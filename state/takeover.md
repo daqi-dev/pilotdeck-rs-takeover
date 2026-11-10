@@ -34,10 +34,13 @@
 
 M2 会话域 → M3 工具回路（同时重跑 `scripts/parity` 的 53 场景并做负控）→ M4 其余 method 族 → M5 gateway HTTP → M6 CLI → M7 退役（删代理模式、删未接线代码、原版 `ui/server` 接 Rust gateway 实测）。完整计划和盘点见 `_tmp/20261110-inventory/REPORT.md`（不入库；丢了就按本文件重做盘点的相应部分）。
 
-## 等人决定
+## 人已定
 
-1. 阶段 B（`ui/server`）是否推迟。我的建议是推迟。确认前不在 B 上做实现。
-2. Node 运行时的 `ExperimentalWarning` 两行 stderr 是否算已接受差异。暂按接受处理（`scripts/bbx/diff.mjs` 的 `ACCEPTED`）。
+2026-11-10 人答复「都按你的建议，之后你来决定就行」：
+
+1. 阶段 B（`ui/server`）推迟，不取消。先做完 A、C、D 并让 TS gateway 退役，再回来定 B。在那之前不在 B 上做实现。
+2. Node 运行时的 `ExperimentalWarning` 两行 stderr 算已接受差异（`scripts/bbx/diff.mjs` 的 `ACCEPTED`）。
+3. 此后这类取舍（已接受差异、阶段顺序、范围内的做法）由我决定，在里程碑汇报里说明决定了什么和依据。我对这句话的理解不包括：推送到原仓库、改接手仓库可见性、对外发布、删除远端资源、改 `intent.md` 的收敛方向，这些仍然先问。
 
 ## 做过的决定
 
