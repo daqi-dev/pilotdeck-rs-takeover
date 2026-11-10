@@ -151,6 +151,8 @@ const env = {
   PATH: process.env.PATH, HOME: home, PILOT_HOME: pilotHome, TMPDIR: tmp,
   TZ: 'UTC', LANG: 'en_US.UTF-8', NO_COLOR: '1',
   PILOTDECK_GATEWAY_TOKEN: TOKEN, PILOTDECK_GATEWAY_PORT: String(GATEWAY_PORT), PILOTDECK_SKIP_BROWSER_OPEN: '1',
+  // 内置 skills 目录两侧指向同一处（基线自带的那份），否则 Rust 的开发构建找不到它。
+  PILOTDECK_BUNDLED_SKILLS_DIR: path.join(BASELINE, 'skills'),
   ...substDeep(scenario.env ?? {}),
 };
 const SIDES = {
