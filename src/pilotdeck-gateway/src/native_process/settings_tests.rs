@@ -1997,24 +1997,35 @@ async fn settings_busy_gate_matrix() {
     );
 }
 
-/// The isolation refusal the full route answers for a `projectKey` it does
-/// not serve: code and message must match the admission gate verbatim.
-fn assert_isolated(result: Result<JsValue, RequestError>) {
-    match result {
-        Err(error) => {
+/// The full route and the gateway layer answer one request identically:
+/// the same success body, or the same error code and message.
+fn assert_same_answer(
+    routed: Result<JsValue, RequestError>,
+    gateway: Result<JsValue, RequestError>,
+    case: &str,
+) {
+    match (routed, gateway) {
+        (Ok(routed), Ok(gateway)) => assert_eq!(
+            as_serde(&routed),
+            as_serde(&gateway),
+            "#1320 routing: {case} answers like the gateway layer"
+        ),
+        (Err(routed), Err(gateway)) => {
             assert_eq!(
-                error.code, "gateway_request_failed",
-                "#1320 routing: the isolation refusal code"
-            );
-            assert_eq!(
-                String::from_utf16_lossy(error.message.units()),
-                "The isolated native process serves only its configured project.",
-                "#1320 routing: the isolation refusal message"
+                (
+                    routed.code,
+                    String::from_utf16_lossy(routed.message.units())
+                ),
+                (
+                    gateway.code,
+                    String::from_utf16_lossy(gateway.message.units())
+                ),
+                "#1320 routing: {case} fails like the gateway layer"
             );
         }
-        Ok(_) => {
-            panic!("#1320 routing: an unserved projectKey must be refused by the admission gate")
-        }
+        (routed, gateway) => panic!(
+            "#1320 routing: {case} must answer alike on both layers, got {routed:?} and {gateway:?}"
+        ),
     }
 }
 
@@ -2022,12 +2033,8 @@ fn assert_isolated(result: Result<JsValue, RequestError>) {
 /// — the gateway layer after the #1305 registry has already selected the
 /// settings family — so it never crosses the isolation admission gate or
 /// the registry lookup. Through the full `GatewayRequests::request` route:
-/// an own-project `projectKey` reaches the family and answers exactly like
-/// the gateway layer, while a foreign or non-string `projectKey` is
-/// refused before the family runs — so the golden's foreign-key rows
-/// (`styles-closes-matching` `"/proj-A"`, `extensions-project` `"/p"`) and
-/// the registered `U7-EXTENSIONS-RELOAD-STRING-COERCION-001` divergence
-/// (`projectKey:5`) hold at the gateway layer only.
+/// every `projectKey` — own, foreign or non-string — reaches the family and
+/// answers exactly like the gateway layer.
 #[tokio::test]
 async fn settings_methods_route_through_the_native_request_gate() {
     let stack = stack(&[]);
@@ -2067,22 +2074,24 @@ async fn settings_methods_route_through_the_native_request_gate() {
         "#1320 routing: an own-project reload_extensions must succeed through the route"
     );
 
-    // Foreign key: refused by the gate before the family runs.
-    let foreign = pilotdeck_protocol::parse_json(r#"{"projectKey":"/proj-A"}"#)
-        .expect("#1320 routing: the foreign params must parse");
-    let refused = requests
-        .request(JsString::from("resolve_settings"), foreign)
-        .await;
-    assert_isolated(refused);
-
-    // Non-string key: refused by the gate before the `String()` coercion of
-    // U7-EXTENSIONS-RELOAD-STRING-COERCION-001 can run on the native route.
-    let numeric = pilotdeck_protocol::parse_json(r#"{"projectKey":5}"#)
-        .expect("#1320 routing: the numeric params must parse");
-    let refused = requests
-        .request(JsString::from("reload_extensions"), numeric)
-        .await;
-    assert_isolated(refused);
+    // The route has no project gate of its own (the baseline has none), so
+    // a foreign key and a non-string key reach the family and answer exactly
+    // like the gateway layer — the layer the TS golden's foreign-key rows
+    // (`styles-closes-matching` `"/proj-A"`, `extensions-project` `"/p"`) and
+    // the registered `U7-EXTENSIONS-RELOAD-STRING-COERCION-001` divergence
+    // (`projectKey:5`) are pinned at.
+    for (method, params) in [
+        ("resolve_settings", r#"{"projectKey":"/proj-A"}"#),
+        ("reload_extensions", r#"{"projectKey":5}"#),
+    ] {
+        let params = pilotdeck_protocol::parse_json(params)
+            .expect("#1320 routing: the foreign params must parse");
+        let routed = requests
+            .request(JsString::from(method), params.clone())
+            .await;
+        let gateway = requests.settings_request(method.to_owned(), params).await;
+        assert_same_answer(routed, gateway, method);
+    }
 }
 
 /// Regeneration guard for the TS golden; run once with `PDRS_BASELINE` set.

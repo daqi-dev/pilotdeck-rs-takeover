@@ -1506,20 +1506,15 @@ impl SubmitHostServices for Services {
         // `_tmp/20261026-issue-2562/ts-probe/probe-{resolver,submit}.out`.
         // A non-string keeps the type error (the TS resolver chain throws on
         // it too — `resolve(7)` is ERR_INVALID_ARG_TYPE).
-        if let Some(project) = input
-            .get("projectKey")
-            .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))
-        {
-            let project = project
-                .as_string()
-                .and_then(|s| s.to_utf8().ok())
-                .ok_or_else(|| failure("projectKey must be a valid path string."))?;
-            if !self.options.serves_project(&project) {
-                return Err(unavailable(
-                    "The isolated native process serves only its configured project.",
-                ));
-            }
-        }
+        let requested = match input.get("projectKey") {
+            None | Some(JsValue::Undefined | JsValue::Null) => None,
+            Some(project) => Some(
+                project
+                    .as_string()
+                    .filter(|key| key.to_utf8().is_ok())
+                    .ok_or_else(|| failure("projectKey must be a valid path string."))?,
+            ),
+        };
         // The composition does not expose the SDK/model setter yet. Refuse
         // these before session admission instead of reporting a false selection.
         for key in ["modelSelection", "modelOverride", "sdkConfig"] {
@@ -1536,9 +1531,9 @@ impl SubmitHostServices for Services {
         // resolver keeps turn-captured snapshots visible to `snapshot_list`.
         if self.snapshot_recorder.is_some() {
             let projects = SnapshotProjects::new(self.options.home.clone(), PathBuf::new());
-            let project = self.options.project.to_string_lossy();
+            let project = self.options.project_root_for(requested);
             Ok(Some(JsString::from(
-                projects.workspace_id(&project).as_str(),
+                projects.workspace_id(&project.to_string_lossy()).as_str(),
             )))
         } else {
             Ok(None)
@@ -1606,7 +1601,10 @@ impl SubmitHostServices for Services {
         input: &'a JsValue,
     ) -> SubmitFuture<'a, Result<SubmitAttachmentLease, SubmitError>> {
         let store = self.upload_store.clone();
-        let project = self.options.project.clone();
+        // `input.projectKey ?? fallbackProjectRoot`, like every other read.
+        let project = self
+            .options
+            .project_root_for(input.get("projectKey").and_then(JsValue::as_string));
         Box::pin(async move {
             // `uploadedAttachments` is a non-empty array at this call site
             // (GatewaySubmitHost::prepare checks that before calling).
@@ -1739,9 +1737,10 @@ impl SubmitHostServices for Services {
         &'a self,
         message: &'a JsValue,
         attachments: Vec<JsValue>,
-        _project: Option<&JsString>,
+        project: Option<&JsString>,
         _session: Option<&JsString>,
     ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
+        let project_dir = self.options.project_root_for(project);
         Box::pin(async move {
             super::assembly::validate_profile(&self.options, &self.env)
                 .await
@@ -1752,7 +1751,6 @@ impl SubmitHostServices for Services {
             if attachments.is_empty() {
                 return Ok(object([("type", "text".into()), ("text", message.clone())]));
             }
-            let project_dir = self.options.project.clone();
             let message = message.clone();
             // P1-3/concurrency#5: the whole composition — the once-per-prepare
             // lease-root canonicalize (simplify#2), the per-attachment stat and
@@ -1777,8 +1775,15 @@ impl SubmitHostServices for Services {
             };
             let params = object([
                 (
+                    // `input.projectKey ?? this.options.fallbackProjectKey`
+                    // (GatewaySessionModelBundle.ts:85).
                     "projectKey",
-                    JsValue::String(self.options.project.to_string_lossy().into_owned().into()),
+                    match input.get("projectKey") {
+                        Some(JsValue::String(key)) => JsValue::String(key.clone()),
+                        _ => JsValue::String(
+                            self.options.project.to_string_lossy().into_owned().into(),
+                        ),
+                    },
                 ),
                 (
                     "sessionKey",

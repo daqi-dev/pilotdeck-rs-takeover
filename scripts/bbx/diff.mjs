@@ -6,7 +6,8 @@
 // 归一化只有下面四条，都是「同一侧连跑两次也会变」的值，别的一律按原样比：
 //   1. UUID            → <uuid:N>，N 是它在该侧输出里第一次出现的序号（保留「同一个 id」的关系）
 //   2. ISO 时间戳      → <iso>
-//   3. 毫秒时间戳整数  → <ms>（1.6e12 ~ 2.0e12 之间的整数）
+//   3. 毫秒时间戳      → <ms>（1.6e12 ~ 2.0e12 之间的整数）；带小数的记成 <ms.frac>，
+//                        这样「一侧整数、一侧小数」仍然算差异
 //   4. 进程号          → <pid>（键名为 pid / ownerPid 的整数；以及 Node 警告行前缀 "(node:1234)"）
 // 已接受差异（ACCEPTED，同样每次打印）：只属于 Node 运行时、与 PilotDeck 行为无关的输出。
 // 另有一张「不比较」的清单 IGNORED，每次运行都会打印出来，不藏。
@@ -44,7 +45,7 @@ function normalizer() {
   }).replace(ISO, '<iso>').replace(/\(node:\d+\)/g, '(node:<pid>)');
   const walk = (v) => {
     if (typeof v === 'string') return Object.values(ACCEPTED).reduce((s, [, apply]) => apply(s), text(v));
-    if (typeof v === 'number') return Number.isInteger(v) && v > 1.6e12 && v < 2.0e12 ? '<ms>' : v;
+    if (typeof v === 'number') return v > 1.6e12 && v < 2.0e12 ? (Number.isInteger(v) ? '<ms>' : '<ms.frac>') : v;
     if (Array.isArray(v)) return v.map(walk);
     if (v && typeof v === 'object') {
       return Object.fromEntries(Object.entries(v).map(([k, x]) => [text(k), PID_KEYS.includes(k) && Number.isInteger(x) ? '<pid>' : walk(x)]));

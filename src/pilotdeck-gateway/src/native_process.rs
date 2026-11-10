@@ -32,6 +32,9 @@ mod channels_tests;
 mod management_tests;
 #[cfg(test)]
 mod mcp_status_tests;
+// Project routing shared by every request family: the baseline's
+// `projectKey ?? fallbackProjectRoot` read and its dialog registration rule.
+mod projects;
 mod requests;
 // The product entry (`pilotdeck server`): the baseline's startGatewayServer
 // options over the same assembly and listener the `--native` entry uses.
@@ -238,7 +241,18 @@ async fn production_listener(
 #[derive(Clone, Debug)]
 pub struct Options {
     pub home: PathBuf,
+    /// The baseline's `fallbackProjectRoot` (LocalGatewayBootConfig.ts:52):
+    /// the project a request without `projectKey` is served from. The product
+    /// entry passes the pilot home (src/cli/pilotdeck.ts:111), which is the
+    /// virtual General workspace and needs no registration; the `--native`
+    /// entry keeps the baseline default `fallbackProjectRoot ?? projectRoot`,
+    /// so there it equals [`Options::project_root`].
     pub project: PathBuf,
+    /// The baseline's `projectRoot` (`process.cwd()` for `pilotdeck server`):
+    /// reported as `serverInfo.projectKey` (createLocalGateway.ts:1042) and
+    /// the anchor of the process config store (createLocalGateway.ts:800).
+    /// Requests are never routed here unless they name it as `projectKey`.
+    pub project_root: PathBuf,
     pub listen: SocketAddr,
     pub token_file: PathBuf,
     pub sidecar: PathBuf,
@@ -383,6 +397,7 @@ impl Options {
         }
         Ok(Self {
             home,
+            project_root: project.clone(),
             project,
             listen,
             token_file,
@@ -401,11 +416,6 @@ impl Options {
     /// `os.homedir()` as the hosted code sees it; see [`Options::os_home`].
     pub(crate) fn homedir(&self) -> PathBuf {
         self.os_home.clone().unwrap_or_else(|| self.home.clone())
-    }
-
-    fn serves_project(&self, project: &str) -> bool {
-        crate::metadata::resolve_process_path(Path::new(""), Path::new(project))
-            .is_ok_and(|path| path == self.project)
     }
 
     /// A captured environment for config/children. The isolated home wins over

@@ -41,15 +41,15 @@ mutations = [
      '''let runs = match registry_switch {
             Some(RunRegistrySwitch::Off) => None,
             Some(RunRegistrySwitch::On) | None => Some(Arc::new(FileRegistry::new(
-                FileRunRegistry::open(options.home.join("runs.json"))?,
+                FileRunRegistry::open(runs_path)?,
             )?)),
         };''',
      '''let runs = match registry_switch {
             Some(RunRegistrySwitch::Off) => Some(Arc::new(FileRegistry::new(
-                FileRunRegistry::open(options.home.join("runs.json"))?,
+                FileRunRegistry::open(runs_path)?,
             )?)),
             Some(RunRegistrySwitch::On) | None => Some(Arc::new(FileRegistry::new(
-                FileRunRegistry::open(options.home.join("runs.json"))?,
+                FileRunRegistry::open(runs_path)?,
             )?)),
         };''',
      'executable_native_registry_switch', '#1369 executable describe_server registry gating'),

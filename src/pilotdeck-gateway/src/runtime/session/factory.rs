@@ -836,7 +836,11 @@ pub type Admission =
 /// (whose first statement constructs the budget, `SessionContextRuntimeBundle.ts:85`)
 /// inside `createSession`'s try. The per-turn assembly keeps its own live cwd
 /// read; the Node process.cwd() cache difference stays registered (A7.4).
-pub type ToolResultsDir = Arc<dyn Fn(&JsString) -> PathBuf + Send + Sync>;
+///
+/// The whole context is handed over because the directory lives under the
+/// session's own project root (`ProjectSessionStorage.ts:413`), which the
+/// host derives from `context.project_key`.
+pub type ToolResultsDir = Arc<dyn Fn(&SessionContext) -> PathBuf + Send + Sync>;
 pub struct FactoryOptions {
     /// Predecessor drain + occupied process-lock wait budget, chosen by the
     /// host's cancellation policy (e.g. POST_CANCEL_EXIT_TIMEOUT), not a total
@@ -1053,9 +1057,8 @@ impl ProjectSessionFactory {
             // registered (A7.4-TOOLBUDGET-CWD-001).
             if let Some(resolve) = self.options.tool_results_dir.as_ref()
                 && !crate::mutants::on("session-cwd-preflight-skipped")
-                && let Err(error) = ToolResultBudget::new(ToolResultBudgetOptions::new(resolve(
-                    &context.session_key,
-                )))
+                && let Err(error) =
+                    ToolResultBudget::new(ToolResultBudgetOptions::new(resolve(&context)))
             {
                 return Err(if crate::mutants::on("session-cwd-preflight-message") {
                     RuntimeError::new(format!("Host execution failed: {error}"))

@@ -460,53 +460,96 @@ pub(crate) fn canonical_transcript_path(supplied: &Path) -> Result<PathBuf> {
 pub(crate) struct LedgerLock {
     file: File,
     path: PathBuf,
+    lock_path: PathBuf,
 }
 impl LedgerLock {
-    /// Shared single-writer fence. Resolve aliases before opening the stable
+    /// Shared single-writer fence. Resolve aliases before opening the
     /// sibling lock inode, and retain it for the actual writer's lifetime.
     /// The retained canonical path lets a transfer verify the fence really
     /// guards the path the holder resolved (#1019).
+    ///
+    /// The baseline has no lock file next to a transcript, so the sibling
+    /// exists only while a writer holds it: the holder unlinks it on release
+    /// (see `Drop`). A contender may therefore lock an inode that was just
+    /// unlinked; it detects that by comparing the inode it locked with the one
+    /// the path names now, and starts over on a fresh inode.
     pub(crate) fn acquire(supplied: &Path) -> Result<(PathBuf, Self)> {
         let path = canonical_transcript_path(supplied)?;
         let mut lock_path = path.as_os_str().to_os_string();
         lock_path.push(".lock");
         let lock_path = PathBuf::from(lock_path);
-        let lock = private_open()
-            .read(true)
-            .write(true)
-            .create(true)
-            // Rust-only fence inode: TS has no lock syscall. Keep the errno out
-            // of the error so the wire layer cannot blame the transcript for a
-            // failure that belongs to `<transcript>.lock`; Rust text is honest.
-            .open(&lock_path)
-            .map_err(|error| {
-                io::Error::new(
-                    error.kind(),
-                    format!(
-                        "Could not open session ledger lock {}: {error}",
-                        lock_path.display()
-                    ),
-                )
+        loop {
+            let lock = private_open()
+                .read(true)
+                .write(true)
+                .create(true)
+                // Rust-only fence inode: TS has no lock syscall. Keep the errno out
+                // of the error so the wire layer cannot blame the transcript for a
+                // failure that belongs to `<transcript>.lock`; Rust text is honest.
+                .open(&lock_path)
+                .map_err(|error| {
+                    io::Error::new(
+                        error.kind(),
+                        format!(
+                            "Could not open session ledger lock {}: {error}",
+                            lock_path.display()
+                        ),
+                    )
+                })?;
+            // Rust-only single-writer fence: TS has no lock syscall, and the
+            // WouldBlock rejection is synthetic, so neither is rendered as a
+            // Node fs error.
+            lock.try_lock().map_err(|error| match error {
+                fs::TryLockError::WouldBlock => LedgerError::Io(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "Session operation ledger is locked.",
+                )),
+                fs::TryLockError::Error(error) => error.into(),
             })?;
-        // Rust-only single-writer fence: TS has no lock syscall, and the
-        // WouldBlock rejection is synthetic, so neither is rendered as a
-        // Node fs error.
-        lock.try_lock().map_err(|error| match error {
-            fs::TryLockError::WouldBlock => LedgerError::Io(io::Error::new(
-                io::ErrorKind::WouldBlock,
-                "Session operation ledger is locked.",
-            )),
-            fs::TryLockError::Error(error) => error.into(),
-        })?;
-        Ok((path.clone(), Self { file: lock, path }))
+            if !same_inode(&lock, &lock_path) {
+                // The previous holder unlinked this inode between our open
+                // and our lock; the lock we hold fences nothing.
+                let _ = lock.unlock();
+                continue;
+            }
+            return Ok((
+                path.clone(),
+                Self {
+                    file: lock,
+                    path,
+                    lock_path,
+                },
+            ));
+        }
     }
     /// The canonical path this fence actually guards.
     pub(crate) fn path(&self) -> &Path {
         &self.path
     }
 }
+/// Whether `path` still names the inode `file` has open.
+#[cfg(unix)]
+fn same_inode(file: &File, path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (file.metadata(), fs::metadata(path)) {
+        (Ok(held), Ok(named)) => held.dev() == named.dev() && held.ino() == named.ino(),
+        _ => false,
+    }
+}
+#[cfg(not(unix))]
+fn same_inode(_: &File, _: &Path) -> bool {
+    true
+}
 impl Drop for LedgerLock {
     fn drop(&mut self) {
+        // Unlink while still holding the lock: whoever opens the path from
+        // now on gets a fresh inode, and whoever already opened this one
+        // fails the `same_inode` check after locking it. Only the inode this
+        // fence holds is removed, never a successor's.
+        #[cfg(unix)]
+        if same_inode(&self.file, &self.lock_path) {
+            let _ = fs::remove_file(&self.lock_path);
+        }
         // Explicit unlock matters when a concurrent process spawn briefly
         // inherits a duplicate descriptor before exec closes it (CLOEXEC).
         // Closing only this File would keep that shared flock alive.

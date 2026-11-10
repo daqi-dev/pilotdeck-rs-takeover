@@ -746,9 +746,12 @@ async fn admission_and_unwired_families_stay_closed() {
     let target = scratch.0.join("outside");
     std::fs::create_dir_all(&target).expect("#1231 outside target");
     let result=requests.request("snapshot_restore".into(),expand(&json!({"projectKey":"<root>/project","snapshotId":"missing","targetProjectKey":target}),&scratch.0)).await;
+    // createLocalGateway.ts:1305-1311: the source snapshot is looked up
+    // before the target project is resolved, so a missing snapshot answers
+    // first whatever the target is.
     negative_assert_eq!(
         result.expect_err("#1231 foreign restore must fail").code,
-        "CAPABILITY_UNAVAILABLE",
+        "SNAPSHOT_NOT_FOUND",
         "#1231 restore target project admission"
     );
     let units = format!(
@@ -760,7 +763,7 @@ async fn admission_and_unwired_families_stay_closed() {
     let result = requests.request("snapshot_restore".into(), malformed).await;
     negative_assert_eq!(
         result.expect_err("#1231 surrogate restore must fail").code,
-        "CAPABILITY_UNAVAILABLE",
+        "SNAPSHOT_NOT_FOUND",
         "#1231 surrogate restore target admission"
     );
     let result = requests
@@ -2539,24 +2542,23 @@ async fn submit_workspace_id_treats_an_explicit_null_project_key_as_not_provided
         "#2562 a non-string projectKey keeps the type message"
     );
 
-    // (4) Unserved string control: a foreign string is still refused, so the
-    // fallback in (1) is the configured project, not "anything goes".
-    let unserved_input = pilotdeck_protocol::parse_json(
+    // (4) Another project's string is routed, not refused:
+    // `resolveProjectStorageId(requestedProjectKey ?? fallbackProjectRoot,
+    // pilotHome)` (createLocalGateway.ts:1026-1028) answers the legacy slug
+    // of an unregistered path, so the fallback in (1) is one project among
+    // many rather than the only one served.
+    let other_input = pilotdeck_protocol::parse_json(
         &serde_json::json!({"projectKey": "/nonexistent/pdrs-2562"}).to_string(),
     )
-    .expect("#2562 unserved input JSON");
-    let error = on
-        .workspace_id(&unserved_input)
-        .expect_err("#2562 an unserved project string is refused");
+    .expect("#2562 other-project input JSON");
+    let other_id = on
+        .workspace_id(&other_input)
+        .expect("#2562 another project's key resolves a workspace id")
+        .expect("#2562 the recorder is on");
     negative_assert_eq!(
-        error.code,
-        "CAPABILITY_UNAVAILABLE",
-        "#2562 an unserved project string keeps the isolated-project code"
-    );
-    negative_assert_eq!(
-        error.message,
-        "The isolated native process serves only its configured project.",
-        "#2562 an unserved project string keeps the isolated-project message"
+        String::from_utf16_lossy(other_id.units()),
+        "nonexistent-pdrs-2562",
+        "#2562 an unregistered project answers its legacy storage slug"
     );
 
     requests

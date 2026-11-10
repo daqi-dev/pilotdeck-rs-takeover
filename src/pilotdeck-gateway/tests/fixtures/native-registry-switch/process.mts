@@ -109,7 +109,7 @@ try{
     const files=(await readdir(process.home,{recursive:true})).filter(p=>p.endsWith('.jsonl'));assert.equal(files.length,1,'#1369 off durable session file');
     const disk=await readFile(join(process.home,files[0]),'utf8');
     assert.ok(disk.split('\n').filter(Boolean).map(s=>JSON.parse(s)).some(e=>e.type==='assistant_message'&&e.message.content.some((b:any)=>b.text==='native registry switch text')),'#1369 off transcript persists');
-    assert.equal(await stat(join(process.home,'runs.json')).then(()=>true,()=>false),false,'#1369 off leaves no runs.json');
+    assert.equal(await stat(join(process.home,'runs','registry.json')).then(()=>true,()=>false),false,'#1369 off leaves no runs.json');
     for(const method of ['run_get','run_events','run_reattach']){
       const refused=await request(ws,next,'refused-'+method,method,{projectKey:process.project,sessionKey:'registry-off-session',runId:'registry-off-run'});
       assert.equal(refused.ok,false,`#1369 off ${method} refuses`);
@@ -131,7 +131,7 @@ try{
       assert.ok(described.result.capabilities.includes(capability),'#1369 describe_server gates run capabilities');
     const events=await submit(ws,next,process,'registry-on-session','registry-on-run','native registry on');
     assert.equal(events.at(-1).type,'turn_completed','#1369 on turn completes');
-    assert.equal(await stat(join(process.home,'runs.json')).then(()=>true,()=>false),true,'#1369 on persists runs.json');
+    assert.equal(await stat(join(process.home,'runs','registry.json')).then(()=>true,()=>false),true,'#1369 on persists runs.json');
     const read=await request(ws,next,'read','run_get',{projectKey:process.project,sessionKey:'registry-on-session',runId:'registry-on-run'});
     assert.equal(read.ok,true,'#1369 on run_get reads the registry');
     assert.equal(read.result.state,'completed','#1369 on run_get terminal state');

@@ -836,6 +836,30 @@ fn lock_contention_and_drop_release_cover_canonical_path_aliases() {
     drop(inherited_descriptor);
     assert!(scratch.0.join("session.jsonl.lock").is_file());
 }
+/// The baseline keeps no lock file next to a transcript (bbx `turn-text`:
+/// `chats/` holds the `.jsonl` and its projections only), so the Rust-only
+/// fence inode exists exactly while a writer holds it.
+#[test]
+fn ledger_lock_file_exists_only_while_held() {
+    let scratch = Scratch::new();
+    let lock_file = scratch.0.join("session.jsonl.lock");
+    let (_, held) = super::LedgerLock::acquire(&scratch.path()).unwrap();
+    assert!(lock_file.is_file(), "the fence inode exists while held");
+    assert!(
+        matches!(super::LedgerLock::acquire(&scratch.path()), Err(LedgerError::Io(e)) if e.kind() == io::ErrorKind::WouldBlock),
+        "a second holder is refused while the first is alive"
+    );
+    assert!(
+        lock_file.is_file(),
+        "the refused contender must not remove the holder's inode"
+    );
+    drop(held);
+    assert!(!lock_file.exists(), "release removes the fence inode");
+    let (_, again) = super::LedgerLock::acquire(&scratch.path()).unwrap();
+    assert!(lock_file.is_file());
+    drop(again);
+    assert!(!lock_file.exists());
+}
 #[test]
 fn half_written_tail_is_preserved_and_separated_before_append() {
     let scratch = Scratch::new();

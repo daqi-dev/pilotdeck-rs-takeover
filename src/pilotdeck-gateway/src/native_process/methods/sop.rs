@@ -84,38 +84,6 @@ mod tests {
             .expect("#1312 sop project dispose");
     }
 
-    // sop_status: valid sessionKey + wrong projectKey → shared entry gate in
-    // Requests::request rejects before sop_request runs, code is gateway_request_failed.
-    // The per-method guard that used to live in sop_request was dead code because
-    // native_process/requests.rs:179-188 always intercepts first with a different error code.
-    #[tokio::test]
-    async fn sop_status_rejects_wrong_project() {
-        let (_scratch, requests) =
-            std::panic::catch_unwind(setup).expect("#1312 sop fixture setup");
-        let params = crate::metadata::object([
-            ("sessionKey", "s1".into()),
-            ("projectKey", "/wrong/project".into()),
-        ]);
-        let result = crate::runtime::turn::gateway::GatewayRequests::request(
-            &requests,
-            pilotdeck_protocol::JsString::from("sop_status"),
-            params,
-        )
-        .await;
-        negative_assert_eq!(
-            result.unwrap_err().code.as_str(),
-            "gateway_request_failed",
-            "#1312 sop_status wrong project rejected by shared entry gate"
-        );
-        requests.owner.shutdown().await.expect("#1312 sop shutdown");
-        requests
-            .project
-            .dispose()
-            .await
-            .expect("#1312 sop project dispose");
-    }
-
-    // sop_status: valid sessionKey, no SOP runtime → CAPABILITY_UNAVAILABLE.
     #[tokio::test]
     async fn sop_status_unavailable_without_runtime() {
         let (_scratch, requests) =

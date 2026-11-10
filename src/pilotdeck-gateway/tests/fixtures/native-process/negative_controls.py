@@ -178,16 +178,13 @@ impl Clone for ReplacementCoordinator {
      'file.write_all(options.project.to_string_lossy().as_bytes())?;',
      'file.write_all(b".")?;',
      'native_process::tests::review::project_options_publish_and_restart_match_ts', '#1137 marker publishes normalized project identity'),
-    # #2083 r1: the request gate now converts the key lossily (same source as
-    # session_close_project), so the anchor follows the new gate shape.
-    ('request-project-base', REQUESTS,
-     'self.options.serves_project(&lossy)',
-     'crate::metadata::resolve(&self.options.project, &lossy) == self.options.project',
-     'native_process::tests::review::project_path_boundaries_worker', '#1137 request project guard uses process cwd'),
-    ('submit-project-base', SERVICES,
-     'if !self.options.serves_project(&project) {',
-     'if crate::metadata::resolve(&self.options.project, &project) != self.options.project {',
-     'native_process::tests::review::project_path_boundaries_worker', '#1137 submit project guard uses process cwd'),
+    # 2026-11-10 (dev/takeover, multi-project host): the request-level
+    # isolated-project gate the `request-project-base` / `submit-project-base` rows mutated is gone — the baseline has no
+    # such gate; every method reads `input.projectKey ?? fallbackProjectRoot`
+    # itself (see src/native_process/projects.rs). The rows were removed with
+    # the code they anchored on; the behaviour is now pinned against the
+    # baseline by scripts/bbx (project-default / project-keys /
+    # project-session-lifecycle) and by the rewritten unit tests.
     ('empty-project-options', MARKER_ORACLE,
      '"options": [', '"options": [], "unusedOptions": [',
      'native_process::tests::review::project_options_publish_and_restart_match_ts', '#1137 project option matrix count'),

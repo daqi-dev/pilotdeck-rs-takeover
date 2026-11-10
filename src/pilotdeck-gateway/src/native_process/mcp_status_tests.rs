@@ -586,14 +586,11 @@ async fn nullish_params_report_the_type_error() {
 /// `ProjectRuntimeRegistry.ts`; probe
 /// `_tmp/20261109-archive-wt-2272/20261108-issue-2272-fix1/ts-probe/probe-null.out` shows the same
 /// `{"servers":[]}` answer for null and a missing key). A non-string key is
-/// still an unserved key for the gate and is refused before the shared
-/// config's own `ERR_INVALID_ARG_TYPE` (node:path.resolve) — that one
-/// divergence is the #1311-era isolation admission this route shares with
-/// every other method, not something the #1432 wiring introduces. These two
-/// cells pin the current admission answer so the divergence stays visible
-/// instead of drifting.
+/// answered by the shared config's own `ERR_INVALID_ARG_TYPE`
+/// (node:path.resolve), like the baseline: the request route has no project
+/// gate in front of it any more.
 #[tokio::test]
-async fn null_project_key_falls_back_and_non_string_stays_refused_by_admission() {
+async fn null_project_key_falls_back_and_non_string_is_the_path_resolve_type_error() {
     // null: admitted, and the read falls back like a missing key (#2272).
     let admitted = harness();
     let status = call(
@@ -619,7 +616,7 @@ async fn null_project_key_falls_back_and_non_string_stays_refused_by_admission()
         .await
         .expect("#1432 harness owner shutdown");
 
-    // non-string: still an unserved key for the isolation gate.
+    // non-string: `path.resolve(5)` rejects it.
     let refused = harness();
     let error = call(
         &refused.requests,
@@ -627,18 +624,18 @@ async fn null_project_key_falls_back_and_non_string_stays_refused_by_admission()
         r#"{"projectKey":5,"sessionKey":"s"}"#,
     )
     .await
-    .expect_err("#1432 admission must refuse non-string project keys");
+    .expect_err("#1432 a non-string project key must be refused");
     assert_eq!(
-        "gateway_request_failed", error.code,
-        "#1432 the admission refusal carries the family fallback code"
+        "ERR_INVALID_ARG_TYPE", error.code,
+        "#1432 the refusal is Node's path.resolve argument error"
     );
     assert_eq!(
         error
             .message
             .to_utf8()
-            .expect("#1432 admission message must be UTF-8"),
-        "The isolated native process serves only its configured project.",
-        "#1432 the isolation gate answers before the shared config"
+            .expect("#1432 the type error message must be UTF-8"),
+        "The \"paths[0]\" argument must be of type string. Received type number (5)",
+        "#1432 the shared config answers the non-string key itself"
     );
     assert!(
         refused.probe.events().is_empty(),

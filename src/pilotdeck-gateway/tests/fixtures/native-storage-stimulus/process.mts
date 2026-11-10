@@ -218,7 +218,7 @@ try{
     assert.ok((await transcriptOf(process)).includes('turn_timeout'),'#1370 writer release lands the status write');
     // Registry site: the agent_status persist is held inside the lock.
     const registryBlock=await witness(control,'registry','block','agent_status:turn_timeout');
-    const runsPath=join(process.home,'runs.json');
+    const runsPath=join(process.home,'runs','registry.json');
     assert.ok(!((await exists(runsPath))&&(await readFile(runsPath,'utf8')).includes('turn_timeout')),'#1370 runs.json stays held before the release');
     ws.send(JSON.stringify({type:'request',id:'runget',method:'run_get',params:{projectKey:process.project,sessionKey:'stimulus-replay-session',runId:'stimulus-replay-run'}}));
     await sleep(700);

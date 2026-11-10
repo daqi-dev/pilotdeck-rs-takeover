@@ -271,15 +271,6 @@ fn non_utf8_project_path_is_refused() {
     // Control: the same arguments with the UTF-8 project parse, so the
     // rejection above is about the bytes and not an unrelated option.
     Options::parse(scratch.args()).expect("#1431 UTF-8 project control parses");
-    // Measurement behind the refusal: with the raw project configured, the one
-    // spelling a JS client can send (the lossy one) is not served, so no
-    // `snapshot_list` for this workspace is reachable.
-    let mut parsed = Options::parse(scratch.args()).expect("#1431 control options");
-    parsed.project = raw;
-    negative_assert!(
-        !parsed.serves_project(&parsed.project.to_string_lossy()),
-        "#1431 the lossy project spelling a client must send is not served"
-    );
 }
 
 /// #2036: the triage contract behind the probe, in one place. Only `EILSEQ` —
@@ -1702,7 +1693,8 @@ fn loop_stimulus_switch_matrix() {
     );
 }
 
-// A runs.json directory makes opening the persistent registry fail, so only
+// A directory at the registry path (`runs/registry.json`,
+// createLocalGateway.ts:996) makes opening the persistent registry fail, so only
 // the off switch can complete startup: unset and "on" pin the production
 // default, and an invalid value is rejected before the file is touched.
 #[tokio::test]
@@ -1717,7 +1709,8 @@ async fn run_registry_switch_controls_startup() {
         let options = Options::parse(scratch.args()).expect("#1369 registry switch options");
         std::fs::write(options.home.join("pilotdeck.yaml"), CONFIG)
             .expect("#1369 registry switch config");
-        std::fs::create_dir(options.home.join("runs.json")).expect("#1369 runs directory fixture");
+        std::fs::create_dir_all(options.home.join("runs/registry.json"))
+            .expect("#1369 runs directory fixture");
         let mut inherited = Env::new();
         if let Some(value) = value {
             inherited.insert("PILOTDECK_NATIVE_RUN_REGISTRY".into(), value.into());
@@ -1747,7 +1740,7 @@ async fn run_registry_switch_controls_startup() {
             "#1369 off registry switch starts without the run file",
         );
         negative_assert!(
-            options.home.join("runs.json").is_dir(),
+            options.home.join("runs/registry.json").is_dir(),
             "#1369 off registry switch leaves the run path untouched"
         );
         host.request_shutdown(options.drain_budget);

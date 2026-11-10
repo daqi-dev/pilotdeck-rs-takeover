@@ -416,7 +416,19 @@ async fn start_assembly(
     // Management can inspect existing skills; turn admission still checks that
     // unsupported skill prompt/tool composition is not silently omitted.
     validate_profile_inner(&options, &env, true).await?;
-    register_project(&options)?;
+    // The baseline gateway never registers a project (the `.cwd` markers are
+    // written by its web server and cron storage, src/web/server/
+    // listProjects.ts and src/cron/runtime/CronProjectStorageProvider.ts:65),
+    // and `pilotdeck server` needs none: its default project is the pilot
+    // home, the General workspace every dialog lookup accepts unregistered.
+    // The `--native` entry is `createLocalGateway({ projectRoot })` with the
+    // default `fallbackProjectRoot ?? projectRoot`: there the default project
+    // is an ordinary one, and the dialog registry refuses it until something
+    // registered it. That entry has no web server to do so, so it registers
+    // its own project here.
+    if !options.default_project_is_general() {
+        register_project(&options)?;
+    }
     let project = project_registry(&options, &env);
     let snapshot_enabled = snapshot::snapshot_enabled(&options, &project).await?;
     let snapshot_recorder =
@@ -468,7 +480,7 @@ async fn start_assembly(
     let storage_options = options.clone();
     // #897: the composition-time budget preflight resolves the same directory
     // the per-turn ports use (`SessionTools::turn`), so the two cannot drift.
-    let budget_project = options.project.clone();
+    let budget_options = options.clone();
     let factory = Arc::new(ProjectSessionFactory::new(FactoryOptions {
         writer_busy_wait_timeout: options.drain_budget,
         prepare: Arc::new(move |context, session_mcp_runtimes| {
@@ -484,7 +496,12 @@ async fn start_assembly(
             let mcp_diagnostic = prepare_mcp_diagnostic.clone();
             let session_overrides = prepare_overrides.clone();
             Box::pin(async move {
-                let lease = project.acquire(None)?;
+                // `registry.resolve(projectKey ?? fallbackProjectRoot)`
+                // (ProjectRuntimeRegistry.ts:1540-1560): the session runs in
+                // the runtime, the working directory and the storage of the
+                // project its first turn named.
+                let project_root = options.project_root_for(context.project_key.as_ref());
+                let lease = project.acquire(Some(&project_root))?;
                 let resources = lease
                     .runtime()
                     .resources()
@@ -560,7 +577,7 @@ async fn start_assembly(
                 config.insert("jsonSelfCorrect".into(), JsValue::Bool(true));
                 config.insert(
                     "cwd".into(),
-                    JsValue::String(options.project.to_string_lossy().into_owned().into()),
+                    JsValue::String(project_root.to_string_lossy().into_owned().into()),
                 );
                 // #1864: compose the session selections the three selector
                 // methods stored — the native counterpart of
@@ -660,7 +677,7 @@ async fn start_assembly(
                 };
                 retained.push(move || Box::pin(async move { session_mcp_release.release().await }));
                 let tail = TailConfig {
-                    cwd: Some(options.project.clone()),
+                    cwd: Some(project_root.clone()),
                     // #1371: the controlled loop emits no assistant text, so
                     // the automatic title request is a stimulus difference
                     // (RESULT.md TEXT row). An armed loop *with a plan*
@@ -691,7 +708,7 @@ async fn start_assembly(
                         let deployment = Deployment::Stdio {
                             command: options.sidecar.to_string_lossy().into_owned(),
                             args: options.sidecar_args.clone(),
-                            cwd: options.project.clone(),
+                            cwd: project_root.clone(),
                             env: env.clone(),
                         };
                         let ports = super::tools::SessionTools::new(
@@ -731,7 +748,8 @@ async fn start_assembly(
             let project = storage_project.clone();
             let options = storage_options.clone();
             Box::pin(async move {
-                let lease = Arc::new(project.acquire(None)?);
+                let project_root = options.project_root_for(context.project_key.as_ref());
+                let lease = Arc::new(project.acquire(Some(&project_root))?);
                 let resource = lease
                     .runtime()
                     .resources()
@@ -740,7 +758,11 @@ async fn start_assembly(
                     .context()
                     .resource(Resource::Persistence)
                     .ok_or_else(|| RuntimeError::new("Native persistence is missing."))?;
-                let path = transcript_path(&options, &context.session_key);
+                let path = crate::runtime::session::transcript_locks::session_transcript_path(
+                    &options.home,
+                    &project_root,
+                    &context.session_key,
+                );
                 let open_path = path.clone();
                 Ok(SessionStorage::Recording(RecordingPlan {
                     transcript_path: path,
@@ -761,18 +783,24 @@ async fn start_assembly(
             })
         }),
         admission: None,
-        tool_results_dir: Some(Arc::new(move |session_id| {
-            super::tools::session_tool_results_dir(&budget_project, session_id)
+        tool_results_dir: Some(Arc::new(move |context| {
+            super::tools::session_tool_results_dir(
+                &budget_options.project_root_for(context.project_key.as_ref()),
+                &context.session_key,
+            )
         })),
         diagnostic: Arc::new(|d| eprintln!("native session: {d:?}")),
     }));
     let built = (|| -> Result<_, ProxyError> {
         // TS parity: an unconfigured runRegistry is simply absent, so the file
         // registry is never opened and no run persistence happens at all.
+        // `new FileRunRegistry(joinPath(pilotHome, "runs", "registry.json"))`
+        // (createLocalGateway.ts:996).
+        let runs_path = options.home.join("runs").join("registry.json");
         let runs = match registry_switch {
             Some(RunRegistrySwitch::Off) => None,
             Some(RunRegistrySwitch::On) | None => Some(Arc::new(FileRegistry::new(
-                FileRunRegistry::open(options.home.join("runs.json"))?,
+                FileRunRegistry::open(runs_path)?,
             )?)),
         };
         let artifacts = Arc::new(GatewayToolResultArtifactStore::new(
@@ -785,16 +813,25 @@ async fn start_assembly(
                 ..Default::default()
             },
         )?);
-        // U1 upload store: resolves the configured project only.
-        let upload_project = options.project.clone();
+        // U1 upload store over the dialog registry, like the baseline's
+        // `new UploadStore({ listProjects: projects.listProjectKeys,
+        // resolveProject: projects.resolveProjectKey })`
+        // (GatewayDialogBundle.ts:66-69).
+        let (resolve_options, list_options) = (options.clone(), options.clone());
         let upload_store = Arc::new(crate::upload::UploadStore::new(
             crate::upload::UploadStoreOptions::new(
                 move |key: &pilotdeck_protocol::JsString| {
-                    upload_resolve_project(&upload_project, key)
+                    resolve_options
+                        .dialog_project(Some(key))
+                        .map_err(|_| crate::upload::unknown_project_key(key))
                 },
-                {
-                    let p = options.project.clone();
-                    move || Ok(vec![p.clone()])
+                move || {
+                    Ok(list_options
+                        .project_catalog()
+                        .dialog_project_keys()
+                        .into_iter()
+                        .map(PathBuf::from)
+                        .collect())
                 },
             ),
         ));
@@ -966,8 +1003,14 @@ async fn start_assembly(
                 budget.as_millis() as u64,
                 None,
             ));
+            let project_admission = Arc::new(super::projects::SubmitProjectAdmission {
+                options: options.clone(),
+                registry: build_project.clone(),
+            });
             let admission = SubmitAdmissionOptions {
                 interactions: interactions.clone(),
+                model_assertion: Some(project_admission.clone()),
+                dialog_recovery: Some(project_admission),
                 ..SubmitAdmissionOptions::new(replacement.clone())
             };
             let services = Arc::new(super::services::Services {
@@ -996,7 +1039,10 @@ async fn start_assembly(
                 owner.clone(),
                 build_project.clone(),
                 &options.homedir(),
-                &options.project,
+                // `createPilotConfigStoreSync({ projectRoot, env })`
+                // (createLocalGateway.ts:800): the process root, not the
+                // default project.
+                &options.project_root,
                 &env,
             )?;
             // #2294 A7.8: the one automation bundle of the native process —
@@ -1298,17 +1344,6 @@ async fn start_assembly(
         }
     }
 }
-pub fn transcript_path(options: &Options, session: &JsString) -> std::path::PathBuf {
-    // #1860: one derivation, shared with the transcript write fence — a second
-    // copy could drift and leave the fence guarding a file the store never
-    // opens.
-    crate::runtime::session::transcript_locks::session_transcript_path(
-        &options.home,
-        &options.project,
-        session,
-    )
-}
-
 /// #1864 (a): the pure compose step for the three session selections —
 /// extracted from the prepare closure so the read-back tests exercise the
 /// same logic the next session runs. Mirrors
@@ -1515,34 +1550,6 @@ async fn validate_profile_inner(
     }
     Ok(())
 }
-/// U1 upload store `resolveProject`: the configured project only, accepted
-/// under either spelling — the canonical path or the logical one the process
-/// was configured with (the two differ when `--project` itself names a
-/// symlink; the upload record keeps the canonical spelling, the client may
-/// echo either). Any other key is `unknown_project_key` with the caller's raw
-/// UTF-16 (#1441: extracted from the wiring closure so the dual-spelling
-/// acceptance has a direct test).
-pub(super) fn upload_resolve_project(
-    upload_project: &std::path::Path,
-    key: &JsString,
-) -> std::result::Result<PathBuf, crate::upload::UploadError> {
-    // Shared helper `Unknown projectKey: <raw UTF-16>` (UploadStore.ts:63,
-    // #865 frozen behavior): the other 15+ call sites already report the
-    // exact UTF-16 units.
-    let path = match key.to_utf8() {
-        Ok(utf8) => PathBuf::from(utf8),
-        Err(_) => return Err(crate::upload::unknown_project_key(key)),
-    };
-    // Accept both the canonical path and the logical path.
-    let canonical =
-        std::fs::canonicalize(upload_project).unwrap_or_else(|_| upload_project.to_path_buf());
-    let requested = std::fs::canonicalize(&path).unwrap_or(path.clone());
-    if requested != canonical && path != upload_project {
-        return Err(crate::upload::unknown_project_key(key));
-    }
-    Ok(upload_project.to_path_buf())
-}
-
 pub fn env_object(env: &Env) -> JsObject {
     let mut result = JsObject::new();
     for (key, value) in env {
@@ -1597,53 +1604,4 @@ pub(super) fn project_registry(options: &Options, env: &Env) -> Arc<ProjectRunti
             .with_interaction(),
         })),
     ))
-}
-
-#[cfg(test)]
-mod resolve_project_tests {
-    use super::upload_resolve_project;
-    use pilotdeck_protocol::JsString;
-
-    /// #1441（探针 ts-probe/p4-resolve-project.out.txt）：resolveProject 收
-    /// 规范拼写与逻辑拼写两种（Rust 装配闭包的超集行为——TS registry 是
-    /// 词法等值匹配，差异如实记录在 RESULT），外来路径按原始 UTF-16 报
-    /// `Unknown projectKey: <原样>`。
-    #[test]
-    fn upload_resolve_project_accepts_both_spellings() {
-        let scratch =
-            std::env::temp_dir().join(format!("pdrs-1441-resolve-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(scratch.join("real")).expect("#1441 scratch dir");
-        let real = scratch
-            .join("real")
-            .canonicalize()
-            .expect("#1441 canonical");
-        let logical = scratch.join("alias");
-        std::os::unix::fs::symlink(&real, &logical).expect("#1441 alias symlink");
-        // 配置拼写 = 逻辑（经 symlink）
-        let configured = &logical;
-        for key in [&logical, &real] {
-            let resolved =
-                upload_resolve_project(configured, &JsString::from(key.to_string_lossy().as_ref()))
-                    .expect("#1441 both spellings must resolve");
-            assert_eq!(resolved, logical, "the registered spelling is returned");
-        }
-        // 外来路径：精确消息（原样回显）
-        let foreign = scratch.join("nowhere");
-        let error = upload_resolve_project(
-            configured,
-            &JsString::from(foreign.to_string_lossy().as_ref()),
-        )
-        .expect_err("#1441 a foreign key must be refused");
-        assert_eq!(
-            String::from_utf16_lossy(error.message.units()),
-            format!("Unknown projectKey: {}", foreign.to_string_lossy()),
-            "the refusal echoes the caller's spelling"
-        );
-        // 反向：配置拼写 = 规范时，逻辑拼写同样通过
-        let resolved =
-            upload_resolve_project(&real, &JsString::from(logical.to_string_lossy().as_ref()))
-                .expect("#1441 the logical spelling resolves against a canonical config");
-        assert_eq!(resolved, real);
-        std::fs::remove_dir_all(&scratch).ok();
-    }
 }

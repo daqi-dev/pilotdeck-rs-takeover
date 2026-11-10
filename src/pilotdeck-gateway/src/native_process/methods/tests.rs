@@ -3993,15 +3993,17 @@ async fn upload_methods_dispatch_to_the_wired_store() {
         .expect("#1441 registry fixture setup");
     let project = requests.options.project.clone();
     let project_key = project.to_string_lossy().into_owned();
-    let owned = project.clone();
+    let resolve_options = requests.options.clone();
     let listed = project.clone();
     let store = Arc::new(crate::upload::UploadStore::new(
         crate::upload::UploadStoreOptions::new(
-            // #1441 (fix-r1, simplify#1): the production wiring closure —
-            // the dispatch test must not carry a hand copy of the
-            // dual-spelling rule that can drift from the real one.
+            // The production wiring's resolver (the dialog registry,
+            // GatewayDialogBundle.ts:66-69), so the dispatch test cannot
+            // carry a hand copy of the rule that drifts from the real one.
             move |key: &pilotdeck_protocol::JsString| {
-                super::super::assembly::upload_resolve_project(&owned, key)
+                resolve_options
+                    .dialog_project(Some(key))
+                    .map_err(|_| crate::upload::unknown_project_key(key))
             },
             move || Ok(vec![listed.clone()]),
         ),

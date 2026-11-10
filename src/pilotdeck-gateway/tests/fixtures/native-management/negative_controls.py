@@ -53,7 +53,13 @@ mutations = [
     ('limit-fraction-truncated', SOURCE, 'n.fract() == 0.0 && (1.0..=100.0).contains(n)', '(1.0..=100.0).contains(n)', TEST, '#1231 method wire result'),
     ('missing-project-defaulted', SOURCE, 'validate_command_project(params)?;', 'if false { validate_command_project(params)?; }', TEST, '#1231 method wire result'),
     ('host-boundary-leaked', SOURCE, 'if e.requires_host {\n        return unavailable();\n    }', 'if false && e.requires_host {\n        return unavailable();\n    }', ADMISSION, '#1231 host-dependent skill rejected'),
-    ('surrogate-target-accepted', SOURCE, '!s.to_utf8().is_ok_and(|p| self.options.serves_project(&p))', 's.to_utf8().is_ok_and(|p| !self.options.serves_project(&p))', ADMISSION, '#1231 surrogate restore target admission'),
+    # 2026-11-10 (dev/takeover, multi-project host): the request-level
+    # isolated-project gate these rows mutated is gone — the baseline has no
+    # such gate; every method reads `input.projectKey ?? fallbackProjectRoot`
+    # itself (see src/native_process/projects.rs). The rows were removed with
+    # the code they anchored on; the behaviour is now pinned against the
+    # baseline by scripts/bbx (project-default / project-keys /
+    # project-session-lifecycle) and by the rewritten unit tests.
     ('capability-invented-always_on_apply', CAPABILITIES,
      'Capability { name: "commands_list", methods: &[], wired: compiled_in }',
      'Capability { name: "commands_list", methods: &[], wired: compiled_in },' + '\n    ' + 'Capability { name: "always_on_apply", methods: &[], wired: compiled_in }', HOST, '#1231 exact wired capability set'),
@@ -93,7 +99,7 @@ mutations.append(('commands-nested-blocking', SOURCE, 'return Some(self.commands
 
 mutations.append(('skill-execution-enabled', ASSEMBLY, 'validate_profile_inner(options, env, false).await', 'validate_profile_inner(options, env, true).await', HOST, '#1231 skill management does not enable execution'))
 
-mutations.append(('management-nested-acquire', SOURCE, 'let lease = self\n            .project\n            .acquire(None)\n            .map_err(|e| RequestError::new(e.to_string()))?;', 'let project = self.project.clone();\n        let lease = tokio::task::spawn_blocking(move || project.acquire(None)).await.map_err(|e| RequestError::new(e.to_string()))?.map_err(|e| RequestError::new(e.to_string()))?;', 'native_process::management_tests::management_progress_with_one_available_blocking_thread', '#1231 management progress with one blocking slot'))
+mutations.append(('management-nested-acquire', SOURCE, 'let lease = self\n            .project\n            .acquire(Some(&project_root))\n            .map_err(|e| RequestError::new(e.to_string()))?;', 'let project = self.project.clone();\n        let lease = tokio::task::spawn_blocking(move || project.acquire(Some(&project_root))).await.map_err(|e| RequestError::new(e.to_string()))?.map_err(|e| RequestError::new(e.to_string()))?;', 'native_process::management_tests::management_progress_with_one_available_blocking_thread', '#1231 management progress with one blocking slot'))
 
 mutations.append(('query-surrogate-lossy', SOURCE, 'Some(JsValue::String(text)) => Some(text.clone()),', 'Some(JsValue::String(text)) => Some(String::from_utf16_lossy(text.units()).into()),', TEST, '#1231 method wire result'))
 
@@ -195,29 +201,6 @@ mutations.append((
     '        Ok(Some(resource.management().clone()))',
     'native_process::assembly::memory::tests::memory_management_holds_the_generation_lease_through_the_call',
     '#1456 the returned service must own a generation lease'))
-# #1456 review (two lineages): the widened catalog resolution also accepts
-# every *other* registered project and the virtual General workspace; without
-# the isolation gate `memory_wipe` with a foreign key clears the served
-# project's memory.
-mutations.append((
-    'memory-foreign-project-served',
-    ASSEMBLY_MEMORY,
-    '        if !self.serves_project(project_key) {',
-    '        if false && !self.serves_project(project_key) {',
-    'native_process::assembly::memory::tests::resolve_project_key_accepts_the_keys_the_snapshot_route_accepts',
-    'must not reach the served project'))
-# #1456 r2 (codex sibling P2): the gate must be *project*-exact. Degrading the
-# shared predicate to a textual prefix admits a registered sibling whose
-# spelling starts with the served root (`<tmp>/project-2`) and would wipe the
-# served project's memory; the prefix-sharing fixture cell must kill it.
-mutations.append((
-    'memory-foreign-project-served-by-prefix',
-    ASSEMBLY_MEMORY,
-    '            .is_ok_and(|key| self.options.serves_project(&key))',
-    '            .is_ok_and(|key| key\n'
-    '                .starts_with(self.options.project.to_string_lossy().as_ref()))',
-    'native_process::assembly::memory::tests::resolve_project_key_accepts_the_keys_the_snapshot_route_accepts',
-    'must not reach the served project'))
 # #1320 fix-r2: resolve_settings is advertised (fix-r1 F7), so the
 # rename-to-unwired control keeps the exact wired capability set pinned.
 mutations.append(('capability-resolve_settings', CAPABILITIES, 'name: "resolve_settings"',
@@ -233,7 +216,7 @@ mutations.append(('environment-storage-not-injected', ENTRY, 'inherited.insert("
 # #1431 review: the id source itself and the two remaining environment
 # semantics (ambient storage must lose to --storage-root; the separate
 # snapshot root override must survive) had assertions but no mutants.
-mutations.append(('submit-workspace-id-legacy-slug', SERVICES, 'projects.workspace_id(&project).as_str()', 'crate::metadata::project_id(std::path::Path::new(&*project)).as_str()', WIRING, '#1431 marker spelling selects the registered workspace id'))
+mutations.append(('submit-workspace-id-legacy-slug', SERVICES, 'projects.workspace_id(&project.to_string_lossy()).as_str()', 'crate::metadata::project_id(&project).as_str()', WIRING, '#1431 marker spelling selects the registered workspace id'))
 mutations.append(('environment-storage-ambient-wins', ENTRY, 'inherited.insert("PILOTDECK_STORAGE_ROOT".into(), root.clone());', 'inherited.entry("PILOTDECK_STORAGE_ROOT".into()).or_insert(root.clone());', ENVIRONMENT, '#1431 storage root injected from --storage-root'))
 mutations.append(('environment-snapshot-root-dropped', ENTRY, 'inherited.insert("PILOTDECK_STORAGE_ROOT".into(), root.clone());', 'inherited.insert("PILOTDECK_STORAGE_ROOT".into(), root.clone());\n                inherited.remove("PILOTDECK_SNAPSHOT_ROOT");', ENVIRONMENT, '#1431 snapshot root override preserved'))
 # #1431 review: the recorder extraction in `assembly::snapshot` is the last
@@ -475,7 +458,6 @@ EXPECTED_NAMES = (
     'limit-fraction-truncated',
     'missing-project-defaulted',
     'host-boundary-leaked',
-    'surrogate-target-accepted',
     'capability-invented-always_on_apply',
     'capability-snapshot_list',
     'capability-snapshot_get',
@@ -520,8 +502,6 @@ EXPECTED_NAMES = (
     'memory-error-as-success',
     'memory-project-key-exact-only',
     'memory-lease-dropped',
-    'memory-foreign-project-served',
-    'memory-foreign-project-served-by-prefix',
     'capability-resolve_settings',
     'submit-workspace-id-unwired',
     'submit-snapshots-unwired',

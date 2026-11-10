@@ -107,28 +107,27 @@ impl Requests {
         }
     }
 
-    fn admit_management_project(&self, params: &JsValue) -> Result<(), RequestError> {
-        if let Some(JsValue::String(project)) = params.get("projectKey")
-            && !project
-                .to_utf8()
-                .is_ok_and(|p| self.options.serves_project(&p))
-        {
-            return Err(error(
-                Some("CAPABILITY_UNAVAILABLE"),
-                "The isolated native process serves only its configured project.".into(),
-            ));
+    /// The project a management request is served from: a string
+    /// `projectKey` goes through the dialog registry like every baseline
+    /// management method (`dialog.projects.resolveProjectKey`,
+    /// createLocalGateway.ts:1099-1316), anything else keeps the method's own
+    /// reading further down and is served from the default project.
+    fn management_project(&self, params: &JsValue) -> Result<std::path::PathBuf, RequestError> {
+        match params.get("projectKey") {
+            Some(JsValue::String(_)) => self.dialog_project(params),
+            _ => Ok(self.options.project.clone()),
         }
-        Ok(())
     }
 
     async fn commands(&self, params: &JsValue) -> Result<JsValue, RequestError> {
-        self.admit_management_project(params)?;
         validate_command_project(params)?;
+        let project_root = self.management_project(params)?;
         // Acquire may read configuration synchronously. End that blocking job
         // before awaiting the catalog's own blocking loader/list jobs, so even
         // a single available blocking thread can make progress.
         let project = self.project.clone();
-        let lease = tokio::task::spawn_blocking(move || project.acquire(None))
+        let acquire_root = project_root.clone();
+        let lease = tokio::task::spawn_blocking(move || project.acquire(Some(&acquire_root)))
             .await
             .map_err(|e| RequestError::new(e.to_string()))?
             .map_err(|e| RequestError::new(e.to_string()))?;
@@ -147,7 +146,7 @@ impl Requests {
             .ok_or_else(unavailable)?
             .runtime
             .clone();
-        let project = self.options.project.to_string_lossy().into_owned();
+        let project = project_root.to_string_lossy().into_owned();
         let bundle = GatewayCommandCatalogBundle::new(
             self.options.home.to_string_lossy().into_owned(),
             Arc::new(|key| Box::pin(async move { Ok(key) })),
@@ -168,7 +167,7 @@ impl Requests {
     }
 
     async fn management(&self, method: &str, params: &JsValue) -> Result<JsValue, RequestError> {
-        self.admit_management_project(params)?;
+        let project_root = self.management_project(params)?;
         if matches!(method, "manager_sessions" | "manager_browsers") {
             let gateway = ManagerGateway::from_parts(
                 Some(Arc::new(TranscriptSessionCatalog::new(Arc::new(
@@ -199,7 +198,7 @@ impl Requests {
         // release included); invalidation must not dispose an in-flight request.
         let lease = self
             .project
-            .acquire(None)
+            .acquire(Some(&project_root))
             .map_err(|e| RequestError::new(e.to_string()))?;
         let resources = lease
             .runtime()
@@ -208,17 +207,6 @@ impl Requests {
             .ok_or_else(|| RequestError::new("Native project resources are missing."))?;
         let context = resources.context();
         if method.starts_with("snapshot_") {
-            if method == "snapshot_restore"
-                && let Some(target) = params.get("targetProjectKey").filter(|v| !v.is_undefined())
-                && target
-                    .as_string()
-                    .is_some_and(|s| !s.to_utf8().is_ok_and(|p| self.options.serves_project(&p)))
-            {
-                return Err(error(
-                    Some("CAPABILITY_UNAVAILABLE"),
-                    "The isolated native process serves only its configured project.".into(),
-                ));
-            }
             let persistence = context
                 .resource(Resource::Persistence)
                 .ok_or_else(unavailable)?;

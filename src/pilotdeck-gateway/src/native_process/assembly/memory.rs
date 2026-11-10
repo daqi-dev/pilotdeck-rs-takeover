@@ -27,7 +27,6 @@ use std::sync::Arc;
 /// disabled or absent).
 struct NativeMemoryRegistry {
     project: Arc<ProjectRuntimeRegistry>,
-    options: Options,
     metadata: Metadata,
 }
 
@@ -35,7 +34,6 @@ impl NativeMemoryRegistry {
     fn new(project: Arc<ProjectRuntimeRegistry>, options: &Options) -> Self {
         Self {
             project,
-            options: options.clone(),
             // Same base the management snapshot route builds
             // (`PersistenceResources::snapshot_gateway(PathBuf::new())`), so
             // both management families resolve a project key identically.
@@ -45,19 +43,6 @@ impl NativeMemoryRegistry {
                 files: NativeFiles,
             },
         }
-    }
-
-    /// The isolation boundary of the sibling management routes, delegated to
-    /// the one predicate they all use (`Options::serves_project`): the key the
-    /// projection already resolved must fold lexically onto the one project
-    /// this process staged. Both sides are `path.resolve`-shaped — the
-    /// configured project runs through `resolve_process_path` at parse, the key
-    /// through the project catalog — so the comparison is spelling-insensitive
-    /// but project-exact, and it cannot drift from the sibling routes.
-    fn serves_project(&self, project_key: &JsString) -> bool {
-        project_key
-            .to_utf8()
-            .is_ok_and(|key| self.options.serves_project(&key))
     }
 }
 
@@ -73,22 +58,15 @@ impl ProjectMemoryRegistry for NativeMemoryRegistry {
         &self,
         project_key: &JsString,
     ) -> Result<Option<Arc<dyn MemoryManagementService>>, MemoryProviderError> {
-        // The catalog resolves every registered project plus the virtual
-        // General workspace, while this process stages one. Without this gate
-        // `memory_wipe` carrying another project's key would clear the served
-        // project's memory (#1456) — the same refusal the sibling management
-        // routes return from `Requests::admit_management_project`.
-        if !self.serves_project(project_key) {
-            return Err(MemoryProviderError {
-                name: "DialogGatewayError".into(),
-                code: Some("CAPABILITY_UNAVAILABLE".into()),
-                message: "The isolated native process serves only its configured project.".into(),
-                requires_host: false,
-            });
-        }
+        // `project_key` is the registry's own answer (`resolve_project_key`
+        // above), so the management service comes from that project's
+        // runtime: a wipe names the project it clears (#1456), and the
+        // registry stages the runtime on first use like
+        // `registry.resolve(projectKey)`.
+        let root = std::path::PathBuf::from(String::from_utf16_lossy(project_key.units()));
         let lease = self
             .project
-            .acquire(None)
+            .acquire(Some(&root))
             .map_err(MemoryProviderError::from)?;
         let resources = lease
             .runtime()
@@ -389,6 +367,7 @@ mod tests {
         Options {
             home: scratch.home(),
             project: scratch.root(),
+            project_root: scratch.root(),
             listen: "127.0.0.1:0".parse().expect("#1456 listen address"),
             token_file: scratch.0.join("token"),
             os_home: None,
@@ -478,73 +457,45 @@ mod tests {
                 "#1456 {foreign:?} rejection message"
             );
         }
-        // The catalog is wider than this process. Another registered project
-        // and the virtual General workspace both resolve there, so the
-        // isolation gate — not the resolution — is what must refuse them
-        // (#1456: `memory_wipe` used to clear the served project's memory
-        // under another project's key).
+        // Another registered project and the virtual General workspace are
+        // served from their *own* runtime, staged on first use like
+        // `registry.resolve(projectKey)` — never from the default project's
+        // generation (#1456: `memory_wipe` used to clear the default
+        // project's memory under another project's key).
+        let default_runtime = project.resolve(None).expect("#1456 default runtime");
+        let default_leases = default_runtime.lease_count();
         let others = [
             scratch.other().to_string_lossy().into_owned(),
             scratch.prefix_sibling().to_string_lossy().into_owned(),
             scratch.home().to_string_lossy().into_owned(),
         ];
         for foreign in &others {
+            let resolved = registry
+                .resolve_project_key(&JsString::from(foreign.clone()))
+                .unwrap_or_else(|error| panic!("#1456 {foreign} is in the catalog: {error:?}"));
+            let management = registry
+                .memory_management(&resolved)
+                .unwrap_or_else(|error| panic!("#1456 {foreign} stages its own runtime: {error:?}"))
+                .expect("#1456 the fake provider stages a management service");
+            let own_runtime = project
+                .resolve(Some(std::path::Path::new(foreign)))
+                .expect("#1456 the named project's runtime");
             assert!(
-                registry
-                    .resolve_project_key(&JsString::from(foreign.clone()))
-                    .is_ok(),
-                "#1456 {foreign} is in the project catalog; the gate below is what refuses it"
+                !Arc::ptr_eq(&own_runtime, &default_runtime),
+                "#1456 {foreign} must not reach the default project's provider"
             );
-            let Err(error) = registry.memory_management(&JsString::from(foreign.clone())) else {
-                panic!("#1456 {foreign} must not reach the served project's provider");
-            };
             assert_eq!(
-                error.code.as_deref(),
-                Some("CAPABILITY_UNAVAILABLE"),
-                "#1456 {foreign} refusal code matches the sibling management routes"
+                own_runtime.lease_count(),
+                1,
+                "#1456 {foreign} is served under a lease on its own generation"
             );
-            assert_eq!(error.name, "DialogGatewayError", "#1456 refusal name");
             assert_eq!(
-                String::from_utf16_lossy(error.message.units()),
-                "The isolated native process serves only its configured project.",
-                "#1456 {foreign} refusal message"
+                default_runtime.lease_count(),
+                default_leases,
+                "#1456 {foreign} takes no lease on the default project's generation"
             );
+            drop(management);
         }
-        // The wire keeps the refusal as a thrown error and never touches the
-        // served project's provider.
-        let lists = provider.list_calls.load(Ordering::SeqCst);
-        let clears = provider.clear_calls.load(Ordering::SeqCst);
-        for method in ["memory_list", "memory_wipe"] {
-            for foreign in &others {
-                let params = list_params(foreign);
-                let outcome = gateway
-                    .dispatch(method, &params)
-                    .expect("#1456 memory methods are dispatched here");
-                let MemoryDispatch::Error(error) = &outcome else {
-                    panic!("#1456 {method} for {foreign} must answer ok:false, got {outcome:?}");
-                };
-                assert_eq!(
-                    error.code(),
-                    Some("CAPABILITY_UNAVAILABLE"),
-                    "#1456 {method} {foreign} wire code"
-                );
-                assert_eq!(
-                    String::from_utf16_lossy(error.message().units()),
-                    "The isolated native process serves only its configured project.",
-                    "#1456 {method} {foreign} wire message"
-                );
-            }
-        }
-        assert_eq!(
-            provider.list_calls.load(Ordering::SeqCst),
-            lists,
-            "#1456 a refused key must not list the served project's memory"
-        );
-        assert_eq!(
-            provider.clear_calls.load(Ordering::SeqCst),
-            clears,
-            "#1456 a refused key must not wipe the served project's memory"
-        );
         project.dispose().await.expect("#1456 registry disposal");
     }
 

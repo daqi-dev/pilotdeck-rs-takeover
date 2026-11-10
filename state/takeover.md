@@ -8,20 +8,20 @@
 
 | 入口 | 证据 | 没覆盖的 |
 |---|---|---|
-| `pilotdeck server` 启动失败路径（无配置） | `server-entry-no-config` SAME | — |
+| `pilotdeck server` 的启停：参数与环境变量优先级、启动输出、token 文件、停机退出码、`/health`、`/auth/local-token`、落盘 | `server-entry-no-config` / `start-stop` / `port-host` / `token-generate` / `token-sources` 5 个场景 SAME | 停机时有客户端连着；非 git 目录的 stderr；`telemetry.enabled: true` |
 
-`pilotdeck server` 的其余入口行为（参数与环境变量优先级、启动输出、token 文件、停机退出码、`/health`、`/auth/local-token`）在 4 个场景里 stdout / stderr / 退出码 / HTTP 应答一致，各剩 1 处落盘差异（启动时多写 `.cwd`），所以还不算做完。
-
-当前对拍结果（`node scripts/bbx/check.mjs`，2026-11-10）：基线自比 9/9 SAME；基线 vs Rust 1/9 SAME。
+当前对拍结果（`node scripts/bbx/check.mjs`，2026-11-10，多项目改造后）：基线自比 12/12 SAME；基线 vs Rust 5/12 SAME。
 
 | 场景 | 结果 |
 |---|---|
-| `server-entry-no-config` | SAME |
-| `server-entry-start-stop` / `port-host` / `token-generate` / `token-sources` | 各 DIFF 1 |
-| `server-entry-handshake` | DIFF 41 |
-| `turn-text` | DIFF 214 |
-| `survey-empty-params` | DIFF 179 |
+| `server-entry-*`（除 handshake）5 个 | SAME |
+| `server-entry-handshake` | DIFF 39（全是能力列表） |
+| `turn-text` | DIFF 337 |
+| `project-default` / `project-keys` / `project-session-lifecycle` | DIFF 621 / 742 / 1164 |
+| `survey-empty-params` | DIFF 161 |
 | `cli-survey-offline` | DIFF 15 |
+
+带对话的 4 个场景里，剩余差异只有这几类（都归 M1 第三块）：发给 provider 的请求、会话 `.jsonl` 与 `.projections.json` 的内容、`context_budget` 事件、能力列表、`fileSize`、`read_session_messages`。落盘路径、`serverInfo.projectKey`、`cwd`、项目解析报错已一致。数字比改造前大，是因为会话文件落到了与基线相同的路径，从「整个文件缺失算 1 处」变成逐条比内容。
 
 ## 验收手段
 
@@ -36,7 +36,7 @@
 **M1 最小闭环**，分三块：
 
 1. 入口：已提交（`pilotdeck server` 与基线同参数；Linux CI 全绿）。
-2. 多项目宿主与落盘布局：进行中。基线不带 `projectKey` 的请求归 pilot home、项目运行时按需创建；Rust 原先只服务启动时的单个项目。连带对齐 `runs/registry.json`、`.cwd`、残留 `.lock`、`serverInfo.projectKey`、`list_projects`。
+2. 多项目宿主与落盘布局：已提交。规则集中在 `native_process/projects.rs`：运行时路由是纯词法 `resolve(projectKey ?? pilot home)`；对话准入要求项目已登记（`projects/<id>/.cwd`），pilot home 免登记；gateway 自己从不登记项目。负控：把缺省项目改成 cwd，`turn-text` 报出 `sessions[0].cwd` 和 4 条落盘路径差异。
 3. 发给 provider 的请求与会话记录：未开始。工具声明 5 对 28、请求头、`context_budget`、会话文件缺 `context_snapshot` / `agent_instructions` / `compaction_*`、`read_session_messages` 未接线、能力列表 40 对 53。
 
 M1 之后要回头处理的（入口那块发现的）：
@@ -46,6 +46,9 @@ M1 之后要回头处理的（入口那块发现的）：
 - 基线在非 git 目录启动会往 stderr 漏两行 `fatal: not a git repository`；入口场景用 `DOCKER_CONTAINER=1`、`COMMIT_HASH=bbx` 让基线跳过，等于没覆盖。
 - Rust 没有遥测采集器，停机行打印的是全 0 常量；`telemetry.enabled: true` 时与基线不同。
 - 基线 server 启动流程里有、Rust 还没有的：全局代理、配置热重载（接了多少未核实）、渠道只有飞书和微信、公共审批与公共 host 的 HTTP 路由、路由事件写 `router/events.jsonl`。
+- 多项目改造留下的：sop、always-on、steer、interaction、background tasks、mcp 四控仍只走缺省项目运行时；`project_files_list` / `project_file_read` 缺 key 时回的是 Rust 自造文案；设置的配置存储锚点改成了 cwd，cwd 下有项目级配置时没验证；`--native` 旧入口启动时仍登记自己的项目（`pilotdeck server` 不写）。
+- 冻结账本里有条目已不再描述真实差异（`A7.2-NATIVE-ARCHIVE-CWD-001(-R1)`、`A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001-R8/R9/R11`），没动账本。`scripts/native-witness/*`、`scripts/gateway-parity/native_evidence.py` 还写旧的 `runs.json` 路径，已不可用。
+- 带对话的场景基线自比偶发不稳（首轮 `session_metadata` 与 `compaction_started` 两条记录先后会变），遇到就重跑 `--self`。
 - sidecar 找不到时的报错文案是 Rust 自己的，基线没有对应物（基线默认进程内跑循环）。
 
 ## 之后
@@ -66,6 +69,8 @@ M2 会话域 → M3 工具回路（同时重跑 `scripts/parity` 的 53 场景�
 |---|---|---|
 | 2026-11-10 | 新建 `scripts/bbx` 作为验收手段，不再用 `scripts/gateway-parity` 和 `scripts/ui-server-parity` 验收 | 前者比的是透明代理模式，后者的被测件是一次性代理，都证明不了 Rust native 实现的任何事 |
 | 2026-11-10 | 保留 Rust native gateway，按对拍差异收敛，不整体重写 | 它能独立跑通一轮对话，69 个 method 的错误路径与基线逐字节一致；缺的是接线和端到端验证 |
+| 2026-11-10 | bbx 比较器把带小数的毫秒时间戳归一化成 `<ms.frac>`（与整数的 `<ms>` 区分） | 基线 `createdAt` 用高精度时钟，自比不稳；区分两种记号后「一侧整数一侧小数」仍算差异 |
+| 2026-11-10 | 删掉旧负控装置里 11 条针对「单项目入口闸门」的变异和 3 个对应单测 | 闸门本身与基线不符已删除；别的项目是否被正确服务改由 bbx 的 3 个 `project-*` 场景验证 |
 | 2026-11-10 | `scripts/parity`、`scripts/cli-parity` 暂留，用到时先做负控 | 静态看是真对拍，但我没跑过 |
 
 ## 停用的旧闸门

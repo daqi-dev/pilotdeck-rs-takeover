@@ -356,24 +356,13 @@ mod tests {
         teardown(&requests).await;
     }
 
-    // The always-on rounds walk the same shared admission gate as every other
-    // session request: an unserved projectKey is refused by the entry gate
-    // before the family runs, and the configured project is admitted through
-    // to the envelope (issue acceptance: "always-on 轮次走同一接纳器").
+    // The always-on rounds enter through the same request route as every
+    // other session request and reach the family's envelope. (The entry no
+    // longer has a project gate — the baseline has none — so the former
+    // "unserved projectKey is refused first" half of this test is gone.)
     #[tokio::test]
     async fn always_on_rounds_share_the_admission_gate() {
         let (_scratch, requests) = std::panic::catch_unwind(setup).expect("#1313 fixture setup");
-        let params = crate::metadata::object([("projectKey", "/wrong/project".into())]);
-        let result =
-            GatewayRequests::request(&requests, JsString::from("always_on_apply"), params).await;
-        negative_assert_eq!(
-            result
-                .expect_err("#1313 wrong project is refused")
-                .code
-                .as_str(),
-            "gateway_request_failed",
-            "#1313 always_on_apply admission gate refuses an unserved project"
-        );
         let project_key = requests.options.project.to_string_lossy().into_owned();
         let params = crate::metadata::object([
             ("projectKey", project_key.as_str().into()),
@@ -529,19 +518,6 @@ mod tests {
                 .expect("#2294 envelope is defined");
             negative_assert_eq!(text, envelope, "#2294 {method} configured routing");
         }
-        // A staged manager does not bypass the shared admission gate: an
-        // unserved projectKey is still refused before the family runs.
-        let params = crate::metadata::object([("projectKey", "/elsewhere".into())]);
-        let result =
-            GatewayRequests::request(&requests, JsString::from("always_on_apply"), params).await;
-        negative_assert_eq!(
-            result
-                .expect_err("#2294 unserved project is refused with a manager too")
-                .code
-                .as_str(),
-            "gateway_request_failed",
-            "#2294 the admission gate precedes the always-on family"
-        );
         teardown(&requests).await;
     }
 

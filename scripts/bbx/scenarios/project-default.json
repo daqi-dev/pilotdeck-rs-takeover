@@ -1,0 +1,33 @@
+{
+  "name": "project-default",
+  "about": "不带 projectKey 的请求归到 pilot home（General 工作区）：一轮对话后的会话列表、项目列表、describe_project 与落盘树。进程 cwd（{PROJECT}）没有登记，不出现在项目列表里，也不能当 projectKey 对话。",
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Say hello\"}" } },
+    { "name": "main", "reply": { "text": "Hello from the mock." } }
+  ],
+  "steps": [
+    { "ws": "describe_server" },
+    { "ws": "list_projects" },
+    { "ws": "list_sessions" },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-default", "channelKey": "test", "message": "hello" } },
+    { "sleep": 500 },
+    { "ws": "list_sessions" },
+    { "ws": "list_sessions", "params": { "projectKey": null } },
+    { "ws": "list_sessions", "params": { "projectKey": "{PILOT_HOME}" } },
+    { "ws": "list_sessions", "params": { "projectKey": "{PILOT_HOME}/." } },
+    { "ws": "list_sessions", "params": { "projectKey": "{PROJECT}" } },
+    { "ws": "list_projects" },
+    { "ws": "describe_project" },
+    { "ws": "describe_project", "params": { "projectKey": "{PILOT_HOME}" } },
+    { "ws": "describe_project", "params": { "projectKey": "{PROJECT}" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-home", "channelKey": "test", "message": "hello again", "projectKey": "{PILOT_HOME}" } },
+    { "sleep": 500 },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-cwd", "channelKey": "test", "message": "hello", "projectKey": "{PROJECT}" } },
+    { "sleep": 300 },
+    { "ws": "list_sessions" },
+    { "ws": "list_sessions", "params": { "projectKey": "{PROJECT}" } },
+    { "ws": "describe_project", "params": { "projectKey": "{PILOT_HOME}" } },
+    { "ws": "list_projects" },
+    { "ws": "describe_server" }
+  ]
+}

@@ -584,6 +584,7 @@ fn project_marker_ownership_matches_ts() {
         .clone();
         let options = Options {
             home: scratch.0.join("home"),
+            project_root: project.clone(),
             project,
             listen: "127.0.0.1:0".parse().expect("#1137 marker listen address"),
             token_file: scratch.0.join("unused-token"),
@@ -858,113 +859,30 @@ fn absolute_marker_deleted_cwd_worker() {
     crate::test_process::receipt("1137-deleted-cwd");
 }
 
-#[cfg(unix)]
-struct NoPathResources;
-#[cfg(unix)]
-impl crate::runtime::project::ProjectRuntimeFactory for NoPathResources {
-    fn stage(
-        &self,
-        _: &Path,
-        _: &mut crate::runtime::project::ResourceBundle,
-    ) -> crate::runtime::project::RuntimeResult {
-        panic!("#1137 path checks must not stage project resources")
-    }
-}
-#[cfg(unix)]
-impl crate::runtime::session::SessionFactory for NoPathResources {
-    fn create(
-        &self,
-        _: crate::runtime::session::SessionContext,
-        _: Option<crate::runtime::session::LiveSessionHandle>,
-    ) -> crate::runtime::refresh::BoxFuture<
-        Result<crate::runtime::session::LiveSessionHandle, crate::runtime::project::RuntimeError>,
-    > {
-        panic!("#1137 path checks must not create a session")
-    }
-}
-
 #[tokio::test]
 #[cfg(unix)]
 #[ignore = "isolated cwd worker; launched by process_path_boundaries_match_ts"]
 async fn project_path_boundaries_worker() {
-    use crate::runtime::{
-        project::ProjectRuntimeRegistry,
-        session::{SessionOwner, SessionOwnerOptions},
-        turn::{gateway::GatewayRequests, submit_host::SubmitHostServices},
-    };
+    // The two project reads of a request, against the TS oracle's cwd matrix:
+    // the dialog registry (`resolveProjectKey`, the `registered` column) and
+    // the storage id (`resolveProjectStorageId`, the `storageMatches` column)
+    // both resolve a relative key against the process cwd, never against the
+    // default project.
     let scratch = path_scratch();
     let options = Options::parse_at(path_args(&scratch, "project"), &scratch.0)
         .expect("#1137 path boundary options");
     std::fs::write(options.home.join("pilotdeck.yaml"), CONFIG)
         .expect("#1137 path boundary config");
     assembly::register_project_at(&options, &scratch.0).expect("#1137 path boundary marker");
-    let mut owner_options = SessionOwnerOptions::new(Arc::new(NoPathResources));
-    owner_options.idle_sweep_interval_ms = 0;
-    let owner = SessionOwner::new(owner_options);
-    let requests = requests::Requests {
-        project: Arc::new(ProjectRuntimeRegistry::new(
-            options.project.clone(),
-            Arc::new(NoPathResources),
-        )),
-        options: options.clone(),
-        env: options.environment(Env::new()),
-        snapshot_enabled: false,
-        memory: Arc::new(crate::runtime::memory::gateway::MemoryGateway::disabled()),
-        coordinator: Arc::default(),
-        runs: Some(Arc::new(
-            crate::runtime::turn::publish::FileRegistry::new(
-                crate::storage::FileRunRegistry::open(options.home.join("runs.json"))
-                    .expect("#1137 path run file"),
-            )
-            .expect("#1137 path run registry"),
-        )),
-        owner: owner.clone(),
-        replacement: Arc::new(crate::runtime::replacement::ReplacementCoordinator::new(
-            Default::default(),
-            Arc::new(owner.clone()),
-            5000,
-            None,
-        )),
-        recorders: Arc::default(),
-        interactions: Arc::default(),
-        mcp: requests::Requests::stub_mcp(&owner),
-        async_hook_registry: None,
-        // #1600: match production (connected), not the retired
-        // observer-coupled bus.
-        user_dialog_bus: Arc::new(std::sync::Mutex::new(
-            crate::user_dialog::GatewayUserDialogBus::connected(
-                crate::user_dialog::DialogRuntime::default(),
-            ),
-        )),
-        upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
-        prepare_weixin_login: None,
-        cron: None,
-        always_on: None,
-        settings: requests::Requests::stub_settings(&owner),
-        session_overrides: Arc::default(),
+    let storage_id = |root: &std::path::Path| {
+        use crate::runtime::snapshot::SnapshotProjectResolver;
+        crate::runtime::snapshot::SnapshotProjects::new(
+            options.home.clone(),
+            std::path::PathBuf::new(),
+        )
+        .workspace_id(&root.to_string_lossy())
     };
-    let services = services::Services {
-        options: options.clone(),
-        env: options.environment(Env::new()),
-        project: Arc::new(ProjectRuntimeRegistry::new(
-            options.project.clone(),
-            Arc::new(NoPathResources),
-        )),
-        recorders: Arc::default(),
-        owner,
-        snapshot_recorder: None,
-        upload_store: Arc::new(crate::upload::UploadStore::new(
-            crate::upload::UploadStoreOptions::new(
-                |_: &pilotdeck_protocol::JsString| {
-                    Err(crate::upload::UploadError::dialog(
-                        "PROJECT_NOT_FOUND",
-                        "unavailable in test",
-                    ))
-                },
-                || Ok(vec![]),
-            ),
-        )),
-    };
+    let registered_id = storage_id(&options.project);
     std::env::set_current_dir(scratch.0.join("other")).expect("#1137 enter other cwd");
     let oracle = marker_oracle();
     let paths = &oracle["observations"]["paths"];
@@ -977,22 +895,16 @@ async fn project_path_boundaries_worker() {
             .as_str()
             .expect("#1137 boundary input")
             .replace("{root}", &scratch.0.to_string_lossy());
-        let params = pilotdeck_protocol::parse_json(
-            &json!({"projectKey":input,"sessionKey":"s"}).to_string(),
-        )
-        .expect("#1137 path parameters JSON");
-        let read = requests
-            .request("active_turn_snapshot".into(), params.clone())
-            .await;
+        let key = pilotdeck_protocol::JsString::from(input.as_str());
         negative_assert_eq!(
-            read.is_ok(),
+            options.dialog_project(Some(&key)).is_ok(),
             row["registered"]
                 .as_bool()
                 .expect("#1137 TS boundary registration"),
             "#1137 request project guard uses process cwd"
         );
         negative_assert_eq!(
-            services.workspace_id(&params).is_ok(),
+            storage_id(&options.project_root_for(Some(&key))) == registered_id,
             row["storageMatches"]
                 .as_bool()
                 .expect("#1137 TS storage boundary"),
@@ -1000,11 +912,6 @@ async fn project_path_boundaries_worker() {
         );
     }
     std::env::set_current_dir(&scratch.0).expect("#1137 restore path boundary worker");
-    services
-        .project
-        .dispose()
-        .await
-        .expect("#1137 unused path project disposed");
     crate::test_process::receipt("1137-project-paths");
 }
 

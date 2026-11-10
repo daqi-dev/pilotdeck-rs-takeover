@@ -47,19 +47,13 @@ MUTATIONS = [
      'None | Some(JsValue::Undefined | JsValue::Null)',
      'None | Some(JsValue::Undefined | JsValue::Null | JsValue::String(_))',
      'archive_matrix_matches_ts', '#1154 archive configured fallback and explicit key boundary'),
-    # #2272: the admission filter now skips `undefined` and `null` together
-    # (nullish "not provided"), so the anchor follows the new multi-line
-    # gate shape; the mutation itself is unchanged — the whole admission arm
-    # is switched off with `&& false`.
-    ('isolated-admission-skipped', REQUESTS,
-     'if let Some(project) = params\n'
-     '                .get("projectKey")\n'
-     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
-     'if let Some(project) = params\n'
-     '                .get("projectKey")\n'
-     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))\n'
-     '                && false',
-     'archive_matrix_matches_ts', '#1154 archive configured fallback and explicit key boundary'),
+    # 2026-11-10 (dev/takeover, multi-project host): the request-level
+    # isolated-project gate these rows mutated is gone — the baseline has no
+    # such gate; every method reads `input.projectKey ?? fallbackProjectRoot`
+    # itself (see src/native_process/projects.rs). The rows were removed with
+    # the code they anchored on; the behaviour is now pinned against the
+    # baseline by scripts/bbx (project-default / project-keys /
+    # project-session-lifecycle) and by the rewritten unit tests.
     ('archive-empty-matrix', REGRESSION,
      'let oracle = archive_fixture();\n    negative_assert_eq!(oracle["node"]',
      'let mut oracle = archive_fixture();\n    oracle["cases"] = serde_json::json!([]);\n    negative_assert_eq!(oracle["node"]',

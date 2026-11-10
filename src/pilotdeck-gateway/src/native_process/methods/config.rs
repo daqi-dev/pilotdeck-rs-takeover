@@ -151,22 +151,26 @@ fn reserve_model_update<'a>(
         .map_err(replacement_error)
 }
 
-/// Resolves `projectKey` from params, falling back to the configured project.
-/// The session_dir slice owns the family's copy of this resolution; a local
-/// one keeps the config family inside its sanctioned file set.
+/// `this.options.resolveProjectKey(input.projectKey)` of the session-model
+/// bundle (GatewaySessionModelBundle.ts:51,70): the dialog registry with no
+/// fallback, so a missing key is Node's `path.resolve(undefined)` rejection.
 fn resolve_project(requests: &Requests, params: &JsValue) -> Result<String, RequestError> {
-    let project = params
-        .get("projectKey")
-        .and_then(JsValue::as_string)
-        .and_then(|s| s.to_utf8().ok())
-        .unwrap_or_else(|| requests.options.project.to_string_lossy().into_owned());
-    if !requests.options.serves_project(&project) {
-        return Err(gateway_error(
-            "CAPABILITY_UNAVAILABLE",
-            "The isolated native process serves only its configured project.",
-        ));
+    match params.get("projectKey") {
+        None | Some(JsValue::Undefined) => Err(invalid_project_key("undefined")),
+        Some(JsValue::Null) => Err(invalid_project_key("null")),
+        Some(_) => requests
+            .dialog_project(params)
+            .map(|root| root.to_string_lossy().into_owned()),
     }
-    Ok(project)
+}
+
+fn invalid_project_key(received: &str) -> RequestError {
+    RequestError {
+        code: "ERR_INVALID_ARG_TYPE".into(),
+        message: crate::metadata::invalid_arg_type_message("paths[0]", &received.into()),
+        details: None,
+        validation: None,
+    }
 }
 
 /// The metadata face the model catalog validates against, like the services
@@ -578,7 +582,8 @@ impl Requests {
     /// ProjectRuntimeRegistry.outputStylesListForSdk refreshes the plugin
     /// runtime and lists the project's (plus session's) style contributions.
     async fn output_styles_list(&self, params: &JsValue) -> Result<JsValue, RequestError> {
-        let _project = resolve_project(self, params)?;
+        // `registry.resolve(input.projectKey)`: runtime routing.
+        let _project = self.route_project(params)?;
         let styles = self.plugin_styles().await?;
         let mut style_values = Vec::with_capacity(styles.len());
         for style in &styles {
@@ -1052,6 +1057,36 @@ mod tests {
             .expect("#1457 config fixture")
     }
 
+    /// `session_model_set` / `session_model_clear` resolve `input.projectKey`
+    /// with no fallback (GatewaySessionModelBundle.ts:51,70; bbx
+    /// `survey-empty-params`: a missing key is Node's `paths[0]` rejection).
+    /// These tests address the fixture's own registered project, so the
+    /// helper supplies its key unless the test set one itself.
+    trait KeyedSessionModel {
+        fn session_model_request_keyed(
+            &self,
+            method: String,
+            params: JsValue,
+        ) -> Call<'_, Result<JsValue, RequestError>>;
+    }
+    impl KeyedSessionModel for Requests {
+        fn session_model_request_keyed(
+            &self,
+            method: String,
+            mut params: JsValue,
+        ) -> Call<'_, Result<JsValue, RequestError>> {
+            if let JsValue::Object(fields) = &mut params
+                && fields.get("projectKey").is_none()
+            {
+                fields.insert(
+                    "projectKey".into(),
+                    JsValue::String(self.options.project.to_string_lossy().into_owned().into()),
+                );
+            }
+            self.session_config_request(method, params)
+        }
+    }
+
     fn selection(mode: &str, provider: &str, model: &str) -> JsValue {
         object([
             ("mode", mode.into()),
@@ -1152,7 +1187,7 @@ mod tests {
             ("selection", selection("model", "test", "test")),
         ]);
         let result = r
-            .session_config_request("session_model_set".into(), params)
+            .session_model_request_keyed("session_model_set".into(), params)
             .await
             .expect("#1457 session_model_set accepts the fixture selection");
         negative_assert_eq!(
@@ -1220,7 +1255,8 @@ mod tests {
             ("sessionKey", JsValue::String(key.clone())),
             ("selection", selection("model", "test", "test")),
         ]);
-        let mut request = Box::pin(r.session_config_request("session_model_set".into(), params));
+        let mut request =
+            Box::pin(r.session_model_request_keyed("session_model_set".into(), params));
         // One poll runs the synchronous prefix — the reserve included — and
         // parks the future at the held fence; a completion here would mean the
         // fixture never reached the write.
@@ -1242,7 +1278,7 @@ mod tests {
         );
         drop(fence);
         let retry = r
-            .session_config_request(
+            .session_model_request_keyed(
                 "session_model_set".into(),
                 object([
                     ("sessionKey", JsValue::String(key.clone())),
@@ -1273,7 +1309,7 @@ mod tests {
         ))
         .await
         .expect("#2391 test holds the transcript fence");
-        let mut request = Box::pin(r.session_config_request(
+        let mut request = Box::pin(r.session_model_request_keyed(
             "session_model_clear".into(),
             object([("sessionKey", JsValue::String(key.clone()))]),
         ));
@@ -1346,7 +1382,7 @@ mod tests {
             ),
         ] {
             let error = r
-                .session_config_request("session_model_set".into(), params)
+                .session_model_request_keyed("session_model_set".into(), params)
                 .await
                 .expect_err("#1457 session_model_set rejects {label}");
             negative_assert_eq!(error.code.as_str(), code, "#1457 {label} code");
@@ -1365,7 +1401,7 @@ mod tests {
             .begin_turn(&session.clone().into(), &run)
             .expect("#1457 reserve active turn");
         let error = r
-            .session_config_request(
+            .session_model_request_keyed(
                 "session_model_set".into(),
                 object([
                     ("sessionKey", session.as_str().into()),
@@ -1392,11 +1428,11 @@ mod tests {
             ("sessionKey", "cfg-clear-1".into()),
             ("selection", selection("model", "test", "test")),
         ]);
-        r.session_config_request("session_model_set".into(), set)
+        r.session_model_request_keyed("session_model_set".into(), set)
             .await
             .expect("#1457 seed the session selection first");
         let cleared = r
-            .session_config_request(
+            .session_model_request_keyed(
                 "session_model_clear".into(),
                 object([("sessionKey", "cfg-clear-1".into())]),
             )
@@ -1425,7 +1461,7 @@ mod tests {
     async fn session_model_clear_gates_key_and_busy() {
         let (_scratch, r) = setup_fixture();
         let error = r
-            .session_config_request("session_model_clear".into(), object([]))
+            .session_model_request_keyed("session_model_clear".into(), object([]))
             .await
             .expect_err("#1457 session_model_clear needs a key");
         negative_assert_eq!(
@@ -1440,7 +1476,7 @@ mod tests {
             .begin_turn(&session.clone().into(), &run)
             .expect("#1457 reserve active turn");
         let error = r
-            .session_config_request(
+            .session_model_request_keyed(
                 "session_model_clear".into(),
                 object([("sessionKey", session.as_str().into())]),
             )
@@ -1505,7 +1541,7 @@ mod tests {
             .begin_turn(&"al-set/session".into(), &run)
             .expect("#1872 reserve the owner's active turn");
         let error = r
-            .session_config_request(
+            .session_model_request_keyed(
                 "session_model_set".into(),
                 object([
                     ("sessionKey", "al-set-session".into()),
@@ -1543,7 +1579,7 @@ mod tests {
             .begin_turn(&"session".into(), &run)
             .expect("#1872 the folding session holds a live turn");
         let error = r
-            .session_config_request(
+            .session_model_request_keyed(
                 "session_model_set".into(),
                 object([
                     ("sessionKey", "".into()),
@@ -1587,7 +1623,7 @@ mod tests {
             .begin_turn(&"".into(), &run)
             .expect("#1872 the blank spelling holds a live turn");
         let error = r
-            .session_config_request(
+            .session_model_request_keyed(
                 "session_model_set".into(),
                 object([
                     ("sessionKey", "".into()),
@@ -1625,7 +1661,7 @@ mod tests {
             .begin_turn(&"".into(), &run)
             .expect("#1872 the blank spelling holds a live turn");
         let error = r
-            .session_config_request(
+            .session_model_request_keyed(
                 "session_model_clear".into(),
                 object([("sessionKey", "".into())]),
             )
@@ -1723,7 +1759,7 @@ mod tests {
             .reserve_transcript_write(&"session".into(), "hold the owner's transcript write")
             .expect("#1872 stage the owner's concurrent reservation");
         let error = r
-            .session_config_request(
+            .session_model_request_keyed(
                 "session_model_set".into(),
                 object([
                     ("sessionKey", "".into()),
@@ -1753,7 +1789,7 @@ mod tests {
             .reserve_transcript_write(&"session".into(), "hold the owner's transcript write")
             .expect("#1872 stage the owner's concurrent reservation");
         let error = r
-            .session_config_request(
+            .session_model_request_keyed(
                 "session_model_clear".into(),
                 object([("sessionKey", "".into())]),
             )
@@ -1779,7 +1815,7 @@ mod tests {
             .begin_turn(&"al-clear/session".into(), &run)
             .expect("#1872 reserve the owner's active turn");
         let error = r
-            .session_config_request(
+            .session_model_request_keyed(
                 "session_model_clear".into(),
                 object([("sessionKey", "al-clear-session".into())]),
             )
@@ -1818,7 +1854,7 @@ mod tests {
         let request = {
             let r = r.clone();
             tokio::spawn(async move {
-                r.session_config_request(
+                r.session_model_request_keyed(
                     "session_model_set".into(),
                     object([
                         ("sessionKey", "win-session".into()),
@@ -1893,7 +1929,7 @@ mod tests {
         let request = {
             let r = r.clone();
             tokio::spawn(async move {
-                r.session_config_request(
+                r.session_model_request_keyed(
                     "session_model_clear".into(),
                     object([("sessionKey", "win-clear-session".into())]),
                 )
@@ -1955,7 +1991,7 @@ mod tests {
             .expect("#1873 the transcript lease probe itself must not fail")
             .expect("#1874 the transcript lease is free before the session loads");
         let error = r
-            .session_config_request(
+            .session_model_request_keyed(
                 "session_model_set".into(),
                 object([
                     ("sessionKey", "alx-session".into()),
@@ -1994,7 +2030,7 @@ mod tests {
         // append exists for.
         recorder.writer().close();
         let error = r
-            .session_config_request(
+            .session_model_request_keyed(
                 "session_model_set".into(),
                 object([
                     ("sessionKey", "cw-session".into()),
@@ -2030,7 +2066,7 @@ mod tests {
         std::fs::create_dir(std::path::PathBuf::from(&lock))
             .expect("#1873 the broken ledger lock is in place");
         let error = r
-            .session_config_request(
+            .session_model_request_keyed(
                 "session_model_set".into(),
                 object([
                     ("sessionKey", "bl-session".into()),
@@ -2076,7 +2112,7 @@ mod tests {
             .expect("#1872 the owner session is created");
         let _recorder = register_recorder(&r, "g7/session");
         let result = r
-            .session_config_request(
+            .session_model_request_keyed(
                 "session_model_set".into(),
                 object([
                     ("sessionKey", "g7-session".into()),
@@ -3217,7 +3253,7 @@ mod tests {
             .insert("b9/session".into(), Arc::downgrade(&recorder));
 
         let result = r
-            .session_config_request(
+            .session_model_request_keyed(
                 "session_model_set".into(),
                 object([
                     ("sessionKey", "b9-session".into()),
@@ -3288,7 +3324,7 @@ mod tests {
                 ("value", JsValue::String(format!("round-{round}").into())),
             ]);
             let (written, renamed) = tokio::join!(
-                r.session_config_request("session_model_set".into(), set_params),
+                r.session_model_request_keyed("session_model_set".into(), set_params),
                 r.session_dir_request("rename_session".into(), rename_params),
             );
             // The requests succeed only if each append claimed the next number

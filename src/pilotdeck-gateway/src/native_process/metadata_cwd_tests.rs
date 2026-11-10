@@ -385,32 +385,6 @@ fn archive_fixture() -> Value {
     .expect("#1154 archive valid oracle JSON")
 }
 
-// #1154 fix-r3 (review P1-3/P3-9): the six admission cells below stay
-// machine-bound to the correction entry's explicit admission lines — exact
-// `marker: value` ledger lines, not a substring any other sentence could
-// satisfy — so an approved or revoked registration must fail the matrix
-// instead of silently drifting from the hardcoded expectation.
-const ADMISSION_CODE: &str = "gateway_request_failed";
-const ADMISSION_MESSAGE: &str = "The isolated native process serves only its configured project.";
-
-// #1278: read the ledger at runtime instead of `include_str!`, which made
-// every `--lib` test build depend on `specs/` and broke the `src/`-only
-// scratch copies that copy-based negative controls compile. Only this
-// archive matrix needs the file, and a missing ledger fails the test with
-// its own message instead of passing silently.
-fn admission_ledger() -> String {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../specs/gateway-parity/diffs/A7.2-NATIVE-ARCHIVE-CWD-001-R1.md"
-    );
-    std::fs::read_to_string(path)
-        .unwrap_or_else(|error| panic!("#1278 admission ledger unreadable at {path}: {error}"))
-}
-
-fn admission_ledger_line<'a>(ledger: &'a str, marker: &str) -> Option<&'a str> {
-    ledger.lines().find_map(|line| line.strip_prefix(marker))
-}
-
 #[test]
 fn archive_matrix_matches_ts() {
     crate::test_baseline::oracle_bounded(include_str!(
@@ -596,28 +570,12 @@ async fn observe_archive(name: &str) {
             json!({"ok":false,"code":error.code,"message":error.message.to_utf8().expect("#1154 archive UTF8 error")})
         }
     };
-    let expected = if key == "empty" && cwd != "project" {
-        // Existing isolated admission policy, recorded separately from TS parity.
-        // specs/gateway-parity/diffs/A7.2-NATIVE-ARCHIVE-CWD-001-R1.md
-        let ledger = admission_ledger();
-        negative_assert!(
-            ledger
-                .lines()
-                .any(|line| line == "original: A7.2-NATIVE-ARCHIVE-CWD-001"),
-            "#1154 archive admission expectation stays bound to its ledger"
-        );
-        negative_assert_eq!(
-            admission_ledger_line(&ledger, "admission-code: "),
-            Some(ADMISSION_CODE),
-            "#1154 archive admission expectation stays bound to its ledger"
-        );
-        negative_assert_eq!(
-            admission_ledger_line(&ledger, "admission-message: "),
-            Some(ADMISSION_MESSAGE),
-            "#1154 archive admission expectation stays bound to its ledger"
-        );
-        json!({"ok":false,"code":ADMISSION_CODE,"message":ADMISSION_MESSAGE})
-    } else if row["ok"] == true {
+    // All 36 cells follow the TS oracle. The six explicit-empty-key cells
+    // outside the project cwd used to be answered by the isolated-project
+    // admission gate (registered as A7.2-NATIVE-ARCHIVE-CWD-001); the gate is
+    // gone with the single-project model, so they answer the baseline's own
+    // `PROJECT_NOT_FOUND` / `uv_cwd` rows like every other cell.
+    let expected = if row["ok"] == true {
         json!({"ok":true,"result":row["result"]})
     } else {
         json!({"ok":false,"code":row["code"],"message":row["message"]})

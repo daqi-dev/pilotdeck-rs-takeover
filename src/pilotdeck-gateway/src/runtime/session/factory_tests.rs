@@ -421,7 +421,7 @@ impl Harness {
                 lock(&diagnostic_obs.diagnostics).push(d.clone());
             }),
             tool_results_dir: tool_results_dir
-                .map(|dir| Arc::new(move |_: &JsString| dir.clone()) as ToolResultsDir),
+                .map(|dir| Arc::new(move |_: &SessionContext| dir.clone()) as ToolResultsDir),
         }));
         let owner_factory: Arc<dyn SessionFactory> = Arc::new(PublishGate {
             factory: factory.clone(),

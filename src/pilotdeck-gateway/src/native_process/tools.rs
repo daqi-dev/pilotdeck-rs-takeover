@@ -62,7 +62,9 @@ pub(super) fn session_tool_results_dir(project: &Path, session_id: &JsString) ->
 }
 
 pub struct SessionTools {
-    options: Options,
+    /// The session's project root: `resolve(projectKey ?? fallbackProjectRoot)`
+    /// for the key the session was created under.
+    project: PathBuf,
     env: JsObject,
     binding: SessionBinding,
     config: JsObject,
@@ -89,14 +91,15 @@ impl SessionTools {
         lsp: Arc<super::families::DefaultLsp>,
         mcp: SessionMcpTools,
     ) -> Result<Self, RuntimeError> {
+        let project = options.project_root_for(binding.context.project_key.as_ref());
         let context =
             permission::create_default_permission_context(DefaultPermissionContextOptions {
-                cwd: options.project.to_string_lossy().into_owned().into(),
+                cwd: project.to_string_lossy().into_owned().into(),
                 can_prompt: Some(false),
                 ..Default::default()
             });
         Ok(Self {
-            options: options.clone(),
+            project,
             env: env_object(env),
             binding,
             config,
@@ -181,7 +184,7 @@ impl SessionTools {
         let message_sink = sink.clone();
         SessionPorts {
             model: RouterModelPortOptions {
-                project_path: Some(self.options.project.to_string_lossy().into_owned().into()),
+                project_path: Some(self.project.to_string_lossy().into_owned().into()),
                 agent_model: self
                     .config
                     .get("provider")
@@ -192,7 +195,7 @@ impl SessionTools {
                 ..RouterModelPortOptions::main_agent()
             },
             recorder: None,
-            tool_results_dir: session_tool_results_dir(&self.options.project, &identity.session_id),
+            tool_results_dir: session_tool_results_dir(&self.project, &identity.session_id),
             context_runtime: None,
             context_identity: ContextRequestIdentity::new(binding.clone(), tool_ports.clone()),
             context_config: config,

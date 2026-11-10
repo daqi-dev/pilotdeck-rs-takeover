@@ -575,8 +575,11 @@ mutations = [
      '                Ok(TrimGuard::Missing)',
      '            if false {\n'
      '                Ok(TrimGuard::Missing)',
-     DIR + 'resume_session_rejects_blank_session_key',
-     '#1455 resume_session rejects the blank key'),
+     # 2026-11-10: re-bound. `resume_session` validates nothing in the
+     # baseline (`return input`), so its blank-key test is gone; the guard
+     # still gates delete/rename/tag.
+     DIR + 'delete_session_blank_key_gate_order',
+     'answers the sessionKey gate under a resolvable project'),
     ('session-dir-surrogate-rejected', METHODS_MOD,
      '            if crate::metadata::js_trim(&text).is_empty() {',
      '            if value.to_utf8().is_err() || crate::metadata::js_trim(&text).is_empty() {',
@@ -592,36 +595,15 @@ mutations = [
      '        )?;',
      DIR + 'close_project_sessions_blank_project_key_is_the_domain_error',
      '#1604 the blank projectKey keeps the domain message'),
-    # #2083: a lone-surrogate `projectKey` passes the trim gate and reaches
-    # the configured-project check (TS runs it to completion; the baseline
-    # gate is only `?.trim()`). Re-adding the pre-#2083 UTF-8 rejection must
-    # turn the gate-order test red. r1: renamed off the #1455
-    # `session-dir-surrogate-rejected` (METHODS_MOD) — this runner keys its
-    # evidence files on the mutation name alone, so two rows sharing a name
-    # overwrite each other's logs.
-    ('session-dir-project-key-surrogate-rejected', SESSION_DIR,
-     '        let project_key_str = String::from_utf16_lossy(project_key.units());',
-     '        let project_key_str = project_key\n'
-     '            .to_utf8()\n'
-     '            .map_err(|_| RequestError::new("projectKey is required."))?;',
-     DIR + 'close_project_sessions_surrogate_project_key_reaches_the_capability_gate',
-     '#2083 the surrogate projectKey reaches the capability gate'),
-    # ── #2272: the admission filter skips `undefined` AND `null` (the TS
-    # nullish read `input.projectKey ?? fallback`, createLocalGateway.ts).
-    # Dropping the null arm restores the pre-#2272 shape where an explicit
-    # null was refused as an unserved project even with a valid sessionKey,
-    # so the session directory's null-cell gate-order expectations must die.
-    # The bound test fails first at its blank-key null cell, before the
-    # per-method valid-key cells that follow it.
-    ('admission-null-refused', REQUESTS,
-     'params\n'
-     '                .get("projectKey")\n'
-     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
-     'params\n'
-     '                .get("projectKey")\n'
-     '                .filter(|v| !v.is_undefined())',
-     DIR + 'resume_session_blank_key_gate_order',
-     '#2272 a null projectKey falls back like a missing one, so the sessionKey gate answers the blank key'),
+    # 2026-11-10 (dev/takeover, multi-project host): the request-level
+    # isolated-project gate is gone — the baseline has no such gate; every
+    # method reads `input.projectKey ?? fallbackProjectRoot` itself (see
+    # src/native_process/projects.rs). The rows that mutated it were removed
+    # with the code they anchored on (`session-dir-project-key-surrogate-
+    # rejected`, `admission-null-refused` and its three re-bindings); the
+    # behaviour is now pinned against the baseline by scripts/bbx
+    # (project-default / project-keys / project-session-lifecycle) and by the
+    # rewritten unit tests in native_process/methods/session_dir.rs.
     # ── #2562: the submit path's gate is the same nullish read (the TS submit
     # source is `workspaceIdResolver(input.projectKey)` →
     # `resolveProjectStorageId(requestedProjectKey ?? fallbackProjectRoot)`,
@@ -630,51 +612,18 @@ mutations = [
     # `projectKey must be a valid path string.` type error instead of falling
     # back to the configured project, so the recorder-on null cell must die.
     ('submit-null-refused', SERVICES,
-     '        if let Some(project) = input\n'
-     '            .get("projectKey")\n'
-     '            .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))\n'
-     '        {',
-     '        if let Some(project) = input.get("projectKey").filter(|v| !v.is_undefined()) {',
+     '            None | Some(JsValue::Undefined | JsValue::Null) => None,\n'
+     '            Some(project) => Some(\n'
+     '                project\n'
+     '                    .as_string()\n'
+     '                    .filter(|key| key.to_utf8().is_ok())',
+     '            None | Some(JsValue::Undefined) => None,\n'
+     '            Some(project) => Some(\n'
+     '                project\n'
+     '                    .as_string()\n'
+     '                    .filter(|key| key.to_utf8().is_ok())',
      'native_process::management_tests::submit_workspace_id_treats_an_explicit_null_project_key_as_not_provided',
      '#2562 explicit null is not an error with the recorder on'),
-    # ── #2564: the #2272 admission mutant re-bound to the close_project_sessions
-    # path — with the null arm dropped the admission refusal (isolated-project
-    # message) answers before the method's own `?.trim()` gate, so the null
-    # cell's domain-message assertion must die. Same mutant text as
-    # `admission-null-refused` above: one code point, four bound tests.
-    ('admission-null-refused-close-project', REQUESTS,
-     'params\n'
-     '                .get("projectKey")\n'
-     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
-     'params\n'
-     '                .get("projectKey")\n'
-     '                .filter(|v| !v.is_undefined())',
-     DIR + 'close_project_sessions_null_project_key_is_the_domain_error',
-     '#2564 a null projectKey keeps the domain message'),
-    # ── #2564 fix-r1 (harvest reviews: DS sibling#2 + anthropic boundary#2,
-    # two lineages hit the same gap): the same admission mutant re-bound to the
-    # list/new null cells. With the null arm dropped the admission refusal
-    # (isolated-project message) answers before each method's own nullish read,
-    # so the cell's `.expect` must die at its own message — without these rows
-    # the two cells were guarded only by their positive assertions.
-    ('admission-null-refused-list-sessions', REQUESTS,
-     'params\n'
-     '                .get("projectKey")\n'
-     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
-     'params\n'
-     '                .get("projectKey")\n'
-     '                .filter(|v| !v.is_undefined())',
-     DIR + 'list_sessions_null_project_key_lists_the_configured_project',
-     '#2564 a null projectKey lists the configured project'),
-    ('admission-null-refused-new-session', REQUESTS,
-     'params\n'
-     '                .get("projectKey")\n'
-     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
-     'params\n'
-     '                .get("projectKey")\n'
-     '                .filter(|v| !v.is_undefined())',
-     DIR + 'new_session_null_project_key_omits_the_project_prefix',
-     '#2564 a null projectKey generates a session key'),
     # ── #1864: the three selectors now have a reader. Each write site
     # (permission, thinking, output style), each compose-step read leg
     # (permission, thinking, style merge), the live adapter's per-turn source

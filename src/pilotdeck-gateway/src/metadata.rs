@@ -121,7 +121,7 @@ fn constructor_has_name(constructor: &JsValue) -> bool {
     }
 }
 
-fn js_truthy(value: &JsValue) -> bool {
+pub(crate) fn js_truthy(value: &JsValue) -> bool {
     match value {
         JsValue::Undefined | JsValue::Null => false,
         JsValue::Bool(value) => *value,
@@ -702,6 +702,33 @@ impl<F: Files> Metadata<F> {
             }
         }
         Ok(false)
+    }
+    /// `listProjectKeys` of the dialog registry (projectRegistry.ts:29-40):
+    /// the General workspace first, then every registered project in
+    /// directory order, deduplicated by resolved path.
+    pub(crate) fn dialog_project_keys(&self) -> Vec<String> {
+        let general = resolve(&self.cwd, &self.home.to_string_lossy());
+        let mut resolved = vec![general.clone()];
+        let mut keys = vec![general.to_string_lossy().into_owned()];
+        let projects_dir = self.home.join("projects");
+        for (id, _) in self.files.entries(&projects_dir).unwrap_or_default() {
+            if !self
+                .files
+                .stat(&projects_dir.join(&id))
+                .is_ok_and(|stat| stat.directory)
+            {
+                continue;
+            }
+            let Some(root) = self.registered_path(&id) else {
+                continue;
+            };
+            let path = resolve(&self.cwd, &root);
+            if !resolved.contains(&path) {
+                resolved.push(path);
+                keys.push(root);
+            }
+        }
+        keys
     }
     pub fn list_projects(&self) -> io::Result<JsValue> {
         let projects_dir = self.home.join("projects");

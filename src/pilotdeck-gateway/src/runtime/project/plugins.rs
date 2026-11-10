@@ -31,9 +31,12 @@ impl ResourceFamilySource for PluginFamilySource {
         Family::PluginRuntime
     }
 
-    fn stage(&self, _context: &StageContext, sink: &mut StageSink<'_>) -> RuntimeResult {
+    fn stage(&self, context: &StageContext, sink: &mut StageSink<'_>) -> RuntimeResult {
         let runtime = Arc::new(PluginRuntime::new(PluginRuntimeOptions {
-            project_root: self.options.project_root.clone(),
+            // One factory stages every project of the registry, so the plugin
+            // runtime follows the generation's own root
+            // (ProjectRuntimeResourcesBundle.ts:218-225 passes `projectRoot`).
+            project_root: context.project_root(),
             pilot_home: self.options.pilot_home.clone(),
             builtin_skills_root: self.options.builtin_skills_root.clone(),
             builtin_plugins: self.options.builtin_plugins.clone(),

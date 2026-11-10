@@ -44,23 +44,6 @@ fn gateway_error(code: &'static str, message: impl Into<String>) -> RequestError
     }
 }
 
-/// Resolves `projectKey` from params, falling back to the configured project.
-/// Returns the resolved path string.
-fn resolve_project(requests: &Requests, params: &JsValue) -> Result<String, RequestError> {
-    let project = params
-        .get("projectKey")
-        .and_then(JsValue::as_string)
-        .and_then(|s| s.to_utf8().ok())
-        .unwrap_or_else(|| requests.options.project.to_string_lossy().into_owned());
-    if !requests.options.serves_project(&project) {
-        return Err(gateway_error(
-            "CAPABILITY_UNAVAILABLE",
-            "The isolated native process serves only its configured project.",
-        ));
-    }
-    Ok(project)
-}
-
 /// Validates that `sessionKey` is present and non-blank (TS `?.trim()` check).
 /// Delegates to the family-shared guard (#1604) so the blank test is JS trim
 /// (U+FEFF and the other WhiteSpace code points count as blank) and a
@@ -120,8 +103,12 @@ impl Requests {
     /// `InProcessGateway.listSessions` → `SessionRouter.list` → catalog path.
     ///
     /// Cursor is a base-10 integer offset string (`GatewaySessionCatalog.ts:24-25`).
+    ///
+    /// The catalog reads the storage of `registry.resolve(input.projectKey)`
+    /// (ProjectRuntimeRegistry.ts:288-291): runtime routing, so an
+    /// unregistered or missing project lists as empty instead of failing.
     async fn session_list(&self, params: &JsValue) -> Result<JsValue, RequestError> {
-        let project_root = resolve_project(self, params)?;
+        let project_root = self.route_project(params)?;
         let limit = params
             .get("limit")
             .and_then(JsValue::as_number)
@@ -136,7 +123,7 @@ impl Requests {
             .unwrap_or(0.0);
         let home = self.options.home.clone();
         let input = SessionCatalogListInput {
-            project_root: project_root.clone().into(),
+            project_root: project_root.clone(),
             pilot_home: home.clone(),
             limit,
             offset: Some(offset),
@@ -175,55 +162,63 @@ impl Requests {
         Ok(JsValue::Object(result))
     }
 
-    /// `InProcessGateway.resumeSession` → identity (returns the key unchanged).
+    /// `InProcessGateway.resumeSession` (InProcessGateway.ts:2026-2028) is
+    /// `return input`: the params come back as sent, whatever they hold.
     fn session_resume(&self, params: &JsValue) -> Result<JsValue, RequestError> {
-        let key = require_session_key(params)?;
-        Ok(object([("sessionKey", JsValue::String(key))]))
+        Ok(params.clone())
     }
 
-    /// `InProcessGateway.newSession` → generate key from channelKey + optional projectKey.
+    /// `InProcessGateway.newSession` (InProcessGateway.ts:2030-2034):
+    /// `${input.channelKey}:${projectKey}s_${uuid}` with
+    /// `projectKey = input.projectKey ? "project=<key>:" : ""`. Nothing is
+    /// validated — a missing `channelKey` interpolates as `undefined` and the
+    /// project is neither resolved nor checked.
     fn session_new(&self, params: &JsValue) -> Result<JsValue, RequestError> {
+        let project_key = super::input_property(params, "projectKey")?;
         let channel_key = params
             .get("channelKey")
-            .and_then(JsValue::as_string)
             .cloned()
-            .ok_or_else(|| RequestError::new("channelKey must be a string."))?;
-        let suffix = uuid::Uuid::new_v4().simple().to_string();
-        let project_prefix = params
-            .get("projectKey")
-            .and_then(JsValue::as_string)
-            .and_then(|s| s.to_utf8().ok())
-            .filter(|s| !s.is_empty())
-            .map(|p| format!("project={}:", p))
-            .unwrap_or_default();
-        let session_key = format!(
-            "{}:{}s_{}",
-            channel_key
-                .to_utf8()
-                .map_err(|_| RequestError::new("channelKey must be a valid UTF-8 string."))?,
-            project_prefix,
-            suffix,
-        );
+            .unwrap_or(JsValue::Undefined);
+        let interpolate = |value: &JsValue| {
+            crate::js_value::to_string_units(value)
+                .map_err(|_| RequestError::new("Maximum call stack size exceeded"))
+        };
+        let mut key = interpolate(&channel_key)?;
+        key.push(u16::from(b':'));
+        if let Some(project) = project_key.filter(crate::metadata::js_truthy) {
+            key.extend("project=".encode_utf16());
+            key.extend(interpolate(&project)?);
+            key.push(u16::from(b':'));
+        }
+        key.extend(format!("s_{}", uuid::Uuid::new_v4()).encode_utf16());
         Ok(object([(
             "sessionKey",
-            JsValue::String(session_key.into()),
+            JsValue::String(JsString::from_utf16(key)),
         )]))
     }
 
-    /// `InProcessGateway.closeSession` → owner.close + interaction coordinator cleanup.
+    /// `InProcessGateway.closeSession` (InProcessGateway.ts:2049-2054) →
+    /// `router.close(input.sessionKey)` + interaction cleanup; the WS layer
+    /// answers `{ ok: true }` (GatewayWsConnection.ts:339-340). The key is not
+    /// validated: closing a missing or absent key is a no-op that still
+    /// answers ok.
     async fn session_close(&self, params: &JsValue) -> Result<JsValue, RequestError> {
-        let key = require_session_key(params)?;
+        let key = super::input_property(params, "sessionKey")?;
         let reason: JsString = params
             .get("reason")
             .and_then(JsValue::as_string)
             .cloned()
             .unwrap_or_else(|| "session_closed".into());
-        self.owner
-            .close(&key)
-            .await
-            .map_err(|e| RequestError::new(e.to_string()))?;
-        self.interactions.close_session(&key, &reason);
-        Ok(JsValue::Undefined)
+        // The session maps are keyed by string; any other value names no
+        // session, like a `Map.get` miss in the baseline.
+        if let Some(JsValue::String(key)) = &key {
+            self.owner
+                .close(key)
+                .await
+                .map_err(|e| RequestError::new(e.to_string()))?;
+            self.interactions.close_session(key, &reason);
+        }
+        Ok(object([("ok", JsValue::Bool(true))]))
     }
 
     /// `createLocalGateway.deleteSession` → close live owner, delete transcript +
@@ -231,8 +226,9 @@ impl Requests {
     /// session's SDK registry rows (`clearSdkSessionState`,
     /// createLocalGateway.ts:1160).
     async fn session_delete(&self, params: &JsValue) -> Result<JsValue, RequestError> {
+        // createLocalGateway.ts:1143-1144: the dialog registry answers first.
+        let project_root = self.dialog_project(params)?;
         let key = require_session_key(params)?;
-        let project_root: std::path::PathBuf = resolve_project(self, params)?.into();
         // Close the live session first so the writer drains before we delete.
         self.owner
             .close(&key)
@@ -274,8 +270,14 @@ impl Requests {
                 );
                 return Err(gateway_error("SESSION_NOT_FOUND", msg));
             }
-            // Delete transcript files.
-            if let Some(result) = storage.delete_session_transcripts() {
+            // createLocalGateway.ts:1150-1152: `deleteSessionTranscripts`
+            // when the store has it, else `deleteTranscript`. The native
+            // JSONL store only has the latter; skipping it left the
+            // transcript on disk behind an ok answer.
+            if let Some(result) = storage
+                .delete_session_transcripts()
+                .or_else(|| storage.delete_transcript())
+            {
                 result.map_err(|e| RequestError::new(e.to_string()))?;
             }
             // Remove file history and tool results directories.
@@ -309,7 +311,8 @@ impl Requests {
             .clear_sdk_session_state(&JsValue::String(key.clone()));
         self.session_overrides.clear_thinking(&key);
         self.session_overrides.clear_output_style(&key);
-        Ok(JsValue::Undefined)
+        // GatewayWsConnection.ts:342: `.then(() => ({ ok: true }))`.
+        Ok(object([("ok", JsValue::Bool(true))]))
     }
 
     /// `createLocalGateway.renameSession` / `tagSession` → busy check + metadata record.
@@ -319,6 +322,8 @@ impl Requests {
         params: &JsValue,
         is_tag: bool,
     ) -> Result<JsValue, RequestError> {
+        // createLocalGateway.ts:1117-1121 / 1130-1134: project, key, busy.
+        let project_root = self.dialog_project(params)?;
         let key = require_session_key(params)?;
         if self.owner.has_active_turn(&key) {
             let verb = if is_tag { "tag" } else { "rename" };
@@ -327,7 +332,6 @@ impl Requests {
                 format!("Cannot {verb} an active session."),
             ));
         }
-        let project_root: std::path::PathBuf = resolve_project(self, params)?.into();
         // #1457 fix-r1: same single-writer fence the config family uses; two
         // fresh writers that both restore the tail and append `sequence + 1`
         // leave the transcript unloadable.
@@ -429,22 +433,10 @@ impl Requests {
             "gateway_request_failed",
             "projectKey is required.",
         )?;
-        // #2083: the TS baseline runs a lone-surrogate `projectKey` to
-        // completion (`closeProjectSessions` answers `{sessionKeys: []}`;
-        // real-entry probe `_tmp/20261107-issue-2083/worker-r1/probe.out`), so the only
-        // gate is the `?.trim()` shape above. The key converts lossily for the
-        // configured-project comparison, like TS's own path handling; the raw
-        // UTF-16 key still reaches the owner, so a session created under the
-        // same spelling closes like any other project. Residual, accepted with
-        // #2083: a key whose lossy form names the configured project (a real
-        // path containing U+FFFD) is served.
-        let project_key_str = String::from_utf16_lossy(project_key.units());
-        if !self.options.serves_project(&project_key_str) {
-            return Err(gateway_error(
-                "CAPABILITY_UNAVAILABLE",
-                "The isolated native process serves only its configured project.",
-            ));
-        }
+        // InProcessGateway.ts:2036-2047: the `?.trim()` shape above is the
+        // only gate; any project's sessions can be closed or resumed. The raw
+        // UTF-16 key reaches the owner, so a session created under the same
+        // spelling closes like any other project (#2083).
         if params.get("resume") == Some(&JsValue::Bool(true)) {
             self.owner.resume_project(&project_key);
             return Ok(object([("sessionKeys", JsValue::Array(vec![]))]));
@@ -485,15 +477,22 @@ impl Requests {
         // writer for the tail it restores. Looking the recorder up first left a
         // window where a concurrent close retired it between lookup and append,
         // and the retired writer's no-op append reported `recorded: true`.
+        // GatewaySessionHistoryBundle.ts:250: `projectKey ? projectKey :
+        // fallbackProjectRoot`, no registry lookup.
+        let project_root = self.options.project_root_for(
+            params
+                .get("projectKey")
+                .and_then(JsValue::as_string)
+                .filter(|key| !key.is_empty()),
+        );
         let fence_path = transcript_locks::session_transcript_path(
             &self.options.home,
-            &self.options.project,
+            &project_root,
             &session_key,
         );
         let write_fence = transcript_locks::acquire(&fence_path).await?;
         let recorders = self.recorders.clone();
         let home = self.options.home.clone();
-        let project_root = self.options.project.clone();
         // The shared three-segment protocol (#1874), with #1873's error shape:
         // the live closure below is both the first lookup and the busy-lease
         // re-query, so its one checked append — a writer that closed under us
@@ -1057,195 +1056,145 @@ mod tests {
         r.project.dispose().await.expect("#1310 dispose");
     }
 
-    // #2090: request-level gate order for the session_dir family, measured on
-    // both sides (`_tmp/20261107-issue-2090/`). Two gates can answer a bad or
-    // absent key: the request-level isolated-project admission
-    // (`native_process/requests.rs`) and this family's
-    // `require_session_key` (`:180` / `:215` / `:232` / `:301`). Admission runs
-    // before the method dispatch, so a `projectKey` the process does not serve
-    // is answered as `gateway_request_failed` even when `sessionKey` is blank;
-    // with the project admitted (or omitted, which falls back to the configured
-    // one) the missing or blank key answers `INVALID_SESSION_KEY`. #2272: an
-    // explicit `projectKey: null` is "not provided" for that admission (the
-    // same nullish read TS gives it), so it falls back to the configured
-    // project exactly like an omitted key; the resume/close blank-key
-    // divergence stays registered in
-    // `specs/gateway-parity/diffs/A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001-R9.md`.
+    // Gate order of the session_dir family against the baseline
+    // (`scripts/bbx/scenarios/project-keys.json` and
+    // `project-session-lifecycle.json`; createLocalGateway.ts:1116-1160,
+    // InProcessGateway.ts:2026-2054).
+    //
+    // - `resume_session` is `return input` and `close_session` is
+    //   `router.close(input.sessionKey)`: neither validates the key or looks
+    //   at the project, so a missing or blank key and an unknown project are
+    //   all answered like a valid request.
+    // - `delete_session` / `rename_session` / `tag_session` ask the dialog
+    //   registry first (`projectKey ?? fallbackProjectRoot`), then check the
+    //   key: an unregistered project is `PROJECT_NOT_FOUND` even when the key
+    //   is blank, and under a resolvable project a missing or blank key is
+    //   `INVALID_SESSION_KEY`.
     const BLANK_KEY_MESSAGE: &str = "sessionKey is required.";
-    const ISOLATED_PROJECT_MESSAGE: &str =
-        "The isolated native process serves only its configured project.";
+    const UNREGISTERED_PROJECT: &str = "/nonexistent/pdrs-2090";
 
-    async fn blank_key_gate_order(method: &str) {
-        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
-            .expect("#2090 fixture");
-        // A path no `createLocalGateway` registry can resolve, so the two
-        // mechanisms that reject it (TS registry vs this process's admission)
-        // are both forced to answer.
-        const UNSERVED_PROJECT: &str = "/nonexistent/pdrs-2090";
-        // (1) No `projectKey`: the fallback is the configured project, so the
-        // family's own sessionKey gate answers — for an absent key and for a
-        // blank one alike.
-        for (label, params) in [
-            ("missing", object([])),
-            ("blank", object([("sessionKey", "   ".into())])),
-        ] {
-            let expected = format!("#2090 a {label} sessionKey is rejected");
-            let error =
-                crate::runtime::turn::gateway::GatewayRequests::request(&r, method.into(), params)
-                    .await
-                    .expect_err(&expected);
-            negative_assert_eq!(
-                error.code.as_str(),
-                "INVALID_SESSION_KEY",
-                "#2090 the sessionKey gate answers a missing or blank key under the configured project"
-            );
-            negative_assert_eq!(
-                key_message(&error),
-                BLANK_KEY_MESSAGE,
-                "#2090 the gate message matches the TS provider gate"
-            );
-        }
+    async fn call(r: &Requests, method: &str, params: JsValue) -> Result<JsValue, RequestError> {
+        crate::runtime::turn::gateway::GatewayRequests::request(r, method.into(), params).await
+    }
 
-        // (1b) #2272: an explicit `projectKey: null` is "not provided" for the
-        // admission too, so the fallback is the configured project and the
-        // family's sessionKey gate answers the blank key exactly as (1).
-        {
-            let params = object([("sessionKey", "   ".into()), ("projectKey", JsValue::Null)]);
-            let error =
-                crate::runtime::turn::gateway::GatewayRequests::request(&r, method.into(), params)
-                    .await
-                    .expect_err("#2272 the blank sessionKey is rejected under a null projectKey");
-            negative_assert_eq!(
-                error.code.as_str(),
-                "INVALID_SESSION_KEY",
-                "#2272 a null projectKey falls back like a missing one, so the sessionKey gate answers the blank key"
-            );
-            negative_assert_eq!(
-                key_message(&error),
-                BLANK_KEY_MESSAGE,
-                "#2272 the gate message matches the TS provider gate under a null projectKey"
-            );
-        }
-
-        // (2) Project outside the configured one: request admission answers
-        // before the method dispatch, so the first code is the admission one.
-        // The valid-key control answering identically is what proves admission
-        // — not the key — decides here.
-        for (label, params) in [
+    fn gate_cases() -> Vec<(&'static str, JsValue)> {
+        vec![
+            ("missing key", object([])),
+            ("blank key", object([("sessionKey", "   ".into())])),
             (
-                "blank key + unserved project",
+                "blank key + null project",
+                object([("sessionKey", "   ".into()), ("projectKey", JsValue::Null)]),
+            ),
+            (
+                "blank key + unregistered project",
                 object([
                     ("sessionKey", "   ".into()),
-                    ("projectKey", UNSERVED_PROJECT.into()),
+                    ("projectKey", UNREGISTERED_PROJECT.into()),
                 ]),
             ),
             (
-                "valid key + unserved project",
+                "valid key + unregistered project",
                 object([
                     ("sessionKey", "pdrs-2090-control".into()),
-                    ("projectKey", UNSERVED_PROJECT.into()),
+                    ("projectKey", UNREGISTERED_PROJECT.into()),
                 ]),
             ),
-        ] {
-            let expected = format!("#2090 admission refuses {label}");
-            let error =
-                crate::runtime::turn::gateway::GatewayRequests::request(&r, method.into(), params)
-                    .await
-                    .expect_err(&expected);
-            negative_assert_eq!(
-                error.code.as_str(),
-                "gateway_request_failed",
-                "#2090 admission answers an unserved project before the sessionKey gate"
-            );
-            negative_assert_eq!(
-                key_message(&error),
-                ISOLATED_PROJECT_MESSAGE,
-                "#2090 the admission message is the isolated-project one"
-            );
-        }
+            (
+                "valid key + null project",
+                object([
+                    ("sessionKey", "pdrs-2090-control".into()),
+                    ("projectKey", JsValue::Null),
+                ]),
+            ),
+        ]
+    }
 
-        // (3) #2272: a valid sessionKey with `projectKey: null` runs the
-        // method on the configured project — the fallback the handler's
-        // `resolve_project` gives a nullish key. Rust has no
-        // unresolvable-fallback shape (the fallback is always the configured
-        // project, R9 difference 4), so this is TS scenario A only; resume's
-        // echo missing `projectKey` and close answering `undefined` are the
-        // registered R9 divergences, kept as they are.
-        {
-            let params = object([
-                ("sessionKey", "pdrs-2090-control".into()),
-                ("projectKey", JsValue::Null),
-            ]);
-            let result =
-                crate::runtime::turn::gateway::GatewayRequests::request(&r, method.into(), params)
-                    .await;
-            match method {
-                "resume_session" => {
-                    let value = result
-                        .expect("#2272 resume_session answers a valid key under a null projectKey");
-                    let echoed = value
-                        .get("sessionKey")
-                        .and_then(JsValue::as_string)
-                        .cloned()
-                        .expect(
-                            "#2272 resume_session echoes the sessionKey under a null projectKey",
-                        );
-                    negative_assert_eq!(
-                        String::from_utf16_lossy(echoed.units()),
-                        "pdrs-2090-control",
-                        "#2272 resume_session echoes the key it was given under a null projectKey"
-                    );
-                    negative_assert!(
-                        value.get("projectKey").is_none(),
-                        "#2272 resume_session keeps the registered R9 echo shape with no projectKey"
-                    );
-                }
-                "close_session" => {
-                    negative_assert!(
-                        matches!(result, Ok(JsValue::Undefined)),
-                        "#2272 close_session answers undefined for a valid key under a null projectKey"
-                    );
-                }
-                "delete_session" => {
-                    let error = result.expect_err(
-                        "#2272 delete_session looks for a valid key in the configured project under a null projectKey",
-                    );
-                    negative_assert_eq!(
-                        error.code.as_str(),
-                        "SESSION_NOT_FOUND",
-                        "#2272 delete_session answers SESSION_NOT_FOUND, not an admission refusal"
-                    );
-                }
-                "rename_session" | "tag_session" => {
-                    let value = result
-                        .expect("#2272 rename/tag answers a valid key under a null projectKey");
-                    negative_assert_eq!(
-                        value.get("updated").and_then(JsValue::as_bool),
-                        Some(true),
-                        "#2272 rename/tag reports updated:true on the configured project"
-                    );
-                }
-                _ => unreachable!("blank_key_gate_order called for an unknown method"),
-            }
+    #[tokio::test]
+    async fn resume_session_returns_its_input_unvalidated() {
+        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#2090 fixture");
+        for (label, params) in gate_cases() {
+            let value = call(&r, "resume_session", params.clone())
+                .await
+                .unwrap_or_else(|error| panic!("resume_session answers {label}: {error:?}"));
+            negative_assert_eq!(value, params, "resume_session echoes its input for {label}");
         }
-
         r.owner.shutdown().await.expect("#2090 shutdown");
         r.project.dispose().await.expect("#2090 dispose");
     }
 
     #[tokio::test]
-    async fn resume_session_blank_key_gate_order() {
-        blank_key_gate_order("resume_session").await;
+    async fn close_session_answers_ok_without_validating() {
+        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#2090 fixture");
+        for (label, params) in gate_cases() {
+            let value = call(&r, "close_session", params)
+                .await
+                .unwrap_or_else(|error| panic!("close_session answers {label}: {error:?}"));
+            negative_assert_eq!(
+                value,
+                object([("ok", JsValue::Bool(true))]),
+                "close_session answers ok for {label}"
+            );
+        }
+        r.owner.shutdown().await.expect("#2090 shutdown");
+        r.project.dispose().await.expect("#2090 dispose");
     }
 
-    #[tokio::test]
-    async fn close_session_blank_key_gate_order() {
-        blank_key_gate_order("close_session").await;
+    async fn project_then_key_gate_order(method: &str) {
+        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#2090 fixture");
+        for (label, params) in gate_cases() {
+            let result = call(&r, method, params).await;
+            if label.contains("unregistered project") {
+                let error = result.expect_err("an unregistered project is refused first");
+                negative_assert_eq!(
+                    error.code.as_str(),
+                    "PROJECT_NOT_FOUND",
+                    "{method} asks the dialog registry before the sessionKey gate ({label})"
+                );
+                negative_assert_eq!(
+                    key_message(&error),
+                    format!("Unknown projectKey: {UNREGISTERED_PROJECT}"),
+                    "{method} echoes the key as sent ({label})"
+                );
+            } else if label.starts_with("valid key") {
+                // A null projectKey is the default project (`??`).
+                match method {
+                    "delete_session" => negative_assert_eq!(
+                        result
+                            .expect_err("no such session in the default project")
+                            .code
+                            .as_str(),
+                        "SESSION_NOT_FOUND",
+                        "delete_session looks in the default project ({label})"
+                    ),
+                    _ => negative_assert_eq!(
+                        result
+                            .expect("rename/tag write to the default project")
+                            .get("updated")
+                            .and_then(JsValue::as_bool),
+                        Some(true),
+                        "{method} reports updated:true ({label})"
+                    ),
+                }
+            } else {
+                let error = result.expect_err("a missing or blank sessionKey is rejected");
+                negative_assert_eq!(
+                    error.code.as_str(),
+                    "INVALID_SESSION_KEY",
+                    "{method} answers the sessionKey gate under a resolvable project ({label})"
+                );
+                negative_assert_eq!(key_message(&error), BLANK_KEY_MESSAGE, "{method} {label}");
+            }
+        }
+        r.owner.shutdown().await.expect("#2090 shutdown");
+        r.project.dispose().await.expect("#2090 dispose");
     }
 
     #[tokio::test]
     async fn delete_session_blank_key_gate_order() {
-        blank_key_gate_order("delete_session").await;
+        project_then_key_gate_order("delete_session").await;
     }
 
     /// The session keys one `snapshot_state` table holds, as UTF-8 strings.
@@ -1345,9 +1294,10 @@ mod tests {
             object([("sessionKey", "a8-session".into())]),
         )
         .await;
-        negative_assert!(
-            matches!(result, Ok(JsValue::Undefined)),
-            "#2392 delete_session answers undefined after deleting the transcript"
+        negative_assert_eq!(
+            result.ok(),
+            Some(object([("ok", JsValue::Bool(true))])),
+            "#2392 delete_session answers ok after deleting the transcript"
         );
         negative_assert!(
             !snapshot_table_keys(config, "overrides").contains(&"a8-session".to_string()),
@@ -1422,28 +1372,12 @@ mod tests {
 
     #[tokio::test]
     async fn rename_session_blank_key_gate_order() {
-        blank_key_gate_order("rename_session").await;
+        project_then_key_gate_order("rename_session").await;
     }
 
     #[tokio::test]
     async fn tag_session_blank_key_gate_order() {
-        blank_key_gate_order("tag_session").await;
-    }
-
-    #[tokio::test]
-    async fn resume_session_rejects_blank_session_key() {
-        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
-            .expect("#1310 fixture");
-        let params = object([("sessionKey", "  ".into())]);
-        let result = r.session_dir_request("resume_session".into(), params).await;
-        let err = result.expect_err("#1455 resume_session rejects the blank key");
-        negative_assert_eq!(
-            err.code.as_str(),
-            "INVALID_SESSION_KEY",
-            "#1455 resume_session blank sessionKey is rejected"
-        );
-        r.owner.shutdown().await.expect("#1310 shutdown");
-        r.project.dispose().await.expect("#1310 dispose");
+        project_then_key_gate_order("tag_session").await;
     }
 
     // #1604: the sessionKey gate is the family-shared `?.trim()` guard, so
@@ -1562,103 +1496,34 @@ mod tests {
     // #2083: a lone-surrogate `projectKey` is a non-blank key, and the TS
     // baseline runs it to completion (`closeProjectSessions` answers
     // `{sessionKeys: []}` on both branches — real-entry probe
-    // `_tmp/20261107-issue-2083/worker-r1/probe.out`). It therefore passes the trim gate
-    // and reaches the same configured-project check every other foreign key
-    // fails, on both the close and the resume branch, instead of being
-    // answered the missing-key domain error.
+    // `_tmp/20261107-issue-2083/worker-r1/probe.out`). The `?.trim()` shape is
+    // the method's only gate (InProcessGateway.ts:2036-2047), so the key
+    // reaches the owner and names a project with no sessions.
     #[tokio::test]
-    async fn close_project_sessions_surrogate_project_key_reaches_the_capability_gate() {
+    async fn close_project_sessions_surrogate_project_key_runs_to_completion() {
         let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
             .expect("#1310 fixture");
         for (label, resume) in [("close", false), ("resume", true)] {
-            let error = r
-                .session_dir_request(
-                    "close_project_sessions".into(),
-                    object([
-                        (
-                            "projectKey",
-                            JsValue::String(JsString::from_utf16(vec![0xd800])),
-                        ),
-                        ("resume", JsValue::Bool(resume)),
-                    ]),
-                )
-                .await
-                .expect_err("#2083 the surrogate projectKey is not a missing key");
+            let value = crate::runtime::turn::gateway::GatewayRequests::request(
+                &r,
+                "close_project_sessions".into(),
+                object([
+                    (
+                        "projectKey",
+                        JsValue::String(JsString::from_utf16(vec![0xd800])),
+                    ),
+                    ("resume", JsValue::Bool(resume)),
+                ]),
+            )
+            .await
+            .unwrap_or_else(|error| {
+                panic!("#2083 the surrogate projectKey runs to completion ({label}): {error:?}")
+            });
             assert_eq!(
-                "CAPABILITY_UNAVAILABLE", error.code,
-                "#2083 the surrogate projectKey reaches the capability gate ({label} branch)"
+                value,
+                object([("sessionKeys", JsValue::Array(vec![]))]),
+                "#2083 the surrogate project has no sessions ({label} branch)"
             );
-            assert_eq!(
-                "The isolated native process serves only its configured project.",
-                key_message(&error),
-                "#2083 the surrogate projectKey keeps the capability message ({label} branch)"
-            );
-        }
-        r.owner.shutdown().await.expect("#1310 shutdown");
-        r.project.dispose().await.expect("#1310 dispose");
-    }
-
-    // #2083 r1 (DS sibling#1): the admission gate in `GatewayRequests::request`
-    // is the same source as the handler's configured-project check above, so
-    // it converts the key lossily too. Through the real entry an unserved
-    // surrogate is answered by the admission gate itself (`gateway_request_failed`
-    // + the isolation message, like every foreign key), and the registered
-    // residual — a key whose lossy form names a configured project path
-    // containing U+FFFD — is admitted and served on both layers alike
-    // (`resume` arm: the gate sits before the branch).
-    #[tokio::test]
-    async fn close_project_sessions_surrogate_project_key_meets_the_same_lossy_gate_at_the_entry() {
-        let (_s, mut r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
-            .expect("#1310 fixture");
-        let error = crate::runtime::turn::gateway::GatewayRequests::request(
-            &r,
-            "close_project_sessions".into(),
-            object([
-                (
-                    "projectKey",
-                    JsValue::String(JsString::from_utf16(vec![0xd800])),
-                ),
-                ("resume", JsValue::Bool(true)),
-            ]),
-        )
-        .await
-        .expect_err("#2083 an unserved surrogate projectKey is refused at the entry");
-        assert_eq!(
-            "gateway_request_failed", error.code,
-            "#2083 the entry answers the admission refusal for the surrogate projectKey"
-        );
-        assert_eq!(
-            "The isolated native process serves only its configured project.",
-            key_message(&error),
-            "#2083 the entry keeps the isolation message for the surrogate projectKey"
-        );
-        let residual = format!("{}-pd-\u{FFFD}", r.options.project.to_string_lossy());
-        r.options.project = std::path::PathBuf::from(&residual);
-        let residual_units: Vec<u16> = residual
-            .encode_utf16()
-            .map(|unit| if unit == 0xFFFD { 0xD800 } else { unit })
-            .collect();
-        let served = crate::runtime::turn::gateway::GatewayRequests::request(
-            &r,
-            "close_project_sessions".into(),
-            object([
-                (
-                    "projectKey",
-                    JsValue::String(JsString::from_utf16(residual_units)),
-                ),
-                ("resume", JsValue::Bool(true)),
-            ]),
-        )
-        .await
-        .expect("#2083 the residual lossy form of the configured project is served at the entry");
-        match served.get("sessionKeys") {
-            Some(JsValue::Array(keys)) => assert!(
-                keys.is_empty(),
-                "#2083 the residual project has no sessions to close"
-            ),
-            other => {
-                panic!("#2083 the resume arm must answer the sessionKeys array, got {other:?}")
-            }
         }
         r.owner.shutdown().await.expect("#1310 shutdown");
         r.project.dispose().await.expect("#1310 dispose");

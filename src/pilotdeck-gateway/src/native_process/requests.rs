@@ -168,6 +168,18 @@ impl GatewayRequests for Requests {
                     "sessionCount",
                     JsValue::Number(self.owner.cached_session_count() as f64),
                 ),
+                // `serverInfo: { mode: "in_process", projectKey: projectRoot }`
+                // (createLocalGateway.ts:1042), spread after `sessionCount`.
+                (
+                    "projectKey",
+                    JsValue::String(
+                        self.options
+                            .project_root
+                            .to_string_lossy()
+                            .into_owned()
+                            .into(),
+                    ),
+                ),
                 (
                     "capabilities",
                     // One table, composed per provider: `capabilities::advertised`
@@ -205,29 +217,9 @@ impl GatewayRequests for Requests {
             {
                 return result;
             }
-            // #2083 r1: this admission gate is the same source as the
-            // handler's configured-project check (`session_close_project`),
-            // so the key converts lossily here too. A lone-surrogate
-            // `projectKey` is refused as any other unserved key, and the
-            // registered residual — a lossy form naming a configured path
-            // that contains U+FFFD — is admitted on both layers alike.
-            // #2272: the filter skips `undefined` *and* `null` — TS reads
-            // `input.projectKey ?? fallback` (createLocalGateway.ts), so an
-            // explicit null is "not provided" and takes the handler-side
-            // configured-project fallback like `resolve_project` does, not
-            // the unserved-key refusal.
-            if let Some(project) = params
-                .get("projectKey")
-                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))
-                && !project.as_string().is_some_and(|key| {
-                    let lossy = String::from_utf16_lossy(key.units());
-                    self.options.serves_project(&lossy)
-                })
-            {
-                return Err(RequestError::new(
-                    "The isolated native process serves only its configured project.",
-                ));
-            }
+            // No project gate here: the baseline has none. Each method reads
+            // `input.projectKey ?? fallbackProjectRoot` itself and applies its
+            // own rule (see `native_process::projects`).
             let method = method
                 .to_utf8()
                 .map_err(|_| RequestError::new("Unknown native gateway method."))?;

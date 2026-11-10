@@ -94,7 +94,9 @@ async fn serve_on_runtime(
     ensure_router_dir(&options.pilot_home);
     let process = Options {
         home: options.pilot_home.clone(),
-        project: options.project.clone(),
+        // `fallbackProjectRoot: pilotHome` (src/cli/pilotdeck.ts:103-115).
+        project: options.pilot_home.clone(),
+        project_root: options.project.clone(),
         // `listen` and `token_file` are read by the `--native` entry's `run`
         // only; this entry binds and authenticates from `ServerOptions`.
         listen: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
