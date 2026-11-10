@@ -391,6 +391,7 @@ mod tests {
             project: scratch.root(),
             listen: "127.0.0.1:0".parse().expect("#1456 listen address"),
             token_file: scratch.0.join("token"),
+            os_home: None,
             sidecar: scratch.0.join("sidecar"),
             sidecar_args: Vec::new(),
             drain_budget: Duration::from_secs(5),

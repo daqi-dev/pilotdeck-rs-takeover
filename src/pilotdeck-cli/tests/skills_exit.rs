@@ -31,7 +31,13 @@ fn usage_json_error_exit_and_gateway_todo_are_distinct() {
     assert!(text.stderr.is_empty() && json.stderr.is_empty());
     let report: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
     assert_eq!(report["summary"]["error"], 1);
-    let todo = invoke(&["server"]);
+    // `server` is a real entry now: without a config it fails like the
+    // baseline's loadPilotConfig, before anything is created.
+    let server = invoke(&["server"]);
+    assert_eq!(server.status.code(), Some(1));
+    assert!(server.stdout.is_empty());
+    assert_eq!(server.stderr, b"Config must contain an agent section.\n");
+    let todo = invoke(&["cron"]);
     assert_eq!(todo.status.code(), Some(2));
     assert!(
         String::from_utf8(todo.stderr)

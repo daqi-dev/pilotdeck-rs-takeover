@@ -1,0 +1,70 @@
+{
+  "name": "server-entry-token-sources",
+  "about": "token 的来源：已有的 server-token 文件按 trim 后的内容使用（照样打印 Token: 行，不改文件）；PILOTDECK_GATEWAY_TOKEN 为空时退到 PILOTDECK_TOKEN（不打印 Token: 行）。生效的 token 从回环的 /auth/local-token 读出来比；用别的 token 握手被拒。环境里的 DOCKER_CONTAINER / COMMIT_HASH 让基线的遥测上下文不去跑 git（否则在非 git 目录会往 stderr 漏两行 fatal，Rust 不跑 git）；PILOTDECK_BUNDLED_SKILLS_DIR 给两侧同一个内置技能目录（Rust 开发布局下找不到自带的）。",
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx",
+    "PILOTDECK_BUNDLED_SKILLS_DIR": "{ROOT}/bundled"
+  },
+  "files": {
+    "bundled/sample/SKILL.md": "---\nname: sample\ndescription: bbx bundled skill placeholder\n---\nbody\n",
+    "home/.pilotdeck/server-token": "  bbx-file-token \n\n"
+  },
+  "volatile": [
+    "\\.http\\.headers\\.date$"
+  ],
+  "steps": [
+    {
+      "serve": [
+        "server"
+      ],
+      "env": {
+        "PILOTDECK_GATEWAY_TOKEN": null
+      },
+      "then": [
+        {
+          "http": "GET /auth/local-token"
+        },
+        {
+          "connect": {
+            "type": "hello",
+            "protocolVersion": "1.2",
+            "clientName": "test",
+            "clientVersion": "0.0.0",
+            "token": "{TOKEN}"
+          }
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    },
+    {
+      "serve": [
+        "server"
+      ],
+      "env": {
+        "PILOTDECK_GATEWAY_TOKEN": "",
+        "PILOTDECK_TOKEN": "bbx-second"
+      },
+      "then": [
+        {
+          "http": "GET /auth/local-token"
+        },
+        {
+          "connect": {
+            "type": "hello",
+            "protocolVersion": "1.2",
+            "clientName": "test",
+            "clientVersion": "0.0.0",
+            "token": "{TOKEN}"
+          }
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    }
+  ]
+}

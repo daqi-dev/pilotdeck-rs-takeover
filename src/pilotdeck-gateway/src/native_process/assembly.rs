@@ -847,7 +847,7 @@ async fn start_assembly(
         let config = crate::runtime::project::NativeConfigSource::new(
             options.project.clone(),
             env.clone(),
-            Some(options.home.clone()),
+            Some(options.homedir()),
             None,
         )
         .load(&options.project);
@@ -995,7 +995,7 @@ async fn start_assembly(
             let settings = super::services::native_settings_for_process(
                 owner.clone(),
                 build_project.clone(),
-                &options.home,
+                &options.homedir(),
                 &options.project,
                 &env,
             )?;
@@ -1450,7 +1450,7 @@ async fn validate_profile_inner(
     let mcp = crate::runtime::mcp::protocol::load_mcp_server_config(
         &options.project,
         &options.home,
-        &Captured(env, &options.home),
+        &Captured(env, &options.homedir()),
     )?;
     if !mcp.servers.own_entries().is_empty() || !mcp.diagnostics.is_empty() {
         return Err("Native isolated profile does not yet support configured MCP servers.".into());
@@ -1475,7 +1475,7 @@ async fn validate_profile_inner(
     let snapshot = crate::runtime::project::NativeConfigSource::new(
         options.project.clone(),
         env.clone(),
-        Some(options.home.clone()),
+        Some(options.homedir()),
         None,
     )
     .load(&options.project)?;
@@ -1573,7 +1573,7 @@ pub(super) fn project_registry(options: &Options, env: &Env) -> Arc<ProjectRunti
             pilot_home: options.home.clone(),
             cwd: options.project.clone(),
             env: env.clone(),
-            homedir: Some(options.home.clone()),
+            homedir: Some(options.homedir()),
             builtin_skills_root: None,
             now: Arc::new(SystemTime::now),
             telemetry: None,

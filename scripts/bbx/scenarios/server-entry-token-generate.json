@@ -1,0 +1,46 @@
+{
+  "name": "server-entry-token-generate",
+  "about": "不给 token 环境变量时生成 pilot home 下的 server-token：多打一行 Token: <路径>，文件权限 0600；第二次启动复用同一个文件。token 本身是随机的，所以文件内容和 /auth/local-token 的应答体声明为不稳定，其余照比。环境里的 DOCKER_CONTAINER / COMMIT_HASH 让基线的遥测上下文不去跑 git（否则在非 git 目录会往 stderr 漏两行 fatal，Rust 不跑 git）；PILOTDECK_BUNDLED_SKILLS_DIR 给两侧同一个内置技能目录（Rust 开发布局下找不到自带的）。",
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx",
+    "PILOTDECK_BUNDLED_SKILLS_DIR": "{ROOT}/bundled"
+  },
+  "files": {
+    "bundled/sample/SKILL.md": "---\nname: sample\ndescription: bbx bundled skill placeholder\n---\nbody\n"
+  },
+  "volatile": [
+    "\\.http\\.headers\\.date$",
+    "^\\$\\.tree\\./home/\\.pilotdeck/server-token\\.text$",
+    "^\\$\\.steps\\[\\d+\\]\\.then\\[0\\]\\.http\\.body\\.token$"
+  ],
+  "steps": [
+    {
+      "serve": [
+        "server"
+      ],
+      "env": {
+        "PILOTDECK_GATEWAY_TOKEN": null
+      },
+      "then": [
+        {
+          "http": "GET /auth/local-token"
+        }
+      ]
+    },
+    {
+      "serve": [
+        "server"
+      ],
+      "env": {
+        "PILOTDECK_GATEWAY_TOKEN": ""
+      },
+      "then": [
+        {
+          "http": "GET /auth/local-token"
+        }
+      ]
+    }
+  ]
+}

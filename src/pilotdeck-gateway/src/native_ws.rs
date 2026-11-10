@@ -76,9 +76,34 @@ impl NativeWsServer {
         if !crate::mutants::on("native-ws-token-policy") && token.trim().is_empty() {
             return Err("native WS requires an explicit nonempty token".into());
         }
-        // The token route's loopback gate is derived from the bind address,
-        // not asserted: a future non-loopback bind policy must not leak
-        // /auth/local-token. #1292 tightened the derivation to the TS literal
+        Self::bind_as(
+            address,
+            ts_loopback_literal(address.ip()),
+            host,
+            token,
+            version,
+        )
+        .await
+        .map_err(Into::into)
+    }
+
+    /// The product entry's bind (`pilotdeck server`, GatewayServer.ts:47-80):
+    /// no address or port policy of its own. The caller has already applied
+    /// the baseline's remote-binding checks and passes `loopback` as the TS
+    /// literal test on the *host string* (`"127.0.0.1"` or `"localhost"`),
+    /// which is what gates `/auth/local-token` there — `localhost` may
+    /// resolve to `::1` and still serves the token. The bind error is
+    /// returned as the raw `io::Error` so the caller can spell it like Node.
+    pub async fn bind_as(
+        address: SocketAddr,
+        loopback: bool,
+        host: TurnGateway,
+        token: String,
+        version: String,
+    ) -> std::io::Result<Self> {
+        // The token route's loopback gate: `bind` derives it from the bind
+        // address and the product entry from the host string, so a
+        // non-loopback bind never leaks /auth/local-token. #1292 tightened the derivation to the TS literal
         // (`host === "127.0.0.1" || host === "localhost"` — probes
         // `b4-L1.out`/`b4-L2.out`/`b4-L3.out`: 127.0.0.2 + allowRemoteHost
         // is a 404, localhost and 127.0.0.1 serve the token): the wide
@@ -88,7 +113,7 @@ impl NativeWsServer {
         // own Config construction.
         let http = native_http::Config {
             token: token.clone(),
-            loopback: ts_loopback_literal(address.ip()),
+            loopback,
             static_root: None,
             webhook: None,
             api_web: None,

@@ -1,0 +1,191 @@
+{
+  "name": "server-entry-port-host",
+  "about": "端口与 host 的来源和优先级：--port 先于 PILOTDECK_GATEWAY_PORT；两者都按 parseInt 读，读不出数就落到下一级；--host 先于 PILOTDECK_GATEWAY_HOST，后面跟着 -- 开头的词就当没给。以及监听阶段的失败：端口越界、端口被占（占用者是假 provider 的 38412）、非回环 host 缺 allowRemoteHost 或缺显式 token。非回环用 ::1（基线只认 127.0.0.1 和 localhost 两个字面量为回环），不会对外监听。默认端口 18789 不在这里跑。环境里的 DOCKER_CONTAINER / COMMIT_HASH 让基线的遥测上下文不去跑 git（否则在非 git 目录会往 stderr 漏两行 fatal，Rust 不跑 git）；PILOTDECK_BUNDLED_SKILLS_DIR 给两侧同一个内置技能目录（Rust 开发布局下找不到自带的）。",
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx",
+    "PILOTDECK_BUNDLED_SKILLS_DIR": "{ROOT}/bundled"
+  },
+  "files": {
+    "bundled/sample/SKILL.md": "---\nname: sample\ndescription: bbx bundled skill placeholder\n---\nbody\n"
+  },
+  "steps": [
+    {
+      "serve": [
+        "server"
+      ]
+    },
+    {
+      "serve": [
+        "server",
+        "--port",
+        "38413"
+      ]
+    },
+    {
+      "serve": [
+        "server",
+        "--port",
+        "abc"
+      ]
+    },
+    {
+      "serve": [
+        "server",
+        "--port"
+      ]
+    },
+    {
+      "serve": [
+        "server",
+        "--port",
+        "38413xyz",
+        "--host",
+        "localhost"
+      ]
+    },
+    {
+      "serve": [
+        "server",
+        "--port",
+        "38413",
+        "--port",
+        "38414"
+      ]
+    },
+    {
+      "serve": [
+        "server"
+      ],
+      "env": {
+        "PILOTDECK_GATEWAY_PORT": "38414trailing"
+      }
+    },
+    {
+      "serve": [
+        "server",
+        "--port",
+        "38413"
+      ],
+      "env": {
+        "PILOTDECK_GATEWAY_PORT": "junk"
+      }
+    },
+    {
+      "serve": [
+        "server"
+      ],
+      "env": {
+        "PILOTDECK_GATEWAY_HOST": "localhost"
+      }
+    },
+    {
+      "serve": [
+        "server",
+        "--host",
+        "127.0.0.1"
+      ],
+      "env": {
+        "PILOTDECK_GATEWAY_HOST": "localhost"
+      }
+    },
+    {
+      "serve": [
+        "server",
+        "--host",
+        "--port",
+        "38413"
+      ],
+      "env": {
+        "PILOTDECK_GATEWAY_HOST": "localhost"
+      }
+    },
+    {
+      "cli": [
+        "server",
+        "--port",
+        "99999"
+      ],
+      "timeout": 20000
+    },
+    {
+      "cli": [
+        "server",
+        "--port",
+        "-5"
+      ],
+      "timeout": 20000
+    },
+    {
+      "cli": [
+        "server"
+      ],
+      "env": {
+        "PILOTDECK_GATEWAY_PORT": "70000"
+      },
+      "timeout": 20000
+    },
+    {
+      "cli": [
+        "server",
+        "--port",
+        "38412"
+      ],
+      "timeout": 20000
+    },
+    {
+      "cli": [
+        "server",
+        "--host",
+        "::1"
+      ],
+      "timeout": 20000
+    },
+    {
+      "cli": [
+        "server",
+        "--host",
+        "::1"
+      ],
+      "env": {
+        "PILOTDECK_GATEWAY_ALLOW_REMOTE": "true"
+      },
+      "timeout": 20000
+    },
+    {
+      "cli": [
+        "server",
+        "--host",
+        "::1"
+      ],
+      "env": {
+        "PILOTDECK_GATEWAY_ALLOW_REMOTE": "1",
+        "PILOTDECK_GATEWAY_TOKEN": null
+      },
+      "timeout": 20000
+    },
+    {
+      "cli": [
+        "server",
+        "--host",
+        "::1"
+      ],
+      "env": {
+        "PILOTDECK_GATEWAY_ALLOW_REMOTE": "1",
+        "PILOTDECK_GATEWAY_TOKEN": "   "
+      },
+      "timeout": 20000
+    },
+    {
+      "serve": [
+        "server",
+        "--host",
+        "::1"
+      ],
+      "env": {
+        "PILOTDECK_GATEWAY_ALLOW_REMOTE": "1"
+      }
+    }
+  ]
+}

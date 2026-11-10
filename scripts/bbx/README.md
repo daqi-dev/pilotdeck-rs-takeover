@@ -4,7 +4,7 @@
 
 ## 它为什么可信
 
-- **被测对象是真进程**：基线是 `node dist/src/cli/pilotdeck.js server`，Rust 是编译出来的二进制。采集器不 import 任何一侧的代码。
+- **被测对象是真进程**：基线是 `node dist/src/cli/pilotdeck.js server --port N`，Rust 是编译出来的 `pilotdeck server --port N`，参数和环境变量两侧相同。采集器不 import 任何一侧的代码。
 - **输入完全相同**：两侧先后在同一个固定路径 `/private/tmp/pdrs-bbx/root` 的干净目录里跑，同样的配置文件、同样的初始文件、同样的环境变量、同样的端口、同一个假 provider、同样的步骤。路径和端口因此不需要归一化。
 - **记录的是原样输出**：WS 帧、HTTP 响应（状态、头、体）、CLI 的 stdout / stderr / 退出码、假 provider 收到的请求（方法、路径、头、体）、结束后 home 和 project 下的全部文件、停机退出码。
 - **归一化只有四条**，都是「基线自己连跑两次也会变」的值：UUID、ISO 时间戳、毫秒时间戳、进程号。规则写在 `diff.mjs` 开头。不比较的字段只有三个（采集侧标记、启动耗时、服务进程日志），每次比较都会打印出来。
@@ -35,7 +35,7 @@ node scripts/bbx/run.mjs rust scripts/bbx/scenarios/turn-text.json /tmp/b.json
 node scripts/bbx/diff.mjs /tmp/a.json /tmp/b.json
 ```
 
-采集是独占的（固定路径和端口 38411 / 38412），同一时刻只能跑一个；不要和它并行跑另一个 `check.mjs`。
+采集是独占的（固定路径和端口 38411 / 38412；入口场景另外会用到 38413 / 38414），同一时刻只能跑一个；不要和它并行跑另一个 `check.mjs`。
 
 ## 场景格式
 
@@ -49,8 +49,12 @@ node scripts/bbx/diff.mjs /tmp/a.json /tmp/b.json
 | `env` | 额外环境变量 |
 | `provider` | 假 provider 的应答规则，按顺序匹配请求体文本：`when` 全部包含、`unless` 全部不包含；`reply` 可以是 `{text}`、`{tool:{name,arguments}}`、`{status,body}`。请求按命中的规则名分组记录 |
 | `server` | `false` 表示不起服务（纯 CLI 场景） |
-| `steps` | 依次执行：`{ws, params}`、`{http: "GET /path", headers, body}`、`{cli: [参数...], stdin}`、`{connect: true}`（重连）、`{sleep: 毫秒}` |
+| `steps` | 依次执行：`{ws, params}`、`{http: "GET /path", headers, body}`、`{cli: [参数...], stdin}`、`{serve: [参数...]}`（见下）、`{connect: true}`（重连；也可以给一个完整的 hello 帧）、`{disconnect: true}`（客户端主动断开）、`{sleep: 毫秒}` |
 | `volatile` | 该场景里确认不稳定的差异路径（正则）。会被略过并打印。用之前先用 `--self` 证明它确实不稳定 |
+
+`cli` 和 `serve` 步骤可以带 `env`：盖在场景环境之上，值为 `null` 表示删掉该变量（例如去掉采集器默认给的 `PILOTDECK_GATEWAY_TOKEN`）。
+
+`serve` 步骤用来比常驻命令（`pilotdeck server`）自己的 stdout / stderr / 退出码，这些在 `"server"` 起的服务上属于不比较的 `serverLog`。它用 CLI 起一个进程，等 stdout 里出现 `until`（默认 `WebSocket: `），依次执行 `then` 里的步骤，然后发 `signal`（默认 `SIGTERM`）并等进程退出；15 秒不退就 SIGKILL，如实记成 `signal: "SIGKILL"`。进程没等到 `until` 就自己退出（启动失败）时不执行 `then`，照样记输出和退出码。这类场景通常写 `"server": false`；`then` 里的 `http` / `connect` 连的是固定端口 38411，所以被起的进程要监听在那里（采集器默认给了 `PILOTDECK_GATEWAY_PORT=38411`）。发信号前客户端若还连着，基线会一直等到它断开，需要比停机时先 `{disconnect: true}`。
 
 字符串里可用 `{ROOT}` `{HOME}` `{PILOT_HOME}` `{PROJECT}` `{MOCK}` `{GATEWAY}` `{TOKEN}`。
 
@@ -63,4 +67,3 @@ node scripts/bbx/diff.mjs /tmp/a.json /tmp/b.json
 - 两侧在同一台机器、同一个 Node / 同一份构建上跑，不防本机被人动手脚，只防实现不一致。
 - 假 provider 只有 OpenAI chat completions 形状。别的协议（Anthropic 等）需要时再加。
 - 时序相关的行为（超时、并发竞态）不在这个手段的覆盖内，需要单独设计场景或用单元测试。
-- Rust 一侧目前经 `pilotdeck-gateway --native` 启动，参数和基线的 `pilotdeck server --port` 不同。这个差别本身是未完成项，等 Rust CLI 承担 `server` 子命令后，`run.mjs` 里的 `SIDES.rust.server` 改成和基线一样的参数。

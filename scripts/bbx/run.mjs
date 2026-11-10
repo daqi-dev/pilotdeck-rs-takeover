@@ -103,7 +103,6 @@ telemetry:
 if (scenario.config !== null) {
   fs.writeFileSync(path.join(pilotHome, 'pilotdeck.yaml'), subst(scenario.config ?? DEFAULT_CONFIG));
 }
-fs.writeFileSync(path.join(ROOT, 'token'), TOKEN + '\n', { mode: 0o600 });
 for (const [rel, content] of Object.entries(scenario.files ?? {})) {
   const target = path.join(ROOT, rel);
   if (!target.startsWith(ROOT + '/')) throw new Error(`file escapes root: ${rel}`);
@@ -160,15 +159,12 @@ const SIDES = {
     cli: ['node', path.join(BASELINE, 'dist/src/cli/pilotdeck.js')],
   },
   rust: {
-    // 迁移中的入口：Rust 的 server 目前只能经 gateway 二进制的 --native 起。
-    // 等 `pilotdeck server` 由 Rust CLI 承担后，这里换成和 ts 一样的参数。
-    server: [path.join(TARGET, 'pilotdeck-gateway'), '--native', '--home', pilotHome, '--project', project,
-      '--listen', `127.0.0.1:${GATEWAY_PORT}`, '--token-file', path.join(ROOT, 'token'),
-      '--sidecar', path.join(TARGET, 'pilotdeck-agent-loop-sidecar')],
+    server: [path.join(TARGET, 'pilotdeck'), 'server', '--port', String(GATEWAY_PORT)],
     cli: [path.join(TARGET, 'pilotdeck')],
   },
 };
-const out = { scenario: scenario.name, side, steps: [], notifications: [], provider: providerRequests };
+// volatile 原样带进产物：diff.mjs 从产物里读它（两侧相同，不会成为差异）。
+const out = { scenario: scenario.name, side, volatile: scenario.volatile ?? [], steps: [], notifications: [], provider: providerRequests };
 let server; let serverLog = '';
 const wantServer = scenario.server !== false;
 if (wantServer) {
@@ -208,9 +204,22 @@ const waitFrame = async (pred, timeout = STEP_TIMEOUT_MS) => {
     await new Promise((r) => { wake.push(r); setTimeout(r, 200); });
   }
 };
+// 步骤级环境变量：盖在场景环境之上；值为 null 表示删掉该变量。
+const stepEnv = (step) => {
+  const merged = { ...env };
+  for (const [k, v] of Object.entries(substDeep(step.env ?? {}))) { if (v === null) delete merged[k]; else merged[k] = v; }
+  return merged;
+};
 let requestSeq = 0;
 const runStep = async (step) => {
   if (step.sleep) { await sleep(step.sleep); return { slept: true }; }
+  if (step.disconnect) {
+    if (!ws || ws.readyState > 1) return { disconnected: false };
+    const done = waitFrame((f) => f.type === '__closed', 5000);
+    ws.close();
+    const last = await done;
+    return { disconnected: true, close: last.type === '__closed' ? { code: last.code, reason: last.reason } : last };
+  }
   if (step.connect) return { hello: await connect(step.connect === true ? undefined : substDeep(step.connect)) };
   if (step.ws) {
     let hello; if (!ws) hello = await connect();
@@ -234,9 +243,36 @@ const runStep = async (step) => {
     let json; try { json = JSON.parse(text); } catch {}
     return { http: { status: response.status, headers: Object.fromEntries(response.headers), body: json ?? text } };
   }
+  if (step.serve) {
+    // 前台起一个会常驻的 CLI 进程（如 `server`）：等 stdout 出现 until，执行 then 里的步骤，
+    // 发 signal，记下 stdout / stderr / 退出码。进程自己先退出（启动失败）也照样记。
+    const [cmd, ...prefix] = SIDES[side].cli;
+    const child = spawn(cmd, [...prefix, ...substDeep(step.serve)], {
+      cwd: step.cwd ? subst(step.cwd) : project, env: stepEnv(step), stdio: ['ignore', 'pipe', 'pipe'], detached: true,
+    });
+    children.push(child);
+    let stdout = '', stderr = '';
+    child.stdout.on('data', (d) => { stdout += d; }); child.stderr.on('data', (d) => { stderr += d; });
+    const closed = new Promise((r) => child.on('close', (c, s) => r([c, s])));
+    const until = subst(step.until ?? 'WebSocket: ');
+    const t0 = Date.now();
+    while (!stdout.includes(until) && child.exitCode === null && child.signalCode === null
+      && Date.now() - t0 < (step.timeout ?? STEP_TIMEOUT_MS)) await sleep(20);
+    const reached = stdout.includes(until);
+    const then = [];
+    if (reached) {
+      await sleep(step.settleMs ?? 100);
+      for (const inner of step.then ?? []) then.push({ step: inner, ...(await runStep(inner)) });
+      child.kill(step.signal ?? 'SIGTERM');
+    }
+    const killer = setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }, reached ? 15000 : 0);
+    const [exitCode, signal] = await closed;
+    clearTimeout(killer);
+    return { serve: { reached, exitCode, signal, stdout, stderr }, then };
+  }
   if (step.cli) {
     const [cmd, ...prefix] = SIDES[side].cli;
-    const child = spawn(cmd, [...prefix, ...substDeep(step.cli)], { cwd: step.cwd ? subst(step.cwd) : project, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(cmd, [...prefix, ...substDeep(step.cli)], { cwd: step.cwd ? subst(step.cwd) : project, env: stepEnv(step), stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '', stderr = '';
     child.stdout.on('data', (d) => { stdout += d; }); child.stderr.on('data', (d) => { stderr += d; });
     child.stdin.end(step.stdin ?? '');

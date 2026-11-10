@@ -587,6 +587,7 @@ fn project_marker_ownership_matches_ts() {
             project,
             listen: "127.0.0.1:0".parse().expect("#1137 marker listen address"),
             token_file: scratch.0.join("unused-token"),
+            os_home: None,
             sidecar: scratch.0.join("unused-sidecar"),
             sidecar_args: vec![],
             drain_budget: Duration::from_secs(1),

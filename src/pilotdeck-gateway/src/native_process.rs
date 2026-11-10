@@ -33,6 +33,10 @@ mod management_tests;
 #[cfg(test)]
 mod mcp_status_tests;
 mod requests;
+// The product entry (`pilotdeck server`): the baseline's startGatewayServer
+// options over the same assembly and listener the `--native` entry uses.
+mod server;
+pub use server::{DEFAULT_PORT, Listening, ServerOptions, parse_port, serve};
 mod services;
 mod session_overrides;
 // #1353 A8.5-pr2: the production switch faces over the real assembly.
@@ -85,6 +89,30 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
                 return Err(error);
             }
         };
+    serve_until_signal(
+        options.drain_budget,
+        host,
+        server,
+        switch_handles,
+        |address| eprintln!("native listening {address}"),
+        || eprintln!("native stopping"),
+    )
+    .await
+}
+
+/// The bound listener's whole life, shared by the isolated `--native` entry
+/// ([`run`]) and the product entry ([`server::serve`]): register the two stop
+/// signals, serve, and on SIGTERM / SIGINT run the switch machine to a clean
+/// stop. `listening` runs once the accept loop is live and `stopping` when the
+/// signal arrives; each entry prints its own lines there.
+async fn serve_until_signal(
+    drain_budget: Duration,
+    host: crate::runtime::turn::gateway::TurnGateway,
+    server: crate::native_ws::NativeWsServer,
+    switch_handles: switch_wiring::AssemblySwitchHandles,
+    listening: impl FnOnce(SocketAddr),
+    stopping: impl FnOnce(),
+) -> Result<(), ProxyError> {
     #[cfg(unix)]
     let signals = (|| -> std::io::Result<_> {
         Ok((
@@ -96,14 +124,14 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
     let (mut terminate, mut interrupt) = match signals {
         Ok(signals) => signals,
         Err(error) => {
-            let _ = host.shutdown(options.drain_budget).await;
+            let _ = host.shutdown(drain_budget).await;
             return Err(error.into());
         }
     };
     let address = match server.local_addr() {
         Ok(address) => address,
         Err(error) => {
-            let _ = host.shutdown(options.drain_budget).await;
+            let _ = host.shutdown(drain_budget).await;
             return Err(error.into());
         }
     };
@@ -120,10 +148,7 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
     // steady state is served exactly like the awaited `run()` future was —
     // the signal only triggers the switch (`native_ws.rs::run_phased`).
     let (trigger, trigger_rx) = tokio::sync::watch::channel(false);
-    let phased = Arc::new(server.run_phased(
-        switch_wiring::trigger_stop(trigger_rx),
-        options.drain_budget,
-    ));
+    let phased = Arc::new(server.run_phased(switch_wiring::trigger_stop(trigger_rx), drain_budget));
     let faces = switch_wiring::ProductionFaces::new(
         switch_handles.cron,
         switch_wiring::AdmissionGate::new(switch_handles.channels, trigger),
@@ -131,14 +156,14 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
     );
     let machine = crate::switch::SwitchMachine::new(
         faces.clone(),
-        crate::switch::SwitchTimeouts::production(options.drain_budget),
+        crate::switch::SwitchTimeouts::production(drain_budget),
     );
-    eprintln!("native listening {address}");
+    listening(address);
     #[cfg(unix)]
     tokio::select! { _ = terminate.recv() => {}, _ = interrupt.recv() => {} }
     #[cfg(not(unix))]
     let _ = tokio::signal::ctrl_c().await;
-    eprintln!("native stopping");
+    stopping();
     match machine.run().await {
         Ok(()) => Ok(()),
         Err(error) => {
@@ -220,6 +245,12 @@ pub struct Options {
     pub sidecar_args: Vec<String>,
     pub drain_budget: Duration,
     pub storage_root: Option<String>,
+    /// `os.homedir()` for the hosted code. `None` is the isolated `--native`
+    /// entry, where `home` doubles as the OS home (its `environment()` sets
+    /// `HOME` and `PILOT_HOME` to the same directory). The product entry
+    /// (`pilotdeck server`) keeps the two apart like the baseline: `home` is
+    /// the resolved pilot home and this is the user's real home.
+    pub os_home: Option<PathBuf>,
 }
 
 pub fn native_requested(first: Option<&std::ffi::OsStr>) -> bool {
@@ -363,7 +394,13 @@ impl Options {
                 .map(|v| utf8_argument(v, "storage root"))
                 .transpose()?
                 .map(str::to_owned),
+            os_home: None,
         })
+    }
+
+    /// `os.homedir()` as the hosted code sees it; see [`Options::os_home`].
+    pub(crate) fn homedir(&self) -> PathBuf {
+        self.os_home.clone().unwrap_or_else(|| self.home.clone())
     }
 
     fn serves_project(&self, project: &str) -> bool {

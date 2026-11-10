@@ -1,0 +1,60 @@
+{
+  "name": "server-entry-start-stop",
+  "about": "`pilotdeck server` 的正常路径：启动行的顺序与文案、/health、回环上的 /auth/local-token、静态兜底 404、带错 token 的握手被拒，然后分别用 SIGTERM 和 SIGINT 停机（停机前客户端已断开），比 stdout / stderr / 退出码和停机后的落盘。握手成功的 hello_ok 内容在 server-entry-handshake 里单独比。环境里的 DOCKER_CONTAINER / COMMIT_HASH 让基线的遥测上下文不去跑 git（否则在非 git 目录会往 stderr 漏两行 fatal，Rust 不跑 git）；PILOTDECK_BUNDLED_SKILLS_DIR 给两侧同一个内置技能目录（Rust 开发布局下找不到自带的）。",
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx",
+    "PILOTDECK_BUNDLED_SKILLS_DIR": "{ROOT}/bundled"
+  },
+  "files": {
+    "bundled/sample/SKILL.md": "---\nname: sample\ndescription: bbx bundled skill placeholder\n---\nbody\n"
+  },
+  "volatile": [
+    "\\.http\\.headers\\.date$"
+  ],
+  "steps": [
+    {
+      "serve": [
+        "server"
+      ],
+      "then": [
+        {
+          "http": "GET /health"
+        },
+        {
+          "http": "GET /auth/local-token"
+        },
+        {
+          "http": "GET /"
+        },
+        {
+          "http": "GET /no-such-path"
+        },
+        {
+          "connect": {
+            "type": "hello",
+            "protocolVersion": "1.2",
+            "clientName": "test",
+            "clientVersion": "0.0.0",
+            "token": "not-the-token"
+          }
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    },
+    {
+      "serve": [
+        "server"
+      ],
+      "signal": "SIGINT",
+      "then": [
+        {
+          "http": "GET /health"
+        }
+      ]
+    }
+  ]
+}

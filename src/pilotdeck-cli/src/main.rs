@@ -3,6 +3,7 @@ mod chat_search;
 mod config;
 pub(crate) mod paths;
 pub(crate) mod sdk;
+mod server;
 pub(crate) mod skills;
 mod skills_migrate;
 #[cfg(test)]
@@ -152,7 +153,7 @@ pub(crate) fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure>
         Some("run" | "resume" | "sessions" | "settings" | "help" | "--help" | "-h") => {
             sdk::run_sdk_cli(argv, env, cwd)
         }
-        Some("server") => Err(Failure::Todo("pilotdeck server")),
+        Some("server") => server::run(argv, env, cwd),
         Some("gateway") => {
             if argv.get(1).map(String::as_str) == Some("setup") {
                 return Err(Failure::Todo("pilotdeck gateway setup"));

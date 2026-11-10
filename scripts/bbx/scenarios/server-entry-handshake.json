@@ -1,0 +1,28 @@
+{
+  "name": "server-entry-handshake",
+  "about": "`pilotdeck server` 启动后握手一次、断开、SIGTERM 停机。入口部分（stdout、退出码、落盘）之外，这里还比 hello_ok 的内容（serverInfo.projectKey、capabilities 清单）。环境里的 DOCKER_CONTAINER / COMMIT_HASH 让基线的遥测上下文不去跑 git（否则在非 git 目录会往 stderr 漏两行 fatal，Rust 不跑 git）；PILOTDECK_BUNDLED_SKILLS_DIR 给两侧同一个内置技能目录（Rust 开发布局下找不到自带的）。",
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx",
+    "PILOTDECK_BUNDLED_SKILLS_DIR": "{ROOT}/bundled"
+  },
+  "files": {
+    "bundled/sample/SKILL.md": "---\nname: sample\ndescription: bbx bundled skill placeholder\n---\nbody\n"
+  },
+  "steps": [
+    {
+      "serve": [
+        "server"
+      ],
+      "then": [
+        {
+          "connect": true
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    }
+  ]
+}

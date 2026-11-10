@@ -1560,7 +1560,7 @@ impl SubmitHostServices for Services {
             let current = crate::runtime::project::NativeConfigSource::new(
                 self.options.project.clone(),
                 self.env.clone(),
-                Some(self.options.home.clone()),
+                Some(self.options.homedir()),
                 None,
             );
             use crate::runtime::project::ConfigSource;
