@@ -6,15 +6,22 @@
 
 ## 现在由 Rust 承担并有证据的入口
 
-**没有。**（标准：bbx 对拍 SAME 或差异已登记；Rust 独立应答；四条命令全量通过。）
+| 入口 | 证据 | 没覆盖的 |
+|---|---|---|
+| `pilotdeck server` 启动失败路径（无配置） | `server-entry-no-config` SAME | — |
 
-当前对拍结果（`node scripts/bbx/check.mjs`）：
+`pilotdeck server` 的其余入口行为（参数与环境变量优先级、启动输出、token 文件、停机退出码、`/health`、`/auth/local-token`）在 4 个场景里 stdout / stderr / 退出码 / HTTP 应答一致，各剩 1 处落盘差异（启动时多写 `.cwd`），所以还不算做完。
+
+当前对拍结果（`node scripts/bbx/check.mjs`，2026-11-10）：基线自比 9/9 SAME；基线 vs Rust 1/9 SAME。
 
 | 场景 | 结果 |
 |---|---|
-| `turn-text` | DIFF 216 |
-| `survey-empty-params` | DIFF 181（100 个 method 里 69 个应答一致） |
-| `cli-survey-offline` | DIFF 16（25 条命令里 20 条一致） |
+| `server-entry-no-config` | SAME |
+| `server-entry-start-stop` / `port-host` / `token-generate` / `token-sources` | 各 DIFF 1 |
+| `server-entry-handshake` | DIFF 41 |
+| `turn-text` | DIFF 214 |
+| `survey-empty-params` | DIFF 179 |
+| `cli-survey-offline` | DIFF 15 |
 
 ## 验收手段
 
@@ -26,9 +33,20 @@
 
 ## 正在做
 
-**M1 最小闭环**：Rust `pilotdeck server` 成为真入口（参数、环境变量、启动输出与基线相同），`turn-text` 场景 SAME。
+**M1 最小闭环**，分三块：
 
-主要差距（来自 `_build/bbx/turn-text.diff.txt`）：工具声明 5 个对 28 个、系统提示词、provider 请求头、`context_budget` 事件、会话落盘缺记录类型、`runs/registry.json` 路径、会话归属目录、`read_session_messages` 未接线、`describe_server` 缺 `projectKey` 和 13 项能力。
+1. 入口：已提交（`pilotdeck server` 与基线同参数；Linux CI 全绿）。
+2. 多项目宿主与落盘布局：进行中。基线不带 `projectKey` 的请求归 pilot home、项目运行时按需创建；Rust 原先只服务启动时的单个项目。连带对齐 `runs/registry.json`、`.cwd`、残留 `.lock`、`serverInfo.projectKey`、`list_projects`。
+3. 发给 provider 的请求与会话记录：未开始。工具声明 5 对 28、请求头、`context_budget`、会话文件缺 `context_snapshot` / `agent_instructions` / `compaction_*`、`read_session_messages` 未接线、能力列表 40 对 53。
+
+M1 之后要回头处理的（入口那块发现的）：
+
+- 停机时还有客户端连着：基线一直等到客户端断开再退出 0；Rust 等 5 秒后以 1001 关连接、退出 1。还没定怎么对齐，也没有场景覆盖。
+- `validate_profile`：配了 MCP server、plugins、skills、hooks、modules、subagents 时 Rust 拒绝启动，基线没有这个限制。在做到对应功能的里程碑时去掉。
+- 基线在非 git 目录启动会往 stderr 漏两行 `fatal: not a git repository`；入口场景用 `DOCKER_CONTAINER=1`、`COMMIT_HASH=bbx` 让基线跳过，等于没覆盖。
+- Rust 没有遥测采集器，停机行打印的是全 0 常量；`telemetry.enabled: true` 时与基线不同。
+- 基线 server 启动流程里有、Rust 还没有的：全局代理、配置热重载（接了多少未核实）、渠道只有飞书和微信、公共审批与公共 host 的 HTTP 路由、路由事件写 `router/events.jsonl`。
+- sidecar 找不到时的报错文案是 Rust 自己的，基线没有对应物（基线默认进程内跑循环）。
 
 ## 之后
 
@@ -60,7 +78,7 @@ M2 会话域 → M3 工具回路（同时重跑 `scripts/parity` 的 53 场景�
 
 ## 已知的坑
 
-- 这台 macOS 上全量 nextest 有 3 个失败：`unsafe_boundary::compiler_enforces_gateway_boundary`（守卫只支持 Linux）、`channel::sms::tests::dual_stack_occupier_is_reported_by_the_fixed_host_bind_probe`、`mcp_https::replays_ts_mcp_https_over_local_tls`（后两个与 IPv6 有关，稳定复现，根因未查）。
+- Linux CI（`takeover.yml`）四条命令全绿。这台 macOS 上全量 nextest 有 3 个失败：`unsafe_boundary::compiler_enforces_gateway_boundary`（守卫只支持 Linux）、`channel::sms::tests::dual_stack_occupier_is_reported_by_the_fixed_host_bind_probe`、`mcp_https::replays_ts_mcp_https_over_local_tls`（后两个与 IPv6 有关，稳定复现，根因未查）。
 - 全量 nextest 约 12 分钟，`src/target` 约 15 GB。改一行 gateway 后增量构建约 35 秒。
 - 基线 CLI 的 `cron` 和默认对话路径会探测写死的 `127.0.0.1:18789`。bbx 在该端口有监听者时拒绝运行，不要绕过。
 - bbx 独占固定目录 `/private/tmp/pdrs-bbx` 和端口 38411 / 38412，不能并行跑两个。
