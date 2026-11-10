@@ -1,0 +1,16 @@
+{
+  "name": "turn-text",
+  "about": "最小闭环：握手、空会话列表、一轮纯文本对话、对话后的会话列表与消息读取。",
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Say hello\"}" } },
+    { "name": "main", "reply": { "text": "Hello from the mock." } }
+  ],
+  "steps": [
+    { "ws": "describe_server" },
+    { "ws": "list_sessions" },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-bbx-1", "channelKey": "test", "message": "hello" } },
+    { "sleep": 500 },
+    { "ws": "list_sessions" },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-bbx-1" } }
+  ]
+}

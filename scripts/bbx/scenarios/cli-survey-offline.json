@@ -1,0 +1,32 @@
+{
+  "name": "cli-survey-offline",
+  "about": "不起服务时各 CLI 子命令的入口行为普查：帮助、用法错误、无 gateway 可连时的输出与退出码。不含 update（会访问外网）和需要 TTY 的 tui 正常路径。只说明入口是否存在、报错是否一致，不说明功能完整。",
+  "server": false,
+  "steps": [
+    { "cli": [] },
+    { "cli": ["help"] },
+    { "cli": ["--help"] },
+    { "cli": ["-h"] },
+    { "cli": ["nonsense"] },
+    { "cli": ["sessions"] },
+    { "cli": ["sessions", "list"], "timeout": 15000 },
+    { "cli": ["sessions", "messages"], "timeout": 15000 },
+    { "cli": ["settings"], "timeout": 15000 },
+    { "cli": ["run"], "timeout": 15000 },
+    { "cli": ["run", "hello"], "timeout": 20000 },
+    { "cli": ["resume"], "timeout": 15000 },
+    { "cli": ["gateway"] },
+    { "cli": ["gateway", "nonsense"] },
+    { "cli": ["cron"], "timeout": 15000 },
+    { "cli": ["cron", "list"], "timeout": 15000 },
+    { "cli": ["cron", "nonsense"], "timeout": 15000 },
+    { "cli": ["skills"] },
+    { "cli": ["skills", "nonsense"] },
+    { "cli": ["skills", "migrate", "--help"] },
+    { "cli": ["skills", "migrate", "--dry-run"], "timeout": 15000 },
+    { "cli": ["chat"] },
+    { "cli": ["chat", "search"] },
+    { "cli": ["chat", "search", "hello"], "timeout": 15000 },
+    { "cli": ["tui"] }
+  ]
+}

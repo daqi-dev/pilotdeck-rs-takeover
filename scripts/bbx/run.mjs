@@ -1,0 +1,284 @@
+#!/usr/bin/env node
+// 黑盒对拍 · 采集器。
+// 用法：node scripts/bbx/run.mjs <ts|rust> <scenario.json> <out.json>
+//
+// 做的事只有一件：在一个固定路径的干净隔离目录里，按场景写入同样的初始文件，
+// 起一个假 provider 和被测一侧的进程，逐步发送同样的输入，把对外可观察的输出
+// 原样记下来：WS 帧、HTTP 响应、CLI 的 stdout/stderr/退出码、发给 provider 的请求、
+// 结束后的落盘文件。这里不做任何归一化和比较，那是 diff.mjs 的事。
+//
+// 两侧使用同一个根目录路径和同一组端口（先后跑，不并行），所以路径和端口在两侧
+// 的输出里天然相同，不需要归一化。
+import { spawn } from 'node:child_process';
+import http from 'node:http';
+import net from 'node:net';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const BASELINE = process.env.BBX_BASELINE || path.join(REPO, 'resources/PilotDeck');
+const TARGET = process.env.BBX_TARGET || path.join(REPO, 'src/target/debug');
+export const ROOT = '/private/tmp/pdrs-bbx/root';
+const GATEWAY_PORT = 38411;
+const MOCK_PORT = 38412;
+const TOKEN = 'bbx-token';
+const STEP_TIMEOUT_MS = 30000;
+
+const [side, scenarioPath, outPath] = process.argv.slice(2);
+if (!['ts', 'rust'].includes(side) || !scenarioPath || !outPath) {
+  console.error('usage: run.mjs <ts|rust> <scenario.json> <out.json>');
+  process.exit(2);
+}
+const scenario = JSON.parse(fs.readFileSync(scenarioPath, 'utf8'));
+const home = path.join(ROOT, 'home');
+const pilotHome = path.join(home, '.pilotdeck');
+const project = path.join(ROOT, 'proj');
+const tmp = path.join(ROOT, 'tmp');
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const subst = (text) => text
+  .replaceAll('{ROOT}', ROOT).replaceAll('{HOME}', home).replaceAll('{PILOT_HOME}', pilotHome)
+  .replaceAll('{PROJECT}', project).replaceAll('{MOCK}', `http://127.0.0.1:${MOCK_PORT}`)
+  .replaceAll('{GATEWAY}', `http://127.0.0.1:${GATEWAY_PORT}`).replaceAll('{TOKEN}', TOKEN);
+const substDeep = (v) => typeof v === 'string' ? subst(v)
+  : Array.isArray(v) ? v.map(substDeep)
+  : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, substDeep(x)]))
+  : v;
+
+// ── 独占：同一时刻只允许一次采集（固定路径和端口的代价） ──
+fs.mkdirSync(path.dirname(ROOT), { recursive: true });
+const lock = path.join(path.dirname(ROOT), 'lock');
+try { fs.mkdirSync(lock); } catch {
+  const owner = Number(fs.readFileSync(path.join(lock, 'pid'), 'utf8').trim() || 0);
+  let alive = false; try { process.kill(owner, 0); alive = true; } catch {}
+  if (alive) { console.error(`bbx: another run holds ${lock} (pid ${owner})`); process.exit(3); }
+}
+fs.writeFileSync(path.join(lock, 'pid'), String(process.pid));
+const children = [];
+const cleanup = () => {
+  for (const c of children) { try { process.kill(-c.pid, 'SIGKILL'); } catch {} }
+  try { fs.rmSync(lock, { recursive: true, force: true }); } catch {}
+};
+process.on('exit', cleanup);
+for (const s of ['SIGINT', 'SIGTERM']) process.on(s, () => process.exit(130));
+
+const portFree = (port) => new Promise((resolve) => {
+  const s = net.createServer().once('error', () => resolve(false))
+    .once('listening', () => s.close(() => resolve(true))).listen(port, '127.0.0.1');
+});
+// 基线 CLI 的若干路径会探测写死的默认端口 18789（真实 PilotDeck 的默认端口）。
+// 那里有人监听时一律拒跑，免得碰到本机正在运行的实例。用 lsof 看，不去连它。
+import { spawnSync } from 'node:child_process';
+if (spawnSync('lsof', ['-nP', '-iTCP:18789', '-sTCP:LISTEN'], { encoding: 'utf8' }).stdout.trim()) {
+  console.error('bbx: something is listening on 18789 (a real PilotDeck?); refusing to run'); process.exit(3);
+}
+for (const p of [GATEWAY_PORT, MOCK_PORT]) {
+  if (!(await portFree(p))) { console.error(`bbx: port ${p} is in use`); process.exit(3); }
+}
+
+// ── 初始状态：两侧完全一样 ──
+fs.rmSync(ROOT, { recursive: true, force: true });
+for (const d of [pilotHome, project, tmp]) fs.mkdirSync(d, { recursive: true });
+const DEFAULT_CONFIG = `schemaVersion: 1
+agent:
+  model: bbx/deterministic
+  maxContextTokens: 65536
+  maxOutputTokens: 8192
+model:
+  providers:
+    bbx:
+      protocol: openai
+      url: {MOCK}/v1
+      apiKey: bbx-mock-only
+      models:
+        deterministic:
+          capabilities:
+            supportsToolUse: true
+            maxContextTokens: 65536
+            maxOutputTokens: 8192
+telemetry:
+  enabled: false
+`;
+if (scenario.config !== null) {
+  fs.writeFileSync(path.join(pilotHome, 'pilotdeck.yaml'), subst(scenario.config ?? DEFAULT_CONFIG));
+}
+fs.writeFileSync(path.join(ROOT, 'token'), TOKEN + '\n', { mode: 0o600 });
+for (const [rel, content] of Object.entries(scenario.files ?? {})) {
+  const target = path.join(ROOT, rel);
+  if (!target.startsWith(ROOT + '/')) throw new Error(`file escapes root: ${rel}`);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, typeof content === 'string' ? subst(content) : JSON.stringify(substDeep(content), null, 2) + '\n');
+}
+
+// ── 假 provider（OpenAI chat completions 形状）──
+// 规则按顺序匹配请求体的 JSON 文本：when（全部包含）/ unless（全部不包含）。
+// 请求按命中的规则名分组记录，这样互不相干的两路请求（如标题生成与主对话）
+// 谁先到不影响比较。没有规则命中时用 default，回一段固定文本。
+const rules = [...(scenario.provider ?? []), { name: 'default', reply: { text: 'BBX_OK' } }];
+const providerRequests = {};
+const mock = http.createServer(async (req, res) => {
+  const parts = []; for await (const p of req) parts.push(p);
+  const raw = Buffer.concat(parts).toString('utf8');
+  let body = null; try { body = JSON.parse(raw); } catch {}
+  const rule = rules.find((r) => (r.when ?? []).every((s) => raw.includes(s)) && (r.unless ?? []).every((s) => !raw.includes(s)));
+  (providerRequests[rule.name] ??= []).push({
+    method: req.method, url: req.url, headers: req.headers, body: body ?? { raw },
+  });
+  const reply = rule.reply ?? {};
+  if (reply.status) { res.writeHead(reply.status, { 'content-type': 'application/json' }); res.end(JSON.stringify(reply.body ?? {})); return; }
+  const message = reply.tool
+    ? { role: 'assistant', content: null, tool_calls: [{ id: reply.tool.id ?? 'call_bbx_1', type: 'function', function: { name: reply.tool.name, arguments: JSON.stringify(reply.tool.arguments ?? {}) } }] }
+    : { role: 'assistant', content: reply.text ?? 'BBX_OK' };
+  const finish = reply.tool ? 'tool_calls' : 'stop';
+  const usage = { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 };
+  if (!body?.stream) {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ id: 'chatcmpl-bbx', model: body?.model, choices: [{ index: 0, message, finish_reason: finish }], usage }));
+    return;
+  }
+  res.writeHead(200, { 'content-type': 'text/event-stream' });
+  const delta = message.tool_calls
+    ? { role: 'assistant', tool_calls: message.tool_calls.map((t) => ({ index: 0, ...t })) }
+    : { role: 'assistant', content: message.content };
+  res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`);
+  res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: finish }], usage })}\n\n`);
+  res.end('data: [DONE]\n\n');
+});
+await new Promise((r) => mock.listen(MOCK_PORT, '127.0.0.1', r));
+
+// ── 被测一侧 ──
+const env = {
+  PATH: process.env.PATH, HOME: home, PILOT_HOME: pilotHome, TMPDIR: tmp,
+  TZ: 'UTC', LANG: 'en_US.UTF-8', NO_COLOR: '1',
+  PILOTDECK_GATEWAY_TOKEN: TOKEN, PILOTDECK_GATEWAY_PORT: String(GATEWAY_PORT), PILOTDECK_SKIP_BROWSER_OPEN: '1',
+  ...substDeep(scenario.env ?? {}),
+};
+const SIDES = {
+  ts: {
+    server: ['node', path.join(BASELINE, 'dist/src/cli/pilotdeck.js'), 'server', '--port', String(GATEWAY_PORT)],
+    cli: ['node', path.join(BASELINE, 'dist/src/cli/pilotdeck.js')],
+  },
+  rust: {
+    // 迁移中的入口：Rust 的 server 目前只能经 gateway 二进制的 --native 起。
+    // 等 `pilotdeck server` 由 Rust CLI 承担后，这里换成和 ts 一样的参数。
+    server: [path.join(TARGET, 'pilotdeck-gateway'), '--native', '--home', pilotHome, '--project', project,
+      '--listen', `127.0.0.1:${GATEWAY_PORT}`, '--token-file', path.join(ROOT, 'token'),
+      '--sidecar', path.join(TARGET, 'pilotdeck-agent-loop-sidecar')],
+    cli: [path.join(TARGET, 'pilotdeck')],
+  },
+};
+const out = { scenario: scenario.name, side, steps: [], notifications: [], provider: providerRequests };
+let server; let serverLog = '';
+const wantServer = scenario.server !== false;
+if (wantServer) {
+  const [cmd, ...args] = SIDES[side].server;
+  server = spawn(cmd, args, { cwd: project, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+  children.push(server);
+  server.stdout.on('data', (d) => { serverLog += d; });
+  server.stderr.on('data', (d) => { serverLog += d; });
+  const t0 = Date.now();
+  for (;;) {
+    if (server.exitCode !== null) { out.startFailure = { exitCode: server.exitCode, log: serverLog }; break; }
+    if (Date.now() - t0 > 60000) { out.startFailure = { timeout: true, log: serverLog }; break; }
+    if (!(await portFree(GATEWAY_PORT))) break;
+    await sleep(50);
+  }
+  out.startMs = Date.now() - t0;
+}
+
+// ── WS 连接（惰性建立；一个场景一条连接，除非步骤要求重连）──
+let ws; let frames = []; let wake = [];
+const connect = async (hello) => {
+  ws = new WebSocket(`ws://127.0.0.1:${GATEWAY_PORT}/ws`);
+  frames = [];
+  ws.onmessage = (e) => { let f; try { f = JSON.parse(e.data); } catch { f = { raw: String(e.data) }; } frames.push(f); wake.splice(0).forEach((w) => w()); };
+  let closed = null;
+  ws.onclose = (e) => { closed = { code: e.code, reason: e.reason }; frames.push({ type: '__closed', ...closed }); wake.splice(0).forEach((w) => w()); };
+  await new Promise((resolve) => { ws.onopen = resolve; ws.onerror = resolve; });
+  if (ws.readyState !== 1) return { connectFailed: true };
+  ws.send(JSON.stringify(hello ?? { type: 'hello', protocolVersion: '1.2', clientName: 'test', clientVersion: '0.0.0', token: TOKEN }));
+  return waitFrame((f) => f.type !== 'notification');
+};
+const waitFrame = async (pred, timeout = STEP_TIMEOUT_MS) => {
+  const t0 = Date.now(); let seen = 0;
+  for (;;) {
+    for (; seen < frames.length; seen++) if (pred(frames[seen])) return frames[seen];
+    if (Date.now() - t0 > timeout) return { type: '__timeout' };
+    await new Promise((r) => { wake.push(r); setTimeout(r, 200); });
+  }
+};
+let requestSeq = 0;
+const runStep = async (step) => {
+  if (step.sleep) { await sleep(step.sleep); return { slept: true }; }
+  if (step.connect) return { hello: await connect(step.connect === true ? undefined : substDeep(step.connect)) };
+  if (step.ws) {
+    let hello; if (!ws) hello = await connect();
+    const id = `q${++requestSeq}`;
+    ws.send(JSON.stringify({ type: 'request', id, method: step.ws, params: substDeep(step.params ?? {}) }));
+    const last = await waitFrame((f) => f.type === '__closed' || f.type === '__timeout'
+      || (f.id === id && (f.type === 'response' || (f.type === 'event' && f.final))), step.timeout);
+    const mine = frames.filter((f) => f.id === id);
+    if (last.type?.startsWith('__')) mine.push(last);
+    return hello ? { hello, frames: mine } : { frames: mine };
+  }
+  if (step.http) {
+    const [method, url] = step.http.split(' ');
+    const response = await fetch(`http://127.0.0.1:${GATEWAY_PORT}${subst(url)}`, {
+      method, headers: substDeep(step.headers ?? {}), redirect: 'manual',
+      body: step.body === undefined ? undefined : typeof step.body === 'string' ? subst(step.body) : JSON.stringify(substDeep(step.body)),
+      signal: AbortSignal.timeout(step.timeout ?? STEP_TIMEOUT_MS),
+    }).catch((error) => ({ error: String(error.cause?.code ?? error.name) }));
+    if (response.error) return { http: response };
+    const text = await response.text();
+    let json; try { json = JSON.parse(text); } catch {}
+    return { http: { status: response.status, headers: Object.fromEntries(response.headers), body: json ?? text } };
+  }
+  if (step.cli) {
+    const [cmd, ...prefix] = SIDES[side].cli;
+    const child = spawn(cmd, [...prefix, ...substDeep(step.cli)], { cwd: step.cwd ? subst(step.cwd) : project, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '', stderr = '';
+    child.stdout.on('data', (d) => { stdout += d; }); child.stderr.on('data', (d) => { stderr += d; });
+    child.stdin.end(step.stdin ?? '');
+    const timer = setTimeout(() => child.kill('SIGKILL'), step.timeout ?? STEP_TIMEOUT_MS);
+    const [exitCode, signal] = await new Promise((r) => child.on('close', (c, s) => r([c, s])));
+    clearTimeout(timer);
+    return { cli: { exitCode, signal, stdout, stderr } };
+  }
+  throw new Error(`unknown step: ${JSON.stringify(step)}`);
+};
+if (!out.startFailure) {
+  for (const step of scenario.steps) out.steps.push({ step, ...(await runStep(step)) });
+  await sleep(scenario.settleMs ?? 300);
+}
+out.notifications = frames.filter((f) => f.type === 'notification');
+out.unsolicited = frames.filter((f) => !['notification', 'hello_ok', 'response', 'event', '__closed'].includes(f.type));
+if (ws) ws.close();
+
+// ── 停机：SIGTERM，记退出码 ──
+if (server && server.exitCode === null) {
+  const exited = new Promise((r) => server.on('exit', (code, signal) => r({ code, signal })));
+  server.kill('SIGTERM');
+  out.shutdown = await Promise.race([exited, sleep(15000).then(() => ({ timeout: true }))]);
+}
+mock.close(); mock.closeAllConnections();
+out.serverLog = serverLog;
+
+// ── 落盘：home 与 project 下的全部文件 ──
+const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1)).flatMap((e) => {
+  const p = path.join(dir, e.name);
+  if (e.isDirectory()) { const inner = walk(p); return inner.length ? inner : [[p + '/', { emptyDir: true }]]; }
+  if (e.isSymbolicLink()) return [[p, { symlink: fs.readlinkSync(p) }]];
+  const bytes = fs.readFileSync(p);
+  const text = bytes.toString('utf8');
+  if (Buffer.from(text, 'utf8').compare(bytes) !== 0) return [[p, { binaryBytes: bytes.length }]];
+  const mode = (fs.statSync(p).mode & 0o777).toString(8);
+  if (p.endsWith('.jsonl')) { try { return [[p, { mode, jsonl: text.split('\n').filter(Boolean).map((l) => JSON.parse(l)) }]]; } catch {} }
+  if (p.endsWith('.json')) { try { return [[p, { mode, json: JSON.parse(text) }]]; } catch {} }
+  return [[p, { mode, text }]];
+});
+out.tree = Object.fromEntries([...walk(home), ...walk(project)].map(([p, v]) => [p.slice(ROOT.length), v]));
+fs.mkdirSync(path.dirname(path.resolve(outPath)), { recursive: true });
+fs.writeFileSync(outPath, JSON.stringify(out, null, 1) + '\n');
+console.error(`bbx: ${side} ${scenario.name}: ${out.startFailure ? 'START FAILED' : `${out.steps.length} steps`} -> ${outPath}`);
+process.exit(0);

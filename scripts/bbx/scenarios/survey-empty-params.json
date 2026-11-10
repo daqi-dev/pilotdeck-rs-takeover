@@ -1,0 +1,506 @@
+{
+ "name": "survey-empty-params",
+ "about": "基线 WsGatewayMethod 全集（除会访问外网的 prepare_weixin_login）各用空参数调用一次。只说明每个 method 是否存在、空参数时的校验与错误格式是否一致，不说明功能完整。",
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "upload_create",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "upload_get",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "upload_part",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "upload_complete",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "upload_cancel",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "run_get",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "run_events",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "run_reattach",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "permission_list",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "memory_list",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "memory_wipe",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "snapshot_list",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "snapshot_get",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "snapshot_restore",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "manager_sessions",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "manager_browsers",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "native_archive_manifest",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "native_archive_entries",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "native_archive_artifact",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "steer_turn",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "cancel_steer",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "abort_turn",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "list_sessions",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "resume_session",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "sop_status",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "sop_resume",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "new_session",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "close_session",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "delete_session",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "export_session_transcript",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "restore_session_transcript",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "rename_session",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "tag_session",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "close_project_sessions",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "record_agent_status_message",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "describe_server",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "project_files_list",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "commands_list",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "model_catalog_list",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "session_model_get",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "session_model_set",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "session_model_clear",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "active_turn_snapshot",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "mcp_server_status",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "project_file_read",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "set_mcp_servers",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "mcp_server_reconnect",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "mcp_server_toggle",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "set_mcp_permission_mode_override",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "set_permission_mode",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "apply_flag_settings",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "update_settings",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "resolve_settings",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "set_session_thinking",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "output_styles_list",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "set_output_style",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "reload_output_styles",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "usage_snapshot",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "model_usage_snapshot",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "rewind_files",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "background_task_stop",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "background_tasks",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "hook_async_result",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "seed_read_state",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "supported_agents",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "reconnect_interaction",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "cron_create",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "cron_list",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "cron_update",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "cron_delete",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "cron_stop",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "cron_run_now",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "elicitation_respond",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "user_dialog_list",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "user_dialog_claim",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "user_dialog_release",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "user_dialog_respond",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "permission_decide",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "grant_session_permission",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "read_subagent_messages",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "fork_session",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "replace_last_turn",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "finalize_last_turn_replacement",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "list_projects",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "describe_project",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "reload_config",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "reload_extensions",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "skill_list",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "skill_read",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "skill_write",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "skill_create",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "skill_delete",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "skill_import",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "skill_validate",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "skill_scan",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "always_on_apply",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "always_on_abort",
+   "params": {},
+   "timeout": 8000
+  },
+  {
+   "ws": "always_on_rerun_plan",
+   "params": {},
+   "timeout": 8000
+  }
+ ]
+}
