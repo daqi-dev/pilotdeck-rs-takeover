@@ -1251,10 +1251,8 @@ impl PermissionDecision for Permissions {
                     hooks.as_ref(),
                     "PermissionRequest",
                     &name,
-                    &id,
-                    &input,
+                    crate::runtime::tools::tool_event_payload(&name, &id, &input, extra),
                     &run,
-                    extra,
                 )
                 .await?
                 .map(|result| result.effects)

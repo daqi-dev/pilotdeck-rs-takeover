@@ -65,15 +65,33 @@ pub struct ToolAudit(pub Arc<dyn ToolAuditRecorder>);
 /// runtime treats as an empty result. `extra` is the event's own payload
 /// after `toolName` / `toolInput` / `toolUseId`.
 pub trait ToolLifecycle: Send + Sync {
+    /// The base input (session, cwd, permission mode), environment and
+    /// signal come from `context`; `payload` is the event's own fields.
     fn dispatch(
         &self,
         event: &'static str,
-        tool_name: &JsString,
-        tool_call_id: &JsString,
-        tool_input: &JsValue,
+        match_query: &JsString,
+        payload: JsObject,
         context: &ToolRunContext,
-        extra: JsObject,
     ) -> crate::host::HostFuture<Option<crate::runtime::hooks::LifecycleDispatchResult>>;
+}
+
+/// The payload of a tool event: `toolName`, `toolInput`, `toolUseId`, then
+/// the event's own fields.
+pub fn tool_event_payload(
+    tool_name: &JsString,
+    tool_call_id: &JsString,
+    tool_input: &JsValue,
+    extra: JsObject,
+) -> JsObject {
+    let mut payload = JsObject::new();
+    payload.insert("toolName".into(), JsValue::String(tool_name.clone()));
+    payload.insert("toolInput".into(), tool_input.clone());
+    payload.insert("toolUseId".into(), JsValue::String(tool_call_id.clone()));
+    for (key, value) in extra.own_entries() {
+        payload.insert(key.clone(), value.clone());
+    }
+    payload
 }
 
 /// `PilotDeckElicitationRequest`: one batch of questions for the user. The
@@ -150,7 +168,21 @@ pub struct ToolRunContext {
     /// runtime installs it on every call it executes; a host that runs a tool
     /// directly leaves it `None`.
     pub execute_tool: Option<NestedToolExecutor>,
+    /// `context.fileUpdateNotifier.didSave` as the tool runtime wraps it
+    /// (ToolRuntime.ts:513-538): a write tool reports each committed save.
+    pub file_saved: Option<FileSavedNotifier>,
 }
+/// `PilotDeckFileUpdateNotification`, the fields its consumers read.
+/// `created` is `previousContent === null`.
+#[derive(Clone, Debug)]
+pub struct FileUpdate {
+    pub absolute_path: JsString,
+    pub relative_path: JsString,
+    pub created: bool,
+}
+/// See [`ToolRunContext::file_saved`].
+pub type FileSavedNotifier =
+    Arc<dyn Fn(FileUpdate) -> crate::host::HostFuture<()> + Send + Sync>;
 /// See [`ToolRunContext::execute_tool`]. The result is the nested call's
 /// tool result object (`type: "success" | "error"`).
 pub type NestedToolExecutor = Arc<
@@ -164,6 +196,14 @@ impl ToolRunContext {
             fields: host.fields.clone(),
             host,
             execute_tool: None,
+            file_saved: None,
+        }
+    }
+    /// `await context.fileUpdateNotifier?.didSave?.(update)`.
+    pub async fn notify_file_saved(&self, update: FileUpdate) -> Result<(), HostError> {
+        match &self.file_saved {
+            Some(notifier) => notifier(update).await,
+            None => Ok(()),
         }
     }
     /// The signal only when it is a [`ToolCancellation`]; prefer

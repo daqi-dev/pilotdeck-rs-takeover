@@ -53,7 +53,14 @@ impl ExecutableTool for EditNotebookTool {
     }
 
     fn execute(&self, input: JsValue, context: ToolRunContext) -> ToolFuture<ToolOutput> {
-        Box::pin(async move { execute(&input, &context) })
+        Box::pin(async move {
+            let (output, update) = execute(&input, &context)?;
+            context
+                .notify_file_saved(update)
+                .await
+                .map_err(|error| ToolError::failed(error.message))?;
+            Ok(output)
+        })
     }
 }
 
@@ -189,7 +196,10 @@ fn validate(input: &JsValue, context: &ToolRunContext) -> Result<Option<Vec<JsOb
     Ok(None)
 }
 
-fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, ToolError> {
+fn execute(
+    input: &JsValue,
+    context: &ToolRunContext,
+) -> Result<(ToolOutput, crate::runtime::tools::FileUpdate), ToolError> {
     let path = input_string(input, "notebook_path").unwrap_or_else(|| JsString::from(""));
     let cell_id = input_string(input, "cell_id").filter(|value| !value.is_empty());
     let new_source = input_string(input, "new_source").unwrap_or_else(|| JsString::from(""));
@@ -367,21 +377,30 @@ fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, Tool
             )
         }
     };
-    Ok(ToolOutput {
-        content: vec![JsValue::Object(object([
-            ("type", string("text")),
-            ("text", string(result_text.as_str())),
-        ]))],
-        data: Some(JsValue::Object(ordered)),
-        metadata: Some(object([
-            (
-                "bytesWritten",
-                JsValue::Number(updated_content.len() as f64),
-            ),
-            ("mtimeMs", JsValue::Number(write.mtime_ms)),
-        ])),
-        supplemental_messages: None,
-    })
+    // `previousContent: originalContent`: a notebook edit is always an update.
+    let update = crate::runtime::tools::FileUpdate {
+        absolute_path: resolved.absolute.clone(),
+        relative_path: resolved.relative.clone(),
+        created: false,
+    };
+    Ok((
+        ToolOutput {
+            content: vec![JsValue::Object(object([
+                ("type", string("text")),
+                ("text", string(result_text.as_str())),
+            ]))],
+            data: Some(JsValue::Object(ordered)),
+            metadata: Some(object([
+                (
+                    "bytesWritten",
+                    JsValue::Number(updated_content.len() as f64),
+                ),
+                ("mtimeMs", JsValue::Number(write.mtime_ms)),
+            ])),
+            supplemental_messages: None,
+        },
+        update,
+    ))
 }
 
 fn missing_cell_error(cell_id: &Option<JsString>, index: usize) -> ToolError {

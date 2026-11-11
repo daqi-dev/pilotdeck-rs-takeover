@@ -24,10 +24,10 @@ process.stdin.on('end', () => {
   const env = {};
   for (const k of Object.keys(process.env).sort()) env[k] = /^PILOT/.test(k) && !/BUNDLED/.test(k) ? process.env[k] : true;
   append({ argv: process.argv.slice(2), cwd: process.cwd(), input: parsed, env });
-  // exit "@": the behaviour is the JSON between HOOK<< and >> in the prompt.
+  // exit "@": the behaviour is the JSON between HOOK<< and >> in the prompt (or the last assistant message).
   let spec = { exit, out, err, sleep };
   if (exit === '@') {
-    const m = /HOOK<<(.*?)>>/s.exec(String(parsed.prompt ?? ''));
+    const m = /HOOK<<(.*?)>>/s.exec(String(parsed.prompt ?? parsed.lastAssistantMessage ?? ''));
     spec = { exit: 0, out: '', err: '', sleep: 0, ...(m ? JSON.parse(m[1]) : {}) };
   }
   setTimeout(() => {
@@ -175,6 +175,83 @@ const scenarios = {};
     files: plugin('bbx-prompt', hooks),
     provider: [TITLE, { name: 'main', reply: { text: 'answer' } }],
     steps,
+  };
+}
+
+// ── PermissionRequest / PermissionDenied / FileChanged ──
+{
+  const decision = (value) => json({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: value } });
+  const hooks = {
+    PermissionRequest: [{ matcher: 'write_file', hooks: [
+      cmd('perm', { if: 'write_file(perm-allow)', out: decision({ behavior: 'allow' }) }),
+      cmd('perm', { if: 'write_file(perm-deny)', out: decision({ behavior: 'deny', message: 'hook says no' }) }),
+      cmd('perm', { if: 'write_file(perm-bare)', out: decision({ behavior: 'deny' }) }),
+      cmd('perm', { if: 'write_file(perm-update)', out: decision({ behavior: 'allow', updatedInput: { file_path: 'updated-by-hook.txt', content: 'updated by hook\n' } }) }),
+      cmd('perm', { if: 'write_file(perm-pass)' }),
+      cmd('perm', { if: 'write_file(perm-exit2)', exit: 2, err: 'blocking is not a decision\n' }),
+      cmd('perm', { if: 'write_file(perm-twice)', out: decision({ behavior: 'deny', message: 'first decision wins' }) }),
+      cmd('perm', { if: 'write_file(perm-twice)', out: decision({ behavior: 'allow' }) }),
+    ] }],
+    PermissionDenied: [{ hooks: [cmd('denied')] }],
+    FileChanged: [
+      { matcher: '/perm-[a-z0-9]+\\.txt$/', hooks: [cmd('changed')] },
+      { matcher: '/updated-by-hook/', hooks: [cmd('changed', { exit: 1, err: 'changed hook failed\n' }), cmd('changed', { exit: 2, err: 'changed hook blocked\n' })] },
+    ],
+  };
+  // 采集器对权限询问的回答：hook 的决定在前，网关回调在后，取第一个决定。
+  const cases = { allow: 'deny', deny: 'allow', bare: 'allow', update: 'deny', pass: 'deny', exit2: 'allow', twice: 'allow' };
+  const provider = [TITLE];
+  const steps = [];
+  for (const [c, answer] of Object.entries(cases)) {
+    provider.push(...toolCase(`perm-${c}`, 'write_file', { file_path: `perm-${c}.txt`, content: `perm-${c}\n` }));
+    steps.push(submit(`s-${c}`, `perm-${c}: write the file`, { answer: [{
+      on: { type: 'permission_request' }, ws: 'permission_decide',
+      params: { sessionKey: `s-${c}`, requestId: '{event.requestId}', decision: answer }, count: 1,
+    }] }), { sleep: 300 });
+  }
+  steps.push(read('s-update'));
+  scenarios['hook-permission-request'] = {
+    about: '插件的 PermissionRequest / PermissionDenied / FileChanged hook（默认权限模式，write_file 需要询问）：配置的 hook 先于网关的权限回调执行，第一个 decision 生效——hook allow 而用户拒绝时照样写、hook deny（带 / 不带 message）而用户批准时照样拒、allow 带 updatedInput 时写的是改过的文件；hook 不表态时用户的回答生效；退出码 2 不是决定；两条 hook 先 deny 后 allow 取 deny。被拒时 PermissionDenied 收到 reason。写成功后 FileChanged 按绝对路径匹配，失败与阻止只变成 warning 事件，不影响工具结果。',
+    files: plugin('bbx-perm', hooks),
+    provider,
+    steps,
+  };
+}
+
+// ── SessionStart / Setup / Stop / StopFailure / SessionEnd ──
+{
+  const hooks = {
+    SessionStart: [{ hooks: [cmd('session-start', { out: json({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: 'ignored by the session' } }) })] }],
+    Setup: [{ hooks: [cmd('setup', { exit: 2, err: 'setup blocking is ignored\n' })] }],
+    Stop: [{ hooks: [cmd('stop', { exit: '@' }), cmd('stop-second', {})] }],
+    StopFailure: [{ hooks: [cmd('stop-failure', {})] }],
+    SessionEnd: [{ matcher: 'SessionEnd', hooks: [cmd('session-end', { exit: '@' })] }, { matcher: 'Other', hooks: [cmd('session-end-nomatch')] }],
+  };
+  // Stop 与 SessionEnd 的第一条 hook 按助手最后一句话里的 HOOK<<…>> 行事（SessionEnd 收不到这句话，
+  // 走默认放行；超时用专门的会话：Stop 回 {"sleep":…} 没用，所以 SessionEnd 的超时靠 session-end-slow）。
+  hooks.SessionEnd.push({ matcher: 'SessionEnd', hooks: [cmd('session-end-slow', { sleep: 4000 })] });
+  const directive = (spec) => `HOOK<<${JSON.stringify(spec)}>>`;
+  const replies = {
+    pass: 'all good',
+    'stop-block': `blocked ${directive({ exit: 2, err: 'stop hook blocked\n' })}`,
+    'stop-json': `json ${directive({ out: json({ decision: 'block', reason: 'stop json block' }) })}`,
+    'stop-context': `context ${directive({ out: json({ hookSpecificOutput: { hookEventName: 'Stop', additionalContext: 'stop context' } }) })}`,
+    'stop-fail': `fail ${directive({ exit: 1, err: 'stop failed\n' })}`,
+  };
+  const provider = [TITLE, { name: 'model-error', when: ['case-model-error:'], reply: { status: 400, body: { error: { message: 'bad request from mock', type: 'invalid_request_error' } } } }];
+  const steps = [];
+  for (const [c, text] of Object.entries(replies)) {
+    provider.push({ name: `case-${c}`, when: [`case-${c}:`], reply: { text } });
+    steps.push(submit(`s-${c}`, `case-${c}: say something`), { sleep: 300 });
+  }
+  steps.push(submit('s-model-error', 'case-model-error: fail please'), { sleep: 4500 });
+  steps.push(read('s-stop-block'));
+  scenarios['hook-session-lifecycle'] = {
+    about: '插件的 SessionStart / Setup / Stop / StopFailure / SessionEnd hook：每次提交都跑 SessionStart、Setup、SessionEnd（gateway 每轮一个会话周期），它们的效果与退出码不影响本轮；Stop 收到最后一句助手消息，退出码 2 与 decision:block 让本轮以 lifecycle_blocked（stage stop）失败，additionalContext、非零退出不影响；模型请求失败时 StopFailure 收到 error；SessionEnd 的 hook 1.5 秒超时被杀（hooklog 里没有 done 行），matcher 与事件名不同的不跑。',
+    files: plugin('bbx-life', hooks),
+    provider,
+    steps,
+    settleMs: 1000,
   };
 }
 

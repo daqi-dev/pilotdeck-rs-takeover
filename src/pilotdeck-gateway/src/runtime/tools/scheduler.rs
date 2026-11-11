@@ -68,7 +68,12 @@ impl ToolRuntime {
             return Ok(Vec::new());
         };
         Ok(lifecycle
-            .dispatch(event, name, id, input, context, extra)
+            .dispatch(
+                event,
+                name,
+                super::tool_event_payload(name, id, input, extra),
+                context,
+            )
             .await?
             .map(|result| result.effects)
             .unwrap_or_default())
@@ -586,6 +591,13 @@ impl ToolRuntime {
             execution
                 .fields
                 .insert("currentPermissionDecision".into(), decision);
+            if let Some(lifecycle) = &self.lifecycle {
+                execution.file_saved = Some(file_changed_notifier(
+                    lifecycle.clone(),
+                    self.events.clone(),
+                    context.clone(),
+                ));
+            }
             let execute_input = input.clone();
             match tool.execute(input, execution).await {
                 Err(error) => {
@@ -731,6 +743,80 @@ impl ToolExecution for ToolRuntime {
             runtime.execute_batch(calls, context).await
         })
     }
+}
+
+/// `createFileUpdateNotifier` / `dispatchFileChanged` (ToolRuntime.ts:513-604):
+/// a committed save dispatches `FileChanged`, matched on the absolute path.
+/// Its effects are observations only: a block and every hook error become
+/// `warning` agent events, and the tool result is unchanged.
+fn file_changed_notifier(
+    lifecycle: Arc<dyn super::ToolLifecycle>,
+    events: Option<crate::host::modules::tool_context::EventSink>,
+    context: ToolRunContext,
+) -> super::FileSavedNotifier {
+    Arc::new(move |update: super::FileUpdate| {
+        let (lifecycle, events, context) = (lifecycle.clone(), events.clone(), context.clone());
+        Box::pin(async move {
+            let change_kind = if update.created { "create" } else { "update" };
+            let report = |code: &str, message: JsString, hook_name: Option<JsString>| {
+                let Some(emit) = &events else {
+                    return;
+                };
+                let mut metadata = object([
+                    ("absolutePath", string(update.absolute_path.clone())),
+                    ("relativePath", string(update.relative_path.clone())),
+                    ("changeKind", change_kind.into()),
+                ]);
+                if let Some(name) = hook_name {
+                    metadata.insert("hookName".into(), string(name));
+                }
+                let identity =
+                    |key: &str| context.fields.get(key).cloned().unwrap_or(JsValue::Undefined);
+                emit(object([
+                    ("type", "warning".into()),
+                    ("sessionId", identity("sessionId")),
+                    ("turnId", identity("turnId")),
+                    ("code", code.into()),
+                    ("message", string(message)),
+                    ("metadata", JsValue::Object(metadata)),
+                ]));
+            };
+            let payload = object([
+                ("absolutePath", string(update.absolute_path.clone())),
+                ("relativePath", string(update.relative_path.clone())),
+                ("changeKind", change_kind.into()),
+            ]);
+            match lifecycle
+                .dispatch("FileChanged", &update.absolute_path, payload, &context)
+                .await
+            {
+                Ok(Some(result)) => {
+                    if let Some(reason) = result.effects.iter().find_map(|effect| match effect {
+                        crate::runtime::hooks::HookEffect::Block { reason, .. } => {
+                            Some(reason.clone())
+                        }
+                        _ => None,
+                    }) {
+                        report("file_changed_hook_blocked", reason, None);
+                    }
+                    for error in result
+                        .blocking_errors
+                        .iter()
+                        .chain(result.non_blocking_errors.iter())
+                    {
+                        report(
+                            "file_changed_hook_error",
+                            error.message.clone(),
+                            error.hook_name.clone(),
+                        );
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => report("file_changed_hook_error", error.message.as_str().into(), None),
+            }
+            Ok(())
+        })
+    })
 }
 
 /// `lifecycleMetadata` (ToolRuntime.ts:773-787): what a `PostToolUse` hook

@@ -54,7 +54,11 @@ impl ExecutableTool for WriteFileTool {
     fn execute(&self, input: JsValue, context: ToolRunContext) -> ToolFuture<ToolOutput> {
         Box::pin(async move {
             #[cfg_attr(not(unix), allow(unused_mut, unused_variables))]
-            let (mut output, relative, content) = execute(&input, &context)?;
+            let (mut output, relative, content, update) = execute(&input, &context)?;
+            context
+                .notify_file_saved(update)
+                .await
+                .map_err(|error| ToolError::failed(error.message))?;
             #[cfg(unix)]
             super::syntax_diagnostics::append_to_success_text(&mut output, &relative, &content)
                 .await;
@@ -141,7 +145,7 @@ fn validate(input: &JsValue, context: &ToolRunContext) -> Result<Option<Vec<JsOb
 fn execute(
     input: &JsValue,
     context: &ToolRunContext,
-) -> Result<(ToolOutput, String, String), ToolError> {
+) -> Result<(ToolOutput, String, String, crate::runtime::tools::FileUpdate), ToolError> {
     let path = input_path(input);
     let content_value = input_content(input);
     let content = String::from_utf16_lossy(content_value.units());
@@ -222,7 +226,12 @@ fn execute(
         ])),
         supplemental_messages: None,
     };
-    Ok((output, text(&resolved.relative), content))
+    let update = crate::runtime::tools::FileUpdate {
+        absolute_path: resolved.absolute.clone(),
+        relative_path: resolved.relative.clone(),
+        created: freshness.previous_content.is_none(),
+    };
+    Ok((output, text(&resolved.relative), content, update))
 }
 
 fn split_lines(content: &str) -> Vec<&str> {

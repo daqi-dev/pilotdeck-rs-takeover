@@ -212,11 +212,9 @@ impl ToolLifecycle for ToolHooks {
     fn dispatch(
         &self,
         event: &'static str,
-        tool_name: &JsString,
-        tool_call_id: &JsString,
-        tool_input: &JsValue,
+        match_query: &JsString,
+        payload: JsObject,
         context: &ToolRunContext,
-        extra: JsObject,
     ) -> HostFuture<Option<LifecycleDispatchResult>> {
         let configured = self
             .events
@@ -235,18 +233,11 @@ impl ToolLifecycle for ToolHooks {
         base.insert("transcriptPath".into(), "".into());
         base.insert("cwd".into(), JsValue::String(cwd.clone()));
         base.insert("permissionMode".into(), field("permissionMode"));
-        let mut payload = JsObject::new();
-        payload.insert("toolName".into(), JsValue::String(tool_name.clone()));
-        payload.insert("toolInput".into(), tool_input.clone());
-        payload.insert("toolUseId".into(), JsValue::String(tool_call_id.clone()));
-        for (key, value) in extra.own_entries() {
-            payload.insert(key.clone(), value.clone());
-        }
         let input = LifecycleDispatchInput {
             event: event.into(),
             base_input: base,
             payload: Some(payload),
-            match_query: Some(tool_name.clone()),
+            match_query: Some(match_query.clone()),
             cwd,
             env: context.fields.get("env").and_then(JsValue::as_object).cloned(),
             signal: None,
