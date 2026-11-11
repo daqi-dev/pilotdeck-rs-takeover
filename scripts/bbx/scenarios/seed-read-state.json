@@ -1,0 +1,33 @@
+{
+  "name": "seed-read-state",
+  "about": "seed_read_state（SDK 告诉会话「这个文件已按某个 mtime 读过」，之后 edit_file 不用先 read_file）：缺 sessionKey / path、mtime 非法（负数、小数、字符串）；先用一个会话的 bash 建 seed.txt 并把 mtime 设成固定的 2026-01-01T00:00:00Z；没播种的会话直接 edit_file 被拒；mtime 不符时 applied:false；不存在的文件、工作区外的路径、图片扩展名报错；mtime 相符时 applied:true，之后同会话 edit_file 成功；轮次进行中（挂在权限询问上）被拒。比较返回值、工具结果和落盘。",
+  "files": { "outside.txt": "outside\n" },
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Seed run\"}" } },
+    { "name": "prep-done", "when": ["prep:", "\"tool_call_id\":\"call_bbx_p\""], "reply": { "text": "Prepared." } },
+    { "name": "prep", "when": ["prep:"], "reply": { "tool": { "id": "call_bbx_p", "name": "bash", "arguments": { "command": "printf 'alpha\\n' > seed.txt && printf 'png' > pic.png && touch -d 2026-01-01T00:00:00Z seed.txt pic.png" } } } },
+    { "name": "edit-done", "when": ["edit:", "\"tool_call_id\":\"call_bbx_e\""], "reply": { "text": "Edit attempted." } },
+    { "name": "edit", "when": ["edit:"], "reply": { "tool": { "id": "call_bbx_e", "name": "edit_file", "arguments": { "file_path": "seed.txt", "old_string": "alpha", "new_string": "beta" } } } },
+    { "name": "busy", "when": ["busy:"], "reply": { "tool": { "id": "call_bbx_b", "name": "bash", "arguments": { "command": "echo needs-permission > made.txt" } } } }
+  ],
+  "steps": [
+    { "ws": "seed_read_state", "params": {} },
+    { "ws": "seed_read_state", "params": { "sessionKey": "s-seed" } },
+    { "ws": "seed_read_state", "params": { "sessionKey": "s-seed", "path": "seed.txt", "mtime": -1 } },
+    { "ws": "seed_read_state", "params": { "sessionKey": "s-seed", "path": "seed.txt", "mtime": 1.5 } },
+    { "ws": "seed_read_state", "params": { "sessionKey": "s-seed", "path": "seed.txt", "mtime": "1767225600000" } },
+    { "ws": "set_permission_mode", "params": { "sessionKey": "s-prep", "mode": "bypassPermissions" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-prep", "channelKey": "test", "runId": "run-p", "message": "prep: make the file" }, "timeout": 20000 },
+    { "ws": "set_permission_mode", "params": { "sessionKey": "s-noseed", "mode": "bypassPermissions" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-noseed", "channelKey": "test", "runId": "run-n", "message": "edit: without seeding" }, "timeout": 20000 },
+    { "ws": "set_permission_mode", "params": { "sessionKey": "s-seed", "mode": "bypassPermissions" } },
+    { "ws": "seed_read_state", "params": { "sessionKey": "s-seed", "path": "seed.txt", "mtime": 1767225601000 } },
+    { "ws": "seed_read_state", "params": { "sessionKey": "s-seed", "path": "missing.txt", "mtime": 1767225600000 } },
+    { "ws": "seed_read_state", "params": { "sessionKey": "s-seed", "path": "{ROOT}/outside.txt", "mtime": 1767225600000 } },
+    { "ws": "seed_read_state", "params": { "sessionKey": "s-seed", "path": "pic.png", "mtime": 1767225600000 } },
+    { "ws": "seed_read_state", "params": { "sessionKey": "s-seed", "path": "seed.txt", "mtime": 1767225600000 } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-seed", "channelKey": "test", "runId": "run-s", "message": "edit: after seeding" }, "timeout": 20000 },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-busy", "channelKey": "test", "runId": "run-b", "message": "busy: ask" }, "timeout": 3000, "expectTimeout": true },
+    { "ws": "seed_read_state", "params": { "sessionKey": "s-busy", "path": "seed.txt", "mtime": 1767225600000 } }
+  ]
+}
