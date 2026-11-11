@@ -34,6 +34,8 @@ mod management_tests;
 mod mcp_status_tests;
 // Project routing shared by every request family: the baseline's
 // `projectKey ?? fallbackProjectRoot` read and its dialog registration rule.
+mod elicitation;
+mod permission_prompt;
 mod projects;
 mod requests;
 // The product entry (`pilotdeck server`): the baseline's startGatewayServer
@@ -157,7 +159,8 @@ async fn serve_until_signal(
         switch_handles.cron,
         switch_wiring::AdmissionGate::new(switch_handles.channels, trigger),
         phased,
-    );
+    )
+    .with_release_interactions(switch_handles.release_interactions);
     let machine = crate::switch::SwitchMachine::new(
         faces.clone(),
         crate::switch::SwitchTimeouts::production(drain_budget),

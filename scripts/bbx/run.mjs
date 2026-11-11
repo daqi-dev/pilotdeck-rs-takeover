@@ -46,6 +46,19 @@ const substDeep = (v) => typeof v === 'string' ? subst(v)
   : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, substDeep(x)]))
   : v;
 
+// answer 模板：字符串里的 {event.a.b} 换成触发事件的对应字段；整个字符串就是一个占位符时保留原类型。
+const fillEvent = (v, event) => {
+  const pick = (p) => p.split('.').reduce((o, k) => (o == null ? undefined : o[k]), event);
+  if (typeof v === 'string') {
+    const whole = /^\{event\.([\w.]+)\}$/.exec(v);
+    if (whole) return pick(whole[1]);
+    return v.replace(/\{event\.([\w.]+)\}/g, (_, p) => String(pick(p)));
+  }
+  if (Array.isArray(v)) return v.map((x) => fillEvent(x, event));
+  if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, fillEvent(x, event)]));
+  return v;
+};
+
 // ── 独占：同一时刻只允许一次采集（固定路径和端口的代价） ──
 fs.mkdirSync(path.dirname(ROOT), { recursive: true });
 const lock = path.join(path.dirname(ROOT), 'lock');
@@ -112,9 +125,10 @@ for (const [rel, content] of Object.entries(scenario.files ?? {})) {
 
 // ── 假 provider（OpenAI chat completions 形状）──
 // 规则按顺序匹配请求体的 JSON 文本：when（全部包含）/ unless（全部不包含）。
+// 规则里的字符串（包括工具参数）同样做 {ROOT} 等占位符替换。
 // 请求按命中的规则名分组记录，这样互不相干的两路请求（如标题生成与主对话）
 // 谁先到不影响比较。没有规则命中时用 default，回一段固定文本。
-const rules = [...(scenario.provider ?? []), { name: 'default', reply: { text: 'BBX_OK' } }];
+const rules = [...substDeep(scenario.provider ?? []), { name: 'default', reply: { text: 'BBX_OK' } }];
 const providerRequests = {};
 const mock = http.createServer(async (req, res) => {
   const parts = []; for await (const p of req) parts.push(p);
@@ -230,11 +244,36 @@ const runStep = async (step) => {
     let hello; if (!ws) hello = await connect();
     const id = `q${++requestSeq}`;
     ws.send(JSON.stringify({ type: 'request', id, method: step.ws, params: substDeep(step.params ?? {}) }));
-    const last = await waitFrame((f) => f.type === '__closed' || f.type === '__timeout'
-      || (f.id === id && (f.type === 'response' || (f.type === 'event' && f.final))), step.timeout);
+    // answer：收集本步骤的帧期间，遇到匹配的事件就按模板发一个请求（见 README）。
+    // 每条规则最多应答 count 次（缺省不限）；一个事件只由第一条还有余量的匹配规则应答。
+    const rulesLeft = (step.answer ?? []).map((rule) => ({ rule, left: rule.count ?? Infinity }));
+    const answers = [];
+    const react = (f) => {
+      if (f.id !== id || f.type !== 'event' || !f.event) return;
+      const hit = rulesLeft.find((r) => r.left > 0 && Object.entries(r.rule.on ?? {}).every(([k, v]) => f.event[k] === v));
+      if (!hit) return;
+      hit.left--;
+      const answerId = `q${++requestSeq}`;
+      const params = fillEvent(substDeep(hit.rule.params ?? {}), f.event);
+      answers.push({ id: answerId, ws: hit.rule.ws, params });
+      ws.send(JSON.stringify({ type: 'request', id: answerId, method: hit.rule.ws, params }));
+    };
+    const last = await waitFrame((f) => { react(f); return f.type === '__closed' || f.type === '__timeout'
+      || (f.id === id && (f.type === 'response' || (f.type === 'event' && f.final))); }, step.timeout);
     const mine = frames.filter((f) => f.id === id);
     if (last.type?.startsWith('__')) mine.push(last);
-    return hello ? { hello, frames: mine } : { frames: mine };
+    const result = hello ? { hello, frames: mine } : { frames: mine };
+    if (step.answer) {
+      result.answers = [];
+      for (const a of answers) {
+        const done = await waitFrame((f) => f.type === '__closed' || f.type === '__timeout'
+          || (f.id === a.id && (f.type === 'response' || (f.type === 'event' && f.final))), 5000);
+        const got = frames.filter((f) => f.id === a.id);
+        if (done.type?.startsWith('__')) got.push(done);
+        result.answers.push({ ws: a.ws, params: a.params, frames: got });
+      }
+    }
+    return result;
   }
   if (step.http) {
     const [method, url] = step.http.split(' ');

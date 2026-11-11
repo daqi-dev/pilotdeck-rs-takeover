@@ -43,7 +43,15 @@ use super::channels::NativeChannels;
 pub(crate) struct AssemblySwitchHandles {
     pub(crate) cron: Option<Arc<CronStopHandle>>,
     pub(crate) channels: Arc<NativeChannels>,
+    pub(crate) release_interactions: Option<ReleaseInteractions>,
 }
+
+/// What the stop does about turns parked on a user prompt: the baseline's
+/// gateway disposal settles every pending permission and question with
+/// `local_gateway_disposed` and its router shutdown aborts the turn, so a
+/// prompt nobody will answer never holds the stop. The assembly supplies it
+/// (it owns the interaction coordinator and the session owner).
+pub(crate) type ReleaseInteractions = Arc<dyn Fn() + Send + Sync>;
 
 /// The out-of-band slots that carry those handles out of `start_assembly`:
 /// the channel assembly is constructed before the host starts, the cron stop
@@ -53,6 +61,7 @@ pub(crate) struct AssemblySwitchHandles {
 pub(crate) struct AssemblySwitchSlots {
     pub(crate) cron: Arc<std::sync::OnceLock<Arc<CronStopHandle>>>,
     pub(crate) channels: Arc<std::sync::OnceLock<Arc<NativeChannels>>>,
+    pub(crate) release_interactions: Arc<std::sync::OnceLock<ReleaseInteractions>>,
 }
 
 /// A1's single admission flip: the channel server's close and the native WS
@@ -100,9 +109,18 @@ pub(crate) struct ProductionFaces {
     /// A10's precondition latch: set by the S2 face to the WS drain's own
     /// verdict, checked by the flush face.
     entries_drained: Arc<AtomicBool>,
+    release_interactions: Option<ReleaseInteractions>,
 }
 
 impl ProductionFaces {
+    pub(crate) fn with_release_interactions(
+        mut self,
+        release: Option<ReleaseInteractions>,
+    ) -> Self {
+        self.release_interactions = release;
+        self
+    }
+
     pub(crate) fn new(
         cron: Option<Arc<CronStopHandle>>,
         admission: AdmissionGate,
@@ -113,6 +131,7 @@ impl ProductionFaces {
             admission,
             phased,
             entries_drained: Arc::new(AtomicBool::new(false)),
+            release_interactions: None,
         }
     }
 
@@ -243,10 +262,16 @@ impl SwitchFaces for ProductionFaces {
         let admission = self.admission.clone();
         let phased = self.phased.clone();
         let entries_drained = self.entries_drained.clone();
+        let release_interactions = self.release_interactions.clone();
         Box::pin(async move {
             // A1: the seal happens synchronously at the first poll of this
             // face — both admission flips, no await between them.
             let close = admission.seal();
+            // Turns waiting on a permission or question prompt are settled
+            // and aborted now; they could only drain by a user answering.
+            if let Some(release) = release_interactions {
+                release();
+            }
             // The channel stops (spawned inside the seal) and the WS entry
             // drain proceed concurrently — both are S2's entry surfaces.
             let drained = phased.drained().await;

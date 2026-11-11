@@ -199,6 +199,7 @@ async fn observe(name: &str) -> (Value, Value) {
         recorders: Arc::default(),
         owner,
         snapshot_recorder: None,
+        session_overrides: Default::default(),
         upload_store: Arc::new(crate::upload::UploadStore::new(
             crate::upload::UploadStoreOptions::new(
                 |_: &pilotdeck_protocol::JsString| {

@@ -32,6 +32,9 @@ pub struct Services {
     /// `--storage-root` was not supplied and snapshots are disabled.
     pub snapshot_recorder: Option<Arc<ContentAddressedWorkspaceSnapshotRecorder>>,
     pub upload_store: Arc<UploadStore>,
+    /// The gateway's session selections, including the live permission modes
+    /// (`GatewaySessionPermissionModeRegistry`).
+    pub session_overrides: Arc<super::SessionOverrides>,
 }
 fn base64_encode(bytes: &[u8]) -> String {
     BASE64_STANDARD.encode(bytes)
@@ -1498,6 +1501,12 @@ impl SubmitHostServices for Services {
         // `resolveLocalGatewayBootConfig`: `input.permissionMode ?? "default"`
         // (LocalGatewayBootConfig.ts:53); `pilotdeck server` passes none.
         Some("default".into())
+    }
+    fn live_permission_mode(&self, session: &JsString) -> Option<JsString> {
+        self.session_overrides.live_mode(session)
+    }
+    fn live_base_permission_mode(&self, session: &JsString) -> Option<JsString> {
+        self.session_overrides.live_base_mode(session)
     }
     fn workspace_id(&self, input: &JsValue) -> Result<Option<JsString>, SubmitError> {
         // #2562: the filter skips `undefined` *and* `null`, the same nullish

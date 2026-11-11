@@ -328,6 +328,7 @@ pub(super) async fn start_with_webhook(
             channels: switch_slots.channels.get().cloned().ok_or_else(|| {
                 ProxyError::from("channel assembly slot was not constructed during assembly")
             })?,
+            release_interactions: switch_slots.release_interactions.get().cloned(),
         },
     ))
 }
@@ -449,6 +450,11 @@ async fn start_assembly(
     let prepare_env = env.clone();
     let prepare_recorders = recorders.clone();
     let prepare_interactions = interactions.clone();
+    // The gateway event sink of the session interaction facade
+    // (`GatewaySessionInteractionFacade.emit`): the host's coordinator is
+    // built after the session factory, so it is published into this slot.
+    let gateway_emit: super::permission_prompt::GatewayEmitSlot = Arc::default();
+    let prepare_gateway_emit = gateway_emit.clone();
     let prepare_permission_rule_sets = permission_rule_sets.clone();
     // Forward reference so the prepare closure can call sync_permission_rules
     // after lease acquire (mirrors ProjectRuntimeRegistry.ts:305-308).
@@ -487,6 +493,7 @@ async fn start_assembly(
             let env = prepare_env.clone();
             let recorders = prepare_recorders.clone();
             let interactions = prepare_interactions.clone();
+            let gateway_emit = prepare_gateway_emit.clone();
             let permission_rule_sets = prepare_permission_rule_sets.clone();
             let mcp_config_handle = prepare_mcp_config.clone();
             let acquire_miss_report = prepare_acquire_miss_report.clone();
@@ -626,6 +633,12 @@ async fn start_assembly(
                 let mut retained = PreparedResources::default();
                 retained.retain_lease(lease);
                 let permission_lease = permission_rule_sets.acquire(&context.session_key, None);
+                let session_rules = permission_lease.rules();
+                // `LocalGatewayBootConfig.permissionTimeoutMs`.
+                let permission_timeout = super::permission_prompt::interaction_timeout(
+                    env.get("PILOTDECK_PERMISSION_TIMEOUT_MS")
+                        .map(|v| v.as_str()),
+                );
                 // Sync MCP ask rules on acquire, mirroring
                 // ProjectRuntimeRegistry.ts:305-308 where the wiring layer
                 // calls `lease.rules().ask` via syncSdkMcpPermissionRules.
@@ -753,8 +766,17 @@ async fn start_assembly(
                         let permission_source = {
                             let session_overrides = session_overrides.clone();
                             let session = session.clone();
-                            Arc::new(move || session_overrides.permission_mode(&session))
+                            // The live registry (the last selection or
+                            // plan-mode transition) is what the baseline's
+                            // next run starts in; the stored selection covers
+                            // a session whose live entry was cleared.
+                            Arc::new(move || {
+                                session_overrides
+                                    .live_mode(&session)
+                                    .or_else(|| session_overrides.permission_mode(&session))
+                            })
                         };
+                        let turn_project_root = project_root.clone();
                         let deployment = Deployment::Stdio {
                             command: options.sidecar.to_string_lossy().into_owned(),
                             args: options.sidecar_args.clone(),
@@ -770,7 +792,19 @@ async fn start_assembly(
                             lsp,
                             session_mcp,
                         )?
-                        .with_permission_mode_source(permission_source.clone());
+                        .with_permission_mode_source(permission_source.clone())
+                        .with_permission_prompt(gateway_emit, session_rules, permission_timeout)
+                        .with_permission_mode_transition({
+                            let session_overrides = session_overrides.clone();
+                            let session = session.clone();
+                            Arc::new(move |mode, fallback_base| {
+                                session_overrides.transition_live_mode(
+                                    &session,
+                                    mode,
+                                    fallback_base,
+                                )
+                            })
+                        });
                         let ports = match plugin_runtime {
                             Some(plugins) => ports.with_skills(plugins),
                             None => ports,
@@ -801,6 +835,7 @@ async fn start_assembly(
                             },
                         )
                         .with_agent_config(config)
+                        .for_project(turn_project_root)
                         // #1864 (b): TS re-reads the permission-mode override
                         // on every run (InProcessGateway.ts:1443), so an
                         // already-live session picks the change up without a
@@ -1054,6 +1089,9 @@ async fn start_assembly(
         Some(slots) => slots.cron.clone(),
         None => Arc::default(),
     };
+    let build_release_slot = switch_slots
+        .as_ref()
+        .map(|slots| slots.release_interactions.clone());
     let budget = options.drain_budget;
     // #1959: the fallback's own read of the per-resource completion flags —
     // the cleanup closure below moves the originals.
@@ -1073,7 +1111,34 @@ async fn start_assembly(
         // legal `--drain-ms` teardown is not cut by the host's default bound.
         budget,
         move |coordinator| {
+            let emit_coordinator = coordinator.clone();
+            // `turnEventCoordinator.dispose()` comes first in the gateway's
+            // disposal: once the stop has begun, the facade delivers nothing.
+            let emit_disposed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let release_disposed = emit_disposed.clone();
+            let _ = gateway_emit.set(Arc::new(move |session, event| {
+                !emit_disposed.load(std::sync::atomic::Ordering::SeqCst)
+                    && emit_coordinator.emit(session, &event)
+            }));
             let owner = SessionOwner::new(SessionOwnerOptions::new(build_factory));
+            if let Some(slot) = &build_release_slot {
+                // `gateway.dispose("local_gateway_disposed")` followed by the
+                // router shutdown (LocalGatewayLifecycleBundle.ts:45-60), for
+                // the turns that are parked on a prompt.
+                let (owner, interactions) = (owner.clone(), interactions.clone());
+                let _ = slot.set(Arc::new(move || {
+                    release_disposed.store(true, std::sync::atomic::Ordering::SeqCst);
+                    let reason: JsString = "local_gateway_disposed".into();
+                    for session in owner.active_turn_sessions() {
+                        if interactions.permission_bus().has_pending_session(&session)
+                            || interactions.elicitation_bus().has_pending_session(&session)
+                        {
+                            interactions.reject_pending_turn(&session, &reason);
+                            let _ = owner.abort(&session, None, &reason);
+                        }
+                    }
+                }));
+            }
             let replacement = Arc::new(ReplacementCoordinator::new(
                 Default::default(),
                 Arc::new(owner.clone()),
@@ -1098,6 +1163,7 @@ async fn start_assembly(
                 owner: owner.clone(),
                 snapshot_recorder: snapshot_recorder.clone(),
                 upload_store: upload_store.clone(),
+                session_overrides: session_overrides.clone(),
             });
             let mcp_gateway = mcp::build_mcp_gateway(
                 &owner,

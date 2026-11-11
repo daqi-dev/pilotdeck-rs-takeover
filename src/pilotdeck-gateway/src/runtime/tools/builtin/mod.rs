@@ -4,6 +4,7 @@
 //! lexically in UTF-16 first so path identity and state keys keep the original
 //! wire spelling, and only the OS boundary uses an `OsStr`.
 pub mod agent;
+pub mod ask_user_question;
 pub mod bash;
 pub mod edit_file;
 pub mod edit_notebook;

@@ -1,0 +1,157 @@
+{
+  "name": "tool-ask-user-question-answer",
+  "about": "ask_user_question：发出 elicitation_request，客户端用 elicitation_respond 回答后工具返回答案；第二轮客户端取消。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Tool run\"}"
+      }
+    },
+    {
+      "name": "turn-2-after-tool",
+      "when": [
+        "turn-2:",
+        "\"tool_call_id\":\"call_bbx_2\""
+      ],
+      "reply": {
+        "text": "Done 2."
+      }
+    },
+    {
+      "name": "turn-2",
+      "when": [
+        "turn-2:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_2",
+          "name": "ask_user_question",
+          "arguments": {
+            "questions": [
+              {
+                "question": "Which color?",
+                "header": "Color",
+                "options": [
+                  {
+                    "label": "Red",
+                    "description": "warm"
+                  },
+                  {
+                    "label": "Blue",
+                    "description": "cool"
+                  }
+                ],
+                "multiSelect": false
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-1-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "turn-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1",
+          "name": "ask_user_question",
+          "arguments": {
+            "questions": [
+              {
+                "question": "Which color?",
+                "header": "Color",
+                "options": [
+                  {
+                    "label": "Red",
+                    "description": "warm"
+                  },
+                  {
+                    "label": "Blue",
+                    "description": "cool"
+                  }
+                ],
+                "multiSelect": false
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-1: run the tool"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "elicitation_request"
+          },
+          "ws": "elicitation_respond",
+          "params": {
+            "sessionKey": "s-bbx-1",
+            "requestId": "{event.requestId}",
+            "answer": {
+              "type": "answered",
+              "answers": {
+                "Which color?": "Blue"
+              }
+            }
+          }
+        }
+      ],
+      "timeout": 15000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-2: run the tool"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "elicitation_request"
+          },
+          "ws": "elicitation_respond",
+          "params": {
+            "sessionKey": "s-bbx-1",
+            "requestId": "{event.requestId}",
+            "answer": {
+              "type": "cancelled",
+              "reason": "user closed it"
+            }
+          }
+        }
+      ],
+      "timeout": 15000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-bbx-1"
+      }
+    }
+  ]
+}

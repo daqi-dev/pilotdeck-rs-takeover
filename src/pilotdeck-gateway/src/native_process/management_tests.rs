@@ -1865,6 +1865,7 @@ async fn submit_snapshot_wiring_matches_management_workspace_id() {
         recorders: Arc::default(),
         owner: requests.owner.clone(),
         snapshot_recorder: Some(recorder),
+        session_overrides: Default::default(),
         upload_store: Arc::new(crate::upload::UploadStore::new(
             crate::upload::UploadStoreOptions::new(
                 |_| Ok(std::path::PathBuf::new()),
@@ -2261,6 +2262,7 @@ async fn snapshot_wiring_workspace_id_routes_to_recorder() {
         recorders: std::sync::Arc::default(),
         owner: crate::runtime::session::SessionOwner::new(owner_options),
         snapshot_recorder: Some(recorder.clone()),
+        session_overrides: Default::default(),
         upload_store: std::sync::Arc::new(crate::upload::UploadStore::new(
             crate::upload::UploadStoreOptions::new(
                 |_: &pilotdeck_protocol::JsString| {
@@ -2368,6 +2370,7 @@ async fn snapshot_workspace_id_prefers_registered_marker() {
             crate::runtime::session::SessionOwnerOptions::new(std::sync::Arc::new(SnapshotFactory)),
         ),
         snapshot_recorder: Some(recorder),
+        session_overrides: Default::default(),
         upload_store: std::sync::Arc::new(crate::upload::UploadStore::new(
             crate::upload::UploadStoreOptions::new(
                 |_: &pilotdeck_protocol::JsString| {
@@ -2461,6 +2464,7 @@ async fn submit_workspace_id_treats_an_explicit_null_project_key_as_not_provided
                 )),
             ),
             snapshot_recorder: recorder,
+            session_overrides: Default::default(),
             upload_store: std::sync::Arc::new(crate::upload::UploadStore::new(
                 crate::upload::UploadStoreOptions::new(
                     |_: &pilotdeck_protocol::JsString| {

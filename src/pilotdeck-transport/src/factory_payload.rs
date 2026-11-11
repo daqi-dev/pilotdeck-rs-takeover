@@ -632,12 +632,30 @@ fn blocks(values: &[JsValue]) -> Vec<JsValue> {
                     let Some(id) = string(o.get("toolCallId")) else {
                         continue;
                     };
+                    // The default factory writes `content` before `isError`.
+                    // The baseline gateway runs the loop in-process, where a
+                    // history block is never rebuilt and keeps the order the
+                    // tool projection gave it (`isError` first), so a source
+                    // block that has `isError` ahead of `content` keeps it
+                    // there (bbx: the `model_request` record of a turn that
+                    // follows a failed tool call).
+                    let position = |name: &str| {
+                        o.entries()
+                            .iter()
+                            .position(|(key, _)| key.equals_str(name))
+                            .unwrap_or(usize::MAX)
+                    };
+                    let error_first = position("isError") < position("content");
+                    let is_error = boolean(o.get("isError")) == Some(true);
                     let mut out = object([
                         ("type", "tool_result".into()),
                         ("toolCallId", JsValue::String(id)),
-                        ("content", JsValue::Array(vec![])),
                     ]);
-                    if boolean(o.get("isError")) == Some(true) {
+                    if is_error && error_first {
+                        out.insert("isError".into(), JsValue::Bool(true));
+                    }
+                    out.insert("content".into(), JsValue::Array(vec![]));
+                    if is_error && !error_first {
                         out.insert("isError".into(), JsValue::Bool(true));
                     }
                     if let Some(v) = o.get("raw").filter(|v| !v.is_undefined()) {

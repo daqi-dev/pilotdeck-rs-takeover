@@ -4178,6 +4178,7 @@ async fn prepare_attachment_turn_composes_the_turn_end_to_end() {
         recorders: Arc::default(),
         owner: requests.owner.clone(),
         snapshot_recorder: None,
+        session_overrides: Default::default(),
         upload_store: Arc::new(crate::upload::UploadStore::new(
             crate::upload::UploadStoreOptions::new(
                 |_| Ok(std::path::PathBuf::new()),
@@ -4261,6 +4262,7 @@ async fn prepare_attachment_turn_refuses_a_linked_lease_root() {
         recorders: Arc::default(),
         owner: requests.owner.clone(),
         snapshot_recorder: None,
+        session_overrides: Default::default(),
         upload_store: Arc::new(crate::upload::UploadStore::new(
             crate::upload::UploadStoreOptions::new(
                 |_| Ok(std::path::PathBuf::new()),
