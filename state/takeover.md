@@ -10,20 +10,19 @@
 |---|---|---|
 | `pilotdeck server` 的启停：参数与环境变量优先级、启动输出、token 文件、停机退出码、`/health`、`/auth/local-token`、落盘 | `server-entry-no-config` / `start-stop` / `port-host` / `token-generate` / `token-sources` 5 个场景 SAME | 停机时有客户端连着；非 git 目录的 stderr；`telemetry.enabled: true` |
 
-当前对拍结果（`node scripts/bbx/check.mjs`，2026-11-11，三个并行分支合并后，30 个场景）：基线自比 29/30 SAME（`read-messages-paging` 撞标题记录竞态）；基线 vs Rust 6/30 SAME（6 个 `server-entry-*`）。
+当前对拍结果（`node scripts/bbx/check.mjs`，2026-11-11，权限询问、`agent`、`execute_code` 三个分支合并后，50 个场景，日志 `_tmp/20261110-inventory/build/m1f-bbx.log`）：基线自比 47/50 SAME；基线 vs Rust 6/50 SAME（6 个 `server-entry-*`）。
 
-其余场景的差异绝大部分是同一个原因：5 个工具没有 Rust 实现（`agent`、`subagent`、`send_message`、`ask_user_question`、`execute_code`，清单在 `native_process/tools.rs` 的 `BASELINE_TOOLS_NOT_PORTED`），每次模型请求少 5 个工具声明，连带 `content-length`、`context_budget` 各数值、`fileSize` 不同。`turn-text` 的 55 处全部属于这一类。
+自比不稳的 3 个：`read-messages-paging`、`read-messages-tools`（标题记录竞态）；`tool-subagent`（后台子代理与父轮请求谁先到 provider 不定）。
 
-去掉这一类之后还剩的（下一轮要做的）：
+基线向模型声明 28 个工具，Rust 现在 26 个，只缺 `subagent`、`send_message`（`native_process/tools.rs` 的 `BASELINE_TOOLS_NOT_PORTED`）。它们依赖 Rust 里还不存在的三块：会话级持久收件箱（`agent_turn_enqueued` 没有生产者）、宿主发起的父轮次（轮次管线现在只由客户端 `submit_turn` 驱动，是主要工作量）、子会话冷恢复与后代回收。基线行为记录在场景 `tool-subagent`、`tool-subagent-input`。
 
-- 默认权限模式下的权限询问：基线发 `permission_request` 等用户答复，Rust 直接拒绝（`tool-goal-permission`、`tool-send-attachment-outside`）。bbx 采集器还不能在一步里应答请求。
-- `model_request` 记录里工具结果块的键顺序（`isError`）；`permissionDenials` 的键顺序。
-- `set_permission_mode` 之后会话记录里的 `metadata.permissionMode`。
-- 读文件失败时的事件类型和错误码（`read-messages-tools`：Rust `file_not_found`，基线 `permission_denied`）。
-- `plugins-user-level` 里会话记录有两条错位。
+除入口 6 个外的 44 个场景都还是 DIFF，原因是每次模型请求少这 2 个工具声明，连带 `content-length`、`context_budget` 各数值、`fileSize` 不同。`turn-text` 的 49 处全部属于这一类。去掉这一类（`tools[name=` 和 token 数值字段）之后：
+
+- 无其他差异：`turn-text`、3 个 `project-*`、4 个 `read-messages-*`、2 个 `plugins-*`（`plugins-user-level` 剩 10 处是标题记录竞态）、11 个 `permission-*`、4 个 `tool-agent*`、3 个 `tool-ask-user-question*`、`tool-goal*`、`tool-read-skill`、`tool-send-attachment*`、`tool-structured-output`、`tool-todo-write`、`tool-execute-code`、`tool-execute-code-traceback`。
+- `tool-execute-code-truncate`：367 处，输出过长时溢出文件的位置和文件名与基线不同（真实差异，`execute_code` 次任务的子代理在修）。
+- `tool-execute-code-rpc-write`：3 处 `resultBytes`（耗时位数不定引起，自比也会变）。
+- `tool-subagent`、`tool-subagent-input`：工具未移植。
 - `survey-empty-params` 34 处、`cli-survey-offline` 15 处（M4 / M6）。
-
-已做完并有场景的：7 个工具（`todo_write`、`create_goal`、`get_goal`、`update_goal`、`read_skill`、`structured_output`、`send_attachment`，只在 `bypassPermissions` 下验证了成功路径）；工具轮的落盘记录；13 个投影与 `read_session_messages` / `read_subagent_messages`；内置插件加载、funasr 的 MCP 工具、用户级 skills / MCP server / 插件。
 
 临时分类脚本的做法：`node scripts/bbx/diff.mjs a b --max 100000`，去掉 `tools[name=` 和 token 数值字段后按路径分组。只用来定下一步，不作验收。
 
@@ -41,7 +40,7 @@
 
 1. 入口：已提交（`pilotdeck server` 与基线同参数；Linux CI 全绿）。
 2. 多项目宿主与落盘布局：已提交。规则集中在 `native_process/projects.rs`：运行时路由是纯词法 `resolve(projectKey ?? pilot home)`；对话准入要求项目已登记（`projects/<id>/.cwd`），pilot home 免登记；gateway 自己从不登记项目。负控：把缺省项目改成 cwd，`turn-text` 报出 `sessions[0].cwd` 和 4 条落盘路径差异。
-3. 发给 provider 的请求与会话记录：两轮已提交。第三批并行三件：宿主层权限询问 + 零星差异 + `ask_user_question`（7 个提交，未合并）；子代理运行时（`agent`、`subagent`、`send_message`，未提交）；`execute_code`（主任务已合并，见下；次任务刚开始）。三件都因额度中断过，改动在各自 worktree 里。
+3. 发给 provider 的请求与会话记录：权限询问（`permission_request` / `permission_decide`、`ask_user_question`、写工具文件历史）、工具 `agent`（一次性子代理运行时，`agent.subagents` 配置生效）、`execute_code` 都已合并。`turn-text` 到 SAME 只差 `subagent`、`send_message` 两个工具。`execute_code` 次任务的子代理（验证 `bash` / `write_file` / `edit_file` / `task_*` / `web_fetch` 的执行行为，修溢出文件位置）因额度中断，改动在它的 worktree 里，恢复后要先同步主线。
 4. 三个分支合并后、M1 收尾前：Rust 风险审查（见「剩余工作估算」）。
 5. 尺子复核（2026-11-11，Fable）：已看过 Opus 期间加的两类归一化。随机路径段的规则只认两个固定前缀，`tool-execute-code-truncate` 里两侧溢出路径的真实差异仍被报出。耗时原先保留小数位数，但基线 0.10 会印成 0.1，位数逐次不同，会让自比偶发不稳，已改为整体记成 `<dur>`；耗时的取整与打印格式 bbx 不比，`execute_code` 目前没有专门的单元测试盯这一点，待补。
 
@@ -132,6 +131,12 @@ M2 会话域 → M3 工具回路（同时重跑 `scripts/parity` 的 53 场景�
 旧 workflow 没删的原因：仓库里有 Python 守卫和至少一个 Rust 测试会读 `ci.yml` 的内容。等 M7 精简测试时一起处理。
 
 ## 已知的坑
+
+- bbx 的 `ws` 步骤支持 `answer`：收集帧期间遇到匹配事件就按模板发请求（`{event.字段}` 引用触发事件），用于应答 `permission_request` / `elicitation_request`。说明在 `scripts/bbx/README.md`。
+- 重新构建后第一次起 Rust 二进制明显变慢，3 秒超时的场景会假失败。重建后先跑一次 `node scripts/bbx/check.mjs turn-text` 预热再跑全量。
+- 基线里第一层子代理的 `subagentDepth` 是 2（`OneShotSubagentPort.ts:155-159` 与 `SubagentRuntimeComposition.ts:59` 各加一次），所以 `maxDepth: 2` 时子代理拿不到 `agent` 工具，要 3 才能嵌套。与工具描述不符，但不属于崩溃或丢数据，Rust 照基线做（`tool-agent-nested`）。
+- 子代理会话的写工具记到父会话的文件历史里，权限询问走父会话的应答器（基线子代理的工具注册表是父注册表的视图，`SubagentRuntimeComposition.ts:57-81`）。子代理里触发权限询问没有场景。
+- `html_markdown::ten_mib_of_flat_inline_siblings_stays_fast` 是限时的性能测试，机器负载高时全量 nextest 里会超时失败，单独跑通过（约 56 秒）。
 
 - Linux CI（`takeover.yml`）四条命令全绿。这台 macOS 上全量 nextest 有 3 个失败：`unsafe_boundary::compiler_enforces_gateway_boundary`（守卫只支持 Linux）、`channel::sms::tests::dual_stack_occupier_is_reported_by_the_fixed_host_bind_probe`、`mcp_https::replays_ts_mcp_https_over_local_tls`（后两个与 IPv6 有关，稳定复现，根因未查）。
 - 全量 nextest 约 12 分钟，`src/target` 约 15 GB。改一行 gateway 后增量构建约 35 秒。
