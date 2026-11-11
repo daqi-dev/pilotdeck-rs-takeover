@@ -1,0 +1,125 @@
+{
+  "name": "tool-agent-general",
+  "about": "agent：缺省类型（general-purpose）的子代理先调一次只读工具 glob 再回文本（不按五段格式）；第二轮用未知 subagent_type（不产生子代理）。一个场景只留一个子代理文件：子代理文件名是随机 UUID，两个文件的先后顺序每次运行都可能不同。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Tool run\"}"
+      }
+    },
+    {
+      "name": "child-1-after-tool",
+      "when": [
+        "You are a subagent of PilotDeck",
+        "CHILD-GP-1",
+        "\"tool_call_id\":\"call_child_1\""
+      ],
+      "reply": {
+        "text": "I found one yaml file."
+      }
+    },
+    {
+      "name": "child-1",
+      "when": [
+        "You are a subagent of PilotDeck",
+        "CHILD-GP-1"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_child_1",
+          "name": "glob",
+          "arguments": {
+            "pattern": "*.yaml"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-2-after-tool",
+      "when": [
+        "turn-2:",
+        "\"tool_call_id\":\"call_bbx_2\""
+      ],
+      "reply": {
+        "text": "Done 2."
+      }
+    },
+    {
+      "name": "turn-2",
+      "when": [
+        "turn-2:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_2",
+          "name": "agent",
+          "arguments": {
+            "description": "Unknown type",
+            "prompt": "CHILD-NOPE-2: never runs.",
+            "subagent_type": "nope"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-1-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "turn-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1",
+          "name": "agent",
+          "arguments": {
+            "description": "List yaml files",
+            "prompt": "CHILD-GP-1: list the yaml files."
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-1: run the tool"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-2: run the tool"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-bbx-1"
+      }
+    }
+  ]
+}

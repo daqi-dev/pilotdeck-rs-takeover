@@ -1,0 +1,70 @@
+{
+  "name": "tool-agent",
+  "about": "agent：父轮调用 agent 工具（旧别名 subagentType，值带空白和大小写、写成 Explorer），explore 子代理跑一轮模型请求回五段格式的报告，父轮拿到工具结果后回文本；随后读会话消息。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Tool run\"}"
+      }
+    },
+    {
+      "name": "parent-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "parent",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1",
+          "name": "agent",
+          "arguments": {
+            "description": "Count the files",
+            "prompt": "CHILD-DIRECTIVE-7: report how many files exist.",
+            "subagentType": " Explorer "
+          }
+        }
+      }
+    },
+    {
+      "name": "child",
+      "when": [
+        "CHILD-DIRECTIVE-7"
+      ],
+      "reply": {
+        "text": "Scope: counted files.\nResult: there are 0 files.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-1: run the tool"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-bbx-1"
+      }
+    }
+  ]
+}
