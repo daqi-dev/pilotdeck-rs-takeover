@@ -25,7 +25,15 @@ for (const file of scenarios) {
   const name = path.basename(file, '.json');
   const a = path.join(outDir, `${name}.${sideA}${self ? '-1' : ''}.json`);
   const b = path.join(outDir, `${name}.${sideB}${self ? '-2' : ''}.json`);
-  const runs = [node('run.mjs', sideA, file, a), node('run.mjs', sideB, file, b)];
+  // 采集是独占的：锁被别的运行占着（run.mjs 退出码 3）就等，最多等 20 分钟。
+  const collect = (side, out) => {
+    for (let waited = 0; ; waited += 15) {
+      const r = node('run.mjs', side, file, out);
+      if (r.status !== 3 || waited >= 1200) return r;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 15000);
+    }
+  };
+  const runs = [collect(sideA, a), collect(sideB, b)];
   const failed = runs.find((r) => r.status !== 0);
   if (failed) { bad++; rows.push([name, 'RUN FAILED', failed.stderr.trim().split('\n').pop()]); continue; }
   const d = node('diff.mjs', a, b, '--max', '400', ...(self ? ['--self'] : []));

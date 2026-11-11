@@ -105,7 +105,7 @@ const portFree = (port) => new Promise((resolve) => {
 // 那里有人监听时一律拒跑，免得碰到本机正在运行的实例。用 lsof 看，不去连它。
 import { spawnSync } from 'node:child_process';
 if (spawnSync('lsof', ['-nP', '-iTCP:18789', '-sTCP:LISTEN'], { encoding: 'utf8' }).stdout.trim()) {
-  console.error('bbx: something is listening on 18789 (a real PilotDeck?); refusing to run'); process.exit(3);
+  console.error('bbx: something is listening on 18789 (a real PilotDeck?); refusing to run'); process.exit(5);
 }
 for (const p of [GATEWAY_PORT, MOCK_PORT]) {
   if (!(await portFree(p))) { console.error(`bbx: port ${p} is in use`); process.exit(3); }

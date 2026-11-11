@@ -66,5 +66,9 @@
         "sessionKey": "s-bbx-1"
       }
     }
-  ]
+  ],
+  "volatile": [
+    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages|resultBytes)$"
+  ],
+  "volatileWhy": "工具结果文本里带位数不定的耗时或进程号，文本长度逐次差几个字符，token 估算和字节数随之变；基线自比已证明"
 }
