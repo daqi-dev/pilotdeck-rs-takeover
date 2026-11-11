@@ -89,7 +89,6 @@ mutations = [
      '    let _ = (capability, registered); false', HOST, '#1231 exact wired capability set'),
 
 
-    ('skills-restart-refused', ASSEMBLY, 'if management && name == "skills" {', 'if management && name == "unwired_skills" {', HOST, '#1231 native management boot/restart'),
     ('snapshot-storage-omitted', ASSEMBLY, 'let project = project_registry(&options, &env);', 'let mut env = env; env.remove("PILOTDECK_STORAGE_ROOT"); let project = project_registry(&options, &env);', HOST, '#1231 snapshot route with explicit storage'),
     ('oracle-corruption', ORACLE, '"node": "v22.22.0"', '"node": "v0.0.0"', 'native_process::management_tests::regenerates_identically', '#280 native-management/oracle.json differs'),
 ]
@@ -98,7 +97,6 @@ mutations.append(('pending-io-blocks-host', SOURCE, '        Some(\n            
 
 mutations.append(('commands-nested-blocking', SOURCE, 'return Some(self.commands(params).await);', 'let requests = self.clone(); let params = params.clone(); let runtime = tokio::runtime::Handle::current();\n            return Some(tokio::task::spawn_blocking(move || runtime.block_on(requests.commands(&params))).await.map_err(|e| RequestError::new(e.to_string())).and_then(|r| r));', 'native_process::management_tests::management_progress_with_one_available_blocking_thread', '#1231 management progress with one blocking slot'))
 
-mutations.append(('skill-execution-enabled', ASSEMBLY, 'validate_profile_inner(options, env, false).await', 'validate_profile_inner(options, env, true).await', HOST, '#1231 skill management does not enable execution'))
 
 mutations.append(('management-nested-acquire', SOURCE, 'let lease = self\n            .project\n            .acquire(Some(&project_root))\n            .map_err(|e| RequestError::new(e.to_string()))?;', 'let project = self.project.clone();\n        let lease = tokio::task::spawn_blocking(move || project.acquire(Some(&project_root))).await.map_err(|e| RequestError::new(e.to_string()))?.map_err(|e| RequestError::new(e.to_string()))?;', 'native_process::management_tests::management_progress_with_one_available_blocking_thread', '#1231 management progress with one blocking slot'))
 
@@ -466,13 +464,11 @@ EXPECTED_NAMES = (
     'capability-unwired-method-advertised',
     'capability-unserved-history-method',
     'capability-registry-filter-ignored',
-    'skills-restart-refused',
     'snapshot-storage-omitted',
     'oracle-corruption',
     'cursor-array-refused',
     'pending-io-blocks-host',
     'commands-nested-blocking',
-    'skill-execution-enabled',
     'management-nested-acquire',
     'query-surrogate-lossy',
     'notification-before-dirty',

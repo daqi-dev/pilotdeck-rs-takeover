@@ -848,3 +848,51 @@ fn plugin_disposal_completion_survives_runtime_shutdown() {
         }
     });
 }
+
+/// loadBuiltinPlugins.ts:12-37: subdirectories with a `plugin.json` become
+/// manifest-only builtin plugins in directory order; a directory without a
+/// manifest and a plain file are skipped; the first manifest that cannot be
+/// parsed ends the scan and keeps what was collected before it.
+#[test]
+fn builtin_plugin_scan_follows_the_baseline_loader() {
+    let root = std::env::temp_dir().join(format!("pdrs-builtin-plugins-{}", uuid::Uuid::new_v4()));
+    let write = |relative: &str, text: &str| {
+        let path = root.join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    write(
+        "a-first/plugin.json",
+        r#"{"name":"first","skills":"skills","mcpServers":{"echo":{"command":"node"}}}"#,
+    );
+    write(
+        "a-first/skills/hello/SKILL.md",
+        "---\nname: hello\n---\nhi\n",
+    );
+    write("b-no-manifest/readme.txt", "x");
+    write("c-file", "x");
+    write("d-second/plugin.json", r#"{"name":"second"}"#);
+    write("e-broken/plugin.json", "{ not json");
+    write("f-after-broken/plugin.json", r#"{"name":"after"}"#);
+
+    let plugins = loader::load_builtin_plugins(&root);
+    let names: Vec<&str> = plugins.iter().map(|plugin| plugin.name.as_str()).collect();
+    assert_eq!(names, ["first", "second"]);
+    assert!(
+        plugins
+            .iter()
+            .all(|plugin| plugin.source == PluginSource::Builtin)
+    );
+    assert_eq!(plugins[0].path, root.join("a-first"));
+    // Manifest-only: contributions are loaded by the runtime's refresh.
+    assert!(plugins[0].skills.is_empty());
+    assert!(
+        plugins[0]
+            .mcp_servers
+            .as_ref()
+            .is_some_and(|servers| servers.get("echo").is_some())
+    );
+    assert!(plugins[1].mcp_servers.is_none());
+    assert!(loader::load_builtin_plugins(&root.join("missing")).is_empty());
+    std::fs::remove_dir_all(root).unwrap();
+}

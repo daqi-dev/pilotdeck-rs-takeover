@@ -1661,3 +1661,47 @@ async fn deeply_nested_malformed_frame_closes_invalid_json_like_ts() {
     );
     assert_eq!(text.frames.lock().unwrap().len(), 1);
 }
+
+/// GatewayServer.ts:62-84 and GatewayWsConnection.sendNotification: a
+/// broadcast reaches every registered connection that has completed the
+/// handshake, in registration order, as `{type, name, payload}`; an
+/// unauthenticated connection gets nothing and a dropped one is forgotten.
+#[tokio::test]
+async fn broadcast_reaches_only_authenticated_live_connections() {
+    let connect = || {
+        let text = Arc::new(MemoryText::default());
+        let connection = Arc::new(GatewayConnection::new(
+            text.clone(),
+            Arc::new(Gateway::new(false)),
+            "fixture-token".into(),
+            "test".into(),
+        ));
+        (text, connection)
+    };
+    let hello = json!({"type":"hello","protocolVersion":GATEWAY_PROTOCOL_VERSION,"clientName":"ui","clientVersion":"test","token":"fixture-token"}).to_string();
+    let broadcast = ConnectionBroadcast::default();
+    let (authed_text, authed) = connect();
+    let (silent_text, silent) = connect();
+    let (gone_text, gone) = connect();
+    for connection in [&authed, &silent, &gone] {
+        broadcast.register(connection);
+    }
+    authed.receive(&hello).await.unwrap();
+    gone.receive(&hello).await.unwrap();
+    drop(gone);
+    let sent_before = authed_text.frames.lock().unwrap().len();
+    let gone_before = gone_text.frames.lock().unwrap().len();
+
+    let payload =
+        parse_json(r#"{"changedPaths":[],"changeClasses":["extension-changed"]}"#).unwrap();
+    broadcast.broadcast("config_changed", &payload);
+
+    let frames = authed_text.frames.lock().unwrap();
+    assert_eq!(
+        frames[sent_before..],
+        [r#"{"type":"notification","name":"config_changed","payload":{"changedPaths":[],"changeClasses":["extension-changed"]}}"#.to_owned()]
+    );
+    assert!(silent_text.frames.lock().unwrap().is_empty());
+    assert_eq!(gone_text.frames.lock().unwrap().len(), gone_before);
+    drop(silent);
+}

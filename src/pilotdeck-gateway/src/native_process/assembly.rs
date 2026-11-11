@@ -413,9 +413,7 @@ async fn start_assembly(
         };
         eprintln!("native run registry {state}");
     }
-    // Management can inspect existing skills; turn admission still checks that
-    // unsupported skill prompt/tool composition is not silently omitted.
-    validate_profile_inner(&options, &env, true).await?;
+    validate_profile(&options, &env).await?;
     // The baseline gateway never registers a project (the `.cwd` markers are
     // written by its web server and cron storage, src/web/server/
     // listProjects.ts and src/cron/runtime/CronProjectStorageProvider.ts:65),
@@ -652,48 +650,67 @@ async fn start_assembly(
                 // factory's per-session registry. An unpublished config keeps
                 // the empty composition: the ask-rule sync above already
                 // reported that wiring miss for this assembly (#1429).
-                let (session_mcp, session_mcp_release) = match mcp_config_handle.get() {
-                    Some(mcp_config) => {
-                        let provider = staged
-                            .owner(Family::McpProvider)
-                            .ok_or_else(|| RuntimeError::new("Native MCP provider is missing."))?;
-                        let provider = provider
-                            .as_any()
-                            .downcast_ref::<McpProviderResource>()
-                            .ok_or_else(|| {
-                                RuntimeError::new("Native MCP provider has the wrong type.")
-                            })?
-                            .provider()
-                            .clone();
-                        // #1433 fix-r1 (review P2#4): read the snapshot's
-                        // already-normalized key — `config/snapshot.rs`
-                        // normalizes it to a finite number with a floor of 1
-                        // (the TS `numberField(..., 5)` + `Math.max(1, …)`),
-                        // so re-clamping here would be a second
-                        // normalization, and the old `as usize` cast
-                        // truncated a fractional cap (TS `size >= 2.5` still
-                        // admits the third registration).
-                        let max_per_session_instances = snapshot
-                            .get("config")
-                            .and_then(|config| config.get("gateway"))
-                            .and_then(|gateway| gateway.get("maxPerSessionMcpInstances"))
-                            .and_then(JsValue::as_number)
-                            .unwrap_or(5.0);
-                        super::tools::session_mcp_tools(super::tools::SessionMcpToolsOptions {
-                            mcp_config,
-                            provider: &provider,
-                            per_session_runtimes: &session_mcp_runtimes,
-                            session_key: &context.session_key,
-                            max_per_session_instances,
-                            on_diagnostic: mcp_diagnostic.clone(),
-                        })
-                        .await?
-                    }
-                    None => (
-                        super::tools::SessionMcpTools::empty(),
-                        super::tools::SessionMcpRelease::default(),
-                    ),
-                };
+                let (session_mcp, session_mcp_release) =
+                    match mcp_config_handle.get() {
+                        Some(mcp_config) => {
+                            let provider = staged.owner(Family::McpProvider).ok_or_else(|| {
+                                RuntimeError::new("Native MCP provider is missing.")
+                            })?;
+                            let provider = provider
+                                .as_any()
+                                .downcast_ref::<McpProviderResource>()
+                                .ok_or_else(|| {
+                                    RuntimeError::new("Native MCP provider has the wrong type.")
+                                })?
+                                .provider()
+                                .clone();
+                            // #1433 fix-r1 (review P2#4): read the snapshot's
+                            // already-normalized key — `config/snapshot.rs`
+                            // normalizes it to a finite number with a floor of 1
+                            // (the TS `numberField(..., 5)` + `Math.max(1, …)`),
+                            // so re-clamping here would be a second
+                            // normalization, and the old `as usize` cast
+                            // truncated a fractional cap (TS `size >= 2.5` still
+                            // admits the third registration).
+                            let max_per_session_instances = snapshot
+                                .get("config")
+                                .and_then(|config| config.get("gateway"))
+                                .and_then(|gateway| gateway.get("maxPerSessionMcpInstances"))
+                                .and_then(JsValue::as_number)
+                                .unwrap_or(5.0);
+                            // `await runtime.pluginRuntime.refresh()` then the
+                            // generation's `contributions.mcpServers`
+                            // (ProjectSessionRuntimeBundle.ts:247-279): plugin
+                            // servers — the builtin ones included — are composed
+                            // when the session is created.
+                            let plugin_servers =
+                                match staged.resource(Resource::PluginRuntime).as_ref().and_then(
+                                    |resource| resource.as_any().downcast_ref::<PluginResources>(),
+                                ) {
+                                    Some(plugins) => {
+                                        plugins.runtime.refresh().await.map_err(|error| {
+                                            RuntimeError::new(error.to_string())
+                                        })?;
+                                        plugins.runtime.mcp_servers().await
+                                    }
+                                    None => JsObject::new(),
+                                };
+                            super::tools::session_mcp_tools(super::tools::SessionMcpToolsOptions {
+                                mcp_config,
+                                plugin_servers,
+                                provider: &provider,
+                                per_session_runtimes: &session_mcp_runtimes,
+                                session_key: &context.session_key,
+                                max_per_session_instances,
+                                on_diagnostic: mcp_diagnostic.clone(),
+                            })
+                            .await?
+                        }
+                        None => (
+                            super::tools::SessionMcpTools::empty(),
+                            super::tools::SessionMcpRelease::default(),
+                        ),
+                    };
                 retained.push(move || Box::pin(async move { session_mcp_release.release().await }));
                 let tail = TailConfig {
                     cwd: Some(project_root.clone()),
@@ -1027,6 +1044,12 @@ async fn start_assembly(
     let fallback_factory_disposed = factory_disposed.clone();
     let fallback_project_disposed = project_disposed.clone();
     let fallback_observer = cleanup_observer.clone();
+    // `bindServer(server)` (src/cli/pilotdeck.ts:248): the refresh bundle
+    // broadcasts `config_changed` to every authenticated connection of the
+    // gateway server. The set exists before the host so the builder can bind
+    // it; the host registers each accepted connection into it.
+    let connection_broadcast = Arc::new(crate::runtime::connection::ConnectionBroadcast::default());
+    let build_connection_broadcast = connection_broadcast.clone();
     let host = TurnGateway::start_with_cleanup_budget(
         TurnReplayOptions::new(),
         // #1746: the failure path waits out this embedding's own drain budget
@@ -1083,6 +1106,7 @@ async fn start_assembly(
                 &options.project_root,
                 &env,
             )?;
+            settings.bundle.bind_server(build_connection_broadcast);
             // #2294 A7.8: the one automation bundle of the native process —
             // the port of `ProjectAutomationBundle`, which now constructs the
             // one `CronManager` (the #1326 lane's manager behind the bundle's
@@ -1332,6 +1356,7 @@ async fn start_assembly(
     );
     match host {
         Ok(host) => {
+            let host = host.with_connection_broadcast(connection_broadcast);
             // #1328: start config-enabled channels (pilotdeckServer.ts:288-296)
             // once the builder has published the gateway port. #2301: the
             // configured half — `loadEnabledChannels(config.adapters)` — joins
@@ -1501,47 +1526,33 @@ pub(super) fn register_project_at(
 /// This entry's currently supported profile is a text main agent with native
 /// read tools. Refuse configured integrations before admitting a turn instead
 /// of silently dropping their tools/hooks or launching an implicit helper.
+/// What the native host still refuses to start with: configured hooks, module
+/// bindings and subagents, none of which it serves yet (the baseline has no
+/// such refusal). MCP servers, plugins and skills are served — see
+/// `session_mcp_tools` and the plugin runtime — and are no longer refused.
+/// Plugins that contribute hooks stay refused with the config-level hooks.
 pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(), ProxyError> {
-    validate_profile_inner(options, env, false).await
-}
-
-async fn validate_profile_inner(
-    options: &Options,
-    env: &Env,
-    management: bool,
-) -> Result<(), ProxyError> {
-    struct Captured<'a>(&'a Env, &'a std::path::Path);
-    impl crate::runtime::mcp::protocol::McpEnvironment for Captured<'_> {
-        fn env(&self, name: &JsString) -> Option<JsString> {
-            self.0.get(&name.to_utf8().ok()?).map(|v| v.as_str().into())
-        }
-        fn home(&self) -> JsString {
-            self.1.to_string_lossy().into_owned().into()
-        }
+    use crate::runtime::plugins::{PilotExtensionPaths, PluginSource, loader};
+    let paths = PilotExtensionPaths::resolve(&options.project, &options.home);
+    let mut plugin_paths: Vec<_> = loader::discover_plugin_paths(&[
+        (paths.global_plugins_dir, PluginSource::Global),
+        (paths.project_plugins_dir, PluginSource::Project),
+    ])
+    .into_iter()
+    .map(|found| (found.path, found.source))
+    .collect();
+    if let Some(root) = &options.builtin_plugins_root {
+        plugin_paths.extend(
+            loader::load_builtin_plugins(root)
+                .iter()
+                .map(|plugin| (plugin.path.clone(), PluginSource::Builtin)),
+        );
     }
-    let mcp = crate::runtime::mcp::protocol::load_mcp_server_config(
-        &options.project,
-        &options.home,
-        &Captured(env, &options.homedir()),
-    )?;
-    if !mcp.servers.own_entries().is_empty() || !mcp.diagnostics.is_empty() {
-        return Err("Native isolated profile does not yet support configured MCP servers.".into());
-    }
-    for base in [&options.home, &options.project.join(".pilotdeck")] {
-        for name in ["plugins", "skills"] {
-            if management && name == "skills" {
-                continue;
-            }
-            match std::fs::read_dir(base.join(name)) {
-                Ok(entries) => {
-                    if entries.count() != 0 {
-                        return Err("Native isolated profile does not yet support configured plugins, skills or hooks.".into());
-                    }
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
+    if plugin_paths.iter().any(|(path, source)| {
+        loader::load_plugin_from_path(path, *source)
+            .is_ok_and(|plugin| plugin.hooks_config.is_some_and(|hooks| !hooks.is_empty()))
+    }) {
+        return Err("Native isolated profile does not yet support configured hooks.".into());
     }
     use crate::runtime::project::ConfigSource;
     let snapshot = crate::runtime::project::NativeConfigSource::new(
@@ -1611,6 +1622,22 @@ pub(super) fn turn_ports(
 }
 
 pub(super) fn project_registry(options: &Options, env: &Env) -> Arc<ProjectRuntimeRegistry> {
+    // `builtinPlugins: options.builtinPlugins ?? loadBuiltinPlugins()`
+    // (ProjectRuntimeRegistry.ts:1609): one scan for the process, shared by
+    // every project runtime. The MCP placeholders of those plugins resolve
+    // against the same directory (projectMcpSpec.ts).
+    let builtin_plugins = options
+        .builtin_plugins_root
+        .as_deref()
+        .map(crate::runtime::plugins::loader::load_builtin_plugins)
+        .unwrap_or_default();
+    let builtin_mcp_paths = options
+        .builtin_plugins_root
+        .as_deref()
+        .and_then(|root| {
+            crate::runtime::mcp::registry::BuiltinMcpPaths::for_builtin_plugins(root, env).ok()
+        })
+        .unwrap_or_default();
     Arc::new(ProjectRuntimeRegistry::new(
         options.project.clone(),
         Arc::new(ProjectResourcesFactory::new(ProjectResourcesOptions {
@@ -1631,11 +1658,12 @@ pub(super) fn project_registry(options: &Options, env: &Env) -> Arc<ProjectRunti
             .with_native_models()
             .with_context_memory()
             .with_tools_mcp()
+            .with_builtin_mcp_paths(builtin_mcp_paths)
             .with_plugins(crate::runtime::plugins::PluginRuntimeOptions {
                 project_root: options.project.clone(),
                 pilot_home: options.home.clone(),
                 builtin_skills_root: options.builtin_skills_root.clone(),
-                builtin_plugins: vec![],
+                builtin_plugins,
                 builtin_plugins_enabled: HashMap::new(),
             })
             .with_interaction(),

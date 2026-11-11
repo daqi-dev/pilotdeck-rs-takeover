@@ -38,7 +38,12 @@ impl FamilyResource for McpProviderResource {
 
 /// Production MCP family source.  Constructs a `ProjectMcpRuntimeProvider`
 /// from the staged config and registers it as the McpProvider owner.
-pub struct McpFamilySource;
+#[derive(Default)]
+pub struct McpFamilySource {
+    /// What the builtin plugins' MCP placeholders resolve to; the default
+    /// (all empty) is a host that ships no builtin plugins.
+    pub builtin_paths: BuiltinMcpPaths,
+}
 
 impl ResourceFamilySource for McpFamilySource {
     fn family(&self) -> Family {
@@ -75,7 +80,7 @@ impl ResourceFamilySource for McpFamilySource {
             proxy: proxy_settings,
             on_diagnostic: None,
             environment: Arc::new(SystemEnvironment),
-            builtin_paths: BuiltinMcpPaths::default(),
+            builtin_paths: self.builtin_paths.clone(),
         };
 
         let provider = Arc::new(ProjectMcpRuntimeProvider::new(options));

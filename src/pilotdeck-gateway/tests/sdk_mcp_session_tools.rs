@@ -213,6 +213,7 @@ async fn compose(
     session_key: &str,
 ) -> (SessionMcpTools, SessionMcpRelease) {
     session_mcp_tools(SessionMcpToolsOptions {
+        plugin_servers: pilotdeck_protocol::JsObject::new(),
         mcp_config: config,
         provider,
         per_session_runtimes,

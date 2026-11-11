@@ -137,37 +137,41 @@ fn project(
         } else {
             namespace
         };
-        let mut item = object([
-            (
-                "name",
-                JsValue::String(
-                    if name.starts_with('/') {
-                        name.to_owned()
-                    } else {
-                        format!("/{name}")
-                    }
-                    .into(),
-                ),
+        // Key order is toExtensionCommands' literal (commands.ts:91-98):
+        // name, description?, namespace, type, argumentHint?, metadata.
+        let optional = |value: Option<String>| value.filter(|text| !text.is_empty());
+        let mut item = object([(
+            "name",
+            JsValue::String(
+                if name.starts_with('/') {
+                    name.to_owned()
+                } else {
+                    format!("/{name}")
+                }
+                .into(),
             ),
-            ("namespace", namespace.into()),
-            ("type", "command".into()),
-            (
-                "metadata",
-                object([
-                    ("type", "command".into()),
-                    ("source", "plugin".into()),
-                    ("namespace", namespace.into()),
-                ]),
-            ),
-        ]);
-        for (key, value) in [
-            ("description", c.description),
-            ("argumentHint", c.argument_hint),
-        ] {
-            if let Some(value) = value.filter(|s| !s.is_empty()) {
-                set(&mut item, key, JsValue::String(value.into()));
-            }
+        )]);
+        if let Some(description) = optional(c.description) {
+            set(
+                &mut item,
+                "description",
+                JsValue::String(description.into()),
+            );
         }
+        set(&mut item, "namespace", namespace.into());
+        set(&mut item, "type", "command".into());
+        if let Some(hint) = optional(c.argument_hint) {
+            set(&mut item, "argumentHint", JsValue::String(hint.into()));
+        }
+        set(
+            &mut item,
+            "metadata",
+            object([
+                ("type", "command".into()),
+                ("source", "plugin".into()),
+                ("namespace", namespace.into()),
+            ]),
+        );
         all.push(item);
     }
     let mut seen = HashSet::new();

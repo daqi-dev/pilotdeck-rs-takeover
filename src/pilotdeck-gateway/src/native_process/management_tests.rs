@@ -712,14 +712,6 @@ async fn production_host_management_and_restart() {
         // false-FAIL the day TS legitimately drops names from them (#1761
         // paired state to state for exactly this reason). The #1352 derived
         // expectation makes the enabled-state subset check a tautology anyway.
-        negative_assert!(
-            assembly::validate_profile(&options, &options.environment(crate::config::Env::new()))
-                .await
-                .is_err_and(|e| e
-                    .to_string()
-                    .contains("configured plugins, skills or hooks")),
-            "#1231 skill management does not enable execution"
-        );
         host.shutdown(options.drain_budget)
             .await
             .expect("#1231 native host shutdown");

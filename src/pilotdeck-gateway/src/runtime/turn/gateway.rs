@@ -307,8 +307,20 @@ pub struct TurnGateway {
     gateway: Arc<ConnectionTurnGateway>,
     stop: watch::Sender<Option<Duration>>,
     stopped: watch::Receiver<Option<Result<(), String>>>,
+    /// The server's connection set for `broadcastNotification`; `None` for an
+    /// embedding that pushes no notifications.
+    broadcast: Option<Arc<crate::runtime::connection::ConnectionBroadcast>>,
 }
 impl TurnGateway {
+    /// Register every connection accepted from now on with `broadcast`, the
+    /// set `startGatewayServer` keeps for `broadcastNotification`.
+    pub fn with_connection_broadcast(
+        mut self,
+        broadcast: Arc<crate::runtime::connection::ConnectionBroadcast>,
+    ) -> Self {
+        self.broadcast = Some(broadcast);
+        self
+    }
     pub fn start(
         options: TurnReplayOptions,
         build: impl FnOnce(Arc<TurnEventCoordinator>) -> std::io::Result<GatewayServices>
@@ -499,6 +511,7 @@ impl TurnGateway {
             gateway,
             stop,
             stopped,
+            broadcast: None,
         })
     }
     /// Signal shutdown synchronously, including from an embedding's Drop guard.
@@ -550,14 +563,18 @@ impl TurnGateway {
         token: String,
         server_version: String,
     ) -> HostedConnection {
+        let connection = Arc::new(GatewayConnection::new(
+            text,
+            self.gateway.clone(),
+            token,
+            server_version,
+        ));
+        if let Some(broadcast) = &self.broadcast {
+            broadcast.register(&connection);
+        }
         HostedConnection {
             host: self.clone(),
-            connection: Arc::new(GatewayConnection::new(
-                text,
-                self.gateway.clone(),
-                token,
-                server_version,
-            )),
+            connection,
         }
     }
     /// External permission/hooks also enter on the host; never expose the

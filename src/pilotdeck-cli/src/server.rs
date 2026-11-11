@@ -59,6 +59,7 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
         sidecar: exe_dir.unwrap_or(Path::new("")).join(SIDECAR),
         env: env.strings(),
         builtin_skills_root: Some(builtin_root),
+        builtin_plugins_root: builtin_plugins_root(env, cwd, exe_dir),
     };
     native_process::serve(options, |listening| {
         stdout_line(&format!("PilotDeck server listening: {}", listening.url));
@@ -74,6 +75,39 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
         "[telemetry] shutdown snapshot {TELEMETRY_SNAPSHOT}"
     ));
     Ok(0)
+}
+
+/// The builtin plugins directory. The baseline has no such setting: it scans
+/// the directory its compiled `loadBuiltinPlugins` module sits in
+/// (`dist/src/extension/plugins/builtin`). The Rust layout follows the bundled
+/// skills convention (`skills::builtin_skills_root`): a non-empty
+/// `PILOTDECK_BUNDLED_PLUGINS_DIR` wins, otherwise the first existing
+/// `builtin-plugins` directory one or two levels above the executable. Unlike
+/// skills there is no working-directory fallback — plugins can declare
+/// processes to start, so nothing is loaded from wherever the server happens
+/// to be launched. `None` ships no builtin plugins, which is what the
+/// baseline does when its scan fails.
+///
+/// The directory is reported with symlinks resolved: the baseline's is the
+/// location of a loaded module, which Node always gives as a real path, and
+/// that path shows up in the skills section of the system prompt.
+fn builtin_plugins_root(env: &Env, cwd: &Path, exe_dir: Option<&Path>) -> Option<PathBuf> {
+    let real = |path: PathBuf| std::fs::canonicalize(&path).unwrap_or(path);
+    if let Some(dir) = env
+        .get("PILOTDECK_BUNDLED_PLUGINS_DIR")
+        .filter(|dir| !dir.is_empty())
+    {
+        return Some(real(paths::resolve(cwd, Path::new(dir))));
+    }
+    let exe_dir = exe_dir?;
+    [
+        exe_dir.join("../builtin-plugins"),
+        exe_dir.join("../../builtin-plugins"),
+    ]
+    .into_iter()
+    .map(|candidate| paths::resolve(cwd, &candidate))
+    .find(|candidate| candidate.is_dir())
+    .map(real)
 }
 
 /// readPort (pilotdeck.ts:517-525): the argument after the first `--port`,
@@ -98,6 +132,50 @@ mod tests {
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|arg| (*arg).to_owned()).collect()
+    }
+
+    #[test]
+    fn builtin_plugins_root_is_the_override_then_the_install_layout() {
+        let base = std::fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .join(format!("pdrs-plugins-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let exe_dir = base.join("stage/bin");
+        let cwd = base.join("work");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        std::fs::create_dir_all(cwd.join("rel")).unwrap();
+        // Nothing shipped and no override: no builtin plugins, and never the
+        // working directory.
+        std::fs::create_dir_all(cwd.join("builtin-plugins")).unwrap();
+        assert_eq!(
+            builtin_plugins_root(&Env::from_pairs(&[]), &cwd, Some(&exe_dir)),
+            None
+        );
+        assert_eq!(
+            builtin_plugins_root(&Env::from_pairs(&[]), &cwd, None),
+            None
+        );
+        // The install layout: beside `bin`.
+        std::fs::create_dir_all(base.join("stage/builtin-plugins")).unwrap();
+        let empty = Env::from_pairs(&[("PILOTDECK_BUNDLED_PLUGINS_DIR", "")]);
+        assert_eq!(
+            builtin_plugins_root(&empty, &cwd, Some(&exe_dir)),
+            Some(base.join("stage/builtin-plugins"))
+        );
+        // A non-empty override wins, resolved against the working directory.
+        let env = Env::from_pairs(&[("PILOTDECK_BUNDLED_PLUGINS_DIR", "rel")]);
+        assert_eq!(
+            builtin_plugins_root(&env, &cwd, Some(&exe_dir)),
+            Some(cwd.join("rel"))
+        );
+        // A missing override directory is kept as named (nothing loads from it).
+        let env =
+            Env::from_pairs(&[("PILOTDECK_BUNDLED_PLUGINS_DIR", "/nonexistent/pdrs-plugins")]);
+        assert_eq!(
+            builtin_plugins_root(&env, &cwd, Some(&exe_dir)),
+            Some(PathBuf::from("/nonexistent/pdrs-plugins"))
+        );
+        std::fs::remove_dir_all(base).unwrap();
     }
 
     #[test]

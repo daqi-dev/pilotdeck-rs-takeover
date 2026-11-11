@@ -1901,17 +1901,13 @@ pub struct NativeSettingsOptions {
 /// real refresh bundle and config store.
 pub struct NativeSettings {
     pub gateway: Arc<SettingsGateway>,
-    // Nothing in production reads the handle yet: the delegates inside the
-    // gateway keep the bundle alive. #1320 fix-r1 F2: the production
-    // composition never binds a notification server — the isolated native
-    // process has no server-push channel, so the bundle's broadcasts are
-    // simply lost (the connection registry is #1669, deliberately not built
-    // here). Tests that need to observe the dirty/broadcast order must
-    // `bind_server` a recording server themselves AND assert both
-    // `has_notification_server()` and the difference from the production
-    // assembly (`native_settings_production_binds_no_notification_server`).
-    // Keep `dead_code`: only those tests read the handle.
-    #[allow(dead_code)]
+    // The delegates inside the gateway keep the bundle alive; the process
+    // assembly reads the handle once, to `bind_server` the gateway server's
+    // connection set (`ConnectionBroadcast`, the baseline's
+    // `bindServer(server)`). This composition itself binds nothing (#1320
+    // fix-r1 F2): tests that observe the dirty/broadcast order `bind_server`
+    // a recording server themselves and assert `has_notification_server()`
+    // (`native_settings_production_binds_no_notification_server`).
     pub bundle: Arc<RefreshBundle>,
 }
 
@@ -1926,13 +1922,11 @@ pub struct NativeSettings {
 /// assembled into the isolated native process) and answer the TS
 /// unconfigured shapes through the component's own option handling.
 ///
-/// #1320 fix-r1 F2: this composition never binds a notification server — the
-/// isolated native process has no server-push channel, so the bundle's
-/// broadcasts are lost (the connection registry is #1669, deliberately not
-/// built here). Tests that need to observe the dirty/broadcast order must
-/// `bind_server` a recording server themselves AND assert both
-/// `has_notification_server()` and the difference from the production
-/// assembly.
+/// #1320 fix-r1 F2: this composition binds no notification server itself.
+/// The process assembly binds the gateway server's connection set right
+/// after it (`ConnectionBroadcast`, the baseline's `bindServer(server)`);
+/// tests that observe the dirty/broadcast order `bind_server` a recording
+/// server themselves and assert `has_notification_server()`.
 pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
     let NativeSettingsOptions {
         owner,
@@ -1979,13 +1973,11 @@ pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
 /// other config reads (`NativeConfigSource`: PILOT_HOME from the
 /// environment, the served project as cwd and `projectRoot`).
 ///
-/// #1320 fix-r1 F2: this composition never binds a notification server —
-/// the isolated native process has no server-push channel, so the bundle's
-/// broadcasts are lost (the connection registry is #1669, deliberately not
-/// built here). Tests that need to observe the dirty/broadcast order must
-/// `bind_server` a recording server themselves AND assert both
-/// `has_notification_server()` and the difference from the production
-/// assembly.
+/// #1320 fix-r1 F2: this composition binds no notification server itself.
+/// The process assembly binds the gateway server's connection set right
+/// after it (`ConnectionBroadcast`, the baseline's `bindServer(server)`);
+/// tests that observe the dirty/broadcast order `bind_server` a recording
+/// server themselves and assert `has_notification_server()`.
 pub fn native_settings_for_process(
     owner: SessionOwner,
     project: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
