@@ -710,7 +710,12 @@ mod tests {
             crate::metadata::object([
                 ("sessionKey", "c4-session".into()),
                 ("turnId", "status-through-the-recorder".into()),
-                ("status", JsValue::Undefined),
+                // A nullish status throws on `status.event` in TS before any
+                // write; the writer path needs a status object.
+                (
+                    "status",
+                    crate::metadata::object([("event", "note".into())]),
+                ),
             ]),
         )
         .await
@@ -1038,7 +1043,10 @@ mod tests {
             crate::metadata::object([
                 ("sessionKey", "d8-session".into()),
                 ("turnId", "must-not-vanish".into()),
-                ("status", JsValue::Undefined),
+                (
+                    "status",
+                    crate::metadata::object([("event", "note".into())]),
+                ),
             ]),
         )
         .await
