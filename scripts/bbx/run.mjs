@@ -48,6 +48,17 @@ const subst = (text) => text
   .replaceAll('{ROOT}', ROOT).replaceAll('{HOME}', home).replaceAll('{PILOT_HOME}', pilotHome)
   .replaceAll('{PROJECT}', project).replaceAll('{MOCK}', `http://127.0.0.1:${MOCK_PORT}`)
   .replaceAll('{GATEWAY}', `http://127.0.0.1:${GATEWAY_PORT}`).replaceAll('{TOKEN}', TOKEN);
+// 引用前面跑出来的值：步骤或 provider 规则上写 "save": {"名字": "正则"}，正则在该步骤结果（或该次模型请求）
+// 的 JSON 文本上匹配，第一个捕获组存成这个名字；之后的步骤和 provider 应答里用 {saved.名字} 引用。
+// 存下来的值只用来驱动后续输入，不进产物；没存到时 {saved.名字} 原样留着，后续步骤会因此明显失败。
+const saved = {};
+const capture = (rules, text) => {
+  for (const [name, re] of Object.entries(rules ?? {})) { const m = new RegExp(re).exec(text); if (m) saved[name] = m[1] ?? m[0]; }
+};
+const withSaved = (v) => typeof v === 'string' ? v.replace(/\{saved\.([A-Za-z0-9_]+)\}/g, (all, k) => saved[k] ?? all)
+  : Array.isArray(v) ? v.map(withSaved)
+  : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, withSaved(x)]))
+  : v;
 const substDeep = (v) => typeof v === 'string' ? subst(v)
   : Array.isArray(v) ? v.map(substDeep)
   : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, substDeep(x)]))
@@ -165,7 +176,8 @@ const mock = http.createServer(async (req, res) => {
   (providerRequests[rule.name] ??= []).push({
     method: req.method, url: req.url, headers: req.headers, body: body ?? { raw },
   });
-  const reply = rule.reply ?? {};
+  capture(rule.save, raw);
+  const reply = withSaved(rule.reply ?? {});
   if (reply.status) { res.writeHead(reply.status, { 'content-type': 'application/json' }); res.end(JSON.stringify(reply.body ?? {})); return; }
   const message = reply.tool
     ? { role: 'assistant', content: null, tool_calls: [{ id: reply.tool.id ?? 'call_bbx_1', type: 'function', function: { name: reply.tool.name, arguments: JSON.stringify(reply.tool.arguments ?? {}) } }] }
@@ -371,7 +383,11 @@ const failuresOf = (step, r, at) => {
     ...(r.then ?? []).flatMap((x, i) => failuresOf(x.step, x, `${at}.then[${i}]`))];
 };
 if (!out.startFailure) {
-  for (const step of scenario.steps) out.steps.push({ step, ...(await runStep(step)) });
+  for (const step of scenario.steps) {
+    const result = await runStep(withSaved(step));
+    capture(step.save, JSON.stringify(result));
+    out.steps.push({ step, ...result });
+  }
   await sleep(scenario.settleMs ?? 300);
 }
 out.failures = [
