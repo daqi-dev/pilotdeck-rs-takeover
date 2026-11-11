@@ -809,12 +809,39 @@ pub(crate) fn execute<F: Files>(
     method: &str,
     params: &JsValue,
 ) -> Option<Result<JsValue>> {
-    let project = text_field(params, "projectKey")?;
+    // `input.projectKey` on a nullish input is the property-read TypeError;
+    // a non-string key reaches Node's `path.resolve(projectKey)` first
+    // (InProcessGateway.ts:2168, projectRegistry.ts:42).
+    if matches!(params, JsValue::Undefined | JsValue::Null) {
+        let kind = if params.is_undefined() {
+            "undefined"
+        } else {
+            "null"
+        };
+        return Some(Err((
+            "gateway_request_failed",
+            format!("Cannot read properties of {kind} (reading 'projectKey')"),
+        )));
+    }
+    let Some(project) = text_field(params, "projectKey") else {
+        static UNDEFINED: JsValue = JsValue::Undefined;
+        let key = params.get("projectKey").unwrap_or(&UNDEFINED);
+        return invalid_path_argument("paths[0]", key);
+    };
     if method == "project_file_read" {
         // Node encodes lone UTF-16 surrogates as U+FFFD for filesystem access.
         // Keep all string paths on the local containment/NOFOLLOW path, while
         // preserving the original JS string in the response.
-        let path = params.get("path")?.as_string()?;
+        let Some(path) = params.get("path").and_then(JsValue::as_string) else {
+            // `resolve(root, input.path)` (createLocalGateway.ts:1101) runs
+            // after the project resolves and its root is realpath'd.
+            if let Err(error) = registered(metadata, &project, true) {
+                return local_result(Err(error));
+            }
+            static UNDEFINED: JsValue = JsValue::Undefined;
+            let path = params.get("path").unwrap_or(&UNDEFINED);
+            return invalid_path_argument("paths[1]", path);
+        };
         let path = String::from_utf16_lossy(path.units());
         let result = read(metadata, params, &project, &path);
         // A too-deep maxBytes is answered here too: forwarding would hand the
@@ -836,6 +863,19 @@ pub(crate) fn execute<F: Files>(
         return None;
     }
     local_result(list(metadata, params, &project, &query))
+}
+/// Node's `ERR_INVALID_ARG_TYPE` for a non-string `path.resolve` argument;
+/// a shape whose Received text Node never produces stays upstream.
+fn invalid_path_argument(argument: &str, value: &JsValue) -> Option<Result<JsValue>> {
+    let crate::metadata::ArgumentReceived::Text(received) =
+        crate::metadata::argument_received(value)
+    else {
+        return None;
+    };
+    let message = crate::metadata::invalid_arg_type_message(argument, &received)
+        .to_utf8()
+        .ok()?;
+    Some(Err(("ERR_INVALID_ARG_TYPE", message)))
 }
 // Node owns unmeasured platform-specific IO diagnostics. Keep those errors
 // upstream rather than manufacturing a different errno/message. Security errors

@@ -1,0 +1,35 @@
+{
+  "name": "project-files",
+  "about": "supported_agents；登记项目上的 project_files_list（全量、query、limit 分页、includeDirs、未登记目录、缺 projectKey）与 project_file_read（utf-8、base64、maxBytes、目录、不存在、越界、缺 projectKey）。",
+  "files": {
+    "home/work/alpha/README.md": "alpha readme\n",
+    "home/work/alpha/src/main.rs": "fn main() { println!(\"alpha\"); }\n",
+    "home/work/alpha/src/lib.rs": "pub fn lib() {}\n",
+    "home/work/alpha/docs/guide.md": "# Guide\n\nSome docs.\n",
+    "home/work/alpha/.hidden/secret.txt": "hidden\n",
+    "home/work/alpha/node_modules/pkg/index.js": "module.exports = 1;\n",
+    "home/work/gamma/README.md": "gamma\n",
+    "home/work/outside.txt": "outside the project\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n"
+  },
+  "steps": [
+    { "ws": "supported_agents" },
+    { "ws": "supported_agents", "params": {} },
+    { "ws": "project_files_list", "params": { "projectKey": "{HOME}/work/alpha" } },
+    { "ws": "project_files_list", "params": { "projectKey": "{HOME}/work/alpha", "query": "main" } },
+    { "ws": "project_files_list", "params": { "projectKey": "{HOME}/work/alpha", "limit": 2 } },
+    { "ws": "project_files_list", "params": { "projectKey": "{HOME}/work/alpha", "includeDirs": true } },
+    { "ws": "project_files_list", "params": { "projectKey": "{HOME}/work/gamma" } },
+    { "ws": "project_files_list", "params": {} },
+    { "ws": "project_files_list" },
+    { "ws": "project_file_read", "params": { "projectKey": "{HOME}/work/alpha", "path": "src/main.rs" } },
+    { "ws": "project_file_read", "params": { "projectKey": "{HOME}/work/alpha", "path": "README.md", "encoding": "base64" } },
+    { "ws": "project_file_read", "params": { "projectKey": "{HOME}/work/alpha", "path": "docs/guide.md", "maxBytes": 4 } },
+    { "ws": "project_file_read", "params": { "projectKey": "{HOME}/work/alpha", "path": "src" } },
+    { "ws": "project_file_read", "params": { "projectKey": "{HOME}/work/alpha", "path": "nope.txt" } },
+    { "ws": "project_file_read", "params": { "projectKey": "{HOME}/work/alpha", "path": "../outside.txt" } },
+    { "ws": "project_file_read", "params": { "projectKey": "{HOME}/work/gamma", "path": "README.md" } },
+    { "ws": "project_file_read", "params": { "path": "README.md" } },
+    { "ws": "project_file_read", "params": {} }
+  ]
+}
