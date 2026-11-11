@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 黑盒对拍 · 比较器。
-// 用法：node scripts/bbx/diff.mjs <a.json> <b.json> [--max N] [--quiet]
+// 用法：node scripts/bbx/diff.mjs <a.json> <b.json> [--max N] [--quiet] [--self]
 // 退出码：0 一致，1 有差异，2 用法错误。
 //
 // 归一化只有下面四条，都是「同一侧连跑两次也会变」的值，别的一律按原样比：
@@ -29,13 +29,16 @@
 // （Rust 有意不照做）。命中的差异路径被略过，id、原因和略过的条数每次打印；依据记在 state/takeover.md。
 // 另有一张「不比较」的清单 IGNORED，每次运行都会打印出来，不藏。
 // 场景自己可以在 "volatile" 里再声明不稳定的路径（正则，匹配差异路径），同样会打印。
+// 过期检查：基线 vs Rust 比较时，场景登记的每条 accepted 正则一处都没命中，打印 STALE 并计 1 处差异；
+// volatile 正则一处都没命中只打印 STALE? 提示（基线这次没抖时本来就是 0）。--self（基线自比）不做这个检查。
 import fs from 'node:fs';
 
 const args = process.argv.slice(2);
 const files = args.filter((a) => !a.startsWith('--'));
 const max = args.includes('--max') ? Number(args[args.indexOf('--max') + 1]) : 60;
 const quiet = args.includes('--quiet');
-if (files.length < 2) { console.error('usage: diff.mjs <a.json> <b.json> [--max N] [--quiet]'); process.exit(2); }
+const selfCompare = args.includes('--self');
+if (files.length < 2) { console.error('usage: diff.mjs <a.json> <b.json> [--max N] [--quiet] [--self]'); process.exit(2); }
 
 // 不比较的顶层字段，以及原因。
 export const IGNORED = {
@@ -151,6 +154,12 @@ compare(a, b, '$', all);
 const scenarioAccepted = (JSON.parse(fs.readFileSync(fa, 'utf8')).accepted ?? []).map((x) => ({ ...x, res: x.paths.map((p) => new RegExp(p)), hits: 0 }));
 const stable = all.filter((d) => !scenarioVolatile.some((re) => re.test(d.at)));
 const diffs = stable.filter((d) => !scenarioAccepted.some((x) => x.res.some((re) => re.test(d.at)) && ++x.hits));
+const unused = (res, list) => res.filter((re) => !list.some((d) => re.test(d.at)));
+const stale = selfCompare ? [] : [
+  ...unused(scenarioVolatile, all).map((re) => ({ tag: 'STALE?', what: `volatile ${re}` })),
+  ...scenarioAccepted.flatMap((x) => unused(x.res, stable).map((re) => ({ tag: 'STALE', what: `accepted ${x.id} ${re}` }))),
+];
+const count = diffs.length + stale.filter((x) => x.tag === 'STALE').length;
 if (!quiet) {
   console.log(`bbx diff: ${fa}  vs  ${fb}`);
   console.log(`  不比较的字段: ${Object.entries(IGNORED).map(([k, why]) => `${k}（${why}）`).join('；')}`);
@@ -159,6 +168,7 @@ if (!quiet) {
   for (const x of scenarioAccepted) console.log(`  场景登记的已接受差异: ${x.id}（${x.why}）略过 ${x.hits} 处`);
   for (const d of diffs.slice(0, max)) console.log(`  ${d.at}\n      a: ${show(d.a)}\n      b: ${show(d.b)}`);
   if (diffs.length > max) console.log(`  … 另有 ${diffs.length - max} 处`);
+  for (const x of stale) console.log(`  ${x.tag} ${x.what}：一处都没命中${x.tag === 'STALE' ? '，计 1 处差异' : '（只提示）'}`);
 }
-console.log(diffs.length ? `DIFF ${diffs.length}` : 'SAME');
-process.exit(diffs.length ? 1 : 0);
+console.log(count ? `DIFF ${count}` : 'SAME');
+process.exit(count ? 1 : 0);

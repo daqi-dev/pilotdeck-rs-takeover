@@ -28,7 +28,7 @@ for (const file of scenarios) {
   const runs = [node('run.mjs', sideA, file, a), node('run.mjs', sideB, file, b)];
   const failed = runs.find((r) => r.status !== 0);
   if (failed) { bad++; rows.push([name, 'RUN FAILED', failed.stderr.trim().split('\n').pop()]); continue; }
-  const d = node('diff.mjs', a, b, '--max', '400');
+  const d = node('diff.mjs', a, b, '--max', '400', ...(self ? ['--self'] : []));
   const report = path.join(outDir, `${name}.${self ? 'self' : 'diff'}.txt`);
   fs.writeFileSync(report, d.stdout);
   const verdict = d.stdout.trim().split('\n').pop();
