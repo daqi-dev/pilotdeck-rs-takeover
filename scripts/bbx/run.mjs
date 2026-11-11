@@ -243,6 +243,7 @@ const runStep = async (step) => {
   if (step.connect) return { hello: await connect(step.connect === true ? undefined : substDeep(step.connect)) };
   if (step.ws) {
     let hello; if (!ws) hello = await connect();
+    if (hello?.connectFailed) return { hello };
     const id = `q${++requestSeq}`;
     ws.send(JSON.stringify({ type: 'request', id, method: step.ws, params: substDeep(step.params ?? {}) }));
     // answer：收集本步骤的帧期间，遇到匹配的事件就按模板发一个请求（见 README）。
@@ -304,6 +305,7 @@ const runStep = async (step) => {
     while (!stdout.includes(until) && child.exitCode === null && child.signalCode === null
       && Date.now() - t0 < (step.timeout ?? STEP_TIMEOUT_MS)) await sleep(20);
     const reached = stdout.includes(until);
+    const timedOut = !reached && child.exitCode === null && child.signalCode === null;
     const then = [];
     if (reached) {
       await sleep(step.settleMs ?? 100);
@@ -313,7 +315,7 @@ const runStep = async (step) => {
     const killer = setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }, reached ? 15000 : 0);
     const [exitCode, signal] = await closed;
     clearTimeout(killer);
-    return { serve: { reached, exitCode, signal, stdout, stderr }, then };
+    return { serve: { reached, exitCode, signal, stdout, stderr }, then, ...(timedOut && { timedOut }) };
   }
   if (step.cli) {
     const [cmd, ...prefix] = SIDES[side].cli;
@@ -321,17 +323,33 @@ const runStep = async (step) => {
     let stdout = '', stderr = '';
     child.stdout.on('data', (d) => { stdout += d; }); child.stderr.on('data', (d) => { stderr += d; });
     child.stdin.end(step.stdin ?? '');
-    const timer = setTimeout(() => child.kill('SIGKILL'), step.timeout ?? STEP_TIMEOUT_MS);
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, step.timeout ?? STEP_TIMEOUT_MS);
     const [exitCode, signal] = await new Promise((r) => child.on('close', (c, s) => r([c, s])));
     clearTimeout(timer);
-    return { cli: { exitCode, signal, stdout, stderr } };
+    return { cli: { exitCode, signal, stdout, stderr }, ...(timedOut && { timedOut }) };
   }
   throw new Error(`unknown step: ${JSON.stringify(step)}`);
+};
+// 失败：步骤超时（含被采集器杀掉的 cli / serve）、连不上。只有步骤上声明了 expectTimeout 的超时算预期；
+// 其余记进 failures，check.mjs 见到非预期的就把场景判为 INVALID，不管两侧是否相同。
+const failuresOf = (step, r, at) => {
+  const t = (x) => x?.type === '__timeout';
+  const httpTimeout = ['TimeoutError', 'AbortError'].includes(r.http?.error);
+  const kinds = [];
+  if (r.timedOut || t(r.close) || t(r.hello) || (r.frames ?? []).some(t) || (r.answers ?? []).some((a) => a.frames.some(t)) || httpTimeout) kinds.push('timeout');
+  if (r.hello?.connectFailed || (r.http?.error && !httpTimeout)) kinds.push('connect');
+  return [...kinds.map((kind) => ({ at, kind, expected: kind === 'timeout' && step.expectTimeout === true })),
+    ...(r.then ?? []).flatMap((x, i) => failuresOf(x.step, x, `${at}.then[${i}]`))];
 };
 if (!out.startFailure) {
   for (const step of scenario.steps) out.steps.push({ step, ...(await runStep(step)) });
   await sleep(scenario.settleMs ?? 300);
 }
+out.failures = [
+  ...(out.startFailure ? [{ at: 'start', kind: 'start', expected: scenario.expectStartFailure === true }] : []),
+  ...out.steps.flatMap((r, i) => failuresOf(r.step, r, `steps[${i}]`)),
+];
 out.notifications = frames.filter((f) => f.type === 'notification');
 out.unsolicited = frames.filter((f) => !['notification', 'hello_ok', 'response', 'event', '__closed'].includes(f.type));
 if (ws) ws.close();
@@ -341,6 +359,7 @@ if (server && server.exitCode === null) {
   const exited = new Promise((r) => server.on('exit', (code, signal) => r({ code, signal })));
   server.kill('SIGTERM');
   out.shutdown = await Promise.race([exited, sleep(15000).then(() => ({ timeout: true }))]);
+  if (out.shutdown.timeout) out.failures.push({ at: 'shutdown', kind: 'timeout', expected: false });
 }
 mock.close(); mock.closeAllConnections();
 out.serverLog = serverLog;

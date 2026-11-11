@@ -42,6 +42,7 @@ export const IGNORED = {
   side: '采集侧标记',
   startMs: '启动耗时，性能指标，单独报告',
   serverLog: '服务进程自己的日志输出；CLI 子命令的 stdout/stderr 在 steps 里照常比较',
+  failures: '超时 / 连不上的汇总，由 check.mjs 判 INVALID；对应的输出在 steps 里照常比较',
 };
 
 // 已接受差异：id → [说明, 对字符串做的处理]。新增条目要在 state/takeover.md 记依据。

@@ -48,7 +48,8 @@
         "channelKey": "test",
         "message": "turn-1: run the tool"
       },
-      "timeout": 3000
+      "timeout": 3000,
+      "expectTimeout": true
     },
     {
       "sleep": 200

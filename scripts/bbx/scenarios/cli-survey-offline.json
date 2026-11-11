@@ -3,11 +3,11 @@
   "about": "不起服务时各 CLI 子命令的入口行为普查：帮助、用法错误、无 gateway 可连时的输出与退出码。不含 update（会访问外网）和需要 TTY 的 tui 正常路径。只说明入口是否存在、报错是否一致，不说明功能完整。",
   "server": false,
   "steps": [
-    { "cli": [] },
+    { "cli": [], "expectTimeout": true },
     { "cli": ["help"] },
     { "cli": ["--help"] },
     { "cli": ["-h"] },
-    { "cli": ["nonsense"] },
+    { "cli": ["nonsense"], "expectTimeout": true },
     { "cli": ["sessions"] },
     { "cli": ["sessions", "list"], "timeout": 15000 },
     { "cli": ["sessions", "messages"], "timeout": 15000 },

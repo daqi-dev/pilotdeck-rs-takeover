@@ -4,7 +4,9 @@
 //   默认对 scenarios/ 下每个场景：基线跑一次、Rust 跑一次、比较。
 //   --self：基线跑两次互相比较。它必须全部 SAME，否则说明场景或归一化本身不稳定，
 //           这个场景的对拍结论不能用。
-// 退出码：0 全部 SAME，1 有 DIFF 或采集失败。
+//   采集产物里有非预期的失败（启动失败、步骤超时、连不上；见 run.mjs 的 failuresOf）时判 INVALID，
+//   不管两侧是否相同。预期的超时由场景在步骤上声明 expectTimeout，预期的启动失败声明 expectStartFailure。
+// 退出码：0 全部 SAME，1 有 DIFF、INVALID 或采集失败。
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -27,10 +29,14 @@ for (const file of scenarios) {
   const failed = runs.find((r) => r.status !== 0);
   if (failed) { bad++; rows.push([name, 'RUN FAILED', failed.stderr.trim().split('\n').pop()]); continue; }
   const d = node('diff.mjs', a, b, '--max', '400');
-  fs.writeFileSync(path.join(outDir, `${name}.${self ? 'self' : 'diff'}.txt`), d.stdout);
+  const report = path.join(outDir, `${name}.${self ? 'self' : 'diff'}.txt`);
+  fs.writeFileSync(report, d.stdout);
   const verdict = d.stdout.trim().split('\n').pop();
-  if (d.status !== 0) bad++;
-  rows.push([name, verdict, path.relative(process.cwd(), path.join(outDir, `${name}.${self ? 'self' : 'diff'}.txt`))]);
+  // 非预期的失败（启动失败、超时、连不上）：结论不能用，判 INVALID，两侧相同也一样。
+  const failures = [a, b].flatMap((f) => (JSON.parse(fs.readFileSync(f, 'utf8')).failures ?? [])
+    .filter((x) => !x.expected).map((x) => `${path.basename(f, '.json').split('.').pop()}:${x.at}:${x.kind}`));
+  if (d.status !== 0 || failures.length) bad++;
+  rows.push([name, failures.length ? 'INVALID' : verdict, `${path.relative(process.cwd(), report)}${failures.length ? `  (${verdict}; ${failures.join(' ')})` : ''}`]);
 }
 const width = Math.max(...rows.map((r) => r[0].length));
 for (const [name, verdict, note] of rows) console.log(`${name.padEnd(width)}  ${verdict.padEnd(10)}  ${note}`);
