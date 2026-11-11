@@ -1,0 +1,76 @@
+{
+  "name": "tool-ask-user-question",
+  "about": "ask_user_question：发出 elicitation_request 后等待回答（采集器无法回答，随后断开）。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Tool run\"}"
+      }
+    },
+    {
+      "name": "turn-1-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "turn-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1",
+          "name": "ask_user_question",
+          "arguments": {
+            "questions": [
+              {
+                "question": "Which color?",
+                "header": "Color",
+                "options": [
+                  {
+                    "label": "Red",
+                    "description": "warm"
+                  },
+                  {
+                    "label": "Blue",
+                    "description": "cool"
+                  }
+                ],
+                "multiSelect": false
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-1: run the tool"
+      },
+      "timeout": 3000
+    },
+    {
+      "sleep": 200
+    },
+    {
+      "disconnect": true
+    },
+    {
+      "sleep": 500
+    }
+  ]
+}

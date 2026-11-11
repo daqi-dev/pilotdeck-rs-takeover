@@ -1,0 +1,244 @@
+{
+  "name": "tool-ask-user-question-invalid",
+  "about": "ask_user_question：输入校验（重复问题、重复选项、过长 header、预置答案）。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Tool run\"}"
+      }
+    },
+    {
+      "name": "turn-4-after-tool",
+      "when": [
+        "turn-4:",
+        "\"tool_call_id\":\"call_bbx_4\""
+      ],
+      "reply": {
+        "text": "Done 4."
+      }
+    },
+    {
+      "name": "turn-4",
+      "when": [
+        "turn-4:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_4",
+          "name": "ask_user_question",
+          "arguments": {
+            "questions": [
+              {
+                "question": "Pre-answered?",
+                "header": "A",
+                "options": [
+                  {
+                    "label": "x",
+                    "description": "1"
+                  },
+                  {
+                    "label": "y",
+                    "description": "2"
+                  }
+                ]
+              }
+            ],
+            "answers": {
+              "Pre-answered?": "x"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-3-after-tool",
+      "when": [
+        "turn-3:",
+        "\"tool_call_id\":\"call_bbx_3\""
+      ],
+      "reply": {
+        "text": "Done 3."
+      }
+    },
+    {
+      "name": "turn-3",
+      "when": [
+        "turn-3:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_3",
+          "name": "ask_user_question",
+          "arguments": {
+            "questions": [
+              {
+                "question": "Too long header?",
+                "header": "ABCDEFGHIJKLMNOP",
+                "options": [
+                  {
+                    "label": "x",
+                    "description": "1"
+                  },
+                  {
+                    "label": "y",
+                    "description": "2"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-2-after-tool",
+      "when": [
+        "turn-2:",
+        "\"tool_call_id\":\"call_bbx_2\""
+      ],
+      "reply": {
+        "text": "Done 2."
+      }
+    },
+    {
+      "name": "turn-2",
+      "when": [
+        "turn-2:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_2",
+          "name": "ask_user_question",
+          "arguments": {
+            "questions": [
+              {
+                "question": "Dup options?",
+                "header": "A",
+                "options": [
+                  {
+                    "label": "x",
+                    "description": "1"
+                  },
+                  {
+                    "label": "x",
+                    "description": "2"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-1-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "turn-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1",
+          "name": "ask_user_question",
+          "arguments": {
+            "questions": [
+              {
+                "question": "Same?",
+                "header": "A",
+                "options": [
+                  {
+                    "label": "x",
+                    "description": "1"
+                  },
+                  {
+                    "label": "y",
+                    "description": "2"
+                  }
+                ]
+              },
+              {
+                "question": "Same?",
+                "header": "B",
+                "options": [
+                  {
+                    "label": "x",
+                    "description": "1"
+                  },
+                  {
+                    "label": "y",
+                    "description": "2"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-1: run the tool"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-2: run the tool"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-3: run the tool"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-4: run the tool"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-bbx-1"
+      }
+    }
+  ]
+}
