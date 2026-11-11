@@ -10,21 +10,18 @@
 |---|---|---|
 | `pilotdeck server` 的启停：参数与环境变量优先级、启动输出、token 文件、停机退出码、`/health`、`/auth/local-token`、落盘 | `server-entry-no-config` / `start-stop` / `port-host` / `token-generate` / `token-sources` 5 个场景 SAME | 停机时有客户端连着；非 git 目录的 stderr；`telemetry.enabled: true` |
 
-当前对拍结果（`node scripts/bbx/check.mjs`，2026-11-11，权限询问、`agent`、`execute_code` 三个分支合并后，50 个场景，日志 `_tmp/20261110-inventory/build/m1f-bbx.log`）：基线自比 47/50 SAME；基线 vs Rust 6/50 SAME（6 个 `server-entry-*`）。
+当前对拍结果（`node scripts/bbx/check.mjs`，2026-11-11，对拍工具加固并合并工具执行行为分支之后，57 个场景）：基线 vs Rust 6/57 SAME（6 个 `server-entry-*`，在加固后的规则下仍 SAME）。基线自比 55/57 SAME；不稳的是 `tool-subagent`（后台子代理与父轮请求到达先后不定）和 `tool-subagent-input`（场景本身坏了：基线在等一个没人答的权限询问，判 INVALID）。完整结果在 `_tmp/20261110-inventory/build/m1i-bbx.log`。
 
-自比不稳的 3 个：`read-messages-paging`、`read-messages-tools`（标题记录竞态）；`tool-subagent`（后台子代理与父轮请求谁先到 provider 不定）。
+其余 51 个场景都 DIFF，共同原因是还缺 `subagent`、`send_message` 两个工具的声明（`native_process/tools.rs` 的 `BASELINE_TOOLS_NOT_PORTED`）：每次模型请求少 2 个工具，连带 `content-length`、token 估算各数值、`fileSize` 不同。`turn-text` 的 51 处全属这一类。
 
-基线向模型声明 28 个工具，Rust 现在 26 个，只缺 `subagent`、`send_message`（`native_process/tools.rs` 的 `BASELINE_TOOLS_NOT_PORTED`）。它们依赖 Rust 里还不存在的三块：会话级持久收件箱（`agent_turn_enqueued` 没有生产者）、宿主发起的父轮次（轮次管线现在只由客户端 `submit_turn` 驱动，是主要工作量）、子会话冷恢复与后代回收。基线行为记录在场景 `tool-subagent`、`tool-subagent-input`。
+去掉这一类之后已知还剩的真实差异：
 
-除入口 6 个外的 44 个场景都还是 DIFF，原因是每次模型请求少这 2 个工具声明，连带 `content-length`、`context_budget` 各数值、`fileSize` 不同。`turn-text` 的 49 处全部属于这一类。去掉这一类（`tools[name=` 和 token 数值字段）之后：
+- JS/TS、HTML、CSV 文件写入后的语法诊断没移植（`tool-write-file-diagnostics`）。
+- `web_fetch` 只验证了失败路径：基线总把 http 升级成 https，成功路径需要采集器提供本机 HTTPS 服务并让两侧信任证书。
+- `task_output` / `task_wait` / `task_stop` 按真实任务 id 的成功路径没覆盖：需要假 provider 能引用上一步工具结果里的值。`background_tasks` / `background_task_stop` 仍忽略 `projectKey`。
+- `survey-empty-params` 34 处、`cli-survey-offline` 17 处（M4 / M6）。
 
-- 无其他差异：`turn-text`、3 个 `project-*`、4 个 `read-messages-*`、2 个 `plugins-*`（`plugins-user-level` 剩 10 处是标题记录竞态）、11 个 `permission-*`、4 个 `tool-agent*`、3 个 `tool-ask-user-question*`、`tool-goal*`、`tool-read-skill`、`tool-send-attachment*`、`tool-structured-output`、`tool-todo-write`、`tool-execute-code`、`tool-execute-code-traceback`。
-- `tool-execute-code-truncate`：367 处，输出过长时溢出文件的位置和文件名与基线不同（真实差异，`execute_code` 次任务的子代理在修）。
-- `tool-execute-code-rpc-write`：3 处 `resultBytes`（耗时位数不定引起，自比也会变）。
-- `tool-subagent`、`tool-subagent-input`：工具未移植。
-- `survey-empty-params` 34 处、`cli-survey-offline` 15 处（M4 / M6）。
-
-临时分类脚本的做法：`node scripts/bbx/diff.mjs a b --max 100000`，去掉 `tools[name=` 和 token 数值字段后按路径分组。只用来定下一步，不作验收。
+临时分类的做法：`node scripts/bbx/diff.mjs a b --max 100000`，去掉 `tools[name=`、token 数值字段和 `.raw.` 后按路径分组。只用来定下一步，不作验收。
 
 ## 验收手段
 
