@@ -80,6 +80,12 @@ pub struct SessionTools {
     /// same turn never runs one mode for the sidecar and another for native
     /// tool admission.
     permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
+    /// The host's `config.runMode` (agentLoopSidecarClient.ts:432-436): each
+    /// turn's `input.runMode` overrides it, a turn without one keeps the
+    /// previous value, and `"agent"` is the fallback. The tool runtime's
+    /// ask-mode gate and a fork's read-only inheritance read it from the
+    /// per-turn config.
+    run_mode: Arc<Mutex<Option<JsString>>>,
     /// Session-scoped execution world shared by every turn's tool registry,
     /// so a background task started in one turn is still there in the next.
     world: ExecutionWorld,
@@ -194,6 +200,7 @@ impl ForkSeed {
             .unwrap_or_else(|e| e.into_inner())
             .0
             .clone();
+        let run_mode = Arc::new(Mutex::new(config_run_mode(&config)));
         SessionTools {
             plan_files: Arc::new(crate::runtime::plan_todo::SessionPlanFiles::new(
                 &self.project,
@@ -214,6 +221,7 @@ impl ForkSeed {
             lsp: self.lsp,
             mcp: self.mcp,
             permission_mode_source: None,
+            run_mode,
             world: self.world,
             goal: Arc::default(),
             events: self.events,
@@ -257,6 +265,7 @@ impl SessionTools {
             });
         let plan_files = Arc::new(crate::runtime::plan_todo::SessionPlanFiles::new(&project));
         let file_history = Arc::new(session_file_history(&binding));
+        let run_mode = Arc::new(Mutex::new(config_run_mode(&config)));
         Ok(Self {
             project,
             env: env_object(env),
@@ -271,6 +280,7 @@ impl SessionTools {
                 Default::default(),
             )),
             permission_mode_source: None,
+            run_mode,
             world: ExecutionWorld::new(),
             goal: Arc::default(),
             plan_files,
@@ -381,6 +391,20 @@ impl SessionTools {
         self
     }
 
+    /// `applyRunModeOverride` (agentLoopSidecarClient.ts:432-436): the sink
+    /// the live session calls with each admitted turn's `runMode`.
+    pub fn run_mode_override(&self) -> Arc<dyn Fn(Option<JsString>) + Send + Sync> {
+        let slot = self.run_mode.clone();
+        Arc::new(move |requested| {
+            let mut current = slot.lock().unwrap_or_else(|e| e.into_inner());
+            *current = Some(
+                requested
+                    .or_else(|| current.take())
+                    .unwrap_or_else(|| "agent".into()),
+            );
+        })
+    }
+
     /// #1864 (b): the live permission-mode source, consulted on every turn
     /// before the permission context is emitted. `None` keeps the context's
     /// current mode.
@@ -421,6 +445,14 @@ impl SessionTools {
         config.insert("env".into(), JsValue::Object(self.env.clone()));
         config.insert("permissionMode".into(), JsValue::String(permission_mode));
         config.insert("permissionContext".into(), permission_context);
+        if let Some(run_mode) = self
+            .run_mode
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+        {
+            config.insert("runMode".into(), JsValue::String(run_mode));
+        }
         let tools = native_tools(
             self.binding.context.allowed_tools.clone(),
             self.binding.context.disallowed_tools.clone(),
@@ -1511,6 +1543,11 @@ pub async fn session_mcp_tools(
             Ok((tools, release))
         }
     }
+}
+
+/// A configured string `runMode`, the initial host run mode.
+fn config_run_mode(config: &JsObject) -> Option<JsString> {
+    config.get("runMode").and_then(JsValue::as_string).cloned()
 }
 
 #[cfg(test)]

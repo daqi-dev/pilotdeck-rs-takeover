@@ -1,6 +1,6 @@
 {
-  "name": "secreview-path-symlink",
-  "about": "安全审查：默认模式下，工作区（PILOT_HOME）里的目录 / 文件符号链接指向工作区外（proj/outside），以及 .. 与大小写变体，经 read_file / write_file / edit_file / send_attachment 访问。采集器对任何权限询问一律拒绝；比两侧哪些调用不经询问就读到或写到了工作区外。第 1 轮在 bypassPermissions 下用 bash 搭链接。",
+  "name": "mode-ask-blocks-writes",
+  "about": "runMode=ask（只读问答模式）且权限模式 bypassPermissions 时，工具运行时在 schema 校验与权限判断之前按 ASK_MODE_ALLOWED_TOOLS 拦截（ToolRuntime.ts:141-150；askModeConstraints.ts），bypassPermissions 解不开：白名单外的工具（write_file、todo_write、edit_file；参数不合 schema 时也先报 ask_mode_violation）被拦；bash 非只读命令被拦，只读命令（pwd）放行；execute_code 在白名单里，但脚本调用 write_file 时 isReadOnly 为假，被拦；只读脚本放行。采集器对任何权限询问一律拒绝。",
   "provider": [
     {
       "name": "title",
@@ -9,58 +9,6 @@
       ],
       "reply": {
         "text": "{\"title\": \"Tool run\"}"
-      }
-    },
-    {
-      "name": "turn-9-after-tool",
-      "when": [
-        "turn-9:",
-        "\"tool_call_id\":\"call_bbx_9\""
-      ],
-      "reply": {
-        "text": "Done 9."
-      }
-    },
-    {
-      "name": "turn-9",
-      "when": [
-        "turn-9:"
-      ],
-      "reply": {
-        "tool": {
-          "id": "call_bbx_9",
-          "name": "read_file",
-          "arguments": {
-            "file_path": "{PILOT_HOME}/LINK-OUT/secret.txt"
-          }
-        }
-      }
-    },
-    {
-      "name": "turn-8-after-tool",
-      "when": [
-        "turn-8:",
-        "\"tool_call_id\":\"call_bbx_8\""
-      ],
-      "reply": {
-        "text": "Done 8."
-      }
-    },
-    {
-      "name": "turn-8",
-      "when": [
-        "turn-8:"
-      ],
-      "reply": {
-        "tool": {
-          "id": "call_bbx_8",
-          "name": "edit_file",
-          "arguments": {
-            "file_path": "link-out/secret.txt",
-            "old_string": "TOPSECRET",
-            "new_string": "EDITED"
-          }
-        }
       }
     },
     {
@@ -81,10 +29,8 @@
       "reply": {
         "tool": {
           "id": "call_bbx_7",
-          "name": "send_attachment",
-          "arguments": {
-            "file_path": "link-out/secret.txt"
-          }
+          "name": "edit_file",
+          "arguments": {}
         }
       }
     },
@@ -106,9 +52,9 @@
       "reply": {
         "tool": {
           "id": "call_bbx_6",
-          "name": "read_file",
+          "name": "todo_write",
           "arguments": {
-            "file_path": "{PILOT_HOME}/../../proj/outside/secret.txt"
+            "todos": []
           }
         }
       }
@@ -131,10 +77,9 @@
       "reply": {
         "tool": {
           "id": "call_bbx_5",
-          "name": "write_file",
+          "name": "execute_code",
           "arguments": {
-            "file_path": "secret-link.txt",
-            "content": "overwritten via file link\n"
+            "code": "print('read only ok')\n"
           }
         }
       }
@@ -157,9 +102,9 @@
       "reply": {
         "tool": {
           "id": "call_bbx_4",
-          "name": "read_file",
+          "name": "execute_code",
           "arguments": {
-            "file_path": "secret-link.txt"
+            "code": "from pilotdeck_tools import write_file\nwrite_file('{PILOT_HOME}/askmode-rpc.txt', 'x')\n"
           }
         }
       }
@@ -182,10 +127,9 @@
       "reply": {
         "tool": {
           "id": "call_bbx_3",
-          "name": "write_file",
+          "name": "bash",
           "arguments": {
-            "file_path": "{PILOT_HOME}/link-out/new.txt",
-            "content": "via dir link\n"
+            "command": "pwd"
           }
         }
       }
@@ -208,9 +152,9 @@
       "reply": {
         "tool": {
           "id": "call_bbx_2",
-          "name": "read_file",
+          "name": "bash",
           "arguments": {
-            "file_path": "{PILOT_HOME}/link-out/secret.txt"
+            "command": "touch {PILOT_HOME}/askmode-bash.txt"
           }
         }
       }
@@ -233,9 +177,10 @@
       "reply": {
         "tool": {
           "id": "call_bbx_1",
-          "name": "bash",
+          "name": "write_file",
           "arguments": {
-            "command": "mkdir -p {PROJECT}/outside && printf 'TOPSECRET\\n' > {PROJECT}/outside/secret.txt && ln -s {PROJECT}/outside {PILOT_HOME}/link-out && ln -s {PROJECT}/outside/secret.txt {PILOT_HOME}/secret-link.txt && echo ok"
+            "file_path": "{PILOT_HOME}/askmode-write.txt",
+            "content": "written in ask run mode\n"
           }
         }
       }
@@ -254,26 +199,8 @@
       "params": {
         "sessionKey": "s-bbx-1",
         "channelKey": "test",
-        "message": "turn-1: run the tool"
-      },
-      "timeout": 20000
-    },
-    {
-      "sleep": 300
-    },
-    {
-      "ws": "set_permission_mode",
-      "params": {
-        "sessionKey": "s-bbx-1",
-        "mode": "default"
-      }
-    },
-    {
-      "ws": "submit_turn",
-      "params": {
-        "sessionKey": "s-bbx-1",
-        "channelKey": "test",
-        "message": "turn-2: run the tool"
+        "message": "turn-1: run the tool",
+        "runMode": "ask"
       },
       "answer": [
         {
@@ -285,7 +212,7 @@
             "sessionKey": "s-bbx-1",
             "requestId": "{event.requestId}",
             "decision": "deny",
-            "reason": "secreview denies every prompt"
+            "reason": "bbx denies every prompt"
           }
         }
       ],
@@ -299,7 +226,8 @@
       "params": {
         "sessionKey": "s-bbx-1",
         "channelKey": "test",
-        "message": "turn-3: run the tool"
+        "message": "turn-2: run the tool",
+        "runMode": "ask"
       },
       "answer": [
         {
@@ -311,7 +239,7 @@
             "sessionKey": "s-bbx-1",
             "requestId": "{event.requestId}",
             "decision": "deny",
-            "reason": "secreview denies every prompt"
+            "reason": "bbx denies every prompt"
           }
         }
       ],
@@ -325,7 +253,8 @@
       "params": {
         "sessionKey": "s-bbx-1",
         "channelKey": "test",
-        "message": "turn-4: run the tool"
+        "message": "turn-3: run the tool",
+        "runMode": "ask"
       },
       "answer": [
         {
@@ -337,7 +266,7 @@
             "sessionKey": "s-bbx-1",
             "requestId": "{event.requestId}",
             "decision": "deny",
-            "reason": "secreview denies every prompt"
+            "reason": "bbx denies every prompt"
           }
         }
       ],
@@ -351,7 +280,8 @@
       "params": {
         "sessionKey": "s-bbx-1",
         "channelKey": "test",
-        "message": "turn-5: run the tool"
+        "message": "turn-4: run the tool",
+        "runMode": "ask"
       },
       "answer": [
         {
@@ -363,7 +293,7 @@
             "sessionKey": "s-bbx-1",
             "requestId": "{event.requestId}",
             "decision": "deny",
-            "reason": "secreview denies every prompt"
+            "reason": "bbx denies every prompt"
           }
         }
       ],
@@ -377,7 +307,8 @@
       "params": {
         "sessionKey": "s-bbx-1",
         "channelKey": "test",
-        "message": "turn-6: run the tool"
+        "message": "turn-5: run the tool",
+        "runMode": "ask"
       },
       "answer": [
         {
@@ -389,7 +320,7 @@
             "sessionKey": "s-bbx-1",
             "requestId": "{event.requestId}",
             "decision": "deny",
-            "reason": "secreview denies every prompt"
+            "reason": "bbx denies every prompt"
           }
         }
       ],
@@ -403,7 +334,8 @@
       "params": {
         "sessionKey": "s-bbx-1",
         "channelKey": "test",
-        "message": "turn-7: run the tool"
+        "message": "turn-6: run the tool",
+        "runMode": "ask"
       },
       "answer": [
         {
@@ -415,7 +347,7 @@
             "sessionKey": "s-bbx-1",
             "requestId": "{event.requestId}",
             "decision": "deny",
-            "reason": "secreview denies every prompt"
+            "reason": "bbx denies every prompt"
           }
         }
       ],
@@ -429,7 +361,8 @@
       "params": {
         "sessionKey": "s-bbx-1",
         "channelKey": "test",
-        "message": "turn-8: run the tool"
+        "message": "turn-7: run the tool",
+        "runMode": "ask"
       },
       "answer": [
         {
@@ -441,33 +374,7 @@
             "sessionKey": "s-bbx-1",
             "requestId": "{event.requestId}",
             "decision": "deny",
-            "reason": "secreview denies every prompt"
-          }
-        }
-      ],
-      "timeout": 20000
-    },
-    {
-      "sleep": 300
-    },
-    {
-      "ws": "submit_turn",
-      "params": {
-        "sessionKey": "s-bbx-1",
-        "channelKey": "test",
-        "message": "turn-9: run the tool"
-      },
-      "answer": [
-        {
-          "on": {
-            "type": "permission_request"
-          },
-          "ws": "permission_decide",
-          "params": {
-            "sessionKey": "s-bbx-1",
-            "requestId": "{event.requestId}",
-            "decision": "deny",
-            "reason": "secreview denies every prompt"
+            "reason": "bbx denies every prompt"
           }
         }
       ],

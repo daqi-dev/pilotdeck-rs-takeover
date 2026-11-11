@@ -208,6 +208,7 @@ pub struct TurnHostFactory {
     ports: Arc<PortsFactory>,
     agent_config: Option<JsObject>,
     permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
+    run_mode_sink: Option<Arc<dyn Fn(Option<JsString>) + Send + Sync>>,
     /// See [`LiveSessionAdapter::as_in_process_loop`].
     in_process_loop: bool,
     /// The session's project root; `None` is the registry's default project.
@@ -254,6 +255,7 @@ impl TurnHostFactory {
             ports: Arc::new(ports),
             agent_config: None,
             permission_mode_source: None,
+            run_mode_sink: None,
             in_process_loop: false,
             project_root: None,
         }
@@ -280,6 +282,12 @@ impl TurnHostFactory {
         source: Arc<dyn Fn() -> Option<JsString> + Send + Sync>,
     ) -> Self {
         self.permission_mode_source = Some(source);
+        self
+    }
+
+    /// See [`LiveSessionAdapter::with_run_mode_sink`].
+    pub fn with_run_mode_sink(mut self, sink: Arc<dyn Fn(Option<JsString>) + Send + Sync>) -> Self {
+        self.run_mode_sink = Some(sink);
         self
     }
 
@@ -311,6 +319,7 @@ impl TurnHostFactory {
         let close_timeout = self.limits.close_timeout;
         let agent_config = self.agent_config.clone();
         let permission_mode_source = self.permission_mode_source.take();
+        let run_mode_sink = self.run_mode_sink.take();
         let in_process_loop = self.in_process_loop;
         let factory = Arc::new(self);
         let session = LiveSessionAdapter::with_interaction_signal(
@@ -336,6 +345,10 @@ impl TurnHostFactory {
         };
         let session = match permission_mode_source {
             Some(source) => session.with_permission_mode_source(source),
+            None => session,
+        };
+        let session = match run_mode_sink {
+            Some(sink) => session.with_run_mode_sink(sink),
             None => session,
         };
         if in_process_loop {

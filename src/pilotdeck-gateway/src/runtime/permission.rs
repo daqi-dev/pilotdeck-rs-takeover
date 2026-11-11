@@ -1103,22 +1103,56 @@ fn plan_mode_deny_message(tool_name: &JsString, input: &JsValue) -> JsString {
         let command = js_get(input, "command")
             .and_then(|command| command.as_string().cloned())
             .unwrap_or_default();
-        let truncated = if command.len_utf16() > 120 {
-            concat(&[
-                &JsString::from_utf16(command.units()[..120].to_vec()),
-                &literal("…"),
-            ])
-        } else {
-            command
-        };
-        return concat(&[
-            &literal("[PLAN_MODE_VIOLATION] bash command \""),
-            &truncated,
-            &literal(
-                "\" is BLOCKED — write/modify commands are not allowed in plan mode.\n\nIn plan mode, bash is restricted to READ-ONLY commands only (ls, cat, git status, git log, git diff, pwd, find, head, wc, etc.).\n\nRewrite your command as a read-only operation, or use read_file/grep/glob instead.",
-            ),
-        ]);
+        return plan_mode_bash_violation_message(&command);
     }
+    plan_mode_tool_violation_message(tool_name)
+}
+
+/// `command.length > 120 ? command.slice(0, 120) + "…" : command` (UTF-16).
+pub(crate) fn truncate_command_120(command: &JsString) -> JsString {
+    if command.len_utf16() > 120 {
+        concat(&[
+            &JsString::from_utf16(command.units()[..120].to_vec()),
+            &literal("…"),
+        ])
+    } else {
+        command.clone()
+    }
+}
+
+/// `buildPlanModeBashViolationMessage` (planModeConstraints.ts:50-58).
+pub(crate) fn plan_mode_bash_violation_message(command: &JsString) -> JsString {
+    concat(&[
+        &literal("[PLAN_MODE_VIOLATION] bash command \""),
+        &truncate_command_120(command),
+        &literal(
+            "\" is BLOCKED — write/modify commands are not allowed in plan mode.\n\nIn plan mode, bash is restricted to READ-ONLY commands only (ls, cat, git status, git log, git diff, pwd, find, head, wc, etc.).\n\nRewrite your command as a read-only operation, or use read_file/grep/glob instead.",
+        ),
+    ])
+}
+
+/// `isPlanMarkdownPath` (ToolRuntime.ts:749-764): `filePath` resolved against
+/// `cwd` ends in `.md` (case-insensitive) and lies strictly under the plan
+/// directory. Callers pass a non-empty path and plan directory.
+pub(crate) fn is_plan_markdown_path(
+    file_path: &JsString,
+    plan_directory: &JsString,
+    cwd: &JsString,
+) -> Result<bool, HostError> {
+    let process_cwd = process_cwd_units()?;
+    let absolute = resolve_input(&process_cwd, cwd, file_path);
+    if !ends_with_markdown(&absolute) {
+        return Ok(false);
+    }
+    let relative = relative_path(plan_directory, &absolute, &process_cwd);
+    Ok(!relative.is_empty()
+        && !is_absolute_units(relative.units())
+        && !starts_with(relative.units(), &[DOT, DOT])
+        && !starts_with(relative.units(), &[DOT, DOT, SLASH]))
+}
+
+/// `buildPlanModeViolationMessage` (planModeConstraints.ts:34-48).
+pub(crate) fn plan_mode_tool_violation_message(tool_name: &JsString) -> JsString {
     concat(&[
         &literal("[PLAN_MODE_VIOLATION] Tool \""),
         tool_name,

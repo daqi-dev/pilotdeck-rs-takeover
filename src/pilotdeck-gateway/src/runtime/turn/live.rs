@@ -91,6 +91,8 @@ pub struct LiveSessionAdapter {
     /// `livePermissionMode` — the stored permission-mode selection takes
     /// effect on the next turn without a session close.
     permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
+    /// See [`Self::with_run_mode_sink`].
+    run_mode_sink: Option<Arc<dyn Fn(Option<JsString>) + Send + Sync>>,
     /// See [`Self::as_in_process_loop`].
     in_process_loop: bool,
     /// See [`Self::as_sidechain`].
@@ -139,6 +141,7 @@ impl LiveSessionAdapter {
             close_timeout: crate::host::Limits::default().close_timeout,
             agent_config: None,
             permission_mode_source: None,
+            run_mode_sink: None,
             in_process_loop: false,
             sidechain: false,
             tail: None,
@@ -175,6 +178,14 @@ impl LiveSessionAdapter {
         source: Arc<dyn Fn() -> Option<JsString> + Send + Sync>,
     ) -> Self {
         self.permission_mode_source = Some(source);
+        self
+    }
+
+    /// `applyRunModeOverride` (agentLoopSidecarClient.ts:432-436): every
+    /// admitted turn hands its `runMode` to the host-side config that the
+    /// tool runtime trusts; the loop's own copy in the payload is not policy.
+    pub fn with_run_mode_sink(mut self, sink: Arc<dyn Fn(Option<JsString>) + Send + Sync>) -> Self {
+        self.run_mode_sink = Some(sink);
         self
     }
 
@@ -265,6 +276,7 @@ impl LiveSessionAdapter {
             close_timeout: crate::host::Limits::default().close_timeout,
             agent_config: None,
             permission_mode_source: None,
+            run_mode_sink: None,
             in_process_loop: false,
             sidechain: false,
             tail: None,
@@ -395,6 +407,9 @@ impl LiveSession for LiveSessionAdapter {
             state.reload_execution = Arc::default();
         }
         let active = Arc::new(ActiveTurn(self.state.clone()));
+        if let Some(sink) = &self.run_mode_sink {
+            sink(options.get("runMode").and_then(JsValue::as_string).cloned());
+        }
         let reload_execution = self.reload_execution_started();
         // Read the projection only after admission owns the slot. Rejected
         // submissions must not observe history or race its current owner.

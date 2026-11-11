@@ -1,5 +1,6 @@
 //! Whole-batch safe-first scheduling; results retain caller order.
 use super::{
+    mode_constraints,
     registry::{self, ToolRegistry},
     *,
 };
@@ -239,6 +240,17 @@ impl ToolRuntime {
                 ),
             );
         };
+        // Run-mode gates precede schema validation and the permission
+        // decision (ToolRuntime.ts:129-150).
+        if let Some(message) = mode_constraints::plan_mode_violation(&name, &call.input, &context)?
+        {
+            return fail(&name, ToolError::new("plan_mode_violation", message));
+        }
+        if let Some(message) =
+            mode_constraints::ask_mode_violation(tool.as_ref(), &name, &call.input, &context)?
+        {
+            return fail(&name, ToolError::new("ask_mode_violation", message));
+        }
         let operation = async {
             let issues = validate_input(
                 &call.input,
