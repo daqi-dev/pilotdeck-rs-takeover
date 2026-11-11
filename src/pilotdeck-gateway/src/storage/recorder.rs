@@ -132,11 +132,6 @@ struct Turn {
     /// TS `contextRecorded`: the open step already has its `context_snapshot`.
     context_recorded: bool,
     model_requested: bool,
-    /// Writes parked by [`Recorder::park`], with the record each waits for.
-    parked: Vec<(ParkUntil, ParkedWrite)>,
-    /// The park points this turn has already passed.
-    step_seen: bool,
-    compaction_seen: bool,
 }
 impl Turn {
     fn started() -> Self {
@@ -145,28 +140,8 @@ impl Turn {
             open_step: None,
             context_recorded: false,
             model_requested: false,
-            parked: Vec::new(),
-            step_seen: false,
-            compaction_seen: false,
         }
     }
-    fn passed(&self, point: ParkUntil) -> bool {
-        match point {
-            ParkUntil::StepStarted => self.step_seen,
-            ParkUntil::CompactionStarted => self.compaction_seen,
-        }
-    }
-}
-/// A transcript write that waits for a record of its turn; see
-/// [`Recorder::park`].
-pub type ParkedWrite = Box<dyn FnOnce() + Send>;
-/// The record a parked write is released behind.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ParkUntil {
-    /// The turn's first `step_started`.
-    StepStarted,
-    /// The turn's first `compaction_started`.
-    CompactionStarted,
 }
 /// One `AgentInstructionLayerSnapshot` (`{scope, path, content}`), kept in the
 /// insertion order of the TS `Map` keyed by `scope \0 path`.
@@ -360,16 +335,8 @@ impl Recorder {
         let mut draft = draft("turn_result");
         draft.insert("result".into(), result);
         self.append(session_id, turn_id, draft)?;
-        let parked = inner
-            .turns
-            .remove(turn_id)
-            .map(|turn| turn.parked)
-            .unwrap_or_default();
+        inner.turns.remove(turn_id);
         inner.completed_turn_id = Some(turn_id.clone());
-        // The turn ended before the record they waited for: release them.
-        for (_, write) in parked {
-            write();
-        }
         Ok(())
     }
     /// TS `recordModelRequest`: open a step if needed, append the request, and
@@ -614,58 +581,7 @@ impl Recorder {
                 operation_id: operation_id(draft),
                 completion: None,
             });
-        // Released before this call returns to the compaction, so a parked
-        // write lands ahead of `compaction_completed`.
-        Self::release(&mut inner, turn_id, ParkUntil::CompactionStarted);
         Ok(())
-    }
-    /// Run `write` right after the turn's first record of kind `until`, or
-    /// when the turn completes without one. Returns the write back when the
-    /// turn is not recording or has already passed that record; the caller
-    /// then runs it itself.
-    ///
-    /// This exists for the background title record. The baseline starts the
-    /// title request just before the loop and appends its `session_metadata`
-    /// at the first event-loop yield after the response arrives: in a warm
-    /// process that is the `step_started` append, in a cold one (first turn
-    /// of the process) the response is still in flight then and the record
-    /// lands inside the first compaction bracket. The Rust loop starts in a
-    /// child process, long after the title request returned, so without
-    /// parking the record would always precede the step.
-    ///
-    /// A parked write must not call back into this recorder: it runs under
-    /// the recorder lock and appends through the shared writer only.
-    pub fn park(
-        &self,
-        turn_id: &JsString,
-        until: ParkUntil,
-        write: ParkedWrite,
-    ) -> Option<ParkedWrite> {
-        let mut inner = self.lock();
-        match inner.turns.get_mut(turn_id) {
-            Some(turn) if !turn.passed(until) => {
-                turn.parked.push((until, write));
-                None
-            }
-            _ => Some(write),
-        }
-    }
-    /// Mark `point` as passed for the turn and run what waited for it.
-    fn release(inner: &mut Inner, turn_id: &JsString, point: ParkUntil) {
-        let Some(turn) = inner.turns.get_mut(turn_id) else {
-            return;
-        };
-        match point {
-            ParkUntil::StepStarted => turn.step_seen = true,
-            ParkUntil::CompactionStarted => turn.compaction_seen = true,
-        }
-        let (ready, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut turn.parked)
-            .into_iter()
-            .partition(|(until, _)| *until == point);
-        turn.parked = waiting;
-        for (_, write) in ready {
-            write();
-        }
     }
     /// TS `recordCompactionCompleted` (AgentSessionEventRecorder:333-344).
     pub fn record_compaction_completed(
@@ -841,12 +757,7 @@ impl Recorder {
         if !self.writer.restore_recorder_entries(entries)? {
             return Ok(());
         }
-        // A write still parked on a dropped turn is released, not lost.
-        for (_, turn) in inner.turns.drain() {
-            for (_, write) in turn.parked {
-                write();
-            }
-        }
+        inner.turns.clear();
         inner.compactions.clear();
         inner.completed_turn_id = None;
         // TS `restoreInstructionState(options.restoredEntries)`.
@@ -942,7 +853,6 @@ impl Recorder {
             turn.model_requested = false;
             turn.next_step = step + 1;
         }
-        Self::release(inner, turn_id, ParkUntil::StepStarted);
         Ok(step)
     }
     fn complete_step(
