@@ -425,10 +425,8 @@ impl LiveSession for LiveSessionAdapter {
         let tail_options = options.clone();
         let sidechain = self.sidechain;
         // A turn claimed from the session's durable inbox (a follow-up the
-        // host admitted, not a client submit): its `turn_started` names the
-        // item, and no Gateway projection persists its status events — the
-        // baseline's queued pump drains such a turn without a consumer
-        // (AgentHandle.runQueuedPump).
+        // host admitted, not a client submit) names the item in its
+        // `turn_started` (AgentSession.submitQueuedTurn).
         let inbox_item = options
             .get("inboxItemId")
             .and_then(JsValue::as_string)
@@ -483,7 +481,7 @@ impl LiveSession for LiveSessionAdapter {
                     request.identity.turn_id.clone(),
                 )
                 .with_session_steer(session_steer)
-                .with_status_records(!sidechain && inbox_item.is_none())
+                .with_status_records(!sidechain)
                 .with_inbox_item(inbox_item)
                 .with_interaction_events(interaction_events)
                 .with_prompt_hooks(if crate::mutants::on("prompt-wiring") {

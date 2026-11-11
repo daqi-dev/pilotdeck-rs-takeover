@@ -174,7 +174,8 @@ impl SubagentRuntime {
                 .map(|state| state.messages)
                 .unwrap_or_default()
         })
-        .as_sidechain()
+        // A full session, not a one-shot sidechain: its TurnRunner records
+        // the loop's status messages like any session's.
         .with_tail(tail);
         Ok((Arc::new(session), storage))
     }
