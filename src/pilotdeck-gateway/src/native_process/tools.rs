@@ -1145,17 +1145,6 @@ impl MutationRecorder for Durable {
     }
 }
 
-/// Tools the baseline declares to the model in a default `pilotdeck server`
-/// session that have no Rust implementation yet (names as they appear in the
-/// provider request of bbx `turn-text`). `subagent` and `send_message` are
-/// `extraTools` of the automation bundle. (`mcp__funasr__transcribe_audio`
-/// is not a catalog tool: it comes from the builtin `funasr` plugin's MCP
-/// server through the session MCP composition.)
-#[cfg_attr(not(test), allow(dead_code))]
-#[rustfmt::skip] // one name per line: parallel branches each delete their own
-pub const BASELINE_TOOLS_NOT_PORTED: &[&str] = &[
-];
-
 /// The session's share of the baseline's execution world
 /// (`createNodeExecutionWorldBundle`): what the builtin tools close over.
 #[derive(Clone)]
@@ -1199,10 +1188,8 @@ pub(super) fn native_tools(
         })),
     );
     // `createBuiltinRegistry` (tool/registry/createBuiltinRegistry.ts:128):
-    // every builtin that has a Rust implementation. The ones the baseline
-    // registers and this process still lacks are listed in
-    // [`BASELINE_TOOLS_NOT_PORTED`]; they are left out rather than declared
-    // without an implementation behind them.
+    // the catalog builtins. `agent`, `subagent` and `send_message` join per
+    // turn in `SessionTools::turn`, bound to the session's subagent ports.
     let mut builtins = builtin::read_only_tools();
     builtins.extend(builtin::write_tools());
     #[cfg(unix)]

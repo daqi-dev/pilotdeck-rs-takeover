@@ -323,11 +323,11 @@ impl SessionParent {
             ]));
             let mut submission = match handle.submit_queued(next.input.clone(), options) {
                 Ok(submission) => submission,
-                // Lost the idle slot to another owner of the handle (a
-                // maintenance task): wait for idle again.
+                // `runQueuedPump`'s catch: the pump stops (`queuedPumpBlocked`)
+                // and the item stays pending, so ordinary submits stay refused.
                 Err(_) => {
-                    tokio::task::yield_now().await;
-                    continue;
+                    self.inbox.lock().unwrap_or_else(|e| e.into_inner()).pumping = false;
+                    return;
                 }
             };
             self.inbox
@@ -1030,3 +1030,7 @@ impl SessionContinuationPort {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "continuations_tests.rs"]
+mod tests;

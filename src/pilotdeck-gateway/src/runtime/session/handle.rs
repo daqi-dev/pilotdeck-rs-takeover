@@ -1067,3 +1067,7 @@ mod abort_contract_tests;
 #[cfg(test)]
 #[path = "handle_drop_tests.rs"]
 mod drop_contract_tests;
+
+#[cfg(test)]
+#[path = "handle_queue_tests.rs"]
+mod queue_tests;

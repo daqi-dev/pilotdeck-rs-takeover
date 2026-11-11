@@ -1498,15 +1498,6 @@ fn tool_policy_and_turn_environment() {
     )
     .list()
     .expect("#1071 native tool catalog");
-    // A baseline tool without a Rust implementation is left out of the
-    // catalog, never declared with nothing behind it.
-    for name in tools::BASELINE_TOOLS_NOT_PORTED {
-        negative_assert!(
-            !all.iter()
-                .any(|tool| tool.fields().get("name") == Some(&(*name).into())),
-            "{name} is listed as not ported but is in the native catalog"
-        );
-    }
     negative_assert!(
         all.iter()
             .any(|tool| tool.fields().get("name") == Some(&"read_file".into())),
