@@ -278,6 +278,51 @@ pub fn load_plugin_from_path(
     })
 }
 
+/// `loadBuiltinPlugins()` (extension/plugins/builtin/loadBuiltinPlugins.ts:12-37)
+/// over an explicit directory: the baseline scans the directory its own module
+/// sits in, the Rust host is told where the shipped plugins are.
+///
+/// Every subdirectory holding a `plugin.json` becomes a manifest-only plugin
+/// (name, path, `mcpServers`); `PluginRuntime` refresh then reloads each from
+/// disk and only falls back to this object when that fails. Like the baseline's
+/// single `try` around the loop, the first entry that cannot be stat'ed, read
+/// or parsed ends the scan and keeps what was collected before it.
+pub fn load_builtin_plugins(builtin_root: &Path) -> Vec<Arc<LoadedPlugin>> {
+    let mut plugins = Vec::new();
+    for path in sorted_entries(builtin_root).unwrap_or_default() {
+        // `statSync`: symlinks are followed.
+        let Ok(stat) = path.metadata() else {
+            break;
+        };
+        if !stat.is_dir() {
+            continue;
+        }
+        let manifest_path = path.join("plugin.json");
+        if manifest_path.metadata().is_err() {
+            continue;
+        }
+        let Ok(manifest) = read_json(&manifest_path).and_then(|raw| parse_plugin_manifest(&raw))
+        else {
+            break;
+        };
+        let manifest = manifest.as_object().expect("validated manifest");
+        plugins.push(Arc::new(LoadedPlugin {
+            name: string(manifest.get_property("name").expect("validated name"))
+                .expect("validated name"),
+            path,
+            source: PluginSource::Builtin,
+            commands: vec![],
+            skills: vec![],
+            output_styles: vec![],
+            hooks_config: None,
+            mcp_servers: manifest.get_property("mcpServers").cloned(),
+            lsp_servers: None,
+            dispose: None,
+        }));
+    }
+    plugins
+}
+
 /// The style-only loader never reads hooks or unrelated markdown directories.
 pub struct LoadedPluginOutputStyles {
     pub name: String,

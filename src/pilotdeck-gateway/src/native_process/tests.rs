@@ -912,28 +912,45 @@ async fn production_profile_and_registration() {
         Some(&"mock".into()),
         "#1071 isolated model selection"
     );
+    // Configured MCP servers, plugins and skills are served by the native
+    // host (bbx `plugins-user-level`), so the profile check accepts them —
+    // an invalid `mcp.json` included, which the baseline only diagnoses.
     for (base, body) in [
         (
             &options.home,
-            "{\"mcpServers\":{\"server\":{\"command\":\"must-not-run\"}}}",
+            "{\"mcpServers\":{\"server\":{\"command\":\"never-started-here\"}}}",
         ),
         (&options.project.join(".pilotdeck"), "invalid json"),
     ] {
         std::fs::create_dir_all(base).expect("#1071 MCP parent");
         let file = base.join("mcp.json");
         std::fs::write(&file, body).expect("#1071 MCP configuration");
-        negative_assert!(
-            assembly::validate_profile(&options, &env).await.is_err(),
-            "#1071 unsupported MCP refused"
-        );
+        assembly::validate_profile(&options, &env)
+            .await
+            .expect("configured MCP servers accepted");
         std::fs::remove_file(file).expect("#1071 remove MCP fixture");
     }
     let skill = options.project.join(".pilotdeck/skills/fixture");
     std::fs::create_dir_all(&skill).expect("#1071 skill fixture");
-    negative_assert!(
-        assembly::validate_profile(&options, &env).await.is_err(),
-        "#1071 unsupported contributions refused"
+    let plugin = options.home.join("plugins/fixture");
+    std::fs::create_dir_all(&plugin).expect("plugin fixture");
+    std::fs::write(plugin.join("plugin.json"), "{\"name\":\"fixture\"}").expect("plugin manifest");
+    assembly::validate_profile(&options, &env)
+        .await
+        .expect("configured skills and plugins accepted");
+    // A plugin that contributes hooks is still refused: hooks are not served.
+    std::fs::write(
+        plugin.join("plugin.json"),
+        "{\"name\":\"fixture\",\"hooks\":{\"PreToolUse\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"never-started-here\"}]}]}}",
+    )
+    .expect("plugin hooks manifest");
+    assert!(
+        assembly::validate_profile(&options, &env)
+            .await
+            .is_err_and(|error| error.to_string().contains("configured hooks")),
+        "plugin-contributed hooks refused"
     );
+    std::fs::remove_dir_all(options.home.join("plugins")).expect("remove plugin fixture");
     std::fs::remove_dir_all(options.project.join(".pilotdeck/skills"))
         .expect("#1071 remove skill fixture");
     std::fs::write(

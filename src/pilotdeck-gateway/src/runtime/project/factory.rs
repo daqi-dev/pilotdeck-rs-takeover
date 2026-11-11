@@ -496,7 +496,7 @@ impl Families {
     /// wrapped the custom kernel is replaced as well. That makes
     /// `with_interaction` and `with_tools_mcp` independent of call order.
     pub fn with_tools_mcp(mut self) -> Self {
-        self.mcp = Arc::new(super::tools_mcp::McpFamilySource);
+        self.mcp = Arc::new(super::tools_mcp::McpFamilySource::default());
         let execution_world: Arc<dyn ResourceFamilySource> =
             Arc::new(super::tools_mcp::ExecutionWorldFamilySource);
         self.execution_world = if self.execution_world.layers_interaction() {
@@ -506,6 +506,17 @@ impl Families {
         } else {
             execution_world
         };
+        self
+    }
+
+    /// The production MCP family with the builtin plugins' placeholder
+    /// targets (`patchProjectScopedMcpSpec`); independent of call order with
+    /// `with_tools_mcp`, which only installs the default (empty) paths.
+    pub fn with_builtin_mcp_paths(
+        mut self,
+        builtin_paths: crate::runtime::mcp::registry::BuiltinMcpPaths,
+    ) -> Self {
+        self.mcp = Arc::new(super::tools_mcp::McpFamilySource { builtin_paths });
         self
     }
 

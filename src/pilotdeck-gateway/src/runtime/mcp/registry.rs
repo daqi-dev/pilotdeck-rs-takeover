@@ -26,7 +26,8 @@ use crate::runtime::cleanup_task::lock;
 use crate::{js_value, runtime::model::http::ProxySettings, runtime::project::RuntimeError};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
-    path::Path,
+    collections::HashMap,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 use tokio::sync::watch;
@@ -295,6 +296,104 @@ pub struct BuiltinMcpPaths {
     pub funasr_mcp_entrypoint: String,
     /// `getPilotDeckInstallCommand()`.
     pub install_command: String,
+}
+
+impl BuiltinMcpPaths {
+    /// The values `projectMcpSpec.ts` derives from the Node process and its
+    /// install location, for a host that is given the builtin plugins
+    /// directory instead (`dist/src/extension/plugins/builtin` in the baseline
+    /// package).
+    ///
+    /// - `process.execPath`: the first `node` on `PATH`, symlinks resolved as
+    ///   Node reports its own path. Without one the bare name is kept and the
+    ///   spawn fails like any missing command.
+    /// - `funasrEntrypoint()` (projectMcpSpec.ts:39-43): the script inside the
+    ///   builtin `funasr` plugin.
+    /// - `getPilotDeckInstallCommand()` (projectMcpSpec.ts:17-37): the package
+    ///   root is the nearest ancestor holding `package.json` and
+    ///   `scripts/install-asr.mjs`, falling back to the start directory.
+    /// - `playwrightMcpEntrypoint()` (projectMcpSpec.ts:45-55): the runtime
+    ///   root, the two `node_modules` the baseline reaches from
+    ///   `dist/src/mcp/runtime` (`dist/` and the package root), then the
+    ///   working directory; the first that exists, else the first candidate.
+    pub fn for_builtin_plugins(
+        builtin_plugins_root: &Path,
+        env: &HashMap<String, String>,
+    ) -> std::io::Result<Self> {
+        let root = resolve_path(&builtin_plugins_root.to_string_lossy())?;
+        let node_executable = env
+            .get("PATH")
+            .into_iter()
+            .flat_map(|path| std::env::split_paths(path))
+            .map(|directory| directory.join("node"))
+            .find(|candidate| candidate.is_file())
+            .map(|found| std::fs::canonicalize(&found).unwrap_or(found))
+            .map_or_else(
+                || "node".to_owned(),
+                |found| found.to_string_lossy().into_owned(),
+            );
+        let package_root = {
+            let mut current = PathBuf::from(&root);
+            loop {
+                if current.join("package.json").exists()
+                    && current.join("scripts/install-asr.mjs").exists()
+                {
+                    break current.to_string_lossy().into_owned();
+                }
+                if !current.pop() {
+                    break root.clone();
+                }
+            }
+        };
+        let runtime_root = env
+            .get("PILOTDECK_RUNTIME_ROOT")
+            .filter(|value| !value.is_empty());
+        let same_file = |left: &str, right: &str| {
+            matches!(
+                (std::fs::canonicalize(left), std::fs::canonicalize(right)),
+                (Ok(left), Ok(right)) if left == right
+            )
+        };
+        let install_command = match runtime_root {
+            // Desktop packages ship Node and the installer but no npm.
+            Some(desktop) if Path::new(desktop).exists() && same_file(desktop, &package_root) => {
+                let quote = |value: &str| format!("'{}'", value.replace('\'', "'\"'\"'"));
+                format!(
+                    "{} {}",
+                    quote(&node_executable),
+                    quote(&format!(
+                        "{}/scripts/install-asr.mjs",
+                        package_root.trim_end_matches('/')
+                    ))
+                )
+            }
+            _ => format!("npm --prefix \"{package_root}\" run install:asr"),
+        };
+        const PLAYWRIGHT: &str = "node_modules/@playwright/mcp/cli.js";
+        let mut candidates = Vec::new();
+        if let Some(desktop) = runtime_root {
+            candidates.push(resolve_path(&format!("{desktop}/{PLAYWRIGHT}"))?);
+        }
+        candidates.push(resolve_path(&format!("{root}/../../../../{PLAYWRIGHT}"))?);
+        candidates.push(resolve_path(&format!(
+            "{root}/../../../../../{PLAYWRIGHT}"
+        ))?);
+        candidates.push(resolve_path(PLAYWRIGHT)?);
+        let playwright_mcp_entrypoint = candidates
+            .iter()
+            .find(|candidate| Path::new(candidate).exists())
+            .unwrap_or(&candidates[0])
+            .clone();
+        Ok(Self {
+            node_executable,
+            playwright_mcp_entrypoint,
+            funasr_mcp_entrypoint: format!(
+                "{}/funasr/funasr-local-mcp.mjs",
+                root.trim_end_matches('/')
+            ),
+            install_command,
+        })
+    }
 }
 
 /// `path.resolve(p)` (POSIX, lexical).

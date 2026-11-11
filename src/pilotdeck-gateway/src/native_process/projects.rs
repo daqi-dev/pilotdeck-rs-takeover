@@ -246,6 +246,7 @@ mod tests {
             storage_root: None,
             os_home: None,
             builtin_skills_root: None,
+            builtin_plugins_root: None,
         }
     }
 

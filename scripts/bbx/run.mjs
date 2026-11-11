@@ -153,6 +153,9 @@ const env = {
   PILOTDECK_GATEWAY_TOKEN: TOKEN, PILOTDECK_GATEWAY_PORT: String(GATEWAY_PORT), PILOTDECK_SKIP_BROWSER_OPEN: '1',
   // 内置 skills 目录两侧指向同一处（基线自带的那份），否则 Rust 的开发构建找不到它。
   PILOTDECK_BUNDLED_SKILLS_DIR: path.join(BASELINE, 'skills'),
+  // 内置插件目录：基线固定用自己安装位置下的这一处（loadBuiltinPlugins.ts），不认这个变量；
+  // Rust 没有随二进制带插件，靠它指到基线那份。
+  PILOTDECK_BUNDLED_PLUGINS_DIR: path.join(BASELINE, 'dist/src/extension/plugins/builtin'),
   ...substDeep(scenario.env ?? {}),
 };
 const SIDES = {

@@ -489,8 +489,9 @@ impl MutationRecorder for Durable {
 /// Tools the baseline declares to the model in a default `pilotdeck server`
 /// session that have no Rust implementation yet (names as they appear in the
 /// provider request of bbx `turn-text`). `subagent` and `send_message` are
-/// `extraTools` of the automation bundle; `mcp__funasr__transcribe_audio`
-/// comes from the builtin `funasr` plugin's MCP server.
+/// `extraTools` of the automation bundle. (`mcp__funasr__transcribe_audio`
+/// is not a catalog tool: it comes from the builtin `funasr` plugin's MCP
+/// server through the session MCP composition.)
 #[cfg_attr(not(test), allow(dead_code))]
 pub const BASELINE_TOOLS_NOT_PORTED: &[&str] = &[
     "agent",
@@ -498,7 +499,6 @@ pub const BASELINE_TOOLS_NOT_PORTED: &[&str] = &[
     "create_goal",
     "execute_code",
     "get_goal",
-    "mcp__funasr__transcribe_audio",
     "read_skill",
     "send_attachment",
     "send_message",
@@ -710,6 +710,11 @@ impl SessionMcpRelease {
 pub struct SessionMcpToolsOptions<'a> {
     /// The SDK-owned session server table (`set_mcp_servers` commits here).
     pub mcp_config: &'a SdkMcpConfig,
+    /// `contributions.mcpServers`: the servers the session's plugin
+    /// generation declares. The SDK-set servers are spread over them
+    /// (`{ ...contributions.mcpServers, ...sdkMcpServers }`,
+    /// ProjectSessionRuntimeBundle.ts:279).
+    pub plugin_servers: JsObject,
     pub provider: &'a ProjectMcpRuntimeProvider,
     /// The session factory's per-session registry; gateway disposal drains
     /// it (`ProjectSessionFactory.mcp`).
@@ -738,6 +743,15 @@ pub async fn session_mcp_tools(
 ) -> Result<(SessionMcpTools, SessionMcpRelease), RuntimeError> {
     let session_key = String::from_utf16_lossy(options.session_key.units());
     let servers = enabled_session_mcp_servers(options.mcp_config, options.session_key);
+    // `{ ...contributions.mcpServers, ...sdkMcpServers }`: an SDK-set server
+    // replaces a plugin server of the same name in place.
+    let servers = {
+        let mut merged = options.plugin_servers;
+        for (name, config) in servers.own_entries() {
+            merged.insert(name.clone(), config.clone());
+        }
+        merged
+    };
     let diagnostic = |message: String, error: Option<RuntimeError>| {
         if let Some(sink) = &options.on_diagnostic {
             sink(message, error);
@@ -1128,6 +1142,7 @@ mod tests {
     ) -> Result<(SessionMcpTools, SessionMcpRelease), RuntimeError> {
         session_mcp_tools(SessionMcpToolsOptions {
             mcp_config: config,
+            plugin_servers: JsObject::new(),
             provider,
             per_session_runtimes: runtimes,
             session_key: &JsString::from(session_key),

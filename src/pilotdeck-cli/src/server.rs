@@ -59,6 +59,7 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
         sidecar: exe_dir.unwrap_or(Path::new("")).join(SIDECAR),
         env: env.strings(),
         builtin_skills_root: Some(builtin_root),
+        builtin_plugins_root: builtin_plugins_root(env, cwd, exe_dir),
     };
     native_process::serve(options, |listening| {
         stdout_line(&format!("PilotDeck server listening: {}", listening.url));
@@ -74,6 +75,39 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
         "[telemetry] shutdown snapshot {TELEMETRY_SNAPSHOT}"
     ));
     Ok(0)
+}
+
+/// The builtin plugins directory. The baseline has no such setting: it scans
+/// the directory its compiled `loadBuiltinPlugins` module sits in
+/// (`dist/src/extension/plugins/builtin`). The Rust layout follows the bundled
+/// skills convention (`skills::builtin_skills_root`): a non-empty
+/// `PILOTDECK_BUNDLED_PLUGINS_DIR` wins, otherwise the first existing
+/// `builtin-plugins` directory one or two levels above the executable. Unlike
+/// skills there is no working-directory fallback — plugins can declare
+/// processes to start, so nothing is loaded from wherever the server happens
+/// to be launched. `None` ships no builtin plugins, which is what the
+/// baseline does when its scan fails.
+///
+/// The directory is reported with symlinks resolved: the baseline's is the
+/// location of a loaded module, which Node always gives as a real path, and
+/// that path shows up in the skills section of the system prompt.
+fn builtin_plugins_root(env: &Env, cwd: &Path, exe_dir: Option<&Path>) -> Option<PathBuf> {
+    let real = |path: PathBuf| std::fs::canonicalize(&path).unwrap_or(path);
+    if let Some(dir) = env
+        .get("PILOTDECK_BUNDLED_PLUGINS_DIR")
+        .filter(|dir| !dir.is_empty())
+    {
+        return Some(real(paths::resolve(cwd, Path::new(dir))));
+    }
+    let exe_dir = exe_dir?;
+    [
+        exe_dir.join("../builtin-plugins"),
+        exe_dir.join("../../builtin-plugins"),
+    ]
+    .into_iter()
+    .map(|candidate| paths::resolve(cwd, &candidate))
+    .find(|candidate| candidate.is_dir())
+    .map(real)
 }
 
 /// readPort (pilotdeck.ts:517-525): the argument after the first `--port`,

@@ -269,6 +269,9 @@ pub struct Options {
     /// bundled skills directory every project's extension runtime lists
     /// first. `None` (the `--native` entry) lists no bundled skills.
     pub builtin_skills_root: Option<PathBuf>,
+    /// The builtin plugins directory (`loadBuiltinPlugins()` scans the one
+    /// beside its own module; the Rust host is told). `None` loads none.
+    pub builtin_plugins_root: Option<PathBuf>,
 }
 
 pub fn native_requested(first: Option<&std::ffi::OsStr>) -> bool {
@@ -415,6 +418,7 @@ impl Options {
                 .map(str::to_owned),
             os_home: None,
             builtin_skills_root: None,
+            builtin_plugins_root: None,
         })
     }
 

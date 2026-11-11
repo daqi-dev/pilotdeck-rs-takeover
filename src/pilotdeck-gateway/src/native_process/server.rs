@@ -46,6 +46,8 @@ pub struct ServerOptions {
     pub env: Env,
     /// `resolveBuiltinSkillsRoot()`: the bundled skills directory.
     pub builtin_skills_root: Option<PathBuf>,
+    /// The builtin plugins directory; `None` ships no builtin plugins.
+    pub builtin_plugins_root: Option<PathBuf>,
 }
 
 /// The `GatewayServer` fields the CLI prints once the listener is up.
@@ -115,6 +117,7 @@ async fn serve_on_runtime(
                 .unwrap_or_else(|| PathBuf::from("/")),
         ),
         builtin_skills_root: options.builtin_skills_root.clone(),
+        builtin_plugins_root: options.builtin_plugins_root.clone(),
     };
     // createLocalGateway precedes startGatewayServer in the baseline, so the
     // host and token checks below run with the gateway already built.
