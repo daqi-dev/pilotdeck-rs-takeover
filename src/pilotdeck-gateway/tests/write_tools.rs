@@ -978,77 +978,43 @@ fn scheduled_error_message(result: &JsValue) -> Option<String> {
         .map(js_text)
 }
 
-fn assert_outside_workspace_rejection(result: &JsValue, label: &str) {
-    // Scheduler validation turns the resolver's path_not_allowed into a
-    // schema issue, so the wire code is invalid_tool_input; the containment
-    // message is what distinguishes this from the unread-file error.
-    assert_eq!(
-        scheduled_error_code(result).as_deref(),
-        Some("invalid_tool_input"),
-        "{label}: {result:?}"
-    );
-    assert!(
-        scheduled_error_message(result)
-            .is_some_and(|message| message.contains("resolves outside the PilotDeck workspace")),
-        "{label}: {result:?}"
-    );
-}
-
+/// TS `pathSafety.ts:14-107` is lexical for writes: a path inside the root
+/// that reaches outside through a symlink is not refused by the tool. In
+/// production the default permission mode asks before any write; once the
+/// decision is `allow` the write follows the link, exactly as the baseline's
+/// `writeFile` does (bbx scenario `path-symlink-outside`, turn 10).
 #[test]
-fn scheduled_allow_decision_still_contains_symlink_escape() {
-    let root = scratch::Scratch::new("write-tools-scheduled-security");
-    let outside = scratch::Scratch::new("write-tools-scheduled-security-outside");
+fn scheduled_allow_decision_follows_in_workspace_links_like_ts() {
+    let root = scratch::Scratch::new("write-tools-scheduled-links");
+    let outside = scratch::Scratch::new("write-tools-scheduled-links-outside");
     let case = root.path().join("case");
     fs::create_dir(&case).unwrap();
-    // Two-hop dangling link: hop1 -> hop2 -> <outside>/two-hop.txt.
-    std::os::unix::fs::symlink(outside.path().join("two-hop.txt"), case.join("hop2")).unwrap();
-    std::os::unix::fs::symlink("hop2", case.join("hop1")).unwrap();
-    // Dangling link through a directory symlink that points outside the root.
     std::os::unix::fs::symlink(outside.path(), case.join("outdir")).unwrap();
-    std::os::unix::fs::symlink("outdir/via-dir.txt", case.join("via-dir")).unwrap();
-
     let replay = Replay::new(&case, &JsValue::Object(JsObject::new()));
     let results = scheduled_execute(
         &replay,
-        vec![
-            (
-                "write_file",
-                JsValue::Object(object([
-                    ("file_path", JsValue::from("hop1")),
-                    ("content", JsValue::from("escaped\n")),
-                ])),
-            ),
-            (
-                "edit_file",
-                JsValue::Object(object([
-                    ("file_path", JsValue::from("hop1")),
-                    ("old_string", JsValue::from("")),
-                    ("new_string", JsValue::from("escaped-edit\n")),
-                ])),
-            ),
-            (
-                "write_file",
-                JsValue::Object(object([
-                    ("file_path", JsValue::from("via-dir")),
-                    ("content", JsValue::from("escaped-dir\n")),
-                ])),
-            ),
-        ],
+        vec![(
+            "write_file",
+            JsValue::Object(object([
+                ("file_path", JsValue::from("outdir/via-dir.txt")),
+                ("content", JsValue::from("through the link\n")),
+            ])),
+        )],
     );
-    for (index, result) in results.iter().enumerate() {
-        assert_outside_workspace_rejection(
-            result,
-            &format!("call {index} must be rejected through the scheduler allow path"),
-        );
-    }
-    assert!(!outside.path().join("two-hop.txt").exists());
-    assert!(!outside.path().join("via-dir.txt").exists());
+    assert!(
+        scheduled_error_code(&results[0]).is_none(),
+        "{:?}",
+        results[0]
+    );
+    assert_eq!(
+        fs::read_to_string(outside.path().join("via-dir.txt")).unwrap(),
+        "through the link\n"
+    );
 }
 
 #[test]
-fn symlink_boundaries_still_reject_escapes() {
+fn root_symlink_cwd_stays_writable() {
     let root = scratch::Scratch::new("write-tools-symlink-boundaries");
-    let outside = scratch::Scratch::new("write-tools-symlink-boundaries-outside");
     let case = root.path().join("case");
     fs::create_dir(&case).unwrap();
     // cwd itself is a symlink to the real root.
@@ -1059,58 +1025,15 @@ fn symlink_boundaries_still_reject_escapes() {
         &[],
         &JsValue::Object(JsObject::new()),
     );
-    // A dangling link at the edge, a `..` in a link target that walks out
-    // through a directory link, and a chain longer than the guard limit.
-    std::os::unix::fs::symlink(outside.path().join("dangling.txt"), case.join("dangling")).unwrap();
-    fs::create_dir(outside.path().join("deep")).unwrap();
-    std::os::unix::fs::symlink(outside.path().join("deep"), case.join("deeplink")).unwrap();
-    std::os::unix::fs::symlink("deeplink/../dotdot-escape.txt", case.join("dotdot")).unwrap();
-    let chain = case.join("chain41");
-    fs::create_dir(&chain).unwrap();
-    for index in 0..41 {
-        let target = if index + 1 == 41 {
-            outside
-                .path()
-                .join("chain-escape.txt")
-                .to_string_lossy()
-                .into_owned()
-        } else {
-            format!("h{}", index + 1)
-        };
-        std::os::unix::fs::symlink(&target, chain.join(format!("h{index}"))).unwrap();
-    }
     let results = scheduled_execute(
         &replay,
-        vec![
-            (
-                "write_file",
-                JsValue::Object(object([
-                    ("file_path", JsValue::from("plain.txt")),
-                    ("content", JsValue::from("inside\n")),
-                ])),
-            ),
-            (
-                "write_file",
-                JsValue::Object(object([
-                    ("file_path", JsValue::from("dangling")),
-                    ("content", JsValue::from("escaped\n")),
-                ])),
-            ),
-            (
-                "write_file",
-                JsValue::Object(object([
-                    ("file_path", JsValue::from("dotdot")),
-                    ("content", JsValue::from("escaped\n")),
-                ])),
-            ),
-            (
-                "write_file",
-                JsValue::Object(object([
-                    ("file_path", JsValue::from("chain41/h0")),
-                    ("content", JsValue::from("escaped\n")),
-                ])),
-            ),
-        ],
+        vec![(
+            "write_file",
+            JsValue::Object(object([
+                ("file_path", JsValue::from("plain.txt")),
+                ("content", JsValue::from("inside\n")),
+            ])),
+        )],
     );
     assert!(
         scheduled_error_code(&results[0]).is_none(),
@@ -1121,22 +1044,6 @@ fn symlink_boundaries_still_reject_escapes() {
         fs::read_to_string(case.join("plain.txt")).unwrap(),
         "inside\n"
     );
-    for (index, label) in [(1, "dangling"), (2, "dotdot"), (3, "chain41")] {
-        assert!(
-            scheduled_error_code(&results[index]).is_some(),
-            "{label} must be rejected: {:?}",
-            results[index]
-        );
-        assert!(
-            !scheduled_error_message(&results[index])
-                .unwrap_or_default()
-                .is_empty(),
-            "{label}"
-        );
-    }
-    assert!(!outside.path().join("dangling.txt").exists());
-    assert!(!outside.path().join("dotdot-escape.txt").exists());
-    assert!(!outside.path().join("chain-escape.txt").exists());
 }
 
 #[test]
@@ -1166,50 +1073,6 @@ fn scheduled_allow_decision_still_permits_outside_paths() {
         results[0]
     );
     assert_eq!(fs::read_to_string(&target).unwrap(), "allowed\n");
-}
-
-#[test]
-fn symlink_negative_reads_before_swap_and_needs_the_guard() {
-    let root = scratch::Scratch::new("write-tools-symlink-swap");
-    let outside = scratch::Scratch::new("write-tools-symlink-swap-outside");
-    let case = root.path().join("case");
-    fs::create_dir(&case).unwrap();
-    let target = case.join("swap.txt");
-    let secret = outside.path().join("secret.txt");
-    fs::write(&target, "secret\n").unwrap();
-    fs::write(&secret, "secret\n").unwrap();
-    let modified = fs::metadata(&target).unwrap().modified().unwrap();
-    fs::File::open(&secret)
-        .unwrap()
-        .set_modified(modified)
-        .unwrap();
-    let replay = Replay::new(&case, &JsValue::Object(JsObject::new()));
-    futures_block(ReadFileTool::new().execute(
-        JsValue::Object(object([("file_path", JsValue::from("swap.txt"))])),
-        replay.context.clone(),
-    ))
-    .expect("read the file before it becomes a symlink");
-    fs::remove_file(&target).unwrap();
-    std::os::unix::fs::symlink(&secret, &target).unwrap();
-
-    // The read snapshot is fresh (same hash and mtime), so only the containment
-    // guard can stop this write. Removing the guard makes this assert fail
-    // because the outside file is overwritten.
-    let results = scheduled_execute(
-        &replay,
-        vec![(
-            "write_file",
-            JsValue::Object(object([
-                ("file_path", JsValue::from("swap.txt")),
-                ("content", JsValue::from("hijacked\n")),
-            ])),
-        )],
-    );
-    assert_outside_workspace_rejection(
-        &results[0],
-        "symlink escape must be rejected after a real read",
-    );
-    assert_eq!(fs::read_to_string(&secret).unwrap(), "secret\n");
 }
 
 #[test]

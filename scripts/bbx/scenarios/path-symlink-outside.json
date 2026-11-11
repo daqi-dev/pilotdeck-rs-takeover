@@ -1,6 +1,6 @@
 {
-  "name": "secreview-path-symlink",
-  "about": "安全审查：默认模式下，工作区（PILOT_HOME）里的目录 / 文件符号链接指向工作区外（proj/outside），以及 .. 与大小写变体，经 read_file / write_file / edit_file / send_attachment 访问。采集器对任何权限询问一律拒绝；比两侧哪些调用不经询问就读到或写到了工作区外。第 1 轮在 bypassPermissions 下用 bash 搭链接。",
+  "name": "path-symlink-outside",
+  "about": "默认模式下，工作区（PILOT_HOME）里的目录 / 文件符号链接指向工作区外（proj/outside），以及 .. 与大小写变体，经 read_file / write_file / edit_file / send_attachment 访问。基线的路径检查（pathSafety.ts:14-107）是字面的，只有 mustExist（读、发附件）才比对 realpath：读类工具对链接报 permission_denied「resolves outside」；write_file / edit_file 字面在工作区内即通过，新文件经目录链接写出去时由默认模式的权限询问把关（第 3 轮拒绝、第 10 轮允许后真的写到了工作区外），已存在的链接目标没读过则报「File has not been read yet」。第 1 轮在 bypassPermissions 下用 bash 搭链接；除第 10 轮外采集器对任何权限询问一律拒绝。",
   "provider": [
     {
       "name": "title",
@@ -9,6 +9,32 @@
       ],
       "reply": {
         "text": "{\"title\": \"Tool run\"}"
+      }
+    },
+    {
+      "name": "turn-10-after-tool",
+      "when": [
+        "turn-10:",
+        "\"tool_call_id\":\"call_bbx_10\""
+      ],
+      "reply": {
+        "text": "Done 10."
+      }
+    },
+    {
+      "name": "turn-10",
+      "when": [
+        "turn-10:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_10",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "{PILOT_HOME}/link-out/allowed.txt",
+            "content": "written through dir link after allow\n"
+          }
+        }
       }
     },
     {
@@ -285,7 +311,7 @@
             "sessionKey": "s-bbx-1",
             "requestId": "{event.requestId}",
             "decision": "deny",
-            "reason": "secreview denies every prompt"
+            "reason": "bbx denies every prompt"
           }
         }
       ],
@@ -311,7 +337,7 @@
             "sessionKey": "s-bbx-1",
             "requestId": "{event.requestId}",
             "decision": "deny",
-            "reason": "secreview denies every prompt"
+            "reason": "bbx denies every prompt"
           }
         }
       ],
@@ -337,7 +363,7 @@
             "sessionKey": "s-bbx-1",
             "requestId": "{event.requestId}",
             "decision": "deny",
-            "reason": "secreview denies every prompt"
+            "reason": "bbx denies every prompt"
           }
         }
       ],
@@ -363,7 +389,7 @@
             "sessionKey": "s-bbx-1",
             "requestId": "{event.requestId}",
             "decision": "deny",
-            "reason": "secreview denies every prompt"
+            "reason": "bbx denies every prompt"
           }
         }
       ],
@@ -389,7 +415,7 @@
             "sessionKey": "s-bbx-1",
             "requestId": "{event.requestId}",
             "decision": "deny",
-            "reason": "secreview denies every prompt"
+            "reason": "bbx denies every prompt"
           }
         }
       ],
@@ -415,7 +441,7 @@
             "sessionKey": "s-bbx-1",
             "requestId": "{event.requestId}",
             "decision": "deny",
-            "reason": "secreview denies every prompt"
+            "reason": "bbx denies every prompt"
           }
         }
       ],
@@ -441,7 +467,7 @@
             "sessionKey": "s-bbx-1",
             "requestId": "{event.requestId}",
             "decision": "deny",
-            "reason": "secreview denies every prompt"
+            "reason": "bbx denies every prompt"
           }
         }
       ],
@@ -467,7 +493,32 @@
             "sessionKey": "s-bbx-1",
             "requestId": "{event.requestId}",
             "decision": "deny",
-            "reason": "secreview denies every prompt"
+            "reason": "bbx denies every prompt"
+          }
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-10: run the tool"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-bbx-1",
+            "requestId": "{event.requestId}",
+            "decision": "allow"
           }
         }
       ],
