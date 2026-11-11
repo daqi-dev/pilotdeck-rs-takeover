@@ -680,10 +680,15 @@ impl Requests {
         }
         // The TS callback closes with `sdk_output_style_changed` so the next
         // session composes the style's appendSystemPrompt.
+        // `this.gateway?.closeSession(...)` (InProcessGateway.ts:2049-2054):
+        // the owner, the session's interactions and its live permission mode.
         self.owner
             .close(&session_key)
             .await
             .map_err(runtime_error)?;
+        self.interactions
+            .close_session(&session_key, &"sdk_output_style_changed".into());
+        self.session_overrides.clear_live_mode(&session_key);
         let mut result = pilotdeck_protocol::JsObject::new();
         result.insert("applied".into(), JsValue::Bool(true));
         if let Some(name) = &name {

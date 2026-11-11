@@ -790,12 +790,17 @@ async fn start_assembly(
                             let session = session.clone();
                             // The live registry (the last selection or
                             // plan-mode transition) is what the baseline's
-                            // next run starts in; the stored selection covers
-                            // a session whose live entry was cleared.
+                            // next run starts in: `permissionMode = inputMode
+                            // ?? livePermissionMode ?? defaultPermissionMode`
+                            // (InProcessGateway.ts:1442-1450). A session whose
+                            // live entry was cleared (`closeSession`) runs in
+                            // the server default, not the stored selection.
                             Arc::new(move || {
-                                session_overrides
-                                    .live_mode(&session)
-                                    .or_else(|| session_overrides.permission_mode(&session))
+                                Some(
+                                    session_overrides
+                                        .live_mode(&session)
+                                        .unwrap_or_else(|| "default".into()),
+                                )
                             })
                         };
                         let turn_project_root = project_root.clone();
@@ -1205,6 +1210,8 @@ async fn start_assembly(
                 &build_project,
                 &permission_rule_sets,
                 &build_mcp_config,
+                &interactions,
+                &session_overrides,
             );
             let async_hook_registry =
                 steer::build_async_hook_registry(&build_project, &owner, &coordinator);

@@ -97,24 +97,37 @@ pub(super) fn build_mcp_gateway(
     build_project: &Arc<ProjectRuntimeRegistry>,
     permission_rule_sets: &Arc<GatewaySessionPermissionRuleSetRegistry>,
     build_mcp_config: &Arc<std::sync::OnceLock<Arc<SdkMcpConfig>>>,
+    interactions: &Arc<crate::runtime::interaction::GatewayInteractionCoordinator>,
+    session_overrides: &Arc<super::super::SessionOverrides>,
 ) -> Arc<McpGateway> {
     // U6 MCP four-control gateway (#1319): wire the #1215 component
     // into the native request router. The SdkMcpConfig owns the
     // registry state; the McpGateway owns validation, the busy gate,
     // and the post-success close. The close_session callback mirrors
     // the TS `closeSession` that the registry calls after its commit.
+    // `InProcessGateway.closeSession` (InProcessGateway.ts:2049-2054): close
+    // the live owner, then the session's interactions with the given reason
+    // and its live permission mode.
     let close_owner = owner.clone();
-    let close_session: SdkMcpCloseSession = Arc::new(move |session_key, _reason| {
+    let close_interactions = interactions.clone();
+    let close_overrides = session_overrides.clone();
+    let close_session: SdkMcpCloseSession = Arc::new(move |session_key, reason| {
         let key = match &session_key {
             JsValue::String(key) => key.clone(),
             _ => JsString::from(""),
         };
+        let reason = JsString::from(reason);
         let owner = close_owner.clone();
+        let interactions = close_interactions.clone();
+        let overrides = close_overrides.clone();
         Box::pin(async move {
             owner
                 .close(&key)
                 .await
-                .map_err(|error| SdkMcpError::plain("Error", JsString::from(error.message)))
+                .map_err(|error| SdkMcpError::plain("Error", JsString::from(error.message)))?;
+            interactions.close_session(&key, &reason);
+            overrides.clear_live_mode(&key);
+            Ok(())
         })
     });
     let mcp_config = Arc::new(SdkMcpConfig::new(SdkMcpConfigOptions {
