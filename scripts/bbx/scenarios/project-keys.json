@@ -270,8 +270,7 @@
         "\\.jsonl\\.jsonl\\[\\d+\\]\\.(sequence|parentEntryId)$",
         "\\.projections\\.json\\.json\\..*(asOfSequence|\\.sequence|\\.index)$",
         "\\.projections\\.json\\.json\\.anchor\\.",
-        "\\.projections\\.agent-transcript\\.metadata\\.state\\.(title|tag)$",
-        "\\.result\\.messages\\[\\d+\\]\\.sequence$"
+        "\\.projections\\.agent-transcript\\.metadata\\.state\\.(title|tag)$"
       ]
     }
   ]

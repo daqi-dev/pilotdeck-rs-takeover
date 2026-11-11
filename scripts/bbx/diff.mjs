@@ -8,11 +8,11 @@
 //   2. ISO 时间戳      → <iso>
 //   3. 毫秒时间戳      → <ms>（1.6e12 ~ 2.0e12 之间的整数）；带小数的记成 <ms.frac>，
 //                        这样「一侧整数、一侧小数」仍然算差异
-//   4. 进程号          → <pid>（键名为 pid / ownerPid 的整数；以及 Node 警告行前缀 "(node:1234)"）
+//   4. 进程号          → <pid>（键名为 pid / ownerPid 的整数；Node 警告行前缀 "(node:1234)"；文本里的 "pid=1234"）
 //   5. requestFingerprint → <fingerprint>（键名为 requestFingerprint 的字符串；会话里已有历史时，
 //                        基线两次发出的请求体逐字节相同，这个值仍然不同）
 //   6. 耗时            → 键名为 duration_ms / duration_seconds / durationMs 的数值，以及文本里
-//                        "duration_seconds: 0.02"、"durationMs":12 的数值，
+//                        "duration_seconds: 0.02"、"duration_ms: 12"、"durationMs":12 的数值，
 //                        记成 <dur>。小数位数不比：基线把秒数取整到两位后按 JS 数字打印，0.10 会印成 0.1，
 //                        位数本身逐次不同。取整和打印的写法由 Rust 侧单元测试负责
 //   7. 基线 execute_code 的两处随机路径段：mkdtemp 目录 pilotdeck_execute_code_XXXXXX 的随机后缀 → <tmp>，
@@ -69,6 +69,8 @@ function normalizer() {
     .replace(/pilotdeck_execute_code_[A-Za-z0-9]{6}/g, 'pilotdeck_execute_code_<tmp>')
     .replace(/(pilotdeck-tool-output\/)\d+\//g, '$1<pid>/')
     .replace(/("durationMs":\s?)\d+/g, '$1<dur>')
+    .replace(/(duration_ms: )\d+/g, '$1<dur>')
+    .replace(/\bpid=\d+/g, 'pid=<pid>')
     .replace(/(duration_seconds: )(\d+(?:\.\d+)?)/g, (_, k, n) => k + dur(n));
   const walk = (v) => {
     if (typeof v === 'string') return Object.values(ACCEPTED).reduce((s, [, apply]) => apply(s), text(v));

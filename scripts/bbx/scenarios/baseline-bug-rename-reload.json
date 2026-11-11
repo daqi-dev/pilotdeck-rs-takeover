@@ -68,8 +68,7 @@
       "paths": [
         "^\\$\\.steps\\[[2-6]\\]",
         "^\\$\\.tree",
-        "^\\$\\.provider",
-        "^\\$\\.notifications"
+        "^\\$\\.provider"
       ]
     }
   ]
