@@ -122,6 +122,16 @@ impl SessionOverrides {
             .remove(key);
     }
 
+    /// `applyFlagSettingsForSdk` clearing `permissions.defaultMode`
+    /// (ProjectRuntimeRegistry.ts:935-941): drop only the stored mode.
+    pub fn clear_permission_mode(&self, key: &JsString) {
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .permission_modes
+            .remove(key);
+    }
+
     pub fn set_thinking(&self, key: &JsString, thinking: JsValue) {
         self.inner
             .lock()

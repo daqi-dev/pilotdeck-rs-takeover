@@ -1344,6 +1344,7 @@ async fn settings_capabilities_match_served_delegates() {
         &requests.options.home,
         &requests.options.project,
         &requests.env,
+        std::sync::Arc::default(),
     )
     .expect("#1320 the production settings stack must compose over the fixture");
     requests.settings = native.gateway;

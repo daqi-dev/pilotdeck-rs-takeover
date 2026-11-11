@@ -1222,6 +1222,7 @@ async fn start_assembly(
                 // default project.
                 &options.project_root,
                 &env,
+                session_overrides.clone(),
             )?;
             settings.bundle.bind_server(build_connection_broadcast);
             // #2294 A7.8: the one automation bundle of the native process —

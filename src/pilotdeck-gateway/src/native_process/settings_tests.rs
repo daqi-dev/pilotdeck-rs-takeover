@@ -501,6 +501,8 @@ fn native_stack(store: ConfigStore, stack: &Stack) -> NativeSettings {
         store,
         project_root: JsString::from("/pdrs-fixture/project"),
         log: Arc::new(BundleLog(stack.probe.clone())),
+        apply_flag_settings: None,
+        update_settings: None,
     });
     native.bundle.bind_server(Arc::new(BroadcastServer {
         probe: stack.probe.clone(),

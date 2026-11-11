@@ -3740,6 +3740,8 @@ async fn native_settings_production_binds_no_notification_server() {
         store,
         project_root: JsString::from("/pdrs-fixture/project"),
         log: Arc::new(ConsoleLog),
+        apply_flag_settings: None,
+        update_settings: None,
     });
     negative_assert!(
         !settings.bundle.has_notification_server(),
@@ -3813,6 +3815,7 @@ async fn settings_store_anchors_at_pilot_home_env() {
         &flag_home,
         &served_project,
         &env,
+        Arc::default(),
     )
     .expect("#1320 the production settings stack must compose");
     let resolved = match settings

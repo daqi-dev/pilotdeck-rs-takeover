@@ -1904,6 +1904,10 @@ pub struct NativeSettingsOptions {
     /// Production passes [`ConsoleLog`]; the #1320 replay passes a recorder
     /// because the golden pins the bundle's exact log lines.
     pub log: Arc<dyn RefreshLog>,
+    /// `options.applyFlagSettings` (`registry.applyFlagSettingsForSdk`).
+    pub apply_flag_settings: Option<Arc<dyn crate::runtime::settings::ApplyFlagSettings>>,
+    /// `options.updateSettings` (`updatePilotLocalSettings` + store reload).
+    pub update_settings: Option<crate::runtime::settings::UpdateSettings>,
 }
 
 /// The composed U7 settings stack: the #1318 [`SettingsGateway`] over the
@@ -1944,6 +1948,8 @@ pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
         store,
         project_root,
         log,
+        apply_flag_settings,
+        update_settings,
     } = options;
     let bundle = Arc::new(RefreshBundle::new(RefreshOptions {
         config_store: Arc::new(store.clone()),
@@ -1961,8 +1967,8 @@ pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
     bundle.attach();
     let gateway = Arc::new(SettingsGateway::new(SettingsGatewayOptions {
         owner,
-        apply_flag_settings: None,
-        update_settings: None,
+        apply_flag_settings,
+        update_settings,
         resolve_settings: Some(Arc::new(ResolvedSettingsPort {
             store: store.clone(),
         })),
@@ -1971,6 +1977,63 @@ pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
         reload_extensions: Some(bundle.clone()),
     }));
     NativeSettings { gateway, bundle }
+}
+
+/// `registry.applyFlagSettingsForSdk` (ProjectRuntimeRegistry.ts:914-953)
+/// over the process's session selection store: `effortLevel` is the SDK
+/// thinking override, `permissions.defaultMode` the stored permission mode
+/// the next session composes from. The gateway validated the shape first.
+pub(super) struct NativeFlagSettings {
+    pub(super) overrides: Arc<super::SessionOverrides>,
+}
+impl crate::runtime::settings::ApplyFlagSettings for NativeFlagSettings {
+    fn apply(
+        &self,
+        input: &JsValue,
+    ) -> Result<crate::runtime::settings::FlagSettings, crate::runtime::settings::SettingsError>
+    {
+        let mut result = crate::runtime::settings::FlagSettings::default();
+        let Some(session) = input.get("sessionKey").and_then(JsValue::as_string) else {
+            return Ok(result);
+        };
+        let Some(JsValue::Object(settings)) = input.get("settings") else {
+            return Ok(result);
+        };
+        if let Some(effort) = settings.get("effortLevel") {
+            if matches!(effort, JsValue::Null) {
+                self.overrides.clear_thinking(session);
+                result.cleared.push("effortLevel".into());
+            } else {
+                self.overrides.set_thinking(
+                    session,
+                    object([("enabled", JsValue::Bool(true)), ("mode", effort.clone())]),
+                );
+                result.applied.push("effortLevel".into());
+            }
+        }
+        if let Some(permissions) = settings.get("permissions") {
+            let default_mode = match permissions {
+                JsValue::Null => JsValue::Null,
+                value => value
+                    .get("defaultMode")
+                    .cloned()
+                    .unwrap_or(JsValue::Undefined),
+            };
+            match &default_mode {
+                JsValue::Null | JsValue::Undefined => {
+                    self.overrides.clear_permission_mode(session);
+                    result.cleared.push("permissions.defaultMode".into());
+                }
+                JsValue::String(mode) => {
+                    self.overrides.set_permission_mode(session, mode.clone());
+                    result.applied.push("permissions.defaultMode".into());
+                }
+                // validateSdkFlagSettings admits only the three mode strings.
+                _ => {}
+            }
+        }
+        Ok(result)
+    }
 }
 
 /// The production composition for the native process
@@ -1993,6 +2056,7 @@ pub fn native_settings_for_process(
     home: &std::path::Path,
     served_project: &std::path::Path,
     env: &crate::config::Env,
+    overrides: Arc<super::SessionOverrides>,
 ) -> std::io::Result<NativeSettings> {
     // #1320 fix-r1 F3: same anchor as every other config read of the process
     // (`NativeConfigSource`): PILOT_HOME from the environment resolved
@@ -2022,6 +2086,8 @@ pub fn native_settings_for_process(
         store,
         project_root: JsString::from(served_project.to_string_lossy().into_owned()),
         log: Arc::new(ConsoleLog),
+        apply_flag_settings: Some(Arc::new(NativeFlagSettings { overrides })),
+        update_settings: None,
     }))
 }
 
