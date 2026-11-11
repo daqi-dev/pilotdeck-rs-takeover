@@ -678,6 +678,10 @@ async fn start_assembly(
                 retained.push(move || Box::pin(async move { session_mcp_release.release().await }));
                 let tail = TailConfig {
                     cwd: Some(project_root.clone()),
+                    // `shouldCollectFileArtifacts` (ProjectRuntimeRegistry.ts:365):
+                    // a session whose project root is the pilot home reports
+                    // no file artifacts.
+                    collect_file_artifacts: project_root != options.home,
                     // #1371: the controlled loop emits no assistant text, so
                     // the automatic title request is a stimulus difference
                     // (RESULT.md TEXT row). An armed loop *with a plan*
