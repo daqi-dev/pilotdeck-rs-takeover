@@ -1,0 +1,72 @@
+{
+  "name": "cron-run-now",
+  "about": "cron_run_now：基线为任务建一个「现在」的一次性任务，调度器随即触发一轮宿主发起的对话（会话 cron:<新任务 id>），跑完后删掉一次性任务、写运行历史和运行事件。比较返回、通知、发给 provider 的请求和落盘。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ncron:\n  enabled: true\n",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Cron run\"}"
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "Cron says hi."
+      }
+    }
+  ],
+  "files": {
+    "home/work/alpha/README.md": "alpha\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+    "home/.pilotdeck/cron/projects/private-tmp-pdrs-bbx-root-home-work-alpha/tasks.json": {
+      "schemaVersion": 1,
+      "tasks": [
+        {
+          "schemaVersion": 1,
+          "taskId": "task-a",
+          "message": "cron-turn: summarize",
+          "status": "scheduled",
+          "sessionKey": "cron:task-a",
+          "channelKey": "cron",
+          "projectKey": "{HOME}/work/alpha",
+          "timezone": "UTC",
+          "originSessionKey": "origin-s",
+          "originChannelKey": "web",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "revision": 0,
+          "schedule": {
+            "type": "cron",
+            "expression": "0 9 * * *",
+            "timezone": "UTC"
+          },
+          "nextRunAt": "2099-01-01T09:00:00.000Z",
+          "scheduleComputationVersion": 3
+        }
+      ]
+    }
+  },
+  "steps": [
+    {
+      "ws": "cron_run_now",
+      "params": {
+        "taskId": "task-a",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "sleep": 4000
+    },
+    {
+      "ws": "cron_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "includeHistory": true
+      }
+    }
+  ]
+}
