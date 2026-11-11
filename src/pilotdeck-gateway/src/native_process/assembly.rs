@@ -855,6 +855,7 @@ async fn start_assembly(
                             options.home.clone(),
                             continuations.clone(),
                         ));
+                        let run_mode_sink = ports.run_mode_override();
                         Ok(TurnHostFactory::new_with_signal(
                             project,
                             deployment,
@@ -865,6 +866,7 @@ async fn start_assembly(
                             },
                         )
                         .with_agent_config(config)
+                        .with_run_mode_sink(run_mode_sink)
                         .for_project(turn_project_root)
                         // #1864 (b): TS re-reads the permission-mode override
                         // on every run (InProcessGateway.ts:1443), so an

@@ -1,6 +1,6 @@
 {
-  "name": "secreview-explore-subagent-write",
-  "about": "安全审查：父会话 bypassPermissions，调用只读的 explore 子代理；子代理点名调用非只读 bash（touch）。基线子代理继承 runMode=ask，ToolRuntime 按 ask 模式拦下；看 Rust 子代理是否越过只读定义写盘。",
+  "name": "subagent-explore-ask-mode",
+  "about": "父会话 bypassPermissions，调用只读的 explore 子代理；子代理点名调用非只读 bash（touch）。基线的子代理配置在定义只读（或父会话 plan / ask）时取 runMode=ask（SubagentRuntimeComposition.ts:196,219-226），工具运行时按 ask 模式拦下（ask_mode_violation），文件不落盘。采集器对任何权限询问一律拒绝。",
   "provider": [
     {
       "name": "title",
@@ -89,7 +89,7 @@
             "sessionKey": "s-bbx-1",
             "requestId": "{event.requestId}",
             "decision": "deny",
-            "reason": "secreview denies every prompt"
+            "reason": "bbx denies every prompt"
           }
         }
       ],
