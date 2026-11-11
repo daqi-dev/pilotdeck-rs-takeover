@@ -277,16 +277,28 @@ pub struct CronTurnSubmit {
     pub timeout_ms: f64,
 }
 
+/// The per-event consumer `submit_turn` drives: TS `for await (const event of
+/// gateway.submitTurn(...))` (CronFire.ts:96-141). Returning `false` stops
+/// the drain — the loop body threw (CronFire.ts:105's `appendRunEvent`).
+pub type CronTurnEventSink<'a> = &'a mut dyn FnMut(&JsValue) -> bool;
+
+/// `onTurnEvent(sessionKey, channelKey, event)` (CronFire.ts:26).
+pub type CronTurnEventHandler = Arc<dyn Fn(&JsString, &JsString, &JsValue) + Send + Sync>;
+
 /// TS `CronAgentGatewayPort` (CronAgentGatewayPort.ts:19-28): the only gateway
 /// operations a cron run may invoke. `submit_turn` stands for the whole
-/// event-stream turn — the port contract is that it returns only after the
-/// turn has unwound, so admission is begin/end fenced around it
-/// synchronously; consuming and delivering the `GatewayEvent` stream inside
-/// that fence is the `CronFire` half's job (fire.rs, #2295).
+/// event-stream turn — it returns only after the turn has unwound, handing
+/// every `GatewayEvent` to `on_event` in order (the `CronFire` half consumes
+/// them, fire.rs).
 pub trait CronAgentGateway: Send + Sync {
-    /// Rejected when the session cannot be admitted (busy, maintenance,
-    /// shutdown) or the turn itself fails.
-    fn submit_turn(&self, input: &CronTurnSubmit) -> Result<(), CronError>;
+    /// Every event, terminal `error` events included, reaches `on_event`;
+    /// `Err` is a thrown failure (the generator rejecting). A coded `Err`
+    /// is classified like a terminal error event by the fire half.
+    fn submit_turn(
+        &self,
+        input: &CronTurnSubmit,
+        on_event: CronTurnEventSink<'_>,
+    ) -> Result<(), CronError>;
     /// `abortTurn` — the caller decides whether a rejection surfaces
     /// (CronRuntime.ts:373 propagates, CronRuntime.ts:207-209 swallows).
     fn abort_turn(
@@ -310,7 +322,11 @@ pub trait CronAgentGateway: Send + Sync {
 /// `close_session` are the gateway's halves behind the same
 /// [`CronAgentGateway`] surface.
 pub trait CronGatewayBody: Send + Sync {
-    fn run_turn(&self, input: &CronTurnSubmit) -> Result<(), CronError>;
+    fn run_turn(
+        &self,
+        input: &CronTurnSubmit,
+        on_event: CronTurnEventSink<'_>,
+    ) -> Result<(), CronError>;
     fn abort_turn(
         &self,
         session_key: &JsString,
@@ -357,7 +373,11 @@ impl Drop for TurnFence<'_> {
 }
 
 impl CronAgentGateway for SessionAdmissionCronGateway {
-    fn submit_turn(&self, input: &CronTurnSubmit) -> Result<(), CronError> {
+    fn submit_turn(
+        &self,
+        input: &CronTurnSubmit,
+        on_event: CronTurnEventSink<'_>,
+    ) -> Result<(), CronError> {
         let Some(reservation) = self.admission.begin_turn(&input.session_key, &input.run_id) else {
             // InProcessGateway.ts:1043-1067: the rejected submit surfaces as a
             // terminal `session_busy` error; the port's synchronous boundary
@@ -376,7 +396,7 @@ impl CronAgentGateway for SessionAdmissionCronGateway {
             run_id: &input.run_id,
             reservation: Some(reservation),
         };
-        self.body.run_turn(input)
+        self.body.run_turn(input, on_event)
     }
     fn abort_turn(
         &self,
@@ -819,6 +839,20 @@ impl CronRuntime {
             // limitation) in A8.3-CRON-FIRE-EVENTSTREAM-001; follow-up
             // #1826 owns the channel-delivery family.
             on_result_delivery: None,
+            // `onTurnEvent` (CronManager.ts:199 → CronFire.ts:137): the
+            // manager's handler, read at each event so a handler the
+            // embedding installs after construction still reaches runs.
+            on_turn_event: {
+                let manager = self.manager.clone();
+                Some(Arc::new(move |session, channel, event| {
+                    if let Some(handler) = manager
+                        .upgrade()
+                        .and_then(|manager| manager.turn_events.get().cloned())
+                    {
+                        handler(session, channel, event);
+                    }
+                }))
+            },
             logger: self.logger.clone(),
             zone_cache: self.zone_cache.clone(),
         }));
@@ -2104,6 +2138,9 @@ pub struct CronManager {
     /// this.activeRunCount()`): the constructor hands it out via
     /// `Arc::new_cyclic` because the manager only exists behind an `Arc`.
     self_weak: Weak<CronManager>,
+    /// `CreateCronManagerOptions.onTurnEvent` (CronManager.ts:42), installed
+    /// once by the embedding (`set_turn_event_handler`).
+    turn_events: std::sync::OnceLock<CronTurnEventHandler>,
 }
 
 struct ManagerState {
@@ -2126,7 +2163,21 @@ impl CronManager {
                 runtimes: Vec::new(),
             }),
             self_weak: self_weak.clone(),
+            turn_events: std::sync::OnceLock::new(),
         }))
+    }
+
+    /// `config.enabled` — `getTools()` answers the six tools only then
+    /// (CronManager.ts:66-68).
+    pub fn enabled(&self) -> bool {
+        self.options.config.enabled
+    }
+
+    /// Install `onTurnEvent` (CronManager.ts:42,199): every event of every
+    /// cron run is handed to it after the run-event record is written
+    /// (CronFire.ts:105-106). A second install is ignored.
+    pub fn set_turn_event_handler(&self, handler: CronTurnEventHandler) {
+        let _ = self.turn_events.set(handler);
     }
 
     /// `bindAgentGateway` (CronManager.ts:70-75).

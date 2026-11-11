@@ -484,6 +484,11 @@ async fn start_assembly(
     // session owner is bound once the host has built it.
     let continuations: Arc<super::continuations::Continuations> = Arc::default();
     let prepare_continuations = continuations.clone();
+    // The automation bundle's cron manager, published once the builder has
+    // constructed it: its tools are the gateway's `extraTools`.
+    let cron_manager_slot: Arc<std::sync::OnceLock<Arc<crate::runtime::cron::CronManager>>> =
+        Arc::default();
+    let prepare_cron_manager = cron_manager_slot.clone();
     let storage_project = project.clone();
     let storage_options = options.clone();
     // #897: the composition-time budget preflight resolves the same directory
@@ -505,6 +510,7 @@ async fn start_assembly(
             let mcp_diagnostic = prepare_mcp_diagnostic.clone();
             let session_overrides = prepare_overrides.clone();
             let continuations = prepare_continuations.clone();
+            let cron_tools_slot = prepare_cron_manager.clone();
             Box::pin(async move {
                 // `registry.resolve(projectKey ?? fallbackProjectRoot)`
                 // (ProjectRuntimeRegistry.ts:1540-1560): the session runs in
@@ -630,8 +636,39 @@ async fn start_assembly(
                 // The permission-mode source for the per-turn override (b)
                 // reads the same store live, mirroring
                 // InProcessGateway.ts:1443.
-                let stored_permission_mode =
-                    session_overrides.permission_mode(&context.session_key);
+                // `getSessionOverride(sessionKey)` (ProjectSessionFactory.ts:222):
+                // the unattended runtimes' entry for this session.
+                let unattended = session_overrides
+                    .config_override(&context.session_key)
+                    .map(|value| value.to_value())
+                    .unwrap_or(JsValue::Undefined);
+                let override_mode = unattended
+                    .get("permissionMode")
+                    .and_then(JsValue::as_string)
+                    .cloned();
+                let override_flag = |name: &str| match unattended.get(name) {
+                    Some(JsValue::Bool(flag)) => Some(*flag),
+                    _ => None,
+                };
+                let can_prompt_override = override_flag("canPrompt");
+                let bypass_available_override = override_flag("bypassAvailable");
+                let excluded_tools: Vec<JsString> = match unattended.get("excludeTools") {
+                    Some(JsValue::Array(names)) => names
+                        .iter()
+                        .filter_map(|name| name.as_string().cloned())
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                let extra_tools = cron_tools_slot
+                    .get()
+                    .filter(|manager| manager.enabled())
+                    .map(crate::runtime::cron::cron_tools)
+                    .unwrap_or_default();
+                // `sessionOverride?.permissionMode ?? options.permissionMode`
+                // (SessionAgentConfigBundle.ts:52-56).
+                let stored_permission_mode = override_mode
+                    .clone()
+                    .or_else(|| session_overrides.permission_mode(&context.session_key));
                 let stored_thinking = session_overrides.thinking(&context.session_key);
                 let stored_style_content =
                     match session_overrides.output_style(&context.session_key) {
@@ -795,10 +832,18 @@ async fn start_assembly(
                             // (InProcessGateway.ts:1442-1450). A session whose
                             // live entry was cleared (`closeSession`) runs in
                             // the server default, not the stored selection.
+                            //
+                            // An unattended session's turn is submitted
+                            // with its override's mode (CronFire.ts:101
+                            // `mode: "bypassPermissions"`, the same mode
+                            // `registerTaskSession` stores), so that mode
+                            // stands in for the run's requested mode.
+                            let override_mode = override_mode.clone();
                             Arc::new(move || {
                                 Some(
                                     session_overrides
                                         .live_mode(&session)
+                                        .or_else(|| override_mode.clone())
                                         .unwrap_or_else(|| "default".into()),
                                 )
                             })
@@ -820,6 +865,8 @@ async fn start_assembly(
                             lsp,
                             session_mcp,
                         )?
+                        .with_extra_tools(extra_tools, excluded_tools)
+                        .with_prompt_policy(can_prompt_override, bypass_available_override)
                         .with_permission_mode_source(permission_source.clone())
                         .with_continuation_parent(continuation_parent.parent_ref())
                         .with_permission_prompt(gateway_emit, session_rules, permission_timeout)
@@ -1220,6 +1267,12 @@ async fn start_assembly(
                     overrides: session_overrides.clone(),
                 })),
             )?;
+            let cron_hooks = cron::NativeCronHooks {
+                session_overrides: session_overrides.config_overrides(),
+                on_turn_event: Some(cron::broadcast_turn_events(
+                    build_connection_broadcast.clone(),
+                )),
+            };
             settings.bundle.bind_server(build_connection_broadcast);
             // `configStore.startWatching()` (createLocalGateway.ts:801): a
             // config file change reloads the store, which the refresh bundle
@@ -1268,9 +1321,12 @@ async fn start_assembly(
                     },
                     pilot_home: options.home.clone(),
                     make_always_on: always_on::native_factory(),
-                    make_cron: cron::native_factory(),
+                    make_cron: cron::native_factory(cron_hooks),
                 },
             )?);
+            if let Some(manager) = automation.cron_manager() {
+                let _ = cron_manager_slot.set(manager);
+            }
             // #1326: the cron port's own volatile fence. It must NOT be the
             // owner's `SessionAdmission`: `SessionAdmissionCronGateway` holds
             // its fence for the whole of `run_turn`, and that call ends in

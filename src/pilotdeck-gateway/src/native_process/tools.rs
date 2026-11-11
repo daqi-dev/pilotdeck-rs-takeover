@@ -1188,6 +1188,13 @@ pub(super) struct ExecutionWorld {
     fetcher: builtin::web::fetcher::UrlFetcher,
     /// `readSkill: { loader, lister }`: the project's plugin runtime.
     skills: Option<Arc<crate::runtime::plugins::PluginRuntime>>,
+    /// The gateway's `extraTools` (the automation providers' tools,
+    /// `ProjectExecutionWorldBundle.ts:107-111`), registered after the
+    /// builtins.
+    extra_tools: Vec<Arc<dyn crate::runtime::tools::ExecutableTool>>,
+    /// The session override's `excludeTools`, unregistered from the
+    /// composed registry (`SessionToolCompositionBundle.applySessionPolicy`).
+    excluded_tools: Vec<JsString>,
 }
 impl ExecutionWorld {
     pub(super) fn new() -> Self {
@@ -1198,7 +1205,42 @@ impl ExecutionWorld {
                 crate::runtime::model::http::HyperModelTransport::new(),
             )),
             skills: None,
+            extra_tools: Vec::new(),
+            excluded_tools: Vec::new(),
         }
+    }
+}
+
+impl SessionTools {
+    /// The gateway's extra tools and the session override's exclusions
+    /// (`ProjectSessionRuntimeBundle.ts:294`).
+    pub(super) fn with_extra_tools(
+        mut self,
+        extra: Vec<Arc<dyn crate::runtime::tools::ExecutableTool>>,
+        excluded: Vec<JsString>,
+    ) -> Self {
+        self.world.extra_tools = extra;
+        self.world.excluded_tools = excluded;
+        self
+    }
+
+    /// The session override's `canPrompt` / `bypassAvailable`
+    /// (`ProjectSessionFactory.ts:270`, `SessionAgentConfigBundle.ts:183`).
+    pub(super) fn with_prompt_policy(
+        self,
+        can_prompt: Option<bool>,
+        bypass_available: Option<bool>,
+    ) -> Self {
+        {
+            let mut state = self.permission.0.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(can_prompt) = can_prompt {
+                state.0.can_prompt = can_prompt;
+            }
+            if let Some(bypass_available) = bypass_available {
+                state.0.bypass_available = bypass_available;
+            }
+        }
+        self
     }
 }
 
@@ -1261,6 +1303,12 @@ pub(super) fn native_tools(
         tools
             .register(tool)
             .expect("native builtin names are unique");
+    }
+    for tool in &world.extra_tools {
+        let _ = tools.register(tool.clone());
+    }
+    for name in &world.excluded_tools {
+        let _ = tools.unregister(name);
     }
     tools
         .register(Arc::new(LspTool::new(lsp)))

@@ -170,13 +170,19 @@ type SubmitHook = Box<dyn Fn(&CronTurnSubmit) -> Result<(), CronError> + Send + 
 struct Gateway {
     calls: Mutex<Vec<String>>,
     submit: Mutex<SubmitHook>,
+    /// Events handed to the fire half's sink before `submit` decides.
+    events: Mutex<Vec<JsValue>>,
 }
 impl Gateway {
     fn new() -> Arc<Self> {
         Arc::new(Self {
             calls: Mutex::new(Vec::new()),
             submit: Mutex::new(Box::new(|_| Ok(()))),
+            events: Mutex::new(Vec::new()),
         })
+    }
+    fn set_events(&self, events: Vec<JsValue>) {
+        *self.events.lock().unwrap() = events;
     }
     fn record(&self, line: String) {
         self.calls.lock().unwrap().push(line);
@@ -194,8 +200,18 @@ impl Gateway {
     }
 }
 impl CronAgentGateway for Gateway {
-    fn submit_turn(&self, input: &CronTurnSubmit) -> Result<(), CronError> {
+    fn submit_turn(
+        &self,
+        input: &CronTurnSubmit,
+        on_event: super::CronTurnEventSink<'_>,
+    ) -> Result<(), CronError> {
         self.record(format!("submitTurn {}", submit_json(input)));
+        let events = self.events.lock().unwrap().clone();
+        for event in &events {
+            if !on_event(event) {
+                break;
+            }
+        }
         (self.submit.lock().unwrap())(input)
     }
     fn abort_turn(
@@ -1541,6 +1557,7 @@ fn fire_harness(delivery_fails: bool) -> FireHarness {
         default_timezone: "UTC".into(),
         release_task_session,
         on_result_delivery,
+        on_turn_event: None,
         logger: logger.clone(),
         zone_cache: Arc::new(CronZoneResolverCache::new()),
     });
@@ -1688,6 +1705,78 @@ fn codeless_rejection_folds_to_cron_run_failed() {
     assert!(
         deliveries[0].contains("\"text\":\"the seam threw\""),
         "#2295 the failed delivery carries the error text: {deliveries:?}"
+    );
+}
+
+/// The event loop (CronFire.ts:96-141): every event is written to
+/// `runs/<runId>.events.jsonl` in order; a permission request forces the
+/// `cron_interaction_required` failure, aborts the turn once, and the later
+/// error event no longer changes the outcome.
+#[test]
+fn interaction_request_forces_the_failure_and_aborts_once() {
+    let harness = fire_harness(false);
+    harness.seed(&[cron_body("t1", DUE)]);
+    harness.gateway.set_events(vec![
+        json(r#"{"type":"turn_started","runId":"run-1"}"#),
+        json(r#"{"type":"assistant_text_delta","text":"Hi"}"#),
+        json(r#"{"type":"permission_request","requestId":"p1"}"#),
+        json(r#"{"type":"elicitation_request","requestId":"e1"}"#),
+        json(r#"{"type":"error","code":"agent_aborted","message":"aborted"}"#),
+    ]);
+    harness
+        .fire
+        .run_task(&harness.snapshot(), &JsString::from("run-1"))
+        .unwrap();
+    let history = harness.history();
+    assert_eq!(text(&history[0], "outcome"), "failed");
+    let error = history[0].get("error").unwrap();
+    assert_eq!(text(error, "code"), "cron_interaction_required");
+    assert_eq!(
+        text(error, "message"),
+        "Cron run requested unsupported user interaction through elicitation_request."
+    );
+    let aborts: Vec<String> = harness
+        .gateway
+        .calls()
+        .into_iter()
+        .filter(|call| call.starts_with("abortTurn"))
+        .collect();
+    assert_eq!(
+        aborts,
+        [
+            r#"abortTurn {"sessionKey":"cron:t1","runId":"run-1","reason":"system:interaction_required"}"#
+        ],
+        "one abort for the first interaction request"
+    );
+    let events = fs::read_to_string(harness.paths.runs_dir.join("run-1.events.jsonl")).unwrap();
+    let lines: Vec<&str> = events.lines().collect();
+    assert_eq!(lines.len(), 5);
+    assert_eq!(
+        lines[0],
+        r#"{"schemaVersion":1,"runId":"run-1","event":{"type":"turn_started","runId":"run-1"}}"#
+    );
+}
+
+/// A completed run delivers the accumulated, trimmed assistant text
+/// (CronFire.ts:107-109,224-227).
+#[test]
+fn completed_run_delivers_the_assistant_text() {
+    let harness = fire_harness(false);
+    harness.seed(&[cron_body("t1", DUE)]);
+    harness.gateway.set_events(vec![
+        json(r#"{"type":"assistant_text_delta","text":"  Hello "}"#),
+        json(r#"{"type":"assistant_text_delta","text":"world  "}"#),
+        json(r#"{"type":"turn_completed"}"#),
+    ]);
+    harness
+        .fire
+        .run_task(&harness.snapshot(), &JsString::from("run-1"))
+        .unwrap();
+    assert_eq!(text(&harness.history()[0], "outcome"), "completed");
+    let deliveries = harness.deliveries.lock().unwrap().clone();
+    assert!(
+        deliveries[0].contains("\"text\":\"Hello world\""),
+        "the delivery carries the turn's text: {deliveries:?}"
     );
 }
 

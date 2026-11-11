@@ -1,0 +1,299 @@
+{
+  "name": "cron-tools-run",
+  "about": "cron 开启时普通会话里结果带随机 id 的 cron_* 调用：创建 delay / cron 任务、更新、立即运行（触发一轮 cron 会话，事件通知与落盘）、带历史的列表。每次调用一个会话，随机 id 只影响所在那一步的 token 估算。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ncron:\n  enabled: true\n",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Cron tools\"}"
+      }
+    },
+    {
+      "name": "cron-fired",
+      "when": [
+        "cron-fired-msg"
+      ],
+      "unless": [
+        "bbx-main-session"
+      ],
+      "reply": {
+        "text": "Fired."
+      }
+    },
+    {
+      "name": "turn-1-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "turn-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1",
+          "name": "cron_create",
+          "arguments": {
+            "message": "remind me later",
+            "schedule": {
+              "type": "delay",
+              "amount": 1,
+              "unit": "hour"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-2-after-tool",
+      "when": [
+        "turn-2:",
+        "\"tool_call_id\":\"call_bbx_2\""
+      ],
+      "reply": {
+        "text": "Done 2."
+      }
+    },
+    {
+      "name": "turn-2",
+      "when": [
+        "turn-2:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_2",
+          "name": "cron_create",
+          "arguments": {
+            "message": "weekday report",
+            "schedule": {
+              "type": "cron",
+              "expression": "30 8 * * 1-5",
+              "timezone": "Asia/Shanghai"
+            },
+            "mode": "plan"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-3-after-tool",
+      "when": [
+        "turn-3:",
+        "\"tool_call_id\":\"call_bbx_3\""
+      ],
+      "reply": {
+        "text": "Done 3."
+      }
+    },
+    {
+      "name": "turn-3",
+      "when": [
+        "turn-3:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_3",
+          "name": "cron_update",
+          "arguments": {
+            "taskId": "task-a",
+            "expectedRevision": 0,
+            "message": "cron-fired-msg",
+            "schedule": {
+              "type": "cron",
+              "expression": "15 10 * * *"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-4-after-tool",
+      "when": [
+        "turn-4:",
+        "\"tool_call_id\":\"call_bbx_4\""
+      ],
+      "reply": {
+        "text": "Done 4."
+      }
+    },
+    {
+      "name": "turn-4",
+      "when": [
+        "turn-4:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_4",
+          "name": "cron_run_now",
+          "arguments": {
+            "taskId": "task-a"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-5-after-tool",
+      "when": [
+        "turn-5:",
+        "\"tool_call_id\":\"call_bbx_5\""
+      ],
+      "reply": {
+        "text": "Done 5."
+      }
+    },
+    {
+      "name": "turn-5",
+      "when": [
+        "turn-5:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_5",
+          "name": "cron_list",
+          "arguments": {
+            "includeHistory": true,
+            "limit": 5
+          }
+        }
+      }
+    }
+  ],
+  "files": {
+    "home/work/alpha/README.md": "alpha\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+    "home/.pilotdeck/cron/projects/private-tmp-pdrs-bbx-root-home-work-alpha/tasks.json": {
+      "schemaVersion": 1,
+      "tasks": [
+        {
+          "schemaVersion": 1,
+          "taskId": "task-a",
+          "message": "cron-turn: summarize",
+          "status": "scheduled",
+          "sessionKey": "cron:task-a",
+          "channelKey": "cron",
+          "projectKey": "{HOME}/work/alpha",
+          "timezone": "UTC",
+          "originSessionKey": "origin-s",
+          "originChannelKey": "web",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "revision": 0,
+          "schedule": {
+            "type": "cron",
+            "expression": "0 9 * * *",
+            "timezone": "UTC"
+          },
+          "nextRunAt": "2099-01-01T09:00:00.000Z",
+          "scheduleComputationVersion": 3
+        }
+      ]
+    }
+  },
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "projectKey": "{HOME}/work/alpha",
+        "message": "bbx-main-session turn-1: run the tool"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-bbx-2",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-2",
+        "channelKey": "test",
+        "projectKey": "{HOME}/work/alpha",
+        "message": "bbx-main-session turn-2: run the tool"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-bbx-3",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-3",
+        "channelKey": "test",
+        "projectKey": "{HOME}/work/alpha",
+        "message": "bbx-main-session turn-3: run the tool"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-bbx-4",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-4",
+        "channelKey": "test",
+        "projectKey": "{HOME}/work/alpha",
+        "message": "bbx-main-session turn-4: run the tool"
+      }
+    },
+    {
+      "sleep": 4000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-bbx-5",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-5",
+        "channelKey": "test",
+        "projectKey": "{HOME}/work/alpha",
+        "message": "bbx-main-session turn-5: run the tool"
+      }
+    },
+    {
+      "sleep": 300
+    }
+  ]
+}

@@ -651,8 +651,12 @@ impl RecordingCronGateway {
 }
 
 impl CronAgentGateway for RecordingCronGateway {
-    fn submit_turn(&self, input: &CronTurnSubmit) -> Result<(), CronError> {
-        self.inner.submit_turn(input)
+    fn submit_turn(
+        &self,
+        input: &CronTurnSubmit,
+        on_event: crate::runtime::cron::CronTurnEventSink<'_>,
+    ) -> Result<(), CronError> {
+        self.inner.submit_turn(input, on_event)
     }
 
     fn abort_turn(

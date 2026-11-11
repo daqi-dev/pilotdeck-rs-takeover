@@ -4,19 +4,14 @@
 //! boundary.
 //!
 //! Event-stream boundary: TS `submitTurn` is an async generator whose events
-//! `CronFire` consumes one by one (per-event `appendRunEvent`,
-//! assistant-text accumulation, `interaction_required` aborts, error-event
-//! classification, `forcedFailure` latching after a `turn_timeout`). The
-//! Rust port's [`CronAgentGateway::submit_turn`] contract instead returns
-//! only after the turn unwound, surfacing the first terminal `error` event as
-//! `Err` with the event's code passed through untouched
-//! (`native_process/assembly/cron.rs::failed_turn`), so the classification
-//! below folds the in-loop error-event handling (CronFire.ts:125-140) into
-//! the one visible event. The seams this boundary cannot represent —
-//! assistant-text delivery for `deliverResult`, per-event `appendRunEvent`,
-//! `interaction_required`/`forcedFailure` latching, `onPhaseEvent`,
-//! `onTurnEvent` — are registered in A8.3-CRON-FIRE-EVENTSTREAM-001, not
-//! silently dropped.
+//! `CronFire` consumes one by one. [`CronAgentGateway::submit_turn`] hands
+//! each event to [`CronFire::observe`] in order — `appendRunEvent`,
+//! `onTurnEvent`, assistant-text accumulation, the `interaction_required`
+//! abort, error-event classification with `forcedFailure` latching
+//! (CronFire.ts:105-140) — and returns once the turn unwound. A coded `Err`
+//! from the boundary (the admission fence's `session_busy`) is classified
+//! like a terminal error event. `onPhaseEvent` feeds telemetry only, which
+//! this process does not collect.
 use std::{cell::Cell, sync::Arc};
 
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
@@ -66,6 +61,29 @@ impl CronRunError {
     }
 }
 
+/// The try block's locals the event loop updates (CronFire.ts:61-66).
+struct TurnObserver {
+    outcome: CronRunOutcome,
+    error: Option<CronRunError>,
+    forced_failure: bool,
+    abort_requested: bool,
+    assistant_text: String,
+    /// A throw from the loop body, carried to the catch arm.
+    thrown: Option<JsString>,
+}
+impl Default for TurnObserver {
+    fn default() -> Self {
+        Self {
+            outcome: CronRunOutcome::Completed,
+            error: None,
+            forced_failure: false,
+            abort_requested: false,
+            assistant_text: String::new(),
+            thrown: None,
+        }
+    }
+}
+
 /// `unregisterActiveRun`/`getActiveRun` (CronFire.ts:33-34): the runtime's
 /// registry reads, keyed by run id.
 type ActiveRunLookup = Arc<dyn Fn(&JsString) -> Option<CronActiveRun> + Send + Sync>;
@@ -89,6 +107,8 @@ pub struct CronFireDeps {
     pub default_timezone: String,
     pub release_task_session: Arc<dyn Fn(&JsValue) + Send + Sync>,
     pub on_result_delivery: Option<ResultDelivery>,
+    /// `onTurnEvent` (CronFire.ts:39), optional.
+    pub on_turn_event: Option<super::CronTurnEventHandler>,
     pub logger: Arc<dyn CronLogger>,
     pub zone_cache: Arc<CronZoneResolverCache>,
 }
@@ -147,9 +167,11 @@ impl CronFire {
         };
 
         let mut task = task_snapshot.clone();
-        let mut outcome = CronRunOutcome::Completed;
+        // `let outcome = "completed"`: every arm below assigns it.
+        let mut outcome: CronRunOutcome;
         let mut error: Option<CronRunError> = None;
         let mut started_run = false;
+        let mut assistant_text = String::new();
 
         // The try block (CronFire.ts:67-141): the claim, then the turn.
         // `forcedFailure` stays false on this boundary — its only TS setters
@@ -195,11 +217,30 @@ impl CronFire {
                     run_id: run_id.clone(),
                     timeout_ms: self.deps.run_timeout_ms,
                 };
-                if let Err(caught) = self.deps.gateway.submit_turn(&submit) {
-                    // The error-event classification (CronFire.ts:126-139):
-                    // the boundary carries the event's code through, and a
-                    // code-less error is a thrown seam error
-                    // (CronFire.ts:142-149).
+                let mut turn = TurnObserver::default();
+                let submitted = {
+                    let mut on_event =
+                        |event: &JsValue| self.observe(&mut turn, &task, run_id, event);
+                    self.deps.gateway.submit_turn(&submit, &mut on_event)
+                };
+                outcome = turn.outcome;
+                error = turn.error.take();
+                assistant_text = std::mem::take(&mut turn.assistant_text);
+                // The catch arm (CronFire.ts:142-149): a throw from the loop
+                // body (`appendRunEvent`) or the generator, unless an earlier
+                // event already forced the failure.
+                let thrown = match (turn.thrown.take(), submitted) {
+                    (Some(message), _) => Some(CronError::error(message)),
+                    (None, Err(caught)) => Some(caught),
+                    (None, Ok(())) => None,
+                };
+                if let Some(caught) = thrown
+                    && !turn.forced_failure
+                {
+                    // A coded rejection is the boundary's terminal error
+                    // event (the admission fence's `session_busy`), classified
+                    // like CronFire.ts:126-139; a code-less one is a thrown
+                    // seam error (CronFire.ts:142-149).
                     match caught.code() {
                         Some("turn_timeout") => {
                             outcome = CronRunOutcome::Failed;
@@ -291,7 +332,9 @@ impl CronFire {
         }
 
         // deliverResult (CronFire.ts:188-194 via 217-240), failure only warns.
-        if let Err(delivery_error) = self.deliver_result(&task, run_id, outcome, error.as_ref()) {
+        if let Err(delivery_error) =
+            self.deliver_result(&task, run_id, outcome, &assistant_text, error.as_ref())
+        {
             fire_warn(
                 &self.deps.logger,
                 "cron result delivery failed",
@@ -315,18 +358,121 @@ impl CronFire {
         Ok(())
     }
 
-    /// `deliverResult` (CronFire.ts:217-240). The completed arm's text is the
-    /// accumulated assistant text on the TS side; this boundary consumes no
-    /// event stream, so it is always empty and takes the fixed fallback.
+    /// One event of the turn (CronFire.ts:105-140). Returns `false` when the
+    /// loop body threw — the run-event append failed — which ends the drain.
+    fn observe(
+        &self,
+        turn: &mut TurnObserver,
+        task: &JsValue,
+        run_id: &JsString,
+        event: &JsValue,
+    ) -> bool {
+        if let Err(store_error) = self.deps.store.append_run_event(run_id, event) {
+            turn.thrown = Some(JsString::from(store_error.to_string()));
+            return false;
+        }
+        if let Some(forward) = &self.deps.on_turn_event {
+            let session = task_string(task, "sessionKey").unwrap_or_default();
+            let channel = task_string(task, "channelKey").unwrap_or_default();
+            // `forwardTurnEvent` only warns on a throw (CronFire.ts:205-215).
+            if let Err(panic) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                forward(&session, &channel, event)
+            })) {
+                fire_warn(
+                    &self.deps.logger,
+                    "cron turn event delivery failed",
+                    task,
+                    run_id,
+                    &panic_message(&panic),
+                );
+            }
+        }
+        let kind = event
+            .get("type")
+            .and_then(JsValue::as_string)
+            .map(|kind| String::from_utf16_lossy(kind.units()))
+            .unwrap_or_default();
+        let text_field = |name: &str| match event.get(name) {
+            Some(JsValue::String(text)) => Some(text.clone()),
+            _ => None,
+        };
+        match kind.as_str() {
+            "assistant_text_delta" => {
+                // `assistantText += event.text`.
+                let text = match event.get("text") {
+                    Some(value) => crate::js_value::to_string_units(value)
+                        .map(|units| String::from_utf16_lossy(&units))
+                        .unwrap_or_default(),
+                    None => "undefined".to_owned(),
+                };
+                turn.assistant_text.push_str(&text);
+            }
+            "elicitation_request" | "permission_request" => {
+                turn.outcome = CronRunOutcome::Failed;
+                turn.forced_failure = true;
+                turn.error = Some(CronRunError {
+                    code: "cron_interaction_required".into(),
+                    message: JsString::from(format!(
+                        "Cron run requested unsupported user interaction through {kind}."
+                    )),
+                });
+                if !turn.abort_requested {
+                    turn.abort_requested = true;
+                    let session = task_string(task, "sessionKey").unwrap_or_default();
+                    let _ = self.deps.gateway.abort_turn(
+                        &session,
+                        Some(run_id),
+                        Some(&JsString::from("system:interaction_required")),
+                    );
+                }
+            }
+            "error" => {
+                let code = text_field("code");
+                let message = text_field("message").unwrap_or_default();
+                if code
+                    .as_ref()
+                    .is_some_and(|code| code.equals_str("turn_timeout"))
+                {
+                    turn.outcome = CronRunOutcome::Failed;
+                    turn.forced_failure = true;
+                    turn.error = Some(CronRunError {
+                        code: "cron_run_timeout".into(),
+                        message,
+                    });
+                } else if !turn.forced_failure {
+                    turn.outcome = if code
+                        .as_ref()
+                        .is_some_and(|code| code.equals_str("agent_aborted"))
+                    {
+                        CronRunOutcome::Aborted
+                    } else {
+                        CronRunOutcome::Failed
+                    };
+                    turn.error = Some(CronRunError {
+                        code: code
+                            .map(|code| String::from_utf16_lossy(code.units()))
+                            .unwrap_or_else(|| "cron_run_failed".into()),
+                        message,
+                    });
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// `deliverResult` (CronFire.ts:217-240): a completed run delivers the
+    /// accumulated assistant text.
     fn deliver_result(
         &self,
         task: &JsValue,
         run_id: &JsString,
         outcome: CronRunOutcome,
+        assistant_text: &str,
         error: Option<&CronRunError>,
     ) -> Result<(), String> {
         let text = if outcome == CronRunOutcome::Completed {
-            String::new()
+            crate::metadata::js_trim(assistant_text).to_owned()
         } else {
             let message = error
                 .map(|error| String::from_utf16_lossy(error.message.units()))
