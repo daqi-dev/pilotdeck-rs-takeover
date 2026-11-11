@@ -310,8 +310,7 @@ impl ExecutableTool for RequestUserTool {
                 Kind::Input => Ok(None),
                 Kind::Choice => validate_choice(&input),
                 Kind::Confirmation => validate_confirmation(&input),
-                // Not registered until the form schema check is ported.
-                Kind::Form => Ok(None),
+                Kind::Form => super::form_dialog::validate_input(&input),
             }
         })
     }

@@ -1,0 +1,1354 @@
+{
+ "name": "user-dialog-form",
+ "about": "userDialogKinds=[form]：request_user_form 的表单 schema 子集校验（不支持的键、required 未声明、$ref 未知与循环、非法 pattern、$schema 非 2020-12、空 enum、if 无 then、长度上下界、multipleOf、format、minContains、非根 $defs、空字段名）、合法答案的 json 结果、挂起时按 requestId 送不合法答案（类型、multipleOf、exclusiveMaximum、format、pattern、uniqueItems、enum、dependentRequired）被拒、合法答案送达、取消（无原因）。",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Form\"}"
+   }
+  },
+  {
+   "name": "t20-after",
+   "when": [
+    "turn-20:",
+    "\"tool_call_id\":\"call_f_20\""
+   ],
+   "reply": {
+    "text": "Done 20."
+   }
+  },
+  {
+   "name": "t20",
+   "when": [
+    "turn-20:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_f_20",
+     "name": "request_user_form",
+     "arguments": {
+      "prompt": "Fill",
+      "schema": {
+       "type": "object",
+       "properties": {
+        "": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "t19-after",
+   "when": [
+    "turn-19:",
+    "\"tool_call_id\":\"call_f_19\""
+   ],
+   "reply": {
+    "text": "Done 19."
+   }
+  },
+  {
+   "name": "t19",
+   "when": [
+    "turn-19:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_f_19",
+     "name": "request_user_form",
+     "arguments": {
+      "prompt": "Fill",
+      "schema": {
+       "type": "object",
+       "properties": {
+        "a": {
+         "$defs": {}
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "t18-after",
+   "when": [
+    "turn-18:",
+    "\"tool_call_id\":\"call_f_18\""
+   ],
+   "reply": {
+    "text": "Done 18."
+   }
+  },
+  {
+   "name": "t18",
+   "when": [
+    "turn-18:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_f_18",
+     "name": "request_user_form",
+     "arguments": {
+      "prompt": "Fill",
+      "schema": {
+       "type": "object",
+       "properties": {
+        "a": {
+         "type": "array",
+         "minContains": 1
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "t17-after",
+   "when": [
+    "turn-17:",
+    "\"tool_call_id\":\"call_f_17\""
+   ],
+   "reply": {
+    "text": "Done 17."
+   }
+  },
+  {
+   "name": "t17",
+   "when": [
+    "turn-17:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_f_17",
+     "name": "request_user_form",
+     "arguments": {
+      "prompt": "Fill",
+      "schema": {
+       "type": "object",
+       "properties": {
+        "a": {
+         "type": "string",
+         "format": "phone"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "t16-after",
+   "when": [
+    "turn-16:",
+    "\"tool_call_id\":\"call_f_16\""
+   ],
+   "reply": {
+    "text": "Done 16."
+   }
+  },
+  {
+   "name": "t16",
+   "when": [
+    "turn-16:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_f_16",
+     "name": "request_user_form",
+     "arguments": {
+      "prompt": "Fill",
+      "schema": {
+       "type": "object",
+       "properties": {
+        "a": {
+         "type": "number",
+         "multipleOf": 0
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "t15-after",
+   "when": [
+    "turn-15:",
+    "\"tool_call_id\":\"call_f_15\""
+   ],
+   "reply": {
+    "text": "Done 15."
+   }
+  },
+  {
+   "name": "t15",
+   "when": [
+    "turn-15:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_f_15",
+     "name": "request_user_form",
+     "arguments": {
+      "prompt": "Fill",
+      "schema": {
+       "type": "object",
+       "properties": {
+        "a": {
+         "type": "string",
+         "minLength": 3,
+         "maxLength": 1
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "t14-after",
+   "when": [
+    "turn-14:",
+    "\"tool_call_id\":\"call_f_14\""
+   ],
+   "reply": {
+    "text": "Done 14."
+   }
+  },
+  {
+   "name": "t14",
+   "when": [
+    "turn-14:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_f_14",
+     "name": "request_user_form",
+     "arguments": {
+      "prompt": "Fill",
+      "schema": {
+       "type": "object",
+       "properties": {
+        "a": {
+         "if": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "t13-after",
+   "when": [
+    "turn-13:",
+    "\"tool_call_id\":\"call_f_13\""
+   ],
+   "reply": {
+    "text": "Done 13."
+   }
+  },
+  {
+   "name": "t13",
+   "when": [
+    "turn-13:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_f_13",
+     "name": "request_user_form",
+     "arguments": {
+      "prompt": "Fill",
+      "schema": {
+       "type": "object",
+       "properties": {
+        "a": {
+         "enum": []
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "t12-after",
+   "when": [
+    "turn-12:",
+    "\"tool_call_id\":\"call_f_12\""
+   ],
+   "reply": {
+    "text": "Done 12."
+   }
+  },
+  {
+   "name": "t12",
+   "when": [
+    "turn-12:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_f_12",
+     "name": "request_user_form",
+     "arguments": {
+      "prompt": "Fill",
+      "schema": {
+       "type": "object",
+       "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "t11-after",
+   "when": [
+    "turn-11:",
+    "\"tool_call_id\":\"call_f_11\""
+   ],
+   "reply": {
+    "text": "Done 11."
+   }
+  },
+  {
+   "name": "t11",
+   "when": [
+    "turn-11:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_f_11",
+     "name": "request_user_form",
+     "arguments": {
+      "prompt": "Fill",
+      "schema": {
+       "type": "object",
+       "properties": {
+        "a": {
+         "type": "string",
+         "pattern": "("
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "t10-after",
+   "when": [
+    "turn-10:",
+    "\"tool_call_id\":\"call_f_10\""
+   ],
+   "reply": {
+    "text": "Done 10."
+   }
+  },
+  {
+   "name": "t10",
+   "when": [
+    "turn-10:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_f_10",
+     "name": "request_user_form",
+     "arguments": {
+      "prompt": "Fill",
+      "schema": {
+       "type": "object",
+       "$defs": {
+        "A": {
+         "$ref": "#/$defs/B"
+        },
+        "B": {
+         "$ref": "#/$defs/A"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "t09-after",
+   "when": [
+    "turn-09:",
+    "\"tool_call_id\":\"call_f_09\""
+   ],
+   "reply": {
+    "text": "Done 9."
+   }
+  },
+  {
+   "name": "t09",
+   "when": [
+    "turn-09:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_f_09",
+     "name": "request_user_form",
+     "arguments": {
+      "prompt": "Fill",
+      "schema": {
+       "type": "object",
+       "properties": {
+        "a": {
+         "$ref": "#/$defs/Missing"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "t08-after",
+   "when": [
+    "turn-08:",
+    "\"tool_call_id\":\"call_f_08\""
+   ],
+   "reply": {
+    "text": "Done 8."
+   }
+  },
+  {
+   "name": "t08",
+   "when": [
+    "turn-08:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_f_08",
+     "name": "request_user_form",
+     "arguments": {
+      "prompt": "Fill",
+      "schema": {
+       "type": "object",
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "t07-after",
+   "when": [
+    "turn-07:",
+    "\"tool_call_id\":\"call_f_07\""
+   ],
+   "reply": {
+    "text": "Done 7."
+   }
+  },
+  {
+   "name": "t07",
+   "when": [
+    "turn-07:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_f_07",
+     "name": "request_user_form",
+     "arguments": {
+      "prompt": "Fill",
+      "schema": {
+       "type": "object",
+       "required": [
+        "x"
+       ],
+       "properties": {
+        "y": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "t06-after",
+   "when": [
+    "turn-06:",
+    "\"tool_call_id\":\"call_f_06\""
+   ],
+   "reply": {
+    "text": "Done 6."
+   }
+  },
+  {
+   "name": "t06",
+   "when": [
+    "turn-06:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_f_06",
+     "name": "request_user_form",
+     "arguments": {
+      "prompt": "Fill",
+      "schema": {
+       "type": "object",
+       "foo": 1
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "t05-after",
+   "when": [
+    "turn-05:",
+    "\"tool_call_id\":\"call_f_05\""
+   ],
+   "reply": {
+    "text": "Done 5."
+   }
+  },
+  {
+   "name": "t05",
+   "when": [
+    "turn-05:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_f_05",
+     "name": "request_user_form",
+     "arguments": {
+      "prompt": "Fill",
+      "schema": {
+       "type": "array"
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "t04-after",
+   "when": [
+    "turn-04:",
+    "\"tool_call_id\":\"call_f_04\""
+   ],
+   "reply": {
+    "text": "Done 4."
+   }
+  },
+  {
+   "name": "t04",
+   "when": [
+    "turn-04:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_f_04",
+     "name": "request_user_form",
+     "arguments": {
+      "prompt": "Fill",
+      "schema": {
+       "type": "object",
+       "title": "Contact",
+       "$defs": {
+        "Email": {
+         "type": "string",
+         "format": "email"
+        },
+        "Tag": {
+         "type": "string",
+         "pattern": "^[a-z]+$"
+        }
+       },
+       "properties": {
+        "email": {
+         "$ref": "#/$defs/Email"
+        },
+        "tags": {
+         "type": "array",
+         "items": {
+          "$ref": "#/$defs/Tag"
+         },
+         "uniqueItems": true,
+         "minItems": 1
+        },
+        "when": {
+         "type": "string",
+         "format": "date-time"
+        },
+        "kind": {
+         "enum": [
+          "a",
+          "b"
+         ]
+        },
+        "extra": {
+         "type": [
+          "string",
+          "null"
+         ]
+        }
+       },
+       "required": [
+        "email",
+        "tags"
+       ],
+       "dependentRequired": {
+        "kind": [
+         "extra"
+        ]
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "t03-after",
+   "when": [
+    "turn-03:",
+    "\"tool_call_id\":\"call_f_03\""
+   ],
+   "reply": {
+    "text": "Done 3."
+   }
+  },
+  {
+   "name": "t03",
+   "when": [
+    "turn-03:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_f_03",
+     "name": "request_user_form",
+     "arguments": {
+      "prompt": "Fill",
+      "schema": {
+       "type": "object",
+       "properties": {
+        "n": {
+         "type": "number",
+         "multipleOf": 0.5,
+         "exclusiveMaximum": 10
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "t02-after",
+   "when": [
+    "turn-02:",
+    "\"tool_call_id\":\"call_f_02\""
+   ],
+   "reply": {
+    "text": "Done 2."
+   }
+  },
+  {
+   "name": "t02",
+   "when": [
+    "turn-02:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_f_02",
+     "name": "request_user_form",
+     "arguments": {
+      "prompt": "Fill",
+      "schema": {
+       "type": "object",
+       "title": "Contact",
+       "$defs": {
+        "Email": {
+         "type": "string",
+         "format": "email"
+        },
+        "Tag": {
+         "type": "string",
+         "pattern": "^[a-z]+$"
+        }
+       },
+       "properties": {
+        "email": {
+         "$ref": "#/$defs/Email"
+        },
+        "tags": {
+         "type": "array",
+         "items": {
+          "$ref": "#/$defs/Tag"
+         },
+         "uniqueItems": true,
+         "minItems": 1
+        },
+        "when": {
+         "type": "string",
+         "format": "date-time"
+        },
+        "kind": {
+         "enum": [
+          "a",
+          "b"
+         ]
+        },
+        "extra": {
+         "type": [
+          "string",
+          "null"
+         ]
+        }
+       },
+       "required": [
+        "email",
+        "tags"
+       ],
+       "dependentRequired": {
+        "kind": [
+         "extra"
+        ]
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "t01-after",
+   "when": [
+    "turn-01:",
+    "\"tool_call_id\":\"call_f_01\""
+   ],
+   "reply": {
+    "text": "Done 1."
+   }
+  },
+  {
+   "name": "t01",
+   "when": [
+    "turn-01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_f_01",
+     "name": "request_user_form",
+     "arguments": {
+      "prompt": "Fill",
+      "schema": {
+       "type": "object",
+       "properties": {
+        "name": {
+         "type": "string",
+         "minLength": 1
+        },
+        "age": {
+         "type": "integer",
+         "minimum": 0
+        }
+       },
+       "required": [
+        "name"
+       ],
+       "additionalProperties": false
+      }
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-form",
+    "channelKey": "test",
+    "runId": "run-f-01",
+    "message": "turn-01: basic",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "form"
+     ]
+    }
+   },
+   "timeout": 20000,
+   "answer": [
+    {
+     "on": {
+      "type": "user_dialog_request"
+     },
+     "ws": "user_dialog_respond",
+     "params": {
+      "sessionKey": "s-form",
+      "requestId": "{event.requestId}",
+      "result": {
+       "behavior": "answered",
+       "value": {
+        "name": "Ada",
+        "age": 3
+       }
+      }
+     },
+     "count": 1
+    }
+   ]
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-form",
+    "channelKey": "test",
+    "runId": "run-f-02",
+    "message": "turn-02: rich",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "form"
+     ]
+    }
+   },
+   "timeout": 20000,
+   "answer": [
+    {
+     "on": {
+      "type": "user_dialog_request"
+     },
+     "ws": "user_dialog_respond",
+     "params": {
+      "sessionKey": "s-form",
+      "requestId": "{event.requestId}",
+      "result": {
+       "behavior": "answered",
+       "value": {
+        "email": "a@b.co",
+        "tags": [
+         "x",
+         "y"
+        ],
+        "when": "2026-01-02T03:04:05Z",
+        "kind": "a",
+        "extra": null
+       }
+      }
+     },
+     "count": 1
+    }
+   ]
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-form",
+    "channelKey": "test",
+    "runId": "run-f-03",
+    "message": "turn-03: pending",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "form"
+     ]
+    }
+   },
+   "timeout": 3000,
+   "expectTimeout": true,
+   "save": {
+    "rid": "\"requestId\":\"([0-9a-f-]{36})\""
+   }
+  },
+  {
+   "ws": "user_dialog_respond",
+   "params": {
+    "sessionKey": "s-form",
+    "requestId": "{saved.rid}",
+    "result": {
+     "behavior": "answered",
+     "value": {
+      "n": 0.3
+     }
+    }
+   }
+  },
+  {
+   "ws": "user_dialog_respond",
+   "params": {
+    "sessionKey": "s-form",
+    "requestId": "{saved.rid}",
+    "result": {
+     "behavior": "answered",
+     "value": {
+      "n": 10
+     }
+    }
+   }
+  },
+  {
+   "ws": "user_dialog_respond",
+   "params": {
+    "sessionKey": "s-form",
+    "requestId": "{saved.rid}",
+    "result": {
+     "behavior": "answered",
+     "value": {
+      "n": "1"
+     }
+    }
+   }
+  },
+  {
+   "ws": "user_dialog_respond",
+   "params": {
+    "sessionKey": "s-form",
+    "requestId": "{saved.rid}",
+    "result": {
+     "behavior": "answered",
+     "value": [
+      1
+     ]
+    }
+   }
+  },
+  {
+   "ws": "user_dialog_respond",
+   "params": {
+    "sessionKey": "s-form",
+    "requestId": "{saved.rid}",
+    "result": {
+     "behavior": "answered",
+     "value": "x"
+    }
+   }
+  },
+  {
+   "ws": "user_dialog_respond",
+   "params": {
+    "sessionKey": "s-form",
+    "requestId": "{saved.rid}",
+    "result": {
+     "behavior": "answered",
+     "value": null
+    }
+   }
+  },
+  {
+   "ws": "user_dialog_respond",
+   "params": {
+    "sessionKey": "s-form",
+    "requestId": "{saved.rid}",
+    "result": {
+     "behavior": "answered",
+     "value": {
+      "n": 2.5,
+      "other": true
+     }
+    }
+   }
+  },
+  {
+   "sleep": 1500
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-form",
+    "channelKey": "test",
+    "runId": "run-f-04",
+    "message": "turn-04: rich-bad",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "form"
+     ]
+    }
+   },
+   "timeout": 3000,
+   "expectTimeout": true,
+   "save": {
+    "rid2": "\"requestId\":\"([0-9a-f-]{36})\""
+   }
+  },
+  {
+   "ws": "user_dialog_respond",
+   "params": {
+    "sessionKey": "s-form",
+    "requestId": "{saved.rid2}",
+    "result": {
+     "behavior": "answered",
+     "value": {
+      "email": "nope",
+      "tags": [
+       "x"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "ws": "user_dialog_respond",
+   "params": {
+    "sessionKey": "s-form",
+    "requestId": "{saved.rid2}",
+    "result": {
+     "behavior": "answered",
+     "value": {
+      "email": "a@b.co",
+      "tags": []
+     }
+    }
+   }
+  },
+  {
+   "ws": "user_dialog_respond",
+   "params": {
+    "sessionKey": "s-form",
+    "requestId": "{saved.rid2}",
+    "result": {
+     "behavior": "answered",
+     "value": {
+      "email": "a@b.co",
+      "tags": [
+       "x",
+       "x"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "ws": "user_dialog_respond",
+   "params": {
+    "sessionKey": "s-form",
+    "requestId": "{saved.rid2}",
+    "result": {
+     "behavior": "answered",
+     "value": {
+      "email": "a@b.co",
+      "tags": [
+       "X1"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "ws": "user_dialog_respond",
+   "params": {
+    "sessionKey": "s-form",
+    "requestId": "{saved.rid2}",
+    "result": {
+     "behavior": "answered",
+     "value": {
+      "email": "a@b.co",
+      "tags": [
+       "x"
+      ],
+      "when": "2026-02-30T00:00:00Z"
+     }
+    }
+   }
+  },
+  {
+   "ws": "user_dialog_respond",
+   "params": {
+    "sessionKey": "s-form",
+    "requestId": "{saved.rid2}",
+    "result": {
+     "behavior": "answered",
+     "value": {
+      "email": "a@b.co",
+      "tags": [
+       "x"
+      ],
+      "kind": "c"
+     }
+    }
+   }
+  },
+  {
+   "ws": "user_dialog_respond",
+   "params": {
+    "sessionKey": "s-form",
+    "requestId": "{saved.rid2}",
+    "result": {
+     "behavior": "answered",
+     "value": {
+      "email": "a@b.co",
+      "tags": [
+       "x"
+      ],
+      "kind": "a"
+     }
+    }
+   }
+  },
+  {
+   "ws": "user_dialog_respond",
+   "params": {
+    "sessionKey": "s-form",
+    "requestId": "{saved.rid2}",
+    "result": {
+     "behavior": "cancelled"
+    }
+   }
+  },
+  {
+   "sleep": 1500
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-form",
+    "channelKey": "test",
+    "runId": "run-f-05",
+    "message": "turn-05: invalid",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "form"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-form",
+    "channelKey": "test",
+    "runId": "run-f-06",
+    "message": "turn-06: invalid",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "form"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-form",
+    "channelKey": "test",
+    "runId": "run-f-07",
+    "message": "turn-07: invalid",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "form"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-form",
+    "channelKey": "test",
+    "runId": "run-f-08",
+    "message": "turn-08: invalid",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "form"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-form",
+    "channelKey": "test",
+    "runId": "run-f-09",
+    "message": "turn-09: invalid",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "form"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-form",
+    "channelKey": "test",
+    "runId": "run-f-10",
+    "message": "turn-10: invalid",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "form"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-form",
+    "channelKey": "test",
+    "runId": "run-f-11",
+    "message": "turn-11: invalid",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "form"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-form",
+    "channelKey": "test",
+    "runId": "run-f-12",
+    "message": "turn-12: invalid",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "form"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-form",
+    "channelKey": "test",
+    "runId": "run-f-13",
+    "message": "turn-13: invalid",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "form"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-form",
+    "channelKey": "test",
+    "runId": "run-f-14",
+    "message": "turn-14: invalid",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "form"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-form",
+    "channelKey": "test",
+    "runId": "run-f-15",
+    "message": "turn-15: invalid",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "form"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-form",
+    "channelKey": "test",
+    "runId": "run-f-16",
+    "message": "turn-16: invalid",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "form"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-form",
+    "channelKey": "test",
+    "runId": "run-f-17",
+    "message": "turn-17: invalid",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "form"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-form",
+    "channelKey": "test",
+    "runId": "run-f-18",
+    "message": "turn-18: invalid",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "form"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-form",
+    "channelKey": "test",
+    "runId": "run-f-19",
+    "message": "turn-19: invalid",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "form"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-form",
+    "channelKey": "test",
+    "runId": "run-f-20",
+    "message": "turn-20: invalid",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "form"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-form"
+   }
+  }
+ ],
+ "settleMs": 800
+}

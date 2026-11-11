@@ -62,6 +62,10 @@ pub(super) fn session_channel(
     options.journal =
         create_gateway_user_dialog_journal(Some(transcript), JournalOptions::default())
             .map(|journal| Arc::new(journal) as Arc<dyn UserDialogJournal>);
+    // `acceptsFormDialogAnswer` guards a form answer before it resumes the tool.
+    options.form_accepts = Some(Arc::new(
+        crate::runtime::tools::builtin::form_dialog::accepts_form_dialog_answer,
+    ));
     GatewayUserDialogChannel::new(options)
 }
 

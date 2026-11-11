@@ -9,6 +9,7 @@ pub mod bash;
 pub mod edit_file;
 pub mod edit_notebook;
 pub mod execute_code;
+pub mod form_dialog;
 pub mod glob;
 pub mod goal;
 pub mod grep;
