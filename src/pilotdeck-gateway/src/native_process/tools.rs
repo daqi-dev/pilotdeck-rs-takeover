@@ -682,9 +682,6 @@ impl SessionTools {
     }
 }
 
-/// How long a tool batch waits for its assistant message to be durable.
-const DURABLE_MESSAGE_WAIT: Duration = Duration::from_secs(2);
-
 /// `createDurableToolPort` (`agent/modules/capability/durableToolPort.ts`):
 /// `tool_call` entries before the batch runs and `tool_result` entries (which
 /// close the step) after it, unless the turn was aborted meanwhile.
@@ -766,18 +763,12 @@ impl capability::ToolExecution for DurableTools {
             // The loop records the assistant message before it runs the
             // message's tool calls (in the baseline both happen in one
             // process, in that order). Here the message arrives as a loop
-            // event and is appended on the storage queue while this call is
-            // already in flight, so give the append a bounded moment to land:
-            // the calls are recorded after it and take their timeline from it.
-            let mut waited = Duration::ZERO;
-            while waited < DURABLE_MESSAGE_WAIT
-                && calls
-                    .iter()
-                    .any(|call| DurableTools::durable_call_in(&projection, &turn, call).is_none())
-            {
-                tokio::time::sleep(Duration::from_millis(2)).await;
-                waited += Duration::from_millis(2);
-            }
+            // event ahead of this call on the same sidecar stream, and its
+            // application ends with the durable append; wait for exactly the
+            // events that preceded this call. The calls are then recorded
+            // after the message and take their timeline from its latest
+            // durable copy (a retried step may reuse the same call id).
+            crate::runtime::turn::live::prior_wire_events_applied().await;
             let durable_calls: Vec<JsValue> = calls
                 .iter()
                 .map(|call| {

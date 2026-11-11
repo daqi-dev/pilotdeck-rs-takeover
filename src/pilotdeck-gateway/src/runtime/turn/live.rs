@@ -1532,6 +1532,62 @@ struct Forwarding {
     // #1220: the turn's coordinate allocator. Only submit() assembles it;
     // embedded test handlers keep `Arc::default()` and pass events through.
     timeline: Option<Arc<Mutex<super::timeline::TurnTimeline>>>,
+    /// Arrival ordinal for the next validated wire event.
+    wire_next: u64,
+    /// Validated wire events whose application has not finished (their
+    /// EventGuard is still alive). See [`WireBarrier`].
+    wire_open: std::collections::BTreeSet<u64>,
+    wire_settled: Arc<tokio::sync::Notify>,
+}
+
+tokio::task_local! {
+    static PRIOR_WIRE_EVENTS: WireBarrier;
+}
+
+/// Causal barrier handed to a module callback: every wire event the sidecar
+/// emitted before the module call (the host receives both on one ordered
+/// stdout stream and validates events in arrival order) has finished its
+/// application. For `assistant_message` that application includes the
+/// durable append (the `recorded` receipt in [`StreamHandler::forward`]), so
+/// a tool batch that waits here sees its own assistant message on disk and
+/// can append its `tool_call` entries after it, as the baseline's in-process
+/// loop does (`recordAssistantMessage` before `createDurableToolPort`).
+#[derive(Clone)]
+pub(crate) struct WireBarrier {
+    forwarding: Arc<Mutex<Forwarding>>,
+    upto: u64,
+}
+
+impl WireBarrier {
+    async fn wait(&self) {
+        let notify = self.forwarding.lock().unwrap().wire_settled.clone();
+        loop {
+            let notified = notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self
+                .forwarding
+                .lock()
+                .unwrap()
+                .wire_open
+                .range(..self.upto)
+                .next()
+                .is_none()
+            {
+                return;
+            }
+            notified.await;
+        }
+    }
+}
+
+/// Wait until every wire event that preceded the current module call has
+/// been applied. Outside a sidecar module callback (no barrier in scope) it
+/// returns immediately.
+pub(crate) async fn prior_wire_events_applied() {
+    if let Ok(barrier) = PRIOR_WIRE_EVENTS.try_with(WireBarrier::clone) {
+        barrier.wait().await;
+    }
 }
 
 struct HostSubagent {
@@ -1977,7 +2033,20 @@ impl StreamHandler {
 
 impl HostHandler for StreamHandler {
     fn module_call(&self, call: JsValue) -> HostFuture<JsObject> {
-        self.forward(self.inner.module_call(call), None, None, true, false)
+        // Called on the driver task in arrival order: capture the wire events
+        // received before this call, before anything later can be validated.
+        let barrier = WireBarrier {
+            forwarding: self.forwarding.clone(),
+            upto: self.forwarding.lock().unwrap().wire_next,
+        };
+        let applied = self.inner.module_call(call);
+        self.forward(
+            Box::pin(PRIOR_WIRE_EVENTS.scope(barrier, applied)),
+            None,
+            None,
+            true,
+            false,
+        )
     }
 
     fn observe_loop_completion(&self, payload: &JsValue) {
@@ -1999,6 +2068,9 @@ impl HostHandler for StreamHandler {
         let key = Arc::new(());
         let slot = state.reserve();
         state.wire.push_back((key.clone(), slot));
+        let ordinal = state.wire_next;
+        state.wire_next += 1;
+        state.wire_open.insert(ordinal);
         drop(state);
         let forwarding = self.forwarding.clone();
         Ok(EventGuard::new(move || {
@@ -2008,7 +2080,12 @@ impl HostHandler for StreamHandler {
             // chain instead of making a successor ready ahead of that work.
             let mut forwarding = forwarding.lock().unwrap();
             forwarding.wire.retain(|(id, _)| !Arc::ptr_eq(id, &key));
+            // The guard lives through application, so this is the point
+            // where a WireBarrier may stop waiting for this event.
+            forwarding.wire_open.remove(&ordinal);
+            let settled = forwarding.wire_settled.clone();
             drop(forwarding);
+            settled.notify_waiters();
             drop(inner);
         }))
     }

@@ -4974,3 +4974,54 @@ async fn wire_durable_messages_match_ts_yield_before_callback() {
         }
     }
 }
+
+/// A tool batch records its `tool_call` entries after the assistant message
+/// that carries the calls. The capability callback therefore waits for every
+/// wire event received before it (and only those) to finish application —
+/// a causal barrier, not a timer.
+#[tokio::test]
+async fn module_call_waits_for_exactly_the_preceding_wire_events() {
+    struct BarrierProbe;
+    impl HostHandler for BarrierProbe {
+        fn module_call(&self, _call: JsValue) -> HostFuture<JsObject> {
+            Box::pin(async {
+                prior_wire_events_applied().await;
+                Ok(JsObject::new())
+            })
+        }
+    }
+    let (tx, _rx) = mpsc::channel(1);
+    let handler = Arc::new(StreamHandler {
+        inner: Arc::new(BarrierProbe),
+        events: tx,
+        integrity: Arc::new(StreamIntegrity::new()),
+        forwarding: Arc::default(),
+        callback_cancel: None,
+    });
+    let started =
+        parse_json(r#"{"type":"model_request_started","sessionId":"session","turnId":"turn"}"#)
+            .unwrap();
+    let event =
+        parse_json(r#"{"type":"model_event","sessionId":"session","turnId":"turn"}"#).unwrap();
+    let before = handler.validate_event(&started).unwrap();
+    let call = tokio::spawn(handler.module_call(JsValue::Object(JsObject::new())));
+    // An event received after the call must not hold it back.
+    let _after = handler.validate_event(&event).unwrap();
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        !call.is_finished(),
+        "the call ran before an earlier wire event was applied"
+    );
+    drop(before);
+    timeout(Duration::from_secs(5), call)
+        .await
+        .expect("the barrier opens once the earlier event is applied")
+        .unwrap()
+        .unwrap();
+    // Outside a module callback there is nothing to wait for.
+    timeout(Duration::from_secs(5), prior_wire_events_applied())
+        .await
+        .unwrap();
+}
