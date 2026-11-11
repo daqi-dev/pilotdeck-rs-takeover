@@ -280,7 +280,9 @@ impl Handler {
                             stage,
                             runtime: runtime.clone(),
                             materializer: model.materializer.clone(),
-                            permission_mode: get(&config, "permissionMode"),
+                            // The identity's mode: the turn's current one, which a
+                            // plan-mode tool may have switched mid-turn.
+                            permission_mode: get(&input.fields, "permissionMode"),
                             abort_signal: input.abort_signal.clone(),
                             options: budget::EvaluationOptions {
                                 max_context_tokens,

@@ -401,6 +401,7 @@ impl ExecutableTool for AskUserQuestionTool {
                     ElicitationRequest {
                         tool_call_id: turn_id,
                         tool_name: ASK_USER_QUESTION_TOOL_NAME.into(),
+                        preview_format: None,
                         questions: questions.clone(),
                         metadata: Some(field(&input, "metadata").clone()).filter(js_truthy),
                     },

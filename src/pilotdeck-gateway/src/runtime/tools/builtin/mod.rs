@@ -15,6 +15,7 @@ pub mod goal;
 pub mod grep;
 pub mod mcp_resources;
 pub mod mcp_tool;
+pub mod plan_mode;
 pub mod read_file;
 pub mod read_skill;
 pub mod request_user;

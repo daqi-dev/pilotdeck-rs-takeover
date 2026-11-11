@@ -615,6 +615,23 @@ impl SessionTools {
                 ))) as capability::RuntimeContext
             }),
             file_history: Some(self.file_history.clone()),
+            // The live mode: `enter_plan_mode` / `exit_plan_mode` switch it
+            // between two tool batches of one turn.
+            permission_mode: Some({
+                let permission = self.permission.clone();
+                Arc::new(move || {
+                    JsValue::String(
+                        permission
+                            .0
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .0
+                            .mode
+                            .as_js_string()
+                            .clone(),
+                    )
+                })
+            }),
             // `createDurablePermissionAuditRecorder`.
             audit_recorder: Some(Arc::new(crate::runtime::tools::ToolAudit(Arc::new(
                 DurablePermissionAudit {
@@ -1277,6 +1294,9 @@ pub(super) fn native_tools(
     builtins.push(Arc::new(
         builtin::ask_user_question::AskUserQuestionTool::new(),
     ));
+    // `planMode` defaults on; the loop offers them only to a turn with
+    // `allowPlanModeTools: true`.
+    builtins.extend(builtin::plan_mode::plan_mode_tools());
     builtins.push(Arc::new(builtin::todo_write::TodoWriteTool::new()));
     builtins.push(Arc::new(builtin::send_attachment::SendAttachmentTool::new()));
     builtins.extend(builtin::goal::goal_tools());
