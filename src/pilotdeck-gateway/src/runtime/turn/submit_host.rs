@@ -85,6 +85,11 @@ pub trait SubmitHostServices: Send + Sync {
     fn live_permission_mode(&self, _session: &JsString) -> Option<JsString> {
         None
     }
+    /// `permissionModes.getBase(sessionKey)`: the mode the session had before
+    /// it entered plan mode.
+    fn live_base_permission_mode(&self, _session: &JsString) -> Option<JsString> {
+        None
+    }
     /// `options.defaultPermissionMode` (InProcessGateway.ts:1449).
     fn default_permission_mode(&self) -> Option<JsString> {
         None
@@ -271,7 +276,6 @@ impl SubmitHost for GatewaySubmitHost {
                 )
                 .await?;
             let model_selection = self.services.resolve_model_selection(input).await?;
-            let plan = field(input, "mode") == &JsValue::from("plan");
             // InProcessGateway.ts:1442-1455. `normalizeGatewayModeForLegacyInput`
             // keeps only a permission mode; validation already refused other
             // non-empty values.
@@ -284,14 +288,22 @@ impl SubmitHost for GatewaySubmitHost {
             };
             let requested = mode_of("mode").cloned();
             let live = self.services.live_permission_mode(&run.session_key);
+            // `inputMode = requestedInputMode ?? permissionModes.get(sessionKey)`.
+            let plan = requested
+                .as_ref()
+                .or(live.as_ref())
+                .is_some_and(|mode| mode.equals_str("plan"));
             let default_mode = self.services.default_permission_mode();
             // `inputMode ?? livePermissionMode ?? defaultPermissionMode`; the
             // settings-file `skipPermissions` leg applies only without a
             // default, which no embedding here has.
             let permission_mode = requested.clone().or(live).or_else(|| default_mode.clone());
-            // `permissionModes.getBase` has no native store yet.
             let base_permission_mode = mode_of("basePermissionMode")
                 .cloned()
+                .or_else(|| {
+                    self.services
+                        .live_base_permission_mode(&run.session_key)
+                })
                 .or_else(|| requested.filter(|mode| !mode.equals_str("plan")))
                 .or(default_mode);
             let mut options = crate::metadata::object([

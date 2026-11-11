@@ -217,6 +217,8 @@ impl Requests {
                 .await
                 .map_err(|e| RequestError::new(e.to_string()))?;
             self.interactions.close_session(key, &reason);
+            // `this.permissionModes.clear(input.sessionKey)`.
+            self.session_overrides.clear_live_mode(key);
         }
         Ok(object([("ok", JsValue::Bool(true))]))
     }
@@ -449,6 +451,7 @@ impl Requests {
         for key in &keys {
             self.interactions
                 .close_session(key, &"project_closed".into());
+            self.session_overrides.clear_live_mode(key);
         }
         let session_keys: Vec<JsValue> = keys.into_iter().map(JsValue::String).collect();
         Ok(object([("sessionKeys", JsValue::Array(session_keys))]))

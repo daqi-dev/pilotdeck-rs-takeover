@@ -758,7 +758,15 @@ async fn start_assembly(
                         let permission_source = {
                             let session_overrides = session_overrides.clone();
                             let session = session.clone();
-                            Arc::new(move || session_overrides.permission_mode(&session))
+                            // The live registry (the last selection or
+                            // plan-mode transition) is what the baseline's
+                            // next run starts in; the stored selection covers
+                            // a session whose live entry was cleared.
+                            Arc::new(move || {
+                                session_overrides
+                                    .live_mode(&session)
+                                    .or_else(|| session_overrides.permission_mode(&session))
+                            })
                         };
                         let deployment = Deployment::Stdio {
                             command: options.sidecar.to_string_lossy().into_owned(),
@@ -780,7 +788,18 @@ async fn start_assembly(
                             gateway_emit,
                             session_rules,
                             permission_timeout,
-                        );
+                        )
+                        .with_permission_mode_transition({
+                            let session_overrides = session_overrides.clone();
+                            let session = session.clone();
+                            Arc::new(move |mode, fallback_base| {
+                                session_overrides.transition_live_mode(
+                                    &session,
+                                    mode,
+                                    fallback_base,
+                                )
+                            })
+                        });
                         let ports = match plugin_runtime {
                             Some(plugins) => ports.with_skills(plugins),
                             None => ports,
@@ -1103,6 +1122,7 @@ async fn start_assembly(
                 owner: owner.clone(),
                 snapshot_recorder: snapshot_recorder.clone(),
                 upload_store: upload_store.clone(),
+                session_overrides: session_overrides.clone(),
             });
             let mcp_gateway = mcp::build_mcp_gateway(
                 &owner,

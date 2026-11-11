@@ -130,7 +130,11 @@ impl SessionTools {
             interactions,
             lsp,
             mcp,
-            permission: Arc::new(Permissions(Mutex::new((context, None)), Default::default())),
+            permission: Arc::new(Permissions(
+                Mutex::new((context, None)),
+                Default::default(),
+                Default::default(),
+            )),
             permission_mode_source: None,
             world: ExecutionWorld::new(),
             goal: Arc::default(),
@@ -146,6 +150,16 @@ impl SessionTools {
         events: crate::runtime::project::interaction_events::InteractionEvents,
     ) -> Self {
         self.events = Some(events);
+        self
+    }
+
+    /// Where a tool-requested permission mode change is published for the
+    /// session's next turn (the gateway's live permission-mode registry).
+    pub fn with_permission_mode_transition(
+        self,
+        transition: Arc<dyn Fn(JsString, Option<JsString>) + Send + Sync>,
+    ) -> Self {
+        let _ = self.permission.2.set(transition);
         self
     }
 
@@ -648,7 +662,11 @@ struct Permissions(
     )>,
     /// The gateway answerer, when the session has one.
     std::sync::OnceLock<Arc<super::permission_prompt::PermissionPrompt>>,
+    /// `permissionModes.transition(sessionKey, mode, fallbackBase)`: a tool's
+    /// mode change is carried to the session's next turn.
+    std::sync::OnceLock<ModeTransition>,
 );
+type ModeTransition = Arc<dyn Fn(JsString, Option<JsString>) + Send + Sync>;
 struct Tool(
     Arc<dyn capability::ToolDefinition>,
     JsString,
@@ -796,6 +814,16 @@ impl capability::CapabilityResultObserver for Permissions {
                 && let Some(previous) = state.1.take()
             {
                 mode = previous;
+            }
+            if let Some(transition) = self.2.get() {
+                transition(
+                    mode.as_js_string().clone(),
+                    state
+                        .1
+                        .as_ref()
+                        .map(|base| base.as_js_string().clone())
+                        .or_else(|| Some(state.0.mode.as_js_string().clone())),
+                );
             }
             state.0.mode = mode;
         }
