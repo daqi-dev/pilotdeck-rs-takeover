@@ -399,6 +399,12 @@ impl Recorder {
         }
         Ok(step)
     }
+    /// TS `currentStep`: the turn's open step.
+    pub fn current_step(&self, turn_id: &JsString) -> RecorderResult<u64> {
+        let inner = self.lock();
+        self.require_recording(&inner, turn_id)?;
+        self.require_open_step(&inner, turn_id)
+    }
     /// TS `peekAdmissionStep`: the step a context/model fact recorded now
     /// would land in — the open step until its model request is recorded,
     /// else the next one.

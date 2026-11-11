@@ -87,6 +87,9 @@ pub struct SessionTools {
     goal: Arc<crate::runtime::goal::GoalSessionState>,
     /// `planFileManager` (`SessionPlanTodoBundle`).
     plan_files: Arc<crate::runtime::plan_todo::SessionPlanFiles>,
+    /// The generation's agent event buffer, for events the tool runtime
+    /// raises itself.
+    events: Option<crate::runtime::project::interaction_events::InteractionEvents>,
 }
 impl SessionTools {
     pub fn new(
@@ -122,7 +125,18 @@ impl SessionTools {
             world: ExecutionWorld::new(),
             goal: Arc::default(),
             plan_files,
+            events: None,
         })
+    }
+
+    /// The project generation's event buffer (`eventEmitter` of the tool
+    /// runtime).
+    pub fn with_events(
+        mut self,
+        events: crate::runtime::project::interaction_events::InteractionEvents,
+    ) -> Self {
+        self.events = Some(events);
+        self
     }
 
     /// The project's plugin runtime, behind `read_skill`
@@ -176,11 +190,25 @@ impl SessionTools {
             &self.mcp,
             &self.world,
         );
-        let execution = Arc::new(ToolRuntime::new(
-            tools,
-            self.permission.clone(),
-            SchedulerMode::Concurrent,
-        ));
+        // `createDurableToolPort`: the batch's calls and results are session
+        // events around the scheduler's execution.
+        let runtime = ToolRuntime::new(tools, self.permission.clone(), SchedulerMode::Concurrent);
+        let runtime = match self.events.clone() {
+            // A refused event (the run was superseded or closed) is dropped,
+            // like an emitter whose buffer is gone.
+            Some(events) => runtime.with_event_emitter(Arc::new(move |event| {
+                let _ = events.emit_current(event);
+            })),
+            None => runtime,
+        };
+        let execution = Arc::new(DurableTools {
+            inner: Arc::new(runtime),
+            recorder: recorder.clone(),
+            projection: self.binding.projection.clone(),
+            session: identity.session_id.clone(),
+            turn: identity.turn_id.clone(),
+            signal: signal.clone(),
+        });
         let mut config = self.config.clone();
         config.insert("env".into(), JsValue::Object(self.env.clone()));
         config.insert("permissionMode".into(), JsValue::String(permission_mode));
@@ -217,6 +245,14 @@ impl SessionTools {
             clock: Some(Arc::new(|| JsValue::String(SystemExecutionClock.now_iso()))),
             goal: Some(Arc::new(crate::runtime::goal::GoalSessions(goal))),
             plan_files: Some(self.plan_files.clone()),
+            // `createDurablePermissionAuditRecorder`.
+            audit_recorder: Some(Arc::new(crate::runtime::tools::ToolAudit(Arc::new(
+                DurablePermissionAudit {
+                    recorder: recorder.clone(),
+                    session: identity.session_id.clone(),
+                    turn: identity.turn_id.clone(),
+                },
+            )))),
             ..Default::default()
         };
         let sink = Durable {
@@ -288,6 +324,144 @@ impl SessionTools {
                 turn_ports: Default::default(),
             },
         }
+    }
+}
+
+/// `createDurableToolPort` (`agent/modules/capability/durableToolPort.ts`):
+/// `tool_call` entries before the batch runs and `tool_result` entries (which
+/// close the step) after it, unless the turn was aborted meanwhile.
+struct DurableTools {
+    inner: Arc<ToolRuntime>,
+    recorder: Arc<Recorder>,
+    projection: Arc<crate::runtime::session::factory::SessionProjection>,
+    session: JsString,
+    turn: JsString,
+    signal: Cancellation,
+}
+impl DurableTools {
+    /// The call as the loop holds it: the assistant message's `tool_call`
+    /// block (which carries the timeline position) without its block type.
+    /// The capability wire only carries id, name and arguments.
+    fn durable_call(&self, call: &capability::ToolCall) -> JsValue {
+        let mut found = None;
+        self.projection.for_each_entry(|entry| {
+            if entry.get("type") != Some(&"assistant_message".into())
+                || entry.get("turnId") != Some(&JsValue::String(self.turn.clone()))
+            {
+                return;
+            }
+            let Some(JsValue::Array(blocks)) = entry.get("message").and_then(|m| m.get("content"))
+            else {
+                return;
+            };
+            for block in blocks {
+                if block.get("type") == Some(&"tool_call".into())
+                    && block.get("id") == Some(&JsValue::String(call.id.clone()))
+                {
+                    found = block.as_object().cloned();
+                }
+            }
+        });
+        let mut durable = JsObject::new();
+        match found {
+            Some(block) => {
+                for (key, value) in block.entries() {
+                    if !key.equals_str("type") {
+                        durable.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+            None => {
+                durable.insert("id".into(), JsValue::String(call.id.clone()));
+                durable.insert("name".into(), JsValue::String(call.name.clone()));
+                durable.insert("input".into(), call.input.clone());
+            }
+        }
+        JsValue::Object(durable)
+    }
+}
+impl capability::ToolCatalog for DurableTools {
+    fn list(&self) -> HostFuture<Vec<Arc<dyn capability::ToolDefinition>>> {
+        self.inner.list()
+    }
+}
+impl capability::ToolExecution for DurableTools {
+    fn refresh(&self) -> HostFuture<()> {
+        self.inner.refresh()
+    }
+    fn execute_all(
+        &self,
+        calls: Vec<capability::ToolCall>,
+        context: capability::ToolInvocationContext,
+    ) -> HostFuture<Vec<JsObject>> {
+        let durable_calls: Vec<JsValue> =
+            calls.iter().map(|call| self.durable_call(call)).collect();
+        let inner = self.inner.clone();
+        let signal = self.signal.clone();
+        let recorder = self.recorder.clone();
+        let (session, turn) = (self.session.clone(), self.turn.clone());
+        Box::pin(async move {
+            {
+                let recorder = recorder.clone();
+                let (session, turn) = (session.clone(), turn.clone());
+                tokio::task::spawn_blocking(move || {
+                    recorder.record_tool_calls(&session, &turn, &durable_calls)
+                })
+                .await
+                .map_err(|e| ModuleError::new(e.to_string()))?
+                .map_err(|e| ModuleError::new(e.to_string()))?;
+            }
+            let results = inner.execute_all(calls, context).await?;
+            // An aborted turn ends before its tool results are projected; a
+            // late scheduler result is not a settled tool outcome.
+            if signal.is_cancelled() {
+                return Ok(results);
+            }
+            let durable: Vec<JsValue> = results.iter().cloned().map(JsValue::Object).collect();
+            tokio::task::spawn_blocking(move || {
+                recorder.record_tool_results(&session, &turn, &durable)
+            })
+            .await
+            .map_err(|e| ModuleError::new(e.to_string()))?
+            .map_err(|e| ModuleError::new(e.to_string()))?;
+            Ok(results)
+        })
+    }
+}
+
+/// `createDurablePermissionAuditRecorder`: permission decisions as session
+/// events at the turn's open step. The tool input is deliberately not kept.
+struct DurablePermissionAudit {
+    recorder: Arc<Recorder>,
+    session: JsString,
+    turn: JsString,
+}
+impl crate::runtime::tools::ToolAuditRecorder for DurablePermissionAudit {
+    fn record_permission(&self, kind: &'static str, fields: JsObject) -> HostFuture<()> {
+        let recorder = self.recorder.clone();
+        let (session, turn) = (self.session.clone(), self.turn.clone());
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || {
+                let mut draft = value([
+                    ("type", kind.into()),
+                    (
+                        "step",
+                        JsValue::Number(recorder.current_step(&turn)? as f64),
+                    ),
+                ]);
+                for (key, value) in fields.entries() {
+                    draft.insert(key.clone(), value.clone());
+                }
+                Ok::<_, crate::storage::recorder::RecorderError>(
+                    recorder
+                        .writer()
+                        .record_session_event(&session, &turn, draft)?,
+                )
+            })
+            .await
+            .map_err(|e| ModuleError::new(e.to_string()))?
+            .map_err(|e| ModuleError::new(e.to_string()).into())
+        })
     }
 }
 
@@ -416,6 +590,8 @@ struct Tool(
     Arc<dyn capability::ToolDefinition>,
     JsString,
     Option<JsString>,
+    /// The call's tool runtime context, for `check_runtime_permissions`.
+    capability::RuntimeContext,
 );
 impl PermissionTool for Tool {
     fn name(&self) -> &JsString {
@@ -432,7 +608,10 @@ impl PermissionTool for Tool {
         input: &'a JsValue,
         context: &'a PermissionContext,
     ) -> permission::PermissionFuture<'a, Option<JsValue>> {
-        self.0.check_permissions(input, context)
+        match self.0.check_runtime_permissions(input, &self.3) {
+            Some(check) => check,
+            None => self.0.check_permissions(input, context),
+        }
     }
 }
 impl PermissionDecision for Permissions {
@@ -440,7 +619,7 @@ impl PermissionDecision for Permissions {
         &self,
         tool: Arc<dyn capability::ToolDefinition>,
         input: JsValue,
-        _: capability::RuntimeContext,
+        runtime: capability::RuntimeContext,
         id: JsString,
     ) -> HostFuture<JsValue> {
         let context = self.0.lock().unwrap_or_else(|e| e.into_inner()).0.clone();
@@ -455,9 +634,9 @@ impl PermissionDecision for Permissions {
             .get("kind")
             .and_then(JsValue::as_string)
             .cloned();
-        Box::pin(
-            async move { permission::decide(&context, &Tool(tool, name, kind), &input, &id).await },
-        )
+        Box::pin(async move {
+            permission::decide(&context, &Tool(tool, name, kind, runtime), &input, &id).await
+        })
     }
 }
 impl capability::CapabilityResultObserver for Permissions {

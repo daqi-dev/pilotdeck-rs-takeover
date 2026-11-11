@@ -475,6 +475,14 @@ impl PlanTodoRuntime {
         self.append(turn, draft).await
     }
 
+    /// `planTodoBlockingMessageFor`.
+    pub fn blocking_message_for(&self, tool: &JsString, read_only: bool) -> Option<&'static str> {
+        (!tool.equals_str("todo_write") && !read_only && self.snapshot().requires_initialization)
+            .then_some(
+                "An approved plan is active, but the todo list has not been initialized yet. Call `todo_write` first with a markdown checklist based on the approved plan, then retry this tool.",
+            )
+    }
+
     /// `markPlanApproved`.
     pub async fn mark_plan_approved(
         &self,

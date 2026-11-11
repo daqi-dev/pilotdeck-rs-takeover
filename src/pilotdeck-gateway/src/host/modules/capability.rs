@@ -25,6 +25,18 @@ pub trait ToolDefinition: Send + Sync {
     ) -> crate::runtime::permission::PermissionFuture<'a, Option<JsValue>> {
         Box::pin(async { Ok(None) })
     }
+    /// `checkPermissions(input, context)` of a tool whose check reads the
+    /// tool runtime context (workspace paths, registered files) rather than
+    /// the permission context alone. `None`: the tool has no such check and
+    /// [`Self::check_permissions`] applies. The adapter that owns the runtime
+    /// context passes it in; it stays opaque at this layer.
+    fn check_runtime_permissions<'a>(
+        &'a self,
+        _input: &'a JsValue,
+        _runtime: &'a RuntimeContext,
+    ) -> Option<crate::runtime::permission::PermissionFuture<'a, Option<JsValue>>> {
+        None
+    }
     fn required_runtime_capabilities(&self) -> Option<Vec<JsString>> {
         None
     }

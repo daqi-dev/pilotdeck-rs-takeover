@@ -29,6 +29,9 @@ pub struct ToolRuntime {
     pub registry: ToolRegistry,
     permission: Arc<dyn PermissionDecision>,
     pub mode: SchedulerMode,
+    /// `ToolRuntimeOptions.eventEmitter`: agent events the runtime itself
+    /// raises (`permission_denied`).
+    events: Option<crate::host::modules::tool_context::EventSink>,
 }
 impl ToolRuntime {
     pub fn new(
@@ -40,7 +43,15 @@ impl ToolRuntime {
             registry,
             permission,
             mode,
+            events: None,
         }
+    }
+    pub fn with_event_emitter(
+        mut self,
+        events: crate::host::modules::tool_context::EventSink,
+    ) -> Self {
+        self.events = Some(events);
+        self
     }
     pub async fn execute_batch(
         &self,
@@ -257,8 +268,49 @@ impl ToolRuntime {
                 }
                 Ok(None) => {}
             }
+            // `context.planTodo?.blockingMessageFor(name, isReadOnly)`: an
+            // approved plan without a todo list blocks non-read-only tools.
+            if let Some(plan_todo) = context.host.plan_todo.clone().and_then(|handle| {
+                handle
+                    .downcast::<crate::runtime::plan_todo::PlanTodoRuntime>()
+                    .ok()
+            }) {
+                let read_only = tool.is_read_only(&call.input).is_ok_and(|v| truthy(&v));
+                if let Some(message) = plan_todo.blocking_message_for(&name, read_only) {
+                    return fail(&name, ToolError::failed(message));
+                }
+            }
+            // `auditRecorder.recordPermissionStarted` / `recordPermission` /
+            // `recordPermissionFailed` around the decision.
+            let audit = context
+                .host
+                .audit_recorder
+                .clone()
+                .and_then(|audit| audit.downcast::<super::ToolAudit>().ok());
+            let audit_fields = || {
+                object([
+                    ("operationId", string(call.id.clone())),
+                    ("toolCallId", string(call.id.clone())),
+                    ("toolName", string(name.clone())),
+                    (
+                        "mode",
+                        context
+                            .fields
+                            .get("permissionContext")
+                            .and_then(|permission| permission.get("mode"))
+                            .cloned()
+                            .unwrap_or(JsValue::Undefined),
+                    ),
+                ])
+            };
+            if let Some(audit) = &audit {
+                audit
+                    .0
+                    .record_permission("permission_started", audit_fields())
+                    .await?;
+            }
             let definition: Arc<dyn ToolDefinition> = tool.clone();
-            let decision = self
+            let decision = match self
                 .permission
                 .decide(
                     definition,
@@ -266,7 +318,43 @@ impl ToolRuntime {
                     Arc::new(context.clone()),
                     call.id.clone(),
                 )
-                .await?;
+                .await
+            {
+                Ok(decision) => decision,
+                Err(error) => {
+                    if let Some(audit) = &audit {
+                        let mut fields = audit_fields();
+                        fields.insert("error".into(), string(error.message.clone()));
+                        if audit
+                            .0
+                            .record_permission("permission_failed", fields)
+                            .await
+                            .is_err()
+                        {
+                            return Err(ModuleError::new(named(
+                                "Permission decision failed and its audit could not be recorded for ",
+                                &name,
+                                ".",
+                            ))
+                            .into());
+                        }
+                    }
+                    return Err(error);
+                }
+            };
+            if let Some(audit) = &audit {
+                let mut fields = audit_fields();
+                for key in ["type", "reason"] {
+                    fields.insert(
+                        if key == "type" { "decision" } else { key }.into(),
+                        decision.get(key).cloned().unwrap_or(JsValue::Undefined),
+                    );
+                }
+                audit
+                    .0
+                    .record_permission("permission_completed", fields)
+                    .await?;
+            }
             let kind = decision.get("type").and_then(JsValue::as_string);
             let message = decision
                 .get("message")
@@ -275,6 +363,29 @@ impl ToolRuntime {
                 .unwrap_or_default();
             match kind.map(text).as_deref() {
                 Some("deny") => {
+                    if let Some(emit) = &self.events {
+                        emit(object([
+                            ("type", "permission_denied".into()),
+                            (
+                                "sessionId",
+                                context
+                                    .fields
+                                    .get("sessionId")
+                                    .cloned()
+                                    .unwrap_or(JsValue::Undefined),
+                            ),
+                            (
+                                "turnId",
+                                context
+                                    .fields
+                                    .get("turnId")
+                                    .cloned()
+                                    .unwrap_or(JsValue::Undefined),
+                            ),
+                            ("toolName", string(name.clone())),
+                            ("reason", string(message.clone())),
+                        ]));
+                    }
                     let runtime = decision
                         .get("reason")
                         .and_then(|r| r.get("type"))

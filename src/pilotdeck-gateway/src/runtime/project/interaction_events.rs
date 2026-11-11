@@ -71,6 +71,35 @@ impl InteractionEvents {
         Ok(port)
     }
 
+    /// A host-side producer's event for the session's current run (the tool
+    /// runtime's `eventEmitter`). It passes the same identity gate as
+    /// [`TurnEvents::emit`]; without a current run for the event's session it
+    /// is refused.
+    pub fn emit_current(&self, event: JsObject) -> Result<(), HostError> {
+        let turn = {
+            let state = lock(&self.state);
+            if state.closed {
+                return Err(closed());
+            }
+            event
+                .get("sessionId")
+                .and_then(JsValue::as_string)
+                .and_then(|session| state.turns.get(session).cloned())
+        };
+        let Some(turn) = turn else {
+            return Err(
+                ModuleError::new("Sidecar host event does not match the active turn.").into(),
+            );
+        };
+        event::EventSink::emit(
+            &TurnEvents {
+                generation: self.state.clone(),
+                turn,
+            },
+            event,
+        )
+    }
+
     /// Repeated close is harmless; clearing all retained buffers occurs once.
     pub fn close(&self) {
         let mut state = lock(&self.state);

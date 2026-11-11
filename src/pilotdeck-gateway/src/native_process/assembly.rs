@@ -537,6 +537,14 @@ async fn start_assembly(
                                 .downcast_ref::<crate::runtime::project::plugins::PluginResources>()
                                 .map(|plugins| plugins.runtime.clone())
                         });
+                let interaction_events = staged
+                    .resource(Resource::InteractionEvents)
+                    .and_then(|resource| {
+                        resource
+                            .as_any()
+                            .downcast_ref::<crate::runtime::project::interaction_events::InteractionEvents>()
+                            .cloned()
+                    });
                 let snapshot = staged.snapshot();
                 let agent = snapshot
                     .get("config")
@@ -741,6 +749,10 @@ async fn start_assembly(
                         .with_permission_mode_source(permission_source.clone());
                         let ports = match plugin_runtime {
                             Some(plugins) => ports.with_skills(plugins),
+                            None => ports,
+                        };
+                        let ports = match interaction_events {
+                            Some(events) => ports.with_events(events),
                             None => ports,
                         };
                         Ok(TurnHostFactory::new_with_signal(

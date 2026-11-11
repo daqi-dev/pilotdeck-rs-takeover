@@ -44,6 +44,21 @@ pub trait ExecutableTool: ToolDefinition {
     }
 }
 
+/// `PilotDeckToolAuditRecorder`'s permission half: the scheduler reports each
+/// permission decision here. `kind` is `permission_started`,
+/// `permission_completed` or `permission_failed`; `fields` carries
+/// `operationId`, `toolCallId`, `toolName`, `mode` and the kind's own
+/// `decision` + `reason` or `error`.
+pub trait ToolAuditRecorder: Send + Sync {
+    fn record_permission(
+        &self,
+        kind: &'static str,
+        fields: JsObject,
+    ) -> crate::host::HostFuture<()>;
+}
+/// The concrete type stored in `ToolRuntimeContext::audit_recorder`.
+pub struct ToolAudit(pub Arc<dyn ToolAuditRecorder>);
+
 #[derive(Clone, Debug)]
 pub struct ToolError {
     pub code: String,
