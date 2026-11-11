@@ -73,7 +73,11 @@ struct RecordingBody {
     calls: Mutex<Vec<String>>,
 }
 impl CronGatewayBody for RecordingBody {
-    fn run_turn(&self, input: &CronTurnSubmit) -> Result<(), CronError> {
+    fn run_turn(
+        &self,
+        input: &CronTurnSubmit,
+        _: super::CronTurnEventSink<'_>,
+    ) -> Result<(), CronError> {
         self.record(format!(
             "run_turn {} {}",
             input.session_key.to_utf8().unwrap(),
@@ -486,10 +490,14 @@ fn duplicate_submit_rejected_by_same_admission() {
         reentry: Mutex<Vec<Result<(), CronError>>>,
     }
     impl CronGatewayBody for ReentrantBody {
-        fn run_turn(&self, input: &CronTurnSubmit) -> Result<(), CronError> {
+        fn run_turn(
+            &self,
+            input: &CronTurnSubmit,
+            _: super::CronTurnEventSink<'_>,
+        ) -> Result<(), CronError> {
             // Re-enter the port synchronously, mid-turn.
             let gateway = self.gateway.get().unwrap().upgrade().unwrap();
-            let outcome = gateway.submit_turn(input);
+            let outcome = gateway.submit_turn(input, &mut |_| true);
             self.reentry.lock().unwrap().push(outcome);
             Ok(())
         }
@@ -531,7 +539,9 @@ fn duplicate_submit_rejected_by_same_admission() {
         timeout_ms: 0.0,
     };
 
-    gateway.submit_turn(&submit("run-1")).unwrap();
+    gateway
+        .submit_turn(&submit("run-1"), &mut |_| true)
+        .unwrap();
     let reentry = body.reentry.lock().unwrap();
     let error = reentry[0]
         .as_ref()
@@ -547,7 +557,9 @@ fn duplicate_submit_rejected_by_same_admission() {
         "the outer turn's end_turn released the fence"
     );
 
-    gateway.submit_turn(&submit("run-2")).unwrap();
+    gateway
+        .submit_turn(&submit("run-2"), &mut |_| true)
+        .unwrap();
     assert!(!admission.has_active_turn(&JsString::from("session-a")));
 }
 
@@ -823,7 +835,11 @@ fn global_list_caps_the_merged_run_page_at_the_nullish_default() {
 /// #1258 tail guard is the same shape one layer down in the store).
 struct PanickingBody;
 impl CronGatewayBody for PanickingBody {
-    fn run_turn(&self, _input: &CronTurnSubmit) -> Result<(), CronError> {
+    fn run_turn(
+        &self,
+        _input: &CronTurnSubmit,
+        _: super::CronTurnEventSink<'_>,
+    ) -> Result<(), CronError> {
         panic!("#1325 admission fence probe: the cron body panics mid-turn");
     }
     fn abort_turn(
@@ -856,8 +872,9 @@ fn submit_turn_releases_the_admission_fence_when_the_body_panics() {
         run_id: JsString::from("run-panic"),
         timeout_ms: 0.0,
     };
-    let caught =
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| gateway.submit_turn(&input)));
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        gateway.submit_turn(&input, &mut |_| true)
+    }));
     assert!(
         caught.is_err(),
         "#1325 admission fence: the body's panic must propagate out of submitTurn"

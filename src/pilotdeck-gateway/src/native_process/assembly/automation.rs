@@ -849,7 +849,11 @@ mod tests {
 
     struct DummyCronGateway;
     impl CronAgentGateway for DummyCronGateway {
-        fn submit_turn(&self, _: &crate::runtime::cron::CronTurnSubmit) -> Result<(), CronError> {
+        fn submit_turn(
+            &self,
+            _: &crate::runtime::cron::CronTurnSubmit,
+            _: crate::runtime::cron::CronTurnEventSink<'_>,
+        ) -> Result<(), CronError> {
             Ok(())
         }
         fn abort_turn(

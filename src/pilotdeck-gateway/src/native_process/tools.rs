@@ -266,6 +266,8 @@ impl SessionTools {
         let plan_files = Arc::new(crate::runtime::plan_todo::SessionPlanFiles::new(&project));
         let file_history = Arc::new(session_file_history(&binding));
         let run_mode = Arc::new(Mutex::new(config_run_mode(&config)));
+        let mut world = ExecutionWorld::new();
+        world.invocation = invocation_audit(options, env, &project);
         Ok(Self {
             project,
             env: env_object(env),
@@ -281,7 +283,7 @@ impl SessionTools {
             )),
             permission_mode_source: None,
             run_mode,
-            world: ExecutionWorld::new(),
+            world,
             goal: Arc::default(),
             plan_files,
             events: None,
@@ -616,6 +618,7 @@ impl SessionTools {
         let message_sink = sink.clone();
         SessionPorts {
             model: RouterModelPortOptions {
+                invocation: self.world.invocation.clone(),
                 project_path: Some(self.project.to_string_lossy().into_owned().into()),
                 agent_model: self
                     .config
@@ -1188,6 +1191,17 @@ pub(super) struct ExecutionWorld {
     fetcher: builtin::web::fetcher::UrlFetcher,
     /// `readSkill: { loader, lister }`: the project's plugin runtime.
     skills: Option<Arc<crate::runtime::plugins::PluginRuntime>>,
+    /// The gateway's `extraTools` (the automation providers' tools,
+    /// `ProjectExecutionWorldBundle.ts:107-111`), registered after the
+    /// builtins.
+    extra_tools: Vec<Arc<dyn crate::runtime::tools::ExecutableTool>>,
+    /// The session override's `excludeTools`, unregistered from the
+    /// composed registry (`SessionToolCompositionBundle.applySessionPolicy`).
+    excluded_tools: Vec<JsString>,
+    /// The raw provider audit of the session's model calls
+    /// (`invocationLogSink` + `workspaceId`), when `PILOTDECK_STORAGE_ROOT`
+    /// is set. A fork inherits it (`OneShotSubagentPort.ts:167-169`).
+    invocation: Option<crate::host::modules::model_port::InvocationPortAudit>,
 }
 impl ExecutionWorld {
     pub(super) fn new() -> Self {
@@ -1198,7 +1212,68 @@ impl ExecutionWorld {
                 crate::runtime::model::http::HyperModelTransport::new(),
             )),
             skills: None,
+            extra_tools: Vec::new(),
+            excluded_tools: Vec::new(),
+            invocation: None,
         }
+    }
+}
+
+/// `resolveInvocationStorageConfig(env)` + `workspaceIdResolver(projectKey)`
+/// (createLocalGateway.ts:612-614,1026-1028): the session's audit, keyed by
+/// the same project storage id the turn's snapshots use.
+fn invocation_audit(
+    options: &Options,
+    env: &crate::config::Env,
+    project: &std::path::Path,
+) -> Option<crate::host::modules::model_port::InvocationPortAudit> {
+    use crate::runtime::snapshot::SnapshotProjectResolver;
+    let config = crate::storage::invocation_log::resolve_invocation_storage_config(|key| {
+        env.get(key).cloned()
+    })?;
+    let projects =
+        crate::runtime::snapshot::SnapshotProjects::new(options.home.clone(), PathBuf::new());
+    Some(crate::host::modules::model_port::InvocationPortAudit {
+        sink: Arc::new(crate::storage::invocation_log::JsonlInvocationLogSink::new(
+            config,
+        )),
+        workspace_id: projects
+            .workspace_id(&project.to_string_lossy())
+            .as_str()
+            .into(),
+    })
+}
+
+impl SessionTools {
+    /// The gateway's extra tools and the session override's exclusions
+    /// (`ProjectSessionRuntimeBundle.ts:294`).
+    pub(super) fn with_extra_tools(
+        mut self,
+        extra: Vec<Arc<dyn crate::runtime::tools::ExecutableTool>>,
+        excluded: Vec<JsString>,
+    ) -> Self {
+        self.world.extra_tools = extra;
+        self.world.excluded_tools = excluded;
+        self
+    }
+
+    /// The session override's `canPrompt` / `bypassAvailable`
+    /// (`ProjectSessionFactory.ts:270`, `SessionAgentConfigBundle.ts:183`).
+    pub(super) fn with_prompt_policy(
+        self,
+        can_prompt: Option<bool>,
+        bypass_available: Option<bool>,
+    ) -> Self {
+        {
+            let mut state = self.permission.0.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(can_prompt) = can_prompt {
+                state.0.can_prompt = can_prompt;
+            }
+            if let Some(bypass_available) = bypass_available {
+                state.0.bypass_available = bypass_available;
+            }
+        }
+        self
     }
 }
 
@@ -1261,6 +1336,12 @@ pub(super) fn native_tools(
         tools
             .register(tool)
             .expect("native builtin names are unique");
+    }
+    for tool in &world.extra_tools {
+        let _ = tools.register(tool.clone());
+    }
+    for name in &world.excluded_tools {
+        let _ = tools.unregister(name);
     }
     tools
         .register(Arc::new(LspTool::new(lsp)))

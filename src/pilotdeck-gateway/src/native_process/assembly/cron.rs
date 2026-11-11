@@ -57,6 +57,7 @@ pub(super) fn cron_io_error(error: CronError) -> std::io::Error {
 pub(super) fn build(
     section: Option<&JsValue>,
     pilot_home: &Path,
+    hooks: &NativeCronHooks,
 ) -> Result<Option<Arc<CronManager>>, std::io::Error> {
     let Some(section) = section else {
         return Ok(None);
@@ -64,18 +65,42 @@ pub(super) fn build(
     let manager = CronManager::new(CronManagerOptions {
         config: manager_config(section),
         pilot_home: pilot_home.to_string_lossy().into_owned(),
-        // The native assembly owns no shared session-override registry to
-        // hand over (the SDK session registry MCP shares is a different
-        // mechanism), so the option stays `None` and #1325's runtime keeps
-        // its per-runtime default — never a second hand-rolled registry.
-        session_overrides: None,
+        // `ProjectAutomationBundle.sessionOverrides` (:143,309): the one
+        // registry the session factory reads when it composes a session.
+        session_overrides: Some(hooks.session_overrides.clone()),
         now: None,
         uuid: None,
         logger: None,
         scheduler_idle_poll_ms: None,
     })
     .map_err(cron_io_error)?;
+    if let Some(handler) = &hooks.on_turn_event {
+        manager.set_turn_event_handler(handler.clone());
+    }
     Ok(Some(manager))
+}
+
+/// What the process hands every cron manager it builds: the shared session
+/// override registry and `onCronTurnEvent` (src/cli/pilotdeck.ts:85-87).
+#[derive(Clone)]
+pub(super) struct NativeCronHooks {
+    pub session_overrides:
+        Arc<std::sync::Mutex<crate::config::session_overrides::SessionConfigOverrides>>,
+    pub on_turn_event: Option<crate::runtime::cron::CronTurnEventHandler>,
+}
+
+/// `onCronTurnEvent` (src/cli/pilotdeck.ts:85-87): every cron turn event is
+/// broadcast to the gateway's connections as `always-on:turn-event`.
+pub(super) fn broadcast_turn_events(
+    broadcast: Arc<crate::runtime::connection::ConnectionBroadcast>,
+) -> crate::runtime::cron::CronTurnEventHandler {
+    Arc::new(move |session, channel, event| {
+        let mut payload = JsObject::new();
+        payload.insert("sessionKey".into(), JsValue::String(session.clone()));
+        payload.insert("channelKey".into(), JsValue::String(channel.clone()));
+        payload.insert("event".into(), event.clone());
+        broadcast.broadcast("always-on:turn-event", &JsValue::Object(payload));
+    })
 }
 
 /// The native process's one cron provider for the automation bundle
@@ -83,12 +108,12 @@ pub(super) fn build(
 /// the bundle drives (`ProjectAutomationCronProvider`). The bundle's
 /// `createCron` section gate stays its decision (:304-306) — this factory
 /// only ever sees a present section.
-pub(super) fn native_factory() -> super::automation::CronFactory {
+pub(super) fn native_factory(hooks: NativeCronHooks) -> super::automation::CronFactory {
     use super::automation::CronFactoryInput;
-    Arc::new(|input: CronFactoryInput| {
+    Arc::new(move |input: CronFactoryInput| {
         // The bundle only calls this with a present section, so `build`'s
         // `Some` is the only reachable arm.
-        let manager = build(Some(&input.section), &input.pilot_home)?
+        let manager = build(Some(&input.section), &input.pilot_home, &hooks)?
             .expect("#2294 a present section constructs a manager");
         Ok(Arc::new(NativeCronProvider { manager })
             as Arc<dyn super::automation::ProjectAutomationProvider>)
@@ -199,47 +224,6 @@ impl NativeCronGatewayBody {
     }
 }
 
-/// A turn that never ran or did not finish, read off the event the drain
-/// would otherwise discard.
-///
-/// `runtime/turn/submit.rs` reports every such outcome as an ordinary `Ok`
-/// stream whose last event is an `error`: preflight refusals
-/// (`session_busy` / `SESSION_BUSY`, `workspace_busy`,
-/// `CAPABILITY_UNAVAILABLE`, registry errors — all `recoverable: true`), and
-/// mid-turn failures (`turn_timeout`, agent failures — `recoverable: false`).
-/// The port's contract is `Err` for "cannot be admitted (busy, maintenance,
-/// shutdown) **or the turn itself fails**" (`CronGatewayBody::run_turn`),
-/// and TS's `CronFire` reads any `type === "error"` event as a failed
-/// outcome (CronFire.ts:125-140), so the boundary surfaces the event as
-/// `Err`. Which outcome that becomes — `failed`, `cron_run_timeout`,
-/// `aborted` — is the firing half's (fire.rs, #2295) call; the code is
-/// passed through untouched so it can tell them apart.
-fn failed_turn(event: &JsValue) -> Option<CronError> {
-    let object = event.as_object()?;
-    // Hot path: a turn's stream is mostly `text_delta` / `agent_status`, and
-    // those must not pay a UTF-16 -> String conversion just to be classified.
-    let is_error = object
-        .get_property("type")
-        .and_then(JsValue::as_string)
-        .is_some_and(|kind| kind.equals_str("error"));
-    if !is_error {
-        return None;
-    }
-    let text = |name: &str| {
-        object
-            .get_property(name)
-            .and_then(JsValue::as_string)
-            .map(|value| String::from_utf16_lossy(value.units()))
-    };
-    let code = text("code")
-        .filter(|code| !code.is_empty())
-        .unwrap_or_else(|| "cron_run_failed".to_string());
-    let message = text("message")
-        .filter(|message| !message.is_empty())
-        .unwrap_or_else(|| code.clone());
-    Some(CronError::gateway(code.as_str(), JsString::from(message)))
-}
-
 /// The event stream a turn submission is, as the drain sees it: one step at
 /// a time, `Err` reserved for transport failures (never for an event).
 /// Factored out so the drain loop itself is testable against a scripted
@@ -259,25 +243,34 @@ impl CronTurnStream for TurnSubmission {
     }
 }
 
-/// Drain one admitted turn to its end. The first `error` event ends the
-/// drain with `Err` (see `failed_turn`); everything else is the `CronFire`
-/// half's (fire.rs, #2295).
-async fn drain_turn<S: CronTurnStream>(stream: &mut S) -> Result<(), CronError> {
+/// Drain one admitted turn to its end, handing every event — terminal
+/// `error` events included — to the `CronFire` half (fire.rs), which
+/// classifies them exactly like CronFire.ts:96-141. A sink answering `false`
+/// (its loop body threw) ends the drain; dropping the submission then
+/// releases the turn. Only a broken stream is `Err`.
+async fn drain_turn<S: CronTurnStream>(
+    stream: &mut S,
+    on_event: crate::runtime::cron::CronTurnEventSink<'_>,
+) -> Result<(), CronError> {
     while let Some(event) = stream.next_event().await.map_err(|error| {
         CronError::gateway(
             "cron_run_failed",
             JsString::from(format!("Error: {}", error.message)),
         )
     })? {
-        if let Some(failure) = failed_turn(&event) {
-            return Err(failure);
+        if !on_event(&event) {
+            break;
         }
     }
     Ok(())
 }
 
 impl CronGatewayBody for NativeCronGatewayBody {
-    fn run_turn(&self, input: &CronTurnSubmit) -> Result<(), CronError> {
+    fn run_turn(
+        &self,
+        input: &CronTurnSubmit,
+        on_event: crate::runtime::cron::CronTurnEventSink<'_>,
+    ) -> Result<(), CronError> {
         // Blocking a worker of the gateway's (current-thread) runtime would
         // deadlock the drain below, which only that runtime can advance.
         // An ambient handle here means a runtime thread called us — a
@@ -290,13 +283,7 @@ impl CronGatewayBody for NativeCronGatewayBody {
         let submitter = self.submitter.clone();
         self.runtime.block_on(async move {
             let mut submission = submitter.submit(submit_input(input));
-            // The event stream itself is the `CronFire` half's (fire.rs,
-            // #2295: store claims, run records, result delivery); this
-            // boundary only
-            // keeps the port contract of unwinding the admitted turn and
-            // reporting a turn that never ran or did not finish as `Err`
-            // (`drain_turn`).
-            drain_turn(&mut submission).await
+            drain_turn(&mut submission, on_event).await
         })
     }
 

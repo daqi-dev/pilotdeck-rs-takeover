@@ -486,7 +486,11 @@ fn production_timeouts_keep_the_shared_cap() {
 struct RejectingGateway;
 
 impl CronAgentGateway for RejectingGateway {
-    fn submit_turn(&self, _input: &crate::runtime::cron::CronTurnSubmit) -> Result<(), CronError> {
+    fn submit_turn(
+        &self,
+        _input: &crate::runtime::cron::CronTurnSubmit,
+        _: crate::runtime::cron::CronTurnEventSink<'_>,
+    ) -> Result<(), CronError> {
         Ok(())
     }
     fn abort_turn(
@@ -728,7 +732,11 @@ impl Drop for ParkRelease<'_> {
 }
 
 impl CronAgentGateway for ParkingGateway {
-    fn submit_turn(&self, _input: &crate::runtime::cron::CronTurnSubmit) -> Result<(), CronError> {
+    fn submit_turn(
+        &self,
+        _input: &crate::runtime::cron::CronTurnSubmit,
+        _: crate::runtime::cron::CronTurnEventSink<'_>,
+    ) -> Result<(), CronError> {
         Ok(())
     }
     fn abort_turn(

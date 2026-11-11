@@ -1,0 +1,53 @@
+{
+  "name": "llm-invocations-retry",
+  "about": "provider 回 500 时流式请求被重试，每次尝试一条调用记录（attempt 1..3，provider_error）。重试等待时间带随机抖动，agent_status 里的 delayMs 基线自比不稳。 工作区快照放到 PILOTDECK_SNAPSHOT_ROOT（{ROOT}/tmp，不比较）：同一会话的 pre_user / post_agent 两个快照目录名由随机轮次 id 散列，比较器按出现顺序编号，两者先后随机，留在 home 下会让自比约一半概率不一致；快照本身由 snapshot-turn-restore 覆盖。",
+  "env": {
+    "PILOTDECK_STORAGE_ROOT": "{HOME}/storage",
+    "PILOTDECK_SNAPSHOT_ROOT": "{ROOT}/tmp/snapshots"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Audit\"}"
+      }
+    },
+    {
+      "name": "server-error",
+      "when": [
+        "case-500:"
+      ],
+      "reply": {
+        "status": 500,
+        "body": {
+          "error": {
+            "message": "upstream exploded",
+            "type": "server_error"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-500",
+        "channelKey": "test",
+        "message": "case-500: fail with retries",
+        "projectKey": "{HOME}/work/alpha"
+      },
+      "timeout": 60000
+    },
+    {
+      "sleep": 300
+    }
+  ],
+  "files": {
+    "home/work/alpha/README.md": "alpha\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n"
+  }
+}

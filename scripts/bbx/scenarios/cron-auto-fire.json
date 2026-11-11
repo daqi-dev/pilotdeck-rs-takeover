@@ -1,0 +1,124 @@
+{
+  "name": "cron-auto-fire",
+  "about": "到点自动触发：启动时已过期的一次性任务和 cron 任务（缓存的 nextRunAt 已过），调度器被一次写操作（删除另一个任务）唤醒后在下一个 tick 里触发；maxConcurrentRuns 缺省为 1，同一 tick 里第二个到期任务被推迟 60 秒。比较通知、发给 provider 的请求、运行历史、事件文件和 tasks.json。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ncron:\n  enabled: true\n",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Cron auto\"}"
+      }
+    },
+    {
+      "name": "once",
+      "when": [
+        "auto-once-msg"
+      ],
+      "reply": {
+        "text": "Once fired."
+      }
+    },
+    {
+      "name": "cron",
+      "when": [
+        "auto-cron-msg"
+      ],
+      "reply": {
+        "text": "Cron fired."
+      }
+    }
+  ],
+  "files": {
+    "home/work/alpha/README.md": "alpha\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+    "home/.pilotdeck/cron/projects/private-tmp-pdrs-bbx-root-home-work-alpha/tasks.json": {
+      "schemaVersion": 1,
+      "tasks": [
+        {
+          "schemaVersion": 1,
+          "taskId": "task-once",
+          "message": "auto-once-msg",
+          "status": "scheduled",
+          "sessionKey": "cron:task-once",
+          "channelKey": "cron",
+          "projectKey": "{HOME}/work/alpha",
+          "timezone": "UTC",
+          "originSessionKey": "origin-s",
+          "originChannelKey": "web",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "revision": 0,
+          "schedule": {
+            "type": "once",
+            "runAt": "2000-01-01T00:00:00.000Z"
+          },
+          "nextRunAt": "2000-01-01T00:00:00.000Z"
+        },
+        {
+          "schemaVersion": 1,
+          "taskId": "task-cron",
+          "message": "auto-cron-msg",
+          "status": "scheduled",
+          "sessionKey": "cron:task-cron",
+          "channelKey": "cron",
+          "projectKey": "{HOME}/work/alpha",
+          "timezone": "UTC",
+          "originSessionKey": "origin-s",
+          "originChannelKey": "web",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "revision": 0,
+          "schedule": {
+            "type": "cron",
+            "expression": "0 9 * * *",
+            "timezone": "UTC"
+          },
+          "nextRunAt": "2000-01-02T09:00:00.000Z",
+          "scheduleComputationVersion": 3
+        },
+        {
+          "schemaVersion": 1,
+          "taskId": "task-later",
+          "message": "later-msg",
+          "status": "scheduled",
+          "sessionKey": "cron:task-later",
+          "channelKey": "cron",
+          "projectKey": "{HOME}/work/alpha",
+          "timezone": "UTC",
+          "originSessionKey": "origin-s",
+          "originChannelKey": "web",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "revision": 0,
+          "schedule": {
+            "type": "once",
+            "runAt": "2099-01-01T00:00:00.000Z"
+          },
+          "nextRunAt": "2099-01-01T00:00:00.000Z"
+        }
+      ]
+    }
+  },
+  "steps": [
+    {
+      "ws": "cron_delete",
+      "params": {
+        "taskId": "task-later",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "sleep": 4000
+    },
+    {
+      "ws": "cron_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "includeHistory": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,120 @@
+{
+  "name": "llm-invocations",
+  "about": "设置 PILOTDECK_STORAGE_ROOT 时每次模型调用的记录（llm/invocations.jsonl 与 llm/.pending/）：纯文本轮、带工具调用的两步轮、provider 回 400（provider_error）。重试见 llm-invocations-retry，中止见 llm-invocations-abort。 工作区快照放到 PILOTDECK_SNAPSHOT_ROOT（{ROOT}/tmp，不比较）：同一会话的 pre_user / post_agent 两个快照目录名由随机轮次 id 散列，比较器按出现顺序编号，两者先后随机，留在 home 下会让自比约一半概率不一致；快照本身由 snapshot-turn-restore 覆盖。",
+  "env": {
+    "PILOTDECK_STORAGE_ROOT": "{HOME}/storage",
+    "PILOTDECK_SNAPSHOT_ROOT": "{ROOT}/tmp/snapshots"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Audit\"}"
+      }
+    },
+    {
+      "name": "bad-request",
+      "when": [
+        "case-400:"
+      ],
+      "reply": {
+        "status": 400,
+        "body": {
+          "error": {
+            "message": "bad request from bbx",
+            "type": "invalid_request_error"
+          }
+        }
+      }
+    },
+    {
+      "name": "tool-after",
+      "when": [
+        "case-tool:",
+        "\"tool_call_id\":\"call_bbx_tool\""
+      ],
+      "reply": {
+        "text": "Tool done."
+      }
+    },
+    {
+      "name": "tool",
+      "when": [
+        "case-tool:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_tool",
+          "name": "todo_write",
+          "arguments": {
+            "markdown": "- [ ] audit the calls"
+          }
+        }
+      }
+    },
+    {
+      "name": "text",
+      "when": [
+        "case-text:"
+      ],
+      "reply": {
+        "text": "Plain answer."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-text",
+        "channelKey": "test",
+        "message": "case-text: say something",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-tool",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tool",
+        "channelKey": "test",
+        "message": "case-tool: write a todo",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-400",
+        "channelKey": "test",
+        "message": "case-400: fail please",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "sleep": 500
+    }
+  ],
+  "files": {
+    "home/work/alpha/README.md": "alpha\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n"
+  }
+}

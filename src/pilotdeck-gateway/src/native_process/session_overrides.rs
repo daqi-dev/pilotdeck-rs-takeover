@@ -35,9 +35,35 @@ struct LiveMode {
 #[derive(Default)]
 pub struct SessionOverrides {
     inner: std::sync::Mutex<Inner>,
+    /// `SessionConfigOverrides` (always-on/runtime/SessionConfigOverrides.ts):
+    /// the unattended runtimes' per-session `permissionMode` /
+    /// `bypassAvailable` / `canPrompt` / `excludeTools`, read when a session
+    /// is composed (ProjectSessionFactory.ts:222).
+    config:
+        std::sync::Arc<std::sync::Mutex<crate::config::session_overrides::SessionConfigOverrides>>,
 }
 
 impl SessionOverrides {
+    /// The shared `SessionConfigOverrides` registry the automation runtimes
+    /// write (`ProjectAutomationBundle.sessionOverrides`).
+    pub fn config_overrides(
+        &self,
+    ) -> std::sync::Arc<std::sync::Mutex<crate::config::session_overrides::SessionConfigOverrides>>
+    {
+        self.config.clone()
+    }
+
+    /// `getSessionOverride(sessionKey)` (ProjectRuntimeRegistry.ts:310).
+    pub fn config_override(
+        &self,
+        key: &JsString,
+    ) -> Option<crate::config::session_value::SessionValue> {
+        self.config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(key)
+    }
+
     pub fn set_permission_mode(&self, key: &JsString, mode: JsString) {
         self.inner
             .lock()

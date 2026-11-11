@@ -98,7 +98,11 @@ struct RecordingBody {
     calls: Mutex<Vec<String>>,
 }
 impl CronGatewayBody for RecordingBody {
-    fn run_turn(&self, input: &CronTurnSubmit) -> Result<(), CronError> {
+    fn run_turn(
+        &self,
+        input: &CronTurnSubmit,
+        _: pilotdeck_gateway::runtime::cron::CronTurnEventSink<'_>,
+    ) -> Result<(), CronError> {
         self.record(format!(
             "run_turn {} {}",
             input.session_key.to_utf8().unwrap(),
@@ -173,7 +177,11 @@ impl ReentrantBody {
     }
 }
 impl CronGatewayBody for ReentrantBody {
-    fn run_turn(&self, input: &CronTurnSubmit) -> Result<(), CronError> {
+    fn run_turn(
+        &self,
+        input: &CronTurnSubmit,
+        _: pilotdeck_gateway::runtime::cron::CronTurnEventSink<'_>,
+    ) -> Result<(), CronError> {
         self.record(format!(
             "run_turn {} {}",
             input.session_key.to_utf8().unwrap(),
@@ -194,7 +202,7 @@ impl CronGatewayBody for ReentrantBody {
             run_id: JsString::from("run-second"),
             timeout_ms: input.timeout_ms,
         };
-        let rejected = gateway.submit_turn(&second);
+        let rejected = gateway.submit_turn(&second, &mut |_| true);
         let verdict = match &rejected {
             Ok(()) => "accepted".to_owned(),
             Err(error) => format!(
@@ -387,7 +395,7 @@ fn repeat_trigger_second_submit_rejected_by_admission() {
         .unwrap();
 
     gateway
-        .submit_turn(&submit("cron:task-repeat", "run-repeat"))
+        .submit_turn(&submit("cron:task-repeat", "run-repeat"), &mut |_| true)
         .expect("the first trigger is admitted");
 
     let calls = body.calls();
