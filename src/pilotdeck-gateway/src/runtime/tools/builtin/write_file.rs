@@ -52,7 +52,14 @@ impl ExecutableTool for WriteFileTool {
     }
 
     fn execute(&self, input: JsValue, context: ToolRunContext) -> ToolFuture<ToolOutput> {
-        Box::pin(async move { execute(&input, &context) })
+        Box::pin(async move {
+            #[cfg_attr(not(unix), allow(unused_mut, unused_variables))]
+            let (mut output, relative, content) = execute(&input, &context)?;
+            #[cfg(unix)]
+            super::syntax_diagnostics::append_to_success_text(&mut output, &relative, &content)
+                .await;
+            Ok(output)
+        })
     }
 }
 
@@ -130,7 +137,11 @@ fn validate(input: &JsValue, context: &ToolRunContext) -> Result<Option<Vec<JsOb
     }
 }
 
-fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, ToolError> {
+/// The output plus the relative path and content the syntax check reads.
+fn execute(
+    input: &JsValue,
+    context: &ToolRunContext,
+) -> Result<(ToolOutput, String, String), ToolError> {
     let path = input_path(input);
     let content_value = input_content(input);
     let content = String::from_utf16_lossy(content_value.units());
@@ -199,7 +210,7 @@ fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, Tool
         },
         text(&resolved.relative)
     );
-    Ok(ToolOutput {
+    let output = ToolOutput {
         content: vec![JsValue::Object(object([
             ("type", string("text")),
             ("text", string(success.as_str())),
@@ -210,7 +221,8 @@ fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, Tool
             ("mtimeMs", JsValue::Number(write.mtime_ms)),
         ])),
         supplemental_messages: None,
-    })
+    };
+    Ok((output, text(&resolved.relative), content))
 }
 
 fn split_lines(content: &str) -> Vec<&str> {

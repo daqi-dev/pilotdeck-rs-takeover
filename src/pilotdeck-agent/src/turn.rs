@@ -308,6 +308,13 @@ pub trait TurnEventPort {
 pub trait TurnClock {
     fn now_iso(&self) -> JsString;
     fn uuid(&self) -> JsString;
+    /// `capabilities.clock.uuid?.()`: whether the loop's clock offers an id
+    /// generator at all. Where it does not (the gateway's agent loops), a
+    /// transient synthetic prompt is numbered `transient-N` within the run
+    /// instead (AgentLoop.ts:487).
+    fn offers_uuid(&self) -> bool {
+        true
+    }
 }
 #[derive(Debug, Clone)]
 pub enum TurnEvent {
@@ -441,6 +448,8 @@ pub struct TurnExecutionState {
     pub budget: BudgetLedger,
     pub timeline: TurnTimeline,
     transient_prompt_ids: Vec<JsString>,
+    /// `transientPromptCounter`: per run, for clocks without an id generator.
+    transient_prompt_counter: u32,
 }
 
 /// Actual normal-path owning turn loop. The recovery decision table, budget
@@ -475,6 +484,7 @@ pub fn run_admitted_turn(
         ),
         timeline: TurnTimeline::new(input.turn_id.clone()),
         transient_prompt_ids: Vec::new(),
+        transient_prompt_counter: 0,
     };
     let mut early_stream_recovery = crate::early_stream_recovery::EarlyStreamRecovery::new();
     let mut output_recovery = crate::output_recovery::OutputRecovery::new();
@@ -2774,7 +2784,13 @@ fn push_transient_synthetic_prompt(
     purpose: JsString,
     clock: &dyn TurnClock,
 ) {
-    let id = clock.uuid();
+    // `clock.uuid?.() ?? `transient-${++transientPromptCounter}``.
+    let id = if clock.offers_uuid() {
+        clock.uuid()
+    } else {
+        state.transient_prompt_counter += 1;
+        JsString::from(format!("transient-{}", state.transient_prompt_counter))
+    };
     let mut metadata = JsObject::new();
     metadata.insert("synthetic".into(), JsValue::Bool(true));
     metadata.insert("transient".into(), JsValue::Bool(true));
@@ -4468,6 +4484,55 @@ mod owning_ordinary_recovery_tests;
 #[cfg(test)]
 #[path = "turn_tests/pre_model_abort_tests.rs"]
 mod pre_model_abort_tests;
+
+#[cfg(test)]
+mod transient_id_tests {
+    use super::*;
+
+    struct Clock(bool);
+    impl TurnClock for Clock {
+        fn now_iso(&self) -> JsString {
+            "2026-01-01T00:00:00.000Z".into()
+        }
+        fn uuid(&self) -> JsString {
+            "clock-uuid".into()
+        }
+        fn offers_uuid(&self) -> bool {
+            self.0
+        }
+    }
+
+    fn ids(clock: &Clock) -> Vec<String> {
+        let mut state = TurnExecutionState {
+            messages: vec![],
+            turn_count: 1.0,
+            usage: empty_usage(),
+            permission_denials: vec![],
+            final_message: None,
+            structured_output: None,
+            budget: BudgetLedger::new(None, None, 0.0),
+            timeline: TurnTimeline::new("turn".into()),
+            transient_prompt_ids: vec![],
+            transient_prompt_counter: 0,
+        };
+        for _ in 0..2 {
+            push_transient_synthetic_prompt(&mut state, "p".into(), "purpose".into(), clock);
+        }
+        state
+            .transient_prompt_ids
+            .iter()
+            .map(|id| String::from_utf16_lossy(id.units()))
+            .collect()
+    }
+
+    /// `clock.uuid?.() ?? `transient-${++transientPromptCounter}``
+    /// (AgentLoop.ts:487): numbered per run without an id generator.
+    #[test]
+    fn transient_ids_fall_back_to_a_per_run_counter() {
+        assert_eq!(ids(&Clock(false)), ["transient-1", "transient-2"]);
+        assert_eq!(ids(&Clock(true)), ["clock-uuid", "clock-uuid"]);
+    }
+}
 
 fn source_field_equals(field: &SourceField, expected: &JsString) -> bool {
     matches!(field, SourceField::Present(value) if value.value().as_string() == Some(expected))

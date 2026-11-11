@@ -1,0 +1,740 @@
+{
+  "name": "tool-bash",
+  "about": "bash（bypassPermissions）：stdout / stderr / 空输出 / 仅 stderr 的成功文本，非零退出与诊断，cwd 与环境变量，stdin 关闭，超时，超过上限的 timeout，后台化指引，参数非法，被信号杀死。",
+  "files": {
+    "proj/note.txt": "note body\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Tool run\"}"
+      }
+    },
+    {
+      "name": "turn-19-after-tool",
+      "when": [
+        "turn-19:",
+        "\"tool_call_id\":\"call_bbx_19\""
+      ],
+      "reply": {
+        "text": "Done 19."
+      }
+    },
+    {
+      "name": "turn-19",
+      "when": [
+        "turn-19:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_19",
+          "name": "bash",
+          "arguments": {
+            "command": "echo 中文输出; echo 错误 >&2; exit 1"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-18-after-tool",
+      "when": [
+        "turn-18:",
+        "\"tool_call_id\":\"call_bbx_18\""
+      ],
+      "reply": {
+        "text": "Done 18."
+      }
+    },
+    {
+      "name": "turn-18",
+      "when": [
+        "turn-18:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_18",
+          "name": "bash",
+          "arguments": {
+            "command": "kill -9 $$"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-17-after-tool",
+      "when": [
+        "turn-17:",
+        "\"tool_call_id\":\"call_bbx_17\""
+      ],
+      "reply": {
+        "text": "Done 17."
+      }
+    },
+    {
+      "name": "turn-17",
+      "when": [
+        "turn-17:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_17",
+          "name": "bash",
+          "arguments": {
+            "command": "printf 'a\\tb\\n\\033[31mred\\033[0m\\n'; printf 'no newline'"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-16-after-tool",
+      "when": [
+        "turn-16:",
+        "\"tool_call_id\":\"call_bbx_16\""
+      ],
+      "reply": {
+        "text": "Done 16."
+      }
+    },
+    {
+      "name": "turn-16",
+      "when": [
+        "turn-16:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_16",
+          "name": "bash",
+          "arguments": {
+            "command": ""
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-15-after-tool",
+      "when": [
+        "turn-15:",
+        "\"tool_call_id\":\"call_bbx_15\""
+      ],
+      "reply": {
+        "text": "Done 15."
+      }
+    },
+    {
+      "name": "turn-15",
+      "when": [
+        "turn-15:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_15",
+          "name": "bash",
+          "arguments": {
+            "command": "echo x",
+            "bogus": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-14-after-tool",
+      "when": [
+        "turn-14:",
+        "\"tool_call_id\":\"call_bbx_14\""
+      ],
+      "reply": {
+        "text": "Done 14."
+      }
+    },
+    {
+      "name": "turn-14",
+      "when": [
+        "turn-14:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_14",
+          "name": "bash",
+          "arguments": {
+            "command": 5
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-13-after-tool",
+      "when": [
+        "turn-13:",
+        "\"tool_call_id\":\"call_bbx_13\""
+      ],
+      "reply": {
+        "text": "Done 13."
+      }
+    },
+    {
+      "name": "turn-13",
+      "when": [
+        "turn-13:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_13",
+          "name": "bash",
+          "arguments": {
+            "description": "no command"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-12-after-tool",
+      "when": [
+        "turn-12:",
+        "\"tool_call_id\":\"call_bbx_12\""
+      ],
+      "reply": {
+        "text": "Done 12."
+      }
+    },
+    {
+      "name": "turn-12",
+      "when": [
+        "turn-12:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_12",
+          "name": "bash",
+          "arguments": {
+            "command": "nohup sleep 1"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-11-after-tool",
+      "when": [
+        "turn-11:",
+        "\"tool_call_id\":\"call_bbx_11\""
+      ],
+      "reply": {
+        "text": "Done 11."
+      }
+    },
+    {
+      "name": "turn-11",
+      "when": [
+        "turn-11:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_11",
+          "name": "bash",
+          "arguments": {
+            "command": "sleep 1 &"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-10-after-tool",
+      "when": [
+        "turn-10:",
+        "\"tool_call_id\":\"call_bbx_10\""
+      ],
+      "reply": {
+        "text": "Done 10."
+      }
+    },
+    {
+      "name": "turn-10",
+      "when": [
+        "turn-10:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_10",
+          "name": "bash",
+          "arguments": {
+            "command": "echo x",
+            "timeout": 600001
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-9-after-tool",
+      "when": [
+        "turn-9:",
+        "\"tool_call_id\":\"call_bbx_9\""
+      ],
+      "reply": {
+        "text": "Done 9."
+      }
+    },
+    {
+      "name": "turn-9",
+      "when": [
+        "turn-9:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_9",
+          "name": "bash",
+          "arguments": {
+            "command": "echo started; sleep 5; echo finished",
+            "timeout": 500
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-8-after-tool",
+      "when": [
+        "turn-8:",
+        "\"tool_call_id\":\"call_bbx_8\""
+      ],
+      "reply": {
+        "text": "Done 8."
+      }
+    },
+    {
+      "name": "turn-8",
+      "when": [
+        "turn-8:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_8",
+          "name": "bash",
+          "arguments": {
+            "command": "echo \"$PILOTDECK_SESSION_ID|$PILOTDECK_WORK_DIR|$HOME|$TZ\"; cat; echo after-cat"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-7-after-tool",
+      "when": [
+        "turn-7:",
+        "\"tool_call_id\":\"call_bbx_7\""
+      ],
+      "reply": {
+        "text": "Done 7."
+      }
+    },
+    {
+      "name": "turn-7",
+      "when": [
+        "turn-7:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_7",
+          "name": "bash",
+          "arguments": {
+            "command": "pwd; cd /private/tmp/pdrs-bbx/root/proj && cat note.txt && echo made > made-by-bash.txt && ls"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-6-after-tool",
+      "when": [
+        "turn-6:",
+        "\"tool_call_id\":\"call_bbx_6\""
+      ],
+      "reply": {
+        "text": "Done 6."
+      }
+    },
+    {
+      "name": "turn-6",
+      "when": [
+        "turn-6:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_6",
+          "name": "bash",
+          "arguments": {
+            "command": "ls /private/tmp/pdrs-bbx/root/proj/no-such-entry"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-5-after-tool",
+      "when": [
+        "turn-5:",
+        "\"tool_call_id\":\"call_bbx_5\""
+      ],
+      "reply": {
+        "text": "Done 5."
+      }
+    },
+    {
+      "name": "turn-5",
+      "when": [
+        "turn-5:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_5",
+          "name": "bash",
+          "arguments": {
+            "command": "echo before; exit 3"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-4-after-tool",
+      "when": [
+        "turn-4:",
+        "\"tool_call_id\":\"call_bbx_4\""
+      ],
+      "reply": {
+        "text": "Done 4."
+      }
+    },
+    {
+      "name": "turn-4",
+      "when": [
+        "turn-4:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_4",
+          "name": "bash",
+          "arguments": {
+            "command": "echo only-err >&2"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-3-after-tool",
+      "when": [
+        "turn-3:",
+        "\"tool_call_id\":\"call_bbx_3\""
+      ],
+      "reply": {
+        "text": "Done 3."
+      }
+    },
+    {
+      "name": "turn-3",
+      "when": [
+        "turn-3:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_3",
+          "name": "bash",
+          "arguments": {
+            "command": "true"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-2-after-tool",
+      "when": [
+        "turn-2:",
+        "\"tool_call_id\":\"call_bbx_2\""
+      ],
+      "reply": {
+        "text": "Done 2."
+      }
+    },
+    {
+      "name": "turn-2",
+      "when": [
+        "turn-2:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_2",
+          "name": "bash",
+          "arguments": {
+            "command": "echo out; echo err >&2"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-1-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "turn-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1",
+          "name": "bash",
+          "arguments": {
+            "command": "echo hello",
+            "description": "Print a greeting"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-1: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-2: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-3: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-4: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-5: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-6: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-7: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-8: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-9: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-10: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-11: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-12: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-13: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-14: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-15: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-16: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-17: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-18: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-19: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-bbx-1"
+      }
+    }
+  ]
+}

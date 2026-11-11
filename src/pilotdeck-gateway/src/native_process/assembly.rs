@@ -542,6 +542,15 @@ async fn start_assembly(
                                 .downcast_ref::<crate::runtime::project::plugins::PluginResources>()
                                 .map(|plugins| plugins.runtime.clone())
                         });
+                // `backgroundTasks: { runtime: executionWorld.backgroundTasks }`
+                // (ProjectExecutionWorldBundle.ts:85): the project's runtime.
+                #[cfg(unix)]
+                let background_tasks = staged.resource(Resource::ExecutionWorld).and_then(|world| {
+                    world
+                        .as_any()
+                        .downcast_ref::<crate::runtime::project::tools_mcp::ExecutionWorldResource>()
+                        .map(|world| world.background().tasks.clone())
+                });
                 let interaction_events = staged
                     .resource(Resource::InteractionEvents)
                     .and_then(|resource| {
@@ -813,6 +822,11 @@ async fn start_assembly(
                             Some(events) => ports.with_events(events),
                             None => ports,
                         };
+                        #[cfg(unix)]
+                        let ports = match background_tasks {
+                            Some(tasks) => ports.with_background_tasks(tasks),
+                            None => ports,
+                        };
                         let limits = crate::host::Limits {
                             close_timeout: options.drain_budget,
                             ..Default::default()
@@ -909,8 +923,12 @@ async fn start_assembly(
                 FileRunRegistry::open(runs_path)?,
             )?)),
         };
+        // `resolve(tmpdir(), "pilotdeck-tool-output", process.pid.toString())`
+        // (createLocalGateway.ts:924-926).
         let artifacts = Arc::new(GatewayToolResultArtifactStore::new(
-            options.home.join("tool-results"),
+            std::path::Path::new(&crate::node_io::node_tmpdir(|key| std::env::var_os(key)))
+                .join("pilotdeck-tool-output")
+                .join(std::process::id().to_string()),
             4096,
         )?);
         let projector = Arc::new(GatewayAgentEventProjector::new(

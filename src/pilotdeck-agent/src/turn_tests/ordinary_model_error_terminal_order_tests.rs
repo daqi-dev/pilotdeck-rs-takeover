@@ -98,6 +98,7 @@ fn run(
         budget: BudgetLedger::new(None, None, 0.0),
         timeline: TurnTimeline::new("turn".into()),
         transient_prompt_ids: vec![],
+        transient_prompt_counter: 0,
     };
     let input = TurnInput {
         session_id: "session".into(),
@@ -224,6 +225,7 @@ fn budget_status_projection_preserves_failure_diagnostics_for_both_limits() {
             budget: ledger,
             timeline: TurnTimeline::new("turn".into()),
             transient_prompt_ids: vec![],
+            transient_prompt_counter: 0,
         };
         let input = TurnInput {
             session_id: "session".into(),

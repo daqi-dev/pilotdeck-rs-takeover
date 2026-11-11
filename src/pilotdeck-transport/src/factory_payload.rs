@@ -572,6 +572,27 @@ fn leaf(o: &JsObject) -> Option<JsValue> {
         for key in ["readFilePath", "mimeType", "reason"] {
             copy_string(&mut out, o, key);
         }
+        // The baseline gateway runs the loop in-process, where a history block
+        // is never rebuilt: it keeps the order `ToolResultBudget` gave it
+        // (`readFilePath` right after `path`). The kept fields follow the
+        // source block's own order (bbx: the `model_request` record of a turn
+        // after a spilled tool result).
+        let position = |name: &JsString| {
+            o.entries()
+                .iter()
+                .position(|(key, _)| key == name)
+                .unwrap_or(usize::MAX)
+        };
+        let mut fields: Vec<(JsString, JsValue)> = out
+            .entries()
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        fields.sort_by_key(|(key, _)| position(key));
+        out = JsObject::new();
+        for (key, value) in fields {
+            out.insert(key, value);
+        }
     } else if is(o.get("type"), "media_reference")
         && ["image", "pdf", "audio"]
             .iter()

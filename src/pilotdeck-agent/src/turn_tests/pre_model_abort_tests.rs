@@ -169,6 +169,7 @@ fn run_path_with_hard_stop(
         budget: BudgetLedger::new(None, None, 0.0),
         timeline: TurnTimeline::new("turn".into()),
         transient_prompt_ids: vec!["unconsumed-prompt".into()],
+        transient_prompt_counter: 0,
     };
     let mut host = Host {
         log: log.clone(),

@@ -18,6 +18,7 @@ pub mod read_file;
 pub mod read_skill;
 pub mod send_attachment;
 pub mod structured_output;
+mod syntax_diagnostics;
 pub mod task;
 pub mod time;
 pub mod todo_write;

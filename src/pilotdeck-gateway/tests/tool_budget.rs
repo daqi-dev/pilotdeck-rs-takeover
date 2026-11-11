@@ -191,12 +191,6 @@ async fn real_ts_tool_budget_and_apply_tool_results_replay() {
             })
             .expect("#885 tool_results_dir is an absolute scratch path"),
         );
-        let prefix = PathBuf::from(budget.spill_path(&"".into()).to_utf8().unwrap())
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_owned();
         if let Some(files) = case.get("files") {
             for file in array(files) {
                 let path = case_root.join(text(field(file, "path")));
@@ -277,27 +271,11 @@ async fn real_ts_tool_budget_and_apply_tool_results_replay() {
             let actual = stringify_json(&result)
                 .unwrap()
                 .unwrap()
-                .replace(&root_string, "<fixture>")
-                .replace(&format!("/{prefix}"), "/");
+                .replace(&root_string, "<fixture>");
             let expected = text(field(step, "outputJson"));
             assert_eq!(actual, expected, "case {name} step {index} output");
             let files = snapshot(&case_root);
-            // Map only each entry's filename, preserving contents and every entry.
-            // Restore the TS lexical walk order after changing filename prefixes.
-            let mut files: Vec<_> = array(&files)
-                .iter()
-                .map(|entry| {
-                    let mut entry = entry.as_object().unwrap().clone();
-                    let path = text(entry.get("path").unwrap());
-                    entry.insert(
-                        "path".into(),
-                        JsValue::String(path.replace(&format!("/{prefix}"), "/").into()),
-                    );
-                    JsValue::Object(entry)
-                })
-                .collect();
-            files.sort_by_key(|entry| text(field(entry, "path")));
-            let actual_files = stringify_json(&JsValue::Array(files)).unwrap().unwrap();
+            let actual_files = stringify_json(&files).unwrap().unwrap();
             let expected_files = text(field(step, "filesJson"));
             assert_eq!(
                 actual_files, expected_files,

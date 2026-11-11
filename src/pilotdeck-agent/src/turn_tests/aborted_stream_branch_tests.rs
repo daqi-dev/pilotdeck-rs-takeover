@@ -126,6 +126,7 @@ fn run(branch: AbortedStreamBranch, reason: &str) -> Vec<&'static str> {
         budget: BudgetLedger::new(None, None, 0.0),
         timeline: TurnTimeline::new("turn".into()),
         transient_prompt_ids: vec![],
+        transient_prompt_counter: 0,
     };
     let mut host = Host(log.clone());
     let preparation = Preparation;

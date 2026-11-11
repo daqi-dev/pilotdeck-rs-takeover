@@ -94,23 +94,56 @@ impl ResourceFamilySource for McpFamilySource {
 }
 
 // ---------------------------------------------------------------------------
-// ExecutionWorld family (minimal — exposes sandbox/fs/network/shell to tools;
-// full wiring is A6.9-pr3c2 scope)
+// ExecutionWorld family: the project's background task runtime
+// (`createNodeExecutionWorldBundle`, tool/execution-world/ExecutionWorldBundle.ts:
+// 177-223). Sessions of the project share it through their `task_*` tools, and
+// the gateway's `background_tasks` / `background_task_stop` read it.
 // ---------------------------------------------------------------------------
 
-struct ExecutionWorldResource;
+/// `executionWorld.backgroundTasks` beside `runtime.backgroundSubagents`.
+pub struct ExecutionWorldResource {
+    background: crate::runtime::background::BackgroundResources,
+}
+impl ExecutionWorldResource {
+    /// `backgroundTasks: new BackgroundTaskRuntime({ diskSpillDir:
+    /// <state>/output, snapshotStore: <state>/state.json })` with the state
+    /// directory `<projectRoot>/.pilotdeck/background-tasks`. Nothing is
+    /// written until a task starts.
+    fn new(project_root: &std::path::Path) -> std::io::Result<Self> {
+        use crate::runtime::background::{
+            BackgroundResources, BackgroundTaskRuntime, BackgroundTaskRuntimeOptions,
+        };
+        let state_dir = project_root.join(".pilotdeck").join("background-tasks");
+        let snapshot_store =
+            crate::runtime::background_snapshot::JsonFileBackgroundTaskSnapshotStore::new(
+                state_dir.join("state.json"),
+            )?;
+        Ok(Self {
+            background: BackgroundResources {
+                tasks: BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
+                    // This runtime appends `output/` itself.
+                    disk_spill_dir: Some(state_dir.clone()),
+                    snapshot_store: Some(Arc::new(snapshot_store)),
+                    ..BackgroundTaskRuntimeOptions::default()
+                }),
+                subagents: Default::default(),
+            },
+        })
+    }
+    pub fn background(&self) -> &crate::runtime::background::BackgroundResources {
+        &self.background
+    }
+}
 impl FamilyResource for ExecutionWorldResource {
     fn dispose(&self) -> DisposeFuture<'_> {
-        Box::pin(async { Ok(()) })
+        crate::runtime::project::RuntimeResources::dispose(&self.background)
     }
     fn as_any(&self) -> &dyn Any {
         self
     }
 }
 
-/// Minimal production execution-world family source.  Registers the bundle
-/// owner so downstream staging does not fail; full sandbox wiring follows in
-/// A6.9-pr3c2.
+/// Production execution-world family source.
 pub struct ExecutionWorldFamilySource;
 
 impl ResourceFamilySource for ExecutionWorldFamilySource {
@@ -118,8 +151,11 @@ impl ResourceFamilySource for ExecutionWorldFamilySource {
         Family::ExecutionWorld
     }
 
-    fn stage(&self, _context: &StageContext, sink: &mut StageSink<'_>) -> RuntimeResult {
-        let resource = Arc::new(ExecutionWorldResource);
+    fn stage(&self, context: &StageContext, sink: &mut StageSink<'_>) -> RuntimeResult {
+        let resource = Arc::new(
+            ExecutionWorldResource::new(&context.project_root())
+                .map_err(|error| RuntimeError::new(error.to_string()))?,
+        );
         sink.register_owner(self.family(), resource.clone());
         sink.register_resource(Resource::ExecutionWorld, resource);
         Ok(())

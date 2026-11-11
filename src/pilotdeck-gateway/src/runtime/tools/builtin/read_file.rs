@@ -728,7 +728,10 @@ fn notebook(
             "invalid_tool_input",
             format!("Notebook {} is not valid JSON.", text(&resolved.absolute)),
         );
-        tool.details = Some(object([("cause", string(error.to_string()))]));
+        // `cause: error.message`: V8's `JSON.parse` SyntaxError text.
+        let cause =
+            pilotdeck_protocol::json_syntax::parse_error(&raw).unwrap_or_else(|| error.to_string());
+        tool.details = Some(object([("cause", string(cause))]));
         tool
     })?;
     let notebook = parsed.as_object();
