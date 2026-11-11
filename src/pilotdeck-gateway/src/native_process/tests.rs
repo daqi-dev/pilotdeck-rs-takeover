@@ -938,18 +938,15 @@ async fn production_profile_and_registration() {
     assembly::validate_profile(&options, &env)
         .await
         .expect("configured skills and plugins accepted");
-    // A plugin that contributes hooks is still refused: hooks are not served.
+    // Plugin-contributed hooks are served (`native_process/hooks.rs`).
     std::fs::write(
         plugin.join("plugin.json"),
         "{\"name\":\"fixture\",\"hooks\":{\"PreToolUse\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"never-started-here\"}]}]}}",
     )
     .expect("plugin hooks manifest");
-    assert!(
-        assembly::validate_profile(&options, &env)
-            .await
-            .is_err_and(|error| error.to_string().contains("configured hooks")),
-        "plugin-contributed hooks refused"
-    );
+    assembly::validate_profile(&options, &env)
+        .await
+        .expect("plugin-contributed hooks accepted");
     std::fs::remove_dir_all(options.home.join("plugins")).expect("remove plugin fixture");
     std::fs::remove_dir_all(options.project.join(".pilotdeck/skills"))
         .expect("#1071 remove skill fixture");
@@ -980,10 +977,10 @@ async fn production_profile_and_registration() {
     )
     .load(&options.project)
     .expect("#1071 module fixture parses successfully");
-    negative_assert!(
-        assembly::validate_profile(&options, &env).await.is_err(),
-        "#1071 unsupported module bindings refused"
-    );
+    // A disabled skill module needs no outside service and is served.
+    assembly::validate_profile(&options, &env)
+        .await
+        .expect("a disabled skill module is accepted");
 }
 
 /// #2354: the production assembly's `/api/web` mount, held up end to end. `run`

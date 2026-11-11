@@ -1137,7 +1137,7 @@ fn interaction_cleanup_completion_survives_stopped_executor() {
 }
 
 #[tokio::test]
-async fn host_next_turn_surfaces_the_pending_hook_discard_notice() {
+async fn host_next_turn_reports_no_pending_hook_discard() {
     live_notice("success").await;
 }
 #[tokio::test]
@@ -1254,13 +1254,12 @@ async fn live_notice(mode: &str) {
     }
     let kinds: Vec<_> = delivered.iter().map(|e| e.get("type").cloned()).collect();
     assert!(kinds.len() >= 3, "#741 notice live start order");
+    // The baseline keeps a local async hook pending in the session's hook
+    // runtime and reports nothing when a turn ends (AsyncHookRegistry.ts),
+    // so no discard warning precedes the successor's input.
     assert_eq!(
-        &kinds[..3],
-        &[
-            Some("turn_started".into()),
-            Some("warning".into()),
-            Some("input_accepted".into())
-        ],
+        &kinds[..2],
+        &[Some("turn_started".into()), Some("input_accepted".into())],
         "#741 notice live start order"
     );
     assert_eq!(
@@ -1268,8 +1267,8 @@ async fn live_notice(mode: &str) {
             .iter()
             .filter(|k| **k == Some("warning".into()))
             .count(),
-        1,
-        "#741 notice live warning once"
+        0,
+        "#741 no hooks discard warning"
     );
     assert_eq!(
         kinds
@@ -1278,19 +1277,6 @@ async fn live_notice(mode: &str) {
             .count(),
         1,
         "#741 notice live start once"
-    );
-    assert_eq!(
-        delivered.get(1),
-        Some(&JsValue::Object(
-            crate::runtime::project::interaction_notice::DiscardNotice::new(
-                crate::runtime::project::interaction_notice::DiscardSource::Hooks,
-                1,
-                "session".into(),
-                "run".into()
-            )
-            .to_warning(&"session".into(), &"turn".into())
-        )),
-        "#741 notice live warning payload"
     );
     assert_eq!(
         delivered
