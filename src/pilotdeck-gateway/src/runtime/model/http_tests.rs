@@ -887,6 +887,87 @@ async fn undelimited_sse_buffer_over_the_v8_limit_throws_range_error() {
     assert_eq!(events.len(), 2, "request_started + message_start, no retry");
 }
 
+/// The invocation audit (streamModel.ts:885-966): a stream that ends without
+/// its completion sentinel is retried — each attempt one `incomplete` record
+/// with the raw bytes read — and a 400 is one `provider_error` record with
+/// the response text. The staged copies are gone once the terminal lands.
+#[tokio::test]
+async fn invocation_audit_records_each_attempt_terminal() {
+    let (request, config) = stream_config();
+    let root = std::env::temp_dir().join(format!("pdrs-audit-{}", uuid::Uuid::new_v4()));
+    let sink = Arc::new(crate::storage::invocation_log::JsonlInvocationLogSink::new(
+        crate::storage::invocation_log::InvocationStorageConfig {
+            root: root.clone(),
+            storage_config_version: "env".into(),
+        },
+    ));
+    let mut context = JsObject::new();
+    for (key, value) in [
+        ("workspaceId", "ws"),
+        ("sessionId", "s1"),
+        ("turnId", "t1"),
+        ("runId", "t1"),
+        ("logicalCallId", "call-1"),
+        ("caller", "agent"),
+        ("storageConfigVersion", "env"),
+    ] {
+        context.insert(key.into(), value.into());
+    }
+    let options = StreamOptions {
+        invocation: Some(InvocationAudit {
+            sink: sink.clone(),
+            context,
+        }),
+        ..StreamOptions::default()
+    };
+    let partial: &'static [u8] = b"data: {\"type\":\"message_start\"}\n\n";
+    let transport = Scripted(std::sync::Mutex::new(vec![
+        (200, vec![Some(partial)]),
+        (200, vec![Some(partial)]),
+        (200, vec![Some(partial)]),
+        (400, vec![Some(b"{\"error\":\"nope\"}".as_slice())]),
+    ]));
+    let mut sink_events = |_: StreamOutput| {};
+    let _ = stream_model(&transport, &request, &config, &options, &mut sink_events).await;
+    let _ = stream_model(&transport, &request, &config, &options, &mut sink_events).await;
+    let dir = root.join("workspaces/ws/sessions/s1/llm");
+    let records: Vec<JsValue> = std::fs::read_to_string(dir.join("invocations.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| parse_json(line).unwrap())
+        .collect();
+    let summary: Vec<String> = records
+        .iter()
+        .map(|record| {
+            format!(
+                "{}|{}|{}|{}",
+                crate::js_value::number_string(field(record, "attempt").as_number().unwrap()),
+                String::from_utf16_lossy(field(record, "outcome").as_string().unwrap().units()),
+                crate::js_value::number_string(field(record, "httpStatus").as_number().unwrap()),
+                String::from_utf16_lossy(
+                    field(record, "responseBody").as_string().unwrap().units()
+                ),
+            )
+        })
+        .collect();
+    let partial_text = String::from_utf8_lossy(partial);
+    assert_eq!(
+        summary,
+        [
+            format!("1|incomplete|200|{partial_text}"),
+            format!("2|incomplete|200|{partial_text}"),
+            format!("3|incomplete|200|{partial_text}"),
+            "1|provider_error|400|{\"error\":\"nope\"}".to_owned(),
+        ]
+    );
+    assert_eq!(
+        field(&records[0], "responseBytes").as_number(),
+        Some(partial.len() as f64)
+    );
+    assert_eq!(std::fs::read_dir(dir.join(".pending")).unwrap().count(), 0);
+    let _ = std::fs::remove_dir_all(root);
+}
+
 #[tokio::test]
 async fn stalled_error_body_hits_the_body_timeout() {
     let (request, config) = stream_config();

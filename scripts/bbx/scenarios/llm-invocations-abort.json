@@ -1,0 +1,82 @@
+{
+  "name": "llm-invocations-abort",
+  "about": "工具执行中中止轮次时的模型调用记录：已完成的那次请求有终态记录，中止后不再有请求，.pending 为空。 工作区快照放到 PILOTDECK_SNAPSHOT_ROOT（{ROOT}/tmp，不比较）：同一会话的 pre_user / post_agent 两个快照目录名由随机轮次 id 散列，比较器按出现顺序编号，两者先后随机，留在 home 下会让自比约一半概率不一致；快照本身由 snapshot-turn-restore 覆盖。",
+  "env": {
+    "PILOTDECK_STORAGE_ROOT": "{HOME}/storage",
+    "PILOTDECK_SNAPSHOT_ROOT": "{ROOT}/tmp/snapshots"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Audit\"}"
+      }
+    },
+    {
+      "name": "abort-after-tool",
+      "when": [
+        "case-abort:",
+        "\"tool_call_id\":\"call_bbx_abort\""
+      ],
+      "reply": {
+        "text": "Should not run."
+      }
+    },
+    {
+      "name": "abort",
+      "when": [
+        "case-abort:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_abort",
+          "name": "bash",
+          "arguments": {
+            "command": "sleep 3; echo slept"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-abort",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-abort",
+        "channelKey": "test",
+        "message": "case-abort: sleep then abort",
+        "projectKey": "{HOME}/work/alpha"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started"
+          },
+          "ws": "abort_turn",
+          "params": {
+            "sessionKey": "s-abort"
+          },
+          "count": 1
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "sleep": 500
+    }
+  ],
+  "files": {
+    "home/work/alpha/README.md": "alpha\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n"
+  }
+}

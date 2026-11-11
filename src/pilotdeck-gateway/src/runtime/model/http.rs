@@ -1168,6 +1168,8 @@ pub struct StreamOptions {
     /// `None` for router-internal callers, whose sinks are driven to
     /// completion without a consumer pacing them.
     pub yield_gate: Option<YieldGate>,
+    /// `options.invocation`: the gateway-owned raw provider audit.
+    pub invocation: Option<InvocationAudit>,
 }
 impl Default for StreamOptions {
     fn default() -> Self {
@@ -1180,7 +1182,166 @@ impl Default for StreamOptions {
             clock: Arc::new(super::router::wall_clock),
             body_timeout_ms: UNDICI_BODY_TIMEOUT_MS,
             yield_gate: None,
+            invocation: None,
         }
+    }
+}
+
+/// `ModelRuntimeOptions.invocation` (streamModel.ts:37-41): the sink plus the
+/// `InvocationLogContext` its records start with, in that key order.
+#[derive(Clone)]
+pub struct InvocationAudit {
+    pub sink: Arc<crate::storage::invocation_log::JsonlInvocationLogSink>,
+    pub context: JsObject,
+}
+
+/// One staged attempt (`InvocationAttempt`, streamModel.ts:866-875).
+struct InvocationAttempt {
+    request_log_id: JsString,
+    request_id: JsString,
+    started_at: String,
+    request_body: String,
+    attempt: f64,
+    provider: JsValue,
+    protocol: JsValue,
+    model: JsValue,
+    stream: bool,
+}
+
+/// `beginInvocation`: stage the attempt before the request is sent; a
+/// staging failure keeps the request from going out.
+fn begin_invocation(
+    options: &StreamOptions,
+    provider: &JsValue,
+    model: &JsValue,
+    stream: bool,
+    body: &JsValue,
+    attempt: f64,
+) -> Result<Option<InvocationAttempt>, ModelStreamError> {
+    let Some(invocation) = &options.invocation else {
+        return Ok(None);
+    };
+    let request_body = crate::js_value::json_stringify(&providers::final_body(body, provider))
+        .map_err(|_| {
+            ModelStreamError::thrown("RangeError", crate::js_value::StackOverflow::MESSAGE)
+        })?
+        .unwrap_or_default();
+    let state = InvocationAttempt {
+        request_log_id: uuid::Uuid::new_v4().to_string().into(),
+        request_id: uuid::Uuid::new_v4().to_string().into(),
+        started_at: iso_now(options),
+        request_body,
+        attempt,
+        provider: field(provider, "id").clone(),
+        protocol: field(provider, "protocol").clone(),
+        model: model.clone(),
+        stream,
+    };
+    let mut record = invocation_head(invocation, &state);
+    record.insert(
+        "requestBytes".into(),
+        JsValue::Number(state.request_body.len() as f64),
+    );
+    record.insert("outcome".into(), "success".into());
+    record.insert("responseComplete".into(), JsValue::Bool(false));
+    record.insert("startedAt".into(), state.started_at.as_str().into());
+    record.insert("completedAt".into(), state.started_at.as_str().into());
+    invocation
+        .sink
+        .stage(&record)
+        .map_err(|error| ModelStreamError::thrown("Error", error.to_string()))?;
+    Ok(Some(state))
+}
+
+fn iso_now(options: &StreamOptions) -> String {
+    pilotdeck_transport::system_clock::format_epoch_iso((options.clock)().floor() as i64)
+}
+
+/// The record prefix both stages share: the context, then the attempt.
+fn invocation_head(invocation: &InvocationAudit, state: &InvocationAttempt) -> JsObject {
+    let mut record = invocation.context.clone();
+    record.insert(
+        "requestLogId".into(),
+        JsValue::String(state.request_log_id.clone()),
+    );
+    record.insert(
+        "requestId".into(),
+        JsValue::String(state.request_id.clone()),
+    );
+    record.insert("attempt".into(), JsValue::Number(state.attempt));
+    record.insert("provider".into(), state.provider.clone());
+    record.insert("protocol".into(), state.protocol.clone());
+    record.insert("model".into(), state.model.clone());
+    record.insert("stream".into(), JsValue::Bool(state.stream));
+    record.insert("requestBody".into(), state.request_body.as_str().into());
+    record
+}
+
+/// The attempt's settled response, for `finishInvocation`.
+struct InvocationResponse<'a> {
+    body: Option<&'a [u8]>,
+    status: Option<u16>,
+    complete: bool,
+}
+
+/// `finishInvocation`: append the terminal record once. An aborted signal
+/// wins over the reported outcome, then a stream idle timeout. An append
+/// failure is only reported, like the TS `.catch`.
+fn finish_invocation(
+    state: &mut Option<InvocationAttempt>,
+    options: &StreamOptions,
+    outcome: &str,
+    response: InvocationResponse<'_>,
+    error: Option<&ModelStreamError>,
+) {
+    let (Some(state), Some(invocation)) = (state.take(), &options.invocation) else {
+        return;
+    };
+    let outcome = if aborted(options) {
+        "aborted"
+    } else if error.is_some_and(|error| error.name().equals_str("StreamIdleTimeoutError")) {
+        "timeout"
+    } else {
+        outcome
+    };
+    let mut record = invocation_head(invocation, &state);
+    if let Some(body) = response.body {
+        record.insert(
+            "responseBody".into(),
+            String::from_utf8_lossy(body).as_ref().into(),
+        );
+    }
+    record.insert(
+        "requestBytes".into(),
+        JsValue::Number(state.request_body.len() as f64),
+    );
+    if let Some(body) = response.body {
+        record.insert("responseBytes".into(), JsValue::Number(body.len() as f64));
+    }
+    if let Some(status) = response.status {
+        record.insert("httpStatus".into(), JsValue::Number(f64::from(status)));
+    }
+    record.insert("outcome".into(), outcome.into());
+    record.insert("responseComplete".into(), JsValue::Bool(response.complete));
+    record.insert("startedAt".into(), state.started_at.as_str().into());
+    record.insert("completedAt".into(), iso_now(options).as_str().into());
+    if let Err(error) = invocation.sink.append(&record) {
+        let text = |key: &str| {
+            invocation
+                .context
+                .get(key)
+                .and_then(JsValue::as_string)
+                .map(|value| String::from_utf16_lossy(value.units()))
+                .unwrap_or_else(|| "unknown".into())
+        };
+        eprintln!(
+            "[PilotDeck] failed to persist model invocation audit run={} turn={} requestLogId={} attempt={} {}",
+            text("runId"),
+            text("turnId"),
+            String::from_utf16_lossy(state.request_log_id.units()),
+            crate::js_value::number_string(state.attempt),
+            error
+        );
     }
 }
 impl StreamOptions {
@@ -2711,6 +2872,14 @@ pub async fn stream_model(
         options.yield_boundary().await;
         let (provider_now, model_now) = providers::validate_model_request(&current, config)?;
         let body = providers::build_model_request(&current, &provider_now, &model_now)?;
+        let mut invocation = begin_invocation(
+            options,
+            &provider,
+            field(&current, "model"),
+            true,
+            &body,
+            attempt + 1.0,
+        )?;
 
         let progress = |sink: &mut (dyn FnMut(StreamOutput) + Send),
                         reason: &str,
@@ -2730,6 +2899,17 @@ pub async fn stream_model(
         {
             Ok(response) => response,
             Err(error) => {
+                finish_invocation(
+                    &mut invocation,
+                    options,
+                    "transport_error",
+                    InvocationResponse {
+                        body: None,
+                        status: None,
+                        complete: false,
+                    },
+                    Some(&error),
+                );
                 if attempt < max_retries && is_retryable_stream_error(&error) {
                     let (_, delay_ms) = retry_decide(&provider, attempt, None, (options.random)());
                     progress(sink, "network_error", delay_ms, field(&current, "model"));
@@ -2762,6 +2942,17 @@ pub async fn stream_model(
         let (mut body, mut body_before_abort) = response.into_body();
         if matches!(status, 204 | 205) {
             // Null-body statuses: `response.body` is null in fetch.
+            finish_invocation(
+                &mut invocation,
+                options,
+                "incomplete",
+                InvocationResponse {
+                    body: None,
+                    status: Some(status),
+                    complete: false,
+                },
+                None,
+            );
             let missing = JsError {
                 message: "Missing response body.".into(),
                 code: None,
@@ -2781,6 +2972,17 @@ pub async fn stream_model(
         }
         if !(200..300).contains(&status) {
             let text = response_text(&mut body, options, body_before_abort).await?;
+            finish_invocation(
+                &mut invocation,
+                options,
+                "provider_error",
+                InvocationResponse {
+                    body: Some(text.as_bytes()),
+                    status: Some(status),
+                    complete: false,
+                },
+                None,
+            );
             let raw = parse_json(&text).unwrap_or_else(|_| JsValue::String(text.as_str().into()));
             let mut error = normalize_model_error(
                 &provider_id(&provider),
@@ -2825,12 +3027,19 @@ pub async fn stream_model(
         let idle_ms = idle_timeout_ms(&provider, options);
         let mut guard = StreamGuard::new(&provider, (options.clock)());
         let mut buffer = sse::SseBuffer::with_limit(sse_limit());
+        // `rawResponseChunks`: every body byte read, for the audit record.
+        let mut raw_response: Vec<u8> = Vec::new();
         let outcome: Result<(), ModelStreamError> = async {
             loop {
                 if !body_before_abort {
                     throw_if_aborted(options)?;
                 }
                 let chunk = read_frame(&mut body, idle_ms, options, &mut body_before_abort).await?;
+                if invocation.is_some()
+                    && let Some(bytes) = &chunk
+                {
+                    raw_response.extend_from_slice(bytes);
+                }
                 if !body_before_abort {
                     throw_if_aborted(options)?;
                 }
@@ -2880,10 +3089,27 @@ pub async fn stream_model(
         .await;
         // Closing the body (here or on any return) cancels the connection.
         drop(body);
+        let settled = |complete: bool| InvocationResponse {
+            body: Some(raw_response.as_slice()),
+            status: Some(status),
+            complete,
+        };
         let Err(error) = outcome else {
+            finish_invocation(&mut invocation, options, "success", settled(true), None);
             return Ok(());
         };
         let retryable = is_retryable_stream_error(&error);
+        finish_invocation(
+            &mut invocation,
+            options,
+            if retryable {
+                "incomplete"
+            } else {
+                "transport_error"
+            },
+            settled(false),
+            Some(&error),
+        );
         if attempt < max_retries && retryable && checkpoint.can_continue_text() {
             current = continuation_request(&current, &checkpoint.partial_text);
             let (_, delay_ms) =

@@ -4,6 +4,7 @@
 //! `run_registry` is the TS RunRegistry snapshot store; it is not wired into
 //! the host or gateway methods either.
 pub mod file_history;
+pub mod invocation_log;
 mod ledger;
 mod projection;
 pub mod recorder;

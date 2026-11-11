@@ -659,10 +659,17 @@ impl RouterRuntime {
                 }
             }
         };
+        // `logicalCallId: ctx.logicalCallId ?? randomUUID()` (RouterRuntime.ts
+        // :1165): one per attempt, shared by the attempt's provider retries.
+        let mut stream_options = ctx.stream_options.clone();
+        if let Some(invocation) = &mut stream_options.invocation {
+            invocation.context.insert(
+                "logicalCallId".into(),
+                uuid::Uuid::new_v4().to_string().as_str().into(),
+            );
+        }
         let result = {
-            let mut stream = self
-                .invoker
-                .stream(request, &ctx.stream_options, &mut receive);
+            let mut stream = self.invoker.stream(request, &stream_options, &mut receive);
             // A provider yielding after cancellation must be dropped, even if
             // it then remains pending. This is an event observation, not a
             // second response/timeout race; HTTP owns those races.

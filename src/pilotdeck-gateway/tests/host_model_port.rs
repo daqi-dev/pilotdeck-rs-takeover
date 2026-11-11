@@ -455,6 +455,7 @@ async fn replay_case(case: &JsValue, oracle: &JsValue) -> Result<(), String> {
     ));
 
     let options = RouterModelPortOptions {
+        invocation: None,
         is_main_agent: get(&spec, "isMainAgent").as_bool().unwrap_or(true),
         project_path: None,
         fallback_models: Vec::new(),

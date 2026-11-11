@@ -57,10 +57,19 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{future::Future, pin::Pin, sync::Arc, task::Poll};
 use tokio::sync::{mpsc, oneshot};
 
-/// `RouterModelInvokerAdapterOptions`. `workspaceId`/`storageConfigVersion`
-/// only feed the invocation audit sink (out of scope), so they are absent.
+/// `RouterModelInvokerAdapterOptions.workspaceId` / `invocationLogSink`: the
+/// raw provider audit of this port's streams (`RouterRuntime.ts:1157-1171`
+/// stages one only when both are present).
+#[derive(Clone)]
+pub struct InvocationPortAudit {
+    pub sink: Arc<crate::storage::invocation_log::JsonlInvocationLogSink>,
+    pub workspace_id: JsString,
+}
+
+/// `RouterModelInvokerAdapterOptions`.
 #[derive(Clone)]
 pub struct RouterModelPortOptions {
+    pub invocation: Option<InvocationPortAudit>,
     /// `options.isMainAgent ?? true`.
     pub is_main_agent: bool,
     /// `options.projectPath`, persisted on router usage records.
@@ -82,6 +91,7 @@ impl Default for RouterModelPortOptions {
     /// when the caller omits it.
     fn default() -> Self {
         Self {
+            invocation: None,
             is_main_agent: true,
             project_path: None,
             fallback_models: Vec::new(),
@@ -267,6 +277,47 @@ impl ModelExecution for RouterModelPort {
             stream_options: crate::runtime::model::http::StreamOptions {
                 abort: Some(abort.clone()),
                 yield_gate: Some(gate.clone()),
+                invocation: self.options.invocation.as_ref().map(|audit| {
+                    // `InvocationLogContext` in its key order; the router
+                    // stamps a fresh `logicalCallId` per attempt.
+                    let mut context = JsObject::new();
+                    let field = |key: &str| {
+                        input
+                            .context
+                            .get(key)
+                            .filter(|value| !value.is_undefined())
+                            .cloned()
+                    };
+                    let turn = field("turnId").unwrap_or(JsValue::Undefined);
+                    context.insert(
+                        "workspaceId".into(),
+                        JsValue::String(audit.workspace_id.clone()),
+                    );
+                    context.insert(
+                        "sessionId".into(),
+                        field("sessionId").unwrap_or(JsValue::Undefined),
+                    );
+                    context.insert("turnId".into(), turn.clone());
+                    context.insert("runId".into(), field("runId").unwrap_or(turn));
+                    context.insert("logicalCallId".into(), JsValue::Undefined);
+                    context.insert(
+                        "caller".into(),
+                        if self.options.is_main_agent {
+                            "agent"
+                        } else {
+                            "subagent"
+                        }
+                        .into(),
+                    );
+                    let version = audit.sink.storage_config_version();
+                    if !version.is_empty() {
+                        context.insert("storageConfigVersion".into(), version.into());
+                    }
+                    crate::runtime::model::http::InvocationAudit {
+                        sink: audit.sink.clone(),
+                        context,
+                    }
+                }),
                 ..Default::default()
             },
         };
