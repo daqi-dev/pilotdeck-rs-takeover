@@ -327,6 +327,9 @@ impl SessionTools {
     }
 }
 
+/// How long a tool batch waits for its assistant message to be durable.
+const DURABLE_MESSAGE_WAIT: Duration = Duration::from_secs(2);
+
 /// `createDurableToolPort` (`agent/modules/capability/durableToolPort.ts`):
 /// `tool_call` entries before the batch runs and `tool_result` entries (which
 /// close the step) after it, unless the turn was aborted meanwhile.
@@ -339,14 +342,27 @@ struct DurableTools {
     signal: Cancellation,
 }
 impl DurableTools {
+    /// The call as the capability wire carries it, for a batch whose
+    /// assistant message never became durable.
+    fn bare_call(call: &capability::ToolCall) -> JsValue {
+        let mut durable = JsObject::new();
+        durable.insert("id".into(), JsValue::String(call.id.clone()));
+        durable.insert("name".into(), JsValue::String(call.name.clone()));
+        durable.insert("input".into(), call.input.clone());
+        JsValue::Object(durable)
+    }
     /// The call as the loop holds it: the assistant message's `tool_call`
     /// block (which carries the timeline position) without its block type.
     /// The capability wire only carries id, name and arguments.
-    fn durable_call(&self, call: &capability::ToolCall) -> JsValue {
+    fn durable_call_in(
+        projection: &crate::runtime::session::factory::SessionProjection,
+        turn: &JsString,
+        call: &capability::ToolCall,
+    ) -> Option<JsValue> {
         let mut found = None;
-        self.projection.for_each_entry(|entry| {
+        projection.for_each_entry(|entry| {
             if entry.get("type") != Some(&"assistant_message".into())
-                || entry.get("turnId") != Some(&JsValue::String(self.turn.clone()))
+                || entry.get("turnId") != Some(&JsValue::String(turn.clone()))
             {
                 return;
             }
@@ -362,22 +378,14 @@ impl DurableTools {
                 }
             }
         });
+        let block = found?;
         let mut durable = JsObject::new();
-        match found {
-            Some(block) => {
-                for (key, value) in block.entries() {
-                    if !key.equals_str("type") {
-                        durable.insert(key.clone(), value.clone());
-                    }
-                }
-            }
-            None => {
-                durable.insert("id".into(), JsValue::String(call.id.clone()));
-                durable.insert("name".into(), JsValue::String(call.name.clone()));
-                durable.insert("input".into(), call.input.clone());
+        for (key, value) in block.entries() {
+            if !key.equals_str("type") {
+                durable.insert(key.clone(), value.clone());
             }
         }
-        JsValue::Object(durable)
+        Some(JsValue::Object(durable))
     }
 }
 impl capability::ToolCatalog for DurableTools {
@@ -394,13 +402,34 @@ impl capability::ToolExecution for DurableTools {
         calls: Vec<capability::ToolCall>,
         context: capability::ToolInvocationContext,
     ) -> HostFuture<Vec<JsObject>> {
-        let durable_calls: Vec<JsValue> =
-            calls.iter().map(|call| self.durable_call(call)).collect();
         let inner = self.inner.clone();
         let signal = self.signal.clone();
         let recorder = self.recorder.clone();
         let (session, turn) = (self.session.clone(), self.turn.clone());
+        let projection = self.projection.clone();
         Box::pin(async move {
+            // The loop records the assistant message before it runs the
+            // message's tool calls (in the baseline both happen in one
+            // process, in that order). Here the message arrives as a loop
+            // event and is appended on the storage queue while this call is
+            // already in flight, so give the append a bounded moment to land:
+            // the calls are recorded after it and take their timeline from it.
+            let mut waited = Duration::ZERO;
+            while waited < DURABLE_MESSAGE_WAIT
+                && calls
+                    .iter()
+                    .any(|call| DurableTools::durable_call_in(&projection, &turn, call).is_none())
+            {
+                tokio::time::sleep(Duration::from_millis(2)).await;
+                waited += Duration::from_millis(2);
+            }
+            let durable_calls: Vec<JsValue> = calls
+                .iter()
+                .map(|call| {
+                    DurableTools::durable_call_in(&projection, &turn, call)
+                        .unwrap_or_else(|| DurableTools::bare_call(call))
+                })
+                .collect();
             {
                 let recorder = recorder.clone();
                 let (session, turn) = (session.clone(), turn.clone());
