@@ -495,6 +495,7 @@ impl ToolRuntime {
             execution
                 .fields
                 .insert("currentPermissionDecision".into(), decision);
+            let execute_input = input.clone();
             match tool.execute(input, execution).await {
                 Err(error) => {
                     lifecycle("post_tool_execute", Some(false));
@@ -520,6 +521,28 @@ impl ToolRuntime {
                             .get_or_insert_with(JsObject::new)
                             .insert("previewLimit".into(), JsValue::Object(limit));
                     }
+                    let completed = context.now_iso()?;
+                    // `context.planTodo?.markToolProgressChanged(name)` after a
+                    // non-read-only tool other than `todo_write` succeeds.
+                    if !name.equals_str("todo_write")
+                        && !tool.is_read_only(&execute_input).is_ok_and(|v| truthy(&v))
+                        && let Some(plan_todo) = context.host.plan_todo.clone().and_then(|handle| {
+                            handle
+                                .downcast::<crate::runtime::plan_todo::PlanTodoRuntime>()
+                                .ok()
+                        })
+                    {
+                        let turn = context
+                            .fields
+                            .get("turnId")
+                            .and_then(JsValue::as_string)
+                            .cloned()
+                            .unwrap_or_default();
+                        if let Err(error) = plan_todo.mark_tool_progress_changed(&name, &turn).await
+                        {
+                            return fail(&name, ToolError::failed(error.message));
+                        }
+                    }
                     Ok(object([
                         ("type", "success".into()),
                         ("toolCallId", string(call.id.clone())),
@@ -538,7 +561,7 @@ impl ToolRuntime {
                             metadata.map(JsValue::Object).unwrap_or(JsValue::Undefined),
                         ),
                         ("startedAt", string(started.clone())),
-                        ("completedAt", string(context.now_iso()?)),
+                        ("completedAt", string(completed)),
                     ]))
                 }
             }

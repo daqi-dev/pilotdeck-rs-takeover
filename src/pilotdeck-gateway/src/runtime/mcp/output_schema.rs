@@ -867,7 +867,7 @@ fn code_points(text: &JsString) -> usize {
     char::decode_utf16(text.units().iter().copied()).count()
 }
 
-enum JsRegex {
+pub(crate) enum JsRegex {
     Compiled(Regex),
     /// Syntax this port cannot safely translate; refused as schema patterns.
     JsOnly,
@@ -875,7 +875,7 @@ enum JsRegex {
     Invalid(&'static str),
 }
 
-fn js_regex(pattern: &str) -> JsRegex {
+pub(crate) fn js_regex(pattern: &str) -> JsRegex {
     // V8 decides validity first. Only a pattern that ECMAScript `/u` accepts
     // is allowed to become `JsOnly`: a Rust compile failure must never turn a
     // JavaScript-invalid pattern into a permissive "unsupported" path, and a

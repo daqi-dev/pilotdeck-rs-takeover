@@ -1,6 +1,6 @@
 {
   "name": "mode-plan-blocks-tools",
-  "about": "plan 模式（set_permission_mode plan）下，工具运行时在 schema 校验与权限判断之前按 PLAN_MODE_ALLOWED_TOOLS 拦截（ToolRuntime.ts:129-139,706-764）。第 1 轮在默认模式：execute_code 的 Python 脚本只要不调 write_file/edit_file/bash 就判为只读，不经询问直接执行（open().write()、os.system() 也算），且继承宿主环境变量——这是基线自身的弱点，两侧照基线一致，这一轮只作记录。其后各轮在 plan 模式：白名单外的工具（execute_code；参数不合 schema 时也先报 plan_mode_violation）被拦；bash 非只读命令被拦（超过 120 个字符的命令在文案里截断），只读命令放行；write_file/edit_file 只放行计划目录（<cwd>/.pilotdeck/plans）下以 .md 结尾（不区分大小写）的路径，计划目录外、非 .md、经 .. 跳出的都被拦；用 filePath 别名指向计划目录的调用通过拦截后照常报 schema 错误；read_file 放行。submit_turn 带 allowPlanModeTools:false：Rust 尚未实现 enter_plan_mode/exit_plan_mode，这样两侧发给模型的工具目录一致，不影响本场景要测的运行时拦截。采集器对任何权限询问一律拒绝。",
+  "about": "plan 模式（set_permission_mode plan）下，工具运行时在 schema 校验与权限判断之前按 PLAN_MODE_ALLOWED_TOOLS 拦截（ToolRuntime.ts:129-139,706-764）。第 1 轮在默认模式：execute_code 的 Python 脚本只要不调 write_file/edit_file/bash 就判为只读，不经询问直接执行（open().write()、os.system() 也算），且继承宿主环境变量——这是基线自身的弱点，两侧照基线一致，这一轮只作记录。其后各轮在 plan 模式：白名单外的工具（execute_code；参数不合 schema 时也先报 plan_mode_violation）被拦；bash 非只读命令被拦（超过 120 个字符的命令在文案里截断），只读命令放行；write_file/edit_file 只放行计划目录（<cwd>/.pilotdeck/plans）下以 .md 结尾（不区分大小写）的路径，计划目录外、非 .md、经 .. 跳出的都被拦；用 filePath 别名指向计划目录的调用通过拦截后照常报 schema 错误；read_file 放行。submit_turn 不带 allowPlanModeTools（缺省即不向模型声明 enter_plan_mode/exit_plan_mode）。采集器对任何权限询问一律拒绝。",
   "env": {
     "BBX_FAKE_TOKEN": "fake-secret-123"
   },
@@ -358,8 +358,7 @@
       "params": {
         "sessionKey": "s-bbx-1",
         "channelKey": "test",
-        "message": "turn-2: run the tool",
-        "allowPlanModeTools": false
+        "message": "turn-2: run the tool"
       },
       "answer": [
         {
@@ -385,8 +384,7 @@
       "params": {
         "sessionKey": "s-bbx-1",
         "channelKey": "test",
-        "message": "turn-3: run the tool",
-        "allowPlanModeTools": false
+        "message": "turn-3: run the tool"
       },
       "answer": [
         {
@@ -412,8 +410,7 @@
       "params": {
         "sessionKey": "s-bbx-1",
         "channelKey": "test",
-        "message": "turn-4: run the tool",
-        "allowPlanModeTools": false
+        "message": "turn-4: run the tool"
       },
       "answer": [
         {
@@ -439,8 +436,7 @@
       "params": {
         "sessionKey": "s-bbx-1",
         "channelKey": "test",
-        "message": "turn-5: run the tool",
-        "allowPlanModeTools": false
+        "message": "turn-5: run the tool"
       },
       "answer": [
         {
@@ -466,8 +462,7 @@
       "params": {
         "sessionKey": "s-bbx-1",
         "channelKey": "test",
-        "message": "turn-6: run the tool",
-        "allowPlanModeTools": false
+        "message": "turn-6: run the tool"
       },
       "answer": [
         {
@@ -493,8 +488,7 @@
       "params": {
         "sessionKey": "s-bbx-1",
         "channelKey": "test",
-        "message": "turn-7: run the tool",
-        "allowPlanModeTools": false
+        "message": "turn-7: run the tool"
       },
       "answer": [
         {
@@ -520,8 +514,7 @@
       "params": {
         "sessionKey": "s-bbx-1",
         "channelKey": "test",
-        "message": "turn-8: run the tool",
-        "allowPlanModeTools": false
+        "message": "turn-8: run the tool"
       },
       "answer": [
         {
@@ -547,8 +540,7 @@
       "params": {
         "sessionKey": "s-bbx-1",
         "channelKey": "test",
-        "message": "turn-9: run the tool",
-        "allowPlanModeTools": false
+        "message": "turn-9: run the tool"
       },
       "answer": [
         {
@@ -574,8 +566,7 @@
       "params": {
         "sessionKey": "s-bbx-1",
         "channelKey": "test",
-        "message": "turn-10: run the tool",
-        "allowPlanModeTools": false
+        "message": "turn-10: run the tool"
       },
       "answer": [
         {
@@ -601,8 +592,7 @@
       "params": {
         "sessionKey": "s-bbx-1",
         "channelKey": "test",
-        "message": "turn-11: run the tool",
-        "allowPlanModeTools": false
+        "message": "turn-11: run the tool"
       },
       "answer": [
         {
@@ -628,8 +618,7 @@
       "params": {
         "sessionKey": "s-bbx-1",
         "channelKey": "test",
-        "message": "turn-12: run the tool",
-        "allowPlanModeTools": false
+        "message": "turn-12: run the tool"
       },
       "answer": [
         {

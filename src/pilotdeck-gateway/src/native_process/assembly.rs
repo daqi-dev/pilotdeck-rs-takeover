@@ -458,6 +458,7 @@ async fn start_assembly(
     // (the prepare closure composing each session's agent config).
     let session_overrides: Arc<super::SessionOverrides> = Arc::default();
     let prepare_overrides = session_overrides.clone();
+    let prepare_user_dialog_bus = user_dialog_bus.clone();
     let prepare_project = project.clone();
     let prepare_options = options.clone();
     let prepare_env = env.clone();
@@ -520,6 +521,7 @@ async fn start_assembly(
             let session_overrides = prepare_overrides.clone();
             let continuations = prepare_continuations.clone();
             let cron_tools_slot = prepare_cron_manager.clone();
+            let user_dialog_bus = prepare_user_dialog_bus.clone();
             Box::pin(async move {
                 // `registry.resolve(projectKey ?? fallbackProjectRoot)`
                 // (ProjectRuntimeRegistry.ts:1540-1560): the session runs in
@@ -679,11 +681,19 @@ async fn start_assembly(
                     .clone()
                     .or_else(|| session_overrides.permission_mode(&context.session_key));
                 let stored_thinking = session_overrides.thinking(&context.session_key);
+                // `sdkSessionConfig.userDialogKinds` of the config stored
+                // before this session was created.
+                let sdk_config = session_overrides.sdk_config(&context.session_key);
+                let user_dialog_kinds = super::sdk_config::user_dialog_kinds(sdk_config.as_ref());
                 let stored_style_content =
                     match session_overrides.output_style(&context.session_key) {
                         Some(name) => output_style_content(&staged, &name).await,
                         None => None,
                     };
+                super::sdk_config::apply_prompt_fields(
+                    &mut config,
+                    session_overrides.sdk_config(&context.session_key).as_ref(),
+                );
                 apply_session_overrides(
                     &mut config,
                     stored_permission_mode.as_ref(),
@@ -865,6 +875,17 @@ async fn start_assembly(
                             env: env.clone(),
                         };
                         continuation_parent.bind_recorder(binding.recorder.clone());
+                        // `GatewayUserDialogChannel` (ProjectSessionRuntimeBundle.ts:
+                        // 638-650): only for a session that enabled a dialog kind,
+                        // journaled next to its transcript.
+                        let user_dialog = (!user_dialog_kinds.is_empty()).then(|| {
+                            user_dialog::session_channel(
+                                session.clone(),
+                                user_dialog_bus.clone(),
+                                gateway_emit.clone(),
+                                binding.recorder.writer().path(),
+                            )
+                        });
                         let ports = super::tools::SessionTools::new(
                             &options,
                             &env,
@@ -876,6 +897,7 @@ async fn start_assembly(
                         )?
                         .with_extra_tools(extra_tools, excluded_tools)
                         .with_prompt_policy(can_prompt_override, bypass_available_override)
+                        .with_sdk_permissions(sdk_config.as_ref())
                         .with_permission_mode_source(permission_source.clone())
                         .with_continuation_parent(continuation_parent.parent_ref())
                         .with_permission_prompt(gateway_emit, session_rules, permission_timeout)
@@ -890,6 +912,12 @@ async fn start_assembly(
                                 )
                             })
                         });
+                        let ports = match user_dialog {
+                            Some(channel) => {
+                                ports.with_user_dialog(user_dialog_kinds.clone(), channel)
+                            }
+                            None => ports,
+                        };
                         let ports = match plugin_runtime {
                             Some(plugins) => ports.with_skills(plugins),
                             None => ports,
@@ -1201,6 +1229,9 @@ async fn start_assembly(
     // it; the host registers each accepted connection into it.
     let connection_broadcast = Arc::new(crate::runtime::connection::ConnectionBroadcast::default());
     let build_connection_broadcast = connection_broadcast.clone();
+    // `onUserDialogChange` (createLocalGateway.ts:1053-1058): the bus's
+    // renderer notifications go to every connection of the server.
+    user_dialog::bind_broadcast(&user_dialog_bus, connection_broadcast.clone());
     let host = TurnGateway::start_with_cleanup_budget(
         TurnReplayOptions::new(),
         // #1746: the failure path waits out this embedding's own drain budget
@@ -1249,6 +1280,10 @@ async fn start_assembly(
             });
             let admission = SubmitAdmissionOptions {
                 interactions: interactions.clone(),
+                sdk_config: Some(Arc::new(super::sdk_config::NativeSdkSessionConfig {
+                    options: options.clone(),
+                    overrides: session_overrides.clone(),
+                })),
                 model_assertion: Some(project_admission.clone()),
                 dialog_recovery: Some(project_admission),
                 ..SubmitAdmissionOptions::new(replacement.clone())
@@ -1644,7 +1679,8 @@ pub(super) fn apply_session_overrides(
             .get("appendSystemPrompt")
             .and_then(JsValue::as_string)
             .map(|value| String::from_utf16_lossy(value.units()));
-        let joined = [existing.as_deref(), Some(content)]
+        // `sdkOutputStyleContent?.trim()`.
+        let joined = [existing.as_deref(), Some(crate::metadata::js_trim(content))]
             .into_iter()
             .flatten()
             .filter(|part| !crate::metadata::js_trim(part).is_empty())

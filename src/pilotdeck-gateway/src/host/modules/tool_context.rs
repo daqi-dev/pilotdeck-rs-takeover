@@ -280,6 +280,11 @@ pub struct ToolContextPorts {
     pub subagent: Option<Arc<dyn OneShotSubagent>>,
     pub goal: Option<Arc<dyn SessionService>>,
     pub plan_files: Option<Arc<dyn PlanFiles>>,
+    /// The session's current permission mode. A tool result can switch it in
+    /// the middle of a turn (`requestedMode`); the loop's config then carries
+    /// the new mode into later tool calls and model requests of the same turn.
+    /// Without it the turn binding's mode is used.
+    pub permission_mode: Option<Arc<dyn Fn() -> JsValue + Send + Sync>>,
 }
 
 #[derive(Clone)]
@@ -356,12 +361,19 @@ impl ToolContextBuilder {
             auxiliary_model,
         }
     }
+    /// The turn's current permission mode.
+    fn permission_mode(&self) -> JsValue {
+        match &self.ports.permission_mode {
+            Some(live) => live(),
+            None => get(&self.binding.config, "permissionMode"),
+        }
+    }
     pub fn permission_context(&self) -> JsObject {
         let config = &self.binding.config;
         let base = config.get("permissionContext").and_then(JsValue::as_object);
         let mut result = base.cloned().unwrap_or_default();
         result.insert("cwd".into(), get(config, "cwd"));
-        result.insert("mode".into(), get(config, "permissionMode"));
+        result.insert("mode".into(), self.permission_mode());
         result.insert(
             "canPrompt".into(),
             self.binding
@@ -427,7 +439,7 @@ impl ToolContextBuilder {
                 fields.insert(key.into(), value.clone());
             }
         }
-        fields.insert("permissionMode".into(), get(config, "permissionMode"));
+        fields.insert("permissionMode".into(), self.permission_mode());
         let mut permission = self.permission_context();
         if let Some(path) = &directory {
             permission.insert("planDirectoryPath".into(), JsValue::String(path.clone()));
@@ -551,9 +563,8 @@ impl ToolContextBuilder {
         for (key, value) in host_identity(&self.binding).entries() {
             fields.insert(key.clone(), value.clone());
         }
-        for key in ["cwd", "permissionMode"] {
-            fields.insert(key.into(), get(&self.binding.config, key));
-        }
+        fields.insert("cwd".into(), get(&self.binding.config, "cwd"));
+        fields.insert("permissionMode".into(), self.permission_mode());
         fields.insert("runMode".into(), run_mode(&self.binding.config));
         ContextIdentity {
             fields,

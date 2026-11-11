@@ -73,8 +73,11 @@ impl GatewayElicitation {
         let mut replay = object([
             ("toolCallId", JsValue::String(request.tool_call_id.clone())),
             ("toolName", JsValue::String(request.tool_name.clone())),
-            ("questions", request.questions.clone()),
         ]);
+        if let Some(format) = &request.preview_format {
+            replay.insert("previewFormat".into(), JsValue::String(format.clone()));
+        }
+        replay.insert("questions".into(), request.questions.clone());
         if let Some(metadata) = &request.metadata {
             replay.insert("metadata".into(), metadata.clone());
         }
@@ -102,8 +105,11 @@ impl GatewayElicitation {
             ("requestId", JsValue::String(request_id.clone())),
             ("toolCallId", JsValue::String(request.tool_call_id.clone())),
             ("toolName", JsValue::String(request.tool_name.clone())),
-            ("questions", request.questions.clone()),
         ]);
+        if let Some(format) = &request.preview_format {
+            event.insert("previewFormat".into(), JsValue::String(format.clone()));
+        }
+        event.insert("questions".into(), request.questions.clone());
         if let Some(metadata) = &request.metadata {
             event.insert("metadata".into(), metadata.clone());
         }

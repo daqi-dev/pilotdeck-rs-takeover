@@ -1,0 +1,1111 @@
+{
+ "name": "sdk-config-validate",
+ "about": "submit_turn.sdkSessionConfig 的形状校验（InProcessGateway.ts validateSdkSessionConfig）：逐个字段的非法值各一轮，错误码、文案、先后顺序；旧字段 sdkPermissionMode 折进 permissionMode 后同样校验；sdkSessionConfig 为 null 时按没带处理，正常跑一轮。",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Validate\"}"
+   }
+  },
+  {
+   "name": "turn",
+   "when": [
+    "hello"
+   ],
+   "reply": {
+    "text": "Hi."
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-0",
+    "channelKey": "test",
+    "runId": "run-v-0",
+    "message": "hello",
+    "sdkSessionConfig": "not an object"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-1",
+    "channelKey": "test",
+    "runId": "run-v-1",
+    "message": "hello",
+    "sdkSessionConfig": [
+     1
+    ]
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-2",
+    "channelKey": "test",
+    "runId": "run-v-2",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "systemPrompt": 3
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-3",
+    "channelKey": "test",
+    "runId": "run-v-3",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "persistSession": true
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-4",
+    "channelKey": "test",
+    "runId": "run-v-4",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "appendSystemPrompt": null
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-5",
+    "channelKey": "test",
+    "runId": "run-v-5",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "planModeInstructions": 1
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-6",
+    "channelKey": "test",
+    "runId": "run-v-6",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "outputStyle": "  "
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-7",
+    "channelKey": "test",
+    "runId": "run-v-7",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "permissionMode": "plan"
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-8",
+    "channelKey": "test",
+    "runId": "run-v-8",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "managedPermissions": {
+      "deny": [],
+      "ask": [],
+      "extra": 1
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-9",
+    "channelKey": "test",
+    "runId": "run-v-9",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "managedPermissions": {
+      "deny": [
+       " "
+      ],
+      "ask": []
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-10",
+    "channelKey": "test",
+    "runId": "run-v-10",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "managedPermissions": {
+      "deny": [],
+      "ask": [],
+      "defaultMode": "default"
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-11",
+    "channelKey": "test",
+    "runId": "run-v-11",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "managedModels": {
+      "allow": [
+       "openai"
+      ],
+      "deny": []
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-12",
+    "channelKey": "test",
+    "runId": "run-v-12",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "managedModels": {
+      "allow": [
+       "*",
+       "openai/*",
+       "a/b"
+      ],
+      "deny": [
+       "x y/z"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-13",
+    "channelKey": "test",
+    "runId": "run-v-13",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "includeHookEvents": "yes"
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-14",
+    "channelKey": "test",
+    "runId": "run-v-14",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "agentProgressSummaries": 1
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-15",
+    "channelKey": "test",
+    "runId": "run-v-15",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "forwardSubagentText": null
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-16",
+    "channelKey": "test",
+    "runId": "run-v-16",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "sandbox": {}
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-17",
+    "channelKey": "test",
+    "runId": "run-v-17",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "sandbox": {
+      "type": "tool_policy",
+      "network": "allow"
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-18",
+    "channelKey": "test",
+    "runId": "run-v-18",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "sandbox": {
+      "filesystem": "read_only",
+      "gpu": "deny"
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-19",
+    "channelKey": "test",
+    "runId": "run-v-19",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "userDialogKinds": []
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-20",
+    "channelKey": "test",
+    "runId": "run-v-20",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "input",
+      "input"
+     ]
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-21",
+    "channelKey": "test",
+    "runId": "run-v-21",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "voice"
+     ]
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-22",
+    "channelKey": "test",
+    "runId": "run-v-22",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "userDialogKinds": "input"
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-23",
+    "channelKey": "test",
+    "runId": "run-v-23",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "taskBudget": {
+      "total": 0
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-24",
+    "channelKey": "test",
+    "runId": "run-v-24",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "taskBudget": null
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-25",
+    "channelKey": "test",
+    "runId": "run-v-25",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "taskBudget": {
+      "total": 1,
+      "scope": "global"
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-26",
+    "channelKey": "test",
+    "runId": "run-v-26",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "taskBudget": {
+      "total": 1,
+      "projectRetentionMs": 1.5,
+      "scope": "project"
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-27",
+    "channelKey": "test",
+    "runId": "run-v-27",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "taskBudget": {
+      "total": 1,
+      "projectRetentionMs": 10
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-28",
+    "channelKey": "test",
+    "runId": "run-v-28",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "settings": []
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-29",
+    "channelKey": "test",
+    "runId": "run-v-29",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "settings": {
+      "agent": {},
+      "ui": {}
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-30",
+    "channelKey": "test",
+    "runId": "run-v-30",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "settings": {
+      "agent": {
+       "temperature": 1
+      }
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-31",
+    "channelKey": "test",
+    "runId": "run-v-31",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "settings": {
+      "agent": {
+       "model": ""
+      }
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-32",
+    "channelKey": "test",
+    "runId": "run-v-32",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "settings": {
+      "agent": {
+       "fallbackModel": 3
+      }
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-33",
+    "channelKey": "test",
+    "runId": "run-v-33",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "settings": {
+      "agent": {
+       "maxContextTokens": 1.5
+      }
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-34",
+    "channelKey": "test",
+    "runId": "run-v-34",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "settings": {
+      "agent": {
+       "maxOutputTokens": 0
+      }
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-35",
+    "channelKey": "test",
+    "runId": "run-v-35",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "settings": {
+      "agent": {
+       "thinking": {
+        "enabled": "yes"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-36",
+    "channelKey": "test",
+    "runId": "run-v-36",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "settings": {
+      "agent": {
+       "thinking": {
+        "enabled": true,
+        "budgetTokens": -1
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-37",
+    "channelKey": "test",
+    "runId": "run-v-37",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "settings": {
+      "agent": {
+       "subagents": {
+        "maxDepth": -1
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-38",
+    "channelKey": "test",
+    "runId": "run-v-38",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "settings": {
+      "agent": {
+       "subagents": {
+        "default": " "
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-39",
+    "channelKey": "test",
+    "runId": "run-v-39",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "settingSources": []
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-40",
+    "channelKey": "test",
+    "runId": "run-v-40",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "user",
+      "user"
+     ]
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-41",
+    "channelKey": "test",
+    "runId": "run-v-41",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "cloud"
+     ]
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-42",
+    "channelKey": "test",
+    "runId": "run-v-42",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "additionalWorkingDirectories": [
+      "relative/dir"
+     ]
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-43",
+    "channelKey": "test",
+    "runId": "run-v-43",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "additionalWorkingDirectories": "/abs"
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-44",
+    "channelKey": "test",
+    "runId": "run-v-44",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "toolAliases": {
+      "a": ""
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-45",
+    "channelKey": "test",
+    "runId": "run-v-45",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "toolAliases": {
+      " ": "b"
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-46",
+    "channelKey": "test",
+    "runId": "run-v-46",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "toolAliases": []
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-47",
+    "channelKey": "test",
+    "runId": "run-v-47",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "outputFormat": {
+      "type": "text"
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-48",
+    "channelKey": "test",
+    "runId": "run-v-48",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "outputFormat": {
+      "type": "json_schema",
+      "schema": {
+       "type": 3
+      }
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-49",
+    "channelKey": "test",
+    "runId": "run-v-49",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "outputFormat": {
+      "type": "json_schema",
+      "schema": {
+       "properties": {
+        "a": {
+         "required": "x"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-50",
+    "channelKey": "test",
+    "runId": "run-v-50",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "agents": []
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-51",
+    "channelKey": "test",
+    "runId": "run-v-51",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "agents": {
+      "a": {
+       "description": "d"
+      }
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-52",
+    "channelKey": "test",
+    "runId": "run-v-52",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "agents": {
+      "": {
+       "description": "d",
+       "prompt": "p"
+      }
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-53",
+    "channelKey": "test",
+    "runId": "run-v-53",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "agents": {
+      "a": {
+       "description": "d",
+       "prompt": "p",
+       "maxTurns": 0
+      }
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-54",
+    "channelKey": "test",
+    "runId": "run-v-54",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "agents": {
+      "a": {
+       "description": "d",
+       "prompt": "p",
+       "effort": "max"
+      }
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-55",
+    "channelKey": "test",
+    "runId": "run-v-55",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "agents": {
+      "a": {
+       "description": "d",
+       "prompt": "p",
+       "observer": "a"
+      }
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-56",
+    "channelKey": "test",
+    "runId": "run-v-56",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "agents": {
+      "a": {
+       "description": "d",
+       "prompt": "p",
+       "observer": "b"
+      }
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-57",
+    "channelKey": "test",
+    "runId": "run-v-57",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "agents": {
+      "a": {
+       "description": "d",
+       "prompt": "p",
+       "observerMessage": "hi"
+      }
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-58",
+    "channelKey": "test",
+    "runId": "run-v-58",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "skills": []
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-59",
+    "channelKey": "test",
+    "runId": "run-v-59",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "skills": [
+      "a",
+      "a"
+     ]
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-60",
+    "channelKey": "test",
+    "runId": "run-v-60",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "skills": "some"
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-61",
+    "channelKey": "test",
+    "runId": "run-v-61",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "plugins": [
+      {
+       "type": "local",
+       "path": "rel"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-62",
+    "channelKey": "test",
+    "runId": "run-v-62",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "plugins": [
+      {
+       "type": "remote",
+       "path": "/abs"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-63",
+    "channelKey": "test",
+    "runId": "run-v-63",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "plugins": [
+      {
+       "type": "local",
+       "path": "/a"
+      },
+      {
+       "type": "local",
+       "path": "/a"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-64",
+    "channelKey": "test",
+    "runId": "run-v-64",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "hooks": []
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-65",
+    "channelKey": "test",
+    "runId": "run-v-65",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "hooks": {
+      "url": "not a url",
+      "events": {}
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-66",
+    "channelKey": "test",
+    "runId": "run-v-66",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "hooks": {
+      "url": "ftp://example.invalid/x",
+      "events": {}
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-67",
+    "channelKey": "test",
+    "runId": "run-v-67",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "hooks": {
+      "url": "http://127.0.0.1:1/h",
+      "headers": {
+       "a": 1
+      },
+      "events": {}
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-68",
+    "channelKey": "test",
+    "runId": "run-v-68",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "hooks": {
+      "url": "http://127.0.0.1:1/h",
+      "events": {
+       "NotAnEvent": []
+      }
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-69",
+    "channelKey": "test",
+    "runId": "run-v-69",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "hooks": {
+      "url": "http://127.0.0.1:1/h",
+      "events": {
+       "PreToolUse": [
+        {
+         "timeout": 0
+        }
+       ]
+      }
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-70",
+    "channelKey": "test",
+    "runId": "run-v-70",
+    "message": "hello",
+    "sdkSessionConfig": {
+     "hooks": {
+      "url": "http://127.0.0.1:1/h"
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-mode",
+    "channelKey": "test",
+    "runId": "run-v-mode",
+    "message": "hello",
+    "sdkPermissionMode": "bogus"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-v-null",
+    "channelKey": "test",
+    "runId": "run-v-null",
+    "message": "hello",
+    "sdkSessionConfig": null
+   },
+   "timeout": 20000
+  }
+ ]
+}

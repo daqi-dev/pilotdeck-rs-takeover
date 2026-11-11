@@ -222,6 +222,12 @@ impl GatewayUserDialogBus {
         }
     }
 
+    /// Attaches the renderer notification sink of a live bus
+    /// (`onUserDialogChange`). Availability does not change.
+    pub fn set_observer(&mut self, observer: Arc<dyn Fn(JsValue) -> Result<()> + Send + Sync>) {
+        self.on_change = Some(observer);
+    }
+
     /// Returns whether the bus may serve the four methods.
     ///
     /// Unconnected semantics differ by method:

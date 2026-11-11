@@ -65,6 +65,8 @@ pub struct ToolAudit(pub Arc<dyn ToolAuditRecorder>);
 pub struct ElicitationRequest {
     pub tool_call_id: JsString,
     pub tool_name: JsString,
+    /// `previewFormat` (`"html"` / `"markdown"`), when the tool sets one.
+    pub preview_format: Option<JsString>,
     pub questions: JsValue,
     pub metadata: Option<JsValue>,
 }

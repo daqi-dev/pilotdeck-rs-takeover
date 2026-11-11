@@ -14,7 +14,10 @@ use std::collections::HashMap;
 struct Inner {
     permission_modes: HashMap<JsString, JsString>,
     thinking: HashMap<JsString, JsValue>,
-    output_styles: HashMap<JsString, JsString>,
+    /// `sdkSessionConfigs`: the session's whole SDK config. The output-style
+    /// selection is its `outputStyle` field, as in the baseline, so a later
+    /// `sdkSessionConfig` replaces a selection made by `set_output_style`.
+    sdk_configs: HashMap<JsString, JsValue>,
     /// `sdkSessionConfigs` membership with its `sdkSessionProjects` root:
     /// the sessions `reloadOutputStylesForSdk` closes
     /// (ProjectRuntimeRegistry.ts:1111-1121).
@@ -187,20 +190,50 @@ impl SessionOverrides {
             .cloned()
     }
 
+    /// `setOutputStyleForSdk`: `{ ...previous, outputStyle: name }`.
     pub fn set_output_style(&self, key: &JsString, name: JsString) {
-        self.inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .output_styles
-            .insert(key.clone(), name);
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut next = inner
+            .sdk_configs
+            .get(key)
+            .and_then(JsValue::as_object)
+            .cloned()
+            .unwrap_or_default();
+        next.insert("outputStyle".into(), JsValue::String(name));
+        inner.sdk_configs.insert(key.clone(), JsValue::Object(next));
     }
 
+    /// `setOutputStyleForSdk(null)`: `{ ...previous }` without `outputStyle`.
     pub fn clear_output_style(&self, key: &JsString) {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut next = pilotdeck_protocol::JsObject::new();
+        if let Some(previous) = inner.sdk_configs.get(key).and_then(JsValue::as_object) {
+            for (name, value) in previous.entries() {
+                if !name.equals_str("outputStyle") {
+                    next.insert(name.clone(), value.clone());
+                }
+            }
+        }
+        inner.sdk_configs.insert(key.clone(), JsValue::Object(next));
+    }
+
+    /// `sdkSessionConfigs.get(key)`.
+    pub fn sdk_config(&self, key: &JsString) -> Option<JsValue> {
         self.inner
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .output_styles
-            .remove(key);
+            .sdk_configs
+            .get(key)
+            .cloned()
+    }
+
+    /// `sdkSessionConfigs.set(key, config)`.
+    pub fn set_sdk_config(&self, key: &JsString, config: JsValue) {
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .sdk_configs
+            .insert(key.clone(), config);
     }
 
     /// `sdkSessionConfigs.set(key, ...)` + `sdkSessionProjects.set(key, root)`.
@@ -227,8 +260,10 @@ impl SessionOverrides {
         self.inner
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .output_styles
+            .sdk_configs
             .get(key)
+            .and_then(|config| config.get("outputStyle"))
+            .and_then(JsValue::as_string)
             .cloned()
     }
 }

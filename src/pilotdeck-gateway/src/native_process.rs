@@ -43,6 +43,7 @@ mod requests;
 // options over the same assembly and listener the `--native` entry uses.
 mod server;
 pub use server::{DEFAULT_PORT, Listening, ServerOptions, parse_port, serve};
+mod sdk_config;
 mod services;
 mod session_archive;
 mod session_fork;
