@@ -1,0 +1,53 @@
+{
+  "name": "interaction-reconnect",
+  "about": "reconnect_interaction：没有挂起请求时的首次绑定、带不匹配的 previousBinding；轮次挂在权限询问上时断开连接，重连后不带 / 带错误的 previousBinding 重新挂接、权限列表、同会话再提交。带正确 previousBinding 的成功路径需要采集器能跨步骤引用上一步响应里的字段，见报告。",
+  "provider": [
+    {
+      "name": "title",
+      "when": ["Generate a concise title"],
+      "reply": { "text": "{\"title\": \"Reconnect run\"}" }
+    },
+    {
+      "name": "turn-2",
+      "when": ["turn-2:"],
+      "reply": { "text": "Done 2." }
+    },
+    {
+      "name": "turn-1-after-tool",
+      "when": ["turn-1:", "\"tool_call_id\":\"call_bbx_1\""],
+      "reply": { "text": "Done 1." }
+    },
+    {
+      "name": "turn-1",
+      "when": ["turn-1:"],
+      "reply": { "tool": { "id": "call_bbx_1", "name": "bash", "arguments": { "command": "echo needs-permission > made.txt" } } }
+    }
+  ],
+  "steps": [
+    { "ws": "reconnect_interaction", "params": { "sessionKey": "s-bbx-1" } },
+    { "ws": "reconnect_interaction", "params": { "sessionKey": "s-bbx-1", "previousBinding": { "connectionId": "not-a-connection", "generation": 1 } } },
+    { "ws": "reconnect_interaction", "params": {} },
+    {
+      "ws": "submit_turn",
+      "params": { "sessionKey": "s-bbx-1", "channelKey": "test", "runId": "run-bbx-1", "message": "turn-1: ask" },
+      "timeout": 3000,
+      "expectTimeout": true
+    },
+    { "ws": "permission_list", "params": { "sessionKey": "s-bbx-1" } },
+    { "disconnect": true },
+    { "sleep": 500 },
+    { "connect": true },
+    { "ws": "permission_list", "params": { "sessionKey": "s-bbx-1" } },
+    { "ws": "active_turn_snapshot", "params": { "sessionKey": "s-bbx-1", "includeEvents": false } },
+    { "ws": "reconnect_interaction", "params": { "sessionKey": "s-bbx-1", "previousBinding": { "connectionId": "not-a-connection", "generation": 1 } } },
+    {
+      "ws": "submit_turn",
+      "params": { "sessionKey": "s-bbx-1", "channelKey": "test", "runId": "run-bbx-2", "message": "turn-2: again" },
+      "timeout": 5000
+    },
+    { "ws": "reconnect_interaction", "params": { "sessionKey": "s-bbx-1" } },
+    { "ws": "permission_list", "params": { "sessionKey": "s-bbx-1" } },
+    { "ws": "abort_turn", "params": { "sessionKey": "s-bbx-1" } },
+    { "ws": "run_get", "params": { "sessionKey": "s-bbx-1", "runId": "run-bbx-1" } }
+  ]
+}

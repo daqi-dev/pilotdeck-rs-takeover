@@ -1,0 +1,88 @@
+{
+  "name": "turn-abort",
+  "about": "abort_turn 与 active_turn_snapshot：没有进行中的轮次时两者的回答；轮次进行中（bash sleep 期间）取快照；轮次结束后的终态快照（含 includeEvents:false）；runId 不匹配的中止不影响进行中的轮次；轮次进行中中止，中止后的快照、重复中止、会话记录、发给 provider 的下一轮请求。每轮用不同会话，避免 provider 规则被历史消息误命中。",
+  "provider": [
+    {
+      "name": "title",
+      "when": ["Generate a concise title"],
+      "reply": { "text": "{\"title\": \"Abort run\"}" }
+    },
+    {
+      "name": "turn-4",
+      "when": ["turn-4:"],
+      "reply": { "text": "Done 4." }
+    },
+    {
+      "name": "turn-3-after-tool",
+      "when": ["turn-3:", "\"tool_call_id\":\"call_bbx_3\""],
+      "reply": { "text": "Done 3." }
+    },
+    {
+      "name": "turn-3",
+      "when": ["turn-3:"],
+      "reply": { "tool": { "id": "call_bbx_3", "name": "bash", "arguments": { "command": "sleep 3; echo slept-3" } } }
+    },
+    {
+      "name": "turn-2-after-tool",
+      "when": ["turn-2:", "\"tool_call_id\":\"call_bbx_2\""],
+      "reply": { "text": "Done 2." }
+    },
+    {
+      "name": "turn-2",
+      "when": ["turn-2:"],
+      "reply": { "tool": { "id": "call_bbx_2", "name": "bash", "arguments": { "command": "sleep 2; echo slept-2" } } }
+    },
+    {
+      "name": "turn-1-after-tool",
+      "when": ["turn-1:", "\"tool_call_id\":\"call_bbx_1\""],
+      "reply": { "text": "Done 1." }
+    },
+    {
+      "name": "turn-1",
+      "when": ["turn-1:"],
+      "reply": { "tool": { "id": "call_bbx_1", "name": "bash", "arguments": { "command": "sleep 2; echo slept-1" } } }
+    }
+  ],
+  "steps": [
+    { "ws": "abort_turn", "params": { "sessionKey": "s-bbx-1" } },
+    { "ws": "active_turn_snapshot", "params": { "sessionKey": "s-bbx-1" } },
+    { "ws": "set_permission_mode", "params": { "sessionKey": "s-bbx-1", "mode": "bypassPermissions" } },
+    {
+      "ws": "submit_turn",
+      "params": { "sessionKey": "s-bbx-1", "channelKey": "test", "runId": "run-bbx-1", "message": "turn-1: sleep a bit" },
+      "answer": [
+        { "on": { "type": "tool_call_started" }, "ws": "active_turn_snapshot", "params": { "sessionKey": "s-bbx-1" }, "count": 1 }
+      ],
+      "timeout": 20000
+    },
+    { "ws": "active_turn_snapshot", "params": { "sessionKey": "s-bbx-1" } },
+    { "ws": "active_turn_snapshot", "params": { "sessionKey": "s-bbx-1", "includeEvents": false } },
+    { "ws": "set_permission_mode", "params": { "sessionKey": "s-bbx-2", "mode": "bypassPermissions" } },
+    {
+      "ws": "submit_turn",
+      "params": { "sessionKey": "s-bbx-2", "channelKey": "test", "runId": "run-bbx-2", "message": "turn-2: sleep a bit" },
+      "answer": [
+        { "on": { "type": "tool_call_started" }, "ws": "abort_turn", "params": { "sessionKey": "s-bbx-2", "runId": "run-other" }, "count": 1 }
+      ],
+      "timeout": 20000
+    },
+    { "ws": "set_permission_mode", "params": { "sessionKey": "s-bbx-3", "mode": "bypassPermissions" } },
+    {
+      "ws": "submit_turn",
+      "params": { "sessionKey": "s-bbx-3", "channelKey": "test", "runId": "run-bbx-3", "message": "turn-3: sleep then get aborted" },
+      "answer": [
+        { "on": { "type": "tool_call_started" }, "ws": "abort_turn", "params": { "sessionKey": "s-bbx-3", "runId": "run-bbx-3" }, "count": 1 }
+      ],
+      "timeout": 20000
+    },
+    { "ws": "active_turn_snapshot", "params": { "sessionKey": "s-bbx-3" } },
+    { "ws": "abort_turn", "params": { "sessionKey": "s-bbx-3", "runId": "run-bbx-3" } },
+    { "sleep": 3500 },
+    {
+      "ws": "submit_turn",
+      "params": { "sessionKey": "s-bbx-3", "channelKey": "test", "runId": "run-bbx-4", "message": "turn-4: after abort" },
+      "timeout": 20000
+    },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-bbx-3" } }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "name": "permission-grant-session",
+  "about": "grant_session_permission：空条目、带模式的条目、整工具条目的返回；授予 bash 之后默认权限模式下的 bash 不再询问（若仍询问则由 answer 放行，差异照常记录）；另一会话不受影响。",
+  "provider": [
+    {
+      "name": "title",
+      "when": ["Generate a concise title"],
+      "reply": { "text": "{\"title\": \"Grant run\"}" }
+    },
+    {
+      "name": "turn-after-tool",
+      "when": ["\"tool_call_id\":\"call_bbx_1\""],
+      "reply": { "text": "Done." }
+    },
+    {
+      "name": "turn",
+      "when": ["turn-1:"],
+      "reply": { "tool": { "id": "call_bbx_1", "name": "bash", "arguments": { "command": "echo granted" } } }
+    }
+  ],
+  "steps": [
+    { "ws": "grant_session_permission", "params": { "sessionKey": "s-bbx-1", "entry": "" } },
+    { "ws": "grant_session_permission", "params": { "sessionKey": "s-bbx-1", "entry": "Bash(git status:*)" } },
+    { "ws": "grant_session_permission", "params": { "sessionKey": "s-bbx-1", "entry": "write_file:notes/*" } },
+    { "ws": "grant_session_permission", "params": { "sessionKey": "s-bbx-1", "entry": "bash" } },
+    {
+      "ws": "submit_turn",
+      "params": { "sessionKey": "s-bbx-1", "channelKey": "test", "message": "turn-1: run it" },
+      "answer": [
+        { "on": { "type": "permission_request" }, "ws": "permission_decide", "params": { "sessionKey": "s-bbx-1", "requestId": "{event.requestId}", "decision": "allow" } }
+      ],
+      "timeout": 15000
+    },
+    {
+      "ws": "submit_turn",
+      "params": { "sessionKey": "s-bbx-2", "channelKey": "test", "message": "turn-1: run it elsewhere" },
+      "answer": [
+        { "on": { "type": "permission_request" }, "ws": "permission_decide", "params": { "sessionKey": "s-bbx-2", "requestId": "{event.requestId}", "decision": "allow" } }
+      ],
+      "timeout": 15000
+    }
+  ]
+}

@@ -1,0 +1,59 @@
+{
+  "name": "user-dialog",
+  "about": "user_dialog_*：SDK 会话配置打开 confirm 对话框后，request_user_confirmation 发出 user_dialog_request；轮次中用 user_dialog_respond 回答；另一轮在对话框挂起时 user_dialog_list 看到它，之后对未知 requestId 的 claim / release / respond、各参数校验，中止轮次后列表为空。claim / release 已挂起对话框的成功路径需要采集器能在一个事件上依次发多个请求或跨步骤引用事件字段，见报告。",
+  "provider": [
+    {
+      "name": "title",
+      "when": ["Generate a concise title"],
+      "reply": { "text": "{\"title\": \"Dialog run\"}" }
+    },
+    {
+      "name": "turn-2",
+      "when": ["turn-2:"],
+      "reply": { "tool": { "id": "call_bbx_2", "name": "request_user_confirmation", "arguments": { "prompt": "Wait for me?" } } }
+    },
+    {
+      "name": "turn-1-after-tool",
+      "when": ["turn-1:", "\"tool_call_id\":\"call_bbx_1\""],
+      "reply": { "text": "Done 1." }
+    },
+    {
+      "name": "turn-1",
+      "when": ["turn-1:"],
+      "reply": { "tool": { "id": "call_bbx_1", "name": "request_user_confirmation", "arguments": { "prompt": "Proceed?", "confirmLabel": "Go", "defaultValue": true } } }
+    }
+  ],
+  "steps": [
+    { "ws": "user_dialog_list", "params": { "sessionKey": "s-bbx-1" } },
+    {
+      "ws": "submit_turn",
+      "params": { "sessionKey": "s-bbx-1", "channelKey": "test", "runId": "run-bbx-1", "message": "turn-1: confirm", "sdkSessionConfig": { "userDialogKinds": ["confirm"] } },
+      "answer": [
+        { "on": { "type": "user_dialog_request" }, "ws": "user_dialog_respond", "params": { "sessionKey": "s-bbx-1", "requestId": "{event.requestId}", "result": { "behavior": "answered", "value": true } }, "count": 1 }
+      ],
+      "timeout": 20000
+    },
+    {
+      "ws": "submit_turn",
+      "params": { "sessionKey": "s-bbx-2", "channelKey": "test", "runId": "run-bbx-2", "message": "turn-2: confirm and wait", "sdkSessionConfig": { "userDialogKinds": ["confirm"] } },
+      "answer": [
+        { "on": { "type": "user_dialog_request" }, "ws": "user_dialog_list", "params": { "sessionKey": "s-bbx-2" }, "count": 1 }
+      ],
+      "timeout": 3000,
+      "expectTimeout": true
+    },
+    { "ws": "user_dialog_claim", "params": { "sessionKey": "s-bbx-2", "requestId": "no-such-request" } },
+    { "ws": "user_dialog_claim", "params": { "sessionKey": "s-bbx-2", "requestId": "no-such-request", "ttlMs": 10 } },
+    { "ws": "user_dialog_claim", "params": { "sessionKey": "s-bbx-2", "requestId": "no-such-request", "leaseId": " " } },
+    { "ws": "user_dialog_release", "params": { "sessionKey": "s-bbx-2", "requestId": "no-such-request", "leaseId": "lease-x" } },
+    { "ws": "user_dialog_release", "params": { "sessionKey": "s-bbx-2", "requestId": "no-such-request" } },
+    { "ws": "user_dialog_respond", "params": { "sessionKey": "s-bbx-2", "requestId": "no-such-request", "result": { "behavior": "answered", "value": true } } },
+    { "ws": "user_dialog_respond", "params": { "sessionKey": "s-bbx-2", "requestId": "no-such-request", "result": { "behavior": "answered" } } },
+    { "ws": "user_dialog_respond", "params": { "sessionKey": "s-bbx-2", "requestId": "no-such-request", "result": { "behavior": "maybe" } } },
+    { "ws": "user_dialog_respond", "params": { "sessionKey": "s-bbx-2", "requestId": "no-such-request", "result": { "behavior": "cancelled", "reason": 3 } } },
+    { "ws": "user_dialog_respond", "params": { "sessionKey": "s-bbx-2", "requestId": "no-such-request", "leaseId": "", "result": { "behavior": "cancelled" } } },
+    { "ws": "abort_turn", "params": { "sessionKey": "s-bbx-2", "runId": "run-bbx-2" } },
+    { "ws": "user_dialog_list", "params": { "sessionKey": "s-bbx-2" } },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-bbx-1" } }
+  ]
+}

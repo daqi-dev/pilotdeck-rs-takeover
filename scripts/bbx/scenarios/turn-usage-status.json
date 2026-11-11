@@ -1,0 +1,48 @@
+{
+  "name": "turn-usage-status",
+  "about": "usage_snapshot / model_usage_snapshot：没有轮次时（项目级、未知会话）与一轮对话之后（会话级、项目级）；record_agent_status_message：给已有会话追加状态记录、给不存在的会话写、之后读会话消息。",
+  "provider": [
+    {
+      "name": "title",
+      "when": ["Generate a concise title"],
+      "reply": { "text": "{\"title\": \"Usage run\"}" }
+    },
+    {
+      "name": "turn-1",
+      "when": ["turn-1:"],
+      "reply": { "text": "Done 1." }
+    }
+  ],
+  "steps": [
+    { "ws": "usage_snapshot", "params": {} },
+    { "ws": "usage_snapshot", "params": { "sessionKey": "s-bbx-1" } },
+    { "ws": "model_usage_snapshot", "params": {} },
+    { "ws": "model_usage_snapshot", "params": { "sessionKey": "s-bbx-1" } },
+    {
+      "ws": "submit_turn",
+      "params": { "sessionKey": "s-bbx-1", "channelKey": "test", "runId": "run-bbx-1", "message": "turn-1: hello" },
+      "timeout": 20000
+    },
+    { "sleep": 300 },
+    { "ws": "usage_snapshot", "params": { "sessionKey": "s-bbx-1" } },
+    { "ws": "usage_snapshot", "params": {} },
+    { "ws": "usage_snapshot", "params": { "sessionKey": "s-bbx-other" } },
+    { "ws": "model_usage_snapshot", "params": { "sessionKey": "s-bbx-1" } },
+    { "ws": "model_usage_snapshot", "params": {} },
+    {
+      "ws": "record_agent_status_message",
+      "params": { "sessionKey": "s-bbx-1", "turnId": "run-bbx-1", "status": { "event": "retry", "kind": "info", "text": "Retrying soon", "detail": { "attempt": 1 } } }
+    },
+    {
+      "ws": "record_agent_status_message",
+      "params": { "sessionKey": "s-bbx-new", "turnId": "turn-x", "status": { "event": "note", "kind": "warning", "text": "Standalone status" } }
+    },
+    { "ws": "record_agent_status_message", "params": { "sessionKey": null } },
+    { "ws": "record_agent_status_message", "params": { "sessionKey": 5 } },
+    { "ws": "record_agent_status_message", "params": { "sessionKey": "s-bbx-empty" } },
+    { "ws": "record_agent_status_message", "params": { "sessionKey": "s-bbx-1", "turnId": "run-bbx-1", "status": null } },
+    { "ws": "record_agent_status_message", "params": { "sessionKey": "s-bbx-new", "turnId": "turn-y", "status": "not-an-object" } },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-bbx-1" } },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-bbx-new" } }
+  ]
+}

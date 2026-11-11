@@ -1177,7 +1177,7 @@ async fn start_assembly(
                 }));
             }
             let replacement = Arc::new(ReplacementCoordinator::new(
-                Default::default(),
+                super::session_fork::storage(&options),
                 Arc::new(owner.clone()),
                 budget.as_millis() as u64,
                 None,

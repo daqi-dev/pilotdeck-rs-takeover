@@ -44,6 +44,8 @@ mod requests;
 mod server;
 pub use server::{DEFAULT_PORT, Listening, ServerOptions, parse_port, serve};
 mod services;
+mod session_archive;
+mod session_fork;
 mod session_overrides;
 // #1353 A8.5-pr2: the production switch faces over the real assembly.
 #[cfg(test)]

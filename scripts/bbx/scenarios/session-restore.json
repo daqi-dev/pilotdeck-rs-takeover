@@ -1,0 +1,39 @@
+{
+  "name": "session-restore",
+  "about": "restore_session_transcript：参数与归档校验（缺 sessionKey、格式不对、空消息、非法角色、标题过长），把一份带标题的可移植归档恢复成新会话（落盘、列出、读消息），对已有记录的会话再恢复被拒；不带标题的归档；之后在恢复出的会话上续一轮，比较发给 provider 的历史。",
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Restored\"}" } },
+    { "name": "main", "reply": { "text": "Continuing." } }
+  ],
+  "steps": [
+    { "ws": "restore_session_transcript", "params": {} },
+    { "ws": "restore_session_transcript", "params": { "sessionKey": "s-r1" } },
+    { "ws": "restore_session_transcript", "params": { "sessionKey": "s-r1", "archive": { "schemaVersion": 2, "format": "portable_text_messages", "messages": [] } } },
+    { "ws": "restore_session_transcript", "params": { "sessionKey": "s-r1", "archive": { "schemaVersion": 1, "format": "portable_text_messages", "messages": [] } } },
+    { "ws": "restore_session_transcript", "params": { "sessionKey": "s-r1", "archive": { "schemaVersion": 1, "format": "portable_text_messages", "messages": [{ "role": "system", "text": "x" }] } } },
+    { "ws": "restore_session_transcript", "params": { "sessionKey": "s-r1", "archive": { "schemaVersion": 1, "format": "portable_text_messages", "title": 5, "messages": [{ "role": "user", "text": "x" }] } } },
+    {
+      "ws": "restore_session_transcript",
+      "params": {
+        "sessionKey": "s-r1",
+        "archive": {
+          "schemaVersion": 1,
+          "format": "portable_text_messages",
+          "title": "Imported chat",
+          "messages": [
+            { "role": "user", "text": "What is two plus two?" },
+            { "role": "assistant", "text": "Four." },
+            { "role": "user", "text": "And times three?" },
+            { "role": "assistant", "text": "Twelve." }
+          ]
+        }
+      }
+    },
+    { "ws": "restore_session_transcript", "params": { "sessionKey": "s-r1", "archive": { "schemaVersion": 1, "format": "portable_text_messages", "messages": [{ "role": "user", "text": "again" }] } } },
+    { "ws": "restore_session_transcript", "params": { "sessionKey": "s-r2", "archive": { "schemaVersion": 1, "format": "portable_text_messages", "messages": [{ "role": "user", "text": "untitled" }] } } },
+    { "ws": "list_sessions", "params": {} },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-r1" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-r1", "channelKey": "test", "runId": "run-r1", "message": "Continue please" }, "timeout": 20000 },
+    { "ws": "restore_session_transcript", "params": { "sessionKey": "s-r1", "archive": { "schemaVersion": 1, "format": "portable_text_messages", "messages": [{ "role": "user", "text": "busy" }] } } }
+  ]
+}
