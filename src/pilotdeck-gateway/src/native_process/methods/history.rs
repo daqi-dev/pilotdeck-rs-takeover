@@ -2,7 +2,7 @@ use super::super::requests::Requests;
 use crate::runtime::{
     connection::{Call, RequestError},
     replacement::ReplacementError,
-    turn::read::{self, SessionHistoryReader},
+    turn::read,
 };
 use pilotdeck_protocol::JsValue;
 
@@ -55,26 +55,16 @@ impl Requests {
                     "restoreSessionTranscript",
                     "restore_session_transcript",
                 )),
-                "read_session_messages" => read::read_session_messages(
-                    &coordinator,
-                    None::<&dyn SessionHistoryReader>,
-                    &params,
-                )
-                .await
-                .map_err(|error| RequestError {
-                    code: error
-                        .code
-                        .unwrap_or_else(|| "gateway_request_failed".into()),
-                    message: error.message,
-                    details: None,
-                    validation: None,
-                }),
-                "read_subagent_messages" => Err(RequestError {
-                    code: "gateway_request_failed".into(),
-                    message: "read_subagent_messages is not configured. Wire `readSubagentMessages` via createLocalGateway.".into(),
-                    details: None,
-                    validation: None,
-                }),
+                "read_session_messages" => {
+                    let reader = super::history_read::HistoryReader::new(self);
+                    read::read_session_messages(&coordinator, Some(&reader), &params)
+                        .await
+                        .map_err(super::history_read::request_error)
+                }
+                "read_subagent_messages" => super::history_read::HistoryReader::new(self)
+                    .read_subagent(params)
+                    .await
+                    .map_err(super::history_read::request_error),
                 "fork_session" => replacement
                     .fork_session(params)
                     .await
