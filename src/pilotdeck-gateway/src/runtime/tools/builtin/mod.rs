@@ -16,6 +16,7 @@ pub mod mcp_resources;
 pub mod mcp_tool;
 pub mod read_file;
 pub mod read_skill;
+pub mod request_user;
 pub mod send_attachment;
 pub mod structured_output;
 pub mod subagent_continuation;

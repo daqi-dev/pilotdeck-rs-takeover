@@ -110,6 +110,12 @@ pub struct SessionTools {
     /// `SessionFileHistoryBundle`: the session's file-history store behind
     /// the write tools, recording its snapshots in the transcript.
     file_history: Arc<crate::storage::file_history::FileHistoryStore>,
+    /// `sdkSessionConfig.userDialogKinds` and the session's gateway
+    /// user-dialog channel: one `request_user_*` tool per enabled kind.
+    user_dialog: Option<(
+        Vec<&'static str>,
+        crate::user_dialog::GatewayUserDialogChannel,
+    )>,
 }
 
 /// `SessionFileHistoryBundle.compose`: backups under the session's
@@ -229,6 +235,7 @@ impl ForkSeed {
             fork: Some(scope),
             continuation: self.continuation,
             file_history: self.file_history,
+            user_dialog: None,
             elicitation_timeout: self.elicitation_timeout,
         }
     }
@@ -289,11 +296,25 @@ impl SessionTools {
             fork: None,
             continuation: None,
             file_history,
+            user_dialog: None,
             elicitation_timeout: super::permission_prompt::interaction_timeout(
                 env.get("PILOTDECK_ELICITATION_TIMEOUT_MS")
                     .map(|value| value.as_str()),
             ),
         })
+    }
+
+    /// The session's user-dialog tools (ProjectSessionRuntimeBundle.ts:
+    /// 328-338), bound to its gateway user-dialog channel.
+    pub(super) fn with_user_dialog(
+        mut self,
+        kinds: Vec<&'static str>,
+        channel: crate::user_dialog::GatewayUserDialogChannel,
+    ) -> Self {
+        if !kinds.is_empty() {
+            self.user_dialog = Some((kinds, channel));
+        }
+        self
     }
 
     /// The subagent family (`oneShotSubagentPort` and the `agent` tool).
@@ -460,6 +481,13 @@ impl SessionTools {
             &self.mcp,
             &self.world,
         );
+        if let Some((kinds, channel)) = &self.user_dialog {
+            for tool in builtin::request_user::user_dialog_tools(kinds, channel) {
+                tools
+                    .register(tool)
+                    .expect("native user-dialog tool names are unique");
+            }
+        }
         // `createAgentTool({ maxSubagentDepth, subagentDepth })`: the tool
         // exists wherever the host can fork; its description names what the
         // next child may do under the depth cap.
