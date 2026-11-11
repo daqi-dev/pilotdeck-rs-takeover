@@ -2,7 +2,7 @@
 
 新会话先读这份，再读 `CLAUDE.md` 和 `.42cog/intent.md`，然后看 `git log`。不要往 `state/board.md` 追加；`state/` 下其余文件是上一轮流水线的记录，只当线索。
 
-最后更新：2026-11-11
+最后更新：2026-11-11（剩余工作估算）
 
 ## 现在由 Rust 承担并有证据的入口
 
@@ -41,9 +41,11 @@
 
 1. 入口：已提交（`pilotdeck server` 与基线同参数；Linux CI 全绿）。
 2. 多项目宿主与落盘布局：已提交。规则集中在 `native_process/projects.rs`：运行时路由是纯词法 `resolve(projectKey ?? pilot home)`；对话准入要求项目已登记（`projects/<id>/.cwd`），pilot home 免登记；gateway 自己从不登记项目。负控：把缺省项目改成 cwd，`turn-text` 报出 `sessions[0].cwd` 和 4 条落盘路径差异。
-3. 发给 provider 的请求与会话记录：两轮已提交。`turn-text` 到 SAME 还差 5 个工具，下一轮并行三件：宿主层权限询问 + 上面的零星差异 + `ask_user_question`；子代理运行时（`agent`、`subagent`、`send_message`）；`execute_code`。
+3. 发给 provider 的请求与会话记录：两轮已提交。第三批并行三件：宿主层权限询问 + 零星差异 + `ask_user_question`（7 个提交，未合并）；子代理运行时（`agent`、`subagent`、`send_message`，未提交）；`execute_code`（主任务已合并，见下；次任务刚开始）。三件都因额度中断过，改动在各自 worktree 里。
+4. 三个分支合并后、M1 收尾前：Rust 风险审查（见「剩余工作估算」）。
+5. 复核尺子：2026-11-11 Opus 5.5 主持期间给 `diff.mjs` 加了耗时归一化和 `execute_code` 随机路径段归一化。下一次由 Fable 主持时先独立复核：在 Rust 侧故意改坏耗时的小数位数和溢出路径前缀，确认对拍仍报出，再还原。
 
-并行做法：每个子代理一个 git worktree（`.claude/worktrees/`），自己的 `src/target`，在 worktree 里建 `resources/PilotDeck` 符号链接指向主检出的基线；bbx 靠独占锁排队。`negative_anchor_selfcheck` 在多个 worktree 并发时会卡住，让子代理跳过它，合并后在主检出单独跑。
+并行做法：每个子代理一个 git worktree（`.claude/worktrees/`），自己的 `src/target`，在 worktree 里建 `resources/PilotDeck` 符号链接指向主检出的基线；bbx 靠独占锁排队。`negative_anchor_selfcheck` 在多个 worktree 并发时会卡住，让子代理跳过它，合并后在主检出单独跑（2026-11-11 在 `7bdfa0781` 上单独跑：通过，103 秒）。
 
 M1 之后要回头处理的（入口那块发现的）：
 
@@ -70,11 +72,34 @@ M1 之后要回头处理的（入口那块发现的）：
   - `export_session_transcript`、`restore_session_transcript`、`fork_session`、`replace_last_turn`、`finalize_last_turn_replacement` 没做。
   - 投影归约器对畸形记录比基线宽（基线抛错丢投影，Rust 多数情况当不匹配）。
   - 项目级（`<项目>/.pilotdeck/`）的插件、skills、`mcp.json` 没有场景；MCP 工具的权限询问路径没覆盖。
+- `execute_code` 合并后（2026-11-11）的剩余差异：基线结果里的耗时（`duration_seconds`、`tool_call_log[].duration_ms`，也嵌在结果文本里）两次跑不同，4 个场景自比都不是 SAME，要先定尺子怎么处理；输出过长时溢出文件的路径不同（基线 `<ROOT>/tmp/pilotdeck-tool-output/<pid>/…`，Rust `<pilot home>/tool-results/…`），第二个溢出文件名也不同；RPC 回调写文件时 Rust 缺 `file_snapshot_recorded` 记录（文件历史，写工具共有的缺口）；`permissionMode` 和工具结果块键顺序归权限询问分支。
 - sidecar 找不到时的报错文案是 Rust 自己的，基线没有对应物（基线默认进程内跑循环）。
+
+## 剩余工作估算（2026-11-11）
+
+单位：**轮** = 一个子代理做一个连贯模块（约 1 小时实跑，加我复核合并）；**窗口** = 一个 5 小时额度窗口。实测速度：11-10 到 11-11 共 8 轮（入口、多项目、请求与记录、三个并行 ×2 批里已回报的 4 个半），三次撞额度（两次 5 小时上限、一次 Fable 周额度）；一个窗口大约撑 3 个并行子代理各 1 轮，即 **约 3 轮 / 窗口**。下表的轮数含复核返工，不含人的真实使用验收。
+
+| 范围 | 已完成 | 剩余 | 主要风险 | 估计 | 把握 |
+|---|---|---|---|---|---|
+| M1+M3 一轮对话与工具回路（进行中） | 入口 6 场景 SAME；多项目；请求头、能力列表、会话记录、投影、读模型；内置插件与 MCP；24/28 工具（含 `execute_code`） | 子代理运行时 3 个工具；权限询问分支收尾合并；文件历史快照记录（`file_snapshot_recorded`）；工具输出溢出文件路径；`bash` / 写改文件 / `web_fetch` / `task_*` 执行行为；全量摘要压缩；`scripts/parity` 53 场景重跑与负控 | 子代理运行时规模未知；基线耗时字段让工具场景自比不稳，需要先定尺子怎么处理 | 8–12 轮，3–4 窗口 | 中（有实测速度，子代理运行时是推测） |
+| Rust 风险审查（人 2026-11-11 同意） | — | 只审接手以来新写和新接线的代码（`git diff 9c0c5f9b8..HEAD`）：安全（`execute_code` 子进程与沙箱、权限询问放行、路径检查）、并发与资源（每会话 sidecar 泄漏、落盘前等 2 秒、冷 / 热标志、会话锁）、超时 / 断连 / 重启恢复。审查者只拿代码和基线对应位置，不看实现动机。放在本轮三个分支合并之后、M1 收尾之前 | 不用旧流水线的 `pdrs-review`（人 2026-11-11 明确：旧流程工具是噪声来源）。做法：每类风险一个普通子代理，每条发现必须附可复现证据（失败的测试、复现命令或对拍场景），只有观点没有复现的不进修复清单；由我逐条复现后再修 | 审 1–2 轮 + 修 1–2 轮，约 1 窗口 | 中 |
+| M2 会话域 | 列出、读、改名、打标、删除、关闭、读模型 | `export_session_transcript`、`restore_session_transcript`、`fork_session`、`replace_last_turn`、`finalize_last_turn_replacement`；多轮续接与重启恢复场景 | 归档格式要和基线字节一致 | 2–3 轮，约 1 窗口 | 中 |
+| M4 其余 method 族 | 空参数普查 101 个 method 里 82 个一致 | 空参数仍不一致的 19 个（`submit_turn`、`run_get`、`run_reattach`、`sop_*`、`record_agent_status_message`、`project_files_list` / `project_file_read`、`apply_flag_settings`、`update_settings`、`reload_output_styles`、`always_on_*` 三个及 M2 那 5 个）；其余族的正常路径只验证过空参数：设置与热重载、模型目录、MCP 四控、skills、cron、上传、快照、memory、后台任务、steer / interaction；server 启动流程缺口（全局代理、渠道、公共审批路由、`router/events.jsonl`、遥测、停机时有客户端连着） | 各族正常路径没有场景，实际差异量未知 | 8–14 轮，3–5 窗口 | 低（推测） |
+| M5 gateway HTTP | `/health`、`/auth/local-token` 已对拍 | 其余 10 条路由（`/api/module-host/*` 4 条现在 404）、静态资源、鉴权 | — | 2–3 轮，约 1 窗口 | 低 |
+| M6 CLI | 离线普查 25 条里 20 条一致 | 无参数默认对话、未知命令、`cron` 三条；`run` / `resume` / `sessions` / `settings` 对着 Rust server 的正常路径；`tui`（PTY）、`gateway setup`、`update`（mock） | `tui` 需要 PTY 采集，bbx 没有 | 4–6 轮，约 2 窗口 | 低 |
+| M7 退役 | — | 删代理模式与上游转发、删未接线代码、精简测试与 CI（旧 workflow 被 Python 守卫和 Rust 测试读取）、原版 `ui/server` 接 Rust gateway 的真实使用验收 | gateway 约 60 万行，删除面大；真实使用验收要人参与 | 3–5 轮，1–2 窗口，另加人的验收 | 低 |
+| 阶段 B `ui/server`（推迟） | — | 基线约 3.6 万行，245 处路由，WS 三类，SSE | 依赖 M7；规模大 | 15–30 轮，5–10 窗口 | 很低 |
+| 前端（Leptos，按计划 004） | `ui-rs/` 只有探针 | 全部业务页面与交互迁移、桌面壳 smoke、真人会话 | 未盘点；依赖 B | 未估（需要单独盘点） | — |
+
+合计（不含 B 和前端）：约 28–45 轮，**10–15 个窗口**。按每天 2–3 个窗口算约 4–7 天，前提是额度不再被周上限截断。最大的不确定是 M4：现在只有空参数普查，各族正常路径差多少要等写了场景才知道。
 
 ## 之后
 
 M2 会话域 → M3 工具回路（同时重跑 `scripts/parity` 的 53 场景并做负控）→ M4 其余 method 族 → M5 gateway HTTP → M6 CLI → M7 退役（删代理模式、删未接线代码、原版 `ui/server` 接 Rust gateway 实测）。完整计划和盘点见 `_tmp/20261110-inventory/REPORT.md`（不入库；丢了就按本文件重做盘点的相应部分）。
+
+## 原仓库的新提交与 PR（2026-11-11 查看）
+
+原仓库 `main` 在分叉后又合并了 134 个提交，另有 34 个未合并 PR，几乎都是旧流程的守卫、负控、账本和评审轮次，验收依据是证明不了 native 实现的 `gateway-parity`。不合并、不派子代理跟踪。做到对应模块时只读查一下它在该模块产品代码上的改动（`git fetch origin` 后 `git log origin/main -- <路径>`），有用就读懂后自己实现、用 bbx 验证。可能有参考价值的 PR：#2862（`export/restore_session_transcript`）、#2902（hooks 注册接线）、#2965（飞书 / 微信并发），以及 `main` 上 Slack 渠道约 770 行改动。不合入的：#2957（比基线更严，改变对外行为）、#2786（+222 万行草稿）。
 
 ## 人已定
 
@@ -95,6 +120,7 @@ M2 会话域 → M3 工具回路（同时重跑 `scripts/parity` 的 53 场景�
 | 2026-11-11 | 基线 bug 不照做：`rename_session` / `tag_session` 的记录接着会话记录链写（基线从 `sequence: 1`、`parentEntryId: null` 写起） | 实测基线改名后只要会话重新加载就报 `Session event sequence must increase strictly: received 1 after 1.`，会话永久开不了轮次，属于丢数据类 bug。登记在场景的 `accepted`（`rename-record-chain`），复现留在 `baseline-bug-rename-reload` |
 | 2026-11-11 | bbx 比较器：带名字的数组按名字对齐；`requestFingerprint` 归一化；场景可登记带原因的 `accepted` | 少一个工具不再表现为后面全部错位（`turn-text` 544 → 55，差异没有消失）；指纹在请求体逐字节相同时基线自比也不同；已接受差异需要一个每次打印的登记处 |
 | 2026-11-11 | Rust 新增环境变量 `PILOTDECK_BUNDLED_PLUGINS_DIR` | 基线的内置插件目录由安装位置决定，Rust 需要自己的打包布局；bbx 用它让 Rust 指向基线那份 |
+| 2026-11-11 | bbx 比较器加两类归一化：耗时（`duration_ms` / `duration_seconds` 的数值，保留小数位数）；基线 `execute_code` 的 mkdtemp 随机后缀和溢出目录里的进程号（只认这两个固定前缀） | 基线自比也不稳；只抹数值或随机段，格式和路径其余部分照比。`tool-execute-code-traceback` 自比仍有约 50 处：随机目录名进了 traceback 文本，token 估算随之差几个；`tool-execute-code` 自比剩 `fileSize` 1 处。这两处还没处理 |
 | 2026-11-10 | `scripts/parity`、`scripts/cli-parity` 暂留，用到时先做负控 | 静态看是真对拍，但我没跑过 |
 
 ## 停用的旧闸门

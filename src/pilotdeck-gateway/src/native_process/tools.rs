@@ -893,8 +893,12 @@ impl MutationRecorder for Durable {
 /// is not a catalog tool: it comes from the builtin `funasr` plugin's MCP
 /// server through the session MCP composition.)
 #[cfg_attr(not(test), allow(dead_code))]
-pub const BASELINE_TOOLS_NOT_PORTED: &[&str] =
-    &["agent", "execute_code", "send_message", "subagent"];
+#[rustfmt::skip] // one name per line: parallel branches each delete their own
+pub const BASELINE_TOOLS_NOT_PORTED: &[&str] = &[
+    "agent",
+    "send_message",
+    "subagent",
+];
 
 /// The session's share of the baseline's execution world
 /// (`createNodeExecutionWorldBundle`): what the builtin tools close over.
@@ -948,6 +952,11 @@ pub(super) fn native_tools(
     #[cfg(unix)]
     {
         builtins.extend(builtin::shell_tools());
+        // `createExecuteCodeTool({ webSearch })`: `web_search` is not
+        // registered by this process, so its helper is not offered either.
+        builtins.push(Arc::new(builtin::execute_code::ExecuteCodeTool::new(
+            builtin::execute_code::ExecuteCodeToolOptions { web_search: false },
+        )));
         builtins.extend(builtin::task::task_tools(Some(world.tasks.clone())));
     }
     builtins.push(Arc::new(builtin::web::fetch_tool::WebFetchTool::new(

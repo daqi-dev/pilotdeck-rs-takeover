@@ -1,0 +1,70 @@
+{
+  "name": "tool-execute-code-rpc-write",
+  "about": "execute_code 经 RPC 回调 write_file / read_file / edit_file / bash（bypassPermissions）：嵌套调用的权限审计记录与文件快照记录落盘，bash 失败转成 RuntimeError。",
+  "files": {
+    "proj/note.txt": "first line\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Tool run\"}"
+      }
+    },
+    {
+      "name": "turn-1-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "turn-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1",
+          "name": "execute_code",
+          "arguments": {
+            "code": "from pilotdeck_tools import write_file, read_file, edit_file, bash\nw = write_file('/private/tmp/pdrs-bbx/root/proj/made.txt', 'alpha\\nbeta\\n')\nprint(w['content'])\nr = read_file('/private/tmp/pdrs-bbx/root/proj/made.txt')\ne = edit_file('/private/tmp/pdrs-bbx/root/proj/made.txt', 'beta', 'gamma')\nprint(e['content'])\nb = bash('cat made.txt', workdir='/private/tmp/pdrs-bbx/root/proj')\nprint(b['content'])\ntry:\n    bash('exit 7')\nexcept RuntimeError as e:\n    print('caught:', e)\n"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-1: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-bbx-1"
+      }
+    }
+  ]
+}
