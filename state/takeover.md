@@ -71,27 +71,29 @@ M1 之后要回头处理的（入口那块发现的）：
 - `execute_code` 合并后（2026-11-11）的剩余差异：基线结果里的耗时（`duration_seconds`、`tool_call_log[].duration_ms`，也嵌在结果文本里）两次跑不同，4 个场景自比都不是 SAME，要先定尺子怎么处理；输出过长时溢出文件的路径不同（基线 `<ROOT>/tmp/pilotdeck-tool-output/<pid>/…`，Rust `<pilot home>/tool-results/…`），第二个溢出文件名也不同；RPC 回调写文件时 Rust 缺 `file_snapshot_recorded` 记录（文件历史，写工具共有的缺口）；`permissionMode` 和工具结果块键顺序归权限询问分支。
 - sidecar 找不到时的报错文案是 Rust 自己的，基线没有对应物（基线默认进程内跑循环）。
 
-## 剩余工作估算（2026-11-11）
+## 计划
 
-单位：**轮** = 一个子代理做一个连贯模块（约 1 小时实跑，加我复核合并）；**窗口** = 一个 5 小时额度窗口。实测速度：11-10 到 11-11 共 8 轮（入口、多项目、请求与记录、三个并行 ×2 批里已回报的 4 个半），三次撞额度（两次 5 小时上限、一次 Fable 周额度）；一个窗口大约撑 3 个并行子代理各 1 轮，即 **约 3 轮 / 窗口**。下表的轮数含复核返工，不含人的真实使用验收。
+进度不手写，以两条命令的输出为准：`node scripts/bbx/check.mjs`（场景 SAME 数）和 `node scripts/bbx/coverage.mjs`（101 个 gateway method 各有没有正常路径的场景、是不是 SAME）。2026-11-11：场景 57/64 SAME；method 有场景且全 SAME 20，有差异 4，未覆盖 77。
 
-| 范围 | 已完成 | 剩余 | 主要风险 | 估计 | 把握 |
-|---|---|---|---|---|---|
-| M1+M3 一轮对话与工具回路（进行中） | 入口 6 场景 SAME；多项目；请求头、能力列表、会话记录、投影、读模型；内置插件与 MCP；24/28 工具（含 `execute_code`） | 子代理运行时 3 个工具；权限询问分支收尾合并；文件历史快照记录（`file_snapshot_recorded`）；工具输出溢出文件路径；`bash` / 写改文件 / `web_fetch` / `task_*` 执行行为；全量摘要压缩；`scripts/parity` 53 场景重跑与注入错误检查 | 子代理运行时规模未知；基线耗时字段让工具场景自比不稳，需要先定尺子怎么处理 | 8–12 轮，3–4 窗口 | 中（有实测速度，子代理运行时是推测） |
-| Rust 风险审查（人 2026-11-11 同意） | — | 只审接手以来新写和新接线的代码（`git diff 9c0c5f9b8..HEAD`）：安全（`execute_code` 子进程与沙箱、权限询问放行、路径检查）、并发与资源（每会话 sidecar 泄漏、落盘前等 2 秒、冷 / 热标志、会话锁）、超时 / 断连 / 重启恢复。审查者只拿代码和基线对应位置，不看实现动机。放在本轮三个分支合并之后、M1 收尾之前 | 不用旧流水线的 `pdrs-review`（人 2026-11-11 明确：旧流程工具是噪声来源）。做法：每类风险一个普通子代理，每条发现必须附可复现证据（失败的测试、复现命令或对拍场景），只有观点没有复现的不进修复清单；由我逐条复现后再修 | 审 1–2 轮 + 修 1–2 轮，约 1 窗口 | 中 |
-| M2 会话域 | 列出、读、改名、打标、删除、关闭、读模型 | `export_session_transcript`、`restore_session_transcript`、`fork_session`、`replace_last_turn`、`finalize_last_turn_replacement`；多轮续接与重启恢复场景 | 归档格式要和基线字节一致 | 2–3 轮，约 1 窗口 | 中 |
-| M4 其余 method 族 | 空参数普查 101 个 method 里 82 个一致 | 空参数仍不一致的 19 个（`submit_turn`、`run_get`、`run_reattach`、`sop_*`、`record_agent_status_message`、`project_files_list` / `project_file_read`、`apply_flag_settings`、`update_settings`、`reload_output_styles`、`always_on_*` 三个及 M2 那 5 个）；其余族的正常路径只验证过空参数：设置与热重载、模型目录、MCP 四控、skills、cron、上传、快照、memory、后台任务、steer / interaction；server 启动流程缺口（全局代理、渠道、公共审批路由、`router/events.jsonl`、遥测、停机时有客户端连着） | 各族正常路径没有场景，实际差异量未知 | 8–14 轮，3–5 窗口 | 低（推测） |
-| M5 gateway HTTP | `/health`、`/auth/local-token` 已对拍 | 其余 10 条路由（`/api/module-host/*` 4 条现在 404）、静态资源、鉴权 | — | 2–3 轮，约 1 窗口 | 低 |
-| M6 CLI | 离线普查 25 条里 20 条一致 | 无参数默认对话、未知命令、`cron` 三条；`run` / `resume` / `sessions` / `settings` 对着 Rust server 的正常路径；`tui`（PTY）、`gateway setup`、`update`（mock） | `tui` 需要 PTY 采集，bbx 没有 | 4–6 轮，约 2 窗口 | 低 |
-| M7 退役 | — | 删代理模式与上游转发、删未接线代码、精简测试与 CI（旧 workflow 被 Python 守卫和 Rust 测试读取）、原版 `ui/server` 接 Rust gateway 的真实使用验收 | gateway 约 60 万行，删除面大；真实使用验收要人参与 | 3–5 轮，1–2 窗口，另加人的验收 | 低 |
-| 阶段 B `ui/server`（推迟） | — | 基线约 3.6 万行，245 处路由，WS 三类，SSE | 依赖 M7；规模大 | 15–30 轮，5–10 窗口 | 很低 |
-| 前端（Leptos，按计划 004） | `ui-rs/` 只有探针 | 全部业务页面与交互迁移、桌面壳 smoke、真人会话 | 未盘点；依赖 B | 未估（需要单独盘点） | — |
+下表只记工作包、依赖和现在谁在做。一个工作包「做完」= 它范围内的入口都有场景且 SAME（或差异已登记为已接受），四条命令通过，范围内的占位和代理路径已删。
 
-合计（不含 B 和前端）：约 28–45 轮，**10–15 个窗口**。按每天 2–3 个窗口算约 4–7 天，前提是额度不再被周上限截断。最大的不确定是 M4：现在只有空参数普查，各族正常路径差多少要等写了场景才知道。
+| # | 工作包 | 范围 | 依赖 | 状态 |
+|---|---|---|---|---|
+| P1 | 对话主干 | 一轮对话、28 个工具、权限询问、会话读取、子代理、插件 | — | 主体完成。剩：JS/TS / HTML / CSV 写后语法诊断；`web_fetch` 成功路径；`task_*` 真实 id 路径 |
+| P2 | 安全修复 | plan / ask 模式拦截、符号链接、`execute_code` 超时、token 接口 Host / Origin | P1 | 进行中（分支 `worktree-agent-a5b164055e58ead20`） |
+| P3 | method：轮次控制与运行记录 | abort / steer / run_* / user_dialog_* / fork / replace / export / restore / rewind 等约 24 个 | P1 | 进行中（`worktree-agent-a77e59246b587d509`，槽位 1） |
+| P4 | method：配置、模型、MCP、skills | model_* / settings / thinking / output style / skill_* / mcp_* / project_file* 等约 27 个 | P1 | 进行中（`worktree-agent-a05f5a750360a428d`，槽位 2） |
+| P5 | method：存储与自动化 | upload_* / memory_* / snapshot_* / native_archive_* / manager_* / sop_* / cron_* / always_on_* 约 25 个 | P1 | 未开始 |
+| P6 | gateway HTTP | 12 条路由（含公共审批、上传下载）、鉴权、SSE | P1；P5 的上传 | 未开始 |
+| P7 | CLI | 25 条命令（普查里 13 条未实现）、进程内模式的落盘 | P1；连 gateway 的命令依赖 P3–P5 | 未开始 |
+| P8 | 启动流程补齐 | 全局代理、配置热重载、渠道适配器、遥测、hooks / modules 配置、停机时有客户端连着 | P4 | 未开始 |
+| P9 | 其余风险审查 | 并发与资源、超时 / 断连 / 重启恢复（做法同安全审查：每条发现附可复现证据，对照基线） | P2–P5 合并后 | 未开始 |
+| P10 | 退役 | 删代理模式、未接线代码、旧测试装置；原版 `ui/server` 接 Rust gateway 实测；人参与的真实使用验收 | P1–P9 | 未开始 |
+| — | 阶段 B（`ui/server`）、前端 | 推迟，P10 之后再定 | P10 | 推迟 |
 
-## 之后
+并行规则：P3 / P4 / P5 / P6 / P7 互不依赖实现，可同时做；同时最多 3 个 Opus 子代理（额度宽裕时 4 个），各用一个 bbx 槽位（`BBX_SLOT`）；合并由主会话逐个做，合并后在主检出跑全量对拍和四条命令。给子代理的通用说明在会话的 scratchpad（`briefs/common.md`，仓库外；丢了就按 `CLAUDE.md` 和本文件重写）。
 
-M2 会话域 → M3 工具回路（同时重跑 `scripts/parity` 的 53 场景并先做注入错误检查）→ M4 其余 method 族 → M5 gateway HTTP → M6 CLI → M7 退役（删代理模式、删未接线代码、原版 `ui/server` 接 Rust gateway 实测）。完整计划和盘点见 `_tmp/20261110-inventory/REPORT.md`（不入库；丢了就按本文件重做盘点的相应部分）。
+速度参考：一个 Opus 子代理一轮 1–1.5 小时、约 40–60 万 token，能做完一个上面这样大小的工作包的大部分。
 
 ## 原仓库的新提交与 PR（2026-11-11 查看）
 
