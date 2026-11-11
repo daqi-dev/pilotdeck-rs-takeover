@@ -1539,14 +1539,12 @@ impl SubmitHostServices for Services {
                     .ok_or_else(|| failure("projectKey must be a valid path string."))?,
             ),
         };
-        // The composition does not expose the SDK/model setter yet. Refuse
-        // these before session admission instead of reporting a false selection.
-        for key in ["modelSelection", "modelOverride", "sdkConfig"] {
-            if input.get(key).is_some_and(|v| !v.is_undefined()) {
-                return Err(unavailable(
-                    "Per-turn model/SDK overrides are not installed in this isolated process.",
-                ));
-            }
+        // The composition does not expose the SDK setter yet. Refuse it
+        // before session admission instead of reporting a false selection.
+        if input.get("sdkConfig").is_some_and(|v| !v.is_undefined()) {
+            return Err(unavailable(
+                "Per-turn SDK overrides are not installed in this isolated process.",
+            ));
         }
         // When snapshots are enabled (--storage-root was supplied), resolve the
         // id exactly as the management snapshot route does
@@ -1807,6 +1805,14 @@ impl SubmitHostServices for Services {
         input: &'a JsValue,
     ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
         Box::pin(async move {
+            if let Some(turn) =
+                super::methods::config::turn_model_selection(input, &self.options.home, &self.env)
+                    .map_err(|e| {
+                    SubmitError::new(&e.code, String::from_utf16_lossy(e.message.units()))
+                })?
+            {
+                return Ok(turn);
+            }
             let metadata = crate::metadata::Metadata {
                 home: self.options.home.clone(),
                 cwd: std::path::PathBuf::new(),

@@ -356,7 +356,15 @@ impl SubmitHost for GatewaySubmitHost {
                 // organization turn limits, the client's value as given.
                 // `canPrompt: input.canPrompt, canElicit: input.canElicit`
                 // (InProcessGateway.ts:1563-1564), passed through as given.
-                for key in ["maxTurns", "maxBudgetUsd", "canPrompt", "canElicit"] {
+                // `modelSelection: input.modelSelection` (InProcessGateway.ts:
+                // 1534), already normalized: the accepted input records it.
+                for key in [
+                    "maxTurns",
+                    "maxBudgetUsd",
+                    "canPrompt",
+                    "canElicit",
+                    "modelSelection",
+                ] {
                     if let Some(value) = input
                         .get(key)
                         .filter(|value| !matches!(value, JsValue::Undefined))
@@ -371,6 +379,42 @@ impl SubmitHost for GatewaySubmitHost {
                     if let Some(mode) = mode {
                         fields.insert(key.into(), JsValue::String(mode));
                     }
+                }
+                // InProcessGateway.ts:1488-1494: the client's channel hints
+                // become synthetic user messages of this turn only
+                // (`...(syntheticMessages.length > 0 ? { syntheticMessages }
+                // : {})`). No trusted-context authorizer is wired here, so
+                // a turn carrying trustedContext was refused earlier.
+                if let JsValue::Array(hints) = field(input, "syntheticMessages")
+                    && !hints.is_empty()
+                {
+                    let messages = hints
+                        .iter()
+                        .map(|hint| {
+                            let purpose = match field(hint, "purpose") {
+                                JsValue::Null | JsValue::Undefined => "channel_hint".into(),
+                                purpose => purpose.clone(),
+                            };
+                            crate::metadata::object([
+                                ("role", "user".into()),
+                                (
+                                    "content",
+                                    JsValue::Array(vec![crate::metadata::object([
+                                        ("type", "text".into()),
+                                        ("text", field(hint, "text").clone()),
+                                    ])]),
+                                ),
+                                (
+                                    "metadata",
+                                    crate::metadata::object([
+                                        ("synthetic", JsValue::Bool(true)),
+                                        ("purpose", purpose),
+                                    ]),
+                                ),
+                            ])
+                        })
+                        .collect();
+                    fields.insert("syntheticMessages".into(), JsValue::Array(messages));
                 }
                 if let Some(model_override) = turn_model_override(&model_selection)? {
                     fields.insert("modelOverride".into(), model_override);

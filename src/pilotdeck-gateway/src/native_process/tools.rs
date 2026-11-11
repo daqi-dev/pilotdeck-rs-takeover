@@ -86,6 +86,11 @@ pub struct SessionTools {
     /// ask-mode gate and a fork's read-only inheritance read it from the
     /// per-turn config.
     run_mode: Arc<Mutex<Option<JsString>>>,
+    /// The last admitted turn's `permissionMode` / `basePermissionMode`
+    /// submit options (`applyAgentPermissionOverrides`,
+    /// agentLoopSidecarClient.ts:328), applied to the host-side permission
+    /// context when the turn's ports are built.
+    turn_permission: TurnPermission,
     /// Session-scoped execution world shared by every turn's tool registry,
     /// so a background task started in one turn is still there in the next.
     world: ExecutionWorld,
@@ -228,6 +233,7 @@ impl ForkSeed {
             mcp: self.mcp,
             permission_mode_source: None,
             run_mode,
+            turn_permission: Arc::default(),
             world: self.world,
             goal: Arc::default(),
             events: self.events,
@@ -290,6 +296,7 @@ impl SessionTools {
             )),
             permission_mode_source: None,
             run_mode,
+            turn_permission: Arc::default(),
             world,
             goal: Arc::default(),
             plan_files,
@@ -477,17 +484,59 @@ impl SessionTools {
         self
     }
 
-    /// `applyRunModeOverride` (agentLoopSidecarClient.ts:432-436): the sink
-    /// the live session calls with each admitted turn's `runMode`.
-    pub fn run_mode_override(&self) -> Arc<dyn Fn(Option<JsString>) + Send + Sync> {
-        let slot = self.run_mode.clone();
-        Arc::new(move |requested| {
-            let mut current = slot.lock().unwrap_or_else(|e| e.into_inner());
-            *current = Some(
-                requested
-                    .or_else(|| current.take())
-                    .unwrap_or_else(|| "agent".into()),
-            );
+    /// `applyRunModeOverride` / `applyAgentPermissionOverrides`
+    /// (agentLoopSidecarClient.ts:327-328, 432-436): the sink the live
+    /// session calls with each admitted turn's submit options.
+    pub fn turn_override(&self) -> crate::runtime::turn::live::TurnOverrideSink {
+        let run_mode = self.run_mode.clone();
+        let turn_permission = self.turn_permission.clone();
+        let permission = self.permission.clone();
+        Arc::new(move |options| {
+            let requested = options.get("runMode").and_then(JsValue::as_string).cloned();
+            {
+                let mut current = run_mode.lock().unwrap_or_else(|e| e.into_inner());
+                *current = Some(
+                    requested
+                        .or_else(|| current.take())
+                        .unwrap_or_else(|| "agent".into()),
+                );
+            }
+            let mode = |key: &str| {
+                options
+                    .get(key)
+                    .filter(|mode| permission::is_permission_mode(mode))
+                    .and_then(JsValue::as_string)
+                    .cloned()
+            };
+            let requested =
+                mode("permissionMode").map(|current| (current, mode("basePermissionMode")));
+            // The `permissionModeBeforePlan` the turn's config will carry
+            // (permissionOverrides.ts:13-16), read off the host state the
+            // previous turn left.
+            let before_plan = {
+                let state = permission.0.lock().unwrap_or_else(|e| e.into_inner());
+                match &requested {
+                    Some((current, base))
+                        if current.equals_str("plan")
+                            && !state.0.mode.as_js_string().equals_str("plan") =>
+                    {
+                        Some(
+                            base.clone()
+                                .unwrap_or_else(|| state.0.mode.as_js_string().clone()),
+                        )
+                    }
+                    _ => state.1.as_ref().map(|mode| mode.as_js_string().clone()),
+                }
+            };
+            *turn_permission.lock().unwrap_or_else(|e| e.into_inner()) = TurnOptions {
+                permission: requested,
+                can_elicit: options.get("canElicit") == Some(&JsValue::Bool(true)),
+                can_prompt: options
+                    .get("canPrompt")
+                    .filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined))
+                    .cloned(),
+            };
+            before_plan
         })
     }
 
@@ -508,8 +557,9 @@ impl SessionTools {
         recorder: Arc<Recorder>,
         signal: Cancellation,
     ) -> SessionPorts {
-        // #1864 (b): the effective mode — a non-empty
-        // `managedPermissions.defaultMode` wins, else the stored selection —
+        // The effective mode — the turn's own `permissionMode` submit option
+        // when the gateway resolved one; otherwise (#1864 (b)) a non-empty
+        // `managedPermissions.defaultMode`, else the stored selection —
         // is written back before the context is emitted, so `Permissions::
         // decide` (which clones the current value per call), the emitted
         // `permissionContext` and this turn's local `config.permissionMode`
@@ -518,11 +568,34 @@ impl SessionTools {
         // the previous mode and the plan-round-trip stack below untouched.
         let (permission_context, permission_mode) = {
             let mut state = self.permission.0.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(mode) = permission::managed_default_mode(&self.config).or_else(|| {
-                self.permission_mode_source
-                    .as_ref()
-                    .and_then(|source| source())
-            }) {
+            let turn = self
+                .turn_permission
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .permission
+                .clone();
+            if let Some((mode, base)) = turn {
+                // `applyAgentPermissionOverrides` (permissionOverrides.ts:
+                // 12-19): entering plan from another mode remembers
+                // `basePermissionMode ?? config.permissionMode` as the mode
+                // exit_plan_mode returns to.
+                let mode = crate::config::permission::PermissionMode::from(mode);
+                if mode.as_js_string().equals_str("plan")
+                    && !state.0.mode.as_js_string().equals_str("plan")
+                {
+                    state.1 = Some(
+                        base.map(crate::config::permission::PermissionMode::from)
+                            .unwrap_or_else(|| state.0.mode.clone()),
+                    );
+                }
+                state.0.mode = mode;
+            } else if let Some(mode) =
+                permission::managed_default_mode(&self.config).or_else(|| {
+                    self.permission_mode_source
+                        .as_ref()
+                        .and_then(|source| source())
+                })
+            {
                 state.0.mode = crate::config::permission::PermissionMode::from(mode);
             }
             (state.0.to_value(), state.0.mode.as_js_string().clone())
@@ -530,6 +603,23 @@ impl SessionTools {
         let mut config = self.config.clone();
         config.insert("env".into(), JsValue::Object(self.env.clone()));
         config.insert("permissionMode".into(), JsValue::String(permission_mode));
+        // `canPrompt: input.canPrompt ?? config.permissionContext.canPrompt`
+        // (sidecarToolContext.ts:192): the tool runtime's prompt gate reads
+        // the turn's own choice.
+        let mut permission_context = permission_context;
+        let turn_can_prompt = self
+            .turn_permission
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .can_prompt
+            .clone();
+        if let Some(can_prompt) = turn_can_prompt
+            && let Some(context) = permission_context.as_object()
+        {
+            let mut context = context.clone();
+            context.insert("canPrompt".into(), can_prompt);
+            permission_context = JsValue::Object(context);
+        }
         config.insert("permissionContext".into(), permission_context);
         if let Some(run_mode) = self
             .run_mode
@@ -637,10 +727,23 @@ impl SessionTools {
         });
         let binding = TurnBinding {
             config: config.clone(),
-            input: value([
-                ("sessionId", JsValue::String(identity.session_id.clone())),
-                ("turnId", JsValue::String(identity.turn_id.clone())),
-            ]),
+            input: {
+                let mut input = value([
+                    ("sessionId", JsValue::String(identity.session_id.clone())),
+                    ("turnId", JsValue::String(identity.turn_id.clone())),
+                ]);
+                // `canElicit: input.canElicit` (sidecarToolContext.ts:105):
+                // the tool runtime honours it only with an elicitation port.
+                if self
+                    .turn_permission
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .can_elicit
+                {
+                    input.insert("canElicit".into(), JsValue::Bool(true));
+                }
+                input
+            },
             checkpoint: self.binding.checkpoint.clone(),
             abort_signal: Some(Arc::new(signal.clone())),
             environment: Arc::new(NativeTurnEnvironment(self.env.clone())),
@@ -785,7 +888,10 @@ impl SessionTools {
                 messages: vec![],
                 switches: CompositionSwitches {
                     plan_todo: false,
-                    elicitation_available: None,
+                    // `interaction: { elicitationAvailable: true }` whenever
+                    // the session has an elicitation port
+                    // (sidecarHostModulePorts.ts:206-207).
+                    elicitation_available: self.permission.1.get().map(|_| true),
                 },
                 turn_ports: Default::default(),
             },
@@ -1087,6 +1193,17 @@ struct Permissions(
     std::sync::OnceLock<ModeTransition>,
 );
 type ModeTransition = Arc<dyn Fn(JsString, Option<JsString>) + Send + Sync>;
+type TurnPermission = Arc<Mutex<TurnOptions>>;
+/// The last admitted turn's submit options the host-side config applies.
+#[derive(Clone, Default)]
+struct TurnOptions {
+    /// `permissionMode` with its `basePermissionMode`.
+    permission: Option<(JsString, Option<JsString>)>,
+    /// `canElicit === true`.
+    can_elicit: bool,
+    /// `canPrompt`, when the turn gave one.
+    can_prompt: Option<JsValue>,
+}
 struct Tool(
     Arc<dyn capability::ToolDefinition>,
     JsString,

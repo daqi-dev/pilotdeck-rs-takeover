@@ -5,7 +5,7 @@ use pilotdeck_protocol::{JsString, JsValue};
 
 mod active_turn;
 mod always_on;
-mod config;
+pub(super) mod config;
 mod cron;
 mod history;
 mod history_read;

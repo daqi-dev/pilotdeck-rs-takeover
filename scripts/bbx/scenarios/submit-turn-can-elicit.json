@@ -1,0 +1,434 @@
+{
+ "name": "submit-turn-can-elicit",
+ "about": "submit_turn 的 canElicit：canPrompt=false 时，canElicit=true 让 ask_user_question 仍声明给模型并经专用 elicitation 询问（src/agent/loop/AgentLoop.ts:2328-2337、src/tool/execution/ToolRuntime.ts:170-183），elicitationAvailable 取会话是否有 elicitation 端口（src/agent/loop/AgentTurnCapabilities.ts:291）；不带 / false 时该工具不声明、调用被拒；canElicit 不放开其它需要询问的工具（bash）；canPrompt 缺省时 canElicit 无影响。",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Elicit run\"}"
+   }
+  },
+  {
+   "name": "e1-after",
+   "when": [
+    "e1:",
+    "\"tool_call_id\":\"call_e_1\""
+   ],
+   "reply": {
+    "text": "Done e1."
+   }
+  },
+  {
+   "name": "e1",
+   "when": [
+    "e1:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_e_1",
+     "name": "ask_user_question",
+     "arguments": {
+      "questions": [
+       {
+        "question": "Which color?",
+        "header": "Color",
+        "options": [
+         {
+          "label": "Red",
+          "description": "warm"
+         },
+         {
+          "label": "Blue",
+          "description": "cool"
+         }
+        ],
+        "multiSelect": false
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "e2-after",
+   "when": [
+    "e2:",
+    "\"tool_call_id\":\"call_e_2\""
+   ],
+   "reply": {
+    "text": "Done e2."
+   }
+  },
+  {
+   "name": "e2",
+   "when": [
+    "e2:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_e_2",
+     "name": "ask_user_question",
+     "arguments": {
+      "questions": [
+       {
+        "question": "Which color?",
+        "header": "Color",
+        "options": [
+         {
+          "label": "Red",
+          "description": "warm"
+         },
+         {
+          "label": "Blue",
+          "description": "cool"
+         }
+        ],
+        "multiSelect": false
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "e3-after",
+   "when": [
+    "e3:",
+    "\"tool_call_id\":\"call_e_3\""
+   ],
+   "reply": {
+    "text": "Done e3."
+   }
+  },
+  {
+   "name": "e3",
+   "when": [
+    "e3:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_e_3",
+     "name": "ask_user_question",
+     "arguments": {
+      "questions": [
+       {
+        "question": "Which color?",
+        "header": "Color",
+        "options": [
+         {
+          "label": "Red",
+          "description": "warm"
+         },
+         {
+          "label": "Blue",
+          "description": "cool"
+         }
+        ],
+        "multiSelect": false
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "e4-after",
+   "when": [
+    "e4:",
+    "\"tool_call_id\":\"call_e_4\""
+   ],
+   "reply": {
+    "text": "Done e4."
+   }
+  },
+  {
+   "name": "e4",
+   "when": [
+    "e4:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_e_4",
+     "name": "bash",
+     "arguments": {
+      "command": "echo e4"
+     }
+    }
+   }
+  },
+  {
+   "name": "e5-after",
+   "when": [
+    "e5:",
+    "\"tool_call_id\":\"call_e_5\""
+   ],
+   "reply": {
+    "text": "Done e5."
+   }
+  },
+  {
+   "name": "e5",
+   "when": [
+    "e5:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_e_5",
+     "name": "ask_user_question",
+     "arguments": {
+      "questions": [
+       {
+        "question": "Which color?",
+        "header": "Color",
+        "options": [
+         {
+          "label": "Red",
+          "description": "warm"
+         },
+         {
+          "label": "Blue",
+          "description": "cool"
+         }
+        ],
+        "multiSelect": false
+       }
+      ]
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-e1",
+    "channelKey": "test",
+    "runId": "run-e1",
+    "message": "e1: go",
+    "canPrompt": false,
+    "canElicit": true
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "elicitation_request"
+     },
+     "ws": "elicitation_respond",
+     "params": {
+      "sessionKey": "s-e1",
+      "requestId": "{event.requestId}",
+      "answer": {
+       "type": "answered",
+       "answers": {
+        "Which color?": "Blue"
+       }
+      }
+     },
+     "count": 1
+    },
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-e1",
+      "requestId": "{event.requestId}",
+      "decision": "deny",
+      "reason": "bbx denies"
+     }
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-e2",
+    "channelKey": "test",
+    "runId": "run-e2",
+    "message": "e2: go",
+    "canPrompt": false
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "elicitation_request"
+     },
+     "ws": "elicitation_respond",
+     "params": {
+      "sessionKey": "s-e2",
+      "requestId": "{event.requestId}",
+      "answer": {
+       "type": "answered",
+       "answers": {
+        "Which color?": "Blue"
+       }
+      }
+     },
+     "count": 1
+    },
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-e2",
+      "requestId": "{event.requestId}",
+      "decision": "deny",
+      "reason": "bbx denies"
+     }
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-e3",
+    "channelKey": "test",
+    "runId": "run-e3",
+    "message": "e3: go",
+    "canPrompt": false,
+    "canElicit": false
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "elicitation_request"
+     },
+     "ws": "elicitation_respond",
+     "params": {
+      "sessionKey": "s-e3",
+      "requestId": "{event.requestId}",
+      "answer": {
+       "type": "answered",
+       "answers": {
+        "Which color?": "Blue"
+       }
+      }
+     },
+     "count": 1
+    },
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-e3",
+      "requestId": "{event.requestId}",
+      "decision": "deny",
+      "reason": "bbx denies"
+     }
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-e4",
+    "channelKey": "test",
+    "runId": "run-e4",
+    "message": "e4: go",
+    "canPrompt": false,
+    "canElicit": true
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "elicitation_request"
+     },
+     "ws": "elicitation_respond",
+     "params": {
+      "sessionKey": "s-e4",
+      "requestId": "{event.requestId}",
+      "answer": {
+       "type": "answered",
+       "answers": {
+        "Which color?": "Blue"
+       }
+      }
+     },
+     "count": 1
+    },
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-e4",
+      "requestId": "{event.requestId}",
+      "decision": "deny",
+      "reason": "bbx denies"
+     }
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-e5",
+    "channelKey": "test",
+    "runId": "run-e5",
+    "message": "e5: go",
+    "canElicit": true
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "elicitation_request"
+     },
+     "ws": "elicitation_respond",
+     "params": {
+      "sessionKey": "s-e5",
+      "requestId": "{event.requestId}",
+      "answer": {
+       "type": "answered",
+       "answers": {
+        "Which color?": "Blue"
+       }
+      }
+     },
+     "count": 1
+    },
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-e5",
+      "requestId": "{event.requestId}",
+      "decision": "deny",
+      "reason": "bbx denies"
+     }
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  }
+ ]
+}
