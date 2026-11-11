@@ -1,0 +1,102 @@
+{
+  "name": "secreview-explore-subagent-write",
+  "about": "安全审查：父会话 bypassPermissions，调用只读的 explore 子代理；子代理点名调用非只读 bash（touch）。基线子代理继承 runMode=ask，ToolRuntime 按 ask 模式拦下；看 Rust 子代理是否越过只读定义写盘。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Tool run\"}"
+      }
+    },
+    {
+      "name": "child-after-tool",
+      "when": [
+        "CHILD-SEC-1",
+        "\"tool_call_id\":\"call_child_1\""
+      ],
+      "reply": {
+        "text": "Scope: x.\nResult: done.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "child",
+      "when": [
+        "CHILD-SEC-1"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_child_1",
+          "name": "bash",
+          "arguments": {
+            "command": "touch {PILOT_HOME}/explore-wrote.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "parent-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "parent",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1",
+          "name": "agent",
+          "arguments": {
+            "description": "Look",
+            "prompt": "CHILD-SEC-1: look around.",
+            "subagent_type": "explore"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-1: run the tool"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-bbx-1",
+            "requestId": "{event.requestId}",
+            "decision": "deny",
+            "reason": "secreview denies every prompt"
+          }
+        }
+      ],
+      "timeout": 30000
+    },
+    {
+      "sleep": 500
+    }
+  ]
+}

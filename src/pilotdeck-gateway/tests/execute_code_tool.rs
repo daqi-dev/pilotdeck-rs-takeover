@@ -218,3 +218,40 @@ fn a_nested_call_runs_through_the_runtime_under_a_derived_id() {
         ]
     );
 }
+
+/// Security review: `timeout_seconds` must bound the tool call. A grandchild
+/// that leaves the process group (`start_new_session=True`) survives the group
+/// kill and keeps the inherited stdout pipe open, so the tool only returns
+/// once that grandchild exits. The baseline behaves the same way
+/// (NodeCodeRuntimePort.ts:125-139 waits for the stdout stream to end).
+#[test]
+#[ignore = "secreview: execute_code timeout is not enforced when a detached grandchild holds stdout"]
+fn secreview_execute_code_timeout_bounded_despite_detached_grandchild() {
+    let cwd = Workdir::new();
+    let runtime = runtime(Arc::default());
+    let started = Instant::now();
+    let result = block_on(runtime.execute(
+        ToolCall {
+            id: "outer".into(),
+            name: "execute_code".into(),
+            input: JsValue::Object(object([
+                (
+                    "code",
+                    JsValue::from(
+                        "import subprocess, time\nsubprocess.Popen(['sleep', '20'], start_new_session=True)\nprint('started', flush=True)\ntime.sleep(60)\n",
+                    ),
+                ),
+                ("timeout_seconds", JsValue::Number(2.0)),
+            ])),
+        },
+        context(&cwd, None),
+    ))
+    .unwrap();
+    let elapsed = started.elapsed();
+    let data = result.get("data").unwrap();
+    assert_eq!(text(data.get("status")), "timeout", "{data:?}");
+    assert!(
+        elapsed < Duration::from_secs(8),
+        "timeout_seconds=2 but the call took {elapsed:?}"
+    );
+}

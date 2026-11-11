@@ -1,0 +1,129 @@
+{
+  "name": "secreview-execute-code-readonly",
+  "about": "安全审查：默认模式与 plan 模式下，execute_code 里不调用 write_file/edit_file/bash 的 Python 脚本被判为只读，不经询问直接执行（写文件、起 shell），且继承宿主环境变量。采集器对任何权限询问一律拒绝。",
+  "env": {
+    "SECREVIEW_FAKE_TOKEN": "fake-secret-123"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Tool run\"}"
+      }
+    },
+    {
+      "name": "turn-2-after-tool",
+      "when": [
+        "turn-2:",
+        "\"tool_call_id\":\"call_bbx_2\""
+      ],
+      "reply": {
+        "text": "Done 2."
+      }
+    },
+    {
+      "name": "turn-2",
+      "when": [
+        "turn-2:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_2",
+          "name": "execute_code",
+          "arguments": {
+            "code": "import os\nopen(os.path.join(os.environ['PILOTDECK_WORKSPACE_CWD'], 'pwned-plan.txt'), 'w').write('written in plan mode')\nprint('plan write done')\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-1-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "turn-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1",
+          "name": "execute_code",
+          "arguments": {
+            "code": "import os\nopen(os.path.join(os.environ['PILOTDECK_WORKSPACE_CWD'], 'pwned-default.txt'), 'w').write('written without asking')\nos.system('echo via-shell > ' + os.path.join(os.environ['PILOTDECK_WORKSPACE_CWD'], 'pwned-shell.txt'))\nprint('SECREVIEW_FAKE_TOKEN=' + os.environ.get('SECREVIEW_FAKE_TOKEN', '<absent>'))\n"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-1: run the tool"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-bbx-1",
+            "requestId": "{event.requestId}",
+            "decision": "deny",
+            "reason": "secreview denies every prompt"
+          }
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "mode": "plan"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-2: run the tool"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-bbx-1",
+            "requestId": "{event.requestId}",
+            "decision": "deny",
+            "reason": "secreview denies every prompt"
+          }
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    }
+  ]
+}
