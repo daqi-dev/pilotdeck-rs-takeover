@@ -1689,6 +1689,22 @@ fn real_user(message: &JsValue) -> bool {
             !text.is_empty() && text != "[system: the conversation above has been compacted. please continue with the current task.]" && !["<compact-boundary","<snip-boundary","<memory-context>","<internal-compaction-control","<hook_context"].iter().any(|p| text.starts_with(p))
         }))
 }
+/// What disposing a persistent session storage that was never restored leaves
+/// on disk when its transcript holds no entries: `SessionProjectionCheckpoint
+/// Binding.flush` sees an empty log and an empty projection at the same
+/// watermark (-1) and saves the empty checkpoint (SessionProjectionCheckpoint
+/// Binding.ts:56-72). With entries the two watermarks differ and nothing is
+/// written.
+pub(crate) fn save_empty_projection_checkpoint(
+    path: &Path,
+    session: &JsString,
+) -> Result<(), RuntimeError> {
+    use projection_cache::ProjectionCheckpointStore;
+    projection_cache::FileProjectionCheckpointStore(path.to_path_buf()).save(
+        &projection_cache::envelope(session, &[], &DurableSessionState::default()),
+    )
+}
+
 /// `replayTranscriptEntries` (session/transcript/TranscriptReplay.ts): the
 /// conversation messages and merged metadata of a whole transcript.
 pub(crate) fn project_transcript(entries: &[JsValue]) -> Result<DurableSessionState, RuntimeError> {

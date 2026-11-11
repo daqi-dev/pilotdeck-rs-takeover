@@ -165,36 +165,39 @@ impl Requests {
 
     /// `rewindFilesForSdk` — `InProcessGateway.ts:2402-2408` contract.
     async fn tools_rewind_files(&self, params: &JsValue) -> Result<JsValue, RequestError> {
-        let requests = self.clone();
-        let params = params.clone();
+        let session_key = required_trimmed(
+            params,
+            "sessionKey",
+            "INVALID_SESSION_KEY",
+            "sessionKey is required.",
+        )?;
+        let user_message_id = required_trimmed(
+            params,
+            "userMessageId",
+            "INVALID_MESSAGE_ID",
+            "userMessageId is required.",
+        )?;
+        // `router.hasActiveTurn` is the only admission check the baseline makes
+        // (InProcessGateway.ts:2406); nothing holds the session afterwards.
+        if self.owner.has_active_turn(&session_key) {
+            return Err(session_error(
+                "SESSION_BUSY",
+                "Cannot rewind files while a turn is active.",
+            ));
+        }
+        // `this.resolve(input.projectKey).projectRoot`
+        // (ProjectRuntimeRegistry.ts:1128-1129).
+        let project = self.route_project(params)?;
+        // `if (input.dryRun)`: JS truthiness.
+        let dry_run = match params.get("dryRun") {
+            None | Some(JsValue::Undefined | JsValue::Null | JsValue::Bool(false)) => false,
+            Some(JsValue::Number(n)) => *n != 0.0 && !n.is_nan(),
+            Some(JsValue::String(s)) => !s.is_empty(),
+            Some(_) => true,
+        };
+        let home = self.options.home.clone();
         // Synchronous disk IO must not block the serial host thread.
-        // begin_maintenance is acquired before has_active_turn so that no new
-        // turn can start between the check and the IO: begin_turn checks the
-        // maintenance flag under the same admission lock.  A concurrent rewind
-        // (maintenance already set for this session) or an active turn both
-        // return SESSION_BUSY; the guard is dropped when the closure exits.
         tokio::task::spawn_blocking(move || {
-            let session_key = required_trimmed(
-                &params,
-                "sessionKey",
-                "INVALID_SESSION_KEY",
-                "sessionKey is required.",
-            )?;
-            let user_message_id = required_trimmed(
-                &params,
-                "userMessageId",
-                "INVALID_MESSAGE_ID",
-                "userMessageId is required.",
-            )?;
-            let _rewind_guard = requests
-                .owner
-                .begin_maintenance(&session_key)
-                .map_err(|e| RequestError::new(e.to_string()))?
-                .ok_or_else(|| session_error("SESSION_BUSY", "A rewind is already in progress."))?;
-            let dry_run = params
-                .get("dryRun")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
             let user_message_id = user_message_id
                 .to_utf8()
                 .map_err(|_| RequestError::new("userMessageId must be valid UTF-8."))?;
@@ -208,8 +211,6 @@ impl Requests {
                     )
                 }),
             );
-            let home = requests.options.home.clone();
-            let project = requests.options.project.clone();
             let result = rewind::rewind_files(RewindFilesInput {
                 adapter: &adapter,
                 project_root: &project,
@@ -236,9 +237,11 @@ impl Requests {
             "sessionKey is required.",
         )?;
         let task_id = required_trimmed(params, "taskId", "INVALID_TASK_ID", "taskId is required.")?;
+        // `this.resolve(input.projectKey)` (ProjectRuntimeRegistry.ts:1710).
+        let project_root = self.route_project(params)?;
         crate::runtime::background::stop_background_task_in_registry(
             &self.project,
-            None,
+            Some(&project_root),
             &session_key,
             &task_id,
         )
@@ -257,9 +260,11 @@ impl Requests {
             "sessionKey is required.",
         )?;
         let task_id = params.get("taskId").cloned().unwrap_or(JsValue::Undefined);
+        // `this.resolve(input.projectKey)` (ProjectRuntimeRegistry.ts:1732).
+        let project_root = self.route_project(params)?;
         crate::runtime::background::background_tasks_in_registry(
             &self.project,
-            None,
+            Some(&project_root),
             &session_key,
             &task_id,
         )
