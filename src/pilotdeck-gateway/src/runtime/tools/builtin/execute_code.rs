@@ -73,39 +73,8 @@ const BASE_ALLOWED_TOOLS: [&str; 7] = [
 ];
 /// `killProcess(child, true)`'s escalation delay.
 const KILL_AFTER: Duration = Duration::from_millis(500);
-/// `CHECKER_TIMEOUT_MS` / `MAX_CHECKER_OUTPUT_BYTES`
-/// (filesystem/syntaxDiagnostics.ts:26-27).
-const CHECKER_TIMEOUT: Duration = Duration::from_millis(2_000);
-const MAX_CHECKER_OUTPUT_UNITS: usize = 16_384;
 
 const INPUT_SCHEMA: &str = r#"{"type":"object","required":["code"],"additionalProperties":false,"properties":{"code":{"type":"string","description":"Python 3 source code to execute. Use `from pilotdeck_tools import ...` to call allowed PilotDeck tools."},"description":{"type":"string","description":"Optional human-readable note; ignored by execution."},"timeout_seconds":{"type":"integer","description":"Maximum execution time in seconds. Defaults to 300; maximum 300."},"max_tool_calls":{"type":"integer","description":"Maximum number of PilotDeck tool calls the script may make. Defaults to 50; maximum 50."}}}"#;
-
-/// Python source the baseline passes to `python3 -c` to compile-check a
-/// script: `PYTHON_SYNTAX_CHECKER`, verbatim from
-/// `resources/PilotDeck/src/tool/builtin/filesystem/syntaxDiagnostics.ts:51-74`
-/// (the template literal after `.trim()`).
-const PYTHON_SYNTAX_CHECKER: &str = r#"import json
-import sys
-
-filename = sys.argv[1] if len(sys.argv) > 1 else "<stdin>"
-source = sys.stdin.read()
-
-try:
-    compile(source, filename, "exec")
-except SyntaxError as exc:
-    print(json.dumps({
-        "line": exc.lineno or 1,
-        "column": exc.offset or 1,
-        "message": exc.msg or "Invalid Python syntax."
-    }))
-    sys.exit(1)
-except ValueError as exc:
-    print(json.dumps({
-        "line": 1,
-        "column": 1,
-        "message": str(exc)
-    }))
-    sys.exit(1)"#;
 
 // The Python helper module written next to the script as `pilotdeck_tools.py`.
 // Verbatim from `resources/PilotDeck/src/tool/builtin/executeCode.ts`: the
@@ -529,7 +498,8 @@ async fn validate(input: &JsValue) -> Option<Vec<JsObject>> {
         ));
     }
     if issues.is_empty()
-        && let Some(diagnostic) = python_syntax_diagnostic(&code).await
+        && let Some(diagnostic) =
+            super::syntax_diagnostics::python_diagnostics("execute_code.py", &code).await
     {
         issues.push(issue(
             "$.code",
@@ -542,107 +512,6 @@ async fn validate(input: &JsValue) -> Option<Vec<JsObject>> {
         ));
     }
     (!issues.is_empty()).then_some(issues)
-}
-
-struct SyntaxDiagnostic {
-    line: f64,
-    column: f64,
-    message: String,
-}
-
-/// `collectPythonSyntaxDiagnostics("execute_code.py", code)`: `python3 -c
-/// <checker> execute_code.py` with the script on stdin, in the gateway's own
-/// cwd and environment. A checker that cannot be started, times out, exits 0
-/// or prints something other than a JSON object reports nothing.
-async fn python_syntax_diagnostic(code: &str) -> Option<SyntaxDiagnostic> {
-    let mut command = Command::new("python3");
-    command
-        .args(["-c", PYTHON_SYNTAX_CHECKER, "execute_code.py"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
-    pilotdeck_child_signals::install_child_detach_session(command.as_std_mut());
-    pilotdeck_child_signals::install_child_signal_reset(command.as_std_mut());
-    let mut child = command.spawn().ok()?;
-    let mut guard = GroupGuard(
-        child
-            .id()
-            .and_then(|pid| rustix::process::Pid::from_raw(pid as i32)),
-    );
-    let mut stdin = child.stdin.take();
-    let run = async {
-        if let Some(stdin) = stdin.as_mut() {
-            let _ = stdin.write_all(code.as_bytes()).await;
-        }
-        drop(stdin.take());
-        child.wait_with_output().await
-    };
-    // A timeout drops the run with the guard armed: the group is killed.
-    let output = tokio::time::timeout(CHECKER_TIMEOUT, run)
-        .await
-        .ok()?
-        .ok()?;
-    guard.disarm();
-    if output.status.code() == Some(0) {
-        return None;
-    }
-    let stdout: Vec<u16> = String::from_utf8_lossy(&output.stdout)
-        .encode_utf16()
-        .take(MAX_CHECKER_OUTPUT_UNITS)
-        .collect();
-    let parsed = parse_json(String::from_utf16_lossy(&stdout).trim_matches(json_space)).ok()?;
-    if !matches!(parsed, JsValue::Object(_) | JsValue::Array(_)) {
-        return None;
-    }
-    // `positiveInteger(value) ?? 1`.
-    let positive = |key: &str| {
-        parsed
-            .get(key)
-            .and_then(JsValue::as_number)
-            .filter(|value| value.is_finite())
-            .map(f64::floor)
-            .filter(|value| *value > 0.0)
-            .unwrap_or(1.0)
-    };
-    let message = parsed
-        .get("message")
-        .and_then(JsValue::as_string)
-        .filter(|message| !message.is_empty())
-        .map_or_else(|| "Invalid Python syntax.".to_owned(), text);
-    Some(SyntaxDiagnostic {
-        line: positive("line"),
-        column: positive("column"),
-        message: trim_diagnostic_message(&message),
-    })
-}
-
-fn json_space(c: char) -> bool {
-    matches!(c, ' ' | '\t' | '\n' | '\r')
-}
-
-/// `trimDiagnosticMessage`: whitespace runs collapse to one space, and a
-/// message longer than 220 UTF-16 units is cut to 217 plus `...`.
-fn trim_diagnostic_message(message: &str) -> String {
-    let mut compact = String::new();
-    let mut pending_space = false;
-    for c in message.chars() {
-        if js_space(c) {
-            pending_space = true;
-            continue;
-        }
-        if pending_space && !compact.is_empty() {
-            compact.push(' ');
-        }
-        pending_space = false;
-        compact.push(c);
-    }
-    let units: Vec<u16> = compact.encode_utf16().collect();
-    if units.len() <= 220 {
-        return compact;
-    }
-    let head = String::from_utf16_lossy(&units[..217]);
-    format!("{}...", head.trim_end_matches(js_space))
 }
 
 // ---------------------------------------------------------------------------
@@ -1556,15 +1425,6 @@ mod tests {
                 "{elapsed} ms"
             );
         }
-    }
-
-    #[test]
-    fn diagnostic_messages_are_compacted_and_capped() {
-        assert_eq!(trim_diagnostic_message("  a \n\t b  "), "a b");
-        let long = "x".repeat(230);
-        let trimmed = trim_diagnostic_message(&long);
-        assert_eq!(trimmed.len(), 220);
-        assert!(trimmed.ends_with("..."));
     }
 
     #[test]
