@@ -87,6 +87,24 @@ impl ToolDefinition for ReadFileTool {
     fn is_concurrency_safe(&self, _input: &JsValue) -> Result<JsValue, HostError> {
         Ok(JsValue::Bool(false))
     }
+    /// `checkReadFilePermission`: a path the workspace check rejects for any
+    /// reason other than lying outside it (a missing file, for one) is denied
+    /// here, before the tool runs; an outside path asks.
+    fn check_runtime_permissions<'a>(
+        &'a self,
+        input: &'a JsValue,
+        runtime: &'a crate::host::modules::capability::RuntimeContext,
+    ) -> Option<crate::runtime::permission::PermissionFuture<'a, Option<JsValue>>> {
+        let context = runtime.downcast_ref::<ToolRunContext>()?;
+        let path = input
+            .get("file_path")
+            .and_then(JsValue::as_string)
+            .cloned()
+            .unwrap_or_default();
+        let result =
+            super::send_attachment::check_read_path_permission("read_file", &path, context);
+        Some(Box::pin(async move { Ok(Some(result)) }))
+    }
 }
 
 impl ExecutableTool for ReadFileTool {

@@ -106,8 +106,13 @@ fn internal_message(input: &JsString, root: &JsString) -> String {
     )
 }
 
-/// `checkSendAttachmentPermission`.
-fn check_permission(input: &JsString, context: &ToolRunContext) -> JsValue {
+/// `checkSendAttachmentPermission` / `checkReadFilePermission`: the two
+/// tools share one shape, differing only in the tool name.
+pub(super) fn check_read_path_permission(
+    tool: &str,
+    input: &JsString,
+    context: &ToolRunContext,
+) -> JsValue {
     let deny = |error: ToolError| {
         JsValue::Object(object([
             ("type", string("deny")),
@@ -135,15 +140,15 @@ fn check_permission(input: &JsString, context: &ToolRunContext) -> JsValue {
     let rule = JsValue::Object(object([
         ("source", string("session")),
         ("behavior", string("allow")),
-        ("toolName", string("send_attachment")),
+        ("toolName", string(tool)),
         ("pattern", string(pattern.clone())),
     ]));
     let reason = JsValue::Object(object([
         ("type", string("tool")),
-        ("toolName", string("send_attachment")),
+        ("toolName", string(tool)),
         (
             "message",
-            string("send_attachment targets a path outside the workspace."),
+            string(format!("{tool} targets a path outside the workspace.")),
         ),
     ]));
     let option = |id: &str, label: &str| object([("id", string(id)), ("label", string(label))]);
@@ -163,7 +168,7 @@ fn check_permission(input: &JsString, context: &ToolRunContext) -> JsValue {
             "request",
             JsValue::Object(object([
                 ("toolCallId", string("")),
-                ("toolName", string("send_attachment")),
+                ("toolName", string(tool)),
                 ("inputSummary", string(summary)),
                 ("reason", reason),
                 (
@@ -220,7 +225,7 @@ impl ToolDefinition for SendAttachmentTool {
         runtime: &'a RuntimeContext,
     ) -> Option<PermissionFuture<'a, Option<JsValue>>> {
         let context = runtime.downcast_ref::<ToolRunContext>()?;
-        let result = check_permission(&file_path(input), context);
+        let result = check_read_path_permission("send_attachment", &file_path(input), context);
         Some(Box::pin(async move { Ok(Some(result)) }))
     }
 }
