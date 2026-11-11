@@ -1,0 +1,635 @@
+{
+  "name": "hook-pre-tool-use",
+  "about": "插件的 PreToolUse hook（bash，bypassPermissions）：多条 hook 的执行顺序（同 matcher 两条、正则 matcher、多选 matcher；write_file 的 matcher 不跑）、退出码 2 阻止、JSON permissionDecision deny（带 / 不带理由）、decision:block、continue:false、updatedInput 改写（改写后的命令真的执行）与改写成非法输入、stdout 非法、退出码 1、matcher 不匹配。hook 收到的 stdin、工作目录、环境变量落盘在 home/hooklog。",
+  "files": {
+    "home/.pilotdeck/plugins/bbx-pre/plugin.json": {
+      "name": "bbx-pre",
+      "version": "0.1.0",
+      "description": "bbx bbx-pre",
+      "hooks": {
+        "PreToolUse": [
+          {
+            "matcher": "bash",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs pre 0 '' '' 0 first",
+                "if": "bash(case-order)"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs pre 0 '' '' 0 second",
+                "if": "bash(case-order)"
+              }
+            ]
+          },
+          {
+            "matcher": "write_file",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs pre 0 '' '' 0 write-file-never",
+                "if": "bash(case-order)"
+              }
+            ]
+          },
+          {
+            "matcher": "/^ba/",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs pre 0 '' '' 0 regex",
+                "if": "bash(case-order)"
+              }
+            ]
+          },
+          {
+            "matcher": "edit_file|bash",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs pre 0 '' '' 0 alternatives",
+                "if": "bash(case-order)"
+              }
+            ]
+          },
+          {
+            "matcher": "bash",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs pre 2 '' 'blocked by hook\n' 0",
+                "if": "bash(case-block)"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs pre 0 '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"denied by hook\"}}\n' '' 0",
+                "if": "bash(case-deny-reason)"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs pre 0 '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\"}}\n' '' 0",
+                "if": "bash(case-deny-bare)"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs pre 0 '{\"decision\":\"block\",\"reason\":\"json block reason\"}\n' '' 0",
+                "if": "bash(case-json-block)"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs pre 0 '{\"continue\":false,\"stopReason\":\"stop reason only\"}\n' '' 0",
+                "if": "bash(case-stop)"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs pre 0 '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"updatedInput\":{\"command\":\"printf rewritten > rewritten.txt\",\"description\":\"rewritten by hook\"}}}\n' '' 0",
+                "if": "bash(case-rewrite-ok)"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs pre 0 '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"updatedInput\":{\"cmd\":1}}}\n' '' 0",
+                "if": "bash(case-rewrite-bad)"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs pre 0 'not json\n{broken\n' '' 0",
+                "if": "bash(case-garbage)"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs pre 1 'partial' 'boom\n' 0",
+                "if": "bash(case-fail)"
+              }
+            ]
+          },
+          {
+            "matcher": "read_file",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs pre 0 '' '' 0",
+                "if": "read_file(case-nomatch)"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "home/.pilotdeck/plugins/bbx-pre/hook.mjs": "// bbx hook fixture: node hook.mjs <log> <exit> [stdout] [stderr] [sleepMs]\nimport fs from 'node:fs';\nconst [log, exit = '0', out = '', err = '', sleep = '0'] = process.argv.slice(2);\nconst dir = process.env.HOME + '/hooklog';\nconst append = (row) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(dir + '/' + log + '.jsonl', JSON.stringify(row) + '\\n'); };\nlet input = '';\nprocess.stdin.on('data', (d) => { input += d; });\nprocess.stdin.on('end', () => {\n  let parsed; try { parsed = JSON.parse(input); } catch { parsed = { raw: input }; }\n  const env = {};\n  for (const k of Object.keys(process.env).sort()) env[k] = /^PILOT/.test(k) && !/BUNDLED/.test(k) ? process.env[k] : true;\n  append({ argv: process.argv.slice(2), cwd: process.cwd(), input: parsed, env });\n  // exit \"@\": the behaviour is the JSON between HOOK<< and >> in the prompt.\n  let spec = { exit, out, err, sleep };\n  if (exit === '@') {\n    const m = /HOOK<<(.*?)>>/s.exec(String(parsed.prompt ?? ''));\n    spec = { exit: 0, out: '', err: '', sleep: 0, ...(m ? JSON.parse(m[1]) : {}) };\n  }\n  setTimeout(() => {\n    append({ argv: process.argv.slice(2), done: true });\n    if (spec.out) process.stdout.write(spec.out);\n    if (spec.err) process.stderr.write(spec.err);\n    process.exit(Number(spec.exit));\n  }, Number(spec.sleep));\n});\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Hook run\"}"
+      }
+    },
+    {
+      "name": "case-order-after",
+      "when": [
+        "case-order:",
+        "\"tool_call_id\":\"call_case_order\""
+      ],
+      "reply": {
+        "text": "done case-order"
+      }
+    },
+    {
+      "name": "case-order",
+      "when": [
+        "case-order:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_case_order",
+          "name": "bash",
+          "arguments": {
+            "command": "printf case-order > out-order.txt",
+            "description": "case order"
+          }
+        }
+      }
+    },
+    {
+      "name": "case-block-after",
+      "when": [
+        "case-block:",
+        "\"tool_call_id\":\"call_case_block\""
+      ],
+      "reply": {
+        "text": "done case-block"
+      }
+    },
+    {
+      "name": "case-block",
+      "when": [
+        "case-block:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_case_block",
+          "name": "bash",
+          "arguments": {
+            "command": "printf case-block > out-block.txt",
+            "description": "case block"
+          }
+        }
+      }
+    },
+    {
+      "name": "case-deny-reason-after",
+      "when": [
+        "case-deny-reason:",
+        "\"tool_call_id\":\"call_case_deny_reason\""
+      ],
+      "reply": {
+        "text": "done case-deny-reason"
+      }
+    },
+    {
+      "name": "case-deny-reason",
+      "when": [
+        "case-deny-reason:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_case_deny_reason",
+          "name": "bash",
+          "arguments": {
+            "command": "printf case-deny-reason > out-deny-reason.txt",
+            "description": "case deny-reason"
+          }
+        }
+      }
+    },
+    {
+      "name": "case-deny-bare-after",
+      "when": [
+        "case-deny-bare:",
+        "\"tool_call_id\":\"call_case_deny_bare\""
+      ],
+      "reply": {
+        "text": "done case-deny-bare"
+      }
+    },
+    {
+      "name": "case-deny-bare",
+      "when": [
+        "case-deny-bare:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_case_deny_bare",
+          "name": "bash",
+          "arguments": {
+            "command": "printf case-deny-bare > out-deny-bare.txt",
+            "description": "case deny-bare"
+          }
+        }
+      }
+    },
+    {
+      "name": "case-json-block-after",
+      "when": [
+        "case-json-block:",
+        "\"tool_call_id\":\"call_case_json_block\""
+      ],
+      "reply": {
+        "text": "done case-json-block"
+      }
+    },
+    {
+      "name": "case-json-block",
+      "when": [
+        "case-json-block:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_case_json_block",
+          "name": "bash",
+          "arguments": {
+            "command": "printf case-json-block > out-json-block.txt",
+            "description": "case json-block"
+          }
+        }
+      }
+    },
+    {
+      "name": "case-stop-after",
+      "when": [
+        "case-stop:",
+        "\"tool_call_id\":\"call_case_stop\""
+      ],
+      "reply": {
+        "text": "done case-stop"
+      }
+    },
+    {
+      "name": "case-stop",
+      "when": [
+        "case-stop:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_case_stop",
+          "name": "bash",
+          "arguments": {
+            "command": "printf case-stop > out-stop.txt",
+            "description": "case stop"
+          }
+        }
+      }
+    },
+    {
+      "name": "case-rewrite-ok-after",
+      "when": [
+        "case-rewrite-ok:",
+        "\"tool_call_id\":\"call_case_rewrite_ok\""
+      ],
+      "reply": {
+        "text": "done case-rewrite-ok"
+      }
+    },
+    {
+      "name": "case-rewrite-ok",
+      "when": [
+        "case-rewrite-ok:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_case_rewrite_ok",
+          "name": "bash",
+          "arguments": {
+            "command": "printf case-rewrite-ok > out-rewrite-ok.txt",
+            "description": "case rewrite-ok"
+          }
+        }
+      }
+    },
+    {
+      "name": "case-rewrite-bad-after",
+      "when": [
+        "case-rewrite-bad:",
+        "\"tool_call_id\":\"call_case_rewrite_bad\""
+      ],
+      "reply": {
+        "text": "done case-rewrite-bad"
+      }
+    },
+    {
+      "name": "case-rewrite-bad",
+      "when": [
+        "case-rewrite-bad:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_case_rewrite_bad",
+          "name": "bash",
+          "arguments": {
+            "command": "printf case-rewrite-bad > out-rewrite-bad.txt",
+            "description": "case rewrite-bad"
+          }
+        }
+      }
+    },
+    {
+      "name": "case-garbage-after",
+      "when": [
+        "case-garbage:",
+        "\"tool_call_id\":\"call_case_garbage\""
+      ],
+      "reply": {
+        "text": "done case-garbage"
+      }
+    },
+    {
+      "name": "case-garbage",
+      "when": [
+        "case-garbage:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_case_garbage",
+          "name": "bash",
+          "arguments": {
+            "command": "printf case-garbage > out-garbage.txt",
+            "description": "case garbage"
+          }
+        }
+      }
+    },
+    {
+      "name": "case-fail-after",
+      "when": [
+        "case-fail:",
+        "\"tool_call_id\":\"call_case_fail\""
+      ],
+      "reply": {
+        "text": "done case-fail"
+      }
+    },
+    {
+      "name": "case-fail",
+      "when": [
+        "case-fail:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_case_fail",
+          "name": "bash",
+          "arguments": {
+            "command": "printf case-fail > out-fail.txt",
+            "description": "case fail"
+          }
+        }
+      }
+    },
+    {
+      "name": "case-nomatch-after",
+      "when": [
+        "case-nomatch:",
+        "\"tool_call_id\":\"call_case_nomatch\""
+      ],
+      "reply": {
+        "text": "done case-nomatch"
+      }
+    },
+    {
+      "name": "case-nomatch",
+      "when": [
+        "case-nomatch:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_case_nomatch",
+          "name": "bash",
+          "arguments": {
+            "command": "printf case-nomatch > out-nomatch.txt",
+            "description": "case nomatch"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-order",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-order",
+        "channelKey": "test",
+        "message": "case-order: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-block",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-block",
+        "channelKey": "test",
+        "message": "case-block: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-deny-reason",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-deny-reason",
+        "channelKey": "test",
+        "message": "case-deny-reason: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-deny-bare",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-deny-bare",
+        "channelKey": "test",
+        "message": "case-deny-bare: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-json-block",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-json-block",
+        "channelKey": "test",
+        "message": "case-json-block: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-stop",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-stop",
+        "channelKey": "test",
+        "message": "case-stop: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-rewrite-ok",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-rewrite-ok",
+        "channelKey": "test",
+        "message": "case-rewrite-ok: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-rewrite-bad",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-rewrite-bad",
+        "channelKey": "test",
+        "message": "case-rewrite-bad: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-garbage",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-garbage",
+        "channelKey": "test",
+        "message": "case-garbage: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-fail",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-fail",
+        "channelKey": "test",
+        "message": "case-fail: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-nomatch",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-nomatch",
+        "channelKey": "test",
+        "message": "case-nomatch: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-rewrite-ok"
+      }
+    }
+  ]
+}

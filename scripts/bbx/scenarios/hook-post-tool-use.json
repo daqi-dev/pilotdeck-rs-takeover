@@ -1,0 +1,416 @@
+{
+  "name": "hook-post-tool-use",
+  "about": "插件的 PostToolUse / PostToolUseFailure hook：放行、additionalContext（进结果 metadata.lifecycle，再到下一次模型请求）、退出码 2 与 decision:block（工具结果带 lifecycle.blocked，循环以 lifecycle_blocked 结束这一轮）、stdout 非法、非零退出；bash 失败时 PostToolUseFailure 收到 error / isInterrupt。",
+  "files": {
+    "home/.pilotdeck/plugins/bbx-post/plugin.json": {
+      "name": "bbx-post",
+      "version": "0.1.0",
+      "description": "bbx bbx-post",
+      "hooks": {
+        "PostToolUse": [
+          {
+            "matcher": "bash",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs post 0 '' '' 0",
+                "if": "bash(case-pass)"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs post 0 '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"context from post hook\"}}\n' '' 0",
+                "if": "bash(case-context)"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs post 2 '' 'post hook blocked\n' 0",
+                "if": "bash(case-block)"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs post 0 '{\"decision\":\"block\",\"reason\":\"post json block\"}\n' '' 0",
+                "if": "bash(case-json-block)"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs post 0 '{\"unterminated' '' 0",
+                "if": "bash(case-garbage)"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs post 3 '' 'post failed\n' 0",
+                "if": "bash(case-fail)"
+              }
+            ]
+          },
+          {
+            "matcher": "write_file",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs post 0 '' '' 0",
+                "if": "bash(case-pass)"
+              }
+            ]
+          }
+        ],
+        "PostToolUseFailure": [
+          {
+            "matcher": "bash",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs post-failure 0 '' '' 0"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs post-failure 0 '{\"decision\":\"block\",\"reason\":\"ignored\"}\n' '' 0"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "home/.pilotdeck/plugins/bbx-post/hook.mjs": "// bbx hook fixture: node hook.mjs <log> <exit> [stdout] [stderr] [sleepMs]\nimport fs from 'node:fs';\nconst [log, exit = '0', out = '', err = '', sleep = '0'] = process.argv.slice(2);\nconst dir = process.env.HOME + '/hooklog';\nconst append = (row) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(dir + '/' + log + '.jsonl', JSON.stringify(row) + '\\n'); };\nlet input = '';\nprocess.stdin.on('data', (d) => { input += d; });\nprocess.stdin.on('end', () => {\n  let parsed; try { parsed = JSON.parse(input); } catch { parsed = { raw: input }; }\n  const env = {};\n  for (const k of Object.keys(process.env).sort()) env[k] = /^PILOT/.test(k) && !/BUNDLED/.test(k) ? process.env[k] : true;\n  append({ argv: process.argv.slice(2), cwd: process.cwd(), input: parsed, env });\n  // exit \"@\": the behaviour is the JSON between HOOK<< and >> in the prompt.\n  let spec = { exit, out, err, sleep };\n  if (exit === '@') {\n    const m = /HOOK<<(.*?)>>/s.exec(String(parsed.prompt ?? ''));\n    spec = { exit: 0, out: '', err: '', sleep: 0, ...(m ? JSON.parse(m[1]) : {}) };\n  }\n  setTimeout(() => {\n    append({ argv: process.argv.slice(2), done: true });\n    if (spec.out) process.stdout.write(spec.out);\n    if (spec.err) process.stderr.write(spec.err);\n    process.exit(Number(spec.exit));\n  }, Number(spec.sleep));\n});\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Hook run\"}"
+      }
+    },
+    {
+      "name": "case-pass-after",
+      "when": [
+        "case-pass:",
+        "\"tool_call_id\":\"call_case_pass\""
+      ],
+      "reply": {
+        "text": "done case-pass"
+      }
+    },
+    {
+      "name": "case-pass",
+      "when": [
+        "case-pass:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_case_pass",
+          "name": "bash",
+          "arguments": {
+            "command": "printf case-pass",
+            "description": "case pass"
+          }
+        }
+      }
+    },
+    {
+      "name": "case-context-after",
+      "when": [
+        "case-context:",
+        "\"tool_call_id\":\"call_case_context\""
+      ],
+      "reply": {
+        "text": "done case-context"
+      }
+    },
+    {
+      "name": "case-context",
+      "when": [
+        "case-context:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_case_context",
+          "name": "bash",
+          "arguments": {
+            "command": "printf case-context",
+            "description": "case context"
+          }
+        }
+      }
+    },
+    {
+      "name": "case-block-after",
+      "when": [
+        "case-block:",
+        "\"tool_call_id\":\"call_case_block\""
+      ],
+      "reply": {
+        "text": "done case-block"
+      }
+    },
+    {
+      "name": "case-block",
+      "when": [
+        "case-block:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_case_block",
+          "name": "bash",
+          "arguments": {
+            "command": "printf case-block",
+            "description": "case block"
+          }
+        }
+      }
+    },
+    {
+      "name": "case-json-block-after",
+      "when": [
+        "case-json-block:",
+        "\"tool_call_id\":\"call_case_json_block\""
+      ],
+      "reply": {
+        "text": "done case-json-block"
+      }
+    },
+    {
+      "name": "case-json-block",
+      "when": [
+        "case-json-block:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_case_json_block",
+          "name": "bash",
+          "arguments": {
+            "command": "printf case-json-block",
+            "description": "case json-block"
+          }
+        }
+      }
+    },
+    {
+      "name": "case-garbage-after",
+      "when": [
+        "case-garbage:",
+        "\"tool_call_id\":\"call_case_garbage\""
+      ],
+      "reply": {
+        "text": "done case-garbage"
+      }
+    },
+    {
+      "name": "case-garbage",
+      "when": [
+        "case-garbage:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_case_garbage",
+          "name": "bash",
+          "arguments": {
+            "command": "printf case-garbage",
+            "description": "case garbage"
+          }
+        }
+      }
+    },
+    {
+      "name": "case-fail-after",
+      "when": [
+        "case-fail:",
+        "\"tool_call_id\":\"call_case_fail\""
+      ],
+      "reply": {
+        "text": "done case-fail"
+      }
+    },
+    {
+      "name": "case-fail",
+      "when": [
+        "case-fail:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_case_fail",
+          "name": "bash",
+          "arguments": {
+            "command": "printf case-fail",
+            "description": "case fail"
+          }
+        }
+      }
+    },
+    {
+      "name": "case-error-after",
+      "when": [
+        "case-error:",
+        "\"tool_call_id\":\"call_case_error\""
+      ],
+      "reply": {
+        "text": "done case-error"
+      }
+    },
+    {
+      "name": "case-error",
+      "when": [
+        "case-error:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_case_error",
+          "name": "bash",
+          "arguments": {
+            "command": "echo failing 1>&2; exit 7",
+            "description": "case error"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-pass",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-pass",
+        "channelKey": "test",
+        "message": "case-pass: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-context",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-context",
+        "channelKey": "test",
+        "message": "case-context: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-block",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-block",
+        "channelKey": "test",
+        "message": "case-block: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-json-block",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-json-block",
+        "channelKey": "test",
+        "message": "case-json-block: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-garbage",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-garbage",
+        "channelKey": "test",
+        "message": "case-garbage: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-fail",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-fail",
+        "channelKey": "test",
+        "message": "case-fail: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-error",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-error",
+        "channelKey": "test",
+        "message": "case-error: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-context"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-block"
+      }
+    }
+  ]
+}
