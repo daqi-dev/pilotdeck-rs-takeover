@@ -178,7 +178,7 @@ async fn client_with_arg(mode: &str, argument: &str) -> Result<HostClient, HostE
         // #1891: liveness margins for the real `peer.py` spawn, not limits
         // under test — same-source sibling of the #978 sites.
         Limits {
-            handshake_timeout: SIDECAR_LIVENESS,
+            handshake_timeout: Some(SIDECAR_LIVENESS),
             execution_timeout: Some(SIDECAR_LIVENESS),
             io_timeout: SIDECAR_LIVENESS,
             close_timeout: Limits::default().close_timeout,
@@ -204,7 +204,7 @@ async fn client_with_close_timeout(
         // #1891: as above; `close_timeout` stays caller-owned because the
         // dispose-timeout test pins it deliberately at 10 ms.
         Limits {
-            handshake_timeout: SIDECAR_LIVENESS,
+            handshake_timeout: Some(SIDECAR_LIVENESS),
             execution_timeout: Some(SIDECAR_LIVENESS),
             io_timeout: SIDECAR_LIVENESS,
             close_timeout,

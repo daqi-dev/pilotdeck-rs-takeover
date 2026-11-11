@@ -674,7 +674,7 @@ async fn spawn_client_with(mode: &str, argument: Option<&str>) -> Result<HostCli
         // both are waits on the sidecar, so both get the margin, and the
         // stream oracles below are unchanged.
         Limits {
-            handshake_timeout: Duration::from_secs(60),
+            handshake_timeout: Some(Duration::from_secs(60)),
             execution_timeout: Some(Duration::from_secs(60)),
             io_timeout: Duration::from_secs(60),
             ..Limits::default()
@@ -4449,7 +4449,7 @@ async fn real_sidecar_case(mode: &str) {
         // liveness margin as the Python peers; the oracle comparisons below
         // are unchanged.
         Limits {
-            handshake_timeout: Duration::from_secs(60),
+            handshake_timeout: Some(Duration::from_secs(60)),
             execution_timeout: Some(Duration::from_secs(60)),
             io_timeout: Duration::from_secs(60),
             ..Limits::default()

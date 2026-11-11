@@ -232,7 +232,7 @@ async fn cancellation_before_and_during_reconnect_uses_original_absolute_deadlin
                 command,
                 None,
                 Limits {
-                    handshake_timeout: Duration::from_secs(60),
+                    handshake_timeout: Some(Duration::from_secs(60)),
                     io_timeout: Duration::from_secs(60),
                     ..Limits::default()
                 },
@@ -407,7 +407,7 @@ async fn cancellation_bounds_pending_terminal_application_and_preserves_known_te
         // spawns in this file; the drain value is the behavior under test.
         let limits = Limits {
             terminal_drain_timeout: Duration::from_secs(60),
-            handshake_timeout: Duration::from_secs(60),
+            handshake_timeout: Some(Duration::from_secs(60)),
             io_timeout: Duration::from_secs(60),
             ..Limits::default()
         };
@@ -502,7 +502,7 @@ async fn cancellation_terminal_application_released_inside_bound_finishes_normal
             &mut command,
             None,
             Limits {
-                handshake_timeout: Duration::from_secs(60),
+                handshake_timeout: Some(Duration::from_secs(60)),
                 io_timeout: Duration::from_secs(60),
                 ..Limits::default()
             },
@@ -568,7 +568,7 @@ async fn completed_application_is_collected_before_the_deadline_exit() {
     // drain value is the behavior under test (see the sibling block above).
     let limits = Limits {
         terminal_drain_timeout: Duration::from_secs(60),
-        handshake_timeout: Duration::from_secs(60),
+        handshake_timeout: Some(Duration::from_secs(60)),
         io_timeout: Duration::from_secs(60),
         ..Limits::default()
     };

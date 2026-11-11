@@ -317,7 +317,7 @@ fn factory(
         // hangs or rejects the handshake still fails closed, and the
         // never-spawned callers never reach the waits at all.
         Limits {
-            handshake_timeout: SIDECAR_LIVENESS,
+            handshake_timeout: Some(SIDECAR_LIVENESS),
             io_timeout: SIDECAR_LIVENESS,
             ..Default::default()
         },
@@ -686,7 +686,7 @@ async fn live_session_shares_recorder_and_reads_current_history() {
         // under `Limits::default()` is the exact shape #978 measured reddening
         // under load, so this construction gets the same liveness margin.
         Limits {
-            handshake_timeout: SIDECAR_LIVENESS,
+            handshake_timeout: Some(SIDECAR_LIVENESS),
             io_timeout: SIDECAR_LIVENESS,
             ..Default::default()
         },
@@ -1684,7 +1684,7 @@ async fn session_hooks_wrap_real_turn_and_retain_lease_through_end() {
                 let factory = TurnHostFactory::new(factory_registry.clone(), deployment,
                     Limits {
                         close_timeout: STEER_CLOSE_TIMEOUT,
-                        handshake_timeout: Duration::from_secs(60),
+                        handshake_timeout: Some(Duration::from_secs(60)),
                         io_timeout: Duration::from_secs(60),
                         ..Default::default()
                     },

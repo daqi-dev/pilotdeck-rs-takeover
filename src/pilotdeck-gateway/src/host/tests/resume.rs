@@ -181,7 +181,7 @@ fn liveness_limits() -> Limits {
         // `resume-liveness-shrunk` negative-control row, and that row's kill
         // runs through the spawn-failure receipt label above — shrinking the
         // execution field instead would not fail the spawn.
-        handshake_timeout: Duration::from_secs(60),
+        handshake_timeout: Some(Duration::from_secs(60)),
         execution_timeout: Some(Duration::from_secs(120)),
         ..limits()
     }
@@ -371,7 +371,7 @@ async fn rejected_resume_or_replacement_handshake_observes_failure_exactly_once(
         let (result, handler, receipt) = execute(
             mode,
             Limits {
-                handshake_timeout,
+                handshake_timeout: Some(handshake_timeout),
                 close_timeout: Duration::from_millis(500),
                 execution_timeout: Some(execution_timeout),
                 ..limits()
