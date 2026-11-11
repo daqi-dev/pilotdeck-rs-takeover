@@ -11,8 +11,9 @@
 //   4. 进程号          → <pid>（键名为 pid / ownerPid 的整数；以及 Node 警告行前缀 "(node:1234)"）
 //   5. requestFingerprint → <fingerprint>（键名为 requestFingerprint 的字符串；会话里已有历史时，
 //                        基线两次发出的请求体逐字节相同，这个值仍然不同）
-//   6. 耗时            → 键名为 duration_ms / duration_seconds 的数值记成 <dur>（小数位数保留，如 <dur>.dd）；
-//                        文本里的 "duration_seconds: 0.02" 同样处理。只抹掉数值，格式（小数位数）仍然比较
+//   6. 耗时            → 键名为 duration_ms / duration_seconds 的数值，以及文本里 "duration_seconds: 0.02" 的数值，
+//                        记成 <dur>。小数位数不比：基线把秒数取整到两位后按 JS 数字打印，0.10 会印成 0.1，
+//                        位数本身逐次不同。取整和打印的写法由 Rust 侧单元测试负责
 //   7. 基线 execute_code 的两处随机路径段：mkdtemp 目录 pilotdeck_execute_code_XXXXXX 的随机后缀 → <tmp>，
 //      工具输出溢出目录 pilotdeck-tool-output/<进程号>/ → <pid>。只认这两个固定前缀
 // 数组按下标比。唯一的例外：元素全是带名字的对象（function.name 或 name，且名字不重复）的数组
@@ -45,7 +46,7 @@ export const ACCEPTED = {
 };
 const PID_KEYS = ['pid', 'ownerPid'];
 const DURATION_KEYS = ['duration_ms', 'duration_seconds'];
-const dur = (n) => { const t = String(n); const i = t.indexOf('.'); return i < 0 ? '<dur>' : '<dur>.' + 'd'.repeat(t.length - i - 1); };
+const dur = () => '<dur>';
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const ISO = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g;
 
