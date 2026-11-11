@@ -1030,12 +1030,13 @@ impl BackgroundTaskRuntime {
 
         let flushed = entry.state.lock().unwrap().output.flush();
         flushed.await;
-        let (task, total_bytes, has_durable) = {
+        let (task, total_bytes, has_durable, spill_configured) = {
             let state = entry.state.lock().unwrap();
             (
                 state.task.clone(),
                 state.output.total,
                 state.output.has_durable_output(),
+                state.output.spill_configured(),
             )
         };
 
@@ -1049,7 +1050,7 @@ impl BackgroundTaskRuntime {
             task: persist_task(&task),
             output: PersistedOutput {
                 total_bytes,
-                persisted: has_durable,
+                persisted: spill_configured,
             },
         };
 

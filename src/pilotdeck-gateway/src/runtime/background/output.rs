@@ -143,6 +143,12 @@ impl OutputStore {
         Ok(store)
     }
 
+    /// `TaskOutputStore.hasDurableOutput()` (TaskOutputStore.ts:181-183):
+    /// what the snapshot's `output.persisted` reports — a spill log is
+    /// configured, whether or not any byte has reached it yet.
+    pub(super) fn spill_configured(&self) -> bool {
+        self.spill.is_some()
+    }
     /// A pending or failed write must never be advertised as recoverable.
     pub(super) fn has_durable_output(&self) -> bool {
         self.spill.as_ref().is_some_and(|spill| {
