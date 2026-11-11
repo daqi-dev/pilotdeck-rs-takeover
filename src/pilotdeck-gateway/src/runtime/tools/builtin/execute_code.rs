@@ -709,7 +709,7 @@ impl Outcome {
             output,
             error: error.filter(|error| !error.is_empty()),
             tool_calls_made: calls.0,
-            duration_seconds: (((now_ms() - started) / 1000.0) * 100.0 + 0.5).floor() / 100.0,
+            duration_seconds: duration_seconds(now_ms() - started),
             tool_call_log: calls.1,
         }
     }
@@ -757,6 +757,12 @@ impl Outcome {
         );
         data
     }
+}
+
+/// `Math.round((elapsedMs / 1000) * 100) / 100`: seconds rounded half-up to
+/// two places. Printed as a JS number, so trailing zeros are dropped.
+fn duration_seconds(elapsed_ms: f64) -> f64 {
+    ((elapsed_ms / 1000.0) * 100.0 + 0.5).floor() / 100.0
 }
 
 /// `Date.now()`.
@@ -1511,6 +1517,45 @@ mod tests {
         assert_eq!(grouped(999), "999");
         assert_eq!(grouped(76_000), "76,000");
         assert_eq!(grouped(1_234_567), "1,234,567");
+    }
+
+    #[test]
+    fn duration_is_rounded_to_two_places_and_printed_as_a_js_number() {
+        // (elapsed ms, value, text in `duration_seconds: ...`), as node prints
+        // `Math.round((ms / 1000) * 100) / 100`.
+        for (elapsed, value, printed) in [
+            (0.0, 0.0, "0"),
+            (4.0, 0.0, "0"),
+            (5.0, 0.01, "0.01"),
+            (15.0, 0.02, "0.02"),
+            (20.0, 0.02, "0.02"),
+            (100.0, 0.1, "0.1"),
+            (104.0, 0.1, "0.1"),
+            (1000.0, 1.0, "1"),
+            (1005.0, 1.0, "1"),
+            // 1.005 * 100 and 1.015 * 100 fall just under .5 in binary.
+            (1006.0, 1.01, "1.01"),
+            (1015.0, 1.01, "1.01"),
+            (2675.0, 2.68, "2.68"),
+            (1234.0, 1.23, "1.23"),
+            (300_004.0, 300.0, "300"),
+        ] {
+            let seconds = duration_seconds(elapsed);
+            assert_eq!(seconds, value, "{elapsed} ms");
+            let outcome = Outcome {
+                status: "success",
+                output: String::new(),
+                error: None,
+                tool_calls_made: 0.0,
+                duration_seconds: seconds,
+                tool_call_log: Vec::new(),
+            };
+            assert_eq!(
+                outcome.format(),
+                format!("status: success\nduration_seconds: {printed}\ntool_calls_made: 0"),
+                "{elapsed} ms"
+            );
+        }
     }
 
     #[test]
