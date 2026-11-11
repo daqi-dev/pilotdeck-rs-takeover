@@ -1,0 +1,72 @@
+{
+  "name": "plugins-builtin-funasr",
+  "about": "内置 funasr 插件的 MCP 工具真的接在插件声明的 server 上：模型调用 mcp__funasr__transcribe_audio，传一个项目内存在的文件。隔离 home 下没有装 FunASR 运行时，server 在检查阶段就回「未安装」错误（带安装命令），不会下载或转写。比较工具结果文本（含安装命令和路径占位符的展开结果）。",
+  "files": {
+    "home/.pilotdeck/clip.wav": "not really audio\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Plugin check\"}"
+      }
+    },
+    {
+      "name": "after-tool",
+      "when": [
+        "tool_call_id"
+      ],
+      "reply": {
+        "text": "Transcription unavailable."
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "tool": {
+          "id": "call_bbx_asr",
+          "name": "mcp__funasr__transcribe_audio",
+          "arguments": {
+            "audio_path": "clip.wav"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "describe_server"
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-asr-1",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-asr-1",
+        "channelKey": "test",
+        "message": "transcribe clip.wav"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "mcp_server_status",
+      "params": {
+        "sessionKey": "s-asr-1"
+      }
+    },
+    {
+      "ws": "list_sessions"
+    }
+  ]
+}
