@@ -1243,6 +1243,75 @@ impl ProjectMcpRuntimeProvider {
 mod tests {
     use super::*;
 
+    /// projectMcpSpec.ts:17-55 over a package laid out like the baseline's:
+    /// the package root is the nearest ancestor with `package.json` and
+    /// `scripts/install-asr.mjs`, the FunASR entrypoint sits in the builtin
+    /// plugin, and Playwright MCP resolves to the first existing candidate.
+    #[test]
+    fn builtin_mcp_paths_resolve_against_the_package_layout() {
+        let base = std::fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .join(format!("pdrs-builtin-mcp-{}", uuid::Uuid::new_v4()));
+        let package = base.join("pkg");
+        let builtin = package.join("dist/src/extension/plugins/builtin");
+        let bin = base.join("bin");
+        for directory in [
+            builtin.clone(),
+            package.join("scripts"),
+            package.join("node_modules/@playwright/mcp"),
+            bin.clone(),
+        ] {
+            std::fs::create_dir_all(directory).unwrap();
+        }
+        std::fs::write(package.join("package.json"), "{}").unwrap();
+        std::fs::write(package.join("scripts/install-asr.mjs"), "").unwrap();
+        std::fs::write(package.join("node_modules/@playwright/mcp/cli.js"), "").unwrap();
+        std::fs::write(bin.join("node"), "").unwrap();
+        let text = |path: &Path| path.to_string_lossy().into_owned();
+        let mut env = HashMap::new();
+        env.insert("PATH".to_owned(), text(&bin));
+
+        let paths = BuiltinMcpPaths::for_builtin_plugins(&builtin, &env).unwrap();
+        assert_eq!(paths.node_executable, text(&bin.join("node")));
+        assert_eq!(
+            paths.funasr_mcp_entrypoint,
+            text(&builtin.join("funasr/funasr-local-mcp.mjs"))
+        );
+        assert_eq!(
+            paths.install_command,
+            format!("npm --prefix \"{}\" run install:asr", text(&package))
+        );
+        // `dist/node_modules` does not exist, the package root's does.
+        assert_eq!(
+            paths.playwright_mcp_entrypoint,
+            text(&package.join("node_modules/@playwright/mcp/cli.js"))
+        );
+
+        // No `node` on PATH: the bare name. No package markers above the
+        // directory: the directory itself is the install prefix.
+        let lone = base.join("lone");
+        std::fs::create_dir_all(&lone).unwrap();
+        let paths = BuiltinMcpPaths::for_builtin_plugins(&lone, &HashMap::new()).unwrap();
+        assert_eq!(paths.node_executable, "node");
+        assert_eq!(
+            paths.install_command,
+            format!("npm --prefix \"{}\" run install:asr", text(&lone))
+        );
+
+        // Desktop packages: the runtime root is the package root.
+        env.insert("PILOTDECK_RUNTIME_ROOT".to_owned(), text(&package));
+        let paths = BuiltinMcpPaths::for_builtin_plugins(&builtin, &env).unwrap();
+        assert_eq!(
+            paths.install_command,
+            format!(
+                "'{}' '{}'",
+                text(&bin.join("node")),
+                text(&package.join("scripts/install-asr.mjs"))
+            )
+        );
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
     async fn panic_deadline<T>(future: impl std::future::Future<Output = T>) -> T {
         tokio::time::timeout(std::time::Duration::from_secs(2), future)
             .await

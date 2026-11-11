@@ -135,6 +135,50 @@ mod tests {
     }
 
     #[test]
+    fn builtin_plugins_root_is_the_override_then_the_install_layout() {
+        let base = std::fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .join(format!("pdrs-plugins-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let exe_dir = base.join("stage/bin");
+        let cwd = base.join("work");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        std::fs::create_dir_all(cwd.join("rel")).unwrap();
+        // Nothing shipped and no override: no builtin plugins, and never the
+        // working directory.
+        std::fs::create_dir_all(cwd.join("builtin-plugins")).unwrap();
+        assert_eq!(
+            builtin_plugins_root(&Env::from_pairs(&[]), &cwd, Some(&exe_dir)),
+            None
+        );
+        assert_eq!(
+            builtin_plugins_root(&Env::from_pairs(&[]), &cwd, None),
+            None
+        );
+        // The install layout: beside `bin`.
+        std::fs::create_dir_all(base.join("stage/builtin-plugins")).unwrap();
+        let empty = Env::from_pairs(&[("PILOTDECK_BUNDLED_PLUGINS_DIR", "")]);
+        assert_eq!(
+            builtin_plugins_root(&empty, &cwd, Some(&exe_dir)),
+            Some(base.join("stage/builtin-plugins"))
+        );
+        // A non-empty override wins, resolved against the working directory.
+        let env = Env::from_pairs(&[("PILOTDECK_BUNDLED_PLUGINS_DIR", "rel")]);
+        assert_eq!(
+            builtin_plugins_root(&env, &cwd, Some(&exe_dir)),
+            Some(cwd.join("rel"))
+        );
+        // A missing override directory is kept as named (nothing loads from it).
+        let env =
+            Env::from_pairs(&[("PILOTDECK_BUNDLED_PLUGINS_DIR", "/nonexistent/pdrs-plugins")]);
+        assert_eq!(
+            builtin_plugins_root(&env, &cwd, Some(&exe_dir)),
+            Some(PathBuf::from("/nonexistent/pdrs-plugins"))
+        );
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
     fn flags_are_read_like_the_baseline_helpers() {
         assert_eq!(
             port_flag(&args(&["server", "--port", "38513"])),
