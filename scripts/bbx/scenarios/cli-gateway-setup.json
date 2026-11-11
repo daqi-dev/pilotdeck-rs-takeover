@@ -1,0 +1,25 @@
+{
+  "name": "cli-gateway-setup",
+  "about": "gateway setup 向导里不联网、不写配置的分支，stdin 非 TTY：横幅、平台菜单（q / 未知 / 空输入 / stdin 直接 EOF）、平台参数大小写与别名、飞书不给凭据时跳过、微信不继续扫码时取消、企业微信不扫码且不给 Bot ID 时跳过、问答中途 stdin 结束。需要外部服务（飞书凭据校验、企业微信扫码、微信 iLink 登录）和写 pilotdeck.yaml（yaml 库整体重新序列化）的分支不在这里。",
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "steps": [
+    { "cli": ["gateway", "setup"], "stdin": "q\n", "timeout": 10000 },
+    { "cli": ["gateway", "setup"], "stdin": "9\n", "timeout": 10000 },
+    { "cli": ["gateway", "setup"], "stdin": "\n", "timeout": 10000 },
+    { "cli": ["gateway", "setup"], "stdin": "", "timeout": 10000 },
+    { "cli": ["gateway", "setup", "bogus"], "stdin": "Q\n", "timeout": 10000 },
+    { "cli": ["gateway", "setup", "FEISHU"], "stdin": "lark\nn\n\n\n", "timeout": 10000 },
+    { "cli": ["gateway", "setup", "feishu"], "stdin": "", "timeout": 10000 },
+    { "cli": ["gateway", "setup", "wechat"], "stdin": "n\n", "timeout": 10000 },
+    { "cli": ["gateway", "setup", "weixin"], "stdin": "", "timeout": 10000 },
+    { "cli": ["gateway", "setup", "work-weixin"], "stdin": "n\n\n\n", "timeout": 10000 },
+    { "cli": ["gateway", "setup", "wecom"], "stdin": "n\nbot-only\n", "timeout": 10000 },
+    { "cli": ["gateway", "setup"], "stdin": "1\nfeishu\nno\n\n\n", "timeout": 10000 },
+    { "cli": ["gateway", "setup"], "stdin": "2\nno\n", "timeout": 10000 },
+    { "cli": ["gateway", "setup"], "stdin": "wecom\nN\n\n\n", "timeout": 10000 }
+  ]
+}

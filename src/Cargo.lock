@@ -1030,6 +1030,7 @@ dependencies = [
  "pilotdeck-gateway",
  "pilotdeck-protocol",
  "pilotdeck-transport",
+ "pilotdeck-yaml",
  "proc-macro2",
  "serde",
  "serde_json",

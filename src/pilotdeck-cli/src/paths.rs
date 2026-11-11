@@ -59,7 +59,7 @@ pub fn resolve(cwd: &Path, path: &Path) -> PathBuf {
 }
 
 /// os.homedir(): libuv returns $HOME whenever it is set, even if empty.
-fn homedir(env: &Env) -> Result<PathBuf, Failure> {
+pub(crate) fn homedir(env: &Env) -> Result<PathBuf, Failure> {
     env.get("HOME")
         .map(PathBuf::from)
         .ok_or(Failure::Todo("home directory lookup without $HOME"))

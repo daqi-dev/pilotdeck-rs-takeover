@@ -20,6 +20,7 @@ fancy-regex = "=0.17.0"
 chrono = { version = "=0.4.45", default-features = false, features = ["clock", "std"] }
 icu_casemap = "=2.1.1"
 pilotdeck-transport = { path = "../pilotdeck-transport" }
+pilotdeck-yaml = { path = "../pilotdeck-yaml" }
 libc = "=0.2.190"
 signal-hook = { version = "=0.3.18", default-features = false }
 icu_collator = "=2.1.1"
