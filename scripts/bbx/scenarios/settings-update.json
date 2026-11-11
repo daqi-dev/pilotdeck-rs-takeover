@@ -3,35 +3,229 @@
   "about": "配置一族：resolve_settings 快照；update_settings 写 pilotdeck.yaml（落盘内容、changedPaths、无变化、各类拒绝）后 resolve_settings 版本前进、下一轮请求的 max_tokens 体现新值；reload_config；apply_flag_settings 的 effortLevel / permissions.defaultMode 与拒绝路径，之后一轮请求体现 reasoning_effort。",
   "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [low, medium, high]\n            format: openai\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
   "provider": [
-    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Settings\"}" } },
-    { "name": "main", "reply": { "text": "Settings turn done." } }
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Settings\"}"
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "Settings turn done."
+      }
+    }
   ],
   "steps": [
-    { "ws": "resolve_settings", "params": {} },
-    { "ws": "reload_config", "params": {} },
-    { "ws": "update_settings", "params": { "source": "projectSettings", "settings": {} } },
-    { "ws": "update_settings", "params": { "source": "localSettings", "settings": [] } },
-    { "ws": "update_settings", "params": { "source": "localSettings", "settings": { "model": {} } } },
-    { "ws": "update_settings", "params": { "source": "localSettings", "settings": { "agent": { "maxOutputTokens": -1 } } } },
-    { "ws": "update_settings", "params": { "source": "localSettings", "settings": { "agent": { "model": "x" } } } },
-    { "ws": "update_settings", "params": { "source": "localSettings", "settings": { "agent": {} } } },
-    { "ws": "update_settings", "params": { "source": "localSettings", "settings": { "agent": { "maxOutputTokens": 4096, "subagents": { "timeoutMs": 60000 } }, "extension": { "includeHookEvents": true } } } },
-    { "ws": "resolve_settings", "params": {} },
-    { "ws": "submit_turn", "params": { "sessionKey": "s-set-1", "channelKey": "test", "message": "turn after update" } },
-    { "sleep": 500 },
-    { "ws": "update_settings", "params": { "source": "localSettings", "settings": { "agent": { "maxOutputTokens": null }, "extension": { "includeHookEvents": null } } } },
-    { "ws": "apply_flag_settings", "params": { "settings": {} } },
-    { "ws": "apply_flag_settings", "params": { "sessionKey": "s-set-2", "settings": [] } },
-    { "ws": "apply_flag_settings", "params": { "sessionKey": "s-set-2", "settings": { "effortLevel": "ultra" } } },
-    { "ws": "apply_flag_settings", "params": { "sessionKey": "s-set-2", "settings": { "model": "bbx/deterministic" } } },
-    { "ws": "apply_flag_settings", "params": { "sessionKey": "s-set-2", "settings": {} } },
-    { "ws": "apply_flag_settings", "params": { "sessionKey": "s-set-2", "settings": { "effortLevel": "high", "permissions": { "defaultMode": "bypassPermissions" } } } },
-    { "ws": "submit_turn", "params": { "sessionKey": "s-set-2", "channelKey": "test", "message": "turn after flags" } },
-    { "sleep": 500 },
-    { "ws": "apply_flag_settings", "params": { "sessionKey": "s-set-2", "settings": { "effortLevel": null, "permissions": null } } },
-    { "ws": "submit_turn", "params": { "sessionKey": "s-set-2", "channelKey": "test", "message": "turn after clearing flags" } },
-    { "sleep": 500 },
-    { "ws": "reload_config", "params": {} },
-    { "ws": "resolve_settings", "params": {} }
+    {
+      "ws": "resolve_settings",
+      "params": {}
+    },
+    {
+      "ws": "reload_config",
+      "params": {}
+    },
+    {
+      "ws": "update_settings",
+      "params": {
+        "source": "projectSettings",
+        "settings": {}
+      }
+    },
+    {
+      "ws": "update_settings",
+      "params": {
+        "source": "localSettings",
+        "settings": []
+      }
+    },
+    {
+      "ws": "update_settings",
+      "params": {
+        "source": "localSettings",
+        "settings": {
+          "model": {}
+        }
+      }
+    },
+    {
+      "ws": "update_settings",
+      "params": {
+        "source": "localSettings",
+        "settings": {
+          "agent": {
+            "maxOutputTokens": -1
+          }
+        }
+      }
+    },
+    {
+      "ws": "update_settings",
+      "params": {
+        "source": "localSettings",
+        "settings": {
+          "agent": {
+            "model": "x"
+          }
+        }
+      }
+    },
+    {
+      "ws": "update_settings",
+      "params": {
+        "source": "localSettings",
+        "settings": {
+          "agent": {}
+        }
+      }
+    },
+    {
+      "ws": "update_settings",
+      "params": {
+        "source": "localSettings",
+        "settings": {
+          "agent": {
+            "maxOutputTokens": 4096,
+            "subagents": {
+              "timeoutMs": 60000
+            }
+          },
+          "extension": {
+            "includeHookEvents": true
+          }
+        }
+      }
+    },
+    {
+      "ws": "resolve_settings",
+      "params": {}
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-set-1",
+        "channelKey": "test",
+        "message": "turn after update"
+      }
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "update_settings",
+      "params": {
+        "source": "localSettings",
+        "settings": {
+          "agent": {
+            "maxOutputTokens": null
+          },
+          "extension": {
+            "includeHookEvents": null
+          }
+        }
+      }
+    },
+    {
+      "ws": "apply_flag_settings",
+      "params": {
+        "settings": {}
+      }
+    },
+    {
+      "ws": "apply_flag_settings",
+      "params": {
+        "sessionKey": "s-set-2",
+        "settings": []
+      }
+    },
+    {
+      "ws": "apply_flag_settings",
+      "params": {
+        "sessionKey": "s-set-2",
+        "settings": {
+          "effortLevel": "ultra"
+        }
+      }
+    },
+    {
+      "ws": "apply_flag_settings",
+      "params": {
+        "sessionKey": "s-set-2",
+        "settings": {
+          "model": "bbx/deterministic"
+        }
+      }
+    },
+    {
+      "ws": "apply_flag_settings",
+      "params": {
+        "sessionKey": "s-set-2",
+        "settings": {}
+      }
+    },
+    {
+      "ws": "apply_flag_settings",
+      "params": {
+        "sessionKey": "s-set-2",
+        "settings": {
+          "effortLevel": "high",
+          "permissions": {
+            "defaultMode": "bypassPermissions"
+          }
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-set-2",
+        "channelKey": "test",
+        "message": "turn after flags"
+      }
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "apply_flag_settings",
+      "params": {
+        "sessionKey": "s-set-2",
+        "settings": {
+          "effortLevel": null,
+          "permissions": null
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-set-2",
+        "channelKey": "test",
+        "message": "turn after clearing flags"
+      }
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "reload_config",
+      "params": {}
+    },
+    {
+      "ws": "resolve_settings",
+      "params": {}
+    }
+  ],
+  "accepted": [
+    {
+      "id": "config-watch-survives-rewrite",
+      "why": "基线对配置文件本身调 fs.watch，update_settings 原子替换文件后监视的是已删除的旧文件，之后改配置不再热重载（版本号少跳一次）；Rust 保持持续监视",
+      "paths": [
+        "^\\$\\.steps\\[25\\]\\.frames\\[0\\]\\.result\\.version$"
+      ]
+    }
   ]
 }

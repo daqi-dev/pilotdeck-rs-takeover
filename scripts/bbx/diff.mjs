@@ -17,6 +17,8 @@
 //                        位数本身逐次不同。取整和打印的写法由 Rust 侧单元测试负责
 //   7. 基线 execute_code 的两处随机路径段：mkdtemp 目录 pilotdeck_execute_code_XXXXXX 的随机后缀 → <tmp>，
 //      工具输出溢出目录 pilotdeck-tool-output/<进程号>/ → <pid>。只认这两个固定前缀
+//   9. 工作区快照：快照 id 由随机的轮次 id 散列得来（键 snapshotId，以及路径段 /snapshots/<64 位十六进制>）
+//      → <snap:N>，N 是它在该侧第一次出现的序号；快照恢复用的 mkdtemp 目录 .pilotdeck-restore-XXXXXX → <tmp>
 //   8. 标题记录的落点：会话 .jsonl 里由 provider 生成标题的那条 session_metadata 记录（metadata.titleSource
 //      存在）与循环开头的几条记录并发写入，基线两次运行的先后就不同。比较前把它的内容挪到同一轮里
 //      accepted_input / 首条 session_metadata 之后；只允许越过 FLOAT_OVER 里列的记录类型，越过别的类型不挪，
@@ -61,12 +63,16 @@ const ISO = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/
 
 function normalizer() {
   const ids = new Map();
+  const snaps = new Map();
+  const snap = (id) => { if (!snaps.has(id)) snaps.set(id, snaps.size + 1); return `<snap:${snaps.get(id)}>`; };
   const text = (s) => s.replace(UUID, (u) => {
     const k = u.toLowerCase();
     if (!ids.has(k)) ids.set(k, ids.size + 1);
     return `<uuid:${ids.get(k)}>`;
   }).replace(ISO, '<iso>').replace(/\(node:\d+\)/g, '(node:<pid>)')
     .replace(/pilotdeck_execute_code_[A-Za-z0-9]{6}/g, 'pilotdeck_execute_code_<tmp>')
+    .replace(/\.pilotdeck-restore-[A-Za-z0-9]{6}/g, '.pilotdeck-restore-<tmp>')
+    .replace(/(\/snapshots\/)([0-9a-f]{64})/g, (_, pre, id) => pre + snap(id))
     .replace(/(pilotdeck-tool-output\/)\d+\//g, '$1<pid>/')
     .replace(/("durationMs":\s?)\d+/g, '$1<dur>')
     .replace(/(duration_ms: )\d+/g, '$1<dur>')
@@ -77,7 +83,7 @@ function normalizer() {
     if (typeof v === 'number') return v > 1.6e12 && v < 2.0e12 ? (Number.isInteger(v) ? '<ms>' : '<ms.frac>') : v;
     if (Array.isArray(v)) return v.map(walk);
     if (v && typeof v === 'object') {
-      return Object.fromEntries(Object.entries(v).map(([k, x]) => [text(k), PID_KEYS.includes(k) && Number.isInteger(x) ? '<pid>' : DURATION_KEYS.includes(k) && typeof x === 'number' ? dur(x) : k === 'requestFingerprint' && typeof x === 'string' ? '<fingerprint>' : walk(x)]));
+      return Object.fromEntries(Object.entries(v).map(([k, x]) => [text(k), PID_KEYS.includes(k) && Number.isInteger(x) ? '<pid>' : DURATION_KEYS.includes(k) && typeof x === 'number' ? dur(x) : k === 'snapshotId' && /^[0-9a-f]{64}$/.test(x) ? snap(x) : k === 'requestFingerprint' && typeof x === 'string' ? '<fingerprint>' : walk(x)]));
     }
     return v;
   };
