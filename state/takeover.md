@@ -44,7 +44,7 @@
 3. 发给 provider 的请求与会话记录：两轮已提交。第三批并行三件：宿主层权限询问 + 零星差异 + `ask_user_question`（7 个提交，未合并）；子代理运行时（`agent`、`subagent`、`send_message`，未提交）；`execute_code`（主任务已合并，见下；次任务刚开始）。三件都因额度中断过，改动在各自 worktree 里。
 4. 三个分支合并后、M1 收尾前：Rust 风险审查（见「剩余工作估算」）。
 
-并行做法：每个子代理一个 git worktree（`.claude/worktrees/`），自己的 `src/target`，在 worktree 里建 `resources/PilotDeck` 符号链接指向主检出的基线；bbx 靠独占锁排队。`negative_anchor_selfcheck` 在多个 worktree 并发时会卡住，让子代理跳过它，合并后在主检出单独跑。
+并行做法：每个子代理一个 git worktree（`.claude/worktrees/`），自己的 `src/target`，在 worktree 里建 `resources/PilotDeck` 符号链接指向主检出的基线；bbx 靠独占锁排队。`negative_anchor_selfcheck` 在多个 worktree 并发时会卡住，让子代理跳过它，合并后在主检出单独跑（2026-11-11 在 `7bdfa0781` 上单独跑：通过，103 秒）。
 
 M1 之后要回头处理的（入口那块发现的）：
 
