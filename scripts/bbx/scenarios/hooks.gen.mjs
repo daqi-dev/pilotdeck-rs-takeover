@@ -334,6 +334,94 @@ const scenarios = {};
   };
 }
 
+// ── 来源：配置文件不是 hook 来源；插件的 hooks/hooks.json、自定义路径；其他 hook 类型 ──
+{
+  const config = `schemaVersion: 1
+agent:
+  model: bbx/deterministic
+  maxContextTokens: 65536
+  maxOutputTokens: 8192
+model:
+  providers:
+    bbx:
+      protocol: openai
+      url: {MOCK}/v1
+      apiKey: bbx-mock-only
+      models:
+        deterministic:
+          capabilities:
+            supportsToolUse: true
+            maxContextTokens: 65536
+            maxOutputTokens: 8192
+telemetry:
+  enabled: false
+hooks:
+  UserPromptSubmit:
+    - hooks:
+        - type: command
+          command: "mkdir -p $HOME/hooklog && echo ran >> $HOME/hooklog/config-file.log"
+`;
+  const promptHook = (log) => ({ UserPromptSubmit: [{ hooks: [cmd(log)] }] });
+  scenarios['hook-sources'] = {
+    about: '`pilotdeck.yaml` 顶层的 hooks 段不是 hook 来源（基线报未知字段，照常启动，hook 不跑）；插件 hooks 的三种写法：plugin.json 里的对象、缺省的 hooks/hooks.json、plugin.json 里写的自定义路径；按插件目录名顺序合并。不支持的事件、callback 类型被丢弃；prompt / agent 类型没有执行器，结果是 non_blocking_error；插件里的 http hook 发到给定地址。',
+    config,
+    files: {
+      // 目录名决定加载顺序：a-inline, b-default-file, c-custom-path, d-kinds。
+      ...plugin('a-inline', promptHook('inline')),
+      'home/.pilotdeck/plugins/b-default-file/plugin.json': { name: 'b-default-file', version: '0.1.0', description: 'bbx' },
+      'home/.pilotdeck/plugins/b-default-file/hooks/hooks.json': promptHook('default-file'),
+      'home/.pilotdeck/plugins/b-default-file/hook.mjs': HOOK_SCRIPT,
+      'home/.pilotdeck/plugins/c-custom-path/plugin.json': { name: 'c-custom-path', version: '0.1.0', description: 'bbx', hooks: 'conf/my-hooks.json' },
+      'home/.pilotdeck/plugins/c-custom-path/conf/my-hooks.json': promptHook('custom-path'),
+      'home/.pilotdeck/plugins/c-custom-path/hook.mjs': HOOK_SCRIPT,
+      ...plugin('d-kinds', {
+        NotAnEvent: [{ hooks: [cmd('never')] }],
+        UserPromptSubmit: [{ hooks: [
+          { type: 'callback', name: 'x' },
+          { type: 'prompt', prompt: 'judge $ARGUMENTS' },
+          { type: 'agent', prompt: 'agent $ARGUMENTS' },
+          { type: 'http', url: '{MOCK}/plugin-hook', headers: { 'x-env': 'pre-$HOME-post', 'x-allowed': '${PILOT_HOME}' }, allowedEnvVars: ['PILOT_HOME'] },
+          { type: 'mystery' },
+          cmd('kinds-last'),
+        ] }],
+      }),
+    },
+    provider: [
+      TITLE,
+      { name: 'plugin-http-hook', when: ['"transcriptPath"', '"hookEventName":"UserPromptSubmit"'], reply: { status: 200, body: { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: 'from plugin http hook' } } } },
+      { name: 'main', reply: { text: 'answer' } },
+    ],
+    steps: [submit('s-src', 'sources: hello'), { sleep: 300 }],
+  };
+}
+
+// ── 子代理：SubagentStart / SubagentStop，子代理自己的工具调用 ──
+{
+  const hooks = {
+    // SubagentStart / SubagentStop 的执行事件投影在父会话的流上，与子代理状态事件的先后在基线里不稳定，
+    // 所以这里不配；它们由手工对比验证（见报告）。子代理自己的 hook 事件带子会话 id，不投影。
+    SessionStart: [{ hooks: [cmd('session', {})] }],
+    Setup: [{ hooks: [cmd('session', {})] }],
+    SessionEnd: [{ hooks: [cmd('session', {})] }],
+    UserPromptSubmit: [{ hooks: [cmd('session', {})] }],
+    PreToolUse: [{ matcher: 'glob', hooks: [cmd('pre', {})] }],
+    PostToolUse: [{ matcher: 'glob', hooks: [cmd('post', {})] }],
+    Stop: [{ hooks: [cmd('stop', {})] }],
+  };
+  scenarios['hook-subagent'] = {
+    about: '插件 hook 与一次性子代理（agent 工具）：子代理自己的工具调用（glob）派发 PreToolUse / PostToolUse、子代理结束派发 Stop，用的是父会话的 hook 配置、子会话的 id 与轮次环境，不投影到网关流；SessionStart / Setup / UserPromptSubmit / SessionEnd 只对父会话派发。',
+    files: plugin('bbx-sub', hooks),
+    provider: [
+      TITLE,
+      { name: 'parent-after', when: ['turn-1:', '"tool_call_id":"call_parent"'], reply: { text: 'Parent done.' } },
+      { name: 'child-after', when: ['CHILD-HOOK-7', '"tool_call_id":"call_child"'], reply: { text: 'Scope: looked.\nResult: nothing.\nKey files: none\nFiles changed: none\nIssues: none' } },
+      { name: 'child', when: ['CHILD-HOOK-7'], reply: { tool: { id: 'call_child', name: 'glob', arguments: { pattern: '*.nothing' } } } },
+      { name: 'parent', when: ['turn-1:'], reply: { tool: { id: 'call_parent', name: 'agent', arguments: { description: 'Look around', prompt: 'CHILD-HOOK-7: look for files.', subagentType: 'Explorer' } } } },
+    ],
+    steps: [submit('s-sub', 'turn-1: delegate'), { sleep: 300 }],
+  };
+}
+
 const outDir = here;
 for (const [name, body] of Object.entries(scenarios)) {
   fs.writeFileSync(path.join(outDir, `${name}.json`), JSON.stringify({ name, ...body }, null, 2) + '\n');

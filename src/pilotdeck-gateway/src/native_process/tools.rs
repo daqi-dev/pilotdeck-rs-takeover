@@ -195,6 +195,10 @@ pub(super) struct ForkSeed {
     /// parent's instances and record into the parent session's file history.
     file_history: Arc<crate::storage::file_history::FileHistoryStore>,
     elicitation_timeout: Duration,
+    /// The parent session's hooks: a child loop shares its parent's
+    /// `dependencies.lifecycle`.
+    hooks: crate::hooks::protocol::HooksSettings,
+    hook_observers: crate::runtime::hooks::runtime::HookObservers,
 }
 impl ForkSeed {
     /// The child session's tools. The permission context starts as a copy of
@@ -213,6 +217,26 @@ impl ForkSeed {
             .0
             .clone();
         let run_mode = Arc::new(Mutex::new(config_run_mode(&config)));
+        // The child runs its loop without an AgentSession or TurnRunner
+        // (SubAgentSession.runNative): the session events and
+        // UserPromptSubmit are never dispatched for it, the loop and tool
+        // events are, through the parent's runtime. The parent's projection
+        // drops them (they carry the child's session id).
+        let hooks: crate::hooks::protocol::HooksSettings = self
+            .hooks
+            .into_iter()
+            .filter(|(event, _)| {
+                !["SessionStart", "Setup", "SessionEnd", "UserPromptSubmit"]
+                    .iter()
+                    .any(|session_event| event.equals_str(session_event))
+            })
+            .collect();
+        let tool_hooks: Arc<super::hooks::ToolHooks> = Arc::default();
+        tool_hooks.configure(&hooks);
+        let child_permission_hooks = std::sync::OnceLock::new();
+        if !hooks.is_empty() {
+            let _ = child_permission_hooks.set(tool_hooks.clone());
+        }
         SessionTools {
             plan_files: Arc::new(crate::runtime::plan_todo::SessionPlanFiles::new(
                 &self.project,
@@ -229,7 +253,7 @@ impl ForkSeed {
                 Mutex::new((permission, None)),
                 self.permission.1.clone(),
                 Default::default(),
-                Default::default(),
+                child_permission_hooks,
             )),
             lsp: self.lsp,
             mcp: self.mcp,
@@ -244,9 +268,9 @@ impl ForkSeed {
             file_history: self.file_history,
             user_dialog: None,
             elicitation_timeout: self.elicitation_timeout,
-            hooks: Vec::new(),
-            hook_observers: Default::default(),
-            tool_hooks: Arc::default(),
+            hooks,
+            hook_observers: self.hook_observers,
+            tool_hooks,
         }
     }
 }
@@ -426,6 +450,8 @@ impl SessionTools {
             continuation: self.continuation.clone(),
             file_history: self.file_history.clone(),
             elicitation_timeout: self.elicitation_timeout,
+            hooks: self.hooks.clone(),
+            hook_observers: self.hook_observers.clone(),
         }
     }
 
@@ -760,6 +786,8 @@ impl SessionTools {
                 subagents.port(
                     self.fork_seed(),
                     super::subagents::ParentTurn {
+                        lifecycle: Some(self.tool_hooks.clone()
+                            as Arc<dyn crate::runtime::tools::ToolLifecycle>),
                         recorder: fork_recorder,
                         config: config.clone(),
                         emit: fork_events,

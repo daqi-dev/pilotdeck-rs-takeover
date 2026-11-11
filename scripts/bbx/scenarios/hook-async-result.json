@@ -1,6 +1,6 @@
 {
   "name": "hook-async-result",
-  "about": "hook_async_result（异步 hook 在后台跑完后，宿主把它的输出送回进行中的轮次）：不配 hooks 时能走到的路径——缺 sessionKey / invocationId（含全空白）、未知的 invocationId 回 status unknown（无论有没有进行中的轮次）。需要 hooks 配置才能产生挂起的 invocation（delivered / duplicate / expired），Rust 启动时的配置校验拒绝带 hooks 的配置，见报告。",
+  "about": "hook_async_result（异步 hook 在后台跑完后，宿主把它的输出送回进行中的轮次）：不配 hooks 时能走到的路径——缺 sessionKey / invocationId（含全空白）、未知的 invocationId 回 status unknown（无论有没有进行中的轮次）。需要 SDK hooks 才能产生挂起的 invocation，delivered / duplicate / expired 见 hook-sdk-http。",
   "provider": [
     { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Hook run\"}" } },
     { "name": "busy", "when": ["busy:"], "reply": { "tool": { "id": "call_bbx_b", "name": "bash", "arguments": { "command": "echo needs-permission > made.txt" } } } }
