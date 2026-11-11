@@ -381,12 +381,10 @@ fn validate_node(value: &JsValue, path: &str, depth: usize, nodes: &mut usize) -
     {
         return Some(issue);
     }
-    for key in ["items"] {
-        if let Some(child) = present(node, key)
-            && let Some(issue) = validate_node(child, &format!("{path}.{key}"), depth + 1, nodes)
-        {
-            return Some(issue);
-        }
+    if let Some(child) = present(node, "items")
+        && let Some(issue) = validate_node(child, &format!("{path}.items"), depth + 1, nodes)
+    {
+        return Some(issue);
     }
     if let Some(prefix) = present(node, "prefixItems") {
         let JsValue::Array(items) = prefix else {
@@ -1010,10 +1008,10 @@ fn answer_matches(value: &JsValue, schema: &JsValue, definitions: &JsObject) -> 
                 }
                 None => match node.get("additionalProperties") {
                     Some(JsValue::Bool(false)) => return false,
-                    Some(additional @ JsValue::Object(_)) => {
-                        if !answer_matches(item, additional, definitions) {
-                            return false;
-                        }
+                    Some(additional @ JsValue::Object(_))
+                        if !answer_matches(item, additional, definitions) =>
+                    {
+                        return false;
                     }
                     _ => {}
                 },
