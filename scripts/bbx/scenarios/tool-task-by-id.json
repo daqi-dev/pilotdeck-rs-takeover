@@ -2,36 +2,295 @@
   "name": "tool-task-by-id",
   "about": "task_* 按真实任务 id 的成功路径（bypassPermissions）：任务 id 由假 provider 规则的 save 从下一次模型请求里的 task_create 结果取出，再填进下一个工具调用。s-t1：第一轮建一个短任务（建时必在运行），等它结束后第二轮 task_output 从头读输出（task_wait 的结果里有 waitedMs，基线自己两次就不同——对已结束的任务也是 0 或 1——所以不在本场景，见报告）；s-t3：建一个长任务后 task_stop 停掉，再 task_output 看状态；s-t2：建一个长任务后结束本轮，用 gateway method background_tasks（带 / 不带 taskId、带缺省项目与另一个 projectKey）列出、background_task_stop 停掉、再停一次。比较工具结果、发给 provider 的请求、返回值和落盘。",
   "provider": [
-    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Task run\"}" } },
-    { "name": "t1b-done", "when": ["t1b:", "\"tool_call_id\":\"call_bbx_1o\""], "reply": { "text": "Done 1." } },
-    { "name": "t1b-output", "when": ["t1b:"], "reply": { "tool": { "id": "call_bbx_1o", "name": "task_output", "arguments": { "taskId": "{saved.tid1}", "offset": 0 } } } },
-    { "name": "t1-done", "when": ["t1:", "\"tool_call_id\":\"call_bbx_1c\""], "save": { "tid1": "task_create taskId=([0-9a-f-]{36})" }, "reply": { "text": "Created 1." } },
-    { "name": "t1-create", "when": ["t1:"], "reply": { "tool": { "id": "call_bbx_1c", "name": "task_create", "arguments": { "command": "sleep 0.5; echo started; echo finished" } } } },
-    { "name": "t3-done", "when": ["t3:", "\"tool_call_id\":\"call_bbx_3o\""], "reply": { "text": "Done 3." } },
-    { "name": "t3-output", "when": ["t3:", "\"tool_call_id\":\"call_bbx_3s\""], "reply": { "tool": { "id": "call_bbx_3o", "name": "task_output", "arguments": { "taskId": "{saved.tid3}" } } } },
-    { "name": "t3-stop", "when": ["t3:", "\"tool_call_id\":\"call_bbx_3c\""], "save": { "tid3": "task_create taskId=([0-9a-f-]{36})" }, "reply": { "tool": { "id": "call_bbx_3s", "name": "task_stop", "arguments": { "taskId": "{saved.tid3}" } } } },
-    { "name": "t3-create", "when": ["t3:"], "reply": { "tool": { "id": "call_bbx_3c", "name": "task_create", "arguments": { "command": "sleep 30" } } } },
-    { "name": "t2-done", "when": ["t2:", "\"tool_call_id\":\"call_bbx_2c\""], "save": { "tid2": "task_create taskId=([0-9a-f-]{36})" }, "reply": { "text": "Started 2." } },
-    { "name": "t2-create", "when": ["t2:"], "reply": { "tool": { "id": "call_bbx_2c", "name": "task_create", "arguments": { "command": "sleep 30" } } } }
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Task run\"}"
+      }
+    },
+    {
+      "name": "t1b-done",
+      "when": [
+        "t1b:",
+        "\"tool_call_id\":\"call_bbx_1o\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "t1b-output",
+      "when": [
+        "t1b:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1o",
+          "name": "task_output",
+          "arguments": {
+            "taskId": "{saved.tid1}",
+            "offset": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "t1-done",
+      "when": [
+        "t1:",
+        "\"tool_call_id\":\"call_bbx_1c\""
+      ],
+      "save": {
+        "tid1": "task_create taskId=([0-9a-f-]{36})"
+      },
+      "reply": {
+        "text": "Created 1."
+      }
+    },
+    {
+      "name": "t1-create",
+      "when": [
+        "t1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1c",
+          "name": "task_create",
+          "arguments": {
+            "command": "sleep 0.5; echo started; echo finished"
+          }
+        }
+      }
+    },
+    {
+      "name": "t3-done",
+      "when": [
+        "t3:",
+        "\"tool_call_id\":\"call_bbx_3o\""
+      ],
+      "reply": {
+        "text": "Done 3."
+      }
+    },
+    {
+      "name": "t3-output",
+      "when": [
+        "t3:",
+        "\"tool_call_id\":\"call_bbx_3s\""
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_3o",
+          "name": "task_output",
+          "arguments": {
+            "taskId": "{saved.tid3}"
+          }
+        }
+      }
+    },
+    {
+      "name": "t3-stop",
+      "when": [
+        "t3:",
+        "\"tool_call_id\":\"call_bbx_3c\""
+      ],
+      "save": {
+        "tid3": "task_create taskId=([0-9a-f-]{36})"
+      },
+      "reply": {
+        "tool": {
+          "id": "call_bbx_3s",
+          "name": "task_stop",
+          "arguments": {
+            "taskId": "{saved.tid3}"
+          }
+        }
+      }
+    },
+    {
+      "name": "t3-create",
+      "when": [
+        "t3:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_3c",
+          "name": "task_create",
+          "arguments": {
+            "command": "sleep 30"
+          }
+        }
+      }
+    },
+    {
+      "name": "t2-done",
+      "when": [
+        "t2:",
+        "\"tool_call_id\":\"call_bbx_2c\""
+      ],
+      "save": {
+        "tid2": "task_create taskId=([0-9a-f-]{36})"
+      },
+      "reply": {
+        "text": "Started 2."
+      }
+    },
+    {
+      "name": "t2-create",
+      "when": [
+        "t2:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_2c",
+          "name": "task_create",
+          "arguments": {
+            "command": "sleep 30"
+          }
+        }
+      }
+    }
   ],
   "steps": [
-    { "ws": "set_permission_mode", "params": { "sessionKey": "s-t1", "mode": "bypassPermissions" } },
-    { "ws": "submit_turn", "params": { "sessionKey": "s-t1", "channelKey": "test", "runId": "run-1", "message": "t1: quick task" }, "timeout": 30000 },
-    { "sleep": 2000 },
-    { "ws": "submit_turn", "params": { "sessionKey": "s-t1", "channelKey": "test", "runId": "run-1b", "message": "t1b: read it" }, "timeout": 30000 },
-    { "ws": "set_permission_mode", "params": { "sessionKey": "s-t3", "mode": "bypassPermissions" } },
-    { "ws": "submit_turn", "params": { "sessionKey": "s-t3", "channelKey": "test", "runId": "run-3", "message": "t3: long task then stop" }, "timeout": 30000 },
-    { "ws": "set_permission_mode", "params": { "sessionKey": "s-t2", "mode": "bypassPermissions" } },
-    { "ws": "submit_turn", "params": { "sessionKey": "s-t2", "channelKey": "test", "runId": "run-2", "message": "t2: long task" }, "timeout": 30000 },
-    { "ws": "background_tasks", "params": { "sessionKey": "s-t2" } },
-    { "ws": "background_tasks", "params": { "sessionKey": "s-t2", "taskId": "{saved.tid2}" } },
-    { "ws": "background_tasks", "params": { "sessionKey": "s-t2", "projectKey": "{PILOT_HOME}" } },
-    { "ws": "background_tasks", "params": { "sessionKey": "s-t2", "projectKey": "{ROOT}/elsewhere" } },
-    { "ws": "background_tasks", "params": { "sessionKey": "s-t1", "taskId": "{saved.tid2}" } },
-    { "ws": "background_task_stop", "params": { "sessionKey": "s-t1", "taskId": "{saved.tid2}" } },
-    { "ws": "background_task_stop", "params": { "sessionKey": "s-t2", "taskId": "{saved.tid2}", "projectKey": "{ROOT}/elsewhere" } },
-    { "ws": "background_task_stop", "params": { "sessionKey": "s-t2", "taskId": "{saved.tid2}" } },
-    { "ws": "background_task_stop", "params": { "sessionKey": "s-t2", "taskId": "{saved.tid2}" } },
-    { "ws": "background_tasks", "params": { "sessionKey": "s-t2" } }
-  ]
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-t1",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-t1",
+        "channelKey": "test",
+        "runId": "run-1",
+        "message": "t1: quick task"
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 2000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-t1",
+        "channelKey": "test",
+        "runId": "run-1b",
+        "message": "t1b: read it"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-t3",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-t3",
+        "channelKey": "test",
+        "runId": "run-3",
+        "message": "t3: long task then stop"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-t2",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-t2",
+        "channelKey": "test",
+        "runId": "run-2",
+        "message": "t2: long task"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "background_tasks",
+      "params": {
+        "sessionKey": "s-t2"
+      }
+    },
+    {
+      "ws": "background_tasks",
+      "params": {
+        "sessionKey": "s-t2",
+        "taskId": "{saved.tid2}"
+      }
+    },
+    {
+      "ws": "background_tasks",
+      "params": {
+        "sessionKey": "s-t2",
+        "projectKey": "{PILOT_HOME}"
+      }
+    },
+    {
+      "ws": "background_tasks",
+      "params": {
+        "sessionKey": "s-t2",
+        "projectKey": "{ROOT}/elsewhere"
+      }
+    },
+    {
+      "ws": "background_tasks",
+      "params": {
+        "sessionKey": "s-t1",
+        "taskId": "{saved.tid2}"
+      }
+    },
+    {
+      "ws": "background_task_stop",
+      "params": {
+        "sessionKey": "s-t1",
+        "taskId": "{saved.tid2}"
+      }
+    },
+    {
+      "ws": "background_task_stop",
+      "params": {
+        "sessionKey": "s-t2",
+        "taskId": "{saved.tid2}",
+        "projectKey": "{ROOT}/elsewhere"
+      }
+    },
+    {
+      "ws": "background_task_stop",
+      "params": {
+        "sessionKey": "s-t2",
+        "taskId": "{saved.tid2}"
+      }
+    },
+    {
+      "ws": "background_task_stop",
+      "params": {
+        "sessionKey": "s-t2",
+        "taskId": "{saved.tid2}"
+      }
+    },
+    {
+      "ws": "background_tasks",
+      "params": {
+        "sessionKey": "s-t2"
+      }
+    }
+  ],
+  "volatile": [
+    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages|resultBytes|content-length)$"
+  ],
+  "volatileWhy": "随机的任务 id 进了模型上下文，token 估算随之变；基线自比已证明"
 }
