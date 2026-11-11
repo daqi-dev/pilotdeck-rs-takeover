@@ -14,6 +14,7 @@
     { "ws": "submit_turn", "params": { "sessionKey": "s-hook", "channelKey": "test", "runId": "run-h", "message": "busy: ask" }, "timeout": 3000, "expectTimeout": true },
     { "ws": "hook_async_result", "params": { "sessionKey": "s-hook", "invocationId": "inv-unknown", "output": { "additionalContext": "late" } } },
     { "ws": "hook_async_result", "params": { "sessionKey": "s-hook", "invocationId": "inv-2" } },
-    { "ws": "active_turn_snapshot", "params": { "sessionKey": "s-hook", "includeEvents": false } }
+    { "ws": "active_turn_snapshot", "params": { "sessionKey": "s-hook", "includeEvents": false } },
+    { "ws": "abort_turn", "params": { "sessionKey": "s-hook" } }
   ]
 }

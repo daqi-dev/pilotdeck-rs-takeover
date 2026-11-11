@@ -28,6 +28,7 @@
     { "ws": "seed_read_state", "params": { "sessionKey": "s-seed", "path": "seed.txt", "mtime": 1767225600000 } },
     { "ws": "submit_turn", "params": { "sessionKey": "s-seed", "channelKey": "test", "runId": "run-s", "message": "edit: after seeding" }, "timeout": 20000 },
     { "ws": "submit_turn", "params": { "sessionKey": "s-busy", "channelKey": "test", "runId": "run-b", "message": "busy: ask" }, "timeout": 3000, "expectTimeout": true },
-    { "ws": "seed_read_state", "params": { "sessionKey": "s-busy", "path": "seed.txt", "mtime": 1767225600000 } }
+    { "ws": "seed_read_state", "params": { "sessionKey": "s-busy", "path": "seed.txt", "mtime": 1767225600000 } },
+    { "ws": "abort_turn", "params": { "sessionKey": "s-busy" } }
   ]
 }

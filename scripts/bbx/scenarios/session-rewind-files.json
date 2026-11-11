@@ -42,6 +42,7 @@
     { "ws": "rewind_files", "params": { "sessionKey": "s-rw", "userMessageId": "run-3", "dryRun": true } },
     { "ws": "rewind_files", "params": { "sessionKey": "s-rw", "userMessageId": "run-3" } },
     { "ws": "submit_turn", "params": { "sessionKey": "s-busy", "channelKey": "test", "runId": "run-b", "message": "turn-b: ask" }, "timeout": 3000, "expectTimeout": true },
-    { "ws": "rewind_files", "params": { "sessionKey": "s-busy", "userMessageId": "run-b" } }
+    { "ws": "rewind_files", "params": { "sessionKey": "s-busy", "userMessageId": "run-b" } },
+    { "ws": "abort_turn", "params": { "sessionKey": "s-busy" } }
   ]
 }

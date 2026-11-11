@@ -50,6 +50,7 @@
     { "ws": "export_session_transcript", "params": { "sessionKey": "s-imported" } },
     { "ws": "list_sessions", "params": {} },
     { "ws": "submit_turn", "params": { "sessionKey": "s-busy", "channelKey": "test", "runId": "run-b", "message": "turn-b: ask" }, "timeout": 3000, "expectTimeout": true },
-    { "ws": "export_session_transcript", "params": { "sessionKey": "s-busy" } }
+    { "ws": "export_session_transcript", "params": { "sessionKey": "s-busy" } },
+    { "ws": "abort_turn", "params": { "sessionKey": "s-busy" } }
   ]
 }

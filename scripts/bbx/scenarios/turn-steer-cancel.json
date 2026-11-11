@@ -1,6 +1,6 @@
 {
   "name": "turn-steer-cancel",
-  "about": "cancel_steer 在插话排队后、应用前取消成功：轮次里的 bash 需要权限询问（默认权限模式），tool_call_started 时 steer_turn 排队，随后的 hook_execution_started（PermissionRequest）时 cancel_steer 取消，permission_request 时允许；之后再取消同一条（已取消）、发给 provider 的下一次请求里不应出现插话、会话记录。三个应答挂在同一轮的三个不同事件上，所以不需要「同一事件应答两次」。",
+  "about": "cancel_steer 在插话排队后、应用前取消成功：轮次里的 bash 需要权限询问（默认权限模式），tool_call_started 时 steer_turn 排队，随后的 hook_execution_started（PermissionRequest）时 cancel_steer 取消，permission_request 时允许；之后再取消同一条（已取消）、发给 provider 的下一次请求里不应出现插话、会话记录（落盘比较；不用 read_session_messages，它的 fileSize 含 bash 耗时的字节数，两侧会差几个字节）。三个应答挂在同一轮的三个不同事件上，所以不需要「同一事件应答两次」。",
   "provider": [
     { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Steer run\"}" } },
     { "name": "turn-1-after-tool", "when": ["turn-1:", "\"tool_call_id\":\"call_bbx_1\""], "reply": { "text": "Done 1." } },
@@ -17,7 +17,6 @@
       ],
       "timeout": 20000
     },
-    { "ws": "cancel_steer", "params": { "sessionKey": "s-bbx-1", "runId": "run-bbx-1", "itemId": "item-1" } },
-    { "ws": "read_session_messages", "params": { "sessionKey": "s-bbx-1" } }
+    { "ws": "cancel_steer", "params": { "sessionKey": "s-bbx-1", "runId": "run-bbx-1", "itemId": "item-1" } }
   ]
 }
