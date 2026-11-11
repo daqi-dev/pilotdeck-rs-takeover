@@ -11,6 +11,10 @@
 //   4. 进程号          → <pid>（键名为 pid / ownerPid 的整数；以及 Node 警告行前缀 "(node:1234)"）
 //   5. requestFingerprint → <fingerprint>（键名为 requestFingerprint 的字符串；会话里已有历史时，
 //                        基线两次发出的请求体逐字节相同，这个值仍然不同）
+//   6. 耗时            → 键名为 duration_ms / duration_seconds 的数值记成 <dur>（小数位数保留，如 <dur>.dd）；
+//                        文本里的 "duration_seconds: 0.02" 同样处理。只抹掉数值，格式（小数位数）仍然比较
+//   7. 基线 execute_code 的两处随机路径段：mkdtemp 目录 pilotdeck_execute_code_XXXXXX 的随机后缀 → <tmp>，
+//      工具输出溢出目录 pilotdeck-tool-output/<进程号>/ → <pid>。只认这两个固定前缀
 // 数组按下标比。唯一的例外：元素全是带名字的对象（function.name 或 name，且名字不重复）的数组
 // 按名字对齐——缺的、多的各报一条，共有元素的相对顺序不同报一条，同名元素再逐字段比。
 // 这只改变差异的报法（少一个工具不再表现为后面所有工具都错位），不会让任何差异消失。
@@ -40,6 +44,8 @@ export const ACCEPTED = {
     (s) => s.replace(/^\(node:<pid>\) ExperimentalWarning: .*\n\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)\n/gm, '')],
 };
 const PID_KEYS = ['pid', 'ownerPid'];
+const DURATION_KEYS = ['duration_ms', 'duration_seconds'];
+const dur = (n) => { const t = String(n); const i = t.indexOf('.'); return i < 0 ? '<dur>' : '<dur>.' + 'd'.repeat(t.length - i - 1); };
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const ISO = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g;
 
@@ -49,13 +55,16 @@ function normalizer() {
     const k = u.toLowerCase();
     if (!ids.has(k)) ids.set(k, ids.size + 1);
     return `<uuid:${ids.get(k)}>`;
-  }).replace(ISO, '<iso>').replace(/\(node:\d+\)/g, '(node:<pid>)');
+  }).replace(ISO, '<iso>').replace(/\(node:\d+\)/g, '(node:<pid>)')
+    .replace(/pilotdeck_execute_code_[A-Za-z0-9]{6}/g, 'pilotdeck_execute_code_<tmp>')
+    .replace(/(pilotdeck-tool-output\/)\d+\//g, '$1<pid>/')
+    .replace(/(duration_seconds: )(\d+(?:\.\d+)?)/g, (_, k, n) => k + dur(n));
   const walk = (v) => {
     if (typeof v === 'string') return Object.values(ACCEPTED).reduce((s, [, apply]) => apply(s), text(v));
     if (typeof v === 'number') return v > 1.6e12 && v < 2.0e12 ? (Number.isInteger(v) ? '<ms>' : '<ms.frac>') : v;
     if (Array.isArray(v)) return v.map(walk);
     if (v && typeof v === 'object') {
-      return Object.fromEntries(Object.entries(v).map(([k, x]) => [text(k), PID_KEYS.includes(k) && Number.isInteger(x) ? '<pid>' : k === 'requestFingerprint' && typeof x === 'string' ? '<fingerprint>' : walk(x)]));
+      return Object.fromEntries(Object.entries(v).map(([k, x]) => [text(k), PID_KEYS.includes(k) && Number.isInteger(x) ? '<pid>' : DURATION_KEYS.includes(k) && typeof x === 'number' ? dur(x) : k === 'requestFingerprint' && typeof x === 'string' ? '<fingerprint>' : walk(x)]));
     }
     return v;
   };
