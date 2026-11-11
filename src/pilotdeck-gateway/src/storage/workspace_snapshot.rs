@@ -2100,8 +2100,7 @@ mod tests {
         );
         // Without the removal the same algorithm creates both levels: the
         // victim round succeeds exactly when nobody deletes the parent.
-        create_staging(&child)
-            .expect("create_staging recreates a parent removed under it");
+        create_staging(&child).expect("create_staging recreates a parent removed under it");
     }
 }
 

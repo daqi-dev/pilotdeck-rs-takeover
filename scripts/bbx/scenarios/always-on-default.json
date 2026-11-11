@@ -1,0 +1,106 @@
+{
+  "name": "always-on-default",
+  "about": "缺省配置（没有 alwaysOn 段）下 always_on_apply / always_on_abort / always_on_rerun_plan：基线发布的是独立的 Always-On control（可以应用已落盘的 work cycle，abort / rerun 回 not_configured）。apply 的找不到 cycle、cycle 没有 workspace、缺 projectKey 三条路径；abort / rerun 带不带参数。",
+  "files": {
+    "home/work/alpha/README.md": "alpha\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+    "home/.pilotdeck/always-on/projects/private-tmp-pdrs-bbx-root-home-work-alpha/cycles/index.json": {
+      "schemaVersion": 1,
+      "cycles": [
+        {
+          "id": "cycle-noworkspace",
+          "status": "completed",
+          "planIds": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ]
+    }
+  },
+  "steps": [
+    {
+      "ws": "always_on_apply",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "workCycleId": "missing",
+        "projectName": "alpha"
+      }
+    },
+    {
+      "ws": "always_on_apply",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "workCycleId": "cycle-noworkspace",
+        "projectName": "alpha"
+      }
+    },
+    {
+      "ws": "always_on_apply",
+      "params": {
+        "workCycleId": "missing"
+      }
+    },
+    {
+      "ws": "always_on_apply",
+      "params": {
+        "projectKey": 7,
+        "workCycleId": "missing"
+      }
+    },
+    {
+      "ws": "always_on_apply",
+      "params": {
+        "projectKey": null,
+        "workCycleId": "missing"
+      }
+    },
+    {
+      "ws": "always_on_apply",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "workCycleId": 5
+      }
+    },
+    {
+      "ws": "always_on_apply",
+      "params": {
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "always_on_apply",
+      "params": {
+        "projectKey": "{HOME}/work/gamma",
+        "workCycleId": "missing"
+      }
+    },
+    {
+      "ws": "always_on_abort",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "sessionKey": "always-on:x"
+      }
+    },
+    {
+      "ws": "always_on_abort",
+      "params": {
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "always_on_abort",
+      "params": {}
+    },
+    {
+      "ws": "always_on_rerun_plan",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "planId": "p1"
+      }
+    },
+    {
+      "ws": "always_on_rerun_plan",
+      "params": {}
+    }
+  ]
+}

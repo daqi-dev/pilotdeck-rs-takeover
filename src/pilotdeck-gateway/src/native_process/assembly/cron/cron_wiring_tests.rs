@@ -712,9 +712,9 @@ async fn a_disabled_always_on_section_constructs_no_manager() {
     negative_assert_eq!(
         apply["result"],
         json!({"sessionKey": "",
-               "error": {"code": "not_configured",
-                         "message": "Always-On apply is not configured on this gateway."}}),
-        "#2294 the unconfigured envelope is byte for byte the #1313 shape"
+               "error": {"code": "cycle_not_found",
+                         "message": "Work cycle c1 not found"}}),
+        "the standalone control reads the persisted cycle (bbx always-on-default)"
     );
 
     harness
