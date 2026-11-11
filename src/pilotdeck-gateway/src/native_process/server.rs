@@ -108,7 +108,10 @@ async fn serve_on_runtime(
         sidecar: options.sidecar.clone(),
         sidecar_args: Vec::new(),
         drain_budget: DRAIN_BUDGET,
-        storage_root: None,
+        // `resolveWorkspaceSnapshotConfig(env)` (workspaceSnapshot.ts:25-34)
+        // reads the process environment; the entry keeps it as given and the
+        // snapshot config resolves and trims it.
+        storage_root: options.env.get("PILOTDECK_STORAGE_ROOT").cloned(),
         os_home: Some(
             options
                 .os_home

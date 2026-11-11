@@ -1,0 +1,147 @@
+{
+  "name": "sop-disabled",
+  "about": "缺省配置（没有 modules.sop）下 sop_status / sop_resume：模块未开启、审批授权分支、authority 覆盖、人工来源、未登记项目。开启 SOP 需要 StaffDeck 外部服务，不在场景里。",
+  "files": {
+    "home/work/alpha/README.md": "alpha\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n"
+  },
+  "steps": [
+    {
+      "ws": "sop_status",
+      "params": {
+        "sessionKey": "s-1"
+      }
+    },
+    {
+      "ws": "sop_status",
+      "params": {
+        "sessionKey": "s-1",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "sop_status",
+      "params": {
+        "sessionKey": "s-1",
+        "projectKey": "{HOME}/work/gamma"
+      }
+    },
+    {
+      "ws": "sop_status",
+      "params": {
+        "sessionKey": "s-1",
+        "approverAuthorization": "Bearer x"
+      }
+    },
+    {
+      "ws": "sop_resume",
+      "params": {
+        "sessionKey": "s-1",
+        "source": "agent",
+        "requestId": "r1",
+        "waitId": "w1",
+        "message": "go"
+      }
+    },
+    {
+      "ws": "sop_resume",
+      "params": {
+        "sessionKey": "s-1",
+        "source": "human",
+        "requestId": "r1",
+        "waitId": "w1"
+      }
+    },
+    {
+      "ws": "sop_resume",
+      "params": {
+        "sessionKey": "s-1",
+        "authority": {}
+      }
+    },
+    {
+      "ws": "sop_resume",
+      "params": {
+        "sessionKey": "s-1",
+        "subject": "x"
+      }
+    },
+    {
+      "ws": "sop_resume",
+      "params": {
+        "sessionKey": "s-1",
+        "projectKey": "{HOME}/work/alpha",
+        "source": "system"
+      }
+    },
+    {
+      "ws": "sop_status",
+      "params": {
+        "approverAuthorization": "Bearer x"
+      }
+    },
+    {
+      "ws": "sop_status",
+      "params": {
+        "sessionKey": "s-1",
+        "approverAuthorization": "Bearer x",
+        "authority": {}
+      }
+    },
+    {
+      "ws": "sop_status",
+      "params": {
+        "sessionKey": "s-1",
+        "approverAuthorization": "Bearer x",
+        "tenantId": "t-other"
+      }
+    },
+    {
+      "ws": "sop_status",
+      "params": {
+        "sessionKey": "s-1",
+        "approverAuthorization": ""
+      }
+    },
+    {
+      "ws": "sop_status",
+      "params": null
+    },
+    {
+      "ws": "sop_resume",
+      "params": {
+        "sessionKey": "s-1",
+        "source": "human",
+        "requestId": "r1",
+        "waitId": "w1",
+        "message": "ok",
+        "expectedRevision": 0
+      }
+    },
+    {
+      "ws": "sop_resume",
+      "params": {
+        "sessionKey": "s-1",
+        "source": "human",
+        "requestId": "r1",
+        "waitId": "w1",
+        "message": "ok",
+        "expectedRevision": -1
+      }
+    },
+    {
+      "ws": "sop_resume",
+      "params": {
+        "source": "human",
+        "requestId": "r1",
+        "waitId": "w1",
+        "message": "ok",
+        "expectedRevision": 2
+      }
+    },
+    {
+      "ws": "sop_resume",
+      "params": {}
+    }
+  ]
+}

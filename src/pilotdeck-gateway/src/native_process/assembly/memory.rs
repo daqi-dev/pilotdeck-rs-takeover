@@ -115,30 +115,18 @@ impl MemoryManagementService for LeasedMemoryManagement {
     }
 }
 
-/// Build the `MemoryGateway` by probing the current project generation. If
-/// `Resource::MemoryManagement` is staged the gateway is enabled; otherwise
-/// (`MemoryGateway::disabled()`) it advertises `CAPABILITY_UNAVAILABLE` after
-/// parameter validation, matching the TS wrapper seam.
+/// Build the `MemoryGateway`. The baseline always wires `memoryList` /
+/// `memoryWipe` (createLocalGateway.ts:1238-1260): each call resolves its
+/// project first and only then reports `CAPABILITY_UNAVAILABLE` when that
+/// project's runtime has no memory management, so the projection is staged
+/// unconditionally and decides per project.
 fn build_memory_gateway(
     options: &Options,
     project: &Arc<ProjectRuntimeRegistry>,
 ) -> Result<MemoryGateway, RuntimeError> {
     let registry = Arc::new(NativeMemoryRegistry::new(project.clone(), options));
-    // Check if the current generation staged a management resource. If the
-    // project has no memory provider the gateway is disabled but not an error.
-    let lease = project.acquire(None)?;
-    let resources = lease
-        .runtime()
-        .resources()
-        .get::<ProjectResources>()
-        .ok_or_else(|| RuntimeError::new("Native project resources are missing."))?;
-    let context = resources.context();
-    if context.resource(Resource::MemoryManagement).is_some() {
-        let projection = MemoryProjection::new(registry, options.project.clone());
-        Ok(MemoryGateway::from_projection(projection))
-    } else {
-        Ok(MemoryGateway::disabled())
-    }
+    let projection = MemoryProjection::new(registry, options.project.clone());
+    Ok(MemoryGateway::from_projection(projection))
 }
 
 pub(super) async fn build_memory(

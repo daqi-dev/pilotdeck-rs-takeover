@@ -1361,9 +1361,15 @@ pub(super) fn set(value: &mut JsValue, key: &str, item: JsValue) {
         value.insert(key.into(), item);
     }
 }
-fn with_run(mut value: JsValue, run: &RunRef) -> JsValue {
-    set(&mut value, "runId", JsValue::String(run.run_id.clone()));
-    value
+/// The `agent_status` frame of `emitGatewayFailureStatus`
+/// (InProcessGateway.ts:1259-1264): `runId` sits right after `type`.
+fn with_run(status: JsValue, run: &RunRef) -> JsValue {
+    object([
+        ("type", field(&status, "type").clone()),
+        ("runId", JsValue::String(run.run_id.clone())),
+        ("event", field(&status, "event").clone()),
+        ("detail", field(&status, "detail").clone()),
+    ])
 }
 pub(super) fn error_event(run: &RunRef, code: &str, message: &str, recoverable: bool) -> JsValue {
     object([

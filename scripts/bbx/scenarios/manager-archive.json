@@ -1,0 +1,271 @@
+{
+  "name": "manager-archive",
+  "about": "manager_sessions（对话前后、按会话过滤、未登记项目）、manager_browsers（缺省没有 browser provider），以及 native_archive_manifest / entries（分页、游标与 limit 校验）/ artifact（名字与 maxBytes 校验、不存在）。三轮对话：alpha 两个会话（一轮带工具调用），pilot home 一个。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Archive\"}"
+      }
+    },
+    {
+      "name": "turn-1-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_ar_1\""
+      ],
+      "reply": {
+        "text": "Read done."
+      }
+    },
+    {
+      "name": "turn-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_ar_1",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "README.md"
+          }
+        }
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "Plain reply."
+      }
+    }
+  ],
+  "files": {
+    "home/work/alpha/README.md": "alpha\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n"
+  },
+  "steps": [
+    {
+      "ws": "manager_sessions",
+      "params": {
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ar-1",
+        "channelKey": "test",
+        "message": "turn-1: read it",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ar-2",
+        "channelKey": "test",
+        "message": "turn-2: plain",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ar-home",
+        "channelKey": "test",
+        "message": "turn-3: home"
+      }
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "manager_sessions",
+      "params": {
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "manager_sessions",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "sessionKey": "s-ar-1"
+      }
+    },
+    {
+      "ws": "manager_sessions",
+      "params": {}
+    },
+    {
+      "ws": "manager_sessions",
+      "params": {
+        "projectKey": "{HOME}/work/gamma"
+      }
+    },
+    {
+      "ws": "manager_browsers",
+      "params": {
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "native_archive_manifest",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "sessionKey": "s-ar-1"
+      }
+    },
+    {
+      "ws": "native_archive_manifest",
+      "params": {
+        "sessionKey": "s-ar-home"
+      }
+    },
+    {
+      "ws": "native_archive_manifest",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "sessionKey": "missing"
+      }
+    },
+    {
+      "ws": "native_archive_manifest",
+      "params": {
+        "projectKey": "{HOME}/work/gamma",
+        "sessionKey": "s-ar-1"
+      }
+    },
+    {
+      "ws": "native_archive_entries",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "sessionKey": "s-ar-1",
+        "limit": 3
+      }
+    },
+    {
+      "ws": "native_archive_entries",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "sessionKey": "s-ar-1",
+        "afterSequence": 30,
+        "limit": 4
+      }
+    },
+    {
+      "ws": "native_archive_entries",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "sessionKey": "s-ar-1",
+        "afterSequence": 1000
+      }
+    },
+    {
+      "ws": "native_archive_entries",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "sessionKey": "s-ar-1",
+        "afterSequence": -1,
+        "limit": 1
+      }
+    },
+    {
+      "ws": "native_archive_entries",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "sessionKey": "s-ar-1",
+        "afterSequence": 1.5
+      }
+    },
+    {
+      "ws": "native_archive_entries",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "sessionKey": "s-ar-1",
+        "limit": 0
+      }
+    },
+    {
+      "ws": "native_archive_entries",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "sessionKey": "s-ar-1",
+        "limit": 501
+      }
+    },
+    {
+      "ws": "native_archive_entries",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "sessionKey": "missing"
+      }
+    },
+    {
+      "ws": "native_archive_artifact",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "sessionKey": "s-ar-1",
+        "artifactName": "nope.txt"
+      }
+    },
+    {
+      "ws": "native_archive_artifact",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "sessionKey": "s-ar-1",
+        "artifactName": "../x"
+      }
+    },
+    {
+      "ws": "native_archive_artifact",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "sessionKey": "s-ar-1",
+        "artifactName": ".."
+      }
+    },
+    {
+      "ws": "native_archive_artifact",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "sessionKey": "s-ar-1",
+        "artifactName": "a.txt",
+        "maxBytes": 0
+      }
+    },
+    {
+      "ws": "native_archive_artifact",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "sessionKey": "s-ar-1",
+        "artifactName": "a.txt",
+        "maxBytes": 10000001
+      }
+    },
+    {
+      "ws": "native_archive_artifact",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "sessionKey": "s-ar-1"
+      }
+    },
+    {
+      "ws": "native_archive_artifact",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "sessionKey": "  ",
+        "artifactName": "a.txt"
+      }
+    }
+  ]
+}

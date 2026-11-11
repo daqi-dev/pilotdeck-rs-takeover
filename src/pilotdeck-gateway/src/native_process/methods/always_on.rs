@@ -88,7 +88,7 @@ impl Requests {
             // staged manager delegates to the control port verbatim; no
             // manager answers the #1313 envelopes.
             let Some(manager) = self.always_on.clone() else {
-                return not_configured(&method, &params);
+                return self.standalone(&method, &params);
             };
             match method.as_str() {
                 // The TS reads happen in this order: the manager's runtime
@@ -160,6 +160,123 @@ impl Requests {
     }
 }
 
+impl Requests {
+    /// The control the baseline publishes when no project enables
+    /// Always-On: `createStandaloneAlwaysOnControl`
+    /// (createApplyHandler.ts:132-170, published by
+    /// ProjectAutomationBundle.ts:364). Apply reads the persisted work cycle;
+    /// abort and rerun answer `not_configured`.
+    fn standalone(&self, method: &str, params: &JsValue) -> Result<JsValue, RequestError> {
+        match method {
+            "always_on_abort" => {
+                let session_key = super::input_property(params, "sessionKey")?;
+                let mut envelope = vec![("aborted", JsValue::Bool(false))];
+                if let Some(value) = session_key.filter(|value| !value.is_undefined()) {
+                    envelope.push(("sessionKey", value));
+                }
+                envelope.push((
+                    "error",
+                    not_configured_error("Always-On abort requires an enabled Always-On runtime."),
+                ));
+                Ok(object(envelope))
+            }
+            // `rerunPlan(_input)` never reads its input.
+            "always_on_rerun_plan" => Ok(object([
+                ("runId", "".into()),
+                (
+                    "error",
+                    not_configured_error(
+                        "Always-On plan rerun requires an enabled Always-On runtime.",
+                    ),
+                ),
+            ])),
+            _ => self.standalone_apply(params),
+        }
+    }
+
+    /// `createApplyHandler` (createApplyHandler.ts:68-104): the storage
+    /// paths `path.resolve` the raw `projectKey`, the cycle is looked up by
+    /// `workCycleId`, and a cycle without `workspace.cwd` is refused.
+    fn standalone_apply(&self, params: &JsValue) -> Result<JsValue, RequestError> {
+        let project_key =
+            super::input_property(params, "projectKey")?.unwrap_or(JsValue::Undefined);
+        let JsValue::String(project_key) = &project_key else {
+            return Err(RequestError {
+                code: "ERR_INVALID_ARG_TYPE".into(),
+                message: format!(
+                    "The \"paths[0]\" argument must be of type string. {}",
+                    node_received(&project_key)
+                )
+                .into(),
+                details: None,
+                validation: None,
+            });
+        };
+        let metadata = crate::metadata::Metadata {
+            home: self.options.home.clone(),
+            cwd: std::path::PathBuf::new(),
+            files: crate::metadata::NativeFiles,
+        };
+        let paths = crate::runtime::always_on::resolve_always_on_paths(
+            &self.options.home,
+            &String::from_utf16_lossy(project_key.units()),
+            &metadata,
+        )
+        .map_err(io_request_error)?;
+        let work_cycle_id = params
+            .get("workCycleId")
+            .cloned()
+            .unwrap_or(JsValue::Undefined);
+        let cycle = match &work_cycle_id {
+            JsValue::String(id) => crate::runtime::always_on::WorkCycleStore::new(paths)
+                .get_record(&String::from_utf16_lossy(id.units()))
+                .map_err(io_request_error)?,
+            _ => None,
+        };
+        let failure = |code: &str, message: String| {
+            Ok(object([
+                ("sessionKey", "".into()),
+                (
+                    "error",
+                    object([("code", code.into()), ("message", message.as_str().into())]),
+                ),
+            ]))
+        };
+        let Some(cycle) = cycle else {
+            return failure(
+                "cycle_not_found",
+                format!("Work cycle {} not found", js_display(&work_cycle_id)),
+            );
+        };
+        if cycle
+            .workspace
+            .as_ref()
+            .is_none_or(|workspace| workspace.cwd.is_empty())
+        {
+            return failure(
+                "missing_workspace",
+                "Cycle has no associated workspace to apply".into(),
+            );
+        }
+        // The apply phase itself (DiscoveryFire.runApplyPhase) is not ported;
+        // a cycle with a workspace keeps the previous unconfigured answer.
+        not_configured("always_on_apply", params)
+    }
+}
+
+/// Node's `ERR_INVALID_ARG_TYPE` suffix for a non-string argument.
+fn node_received(value: &JsValue) -> String {
+    match value {
+        JsValue::Undefined => "Received undefined".into(),
+        JsValue::Null => "Received null".into(),
+        JsValue::Array(_) => "Received an instance of Array".into(),
+        JsValue::Object(_) => "Received an instance of Object".into(),
+        JsValue::Number(_) => format!("Received type number ({})", js_display(value)),
+        JsValue::Bool(_) => format!("Received type boolean ({})", js_display(value)),
+        other => format!("Received {}", js_display(other)),
+    }
+}
+
 /// The TS "no injected always-on control" branch
 /// (InProcessGateway.ts:2992-3016): resolved result envelopes whose `error`
 /// field carries `code: "not_configured"`.
@@ -220,87 +337,58 @@ mod tests {
             .expect("#1313 project dispose");
     }
 
-    // The unconfigured state answers the TS result envelopes byte for byte:
-    // JSON.stringify of the InProcessGateway returns, in the same key order
-    // (ts-probe output.txt, Node v22.22.0 baseline).
+    // Without a manager the baseline publishes the standalone control
+    // (createApplyHandler.ts:132-170): abort and rerun answer `not_configured`
+    // envelopes, in the TS key order (bbx `always-on-default`).
     #[tokio::test]
-    async fn always_on_methods_answer_not_configured_envelopes() {
+    async fn always_on_methods_answer_standalone_envelopes() {
         let (_scratch, requests) = std::panic::catch_unwind(setup).expect("#1313 fixture setup");
-        // No `projectKey` here: an unserved key is refused by the shared
-        // admission gate before the family runs (covered by its own test
-        // below); the TS probe carried one only because the local gateway has
-        // no such gate.
         let full =
             |fields: &[(&'static str, JsValue)]| crate::metadata::object(fields.iter().cloned());
+        let abort = "Always-On abort requires an enabled Always-On runtime.";
+        let rerun = "{\"runId\":\"\",\"error\":{\"code\":\"not_configured\",\"message\":\
+                     \"Always-On plan rerun requires an enabled Always-On runtime.\"}}";
         for (method, params, envelope) in [
-            (
-                "always_on_apply",
-                full(&[("workCycleId", "wc1".into()), ("projectName", "n".into())]),
-                "{\"sessionKey\":\"\",\"error\":{\"code\":\"not_configured\",\"message\":\
-                 \"Always-On apply is not configured on this gateway.\"}}",
-            ),
-            (
-                "always_on_apply",
-                JsValue::Object(Default::default()),
-                "{\"sessionKey\":\"\",\"error\":{\"code\":\"not_configured\",\"message\":\
-                 \"Always-On apply is not configured on this gateway.\"}}",
-            ),
             (
                 "always_on_abort",
                 full(&[("sessionKey", "s1".into())]),
-                "{\"aborted\":false,\"sessionKey\":\"s1\",\"error\":{\"code\":\"not_configured\",\
-                 \"message\":\"Always-On abort is not configured on this gateway.\"}}",
+                format!(
+                    "{{\"aborted\":false,\"sessionKey\":\"s1\",\"error\":{{\"code\":\"not_configured\",\"message\":\"{abort}\"}}}}"
+                ),
             ),
             (
                 "always_on_abort",
                 full(&[("reason", "stop".into())]),
-                "{\"aborted\":false,\"error\":{\"code\":\"not_configured\",\"message\":\
-                 \"Always-On abort is not configured on this gateway.\"}}",
+                format!(
+                    "{{\"aborted\":false,\"error\":{{\"code\":\"not_configured\",\"message\":\"{abort}\"}}}}"
+                ),
             ),
-            (
-                "always_on_abort",
-                full(&[("sessionKey", JsValue::Number(42.0))]),
-                "{\"aborted\":false,\"sessionKey\":42,\"error\":{\"code\":\"not_configured\",\
-                 \"message\":\"Always-On abort is not configured on this gateway.\"}}",
-            ),
-            // A null sessionKey is echoed verbatim, not folded into the
-            // missing-key case (ts-probe output.txt L8): the filter drops only
-            // `undefined`, so this row pins the nullish-predicate boundary.
+            // A present sessionKey is echoed verbatim, null and "" included.
             (
                 "always_on_abort",
                 full(&[("sessionKey", JsValue::Null)]),
-                "{\"aborted\":false,\"sessionKey\":null,\"error\":{\"code\":\"not_configured\",\
-                 \"message\":\"Always-On abort is not configured on this gateway.\"}}",
+                format!(
+                    "{{\"aborted\":false,\"sessionKey\":null,\"error\":{{\"code\":\"not_configured\",\"message\":\"{abort}\"}}}}"
+                ),
             ),
-            // The empty string rides the same echo: it is a present value, not
-            // a falsy one to drop (MM fix1 boundary P2a — the predicate is
-            // `!== undefined`, never a truthiness check).
             (
                 "always_on_abort",
                 full(&[("sessionKey", "".into())]),
-                "{\"aborted\":false,\"sessionKey\":\"\",\"error\":{\"code\":\"not_configured\",\
-                 \"message\":\"Always-On abort is not configured on this gateway.\"}}",
+                format!(
+                    "{{\"aborted\":false,\"sessionKey\":\"\",\"error\":{{\"code\":\"not_configured\",\"message\":\"{abort}\"}}}}"
+                ),
             ),
             (
                 "always_on_rerun_plan",
                 full(&[("planId", "pl1".into())]),
-                "{\"runId\":\"\",\"error\":{\"code\":\"not_configured\",\"message\":\
-                 \"Always-On rerun is not configured on this gateway.\"}}",
+                rerun.to_string(),
             ),
-            (
-                "always_on_rerun_plan",
-                JsValue::Object(Default::default()),
-                "{\"runId\":\"\",\"error\":{\"code\":\"not_configured\",\"message\":\
-                 \"Always-On rerun is not configured on this gateway.\"}}",
-            ),
+            ("always_on_rerun_plan", JsValue::Null, rerun.to_string()),
         ] {
             let result = GatewayRequests::request(&requests, JsString::from(method), params).await;
-            let value = match result {
-                Ok(value) => value,
-                Err(error) => panic!(
-                    "#1313 {method} message: unconfigured answers an envelope, got {error:?}"
-                ),
-            };
+            let value = result.unwrap_or_else(|error| {
+                panic!("{method}: standalone answers an envelope, got {error:?}")
+            });
             let text = stringify_json(&value)
                 .expect("#1313 envelope serializes")
                 .expect("#1313 envelope is defined");
@@ -309,10 +397,58 @@ mod tests {
         teardown(&requests).await;
     }
 
-    // The abort arm reads `input.sessionKey`; apply and rerun do not. A nullish
-    // `params` therefore only fails abort, with the boundary TypeError message
-    // and `gateway_request_failed` code (ts-probe output.txt L9-10;
-    // GatewayWsConnection.ts:246-254), while apply and rerun still answer.
+    // Standalone apply: `path.resolve(projectKey)` rejects a non-string with
+    // Node's ERR_INVALID_ARG_TYPE, a nullish `params` fails the projectKey
+    // read, and an unknown cycle answers `cycle_not_found`.
+    #[tokio::test]
+    async fn standalone_apply_reads_the_persisted_cycle() {
+        let (_scratch, requests) = std::panic::catch_unwind(setup).expect("#1313 fixture setup");
+        let error = GatewayRequests::request(
+            &requests,
+            JsString::from("always_on_apply"),
+            crate::metadata::object([("workCycleId", "wc1".into())]),
+        )
+        .await
+        .expect_err("a missing projectKey fails path.resolve");
+        negative_assert_eq!(error.code.as_str(), "ERR_INVALID_ARG_TYPE", "apply code");
+        negative_assert_eq!(
+            error.message.to_utf8().expect("UTF-8"),
+            "The \"paths[0]\" argument must be of type string. Received undefined",
+            "apply message"
+        );
+        let error =
+            GatewayRequests::request(&requests, JsString::from("always_on_apply"), JsValue::Null)
+                .await
+                .expect_err("nullish params fail the projectKey read");
+        negative_assert_eq!(
+            error.message.to_utf8().expect("UTF-8"),
+            "Cannot read properties of null (reading 'projectKey')",
+            "apply nullish message"
+        );
+        let project_key = requests.options.project.to_string_lossy().into_owned();
+        let value = GatewayRequests::request(
+            &requests,
+            JsString::from("always_on_apply"),
+            crate::metadata::object([
+                ("projectKey", project_key.as_str().into()),
+                ("workCycleId", "wc1".into()),
+            ]),
+        )
+        .await
+        .expect("an unknown cycle answers an envelope");
+        let text = stringify_json(&value)
+            .expect("serializes")
+            .expect("defined");
+        negative_assert_eq!(
+            text,
+            "{\"sessionKey\":\"\",\"error\":{\"code\":\"cycle_not_found\",\"message\":\"Work cycle wc1 not found\"}}",
+            "apply cycle_not_found"
+        );
+        teardown(&requests).await;
+    }
+
+    // The abort arm reads `input.sessionKey` first: a nullish `params` fails
+    // with the boundary TypeError and `gateway_request_failed` code.
     #[tokio::test]
     async fn always_on_abort_nullish_params_hit_the_session_key_read() {
         let (_scratch, requests) = std::panic::catch_unwind(setup).expect("#1313 fixture setup");
@@ -332,54 +468,6 @@ mod tests {
                 "#1313 abort nullish {origin} message"
             );
         }
-        for method in ["always_on_apply", "always_on_rerun_plan"] {
-            for params in [JsValue::Null, JsValue::Undefined] {
-                let result =
-                    GatewayRequests::request(&requests, JsString::from(method), params).await;
-                let value = result
-                    .unwrap_or_else(|error| panic!("#1313 {method} never reads input: {error:?}"));
-                let text = stringify_json(&value)
-                    .expect("#1313 envelope serializes")
-                    .expect("#1313 envelope is defined");
-                // Byte for byte with the rows above: the whole envelope is
-                // the contract, not just the error code half of it.
-                let envelope = if method == "always_on_apply" {
-                    "{\"sessionKey\":\"\",\"error\":{\"code\":\"not_configured\",\"message\":\
-                     \"Always-On apply is not configured on this gateway.\"}}"
-                } else {
-                    "{\"runId\":\"\",\"error\":{\"code\":\"not_configured\",\"message\":\
-                     \"Always-On rerun is not configured on this gateway.\"}}"
-                };
-                negative_assert_eq!(text, envelope, "#1313 {method} nullish message");
-            }
-        }
-        teardown(&requests).await;
-    }
-
-    // The always-on rounds enter through the same request route as every
-    // other session request and reach the family's envelope. (The entry no
-    // longer has a project gate — the baseline has none — so the former
-    // "unserved projectKey is refused first" half of this test is gone.)
-    #[tokio::test]
-    async fn always_on_rounds_share_the_admission_gate() {
-        let (_scratch, requests) = std::panic::catch_unwind(setup).expect("#1313 fixture setup");
-        let project_key = requests.options.project.to_string_lossy().into_owned();
-        let params = crate::metadata::object([
-            ("projectKey", project_key.as_str().into()),
-            ("workCycleId", "wc1".into()),
-        ]);
-        let result =
-            GatewayRequests::request(&requests, JsString::from("always_on_apply"), params).await;
-        let value =
-            result.unwrap_or_else(|error| panic!("#1313 served project is admitted: {error:?}"));
-        negative_assert_eq!(
-            value
-                .get("error")
-                .and_then(|e| e.get("code"))
-                .and_then(JsValue::as_string),
-            Some(&JsString::from("not_configured")),
-            "#1313 always_on_apply admission gate admits the configured project"
-        );
         teardown(&requests).await;
     }
 
@@ -389,7 +477,7 @@ mod tests {
     // (ProjectAutomationBundle.ts:364) — so `describeServer`
     // (InProcessGateway.ts:2123-2126) lists them for an unconfigured server
     // too (bbx `server-entry-handshake`). What an unconfigured gateway
-    // answers is pinned by `always_on_methods_answer_not_configured_envelopes`.
+    // answers is pinned by `always_on_methods_answer_standalone_envelopes`.
     #[tokio::test]
     async fn always_on_methods_are_advertised_without_a_manager() {
         let (_scratch, requests) = std::panic::catch_unwind(setup).expect("#1313 fixture setup");

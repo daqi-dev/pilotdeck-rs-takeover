@@ -1,0 +1,354 @@
+{
+  "name": "cron-methods",
+  "about": "配置里有 cron 段时 cron_create / cron_list / cron_update / cron_delete / cron_stop / cron_run_now 的返回与 tasks.json 落盘（不含触发对话；cron_run_now 只比到返回，触发的那一轮在 cron-run-now 场景）。task id 由服务端随机生成，update / delete / stop / run_now 作用在预先写好的任务上。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ncron:\n  enabled: true\n",
+  "files": {
+    "home/work/alpha/README.md": "alpha\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+    "home/.pilotdeck/cron/projects/private-tmp-pdrs-bbx-root-home-work-alpha/tasks.json": {
+      "schemaVersion": 1,
+      "tasks": [
+        {
+          "schemaVersion": 1,
+          "taskId": "task-a",
+          "message": "seeded task-a",
+          "status": "scheduled",
+          "sessionKey": "cron:task-a",
+          "channelKey": "cron",
+          "projectKey": "{HOME}/work/alpha",
+          "timezone": "UTC",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "revision": 0,
+          "schedule": {
+            "type": "cron",
+            "expression": "0 9 * * *",
+            "timezone": "UTC"
+          },
+          "nextRunAt": "2099-01-01T09:00:00.000Z",
+          "scheduleComputationVersion": 3
+        },
+        {
+          "schemaVersion": 1,
+          "taskId": "task-b",
+          "message": "seeded task-b",
+          "status": "scheduled",
+          "sessionKey": "cron:task-b",
+          "channelKey": "cron",
+          "projectKey": "{HOME}/work/alpha",
+          "timezone": "UTC",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "revision": 0,
+          "schedule": {
+            "type": "once",
+            "runAt": "2099-06-01T00:00:00.000Z"
+          },
+          "nextRunAt": "2099-06-01T00:00:00.000Z"
+        },
+        {
+          "schemaVersion": 1,
+          "taskId": "task-c",
+          "message": "seeded task-c",
+          "status": "running",
+          "sessionKey": "cron:task-c",
+          "channelKey": "cron",
+          "projectKey": "{HOME}/work/alpha",
+          "timezone": "UTC",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "revision": 0,
+          "schedule": {
+            "type": "once",
+            "runAt": "2099-07-01T00:00:00.000Z"
+          },
+          "nextRunAt": "2099-07-01T00:00:00.000Z",
+          "lastRunId": "run-c"
+        }
+      ]
+    }
+  },
+  "steps": [
+    {
+      "ws": "cron_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "cron_create",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "message": "daily report",
+        "schedule": {
+          "type": "cron",
+          "expression": "30 8 * * 1-5"
+        }
+      }
+    },
+    {
+      "ws": "cron_create",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "message": "in an hour",
+        "schedule": {
+          "type": "delay",
+          "amount": 1,
+          "unit": "hour"
+        },
+        "sessionKey": "origin-s",
+        "channelKey": "web"
+      }
+    },
+    {
+      "ws": "cron_create",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "message": "future once",
+        "schedule": {
+          "type": "once",
+          "runAt": "2099-01-02T03:04:05.000Z"
+        },
+        "mode": "plan",
+        "timezone": "Asia/Shanghai"
+      }
+    },
+    {
+      "ws": "cron_create",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "message": "past once",
+        "schedule": {
+          "type": "once",
+          "runAt": "2000-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "ws": "cron_create",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "message": "bad expr",
+        "schedule": {
+          "type": "cron",
+          "expression": "not a cron"
+        }
+      }
+    },
+    {
+      "ws": "cron_create",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "message": "bad type",
+        "schedule": {
+          "type": "weekly"
+        }
+      }
+    },
+    {
+      "ws": "cron_create",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "message": "",
+        "schedule": {
+          "type": "delay",
+          "amount": 5,
+          "unit": "minute"
+        }
+      }
+    },
+    {
+      "ws": "cron_create",
+      "params": {
+        "message": "no project",
+        "schedule": {
+          "type": "delay",
+          "amount": 5,
+          "unit": "minute"
+        }
+      }
+    },
+    {
+      "ws": "cron_create",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "message": "bad tz",
+        "schedule": {
+          "type": "cron",
+          "expression": "0 9 * * *",
+          "timezone": "Mars/Base"
+        }
+      }
+    },
+    {
+      "ws": "cron_update",
+      "params": {
+        "taskId": "task-a",
+        "projectKey": "{HOME}/work/alpha",
+        "expectedRevision": 0,
+        "message": "updated a",
+        "schedule": {
+          "type": "cron",
+          "expression": "15 10 * * *"
+        }
+      }
+    },
+    {
+      "ws": "cron_update",
+      "params": {
+        "taskId": "task-a",
+        "projectKey": "{HOME}/work/alpha",
+        "expectedRevision": 0,
+        "message": "stale",
+        "schedule": {
+          "type": "cron",
+          "expression": "15 10 * * *"
+        }
+      }
+    },
+    {
+      "ws": "cron_update",
+      "params": {
+        "taskId": "task-c",
+        "projectKey": "{HOME}/work/alpha",
+        "expectedRevision": 0,
+        "message": "running",
+        "schedule": {
+          "type": "once",
+          "runAt": "2099-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "ws": "cron_update",
+      "params": {
+        "taskId": "nope",
+        "projectKey": "{HOME}/work/alpha",
+        "expectedRevision": 0,
+        "message": "x",
+        "schedule": {
+          "type": "once",
+          "runAt": "2099-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "ws": "cron_update",
+      "params": {
+        "taskId": "task-a",
+        "projectKey": "{HOME}/work/alpha",
+        "expectedRevision": -1,
+        "message": "x",
+        "schedule": {
+          "type": "once",
+          "runAt": "2099-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "ws": "cron_update",
+      "params": {
+        "taskId": "task-a",
+        "projectKey": "{HOME}/work/alpha",
+        "expectedRevision": 1,
+        "message": "  ",
+        "schedule": {
+          "type": "once",
+          "runAt": "2099-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "ws": "cron_update",
+      "params": {
+        "taskId": "task-a",
+        "projectKey": "{HOME}/work/alpha",
+        "expectedRevision": 1,
+        "message": "tz",
+        "schedule": {
+          "type": "once",
+          "runAt": "2099-01-01T00:00:00.000Z"
+        },
+        "timezone": "Nope/Zone"
+      }
+    },
+    {
+      "ws": "cron_update",
+      "params": {
+        "taskId": "task-a",
+        "expectedRevision": 1,
+        "message": "no project",
+        "schedule": {
+          "type": "once",
+          "runAt": "2099-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "ws": "cron_delete",
+      "params": {
+        "taskId": "task-b",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "cron_delete",
+      "params": {
+        "taskId": "task-b",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "cron_delete",
+      "params": {
+        "taskId": "task-b"
+      }
+    },
+    {
+      "ws": "cron_stop",
+      "params": {
+        "taskId": "task-a",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "cron_stop",
+      "params": {
+        "runId": "run-x",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "cron_stop",
+      "params": {
+        "taskId": "task-a"
+      }
+    },
+    {
+      "ws": "cron_run_now",
+      "params": {
+        "taskId": "task-c",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "cron_run_now",
+      "params": {
+        "taskId": "nope",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "cron_list",
+      "params": {}
+    },
+    {
+      "ws": "cron_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "includeHistory": true,
+        "limit": 5
+      }
+    }
+  ]
+}

@@ -2006,9 +2006,9 @@ pub(super) fn computed_next_run_at_with(
             let JsValue::String(expression) = expression else {
                 // parseCronExpression's `expression.trim()` on a
                 // non-string expression (CronSchedule.ts:108).
-                return Err(CronError::type_error(JsString::from(
-                    "expression.trim is not a function",
-                )));
+                return Err(CronError::type_error(expression_trim_type_error(Some(
+                    expression,
+                ))));
             };
             let computed = compute_next_run_at(
                 &CronCreateSchedule::Cron {
@@ -2623,4 +2623,15 @@ fn js_slice_end(len: usize, end: f64) -> usize {
     } else {
         end.min(len as f64) as usize
     }
+}
+
+/// Node's TypeError for `expression.trim()` (CronSchedule.ts:108) on a
+/// non-string: a nullish (or absent) receiver cannot be read at all, any
+/// other value lacks the method.
+pub(super) fn expression_trim_type_error(expression: Option<&JsValue>) -> JsString {
+    JsString::from(match expression {
+        None | Some(JsValue::Undefined) => "Cannot read properties of undefined (reading 'trim')",
+        Some(JsValue::Null) => "Cannot read properties of null (reading 'trim')",
+        Some(_) => "expression.trim is not a function",
+    })
 }

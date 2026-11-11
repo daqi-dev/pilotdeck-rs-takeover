@@ -1429,21 +1429,11 @@ fn concurrent_failure_cleanup_keeps_other_rounds_commit() {
         failed.contains("ENOENT") && failed.contains("scandir"),
         "#293 R2's marker records the scandir failure: {failed}"
     );
-    // R2 removed its own staging directory and nothing else: the persistent
-    // `.staging` parent (fix-r3) stays behind, holding no round directory.
+    // Both rounds settled: no staging directory, and no idle `.staging`
+    // parent, is left behind.
     assert!(
-        snapshot_root.join(".staging").is_dir(),
-        "#293 fix-r3 the staging parent survives the failed round's cleanup"
-    );
-    let mut staging_names: Vec<String> = fs::read_dir(snapshot_root.join(".staging"))
-        .expect("#293 fix-r3 the staging parent is listable after the interleave")
-        .flatten()
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .collect();
-    staging_names.sort();
-    assert!(
-        staging_names.is_empty(),
-        "#293 R2 removed its own staging directory, leaving the persistent parent empty: {staging_names:?}"
+        !snapshot_root.join(".staging").exists(),
+        "both settled rounds leave no staging directory behind"
     );
     let mut names: Vec<String> = fs::read_dir(&partition)
         .expect("#293 the partition is listable after the interleave")
@@ -1578,16 +1568,8 @@ fn publish_over_a_concurrent_commit_overwrites_like_ts() {
         "#293 the partition holds exactly the manifest and the committed marker"
     );
     assert!(
-        snapshot_root.join(".staging").is_dir(),
-        "#293 fix-r3 the staging parent survives both settles"
-    );
-    assert!(
-        fs::read_dir(snapshot_root.join(".staging"))
-            .expect("#293 fix-r3 the staging parent is listable after both rounds")
-            .flatten()
-            .next()
-            .is_none(),
-        "#293 both rounds consumed their staging directories"
+        !snapshot_root.join(".staging").exists(),
+        "both rounds consumed their staging directories and the idle parent"
     );
 }
 
@@ -1675,16 +1657,8 @@ fn list_ignores_in_flight_staging_directories() {
         "#293 the released round's snapshot lists after it commits"
     );
     assert!(
-        snapshot_root.join(".staging").is_dir(),
-        "#293 fix-r3 the staging parent survives the committed round"
-    );
-    assert!(
-        fs::read_dir(snapshot_root.join(".staging"))
-            .expect("#293 fix-r3 the staging parent is listable after the commit")
-            .flatten()
-            .next()
-            .is_none(),
-        "#293 the committed round consumed its staging directory"
+        !snapshot_root.join(".staging").exists(),
+        "the committed round leaves no staging directory behind (baseline leaves nothing in the root)"
     );
 }
 
@@ -1871,19 +1845,10 @@ fn fallback_publish_writes_the_manifest_before_the_committed_marker() {
         partition.join("_FAILED.json").is_file(),
         "#293 the failure marker is written beside the residue"
     );
-    // The staging parent is persistent (fix-r3 P1-B): it stays, holding no
-    // leftover round directory.
+    // The failed round's staging directory and the idle parent are removed.
     assert!(
-        snapshot_root.join(".staging").is_dir(),
-        "#293 fix-r3 the staging parent survives the failed round"
-    );
-    assert!(
-        fs::read_dir(snapshot_root.join(".staging"))
-            .expect("#293 fix-r3 the staging parent is listable after the failed round")
-            .flatten()
-            .next()
-            .is_none(),
-        "#293 the failed round's staging directory is removed, leaving the parent empty"
+        !snapshot_root.join(".staging").exists(),
+        "the failed round leaves no staging directory behind"
     );
     // A third round on the failed partition early-exits on `_FAILED.json`
     // (no committed marker exists), exactly like a TS round over the probe-c
@@ -2464,18 +2429,14 @@ fn restore_target_staging_is_residue_not_private() {
     );
 }
 
-/// #293 fix-r3 (A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001-R3): `.staging` is a
-/// long-lived parent. No settle path may remove it: a best-effort removal
-/// racing another round's `create_dir_all` (which creates the parent, then
-/// retries the child once — std `DirBuilder::create_dir_all`) turns an
-/// innocent capture into a permanent `_FAILED.json` (r3 review P1-B, hit
-/// independently by two reviewers). Both settle paths — the committed round's
-/// publish tail and the failed round's cleanup — must leave the parent in
-/// place, empty. Its bounded reproduction is
-/// `removing_the_staging_parent_between_mkdirs_fails_the_round` in the lib
-/// tests.
+/// Both settle paths — the committed round's publish tail and the failed
+/// round's cleanup — remove the idle `.staging` parent, like the baseline,
+/// whose temporary directory lives inside the partition and leaves nothing in
+/// the snapshot root (bbx `snapshot-turn-restore`). The mkdir race a removal
+/// opens for a concurrent round is absorbed by the recorder's staging retry
+/// (`removing_the_staging_parent_between_mkdirs_fails_the_round`).
 #[test]
-fn staging_parent_survives_round_settlement() {
+fn staging_parent_is_removed_after_round_settlement() {
     let run = Scratch::new();
     let snapshot_root = run.0.join("snapshots");
     fs::create_dir_all(&snapshot_root).expect("#293 fix-r3 create the snapshot root");
@@ -2499,7 +2460,7 @@ fn staging_parent_survives_round_settlement() {
         snapshot_root: snapshot_root.to_string_lossy().into_owned(),
     };
 
-    // A committed round: the publish tail must leave the parent in place.
+    // A committed round: the publish tail removes the idle parent.
     let committed = ContentAddressedWorkspaceSnapshotRecorder::new(config.clone())
         .capture_pre_user(&input("t1", &workspace))
         .expect("#293 fix-r3 the first round commits");
@@ -2509,21 +2470,12 @@ fn staging_parent_survives_round_settlement() {
         "#293 fix-r3 the first round commits"
     );
     assert!(
-        snapshot_root.join(".staging").is_dir(),
-        "#293 fix-r3 the staging parent survives a committed round"
-    );
-    assert!(
-        fs::read_dir(snapshot_root.join(".staging"))
-            .expect("#293 fix-r3 the staging parent is listable after the committed round")
-            .flatten()
-            .next()
-            .is_none(),
-        "#293 fix-r3 a committed round leaves no staging directory behind"
+        !snapshot_root.join(".staging").exists(),
+        "the idle staging parent is removed once the round settles"
     );
 
     // A failed round (its workspace directory does not exist): the failure
-    // cleanup must leave the parent in place too — this is the arm that used
-    // to race another round's create_dir_all.
+    // cleanup removes the idle parent too.
     let failed = ContentAddressedWorkspaceSnapshotRecorder::new(config)
         .capture_pre_user(&input("t2", &gone))
         .expect("#293 fix-r3 the second round returns a failed result, not a hard error");
@@ -2533,16 +2485,8 @@ fn staging_parent_survives_round_settlement() {
         "#293 fix-r3 the second round fails at the missing workspace directory"
     );
     assert!(
-        snapshot_root.join(".staging").is_dir(),
-        "#293 fix-r3 the staging parent survives a failed round"
-    );
-    assert!(
-        fs::read_dir(snapshot_root.join(".staging"))
-            .expect("#293 fix-r3 the staging parent is listable after the failed round")
-            .flatten()
-            .next()
-            .is_none(),
-        "#293 R2 removed its own staging directory, leaving the persistent parent empty"
+        !snapshot_root.join(".staging").exists(),
+        "the idle staging parent is removed once the round settles"
     );
 }
 

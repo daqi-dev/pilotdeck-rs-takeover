@@ -558,9 +558,9 @@ fn update_or_delete(
 fn cron_day_fields_use_or_checked(schedule: &JsValue) -> Result<bool, CronError> {
     match schedule.get("expression") {
         Some(JsValue::String(expression)) => Ok(cron_day_fields_use_or(expression)),
-        _ => Err(CronError::type_error(JsString::from(
-            "expression.trim is not a function",
-        ))),
+        other => Err(CronError::type_error(
+            super::manager::expression_trim_type_error(other),
+        )),
     }
 }
 

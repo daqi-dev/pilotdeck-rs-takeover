@@ -1,0 +1,261 @@
+{
+  "name": "upload-attachment-turn",
+  "about": "submit_turn 引用已完成的上传（uploadedAttachments）：整批引用、按 attachmentIds 选一个、未知 attachmentId、未完成、内容被改、不存在、跨项目。比较发给 provider 的请求里附件怎么体现、会话记录、租约目录的清理。上传记录预先写好（uploadId 无法跨步骤引用）。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Attachments\"}"
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "Got it."
+      }
+    }
+  ],
+  "files": {
+    "home/work/alpha/README.md": "alpha\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+    "home/work/alpha/.tmp/chat-uploads/up-ok/metadata.json": {
+      "uploadId": "up-ok",
+      "projectKey": "{HOME}/work/alpha",
+      "status": "completed",
+      "manifest": [
+        {
+          "clientFileId": "f1",
+          "name": "note.txt",
+          "relativePath": "docs/note.txt",
+          "size": 12,
+          "mimeType": "text/plain"
+        },
+        {
+          "clientFileId": "f2",
+          "name": "data.bin",
+          "relativePath": "data.bin",
+          "size": 3
+        }
+      ],
+      "totalBytes": 15,
+      "uploadedBytes": 15,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z",
+      "expiresAt": "2099-01-01T00:00:00.000Z",
+      "receivedClientFileIds": [
+        "f1",
+        "f2"
+      ],
+      "attachments": [
+        {
+          "attachmentId": "f1",
+          "name": "note.txt",
+          "relativePath": "docs/note.txt",
+          "mimeType": "text/plain",
+          "bytes": 12,
+          "sha256": "a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447",
+          "path": "{HOME}/work/alpha/.tmp/chat-uploads/up-ok/files/f1"
+        },
+        {
+          "attachmentId": "f2",
+          "name": "data.bin",
+          "relativePath": "data.bin",
+          "bytes": 3,
+          "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+          "path": "{HOME}/work/alpha/.tmp/chat-uploads/up-ok/files/f2"
+        }
+      ]
+    },
+    "home/work/alpha/.tmp/chat-uploads/up-ok/files/f1": "hello world\n",
+    "home/work/alpha/.tmp/chat-uploads/up-ok/files/f2": "abc",
+    "home/work/alpha/.tmp/chat-uploads/up-open/metadata.json": {
+      "uploadId": "up-open",
+      "projectKey": "{HOME}/work/alpha",
+      "status": "created",
+      "manifest": [
+        {
+          "clientFileId": "f2",
+          "name": "data.bin",
+          "relativePath": "data.bin",
+          "size": 3
+        }
+      ],
+      "totalBytes": 3,
+      "uploadedBytes": 0,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z",
+      "expiresAt": "2099-01-01T00:00:00.000Z",
+      "receivedClientFileIds": []
+    },
+    "home/work/alpha/.tmp/chat-uploads/up-bad/metadata.json": {
+      "uploadId": "up-bad",
+      "projectKey": "{HOME}/work/alpha",
+      "status": "completed",
+      "manifest": [
+        {
+          "clientFileId": "f2",
+          "name": "data.bin",
+          "relativePath": "data.bin",
+          "size": 3
+        }
+      ],
+      "totalBytes": 3,
+      "uploadedBytes": 3,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z",
+      "expiresAt": "2099-01-01T00:00:00.000Z",
+      "receivedClientFileIds": [
+        "f2"
+      ],
+      "attachments": [
+        {
+          "attachmentId": "f2",
+          "name": "data.bin",
+          "relativePath": "data.bin",
+          "bytes": 3,
+          "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+          "path": "{HOME}/work/alpha/.tmp/chat-uploads/up-bad/files/f2"
+        }
+      ]
+    },
+    "home/work/alpha/.tmp/chat-uploads/up-bad/files/f2": "xyz"
+  },
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-up-1",
+        "channelKey": "test",
+        "message": "turn-1: read the attachments",
+        "projectKey": "{HOME}/work/alpha",
+        "uploadedAttachments": [
+          {
+            "uploadId": "up-ok"
+          }
+        ]
+      }
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-up-2",
+        "channelKey": "test",
+        "message": "turn-2: only one",
+        "projectKey": "{HOME}/work/alpha",
+        "uploadedAttachments": [
+          {
+            "uploadId": "up-ok",
+            "attachmentIds": [
+              "f2"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-up-3",
+        "channelKey": "test",
+        "message": "turn-3: unknown id",
+        "projectKey": "{HOME}/work/alpha",
+        "uploadedAttachments": [
+          {
+            "uploadId": "up-ok",
+            "attachmentIds": [
+              "nope"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-up-4",
+        "channelKey": "test",
+        "message": "turn-4: not completed",
+        "projectKey": "{HOME}/work/alpha",
+        "uploadedAttachments": [
+          {
+            "uploadId": "up-open"
+          }
+        ]
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-up-5",
+        "channelKey": "test",
+        "message": "turn-5: tampered",
+        "projectKey": "{HOME}/work/alpha",
+        "uploadedAttachments": [
+          {
+            "uploadId": "up-bad"
+          }
+        ]
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-up-6",
+        "channelKey": "test",
+        "message": "turn-6: missing",
+        "projectKey": "{HOME}/work/alpha",
+        "uploadedAttachments": [
+          {
+            "uploadId": "missing"
+          }
+        ]
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-up-7",
+        "channelKey": "test",
+        "message": "turn-7: other project",
+        "uploadedAttachments": [
+          {
+            "uploadId": "up-ok"
+          }
+        ]
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-up-8",
+        "channelKey": "test",
+        "message": "turn-8: pilot home",
+        "projectKey": "{PILOT_HOME}",
+        "uploadedAttachments": [
+          {
+            "uploadId": "up-ok"
+          }
+        ]
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-up-1",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    }
+  ]
+}

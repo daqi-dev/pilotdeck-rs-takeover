@@ -1,0 +1,648 @@
+{
+  "name": "upload-lifecycle",
+  "about": "分片上传的 WS method：upload_create（幂等键、并发上限、清单校验、未登记项目）、upload_get（过期、身份不符）、upload_part（完整性、重复、未声明、base64 校验）、upload_complete、upload_cancel。uploadId 由服务端随机生成，步骤之间无法引用，所以 get / part / complete / cancel 作用在预先写好的上传记录上（alpha 项目）。",
+  "files": {
+    "home/work/alpha/README.md": "alpha\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+    "home/work/alpha/.tmp/chat-uploads/up-a/metadata.json": {
+      "uploadId": "up-a",
+      "projectKey": "{HOME}/work/alpha",
+      "status": "created",
+      "manifest": [
+        {
+          "clientFileId": "f1",
+          "name": "note.txt",
+          "relativePath": "docs/note.txt",
+          "size": 12,
+          "mimeType": "text/plain",
+          "sha256": "a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447"
+        },
+        {
+          "clientFileId": "f2",
+          "name": "data.bin",
+          "relativePath": "data.bin",
+          "size": 3
+        }
+      ],
+      "totalBytes": 15,
+      "uploadedBytes": 0,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z",
+      "expiresAt": "2099-01-01T00:00:00.000Z",
+      "receivedClientFileIds": []
+    },
+    "home/work/alpha/.tmp/chat-uploads/up-a/files/.keep": "",
+    "home/work/alpha/.tmp/chat-uploads/up-b/metadata.json": {
+      "uploadId": "up-b",
+      "projectKey": "{HOME}/work/alpha",
+      "status": "created",
+      "manifest": [
+        {
+          "clientFileId": "f2",
+          "name": "data.bin",
+          "relativePath": "data.bin",
+          "size": 3
+        }
+      ],
+      "totalBytes": 3,
+      "uploadedBytes": 0,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z",
+      "expiresAt": "2099-01-01T00:00:00.000Z",
+      "receivedClientFileIds": []
+    },
+    "home/work/alpha/.tmp/chat-uploads/up-b/files/.keep": "",
+    "home/work/alpha/.tmp/chat-uploads/up-c/metadata.json": {
+      "uploadId": "up-c",
+      "projectKey": "{HOME}/work/alpha",
+      "status": "created",
+      "manifest": [
+        {
+          "clientFileId": "f1",
+          "name": "note.txt",
+          "relativePath": "docs/note.txt",
+          "size": 12,
+          "mimeType": "text/plain",
+          "sha256": "a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447"
+        }
+      ],
+      "totalBytes": 12,
+      "uploadedBytes": 0,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z",
+      "expiresAt": "2099-01-01T00:00:00.000Z",
+      "receivedClientFileIds": []
+    },
+    "home/work/alpha/.tmp/chat-uploads/up-c/files/.keep": "",
+    "home/work/alpha/.tmp/chat-uploads/up-d/metadata.json": {
+      "uploadId": "up-d",
+      "projectKey": "{HOME}/work/alpha",
+      "status": "created",
+      "manifest": [
+        {
+          "clientFileId": "f2",
+          "name": "data.bin",
+          "relativePath": "data.bin",
+          "size": 3
+        }
+      ],
+      "totalBytes": 3,
+      "uploadedBytes": 0,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z",
+      "expiresAt": "2099-01-01T00:00:00.000Z",
+      "receivedClientFileIds": []
+    },
+    "home/work/alpha/.tmp/chat-uploads/up-d/files/.keep": "",
+    "home/work/alpha/.tmp/chat-uploads/up-e/metadata.json": {
+      "uploadId": "up-e",
+      "projectKey": "{HOME}/work/alpha",
+      "status": "created",
+      "manifest": [
+        {
+          "clientFileId": "f2",
+          "name": "data.bin",
+          "relativePath": "data.bin",
+          "size": 3
+        }
+      ],
+      "totalBytes": 3,
+      "uploadedBytes": 0,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z",
+      "expiresAt": "2020-01-01T00:00:00.000Z",
+      "receivedClientFileIds": []
+    },
+    "home/work/beta/README.md": "beta\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-beta/.cwd": "{HOME}/work/beta\n",
+    "home/work/beta/.tmp/chat-uploads/b1/metadata.json": {
+      "uploadId": "b1",
+      "projectKey": "{HOME}/work/beta",
+      "status": "created",
+      "manifest": [
+        {
+          "clientFileId": "f2",
+          "name": "data.bin",
+          "relativePath": "data.bin",
+          "size": 3
+        }
+      ],
+      "totalBytes": 3,
+      "uploadedBytes": 0,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z",
+      "expiresAt": "2099-01-01T00:00:00.000Z",
+      "receivedClientFileIds": []
+    },
+    "home/work/beta/.tmp/chat-uploads/b2/metadata.json": {
+      "uploadId": "b2",
+      "projectKey": "{HOME}/work/beta",
+      "status": "created",
+      "manifest": [
+        {
+          "clientFileId": "f2",
+          "name": "data.bin",
+          "relativePath": "data.bin",
+          "size": 3
+        }
+      ],
+      "totalBytes": 3,
+      "uploadedBytes": 0,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z",
+      "expiresAt": "2099-01-01T00:00:00.000Z",
+      "receivedClientFileIds": []
+    },
+    "home/work/beta/.tmp/chat-uploads/b3/metadata.json": {
+      "uploadId": "b3",
+      "projectKey": "{HOME}/work/beta",
+      "status": "created",
+      "manifest": [
+        {
+          "clientFileId": "f2",
+          "name": "data.bin",
+          "relativePath": "data.bin",
+          "size": 3
+        }
+      ],
+      "totalBytes": 3,
+      "uploadedBytes": 0,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z",
+      "expiresAt": "2099-01-01T00:00:00.000Z",
+      "receivedClientFileIds": []
+    },
+    "home/work/alpha/.tmp/chat-uploads/up-x/metadata.json": {
+      "uploadId": "up-other",
+      "projectKey": "{HOME}/work/alpha",
+      "status": "created",
+      "manifest": [
+        {
+          "clientFileId": "f2",
+          "name": "data.bin",
+          "relativePath": "data.bin",
+          "size": 3
+        }
+      ],
+      "totalBytes": 3,
+      "uploadedBytes": 0,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z",
+      "expiresAt": "2099-01-01T00:00:00.000Z",
+      "receivedClientFileIds": []
+    }
+  },
+  "steps": [
+    {
+      "ws": "upload_create",
+      "params": {
+        "projectKey": "{PILOT_HOME}",
+        "files": [
+          {
+            "clientFileId": "f1",
+            "name": "note.txt",
+            "relativePath": "docs/note.txt",
+            "size": 12,
+            "mimeType": "text/plain",
+            "sha256": "a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447"
+          },
+          {
+            "clientFileId": "f2",
+            "name": "  spaced.bin  ",
+            "relativePath": "data.bin",
+            "size": 3,
+            "mimeType": "application/octet-stream"
+          }
+        ],
+        "idempotencyKey": "k1"
+      }
+    },
+    {
+      "ws": "upload_create",
+      "params": {
+        "projectKey": "{PILOT_HOME}",
+        "files": [
+          {
+            "clientFileId": "f2",
+            "name": "data.bin",
+            "relativePath": "data.bin",
+            "size": 3
+          }
+        ],
+        "idempotencyKey": "k1"
+      }
+    },
+    {
+      "ws": "upload_create",
+      "params": {
+        "projectKey": "{HOME}/work/beta",
+        "files": [
+          {
+            "clientFileId": "f2",
+            "name": "data.bin",
+            "relativePath": "data.bin",
+            "size": 3
+          }
+        ]
+      }
+    },
+    {
+      "ws": "upload_create",
+      "params": {
+        "projectKey": "{HOME}/work/gamma",
+        "files": [
+          {
+            "clientFileId": "f2",
+            "name": "data.bin",
+            "relativePath": "data.bin",
+            "size": 3
+          }
+        ]
+      }
+    },
+    {
+      "ws": "upload_create",
+      "params": {
+        "projectKey": "   ",
+        "files": [
+          {
+            "clientFileId": "f2",
+            "name": "data.bin",
+            "relativePath": "data.bin",
+            "size": 3
+          }
+        ]
+      }
+    },
+    {
+      "ws": "upload_create",
+      "params": {
+        "projectKey": 7,
+        "files": [
+          {
+            "clientFileId": "f2",
+            "name": "data.bin",
+            "relativePath": "data.bin",
+            "size": 3
+          }
+        ]
+      }
+    },
+    {
+      "ws": "upload_create",
+      "params": {
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "upload_create",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "files": []
+      }
+    },
+    {
+      "ws": "upload_create",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "files": [
+          {
+            "clientFileId": "a/b",
+            "name": "data.bin",
+            "relativePath": "data.bin",
+            "size": 3
+          }
+        ]
+      }
+    },
+    {
+      "ws": "upload_create",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "files": [
+          {
+            "clientFileId": "f2",
+            "name": "data.bin",
+            "relativePath": "data.bin",
+            "size": 3
+          },
+          {
+            "clientFileId": "f2",
+            "name": "data.bin",
+            "relativePath": "data.bin",
+            "size": 3
+          }
+        ]
+      }
+    },
+    {
+      "ws": "upload_create",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "files": [
+          {
+            "clientFileId": "f2",
+            "name": "data.bin",
+            "relativePath": "../x",
+            "size": 3
+          }
+        ]
+      }
+    },
+    {
+      "ws": "upload_create",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "files": [
+          {
+            "clientFileId": "f2",
+            "name": "data.bin",
+            "relativePath": "/abs",
+            "size": 3
+          }
+        ]
+      }
+    },
+    {
+      "ws": "upload_create",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "files": [
+          {
+            "clientFileId": "f2",
+            "name": "  ",
+            "relativePath": "data.bin",
+            "size": 3
+          }
+        ]
+      }
+    },
+    {
+      "ws": "upload_create",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "files": [
+          {
+            "clientFileId": "f2",
+            "name": "data.bin",
+            "relativePath": "data.bin",
+            "size": -1
+          }
+        ]
+      }
+    },
+    {
+      "ws": "upload_create",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "files": [
+          {
+            "clientFileId": "f2",
+            "name": "data.bin",
+            "relativePath": "data.bin",
+            "size": 1.5
+          }
+        ]
+      }
+    },
+    {
+      "ws": "upload_create",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "files": [
+          {
+            "clientFileId": "f2",
+            "name": "data.bin",
+            "relativePath": "data.bin",
+            "size": 3,
+            "sha256": "xyz"
+          }
+        ]
+      }
+    },
+    {
+      "ws": "upload_create",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "files": [
+          null
+        ]
+      }
+    },
+    {
+      "ws": "upload_get",
+      "params": {
+        "uploadId": "up-a"
+      }
+    },
+    {
+      "ws": "upload_get",
+      "params": {
+        "uploadId": "missing"
+      }
+    },
+    {
+      "ws": "upload_get",
+      "params": {
+        "uploadId": "../etc"
+      }
+    },
+    {
+      "ws": "upload_get",
+      "params": {
+        "uploadId": "up-x"
+      }
+    },
+    {
+      "ws": "upload_get",
+      "params": {
+        "uploadId": "up-e"
+      }
+    },
+    {
+      "ws": "upload_part",
+      "params": {
+        "uploadId": "up-a",
+        "clientFileId": "f1",
+        "contentBase64": "aGVsbG8gd29ybGQK"
+      }
+    },
+    {
+      "ws": "upload_part",
+      "params": {
+        "uploadId": "up-a",
+        "clientFileId": "f1",
+        "contentBase64": "aGVsbG8gd29ybGQK"
+      }
+    },
+    {
+      "ws": "upload_part",
+      "params": {
+        "uploadId": "up-a",
+        "clientFileId": "f9",
+        "contentBase64": "YWJj"
+      }
+    },
+    {
+      "ws": "upload_part",
+      "params": {
+        "uploadId": "up-a",
+        "clientFileId": "",
+        "contentBase64": "YWJj"
+      }
+    },
+    {
+      "ws": "upload_part",
+      "params": {
+        "uploadId": "up-a",
+        "clientFileId": "f2",
+        "contentBase64": "YWJ"
+      }
+    },
+    {
+      "ws": "upload_part",
+      "params": {
+        "uploadId": "up-a",
+        "clientFileId": "f2",
+        "contentBase64": ""
+      }
+    },
+    {
+      "ws": "upload_part",
+      "params": {
+        "uploadId": "up-a",
+        "clientFileId": "f2"
+      }
+    },
+    {
+      "ws": "upload_get",
+      "params": {
+        "uploadId": "up-a"
+      }
+    },
+    {
+      "ws": "upload_part",
+      "params": {
+        "uploadId": "up-a",
+        "clientFileId": "f2",
+        "contentBase64": "YWJj"
+      }
+    },
+    {
+      "ws": "upload_complete",
+      "params": {
+        "uploadId": "up-a"
+      }
+    },
+    {
+      "ws": "upload_get",
+      "params": {
+        "uploadId": "up-a"
+      }
+    },
+    {
+      "ws": "upload_complete",
+      "params": {
+        "uploadId": "up-a"
+      }
+    },
+    {
+      "ws": "upload_cancel",
+      "params": {
+        "uploadId": "up-a"
+      }
+    },
+    {
+      "ws": "upload_part",
+      "params": {
+        "uploadId": "up-a",
+        "clientFileId": "f2",
+        "contentBase64": "YWJj"
+      }
+    },
+    {
+      "ws": "upload_part",
+      "params": {
+        "uploadId": "up-b",
+        "clientFileId": "f2",
+        "contentBase64": "YWJjZA=="
+      }
+    },
+    {
+      "ws": "upload_get",
+      "params": {
+        "uploadId": "up-b"
+      }
+    },
+    {
+      "ws": "upload_cancel",
+      "params": {
+        "uploadId": "up-b"
+      }
+    },
+    {
+      "ws": "upload_part",
+      "params": {
+        "uploadId": "up-b",
+        "clientFileId": "f2",
+        "contentBase64": "YWJj"
+      }
+    },
+    {
+      "ws": "upload_part",
+      "params": {
+        "uploadId": "up-c",
+        "clientFileId": "f1",
+        "contentBase64": "aGVsbG8gd29ybGQh"
+      }
+    },
+    {
+      "ws": "upload_get",
+      "params": {
+        "uploadId": "up-c"
+      }
+    },
+    {
+      "ws": "upload_complete",
+      "params": {
+        "uploadId": "up-c"
+      }
+    },
+    {
+      "ws": "upload_cancel",
+      "params": {
+        "uploadId": "up-d"
+      }
+    },
+    {
+      "ws": "upload_cancel",
+      "params": {
+        "uploadId": "up-d"
+      }
+    },
+    {
+      "ws": "upload_complete",
+      "params": {
+        "uploadId": "up-d"
+      }
+    },
+    {
+      "ws": "upload_get",
+      "params": {
+        "uploadId": "up-d"
+      }
+    },
+    {
+      "ws": "upload_cancel",
+      "params": {
+        "uploadId": "missing"
+      }
+    },
+    {
+      "ws": "upload_complete",
+      "params": {
+        "uploadId": "missing"
+      }
+    }
+  ]
+}
