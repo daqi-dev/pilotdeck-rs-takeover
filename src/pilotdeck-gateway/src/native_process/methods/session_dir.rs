@@ -462,17 +462,40 @@ impl Requests {
     /// Live path: look up the session's recorder in the shared recorders map.
     /// Cold path: append via a fresh transcript writer (like `options.recordAgentStatusMessage`).
     async fn session_record_status(&self, params: &JsValue) -> Result<JsValue, RequestError> {
-        let session_key = params
-            .get("sessionKey")
-            .and_then(JsValue::as_string)
-            .cloned()
-            .ok_or_else(|| RequestError::new("sessionKey must be a string."))?;
-        let turn_id = params
-            .get("turnId")
-            .and_then(JsValue::as_string)
-            .cloned()
-            .ok_or_else(|| RequestError::new("turnId must be a string."))?;
+        // GatewaySessionHistoryBundle.ts:205-213: the session id goes through
+        // the path sanitizer (`sessionId.replace(...)`) before anything else,
+        // so a non-string key fails there with the boundary's TypeError.
+        let session_key = match params.get("sessionKey") {
+            Some(JsValue::String(key)) => key.clone(),
+            None | Some(JsValue::Undefined) => {
+                return Err(RequestError::new(
+                    "Cannot read properties of undefined (reading 'replace')",
+                ));
+            }
+            Some(JsValue::Null) => {
+                return Err(RequestError::new(
+                    "Cannot read properties of null (reading 'replace')",
+                ));
+            }
+            Some(_) => return Err(RequestError::new("sessionId.replace is not a function")),
+        };
         let status = params.get("status").cloned().unwrap_or(JsValue::Undefined);
+        // JsonlTranscriptWriter reads `status.event` first: a nullish status
+        // throws there, after the cold storage was restored and before it is
+        // disposed (so the checkpoint is still flushed). `turnId` is not read
+        // before that point.
+        let missing_status = match status {
+            JsValue::Undefined => Some("Cannot read properties of undefined (reading 'event')"),
+            JsValue::Null => Some("Cannot read properties of null (reading 'event')"),
+            _ => None,
+        };
+        let turn_id = match (missing_status, params.get("turnId")) {
+            (Some(_), _) => JsString::from(""),
+            (None, Some(JsValue::String(turn))) => turn.clone(),
+            // A non-string turnId is written verbatim by TS; the native
+            // transcript writer only carries string turn ids.
+            (None, _) => return Err(RequestError::new("turnId must be a string.")),
+        };
 
         // #1457 fix-r2: take the fence before deciding who writes. The lookup
         // and the append then see one state — either a live writer exists and
@@ -514,6 +537,9 @@ impl Requests {
                 else {
                     return Ok(None);
                 };
+                if let Some(message) = missing_status {
+                    return Err(RequestError::new(message));
+                }
                 recorder
                     .writer()
                     .record_agent_status_message_checked(&session_key, &turn_id, &status)
@@ -526,10 +552,22 @@ impl Requests {
                 &session_key,
                 live,
                 |storage| {
-                    storage
-                        .transcript
-                        .record_agent_status_message(&session_key, &turn_id, &status)
-                        .map_err(|e| RequestError::new(e.to_string()))
+                    let recorded = match missing_status {
+                        Some(message) => Err(RequestError::new(message)),
+                        None => storage
+                            .transcript
+                            .record_agent_status_message(&session_key, &turn_id, &status)
+                            .map_err(|e| RequestError::new(e.to_string())),
+                    };
+                    // GatewaySessionHistoryBundle.ts:229-235: the cold storage
+                    // is disposed whether or not the append threw, and dispose
+                    // flushes the projection checkpoint.
+                    let saved = crate::runtime::session::factory::save_cold_projection_checkpoint(
+                        storage,
+                        &session_key,
+                    )
+                    .map_err(|e| RequestError::new(e.message));
+                    recorded.and(saved)
                 },
             )?;
             Ok(true)

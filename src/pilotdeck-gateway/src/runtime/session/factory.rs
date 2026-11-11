@@ -255,6 +255,23 @@ async fn acquire_writer_resolved(
 /// (a transcript path that will not canonicalize, a `<transcript>.lock` that
 /// will not open) is a storage error, not contention (#1873: folding it into
 /// the retryable `None` misreported a broken directory as a busy session).
+/// A cold (no live session) storage append ends with `storage.dispose()` in
+/// TS, whose flush captures the projection checkpoint unconditionally
+/// (ProjectSessionStorage.ts:349-361, SessionProjectionCheckpointBinding.ts
+/// `flush`). Re-read the transcript the append just extended and write the
+/// same envelope a live session writes.
+pub(crate) fn save_cold_projection_checkpoint(
+    storage: &crate::storage::SessionStorage,
+    session_id: &JsString,
+) -> Result<(), RuntimeError> {
+    let read = storage
+        .read_transcript(None)
+        .map_err(|e| RuntimeError::new(e.to_string()))?;
+    let state = project(&read.entries)?;
+    let envelope = projection_cache::envelope(session_id, &read.entries, &state);
+    FileProjectionCheckpointStore(storage.projection_checkpoint_path.clone()).save(&envelope)
+}
+
 pub(crate) fn try_writer_lease(path: &Path) -> Result<Option<WriterLease>, RuntimeError> {
     let canonical = crate::storage::canonical_transcript_path(path)
         .map_err(|e| RuntimeError::new(e.to_string()))?;

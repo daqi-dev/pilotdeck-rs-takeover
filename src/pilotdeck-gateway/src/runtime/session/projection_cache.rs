@@ -492,7 +492,11 @@ fn valid_metadata(value: &JsValue) -> bool {
     }
     true
 }
-fn envelope(session: &JsString, entries: &[JsValue], state: &DurableSessionState) -> JsValue {
+pub(super) fn envelope(
+    session: &JsString,
+    entries: &[JsValue],
+    state: &DurableSessionState,
+) -> JsValue {
     let watermark = last_sequence(entries);
     let row = |version, state| {
         object(&[
