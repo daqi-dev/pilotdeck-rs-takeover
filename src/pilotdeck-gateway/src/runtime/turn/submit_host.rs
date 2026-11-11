@@ -300,10 +300,7 @@ impl SubmitHost for GatewaySubmitHost {
             let permission_mode = requested.clone().or(live).or_else(|| default_mode.clone());
             let base_permission_mode = mode_of("basePermissionMode")
                 .cloned()
-                .or_else(|| {
-                    self.services
-                        .live_base_permission_mode(&run.session_key)
-                })
+                .or_else(|| self.services.live_base_permission_mode(&run.session_key))
                 .or_else(|| requested.filter(|mode| !mode.equals_str("plan")))
                 .or(default_mode);
             let mut options = crate::metadata::object([
