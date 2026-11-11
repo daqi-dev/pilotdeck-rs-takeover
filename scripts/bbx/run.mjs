@@ -15,6 +15,7 @@ import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const BASELINE = process.env.BBX_BASELINE || path.join(REPO, 'resources/PilotDeck');
@@ -351,8 +352,9 @@ const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) =
   if (e.isSymbolicLink()) return [[p, { symlink: fs.readlinkSync(p) }]];
   const bytes = fs.readFileSync(p);
   const text = bytes.toString('utf8');
-  if (Buffer.from(text, 'utf8').compare(bytes) !== 0) return [[p, { binaryBytes: bytes.length }]];
   const mode = (fs.statSync(p).mode & 0o777).toString(8);
+  // 非 UTF-8 文件：比长度和内容的 sha256（目前各场景的落盘里没有这类文件）。
+  if (Buffer.from(text, 'utf8').compare(bytes) !== 0) return [[p, { mode, binaryBytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }]];
   if (p.endsWith('.jsonl')) { try { return [[p, { mode, jsonl: text.split('\n').filter(Boolean).map((l) => JSON.parse(l)) }]]; } catch {} }
   if (p.endsWith('.json')) { try { return [[p, { mode, json: JSON.parse(text) }]]; } catch {} }
   return [[p, { mode, text }]];
