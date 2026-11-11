@@ -281,8 +281,23 @@ impl Recorder {
     }
     /// TS `startTurn`: `turn_started`, then `{nextStep: 1}`.
     pub fn start_turn(&self, session_id: &JsString, turn_id: &JsString) -> RecorderResult<()> {
+        self.start_queued_turn(session_id, turn_id, None)
+    }
+    /// TS `startTurn(sessionId, turnId, inboxItemId)`: a turn that claims a
+    /// queued inbox item names it in its `turn_started` entry
+    /// (AgentSessionEventRecorder.ts:137-144).
+    pub fn start_queued_turn(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+        inbox_item_id: Option<&JsString>,
+    ) -> RecorderResult<()> {
         let mut inner = self.lock();
         let draft = draft("turn_started");
+        let mut draft = draft;
+        if let Some(item) = inbox_item_id.filter(|item| !item.is_empty()) {
+            draft.insert("inboxItemId".into(), JsValue::String(item.clone()));
+        }
         self.append(session_id, turn_id, draft)?;
         inner.completed_turn_id = None;
         inner.turns.insert(turn_id.clone(), Turn::started());

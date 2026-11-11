@@ -80,6 +80,8 @@ pub struct TurnRunner {
     /// Whether agent status messages are written to the transcript; off for
     /// a forked subagent's sidechain.
     status_records: bool,
+    /// The queued inbox item this turn claims (`turn_started.inboxItemId`).
+    inbox_item: Option<JsString>,
 }
 pub type Transition = RecorderResult<(TurnRunner, Vec<JsValue>)>;
 
@@ -110,7 +112,14 @@ impl TurnRunner {
             interaction_events: None,
             session_steer: None,
             status_records: true,
+            inbox_item: None,
         }
+    }
+    /// A turn started from the session's durable inbox claims its item in
+    /// `turn_started` (AgentSession.submitQueuedTurn).
+    pub(crate) fn with_inbox_item(mut self, item: Option<JsString>) -> Self {
+        self.inbox_item = item;
+        self
     }
     pub(crate) fn with_status_records(mut self, status_records: bool) -> Self {
         self.status_records = status_records;
@@ -236,6 +245,9 @@ impl TurnRunner {
         // (live-recording/schemata.py). Off — the propagate.
         if crate::mutants::on("gates-skip-start") || crate::mutants::on("start-error-propagates") {
             let _ = self.io(|r, s, t| r.start_turn(s, t)).await;
+        } else if let Some(item) = self.inbox_item.clone() {
+            self.io(move |r, s, t| r.start_queued_turn(s, t, Some(&item)))
+                .await?;
         } else {
             self.io(|r, s, t| r.start_turn(s, t)).await?;
         }

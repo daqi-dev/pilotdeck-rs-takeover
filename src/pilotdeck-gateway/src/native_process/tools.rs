@@ -95,6 +95,10 @@ pub struct SessionTools {
     subagents: Option<super::subagents::SubagentRuntime>,
     /// Set on the tools of a forked child session: its definition's scope.
     fork: Option<super::subagents::ForkScope>,
+    /// The agent the `subagent` / `send_message` tools act for
+    /// (`SessionSubagentContinuationBundle`). Without it, or without the
+    /// subagent family, they are not registered.
+    continuation: Option<super::continuations::ParentRef>,
     /// `LocalGatewayBootConfig.elicitationTimeoutMs`.
     elicitation_timeout: Duration,
     /// `SessionFileHistoryBundle`: the session's file-history store behind
@@ -165,6 +169,9 @@ pub(super) struct ForkSeed {
     world: ExecutionWorld,
     events: Option<crate::runtime::project::interaction_events::InteractionEvents>,
     subagents: Option<super::subagents::SubagentRuntime>,
+    /// A one-shot child's registry view keeps the parent's continuation
+    /// tools, still bound to the parent agent.
+    continuation: Option<super::continuations::ParentRef>,
     /// The child registry is a scoped view of the parent's
     /// (SubagentRuntimeComposition.ts:57-66): its write tools are the
     /// parent's instances and record into the parent session's file history.
@@ -212,6 +219,7 @@ impl ForkSeed {
             events: self.events,
             subagents: self.subagents,
             fork: Some(scope),
+            continuation: self.continuation,
             file_history: self.file_history,
             elicitation_timeout: self.elicitation_timeout,
         }
@@ -269,6 +277,7 @@ impl SessionTools {
             events: None,
             subagents: None,
             fork: None,
+            continuation: None,
             file_history,
             elicitation_timeout: super::permission_prompt::interaction_timeout(
                 env.get("PILOTDECK_ELICITATION_TIMEOUT_MS")
@@ -280,6 +289,15 @@ impl SessionTools {
     /// The subagent family (`oneShotSubagentPort` and the `agent` tool).
     pub(super) fn with_subagents(mut self, subagents: super::subagents::SubagentRuntime) -> Self {
         self.subagents = Some(subagents);
+        self
+    }
+
+    /// The agent this session's continuation tools act for.
+    pub(super) fn with_continuation_parent(
+        mut self,
+        parent: super::continuations::ParentRef,
+    ) -> Self {
+        self.continuation = Some(parent);
         self
     }
 
@@ -295,6 +313,7 @@ impl SessionTools {
             world: self.world.clone(),
             events: self.events.clone(),
             subagents: self.subagents.clone(),
+            continuation: self.continuation.clone(),
             file_history: self.file_history.clone(),
             elicitation_timeout: self.elicitation_timeout,
         }
@@ -398,6 +417,10 @@ impl SessionTools {
             }
             (state.0.to_value(), state.0.mode.as_js_string().clone())
         };
+        let mut config = self.config.clone();
+        config.insert("env".into(), JsValue::Object(self.env.clone()));
+        config.insert("permissionMode".into(), JsValue::String(permission_mode));
+        config.insert("permissionContext".into(), permission_context);
         let tools = native_tools(
             self.binding.context.allowed_tools.clone(),
             self.binding.context.disallowed_tools.clone(),
@@ -416,6 +439,30 @@ impl SessionTools {
                     subagent_depth,
                 )))
                 .expect("native agent tool name is unique");
+        }
+        // `SessionSubagentContinuationBundle.attach`: the two continuation
+        // tools, bound to the agent this session acts for. Like `agent`, they
+        // need the `subagent_fork` capability, so a child under the depth cap
+        // does not see them.
+        if let (Some(subagents), Some(parent)) = (&self.subagents, &self.continuation) {
+            let port: Arc<dyn builtin::subagent_continuation::ContinuationPort> =
+                Arc::new(super::continuations::SessionContinuationPort {
+                    manager: subagents.continuations.clone(),
+                    parent: parent.clone(),
+                    runtime: subagents.clone(),
+                    seed: self.fork_seed(),
+                    config: config.clone(),
+                });
+            for tool in [
+                Arc::new(builtin::subagent_continuation::SubagentTool::new(
+                    port.clone(),
+                )) as Arc<dyn crate::runtime::tools::ExecutableTool>,
+                Arc::new(builtin::subagent_continuation::SendMessageTool::new(port)),
+            ] {
+                tools
+                    .register(tool)
+                    .expect("native continuation tool names are unique");
+            }
         }
         // A forked child sees a scoped view of that registry.
         let tools = match &self.fork {
@@ -463,10 +510,6 @@ impl SessionTools {
             turn: identity.turn_id.clone(),
             signal: signal.clone(),
         });
-        let mut config = self.config.clone();
-        config.insert("env".into(), JsValue::Object(self.env.clone()));
-        config.insert("permissionMode".into(), JsValue::String(permission_mode));
-        config.insert("permissionContext".into(), permission_context);
         let binding = TurnBinding {
             config: config.clone(),
             input: value([
@@ -1111,8 +1154,6 @@ impl MutationRecorder for Durable {
 #[cfg_attr(not(test), allow(dead_code))]
 #[rustfmt::skip] // one name per line: parallel branches each delete their own
 pub const BASELINE_TOOLS_NOT_PORTED: &[&str] = &[
-    "send_message",
-    "subagent",
 ];
 
 /// The session's share of the baseline's execution world

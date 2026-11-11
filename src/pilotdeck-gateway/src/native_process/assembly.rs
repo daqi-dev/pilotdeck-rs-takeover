@@ -480,6 +480,10 @@ async fn start_assembly(
     } else {
         Arc::new(std::sync::OnceLock::new())
     };
+    // `GatewaySubagentRuntimeBundle`: the process's continuable children. The
+    // session owner is bound once the host has built it.
+    let continuations: Arc<super::continuations::Continuations> = Arc::default();
+    let prepare_continuations = continuations.clone();
     let storage_project = project.clone();
     let storage_options = options.clone();
     // #897: the composition-time budget preflight resolves the same directory
@@ -500,6 +504,7 @@ async fn start_assembly(
             let acquire_miss_reported = prepare_acquire_miss_reported.clone();
             let mcp_diagnostic = prepare_mcp_diagnostic.clone();
             let session_overrides = prepare_overrides.clone();
+            let continuations = prepare_continuations.clone();
             Box::pin(async move {
                 // `registry.resolve(projectKey ?? fallbackProjectRoot)`
                 // (ProjectRuntimeRegistry.ts:1540-1560): the session runs in
@@ -671,6 +676,17 @@ async fn start_assembly(
                         Ok(())
                     })
                 });
+                // `SessionSubagentContinuationBundle.attach`: this session as
+                // the parent of continuable children, released (children
+                // drained, queued follow-ups discarded) with the session.
+                let continuation_parent = continuations.bind_session(context.session_key.clone());
+                let released_parent = continuation_parent.clone();
+                retained.push(move || {
+                    Box::pin(async move {
+                        released_parent.release().await;
+                        Ok(())
+                    })
+                });
                 // #1433: compose the session's MCP tools
                 // (`SessionMcpRuntimeBundle.compose`) from the enabled session
                 // server table — the production read face of
@@ -789,6 +805,7 @@ async fn start_assembly(
                             cwd: project_root.clone(),
                             env: env.clone(),
                         };
+                        continuation_parent.bind_recorder(binding.recorder.clone());
                         let ports = super::tools::SessionTools::new(
                             &options,
                             &env,
@@ -799,6 +816,7 @@ async fn start_assembly(
                             session_mcp,
                         )?
                         .with_permission_mode_source(permission_source.clone())
+                        .with_continuation_parent(continuation_parent.parent_ref())
                         .with_permission_prompt(gateway_emit, session_rules, permission_timeout)
                         .with_permission_mode_transition({
                             let session_overrides = session_overrides.clone();
@@ -835,6 +853,7 @@ async fn start_assembly(
                             deployment.clone(),
                             limits,
                             options.home.clone(),
+                            continuations.clone(),
                         ));
                         Ok(TurnHostFactory::new_with_signal(
                             project,
@@ -1136,6 +1155,7 @@ async fn start_assembly(
                     && emit_coordinator.emit(session, &event)
             }));
             let owner = SessionOwner::new(SessionOwnerOptions::new(build_factory));
+            continuations.bind_owner(owner.clone());
             if let Some(slot) = &build_release_slot {
                 // `gateway.dispose("local_gateway_disposed")` followed by the
                 // router shutdown (LocalGatewayLifecycleBundle.ts:45-60), for
