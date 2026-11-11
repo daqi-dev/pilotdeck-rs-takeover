@@ -738,6 +738,12 @@ impl FactoryStorage {
             result
         })
     }
+    /// Close a sidechain storage that was never handed out as a session:
+    /// drain its writer, flush the projection checkpoint and dispose the
+    /// projection (the baseline's `childStorage.dispose()`).
+    pub(crate) fn close_sidechain(&self) -> BoxFuture<RuntimeResult> {
+        self.close_owned()
+    }
     /// The storage admission queue shares the recorder used by session ports.
     /// Each call reserves its position before returning its waiting future.
     pub fn append_metadata(

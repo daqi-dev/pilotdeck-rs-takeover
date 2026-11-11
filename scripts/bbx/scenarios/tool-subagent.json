@@ -1,0 +1,88 @@
+{
+  "name": "tool-subagent",
+  "about": "subagent：父轮启动一个可续跑的后台子代理（explore），工具在首条消息入队后立即返回；子代理在后台跑一轮模型请求后空闲收束，宿主把收束通知作为后续输入投给父会话。（默认权限模式下 subagent 工具要先过权限询问，这里用 bypassPermissions 绕开。）",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Tool run\"}"
+      }
+    },
+    {
+      "name": "child",
+      "when": [
+        "You are a subagent of PilotDeck",
+        "CHILD-BG-1"
+      ],
+      "reply": {
+        "text": "Scope: looked around.\nResult: nothing to report.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "parent-notice",
+      "when": [
+        "Continuable subagent",
+        "settled:"
+      ],
+      "reply": {
+        "text": "Noted."
+      }
+    },
+    {
+      "name": "parent-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "parent",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1",
+          "name": "subagent",
+          "arguments": {
+            "description": "Look around",
+            "prompt": "CHILD-BG-1: look around and report.",
+            "subagent_type": "explore"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-1: run the tool"
+      }
+    },
+    {
+      "sleep": 1500
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-bbx-1"
+      }
+    }
+  ]
+}

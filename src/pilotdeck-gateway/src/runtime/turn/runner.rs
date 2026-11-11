@@ -77,6 +77,9 @@ pub struct TurnRunner {
     prompt_blocked: bool,
     interaction_events: Option<crate::runtime::project::interaction_events::TurnEvents>,
     session_steer: Option<crate::runtime::project::interaction_steer::TurnSteer>,
+    /// Whether agent status messages are written to the transcript; off for
+    /// a forked subagent's sidechain.
+    status_records: bool,
 }
 pub type Transition = RecorderResult<(TurnRunner, Vec<JsValue>)>;
 
@@ -106,7 +109,12 @@ impl TurnRunner {
             prompt_blocked: false,
             interaction_events: None,
             session_steer: None,
+            status_records: true,
         }
+    }
+    pub(crate) fn with_status_records(mut self, status_records: bool) -> Self {
+        self.status_records = status_records;
+        self
     }
     pub(crate) fn with_interaction_events(
         mut self,
@@ -365,6 +373,9 @@ impl TurnRunner {
         if let (Some(detail), JsValue::Object(status)) = (detail, &mut status) {
             status.insert("detail".into(), detail.clone());
         }
+        if !self.status_records {
+            return Ok((self, vec![event]));
+        }
         if let Err(error) = self
             .io(move |r, s, t| Ok(r.writer().record_agent_status_message(s, t, &status)?))
             .await
@@ -585,10 +596,12 @@ impl TurnRunner {
         .into_iter()
         .filter(|(_, field)| !matches!(field, JsValue::Undefined))
         .collect();
-        let written = object(fields.clone());
-        let _ = self
-            .io(move |r, s, t| Ok(r.writer().record_agent_status_message(s, t, &written)?))
-            .await;
+        if self.status_records {
+            let written = object(fields.clone());
+            let _ = self
+                .io(move |r, s, t| Ok(r.writer().record_agent_status_message(s, t, &written)?))
+                .await;
+        }
         self.event("agent_status", fields)
     }
 }
