@@ -811,6 +811,71 @@ fn content_type_of(response: &hyper::Response<Body>) -> String {
         .to_owned()
 }
 
+/// Deliberate deviation from the baseline (DNS rebinding): on a loopback
+/// listener the token is served only to a loopback `Host` and, when sent, a
+/// loopback `Origin`; everything else gets the non-loopback listener's 404.
+#[tokio::test]
+async fn local_token_requires_loopback_host_and_origin() {
+    let local = Config {
+        token: "fixture-token".into(),
+        loopback: true,
+        static_root: None,
+        webhook: None,
+        api_web: None,
+    };
+    let cases: &[(&[(&str, &str)], u16)] = &[
+        (&[("host", "127.0.0.1:18789")], 200),
+        (&[("host", "LOCALHOST:5")], 200),
+        (&[("host", "localhost")], 200),
+        (&[("host", "[::1]:18789")], 200),
+        (
+            &[("host", "127.0.0.1:1"), ("origin", "http://localhost:3001")],
+            200,
+        ),
+        (
+            &[("host", "127.0.0.1:1"), ("origin", "http://[::1]:3001")],
+            200,
+        ),
+        // A missing Host never reaches the route: the parser admission
+        // answers 400 first, like Node's `requireHostHeader`.
+        (&[("host", "evil.example:18789")], 404),
+        (&[("host", "127.0.0.2:18789")], 404),
+        (&[("host", "127.0.0.1.evil.example")], 404),
+        (&[("host", "127.0.0.1:")], 404),
+        (&[("host", "[::1]x")], 404),
+        (&[("host", "127.0.0.1"), ("host", "127.0.0.1")], 404),
+        (
+            &[
+                ("host", "127.0.0.1:1"),
+                ("origin", "http://evil.example:18789"),
+            ],
+            404,
+        ),
+        (&[("host", "127.0.0.1:1"), ("origin", "null")], 404),
+        (
+            &[("host", "127.0.0.1:1"), ("origin", "http://127.0.0.1/x")],
+            404,
+        ),
+    ];
+    for (headers, status) in cases {
+        let mut builder = hyper::Request::builder()
+            .method("GET")
+            .uri("/auth/local-token");
+        for (name, value) in *headers {
+            builder = builder.header(*name, *value);
+        }
+        let response = serve(&builder.body(()).unwrap(), &local).await.unwrap();
+        assert_eq!(u16::from(response.status()), *status, "{headers:?}");
+        let body = body_of(response).await;
+        let expected = if *status == 200 {
+            "{\"token\":\"fixture-token\"}"
+        } else {
+            "not found"
+        };
+        assert_eq!(body, expected, "{headers:?}");
+    }
+}
+
 /// #1209: a non-loopback binding must not leak the token (TS 404s it before
 /// the static fallback); the loopback binding returns it verbatim.
 #[tokio::test]

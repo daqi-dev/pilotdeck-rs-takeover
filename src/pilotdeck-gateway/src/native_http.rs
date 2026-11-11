@@ -327,6 +327,20 @@ async fn route<B>(
     }
     if path == "/auth/local-token" {
         if config.loopback || crate::mutants::on("native-http-token-loopback-skip") {
+            // Deliberate deviation from the baseline (GatewayServer.ts:103-112
+            // answers any request on a loopback listener): a page on another
+            // site that DNS-rebinds its own name to 127.0.0.1 reaches this
+            // route same-origin and could read the token. Its requests carry
+            // that name in `Host` (and in `Origin`, when sent), so only a
+            // loopback `Host` — and a loopback `Origin` if present — is
+            // served; anything else gets the 404 a non-loopback listener
+            // already answers. Same-origin pages served from the gateway, the
+            // CLI and Node clients (no `Origin`) are unaffected; a page on
+            // another origin could not read the baseline's answer anyway (no
+            // CORS headers).
+            if !local_token_request_is_loopback(request) {
+                return Ok(not_found(keep_alive));
+            }
             return Ok(handler_response(
                 hyper::StatusCode::OK,
                 "application/json",
@@ -559,6 +573,53 @@ fn headless_bad_request() -> hyper::Response<Body> {
 }
 
 /// The final 404: `text/plain; charset=utf-8`, body `not found`.
+/// `/auth/local-token`'s request gate (a deliberate deviation, see `route`):
+/// exactly one `Host` naming `127.0.0.1`, `localhost` or `[::1]` (any port,
+/// ASCII case-insensitive), and, when an `Origin` is present, exactly one
+/// whose host is one of the same names. `Origin: null` is refused.
+fn local_token_request_is_loopback<B>(request: &hyper::Request<B>) -> bool {
+    let single = |name: hyper::header::HeaderName| {
+        let mut values = request.headers().get_all(name).iter();
+        match (values.next(), values.next()) {
+            (Some(value), None) => Some(value.to_str().ok()),
+            (None, _) => None,
+            _ => Some(None),
+        }
+    };
+    let host_ok = matches!(
+        single(hyper::header::HOST),
+        Some(Some(host)) if is_loopback_authority(host)
+    );
+    let origin_ok = match single(hyper::header::ORIGIN) {
+        None => true,
+        Some(Some(origin)) => origin
+            .split_once("://")
+            .is_some_and(|(_, rest)| !rest.contains('/') && is_loopback_authority(rest)),
+        Some(None) => false,
+    };
+    host_ok && origin_ok
+}
+
+/// `host[:port]` whose host is `127.0.0.1`, `localhost` or `[::1]`.
+fn is_loopback_authority(authority: &str) -> bool {
+    let (host, port) = if authority.starts_with('[') {
+        match authority.find(']') {
+            Some(end) => (&authority[..=end], &authority[end + 1..]),
+            None => return false,
+        }
+    } else {
+        authority.split_at(authority.find(':').unwrap_or(authority.len()))
+    };
+    let port_ok = port.is_empty()
+        || port
+            .strip_prefix(':')
+            .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()));
+    port_ok
+        && ["127.0.0.1", "localhost", "[::1]"]
+            .iter()
+            .any(|name| host.eq_ignore_ascii_case(name))
+}
+
 fn not_found(keep_alive: bool) -> hyper::Response<Body> {
     let message = if crate::mutants::on("native-http-404-message") {
         "Not Found"

@@ -1,0 +1,45 @@
+{
+  "name": "server-local-token-origin",
+  "about": "回环监听上 /auth/local-token 的来源检查。第 0、1 步：回环 Host（采集器固定从 127.0.0.1 发出）不带 Origin、或带回环 Origin（http://localhost:3001），两侧都返回 token。第 2、3 步：带外部 Origin（http://evil.example:38411）或 Origin: null，基线照样返回 token，Rust 有意按基线对非回环监听的形式回 404 not found——这是基线的 DNS 重绑定问题（GatewayServer.ts:103-112 对回环监听上的任何请求都给 token），登记为 accepted。第 4 步：/health 带外部 Origin 两侧照常 200，说明检查只在这一条路由上。外部 Host 的拒绝采集器发不出来（fetch 不许改 Host），由 native_http 的单元测试覆盖。",
+  "volatile": [
+    "\\.http\\.headers\\.date$"
+  ],
+  "accepted": [
+    {
+      "id": "local-token-dns-rebinding",
+      "why": "基线自身的安全问题：回环监听上 /auth/local-token 不看 Host / Origin（GatewayServer.ts:103-112），恶意网页经 DNS 重绑定同源读到 token。Rust 对外部 Origin（含 null）按基线对非回环监听的既有形式回 404 not found",
+      "paths": [
+        "^\\$\\.steps\\[[23]\\]\\.http\\.(status|body|headers\\.content-type)$"
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "http": "GET /auth/local-token"
+    },
+    {
+      "http": "GET /auth/local-token",
+      "headers": {
+        "origin": "http://localhost:3001"
+      }
+    },
+    {
+      "http": "GET /auth/local-token",
+      "headers": {
+        "origin": "http://evil.example:38411"
+      }
+    },
+    {
+      "http": "GET /auth/local-token",
+      "headers": {
+        "origin": "null"
+      }
+    },
+    {
+      "http": "GET /health",
+      "headers": {
+        "origin": "http://evil.example:38411"
+      }
+    }
+  ]
+}
