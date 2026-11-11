@@ -204,13 +204,15 @@ if (wantServer) {
 }
 
 // ── WS 连接（惰性建立；一个场景一条连接，除非步骤要求重连）──
-let ws; let frames = []; let wake = [];
+// frames 是当前连接收到的帧，步骤从这里取自己的帧；allFrames 跨重连累积，收尾时从中取通知。
+let ws; let frames = []; let wake = []; const allFrames = [];
 const connect = async (hello) => {
   ws = new WebSocket(`ws://127.0.0.1:${GATEWAY_PORT}/ws`);
   frames = [];
-  ws.onmessage = (e) => { let f; try { f = JSON.parse(e.data); } catch { f = { raw: String(e.data) }; } frames.push(f); wake.splice(0).forEach((w) => w()); };
+  const got = (f) => { frames.push(f); allFrames.push(f); wake.splice(0).forEach((w) => w()); };
+  ws.onmessage = (e) => { let f; try { f = JSON.parse(e.data); } catch { f = { raw: String(e.data) }; } got(f); };
   let closed = null;
-  ws.onclose = (e) => { closed = { code: e.code, reason: e.reason }; frames.push({ type: '__closed', ...closed }); wake.splice(0).forEach((w) => w()); };
+  ws.onclose = (e) => { closed = { code: e.code, reason: e.reason }; got({ type: '__closed', ...closed }); };
   await new Promise((resolve) => { ws.onopen = resolve; ws.onerror = resolve; });
   if (ws.readyState !== 1) return { connectFailed: true };
   ws.send(JSON.stringify(hello ?? { type: 'hello', protocolVersion: '1.2', clientName: 'test', clientVersion: '0.0.0', token: TOKEN }));
@@ -350,8 +352,8 @@ out.failures = [
   ...(out.startFailure ? [{ at: 'start', kind: 'start', expected: scenario.expectStartFailure === true }] : []),
   ...out.steps.flatMap((r, i) => failuresOf(r.step, r, `steps[${i}]`)),
 ];
-out.notifications = frames.filter((f) => f.type === 'notification');
-out.unsolicited = frames.filter((f) => !['notification', 'hello_ok', 'response', 'event', '__closed'].includes(f.type));
+out.notifications = allFrames.filter((f) => f.type === 'notification');
+out.unsolicited = allFrames.filter((f) => !['notification', 'hello_ok', 'response', 'event', '__closed'].includes(f.type));
 if (ws) ws.close();
 
 // ── 停机：SIGTERM，记退出码 ──
