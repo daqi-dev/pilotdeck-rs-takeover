@@ -1,0 +1,600 @@
+{
+  "name": "tool-write-file-diagnostics",
+  "about": "write_file 写入后附带的语法诊断：JSON、Python、bash、YAML、Markdown、HTML、CSV、JS/TS 各一个坏文件和一个好文件。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Tool run\"}"
+      }
+    },
+    {
+      "name": "turn-15-after-tool",
+      "when": [
+        "turn-15:",
+        "\"tool_call_id\":\"call_bbx_15\""
+      ],
+      "reply": {
+        "text": "Done 15."
+      }
+    },
+    {
+      "name": "turn-15",
+      "when": [
+        "turn-15:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_15",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "d/good.ts",
+            "content": "export const a: number = 1;\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-14-after-tool",
+      "when": [
+        "turn-14:",
+        "\"tool_call_id\":\"call_bbx_14\""
+      ],
+      "reply": {
+        "text": "Done 14."
+      }
+    },
+    {
+      "name": "turn-14",
+      "when": [
+        "turn-14:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_14",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "d/bad.ts",
+            "content": "const a: number = ;\nfunction (\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-13-after-tool",
+      "when": [
+        "turn-13:",
+        "\"tool_call_id\":\"call_bbx_13\""
+      ],
+      "reply": {
+        "text": "Done 13."
+      }
+    },
+    {
+      "name": "turn-13",
+      "when": [
+        "turn-13:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_13",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "d/bad.csv",
+            "content": "a,b\n\"unterminated,1\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-12-after-tool",
+      "when": [
+        "turn-12:",
+        "\"tool_call_id\":\"call_bbx_12\""
+      ],
+      "reply": {
+        "text": "Done 12."
+      }
+    },
+    {
+      "name": "turn-12",
+      "when": [
+        "turn-12:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_12",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "d/bad.html",
+            "content": "<div><p>unclosed</div></span>\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-11-after-tool",
+      "when": [
+        "turn-11:",
+        "\"tool_call_id\":\"call_bbx_11\""
+      ],
+      "reply": {
+        "text": "Done 11."
+      }
+    },
+    {
+      "name": "turn-11",
+      "when": [
+        "turn-11:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_11",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "d/good.md",
+            "content": "# Title\n\n```js\nlet a = 1;\n```\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-10-after-tool",
+      "when": [
+        "turn-10:",
+        "\"tool_call_id\":\"call_bbx_10\""
+      ],
+      "reply": {
+        "text": "Done 10."
+      }
+    },
+    {
+      "name": "turn-10",
+      "when": [
+        "turn-10:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_10",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "d/front.md",
+            "content": "---\ntitle: x\nbody\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-9-after-tool",
+      "when": [
+        "turn-9:",
+        "\"tool_call_id\":\"call_bbx_9\""
+      ],
+      "reply": {
+        "text": "Done 9."
+      }
+    },
+    {
+      "name": "turn-9",
+      "when": [
+        "turn-9:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_9",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "d/bad.md",
+            "content": "# Title\n\n```js\nlet a = 1;\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-8-after-tool",
+      "when": [
+        "turn-8:",
+        "\"tool_call_id\":\"call_bbx_8\""
+      ],
+      "reply": {
+        "text": "Done 8."
+      }
+    },
+    {
+      "name": "turn-8",
+      "when": [
+        "turn-8:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_8",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "d/good.yaml",
+            "content": "a: 1\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-7-after-tool",
+      "when": [
+        "turn-7:",
+        "\"tool_call_id\":\"call_bbx_7\""
+      ],
+      "reply": {
+        "text": "Done 7."
+      }
+    },
+    {
+      "name": "turn-7",
+      "when": [
+        "turn-7:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_7",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "d/bad.yaml",
+            "content": "a: [1, 2\nb: 3\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-6-after-tool",
+      "when": [
+        "turn-6:",
+        "\"tool_call_id\":\"call_bbx_6\""
+      ],
+      "reply": {
+        "text": "Done 6."
+      }
+    },
+    {
+      "name": "turn-6",
+      "when": [
+        "turn-6:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_6",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "d/good.sh",
+            "content": "echo hi\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-5-after-tool",
+      "when": [
+        "turn-5:",
+        "\"tool_call_id\":\"call_bbx_5\""
+      ],
+      "reply": {
+        "text": "Done 5."
+      }
+    },
+    {
+      "name": "turn-5",
+      "when": [
+        "turn-5:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_5",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "d/bad.sh",
+            "content": "if true; then\necho hi\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-4-after-tool",
+      "when": [
+        "turn-4:",
+        "\"tool_call_id\":\"call_bbx_4\""
+      ],
+      "reply": {
+        "text": "Done 4."
+      }
+    },
+    {
+      "name": "turn-4",
+      "when": [
+        "turn-4:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_4",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "d/good.py",
+            "content": "print(1)\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-3-after-tool",
+      "when": [
+        "turn-3:",
+        "\"tool_call_id\":\"call_bbx_3\""
+      ],
+      "reply": {
+        "text": "Done 3."
+      }
+    },
+    {
+      "name": "turn-3",
+      "when": [
+        "turn-3:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_3",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "d/bad.py",
+            "content": "def broken(:\n    pass\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-2-after-tool",
+      "when": [
+        "turn-2:",
+        "\"tool_call_id\":\"call_bbx_2\""
+      ],
+      "reply": {
+        "text": "Done 2."
+      }
+    },
+    {
+      "name": "turn-2",
+      "when": [
+        "turn-2:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_2",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "d/good.json",
+            "content": "{\"a\": 1}\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-1-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "turn-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "d/bad.json",
+            "content": "{\"a\": 1,}\n"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-1: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-2: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-3: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-4: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-5: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-6: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-7: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-8: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-9: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-10: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-11: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-12: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-13: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-14: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-15: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-bbx-1"
+      }
+    }
+  ]
+}
