@@ -145,6 +145,13 @@ impl SessionProjection {
         }
         self.retained_snapshot()
     }
+    /// Visit every durable entry in commit order. Reducer-style session state
+    /// (goal, plan/todo) folds this list instead of keeping a second copy.
+    pub fn for_each_entry(&self, mut visit: impl FnMut(&JsValue)) {
+        for entry in lock(&self.entries).iter() {
+            visit(entry);
+        }
+    }
     fn retained_snapshot(&self) -> Result<DurableSessionState, RuntimeError> {
         let entries = lock(&self.entries);
         if self.valid.load(Ordering::SeqCst) {

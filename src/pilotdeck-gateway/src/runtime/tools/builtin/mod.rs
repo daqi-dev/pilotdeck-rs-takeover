@@ -7,12 +7,16 @@ pub mod bash;
 pub mod edit_file;
 pub mod edit_notebook;
 pub mod glob;
+pub mod goal;
 pub mod grep;
 pub mod mcp_resources;
 pub mod mcp_tool;
 pub mod read_file;
+pub mod read_skill;
+pub mod structured_output;
 pub mod task;
 pub mod time;
+pub mod todo_write;
 pub mod web;
 pub mod write_file;
 

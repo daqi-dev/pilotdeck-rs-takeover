@@ -83,6 +83,10 @@ pub struct SessionTools {
     /// Session-scoped execution world shared by every turn's tool registry,
     /// so a background task started in one turn is still there in the next.
     world: ExecutionWorld,
+    /// The goal runtime's session-long state (`SessionGoalBundle`).
+    goal: Arc<crate::runtime::goal::GoalSessionState>,
+    /// `planFileManager` (`SessionPlanTodoBundle`).
+    plan_files: Arc<crate::runtime::plan_todo::SessionPlanFiles>,
 }
 impl SessionTools {
     pub fn new(
@@ -99,8 +103,12 @@ impl SessionTools {
             permission::create_default_permission_context(DefaultPermissionContextOptions {
                 cwd: project.to_string_lossy().into_owned().into(),
                 can_prompt: Some(false),
+                plan_directory_path: Some(
+                    crate::runtime::plan_todo::SessionPlanFiles::directory_for(&project),
+                ),
                 ..Default::default()
             });
+        let plan_files = Arc::new(crate::runtime::plan_todo::SessionPlanFiles::new(&project));
         Ok(Self {
             project,
             env: env_object(env),
@@ -112,7 +120,17 @@ impl SessionTools {
             permission: Arc::new(Permissions(Mutex::new((context, None)))),
             permission_mode_source: None,
             world: ExecutionWorld::new(),
+            goal: Arc::default(),
+            plan_files,
         })
+    }
+
+    /// The project's plugin runtime, behind `read_skill`
+    /// (`createBuiltinRegistry({ readSkill })`). Without it the tool is not
+    /// registered, as in the baseline.
+    pub fn with_skills(mut self, plugins: Arc<crate::runtime::plugins::PluginRuntime>) -> Self {
+        self.world.skills = Some(plugins);
+        self
     }
 
     /// #1864 (b): the live permission-mode source, consulted on every turn
@@ -177,8 +195,28 @@ impl SessionTools {
             abort_signal: Some(Arc::new(signal.clone())),
             environment: Arc::new(NativeTurnEnvironment(self.env.clone())),
         };
+        // `SessionPlanTodoBundle` / `SessionGoalBundle`: both providers sit
+        // on the session's transcript writer and its live entry list.
+        let plan_todo = crate::runtime::plan_todo::PlanTodoRuntime::new(
+            identity.session_id.clone(),
+            recorder.clone(),
+            self.binding.projection.clone(),
+        );
+        let goal = crate::runtime::goal::GoalRuntime::new(
+            identity.session_id.clone(),
+            recorder.clone(),
+            self.binding.projection.clone(),
+            Arc::new(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0.0, |elapsed| elapsed.as_millis() as f64)
+            }),
+            self.goal.clone(),
+        );
         let tool_ports = ToolContextPorts {
             clock: Some(Arc::new(|| JsValue::String(SystemExecutionClock.now_iso()))),
+            goal: Some(Arc::new(crate::runtime::goal::GoalSessions(goal))),
+            plan_files: Some(self.plan_files.clone()),
             ..Default::default()
         };
         let sink = Durable {
@@ -207,10 +245,15 @@ impl SessionTools {
             tool_execution: execution,
             tool_context: Arc::new(CapabilityContext {
                 builder: ToolContextBuilder::new(binding, tool_ports, true),
-                plan_todo: None,
+                plan_todo: Some(Arc::new(crate::runtime::plan_todo::PlanTodoSessions(
+                    plan_todo.clone(),
+                ))),
             }),
             tool_observer: self.permission.clone(),
-            plan_todo: None,
+            plan_todo: Some(Arc::new(crate::runtime::plan_todo::PlanTodoTurnHandler {
+                runtime: plan_todo,
+                turn: identity.turn_id.clone(),
+            })),
             turn: Default::default(),
             interaction: InteractionTurnInput {
                 permission: PermissionTurnOptions {
@@ -495,17 +538,11 @@ impl MutationRecorder for Durable {
 pub const BASELINE_TOOLS_NOT_PORTED: &[&str] = &[
     "agent",
     "ask_user_question",
-    "create_goal",
     "execute_code",
-    "get_goal",
     "mcp__funasr__transcribe_audio",
-    "read_skill",
     "send_attachment",
     "send_message",
-    "structured_output",
     "subagent",
-    "todo_write",
-    "update_goal",
 ];
 
 /// The session's share of the baseline's execution world
@@ -517,6 +554,8 @@ pub(super) struct ExecutionWorld {
     tasks: crate::runtime::background::BackgroundTaskRuntime,
     /// `getURLMarkdownContent` over the process network, behind `web_fetch`.
     fetcher: builtin::web::fetcher::UrlFetcher,
+    /// `readSkill: { loader, lister }`: the project's plugin runtime.
+    skills: Option<Arc<crate::runtime::plugins::PluginRuntime>>,
 }
 impl ExecutionWorld {
     pub(super) fn new() -> Self {
@@ -526,6 +565,7 @@ impl ExecutionWorld {
             fetcher: builtin::web::fetcher::UrlFetcher::new(Arc::new(
                 crate::runtime::model::http::HyperModelTransport::new(),
             )),
+            skills: None,
         }
     }
 }
@@ -568,6 +608,16 @@ pub(super) fn native_tools(
             fetcher: world.fetcher.clone(),
         },
     )));
+    builtins.push(Arc::new(
+        builtin::structured_output::StructuredOutputTool::new(),
+    ));
+    builtins.push(Arc::new(builtin::todo_write::TodoWriteTool::new()));
+    builtins.extend(builtin::goal::goal_tools());
+    if let Some(plugins) = &world.skills {
+        builtins.push(Arc::new(builtin::read_skill::ReadSkillTool::new(
+            plugins.clone(),
+        )));
+    }
     for tool in builtins {
         tools
             .register(tool)

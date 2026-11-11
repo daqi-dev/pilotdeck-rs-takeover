@@ -583,6 +583,11 @@ impl PluginRuntime {
         contributions::collect_skill_contributions(&self.state.lock().await.registry.list())
     }
 
+    /// `loadSkillPrompt(extensionId)`: the content behind `read_skill`.
+    pub async fn load_skill_prompt(&self, id: &str) -> Option<String> {
+        contributions::load_skill_prompt(&self.state.lock().await.registry.list(), id)
+    }
+
     pub async fn mcp_servers(&self) -> JsObject {
         contributions::collect_mcp_servers(&self.state.lock().await.registry.list())
     }

@@ -487,6 +487,66 @@ pub(super) fn collect_skill_contributions(
     selected.into_iter().map(|(c, _)| c).collect()
 }
 
+/// `renderSkillContent` (`extension/skills/renderSkillContent.ts`): expand the
+/// skill's own directory, POSIX-shell quoted, into `{{SKILL_ROOT_SHELL}}`;
+/// `{{!SKILL_ROOT_SHELL}}` is the escape for the literal token.
+pub(crate) fn render_skill_content(content: &str, skill_file: &std::path::Path) -> String {
+    const TOKEN: &str = "{{SKILL_ROOT_SHELL}}";
+    const ESCAPED: &str = "{{!SKILL_ROOT_SHELL}}";
+    if !content.contains(TOKEN) && !content.contains(ESCAPED) {
+        return content.to_owned();
+    }
+    let root = skill_file
+        .parent()
+        .map(|dir| dir.to_string_lossy().into_owned())
+        .filter(|dir| !dir.is_empty())
+        .unwrap_or_else(|| ".".into());
+    let quoted = format!("'{}'", root.replace('\'', r#"'"'"'"#));
+    content
+        .split(ESCAPED)
+        .map(|segment| segment.replace(TOKEN, &quoted))
+        .collect::<Vec<_>>()
+        .join(TOKEN)
+}
+
+/// `PluginRuntime.loadSkillPrompt(extensionId)`: an exact skill name first,
+/// then a namespaced skill by its short name, then a command; each pass in
+/// project > global > builtin order. Programmatic `promptContributions` (the
+/// baseline's first pass) are not modelled by [`LoadedPlugin`]: no disk
+/// plugin and none of the baseline's builtin plugins declares any.
+pub(super) fn load_skill_prompt(plugins: &[Arc<LoadedPlugin>], id: &str) -> Option<String> {
+    let mut ordered: Vec<&Arc<LoadedPlugin>> = plugins.iter().collect();
+    ordered.sort_by_key(|plugin| std::cmp::Reverse(source_priority(plugin.source)));
+    let suffix = format!(":{id}");
+    let render = |skill: &super::loader::LoadedPluginCommand| {
+        render_skill_content(&skill.content, &skill.path)
+    };
+    for plugin in &ordered {
+        if let Some(skill) = plugin.skills.iter().find(|skill| skill.name == id) {
+            return Some(render(skill));
+        }
+    }
+    for plugin in &ordered {
+        if let Some(skill) = plugin
+            .skills
+            .iter()
+            .find(|skill| skill.name.ends_with(&suffix))
+        {
+            return Some(render(skill));
+        }
+    }
+    for plugin in &ordered {
+        if let Some(command) = plugin
+            .commands
+            .iter()
+            .find(|command| command.name == id || command.name.ends_with(&suffix))
+        {
+            return Some(command.content.clone());
+        }
+    }
+    None
+}
+
 fn collect_output_styles(plugins: &[Arc<LoadedPlugin>]) -> Vec<PluginOutputStyleContribution> {
     let mut styles: std::collections::HashMap<String, PluginOutputStyleContribution> =
         std::collections::HashMap::new();

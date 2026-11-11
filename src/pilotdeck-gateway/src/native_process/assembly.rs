@@ -526,6 +526,17 @@ async fn start_assembly(
                         .ok_or_else(|| RuntimeError::new("Native LSP service has the wrong type."))?
                         .bind()?,
                 );
+                // `readSkill: { loader, lister }` over the project's plugin
+                // runtime (ProjectRuntimeResourcesBundle.ts:265).
+                let plugin_runtime =
+                    staged
+                        .resource(Resource::PluginRuntime)
+                        .and_then(|resource| {
+                            resource
+                                .as_any()
+                                .downcast_ref::<crate::runtime::project::plugins::PluginResources>()
+                                .map(|plugins| plugins.runtime.clone())
+                        });
                 let snapshot = staged.snapshot();
                 let agent = snapshot
                     .get("config")
@@ -728,6 +739,10 @@ async fn start_assembly(
                             session_mcp,
                         )?
                         .with_permission_mode_source(permission_source.clone());
+                        let ports = match plugin_runtime {
+                            Some(plugins) => ports.with_skills(plugins),
+                            None => ports,
+                        };
                         Ok(TurnHostFactory::new_with_signal(
                             project,
                             deployment,
