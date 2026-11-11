@@ -107,12 +107,26 @@ pub struct ToolRunContext {
     pub host: Arc<ToolRuntimeContext>,
     /// Detached per-call fields, including derived budget and permission result.
     pub fields: JsObject,
+    /// `context.executeTool` (tool/protocol/types.ts:396-406): the recursion
+    /// hook a tool such as `execute_code` uses to dispatch nested calls
+    /// through the same [`ToolRuntime`] path as a model tool call. The
+    /// runtime installs it on every call it executes; a host that runs a tool
+    /// directly leaves it `None`.
+    pub execute_tool: Option<NestedToolExecutor>,
 }
+/// See [`ToolRunContext::execute_tool`]. The result is the nested call's
+/// tool result object (`type: "success" | "error"`).
+pub type NestedToolExecutor = Arc<
+    dyn Fn(crate::host::modules::capability::ToolCall) -> crate::host::HostFuture<JsObject>
+        + Send
+        + Sync,
+>;
 impl ToolRunContext {
     pub fn new(host: Arc<ToolRuntimeContext>) -> Self {
         Self {
             fields: host.fields.clone(),
             host,
+            execute_tool: None,
         }
     }
     /// The signal only when it is a [`ToolCancellation`]; prefer
