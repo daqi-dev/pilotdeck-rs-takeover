@@ -56,6 +56,12 @@ impl TurnClock for ProductionTurnClock {
     fn uuid(&self) -> JsString {
         uuid::Uuid::new_v4().to_string().into()
     }
+    /// The gateway builds its agent loops without a `uuid` dependency
+    /// (`AgentTurnCapabilities.clock`), so their transient prompts are
+    /// numbered per run.
+    fn offers_uuid(&self) -> bool {
+        false
+    }
 }
 struct Preparation {
     state: RequestPreparationState,
