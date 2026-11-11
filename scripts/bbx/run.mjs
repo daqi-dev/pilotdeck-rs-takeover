@@ -169,7 +169,7 @@ const SIDES = {
   },
 };
 // volatile 原样带进产物：diff.mjs 从产物里读它（两侧相同，不会成为差异）。
-const out = { scenario: scenario.name, side, volatile: scenario.volatile ?? [], steps: [], notifications: [], provider: providerRequests };
+const out = { scenario: scenario.name, side, volatile: scenario.volatile ?? [], accepted: scenario.accepted ?? [], steps: [], notifications: [], provider: providerRequests };
 let server; let serverLog = '';
 const wantServer = scenario.server !== false;
 if (wantServer) {

@@ -209,8 +209,5 @@
         "projectKey": "{HOME}/work/alpha"
       }
     }
-  ],
-  "volatile": [
-    "\\.requestFingerprint$"
   ]
 }

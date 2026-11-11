@@ -2,8 +2,21 @@
   "name": "project-keys",
   "about": "带 projectKey 的请求按项目路由。alpha、beta 事先用 .cwd 标记登记（基线的 gateway 自己从不登记项目）；gamma 是存在但没登记的目录。各来一轮对话，再分别列会话、列项目、describe_project；然后是不存在的目录、相对路径、文件、未登记目录、非字符串 projectKey 的报错。",
   "provider": [
-    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Say hello\"}" } },
-    { "name": "main", "reply": { "text": "Hello from the mock." } }
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Say hello\"}"
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "Hello from the mock."
+      }
+    }
   ],
   "files": {
     "home/work/alpha/README.md": "alpha\n",
@@ -16,43 +29,250 @@
     "home/.pilotdeck/projects/empty-marker/.cwd": "\n"
   },
   "steps": [
-    { "ws": "list_projects" },
-    { "ws": "submit_turn", "params": { "sessionKey": "s-alpha", "channelKey": "test", "message": "hello alpha", "projectKey": "{HOME}/work/alpha" } },
-    { "sleep": 500 },
-    { "ws": "submit_turn", "params": { "sessionKey": "s-beta", "channelKey": "test", "message": "hello beta", "projectKey": "{HOME}/work/beta" } },
-    { "sleep": 500 },
-    { "ws": "submit_turn", "params": { "sessionKey": "s-beta-2", "channelKey": "test", "message": "hello beta again", "projectKey": "{HOME}/work/beta/" } },
-    { "sleep": 500 },
-    { "ws": "list_sessions" },
-    { "ws": "list_sessions", "params": { "projectKey": "{HOME}/work/alpha" } },
-    { "ws": "list_sessions", "params": { "projectKey": "{HOME}/work/beta" } },
-    { "ws": "list_sessions", "params": { "projectKey": "{HOME}/work/gamma" } },
-    { "ws": "list_sessions", "params": { "projectKey": "{HOME}/work/nope" } },
-    { "ws": "list_sessions", "params": { "projectKey": "work/alpha" } },
-    { "ws": "list_sessions", "params": { "projectKey": "{HOME}/work/afile.txt" } },
-    { "ws": "list_sessions", "params": { "projectKey": 7 } },
-    { "ws": "list_projects" },
-    { "ws": "describe_project", "params": { "projectKey": "{HOME}/work/alpha" } },
-    { "ws": "describe_project", "params": { "projectKey": "{HOME}/work/beta" } },
-    { "ws": "describe_project", "params": { "projectKey": "{HOME}/work/gamma" } },
-    { "ws": "describe_project", "params": { "projectKey": "{HOME}/work/nope" } },
-    { "ws": "describe_project", "params": { "projectKey": "work/alpha" } },
-    { "ws": "describe_project", "params": { "projectKey": "{HOME}/work/afile.txt" } },
-    { "ws": "describe_project", "params": { "projectKey": 7 } },
-    { "ws": "submit_turn", "params": { "sessionKey": "s-gamma", "channelKey": "test", "message": "hello", "projectKey": "{HOME}/work/gamma" } },
-    { "ws": "submit_turn", "params": { "sessionKey": "s-nope", "channelKey": "test", "message": "hello", "projectKey": "{HOME}/work/nope" } },
-    { "ws": "submit_turn", "params": { "sessionKey": "s-rel", "channelKey": "test", "message": "hello", "projectKey": "work/alpha" } },
-    { "ws": "submit_turn", "params": { "sessionKey": "s-file", "channelKey": "test", "message": "hello", "projectKey": "{HOME}/work/afile.txt" } },
-    { "ws": "submit_turn", "params": { "sessionKey": "s-stale", "channelKey": "test", "message": "hello", "projectKey": "{HOME}/work/removed" } },
-    { "sleep": 300 },
-    { "ws": "rename_session", "params": { "sessionKey": "s-alpha", "value": "Renamed", "projectKey": "{HOME}/work/alpha" } },
-    { "ws": "rename_session", "params": { "sessionKey": "s-alpha", "value": "Renamed", "projectKey": "{HOME}/work/gamma" } },
-    { "ws": "delete_session", "params": { "sessionKey": "s-beta-2", "projectKey": "{HOME}/work/gamma" } },
-    { "ws": "delete_session", "params": { "sessionKey": "s-beta-2", "projectKey": "{HOME}/work/alpha" } },
-    { "ws": "delete_session", "params": { "sessionKey": "s-beta-2", "projectKey": "{HOME}/work/beta" } },
-    { "ws": "list_sessions", "params": { "projectKey": "{HOME}/work/alpha" } },
-    { "ws": "list_sessions", "params": { "projectKey": "{HOME}/work/beta" } },
-    { "ws": "list_projects" },
-    { "ws": "describe_server" }
+    {
+      "ws": "list_projects"
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-alpha",
+        "channelKey": "test",
+        "message": "hello alpha",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-beta",
+        "channelKey": "test",
+        "message": "hello beta",
+        "projectKey": "{HOME}/work/beta"
+      }
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-beta-2",
+        "channelKey": "test",
+        "message": "hello beta again",
+        "projectKey": "{HOME}/work/beta/"
+      }
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "list_sessions"
+    },
+    {
+      "ws": "list_sessions",
+      "params": {
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "list_sessions",
+      "params": {
+        "projectKey": "{HOME}/work/beta"
+      }
+    },
+    {
+      "ws": "list_sessions",
+      "params": {
+        "projectKey": "{HOME}/work/gamma"
+      }
+    },
+    {
+      "ws": "list_sessions",
+      "params": {
+        "projectKey": "{HOME}/work/nope"
+      }
+    },
+    {
+      "ws": "list_sessions",
+      "params": {
+        "projectKey": "work/alpha"
+      }
+    },
+    {
+      "ws": "list_sessions",
+      "params": {
+        "projectKey": "{HOME}/work/afile.txt"
+      }
+    },
+    {
+      "ws": "list_sessions",
+      "params": {
+        "projectKey": 7
+      }
+    },
+    {
+      "ws": "list_projects"
+    },
+    {
+      "ws": "describe_project",
+      "params": {
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "describe_project",
+      "params": {
+        "projectKey": "{HOME}/work/beta"
+      }
+    },
+    {
+      "ws": "describe_project",
+      "params": {
+        "projectKey": "{HOME}/work/gamma"
+      }
+    },
+    {
+      "ws": "describe_project",
+      "params": {
+        "projectKey": "{HOME}/work/nope"
+      }
+    },
+    {
+      "ws": "describe_project",
+      "params": {
+        "projectKey": "work/alpha"
+      }
+    },
+    {
+      "ws": "describe_project",
+      "params": {
+        "projectKey": "{HOME}/work/afile.txt"
+      }
+    },
+    {
+      "ws": "describe_project",
+      "params": {
+        "projectKey": 7
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-gamma",
+        "channelKey": "test",
+        "message": "hello",
+        "projectKey": "{HOME}/work/gamma"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-nope",
+        "channelKey": "test",
+        "message": "hello",
+        "projectKey": "{HOME}/work/nope"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-rel",
+        "channelKey": "test",
+        "message": "hello",
+        "projectKey": "work/alpha"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-file",
+        "channelKey": "test",
+        "message": "hello",
+        "projectKey": "{HOME}/work/afile.txt"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-stale",
+        "channelKey": "test",
+        "message": "hello",
+        "projectKey": "{HOME}/work/removed"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "rename_session",
+      "params": {
+        "sessionKey": "s-alpha",
+        "value": "Renamed",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "rename_session",
+      "params": {
+        "sessionKey": "s-alpha",
+        "value": "Renamed",
+        "projectKey": "{HOME}/work/gamma"
+      }
+    },
+    {
+      "ws": "delete_session",
+      "params": {
+        "sessionKey": "s-beta-2",
+        "projectKey": "{HOME}/work/gamma"
+      }
+    },
+    {
+      "ws": "delete_session",
+      "params": {
+        "sessionKey": "s-beta-2",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "delete_session",
+      "params": {
+        "sessionKey": "s-beta-2",
+        "projectKey": "{HOME}/work/beta"
+      }
+    },
+    {
+      "ws": "list_sessions",
+      "params": {
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "list_sessions",
+      "params": {
+        "projectKey": "{HOME}/work/beta"
+      }
+    },
+    {
+      "ws": "list_projects"
+    },
+    {
+      "ws": "describe_server"
+    }
+  ],
+  "accepted": [
+    {
+      "id": "rename-record-chain",
+      "why": "基线 rename_session / tag_session 追加的 session_metadata 记录从 sequence 1、parentEntryId null 写起，会话重新加载后永久无法开轮次（见 baseline-bug-rename-reload）；Rust 接着会话记录链写；序号因此整体后移，连带影响投影检查点里的序号、锚点和读回消息的 sequence",
+      "paths": [
+        "\\.jsonl\\.jsonl\\[\\d+\\]\\.(sequence|parentEntryId)$",
+        "\\.projections\\.json\\.json\\..*(asOfSequence|\\.sequence|\\.index)$",
+        "\\.projections\\.json\\.json\\.anchor\\.",
+        "\\.projections\\.agent-transcript\\.metadata\\.state\\.(title|tag)$",
+        "\\.result\\.messages\\[\\d+\\]\\.sequence$"
+      ]
+    }
   ]
 }

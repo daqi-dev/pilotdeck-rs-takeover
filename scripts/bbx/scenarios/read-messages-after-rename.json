@@ -1,39 +1,173 @@
 {
   "name": "read-messages-after-rename",
-  "about": "rename_session / tag_session 之后再读：会话文件里追加的 session_metadata 记录、读回的 session 摘要与消息、会话列表；随后同一会话再来一轮对话再读，以及把标题清空、给不存在的会话改名、非字符串的 value；最后关掉会话再对话（从落盘记录重新加载改过名的会话），并在只有改名记录的会话上开第一轮对话。",
+  "about": "rename_session / tag_session 之后再读：会话文件里追加的 session_metadata 记录、读回的 session 摘要与消息、会话列表；随后同一会话再来一轮对话再读，以及把标题清空、给不存在的会话改名、非字符串的 value；最后在只有改名记录的会话上开第一轮对话。（改名后关掉会话再对话的路径是基线 bug，单独放在 baseline-bug-rename-reload。）",
   "provider": [
-    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Say hello\"}" } },
-    { "name": "main", "reply": { "text": "Hello from the mock." } }
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Say hello\"}"
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "Hello from the mock."
+      }
+    }
   ],
   "steps": [
-    { "ws": "submit_turn", "params": { "sessionKey": "s-meta", "channelKey": "test", "message": "hello" } },
-    { "sleep": 500 },
-    { "ws": "rename_session", "params": { "sessionKey": "s-meta", "value": "Renamed once" } },
-    { "ws": "read_session_messages", "params": { "sessionKey": "s-meta" } },
-    { "ws": "tag_session", "params": { "sessionKey": "s-meta", "value": "important" } },
-    { "ws": "read_session_messages", "params": { "sessionKey": "s-meta" } },
-    { "ws": "list_sessions" },
-    { "ws": "rename_session", "params": { "sessionKey": "s-meta", "value": "Renamed twice" } },
-    { "ws": "tag_session", "params": { "sessionKey": "s-meta", "value": 42 } },
-    { "ws": "read_session_messages", "params": { "sessionKey": "s-meta", "limit": 1 } },
-    { "ws": "submit_turn", "params": { "sessionKey": "s-meta", "channelKey": "test", "message": "hello again" } },
-    { "sleep": 500 },
-    { "ws": "read_session_messages", "params": { "sessionKey": "s-meta" } },
-    { "ws": "list_sessions" },
-    { "ws": "rename_session", "params": { "sessionKey": "s-meta", "value": null } },
-    { "ws": "tag_session", "params": { "sessionKey": "s-meta" } },
-    { "ws": "read_session_messages", "params": { "sessionKey": "s-meta", "limit": 1 } },
-    { "ws": "rename_session", "params": { "sessionKey": "s-cold", "value": "Never talked" } },
-    { "ws": "read_session_messages", "params": { "sessionKey": "s-cold" } },
-    { "ws": "list_sessions" },
-    { "ws": "close_session", "params": { "sessionKey": "s-meta" } },
-    { "ws": "submit_turn", "params": { "sessionKey": "s-meta", "channelKey": "test", "message": "hello after reload" } },
-    { "sleep": 500 },
-    { "ws": "read_session_messages", "params": { "sessionKey": "s-meta" } },
-    { "ws": "submit_turn", "params": { "sessionKey": "s-cold", "channelKey": "test", "message": "first words" } },
-    { "sleep": 500 },
-    { "ws": "read_session_messages", "params": { "sessionKey": "s-cold" } },
-    { "ws": "list_sessions" }
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-meta",
+        "channelKey": "test",
+        "message": "hello"
+      }
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "rename_session",
+      "params": {
+        "sessionKey": "s-meta",
+        "value": "Renamed once"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-meta"
+      }
+    },
+    {
+      "ws": "tag_session",
+      "params": {
+        "sessionKey": "s-meta",
+        "value": "important"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-meta"
+      }
+    },
+    {
+      "ws": "list_sessions"
+    },
+    {
+      "ws": "rename_session",
+      "params": {
+        "sessionKey": "s-meta",
+        "value": "Renamed twice"
+      }
+    },
+    {
+      "ws": "tag_session",
+      "params": {
+        "sessionKey": "s-meta",
+        "value": 42
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-meta",
+        "limit": 1
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-meta",
+        "channelKey": "test",
+        "message": "hello again"
+      }
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-meta"
+      }
+    },
+    {
+      "ws": "list_sessions"
+    },
+    {
+      "ws": "rename_session",
+      "params": {
+        "sessionKey": "s-meta",
+        "value": null
+      }
+    },
+    {
+      "ws": "tag_session",
+      "params": {
+        "sessionKey": "s-meta"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-meta",
+        "limit": 1
+      }
+    },
+    {
+      "ws": "rename_session",
+      "params": {
+        "sessionKey": "s-cold",
+        "value": "Never talked"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-cold"
+      }
+    },
+    {
+      "ws": "list_sessions"
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-cold",
+        "channelKey": "test",
+        "message": "first words"
+      }
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-cold"
+      }
+    },
+    {
+      "ws": "list_sessions"
+    }
   ],
-  "volatile": ["\\.requestFingerprint$"]
+  "accepted": [
+    {
+      "id": "rename-record-chain",
+      "why": "基线 rename_session / tag_session 追加的 session_metadata 记录从 sequence 1、parentEntryId null 写起，会话重新加载后永久无法开轮次（见 baseline-bug-rename-reload）；Rust 接着会话记录链写；序号因此整体后移，连带影响投影检查点里的序号、锚点和读回消息的 sequence",
+      "paths": [
+        "\\.jsonl\\.jsonl\\[\\d+\\]\\.(sequence|parentEntryId)$",
+        "\\.projections\\.json\\.json\\..*(asOfSequence|\\.sequence|\\.index)$",
+        "\\.projections\\.json\\.json\\.anchor\\.",
+        "\\.projections\\.agent-transcript\\.metadata\\.state\\.(title|tag)$",
+        "\\.result\\.messages\\[\\d+\\]\\.sequence$"
+      ]
+    }
+  ]
 }

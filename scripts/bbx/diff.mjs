@@ -9,7 +9,14 @@
 //   3. 毫秒时间戳      → <ms>（1.6e12 ~ 2.0e12 之间的整数）；带小数的记成 <ms.frac>，
 //                        这样「一侧整数、一侧小数」仍然算差异
 //   4. 进程号          → <pid>（键名为 pid / ownerPid 的整数；以及 Node 警告行前缀 "(node:1234)"）
+//   5. requestFingerprint → <fingerprint>（键名为 requestFingerprint 的字符串；会话里已有历史时，
+//                        基线两次发出的请求体逐字节相同，这个值仍然不同）
+// 数组按下标比。唯一的例外：元素全是带名字的对象（function.name 或 name，且名字不重复）的数组
+// 按名字对齐——缺的、多的各报一条，共有元素的相对顺序不同报一条，同名元素再逐字段比。
+// 这只改变差异的报法（少一个工具不再表现为后面所有工具都错位），不会让任何差异消失。
 // 已接受差异（ACCEPTED，同样每次打印）：只属于 Node 运行时、与 PilotDeck 行为无关的输出。
+// 场景自己可以在 "accepted" 里登记已接受差异：[{id, why, paths:[正则]}]，只用于基线自身的 bug
+// （Rust 有意不照做）。命中的差异路径被略过，id、原因和略过的条数每次打印；依据记在 state/takeover.md。
 // 另有一张「不比较」的清单 IGNORED，每次运行都会打印出来，不藏。
 // 场景自己可以在 "volatile" 里再声明不稳定的路径（正则，匹配差异路径），同样会打印。
 import fs from 'node:fs';
@@ -48,7 +55,7 @@ function normalizer() {
     if (typeof v === 'number') return v > 1.6e12 && v < 2.0e12 ? (Number.isInteger(v) ? '<ms>' : '<ms.frac>') : v;
     if (Array.isArray(v)) return v.map(walk);
     if (v && typeof v === 'object') {
-      return Object.fromEntries(Object.entries(v).map(([k, x]) => [text(k), PID_KEYS.includes(k) && Number.isInteger(x) ? '<pid>' : walk(x)]));
+      return Object.fromEntries(Object.entries(v).map(([k, x]) => [text(k), PID_KEYS.includes(k) && Number.isInteger(x) ? '<pid>' : k === 'requestFingerprint' && typeof x === 'string' ? '<fingerprint>' : walk(x)]));
     }
     return v;
   };
@@ -62,12 +69,26 @@ function load(file) {
 }
 
 const show = (v) => { const s = JSON.stringify(v); return s === undefined ? '(absent)' : s.length > 200 ? s.slice(0, 200) + `… (${s.length} chars)` : s; };
+// 数组元素的名字表；不是「全部元素都有不重复的名字」就返回 null。
+function names(arr) {
+  const out = arr.map((x) => (x && typeof x === 'object' && !Array.isArray(x)) ? (typeof x.function?.name === 'string' ? x.function.name : typeof x.name === 'string' ? x.name : null) : null);
+  return out.every((n) => n !== null) && new Set(out).size === out.length ? out : null;
+}
 function compare(a, b, at, outList) {
   if (a === b) return;
   const ta = Array.isArray(a) ? 'array' : a === null ? 'null' : typeof a;
   const tb = Array.isArray(b) ? 'array' : b === null ? 'null' : typeof b;
   if (ta !== tb || (ta !== 'object' && ta !== 'array')) { outList.push({ at, a, b }); return; }
   if (ta === 'array') {
+    const na = names(a), nb = names(b);
+    if (na && nb && (a.length || b.length) && JSON.stringify(na) !== JSON.stringify(nb)) {
+      for (const n of na) if (!nb.includes(n)) outList.push({ at: `${at}[name=${n}]`, a: a[na.indexOf(n)], b: undefined });
+      for (const n of nb) if (!na.includes(n)) outList.push({ at: `${at}[name=${n}]`, a: undefined, b: b[nb.indexOf(n)] });
+      const sa = na.filter((n) => nb.includes(n)), sb = nb.filter((n) => na.includes(n));
+      if (JSON.stringify(sa) !== JSON.stringify(sb)) outList.push({ at: at + '.<name order>', a: sa, b: sb });
+      for (const n of sa) compare(a[na.indexOf(n)], b[nb.indexOf(n)], `${at}[name=${n}]`, outList);
+      return;
+    }
     if (a.length !== b.length) outList.push({ at: at + '.length', a: a.length, b: b.length });
     for (let i = 0; i < Math.max(a.length, b.length); i++) {
       if (i >= a.length) outList.push({ at: `${at}[${i}]`, a: undefined, b: b[i] });
@@ -90,12 +111,15 @@ const a = load(fa), b = load(fb);
 const scenarioVolatile = (JSON.parse(fs.readFileSync(fa, 'utf8')).volatile ?? []).map((p) => new RegExp(p));
 const all = [];
 compare(a, b, '$', all);
-const diffs = all.filter((d) => !scenarioVolatile.some((re) => re.test(d.at)));
+const scenarioAccepted = (JSON.parse(fs.readFileSync(fa, 'utf8')).accepted ?? []).map((x) => ({ ...x, res: x.paths.map((p) => new RegExp(p)), hits: 0 }));
+const stable = all.filter((d) => !scenarioVolatile.some((re) => re.test(d.at)));
+const diffs = stable.filter((d) => !scenarioAccepted.some((x) => x.res.some((re) => re.test(d.at)) && ++x.hits));
 if (!quiet) {
   console.log(`bbx diff: ${fa}  vs  ${fb}`);
   console.log(`  不比较的字段: ${Object.entries(IGNORED).map(([k, why]) => `${k}（${why}）`).join('；')}`);
   console.log(`  已接受差异: ${Object.entries(ACCEPTED).map(([k, [why]]) => `${k}（${why}）`).join('；')}`);
-  if (scenarioVolatile.length) console.log(`  场景声明的不稳定路径: ${scenarioVolatile.map(String).join(' ')}（因此略过 ${all.length - diffs.length} 处）`);
+  if (scenarioVolatile.length) console.log(`  场景声明的不稳定路径: ${scenarioVolatile.map(String).join(' ')}（因此略过 ${all.length - stable.length} 处）`);
+  for (const x of scenarioAccepted) console.log(`  场景登记的已接受差异: ${x.id}（${x.why}）略过 ${x.hits} 处`);
   for (const d of diffs.slice(0, max)) console.log(`  ${d.at}\n      a: ${show(d.a)}\n      b: ${show(d.b)}`);
   if (diffs.length > max) console.log(`  … 另有 ${diffs.length - max} 处`);
 }

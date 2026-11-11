@@ -2,8 +2,21 @@
   "name": "project-session-lifecycle",
   "about": "new_session / resume_session / close_session / close_project_sessions 带与不带 projectKey（登记过的 alpha、没登记的 gamma、不存在的目录）。这几个 method 在基线里都不校验项目。",
   "provider": [
-    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Say hello\"}" } },
-    { "name": "main", "reply": { "text": "Hello from the mock." } }
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Say hello\"}"
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "Hello from the mock."
+      }
+    }
   ],
   "files": {
     "home/work/alpha/README.md": "alpha\n",
@@ -11,45 +24,220 @@
     "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n"
   },
   "steps": [
-    { "ws": "new_session" },
-    { "ws": "new_session", "params": { "channelKey": "test" } },
-    { "ws": "new_session", "params": { "channelKey": "test", "sessionKey": "ignored" } },
-    { "ws": "new_session", "params": { "channelKey": "test", "projectKey": "{HOME}/work/alpha" } },
-    { "ws": "new_session", "params": { "channelKey": "test", "projectKey": "{HOME}/work/gamma" } },
-    { "ws": "new_session", "params": { "channelKey": "test", "projectKey": "{HOME}/work/nope" } },
-    { "ws": "new_session", "params": { "channelKey": "test", "projectKey": "" } },
-    { "ws": "new_session", "params": { "channelKey": "test", "projectKey": null } },
-    { "ws": "new_session", "params": { "channelKey": 7, "projectKey": 8 } },
-    { "ws": "submit_turn", "params": { "sessionKey": "s-default", "channelKey": "test", "message": "hello" } },
-    { "sleep": 500 },
-    { "ws": "submit_turn", "params": { "sessionKey": "s-alpha", "channelKey": "test", "message": "hello", "projectKey": "{HOME}/work/alpha" } },
-    { "sleep": 500 },
-    { "ws": "submit_turn", "params": { "sessionKey": "s-alpha", "channelKey": "test", "message": "second turn, no projectKey" } },
-    { "sleep": 500 },
-    { "ws": "list_sessions" },
-    { "ws": "list_sessions", "params": { "projectKey": "{HOME}/work/alpha" } },
-    { "ws": "describe_server" },
-    { "ws": "resume_session" },
-    { "ws": "resume_session", "params": { "sessionKey": "s-default" } },
-    { "ws": "resume_session", "params": { "sessionKey": "s-alpha" } },
-    { "ws": "resume_session", "params": { "sessionKey": "s-alpha", "projectKey": "{HOME}/work/alpha" } },
-    { "ws": "resume_session", "params": { "sessionKey": "s-alpha", "projectKey": "{HOME}/work/gamma" } },
-    { "ws": "resume_session", "params": { "sessionKey": "missing", "projectKey": "{HOME}/work/nope", "extra": 1 } },
-    { "ws": "close_session" },
-    { "ws": "close_session", "params": { "sessionKey": "missing" } },
-    { "ws": "close_session", "params": { "sessionKey": "s-alpha", "projectKey": "{HOME}/work/gamma" } },
-    { "ws": "describe_server" },
-    { "ws": "close_session", "params": { "sessionKey": "s-default" } },
-    { "ws": "describe_server" },
-    { "ws": "submit_turn", "params": { "sessionKey": "s-alpha", "channelKey": "test", "message": "hello again", "projectKey": "{HOME}/work/alpha" } },
-    { "sleep": 500 },
-    { "ws": "close_project_sessions" },
-    { "ws": "close_project_sessions", "params": { "projectKey": "{HOME}/work/gamma" } },
-    { "ws": "close_project_sessions", "params": { "projectKey": "{HOME}/work/alpha" } },
-    { "ws": "describe_server" },
-    { "ws": "close_project_sessions", "params": { "projectKey": "{HOME}/work/alpha", "resume": true } },
-    { "ws": "list_sessions" },
-    { "ws": "list_sessions", "params": { "projectKey": "{HOME}/work/alpha" } }
-  ],
-  "volatile": ["\\.requestFingerprint$"]
+    {
+      "ws": "new_session"
+    },
+    {
+      "ws": "new_session",
+      "params": {
+        "channelKey": "test"
+      }
+    },
+    {
+      "ws": "new_session",
+      "params": {
+        "channelKey": "test",
+        "sessionKey": "ignored"
+      }
+    },
+    {
+      "ws": "new_session",
+      "params": {
+        "channelKey": "test",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "new_session",
+      "params": {
+        "channelKey": "test",
+        "projectKey": "{HOME}/work/gamma"
+      }
+    },
+    {
+      "ws": "new_session",
+      "params": {
+        "channelKey": "test",
+        "projectKey": "{HOME}/work/nope"
+      }
+    },
+    {
+      "ws": "new_session",
+      "params": {
+        "channelKey": "test",
+        "projectKey": ""
+      }
+    },
+    {
+      "ws": "new_session",
+      "params": {
+        "channelKey": "test",
+        "projectKey": null
+      }
+    },
+    {
+      "ws": "new_session",
+      "params": {
+        "channelKey": 7,
+        "projectKey": 8
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-default",
+        "channelKey": "test",
+        "message": "hello"
+      }
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-alpha",
+        "channelKey": "test",
+        "message": "hello",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-alpha",
+        "channelKey": "test",
+        "message": "second turn, no projectKey"
+      }
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "list_sessions"
+    },
+    {
+      "ws": "list_sessions",
+      "params": {
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "describe_server"
+    },
+    {
+      "ws": "resume_session"
+    },
+    {
+      "ws": "resume_session",
+      "params": {
+        "sessionKey": "s-default"
+      }
+    },
+    {
+      "ws": "resume_session",
+      "params": {
+        "sessionKey": "s-alpha"
+      }
+    },
+    {
+      "ws": "resume_session",
+      "params": {
+        "sessionKey": "s-alpha",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "resume_session",
+      "params": {
+        "sessionKey": "s-alpha",
+        "projectKey": "{HOME}/work/gamma"
+      }
+    },
+    {
+      "ws": "resume_session",
+      "params": {
+        "sessionKey": "missing",
+        "projectKey": "{HOME}/work/nope",
+        "extra": 1
+      }
+    },
+    {
+      "ws": "close_session"
+    },
+    {
+      "ws": "close_session",
+      "params": {
+        "sessionKey": "missing"
+      }
+    },
+    {
+      "ws": "close_session",
+      "params": {
+        "sessionKey": "s-alpha",
+        "projectKey": "{HOME}/work/gamma"
+      }
+    },
+    {
+      "ws": "describe_server"
+    },
+    {
+      "ws": "close_session",
+      "params": {
+        "sessionKey": "s-default"
+      }
+    },
+    {
+      "ws": "describe_server"
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-alpha",
+        "channelKey": "test",
+        "message": "hello again",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "close_project_sessions"
+    },
+    {
+      "ws": "close_project_sessions",
+      "params": {
+        "projectKey": "{HOME}/work/gamma"
+      }
+    },
+    {
+      "ws": "close_project_sessions",
+      "params": {
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "describe_server"
+    },
+    {
+      "ws": "close_project_sessions",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "resume": true
+      }
+    },
+    {
+      "ws": "list_sessions"
+    },
+    {
+      "ws": "list_sessions",
+      "params": {
+        "projectKey": "{HOME}/work/alpha"
+      }
+    }
+  ]
 }

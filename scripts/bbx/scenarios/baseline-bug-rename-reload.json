@@ -1,0 +1,76 @@
+{
+  "name": "baseline-bug-rename-reload",
+  "about": "基线 bug 的复现：改名之后关掉会话再对话，基线报 Session event sequence must increase strictly: received 1 after 1.，此后这个会话再也开不了轮次。Rust 不照做（改名记录接着记录链写），会话可以继续。除改名前的步骤外全部登记为已接受差异；这个场景的作用是留住复现，不是验收。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Say hello\"}"
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "Hello from the mock."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-meta",
+        "channelKey": "test",
+        "message": "hello"
+      }
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "rename_session",
+      "params": {
+        "sessionKey": "s-meta",
+        "value": "Renamed once"
+      }
+    },
+    {
+      "ws": "close_session",
+      "params": {
+        "sessionKey": "s-meta"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-meta",
+        "channelKey": "test",
+        "message": "hello after reload"
+      }
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-meta"
+      }
+    }
+  ],
+  "accepted": [
+    {
+      "id": "rename-then-reload-bricks-session",
+      "why": "基线自身 bug：改名后重新加载的会话永久失败；Rust 修掉",
+      "paths": [
+        "^\\$\\.steps\\[[2-6]\\]",
+        "^\\$\\.tree",
+        "^\\$\\.provider",
+        "^\\$\\.notifications"
+      ]
+    }
+  ]
+}

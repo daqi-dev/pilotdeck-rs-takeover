@@ -2,7 +2,7 @@
 
 新会话先读这份，再读 `CLAUDE.md` 和 `.42cog/intent.md`，然后看 `git log`。不要往 `state/board.md` 追加；`state/` 下其余文件是上一轮流水线的记录，只当线索。
 
-最后更新：2026-11-10
+最后更新：2026-11-11
 
 ## 现在由 Rust 承担并有证据的入口
 
@@ -10,25 +10,22 @@
 |---|---|---|
 | `pilotdeck server` 的启停：参数与环境变量优先级、启动输出、token 文件、停机退出码、`/health`、`/auth/local-token`、落盘 | `server-entry-no-config` / `start-stop` / `port-host` / `token-generate` / `token-sources` 5 个场景 SAME | 停机时有客户端连着；非 git 目录的 stderr；`telemetry.enabled: true` |
 
-当前对拍结果（`node scripts/bbx/check.mjs`，2026-11-10，M1 第三块第一轮后）：基线 vs Rust 6/12 SAME。
+当前对拍结果（`node scripts/bbx/check.mjs`，2026-11-11，三个并行分支合并后，30 个场景）：基线自比 29/30 SAME（`read-messages-paging` 撞标题记录竞态）；基线 vs Rust 6/30 SAME（6 个 `server-entry-*`）。
 
-| 场景 | 结果 |
-|---|---|
-| `server-entry-*` 6 个（含握手、能力列表 53 项） | SAME |
-| `turn-text` | DIFF 469 |
-| `project-default` / `project-keys` / `project-session-lifecycle` | DIFF 864 / 1140 / 1698 |
-| `survey-empty-params` | DIFF 38 |
-| `cli-survey-offline` | DIFF 15 |
+其余场景的差异绝大部分是同一个原因：5 个工具没有 Rust 实现（`agent`、`subagent`、`send_message`、`ask_user_question`、`execute_code`，清单在 `native_process/tools.rs` 的 `BASELINE_TOOLS_NOT_PORTED`），每次模型请求少 5 个工具声明，连带 `content-length`、`context_budget` 各数值、`fileSize` 不同。`turn-text` 的 55 处全部属于这一类。
 
-带对话的 4 个场景，会话 `.jsonl` 的记录类型、顺序、字段、请求头、`context_budget` 字段集已一致。剩余差异的原因（数字是 `turn-text` 的，用 `diff.mjs --max 100000` 统计）：
+去掉这一类之后还剩的（下一轮要做的）：
 
-- 工具声明 15 对 28，数组按下标比整体错位（392）。13 个工具没有 Rust 实现：`agent`、`ask_user_question`、`create_goal`、`execute_code`、`get_goal`、`read_skill`、`send_attachment`、`send_message`、`structured_output`、`subagent`、`todo_write`、`update_goal`、`mcp__funasr__transcribe_audio`（清单在 `native_process/tools.rs` 的 `BASELINE_TOOLS_NOT_PORTED`）。
-- 系统提示词缺内置插件带来的两行 skills（2）。基线从 `dist/src/extension/plugins/builtin/` 加载 browser-use、windows-skills、funasr。
-- 上两项派生的数值：`content-length`、`context_budget` 数值、`requestFingerprint`、`fileSize`（24）。
-- `read_session_messages` 未实现（39，含 uuid 编号错位）；`.projections.json` 13 个投影只写了 2 个（12）。两者都依赖基线 `session/projection/` 的 reducer。
-- `rename_session` 追加的 `session_metadata` 记录：基线 `sequence: 1`、`parentEntryId: null`，Rust 接着编号（只在 `project-keys`）。
+- 默认权限模式下的权限询问：基线发 `permission_request` 等用户答复，Rust 直接拒绝（`tool-goal-permission`、`tool-send-attachment-outside`）。bbx 采集器还不能在一步里应答请求。
+- `model_request` 记录里工具结果块的键顺序（`isError`）；`permissionDenials` 的键顺序。
+- `set_permission_mode` 之后会话记录里的 `metadata.permissionMode`。
+- 读文件失败时的事件类型和错误码（`read-messages-tools`：Rust `file_not_found`，基线 `permission_denied`）。
+- `plugins-user-level` 里会话记录有两条错位。
+- `survey-empty-params` 34 处、`cli-survey-offline` 15 处（M4 / M6）。
 
-能力列表照基线列出但 Rust 还不能（完全）服务的，清单在 `native_process/capabilities.rs` 的 `ADVERTISED_NOT_SERVED`。
+已做完并有场景的：7 个工具（`todo_write`、`create_goal`、`get_goal`、`update_goal`、`read_skill`、`structured_output`、`send_attachment`，只在 `bypassPermissions` 下验证了成功路径）；工具轮的落盘记录；13 个投影与 `read_session_messages` / `read_subagent_messages`；内置插件加载、funasr 的 MCP 工具、用户级 skills / MCP server / 插件。
+
+临时分类脚本的做法：`node scripts/bbx/diff.mjs a b --max 100000`，去掉 `tools[name=` 和 token 数值字段后按路径分组。只用来定下一步，不作验收。
 
 ## 验收手段
 
@@ -44,7 +41,9 @@
 
 1. 入口：已提交（`pilotdeck server` 与基线同参数；Linux CI 全绿）。
 2. 多项目宿主与落盘布局：已提交。规则集中在 `native_process/projects.rs`：运行时路由是纯词法 `resolve(projectKey ?? pilot home)`；对话准入要求项目已登记（`projects/<id>/.cwd`），pilot home 免登记；gateway 自己从不登记项目。负控：把缺省项目改成 cwd，`turn-text` 报出 `sessions[0].cwd` 和 4 条落盘路径差异。
-3. 发给 provider 的请求与会话记录：第一轮已提交（能力列表、请求头、会话 `.jsonl`、`context_budget` 字段、10 个工具接线）。`turn-text` 还到不了 SAME，剩下三件并行做（各自在 git worktree 里，用 `BBX_TARGET` / `BBX_BASELINE` 指向自己的构建和主检出的基线）：移植 12 个工具；会话读模型（投影 + `read_session_messages` + `rename_session` 记录）；内置插件与 funasr 的 MCP 工具。
+3. 发给 provider 的请求与会话记录：两轮已提交。`turn-text` 到 SAME 还差 5 个工具，下一轮并行三件：宿主层权限询问 + 上面的零星差异 + `ask_user_question`；子代理运行时（`agent`、`subagent`、`send_message`）；`execute_code`。
+
+并行做法：每个子代理一个 git worktree（`.claude/worktrees/`），自己的 `src/target`，在 worktree 里建 `resources/PilotDeck` 符号链接指向主检出的基线；bbx 靠独占锁排队。`negative_anchor_selfcheck` 在多个 worktree 并发时会卡住，让子代理跳过它，合并后在主检出单独跑。
 
 M1 之后要回头处理的（入口那块发现的）：
 
@@ -64,6 +63,13 @@ M1 之后要回头处理的（入口那块发现的）：
   - 插件 Rust 每轮刷新，基线在会话创建时刷新。
   - undici 默认请求头只加在模型请求路径上，MCP HTTP、hooks、web fetch 等没加也没验证。
   - 会话记录里的 `node: v22.22.0` 是 Rust 里的常量。
+- 第二轮（三个并行分支）留下的：
+  - 工具批次落盘前最多等 2 秒让 `assistant_message` 先落盘（基线没有对应物，是 Rust 的同步手段）。
+  - `reload_output_styles` 仍回 unavailable；browser-use 的会话级参数准备没移植（默认布局下不触发）；hooks、modules、subagents 配置仍被 `validate_profile` 拒绝，带 hooks 的插件也拒绝。
+  - 内置插件目录缺省找可执行文件上一级或上两级的 `builtin-plugins`；Node 取 `PATH` 上第一个 `node`。发布布局定下来时要重看。
+  - `export_session_transcript`、`restore_session_transcript`、`fork_session`、`replace_last_turn`、`finalize_last_turn_replacement` 没做。
+  - 投影归约器对畸形记录比基线宽（基线抛错丢投影，Rust 多数情况当不匹配）。
+  - 项目级（`<项目>/.pilotdeck/`）的插件、skills、`mcp.json` 没有场景；MCP 工具的权限询问路径没覆盖。
 - sidecar 找不到时的报错文案是 Rust 自己的，基线没有对应物（基线默认进程内跑循环）。
 
 ## 之后
@@ -86,6 +92,9 @@ M2 会话域 → M3 工具回路（同时重跑 `scripts/parity` 的 53 场景�
 | 2026-11-10 | 保留 Rust native gateway，按对拍差异收敛，不整体重写 | 它能独立跑通一轮对话，69 个 method 的错误路径与基线逐字节一致；缺的是接线和端到端验证 |
 | 2026-11-10 | bbx 比较器把带小数的毫秒时间戳归一化成 `<ms.frac>`（与整数的 `<ms>` 区分） | 基线 `createdAt` 用高精度时钟，自比不稳；区分两种记号后「一侧整数一侧小数」仍算差异 |
 | 2026-11-10 | 删掉旧负控装置里 11 条针对「单项目入口闸门」的变异和 3 个对应单测 | 闸门本身与基线不符已删除；别的项目是否被正确服务改由 bbx 的 3 个 `project-*` 场景验证 |
+| 2026-11-11 | 基线 bug 不照做：`rename_session` / `tag_session` 的记录接着会话记录链写（基线从 `sequence: 1`、`parentEntryId: null` 写起） | 实测基线改名后只要会话重新加载就报 `Session event sequence must increase strictly: received 1 after 1.`，会话永久开不了轮次，属于丢数据类 bug。登记在场景的 `accepted`（`rename-record-chain`），复现留在 `baseline-bug-rename-reload` |
+| 2026-11-11 | bbx 比较器：带名字的数组按名字对齐；`requestFingerprint` 归一化；场景可登记带原因的 `accepted` | 少一个工具不再表现为后面全部错位（`turn-text` 544 → 55，差异没有消失）；指纹在请求体逐字节相同时基线自比也不同；已接受差异需要一个每次打印的登记处 |
+| 2026-11-11 | Rust 新增环境变量 `PILOTDECK_BUNDLED_PLUGINS_DIR` | 基线的内置插件目录由安装位置决定，Rust 需要自己的打包布局；bbx 用它让 Rust 指向基线那份 |
 | 2026-11-10 | `scripts/parity`、`scripts/cli-parity` 暂留，用到时先做负控 | 静态看是真对拍，但我没跑过 |
 
 ## 停用的旧闸门
