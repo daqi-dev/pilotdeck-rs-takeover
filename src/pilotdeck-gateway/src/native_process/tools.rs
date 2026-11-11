@@ -95,6 +95,57 @@ pub struct SessionTools {
     subagents: Option<super::subagents::SubagentRuntime>,
     /// Set on the tools of a forked child session: its definition's scope.
     fork: Option<super::subagents::ForkScope>,
+    /// `LocalGatewayBootConfig.elicitationTimeoutMs`.
+    elicitation_timeout: Duration,
+    /// `SessionFileHistoryBundle`: the session's file-history store behind
+    /// the write tools, recording its snapshots in the transcript.
+    file_history: Arc<crate::storage::file_history::FileHistoryStore>,
+}
+
+/// `SessionFileHistoryBundle.compose`: backups under the session's
+/// `file-history` directory, every recorded snapshot appended to the
+/// transcript, and the store primed from the snapshots already there.
+fn session_file_history(
+    binding: &SessionBinding,
+) -> crate::storage::file_history::FileHistoryStore {
+    use crate::storage::file_history::{FileHistoryError, FileHistoryOptions, FileHistoryStore};
+    // `<chats>/<session>.jsonl` → `<chats>/<session>/file-history`.
+    let backup_dir = binding
+        .recorder
+        .writer()
+        .path()
+        .with_extension("")
+        .join("file-history");
+    let mut options = FileHistoryOptions::new(backup_dir);
+    let recorder = binding.recorder.clone();
+    let session = binding.context.session_key.clone();
+    options.on_snapshot_recorded = Some(Arc::new(move |snapshot, kind| {
+        let turn = snapshot
+            .get("messageId")
+            .and_then(JsValue::as_string)
+            .cloned()
+            .unwrap_or_default();
+        let mut draft = value([
+            ("type", "file_snapshot_recorded".into()),
+            ("snapshotKind", kind.into()),
+        ]);
+        for (key, field) in snapshot.entries() {
+            draft.insert(key.clone(), field.clone());
+        }
+        recorder
+            .writer()
+            .record_session_event(&session, &turn, draft)
+            .map_err(|error| FileHistoryError::Fs(error.to_string()))
+    }));
+    let store = FileHistoryStore::new(options);
+    let mut entries = Vec::new();
+    binding
+        .projection
+        .for_each_entry(|entry| entries.push(entry.clone()));
+    if let Ok(snapshots) = crate::runtime::rewind::snapshot_entries(&entries) {
+        store.replay_from_transcript(&snapshots);
+    }
+    store
 }
 
 /// What a forked child session takes over from the session that forks it
@@ -114,6 +165,11 @@ pub(super) struct ForkSeed {
     world: ExecutionWorld,
     events: Option<crate::runtime::project::interaction_events::InteractionEvents>,
     subagents: Option<super::subagents::SubagentRuntime>,
+    /// The child registry is a scoped view of the parent's
+    /// (SubagentRuntimeComposition.ts:57-66): its write tools are the
+    /// parent's instances and record into the parent session's file history.
+    file_history: Arc<crate::storage::file_history::FileHistoryStore>,
+    elicitation_timeout: Duration,
 }
 impl ForkSeed {
     /// The child session's tools. The permission context starts as a copy of
@@ -140,7 +196,14 @@ impl ForkSeed {
             binding,
             config,
             interactions: self.interactions,
-            permission: Arc::new(Permissions(Mutex::new((permission, None)))),
+            // The child tool runtime runs on the inherited permission runtime
+            // (SubagentRuntimeComposition.ts:76-81), so it asks through the
+            // parent's answerer. Mode transitions stay with the parent session.
+            permission: Arc::new(Permissions(
+                Mutex::new((permission, None)),
+                self.permission.1.clone(),
+                Default::default(),
+            )),
             lsp: self.lsp,
             mcp: self.mcp,
             permission_mode_source: None,
@@ -149,6 +212,8 @@ impl ForkSeed {
             events: self.events,
             subagents: self.subagents,
             fork: Some(scope),
+            file_history: self.file_history,
+            elicitation_timeout: self.elicitation_timeout,
         }
     }
 }
@@ -166,13 +231,24 @@ impl SessionTools {
         let context =
             permission::create_default_permission_context(DefaultPermissionContextOptions {
                 cwd: project.to_string_lossy().into_owned().into(),
-                can_prompt: Some(false),
+                // `canPrompt: override?.canPrompt ?? runtime.profile.interaction.canPrompt`
+                // (`cli/ProjectSessionFactory.ts:270`); a turn's own
+                // `canPrompt` still wins in the tool context.
+                can_prompt: Some(
+                    RuntimeProfile::resolve(
+                        &JsValue::Undefined,
+                        &RuntimeProfileOverrides::default(),
+                    )
+                    .interaction
+                    .can_prompt,
+                ),
                 plan_directory_path: Some(
                     crate::runtime::plan_todo::SessionPlanFiles::directory_for(&project),
                 ),
                 ..Default::default()
             });
         let plan_files = Arc::new(crate::runtime::plan_todo::SessionPlanFiles::new(&project));
+        let file_history = Arc::new(session_file_history(&binding));
         Ok(Self {
             project,
             env: env_object(env),
@@ -181,7 +257,11 @@ impl SessionTools {
             interactions,
             lsp,
             mcp,
-            permission: Arc::new(Permissions(Mutex::new((context, None)))),
+            permission: Arc::new(Permissions(
+                Mutex::new((context, None)),
+                Default::default(),
+                Default::default(),
+            )),
             permission_mode_source: None,
             world: ExecutionWorld::new(),
             goal: Arc::default(),
@@ -189,6 +269,11 @@ impl SessionTools {
             events: None,
             subagents: None,
             fork: None,
+            file_history,
+            elicitation_timeout: super::permission_prompt::interaction_timeout(
+                env.get("PILOTDECK_ELICITATION_TIMEOUT_MS")
+                    .map(|value| value.as_str()),
+            ),
         })
     }
 
@@ -210,6 +295,8 @@ impl SessionTools {
             world: self.world.clone(),
             events: self.events.clone(),
             subagents: self.subagents.clone(),
+            file_history: self.file_history.clone(),
+            elicitation_timeout: self.elicitation_timeout,
         }
     }
 
@@ -220,6 +307,38 @@ impl SessionTools {
         events: crate::runtime::project::interaction_events::InteractionEvents,
     ) -> Self {
         self.events = Some(events);
+        self
+    }
+
+    /// Where a tool-requested permission mode change is published for the
+    /// session's next turn (the gateway's live permission-mode registry).
+    pub fn with_permission_mode_transition(
+        self,
+        transition: Arc<dyn Fn(JsString, Option<JsString>) + Send + Sync>,
+    ) -> Self {
+        let _ = self.permission.2.set(transition);
+        self
+    }
+
+    /// The session's gateway permission prompt (`SessionInteractionBundle`
+    /// with a gateway answerer): `emit` reaches the active `submit_turn`
+    /// stream, `rules` is the session rule set the decisions read.
+    pub fn with_permission_prompt(
+        self,
+        emit: super::permission_prompt::GatewayEmitSlot,
+        rules: crate::config::permission::RuleSetHandle,
+        timeout: Duration,
+    ) -> Self {
+        let _ = self
+            .permission
+            .1
+            .set(Arc::new(super::permission_prompt::PermissionPrompt {
+                session: self.binding.context.session_key.clone(),
+                coordinator: self.interactions.clone(),
+                emit,
+                rules,
+                timeout,
+            }));
         self
     }
 
@@ -368,6 +487,19 @@ impl SessionTools {
             clock: Some(Arc::new(|| JsValue::String(SystemExecutionClock.now_iso()))),
             goal: Some(Arc::new(crate::runtime::goal::GoalSessions(goal))),
             plan_files: Some(self.plan_files.clone()),
+            // The gateway elicitation channel, inside its durable bracket.
+            elicitation: self.permission.1.get().map(|prompt| {
+                Arc::new(crate::runtime::tools::ToolElicitation(Arc::new(
+                    super::elicitation::GatewayElicitation {
+                        session: prompt.session.clone(),
+                        coordinator: prompt.coordinator.clone(),
+                        emit: prompt.emit.clone(),
+                        recorder: recorder.clone(),
+                        timeout: self.elicitation_timeout,
+                    },
+                ))) as capability::RuntimeContext
+            }),
+            file_history: Some(self.file_history.clone()),
             // `createDurablePermissionAuditRecorder`.
             audit_recorder: Some(Arc::new(crate::runtime::tools::ToolAudit(Arc::new(
                 DurablePermissionAudit {
@@ -750,7 +882,13 @@ struct Permissions(
         PermissionContext,
         Option<crate::config::permission::PermissionMode>,
     )>,
+    /// The gateway answerer, when the session has one.
+    std::sync::OnceLock<Arc<super::permission_prompt::PermissionPrompt>>,
+    /// `permissionModes.transition(sessionKey, mode, fallbackBase)`: a tool's
+    /// mode change is carried to the session's next turn.
+    std::sync::OnceLock<ModeTransition>,
 );
+type ModeTransition = Arc<dyn Fn(JsString, Option<JsString>) + Send + Sync>;
 struct Tool(
     Arc<dyn capability::ToolDefinition>,
     JsString,
@@ -787,7 +925,7 @@ impl PermissionDecision for Permissions {
         runtime: capability::RuntimeContext,
         id: JsString,
     ) -> HostFuture<JsValue> {
-        let context = self.0.lock().unwrap_or_else(|e| e.into_inner()).0.clone();
+        let mut context = self.0.lock().unwrap_or_else(|e| e.into_inner()).0.clone();
         let name = tool
             .fields()
             .get("name")
@@ -799,8 +937,77 @@ impl PermissionDecision for Permissions {
             .get("kind")
             .and_then(JsValue::as_string)
             .cloned();
+        let prompt = self.1.get().cloned();
+        let run = runtime
+            .clone()
+            .downcast::<crate::runtime::tools::ToolRunContext>()
+            .ok();
+        // The call's own permission context decides whether a prompt may be
+        // shown (`input.canPrompt ?? config.permissionContext.canPrompt`).
+        if let Some(can_prompt) = run
+            .as_ref()
+            .and_then(|run| run.fields.get("permissionContext"))
+            .and_then(|permission| permission.get("canPrompt"))
+            .and_then(JsValue::as_bool)
+        {
+            context.can_prompt = can_prompt;
+        }
+        // The session rule set is live: a remembered approval or a session
+        // grant applies to the very next decision.
+        if let Some(prompt) = &prompt {
+            context.rules = prompt.rules.snapshot();
+        }
         Box::pin(async move {
-            permission::decide(&context, &Tool(tool, name, kind, runtime), &input, &id).await
+            let decision = permission::decide(
+                &context,
+                &Tool(tool, name.clone(), kind, runtime),
+                &input,
+                &id,
+            )
+            .await?;
+            let asks = decision
+                .get("type")
+                .and_then(JsValue::as_string)
+                .is_some_and(|kind| kind.equals_str("ask"));
+            let (Some(prompt), Some(run), true) = (prompt, run, asks) else {
+                return Ok(decision);
+            };
+            // `ToolRuntime.runTool`: an `ask` goes through the
+            // `PermissionRequest` hooks, and the gateway callback's answer
+            // replaces the decision.
+            let suggestions = decision
+                .get("request")
+                .and_then(|request| request.get("options"));
+            let message = |text: JsString| {
+                JsValue::Object(value([
+                    ("type", "runtime".into()),
+                    ("message", JsValue::String(text)),
+                ]))
+            };
+            Ok(
+                match prompt.request(&name, &id, &input, suggestions, &run).await {
+                    super::permission_prompt::PromptOutcome::Allow => JsValue::Object(value([
+                        ("type", "allow".into()),
+                        (
+                            "reason",
+                            message(JsString::from_utf16(
+                                "PermissionRequest hook allowed "
+                                    .encode_utf16()
+                                    .chain(name.units().iter().copied())
+                                    .chain(".".encode_utf16())
+                                    .collect(),
+                            )),
+                        ),
+                    ])),
+                    super::permission_prompt::PromptOutcome::Deny(reason) => {
+                        JsValue::Object(value([
+                            ("type", "deny".into()),
+                            ("reason", message(reason.clone())),
+                            ("message", JsValue::String(reason)),
+                        ]))
+                    }
+                },
+            )
         })
     }
 }
@@ -829,6 +1036,16 @@ impl capability::CapabilityResultObserver for Permissions {
                 && let Some(previous) = state.1.take()
             {
                 mode = previous;
+            }
+            if let Some(transition) = self.2.get() {
+                transition(
+                    mode.as_js_string().clone(),
+                    state
+                        .1
+                        .as_ref()
+                        .map(|base| base.as_js_string().clone())
+                        .or_else(|| Some(state.0.mode.as_js_string().clone())),
+                );
             }
             state.0.mode = mode;
         }
@@ -882,7 +1099,6 @@ impl MutationRecorder for Durable {
 #[cfg_attr(not(test), allow(dead_code))]
 #[rustfmt::skip] // one name per line: parallel branches each delete their own
 pub const BASELINE_TOOLS_NOT_PORTED: &[&str] = &[
-    "ask_user_question",
     "send_message",
     "subagent",
 ];
@@ -957,6 +1173,9 @@ pub(super) fn native_tools(
     )));
     builtins.push(Arc::new(
         builtin::structured_output::StructuredOutputTool::new(),
+    ));
+    builtins.push(Arc::new(
+        builtin::ask_user_question::AskUserQuestionTool::new(),
     ));
     builtins.push(Arc::new(builtin::todo_write::TodoWriteTool::new()));
     builtins.push(Arc::new(builtin::send_attachment::SendAttachmentTool::new()));

@@ -541,6 +541,13 @@ impl Requests {
                 "Cannot change permission mode during an active turn.",
             ));
         }
+        // `this.permissionModes.set(input.sessionKey, input.mode)` runs
+        // before the callback's sessionKey gate (InProcessGateway.ts:2326).
+        if let (Some(JsValue::String(key)), Some(live)) =
+            (params.get("sessionKey"), mode.as_string())
+        {
+            self.session_overrides.set_live_mode(key, live.clone());
+        }
         let session_key = require_session_key(params)?;
         let mode = match mode.as_string() {
             Some(mode) => mode.clone(),

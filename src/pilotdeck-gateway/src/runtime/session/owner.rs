@@ -515,6 +515,17 @@ impl SessionOwner {
         self.0.turns.admission.active_turn_run_id(key)
     }
 
+    /// The sessions that have a turn in flight right now.
+    pub fn active_turn_sessions(&self) -> Vec<JsString> {
+        let state = self.0.state.lock().unwrap();
+        state
+            .records
+            .keys()
+            .filter(|key| self.0.turns.admission.has_active_turn(key))
+            .cloned()
+            .collect()
+    }
+
     pub fn has_active_turn(&self, key: &JsString) -> bool {
         let _state = self.0.state.lock().unwrap();
         self.0.turns.admission.has_active_turn(key)

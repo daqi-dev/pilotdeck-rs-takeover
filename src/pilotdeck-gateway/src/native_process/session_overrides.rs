@@ -15,6 +15,14 @@ struct Inner {
     permission_modes: HashMap<JsString, JsString>,
     thinking: HashMap<JsString, JsValue>,
     output_styles: HashMap<JsString, JsString>,
+    /// `GatewaySessionPermissionModeRegistry`: the live mode a session's next
+    /// turn starts in, and the mode it had before entering plan mode.
+    live_modes: HashMap<JsString, LiveMode>,
+}
+
+struct LiveMode {
+    current: JsString,
+    base_before_plan: Option<JsString>,
 }
 
 /// The minimal equivalent registry #1839 allows: one shared instance per
@@ -41,6 +49,77 @@ impl SessionOverrides {
             .permission_modes
             .get(key)
             .cloned()
+    }
+
+    /// `permissionModes.set`: an explicit selection forgets the pre-plan mode.
+    pub fn set_live_mode(&self, key: &JsString, mode: JsString) {
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .live_modes
+            .insert(
+                key.clone(),
+                LiveMode {
+                    current: mode,
+                    base_before_plan: None,
+                },
+            );
+    }
+
+    /// `permissionModes.transition`: entering plan mode remembers the mode to
+    /// return to; any other mode replaces the entry.
+    pub fn transition_live_mode(
+        &self,
+        key: &JsString,
+        mode: JsString,
+        fallback_base: Option<JsString>,
+    ) {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let base_before_plan = if mode.equals_str("plan") {
+            let previous = inner.live_modes.get(key);
+            previous
+                .and_then(|previous| previous.base_before_plan.clone())
+                .or_else(|| previous.map(|previous| previous.current.clone()))
+                .or(fallback_base)
+        } else {
+            None
+        };
+        inner.live_modes.insert(
+            key.clone(),
+            LiveMode {
+                current: mode,
+                base_before_plan,
+            },
+        );
+    }
+
+    /// `permissionModes.get`.
+    pub fn live_mode(&self, key: &JsString) -> Option<JsString> {
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .live_modes
+            .get(key)
+            .map(|mode| mode.current.clone())
+    }
+
+    /// `permissionModes.getBase`.
+    pub fn live_base_mode(&self, key: &JsString) -> Option<JsString> {
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .live_modes
+            .get(key)
+            .and_then(|mode| mode.base_before_plan.clone())
+    }
+
+    /// `permissionModes.clear`.
+    pub fn clear_live_mode(&self, key: &JsString) {
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .live_modes
+            .remove(key);
     }
 
     pub fn set_thinking(&self, key: &JsString, thinking: JsValue) {
@@ -98,6 +177,30 @@ impl SessionOverrides {
 mod tests {
     use super::*;
     use crate::negative_assert_eq;
+
+    /// `GatewaySessionPermissionModeRegistry` (cc7c4e6): `set` drops the
+    /// pre-plan mode, `transition` into plan keeps the first one it saw, and
+    /// leaving plan forgets it.
+    #[test]
+    fn live_mode_keeps_the_mode_before_plan_until_plan_is_left() {
+        let store = SessionOverrides::default();
+        let key: JsString = "s".into();
+        assert_eq!(store.live_mode(&key), None);
+        store.transition_live_mode(&key, "plan".into(), Some("default".into()));
+        assert_eq!(store.live_mode(&key), Some("plan".into()));
+        assert_eq!(store.live_base_mode(&key), Some("default".into()));
+        store.set_live_mode(&key, "bypassPermissions".into());
+        assert_eq!(store.live_base_mode(&key), None);
+        store.transition_live_mode(&key, "plan".into(), Some("default".into()));
+        assert_eq!(store.live_base_mode(&key), Some("bypassPermissions".into()));
+        store.transition_live_mode(&key, "plan".into(), None);
+        assert_eq!(store.live_base_mode(&key), Some("bypassPermissions".into()));
+        store.transition_live_mode(&key, "bypassPermissions".into(), None);
+        assert_eq!(store.live_mode(&key), Some("bypassPermissions".into()));
+        assert_eq!(store.live_base_mode(&key), None);
+        store.clear_live_mode(&key);
+        assert_eq!(store.live_mode(&key), None);
+    }
 
     /// #1864 fix-r1: the store keys on the raw `JsString`, so a session key
     /// carrying a lone surrogate and the key that holds the U+FFFD it would

@@ -67,8 +67,8 @@ pub fn result(input: &TurnInput, result: &TurnResult) -> BoundarySnapshot {
                 .iter()
                 .map(|denial| {
                     let mut out = JsObject::new();
-                    text(&mut out, "toolName", &denial.tool_name);
                     text(&mut out, "toolCallId", &denial.tool_call_id);
+                    text(&mut out, "toolName", &denial.tool_name);
                     if let Some(code) = &denial.error_code {
                         text(&mut out, "errorCode", code);
                     }

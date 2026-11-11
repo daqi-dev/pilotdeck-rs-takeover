@@ -210,6 +210,8 @@ pub struct TurnHostFactory {
     permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
     /// See [`LiveSessionAdapter::as_in_process_loop`].
     in_process_loop: bool,
+    /// The session's project root; `None` is the registry's default project.
+    project_root: Option<PathBuf>,
 }
 
 impl TurnHostFactory {
@@ -253,7 +255,16 @@ impl TurnHostFactory {
             agent_config: None,
             permission_mode_source: None,
             in_process_loop: false,
+            project_root: None,
         }
+    }
+
+    /// Lease each turn's runtime from the session's own project, so the
+    /// turn's interaction resources are the ones the session was composed
+    /// from (`registry.resolve(projectKey ?? fallbackProjectRoot)`).
+    pub fn for_project(mut self, project_root: PathBuf) -> Self {
+        self.project_root = Some(project_root);
+        self
     }
 
     /// Bind the session's explicit serialized AgentRuntimeConfig.
@@ -377,7 +388,7 @@ impl TurnHostFactory {
         };
         let lease = self
             .registry
-            .acquire(None)
+            .acquire(self.project_root.as_deref())
             .map_err(|error| HostError::new(HostErrorKind::Protocol, error.message))?;
         let ports = (self.ports)(identity, recorder, signal);
         let (router, input, lease) = match Self::assemble(lease, identity, ports).await {
