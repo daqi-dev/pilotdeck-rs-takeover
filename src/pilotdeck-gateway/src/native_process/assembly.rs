@@ -1195,26 +1195,6 @@ async fn start_assembly(
                 dialog_recovery: Some(project_admission),
                 ..SubmitAdmissionOptions::new(replacement.clone())
             };
-            let services = Arc::new(super::services::Services {
-                options: options.clone(),
-                project: build_project.clone(),
-                env: env.clone(),
-                recorders: recorders.clone(),
-                owner: owner.clone(),
-                snapshot_recorder: snapshot_recorder.clone(),
-                upload_store: upload_store.clone(),
-                session_overrides: session_overrides.clone(),
-            });
-            let mcp_gateway = mcp::build_mcp_gateway(
-                &owner,
-                &build_project,
-                &permission_rule_sets,
-                &build_mcp_config,
-                &interactions,
-                &session_overrides,
-            );
-            let async_hook_registry =
-                steer::build_async_hook_registry(&build_project, &owner, &coordinator);
             // U7 global settings (#1320): `createPilotConfigStoreSync` +
             // `runtimeRefresh` + the settings gateway
             // (createLocalGateway.ts:795-835, 1383-1410), composed in
@@ -1232,6 +1212,37 @@ async fn start_assembly(
                 session_overrides.clone(),
             )?;
             settings.bundle.bind_server(build_connection_broadcast);
+            // `configStore.startWatching()` (createLocalGateway.ts:801): a
+            // config file change reloads the store, which the refresh bundle
+            // turns into runtime refresh + `config_changed`.
+            let config_watch = settings
+                .store
+                .start_watching(crate::config::store::WatchOptions::default())
+                .ok();
+            let services = Arc::new(super::services::Services {
+                options: options.clone(),
+                project: build_project.clone(),
+                env: env.clone(),
+                recorders: recorders.clone(),
+                owner: owner.clone(),
+                snapshot_recorder: snapshot_recorder.clone(),
+                upload_store: upload_store.clone(),
+                session_overrides: session_overrides.clone(),
+                config_store: Some(super::services::NativeConfigStore {
+                    store: settings.store.clone(),
+                    _watch: config_watch,
+                }),
+            });
+            let mcp_gateway = mcp::build_mcp_gateway(
+                &owner,
+                &build_project,
+                &permission_rule_sets,
+                &build_mcp_config,
+                &interactions,
+                &session_overrides,
+            );
+            let async_hook_registry =
+                steer::build_async_hook_registry(&build_project, &owner, &coordinator);
             // #2294 A7.8: the one automation bundle of the native process —
             // the port of `ProjectAutomationBundle`, which now constructs the
             // one `CronManager` (the #1326 lane's manager behind the bundle's

@@ -4175,6 +4175,7 @@ async fn prepare_attachment_turn_composes_the_turn_end_to_end() {
         .expect("#1448 e2e UTF-8")
         .to_owned();
     let services = super::services::Services {
+        config_store: None,
         options: requests.options.clone(),
         project: requests.project.clone(),
         env: requests.env.clone(),
@@ -4259,6 +4260,7 @@ async fn prepare_attachment_turn_refuses_a_linked_lease_root() {
         .expect("#1448 boundary UTF-8")
         .to_owned();
     let services = super::services::Services {
+        config_store: None,
         options: requests.options.clone(),
         project: requests.project.clone(),
         env: requests.env.clone(),

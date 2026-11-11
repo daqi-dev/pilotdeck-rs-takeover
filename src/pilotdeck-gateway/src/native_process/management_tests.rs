@@ -1860,6 +1860,7 @@ async fn submit_snapshot_wiring_matches_management_workspace_id() {
     .expect("#1431 staged recorder")
     .expect("#1431 staged snapshot recorder");
     let services = crate::native_process::services::Services {
+        config_store: None,
         options: options.clone(),
         project: requests.project.clone(),
         env,
@@ -2257,6 +2258,7 @@ async fn snapshot_wiring_workspace_id_routes_to_recorder() {
         crate::native_process::management_tests::SnapshotFactory,
     ));
     let services = super::services::Services {
+        config_store: None,
         options: requests.options.clone(),
         project: requests.project.clone(),
         env: requests.env.clone(),
@@ -2363,6 +2365,7 @@ async fn snapshot_workspace_id_prefers_registered_marker() {
         ),
     );
     let services = super::services::Services {
+        config_store: None,
         options: requests.options.clone(),
         project: requests.project.clone(),
         env: requests.env.clone(),
@@ -2455,6 +2458,7 @@ async fn submit_workspace_id_treats_an_explicit_null_project_key_as_not_provided
         std::sync::Arc<crate::storage::ContentAddressedWorkspaceSnapshotRecorder>,
     >| {
         super::services::Services {
+            config_store: None,
             options: requests.options.clone(),
             project: requests.project.clone(),
             env: requests.env.clone(),

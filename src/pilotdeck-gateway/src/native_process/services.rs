@@ -35,6 +35,16 @@ pub struct Services {
     /// The gateway's session selections, including the live permission modes
     /// (`GatewaySessionPermissionModeRegistry`).
     pub session_overrides: Arc<super::SessionOverrides>,
+    /// createLocalGateway's `configStore` and its `startWatching()` handle:
+    /// `refreshConfigBeforeTurn` reloads it at every turn start.
+    pub config_store: Option<NativeConfigStore>,
+}
+
+/// The process config store with its file watcher kept alive.
+pub struct NativeConfigStore {
+    pub store: ConfigStore,
+    /// Held for its `Drop`, which stops the watcher.
+    pub _watch: Option<crate::config::store::WatchHandle>,
 }
 fn base64_encode(bytes: &[u8]) -> String {
     BASE64_STANDARD.encode(bytes)
@@ -1566,6 +1576,11 @@ impl SubmitHostServices for Services {
     }
     fn refresh(&self) -> SubmitFuture<'_, Result<(), SubmitError>> {
         Box::pin(async {
+            // `refreshConfigBeforeTurn`: `configStore.reload("turn-start")`,
+            // its failure swallowed (InProcessGateway.ts:1336-1342).
+            if let Some(config) = &self.config_store {
+                let _ = config.store.reload("turn-start").await;
+            }
             let current = crate::runtime::project::NativeConfigSource::new(
                 self.options.project.clone(),
                 self.env.clone(),
@@ -1922,6 +1937,8 @@ pub struct NativeSettings {
     // a recording server themselves and assert `has_notification_server()`
     // (`native_settings_production_binds_no_notification_server`).
     pub bundle: Arc<RefreshBundle>,
+    /// `configStore`: the turn-start reload and the file watcher read it.
+    pub store: ConfigStore,
 }
 
 /// Compose the native U7 settings stack (createLocalGateway.ts:795-831 and
@@ -1976,7 +1993,11 @@ pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
         reload_config: Some(bundle.clone()),
         reload_extensions: Some(bundle.clone()),
     }));
-    NativeSettings { gateway, bundle }
+    NativeSettings {
+        gateway,
+        bundle,
+        store,
+    }
 }
 
 /// `registry.applyFlagSettingsForSdk` (ProjectRuntimeRegistry.ts:914-953)
@@ -2067,6 +2088,11 @@ pub fn native_settings_for_process(
     // `Some(home)` keeps direct callers (tests and future non-CLI
     // assemblies) anchored exactly like the CLI path.
     let pilot_home = crate::runtime::project::resolve_pilot_home(env, served_project, Some(home));
+    let writer = crate::runtime::settings::PilotLocalSettingsWriter {
+        pilot_home: pilot_home.clone(),
+        project_root: served_project.to_path_buf(),
+        env: env.clone(),
+    };
     let mut store_options = StoreOptions::new(pilot_home, served_project, env.clone());
     store_options.project = Some(served_project.to_string_lossy().into_owned());
     let store = ConfigStore::new(store_options).map_err(|error| {
@@ -2083,11 +2109,16 @@ pub fn native_settings_for_process(
         owner: owner.clone(),
         router: Arc::new(owner),
         registry: Arc::new(RegistryRefresh::new(project)),
-        store,
+        store: store.clone(),
         project_root: JsString::from(served_project.to_string_lossy().into_owned()),
         log: Arc::new(ConsoleLog),
         apply_flag_settings: Some(Arc::new(NativeFlagSettings { overrides })),
-        update_settings: None,
+        // createLocalGateway.ts:1384-1401 with no organization policy.
+        update_settings: Some(crate::runtime::settings::UpdateSettings {
+            organization_denied: false,
+            writer: Arc::new(writer),
+            store: store.clone(),
+        }),
     }))
 }
 
