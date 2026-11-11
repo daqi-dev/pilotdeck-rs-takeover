@@ -645,6 +645,10 @@ async fn start_assembly(
                         Some(name) => output_style_content(&staged, &name).await,
                         None => None,
                     };
+                super::sdk_config::apply_prompt_fields(
+                    &mut config,
+                    session_overrides.sdk_config(&context.session_key).as_ref(),
+                );
                 apply_session_overrides(
                     &mut config,
                     stored_permission_mode.as_ref(),
@@ -1610,7 +1614,8 @@ pub(super) fn apply_session_overrides(
             .get("appendSystemPrompt")
             .and_then(JsValue::as_string)
             .map(|value| String::from_utf16_lossy(value.units()));
-        let joined = [existing.as_deref(), Some(content)]
+        // `sdkOutputStyleContent?.trim()`.
+        let joined = [existing.as_deref(), Some(crate::metadata::js_trim(content))]
             .into_iter()
             .flatten()
             .filter(|part| !crate::metadata::js_trim(part).is_empty())

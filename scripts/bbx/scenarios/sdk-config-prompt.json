@@ -1,0 +1,255 @@
+{
+ "name": "sdk-config-prompt",
+ "about": "sdkSessionConfig 的提示词类字段：systemPrompt 替换整段系统提示词（同一配置再提交不重建、改成空串）；appendSystemPrompt 追加（空白视为没有）；outputStyle 选本地插件的 style，与 appendSystemPrompt 按先后拼接、未知 style、output_styles_list 的 selected、set_output_style 清除后又被新配置覆盖、与 systemPrompt 同时给；planModeInstructions 只在 plan 模式下出现；toolAliases 让模型用别名调用工具（目标存在 / 不存在）。比较发给模型的请求。",
+ "files": {
+  "home/.pilotdeck/plugins/style-plugin/plugin.json": {
+   "name": "style-plugin",
+   "version": "0.1.0",
+   "description": "Local plugin contributing output styles."
+  },
+  "home/.pilotdeck/plugins/style-plugin/output-styles/pirate.md": "---\ndescription: Talk like a pirate.\n---\n\nAlways answer in pirate speak. BBX-PIRATE-STYLE.\n",
+  "home/.pilotdeck/notes.txt": "hello notes\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Prompt\"}"
+   }
+  },
+  {
+   "name": "alias-after",
+   "when": [
+    "alias:",
+    "\"tool_call_id\":\"call_alias\""
+   ],
+   "reply": {
+    "text": "Read it."
+   }
+  },
+  {
+   "name": "alias",
+   "when": [
+    "alias:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_alias",
+     "name": "Peek",
+     "arguments": {
+      "file_path": "notes.txt"
+     }
+    }
+   }
+  },
+  {
+   "name": "plain",
+   "when": [
+    "plain:"
+   ],
+   "reply": {
+    "text": "Ok."
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sys",
+    "channelKey": "test",
+    "runId": "run-s-sys-one",
+    "message": "plain: one",
+    "sdkSessionConfig": {
+     "systemPrompt": "You are BBX-CUSTOM-SYSTEM."
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sys",
+    "channelKey": "test",
+    "runId": "run-s-sys-two",
+    "message": "plain: two",
+    "sdkSessionConfig": {
+     "systemPrompt": "You are BBX-CUSTOM-SYSTEM."
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sys",
+    "channelKey": "test",
+    "runId": "run-s-sys-three",
+    "message": "plain: three",
+    "sdkSessionConfig": {
+     "systemPrompt": ""
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-app",
+    "channelKey": "test",
+    "runId": "run-s-app-one",
+    "message": "plain: one",
+    "sdkSessionConfig": {
+     "appendSystemPrompt": "BBX-APPENDED-RULES."
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-app",
+    "channelKey": "test",
+    "runId": "run-s-app-two",
+    "message": "plain: two",
+    "sdkSessionConfig": {
+     "appendSystemPrompt": "   "
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-style",
+    "channelKey": "test",
+    "runId": "run-s-style-one",
+    "message": "plain: one",
+    "sdkSessionConfig": {
+     "appendSystemPrompt": "BBX-APPENDED-RULES.",
+     "outputStyle": "style-plugin:pirate"
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-style",
+    "channelKey": "test",
+    "runId": "run-s-style-two",
+    "message": "plain: two",
+    "sdkSessionConfig": {
+     "outputStyle": "style-plugin:pirate"
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-style",
+    "channelKey": "test",
+    "runId": "run-s-style-three",
+    "message": "plain: three",
+    "sdkSessionConfig": {
+     "outputStyle": "no-such-style"
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "output_styles_list",
+   "params": {
+    "sessionKey": "s-style"
+   }
+  },
+  {
+   "ws": "set_output_style",
+   "params": {
+    "sessionKey": "s-style",
+    "name": null
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-style",
+    "channelKey": "test",
+    "runId": "run-s-style-four",
+    "message": "plain: four",
+    "sdkSessionConfig": {
+     "outputStyle": "style-plugin:pirate",
+     "systemPrompt": "BBX-BOTH."
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-planins",
+    "mode": "plan"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-planins",
+    "channelKey": "test",
+    "runId": "run-s-planins-one",
+    "message": "plain: one",
+    "sdkSessionConfig": {
+     "planModeInstructions": "BBX-PLAN-INSTRUCTIONS."
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-planins-default",
+    "channelKey": "test",
+    "runId": "run-s-planins-default-one",
+    "message": "plain: one",
+    "sdkSessionConfig": {
+     "planModeInstructions": "BBX-PLAN-INSTRUCTIONS."
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-alias",
+    "channelKey": "test",
+    "runId": "run-s-alias-read",
+    "message": "alias: read",
+    "sdkSessionConfig": {
+     "toolAliases": {
+      "Peek": "read_file"
+     }
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-alias2",
+    "channelKey": "test",
+    "runId": "run-s-alias2-read",
+    "message": "alias: read",
+    "sdkSessionConfig": {
+     "toolAliases": {
+      "Peek": "no_such_tool"
+     }
+    }
+   },
+   "timeout": 20000
+  }
+ ]
+}

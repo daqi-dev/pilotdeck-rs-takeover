@@ -19,7 +19,14 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
 use std::sync::Arc;
 
 /// The `sdkSessionConfig` fields whose effect the native session composes.
-pub(super) const WIRED_FIELDS: &[&str] = &["userDialogKinds"];
+pub(super) const WIRED_FIELDS: &[&str] = &[
+    "userDialogKinds",
+    "systemPrompt",
+    "appendSystemPrompt",
+    "planModeInstructions",
+    "toolAliases",
+    "outputStyle",
+];
 
 const INVALID: &str = "INVALID_SDK_SESSION_CONFIG";
 
@@ -632,6 +639,37 @@ pub(super) fn user_dialog_kinds(config: Option<&JsValue>) -> Vec<&'static str> {
         .into_iter()
         .filter(|kind| kinds.iter().any(|value| string_in(value, &[kind])))
         .collect()
+}
+
+/// The prompt-shaping fields of `SessionAgentConfigBundle.compose`
+/// (SessionAgentConfigBundle.ts:139-143): `systemPrompt` replaces the
+/// assembled prompt, `appendSystemPrompt` is added after it (blank counts as
+/// absent; the output style is joined on afterwards), `planModeInstructions`
+/// applies while in plan mode and `toolAliases` are single-hop tool names.
+pub(super) fn apply_prompt_fields(agent: &mut JsObject, config: Option<&JsValue>) {
+    let Some(config) = config.and_then(JsValue::as_object) else {
+        return;
+    };
+    if let Some(prompt) = present(config, "systemPrompt") {
+        agent.insert("systemPrompt".into(), prompt.clone());
+    }
+    if let Some(append) = present(config, "appendSystemPrompt") {
+        let blank = append.as_string().is_none_or(trim_empty);
+        agent.insert(
+            "appendSystemPrompt".into(),
+            if blank {
+                JsValue::Undefined
+            } else {
+                append.clone()
+            },
+        );
+    }
+    if let Some(instructions) = present(config, "planModeInstructions") {
+        agent.insert("planModeInstructions".into(), instructions.clone());
+    }
+    if let Some(aliases) = present(config, "toolAliases").filter(|aliases| truthy(aliases)) {
+        agent.insert("toolAliases".into(), aliases.clone());
+    }
 }
 
 /// `options.setSdkSessionConfig` for the native host.
