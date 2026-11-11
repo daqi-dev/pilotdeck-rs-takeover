@@ -424,6 +424,14 @@ impl LiveSession for LiveSessionAdapter {
         let tail = self.tail.clone();
         let tail_options = options.clone();
         let sidechain = self.sidechain;
+        // A turn claimed from the session's durable inbox (a follow-up the
+        // host admitted, not a client submit) names the item in its
+        // `turn_started` (AgentSession.submitQueuedTurn).
+        let inbox_item = options
+            .get("inboxItemId")
+            .and_then(JsValue::as_string)
+            .filter(|item| !item.is_empty())
+            .cloned();
         // Shared between the host-side validation hook (every received event)
         // and finish()'s second, contradiction-only check; see StreamHandler.
         let integrity = Arc::new(StreamIntegrity::new());
@@ -474,6 +482,7 @@ impl LiveSession for LiveSessionAdapter {
                 )
                 .with_session_steer(session_steer)
                 .with_status_records(!sidechain)
+                .with_inbox_item(inbox_item)
                 .with_interaction_events(interaction_events)
                 .with_prompt_hooks(if crate::mutants::on("prompt-wiring") {
                     None
@@ -2198,7 +2207,7 @@ fn parse_execute_request(
         .expect("identity checked above")
         .entries()
     {
-        if !key.equals_str("syntheticMessages") {
+        if !key.equals_str("syntheticMessages") && !key.equals_str("inboxItemId") {
             payload.insert(key.clone(), value.clone());
         }
     }

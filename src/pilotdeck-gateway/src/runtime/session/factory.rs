@@ -779,7 +779,7 @@ impl FactoryStorage {
             .map_err(|e| RuntimeError::new(e.to_string()))
         })
     }
-    fn restore(&self) -> BoxFuture<Result<TranscriptRead, RuntimeError>> {
+    pub(crate) fn restore(&self) -> BoxFuture<Result<TranscriptRead, RuntimeError>> {
         let load = self.load.clone();
         let load_checkpoint = self.load_checkpoint.clone();
         let restored = self.restored.clone();

@@ -95,6 +95,10 @@ struct Progress {
     disposal_completed: bool,
     recreation_error_reported: bool,
     recreation_stale_handoff: bool,
+    /// Follow-up turns admitted to the session's durable inbox and not yet
+    /// started: an ordinary submit is refused while any is pending, like
+    /// `AgentHandle.submit` (AgentHandle.ts:74-77).
+    queued: usize,
     #[cfg(test)]
     activity_waiting: Option<watch::Sender<bool>>,
 }
@@ -249,6 +253,7 @@ impl LiveSessionHandle {
                 disposal_completed: false,
                 recreation_error_reported: false,
                 recreation_stale_handoff: false,
+                queued: 0,
                 #[cfg(test)]
                 activity_waiting: None,
             })),
@@ -303,7 +308,18 @@ impl LiveSessionHandle {
     }
 
     fn reserve_activity(&self, maintenance: bool) -> Result<HandleActivity, RuntimeError> {
+        self.reserve(maintenance, false)
+    }
+
+    fn reserve(&self, maintenance: bool, queued: bool) -> Result<HandleActivity, RuntimeError> {
         let mut progress = self.0.progress.lock().unwrap();
+        if progress.state == HandleState::Active && progress.queued > 0 && !queued {
+            return Err(RuntimeError::new(if maintenance {
+                "Agent handle is not idle for maintenance."
+            } else {
+                "Agent handle already has an active turn."
+            }));
+        }
         // #996: reserve-activity-ignores-inactive-handle admits the activity
         // anyway (session-owner/schemata.py). Off — the original guard.
         if progress.state != HandleState::Active
@@ -334,6 +350,54 @@ impl LiveSessionHandle {
     ) -> Result<SessionSubmission, RuntimeError> {
         let activity = self.begin_activity()?;
         let stream = self.0.session.submit(input, options)?;
+        Ok(SessionSubmission {
+            stream,
+            _activity: Some(activity),
+        })
+    }
+
+    /// One more follow-up turn waits in the session's durable inbox.
+    pub fn admit_queued(&self) {
+        self.0.progress.lock().unwrap().queued += 1;
+    }
+
+    /// A pending follow-up left the inbox without starting (discarded).
+    pub fn forget_queued(&self) {
+        let mut progress = self.0.progress.lock().unwrap();
+        progress.queued = progress.queued.saturating_sub(1);
+    }
+
+    /// Wait until no turn or maintenance holds the handle. `false` once the
+    /// handle stopped admitting work.
+    pub async fn wait_idle(&self) -> bool {
+        let mut changed = self.0.changed.subscribe();
+        loop {
+            {
+                let progress = self.0.progress.lock().unwrap();
+                if progress.state != HandleState::Active {
+                    return false;
+                }
+                if !progress.activity {
+                    return true;
+                }
+            }
+            if changed.changed().await.is_err() {
+                return false;
+            }
+        }
+    }
+
+    /// Start the oldest pending follow-up turn (`submitQueuedTurn`): it takes
+    /// the activity slot ahead of ordinary submits, which stay refused while
+    /// follow-ups are pending.
+    pub fn submit_queued(
+        &self,
+        input: JsValue,
+        options: JsValue,
+    ) -> Result<SessionSubmission, RuntimeError> {
+        let activity = self.reserve(false, true)?;
+        let stream = self.0.session.submit(input, options)?;
+        self.forget_queued();
         Ok(SessionSubmission {
             stream,
             _activity: Some(activity),
@@ -1003,3 +1067,7 @@ mod abort_contract_tests;
 #[cfg(test)]
 #[path = "handle_drop_tests.rs"]
 mod drop_contract_tests;
+
+#[cfg(test)]
+#[path = "handle_queue_tests.rs"]
+mod queue_tests;

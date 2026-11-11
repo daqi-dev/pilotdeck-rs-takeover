@@ -56,6 +56,8 @@ pub(super) struct SubagentRuntime {
     limits: Limits,
     /// The pilot home, for the sidechain's storage key.
     home: PathBuf,
+    /// The process's continuable children (`subagent` / `send_message`).
+    pub(super) continuations: Arc<super::continuations::Continuations>,
 }
 
 impl SubagentRuntime {
@@ -64,13 +66,118 @@ impl SubagentRuntime {
         deployment: Deployment,
         limits: Limits,
         home: PathBuf,
+        continuations: Arc<super::continuations::Continuations>,
     ) -> Self {
         Self {
             registry,
             deployment,
             limits,
             home,
+            continuations,
         }
+    }
+
+    /// `NativeSubagentContinuationHost.createChild`: a continuable child
+    /// session over its own durable storage — restored from the transcript
+    /// when `resume` — with its metadata tail, a tool registry scoped to its
+    /// definition whose continuation tools act for the child itself
+    /// (`parent`), and no inherited file state.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) async fn materialize_continuable(
+        &self,
+        seed: ForkSeed,
+        parent_config: &JsObject,
+        config: JsObject,
+        definition: &'static SubagentDefinition,
+        child: &JsString,
+        transcript_path: PathBuf,
+        resume: bool,
+        parent: super::continuations::ParentRef,
+    ) -> Result<
+        (
+            Arc<crate::runtime::turn::live::LiveSessionAdapter>,
+            Arc<FactoryStorage>,
+        ),
+        JsString,
+    > {
+        let fail = |error: &dyn std::fmt::Display| JsString::from(error.to_string());
+        let cwd = PathBuf::from(
+            parent_config
+                .get("cwd")
+                .and_then(JsValue::as_string)
+                .map(text)
+                .unwrap_or_default(),
+        );
+        let storage = Arc::new(FactoryStorage::new(
+            Arc::new(JsonlTranscriptStore::new()),
+            TranscriptKey {
+                project_root: cwd.clone(),
+                pilot_home: self.home.clone(),
+                session_id: child.clone(),
+                transcript_path,
+            },
+        ));
+        if resume {
+            storage
+                .restore()
+                .await
+                .map_err(|error| fail(&error.message))?;
+        }
+        let tail = crate::runtime::turn::runner::tail::SessionTail::new(
+            storage.recorder.clone(),
+            child.clone(),
+            crate::runtime::turn::runner::tail::TailConfig {
+                cwd: Some(cwd.clone()),
+                // `shouldCollectFileArtifacts`: none for the pilot home.
+                collect_file_artifacts: cwd != self.home,
+                ..Default::default()
+            },
+        );
+        if resume {
+            let state = storage
+                .projection
+                .snapshot()
+                .map_err(|error| fail(&error.message))?;
+            tail.restore(state.metadata);
+        }
+        let checkpoint =
+            HostToolCheckpoint::new(None, &[]).map_err(|error| fail(&error.message))?;
+        let tools: SessionTools = seed
+            .clone()
+            .child(
+                SessionBinding {
+                    context: seed.context.clone(),
+                    recorder: storage.recorder.clone(),
+                    checkpoint,
+                    projection: storage.projection.clone(),
+                },
+                config.clone(),
+                ForkScope {
+                    definition,
+                    root_recorder: storage.recorder.clone(),
+                },
+            )
+            .with_continuation_parent(parent);
+        let projection = storage.projection.clone();
+        let session = TurnHostFactory::new_with_signal(
+            self.registry.clone(),
+            self.deployment.clone(),
+            self.limits,
+            Some("pilotdeck-agent-loop".into()),
+            move |identity, recorder, signal| tools.turn(identity, recorder, signal),
+        )
+        .with_agent_config(config)
+        .as_in_process_loop()
+        .into_live_session(storage.recorder.clone(), move || {
+            projection
+                .snapshot()
+                .map(|state| state.messages)
+                .unwrap_or_default()
+        })
+        // A full session, not a one-shot sidechain: its TurnRunner records
+        // the loop's status messages like any session's.
+        .with_tail(tail);
+        Ok((Arc::new(session), storage))
     }
 
     /// `createNativeOneShotSubagentPort({ config, dependencies })` for one
@@ -366,7 +473,53 @@ fn child_config(
     definition: &SubagentDefinition,
     subagent_id: &JsString,
 ) -> JsObject {
-    let selected = parent.get("subagentModel").and_then(JsValue::as_object);
+    // The baseline counts a one-shot fork twice: the fork API hands the child
+    // composition a parent config already at `depth + 1`
+    // (OneShotSubagentPort.ts:155-159), and the composition adds one more
+    // (SubagentRuntimeComposition.ts:59,186). A first-level child therefore
+    // runs at depth 2, and gets the nested `agent` tool only under a cap of 3
+    // or more.
+    build_child_config(parent, definition, subagent_id, None, 2.0)
+}
+
+/// `buildSubagentRuntimeConfig` for a continuable child: the model is the one
+/// its descriptor names (`resolvedModel`), and the composition adds one level
+/// of depth (`NativeSubagentContinuationHost.createChild`).
+pub(super) fn continuable_child_config(
+    parent: &JsObject,
+    definition: &SubagentDefinition,
+    subagent_id: &JsString,
+    model: (JsString, JsString),
+) -> JsObject {
+    build_child_config(parent, definition, subagent_id, Some(model), 1.0)
+}
+
+fn build_child_config(
+    parent: &JsObject,
+    definition: &SubagentDefinition,
+    subagent_id: &JsString,
+    resolved: Option<(JsString, JsString)>,
+    depth_increment: f64,
+) -> JsObject {
+    let configured = parent.get("subagentModel").and_then(JsValue::as_object);
+    // An explicit model keeps the configured subagent model's other fields
+    // only when it names that same provider and model.
+    let selected = match resolved {
+        Some((provider, model)) => {
+            let mut selected = configured
+                .filter(|configured| {
+                    configured.get("provider") == Some(&JsValue::String(provider.clone()))
+                        && configured.get("model") == Some(&JsValue::String(model.clone()))
+                })
+                .cloned()
+                .unwrap_or_default();
+            selected.insert("provider".into(), JsValue::String(provider));
+            selected.insert("model".into(), JsValue::String(model));
+            Some(selected)
+        }
+        None => configured.cloned(),
+    };
+    let selected = selected.as_ref();
     // The host rebuilds the permission context and the environment per turn
     // from the child's own state. A configured subagent model replaces the
     // parent's and drops the parent's token caps (they describe the parent's
@@ -413,15 +566,9 @@ fn child_config(
         ),
     );
     config.insert("stopOnStructuredOutput".into(), JsValue::Bool(false));
-    // The baseline counts the fork twice: the fork API hands the child
-    // composition a parent config already at `depth + 1`
-    // (OneShotSubagentPort.ts:155-159), and the composition adds one more
-    // (SubagentRuntimeComposition.ts:59,186). A first-level child therefore
-    // runs at depth 2, and gets the nested `agent` tool only under a cap of 3
-    // or more.
     config.insert(
         "subagentDepth".into(),
-        JsValue::Number(depths(parent).0 + 2.0),
+        JsValue::Number(depths(parent).0 + depth_increment),
     );
     let mut metadata = parent
         .get("metadata")

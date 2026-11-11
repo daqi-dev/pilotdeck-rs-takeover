@@ -158,7 +158,6 @@ async fn replay(name: &str, row: &JsValue) {
     let suggestion_inputs = Arc::new(Mutex::new(Vec::new()));
     let diagnostics = Arc::new(Mutex::new(Vec::new()));
     let cfg = TailConfig {
-        park_title_record: false,
         cwd: Some(f.root.join("workspace")),
         collect_file_artifacts: file != "disabled",
         auto_generate_title: !title.is_empty(),

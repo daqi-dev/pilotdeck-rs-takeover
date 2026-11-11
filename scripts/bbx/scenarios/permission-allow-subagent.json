@@ -1,0 +1,41 @@
+{
+  "name": "permission-allow-subagent",
+  "about": "默认权限模式下 subagent 先发权限询问，客户端批准后才启动后台子代理（general-purpose）；子代理调 bash 时询问发不出去（父轮已结束，没有可投递的客户端），被拒后回报告（两次模型请求，所以一定晚于父轮结束），收束后宿主向父会话投收束通知，父会话自己起一轮。父轮 maxTurns 为 1（理由同 tool-subagent）。",
+  "provider": [
+    {
+      "name": "title",
+      "when": ["Generate a concise title"],
+      "reply": {"text": "{\"title\": \"Tool run\"}"}
+    },
+    {
+      "name": "parent-notice",
+      "when": ["Continuable subagent", "settled:"],
+      "reply": {"text": "Noted."}
+    },
+    {
+      "name": "child-after-tool",
+      "when": ["CHILD-BG-2", "\"tool_call_id\":\"call_bbx_c1\""],
+      "reply": {"text": "Scope: waited.\nResult: nothing to report.\nKey files: none\nFiles changed: none\nIssues: none"}
+    },
+    {
+      "name": "child",
+      "when": ["CHILD-BG-2", "You are a subagent of PilotDeck"],
+      "reply": {"tool": {"id": "call_bbx_c1", "name": "bash", "arguments": {"command": "sleep 1"}}}
+    },
+    {
+      "name": "parent",
+      "when": ["turn-1:"],
+      "reply": {"tool": {"id": "call_bbx_1", "name": "subagent", "arguments": {"description": "Wait a bit", "prompt": "CHILD-BG-2: wait and report."}}}
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {"sessionKey": "s-bbx-1", "channelKey": "test", "message": "turn-1: run the tool", "maxTurns": 1},
+      "answer": [{"on": {"type": "permission_request"}, "ws": "permission_decide", "params": {"sessionKey": "s-bbx-1", "requestId": "{event.requestId}", "decision": "allow"}}],
+      "timeout": 15000
+    },
+    {"sleep": 3000},
+    {"ws": "read_session_messages", "params": {"sessionKey": "s-bbx-1"}}
+  ]
+}

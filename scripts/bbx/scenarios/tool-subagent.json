@@ -1,88 +1,37 @@
 {
   "name": "tool-subagent",
-  "about": "subagent：父轮启动一个可续跑的后台子代理（explore），工具在首条消息入队后立即返回；子代理在后台跑一轮模型请求后空闲收束，宿主把收束通知作为后续输入投给父会话。（默认权限模式下 subagent 工具要先过权限询问，这里用 bypassPermissions 绕开。）",
+  "about": "subagent：父轮启动一个可续跑的后台子代理（general-purpose），工具在首条消息入队后立即返回；子代理先跑一次 bash sleep 再回报告，空闲收束后宿主把收束通知作为后续输入投给父会话，父会话自己起一轮并发一次模型请求（这一轮没有客户端帧）。避开基线的不稳定：父轮 maxTurns 为 1，工具执行完就结束，不再发带随机 id 的第二次请求（随机 UUID 进了历史后，基线自己的 context_budget token 估算每次都不同）；子代理的 sleep 让它一定在父轮结束后才收束。（默认权限模式下 subagent 要先过权限询问，这里用 bypassPermissions 绕开。）",
   "provider": [
     {
       "name": "title",
-      "when": [
-        "Generate a concise title"
-      ],
-      "reply": {
-        "text": "{\"title\": \"Tool run\"}"
-      }
-    },
-    {
-      "name": "child",
-      "when": [
-        "You are a subagent of PilotDeck",
-        "CHILD-BG-1"
-      ],
-      "reply": {
-        "text": "Scope: looked around.\nResult: nothing to report.\nKey files: none\nFiles changed: none\nIssues: none"
-      }
+      "when": ["Generate a concise title"],
+      "reply": {"text": "{\"title\": \"Tool run\"}"}
     },
     {
       "name": "parent-notice",
-      "when": [
-        "Continuable subagent",
-        "settled:"
-      ],
-      "reply": {
-        "text": "Noted."
-      }
+      "when": ["Continuable subagent", "settled:"],
+      "reply": {"text": "Noted."}
     },
     {
-      "name": "parent-after-tool",
-      "when": [
-        "turn-1:",
-        "\"tool_call_id\":\"call_bbx_1\""
-      ],
-      "reply": {
-        "text": "Done 1."
-      }
+      "name": "child-after-tool",
+      "when": ["CHILD-BG-1", "\"tool_call_id\":\"call_bbx_c1\""],
+      "reply": {"text": "Scope: looked around.\nResult: nothing to report.\nKey files: none\nFiles changed: none\nIssues: none"}
+    },
+    {
+      "name": "child",
+      "when": ["CHILD-BG-1", "You are a subagent of PilotDeck"],
+      "reply": {"tool": {"id": "call_bbx_c1", "name": "bash", "arguments": {"command": "sleep 1"}}}
     },
     {
       "name": "parent",
-      "when": [
-        "turn-1:"
-      ],
-      "reply": {
-        "tool": {
-          "id": "call_bbx_1",
-          "name": "subagent",
-          "arguments": {
-            "description": "Look around",
-            "prompt": "CHILD-BG-1: look around and report.",
-            "subagent_type": "explore"
-          }
-        }
-      }
+      "when": ["turn-1:"],
+      "reply": {"tool": {"id": "call_bbx_1", "name": "subagent", "arguments": {"description": "Look around", "prompt": "CHILD-BG-1: look around and report.", "subagent_type": "general-purpose"}}}
     }
   ],
   "steps": [
-    {
-      "ws": "set_permission_mode",
-      "params": {
-        "sessionKey": "s-bbx-1",
-        "mode": "bypassPermissions"
-      }
-    },
-    {
-      "ws": "submit_turn",
-      "params": {
-        "sessionKey": "s-bbx-1",
-        "channelKey": "test",
-        "message": "turn-1: run the tool"
-      }
-    },
-    {
-      "sleep": 1500
-    },
-    {
-      "ws": "read_session_messages",
-      "params": {
-        "sessionKey": "s-bbx-1"
-      }
-    }
+    {"ws": "set_permission_mode", "params": {"sessionKey": "s-bbx-1", "mode": "bypassPermissions"}},
+    {"ws": "submit_turn", "params": {"sessionKey": "s-bbx-1", "channelKey": "test", "message": "turn-1: run the tool", "maxTurns": 1}},
+    {"sleep": 3000},
+    {"ws": "read_session_messages", "params": {"sessionKey": "s-bbx-1"}}
   ]
 }
