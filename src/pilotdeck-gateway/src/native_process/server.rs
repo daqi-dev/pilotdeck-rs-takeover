@@ -158,8 +158,8 @@ async fn serve_on_runtime(
 /// (src/cli/ProjectRouterEventBusProvider.ts:32-41), which the baseline runs
 /// while building the local gateway: `<pilot home>/router` exists after a
 /// start, and a legacy `router-events.jsonl` moves to `router/events.jsonl`.
-/// Both steps are best-effort there too. Only the layout is ported; nothing in
-/// the Rust gateway appends router events yet.
+/// Both steps are best-effort there too. The events themselves are appended
+/// by the project router's event sink (`assembly::RouterEventLog`).
 fn ensure_router_dir(pilot_home: &Path) {
     let directory = pilot_home.join("router");
     let _ = std::fs::create_dir_all(&directory);

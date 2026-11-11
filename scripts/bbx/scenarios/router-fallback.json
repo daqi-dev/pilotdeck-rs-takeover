@@ -1,0 +1,87 @@
+{
+ "name": "router-fallback",
+ "about": "路由开启、主模型 bbx/broken 回 500 时按 router.fallback.default 切到 bbx/deterministic：事件序列、发给 provider 的请求、会话记录、router/events.jsonl（决策、重试、回退事件）。另一轮主模型回 400（不可回退的错误）。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/broken\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        broken:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    dead:\n      protocol: openai\n      url: http://127.0.0.1:9/v1\n      apiKey: bbx-mock-only\n      models:\n        nowhere:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nrouter:\n  enabled: true\n  fallback:\n    default:\n      - bbx/deterministic\n",
+ "env": {
+  "PILOTDECK_SNAPSHOT_ROOT": "{ROOT}/tmp/snapshots"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Router run\"}"
+   }
+  },
+  {
+   "name": "broken-400",
+   "when": [
+    "case-400:",
+    "\"model\":\"broken\""
+   ],
+   "reply": {
+    "status": 400,
+    "body": {
+     "error": {
+      "message": "bad request from mock",
+      "type": "invalid_request_error"
+     }
+    }
+   }
+  },
+  {
+   "name": "broken",
+   "when": [
+    "\"model\":\"broken\""
+   ],
+   "reply": {
+    "status": 500,
+    "body": {
+     "error": {
+      "message": "upstream exploded",
+      "type": "server_error"
+     }
+    }
+   }
+  },
+  {
+   "name": "fallback",
+   "when": [
+    "\"model\":\"deterministic\""
+   ],
+   "reply": {
+    "text": "Hello from fallback."
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-fb",
+    "channelKey": "test",
+    "runId": "run-fb",
+    "message": "case-fb: go"
+   },
+   "timeout": 60000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-fb400",
+    "channelKey": "test",
+    "runId": "run-fb400",
+    "message": "case-400: go"
+   },
+   "timeout": 60000
+  },
+  {
+   "sleep": 300
+  }
+ ]
+}

@@ -437,10 +437,18 @@ async fn start_assembly(
     // built after the session factory, so it is published into this slot.
     // The project runtimes' background task completions use the same sink.
     let gateway_emit: super::permission_prompt::GatewayEmitSlot = Arc::default();
+    // `router.activeTurnRunId(sessionKey)`, published once the session owner
+    // exists, for the router's retry-progress projection.
+    let active_run: ActiveRunSlot = Arc::default();
     let project = project_registry_with(
         &options,
         &env,
         Some(background_completion_projection(gateway_emit.clone())),
+        Some(Arc::new(RouterEventLog {
+            path: options.home.join("router").join("events.jsonl"),
+            emit: gateway_emit.clone(),
+            active_run: active_run.clone(),
+        })),
     );
     let snapshot_enabled = snapshot::snapshot_enabled(&options, &project).await?;
     let snapshot_recorder =
@@ -1249,6 +1257,10 @@ async fn start_assembly(
                     && emit_coordinator.emit(session, &event)
             }));
             let owner = SessionOwner::new(SessionOwnerOptions::new(build_factory));
+            let _ = active_run.set({
+                let owner = owner.clone();
+                Arc::new(move |session: &JsString| owner.active_turn_run_id(session))
+            });
             continuations.bind_owner(owner.clone());
             if let Some(slot) = &build_release_slot {
                 // `gateway.dispose("local_gateway_disposed")` followed by the
@@ -1862,7 +1874,7 @@ pub(super) fn turn_ports(
 
 #[cfg(test)]
 pub(super) fn project_registry(options: &Options, env: &Env) -> Arc<ProjectRuntimeRegistry> {
-    project_registry_with(options, env, None)
+    project_registry_with(options, env, None, None)
 }
 
 /// `toGatewayBackgroundTaskCompletionStatus`
@@ -1918,10 +1930,81 @@ fn background_completion_projection(
     })
 }
 
+type ActiveRunSlot =
+    Arc<std::sync::OnceLock<Arc<dyn Fn(&JsString) -> Option<JsString> + Send + Sync>>>;
+
+/// `ProjectRouterEventBusProvider` (src/cli/ProjectRouterEventBusProvider.ts):
+/// every router event is appended to `<pilot home>/router/events.jsonl` as one
+/// `JSON.stringify` line (best effort), and a retry-progress event is projected
+/// into the session's active turn as `agent_status` / `retry_progress`
+/// (`InProcessGateway.broadcastRetryProgress`, InProcessGateway.ts:732-756)
+/// when the event's turn is the session's active run.
+struct RouterEventLog {
+    path: std::path::PathBuf,
+    emit: super::permission_prompt::GatewayEmitSlot,
+    active_run: ActiveRunSlot,
+}
+
+impl crate::runtime::model::router::RouterEventSink for RouterEventLog {
+    fn emit(&self, event: JsValue) {
+        if let Ok(Some(line)) = pilotdeck_protocol::stringify_json(&event) {
+            use std::io::Write;
+            if let Some(directory) = self.path.parent() {
+                let _ = std::fs::create_dir_all(directory);
+            }
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&self.path)
+            {
+                let _ = file.write_all(format!("{line}\n").as_bytes());
+            }
+        }
+        if event.get("type").and_then(JsValue::as_string)
+            != Some(&JsString::from("pilotdeck_router_retry_progress"))
+        {
+            return;
+        }
+        let (Some(JsValue::String(session)), Some(JsValue::String(turn))) =
+            (event.get("sessionId"), event.get("turnId"))
+        else {
+            return;
+        };
+        let Some(active_run) = self.active_run.get() else {
+            return;
+        };
+        if active_run(session).as_ref() != Some(turn) {
+            return;
+        }
+        let mut detail = JsObject::new();
+        for key in [
+            "attempt",
+            "maxAttempts",
+            "delayMs",
+            "reason",
+            "provider",
+            "model",
+        ] {
+            detail.insert(
+                key.into(),
+                event.get(key).cloned().unwrap_or(JsValue::Undefined),
+            );
+        }
+        let mut status = JsObject::new();
+        status.insert("type".into(), "agent_status".into());
+        status.insert("event".into(), "retry_progress".into());
+        status.insert("detail".into(), JsValue::Object(detail));
+        if let Some(emit) = self.emit.get() {
+            emit(session, JsValue::Object(status));
+        }
+    }
+}
+
 fn project_registry_with(
     options: &Options,
     env: &Env,
     on_completion: Option<crate::runtime::background::CompletionHandler>,
+    router_events: Option<Arc<dyn crate::runtime::model::router::RouterEventSink>>,
 ) -> Arc<ProjectRuntimeRegistry> {
     // `builtinPlugins: options.builtinPlugins ?? loadBuiltinPlugins()`
     // (ProjectRuntimeRegistry.ts:1609): one scan for the process, shared by
@@ -1957,6 +2040,7 @@ fn project_registry_with(
                 ..Families::unwired()
             }
             .with_native_models()
+            .with_router_events(router_events)
             .with_context_memory()
             .with_tools_mcp_completions(on_completion)
             .with_builtin_mcp_paths(builtin_mcp_paths)

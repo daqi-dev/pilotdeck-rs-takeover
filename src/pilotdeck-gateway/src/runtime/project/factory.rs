@@ -485,6 +485,22 @@ impl Families {
         self
     }
 
+    /// The native router family publishing its events to `events`
+    /// (`createRouterEventBus`, ProjectRuntimeRegistry.ts:1656). `None`
+    /// keeps the current router family.
+    pub fn with_router_events(
+        mut self,
+        events: Option<Arc<dyn crate::runtime::model::router::RouterEventSink>>,
+    ) -> Self {
+        if let Some(events) = events {
+            self.router_runtime = Arc::new(super::model::RouterFamilySource {
+                custom_routers: None,
+                events: Some(events),
+            });
+        }
+        self
+    }
+
     /// Wire the MCP and execution-world families (A6.9-pr3c1). Replacing the
     /// execution-world source is the point of this builder: a previously
     /// configured custom source is discarded in favour of the native one and
