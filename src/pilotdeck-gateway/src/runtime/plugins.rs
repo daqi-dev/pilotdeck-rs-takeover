@@ -330,6 +330,10 @@ pub(super) struct PluginRuntimeState {
     disposal_requested: bool,
     dispose_sender: Option<watch::Sender<Option<Result<(), PluginRuntimeError>>>>,
     dispose_receiver: Option<watch::Receiver<Option<Result<(), PluginRuntimeError>>>>,
+    /// `outputStyleRegistry` (PluginRuntime.ts:240): a name-keyed map in
+    /// insertion order, rebuilt by each published refresh and replaced by
+    /// [`PluginRuntime::reload_output_styles`].
+    output_styles: Vec<PluginOutputStyleContribution>,
 }
 
 // ─────────────────────────────────────────────────────────── PluginRuntime
@@ -354,6 +358,7 @@ impl PluginRuntime {
                 disposal_requested: false,
                 dispose_sender: None,
                 dispose_receiver: None,
+                output_styles: Vec::new(),
             })),
             lease_failure,
         }
@@ -419,6 +424,81 @@ impl PluginRuntime {
 
     pub async fn generation(&self) -> u64 {
         self.state.lock().await.registry.current_generation()
+    }
+
+    /// `PluginRuntime.reloadOutputStyles` (PluginRuntime.ts:388-428): re-read
+    /// only output-style files — the configured builtin plugins' styles, then
+    /// every discovered global/project plugin's style directories (a plugin
+    /// whose styles fail to load is omitted) — and replace the registry.
+    /// Returns the names whose contribution changed, current names first.
+    pub async fn reload_output_styles(&self) -> Vec<String> {
+        let options = Arc::clone(&self.options);
+        let next = tokio::task::spawn_blocking(move || {
+            let paths = PilotExtensionPaths::resolve(&options.project_root, &options.pilot_home);
+            let discovered = loader::discover_plugin_paths(&[
+                (paths.global_plugins_dir, PluginSource::Global),
+                (paths.project_plugins_dir, PluginSource::Project),
+            ]);
+            let mut styles: Vec<PluginOutputStyleContribution> = options
+                .builtin_plugins
+                .iter()
+                .flat_map(|plugin| {
+                    plugin
+                        .output_styles
+                        .iter()
+                        .map(|style| contributions::to_output_style(plugin, style))
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            for candidate in discovered {
+                let Ok(loaded) =
+                    loader::load_plugin_output_styles_from_path(&candidate.path, candidate.source)
+                else {
+                    continue;
+                };
+                for style in loaded.output_styles {
+                    styles.push(PluginOutputStyleContribution {
+                        name: style.name.clone(),
+                        description: style
+                            .frontmatter
+                            .get("description")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_owned),
+                        content: style.content.clone(),
+                        path: style.path.clone(),
+                        plugin: loaded.name.clone(),
+                        source: loaded.source,
+                    });
+                }
+            }
+            output_style_registry(styles)
+        })
+        .await
+        .unwrap_or_default();
+        let mut state = self.state.lock().await;
+        let current = std::mem::take(&mut state.output_styles);
+        let find = |styles: &[PluginOutputStyleContribution], name: &str| {
+            styles.iter().position(|style| style.name == name)
+        };
+        let mut names: Vec<String> = current.iter().map(|style| style.name.clone()).collect();
+        for style in &next {
+            if find(&current, &style.name).is_none() {
+                names.push(style.name.clone());
+            }
+        }
+        let changed = names
+            .into_iter()
+            .filter(|name| {
+                let before = find(&current, name).map(|i| &current[i]);
+                let after = find(&next, name).map(|i| &next[i]);
+                match (before, after) {
+                    (Some(a), Some(b)) => !same_output_style(a, b),
+                    _ => true,
+                }
+            })
+            .collect();
+        state.output_styles = next;
+        changed
     }
 
     pub async fn snapshot(&self) -> Vec<Arc<LoadedPlugin>> {
@@ -601,6 +681,31 @@ impl PluginRuntime {
     }
 }
 
+/// JS `Map#set` over the styles in order: a repeated name keeps its first
+/// position and takes the later contribution.
+fn output_style_registry(
+    styles: impl IntoIterator<Item = PluginOutputStyleContribution>,
+) -> Vec<PluginOutputStyleContribution> {
+    let mut registry: Vec<PluginOutputStyleContribution> = Vec::new();
+    for style in styles {
+        match registry.iter_mut().find(|existing| existing.name == style.name) {
+            Some(existing) => *existing = style,
+            None => registry.push(style),
+        }
+    }
+    registry
+}
+
+/// `JSON.stringify(a) === JSON.stringify(b)` over the registry entries.
+fn same_output_style(a: &PluginOutputStyleContribution, b: &PluginOutputStyleContribution) -> bool {
+    a.name == b.name
+        && a.description == b.description
+        && a.content == b.content
+        && a.path == b.path
+        && a.plugin == b.plugin
+        && a.source == b.source
+}
+
 // ─────────────────────────────────────────────────────────── perform_refresh
 
 async fn perform_refresh(
@@ -627,6 +732,13 @@ async fn perform_refresh(
         });
     }
     let replacement = state.registry.replace_all(result.plugins)?;
+    // PluginRuntime.ts:566-571: the published generation's styles.
+    state.output_styles = output_style_registry(replacement.next.iter().flat_map(|plugin| {
+        plugin
+            .output_styles
+            .iter()
+            .map(|style| contributions::to_output_style(plugin, style))
+    }));
     let pending = start_disposals(
         &mut state.registry,
         replacement.retired.clone(),

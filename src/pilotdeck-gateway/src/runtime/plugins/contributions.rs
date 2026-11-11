@@ -759,7 +759,7 @@ fn to_skill_contribution(
     }
 }
 
-fn to_output_style(
+pub(super) fn to_output_style(
     plugin: &LoadedPlugin,
     style: &super::loader::LoadedPluginCommand,
 ) -> PluginOutputStyleContribution {

@@ -14,14 +14,12 @@
 //! (`code: None` is a raw JS throw, which the WS layer answers
 //! `gateway_request_failed` for, like the MCP slice's adapter).
 //!
-//! The native composition (`services::native_settings`) binds the three
-//! delegates the isolated native process really owns (`resolve_settings`
-//! over the real config store, the two reloads over the real refresh
-//! bundle); the registry-bound methods (`apply_flag_settings`,
-//! `update_settings`, `reload_output_styles`) stay unconfigured — their
-//! delegates are the SDK session registry and the production local-settings
-//! writer, neither assembled into the isolated native process — and answer
-//! the TS unconfigured shapes through the component's own option handling.
+//! The native composition (`services::native_settings`) binds
+//! `resolve_settings` over the real config store, the two reloads over the
+//! real refresh bundle and `apply_flag_settings` over the session selection
+//! store. `reload_output_styles` needs the session registry and the project
+//! runtimes the request router owns, so this family answers it directly
+//! (`Requests::reload_output_styles`).
 use super::super::requests::Requests;
 use crate::runtime::{
     connection::{Call, RequestError},
@@ -56,6 +54,9 @@ impl Requests {
         params: JsValue,
     ) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async move {
+            if method == "reload_output_styles" {
+                return self.reload_output_styles(&params).await;
+            }
             let gateway = &self.settings;
             match gateway.dispatch(&method, &params).await {
                 Some(result) => result.map_err(settings_error),
@@ -72,5 +73,68 @@ impl Requests {
                 }),
             }
         })
+    }
+}
+
+impl Requests {
+    /// `registry.reloadOutputStylesForSdk(input)`
+    /// (ProjectRuntimeRegistry.ts:1111-1121; `input = {}` when the frame has
+    /// no params, InProcessGateway.ts:2387): resolve the runtime, reload its
+    /// output-style registry, then close every session holding an SDK
+    /// session config in that project (all of them without a `projectKey`)
+    /// with `sdk_output_styles_reloaded`.
+    async fn reload_output_styles(&self, params: &JsValue) -> Result<JsValue, RequestError> {
+        let empty = JsValue::Object(Default::default());
+        let params = if params.is_undefined() { &empty } else { params };
+        let project_root = self.route_project(params)?;
+        let project = self.project.clone();
+        let acquire_root = project_root.clone();
+        let lease = tokio::task::spawn_blocking(move || project.acquire(Some(&acquire_root)))
+            .await
+            .map_err(|e| RequestError::new(e.to_string()))?
+            .map_err(|e| RequestError::new(e.to_string()))?;
+        let resources = lease
+            .runtime()
+            .resources()
+            .get::<crate::runtime::project::ProjectResources>()
+            .ok_or_else(|| RequestError::new("Native project resources are missing."))?;
+        let plugin_resource = resources
+            .context()
+            .resource(crate::runtime::project::Resource::PluginRuntime)
+            .ok_or_else(|| RequestError::new("Native plugin runtime resource is missing."))?;
+        let plugin_runtime = plugin_resource
+            .as_any()
+            .downcast_ref::<crate::runtime::project::plugins::PluginResources>()
+            .ok_or_else(|| RequestError::new("Native plugin runtime has the wrong type."))?
+            .runtime
+            .clone();
+        let changed = plugin_runtime.reload_output_styles().await;
+        drop(lease);
+        let scoped = matches!(params.get("projectKey"), Some(JsValue::String(key)) if !key.is_empty());
+        let reason: JsString = "sdk_output_styles_reloaded".into();
+        for (session, root) in self.session_overrides.sdk_config_sessions() {
+            if scoped && root != project_root {
+                continue;
+            }
+            // `this.gateway?.closeSession(...)` (InProcessGateway.ts:2049-2054).
+            self.owner
+                .close(&session)
+                .await
+                .map_err(|e| RequestError::new(e.to_string()))?;
+            self.interactions.close_session(&session, &reason);
+            self.session_overrides.clear_live_mode(&session);
+        }
+        let mut result = pilotdeck_protocol::JsObject::new();
+        result.insert("reloaded".into(), JsValue::Bool(true));
+        result.insert(
+            "changed".into(),
+            JsValue::Array(
+                changed
+                    .into_iter()
+                    .map(|name| JsValue::String(name.into()))
+                    .collect(),
+            ),
+        );
+        Ok(JsValue::Object(result))
     }
 }
