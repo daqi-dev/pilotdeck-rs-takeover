@@ -60,6 +60,26 @@ const fillEvent = (v, event) => {
   return v;
 };
 
+// ── Rust 二进制不能比源码旧：src/ 下（不含 target/）的 .rs、Cargo.toml、Cargo.lock 有比它新的就拒跑 ──
+// 有 cargo 的依赖清单 <二进制>.d 时，.rs 只看清单里列出的（改测试文件不会让二进制重链）。BBX_ALLOW_STALE=1 跳过。
+if (side === 'rust' && process.env.BBX_ALLOW_STALE !== '1') {
+  const src = process.env.BBX_SRC || path.resolve(TARGET, '../..');
+  const sources = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const p = path.join(dir, e.name);
+    return e.isDirectory() ? (p === path.join(src, 'target') ? [] : sources(p)) : /\.rs$|^Cargo\.(toml|lock)$/.test(e.name) ? [p] : [];
+  });
+  const all = sources(src);
+  for (const bin of ['pilotdeck', 'pilotdeck-agent-loop-sidecar'].map((b) => path.join(TARGET, b)).filter((b) => fs.existsSync(b))) {
+    let deps = null; try { deps = new Set(fs.readFileSync(bin + '.d', 'utf8').split(/(?<!\\)\s+/)); } catch {}
+    const built = fs.statSync(bin).mtimeMs;
+    const newer = all.filter((f) => (!deps || !f.endsWith('.rs') || deps.has(f)) && fs.statSync(f).mtimeMs > built);
+    if (newer.length) {
+      console.error(`bbx: ${bin} is older than ${newer.length} source file(s), e.g. ${newer[0]}; build first (or BBX_ALLOW_STALE=1)`);
+      process.exit(4);
+    }
+  }
+}
+
 // ── 独占：同一时刻只允许一次采集（固定路径和端口的代价） ──
 fs.mkdirSync(path.dirname(ROOT), { recursive: true });
 const lock = path.join(path.dirname(ROOT), 'lock');
