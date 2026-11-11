@@ -1,0 +1,19 @@
+{
+  "name": "hook-async-result",
+  "about": "hook_async_result（异步 hook 在后台跑完后，宿主把它的输出送回进行中的轮次）：不配 hooks 时能走到的路径——缺 sessionKey / invocationId（含全空白）、未知的 invocationId 回 status unknown（无论有没有进行中的轮次）。需要 hooks 配置才能产生挂起的 invocation（delivered / duplicate / expired），Rust 启动时的配置校验拒绝带 hooks 的配置，见报告。",
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Hook run\"}" } },
+    { "name": "busy", "when": ["busy:"], "reply": { "tool": { "id": "call_bbx_b", "name": "bash", "arguments": { "command": "echo needs-permission > made.txt" } } } }
+  ],
+  "steps": [
+    { "ws": "hook_async_result", "params": {} },
+    { "ws": "hook_async_result", "params": { "sessionKey": "s-hook" } },
+    { "ws": "hook_async_result", "params": { "sessionKey": " ", "invocationId": "inv-1" } },
+    { "ws": "hook_async_result", "params": { "sessionKey": "s-hook", "invocationId": "  " } },
+    { "ws": "hook_async_result", "params": { "sessionKey": "s-hook", "invocationId": "inv-unknown", "output": { "additionalContext": "late" } } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-hook", "channelKey": "test", "runId": "run-h", "message": "busy: ask" }, "timeout": 3000, "expectTimeout": true },
+    { "ws": "hook_async_result", "params": { "sessionKey": "s-hook", "invocationId": "inv-unknown", "output": { "additionalContext": "late" } } },
+    { "ws": "hook_async_result", "params": { "sessionKey": "s-hook", "invocationId": "inv-2" } },
+    { "ws": "active_turn_snapshot", "params": { "sessionKey": "s-hook", "includeEvents": false } }
+  ]
+}
