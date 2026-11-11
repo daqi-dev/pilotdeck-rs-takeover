@@ -1,0 +1,74 @@
+{
+  "name": "permission-timeout",
+  "about": "权限询问无人应答：PILOTDECK_PERMISSION_TIMEOUT_MS 到期后按拒绝处理；之后列出待决权限、答复一个不存在的 requestId。",
+  "env": {
+    "PILOTDECK_PERMISSION_TIMEOUT_MS": "400"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Tool run\"}"
+      }
+    },
+    {
+      "name": "turn-1-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "turn-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1",
+          "name": "create_goal",
+          "arguments": {
+            "objective": "nobody answers"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-1: run the tool"
+      },
+      "timeout": 15000
+    },
+    {
+      "ws": "permission_list",
+      "params": {
+        "sessionKey": "s-bbx-1"
+      }
+    },
+    {
+      "ws": "permission_decide",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "requestId": "no-such-request",
+        "decision": "allow"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-bbx-1"
+      }
+    }
+  ]
+}
