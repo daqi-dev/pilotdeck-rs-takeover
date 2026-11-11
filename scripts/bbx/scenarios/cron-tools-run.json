@@ -295,5 +295,9 @@
     {
       "sleep": 300
     }
-  ]
+  ],
+  "volatile": [
+    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages|resultBytes|content-length)$"
+  ],
+  "volatileWhy": "工具结果里带随机的任务 id 和运行 id，token 估算随之变；基线自比已证明"
 }
