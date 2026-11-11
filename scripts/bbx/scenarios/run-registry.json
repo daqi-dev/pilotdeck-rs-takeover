@@ -1,0 +1,69 @@
+{
+  "name": "run-registry",
+  "about": "运行记录 runs/registry.json：run_get / run_events / run_reattach 的命中、未命中、游标与上限校验、gap；同 runId 重复提交（同参数重放、不同参数冲突）；轮次进行中断开连接、重连后 run_reattach / run_events 的状态与落盘。",
+  "provider": [
+    {
+      "name": "title",
+      "when": ["Generate a concise title"],
+      "reply": { "text": "{\"title\": \"Run registry\"}" }
+    },
+    {
+      "name": "turn-2-after-tool",
+      "when": ["turn-2:", "\"tool_call_id\":\"call_bbx_2\""],
+      "reply": { "text": "Done 2." }
+    },
+    {
+      "name": "turn-2",
+      "when": ["turn-2:"],
+      "reply": { "tool": { "id": "call_bbx_2", "name": "bash", "arguments": { "command": "sleep 2; echo slept-2" } } }
+    },
+    {
+      "name": "turn-1",
+      "when": ["turn-1:"],
+      "reply": { "text": "Done 1." }
+    }
+  ],
+  "steps": [
+    { "ws": "run_get", "params": { "sessionKey": "s-bbx-1", "runId": "run-bbx-1" } },
+    { "ws": "run_events", "params": { "sessionKey": "s-bbx-1", "runId": "run-bbx-1" } },
+    { "ws": "run_reattach", "params": { "sessionKey": "s-bbx-1", "runId": "run-bbx-1" } },
+    {
+      "ws": "submit_turn",
+      "params": { "sessionKey": "s-bbx-1", "channelKey": "test", "runId": "run-bbx-1", "message": "turn-1: hello" },
+      "timeout": 20000
+    },
+    { "ws": "run_get", "params": { "sessionKey": "s-bbx-1", "runId": "run-bbx-1" } },
+    { "ws": "run_reattach", "params": { "sessionKey": "s-bbx-1", "runId": "run-bbx-1" } },
+    { "ws": "run_events", "params": { "sessionKey": "s-bbx-1", "runId": "run-bbx-1" } },
+    { "ws": "run_events", "params": { "sessionKey": "s-bbx-1", "runId": "run-bbx-1", "afterSeq": 2, "limit": 2 } },
+    { "ws": "run_events", "params": { "sessionKey": "s-bbx-1", "runId": "run-bbx-1", "afterSeq": 999 } },
+    { "ws": "run_events", "params": { "sessionKey": "s-bbx-1", "runId": "run-bbx-1", "afterSeq": -1 } },
+    { "ws": "run_events", "params": { "sessionKey": "s-bbx-1", "runId": "run-bbx-1", "limit": 0 } },
+    { "ws": "run_events", "params": { "sessionKey": "s-bbx-1", "runId": "run-bbx-1", "limit": 501 } },
+    { "ws": "run_get", "params": { "sessionKey": "s-bbx-1", "runId": "run-bbx-1", "projectKey": "{PROJECT}" } },
+    {
+      "ws": "submit_turn",
+      "params": { "sessionKey": "s-bbx-1", "channelKey": "test", "runId": "run-bbx-1", "message": "turn-1: hello" },
+      "timeout": 20000
+    },
+    {
+      "ws": "submit_turn",
+      "params": { "sessionKey": "s-bbx-1", "channelKey": "test", "runId": "run-bbx-1", "message": "turn-1: something else" },
+      "timeout": 20000
+    },
+    { "ws": "set_permission_mode", "params": { "sessionKey": "s-bbx-1", "mode": "bypassPermissions" } },
+    {
+      "ws": "submit_turn",
+      "params": { "sessionKey": "s-bbx-1", "channelKey": "test", "runId": "run-bbx-2", "message": "turn-2: sleep" },
+      "timeout": 800,
+      "expectTimeout": true
+    },
+    { "disconnect": true },
+    { "sleep": 3000 },
+    { "connect": true },
+    { "ws": "run_reattach", "params": { "sessionKey": "s-bbx-1", "runId": "run-bbx-2" } },
+    { "ws": "run_events", "params": { "sessionKey": "s-bbx-1", "runId": "run-bbx-2" } },
+    { "ws": "active_turn_snapshot", "params": { "sessionKey": "s-bbx-1" } },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-bbx-1" } }
+  ]
+}

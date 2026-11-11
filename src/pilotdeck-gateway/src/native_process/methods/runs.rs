@@ -99,12 +99,12 @@ impl Requests {
                 if method == "run_reattach" {
                     read::run_reattach(Some(registry), &run)
                         .await
-                        .map(|v| v.unwrap_or(JsValue::Null))
+                        .map(|v| v.unwrap_or(JsValue::Undefined))
                         .map_err(read_error)
                 } else {
                     read::run_get(Some(registry), &run)
                         .await
-                        .map(|v| v.unwrap_or(JsValue::Null))
+                        .map(|v| v.unwrap_or(JsValue::Undefined))
                         .map_err(read_error)
                 }
             }
