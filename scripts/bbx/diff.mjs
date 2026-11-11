@@ -11,7 +11,8 @@
 //   4. 进程号          → <pid>（键名为 pid / ownerPid 的整数；以及 Node 警告行前缀 "(node:1234)"）
 //   5. requestFingerprint → <fingerprint>（键名为 requestFingerprint 的字符串；会话里已有历史时，
 //                        基线两次发出的请求体逐字节相同，这个值仍然不同）
-//   6. 耗时            → 键名为 duration_ms / duration_seconds 的数值，以及文本里 "duration_seconds: 0.02" 的数值，
+//   6. 耗时            → 键名为 duration_ms / duration_seconds / durationMs 的数值，以及文本里
+//                        "duration_seconds: 0.02"、"durationMs":12 的数值，
 //                        记成 <dur>。小数位数不比：基线把秒数取整到两位后按 JS 数字打印，0.10 会印成 0.1，
 //                        位数本身逐次不同。取整和打印的写法由 Rust 侧单元测试负责
 //   7. 基线 execute_code 的两处随机路径段：mkdtemp 目录 pilotdeck_execute_code_XXXXXX 的随机后缀 → <tmp>，
@@ -45,7 +46,7 @@ export const ACCEPTED = {
     (s) => s.replace(/^\(node:<pid>\) ExperimentalWarning: .*\n\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)\n/gm, '')],
 };
 const PID_KEYS = ['pid', 'ownerPid'];
-const DURATION_KEYS = ['duration_ms', 'duration_seconds'];
+const DURATION_KEYS = ['duration_ms', 'duration_seconds', 'durationMs'];
 const dur = () => '<dur>';
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const ISO = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g;
@@ -59,6 +60,7 @@ function normalizer() {
   }).replace(ISO, '<iso>').replace(/\(node:\d+\)/g, '(node:<pid>)')
     .replace(/pilotdeck_execute_code_[A-Za-z0-9]{6}/g, 'pilotdeck_execute_code_<tmp>')
     .replace(/(pilotdeck-tool-output\/)\d+\//g, '$1<pid>/')
+    .replace(/("durationMs":\s?)\d+/g, '$1<dur>')
     .replace(/(duration_seconds: )(\d+(?:\.\d+)?)/g, (_, k, n) => k + dur(n));
   const walk = (v) => {
     if (typeof v === 'string') return Object.values(ACCEPTED).reduce((s, [, apply]) => apply(s), text(v));
