@@ -53,6 +53,7 @@ mod switch_wiring;
 #[cfg(test)]
 mod switch_wiring_tests;
 pub use session_overrides::SessionOverrides;
+mod subagents;
 mod tools;
 // #1433: the session MCP tool composition (SessionMcpRuntimeBundle) behind
 // the turn registry — public so the integration test drives the production

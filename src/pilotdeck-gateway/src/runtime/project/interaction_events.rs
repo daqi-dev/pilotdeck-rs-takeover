@@ -100,6 +100,29 @@ impl InteractionEvents {
         )
     }
 
+    /// An event raised on behalf of a subagent, for the current run of the
+    /// session that forked it. The baseline hands a child's loop and tool
+    /// runtime the parent's own `eventEmitter` (`SubagentRuntimeComposition`,
+    /// `SubAgentSession.forwardActivity`), so the child's tool lifecycle
+    /// events carry the child's session id and still land in the parent's
+    /// buffer. Only the buffer is chosen by `parent_session`; the event is
+    /// kept as raised. Without a current run for the parent it is refused.
+    pub fn emit_forked(&self, parent_session: &JsString, event: JsObject) -> Result<(), HostError> {
+        let generation = lock(&self.state);
+        if generation.closed {
+            return Err(closed());
+        }
+        let Some(turn) = generation.turns.get(parent_session).cloned() else {
+            return Err(
+                ModuleError::new("Sidecar host event does not match the active turn.").into(),
+            );
+        };
+        let mut turn = lock(&turn);
+        check(&generation, &turn)?;
+        turn.events.push(event);
+        Ok(())
+    }
+
     /// Repeated close is harmless; clearing all retained buffers occurs once.
     pub fn close(&self) {
         let mut state = lock(&self.state);

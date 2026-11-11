@@ -93,6 +93,8 @@ pub struct LiveSessionAdapter {
     permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
     /// See [`Self::as_in_process_loop`].
     in_process_loop: bool,
+    /// See [`Self::as_sidechain`].
+    sidechain: bool,
     tail: Option<Arc<super::runner::tail::SessionTail>>,
     recorder: Arc<Recorder>,
     history: Arc<dyn Fn() -> Vec<JsValue> + Send + Sync>,
@@ -138,6 +140,7 @@ impl LiveSessionAdapter {
             agent_config: None,
             permission_mode_source: None,
             in_process_loop: false,
+            sidechain: false,
             tail: None,
             recorder,
             history: Arc::new(history),
@@ -183,6 +186,16 @@ impl LiveSessionAdapter {
     /// wire keep using the bound module id; only the stamp is left out.
     pub fn as_in_process_loop(mut self) -> Self {
         self.in_process_loop = true;
+        self
+    }
+
+    /// The session is a forked subagent's sidechain. The baseline runs such
+    /// a child loop without a turn runner (`SubAgentSession.runNative`), so
+    /// its transcript holds the loop's own records and durable messages but
+    /// no agent status messages — neither the loop's statuses nor the
+    /// runner's visible-failure status.
+    pub fn as_sidechain(mut self) -> Self {
+        self.sidechain = true;
         self
     }
 
@@ -253,6 +266,7 @@ impl LiveSessionAdapter {
             agent_config: None,
             permission_mode_source: None,
             in_process_loop: false,
+            sidechain: false,
             tail: None,
             recorder,
             history: Arc::new(history),
@@ -409,6 +423,7 @@ impl LiveSession for LiveSessionAdapter {
         let identity = request.identity.clone();
         let tail = self.tail.clone();
         let tail_options = options.clone();
+        let sidechain = self.sidechain;
         // Shared between the host-side validation hook (every received event)
         // and finish()'s second, contradiction-only check; see StreamHandler.
         let integrity = Arc::new(StreamIntegrity::new());
@@ -458,6 +473,7 @@ impl LiveSession for LiveSessionAdapter {
                     request.identity.turn_id.clone(),
                 )
                 .with_session_steer(session_steer)
+                .with_status_records(!sidechain)
                 .with_interaction_events(interaction_events)
                 .with_prompt_hooks(if crate::mutants::on("prompt-wiring") {
                     None

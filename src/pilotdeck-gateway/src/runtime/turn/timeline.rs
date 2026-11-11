@@ -502,6 +502,19 @@ pub(crate) fn project(
     if is_kind(event, "type", "subagent_model_event") {
         return;
     }
+    // The rest of a forked subagent's forwarded activity
+    // (`SubAgentSession.forwardActivity`: its assistant blocks, compaction
+    // brackets and tool results) carries the child's coordinates too. The
+    // baseline's in-process loop yields these as raised
+    // (`AgentLoop.drainToolEventBufferForSubagentStatus`); only its sidecar
+    // client strips them. An unbound module is the in-process loop.
+    if module.is_none()
+        && event.get("subagentId").is_some()
+        && (is_kind(event, "type", "agent_status")
+            || is_kind(event, "type", "subagent_tool_result"))
+    {
+        return;
+    }
     let mut owned = without_key(
         &without_key(&strip_child_timeline(event), "timeline"),
         "streamBoundary",
