@@ -32,14 +32,14 @@
 
 - 改完代码：`(cd src && cargo build -p pilotdeck-gateway -p pilotdeck-transport -p pilotdeck-cli) && node scripts/bbx/check.mjs`
 - 新场景先跑 `--self`（基线自比）确认稳定。
-- 负控记录：2026-11-10 把 `native_process/methods/tools.rs` 里 `background_task_stop` 的 `sessionKey is required.` 改一个字母，`survey-empty-params` 从 181 变 182 并指出该处，还原后回 181。注入点必须先确认在被调用路径上。
+- 注入错误检查的记录：2026-11-10 把 `native_process/methods/tools.rs` 里 `background_task_stop` 的 `sessionKey is required.` 改一个字母，`survey-empty-params` 从 181 变 182 并指出该处，还原后回 181。注入点必须先确认在被调用路径上。
 
 ## 正在做
 
 **M1 最小闭环**，分三块：
 
 1. 入口：已提交（`pilotdeck server` 与基线同参数；Linux CI 全绿）。
-2. 多项目宿主与落盘布局：已提交。规则集中在 `native_process/projects.rs`：运行时路由是纯词法 `resolve(projectKey ?? pilot home)`；对话准入要求项目已登记（`projects/<id>/.cwd`），pilot home 免登记；gateway 自己从不登记项目。负控：把缺省项目改成 cwd，`turn-text` 报出 `sessions[0].cwd` 和 4 条落盘路径差异。
+2. 多项目宿主与落盘布局：已提交。规则集中在 `native_process/projects.rs`：运行时路由是纯词法 `resolve(projectKey ?? pilot home)`；对话准入要求项目已登记（`projects/<id>/.cwd`），pilot home 免登记；gateway 自己从不登记项目。注入错误检查：把缺省项目改成 cwd，`turn-text` 报出 `sessions[0].cwd` 和 4 条落盘路径差异。
 3. 发给 provider 的请求与会话记录：权限询问（`permission_request` / `permission_decide`、`ask_user_question`、写工具文件历史）、工具 `agent`（一次性子代理运行时，`agent.subagents` 配置生效）、`execute_code` 都已合并。`turn-text` 到 SAME 只差 `subagent`、`send_message` 两个工具。`execute_code` 次任务的子代理（验证 `bash` / `write_file` / `edit_file` / `task_*` / `web_fetch` 的执行行为，修溢出文件位置）因额度中断，改动在它的 worktree 里，恢复后要先同步主线。
 4. 三个分支合并后、M1 收尾前：Rust 风险审查（见「剩余工作估算」）。
 5. 尺子复核（2026-11-11，Fable）：已看过 Opus 期间加的两类归一化。随机路径段的规则只认两个固定前缀，`tool-execute-code-truncate` 里两侧溢出路径的真实差异仍被报出。耗时原先保留小数位数，但基线 0.10 会印成 0.1，位数逐次不同，会让自比偶发不稳，已改为整体记成 `<dur>`；耗时的取整与打印格式 bbx 不比，`execute_code` 目前没有专门的单元测试盯这一点，待补。
@@ -80,7 +80,7 @@ M1 之后要回头处理的（入口那块发现的）：
 
 | 范围 | 已完成 | 剩余 | 主要风险 | 估计 | 把握 |
 |---|---|---|---|---|---|
-| M1+M3 一轮对话与工具回路（进行中） | 入口 6 场景 SAME；多项目；请求头、能力列表、会话记录、投影、读模型；内置插件与 MCP；24/28 工具（含 `execute_code`） | 子代理运行时 3 个工具；权限询问分支收尾合并；文件历史快照记录（`file_snapshot_recorded`）；工具输出溢出文件路径；`bash` / 写改文件 / `web_fetch` / `task_*` 执行行为；全量摘要压缩；`scripts/parity` 53 场景重跑与负控 | 子代理运行时规模未知；基线耗时字段让工具场景自比不稳，需要先定尺子怎么处理 | 8–12 轮，3–4 窗口 | 中（有实测速度，子代理运行时是推测） |
+| M1+M3 一轮对话与工具回路（进行中） | 入口 6 场景 SAME；多项目；请求头、能力列表、会话记录、投影、读模型；内置插件与 MCP；24/28 工具（含 `execute_code`） | 子代理运行时 3 个工具；权限询问分支收尾合并；文件历史快照记录（`file_snapshot_recorded`）；工具输出溢出文件路径；`bash` / 写改文件 / `web_fetch` / `task_*` 执行行为；全量摘要压缩；`scripts/parity` 53 场景重跑与注入错误检查 | 子代理运行时规模未知；基线耗时字段让工具场景自比不稳，需要先定尺子怎么处理 | 8–12 轮，3–4 窗口 | 中（有实测速度，子代理运行时是推测） |
 | Rust 风险审查（人 2026-11-11 同意） | — | 只审接手以来新写和新接线的代码（`git diff 9c0c5f9b8..HEAD`）：安全（`execute_code` 子进程与沙箱、权限询问放行、路径检查）、并发与资源（每会话 sidecar 泄漏、落盘前等 2 秒、冷 / 热标志、会话锁）、超时 / 断连 / 重启恢复。审查者只拿代码和基线对应位置，不看实现动机。放在本轮三个分支合并之后、M1 收尾之前 | 不用旧流水线的 `pdrs-review`（人 2026-11-11 明确：旧流程工具是噪声来源）。做法：每类风险一个普通子代理，每条发现必须附可复现证据（失败的测试、复现命令或对拍场景），只有观点没有复现的不进修复清单；由我逐条复现后再修 | 审 1–2 轮 + 修 1–2 轮，约 1 窗口 | 中 |
 | M2 会话域 | 列出、读、改名、打标、删除、关闭、读模型 | `export_session_transcript`、`restore_session_transcript`、`fork_session`、`replace_last_turn`、`finalize_last_turn_replacement`；多轮续接与重启恢复场景 | 归档格式要和基线字节一致 | 2–3 轮，约 1 窗口 | 中 |
 | M4 其余 method 族 | 空参数普查 101 个 method 里 82 个一致 | 空参数仍不一致的 19 个（`submit_turn`、`run_get`、`run_reattach`、`sop_*`、`record_agent_status_message`、`project_files_list` / `project_file_read`、`apply_flag_settings`、`update_settings`、`reload_output_styles`、`always_on_*` 三个及 M2 那 5 个）；其余族的正常路径只验证过空参数：设置与热重载、模型目录、MCP 四控、skills、cron、上传、快照、memory、后台任务、steer / interaction；server 启动流程缺口（全局代理、渠道、公共审批路由、`router/events.jsonl`、遥测、停机时有客户端连着） | 各族正常路径没有场景，实际差异量未知 | 8–14 轮，3–5 窗口 | 低（推测） |
@@ -94,11 +94,11 @@ M1 之后要回头处理的（入口那块发现的）：
 
 ## 之后
 
-M2 会话域 → M3 工具回路（同时重跑 `scripts/parity` 的 53 场景并做负控）→ M4 其余 method 族 → M5 gateway HTTP → M6 CLI → M7 退役（删代理模式、删未接线代码、原版 `ui/server` 接 Rust gateway 实测）。完整计划和盘点见 `_tmp/20261110-inventory/REPORT.md`（不入库；丢了就按本文件重做盘点的相应部分）。
+M2 会话域 → M3 工具回路（同时重跑 `scripts/parity` 的 53 场景并先做注入错误检查）→ M4 其余 method 族 → M5 gateway HTTP → M6 CLI → M7 退役（删代理模式、删未接线代码、原版 `ui/server` 接 Rust gateway 实测）。完整计划和盘点见 `_tmp/20261110-inventory/REPORT.md`（不入库；丢了就按本文件重做盘点的相应部分）。
 
 ## 原仓库的新提交与 PR（2026-11-11 查看）
 
-原仓库 `main` 在分叉后又合并了 134 个提交，另有 34 个未合并 PR，几乎都是旧流程的守卫、负控、账本和评审轮次，验收依据是证明不了 native 实现的 `gateway-parity`。不合并、不派子代理跟踪。做到对应模块时只读查一下它在该模块产品代码上的改动（`git fetch origin` 后 `git log origin/main -- <路径>`），有用就读懂后自己实现、用 bbx 验证。可能有参考价值的 PR：#2862（`export/restore_session_transcript`）、#2902（hooks 注册接线）、#2965（飞书 / 微信并发），以及 `main` 上 Slack 渠道约 770 行改动。不合入的：#2957（比基线更严，改变对外行为）、#2786（+222 万行草稿）。
+原仓库 `main` 在分叉后又合并了 134 个提交，另有 34 个未合并 PR，几乎都是旧流程的守卫、注入错误检查、账本和评审轮次，验收依据是证明不了 native 实现的 `gateway-parity`。不合并、不派子代理跟踪。做到对应模块时只读查一下它在该模块产品代码上的改动（`git fetch origin` 后 `git log origin/main -- <路径>`），有用就读懂后自己实现、用 bbx 验证。可能有参考价值的 PR：#2862（`export/restore_session_transcript`）、#2902（hooks 注册接线）、#2965（飞书 / 微信并发），以及 `main` 上 Slack 渠道约 770 行改动。不合入的：#2957（比基线更严，改变对外行为）、#2786（+222 万行草稿）。
 
 ## 人已定
 
@@ -120,9 +120,9 @@ M2 会话域 → M3 工具回路（同时重跑 `scripts/parity` 的 53 场景�
 | 2026-11-11 | bbx 比较器：带名字的数组按名字对齐；`requestFingerprint` 归一化；场景可登记带原因的 `accepted` | 少一个工具不再表现为后面全部错位（`turn-text` 544 → 55，差异没有消失）；指纹在请求体逐字节相同时基线自比也不同；已接受差异需要一个每次打印的登记处 |
 | 2026-11-11 | Rust 新增环境变量 `PILOTDECK_BUNDLED_PLUGINS_DIR` | 基线的内置插件目录由安装位置决定，Rust 需要自己的打包布局；bbx 用它让 Rust 指向基线那份 |
 | 2026-11-11 | bbx 比较器加两类归一化：耗时（`duration_ms` / `duration_seconds` 的数值，保留小数位数）；基线 `execute_code` 的 mkdtemp 随机后缀和溢出目录里的进程号（只认这两个固定前缀） | 基线自比也不稳；只抹数值或随机段，格式和路径其余部分照比。`tool-execute-code-traceback` 自比仍有约 50 处：随机目录名进了 traceback 文本，token 估算随之差几个；`tool-execute-code` 自比剩 `fileSize` 1 处。这两处还没处理 |
-| 2026-11-11 | 会话 `.jsonl` 里 provider 标题记录的落点不比（人确认：基线多次运行之间本身不一致）。bbx 比较前把它的内容挪到同一轮开头的固定位置，只允许越过循环开头那几类记录；位置字段不动 | 基线自比的不稳只表现为这条记录与相邻记录换位，`sequence` / `entryId` 随位置不变。负控：标题内容改一个字报 1 处；落到 `model_request` 之后报 57 处。原先 3 个不稳的自比结果重算后 SAME |
+| 2026-11-11 | 会话 `.jsonl` 里 provider 标题记录的落点不比（人确认：基线多次运行之间本身不一致）。bbx 比较前把它的内容挪到同一轮开头的固定位置，只允许越过循环开头那几类记录；位置字段不动 | 基线自比的不稳只表现为这条记录与相邻记录换位，`sequence` / `entryId` 随位置不变。注入错误检查：标题内容改一个字报 1 处；落到 `model_request` 之后报 57 处。原先 3 个不稳的自比结果重算后 SAME |
 | 2026-11-11 | 关掉 Rust 里模仿标题落点的补丁（`park_title_record: false`） | 上一条之后不再需要；关掉后 `turn-text`、`project-default`、`read-messages-paging`、`tool-todo-write` 过滤后剩余仍为 0。`Recorder::park` 及进程级冷热标志的代码待删 |
-| 2026-11-10 | `scripts/parity`、`scripts/cli-parity` 暂留，用到时先做负控 | 静态看是真对拍，但我没跑过 |
+| 2026-11-10 | `scripts/parity`、`scripts/cli-parity` 暂留，用到时先做注入错误检查 | 静态看是真对拍，但我没跑过 |
 
 ## 停用的旧闸门
 

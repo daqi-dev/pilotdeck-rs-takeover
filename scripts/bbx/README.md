@@ -11,7 +11,7 @@
 - **失败不算一致**：启动失败、步骤超时（含被采集器杀掉的 `cli` / `serve`、`disconnect` 等不到关闭）、连不上、停机等不到退出，都记进产物的 `failures`。只要有未声明为预期的失败，`check.mjs` 就判 `INVALID`，两侧失败得一模一样也不行。
 - **二进制是新的**：跑 Rust 侧之前，`run.mjs` 检查 `src/target/debug/pilotdeck`（和 `pilotdeck-agent-loop-sidecar`）不比 `src/` 下（不含 `target/`）的 `Cargo.toml`、`Cargo.lock` 和它依赖的 `.rs`（cargo 依赖清单 `<二进制>.d` 里列的；没有清单就看全部 `.rs`）旧，旧了拒跑。`BBX_ALLOW_STALE=1` 跳过，`BBX_SRC` 可指定源码目录（默认 `BBX_TARGET` 往上两级）。
 - **自检**：`check.mjs --self` 让基线跑两次互相比。必须 SAME，否则该场景不稳定，结论不能用。
-- **能抓错**：见下面「负控」。
+- **能抓错**：见下面「注入错误检查」。
 
 总共三个脚本、不到 700 行，没有依赖。
 
@@ -67,7 +67,7 @@ node scripts/bbx/diff.mjs /tmp/a.json /tmp/b.json          # 两份基线互比�
 
 字符串里可用 `{ROOT}` `{HOME}` `{PILOT_HOME}` `{PROJECT}` `{MOCK}` `{GATEWAY}` `{TOKEN}`。
 
-## 负控
+## 注入错误检查
 
 改动 `diff.mjs`、`run.mjs` 或者怀疑尺子失灵时，做一次：在 Rust 产品代码里故意改坏一处对外输出（例如把某个错误码的字符串改一个字母），重新构建，跑对应场景，确认 `DIFF` 里出现这一处；然后还原。记录见 `state/takeover.md`。
 
