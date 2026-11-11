@@ -3304,32 +3304,28 @@ mod tests {
         teardown(&r).await;
     }
 
-    /// #1457 fix-r1 (P0): `session_model_set` and `record_agent_status_message`
-    /// each build a fresh `JsonlTranscriptStore`, restore the tail, and append
-    /// `sequence + 1`.
-    /// Racing them on one session must still leave a log the next `restore()`
-    /// accepts: strictly increasing sequences, no duplicate. (The second
-    /// writer used to be `rename_session`; the baseline's rename starts its
-    /// own chain at `sequence: 1` and is no longer part of this invariant.)
+    /// #1457 fix-r1 (P0): `session_model_set` and `rename_session` each build a
+    /// fresh `JsonlTranscriptStore`, restore the tail, and append
+    /// `sequence + 1`. Racing them on one session must still leave a log the
+    /// next `restore()` accepts: strictly increasing sequences, no duplicate.
     #[tokio::test]
     async fn concurrent_transcript_writers_keep_the_chain_loadable() {
         let (_scratch, r) = setup_fixture();
         let session = "cfg-race-1";
         // Eight rounds: a single unlucky ordering must not be able to make the
         // race invisible, and the fences must hold for the whole run.
-        for _ in 0..8 {
+        for round in 0..8 {
             let set_params = object([
                 ("sessionKey", session.into()),
                 ("selection", selection("model", "test", "test")),
             ]);
-            let status_params = object([
+            let rename_params = object([
                 ("sessionKey", session.into()),
-                ("turnId", "status-race".into()),
-                ("status", JsValue::Undefined),
+                ("value", JsValue::String(format!("round-{round}").into())),
             ]);
             let (written, renamed) = tokio::join!(
                 r.session_model_request_keyed("session_model_set".into(), set_params),
-                r.session_dir_request("record_agent_status_message".into(), status_params),
+                r.session_dir_request("rename_session".into(), rename_params),
             );
             // The requests succeed only if each append claimed the next number
             // under the fence, so a lost fence shows up here as the store's
@@ -3337,9 +3333,7 @@ mod tests {
             // controls bind to `#1457 transcript sequences strictly increase`,
             // and this is one of the sites where that invariant breaks first).
             written.expect("#1457 transcript sequences strictly increase (session_model_set)");
-            renamed.expect(
-                "#1457 transcript sequences strictly increase (record_agent_status_message)",
-            );
+            renamed.expect("#1457 transcript sequences strictly increase (rename_session)");
         }
         let entries = transcript_entries(&r, session);
         let sequences: Vec<f64> = entries

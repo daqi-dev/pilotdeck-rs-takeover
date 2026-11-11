@@ -169,6 +169,15 @@ mutations = [
      '        let write_fence = ();',
      CFG + 'concurrent_transcript_writers_keep_the_chain_loadable',
      '#1457 transcript sequences strictly increase'),
+    ('transcript-fence-removed-rename', SESSION_DIR,
+     '        let fence_path =\n'
+     '            transcript_locks::session_transcript_path(&self.options.home, &project_root, &key);\n'
+     '        let write_fence = transcript_locks::acquire(&fence_path).await?;',
+     '        let fence_path =\n'
+     '            transcript_locks::session_transcript_path(&self.options.home, &project_root, &key);\n'
+     '        let write_fence = ();',
+     CFG + 'concurrent_transcript_writers_keep_the_chain_loadable',
+     '#1457 transcript sequences strictly increase'),
     # ── fix-r2 P0: a loaded session must be written *through* its recorder.
     # Bypassing the lookup sends the entry to a fresh writer on the same tail;
     # the loaded writer's next append then duplicates `sequence + 1` and the
@@ -182,18 +191,12 @@ mutations = [
      ' std::sync::Arc<crate::storage::recorder::Recorder>)>',
      CFG + 'model_set_appends_through_the_loaded_writer',
      '#1457 the transcript still loads'),
-    # 2026-11-10 (dev/takeover, session read model): `rename_session` and
-    # `tag_session` no longer take part in the single-writer protocol. The
-    # baseline records them through a fresh, never-restored writer
-    # (createLocalGateway.ts:1116-1140), so each record is `sequence: 1` with
-    # a null parent whatever the transcript holds. The four rows that mutated
-    # the rename leg of the protocol (`transcript-fence-removed-rename`,
-    # `transcript-live-bypass-rename`, `transcript-cold-lease-skipped`,
-    # `rename-checked-append-reverted`) were removed with the code they
-    # anchored on; the status and model-selection legs keep theirs. The rename
-    # behaviour is pinned against the baseline by scripts/bbx (project-keys,
-    # read-messages-after-rename) and by
-    # `rename_and_tag_start_their_own_chain_like_the_baseline`.
+    ('transcript-live-bypass-rename', SESSION_DIR,
+     '                    super::super::assembly::live_recorder(&recorders, &key_clone)',
+     '                    None::<(pilotdeck_protocol::JsString,'
+     ' std::sync::Arc<crate::storage::recorder::Recorder>)>',
+     DIR + 'rename_appends_through_the_loaded_writer',
+     '#1457 the transcript still loads'),
     # ── fix-r3: the status live branch and the cold writer lease.
     ('transcript-live-bypass-status', SESSION_DIR,
      '                    super::super::assembly::live_recorder(&recorders, &session_key)',
@@ -224,6 +227,13 @@ mutations = [
     # caller's busy answer the skipped lease took away. Skipping the lease
     # lets the cold append run beside the holder and the bound expect_err
     # dies on a success.
+    ('transcript-cold-lease-skipped', TRANSCRIPT_LOCKS,
+     '    let Some(_lease) = cold_write_lease(&storage.transcript_path)? else {\n'
+     '        // A session claimed the transcript between the lookup and here.',
+     '    let Some(_lease) = Ok::<_, RequestError>(Some::<()>(()))? else {\n'
+     '        // A session claimed the transcript between the lookup and here.',
+     DIR + 'cold_metadata_write_reports_busy_while_a_session_holds_the_lease',
+     '#1457 a cold append must not run beside a session that owns the writer'),
     ('transcript-cold-lease-skipped-status', TRANSCRIPT_LOCKS,
      '    let Some(_lease) = cold_write_lease(&storage.transcript_path)? else {\n'
      '        // A session claimed the transcript between the lookup and here.',
@@ -247,6 +257,11 @@ mutations = [
      '                    .record_session_metadata(&key, &turn, entry.clone())',
      CFG + 'model_set_reports_a_closed_writer_as_an_error',
      '#1874 a closed session writer is an error, not a silent save'),
+    ('rename-checked-append-reverted', SESSION_DIR,
+     '                    .record_session_metadata_checked(&key_clone, &turn_id, entry.clone())',
+     '                    .record_session_metadata(&key_clone, &turn_id, entry.clone())',
+     DIR + 'rename_reports_a_closed_writer_as_an_error',
+     '#1874 a closed session writer is an error, not a silent rename'),
     ('status-checked-append-reverted', SESSION_DIR,
      '                    .record_agent_status_message_checked(&session_key, &turn_id, &status)',
      '                    .record_agent_status_message(&session_key, &turn_id, &status)',
@@ -796,9 +811,11 @@ LITERAL_ANCHORS = [
     (CONFIG, '#1864 the style content joins the existing prompt'),
     (CONFIG, '#1864 the list echoes the stored selection for the session'),
     (SESSION_DIR, '#1457 the transcript still loads'),
+    (SESSION_DIR, '#1457 a cold append must not run beside a session that owns the writer'),
     (SESSION_DIR, '#1873 a cold status append must not run beside a session that owns the writer'),
     (CONFIG, '#1874 a cold model-set append must not run beside a session that owns the writer'),
     (CONFIG, '#1874 a closed session writer is an error, not a silent save'),
+    (SESSION_DIR, '#1874 a closed session writer is an error, not a silent rename'),
     (SESSION_DIR, '#1874 a closed session writer is an error, not a recorded status'),
     (SESSION_DIR, '#1873 a broken lock file is a storage error, not the retryable busy answer'),
     (SESSION_DIR, '#1455 resume_session rejects the blank key'),
