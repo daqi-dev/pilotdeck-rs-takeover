@@ -996,6 +996,12 @@ async fn start_assembly(
     let fallback_factory_disposed = factory_disposed.clone();
     let fallback_project_disposed = project_disposed.clone();
     let fallback_observer = cleanup_observer.clone();
+    // `bindServer(server)` (src/cli/pilotdeck.ts:248): the refresh bundle
+    // broadcasts `config_changed` to every authenticated connection of the
+    // gateway server. The set exists before the host so the builder can bind
+    // it; the host registers each accepted connection into it.
+    let connection_broadcast = Arc::new(crate::runtime::connection::ConnectionBroadcast::default());
+    let build_connection_broadcast = connection_broadcast.clone();
     let host = TurnGateway::start_with_cleanup_budget(
         TurnReplayOptions::new(),
         // #1746: the failure path waits out this embedding's own drain budget
@@ -1052,6 +1058,7 @@ async fn start_assembly(
                 &options.project_root,
                 &env,
             )?;
+            settings.bundle.bind_server(build_connection_broadcast);
             // #2294 A7.8: the one automation bundle of the native process —
             // the port of `ProjectAutomationBundle`, which now constructs the
             // one `CronManager` (the #1326 lane's manager behind the bundle's
@@ -1301,6 +1308,7 @@ async fn start_assembly(
     );
     match host {
         Ok(host) => {
+            let host = host.with_connection_broadcast(connection_broadcast);
             // #1328: start config-enabled channels (pilotdeckServer.ts:288-296)
             // once the builder has published the gateway port. #2301: the
             // configured half — `loadEnabledChannels(config.adapters)` — joins

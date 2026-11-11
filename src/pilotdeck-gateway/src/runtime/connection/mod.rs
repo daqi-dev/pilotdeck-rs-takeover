@@ -16,6 +16,46 @@ use std::{
 
 pub type Call<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
+/// The `connections` set of `startGatewayServer` and its
+/// `broadcastNotification` (gateway/server/GatewayServer.ts:62-84): every
+/// accepted connection, in accept order, each of which forwards the
+/// notification only once it is authenticated
+/// (`GatewayWsConnection.sendNotification`). The baseline removes a
+/// connection when its socket closes; here an entry lives as long as the
+/// connection object does and is dropped on the next registration or
+/// broadcast after that.
+#[derive(Default)]
+pub struct ConnectionBroadcast {
+    connections: Mutex<Vec<std::sync::Weak<GatewayConnection>>>,
+}
+impl ConnectionBroadcast {
+    pub fn register(&self, connection: &Arc<GatewayConnection>) {
+        let mut connections = self.connections.lock().unwrap();
+        connections.retain(|entry| entry.strong_count() > 0);
+        connections.push(Arc::downgrade(connection));
+    }
+    /// `broadcastNotification(name, payload)`.
+    pub fn broadcast(&self, name: &str, payload: &JsValue) {
+        // Never call a connection's sink under the registry lock.
+        let live: Vec<Arc<GatewayConnection>> = {
+            let mut connections = self.connections.lock().unwrap();
+            connections.retain(|entry| entry.strong_count() > 0);
+            connections
+                .iter()
+                .filter_map(std::sync::Weak::upgrade)
+                .collect()
+        };
+        for connection in live {
+            connection.notify(name, Some(payload.clone()));
+        }
+    }
+}
+impl crate::runtime::refresh::NotificationServer for ConnectionBroadcast {
+    fn broadcast_notification(&self, name: &str, payload: &JsValue) {
+        self.broadcast(name, payload);
+    }
+}
+
 pub trait GatewayTextConnection: Send + Sync {
     fn send_text(&self, message: String);
     fn close(&self, code: u16, reason: &str);

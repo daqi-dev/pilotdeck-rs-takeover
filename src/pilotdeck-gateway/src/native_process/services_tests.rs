@@ -3724,12 +3724,11 @@ fn scratch_store(home: &Path, yaml: &str) -> ConfigStore {
     ConfigStore::new(options).expect("#1320 the scratch store must load")
 }
 
-/// #1320 fix-r1 F2: the production settings composition binds no notification
-/// server — the isolated native process has no server-push channel, so the
-/// bundle's broadcasts are lost (the connection registry is #1669, not built
-/// here). The bound-sever half is the positive control proving the negative
-/// assertion is not vacuous: the seam reports `true` the moment a server is
-/// bound, exactly what the S4 order tests rely on.
+/// #1320 fix-r1 F2: the settings composition itself binds no notification
+/// server (the process assembly binds the gateway's connection set after it,
+/// see `ConnectionBroadcast`). The bound-server half is the positive control
+/// proving the negative assertion is not vacuous: the seam reports `true` the
+/// moment a server is bound, exactly what the S4 order tests rely on.
 #[tokio::test]
 async fn native_settings_production_binds_no_notification_server() {
     let root = std::env::temp_dir().join(format!("pdrs-1320-f2-{}", uuid::Uuid::new_v4()));

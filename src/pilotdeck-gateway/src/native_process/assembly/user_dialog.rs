@@ -11,9 +11,9 @@ pub(super) fn build_user_dialog_bus() -> Arc<Mutex<GatewayUserDialogBus>> {
     // family unreachable in native mode.
     //
     // The observer argument stays `None`: forwarding `user_dialog_changed` is a
-    // separate renderer-broadcast gap (there is no production
-    // `NotificationServer`/`broadcastNotification` in the native process).
-    // Tracked separately; it must not gate availability.
+    // separate renderer-broadcast gap (the process now has a connection set,
+    // `ConnectionBroadcast`, but only the refresh bundle's `config_changed`
+    // is bound to it). Tracked separately; it must not gate availability.
     Arc::new(Mutex::new(GatewayUserDialogBus::connected(
         crate::user_dialog::DialogRuntime::default(),
     )))
