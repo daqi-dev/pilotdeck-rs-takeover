@@ -26,6 +26,9 @@ pub(super) const WIRED_FIELDS: &[&str] = &[
     "planModeInstructions",
     "toolAliases",
     "outputStyle",
+    "permissionMode",
+    "additionalWorkingDirectories",
+    "managedPermissions",
 ];
 
 const INVALID: &str = "INVALID_SDK_SESSION_CONFIG";

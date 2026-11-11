@@ -304,6 +304,69 @@ impl SessionTools {
         })
     }
 
+    /// The SDK adapter's permission inputs (SessionAgentConfigBundle.ts:
+    /// 167-180): `dontAsk` turns prompting off, `acceptEdits` is recorded on
+    /// the context, and `additionalWorkingDirectories` widen the roots the
+    /// context accepts.
+    pub(super) fn with_sdk_permissions(self, config: Option<&JsValue>) -> Self {
+        let Some(config) = config.and_then(JsValue::as_object) else {
+            return self;
+        };
+        let mode = config.get("permissionMode").and_then(JsValue::as_string);
+        {
+            let mut state = self.permission.0.lock().unwrap_or_else(|e| e.into_inner());
+            if mode.is_some_and(|mode| mode.equals_str("dontAsk")) {
+                state.0.can_prompt = false;
+            }
+            state.0.accept_edits = Some(mode.is_some_and(|mode| mode.equals_str("acceptEdits")));
+            // `managedPermissions` (SessionAgentConfigBundle.ts:169-191):
+            // `canPrompt: false` disables prompting as policy, and the deny /
+            // ask entries become `policy` rules ahead of the session's own.
+            if let Some(managed) = config
+                .get("managedPermissions")
+                .and_then(JsValue::as_object)
+            {
+                if managed.get("canPrompt") == Some(&JsValue::Bool(false)) {
+                    state.0.can_prompt = false;
+                    state.0.policy_can_prompt = Some(false);
+                }
+                for (key, behavior) in [("deny", "deny"), ("ask", "ask")] {
+                    let Some(JsValue::Array(entries)) = managed.get(key) else {
+                        continue;
+                    };
+                    let policy: Vec<_> = entries
+                        .iter()
+                        .filter_map(JsValue::as_string)
+                        .map(|entry| {
+                            let mut rule =
+                                crate::runtime::interaction::coordinator::entry_to_rule(entry);
+                            rule.source = "policy".into();
+                            rule.behavior = behavior.into();
+                            rule
+                        })
+                        .collect();
+                    let rules = if key == "deny" {
+                        &mut state.0.rules.deny
+                    } else {
+                        &mut state.0.rules.ask
+                    };
+                    rules.splice(0..0, policy);
+                }
+            }
+            if let Some(JsValue::Array(directories)) = config.get("additionalWorkingDirectories") {
+                for directory in directories.iter().filter_map(JsValue::as_string) {
+                    if !state.0.additional_working_directories.contains(directory) {
+                        state
+                            .0
+                            .additional_working_directories
+                            .push(directory.clone());
+                    }
+                }
+            }
+        }
+        self
+    }
+
     /// The session's user-dialog tools (ProjectSessionRuntimeBundle.ts:
     /// 328-338), bound to its gateway user-dialog channel.
     pub(super) fn with_user_dialog(
@@ -1086,8 +1149,20 @@ impl PermissionDecision for Permissions {
         }
         // The session rule set is live: a remembered approval or a session
         // grant applies to the very next decision.
+        // The SDK's `policy` rules stay ahead of it (SessionAgentConfigBundle
+        // .ts:181-190).
         if let Some(prompt) = &prompt {
+            let policy = |rules: &[crate::config::permission::PermissionRule]| {
+                rules
+                    .iter()
+                    .filter(|rule| rule.source.equals_str("policy"))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            };
+            let (deny, ask) = (policy(&context.rules.deny), policy(&context.rules.ask));
             context.rules = prompt.rules.snapshot();
+            context.rules.deny.splice(0..0, deny);
+            context.rules.ask.splice(0..0, ask);
         }
         Box::pin(async move {
             let decision = permission::decide(

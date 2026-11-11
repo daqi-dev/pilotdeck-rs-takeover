@@ -201,7 +201,7 @@ impl GatewayInteractionCoordinator {
 
 // settings.ts:75-84,100-113: only the pure entry conversion is used. No settings
 // file is read and no new persistence owner is introduced.
-fn entry_to_rule(entry: &JsString) -> PermissionRule {
+pub(crate) fn entry_to_rule(entry: &JsString) -> PermissionRule {
     let trimmed = trim(entry.units());
     let mut normalized = trimmed.to_vec();
     if trimmed.starts_with(&[66, 97, 115, 104, 40])

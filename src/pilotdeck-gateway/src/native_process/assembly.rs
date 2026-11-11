@@ -637,9 +637,8 @@ async fn start_assembly(
                 let stored_thinking = session_overrides.thinking(&context.session_key);
                 // `sdkSessionConfig.userDialogKinds` of the config stored
                 // before this session was created.
-                let user_dialog_kinds = super::sdk_config::user_dialog_kinds(
-                    session_overrides.sdk_config(&context.session_key).as_ref(),
-                );
+                let sdk_config = session_overrides.sdk_config(&context.session_key);
+                let user_dialog_kinds = super::sdk_config::user_dialog_kinds(sdk_config.as_ref());
                 let stored_style_content =
                     match session_overrides.output_style(&context.session_key) {
                         Some(name) => output_style_content(&staged, &name).await,
@@ -842,6 +841,7 @@ async fn start_assembly(
                             lsp,
                             session_mcp,
                         )?
+                        .with_sdk_permissions(sdk_config.as_ref())
                         .with_permission_mode_source(permission_source.clone())
                         .with_continuation_parent(continuation_parent.parent_ref())
                         .with_permission_prompt(gateway_emit, session_rules, permission_timeout)
