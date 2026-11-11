@@ -92,6 +92,55 @@ pub struct SessionTools {
     events: Option<crate::runtime::project::interaction_events::InteractionEvents>,
     /// `LocalGatewayBootConfig.elicitationTimeoutMs`.
     elicitation_timeout: Duration,
+    /// `SessionFileHistoryBundle`: the session's file-history store behind
+    /// the write tools, recording its snapshots in the transcript.
+    file_history: Arc<crate::storage::file_history::FileHistoryStore>,
+}
+
+/// `SessionFileHistoryBundle.compose`: backups under the session's
+/// `file-history` directory, every recorded snapshot appended to the
+/// transcript, and the store primed from the snapshots already there.
+fn session_file_history(
+    binding: &SessionBinding,
+) -> crate::storage::file_history::FileHistoryStore {
+    use crate::storage::file_history::{FileHistoryError, FileHistoryOptions, FileHistoryStore};
+    // `<chats>/<session>.jsonl` → `<chats>/<session>/file-history`.
+    let backup_dir = binding
+        .recorder
+        .writer()
+        .path()
+        .with_extension("")
+        .join("file-history");
+    let mut options = FileHistoryOptions::new(backup_dir);
+    let recorder = binding.recorder.clone();
+    let session = binding.context.session_key.clone();
+    options.on_snapshot_recorded = Some(Arc::new(move |snapshot, kind| {
+        let turn = snapshot
+            .get("messageId")
+            .and_then(JsValue::as_string)
+            .cloned()
+            .unwrap_or_default();
+        let mut draft = value([
+            ("type", "file_snapshot_recorded".into()),
+            ("snapshotKind", kind.into()),
+        ]);
+        for (key, field) in snapshot.entries() {
+            draft.insert(key.clone(), field.clone());
+        }
+        recorder
+            .writer()
+            .record_session_event(&session, &turn, draft)
+            .map_err(|error| FileHistoryError::Fs(error.to_string()))
+    }));
+    let store = FileHistoryStore::new(options);
+    let mut entries = Vec::new();
+    binding
+        .projection
+        .for_each_entry(|entry| entries.push(entry.clone()));
+    if let Ok(snapshots) = crate::runtime::rewind::snapshot_entries(&entries) {
+        store.replay_from_transcript(&snapshots);
+    }
+    store
 }
 impl SessionTools {
     pub fn new(
@@ -124,6 +173,7 @@ impl SessionTools {
                 ..Default::default()
             });
         let plan_files = Arc::new(crate::runtime::plan_todo::SessionPlanFiles::new(&project));
+        let file_history = Arc::new(session_file_history(&binding));
         Ok(Self {
             project,
             env: env_object(env),
@@ -142,6 +192,7 @@ impl SessionTools {
             goal: Arc::default(),
             plan_files,
             events: None,
+            file_history,
             elicitation_timeout: super::permission_prompt::interaction_timeout(
                 env.get("PILOTDECK_ELICITATION_TIMEOUT_MS")
                     .map(|value| value.as_str()),
@@ -309,6 +360,7 @@ impl SessionTools {
                     },
                 ))) as capability::RuntimeContext
             }),
+            file_history: Some(self.file_history.clone()),
             // `createDurablePermissionAuditRecorder`.
             audit_recorder: Some(Arc::new(crate::runtime::tools::ToolAudit(Arc::new(
                 DurablePermissionAudit {
