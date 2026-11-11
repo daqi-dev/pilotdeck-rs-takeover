@@ -769,6 +769,7 @@ async fn start_assembly(
                                     .or_else(|| session_overrides.permission_mode(&session))
                             })
                         };
+                        let turn_project_root = project_root.clone();
                         let deployment = Deployment::Stdio {
                             command: options.sidecar.to_string_lossy().into_owned(),
                             args: options.sidecar_args.clone(),
@@ -818,6 +819,7 @@ async fn start_assembly(
                             },
                         )
                         .with_agent_config(config)
+                        .for_project(turn_project_root)
                         // #1864 (b): TS re-reads the permission-mode override
                         // on every run (InProcessGateway.ts:1443), so an
                         // already-live session picks the change up without a
