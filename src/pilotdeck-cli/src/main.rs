@@ -1,7 +1,9 @@
 //! `pilotdeck` entry. Dispatch order follows src/cli/pilotdeck.ts main().
 mod chat_search;
 mod config;
+mod gateway_setup;
 pub(crate) mod paths;
+mod probe;
 pub(crate) mod sdk;
 mod server;
 pub(crate) mod skills;
@@ -156,13 +158,13 @@ pub(crate) fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure>
         Some("server") => server::run(argv, env, cwd),
         Some("gateway") => {
             if argv.get(1).map(String::as_str) == Some("setup") {
-                return Err(Failure::Todo("pilotdeck gateway setup"));
+                return gateway_setup::run(&argv[2..], env);
             }
             stderr_line("Usage: pilotdeck gateway setup [feishu|weixin|wecom]");
             Ok(1)
         }
-        Some("cron") => Err(Failure::Todo("pilotdeck cron")),
-        Some("update") => Err(Failure::Todo("pilotdeck update")),
+        Some("cron") => run_cron(env, cwd),
+        Some("update") => run_update(),
         Some("skills") => skills_migrate::run(&argv[1..], env, cwd),
         Some("chat") => chat_search::run(&argv[1..], env, cwd),
         Some("tui") => {
@@ -174,6 +176,46 @@ pub(crate) fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure>
         }
         _ => run_local_cli_channel(env, cwd),
     }
+}
+
+/// handleUpdateCommand (src/cli/pilotdeck.ts:351-360). The updater is the
+/// install's own `scripts/update-web.mjs`, found by walking up from the
+/// running code (findUpdateRoot, src/runtime/updateCommand.ts:6-11). An
+/// install without it fails before anything runs, which is what a Rust build
+/// is: it ships no Git Web updater.
+fn run_update() -> Result<u8, Failure> {
+    let exe = std::env::current_exe()
+        .ok()
+        .map(|exe| std::fs::canonicalize(&exe).unwrap_or(exe));
+    let start = exe.as_deref().and_then(Path::parent);
+    if find_update_root(start).is_some() {
+        // Running it needs the Node runtime the baseline spawns
+        // (`process.execPath`), which a Rust install does not have.
+        return Err(Failure::Todo("pilotdeck update with a Git Web updater"));
+    }
+    stderr_line(
+        "Update failed: This installation does not include the Git Web updater. \
+         Use application settings or update manually.",
+    );
+    Ok(1)
+}
+
+fn find_update_root(start: Option<&Path>) -> Option<&Path> {
+    start?
+        .ancestors()
+        .find(|dir| dir.join("scripts/update-web.mjs").exists())
+}
+
+/// handleCronCommand (src/cli/pilotdeck.ts:362-368): every cron subcommand,
+/// usage errors included, first needs a reachable local server.
+fn run_cron(env: &Env, cwd: &Path) -> Result<u8, Failure> {
+    if probe::probe_gateway_server(env, cwd).is_none() {
+        stderr_line("pilotdeck cron requires a running pilotdeck server.");
+        return Ok(1);
+    }
+    // The probe address is fixed (probeServer.ts:16), so the connected
+    // branch cannot be pointed at an isolated gateway and compared.
+    Err(Failure::Todo("pilotdeck cron against a running server"))
 }
 
 /// createLocalGateway() up to its first observable effects, then CliChannel.
@@ -203,6 +245,24 @@ fn run_local_cli_channel(env: &Env, cwd: &Path) -> Result<u8, Failure> {
 mod tests {
     use super::*;
     use crate::test_negative_receipt::verify;
+
+    /// findUpdateRoot: the nearest ancestor holding scripts/update-web.mjs,
+    /// none when no ancestor has it.
+    #[test]
+    fn update_root_is_the_nearest_ancestor_with_the_updater() {
+        let root = std::env::temp_dir().join(format!("pdrs-update-root-{}", std::process::id()));
+        let deep = root.join("a/b/c");
+        std::fs::create_dir_all(&deep).unwrap();
+        assert_eq!(find_update_root(Some(&deep)), None);
+        std::fs::create_dir_all(root.join("a/scripts")).unwrap();
+        std::fs::write(root.join("a/scripts/update-web.mjs"), "").unwrap();
+        assert_eq!(
+            find_update_root(Some(&deep)),
+            Some(root.join("a").as_path())
+        );
+        assert_eq!(find_update_root(None), None);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     /// #983: the streamed pretty printer must be byte-identical to the
     /// two-String form it replaces, including escapes, lone surrogates,

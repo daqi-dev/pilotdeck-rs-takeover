@@ -354,7 +354,9 @@ impl SubmitHost for GatewaySubmitHost {
                 // `maxTurns` / `maxBudgetUsd: capGatewayTurnLimit(input.x,
                 // turnLimits?.x)` (InProcessGateway.ts:1553-1554): with no
                 // organization turn limits, the client's value as given.
-                for key in ["maxTurns", "maxBudgetUsd"] {
+                // `canPrompt: input.canPrompt, canElicit: input.canElicit`
+                // (InProcessGateway.ts:1563-1564), passed through as given.
+                for key in ["maxTurns", "maxBudgetUsd", "canPrompt", "canElicit"] {
                     if let Some(value) = input
                         .get(key)
                         .filter(|value| !matches!(value, JsValue::Undefined))

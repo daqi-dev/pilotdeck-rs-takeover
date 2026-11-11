@@ -1,0 +1,17 @@
+{
+  "name": "cli-sessions-list",
+  "about": "有会话时 sessions list 的输出（缺省子命令、显式 list + --auth-token）。输出里的 lastModified 是会话文件的 mtime（src/session/storage/SessionList.ts:145），CLI 的 stdout 是文本，比较器不归一化其中的毫秒时间戳，所以基线自比在这两步的 stdout 上必然不同（只差 lastModified）；其余字段照常比较。",
+  "env": {
+    "PILOTDECK_TOKEN": "{TOKEN}"
+  },
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Say hello\"}" } },
+    { "name": "main", "reply": { "text": "Hello from the mock." } }
+  ],
+  "steps": [
+    { "ws": "submit_turn", "params": { "sessionKey": "s-bbx-1", "channelKey": "test", "message": "hello" } },
+    { "sleep": 500 },
+    { "cli": ["sessions"] },
+    { "cli": ["sessions", "list", "--auth-token", "{TOKEN}"], "env": { "PILOTDECK_TOKEN": null } }
+  ]
+}

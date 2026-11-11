@@ -1,0 +1,28 @@
+{
+  "name": "cli-gateway-setup-existing",
+  "about": "gateway setup 读已有配置时的显示：菜单里各平台的已启用 / 已有凭据状态，飞书当前域名与 App ID 掩码提示，企业微信已有 Bot ID（token 优先于 extra.bot_id）时的提示，微信已有凭据时的 accountId；PILOTDECK_CONFIG_PATH 指到另一份 yaml、坏 yaml 当作没有配置、微信凭据缺字段当作没有凭据。stdin 只给一块输入，后续问题等不到回答，进程在 EOF 后以 0 退出。",
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: bbx\n      models:\n        deterministic: {}\nadapters:\n  feishu:\n    enabled: true\n    appId: cli_a1b2c3d4e5f6\n    appSecret: secret-value\n    domainName: lark\n  wecom:\n    enabled: true\n    token: bot-token-123456789\n    extra:\n      bot_id: ignored-bot-id\n      secret: wecom-secret\n",
+  "files": {
+    "home/.pilotdeck/weixin-credentials.json": "{\"baseUrl\":\"https://ilink.example\",\"botToken\":\"t\",\"accountId\":\"acct-42\"}\n",
+    "alt/pilotdeck.yaml": "adapters:\n  feishu:\n    enabled: 0\n    appId: short\n  wecom:\n    extra:\n      botId: 12345\n      botSecret: s\n",
+    "bad/pilotdeck.yaml": "adapters: [unclosed\n",
+    "home/alt-home/weixin-credentials.json": "{\"baseUrl\":\"https://ilink.example\",\"accountId\":\"acct-1\"}\n"
+  },
+  "steps": [
+    { "cli": ["gateway", "setup"], "stdin": "q\n", "timeout": 10000 },
+    { "cli": ["gateway", "setup", "lark"], "stdin": "\n", "timeout": 10000 },
+    { "cli": ["gateway", "setup", "wecom"], "stdin": "", "timeout": 10000 },
+    { "cli": ["gateway", "setup", "weixin"], "stdin": "", "timeout": 10000 },
+    { "cli": ["gateway", "setup"], "stdin": "q\n", "env": { "PILOTDECK_CONFIG_PATH": "{ROOT}/alt/pilotdeck.yaml" }, "timeout": 10000 },
+    { "cli": ["gateway", "setup", "feishu"], "stdin": "x\n", "env": { "PILOTDECK_CONFIG_PATH": "{ROOT}/alt/pilotdeck.yaml" }, "timeout": 10000 },
+    { "cli": ["gateway", "setup", "wecom"], "stdin": "", "env": { "PILOTDECK_CONFIG_PATH": "{ROOT}/alt/pilotdeck.yaml" }, "timeout": 10000 },
+    { "cli": ["gateway", "setup"], "stdin": "q\n", "env": { "PILOTDECK_CONFIG_PATH": "{ROOT}/bad/pilotdeck.yaml" }, "timeout": 10000 },
+    { "cli": ["gateway", "setup", "weixin"], "stdin": "", "env": { "PILOT_HOME": "{HOME}/alt-home" }, "timeout": 10000 },
+    { "cli": ["gateway", "setup"], "stdin": "q", "env": { "PILOT_HOME": "{HOME}/alt-home" }, "timeout": 10000 }
+  ]
+}

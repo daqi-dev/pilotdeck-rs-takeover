@@ -10,7 +10,8 @@ use pilotdeck_protocol::{JsString, JsValue};
 use serde::Serialize;
 use serde_json::json;
 use signals::Signals;
-use std::io::{IsTerminal, Read};
+use std::io::IsTerminal;
+use std::path::Path;
 use tokio::time::Instant;
 use transport::{QueryFrame, Transport, string_field};
 
@@ -212,10 +213,13 @@ fn read_prompt(argv: &[String], offset: usize) -> Result<String, Failure> {
         return Ok(prompt.to_owned());
     }
     if !std::io::stdin().is_terminal() {
-        let mut bytes = Vec::new();
-        std::io::stdin()
-            .read_to_end(&mut bytes)
-            .map_err(|e| Failure::Error(e.to_string()))?;
+        // `readFile("/dev/stdin", "utf8")` (sdkCli.ts:200): the path is opened
+        // anew rather than read from descriptor 0, so its open errors (macOS
+        // refuses a closed socketpair with EACCES) surface as Node fs errors.
+        let path = Path::new("/dev/stdin");
+        let bytes = std::fs::read(path).map_err(|error| {
+            Failure::Error(paths::node_fs_message_or_unknown(&error, "open", path))
+        })?;
         return Ok(paths::js_trim(&String::from_utf8_lossy(&bytes)).to_owned());
     }
     Ok(String::new())

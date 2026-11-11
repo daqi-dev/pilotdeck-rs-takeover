@@ -438,6 +438,10 @@ impl LiveSession for LiveSessionAdapter {
         let identity = request.identity.clone();
         let tail = self.tail.clone();
         let tail_options = options.clone();
+        let turn_can_prompt = options
+            .get("canPrompt")
+            .filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined))
+            .cloned();
         let sidechain = self.sidechain;
         // A turn claimed from the session's durable inbox (a follow-up the
         // host admitted, not a client submit) names the item in its
@@ -531,6 +535,20 @@ impl LiveSession for LiveSessionAdapter {
                     for (key, value) in manifest.entries() {
                         request.payload.insert(key.clone(), value.clone());
                     }
+                }
+                // The manifest's permission projection takes the turn's own
+                // `canPrompt` over the session context's
+                // (`input.canPrompt ?? config.permissionContext.canPrompt`,
+                // agent/modules/transport/sidecarToolContext.ts:192); the
+                // sidecar reads both its config and its turn input from it.
+                if let Some(can_prompt) = turn_can_prompt
+                    && let Some(JsValue::Object(context)) = request.payload.get("permissionContext")
+                {
+                    let mut context = context.clone();
+                    context.insert("canPrompt".into(), can_prompt);
+                    request
+                        .payload
+                        .insert("permissionContext".into(), JsValue::Object(context));
                 }
                 let handler = Arc::new(StreamHandler {
                     inner,

@@ -1,0 +1,192 @@
+{
+  "name": "cli-run-resume",
+  "about": "run / resume 一轮对话：纯文本输出、--json、--stream-json、提示词来自 stdin、缺提示词、--channel、--project、resume 已有 / 不存在的会话、provider 报错时的输出与退出码、工具调用（bash；--permission-mode 另见 cli-run-permission-mode）。token 走 PILOTDECK_TOKEN，地址走 PILOTDECK_GATEWAY_PORT。 每个 run 用不同的 --channel（会话文件名是 <channel>:s_<随机 uuid>，同一渠道多个会话时落盘树的排序随 uuid 变，基线自比不稳）。 resume 前先断开造会话的那条 ws 连接。",
+  "env": {
+    "PILOTDECK_TOKEN": "{TOKEN}"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Say hello\"}"
+      }
+    },
+    {
+      "name": "fail",
+      "when": [
+        "PLEASE_FAIL"
+      ],
+      "reply": {
+        "status": 400,
+        "body": {
+          "error": {
+            "message": "bad request from mock",
+            "type": "invalid_request_error"
+          }
+        }
+      }
+    },
+    {
+      "name": "tool-done",
+      "when": [
+        "RUN_TOOL",
+        "tool_call_id"
+      ],
+      "reply": {
+        "text": "tool finished"
+      }
+    },
+    {
+      "name": "tool",
+      "when": [
+        "RUN_TOOL"
+      ],
+      "reply": {
+        "tool": {
+          "name": "bash",
+          "arguments": {
+            "command": "echo hi-from-tool"
+          }
+        }
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "Hello from the mock."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "cli": [
+        "run",
+        "hello",
+        "there"
+      ]
+    },
+    {
+      "cli": [
+        "run",
+        "--channel",
+        "c01",
+        "--json",
+        "hello json"
+      ]
+    },
+    {
+      "cli": [
+        "run",
+        "--channel",
+        "c02",
+        "--stream-json",
+        "hello stream"
+      ]
+    },
+    {
+      "cli": [
+        "run",
+        "--channel",
+        "c03"
+      ],
+      "stdin": "  prompt from stdin \n"
+    },
+    {
+      "cli": [
+        "run",
+        "--channel",
+        "c04"
+      ],
+      "stdin": ""
+    },
+    {
+      "cli": [
+        "run",
+        "--channel",
+        "web",
+        "--project",
+        "{PROJECT}",
+        "hello project"
+      ]
+    },
+    {
+      "cli": [
+        "run",
+        "--channel",
+        "c06",
+        "PLEASE_FAIL"
+      ]
+    },
+    {
+      "cli": [
+        "run",
+        "--channel",
+        "c07",
+        "--json",
+        "PLEASE_FAIL"
+      ]
+    },
+    {
+      "cli": [
+        "run",
+        "--channel",
+        "c08",
+        "RUN_TOOL now"
+      ],
+      "timeout": 20000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-r",
+        "channelKey": "cli",
+        "message": "first"
+      }
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "disconnect": true
+    },
+    {
+      "cli": [
+        "resume",
+        "s-bbx-r",
+        "second",
+        "turn"
+      ]
+    },
+    {
+      "cli": [
+        "resume",
+        "s-bbx-r"
+      ],
+      "stdin": "third\n"
+    },
+    {
+      "cli": [
+        "resume",
+        "s-bbx-r",
+        "--json",
+        "fourth"
+      ]
+    },
+    {
+      "cli": [
+        "resume",
+        "s-does-not-exist",
+        "hello"
+      ]
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-bbx-r"
+      }
+    }
+  ]
+}

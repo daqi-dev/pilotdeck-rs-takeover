@@ -1,0 +1,14 @@
+{
+  "name": "cli-entry-default",
+  "about": "不带子命令 / 未知子命令走 CliChannel：探测写死的 127.0.0.1:18789（src/gateway/client/probeServer.ts:16，无法改指）失败后用进程内 gateway。stdin 为 EOF、一行、多行含空行、带参数时的输出、退出与落盘。",
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "steps": [
+    { "cli": [], "stdin": "", "timeout": 8000, "expectTimeout": true },
+    { "cli": [], "stdin": "hello\n", "timeout": 8000, "expectTimeout": true },
+    { "cli": ["nonsense", "words"], "stdin": "", "timeout": 8000, "expectTimeout": true }
+  ]
+}

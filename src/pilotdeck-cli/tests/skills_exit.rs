@@ -37,7 +37,25 @@ fn usage_json_error_exit_and_gateway_todo_are_distinct() {
     assert_eq!(server.status.code(), Some(1));
     assert!(server.stdout.is_empty());
     assert_eq!(server.stderr, b"Config must contain an agent section.\n");
-    let todo = invoke(&["cron"]);
+    // `cron` and `gateway setup` are no longer TODO entries (cron probes the
+    // fixed 127.0.0.1:18789, which tests must not touch); the iLink QR login
+    // that `gateway setup weixin` reaches on a "yes" still is.
+    let todo = {
+        use std::io::Write;
+        let mut child = Command::new(env!("CARGO_BIN_EXE_pilotdeck"))
+            .env_clear()
+            .env("HOME", root.join("home"))
+            .env("PILOT_HOME", root.join("pilot"))
+            .current_dir(&root)
+            .args(["gateway", "setup", "weixin"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(b"y\n").unwrap();
+        child.wait_with_output().unwrap()
+    };
     assert_eq!(todo.status.code(), Some(2));
     assert!(
         String::from_utf8(todo.stderr)
