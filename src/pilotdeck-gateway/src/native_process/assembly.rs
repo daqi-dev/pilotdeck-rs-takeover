@@ -328,6 +328,7 @@ pub(super) async fn start_with_webhook(
             channels: switch_slots.channels.get().cloned().ok_or_else(|| {
                 ProxyError::from("channel assembly slot was not constructed during assembly")
             })?,
+            release_interactions: switch_slots.release_interactions.get().cloned(),
         },
     ))
 }
@@ -784,11 +785,7 @@ async fn start_assembly(
                             session_mcp,
                         )?
                         .with_permission_mode_source(permission_source.clone())
-                        .with_permission_prompt(
-                            gateway_emit,
-                            session_rules,
-                            permission_timeout,
-                        )
+                        .with_permission_prompt(gateway_emit, session_rules, permission_timeout)
                         .with_permission_mode_transition({
                             let session_overrides = session_overrides.clone();
                             let session = session.clone();
@@ -1074,6 +1071,9 @@ async fn start_assembly(
         Some(slots) => slots.cron.clone(),
         None => Arc::default(),
     };
+    let build_release_slot = switch_slots
+        .as_ref()
+        .map(|slots| slots.release_interactions.clone());
     let budget = options.drain_budget;
     // #1959: the fallback's own read of the per-resource completion flags —
     // the cleanup closure below moves the originals.
@@ -1094,10 +1094,33 @@ async fn start_assembly(
         budget,
         move |coordinator| {
             let emit_coordinator = coordinator.clone();
+            // `turnEventCoordinator.dispose()` comes first in the gateway's
+            // disposal: once the stop has begun, the facade delivers nothing.
+            let emit_disposed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let release_disposed = emit_disposed.clone();
             let _ = gateway_emit.set(Arc::new(move |session, event| {
-                emit_coordinator.emit(session, &event)
+                !emit_disposed.load(std::sync::atomic::Ordering::SeqCst)
+                    && emit_coordinator.emit(session, &event)
             }));
             let owner = SessionOwner::new(SessionOwnerOptions::new(build_factory));
+            if let Some(slot) = &build_release_slot {
+                // `gateway.dispose("local_gateway_disposed")` followed by the
+                // router shutdown (LocalGatewayLifecycleBundle.ts:45-60), for
+                // the turns that are parked on a prompt.
+                let (owner, interactions) = (owner.clone(), interactions.clone());
+                let _ = slot.set(Arc::new(move || {
+                    release_disposed.store(true, std::sync::atomic::Ordering::SeqCst);
+                    let reason: JsString = "local_gateway_disposed".into();
+                    for session in owner.active_turn_sessions() {
+                        if interactions.permission_bus().has_pending_session(&session)
+                            || interactions.elicitation_bus().has_pending_session(&session)
+                        {
+                            interactions.reject_pending_turn(&session, &reason);
+                            let _ = owner.abort(&session, None, &reason);
+                        }
+                    }
+                }));
+            }
             let replacement = Arc::new(ReplacementCoordinator::new(
                 Default::default(),
                 Arc::new(owner.clone()),

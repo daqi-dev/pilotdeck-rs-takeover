@@ -59,6 +59,24 @@ pub trait ToolAuditRecorder: Send + Sync {
 /// The concrete type stored in `ToolRuntimeContext::audit_recorder`.
 pub struct ToolAudit(pub Arc<dyn ToolAuditRecorder>);
 
+/// `PilotDeckElicitationRequest`: one batch of questions for the user. The
+/// abort signal travels with the call's [`ToolRunContext`].
+pub struct ElicitationRequest {
+    pub tool_call_id: JsString,
+    pub tool_name: JsString,
+    pub questions: JsValue,
+    pub metadata: Option<JsValue>,
+}
+/// `PilotDeckElicitationChannel.askUser`: the answer is the host's
+/// `{ type: "answered", answers, annotations? }` or
+/// `{ type: "cancelled", reason? }`.
+pub trait ElicitationChannel: Send + Sync {
+    fn ask_user(&self, request: ElicitationRequest, context: ToolRunContext)
+    -> ToolFuture<JsValue>;
+}
+/// The concrete type stored in `ToolRuntimeContext::elicitation`.
+pub struct ToolElicitation(pub Arc<dyn ElicitationChannel>);
+
 #[derive(Clone, Debug)]
 pub struct ToolError {
     pub code: String,

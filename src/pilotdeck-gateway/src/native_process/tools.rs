@@ -90,6 +90,8 @@ pub struct SessionTools {
     /// The generation's agent event buffer, for events the tool runtime
     /// raises itself.
     events: Option<crate::runtime::project::interaction_events::InteractionEvents>,
+    /// `LocalGatewayBootConfig.elicitationTimeoutMs`.
+    elicitation_timeout: Duration,
 }
 impl SessionTools {
     pub fn new(
@@ -140,6 +142,10 @@ impl SessionTools {
             goal: Arc::default(),
             plan_files,
             events: None,
+            elicitation_timeout: super::permission_prompt::interaction_timeout(
+                env.get("PILOTDECK_ELICITATION_TIMEOUT_MS")
+                    .map(|value| value.as_str()),
+            ),
         })
     }
 
@@ -291,6 +297,18 @@ impl SessionTools {
             clock: Some(Arc::new(|| JsValue::String(SystemExecutionClock.now_iso()))),
             goal: Some(Arc::new(crate::runtime::goal::GoalSessions(goal))),
             plan_files: Some(self.plan_files.clone()),
+            // The gateway elicitation channel, inside its durable bracket.
+            elicitation: self.permission.1.get().map(|prompt| {
+                Arc::new(crate::runtime::tools::ToolElicitation(Arc::new(
+                    super::elicitation::GatewayElicitation {
+                        session: prompt.session.clone(),
+                        coordinator: prompt.coordinator.clone(),
+                        emit: prompt.emit.clone(),
+                        recorder: recorder.clone(),
+                        timeout: self.elicitation_timeout,
+                    },
+                ))) as capability::RuntimeContext
+            }),
             // `createDurablePermissionAuditRecorder`.
             audit_recorder: Some(Arc::new(crate::runtime::tools::ToolAudit(Arc::new(
                 DurablePermissionAudit {
@@ -875,13 +893,8 @@ impl MutationRecorder for Durable {
 /// is not a catalog tool: it comes from the builtin `funasr` plugin's MCP
 /// server through the session MCP composition.)
 #[cfg_attr(not(test), allow(dead_code))]
-pub const BASELINE_TOOLS_NOT_PORTED: &[&str] = &[
-    "agent",
-    "ask_user_question",
-    "execute_code",
-    "send_message",
-    "subagent",
-];
+pub const BASELINE_TOOLS_NOT_PORTED: &[&str] =
+    &["agent", "execute_code", "send_message", "subagent"];
 
 /// The session's share of the baseline's execution world
 /// (`createNodeExecutionWorldBundle`): what the builtin tools close over.
@@ -948,6 +961,9 @@ pub(super) fn native_tools(
     )));
     builtins.push(Arc::new(
         builtin::structured_output::StructuredOutputTool::new(),
+    ));
+    builtins.push(Arc::new(
+        builtin::ask_user_question::AskUserQuestionTool::new(),
     ));
     builtins.push(Arc::new(builtin::todo_write::TodoWriteTool::new()));
     builtins.push(Arc::new(builtin::send_attachment::SendAttachmentTool::new()));
