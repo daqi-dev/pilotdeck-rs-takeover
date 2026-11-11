@@ -342,6 +342,18 @@ impl SessionTools {
         self
     }
 
+    /// The project's `executionWorld.backgroundTasks`, behind the `task_*`
+    /// tools: every session of the project shares one runtime, which the
+    /// gateway's `background_tasks` / `background_task_stop` also read.
+    #[cfg(unix)]
+    pub fn with_background_tasks(
+        mut self,
+        tasks: crate::runtime::background::BackgroundTaskRuntime,
+    ) -> Self {
+        self.world.tasks = tasks;
+        self
+    }
+
     /// The project's plugin runtime, behind `read_skill`
     /// (`createBuiltinRegistry({ readSkill })`). Without it the tool is not
     /// registered, as in the baseline.

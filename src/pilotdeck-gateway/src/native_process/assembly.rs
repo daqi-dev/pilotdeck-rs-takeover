@@ -542,6 +542,15 @@ async fn start_assembly(
                                 .downcast_ref::<crate::runtime::project::plugins::PluginResources>()
                                 .map(|plugins| plugins.runtime.clone())
                         });
+                // `backgroundTasks: { runtime: executionWorld.backgroundTasks }`
+                // (ProjectExecutionWorldBundle.ts:85): the project's runtime.
+                #[cfg(unix)]
+                let background_tasks = staged.resource(Resource::ExecutionWorld).and_then(|world| {
+                    world
+                        .as_any()
+                        .downcast_ref::<crate::runtime::project::tools_mcp::ExecutionWorldResource>()
+                        .map(|world| world.background().tasks.clone())
+                });
                 let interaction_events = staged
                     .resource(Resource::InteractionEvents)
                     .and_then(|resource| {
@@ -811,6 +820,11 @@ async fn start_assembly(
                         };
                         let ports = match interaction_events {
                             Some(events) => ports.with_events(events),
+                            None => ports,
+                        };
+                        #[cfg(unix)]
+                        let ports = match background_tasks {
+                            Some(tasks) => ports.with_background_tasks(tasks),
                             None => ports,
                         };
                         let limits = crate::host::Limits {

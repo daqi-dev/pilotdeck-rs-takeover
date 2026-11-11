@@ -215,60 +215,78 @@ impl BackgroundTaskSnapshotStore for JsonFileBackgroundTaskSnapshotStore {
 fn serialize_snapshot_file(snapshot: &SnapshotFile) -> io::Result<String> {
     use serde_json::{Value, json};
 
-    let tasks: Vec<Value> = snapshot
-        .tasks
-        .iter()
-        .map(|entry| {
-            let task = &entry.task;
-            let mut task_obj = json!({
-                "taskId": task.task_id,
-                "type": task.task_type,
-                "kind": task.kind,
-                "command": task.command,
-                "cwd": task.cwd,
-                "status": task.status,
-                "completionStatusSentInAttachment": task.completion_status_sent_in_attachment,
-                "lastReportedTotalLines": task.last_reported_total_lines,
-                "isBackgrounded": task.is_backgrounded,
-                "interrupted": task.interrupted,
-                "startedAt": task.started_at,
-                "outputBytes": task.output_bytes,
-            });
-
-            let task_map = task_obj.as_object_mut().unwrap();
-
-            if let Some(ended_at) = &task.ended_at {
-                task_map.insert("endedAt".to_string(), json!(ended_at));
+    // `JSON.stringify({ version, tasks })` keeps property insertion order:
+    // the task object literal of `start()` (BackgroundTaskRuntime.ts:268-283)
+    // without `startedAt` / `endedAt`, then `pid` and `exitCode` as they are
+    // assigned, then the ISO dates (`serializeTask`, :615-620).
+    fn object(fields: Vec<(&str, Value)>) -> io::Result<String> {
+        let mut out = String::from("{");
+        for (index, (key, value)) in fields.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
             }
-            if let Some(agent_id) = &task.agent_id {
-                task_map.insert("agentId".to_string(), json!(agent_id));
-            }
-            if let Some(session_id) = &task.session_id {
-                task_map.insert("sessionId".to_string(), json!(session_id));
-            }
-            if let Some(pid) = task.pid {
-                task_map.insert("pid".to_string(), json!(pid));
-            }
-            if let Some(exit_code) = task.exit_code {
-                task_map.insert("exitCode".to_string(), json!(exit_code));
-            }
-
-            json!({
-                "task": task_obj,
-                "output": {
-                    "totalBytes": entry.output.total_bytes,
-                    "persisted": entry.output.persisted,
-                }
-            })
-        })
-        .collect();
-
-    let result = json!({
-        "version": snapshot.version,
-        "tasks": tasks,
-    });
-
-    serde_json::to_string(&result).map_err(io::Error::other)
+            out.push_str(&serde_json::to_string(key).map_err(io::Error::other)?);
+            out.push(':');
+            out.push_str(&serde_json::to_string(value).map_err(io::Error::other)?);
+        }
+        out.push('}');
+        Ok(out)
+    }
+    let mut tasks = Vec::new();
+    for entry in &snapshot.tasks {
+        let task = &entry.task;
+        let mut fields: Vec<(&str, Value)> = vec![
+            ("taskId", json!(task.task_id)),
+            ("type", json!(task.task_type)),
+        ];
+        if let Some(agent_id) = &task.agent_id {
+            fields.push(("agentId", json!(agent_id)));
+        }
+        if let Some(session_id) = &task.session_id {
+            fields.push(("sessionId", json!(session_id)));
+        }
+        fields.extend([
+            ("kind", json!(task.kind)),
+            ("command", json!(task.command)),
+            ("cwd", json!(task.cwd)),
+            ("status", json!(task.status)),
+            (
+                "completionStatusSentInAttachment",
+                json!(task.completion_status_sent_in_attachment),
+            ),
+            (
+                "lastReportedTotalLines",
+                json!(task.last_reported_total_lines),
+            ),
+            ("isBackgrounded", json!(task.is_backgrounded)),
+            ("interrupted", json!(task.interrupted)),
+            ("outputBytes", json!(task.output_bytes)),
+        ]);
+        if let Some(pid) = task.pid {
+            fields.push(("pid", json!(pid)));
+        }
+        if let Some(exit_code) = task.exit_code {
+            fields.push(("exitCode", json!(exit_code)));
+        }
+        fields.push(("startedAt", json!(task.started_at)));
+        if let Some(ended_at) = &task.ended_at {
+            fields.push(("endedAt", json!(ended_at)));
+        }
+        let output = object(vec![
+            ("totalBytes", json!(entry.output.total_bytes)),
+            ("persisted", json!(entry.output.persisted)),
+        ])?;
+        tasks.push(format!(
+            "{{\"task\":{},\"output\":{}}}",
+            object(fields)?,
+            output
+        ));
+    }
+    Ok(format!(
+        "{{\"version\":{},\"tasks\":[{}]}}",
+        snapshot.version,
+        tasks.join(",")
+    ))
 }
 
 fn deserialize_snapshot_file(text: &str) -> io::Result<SnapshotFile> {
@@ -564,7 +582,15 @@ pub fn persist_task(task: &BackgroundBashTask) -> PersistedTask {
         command: to_string(&task.command),
         cwd: to_string(&task.cwd),
         status: task.status.as_str().to_string(),
-        completion_status_sent_in_attachment: false,
+        // Set when the task settles (exit, exit error, spawn failure) and
+        // cleared for a task restored as `unknown` (BackgroundTaskRuntime.ts:
+        // 318, 343, 352, 497).
+        completion_status_sent_in_attachment: matches!(
+            task.status,
+            crate::runtime::background::TaskStatus::Completed
+                | crate::runtime::background::TaskStatus::Failed
+                | crate::runtime::background::TaskStatus::Cancelled
+        ),
         last_reported_total_lines: 0,
         is_backgrounded: true,
         interrupted: task.interrupted,
