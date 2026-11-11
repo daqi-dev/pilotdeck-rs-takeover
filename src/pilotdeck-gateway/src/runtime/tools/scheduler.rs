@@ -147,11 +147,27 @@ impl ToolRuntime {
             .map(|v| v.expect("every call has a result slot"))
             .collect())
     }
+    /// `runtimeContext.executeTool` (ToolRuntime.ts:47-62): a nested call
+    /// runs through this same runtime with the outer call's incoming
+    /// context, whose checkpoint maps live in the shared host context.
+    fn with_nested_executor(&self, mut context: ToolRunContext) -> ToolRunContext {
+        if context.execute_tool.is_none() {
+            let runtime = self.clone();
+            let base = context.clone();
+            context.execute_tool = Some(Arc::new(move |call| {
+                let runtime = runtime.clone();
+                let nested = base.clone();
+                Box::pin(async move { runtime.execute(call, nested).await })
+            }));
+        }
+        context
+    }
     pub async fn execute(
         &self,
         call: ToolCall,
         context: ToolRunContext,
     ) -> Result<JsObject, HostError> {
+        let context = self.with_nested_executor(context);
         let started = context.now_iso()?;
         let mut tool = self.registry.get(&call.name);
         let mut repaired = None;
@@ -1004,7 +1020,7 @@ fn validation_error(
     }
     Ok(ToolError::new("invalid_tool_input", message).with_details(issues))
 }
-fn content_text(v: &JsValue) -> Result<String, HostError> {
+pub(crate) fn content_text(v: &JsValue) -> Result<String, HostError> {
     let field = |key| {
         v.get(key)
             .map_or_else(|| Ok("undefined".into()), js_display)
