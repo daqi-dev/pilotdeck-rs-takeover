@@ -909,8 +909,12 @@ async fn start_assembly(
                 FileRunRegistry::open(runs_path)?,
             )?)),
         };
+        // `resolve(tmpdir(), "pilotdeck-tool-output", process.pid.toString())`
+        // (createLocalGateway.ts:924-926).
         let artifacts = Arc::new(GatewayToolResultArtifactStore::new(
-            options.home.join("tool-results"),
+            std::path::Path::new(&crate::node_io::node_tmpdir(|key| std::env::var_os(key)))
+                .join("pilotdeck-tool-output")
+                .join(std::process::id().to_string()),
             4096,
         )?);
         let projector = Arc::new(GatewayAgentEventProjector::new(

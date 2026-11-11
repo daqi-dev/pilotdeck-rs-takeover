@@ -102,6 +102,9 @@ struct SpillState {
     /// path, so a retry never races an abandoned mid-write attempt.
     in_flight_spills: HashMap<JsString, std::sync::Arc<InFlightSpill>>,
     spill_paths: HashMap<JsString, JsString>,
+    /// Which live context holds each baseline-named spill path (see
+    /// [`ToolResultBudget::spill_path`]).
+    path_owners: HashMap<JsString, String>,
 }
 
 // Root partitions are weak: dropping the last budget/writer releases the registry.
@@ -310,11 +313,19 @@ pub struct ToolResultBudget {
 impl Drop for ToolResultBudget {
     fn drop(&mut self) {
         let prefix = format!("{}-", self.context_token);
-        self.spills
-            .lock()
-            .unwrap()
-            .spill_paths
-            .retain(|key, _| !String::from_utf16_lossy(basename(key).units()).starts_with(&prefix));
+        let mut spills = self.spills.lock().unwrap();
+        let mut owned = Vec::new();
+        spills.path_owners.retain(|path, owner| {
+            let mine = *owner == self.context_token;
+            if mine {
+                owned.push(path.clone());
+            }
+            !mine
+        });
+        spills.spill_paths.retain(|key, _| {
+            !owned.contains(key)
+                && !String::from_utf16_lossy(basename(key).units()).starts_with(&prefix)
+        });
     }
 }
 
@@ -388,16 +399,38 @@ impl ToolResultBudget {
         &self.tool_results_dir
     }
 
-    /// Context isolation lives in a single safe filename, never a subdirectory.
+    /// `resolve(this.toolResultsDir, `${replacementKey}.${ext}`)`
+    /// (ToolResultBudget.ts:234): the spill file is named by the turn-scoped
+    /// tool call alone, and that is the path every observer sees.
+    ///
+    /// Kept deviation: when another live context of the same directory
+    /// already holds that name, this context writes to
+    /// `context-<uuid>-<name>` instead. The baseline lets the second context
+    /// adopt the first one's file through its exclusive open, so its
+    /// reference carries its own preview over the other context's bytes
+    /// (`tests/fixtures/spill-isolation/oracle.json`, the `*-two` rows). A
+    /// single context per directory, the layout of a gateway session, never
+    /// takes this branch.
     pub fn spill_path(&self, name: &JsString) -> JsString {
-        join(
-            &self.tool_results_dir,
-            &JsString::from(format!(
-                "{}-{}",
-                self.context_token,
-                String::from_utf16_lossy(name.units())
-            )),
-        )
+        let bare = join(&self.tool_results_dir, name);
+        let mut spills = self.spills.lock().unwrap();
+        match spills.path_owners.get(&bare) {
+            Some(owner) if *owner != self.context_token => join(
+                &self.tool_results_dir,
+                &JsString::from(format!(
+                    "{}-{}",
+                    self.context_token,
+                    String::from_utf16_lossy(name.units())
+                )),
+            ),
+            Some(_) => bare,
+            None => {
+                spills
+                    .path_owners
+                    .insert(bare.clone(), self.context_token.clone());
+                bare
+            }
+        }
     }
 
     #[cfg(all(test, unix))]
