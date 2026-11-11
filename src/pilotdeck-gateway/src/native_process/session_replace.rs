@@ -445,3 +445,255 @@ pub(super) fn finalize_last_turn_replacement(
     result.insert("action".into(), action.clone());
     Ok(JsValue::Object(result))
 }
+
+/// `recoverNodeProjectSessionReplacements` result.
+#[derive(Default, Debug, PartialEq, Eq)]
+pub(super) struct Recovery {
+    pub committed: usize,
+    pub rolled_back: usize,
+    pub failures: Vec<(PathBuf, String)>,
+}
+
+struct Artifact {
+    transaction: String,
+    backup: PathBuf,
+    journal: PathBuf,
+}
+
+/// The fields of a journal that `readReplacementJournalSync` accepts.
+struct Journal {
+    replacement_turn: JsString,
+    prepared_at: Option<f64>,
+    owner_pid: Option<i32>,
+}
+
+/// `readReplacementJournalSync`.
+fn read_journal(path: &Path, transaction: &str) -> Option<Journal> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let parsed = pilotdeck_protocol::parse_json(&text).ok()?;
+    let version = field(&parsed, "version").as_number();
+    if !matches!(version, Some(v) if v == 1.0 || v == 2.0)
+        || !is(field(&parsed, "transactionId"), transaction)
+        || non_blank(field(&parsed, "sessionKey")).is_none()
+        || !matches!(field(&parsed, "preparedAt"), JsValue::String(_))
+    {
+        return None;
+    }
+    let replacement_turn = non_blank(field(&parsed, "replacementTurnId"))?.clone();
+    let owner = field(&parsed, "owner");
+    let owner_pid = if version == Some(2.0) {
+        let pid = field(owner, "pid").as_number()?;
+        non_blank(field(owner, "instanceId"))?;
+        if pid.fract() != 0.0 || pid <= 0.0 || pid > 9_007_199_254_740_991.0 {
+            return None;
+        }
+        Some(i32::try_from(pid as i64).unwrap_or(i32::MAX))
+    } else {
+        None
+    };
+    let prepared_at = field(&parsed, "preparedAt")
+        .as_string()
+        .and_then(crate::runtime::model::stats::parse_date_ms)
+        .filter(|ms| ms.is_finite());
+    Some(Journal {
+        replacement_turn,
+        prepared_at,
+        owner_pid,
+    })
+}
+
+/// `acceptedTurnIds`: turn ids of the parseable `accepted_input` lines.
+fn accepted_turn_ids(body: &str) -> Vec<JsString> {
+    let mut ids = Vec::new();
+    for line in body.split('\n') {
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        if !line.contains("\"type\":\"accepted_input\"") || !line.contains("\"turnId\"") {
+            continue;
+        }
+        if let Ok(entry) = pilotdeck_protocol::parse_json(line)
+            && is(field(&entry, "type"), "accepted_input")
+            && let JsValue::String(turn) = field(&entry, "turnId")
+            && !ids.contains(turn)
+        {
+            ids.push(turn.clone());
+        }
+    }
+    ids
+}
+
+fn mtime_ms(path: &Path) -> Option<f64> {
+    let modified = std::fs::metadata(path).ok()?.modified().ok()?;
+    let since = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
+    Some(since.as_secs_f64() * 1000.0)
+}
+
+/// `process.kill(pid, 0)` succeeding or failing with EPERM.
+fn process_alive(pid: i32) -> bool {
+    let Some(pid) = rustix::process::Pid::from_raw(pid) else {
+        return false;
+    };
+    match rustix::process::test_kill_process(pid) {
+        Ok(()) => true,
+        Err(error) => error == rustix::io::Errno::PERM,
+    }
+}
+
+/// `^\.(.+)\.([0-9a-f-]{36})\.replace\.(?:bak|json)$` plus `isTransactionId`:
+/// the safe id and the transaction of an artifact file name.
+fn artifact_name(name: &str) -> Option<(&str, &str)> {
+    let stem = name
+        .strip_prefix('.')?
+        .strip_suffix(".replace.bak")
+        .or_else(|| name[1..].strip_suffix(".replace.json"))?;
+    let split = stem.len().checked_sub(37)?;
+    if split == 0 || !stem.is_char_boundary(split) || stem.as_bytes()[split] != b'.' {
+        return None;
+    }
+    let (safe_id, transaction) = (&stem[..split], &stem[split + 1..]);
+    is_transaction_id(transaction).then_some((safe_id, transaction))
+}
+
+/// `recoverNodeProjectSessionReplacements(pilotHome)`: settle the replacement
+/// transactions a previous gateway left behind, before this one is published
+/// (createLocalGateway.ts:655-670).
+pub(super) fn recover(pilot_home: &Path) -> Recovery {
+    let mut recovery = Recovery::default();
+    let chat_dirs: Vec<PathBuf> = match std::fs::read_dir(pilot_home.join("projects")) {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+            .map(|entry| entry.path().join("chats"))
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    // (transcript, safe id, artifacts) in discovery order, like the Map.
+    let mut groups: Vec<(PathBuf, String, Vec<Artifact>)> = Vec::new();
+    for chat_dir in &chat_dirs {
+        let Ok(names) = std::fs::read_dir(chat_dir) else {
+            continue;
+        };
+        for name in names.filter_map(Result::ok) {
+            let name = name.file_name().to_string_lossy().into_owned();
+            let Some((safe_id, transaction)) = artifact_name(&name) else {
+                continue;
+            };
+            let transcript = chat_dir.join(format!("{safe_id}.jsonl"));
+            let index = match groups.iter().position(|(path, _, _)| *path == transcript) {
+                Some(index) => index,
+                None => {
+                    groups.push((transcript, safe_id.to_owned(), Vec::new()));
+                    groups.len() - 1
+                }
+            };
+            let artifacts = &mut groups[index].2;
+            if !artifacts.iter().any(|a| a.transaction == transaction) {
+                artifacts.push(Artifact {
+                    transaction: transaction.to_owned(),
+                    backup: chat_dir.join(format!(".{safe_id}.{transaction}.replace.bak")),
+                    journal: chat_dir.join(format!(".{safe_id}.{transaction}.replace.json")),
+                });
+            }
+        }
+    }
+    for (transcript, safe_id, artifacts) in groups {
+        match recover_group(&transcript, &safe_id, &artifacts) {
+            Ok(Some(true)) => recovery.committed += 1,
+            Ok(Some(false)) => recovery.rolled_back += 1,
+            Ok(None) => {}
+            Err(message) => recovery.failures.push((transcript, message)),
+        }
+    }
+    recovery
+}
+
+/// One transcript's artifacts: `Some(true)` committed, `Some(false)` rolled
+/// back, `None` skipped (the owner is still alive).
+fn recover_group(
+    transcript: &Path,
+    safe_id: &str,
+    artifacts: &[Artifact],
+) -> Result<Option<bool>, String> {
+    let mut states: Vec<(f64, Option<Journal>, bool, &Artifact)> = artifacts
+        .iter()
+        .map(|artifact| {
+            let journal = read_journal(&artifact.journal, &artifact.transaction);
+            let backup = mtime_ms(&artifact.backup);
+            let order = [
+                journal.as_ref().and_then(|j| j.prepared_at).unwrap_or(0.0),
+                backup.unwrap_or(0.0),
+                mtime_ms(&artifact.journal).unwrap_or(0.0),
+            ]
+            .into_iter()
+            .fold(f64::NEG_INFINITY, f64::max);
+            (order, journal, backup.is_some(), artifact)
+        })
+        .collect();
+    // Array.prototype.sort is stable; descending by order.
+    states.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    let Some((_, journal, has_backup, latest)) = states.first() else {
+        return Ok(None);
+    };
+    if let Some(pid) = journal.as_ref().and_then(|j| j.owner_pid)
+        && process_alive(pid)
+    {
+        return Ok(None);
+    }
+    let current = std::fs::read_to_string(transcript)
+        .map(|body| accepted_turn_ids(&body))
+        .unwrap_or_default();
+    let committed = match journal {
+        Some(journal) => current.contains(&journal.replacement_turn),
+        None => match std::fs::read_to_string(&latest.backup) {
+            Ok(body) => {
+                let original = accepted_turn_ids(&body);
+                current.iter().any(|turn| !original.contains(turn))
+            }
+            Err(_) => false,
+        },
+    };
+    let clean = || -> Result<(), String> {
+        for artifact in artifacts {
+            remove_forced(&artifact.backup).map_err(|e| e.to_string())?;
+            remove_forced(&artifact.journal).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    };
+    if committed {
+        clean()?;
+        return Ok(Some(true));
+    }
+    if !has_backup {
+        return Err(format!(
+            "Newest replacement transaction {} has no backup to restore.",
+            latest.transaction
+        ));
+    }
+    let original =
+        std::fs::read(&latest.backup).map_err(|error| node_io_message(&error, &latest.backup))?;
+    let directory = transcript.parent().unwrap_or(Path::new("/"));
+    let temporary = directory.join(format!(".{safe_id}.{}.recovery.tmp", uuid::Uuid::new_v4()));
+    let restored = write_file(&temporary, &original, false)
+        .and_then(|()| std::fs::rename(&temporary, transcript));
+    let _ = remove_forced(&temporary);
+    restored.map_err(|error| error.to_string())?;
+    clean()?;
+    Ok(Some(false))
+}
+
+/// Startup half of createLocalGateway.ts:656-670, including its two console
+/// lines (stdout for the counts, stderr for each failure).
+pub(super) fn recover_and_report(pilot_home: &Path) {
+    let recovery = recover(pilot_home);
+    if recovery.committed > 0 || recovery.rolled_back > 0 {
+        println!(
+            "[pilotdeck] Recovered last-turn replacements: committed={} rolledBack={}.",
+            recovery.committed, recovery.rolled_back
+        );
+    }
+    for (scope, message) in &recovery.failures {
+        eprintln!(
+            "[pilotdeck] Could not recover replacement transaction for {}: {message}",
+            scope.display()
+        );
+    }
+}

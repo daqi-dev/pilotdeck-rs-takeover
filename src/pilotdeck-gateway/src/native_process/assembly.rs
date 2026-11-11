@@ -415,6 +415,10 @@ async fn start_assembly(
         eprintln!("native run registry {state}");
     }
     validate_profile(&options, &env).await?;
+    // `sessionDataPlane.replacement.recover({ pilotHome })`
+    // (createLocalGateway.ts:656): settle a previous gateway's last-turn
+    // replacements before any writer can open those transcripts.
+    super::session_replace::recover_and_report(&options.home);
     // The baseline gateway never registers a project (the `.cwd` markers are
     // written by its web server and cron storage, src/web/server/
     // listProjects.ts and src/cron/runtime/CronProjectStorageProvider.ts:65),

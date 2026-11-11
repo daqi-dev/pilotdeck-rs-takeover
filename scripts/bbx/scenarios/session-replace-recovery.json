@@ -1,0 +1,59 @@
+{
+  "name": "session-replace-recovery",
+  "about": "启动时恢复上次进程留下的末轮替换事务（recoverNodeProjectSessionReplacements）：s-roll 的日志（v2，属主进程已不在）里的替换轮次没进记录 → 用备份回滚；s-done 的日志（v1）里的替换轮次已在记录里 → 视为已提交，只清理备份与日志；s-nojournal 只有备份、记录里出现了备份里没有的轮次 → 已提交；s-orphan 只有日志没有备份且未提交 → 恢复失败、文件留着。比较 server 的 stdout / stderr、恢复后逐个读会话和落盘（list_sessions 按文件修改时间排序，这几份文件同一毫秒写入，基线自己两次顺序不同，所以不用）。",
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx",
+    "PILOTDECK_BUNDLED_SKILLS_DIR": "{ROOT}/bundled"
+  },
+  "files": {
+    "bundled/sample/SKILL.md": "---\nname: sample\ndescription: bbx bundled skill placeholder\n---\nbody\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-roll.jsonl": "{\"type\":\"session_metadata\",\"metadata\":{\"title\":\"Rolled\",\"isSnapshot\":true,\"updatedAt\":\"2026-11-11T10:00:00.000Z\"},\"sessionId\":\"s-roll\",\"turnId\":\"metadata-replace\",\"sequence\":1,\"createdAt\":\"2026-11-11T10:00:00.000Z\",\"entryId\":\"00000000-0000-4000-8000-0000000000a1\",\"parentEntryId\":null}\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-.pilotdeck/chats/.s-roll.11111111-1111-4111-8111-111111111111.replace.bak": "{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"original question\"}]}],\"sessionId\":\"s-roll\",\"turnId\":\"run-old\",\"sequence\":1,\"createdAt\":\"2026-11-11T09:00:00.000Z\",\"entryId\":\"00000000-0000-4000-8000-0000000000b1\",\"parentEntryId\":null}\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-.pilotdeck/chats/.s-roll.11111111-1111-4111-8111-111111111111.replace.json": "{\"version\":2,\"transactionId\":\"11111111-1111-4111-8111-111111111111\",\"sessionKey\":\"s-roll\",\"replacementTurnId\":\"run-new\",\"preparedAt\":\"2026-11-11T10:00:00.000Z\",\"owner\":{\"instanceId\":\"dead-owner\",\"pid\":2147483646}}\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-done.jsonl": "{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"edited question\"}]}],\"sessionId\":\"s-done\",\"turnId\":\"run-new\",\"sequence\":1,\"createdAt\":\"2026-11-11T10:00:00.000Z\",\"entryId\":\"00000000-0000-4000-8000-0000000000c1\",\"parentEntryId\":null}\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-.pilotdeck/chats/.s-done.22222222-2222-4222-9222-222222222222.replace.bak": "{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"original question\"}]}],\"sessionId\":\"s-done\",\"turnId\":\"run-old\",\"sequence\":1,\"createdAt\":\"2026-11-11T09:00:00.000Z\",\"entryId\":\"00000000-0000-4000-8000-0000000000d1\",\"parentEntryId\":null}\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-.pilotdeck/chats/.s-done.22222222-2222-4222-9222-222222222222.replace.json": "{\"version\":1,\"transactionId\":\"22222222-2222-4222-9222-222222222222\",\"sessionKey\":\"s-done\",\"replacementTurnId\":\"run-new\",\"preparedAt\":\"2026-11-11T10:00:00.000Z\"}\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-nojournal.jsonl": "{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"edited question\"}]}],\"sessionId\":\"s-nojournal\",\"turnId\":\"run-new\",\"sequence\":1,\"createdAt\":\"2026-11-11T10:00:00.000Z\",\"entryId\":\"00000000-0000-4000-8000-0000000000e1\",\"parentEntryId\":null}\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-.pilotdeck/chats/.s-nojournal.33333333-3333-4333-a333-333333333333.replace.bak": "{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"original question\"}]}],\"sessionId\":\"s-nojournal\",\"turnId\":\"run-old\",\"sequence\":1,\"createdAt\":\"2026-11-11T09:00:00.000Z\",\"entryId\":\"00000000-0000-4000-8000-0000000000f1\",\"parentEntryId\":null}\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-orphan.jsonl": "{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"kept\"}]}],\"sessionId\":\"s-orphan\",\"turnId\":\"run-old\",\"sequence\":1,\"createdAt\":\"2026-11-11T09:00:00.000Z\",\"entryId\":\"00000000-0000-4000-8000-000000000101\",\"parentEntryId\":null}\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-.pilotdeck/chats/.s-orphan.44444444-4444-4444-b444-444444444444.replace.json": "{\"version\":1,\"transactionId\":\"44444444-4444-4444-b444-444444444444\",\"sessionKey\":\"s-orphan\",\"replacementTurnId\":\"run-new\",\"preparedAt\":\"2026-11-11T10:00:00.000Z\"}\n"
+  },
+  "steps": [
+    {
+      "serve": [
+        "server"
+      ],
+      "then": [
+        {
+          "ws": "read_session_messages",
+          "params": {
+            "sessionKey": "s-roll"
+          }
+        },
+        {
+          "ws": "read_session_messages",
+          "params": {
+            "sessionKey": "s-done"
+          }
+        },
+        {
+          "ws": "read_session_messages",
+          "params": {
+            "sessionKey": "s-nojournal"
+          }
+        },
+        {
+          "ws": "read_session_messages",
+          "params": {
+            "sessionKey": "s-orphan"
+          }
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    }
+  ]
+}
