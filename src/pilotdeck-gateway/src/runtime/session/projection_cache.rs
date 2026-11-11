@@ -4,8 +4,7 @@ use super::*;
 use pilotdeck_protocol::{parse_json, stringify_json};
 use std::io::Write;
 
-const METADATA: &str = "agent-transcript.metadata";
-const SUMMARY: &str = "agent-transcript.turn-summary";
+use crate::storage::{METADATA, TURN_SUMMARY as SUMMARY};
 
 pub trait ProjectionCheckpointStore: Send + Sync {
     fn load(&self) -> Option<JsValue>;
@@ -520,22 +519,22 @@ fn envelope(session: &JsString, entries: &[JsValue], state: &DurableSessionState
         ),
         (
             "projections",
-            object(&[
-                (METADATA, row(2.0, JsValue::Object(state.metadata.clone()))),
-                (
-                    SUMMARY,
-                    row(
-                        1.0,
-                        object(&[
-                            ("usage", JsValue::Object(state.usage.clone())),
-                            (
-                                "permissionDenials",
-                                JsValue::Array(state.permission_denials.clone()),
-                            ),
-                        ]),
-                    ),
-                ),
-            ]),
+            object(
+                &crate::storage::checkpoint_rows(
+                    entries,
+                    object(&[
+                        ("usage", JsValue::Object(state.usage.clone())),
+                        (
+                            "permissionDenials",
+                            JsValue::Array(state.permission_denials.clone()),
+                        ),
+                    ]),
+                    JsValue::Object(state.metadata.clone()),
+                )
+                .into_iter()
+                .map(|(name, version, state)| (name, row(version, state)))
+                .collect::<Vec<_>>(),
+            ),
         ),
     ])
 }

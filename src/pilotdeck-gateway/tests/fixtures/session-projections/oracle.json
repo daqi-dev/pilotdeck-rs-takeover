@@ -1,0 +1,5109 @@
+{
+ "about": "Baseline SessionProjectionDriver.checkpoint() after driving the entries one by one. Regenerate with generate.mjs; do not edit by hand.",
+ "baseline": "OpenBMB/PilotDeck@cc7c4e6",
+ "cases": {
+  "valid": {
+   "entries": [
+    {
+     "type": "turn_started",
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 1,
+     "createdAt": "2026-11-01T00:00:01.000Z",
+     "entryId": "e-1"
+    },
+    {
+     "type": "session_metadata",
+     "metadata": {
+      "title": "Crafted title",
+      "tag": "fixture",
+      "firstPrompt": "look at this",
+      "updatedAt": "2026-11-01T00:00:00.000Z"
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 2,
+     "createdAt": "2026-11-01T00:00:02.000Z",
+     "entryId": "e-2"
+    },
+    {
+     "type": "accepted_input",
+     "messages": [
+      {
+       "role": "user",
+       "content": [
+        {
+         "type": "text",
+         "text": "look at this "
+        },
+        {
+         "type": "image",
+         "source": "base64",
+         "mimeType": "image/png",
+         "data": "QUJD"
+        },
+        {
+         "type": "text",
+         "text": "and this"
+        },
+        {
+         "type": "image",
+         "source": "url",
+         "mimeType": "image/jpeg",
+         "data": "https://example.invalid/a.jpg"
+        }
+       ]
+      },
+      {
+       "role": "user",
+       "metadata": {
+        "synthetic": true
+       },
+       "content": [
+        {
+         "type": "text",
+         "text": "synthetic, hidden"
+        }
+       ]
+      },
+      {
+       "role": "user",
+       "metadata": {
+        "queueItemId": "q-1",
+        "moduleId": "m-1"
+       },
+       "content": [
+        {
+         "type": "text",
+         "text": "queued follow-up"
+        }
+       ]
+      },
+      {
+       "role": "user",
+       "metadata": {
+        "compactReplacement": true
+       },
+       "content": [
+        {
+         "type": "text",
+         "text": "replacement, hidden"
+        }
+       ]
+      }
+     ],
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 3,
+     "createdAt": "2026-11-01T00:00:03.000Z",
+     "entryId": "e-3"
+    },
+    {
+     "type": "assistant_message",
+     "message": {
+      "role": "assistant",
+      "metadata": {
+       "model": "fixture-model"
+      },
+      "content": [
+       {
+        "type": "thinking",
+        "text": "thinking it over",
+        "blockId": "b-think"
+       },
+       {
+        "type": "thinking",
+        "text": "no block id"
+       },
+       {
+        "type": "text",
+        "text": "part one, ",
+        "blockId": "b-1",
+        "timeline": {
+         "version": 1,
+         "turnId": "t1",
+         "id": "b-1",
+         "order": 0,
+         "revision": 1
+        }
+       },
+       {
+        "type": "text",
+        "text": "part two",
+        "blockId": "b-1",
+        "timeline": {
+         "version": 1,
+         "turnId": "t1",
+         "id": "b-1",
+         "order": 1,
+         "revision": 1
+        }
+       },
+       {
+        "type": "text",
+        "text": "new block",
+        "blockId": "b-2"
+       },
+       {
+        "type": "text",
+        "text": "legacy a"
+       },
+       {
+        "type": "text",
+        "text": " legacy b"
+       },
+       {
+        "type": "tool_call",
+        "id": "c-grep",
+        "name": "grep",
+        "input": {
+         "pattern": "x"
+        },
+        "timeline": {
+         "version": 1,
+         "turnId": "t1",
+         "id": "tool:c-grep",
+         "order": 2,
+         "revision": 1
+        }
+       },
+       {
+        "type": "tool_call",
+        "id": "c-agent",
+        "name": "Agent",
+        "input": {
+         "prompt": "child one"
+        }
+       },
+       {
+        "type": "tool_call",
+        "id": "c-task",
+        "name": "task",
+        "input": {
+         "prompt": "child two"
+        }
+       },
+       {
+        "type": "tool_call",
+        "id": "c-plan",
+        "name": "exit_plan_mode",
+        "input": {}
+       },
+       {
+        "type": "image",
+        "source": "base64",
+        "mimeType": "image/png",
+        "data": "QUJD",
+        "bytes": 3
+       },
+       {
+        "type": "pdf",
+        "source": "base64",
+        "mimeType": "application/pdf",
+        "data": "UERG",
+        "bytes": 3
+       },
+       {
+        "type": "audio",
+        "source": "url",
+        "mimeType": "audio/mpeg",
+        "data": "https://example.invalid/a.mp3"
+       },
+       {
+        "type": "unknown_block",
+        "value": 1
+       }
+      ]
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 4,
+     "createdAt": "2026-11-01T00:00:04.000Z",
+     "entryId": "e-4"
+    },
+    {
+     "type": "tool_result_message",
+     "message": {
+      "role": "user",
+      "content": [
+       {
+        "type": "tool_result",
+        "toolCallId": "c-grep",
+        "timeline": {
+         "version": 1,
+         "turnId": "t1",
+         "id": "result:c-grep",
+         "order": 3,
+         "revision": 1
+        },
+        "content": [
+         {
+          "type": "text",
+          "text": "3 matches"
+         },
+         {
+          "type": "image",
+          "source": "url",
+          "mimeType": "image/png",
+          "data": "https://example.invalid/r.png"
+         },
+         {
+          "type": "image",
+          "source": "base64",
+          "mimeType": "image/png",
+          "data": "QUJDRA=="
+         },
+         {
+          "type": "pdf",
+          "source": "base64",
+          "mimeType": "application/pdf",
+          "data": "UERG",
+          "bytes": 3,
+          "pages": 2
+         },
+         {
+          "type": "pdf",
+          "source": "base64",
+          "mimeType": "application/pdf",
+          "data": "UERGUERG",
+          "bytes": 6
+         }
+        ],
+        "raw": {
+         "toolName": "Grep",
+         "data": {
+          "matches": 3,
+          "files": [
+           "a.txt"
+          ]
+         }
+        }
+       },
+       {
+        "type": "image",
+        "source": "base64",
+        "mimeType": "image/png",
+        "data": "RUZH"
+       },
+       {
+        "type": "image",
+        "source": "url",
+        "mimeType": "image/gif",
+        "data": "https://example.invalid/b.gif"
+       },
+       {
+        "type": "tool_result",
+        "toolCallId": "c-agent",
+        "isError": true,
+        "content": [
+         {
+          "type": "text",
+          "text": "child failed"
+         }
+        ],
+        "raw": {
+         "toolName": "Agent",
+         "error": {
+          "code": "child_error",
+          "message": "x"
+         }
+        }
+       },
+       {
+        "type": "text",
+        "text": "between results"
+       },
+       {
+        "type": "image",
+        "source": "base64",
+        "mimeType": "image/png",
+        "data": "SElK"
+       },
+       {
+        "type": "tool_result",
+        "toolCallId": "c-plan",
+        "content": [],
+        "raw": {
+         "toolName": "exit_plan_mode",
+         "data": {
+          "planFilePath": "/tmp/plan.md",
+          "planTitle": "Plan",
+          "planSummary": "Do it"
+         }
+        }
+       },
+       {
+        "type": "tool_result_reference",
+        "toolCallId": "c-ref",
+        "preview": "preview text",
+        "path": "/tmp/out.txt",
+        "originalBytes": 4096,
+        "hasMore": true,
+        "mimeType": "text/plain",
+        "reason": "too_large",
+        "isError": false
+       },
+       {
+        "type": "media_reference",
+        "toolCallId": "c-media",
+        "preview": "media preview",
+        "path": "/tmp/a.png",
+        "originalBytes": 99,
+        "hasMore": false,
+        "mimeType": "image/png",
+        "mediaType": "image",
+        "detail": "low",
+        "reason": "media"
+       }
+      ]
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 5,
+     "createdAt": "2026-11-01T00:00:05.000Z",
+     "entryId": "e-5"
+    },
+    {
+     "type": "file_artifacts",
+     "artifacts": [
+      {
+       "path": "a.txt",
+       "source": "workspace_diff"
+      },
+      {
+       "path": "b.txt",
+       "source": "tool"
+      }
+     ],
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 6,
+     "createdAt": "2026-11-01T00:00:06.000Z",
+     "entryId": "e-6"
+    },
+    {
+     "type": "file_artifacts",
+     "artifacts": [],
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 7,
+     "createdAt": "2026-11-01T00:00:07.000Z",
+     "entryId": "e-7"
+    },
+    {
+     "type": "subagent_started",
+     "subagentId": "sa-1",
+     "transcriptRelativePath": "s-crafted/subagents/sa-1.jsonl",
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 8,
+     "createdAt": "2026-11-01T00:00:08.000Z",
+     "entryId": "e-8"
+    },
+    {
+     "type": "subagent_started",
+     "subagentId": "sa-2",
+     "subagentSessionId": "child-session-2",
+     "transcriptRelativePath": "unused.jsonl",
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 9,
+     "createdAt": "2026-11-01T00:00:09.000Z",
+     "entryId": "e-9"
+    },
+    {
+     "type": "subagent_started",
+     "subagentId": "sa-3",
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 10,
+     "createdAt": "2026-11-01T00:00:10.000Z",
+     "entryId": "e-10"
+    },
+    {
+     "type": "subagent_completed",
+     "subagentId": "sa-1",
+     "summaryPreview": "child one done",
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 11,
+     "createdAt": "2026-11-01T00:00:11.000Z",
+     "entryId": "e-11"
+    },
+    {
+     "type": "subagent_completed",
+     "subagentId": "sa-2",
+     "summaryPreview": "child two done",
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 12,
+     "createdAt": "2026-11-01T00:00:12.000Z",
+     "entryId": "e-12"
+    },
+    {
+     "type": "subagent_completed",
+     "subagentId": "sa-3",
+     "summaryPreview": "never linked",
+     "errored": true,
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 13,
+     "createdAt": "2026-11-01T00:00:13.000Z",
+     "entryId": "e-13"
+    },
+    {
+     "type": "agent_status_message",
+     "event": "context_budget",
+     "kind": "status",
+     "text": "context_budget",
+     "detail": {
+      "type": "context_budget",
+      "used": 1200,
+      "displayUsed": 1300,
+      "budgetUsed": 1250,
+      "total": 65536,
+      "effectiveTotal": 57344,
+      "reservedOutputTokens": 8192,
+      "ratio": 0.02,
+      "state": "ok"
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 14,
+     "createdAt": "2026-11-01T00:00:14.000Z",
+     "entryId": "e-14"
+    },
+    {
+     "type": "agent_status_message",
+     "event": "notice",
+     "kind": "error",
+     "text": "hidden failure",
+     "detail": {
+      "visible": false,
+      "messageI18n": {
+       "key": "errors.hidden",
+       "params": {
+        "a": 1
+       }
+      },
+      "userHintI18n": {
+       "key": "hints.retry"
+      }
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 15,
+     "createdAt": "2026-11-01T00:00:15.000Z"
+    },
+    {
+     "type": "plan_todo_plan_changed",
+     "plan": "  1. do the thing  ",
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 16,
+     "createdAt": "2026-11-01T00:00:16.000Z",
+     "entryId": "e-16"
+    },
+    {
+     "type": "plan_todo_progressed",
+     "toolName": "grep",
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 17,
+     "createdAt": "2026-11-01T00:00:17.000Z",
+     "entryId": "e-17"
+    },
+    {
+     "type": "plan_todo_written",
+     "mode": "structured",
+     "merge": false,
+     "reason": " start ",
+     "todos": [
+      {
+       "id": "a",
+       "content": "first",
+       "status": "in_progress"
+      },
+      {
+       "id": "b",
+       "content": "second",
+       "status": "pending",
+       "priority": "high"
+      }
+     ],
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 18,
+     "createdAt": "2026-11-01T00:00:18.000Z",
+     "entryId": "e-18"
+    },
+    {
+     "type": "plan_todo_progressed",
+     "toolName": "grep",
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 19,
+     "createdAt": "2026-11-01T00:00:19.000Z",
+     "entryId": "e-19"
+    },
+    {
+     "type": "plan_todo_progressed",
+     "toolName": "todo_write",
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 20,
+     "createdAt": "2026-11-01T00:00:20.000Z",
+     "entryId": "e-20"
+    },
+    {
+     "type": "plan_todo_written",
+     "mode": "markdown",
+     "merge": true,
+     "markdown": "- [x] first",
+     "todos": [
+      {
+       "id": "a",
+       "content": "first",
+       "status": "completed"
+      },
+      {
+       "id": "c",
+       "content": "third",
+       "status": "cancelled"
+      }
+     ],
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 21,
+     "createdAt": "2026-11-01T00:00:21.000Z",
+     "entryId": "e-21"
+    },
+    {
+     "type": "goal_changed",
+     "revision": 1,
+     "goal": {
+      "id": "g-1",
+      "revision": 1,
+      "objective": "ship it",
+      "phase": "blocked",
+      "blockedReason": "waiting",
+      "maxGoalRounds": 3
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 22,
+     "createdAt": "2026-11-01T00:00:22.000Z",
+     "entryId": "e-22"
+    },
+    {
+     "type": "goal_changed",
+     "revision": 2,
+     "goal": null,
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 23,
+     "createdAt": "2026-11-01T00:00:23.000Z",
+     "entryId": "e-23"
+    },
+    {
+     "type": "file_snapshot_recorded",
+     "messageId": "m-1",
+     "snapshot": {
+      "files": 1
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 24,
+     "createdAt": "2026-11-01T00:00:24.000Z",
+     "entryId": "e-24"
+    },
+    {
+     "type": "file_snapshot_recorded",
+     "messageId": "m-2",
+     "snapshot": {
+      "files": 2
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 25,
+     "createdAt": "2026-11-01T00:00:25.000Z",
+     "entryId": "e-25"
+    },
+    {
+     "type": "file_snapshot_recorded",
+     "messageId": "m-1",
+     "snapshot": {
+      "files": 3
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 26,
+     "createdAt": "2026-11-01T00:00:26.000Z",
+     "entryId": "e-26"
+    },
+    {
+     "type": "control_boundary",
+     "boundary": {
+      "kind": "compact",
+      "subtype": "compact_boundary",
+      "compactMetadata": {
+       "timeline": {
+        "version": 1,
+        "turnId": "t1",
+        "id": "compact:1",
+        "order": 9,
+        "revision": 1
+       },
+       "compactionId": "cmp-1",
+       "trigger": "auto",
+       "preTokens": 1000,
+       "postTokens": 400.2,
+       "messagesSummarized": 5,
+       "targetTokens": 300,
+       "summaryGenerated": true,
+       "checkpointMerged": false,
+       "finalRatio": 0.4,
+       "level": 1,
+       "stage": "summary",
+       "stageLabel": "Summary"
+      },
+      "replacementMessages": [
+       {
+        "role": "user",
+        "content": [
+         {
+          "type": "text",
+          "text": "summary of earlier turns"
+         }
+        ]
+       }
+      ]
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 27,
+     "createdAt": "2026-11-01T00:00:27.000Z",
+     "entryId": "e-27"
+    },
+    {
+     "type": "durable_message",
+     "message": {
+      "role": "user",
+      "metadata": {
+       "compactReplacement": true
+      },
+      "content": [
+       {
+        "type": "text",
+        "text": "replacement, hidden"
+       }
+      ]
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 28,
+     "createdAt": "2026-11-01T00:00:28.000Z",
+     "entryId": "e-28"
+    },
+    {
+     "type": "turn_result",
+     "result": {
+      "type": "success",
+      "stopReason": "completed",
+      "usage": {
+       "inputTokens": 10,
+       "outputTokens": 2,
+       "totalTokens": 12
+      },
+      "permissionDenials": []
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 29,
+     "createdAt": "2026-11-01T00:00:29.000Z",
+     "entryId": "e-29"
+    },
+    {
+     "type": "accepted_input",
+     "messages": [
+      {
+       "role": "user",
+       "content": [
+        {
+         "type": "text",
+         "text": "second turn"
+        }
+       ]
+      }
+     ],
+     "sessionId": "s-crafted",
+     "turnId": "t2",
+     "sequence": 30,
+     "createdAt": "2026-11-01T00:00:30.000Z",
+     "entryId": "e-30"
+    },
+    {
+     "type": "assistant_message",
+     "message": {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "text",
+        "text": "partial answer"
+       }
+      ]
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t2",
+     "sequence": 31,
+     "createdAt": "2026-11-01T00:00:31.000Z",
+     "entryId": "e-31"
+    },
+    {
+     "type": "control_boundary",
+     "boundary": {
+      "kind": "compact",
+      "subtype": "microcompact"
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t2",
+     "sequence": 32,
+     "createdAt": "2026-11-01T00:00:32.000Z"
+    },
+    {
+     "type": "turn_result",
+     "result": {
+      "type": "error",
+      "stopReason": "model_error",
+      "usage": {},
+      "permissionDenials": [],
+      "errors": [
+       {
+        "message": "first failure"
+       },
+       {
+        "message": ""
+       },
+       {
+        "message": "second failure"
+       }
+      ]
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t2",
+     "sequence": 33,
+     "createdAt": "2026-11-01T00:00:33.000Z",
+     "entryId": "e-33"
+    },
+    {
+     "type": "accepted_input",
+     "messages": [
+      {
+       "role": "user",
+       "content": [
+        {
+         "type": "text",
+         "text": "third turn"
+        }
+       ]
+      }
+     ],
+     "sessionId": "s-crafted",
+     "turnId": "t3",
+     "sequence": 34,
+     "createdAt": "2026-11-01T00:00:34.000Z",
+     "entryId": "e-34"
+    },
+    {
+     "type": "agent_status_message",
+     "event": "model_error",
+     "kind": "error",
+     "text": "visible failure",
+     "detail": {
+      "code": "x"
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t3",
+     "sequence": 35,
+     "createdAt": "2026-11-01T00:00:35.000Z",
+     "entryId": "e-35"
+    },
+    {
+     "type": "turn_result",
+     "result": {
+      "type": "error",
+      "stopReason": "aborted",
+      "usage": {},
+      "permissionDenials": []
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t3",
+     "sequence": 36,
+     "createdAt": "2026-11-01T00:00:36.000Z",
+     "entryId": "e-36"
+    },
+    {
+     "type": "accepted_input",
+     "messages": [
+      {
+       "role": "user",
+       "content": [
+        {
+         "type": "text",
+         "text": "fourth turn"
+        }
+       ]
+      }
+     ],
+     "sessionId": "s-crafted",
+     "turnId": "t4",
+     "sequence": 37,
+     "createdAt": "2026-11-01T00:00:37.000Z",
+     "entryId": "e-37"
+    },
+    {
+     "type": "turn_result",
+     "result": {
+      "type": "error",
+      "stopReason": "max_turns",
+      "usage": {},
+      "permissionDenials": []
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t4",
+     "sequence": 38,
+     "createdAt": "2026-11-01T00:00:38.000Z",
+     "entryId": "e-38"
+    },
+    {
+     "type": "accepted_input",
+     "messages": [
+      {
+       "role": "user",
+       "content": [
+        {
+         "type": "text",
+         "text": "fifth turn, never finished"
+        }
+       ]
+      }
+     ],
+     "sessionId": "s-crafted",
+     "turnId": "t5",
+     "sequence": 39,
+     "createdAt": "2026-11-01T00:00:39.000Z",
+     "entryId": "e-39"
+    },
+    {
+     "type": "assistant_message",
+     "message": {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "tool_call",
+        "id": "c-late",
+        "name": "bash",
+        "input": {
+         "command": "true"
+        }
+       }
+      ]
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t5",
+     "sequence": 40,
+     "createdAt": "2026-11-01T00:00:40.000Z",
+     "entryId": "e-40"
+    },
+    {
+     "type": "durable_message",
+     "message": {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "text",
+        "text": "also unfinished"
+       }
+      ]
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t6",
+     "sequence": 41,
+     "createdAt": "2026-11-01T00:00:41.000Z",
+     "entryId": "e-41"
+    },
+    {
+     "type": "context_snapshot",
+     "step": 1,
+     "runtimeContextMessages": [
+      {
+       "role": "user",
+       "content": [
+        {
+         "type": "text",
+         "text": "<memory-context>remembered</memory-context>"
+        }
+       ]
+      }
+     ],
+     "sessionId": "s-crafted",
+     "turnId": "t7",
+     "sequence": 42,
+     "createdAt": "2026-11-01T00:02:42.000Z",
+     "entryId": "x-42"
+    },
+    {
+     "type": "context_snapshot",
+     "step": 2,
+     "runtimeContextMessages": [],
+     "sessionId": "s-crafted",
+     "turnId": "t7",
+     "sequence": 43,
+     "createdAt": "2026-11-01T00:02:43.000Z",
+     "entryId": "x-43"
+    },
+    {
+     "type": "context_snapshot",
+     "step": 3,
+     "sessionId": "s-crafted",
+     "turnId": "t7",
+     "sequence": 44,
+     "createdAt": "2026-11-01T00:02:44.000Z",
+     "entryId": "x-44"
+    },
+    {
+     "type": "control_boundary",
+     "boundary": {
+      "kind": "compact",
+      "subtype": "compact_boundary",
+      "compactMetadata": {
+       "trigger": "auto",
+       "postTokens": 0
+      },
+      "snapshot": {
+       "version": 2,
+       "messages": []
+      }
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t7",
+     "sequence": 45,
+     "createdAt": "2026-11-01T00:02:45.000Z",
+     "entryId": "x-45"
+    },
+    {
+     "type": "control_boundary",
+     "boundary": {
+      "kind": "compact",
+      "subtype": "compact_boundary",
+      "compactMetadata": {
+       "trigger": "auto",
+       "preTokens": 900
+      }
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t7",
+     "sequence": 46,
+     "createdAt": "2026-11-01T00:02:46.000Z",
+     "entryId": "x-46"
+    },
+    {
+     "type": "control_boundary",
+     "boundary": {
+      "kind": "compact",
+      "subtype": "compact_boundary",
+      "compactMetadata": {
+       "trigger": "manual",
+       "preTokens": 2000,
+       "postTokens": 512,
+       "messagesSummarized": 9
+      },
+      "snapshot": {
+       "version": 1,
+       "messages": [
+        {
+         "role": "user",
+         "content": [
+          {
+           "type": "text",
+           "text": "snapshot summary"
+          }
+         ]
+        },
+        {
+         "role": "assistant",
+         "content": [
+          {
+           "type": "tool_call",
+           "id": "c-snap",
+           "name": "grep",
+           "input": {
+            "pattern": "y"
+           }
+          }
+         ]
+        }
+       ]
+      },
+      "replacementMessages": [
+       {
+        "role": "user",
+        "content": [
+         {
+          "type": "text",
+          "text": "ignored replacement"
+         }
+        ]
+       }
+      ]
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t7",
+     "sequence": 47,
+     "createdAt": "2026-11-01T00:02:47.000Z",
+     "entryId": "x-47"
+    },
+    {
+     "type": "agent_status_message",
+     "event": "context_budget",
+     "kind": "status",
+     "text": "context_budget",
+     "detail": {
+      "used": 700,
+      "total": 1000
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t7",
+     "sequence": 48,
+     "createdAt": "2026-11-01T00:02:48.000Z",
+     "entryId": "x-48"
+    },
+    {
+     "type": "agent_status_message",
+     "event": "context_budget",
+     "kind": "status",
+     "text": "context_budget",
+     "detail": {
+      "used": 0,
+      "total": 1000
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t7",
+     "sequence": 49,
+     "createdAt": "2026-11-01T00:02:49.000Z",
+     "entryId": "x-49"
+    },
+    {
+     "type": "file_artifacts",
+     "artifacts": [
+      {
+       "path": "only-diff.txt",
+       "source": "workspace_diff"
+      }
+     ],
+     "sessionId": "s-crafted",
+     "turnId": "t7",
+     "sequence": 50,
+     "createdAt": "2026-11-01T00:02:50.000Z",
+     "entryId": "x-50"
+    },
+    {
+     "type": "plan_todo_progressed",
+     "toolName": "grep",
+     "sessionId": "s-crafted",
+     "turnId": "t7",
+     "sequence": 51,
+     "createdAt": "2026-11-01T00:02:51.000Z",
+     "entryId": "x-51"
+    },
+    {
+     "type": "plan_todo_written",
+     "mode": "structured",
+     "merge": false,
+     "todos": [
+      {
+       "content": "no id",
+       "status": "pending"
+      },
+      {
+       "id": "z",
+       "content": "last",
+       "status": "in_progress"
+      }
+     ],
+     "sessionId": "s-crafted",
+     "turnId": "t7",
+     "sequence": 52,
+     "createdAt": "2026-11-01T00:02:52.000Z",
+     "entryId": "x-52"
+    },
+    {
+     "type": "goal_changed",
+     "revision": 3,
+     "goal": {
+      "id": "g-2",
+      "revision": 3,
+      "objective": "next goal",
+      "phase": "active",
+      "blockedReason": "  "
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t7",
+     "sequence": 53,
+     "createdAt": "2026-11-01T00:02:53.000Z",
+     "entryId": "x-53"
+    },
+    {
+     "type": "turn_result",
+     "result": {
+      "type": "success",
+      "stopReason": "completed",
+      "usage": {
+       "inputTokens": 0,
+       "outputTokens": 0,
+       "cacheReadTokens": 7
+      },
+      "permissionDenials": []
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t7",
+     "sequence": 54,
+     "createdAt": "2026-11-01T00:02:54.000Z",
+     "entryId": "x-54"
+    }
+   ],
+   "checkpoint": {
+    "agent-transcript.conversation": {
+     "version": 3,
+     "asOfSequence": 54,
+     "state": {
+      "entries": [
+       {
+        "entry": {
+         "type": "accepted_input",
+         "messages": [
+          {
+           "role": "user",
+           "content": [
+            {
+             "type": "text",
+             "text": "look at this "
+            },
+            {
+             "type": "image",
+             "source": "base64",
+             "mimeType": "image/png",
+             "data": "QUJD"
+            },
+            {
+             "type": "text",
+             "text": "and this"
+            },
+            {
+             "type": "image",
+             "source": "url",
+             "mimeType": "image/jpeg",
+             "data": "https://example.invalid/a.jpg"
+            }
+           ]
+          },
+          {
+           "role": "user",
+           "metadata": {
+            "synthetic": true
+           },
+           "content": [
+            {
+             "type": "text",
+             "text": "synthetic, hidden"
+            }
+           ]
+          },
+          {
+           "role": "user",
+           "metadata": {
+            "queueItemId": "q-1",
+            "moduleId": "m-1"
+           },
+           "content": [
+            {
+             "type": "text",
+             "text": "queued follow-up"
+            }
+           ]
+          },
+          {
+           "role": "user",
+           "metadata": {
+            "compactReplacement": true
+           },
+           "content": [
+            {
+             "type": "text",
+             "text": "replacement, hidden"
+            }
+           ]
+          }
+         ],
+         "sessionId": "s-crafted",
+         "turnId": "t1",
+         "sequence": 3,
+         "createdAt": "2026-11-01T00:00:03.000Z",
+         "entryId": "e-3"
+        },
+        "index": 2
+       },
+       {
+        "entry": {
+         "type": "assistant_message",
+         "message": {
+          "role": "assistant",
+          "metadata": {
+           "model": "fixture-model"
+          },
+          "content": [
+           {
+            "type": "thinking",
+            "text": "thinking it over",
+            "blockId": "b-think"
+           },
+           {
+            "type": "thinking",
+            "text": "no block id"
+           },
+           {
+            "type": "text",
+            "text": "part one, ",
+            "blockId": "b-1",
+            "timeline": {
+             "version": 1,
+             "turnId": "t1",
+             "id": "b-1",
+             "order": 0,
+             "revision": 1
+            }
+           },
+           {
+            "type": "text",
+            "text": "part two",
+            "blockId": "b-1",
+            "timeline": {
+             "version": 1,
+             "turnId": "t1",
+             "id": "b-1",
+             "order": 1,
+             "revision": 1
+            }
+           },
+           {
+            "type": "text",
+            "text": "new block",
+            "blockId": "b-2"
+           },
+           {
+            "type": "text",
+            "text": "legacy a"
+           },
+           {
+            "type": "text",
+            "text": " legacy b"
+           },
+           {
+            "type": "tool_call",
+            "id": "c-grep",
+            "name": "grep",
+            "input": {
+             "pattern": "x"
+            },
+            "timeline": {
+             "version": 1,
+             "turnId": "t1",
+             "id": "tool:c-grep",
+             "order": 2,
+             "revision": 1
+            }
+           },
+           {
+            "type": "tool_call",
+            "id": "c-agent",
+            "name": "Agent",
+            "input": {
+             "prompt": "child one"
+            }
+           },
+           {
+            "type": "tool_call",
+            "id": "c-task",
+            "name": "task",
+            "input": {
+             "prompt": "child two"
+            }
+           },
+           {
+            "type": "tool_call",
+            "id": "c-plan",
+            "name": "exit_plan_mode",
+            "input": {}
+           },
+           {
+            "type": "image",
+            "source": "base64",
+            "mimeType": "image/png",
+            "data": "QUJD",
+            "bytes": 3
+           },
+           {
+            "type": "pdf",
+            "source": "base64",
+            "mimeType": "application/pdf",
+            "data": "UERG",
+            "bytes": 3
+           },
+           {
+            "type": "audio",
+            "source": "url",
+            "mimeType": "audio/mpeg",
+            "data": "https://example.invalid/a.mp3"
+           },
+           {
+            "type": "unknown_block",
+            "value": 1
+           }
+          ]
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t1",
+         "sequence": 4,
+         "createdAt": "2026-11-01T00:00:04.000Z",
+         "entryId": "e-4"
+        },
+        "index": 3
+       },
+       {
+        "entry": {
+         "type": "tool_result_message",
+         "message": {
+          "role": "user",
+          "content": [
+           {
+            "type": "tool_result",
+            "toolCallId": "c-grep",
+            "timeline": {
+             "version": 1,
+             "turnId": "t1",
+             "id": "result:c-grep",
+             "order": 3,
+             "revision": 1
+            },
+            "content": [
+             {
+              "type": "text",
+              "text": "3 matches"
+             },
+             {
+              "type": "image",
+              "source": "url",
+              "mimeType": "image/png",
+              "data": "https://example.invalid/r.png"
+             },
+             {
+              "type": "image",
+              "source": "base64",
+              "mimeType": "image/png",
+              "data": "QUJDRA=="
+             },
+             {
+              "type": "pdf",
+              "source": "base64",
+              "mimeType": "application/pdf",
+              "data": "UERG",
+              "bytes": 3,
+              "pages": 2
+             },
+             {
+              "type": "pdf",
+              "source": "base64",
+              "mimeType": "application/pdf",
+              "data": "UERGUERG",
+              "bytes": 6
+             }
+            ],
+            "raw": {
+             "toolName": "Grep",
+             "data": {
+              "matches": 3,
+              "files": [
+               "a.txt"
+              ]
+             }
+            }
+           },
+           {
+            "type": "image",
+            "source": "base64",
+            "mimeType": "image/png",
+            "data": "RUZH"
+           },
+           {
+            "type": "image",
+            "source": "url",
+            "mimeType": "image/gif",
+            "data": "https://example.invalid/b.gif"
+           },
+           {
+            "type": "tool_result",
+            "toolCallId": "c-agent",
+            "isError": true,
+            "content": [
+             {
+              "type": "text",
+              "text": "child failed"
+             }
+            ],
+            "raw": {
+             "toolName": "Agent",
+             "error": {
+              "code": "child_error",
+              "message": "x"
+             }
+            }
+           },
+           {
+            "type": "text",
+            "text": "between results"
+           },
+           {
+            "type": "image",
+            "source": "base64",
+            "mimeType": "image/png",
+            "data": "SElK"
+           },
+           {
+            "type": "tool_result",
+            "toolCallId": "c-plan",
+            "content": [],
+            "raw": {
+             "toolName": "exit_plan_mode",
+             "data": {
+              "planFilePath": "/tmp/plan.md",
+              "planTitle": "Plan",
+              "planSummary": "Do it"
+             }
+            }
+           },
+           {
+            "type": "tool_result_reference",
+            "toolCallId": "c-ref",
+            "preview": "preview text",
+            "path": "/tmp/out.txt",
+            "originalBytes": 4096,
+            "hasMore": true,
+            "mimeType": "text/plain",
+            "reason": "too_large",
+            "isError": false
+           },
+           {
+            "type": "media_reference",
+            "toolCallId": "c-media",
+            "preview": "media preview",
+            "path": "/tmp/a.png",
+            "originalBytes": 99,
+            "hasMore": false,
+            "mimeType": "image/png",
+            "mediaType": "image",
+            "detail": "low",
+            "reason": "media"
+           }
+          ]
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t1",
+         "sequence": 5,
+         "createdAt": "2026-11-01T00:00:05.000Z",
+         "entryId": "e-5"
+        },
+        "index": 4
+       },
+       {
+        "entry": {
+         "type": "control_boundary",
+         "boundary": {
+          "kind": "compact",
+          "subtype": "compact_boundary",
+          "compactMetadata": {
+           "timeline": {
+            "version": 1,
+            "turnId": "t1",
+            "id": "compact:1",
+            "order": 9,
+            "revision": 1
+           },
+           "compactionId": "cmp-1",
+           "trigger": "auto",
+           "preTokens": 1000,
+           "postTokens": 400.2,
+           "messagesSummarized": 5,
+           "targetTokens": 300,
+           "summaryGenerated": true,
+           "checkpointMerged": false,
+           "finalRatio": 0.4,
+           "level": 1,
+           "stage": "summary",
+           "stageLabel": "Summary"
+          },
+          "replacementMessages": [
+           {
+            "role": "user",
+            "content": [
+             {
+              "type": "text",
+              "text": "summary of earlier turns"
+             }
+            ]
+           }
+          ]
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t1",
+         "sequence": 27,
+         "createdAt": "2026-11-01T00:00:27.000Z",
+         "entryId": "e-27"
+        },
+        "index": 26
+       },
+       {
+        "entry": {
+         "type": "durable_message",
+         "message": {
+          "role": "user",
+          "metadata": {
+           "compactReplacement": true
+          },
+          "content": [
+           {
+            "type": "text",
+            "text": "replacement, hidden"
+           }
+          ]
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t1",
+         "sequence": 28,
+         "createdAt": "2026-11-01T00:00:28.000Z",
+         "entryId": "e-28"
+        },
+        "index": 27
+       },
+       {
+        "entry": {
+         "type": "turn_result",
+         "result": {
+          "type": "success",
+          "stopReason": "completed",
+          "usage": {
+           "inputTokens": 10,
+           "outputTokens": 2,
+           "totalTokens": 12
+          },
+          "permissionDenials": []
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t1",
+         "sequence": 29,
+         "createdAt": "2026-11-01T00:00:29.000Z",
+         "entryId": "e-29"
+        },
+        "index": 28
+       },
+       {
+        "entry": {
+         "type": "accepted_input",
+         "messages": [
+          {
+           "role": "user",
+           "content": [
+            {
+             "type": "text",
+             "text": "second turn"
+            }
+           ]
+          }
+         ],
+         "sessionId": "s-crafted",
+         "turnId": "t2",
+         "sequence": 30,
+         "createdAt": "2026-11-01T00:00:30.000Z",
+         "entryId": "e-30"
+        },
+        "index": 29
+       },
+       {
+        "entry": {
+         "type": "assistant_message",
+         "message": {
+          "role": "assistant",
+          "content": [
+           {
+            "type": "text",
+            "text": "partial answer"
+           }
+          ]
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t2",
+         "sequence": 31,
+         "createdAt": "2026-11-01T00:00:31.000Z",
+         "entryId": "e-31"
+        },
+        "index": 30
+       },
+       {
+        "entry": {
+         "type": "turn_result",
+         "result": {
+          "type": "error",
+          "stopReason": "model_error",
+          "usage": {},
+          "permissionDenials": [],
+          "errors": [
+           {
+            "message": "first failure"
+           },
+           {
+            "message": ""
+           },
+           {
+            "message": "second failure"
+           }
+          ]
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t2",
+         "sequence": 33,
+         "createdAt": "2026-11-01T00:00:33.000Z",
+         "entryId": "e-33"
+        },
+        "index": 32
+       },
+       {
+        "entry": {
+         "type": "accepted_input",
+         "messages": [
+          {
+           "role": "user",
+           "content": [
+            {
+             "type": "text",
+             "text": "third turn"
+            }
+           ]
+          }
+         ],
+         "sessionId": "s-crafted",
+         "turnId": "t3",
+         "sequence": 34,
+         "createdAt": "2026-11-01T00:00:34.000Z",
+         "entryId": "e-34"
+        },
+        "index": 33
+       },
+       {
+        "entry": {
+         "type": "turn_result",
+         "result": {
+          "type": "error",
+          "stopReason": "aborted",
+          "usage": {},
+          "permissionDenials": []
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t3",
+         "sequence": 36,
+         "createdAt": "2026-11-01T00:00:36.000Z",
+         "entryId": "e-36"
+        },
+        "index": 35
+       },
+       {
+        "entry": {
+         "type": "accepted_input",
+         "messages": [
+          {
+           "role": "user",
+           "content": [
+            {
+             "type": "text",
+             "text": "fourth turn"
+            }
+           ]
+          }
+         ],
+         "sessionId": "s-crafted",
+         "turnId": "t4",
+         "sequence": 37,
+         "createdAt": "2026-11-01T00:00:37.000Z",
+         "entryId": "e-37"
+        },
+        "index": 36
+       },
+       {
+        "entry": {
+         "type": "turn_result",
+         "result": {
+          "type": "error",
+          "stopReason": "max_turns",
+          "usage": {},
+          "permissionDenials": []
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t4",
+         "sequence": 38,
+         "createdAt": "2026-11-01T00:00:38.000Z",
+         "entryId": "e-38"
+        },
+        "index": 37
+       },
+       {
+        "entry": {
+         "type": "accepted_input",
+         "messages": [
+          {
+           "role": "user",
+           "content": [
+            {
+             "type": "text",
+             "text": "fifth turn, never finished"
+            }
+           ]
+          }
+         ],
+         "sessionId": "s-crafted",
+         "turnId": "t5",
+         "sequence": 39,
+         "createdAt": "2026-11-01T00:00:39.000Z",
+         "entryId": "e-39"
+        },
+        "index": 38
+       },
+       {
+        "entry": {
+         "type": "assistant_message",
+         "message": {
+          "role": "assistant",
+          "content": [
+           {
+            "type": "tool_call",
+            "id": "c-late",
+            "name": "bash",
+            "input": {
+             "command": "true"
+            }
+           }
+          ]
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t5",
+         "sequence": 40,
+         "createdAt": "2026-11-01T00:00:40.000Z",
+         "entryId": "e-40"
+        },
+        "index": 39
+       },
+       {
+        "entry": {
+         "type": "durable_message",
+         "message": {
+          "role": "assistant",
+          "content": [
+           {
+            "type": "text",
+            "text": "also unfinished"
+           }
+          ]
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t6",
+         "sequence": 41,
+         "createdAt": "2026-11-01T00:00:41.000Z",
+         "entryId": "e-41"
+        },
+        "index": 40
+       },
+       {
+        "entry": {
+         "type": "context_snapshot",
+         "step": 1,
+         "runtimeContextMessages": [
+          {
+           "role": "user",
+           "content": [
+            {
+             "type": "text",
+             "text": "<memory-context>remembered</memory-context>"
+            }
+           ]
+          }
+         ],
+         "sessionId": "s-crafted",
+         "turnId": "t7",
+         "sequence": 42,
+         "createdAt": "2026-11-01T00:02:42.000Z",
+         "entryId": "x-42"
+        },
+        "index": 41
+       },
+       {
+        "entry": {
+         "type": "control_boundary",
+         "boundary": {
+          "kind": "compact",
+          "subtype": "compact_boundary",
+          "compactMetadata": {
+           "trigger": "auto",
+           "postTokens": 0
+          },
+          "snapshot": {
+           "version": 2,
+           "messages": []
+          }
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t7",
+         "sequence": 45,
+         "createdAt": "2026-11-01T00:02:45.000Z",
+         "entryId": "x-45"
+        },
+        "index": 44
+       },
+       {
+        "entry": {
+         "type": "control_boundary",
+         "boundary": {
+          "kind": "compact",
+          "subtype": "compact_boundary",
+          "compactMetadata": {
+           "trigger": "manual",
+           "preTokens": 2000,
+           "postTokens": 512,
+           "messagesSummarized": 9
+          },
+          "snapshot": {
+           "version": 1,
+           "messages": [
+            {
+             "role": "user",
+             "content": [
+              {
+               "type": "text",
+               "text": "snapshot summary"
+              }
+             ]
+            },
+            {
+             "role": "assistant",
+             "content": [
+              {
+               "type": "tool_call",
+               "id": "c-snap",
+               "name": "grep",
+               "input": {
+                "pattern": "y"
+               }
+              }
+             ]
+            }
+           ]
+          },
+          "replacementMessages": [
+           {
+            "role": "user",
+            "content": [
+             {
+              "type": "text",
+              "text": "ignored replacement"
+             }
+            ]
+           }
+          ]
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t7",
+         "sequence": 47,
+         "createdAt": "2026-11-01T00:02:47.000Z",
+         "entryId": "x-47"
+        },
+        "index": 46
+       },
+       {
+        "entry": {
+         "type": "turn_result",
+         "result": {
+          "type": "success",
+          "stopReason": "completed",
+          "usage": {
+           "inputTokens": 0,
+           "outputTokens": 0,
+           "cacheReadTokens": 7
+          },
+          "permissionDenials": []
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t7",
+         "sequence": 54,
+         "createdAt": "2026-11-01T00:02:54.000Z",
+         "entryId": "x-54"
+        },
+        "index": 53
+       }
+      ],
+      "completedTurnIds": [
+       "t1",
+       "t2",
+       "t3",
+       "t4",
+       "t7"
+      ],
+      "lastCompactBoundaryIndex": 46,
+      "lastCompactReplacement": {
+       "index": 46,
+       "turnId": "t7",
+       "messages": [
+        {
+         "role": "user",
+         "content": [
+          {
+           "type": "text",
+           "text": "snapshot summary"
+          }
+         ]
+        },
+        {
+         "role": "assistant",
+         "content": [
+          {
+           "type": "tool_call",
+           "id": "c-snap",
+           "name": "grep",
+           "input": {
+            "pattern": "y"
+           }
+          }
+         ]
+        }
+       ],
+       "replayBeforeTurnCompletion": true
+      }
+     }
+    },
+    "agent-transcript.turn-summary": {
+     "version": 1,
+     "asOfSequence": 54,
+     "state": {
+      "usage": {
+       "inputTokens": 10,
+       "outputTokens": 2,
+       "cacheReadTokens": 7,
+       "totalTokens": 12
+      },
+      "permissionDenials": []
+     }
+    },
+    "agent-transcript.metadata": {
+     "version": 2,
+     "asOfSequence": 54,
+     "state": {
+      "title": "Crafted title",
+      "tag": "fixture",
+      "firstPrompt": "look at this",
+      "updatedAt": "2026-11-01T00:00:00.000Z"
+     }
+    },
+    "agent-transcript.compact-boundary": {
+     "version": 1,
+     "asOfSequence": 54,
+     "state": {
+      "lastCompactBoundary": {
+       "type": "control_boundary",
+       "boundary": {
+        "kind": "compact",
+        "subtype": "compact_boundary",
+        "compactMetadata": {
+         "trigger": "manual",
+         "preTokens": 2000,
+         "postTokens": 512,
+         "messagesSummarized": 9
+        },
+        "snapshot": {
+         "version": 1,
+         "messages": [
+          {
+           "role": "user",
+           "content": [
+            {
+             "type": "text",
+             "text": "snapshot summary"
+            }
+           ]
+          },
+          {
+           "role": "assistant",
+           "content": [
+            {
+             "type": "tool_call",
+             "id": "c-snap",
+             "name": "grep",
+             "input": {
+              "pattern": "y"
+             }
+            }
+           ]
+          }
+         ]
+        },
+        "replacementMessages": [
+         {
+          "role": "user",
+          "content": [
+           {
+            "type": "text",
+            "text": "ignored replacement"
+           }
+          ]
+         }
+        ]
+       },
+       "sessionId": "s-crafted",
+       "turnId": "t7",
+       "sequence": 47,
+       "createdAt": "2026-11-01T00:02:47.000Z",
+       "entryId": "x-47"
+      }
+     }
+    },
+    "agent-transcript.subagent-references": {
+     "version": 1,
+     "asOfSequence": 54,
+     "state": {
+      "started": [
+       {
+        "type": "subagent_started",
+        "subagentId": "sa-1",
+        "transcriptRelativePath": "s-crafted/subagents/sa-1.jsonl",
+        "sessionId": "s-crafted",
+        "turnId": "t1",
+        "sequence": 8,
+        "createdAt": "2026-11-01T00:00:08.000Z",
+        "entryId": "e-8"
+       },
+       {
+        "type": "subagent_started",
+        "subagentId": "sa-2",
+        "subagentSessionId": "child-session-2",
+        "transcriptRelativePath": "unused.jsonl",
+        "sessionId": "s-crafted",
+        "turnId": "t1",
+        "sequence": 9,
+        "createdAt": "2026-11-01T00:00:09.000Z",
+        "entryId": "e-9"
+       },
+       {
+        "type": "subagent_started",
+        "subagentId": "sa-3",
+        "sessionId": "s-crafted",
+        "turnId": "t1",
+        "sequence": 10,
+        "createdAt": "2026-11-01T00:00:10.000Z",
+        "entryId": "e-10"
+       }
+      ],
+      "completed": [
+       {
+        "type": "subagent_completed",
+        "subagentId": "sa-1",
+        "summaryPreview": "child one done",
+        "sessionId": "s-crafted",
+        "turnId": "t1",
+        "sequence": 11,
+        "createdAt": "2026-11-01T00:00:11.000Z",
+        "entryId": "e-11"
+       },
+       {
+        "type": "subagent_completed",
+        "subagentId": "sa-2",
+        "summaryPreview": "child two done",
+        "sessionId": "s-crafted",
+        "turnId": "t1",
+        "sequence": 12,
+        "createdAt": "2026-11-01T00:00:12.000Z",
+        "entryId": "e-12"
+       },
+       {
+        "type": "subagent_completed",
+        "subagentId": "sa-3",
+        "summaryPreview": "never linked",
+        "errored": true,
+        "sessionId": "s-crafted",
+        "turnId": "t1",
+        "sequence": 13,
+        "createdAt": "2026-11-01T00:00:13.000Z",
+        "entryId": "e-13"
+       }
+      ]
+     }
+    },
+    "file-history.snapshots": {
+     "version": 1,
+     "asOfSequence": 54,
+     "state": {
+      "entries": [
+       {
+        "type": "file_snapshot_recorded",
+        "messageId": "m-1",
+        "snapshot": {
+         "files": 3
+        },
+        "sessionId": "s-crafted",
+        "turnId": "t1",
+        "sequence": 26,
+        "createdAt": "2026-11-01T00:00:26.000Z",
+        "entryId": "e-26"
+       },
+       {
+        "type": "file_snapshot_recorded",
+        "messageId": "m-2",
+        "snapshot": {
+         "files": 2
+        },
+        "sessionId": "s-crafted",
+        "turnId": "t1",
+        "sequence": 25,
+        "createdAt": "2026-11-01T00:00:25.000Z",
+        "entryId": "e-25"
+       }
+      ]
+     }
+    },
+    "web-history.file-artifacts": {
+     "version": 1,
+     "asOfSequence": 54,
+     "state": {
+      "entries": [
+       {
+        "type": "file_artifacts",
+        "artifacts": [
+         {
+          "path": "a.txt",
+          "source": "workspace_diff"
+         },
+         {
+          "path": "b.txt",
+          "source": "tool"
+         }
+        ],
+        "sessionId": "s-crafted",
+        "turnId": "t1",
+        "sequence": 6,
+        "createdAt": "2026-11-01T00:00:06.000Z",
+        "entryId": "e-6"
+       },
+       {
+        "type": "file_artifacts",
+        "artifacts": [
+         {
+          "path": "only-diff.txt",
+          "source": "workspace_diff"
+         }
+        ],
+        "sessionId": "s-crafted",
+        "turnId": "t7",
+        "sequence": 50,
+        "createdAt": "2026-11-01T00:02:50.000Z",
+        "entryId": "x-50"
+       }
+      ],
+      "turnsWithToolResults": [
+       "t1"
+      ]
+     }
+    },
+    "web-history.agent-statuses": {
+     "version": 1,
+     "asOfSequence": 54,
+     "state": [
+      {
+       "type": "agent_status_message",
+       "event": "context_budget",
+       "kind": "status",
+       "text": "context_budget",
+       "detail": {
+        "type": "context_budget",
+        "used": 1200,
+        "displayUsed": 1300,
+        "budgetUsed": 1250,
+        "total": 65536,
+        "effectiveTotal": 57344,
+        "reservedOutputTokens": 8192,
+        "ratio": 0.02,
+        "state": "ok"
+       },
+       "sessionId": "s-crafted",
+       "turnId": "t1",
+       "sequence": 14,
+       "createdAt": "2026-11-01T00:00:14.000Z",
+       "entryId": "e-14"
+      },
+      {
+       "type": "agent_status_message",
+       "event": "notice",
+       "kind": "error",
+       "text": "hidden failure",
+       "detail": {
+        "visible": false,
+        "messageI18n": {
+         "key": "errors.hidden",
+         "params": {
+          "a": 1
+         }
+        },
+        "userHintI18n": {
+         "key": "hints.retry"
+        }
+       },
+       "sessionId": "s-crafted",
+       "turnId": "t1",
+       "sequence": 15,
+       "createdAt": "2026-11-01T00:00:15.000Z"
+      },
+      {
+       "type": "agent_status_message",
+       "event": "model_error",
+       "kind": "error",
+       "text": "visible failure",
+       "detail": {
+        "code": "x"
+       },
+       "sessionId": "s-crafted",
+       "turnId": "t3",
+       "sequence": 35,
+       "createdAt": "2026-11-01T00:00:35.000Z",
+       "entryId": "e-35"
+      },
+      {
+       "type": "agent_status_message",
+       "event": "context_budget",
+       "kind": "status",
+       "text": "context_budget",
+       "detail": {
+        "used": 700,
+        "total": 1000
+       },
+       "sessionId": "s-crafted",
+       "turnId": "t7",
+       "sequence": 48,
+       "createdAt": "2026-11-01T00:02:48.000Z",
+       "entryId": "x-48"
+      },
+      {
+       "type": "agent_status_message",
+       "event": "context_budget",
+       "kind": "status",
+       "text": "context_budget",
+       "detail": {
+        "used": 0,
+        "total": 1000
+       },
+       "sessionId": "s-crafted",
+       "turnId": "t7",
+       "sequence": 49,
+       "createdAt": "2026-11-01T00:02:49.000Z",
+       "entryId": "x-49"
+      }
+     ]
+    },
+    "web-history.turn-errors": {
+     "version": 1,
+     "asOfSequence": 54,
+     "state": {
+      "entries": [
+       {
+        "type": "turn_result",
+        "result": {
+         "type": "error",
+         "stopReason": "model_error",
+         "usage": {},
+         "permissionDenials": [],
+         "errors": [
+          {
+           "message": "first failure"
+          },
+          {
+           "message": ""
+          },
+          {
+           "message": "second failure"
+          }
+         ]
+        },
+        "sessionId": "s-crafted",
+        "turnId": "t2",
+        "sequence": 33,
+        "createdAt": "2026-11-01T00:00:33.000Z",
+        "entryId": "e-33"
+       },
+       {
+        "type": "turn_result",
+        "result": {
+         "type": "error",
+         "stopReason": "aborted",
+         "usage": {},
+         "permissionDenials": []
+        },
+        "sessionId": "s-crafted",
+        "turnId": "t3",
+        "sequence": 36,
+        "createdAt": "2026-11-01T00:00:36.000Z",
+        "entryId": "e-36"
+       },
+       {
+        "type": "turn_result",
+        "result": {
+         "type": "error",
+         "stopReason": "max_turns",
+         "usage": {},
+         "permissionDenials": []
+        },
+        "sessionId": "s-crafted",
+        "turnId": "t4",
+        "sequence": 38,
+        "createdAt": "2026-11-01T00:00:38.000Z",
+        "entryId": "e-38"
+       }
+      ],
+      "visibleFailureStatusTurnIds": [
+       "t3"
+      ]
+     }
+    },
+    "web-history.token-usage": {
+     "version": 1,
+     "asOfSequence": 54,
+     "state": {
+      "latestContextBudget": {
+       "index": 47,
+       "usage": {
+        "used": 700,
+        "total": 1000,
+        "effectiveTotal": 1000,
+        "reservedOutputTokens": 0,
+        "source": "history",
+        "exact": true
+       }
+      },
+      "latestCompactBudget": {
+       "index": 46,
+       "postTokens": 512,
+       "preTokens": 2000,
+       "messagesSummarized": 9
+      },
+      "latestTurnUsage": {
+       "inputTokens": 0,
+       "outputTokens": 0,
+       "cacheReadTokens": 7
+      }
+     }
+    },
+    "web-history.incomplete-turns": {
+     "version": 1,
+     "asOfSequence": 54,
+     "state": {
+      "durableMessageTurnIds": [
+       "t1",
+       "t2",
+       "t5",
+       "t6"
+      ],
+      "completedTurnIds": [
+       "t1",
+       "t2",
+       "t3",
+       "t4",
+       "t7"
+      ]
+     }
+    },
+    "plan-todo.state": {
+     "version": 1,
+     "asOfSequence": 54,
+     "state": {
+      "approvedPlan": "1. do the thing",
+      "requiresInitialization": false,
+      "toolCallsSinceLastTodoWrite": 0,
+      "todos": [
+       {
+        "content": "no id",
+        "status": "pending"
+       },
+       {
+        "id": "z",
+        "content": "last",
+        "status": "in_progress"
+       }
+      ],
+      "activeTodos": [
+       {
+        "content": "no id",
+        "status": "pending"
+       },
+       {
+        "id": "z",
+        "content": "last",
+        "status": "in_progress"
+       }
+      ],
+      "todoHistory": [
+       {
+        "createdAt": "2026-11-01T00:00:18.000Z",
+        "mode": "structured",
+        "merge": false,
+        "reason": "start",
+        "todos": [
+         {
+          "id": "a",
+          "content": "first",
+          "status": "in_progress"
+         },
+         {
+          "id": "b",
+          "content": "second",
+          "status": "pending",
+          "priority": "high"
+         }
+        ],
+        "diagnostics": {
+         "writeCount": 1,
+         "todoCount": 2,
+         "activeCount": 2,
+         "completedCount": 0,
+         "cancelledCount": 0,
+         "largeRewriteCount": 0,
+         "deletedOpenItemCount": 0,
+         "completedWithoutActiveCount": 0,
+         "lastWrite": {
+          "mode": "structured",
+          "merge": false,
+          "reason": "start",
+          "addedCount": 2,
+          "removedCount": 0,
+          "changedCount": 0,
+          "deletedOpenItemCount": 0,
+          "largeRewrite": false,
+          "allCompleted": false
+         }
+        }
+       },
+       {
+        "createdAt": "2026-11-01T00:00:21.000Z",
+        "mode": "markdown",
+        "merge": true,
+        "markdown": "- [x] first",
+        "todos": [
+         {
+          "id": "a",
+          "content": "first",
+          "status": "completed"
+         },
+         {
+          "id": "c",
+          "content": "third",
+          "status": "cancelled"
+         }
+        ],
+        "diagnostics": {
+         "writeCount": 2,
+         "todoCount": 2,
+         "activeCount": 0,
+         "completedCount": 1,
+         "cancelledCount": 1,
+         "largeRewriteCount": 0,
+         "deletedOpenItemCount": 1,
+         "completedWithoutActiveCount": 1,
+         "lastWrite": {
+          "mode": "markdown",
+          "merge": true,
+          "addedCount": 1,
+          "removedCount": 1,
+          "changedCount": 1,
+          "deletedOpenItemCount": 1,
+          "largeRewrite": false,
+          "allCompleted": true
+         }
+        }
+       },
+       {
+        "createdAt": "2026-11-01T00:02:52.000Z",
+        "mode": "structured",
+        "merge": false,
+        "todos": [
+         {
+          "content": "no id",
+          "status": "pending"
+         },
+         {
+          "id": "z",
+          "content": "last",
+          "status": "in_progress"
+         }
+        ],
+        "diagnostics": {
+         "writeCount": 3,
+         "todoCount": 2,
+         "activeCount": 2,
+         "completedCount": 0,
+         "cancelledCount": 0,
+         "largeRewriteCount": 1,
+         "deletedOpenItemCount": 1,
+         "completedWithoutActiveCount": 1,
+         "lastWrite": {
+          "mode": "structured",
+          "merge": false,
+          "addedCount": 2,
+          "removedCount": 2,
+          "changedCount": 0,
+          "deletedOpenItemCount": 0,
+          "largeRewrite": true,
+          "allCompleted": false
+         }
+        }
+       }
+      ],
+      "todoDiagnostics": {
+       "writeCount": 3,
+       "todoCount": 2,
+       "activeCount": 2,
+       "completedCount": 0,
+       "cancelledCount": 0,
+       "largeRewriteCount": 1,
+       "deletedOpenItemCount": 1,
+       "completedWithoutActiveCount": 1,
+       "lastWrite": {
+        "mode": "structured",
+        "merge": false,
+        "addedCount": 2,
+        "removedCount": 2,
+        "changedCount": 0,
+        "deletedOpenItemCount": 0,
+        "largeRewrite": true,
+        "allCompleted": false
+       }
+      }
+     }
+    },
+    "goal.state": {
+     "version": 1,
+     "asOfSequence": 54,
+     "state": {
+      "goal": {
+       "id": "g-2",
+       "revision": 3,
+       "objective": "next goal",
+       "phase": "active"
+      },
+      "revision": 3
+     }
+    }
+   },
+   "errors": []
+  },
+  "brokenGoal": {
+   "entries": [
+    {
+     "type": "turn_started",
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 1,
+     "createdAt": "2026-11-01T00:00:01.000Z",
+     "entryId": "e-1"
+    },
+    {
+     "type": "session_metadata",
+     "metadata": {
+      "title": "Crafted title",
+      "tag": "fixture",
+      "firstPrompt": "look at this",
+      "updatedAt": "2026-11-01T00:00:00.000Z"
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 2,
+     "createdAt": "2026-11-01T00:00:02.000Z",
+     "entryId": "e-2"
+    },
+    {
+     "type": "accepted_input",
+     "messages": [
+      {
+       "role": "user",
+       "content": [
+        {
+         "type": "text",
+         "text": "look at this "
+        },
+        {
+         "type": "image",
+         "source": "base64",
+         "mimeType": "image/png",
+         "data": "QUJD"
+        },
+        {
+         "type": "text",
+         "text": "and this"
+        },
+        {
+         "type": "image",
+         "source": "url",
+         "mimeType": "image/jpeg",
+         "data": "https://example.invalid/a.jpg"
+        }
+       ]
+      },
+      {
+       "role": "user",
+       "metadata": {
+        "synthetic": true
+       },
+       "content": [
+        {
+         "type": "text",
+         "text": "synthetic, hidden"
+        }
+       ]
+      },
+      {
+       "role": "user",
+       "metadata": {
+        "queueItemId": "q-1",
+        "moduleId": "m-1"
+       },
+       "content": [
+        {
+         "type": "text",
+         "text": "queued follow-up"
+        }
+       ]
+      },
+      {
+       "role": "user",
+       "metadata": {
+        "compactReplacement": true
+       },
+       "content": [
+        {
+         "type": "text",
+         "text": "replacement, hidden"
+        }
+       ]
+      }
+     ],
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 3,
+     "createdAt": "2026-11-01T00:00:03.000Z",
+     "entryId": "e-3"
+    },
+    {
+     "type": "assistant_message",
+     "message": {
+      "role": "assistant",
+      "metadata": {
+       "model": "fixture-model"
+      },
+      "content": [
+       {
+        "type": "thinking",
+        "text": "thinking it over",
+        "blockId": "b-think"
+       },
+       {
+        "type": "thinking",
+        "text": "no block id"
+       },
+       {
+        "type": "text",
+        "text": "part one, ",
+        "blockId": "b-1",
+        "timeline": {
+         "version": 1,
+         "turnId": "t1",
+         "id": "b-1",
+         "order": 0,
+         "revision": 1
+        }
+       },
+       {
+        "type": "text",
+        "text": "part two",
+        "blockId": "b-1",
+        "timeline": {
+         "version": 1,
+         "turnId": "t1",
+         "id": "b-1",
+         "order": 1,
+         "revision": 1
+        }
+       },
+       {
+        "type": "text",
+        "text": "new block",
+        "blockId": "b-2"
+       },
+       {
+        "type": "text",
+        "text": "legacy a"
+       },
+       {
+        "type": "text",
+        "text": " legacy b"
+       },
+       {
+        "type": "tool_call",
+        "id": "c-grep",
+        "name": "grep",
+        "input": {
+         "pattern": "x"
+        },
+        "timeline": {
+         "version": 1,
+         "turnId": "t1",
+         "id": "tool:c-grep",
+         "order": 2,
+         "revision": 1
+        }
+       },
+       {
+        "type": "tool_call",
+        "id": "c-agent",
+        "name": "Agent",
+        "input": {
+         "prompt": "child one"
+        }
+       },
+       {
+        "type": "tool_call",
+        "id": "c-task",
+        "name": "task",
+        "input": {
+         "prompt": "child two"
+        }
+       },
+       {
+        "type": "tool_call",
+        "id": "c-plan",
+        "name": "exit_plan_mode",
+        "input": {}
+       },
+       {
+        "type": "image",
+        "source": "base64",
+        "mimeType": "image/png",
+        "data": "QUJD",
+        "bytes": 3
+       },
+       {
+        "type": "pdf",
+        "source": "base64",
+        "mimeType": "application/pdf",
+        "data": "UERG",
+        "bytes": 3
+       },
+       {
+        "type": "audio",
+        "source": "url",
+        "mimeType": "audio/mpeg",
+        "data": "https://example.invalid/a.mp3"
+       },
+       {
+        "type": "unknown_block",
+        "value": 1
+       }
+      ]
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 4,
+     "createdAt": "2026-11-01T00:00:04.000Z",
+     "entryId": "e-4"
+    },
+    {
+     "type": "tool_result_message",
+     "message": {
+      "role": "user",
+      "content": [
+       {
+        "type": "tool_result",
+        "toolCallId": "c-grep",
+        "timeline": {
+         "version": 1,
+         "turnId": "t1",
+         "id": "result:c-grep",
+         "order": 3,
+         "revision": 1
+        },
+        "content": [
+         {
+          "type": "text",
+          "text": "3 matches"
+         },
+         {
+          "type": "image",
+          "source": "url",
+          "mimeType": "image/png",
+          "data": "https://example.invalid/r.png"
+         },
+         {
+          "type": "image",
+          "source": "base64",
+          "mimeType": "image/png",
+          "data": "QUJDRA=="
+         },
+         {
+          "type": "pdf",
+          "source": "base64",
+          "mimeType": "application/pdf",
+          "data": "UERG",
+          "bytes": 3,
+          "pages": 2
+         },
+         {
+          "type": "pdf",
+          "source": "base64",
+          "mimeType": "application/pdf",
+          "data": "UERGUERG",
+          "bytes": 6
+         }
+        ],
+        "raw": {
+         "toolName": "Grep",
+         "data": {
+          "matches": 3,
+          "files": [
+           "a.txt"
+          ]
+         }
+        }
+       },
+       {
+        "type": "image",
+        "source": "base64",
+        "mimeType": "image/png",
+        "data": "RUZH"
+       },
+       {
+        "type": "image",
+        "source": "url",
+        "mimeType": "image/gif",
+        "data": "https://example.invalid/b.gif"
+       },
+       {
+        "type": "tool_result",
+        "toolCallId": "c-agent",
+        "isError": true,
+        "content": [
+         {
+          "type": "text",
+          "text": "child failed"
+         }
+        ],
+        "raw": {
+         "toolName": "Agent",
+         "error": {
+          "code": "child_error",
+          "message": "x"
+         }
+        }
+       },
+       {
+        "type": "text",
+        "text": "between results"
+       },
+       {
+        "type": "image",
+        "source": "base64",
+        "mimeType": "image/png",
+        "data": "SElK"
+       },
+       {
+        "type": "tool_result",
+        "toolCallId": "c-plan",
+        "content": [],
+        "raw": {
+         "toolName": "exit_plan_mode",
+         "data": {
+          "planFilePath": "/tmp/plan.md",
+          "planTitle": "Plan",
+          "planSummary": "Do it"
+         }
+        }
+       },
+       {
+        "type": "tool_result_reference",
+        "toolCallId": "c-ref",
+        "preview": "preview text",
+        "path": "/tmp/out.txt",
+        "originalBytes": 4096,
+        "hasMore": true,
+        "mimeType": "text/plain",
+        "reason": "too_large",
+        "isError": false
+       },
+       {
+        "type": "media_reference",
+        "toolCallId": "c-media",
+        "preview": "media preview",
+        "path": "/tmp/a.png",
+        "originalBytes": 99,
+        "hasMore": false,
+        "mimeType": "image/png",
+        "mediaType": "image",
+        "detail": "low",
+        "reason": "media"
+       }
+      ]
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 5,
+     "createdAt": "2026-11-01T00:00:05.000Z",
+     "entryId": "e-5"
+    },
+    {
+     "type": "file_artifacts",
+     "artifacts": [
+      {
+       "path": "a.txt",
+       "source": "workspace_diff"
+      },
+      {
+       "path": "b.txt",
+       "source": "tool"
+      }
+     ],
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 6,
+     "createdAt": "2026-11-01T00:00:06.000Z",
+     "entryId": "e-6"
+    },
+    {
+     "type": "file_artifacts",
+     "artifacts": [],
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 7,
+     "createdAt": "2026-11-01T00:00:07.000Z",
+     "entryId": "e-7"
+    },
+    {
+     "type": "subagent_started",
+     "subagentId": "sa-1",
+     "transcriptRelativePath": "s-crafted/subagents/sa-1.jsonl",
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 8,
+     "createdAt": "2026-11-01T00:00:08.000Z",
+     "entryId": "e-8"
+    },
+    {
+     "type": "subagent_started",
+     "subagentId": "sa-2",
+     "subagentSessionId": "child-session-2",
+     "transcriptRelativePath": "unused.jsonl",
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 9,
+     "createdAt": "2026-11-01T00:00:09.000Z",
+     "entryId": "e-9"
+    },
+    {
+     "type": "subagent_started",
+     "subagentId": "sa-3",
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 10,
+     "createdAt": "2026-11-01T00:00:10.000Z",
+     "entryId": "e-10"
+    },
+    {
+     "type": "subagent_completed",
+     "subagentId": "sa-1",
+     "summaryPreview": "child one done",
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 11,
+     "createdAt": "2026-11-01T00:00:11.000Z",
+     "entryId": "e-11"
+    },
+    {
+     "type": "subagent_completed",
+     "subagentId": "sa-2",
+     "summaryPreview": "child two done",
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 12,
+     "createdAt": "2026-11-01T00:00:12.000Z",
+     "entryId": "e-12"
+    },
+    {
+     "type": "subagent_completed",
+     "subagentId": "sa-3",
+     "summaryPreview": "never linked",
+     "errored": true,
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 13,
+     "createdAt": "2026-11-01T00:00:13.000Z",
+     "entryId": "e-13"
+    },
+    {
+     "type": "agent_status_message",
+     "event": "context_budget",
+     "kind": "status",
+     "text": "context_budget",
+     "detail": {
+      "type": "context_budget",
+      "used": 1200,
+      "displayUsed": 1300,
+      "budgetUsed": 1250,
+      "total": 65536,
+      "effectiveTotal": 57344,
+      "reservedOutputTokens": 8192,
+      "ratio": 0.02,
+      "state": "ok"
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 14,
+     "createdAt": "2026-11-01T00:00:14.000Z",
+     "entryId": "e-14"
+    },
+    {
+     "type": "agent_status_message",
+     "event": "notice",
+     "kind": "error",
+     "text": "hidden failure",
+     "detail": {
+      "visible": false,
+      "messageI18n": {
+       "key": "errors.hidden",
+       "params": {
+        "a": 1
+       }
+      },
+      "userHintI18n": {
+       "key": "hints.retry"
+      }
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 15,
+     "createdAt": "2026-11-01T00:00:15.000Z"
+    },
+    {
+     "type": "plan_todo_plan_changed",
+     "plan": "  1. do the thing  ",
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 16,
+     "createdAt": "2026-11-01T00:00:16.000Z",
+     "entryId": "e-16"
+    },
+    {
+     "type": "plan_todo_progressed",
+     "toolName": "grep",
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 17,
+     "createdAt": "2026-11-01T00:00:17.000Z",
+     "entryId": "e-17"
+    },
+    {
+     "type": "plan_todo_written",
+     "mode": "structured",
+     "merge": false,
+     "reason": " start ",
+     "todos": [
+      {
+       "id": "a",
+       "content": "first",
+       "status": "in_progress"
+      },
+      {
+       "id": "b",
+       "content": "second",
+       "status": "pending",
+       "priority": "high"
+      }
+     ],
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 18,
+     "createdAt": "2026-11-01T00:00:18.000Z",
+     "entryId": "e-18"
+    },
+    {
+     "type": "plan_todo_progressed",
+     "toolName": "grep",
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 19,
+     "createdAt": "2026-11-01T00:00:19.000Z",
+     "entryId": "e-19"
+    },
+    {
+     "type": "plan_todo_progressed",
+     "toolName": "todo_write",
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 20,
+     "createdAt": "2026-11-01T00:00:20.000Z",
+     "entryId": "e-20"
+    },
+    {
+     "type": "plan_todo_written",
+     "mode": "markdown",
+     "merge": true,
+     "markdown": "- [x] first",
+     "todos": [
+      {
+       "id": "a",
+       "content": "first",
+       "status": "completed"
+      },
+      {
+       "id": "c",
+       "content": "third",
+       "status": "cancelled"
+      }
+     ],
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 21,
+     "createdAt": "2026-11-01T00:00:21.000Z",
+     "entryId": "e-21"
+    },
+    {
+     "type": "goal_changed",
+     "revision": 1,
+     "goal": {
+      "id": "g-1",
+      "revision": 1,
+      "objective": "ship it",
+      "phase": "blocked",
+      "blockedReason": "waiting",
+      "maxGoalRounds": 3
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 22,
+     "createdAt": "2026-11-01T00:00:22.000Z",
+     "entryId": "e-22"
+    },
+    {
+     "type": "goal_changed",
+     "revision": 2,
+     "goal": null,
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 23,
+     "createdAt": "2026-11-01T00:00:23.000Z",
+     "entryId": "e-23"
+    },
+    {
+     "type": "file_snapshot_recorded",
+     "messageId": "m-1",
+     "snapshot": {
+      "files": 1
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 24,
+     "createdAt": "2026-11-01T00:00:24.000Z",
+     "entryId": "e-24"
+    },
+    {
+     "type": "file_snapshot_recorded",
+     "messageId": "m-2",
+     "snapshot": {
+      "files": 2
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 25,
+     "createdAt": "2026-11-01T00:00:25.000Z",
+     "entryId": "e-25"
+    },
+    {
+     "type": "file_snapshot_recorded",
+     "messageId": "m-1",
+     "snapshot": {
+      "files": 3
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 26,
+     "createdAt": "2026-11-01T00:00:26.000Z",
+     "entryId": "e-26"
+    },
+    {
+     "type": "control_boundary",
+     "boundary": {
+      "kind": "compact",
+      "subtype": "compact_boundary",
+      "compactMetadata": {
+       "timeline": {
+        "version": 1,
+        "turnId": "t1",
+        "id": "compact:1",
+        "order": 9,
+        "revision": 1
+       },
+       "compactionId": "cmp-1",
+       "trigger": "auto",
+       "preTokens": 1000,
+       "postTokens": 400.2,
+       "messagesSummarized": 5,
+       "targetTokens": 300,
+       "summaryGenerated": true,
+       "checkpointMerged": false,
+       "finalRatio": 0.4,
+       "level": 1,
+       "stage": "summary",
+       "stageLabel": "Summary"
+      },
+      "replacementMessages": [
+       {
+        "role": "user",
+        "content": [
+         {
+          "type": "text",
+          "text": "summary of earlier turns"
+         }
+        ]
+       }
+      ]
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 27,
+     "createdAt": "2026-11-01T00:00:27.000Z",
+     "entryId": "e-27"
+    },
+    {
+     "type": "durable_message",
+     "message": {
+      "role": "user",
+      "metadata": {
+       "compactReplacement": true
+      },
+      "content": [
+       {
+        "type": "text",
+        "text": "replacement, hidden"
+       }
+      ]
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 28,
+     "createdAt": "2026-11-01T00:00:28.000Z",
+     "entryId": "e-28"
+    },
+    {
+     "type": "turn_result",
+     "result": {
+      "type": "success",
+      "stopReason": "completed",
+      "usage": {
+       "inputTokens": 10,
+       "outputTokens": 2,
+       "totalTokens": 12
+      },
+      "permissionDenials": []
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t1",
+     "sequence": 29,
+     "createdAt": "2026-11-01T00:00:29.000Z",
+     "entryId": "e-29"
+    },
+    {
+     "type": "accepted_input",
+     "messages": [
+      {
+       "role": "user",
+       "content": [
+        {
+         "type": "text",
+         "text": "second turn"
+        }
+       ]
+      }
+     ],
+     "sessionId": "s-crafted",
+     "turnId": "t2",
+     "sequence": 30,
+     "createdAt": "2026-11-01T00:00:30.000Z",
+     "entryId": "e-30"
+    },
+    {
+     "type": "assistant_message",
+     "message": {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "text",
+        "text": "partial answer"
+       }
+      ]
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t2",
+     "sequence": 31,
+     "createdAt": "2026-11-01T00:00:31.000Z",
+     "entryId": "e-31"
+    },
+    {
+     "type": "control_boundary",
+     "boundary": {
+      "kind": "compact",
+      "subtype": "microcompact"
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t2",
+     "sequence": 32,
+     "createdAt": "2026-11-01T00:00:32.000Z"
+    },
+    {
+     "type": "turn_result",
+     "result": {
+      "type": "error",
+      "stopReason": "model_error",
+      "usage": {},
+      "permissionDenials": [],
+      "errors": [
+       {
+        "message": "first failure"
+       },
+       {
+        "message": ""
+       },
+       {
+        "message": "second failure"
+       }
+      ]
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t2",
+     "sequence": 33,
+     "createdAt": "2026-11-01T00:00:33.000Z",
+     "entryId": "e-33"
+    },
+    {
+     "type": "accepted_input",
+     "messages": [
+      {
+       "role": "user",
+       "content": [
+        {
+         "type": "text",
+         "text": "third turn"
+        }
+       ]
+      }
+     ],
+     "sessionId": "s-crafted",
+     "turnId": "t3",
+     "sequence": 34,
+     "createdAt": "2026-11-01T00:00:34.000Z",
+     "entryId": "e-34"
+    },
+    {
+     "type": "agent_status_message",
+     "event": "model_error",
+     "kind": "error",
+     "text": "visible failure",
+     "detail": {
+      "code": "x"
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t3",
+     "sequence": 35,
+     "createdAt": "2026-11-01T00:00:35.000Z",
+     "entryId": "e-35"
+    },
+    {
+     "type": "turn_result",
+     "result": {
+      "type": "error",
+      "stopReason": "aborted",
+      "usage": {},
+      "permissionDenials": []
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t3",
+     "sequence": 36,
+     "createdAt": "2026-11-01T00:00:36.000Z",
+     "entryId": "e-36"
+    },
+    {
+     "type": "accepted_input",
+     "messages": [
+      {
+       "role": "user",
+       "content": [
+        {
+         "type": "text",
+         "text": "fourth turn"
+        }
+       ]
+      }
+     ],
+     "sessionId": "s-crafted",
+     "turnId": "t4",
+     "sequence": 37,
+     "createdAt": "2026-11-01T00:00:37.000Z",
+     "entryId": "e-37"
+    },
+    {
+     "type": "turn_result",
+     "result": {
+      "type": "error",
+      "stopReason": "max_turns",
+      "usage": {},
+      "permissionDenials": []
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t4",
+     "sequence": 38,
+     "createdAt": "2026-11-01T00:00:38.000Z",
+     "entryId": "e-38"
+    },
+    {
+     "type": "accepted_input",
+     "messages": [
+      {
+       "role": "user",
+       "content": [
+        {
+         "type": "text",
+         "text": "fifth turn, never finished"
+        }
+       ]
+      }
+     ],
+     "sessionId": "s-crafted",
+     "turnId": "t5",
+     "sequence": 39,
+     "createdAt": "2026-11-01T00:00:39.000Z",
+     "entryId": "e-39"
+    },
+    {
+     "type": "assistant_message",
+     "message": {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "tool_call",
+        "id": "c-late",
+        "name": "bash",
+        "input": {
+         "command": "true"
+        }
+       }
+      ]
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t5",
+     "sequence": 40,
+     "createdAt": "2026-11-01T00:00:40.000Z",
+     "entryId": "e-40"
+    },
+    {
+     "type": "durable_message",
+     "message": {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "text",
+        "text": "also unfinished"
+       }
+      ]
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t6",
+     "sequence": 41,
+     "createdAt": "2026-11-01T00:00:41.000Z",
+     "entryId": "e-41"
+    },
+    {
+     "type": "context_snapshot",
+     "step": 1,
+     "runtimeContextMessages": [
+      {
+       "role": "user",
+       "content": [
+        {
+         "type": "text",
+         "text": "<memory-context>remembered</memory-context>"
+        }
+       ]
+      }
+     ],
+     "sessionId": "s-crafted",
+     "turnId": "t7",
+     "sequence": 42,
+     "createdAt": "2026-11-01T00:02:42.000Z",
+     "entryId": "x-42"
+    },
+    {
+     "type": "context_snapshot",
+     "step": 2,
+     "runtimeContextMessages": [],
+     "sessionId": "s-crafted",
+     "turnId": "t7",
+     "sequence": 43,
+     "createdAt": "2026-11-01T00:02:43.000Z",
+     "entryId": "x-43"
+    },
+    {
+     "type": "context_snapshot",
+     "step": 3,
+     "sessionId": "s-crafted",
+     "turnId": "t7",
+     "sequence": 44,
+     "createdAt": "2026-11-01T00:02:44.000Z",
+     "entryId": "x-44"
+    },
+    {
+     "type": "control_boundary",
+     "boundary": {
+      "kind": "compact",
+      "subtype": "compact_boundary",
+      "compactMetadata": {
+       "trigger": "auto",
+       "postTokens": 0
+      },
+      "snapshot": {
+       "version": 2,
+       "messages": []
+      }
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t7",
+     "sequence": 45,
+     "createdAt": "2026-11-01T00:02:45.000Z",
+     "entryId": "x-45"
+    },
+    {
+     "type": "control_boundary",
+     "boundary": {
+      "kind": "compact",
+      "subtype": "compact_boundary",
+      "compactMetadata": {
+       "trigger": "auto",
+       "preTokens": 900
+      }
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t7",
+     "sequence": 46,
+     "createdAt": "2026-11-01T00:02:46.000Z",
+     "entryId": "x-46"
+    },
+    {
+     "type": "control_boundary",
+     "boundary": {
+      "kind": "compact",
+      "subtype": "compact_boundary",
+      "compactMetadata": {
+       "trigger": "manual",
+       "preTokens": 2000,
+       "postTokens": 512,
+       "messagesSummarized": 9
+      },
+      "snapshot": {
+       "version": 1,
+       "messages": [
+        {
+         "role": "user",
+         "content": [
+          {
+           "type": "text",
+           "text": "snapshot summary"
+          }
+         ]
+        },
+        {
+         "role": "assistant",
+         "content": [
+          {
+           "type": "tool_call",
+           "id": "c-snap",
+           "name": "grep",
+           "input": {
+            "pattern": "y"
+           }
+          }
+         ]
+        }
+       ]
+      },
+      "replacementMessages": [
+       {
+        "role": "user",
+        "content": [
+         {
+          "type": "text",
+          "text": "ignored replacement"
+         }
+        ]
+       }
+      ]
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t7",
+     "sequence": 47,
+     "createdAt": "2026-11-01T00:02:47.000Z",
+     "entryId": "x-47"
+    },
+    {
+     "type": "agent_status_message",
+     "event": "context_budget",
+     "kind": "status",
+     "text": "context_budget",
+     "detail": {
+      "used": 700,
+      "total": 1000
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t7",
+     "sequence": 48,
+     "createdAt": "2026-11-01T00:02:48.000Z",
+     "entryId": "x-48"
+    },
+    {
+     "type": "agent_status_message",
+     "event": "context_budget",
+     "kind": "status",
+     "text": "context_budget",
+     "detail": {
+      "used": 0,
+      "total": 1000
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t7",
+     "sequence": 49,
+     "createdAt": "2026-11-01T00:02:49.000Z",
+     "entryId": "x-49"
+    },
+    {
+     "type": "file_artifacts",
+     "artifacts": [
+      {
+       "path": "only-diff.txt",
+       "source": "workspace_diff"
+      }
+     ],
+     "sessionId": "s-crafted",
+     "turnId": "t7",
+     "sequence": 50,
+     "createdAt": "2026-11-01T00:02:50.000Z",
+     "entryId": "x-50"
+    },
+    {
+     "type": "plan_todo_progressed",
+     "toolName": "grep",
+     "sessionId": "s-crafted",
+     "turnId": "t7",
+     "sequence": 51,
+     "createdAt": "2026-11-01T00:02:51.000Z",
+     "entryId": "x-51"
+    },
+    {
+     "type": "plan_todo_written",
+     "mode": "structured",
+     "merge": false,
+     "todos": [
+      {
+       "content": "no id",
+       "status": "pending"
+      },
+      {
+       "id": "z",
+       "content": "last",
+       "status": "in_progress"
+      }
+     ],
+     "sessionId": "s-crafted",
+     "turnId": "t7",
+     "sequence": 52,
+     "createdAt": "2026-11-01T00:02:52.000Z",
+     "entryId": "x-52"
+    },
+    {
+     "type": "goal_changed",
+     "revision": 3,
+     "goal": {
+      "id": "g-2",
+      "revision": 3,
+      "objective": "next goal",
+      "phase": "active",
+      "blockedReason": "  "
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t7",
+     "sequence": 53,
+     "createdAt": "2026-11-01T00:02:53.000Z",
+     "entryId": "x-53"
+    },
+    {
+     "type": "turn_result",
+     "result": {
+      "type": "success",
+      "stopReason": "completed",
+      "usage": {
+       "inputTokens": 0,
+       "outputTokens": 0,
+       "cacheReadTokens": 7
+      },
+      "permissionDenials": []
+     },
+     "sessionId": "s-crafted",
+     "turnId": "t7",
+     "sequence": 54,
+     "createdAt": "2026-11-01T00:02:54.000Z",
+     "entryId": "x-54"
+    },
+    {
+     "type": "goal_changed",
+     "revision": 9,
+     "goal": null,
+     "sessionId": "s-crafted",
+     "turnId": "t8",
+     "sequence": 55,
+     "createdAt": "2026-11-01T00:02:55.000Z",
+     "entryId": "x-55"
+    },
+    {
+     "type": "goal_changed",
+     "revision": 4,
+     "goal": null,
+     "sessionId": "s-crafted",
+     "turnId": "t8",
+     "sequence": 56,
+     "createdAt": "2026-11-01T00:02:56.000Z",
+     "entryId": "x-56"
+    },
+    {
+     "type": "plan_todo_plan_changed",
+     "plan": null,
+     "sessionId": "s-crafted",
+     "turnId": "t8",
+     "sequence": 57,
+     "createdAt": "2026-11-01T00:02:57.000Z",
+     "entryId": "x-57"
+    }
+   ],
+   "checkpoint": {
+    "agent-transcript.conversation": {
+     "version": 3,
+     "asOfSequence": 57,
+     "state": {
+      "entries": [
+       {
+        "entry": {
+         "type": "accepted_input",
+         "messages": [
+          {
+           "role": "user",
+           "content": [
+            {
+             "type": "text",
+             "text": "look at this "
+            },
+            {
+             "type": "image",
+             "source": "base64",
+             "mimeType": "image/png",
+             "data": "QUJD"
+            },
+            {
+             "type": "text",
+             "text": "and this"
+            },
+            {
+             "type": "image",
+             "source": "url",
+             "mimeType": "image/jpeg",
+             "data": "https://example.invalid/a.jpg"
+            }
+           ]
+          },
+          {
+           "role": "user",
+           "metadata": {
+            "synthetic": true
+           },
+           "content": [
+            {
+             "type": "text",
+             "text": "synthetic, hidden"
+            }
+           ]
+          },
+          {
+           "role": "user",
+           "metadata": {
+            "queueItemId": "q-1",
+            "moduleId": "m-1"
+           },
+           "content": [
+            {
+             "type": "text",
+             "text": "queued follow-up"
+            }
+           ]
+          },
+          {
+           "role": "user",
+           "metadata": {
+            "compactReplacement": true
+           },
+           "content": [
+            {
+             "type": "text",
+             "text": "replacement, hidden"
+            }
+           ]
+          }
+         ],
+         "sessionId": "s-crafted",
+         "turnId": "t1",
+         "sequence": 3,
+         "createdAt": "2026-11-01T00:00:03.000Z",
+         "entryId": "e-3"
+        },
+        "index": 2
+       },
+       {
+        "entry": {
+         "type": "assistant_message",
+         "message": {
+          "role": "assistant",
+          "metadata": {
+           "model": "fixture-model"
+          },
+          "content": [
+           {
+            "type": "thinking",
+            "text": "thinking it over",
+            "blockId": "b-think"
+           },
+           {
+            "type": "thinking",
+            "text": "no block id"
+           },
+           {
+            "type": "text",
+            "text": "part one, ",
+            "blockId": "b-1",
+            "timeline": {
+             "version": 1,
+             "turnId": "t1",
+             "id": "b-1",
+             "order": 0,
+             "revision": 1
+            }
+           },
+           {
+            "type": "text",
+            "text": "part two",
+            "blockId": "b-1",
+            "timeline": {
+             "version": 1,
+             "turnId": "t1",
+             "id": "b-1",
+             "order": 1,
+             "revision": 1
+            }
+           },
+           {
+            "type": "text",
+            "text": "new block",
+            "blockId": "b-2"
+           },
+           {
+            "type": "text",
+            "text": "legacy a"
+           },
+           {
+            "type": "text",
+            "text": " legacy b"
+           },
+           {
+            "type": "tool_call",
+            "id": "c-grep",
+            "name": "grep",
+            "input": {
+             "pattern": "x"
+            },
+            "timeline": {
+             "version": 1,
+             "turnId": "t1",
+             "id": "tool:c-grep",
+             "order": 2,
+             "revision": 1
+            }
+           },
+           {
+            "type": "tool_call",
+            "id": "c-agent",
+            "name": "Agent",
+            "input": {
+             "prompt": "child one"
+            }
+           },
+           {
+            "type": "tool_call",
+            "id": "c-task",
+            "name": "task",
+            "input": {
+             "prompt": "child two"
+            }
+           },
+           {
+            "type": "tool_call",
+            "id": "c-plan",
+            "name": "exit_plan_mode",
+            "input": {}
+           },
+           {
+            "type": "image",
+            "source": "base64",
+            "mimeType": "image/png",
+            "data": "QUJD",
+            "bytes": 3
+           },
+           {
+            "type": "pdf",
+            "source": "base64",
+            "mimeType": "application/pdf",
+            "data": "UERG",
+            "bytes": 3
+           },
+           {
+            "type": "audio",
+            "source": "url",
+            "mimeType": "audio/mpeg",
+            "data": "https://example.invalid/a.mp3"
+           },
+           {
+            "type": "unknown_block",
+            "value": 1
+           }
+          ]
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t1",
+         "sequence": 4,
+         "createdAt": "2026-11-01T00:00:04.000Z",
+         "entryId": "e-4"
+        },
+        "index": 3
+       },
+       {
+        "entry": {
+         "type": "tool_result_message",
+         "message": {
+          "role": "user",
+          "content": [
+           {
+            "type": "tool_result",
+            "toolCallId": "c-grep",
+            "timeline": {
+             "version": 1,
+             "turnId": "t1",
+             "id": "result:c-grep",
+             "order": 3,
+             "revision": 1
+            },
+            "content": [
+             {
+              "type": "text",
+              "text": "3 matches"
+             },
+             {
+              "type": "image",
+              "source": "url",
+              "mimeType": "image/png",
+              "data": "https://example.invalid/r.png"
+             },
+             {
+              "type": "image",
+              "source": "base64",
+              "mimeType": "image/png",
+              "data": "QUJDRA=="
+             },
+             {
+              "type": "pdf",
+              "source": "base64",
+              "mimeType": "application/pdf",
+              "data": "UERG",
+              "bytes": 3,
+              "pages": 2
+             },
+             {
+              "type": "pdf",
+              "source": "base64",
+              "mimeType": "application/pdf",
+              "data": "UERGUERG",
+              "bytes": 6
+             }
+            ],
+            "raw": {
+             "toolName": "Grep",
+             "data": {
+              "matches": 3,
+              "files": [
+               "a.txt"
+              ]
+             }
+            }
+           },
+           {
+            "type": "image",
+            "source": "base64",
+            "mimeType": "image/png",
+            "data": "RUZH"
+           },
+           {
+            "type": "image",
+            "source": "url",
+            "mimeType": "image/gif",
+            "data": "https://example.invalid/b.gif"
+           },
+           {
+            "type": "tool_result",
+            "toolCallId": "c-agent",
+            "isError": true,
+            "content": [
+             {
+              "type": "text",
+              "text": "child failed"
+             }
+            ],
+            "raw": {
+             "toolName": "Agent",
+             "error": {
+              "code": "child_error",
+              "message": "x"
+             }
+            }
+           },
+           {
+            "type": "text",
+            "text": "between results"
+           },
+           {
+            "type": "image",
+            "source": "base64",
+            "mimeType": "image/png",
+            "data": "SElK"
+           },
+           {
+            "type": "tool_result",
+            "toolCallId": "c-plan",
+            "content": [],
+            "raw": {
+             "toolName": "exit_plan_mode",
+             "data": {
+              "planFilePath": "/tmp/plan.md",
+              "planTitle": "Plan",
+              "planSummary": "Do it"
+             }
+            }
+           },
+           {
+            "type": "tool_result_reference",
+            "toolCallId": "c-ref",
+            "preview": "preview text",
+            "path": "/tmp/out.txt",
+            "originalBytes": 4096,
+            "hasMore": true,
+            "mimeType": "text/plain",
+            "reason": "too_large",
+            "isError": false
+           },
+           {
+            "type": "media_reference",
+            "toolCallId": "c-media",
+            "preview": "media preview",
+            "path": "/tmp/a.png",
+            "originalBytes": 99,
+            "hasMore": false,
+            "mimeType": "image/png",
+            "mediaType": "image",
+            "detail": "low",
+            "reason": "media"
+           }
+          ]
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t1",
+         "sequence": 5,
+         "createdAt": "2026-11-01T00:00:05.000Z",
+         "entryId": "e-5"
+        },
+        "index": 4
+       },
+       {
+        "entry": {
+         "type": "control_boundary",
+         "boundary": {
+          "kind": "compact",
+          "subtype": "compact_boundary",
+          "compactMetadata": {
+           "timeline": {
+            "version": 1,
+            "turnId": "t1",
+            "id": "compact:1",
+            "order": 9,
+            "revision": 1
+           },
+           "compactionId": "cmp-1",
+           "trigger": "auto",
+           "preTokens": 1000,
+           "postTokens": 400.2,
+           "messagesSummarized": 5,
+           "targetTokens": 300,
+           "summaryGenerated": true,
+           "checkpointMerged": false,
+           "finalRatio": 0.4,
+           "level": 1,
+           "stage": "summary",
+           "stageLabel": "Summary"
+          },
+          "replacementMessages": [
+           {
+            "role": "user",
+            "content": [
+             {
+              "type": "text",
+              "text": "summary of earlier turns"
+             }
+            ]
+           }
+          ]
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t1",
+         "sequence": 27,
+         "createdAt": "2026-11-01T00:00:27.000Z",
+         "entryId": "e-27"
+        },
+        "index": 26
+       },
+       {
+        "entry": {
+         "type": "durable_message",
+         "message": {
+          "role": "user",
+          "metadata": {
+           "compactReplacement": true
+          },
+          "content": [
+           {
+            "type": "text",
+            "text": "replacement, hidden"
+           }
+          ]
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t1",
+         "sequence": 28,
+         "createdAt": "2026-11-01T00:00:28.000Z",
+         "entryId": "e-28"
+        },
+        "index": 27
+       },
+       {
+        "entry": {
+         "type": "turn_result",
+         "result": {
+          "type": "success",
+          "stopReason": "completed",
+          "usage": {
+           "inputTokens": 10,
+           "outputTokens": 2,
+           "totalTokens": 12
+          },
+          "permissionDenials": []
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t1",
+         "sequence": 29,
+         "createdAt": "2026-11-01T00:00:29.000Z",
+         "entryId": "e-29"
+        },
+        "index": 28
+       },
+       {
+        "entry": {
+         "type": "accepted_input",
+         "messages": [
+          {
+           "role": "user",
+           "content": [
+            {
+             "type": "text",
+             "text": "second turn"
+            }
+           ]
+          }
+         ],
+         "sessionId": "s-crafted",
+         "turnId": "t2",
+         "sequence": 30,
+         "createdAt": "2026-11-01T00:00:30.000Z",
+         "entryId": "e-30"
+        },
+        "index": 29
+       },
+       {
+        "entry": {
+         "type": "assistant_message",
+         "message": {
+          "role": "assistant",
+          "content": [
+           {
+            "type": "text",
+            "text": "partial answer"
+           }
+          ]
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t2",
+         "sequence": 31,
+         "createdAt": "2026-11-01T00:00:31.000Z",
+         "entryId": "e-31"
+        },
+        "index": 30
+       },
+       {
+        "entry": {
+         "type": "turn_result",
+         "result": {
+          "type": "error",
+          "stopReason": "model_error",
+          "usage": {},
+          "permissionDenials": [],
+          "errors": [
+           {
+            "message": "first failure"
+           },
+           {
+            "message": ""
+           },
+           {
+            "message": "second failure"
+           }
+          ]
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t2",
+         "sequence": 33,
+         "createdAt": "2026-11-01T00:00:33.000Z",
+         "entryId": "e-33"
+        },
+        "index": 32
+       },
+       {
+        "entry": {
+         "type": "accepted_input",
+         "messages": [
+          {
+           "role": "user",
+           "content": [
+            {
+             "type": "text",
+             "text": "third turn"
+            }
+           ]
+          }
+         ],
+         "sessionId": "s-crafted",
+         "turnId": "t3",
+         "sequence": 34,
+         "createdAt": "2026-11-01T00:00:34.000Z",
+         "entryId": "e-34"
+        },
+        "index": 33
+       },
+       {
+        "entry": {
+         "type": "turn_result",
+         "result": {
+          "type": "error",
+          "stopReason": "aborted",
+          "usage": {},
+          "permissionDenials": []
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t3",
+         "sequence": 36,
+         "createdAt": "2026-11-01T00:00:36.000Z",
+         "entryId": "e-36"
+        },
+        "index": 35
+       },
+       {
+        "entry": {
+         "type": "accepted_input",
+         "messages": [
+          {
+           "role": "user",
+           "content": [
+            {
+             "type": "text",
+             "text": "fourth turn"
+            }
+           ]
+          }
+         ],
+         "sessionId": "s-crafted",
+         "turnId": "t4",
+         "sequence": 37,
+         "createdAt": "2026-11-01T00:00:37.000Z",
+         "entryId": "e-37"
+        },
+        "index": 36
+       },
+       {
+        "entry": {
+         "type": "turn_result",
+         "result": {
+          "type": "error",
+          "stopReason": "max_turns",
+          "usage": {},
+          "permissionDenials": []
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t4",
+         "sequence": 38,
+         "createdAt": "2026-11-01T00:00:38.000Z",
+         "entryId": "e-38"
+        },
+        "index": 37
+       },
+       {
+        "entry": {
+         "type": "accepted_input",
+         "messages": [
+          {
+           "role": "user",
+           "content": [
+            {
+             "type": "text",
+             "text": "fifth turn, never finished"
+            }
+           ]
+          }
+         ],
+         "sessionId": "s-crafted",
+         "turnId": "t5",
+         "sequence": 39,
+         "createdAt": "2026-11-01T00:00:39.000Z",
+         "entryId": "e-39"
+        },
+        "index": 38
+       },
+       {
+        "entry": {
+         "type": "assistant_message",
+         "message": {
+          "role": "assistant",
+          "content": [
+           {
+            "type": "tool_call",
+            "id": "c-late",
+            "name": "bash",
+            "input": {
+             "command": "true"
+            }
+           }
+          ]
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t5",
+         "sequence": 40,
+         "createdAt": "2026-11-01T00:00:40.000Z",
+         "entryId": "e-40"
+        },
+        "index": 39
+       },
+       {
+        "entry": {
+         "type": "durable_message",
+         "message": {
+          "role": "assistant",
+          "content": [
+           {
+            "type": "text",
+            "text": "also unfinished"
+           }
+          ]
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t6",
+         "sequence": 41,
+         "createdAt": "2026-11-01T00:00:41.000Z",
+         "entryId": "e-41"
+        },
+        "index": 40
+       },
+       {
+        "entry": {
+         "type": "context_snapshot",
+         "step": 1,
+         "runtimeContextMessages": [
+          {
+           "role": "user",
+           "content": [
+            {
+             "type": "text",
+             "text": "<memory-context>remembered</memory-context>"
+            }
+           ]
+          }
+         ],
+         "sessionId": "s-crafted",
+         "turnId": "t7",
+         "sequence": 42,
+         "createdAt": "2026-11-01T00:02:42.000Z",
+         "entryId": "x-42"
+        },
+        "index": 41
+       },
+       {
+        "entry": {
+         "type": "control_boundary",
+         "boundary": {
+          "kind": "compact",
+          "subtype": "compact_boundary",
+          "compactMetadata": {
+           "trigger": "auto",
+           "postTokens": 0
+          },
+          "snapshot": {
+           "version": 2,
+           "messages": []
+          }
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t7",
+         "sequence": 45,
+         "createdAt": "2026-11-01T00:02:45.000Z",
+         "entryId": "x-45"
+        },
+        "index": 44
+       },
+       {
+        "entry": {
+         "type": "control_boundary",
+         "boundary": {
+          "kind": "compact",
+          "subtype": "compact_boundary",
+          "compactMetadata": {
+           "trigger": "manual",
+           "preTokens": 2000,
+           "postTokens": 512,
+           "messagesSummarized": 9
+          },
+          "snapshot": {
+           "version": 1,
+           "messages": [
+            {
+             "role": "user",
+             "content": [
+              {
+               "type": "text",
+               "text": "snapshot summary"
+              }
+             ]
+            },
+            {
+             "role": "assistant",
+             "content": [
+              {
+               "type": "tool_call",
+               "id": "c-snap",
+               "name": "grep",
+               "input": {
+                "pattern": "y"
+               }
+              }
+             ]
+            }
+           ]
+          },
+          "replacementMessages": [
+           {
+            "role": "user",
+            "content": [
+             {
+              "type": "text",
+              "text": "ignored replacement"
+             }
+            ]
+           }
+          ]
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t7",
+         "sequence": 47,
+         "createdAt": "2026-11-01T00:02:47.000Z",
+         "entryId": "x-47"
+        },
+        "index": 46
+       },
+       {
+        "entry": {
+         "type": "turn_result",
+         "result": {
+          "type": "success",
+          "stopReason": "completed",
+          "usage": {
+           "inputTokens": 0,
+           "outputTokens": 0,
+           "cacheReadTokens": 7
+          },
+          "permissionDenials": []
+         },
+         "sessionId": "s-crafted",
+         "turnId": "t7",
+         "sequence": 54,
+         "createdAt": "2026-11-01T00:02:54.000Z",
+         "entryId": "x-54"
+        },
+        "index": 53
+       }
+      ],
+      "completedTurnIds": [
+       "t1",
+       "t2",
+       "t3",
+       "t4",
+       "t7"
+      ],
+      "lastCompactBoundaryIndex": 46,
+      "lastCompactReplacement": {
+       "index": 46,
+       "turnId": "t7",
+       "messages": [
+        {
+         "role": "user",
+         "content": [
+          {
+           "type": "text",
+           "text": "snapshot summary"
+          }
+         ]
+        },
+        {
+         "role": "assistant",
+         "content": [
+          {
+           "type": "tool_call",
+           "id": "c-snap",
+           "name": "grep",
+           "input": {
+            "pattern": "y"
+           }
+          }
+         ]
+        }
+       ],
+       "replayBeforeTurnCompletion": true
+      }
+     }
+    },
+    "agent-transcript.turn-summary": {
+     "version": 1,
+     "asOfSequence": 57,
+     "state": {
+      "usage": {
+       "inputTokens": 10,
+       "outputTokens": 2,
+       "cacheReadTokens": 7,
+       "totalTokens": 12
+      },
+      "permissionDenials": []
+     }
+    },
+    "agent-transcript.metadata": {
+     "version": 2,
+     "asOfSequence": 57,
+     "state": {
+      "title": "Crafted title",
+      "tag": "fixture",
+      "firstPrompt": "look at this",
+      "updatedAt": "2026-11-01T00:00:00.000Z"
+     }
+    },
+    "agent-transcript.compact-boundary": {
+     "version": 1,
+     "asOfSequence": 57,
+     "state": {
+      "lastCompactBoundary": {
+       "type": "control_boundary",
+       "boundary": {
+        "kind": "compact",
+        "subtype": "compact_boundary",
+        "compactMetadata": {
+         "trigger": "manual",
+         "preTokens": 2000,
+         "postTokens": 512,
+         "messagesSummarized": 9
+        },
+        "snapshot": {
+         "version": 1,
+         "messages": [
+          {
+           "role": "user",
+           "content": [
+            {
+             "type": "text",
+             "text": "snapshot summary"
+            }
+           ]
+          },
+          {
+           "role": "assistant",
+           "content": [
+            {
+             "type": "tool_call",
+             "id": "c-snap",
+             "name": "grep",
+             "input": {
+              "pattern": "y"
+             }
+            }
+           ]
+          }
+         ]
+        },
+        "replacementMessages": [
+         {
+          "role": "user",
+          "content": [
+           {
+            "type": "text",
+            "text": "ignored replacement"
+           }
+          ]
+         }
+        ]
+       },
+       "sessionId": "s-crafted",
+       "turnId": "t7",
+       "sequence": 47,
+       "createdAt": "2026-11-01T00:02:47.000Z",
+       "entryId": "x-47"
+      }
+     }
+    },
+    "agent-transcript.subagent-references": {
+     "version": 1,
+     "asOfSequence": 57,
+     "state": {
+      "started": [
+       {
+        "type": "subagent_started",
+        "subagentId": "sa-1",
+        "transcriptRelativePath": "s-crafted/subagents/sa-1.jsonl",
+        "sessionId": "s-crafted",
+        "turnId": "t1",
+        "sequence": 8,
+        "createdAt": "2026-11-01T00:00:08.000Z",
+        "entryId": "e-8"
+       },
+       {
+        "type": "subagent_started",
+        "subagentId": "sa-2",
+        "subagentSessionId": "child-session-2",
+        "transcriptRelativePath": "unused.jsonl",
+        "sessionId": "s-crafted",
+        "turnId": "t1",
+        "sequence": 9,
+        "createdAt": "2026-11-01T00:00:09.000Z",
+        "entryId": "e-9"
+       },
+       {
+        "type": "subagent_started",
+        "subagentId": "sa-3",
+        "sessionId": "s-crafted",
+        "turnId": "t1",
+        "sequence": 10,
+        "createdAt": "2026-11-01T00:00:10.000Z",
+        "entryId": "e-10"
+       }
+      ],
+      "completed": [
+       {
+        "type": "subagent_completed",
+        "subagentId": "sa-1",
+        "summaryPreview": "child one done",
+        "sessionId": "s-crafted",
+        "turnId": "t1",
+        "sequence": 11,
+        "createdAt": "2026-11-01T00:00:11.000Z",
+        "entryId": "e-11"
+       },
+       {
+        "type": "subagent_completed",
+        "subagentId": "sa-2",
+        "summaryPreview": "child two done",
+        "sessionId": "s-crafted",
+        "turnId": "t1",
+        "sequence": 12,
+        "createdAt": "2026-11-01T00:00:12.000Z",
+        "entryId": "e-12"
+       },
+       {
+        "type": "subagent_completed",
+        "subagentId": "sa-3",
+        "summaryPreview": "never linked",
+        "errored": true,
+        "sessionId": "s-crafted",
+        "turnId": "t1",
+        "sequence": 13,
+        "createdAt": "2026-11-01T00:00:13.000Z",
+        "entryId": "e-13"
+       }
+      ]
+     }
+    },
+    "file-history.snapshots": {
+     "version": 1,
+     "asOfSequence": 57,
+     "state": {
+      "entries": [
+       {
+        "type": "file_snapshot_recorded",
+        "messageId": "m-1",
+        "snapshot": {
+         "files": 3
+        },
+        "sessionId": "s-crafted",
+        "turnId": "t1",
+        "sequence": 26,
+        "createdAt": "2026-11-01T00:00:26.000Z",
+        "entryId": "e-26"
+       },
+       {
+        "type": "file_snapshot_recorded",
+        "messageId": "m-2",
+        "snapshot": {
+         "files": 2
+        },
+        "sessionId": "s-crafted",
+        "turnId": "t1",
+        "sequence": 25,
+        "createdAt": "2026-11-01T00:00:25.000Z",
+        "entryId": "e-25"
+       }
+      ]
+     }
+    },
+    "web-history.file-artifacts": {
+     "version": 1,
+     "asOfSequence": 57,
+     "state": {
+      "entries": [
+       {
+        "type": "file_artifacts",
+        "artifacts": [
+         {
+          "path": "a.txt",
+          "source": "workspace_diff"
+         },
+         {
+          "path": "b.txt",
+          "source": "tool"
+         }
+        ],
+        "sessionId": "s-crafted",
+        "turnId": "t1",
+        "sequence": 6,
+        "createdAt": "2026-11-01T00:00:06.000Z",
+        "entryId": "e-6"
+       },
+       {
+        "type": "file_artifacts",
+        "artifacts": [
+         {
+          "path": "only-diff.txt",
+          "source": "workspace_diff"
+         }
+        ],
+        "sessionId": "s-crafted",
+        "turnId": "t7",
+        "sequence": 50,
+        "createdAt": "2026-11-01T00:02:50.000Z",
+        "entryId": "x-50"
+       }
+      ],
+      "turnsWithToolResults": [
+       "t1"
+      ]
+     }
+    },
+    "web-history.agent-statuses": {
+     "version": 1,
+     "asOfSequence": 57,
+     "state": [
+      {
+       "type": "agent_status_message",
+       "event": "context_budget",
+       "kind": "status",
+       "text": "context_budget",
+       "detail": {
+        "type": "context_budget",
+        "used": 1200,
+        "displayUsed": 1300,
+        "budgetUsed": 1250,
+        "total": 65536,
+        "effectiveTotal": 57344,
+        "reservedOutputTokens": 8192,
+        "ratio": 0.02,
+        "state": "ok"
+       },
+       "sessionId": "s-crafted",
+       "turnId": "t1",
+       "sequence": 14,
+       "createdAt": "2026-11-01T00:00:14.000Z",
+       "entryId": "e-14"
+      },
+      {
+       "type": "agent_status_message",
+       "event": "notice",
+       "kind": "error",
+       "text": "hidden failure",
+       "detail": {
+        "visible": false,
+        "messageI18n": {
+         "key": "errors.hidden",
+         "params": {
+          "a": 1
+         }
+        },
+        "userHintI18n": {
+         "key": "hints.retry"
+        }
+       },
+       "sessionId": "s-crafted",
+       "turnId": "t1",
+       "sequence": 15,
+       "createdAt": "2026-11-01T00:00:15.000Z"
+      },
+      {
+       "type": "agent_status_message",
+       "event": "model_error",
+       "kind": "error",
+       "text": "visible failure",
+       "detail": {
+        "code": "x"
+       },
+       "sessionId": "s-crafted",
+       "turnId": "t3",
+       "sequence": 35,
+       "createdAt": "2026-11-01T00:00:35.000Z",
+       "entryId": "e-35"
+      },
+      {
+       "type": "agent_status_message",
+       "event": "context_budget",
+       "kind": "status",
+       "text": "context_budget",
+       "detail": {
+        "used": 700,
+        "total": 1000
+       },
+       "sessionId": "s-crafted",
+       "turnId": "t7",
+       "sequence": 48,
+       "createdAt": "2026-11-01T00:02:48.000Z",
+       "entryId": "x-48"
+      },
+      {
+       "type": "agent_status_message",
+       "event": "context_budget",
+       "kind": "status",
+       "text": "context_budget",
+       "detail": {
+        "used": 0,
+        "total": 1000
+       },
+       "sessionId": "s-crafted",
+       "turnId": "t7",
+       "sequence": 49,
+       "createdAt": "2026-11-01T00:02:49.000Z",
+       "entryId": "x-49"
+      }
+     ]
+    },
+    "web-history.turn-errors": {
+     "version": 1,
+     "asOfSequence": 57,
+     "state": {
+      "entries": [
+       {
+        "type": "turn_result",
+        "result": {
+         "type": "error",
+         "stopReason": "model_error",
+         "usage": {},
+         "permissionDenials": [],
+         "errors": [
+          {
+           "message": "first failure"
+          },
+          {
+           "message": ""
+          },
+          {
+           "message": "second failure"
+          }
+         ]
+        },
+        "sessionId": "s-crafted",
+        "turnId": "t2",
+        "sequence": 33,
+        "createdAt": "2026-11-01T00:00:33.000Z",
+        "entryId": "e-33"
+       },
+       {
+        "type": "turn_result",
+        "result": {
+         "type": "error",
+         "stopReason": "aborted",
+         "usage": {},
+         "permissionDenials": []
+        },
+        "sessionId": "s-crafted",
+        "turnId": "t3",
+        "sequence": 36,
+        "createdAt": "2026-11-01T00:00:36.000Z",
+        "entryId": "e-36"
+       },
+       {
+        "type": "turn_result",
+        "result": {
+         "type": "error",
+         "stopReason": "max_turns",
+         "usage": {},
+         "permissionDenials": []
+        },
+        "sessionId": "s-crafted",
+        "turnId": "t4",
+        "sequence": 38,
+        "createdAt": "2026-11-01T00:00:38.000Z",
+        "entryId": "e-38"
+       }
+      ],
+      "visibleFailureStatusTurnIds": [
+       "t3"
+      ]
+     }
+    },
+    "web-history.token-usage": {
+     "version": 1,
+     "asOfSequence": 57,
+     "state": {
+      "latestContextBudget": {
+       "index": 47,
+       "usage": {
+        "used": 700,
+        "total": 1000,
+        "effectiveTotal": 1000,
+        "reservedOutputTokens": 0,
+        "source": "history",
+        "exact": true
+       }
+      },
+      "latestCompactBudget": {
+       "index": 46,
+       "postTokens": 512,
+       "preTokens": 2000,
+       "messagesSummarized": 9
+      },
+      "latestTurnUsage": {
+       "inputTokens": 0,
+       "outputTokens": 0,
+       "cacheReadTokens": 7
+      }
+     }
+    },
+    "web-history.incomplete-turns": {
+     "version": 1,
+     "asOfSequence": 57,
+     "state": {
+      "durableMessageTurnIds": [
+       "t1",
+       "t2",
+       "t5",
+       "t6"
+      ],
+      "completedTurnIds": [
+       "t1",
+       "t2",
+       "t3",
+       "t4",
+       "t7"
+      ]
+     }
+    },
+    "plan-todo.state": {
+     "version": 1,
+     "asOfSequence": 57,
+     "state": {
+      "requiresInitialization": false,
+      "toolCallsSinceLastTodoWrite": 0,
+      "todos": [],
+      "activeTodos": [],
+      "todoHistory": [],
+      "todoDiagnostics": {
+       "writeCount": 0,
+       "todoCount": 0,
+       "activeCount": 0,
+       "completedCount": 0,
+       "cancelledCount": 0,
+       "largeRewriteCount": 0,
+       "deletedOpenItemCount": 0,
+       "completedWithoutActiveCount": 0
+      }
+     }
+    }
+   },
+   "errors": [
+    {
+     "projection": "goal.state",
+     "message": "Goal revision must increase by one: expected 4, received 9."
+    },
+    {
+     "projection": "goal.state",
+     "message": "Goal revision must increase by one: expected 4, received 9."
+    }
+   ]
+  }
+ }
+}

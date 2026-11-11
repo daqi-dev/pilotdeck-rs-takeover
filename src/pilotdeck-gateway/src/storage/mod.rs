@@ -9,9 +9,11 @@ mod projection;
 pub mod recorder;
 mod run_registry;
 mod session_domain;
+mod session_projections;
 pub(crate) mod stimulus;
 mod transcript;
 mod transcript_adapter;
+mod web_messages;
 mod workspace_snapshot;
 
 pub use run_registry::{
@@ -31,6 +33,12 @@ pub(crate) use transcript::{
     LedgerLock, MAX_BYTES as TRANSCRIPT_MAX_BYTES, canonical_transcript_path,
 };
 pub(crate) use transcript_adapter::slice_index;
+
+pub(crate) use session_projections::{METADATA, TURN_SUMMARY, checkpoint_rows, subagent_entries};
+pub(crate) use web_messages::{
+    WebReadOptions, is_background_task_input, session_info_from_entries, web_session_messages,
+    web_subagent_messages,
+};
 
 pub use ledger::{
     KnownTerminal, OperationIdentity, OperationRecovery, OperationResolution,

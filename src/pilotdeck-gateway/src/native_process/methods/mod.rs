@@ -8,6 +8,7 @@ mod always_on;
 mod config;
 mod cron;
 mod history;
+mod history_read;
 mod interaction;
 mod management;
 mod mcp;

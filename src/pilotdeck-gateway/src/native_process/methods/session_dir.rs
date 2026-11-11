@@ -332,23 +332,12 @@ impl Requests {
                 format!("Cannot {verb} an active session."),
             ));
         }
-        // #1457 fix-r1: same single-writer fence the config family uses; two
-        // fresh writers that both restore the tail and append `sequence + 1`
-        // leave the transcript unloadable.
+        // Serialize this process's own metadata appends to one transcript.
         let fence_path =
             transcript_locks::session_transcript_path(&self.options.home, &project_root, &key);
         let write_fence = transcript_locks::acquire(&fence_path).await?;
-        // #1457 fix-r2: a loaded session owns the transcript writer (and the
-        // writer lease) with an in-memory sequence, so the metadata entry goes
-        // *through* its recorder. Closing it first retired an idle session the
-        // user did not ask to close and could abort a turn admitted between the
-        // busy check and the close.
-        // #1457 fix-r3: with no loaded session the cold append takes the same
-        // writer lease a session holds, so it cannot interleave with the
-        // factory's restore→publish window; a busy lease means a session owns
-        // the transcript after all (use its writer or report busy).
-        let recorders = self.recorders.clone();
         let home = self.options.home.clone();
+        let adapter_home = home.clone();
         let value_field: JsValue = params.get("value").cloned().unwrap_or(JsValue::Undefined);
         let value_str: Option<String> = match &value_field {
             JsValue::Null | JsValue::Undefined => None,
@@ -386,33 +375,32 @@ impl Requests {
             meta.insert("updatedAt".into(), JsValue::String(updated_at.into()));
             let turn_id = JsString::from(if is_tag { "sdk-tag" } else { "sdk-rename" });
             let entry = JsValue::Object(meta);
-            // The shared three-segment protocol (#1874): this closure is both
-            // the first lookup and the busy-lease re-query, so the one checked
-            // append below covers both paths.
-            let live = || {
-                let Some((owner, recorder)) =
-                    super::super::assembly::live_recorder(&recorders, &key_clone)
-                else {
-                    return Ok(None);
-                };
-                recorder
-                    .writer()
-                    .record_session_metadata_checked(&key_clone, &turn_id, entry.clone())
-                    .map_err(|e| RequestError::new(e.to_string()))?;
-                Ok(Some(owner))
-            };
-            transcript_locks::append_metadata_with_lease(
-                &home,
-                &project_root,
-                &key_clone,
-                live,
-                |storage| {
-                    storage
-                        .transcript
-                        .record_session_metadata(&key_clone, &turn_id, entry.clone())
-                        .map_err(|e| RequestError::new(e.to_string()))
-                },
-            )?;
+            // createLocalGateway.ts:1122-1126 / 1135-1139: a fresh
+            // `createPersistentSessionStorage(...)` whose writer is never
+            // restored, so the record starts its own chain — `sequence: 1`,
+            // `parentEntryId: null` — whatever the transcript already holds,
+            // and a loaded session neither sees it nor renumbers after it.
+            let adapter = AsyncTranscriptAdapter::new(
+                Arc::new(JsonlTranscriptStore::new()),
+                Arc::new(move |k: &ProjectKey| {
+                    crate::session_chat_dir(
+                        &home,
+                        &k.project_root,
+                        &k.project_root.to_string_lossy(),
+                    )
+                }),
+            );
+            adapter
+                .create_session_storage(SessionStorageInput {
+                    project_root,
+                    pilot_home: adapter_home,
+                    session_id: key_clone.clone(),
+                    now: None,
+                })
+                .map_err(|e| RequestError::new(e.to_string()))?
+                .transcript
+                .record_session_metadata(&key_clone, &turn_id, entry)
+                .map_err(|e| RequestError::new(e.to_string()))?;
             Ok(())
         })
         .await
@@ -543,14 +531,14 @@ mod tests {
     use crate::storage::recorder::Recorder;
     use crate::{negative_assert, negative_assert_eq};
 
-    /// #1457 fix-r2: a loaded session owns the transcript writer, so the rename
-    /// append goes through its recorder instead of a second writer restored
-    /// from the tail. The request spells the key as an alias (`a8/session` and
-    /// `a8-session` are one file after `sanitize_session_id`), which is exactly
-    /// the case a raw-key lookup missed: the recorder would keep a stale
-    /// sequence and its next append would duplicate `sequence + 1`.
+    /// createLocalGateway.ts:1116-1140: `rename_session` / `tag_session` record
+    /// through a fresh storage whose writer is never restored. Each record
+    /// starts its own chain (`sequence: 1`, `parentEntryId: null`) after
+    /// whatever the transcript holds, and a loaded session's writer is neither
+    /// used nor advanced. Pinned against the baseline by the bbx scenarios
+    /// `project-keys` and `read-messages-after-rename`.
     #[tokio::test]
-    async fn rename_appends_through_the_loaded_writer() {
+    async fn rename_and_tag_start_their_own_chain_like_the_baseline() {
         let (_scratch, requests) = crate::native_process::management_tests::setup();
         let home = requests.options.home.clone();
         let project = requests.options.project.clone();
@@ -560,21 +548,24 @@ mod tests {
                 crate::session_chat_dir(&home, &k.project_root, &k.project_root.to_string_lossy())
             }),
         );
-        let open = |session_id: &str| {
-            adapter
-                .create_session_storage(SessionStorageInput {
-                    project_root: project.clone(),
-                    pilot_home: requests.options.home.clone(),
-                    session_id: session_id.into(),
-                    now: None,
-                })
-                .expect("#1457 the transcript storage opens")
-        };
-        let loaded = open("a8/session");
-        loaded
-            .restore()
-            .expect("#1457 the seeded transcript restores");
+        let loaded = adapter
+            .create_session_storage(SessionStorageInput {
+                project_root: project.clone(),
+                pilot_home: requests.options.home.clone(),
+                session_id: "a8/session".into(),
+                now: None,
+            })
+            .expect("the transcript storage opens");
+        loaded.restore().expect("the seeded transcript restores");
+        let transcript_path = loaded.transcript_path.clone();
         let writer = Arc::new(loaded.transcript);
+        writer
+            .record_agent_status_message(
+                &"a8/session".into(),
+                &"before-rename".into(),
+                &JsValue::Undefined,
+            )
+            .expect("the loaded writer appends");
         let recorder = Arc::new(Recorder::from_writer(writer.clone()));
         requests
             .recorders
@@ -582,48 +573,63 @@ mod tests {
             .unwrap_or_else(|e| e.into_inner())
             .insert("a8/session".into(), Arc::downgrade(&recorder));
 
-        let updated = crate::runtime::turn::gateway::GatewayRequests::request(
-            &requests,
-            "rename_session".into(),
-            crate::metadata::object([
-                ("sessionKey", "a8-session".into()),
-                ("value", "renamed-through-the-recorder".into()),
-            ]),
-        )
-        .await
-        .expect("#1457 the rename resolves over a loaded session");
-        negative_assert_eq!(
-            updated
-                .get("updated")
-                .and_then(pilotdeck_protocol::JsValue::as_bool),
-            Some(true),
-            "#1457 the rename reports the metadata write"
-        );
-
-        // The loaded writer still holds the only sequence: this append continues
-        // the chain the rename extended. A second writer on the same tail would
-        // have duplicated `sequence + 1` and this call would be rejected.
+        for (method, value) in [("rename_session", "renamed"), ("tag_session", "tagged")] {
+            let updated = crate::runtime::turn::gateway::GatewayRequests::request(
+                &requests,
+                method.into(),
+                crate::metadata::object([
+                    ("sessionKey", "a8-session".into()),
+                    ("value", value.into()),
+                ]),
+            )
+            .await
+            .expect("the metadata request resolves over a loaded session");
+            assert_eq!(
+                updated.get("updated").and_then(JsValue::as_bool),
+                Some(true)
+            );
+        }
+        // The loaded writer was not consulted: its next record is number 2.
         writer
             .record_agent_status_message(
                 &"a8/session".into(),
                 &"after-rename".into(),
                 &JsValue::Undefined,
             )
-            .expect("#1457 the loaded writer keeps numbering the chain");
-        let reread = open("a8-session");
-        reread.restore().expect("#1457 the transcript still loads");
-        let text = std::fs::read_to_string(&reread.transcript_path)
-            .expect("#1457 the written transcript is readable");
-        negative_assert_eq!(
-            text.contains("renamed-through-the-recorder"),
-            true,
-            "#1457 the rename entry reached the loaded session's transcript"
+            .expect("the loaded writer keeps its own numbering");
+
+        let entries: Vec<serde_json::Value> = std::fs::read_to_string(&transcript_path)
+            .expect("the transcript is readable")
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("a transcript line is JSON"))
+            .collect();
+        // The fixture seeds one `turn-1` record, so the loaded writer is at 2
+        // before the rename and at 3 after it.
+        let shape: Vec<(&str, u64)> = entries
+            .iter()
+            .map(|entry| {
+                (
+                    entry["turnId"].as_str().unwrap_or_default(),
+                    entry["sequence"].as_u64().unwrap_or_default(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            shape,
+            vec![
+                ("turn-1", 1),
+                ("before-rename", 2),
+                ("sdk-rename", 1),
+                ("sdk-tag", 1),
+                ("after-rename", 3),
+            ]
         );
-        negative_assert_eq!(
-            text.contains("after-rename"),
-            true,
-            "#1457 the loaded writer kept appending after the rename"
-        );
+        for index in [2, 3] {
+            assert!(entries[index]["parentEntryId"].is_null());
+            assert_eq!(entries[index]["type"], "session_metadata");
+        }
+        assert_eq!(entries[2]["metadata"]["title"], "renamed");
+        assert_eq!(entries[3]["metadata"]["tag"], "tagged");
     }
 
     /// #1457 fix-r3: `record_agent_status_message` has the same live branch as
@@ -697,61 +703,6 @@ mod tests {
             text.contains("status-through-the-recorder"),
             true,
             "#1457 the status entry reached the loaded session's transcript"
-        );
-    }
-
-    /// #1457 fix-r3: a cold metadata append must not run while a session holds
-    /// the writer lease. The lease is the same object the factory takes before
-    /// it restores the tail and publishes the recorder, so holding it here is
-    /// exactly the hydrate window; the request has to report the retryable busy
-    /// error instead of forking the sequence chain.
-    #[tokio::test]
-    async fn cold_metadata_write_reports_busy_while_a_session_holds_the_lease() {
-        let (_scratch, requests) = crate::native_process::management_tests::setup();
-        let home = requests.options.home.clone();
-        let project = requests.options.project.clone();
-        let adapter = AsyncTranscriptAdapter::new(
-            Arc::new(JsonlTranscriptStore::new()),
-            Arc::new(move |k: &ProjectKey| {
-                crate::session_chat_dir(&home, &k.project_root, &k.project_root.to_string_lossy())
-            }),
-        );
-        let storage = adapter
-            .create_session_storage(SessionStorageInput {
-                project_root: project.clone(),
-                pilot_home: requests.options.home.clone(),
-                session_id: "d2/session".into(),
-                now: None,
-            })
-            .expect("#1457 the transcript storage opens");
-        // Stand in for `factory`: the lease is taken before restore and held
-        // while the recorder is not yet in the map.
-        let lease = transcript_locks::cold_write_lease(&storage.transcript_path)
-            .expect("#1873 the transcript lease probe itself must not fail")
-            .expect("#1457 the transcript lease is free before the session loads");
-
-        let error = crate::runtime::turn::gateway::GatewayRequests::request(
-            &requests,
-            "rename_session".into(),
-            crate::metadata::object([
-                ("sessionKey", "d2-session".into()),
-                ("value", "must-not-fork".into()),
-            ]),
-        )
-        .await
-        .expect_err("#1457 a cold append must not run beside a session that owns the writer");
-        negative_assert_eq!(
-            error.code.as_str(),
-            "SESSION_WRITER_BUSY",
-            "#1457 the racing cold append reports the retryable busy error"
-        );
-        drop(lease);
-        negative_assert_eq!(
-            std::fs::read_to_string(&storage.transcript_path)
-                .map(|text| text.contains("must-not-fork"))
-                .unwrap_or(false),
-            false,
-            "#1457 the refused append wrote nothing"
         );
     }
 
@@ -858,105 +809,6 @@ mod tests {
             String::from_utf16_lossy(error.message.units())
                 .contains("Could not open session ledger lock"),
             "#1873 the storage error names the ledger lock, got {}",
-            String::from_utf16_lossy(error.message.units())
-        );
-    }
-
-    /// #1873: the rename cold path answers the same storage-error separation
-    /// the status caller got — a broken ledger lock is never the retryable
-    /// busy answer for a rename either. The `#1873` `try_writer_lease`
-    /// `Result` split reaches this caller through the shared
-    /// `append_metadata_with_lease` protocol.
-    #[tokio::test]
-    async fn rename_cold_write_surfaces_a_broken_lock_file_as_an_error() {
-        let (_scratch, requests) = crate::native_process::management_tests::setup();
-        let home = requests.options.home.clone();
-        let project = requests.options.project.clone();
-        let adapter = AsyncTranscriptAdapter::new(
-            Arc::new(JsonlTranscriptStore::new()),
-            Arc::new(move |k: &ProjectKey| {
-                crate::session_chat_dir(&home, &k.project_root, &k.project_root.to_string_lossy())
-            }),
-        );
-        let storage = adapter
-            .create_session_storage(SessionStorageInput {
-                project_root: project.clone(),
-                pilot_home: requests.options.home.clone(),
-                session_id: "d6/session".into(),
-                now: None,
-            })
-            .expect("#1873 the rename transcript storage opens");
-        let mut lock = std::ffi::OsString::from(storage.transcript_path.as_os_str());
-        lock.push(".lock");
-        std::fs::create_dir(std::path::PathBuf::from(&lock))
-            .expect("#1873 the rename broken ledger lock is in place");
-        let error = crate::runtime::turn::gateway::GatewayRequests::request(
-            &requests,
-            "rename_session".into(),
-            crate::metadata::object([
-                ("sessionKey", "d6-session".into()),
-                ("value", "broken-lock-rename".into()),
-            ]),
-        )
-        .await
-        .expect_err("#1873 the rename append surfaces the storage failure");
-        negative_assert!(
-            error.code.as_str() != "SESSION_WRITER_BUSY",
-            "#1873 the rename storage failure is never the retryable busy code"
-        );
-        negative_assert!(
-            String::from_utf16_lossy(error.message.units())
-                .contains("Could not open session ledger lock"),
-            "#1873 the rename storage error names the ledger lock, got {}",
-            String::from_utf16_lossy(error.message.units())
-        );
-    }
-
-    /// #1874: a recorder whose writer already closed must surface the close
-    /// as an error, not answer `updated: true` with nothing on disk. The live
-    /// closure's checked append is what makes the closed writer visible; the
-    /// unchecked form the cold path uses would silently no-op.
-    #[tokio::test]
-    async fn rename_reports_a_closed_writer_as_an_error() {
-        let (_scratch, requests) = crate::native_process::management_tests::setup();
-        let home = requests.options.home.clone();
-        let project = requests.options.project.clone();
-        let adapter = AsyncTranscriptAdapter::new(
-            Arc::new(JsonlTranscriptStore::new()),
-            Arc::new(move |k: &ProjectKey| {
-                crate::session_chat_dir(&home, &k.project_root, &k.project_root.to_string_lossy())
-            }),
-        );
-        let storage = adapter
-            .create_session_storage(SessionStorageInput {
-                project_root: project,
-                pilot_home: requests.options.home.clone(),
-                session_id: "d7/session".into(),
-                now: None,
-            })
-            .expect("#1874 the transcript storage opens");
-        let recorder = Arc::new(Recorder::from_writer(Arc::new(storage.transcript)));
-        requests
-            .recorders
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert("d7/session".into(), Arc::downgrade(&recorder));
-        // A close that raced the request — the exact window fix-r2's checked
-        // append exists for.
-        recorder.writer().close();
-        let error = crate::runtime::turn::gateway::GatewayRequests::request(
-            &requests,
-            "rename_session".into(),
-            crate::metadata::object([
-                ("sessionKey", "d7-session".into()),
-                ("value", "must-not-vanish".into()),
-            ]),
-        )
-        .await
-        .expect_err("#1874 a closed session writer is an error, not a silent rename");
-        negative_assert!(
-            String::from_utf16_lossy(error.message.units()).contains("the session writer closed"),
-            "#1874 the rename error names the closed session writer, got {}",
             String::from_utf16_lossy(error.message.units())
         );
     }

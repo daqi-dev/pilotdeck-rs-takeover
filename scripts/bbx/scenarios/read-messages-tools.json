@@ -1,0 +1,35 @@
+{
+  "name": "read-messages-tools",
+  "about": "含工具调用的会话读回：假 provider 先回 read_file 的 tool call（读得到的文件、读不到的文件各一个会话），拿到工具结果后回文本；同一会话再来一轮纯文本。每步之后 read_session_messages，另按 limit / cursor 切在工具消息中间，并读不存在的 subagent。",
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Read a file\"}" } },
+    { "name": "after-tool", "when": ["call_bbx_1"], "reply": { "text": "Done reading." } },
+    { "name": "tool-missing", "when": ["please read the missing file"], "reply": { "tool": { "name": "read_file", "arguments": { "file_path": "missing.txt" } } } },
+    { "name": "tool-notes", "when": ["please read the notes file"], "reply": { "tool": { "name": "read_file", "arguments": { "file_path": "notes.txt" } } } },
+    { "name": "main", "reply": { "text": "Hello from the mock." } }
+  ],
+  "files": {
+    "home/work/alpha/notes.txt": "first line of notes\nsecond line of notes\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n"
+  },
+  "steps": [
+    { "ws": "submit_turn", "params": { "sessionKey": "s-tool", "channelKey": "test", "message": "please read the notes file", "projectKey": "{HOME}/work/alpha" } },
+    { "sleep": 800 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-tool", "projectKey": "{HOME}/work/alpha" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-tool", "channelKey": "test", "message": "thanks", "projectKey": "{HOME}/work/alpha" } },
+    { "sleep": 800 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-tool", "projectKey": "{HOME}/work/alpha" } },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-tool", "projectKey": "{HOME}/work/alpha", "limit": 3 } },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-tool", "projectKey": "{HOME}/work/alpha", "limit": 2, "cursor": "3" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-miss", "channelKey": "test", "message": "please read the missing file", "projectKey": "{HOME}/work/alpha" } },
+    { "sleep": 800 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-miss", "projectKey": "{HOME}/work/alpha" } },
+    { "ws": "read_subagent_messages", "params": { "sessionKey": "s-tool", "subagentId": "nope", "projectKey": "{HOME}/work/alpha" } },
+    { "ws": "read_subagent_messages", "params": { "sessionKey": "s-tool", "projectKey": "{HOME}/work/alpha" } },
+    { "ws": "read_subagent_messages", "params": { "sessionKey": "missing", "subagentId": "nope" } },
+    { "ws": "read_subagent_messages", "params": { "sessionKey": "s-tool", "subagentId": "nope", "projectKey": 7 } },
+    { "ws": "read_subagent_messages", "params": { "sessionKey": "bg", "subagentId": "nope", "sessionKind": "background_task", "relativeTranscriptPath": "../escape.jsonl" } },
+    { "ws": "list_sessions", "params": { "projectKey": "{HOME}/work/alpha" } }
+  ],
+  "volatile": ["\\.requestFingerprint$"]
+}

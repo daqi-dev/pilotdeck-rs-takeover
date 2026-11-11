@@ -1718,7 +1718,7 @@ fn boundary_has_compact_subtype(boundary: &JsValue) -> bool {
 /// Some(messages) only for a version-1 snapshot with non-empty, fully valid
 /// messages. The `String(block.type)` coercion inside the tool_result check
 /// can itself throw, exactly as in TS.
-fn compact_snapshot_messages(boundary: &JsValue) -> AdapterResult<Option<&JsValue>> {
+pub(super) fn compact_snapshot_messages(boundary: &JsValue) -> AdapterResult<Option<&JsValue>> {
     let snapshot = field(boundary, "snapshot");
     if snapshot.as_object().is_none() || field(snapshot, "version").as_number() != Some(1.0) {
         return Ok(None);
