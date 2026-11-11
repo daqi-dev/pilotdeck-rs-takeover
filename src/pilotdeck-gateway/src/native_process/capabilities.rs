@@ -72,7 +72,6 @@ pub(super) const CAPABILITIES: &[Capability] = &[
     Capability { name: "session_model_set", methods: &[], wired: compiled_in },
     Capability { name: "session_model_clear", methods: &[], wired: compiled_in },
     Capability { name: "delete_session", methods: &[], wired: compiled_in },
-    // Listed in [`ADVERTISED_NOT_SERVED`].
     Capability {
         name: "session_transcript_archive",
         methods: &["export_session_transcript", "restore_session_transcript"],
@@ -167,10 +166,6 @@ const NO_WIRE_METHOD: &str = "";
 // list sits next to the table
 #[allow(dead_code)]
 pub(super) const ADVERTISED_NOT_SERVED: &[(&str, &str)] = &[
-    (
-        "session_transcript_archive",
-        "export/restore_session_transcript answer CAPABILITY_UNAVAILABLE (methods/history.rs)",
-    ),
     (
         "sdk_session_config",
         "set_sdk_session_config is not routed by the registry (methods/mod.rs)",

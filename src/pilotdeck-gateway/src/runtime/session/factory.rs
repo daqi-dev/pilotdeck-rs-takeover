@@ -1689,6 +1689,12 @@ fn real_user(message: &JsValue) -> bool {
             !text.is_empty() && text != "[system: the conversation above has been compacted. please continue with the current task.]" && !["<compact-boundary","<snip-boundary","<memory-context>","<internal-compaction-control","<hook_context"].iter().any(|p| text.starts_with(p))
         }))
 }
+/// `replayTranscriptEntries` (session/transcript/TranscriptReplay.ts): the
+/// conversation messages and merged metadata of a whole transcript.
+pub(crate) fn project_transcript(entries: &[JsValue]) -> Result<DurableSessionState, RuntimeError> {
+    project(entries)
+}
+
 fn project(entries: &[JsValue]) -> Result<DurableSessionState, RuntimeError> {
     #[cfg(test)]
     PROJECTION_VISITS.with(|visits| visits.set(visits.get() + entries.len()));

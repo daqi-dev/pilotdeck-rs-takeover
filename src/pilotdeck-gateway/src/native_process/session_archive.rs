@@ -1,7 +1,8 @@
-//! `restore_session_transcript`: the `restoreSessionTranscript` callback of
-//! createLocalGateway.ts:1315-1370 and `validatePortableSessionArchive`
-//! (:1680-1700). `export_session_transcript` (which needs the conversation
-//! replay of `replayTranscriptEntries`) is not ported yet.
+//! `export_session_transcript` / `restore_session_transcript`: the
+//! `exportSessionTranscript` (createLocalGateway.ts:1162-1182) and
+//! `restoreSessionTranscript` (:1315-1370) callbacks, `toPortableSessionArchive`
+//! (:1633-1678) and `validatePortableSessionArchive` (:1680-1700). The archive
+//! is returned whole in one response, as the baseline does.
 use super::requests::Requests;
 use crate::runtime::connection::RequestError;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
@@ -101,7 +102,174 @@ impl Drop for Restoring {
     }
 }
 
+/// JS `String.prototype.trim` over UTF-16 units.
+fn trim_units(units: &[u16]) -> &[u16] {
+    let space = crate::runtime::replacement::js_whitespace;
+    let start = units.iter().position(|u| !space(*u)).unwrap_or(units.len());
+    let end = units
+        .iter()
+        .rposition(|u| !space(*u))
+        .map_or(start, |i| i + 1);
+    &units[start..end]
+}
+
+/// `stringifyPortableTranscriptValue`: strings as-is, else
+/// `JSON.stringify(value, null, 2)` (`undefined` prints as `undefined`).
+fn portable_value(value: &JsValue) -> Vec<u16> {
+    match value {
+        JsValue::String(text) => text.units().to_vec(),
+        JsValue::Undefined => "undefined".encode_utf16().collect(),
+        _ => crate::runtime::memory::edgeclaw::llm::recall::pretty_json(value)
+            .encode_utf16()
+            .collect(),
+    }
+}
+
+/// `portableTranscriptText`.
+fn portable_text(message: &JsValue) -> Option<JsString> {
+    let mut parts: Vec<Vec<u16>> = Vec::new();
+    let blocks = match field(message, "content") {
+        JsValue::Array(blocks) => blocks.as_slice(),
+        _ => &[],
+    };
+    for block in blocks {
+        let kind = field(block, "type");
+        if is(kind, "text") {
+            if let JsValue::String(text) = field(block, "text")
+                && !text.is_empty()
+            {
+                parts.push(text.units().to_vec());
+            }
+        } else if is(kind, "tool_call") {
+            let mut part: Vec<u16> = "[Tool call: ".encode_utf16().collect();
+            part.extend(
+                crate::js_value::to_string_units_checked(field(block, "name")).unwrap_or_default(),
+            );
+            part.extend("]\n".encode_utf16());
+            part.extend(portable_value(field(block, "input")));
+            parts.push(part);
+        } else if is(kind, "tool_result") {
+            let text = crate::runtime::context::compaction::flatten_tool_result_block_text(block);
+            let mut part: Vec<u16> = "[Tool result]".encode_utf16().collect();
+            if !text.is_empty() {
+                part.push(u16::from(b'\n'));
+                part.extend_from_slice(text.units());
+            }
+            parts.push(part);
+        } else if is(kind, "tool_result_reference") {
+            let mut part: Vec<u16> = "[Tool result reference: ".encode_utf16().collect();
+            part.extend(
+                crate::js_value::to_string_units_checked(field(block, "toolCallId"))
+                    .unwrap_or_default(),
+            );
+            part.push(u16::from(b']'));
+            parts.push(part);
+        } else if is(kind, "image") {
+            parts.push("[Image]".encode_utf16().collect());
+        }
+    }
+    let joined = parts.join(&[u16::from(b'\n'), u16::from(b'\n')][..]);
+    let text = trim_units(&joined);
+    (!text.is_empty()).then(|| JsString::from_utf16(text.to_vec()))
+}
+
+/// `toPortableSessionArchive`.
+fn portable_archive(entries: &[JsValue]) -> Result<JsValue, RequestError> {
+    let replay = crate::runtime::session::factory::project_transcript(entries)
+        .map_err(|error| RequestError::new(error.message.to_string()))?;
+    let mut messages = Vec::new();
+    for message in &replay.messages {
+        if field(field(message, "metadata"), "synthetic") == &JsValue::Bool(true) {
+            continue;
+        }
+        if let Some(text) = portable_text(message) {
+            let mut out = JsObject::new();
+            out.insert("role".into(), field(message, "role").clone());
+            out.insert("text".into(), JsValue::String(text));
+            messages.push(JsValue::Object(out));
+        }
+    }
+    let title = match replay.metadata.get("title") {
+        None | Some(JsValue::Undefined | JsValue::Null) => replay.metadata.get("aiTitle"),
+        title => title,
+    };
+    let mut archive = JsObject::new();
+    archive.insert("schemaVersion".into(), JsValue::Number(1.0));
+    archive.insert("format".into(), "portable_text_messages".into());
+    archive.insert("messages".into(), JsValue::Array(messages));
+    // `title && title.length <= 512`; only a string title has a length here.
+    if let Some(JsValue::String(title)) = title
+        && !title.is_empty()
+        && title.len_utf16() <= MAX_TITLE_UNITS
+    {
+        archive.insert("title".into(), JsValue::String(title.clone()));
+    }
+    Ok(JsValue::Object(archive))
+}
+
 impl Requests {
+    pub(in crate::native_process) async fn export_session_transcript(
+        &self,
+        params: JsValue,
+    ) -> Result<JsValue, RequestError> {
+        let project_root = self.dialog_project(&params)?;
+        let session_key = super::methods::require_text(
+            &params,
+            "sessionKey",
+            "INVALID_SESSION_KEY",
+            "sessionKey is required.",
+        )?;
+        if self.owner.has_active_turn(&session_key) {
+            return Err(dialog(
+                "SESSION_BUSY",
+                "Cannot export a transcript while its session has an active turn.",
+            ));
+        }
+        let path = crate::session_chat_dir(
+            &self.options.home,
+            &project_root,
+            &project_root.to_string_lossy(),
+        )
+        .join(format!(
+            "{}.jsonl",
+            crate::storage::sanitize_session_id(&session_key)
+        ));
+        let read = tokio::task::spawn_blocking(move || crate::storage::read_transcript(&path))
+            .await
+            .map_err(|error| RequestError::new(error.to_string()))?
+            .map_err(|error| RequestError::new(error.to_string()))?;
+        if read
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "transcript_missing")
+        {
+            return Err(dialog(
+                "SESSION_NOT_FOUND",
+                &format!(
+                    "Session not found: {}",
+                    String::from_utf16_lossy(session_key.units())
+                ),
+            ));
+        }
+        if read
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.severity == "error")
+        {
+            return Err(dialog(
+                "SESSION_TRANSCRIPT_INVALID",
+                "Cannot export a transcript with invalid entries.",
+            ));
+        }
+        let archive = portable_archive(&read.entries)?;
+        // validatePortableSessionArchive runs before the emptiness check, so an
+        // empty export is rejected with the archive's own message count error
+        // (createLocalGateway.ts:1176-1179, 1686) and SESSION_TRANSCRIPT_EMPTY
+        // is never reached.
+        validate(&archive)?;
+        Ok(archive)
+    }
+
     pub(in crate::native_process) async fn restore_session_transcript(
         &self,
         params: JsValue,

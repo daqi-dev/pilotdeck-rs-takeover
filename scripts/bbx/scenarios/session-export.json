@@ -1,0 +1,55 @@
+{
+  "name": "session-export",
+  "about": "export_session_transcript：缺 sessionKey、未登记的 projectKey、不存在的会话、轮次进行中（挂在权限询问上）被拒；两轮对话（第二轮带 write_file 工具调用与结果、provider 生成标题）后导出可移植归档；用导出结果里的标题和各条消息文本恢复成新会话（restore_session_transcript），再导出、读回、在恢复出的会话上续一轮，比较发给 provider 的历史。归档整体一次返回（基线不分块）。",
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Export run\"}" } },
+    { "name": "turn-2-after-tool", "when": ["turn-2:", "\"tool_call_id\":\"call_bbx_2\""], "unless": ["turn-3:"], "reply": { "text": "Wrote the note." } },
+    { "name": "turn-2", "when": ["turn-2:"], "unless": ["turn-3:"], "reply": { "tool": { "id": "call_bbx_2", "name": "write_file", "arguments": { "file_path": "note.txt", "content": "hello \"export\"\nline two\n" } } } },
+    { "name": "turn-b", "when": ["turn-b:"], "reply": { "tool": { "id": "call_bbx_b", "name": "bash", "arguments": { "command": "echo needs-permission > made.txt" } } } },
+    { "name": "turn-1", "when": ["turn-1:"], "unless": ["turn-2:", "turn-3:"], "reply": { "text": "First answer." } },
+    { "name": "main", "reply": { "text": "Continuing." } }
+  ],
+  "steps": [
+    { "ws": "export_session_transcript", "params": {} },
+    { "ws": "export_session_transcript", "params": { "sessionKey": "s-exp", "projectKey": "{ROOT}/not-registered" } },
+    { "ws": "export_session_transcript", "params": { "sessionKey": "s-none" } },
+    { "ws": "set_permission_mode", "params": { "sessionKey": "s-exp", "mode": "bypassPermissions" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-exp", "channelKey": "test", "runId": "run-1", "message": "turn-1: hello" }, "timeout": 20000 },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-exp", "channelKey": "test", "runId": "run-2", "message": "turn-2: write a note" }, "timeout": 20000 },
+    {
+      "ws": "export_session_transcript",
+      "params": { "sessionKey": "s-exp" },
+      "save": {
+        "title": "\"title\":\"([^\"]*)\"",
+        "u1": "\"role\":\"user\",\"text\":\"(turn-1[^\"]*)\"",
+        "a1": "\"role\":\"assistant\",\"text\":\"(First[^\"]*)\"",
+        "u2": "\"role\":\"user\",\"text\":\"(turn-2[^\"]*)\"",
+        "a2": "\"text\":\"(Wrote[^\"]*)\""
+      }
+    },
+    {
+      "ws": "restore_session_transcript",
+      "params": {
+        "sessionKey": "s-imported",
+        "archive": {
+          "schemaVersion": 1,
+          "format": "portable_text_messages",
+          "title": "{saved.title}",
+          "messages": [
+            { "role": "user", "text": "{saved.u1}" },
+            { "role": "assistant", "text": "{saved.a1}" },
+            { "role": "user", "text": "{saved.u2}" },
+            { "role": "assistant", "text": "{saved.a2}" }
+          ]
+        }
+      }
+    },
+    { "ws": "export_session_transcript", "params": { "sessionKey": "s-imported" } },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-imported" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-imported", "channelKey": "test", "runId": "run-3", "message": "turn-3: continue" }, "timeout": 20000 },
+    { "ws": "export_session_transcript", "params": { "sessionKey": "s-imported" } },
+    { "ws": "list_sessions", "params": {} },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-busy", "channelKey": "test", "runId": "run-b", "message": "turn-b: ask" }, "timeout": 3000, "expectTimeout": true },
+    { "ws": "export_session_transcript", "params": { "sessionKey": "s-busy" } }
+  ]
+}
