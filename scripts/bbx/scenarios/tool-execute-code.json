@@ -1,0 +1,708 @@
+{
+  "name": "tool-execute-code",
+  "about": "execute_code（bypassPermissions）：正常输出与子进程环境、成功时丢弃 stderr、非零退出、被信号杀死、超时、下发的 pilotdeck_tools.py 原文、RPC 回调只读工具、RPC 报错与限额与白名单、参数非法、临时目录清理。",
+  "files": {
+    "proj/note.txt": "first line\nneedle here\n",
+    "home/.pilotdeck/inside/hay.txt": "hay\nneedle inside\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Tool run\"}"
+      }
+    },
+    {
+      "name": "turn-18-after-tool",
+      "when": [
+        "turn-18:",
+        "\"tool_call_id\":\"call_bbx_18\""
+      ],
+      "reply": {
+        "text": "Done 18."
+      }
+    },
+    {
+      "name": "turn-18",
+      "when": [
+        "turn-18:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_18",
+          "name": "execute_code",
+          "arguments": {
+            "code": "import os\nroot = os.path.dirname(os.environ['PILOTDECK_EXECUTE_CODE_TEMP_ROOT'])\nprint(len([n for n in os.listdir(root) if n.startswith('pilotdeck_execute_code_')]))\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-17-after-tool",
+      "when": [
+        "turn-17:",
+        "\"tool_call_id\":\"call_bbx_17\""
+      ],
+      "reply": {
+        "text": "Done 17."
+      }
+    },
+    {
+      "name": "turn-17",
+      "when": [
+        "turn-17:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_17",
+          "name": "execute_code",
+          "arguments": {
+            "code": "print(1)",
+            "bogus": true,
+            "timeout_seconds": "5"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-16-after-tool",
+      "when": [
+        "turn-16:",
+        "\"tool_call_id\":\"call_bbx_16\""
+      ],
+      "reply": {
+        "text": "Done 16."
+      }
+    },
+    {
+      "name": "turn-16",
+      "when": [
+        "turn-16:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_16",
+          "name": "execute_code",
+          "arguments": {
+            "description": "no code"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-15-after-tool",
+      "when": [
+        "turn-15:",
+        "\"tool_call_id\":\"call_bbx_15\""
+      ],
+      "reply": {
+        "text": "Done 15."
+      }
+    },
+    {
+      "name": "turn-15",
+      "when": [
+        "turn-15:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_15",
+          "name": "execute_code",
+          "arguments": {
+            "code": "def broken(:\n    pass\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-14-after-tool",
+      "when": [
+        "turn-14:",
+        "\"tool_call_id\":\"call_bbx_14\""
+      ],
+      "reply": {
+        "text": "Done 14."
+      }
+    },
+    {
+      "name": "turn-14",
+      "when": [
+        "turn-14:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_14",
+          "name": "execute_code",
+          "arguments": {
+            "code": "print('x')",
+            "timeout_seconds": 0,
+            "max_tool_calls": 51
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-13-after-tool",
+      "when": [
+        "turn-13:",
+        "\"tool_call_id\":\"call_bbx_13\""
+      ],
+      "reply": {
+        "text": "Done 13."
+      }
+    },
+    {
+      "name": "turn-13",
+      "when": [
+        "turn-13:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_13",
+          "name": "execute_code",
+          "arguments": {
+            "code": "   \n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-12-after-tool",
+      "when": [
+        "turn-12:",
+        "\"tool_call_id\":\"call_bbx_12\""
+      ],
+      "reply": {
+        "text": "Done 12."
+      }
+    },
+    {
+      "name": "turn-12",
+      "when": [
+        "turn-12:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_12",
+          "name": "execute_code",
+          "arguments": {
+            "code": "import pilotdeck_tools\nfor name, args in [('todo_write', {}), ('execute_code', {'code': 'print(1)'}), ('read_file', {}), ('', {}), ('read_file', 'not-a-dict')]:\n    try:\n        pilotdeck_tools._call(name, args)\n    except RuntimeError as e:\n        print('caught:', e)\nprint(sorted(n for n in dir(pilotdeck_tools) if not n.startswith('_')))\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-11-after-tool",
+      "when": [
+        "turn-11:",
+        "\"tool_call_id\":\"call_bbx_11\""
+      ],
+      "reply": {
+        "text": "Done 11."
+      }
+    },
+    {
+      "name": "turn-11",
+      "when": [
+        "turn-11:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_11",
+          "name": "execute_code",
+          "arguments": {
+            "code": "from pilotdeck_tools import glob\ntry:\n    glob('*')\nexcept RuntimeError as e:\n    print('caught:', e)\n",
+            "max_tool_calls": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-10-after-tool",
+      "when": [
+        "turn-10:",
+        "\"tool_call_id\":\"call_bbx_10\""
+      ],
+      "reply": {
+        "text": "Done 10."
+      }
+    },
+    {
+      "name": "turn-10",
+      "when": [
+        "turn-10:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_10",
+          "name": "execute_code",
+          "arguments": {
+            "code": "from pilotdeck_tools import read_file\nfor i in range(3):\n    try:\n        read_file('/private/tmp/pdrs-bbx/root/proj/note.txt')\n        print('ok', i)\n    except RuntimeError as e:\n        print('caught:', e)\n",
+            "max_tool_calls": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-9-after-tool",
+      "when": [
+        "turn-9:",
+        "\"tool_call_id\":\"call_bbx_9\""
+      ],
+      "reply": {
+        "text": "Done 9."
+      }
+    },
+    {
+      "name": "turn-9",
+      "when": [
+        "turn-9:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_9",
+          "name": "execute_code",
+          "arguments": {
+            "code": "from pilotdeck_tools import read_file\ntry:\n    read_file('/private/tmp/pdrs-bbx/root/proj/missing.txt')\nexcept RuntimeError as e:\n    print('caught:', e)\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-8-after-tool",
+      "when": [
+        "turn-8:",
+        "\"tool_call_id\":\"call_bbx_8\""
+      ],
+      "reply": {
+        "text": "Done 8."
+      }
+    },
+    {
+      "name": "turn-8",
+      "when": [
+        "turn-8:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_8",
+          "name": "execute_code",
+          "arguments": {
+            "code": "from pilotdeck_tools import read_file, glob, grep\nr = read_file('/private/tmp/pdrs-bbx/root/proj/note.txt')\nprint(sorted(r.keys()))\nprint(r['content'])\nprint(r['data'])\nprint(r['metadata'])\ng = glob('*.txt', '/private/tmp/pdrs-bbx/root/proj')\nprint(g['content'])\nh = grep('needle', '/private/tmp/pdrs-bbx/root/home/.pilotdeck/inside')\nprint(h['content'])\nr2 = read_file('/private/tmp/pdrs-bbx/root/proj/note.txt', offset=2, limit=1)\nprint(r2['content'])\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-7-after-tool",
+      "when": [
+        "turn-7:",
+        "\"tool_call_id\":\"call_bbx_7\""
+      ],
+      "reply": {
+        "text": "Done 7."
+      }
+    },
+    {
+      "name": "turn-7",
+      "when": [
+        "turn-7:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_7",
+          "name": "execute_code",
+          "arguments": {
+            "code": "import pilotdeck_tools\nprint(open(pilotdeck_tools.__file__).read())\nprint(sorted(os.path.basename(p) for p in __import__('glob').glob(os.path.join(os.environ['PILOTDECK_EXECUTE_CODE_TEMP_ROOT'], '*'))) if False else '')\nimport os\nprint(sorted(os.listdir(os.environ['PILOTDECK_EXECUTE_CODE_TEMP_ROOT'])))\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-6-after-tool",
+      "when": [
+        "turn-6:",
+        "\"tool_call_id\":\"call_bbx_6\""
+      ],
+      "reply": {
+        "text": "Done 6."
+      }
+    },
+    {
+      "name": "turn-6",
+      "when": [
+        "turn-6:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_6",
+          "name": "execute_code",
+          "arguments": {
+            "code": "import time\nprint('started', flush=True)\ntime.sleep(30)\n",
+            "timeout_seconds": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-5-after-tool",
+      "when": [
+        "turn-5:",
+        "\"tool_call_id\":\"call_bbx_5\""
+      ],
+      "reply": {
+        "text": "Done 5."
+      }
+    },
+    {
+      "name": "turn-5",
+      "when": [
+        "turn-5:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_5",
+          "name": "execute_code",
+          "arguments": {
+            "code": "import os, signal, sys\nprint('about to die', flush=True)\nos.kill(os.getpid(), signal.SIGKILL)\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-4-after-tool",
+      "when": [
+        "turn-4:",
+        "\"tool_call_id\":\"call_bbx_4\""
+      ],
+      "reply": {
+        "text": "Done 4."
+      }
+    },
+    {
+      "name": "turn-4",
+      "when": [
+        "turn-4:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_4",
+          "name": "execute_code",
+          "arguments": {
+            "code": "import sys\nprint('out line')\nsys.stderr.write('\\x1b[31mred failure\\x1b[0m\\n')\nsys.exit(2)\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-3-after-tool",
+      "when": [
+        "turn-3:",
+        "\"tool_call_id\":\"call_bbx_3\""
+      ],
+      "reply": {
+        "text": "Done 3."
+      }
+    },
+    {
+      "name": "turn-3",
+      "when": [
+        "turn-3:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_3",
+          "name": "execute_code",
+          "arguments": {
+            "code": "import sys\nprint('before exit')\nsys.exit(3)\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-2-after-tool",
+      "when": [
+        "turn-2:",
+        "\"tool_call_id\":\"call_bbx_2\""
+      ],
+      "reply": {
+        "text": "Done 2."
+      }
+    },
+    {
+      "name": "turn-2",
+      "when": [
+        "turn-2:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_2",
+          "name": "execute_code",
+          "arguments": {
+            "code": "import sys\nprint('partial out')\nsys.stderr.write('warn on stderr\\n')\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-1-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "turn-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1",
+          "name": "execute_code",
+          "arguments": {
+            "code": "import os, sys\nprint('hello from python')\nprint(os.getcwd())\nprint(sorted(k for k in os.environ if k.startswith('PILOTDECK_') or k.startswith('PYTHON')))\nprint(os.environ['PILOTDECK_WORKSPACE_CWD'])\nprint(os.environ['PYTHONDONTWRITEBYTECODE'])\nprint(os.path.dirname(os.environ['PILOTDECK_EXECUTE_CODE_TEMP_ROOT']))\nprint(os.environ['PYTHONPATH'] == os.environ['PILOTDECK_EXECUTE_CODE_TEMP_ROOT'])\nprint(os.path.dirname(os.environ['PILOTDECK_RPC_SOCKET']))\nprint(repr(sys.stdin.read()))\nprint('中文 ok')\n",
+            "description": "say hello"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-1: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-2: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-3: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-4: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-5: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-6: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-7: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-8: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-9: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-10: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-11: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-12: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-13: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-14: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-15: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-16: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-17: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-18: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-bbx-1"
+      }
+    }
+  ]
+}
