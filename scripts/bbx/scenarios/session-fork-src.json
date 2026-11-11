@@ -1,0 +1,15 @@
+{
+  "name": "session-fork-src",
+  "about": "两轮纯文本对话（s-src）。本身是一个普通对拍场景；它的基线采集产物也是 session-fork.gen.mjs 生成三个 session-fork* 场景的输入。",
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Fork source\"}" } },
+    { "name": "turn-2", "when": ["turn-2:"], "reply": { "text": "Second answer." } },
+    { "name": "turn-1", "when": ["turn-1:"], "reply": { "text": "First answer." } }
+  ],
+  "steps": [
+    { "ws": "submit_turn", "params": { "sessionKey": "s-src", "channelKey": "test", "runId": "run-src-1", "message": "turn-1: first question" }, "timeout": 20000 },
+    { "sleep": 500 },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-src", "channelKey": "test", "runId": "run-src-2", "message": "turn-2: second question" }, "timeout": 20000 },
+    { "sleep": 500 }
+  ]
+}
