@@ -748,7 +748,7 @@ async fn start_assembly(
                     title_provider: (!loop_planned).then_some(title),
                     // The loop runs in the sidecar, which starts after the
                     // title request has returned.
-                    park_title_record: true,
+                    park_title_record: false,
                     ..Default::default()
                 };
                 let session = context.session_key;
