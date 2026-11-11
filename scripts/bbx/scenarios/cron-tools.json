@@ -25,116 +25,199 @@
       }
     },
     {
-      "name": "turn-1-after-tool",
+      "name": "turn-13-after-tool",
       "when": [
-        "turn-1:",
-        "\"tool_call_id\":\"call_bbx_1\""
+        "turn-13:",
+        "\"tool_call_id\":\"call_bbx_13\""
       ],
       "reply": {
-        "text": "Done 1."
+        "text": "Done 13."
       }
     },
     {
-      "name": "turn-1",
+      "name": "turn-13",
       "when": [
-        "turn-1:"
+        "turn-13:"
       ],
       "reply": {
         "tool": {
-          "id": "call_bbx_1",
-          "name": "cron_create",
+          "id": "call_bbx_13",
+          "name": "cron_run_now",
           "arguments": {
-            "message": "bad expr",
-            "schedule": {
-              "type": "cron",
-              "expression": "not a cron"
-            }
+            "taskId": "nope"
           }
         }
       }
     },
     {
-      "name": "turn-2-after-tool",
+      "name": "turn-12-after-tool",
       "when": [
-        "turn-2:",
-        "\"tool_call_id\":\"call_bbx_2\""
+        "turn-12:",
+        "\"tool_call_id\":\"call_bbx_12\""
       ],
       "reply": {
-        "text": "Done 2."
+        "text": "Done 12."
       }
     },
     {
-      "name": "turn-2",
+      "name": "turn-12",
       "when": [
-        "turn-2:"
+        "turn-12:"
       ],
       "reply": {
         "tool": {
-          "id": "call_bbx_2",
-          "name": "cron_create",
-          "arguments": {
-            "message": "extra",
-            "schedule": {
-              "type": "delay",
-              "amount": 1,
-              "unit": "hour"
-            },
-            "bogus": true
-          }
-        }
-      }
-    },
-    {
-      "name": "turn-3-after-tool",
-      "when": [
-        "turn-3:",
-        "\"tool_call_id\":\"call_bbx_3\""
-      ],
-      "reply": {
-        "text": "Done 3."
-      }
-    },
-    {
-      "name": "turn-3",
-      "when": [
-        "turn-3:"
-      ],
-      "reply": {
-        "tool": {
-          "id": "call_bbx_3",
+          "id": "call_bbx_12",
           "name": "cron_list",
           "arguments": {}
         }
       }
     },
     {
-      "name": "turn-4-after-tool",
+      "name": "turn-11-after-tool",
       "when": [
-        "turn-4:",
-        "\"tool_call_id\":\"call_bbx_4\""
+        "turn-11:",
+        "\"tool_call_id\":\"call_bbx_11\""
       ],
       "reply": {
-        "text": "Done 4."
+        "text": "Done 11."
       }
     },
     {
-      "name": "turn-4",
+      "name": "turn-11",
       "when": [
-        "turn-4:"
+        "turn-11:"
       ],
       "reply": {
         "tool": {
-          "id": "call_bbx_4",
-          "name": "cron_update",
+          "id": "call_bbx_11",
+          "name": "cron_run_now",
+          "arguments": {}
+        }
+      }
+    },
+    {
+      "name": "turn-10-after-tool",
+      "when": [
+        "turn-10:",
+        "\"tool_call_id\":\"call_bbx_10\""
+      ],
+      "reply": {
+        "text": "Done 10."
+      }
+    },
+    {
+      "name": "turn-10",
+      "when": [
+        "turn-10:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_10",
+          "name": "cron_list",
+          "arguments": {
+            "includeHistory": true,
+            "limit": 5
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-9-after-tool",
+      "when": [
+        "turn-9:",
+        "\"tool_call_id\":\"call_bbx_9\""
+      ],
+      "reply": {
+        "text": "Done 9."
+      }
+    },
+    {
+      "name": "turn-9",
+      "when": [
+        "turn-9:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_9",
+          "name": "cron_delete",
           "arguments": {
             "taskId": "task-a",
-            "expectedRevision": 0,
-            "message": "stale",
-            "schedule": {
-              "type": "once",
-              "runAt": "2099-01-01T00:00:00.000Z"
-            },
-            "timezone": "Nope/Zone"
+            "stopRunning": true
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-8-after-tool",
+      "when": [
+        "turn-8:",
+        "\"tool_call_id\":\"call_bbx_8\""
+      ],
+      "reply": {
+        "text": "Done 8."
+      }
+    },
+    {
+      "name": "turn-8",
+      "when": [
+        "turn-8:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_8",
+          "name": "cron_delete",
+          "arguments": {
+            "taskId": "task-a"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-7-after-tool",
+      "when": [
+        "turn-7:",
+        "\"tool_call_id\":\"call_bbx_7\""
+      ],
+      "reply": {
+        "text": "Done 7."
+      }
+    },
+    {
+      "name": "turn-7",
+      "when": [
+        "turn-7:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_7",
+          "name": "cron_stop",
+          "arguments": {
+            "taskId": "task-a"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-6-after-tool",
+      "when": [
+        "turn-6:",
+        "\"tool_call_id\":\"call_bbx_6\""
+      ],
+      "reply": {
+        "text": "Done 6."
+      }
+    },
+    {
+      "name": "turn-6",
+      "when": [
+        "turn-6:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_6",
+          "name": "cron_run_now",
+          "arguments": {
+            "taskId": "nope"
           }
         }
       }
@@ -171,152 +254,117 @@
       }
     },
     {
-      "name": "turn-6-after-tool",
+      "name": "turn-4-after-tool",
       "when": [
-        "turn-6:",
-        "\"tool_call_id\":\"call_bbx_6\""
+        "turn-4:",
+        "\"tool_call_id\":\"call_bbx_4\""
       ],
       "reply": {
-        "text": "Done 6."
+        "text": "Done 4."
       }
     },
     {
-      "name": "turn-6",
+      "name": "turn-4",
       "when": [
-        "turn-6:"
+        "turn-4:"
       ],
       "reply": {
         "tool": {
-          "id": "call_bbx_6",
-          "name": "cron_run_now",
-          "arguments": {
-            "taskId": "nope"
-          }
-        }
-      }
-    },
-    {
-      "name": "turn-7-after-tool",
-      "when": [
-        "turn-7:",
-        "\"tool_call_id\":\"call_bbx_7\""
-      ],
-      "reply": {
-        "text": "Done 7."
-      }
-    },
-    {
-      "name": "turn-7",
-      "when": [
-        "turn-7:"
-      ],
-      "reply": {
-        "tool": {
-          "id": "call_bbx_7",
-          "name": "cron_stop",
-          "arguments": {
-            "taskId": "task-a"
-          }
-        }
-      }
-    },
-    {
-      "name": "turn-8-after-tool",
-      "when": [
-        "turn-8:",
-        "\"tool_call_id\":\"call_bbx_8\""
-      ],
-      "reply": {
-        "text": "Done 8."
-      }
-    },
-    {
-      "name": "turn-8",
-      "when": [
-        "turn-8:"
-      ],
-      "reply": {
-        "tool": {
-          "id": "call_bbx_8",
-          "name": "cron_delete",
-          "arguments": {
-            "taskId": "task-a"
-          }
-        }
-      }
-    },
-    {
-      "name": "turn-9-after-tool",
-      "when": [
-        "turn-9:",
-        "\"tool_call_id\":\"call_bbx_9\""
-      ],
-      "reply": {
-        "text": "Done 9."
-      }
-    },
-    {
-      "name": "turn-9",
-      "when": [
-        "turn-9:"
-      ],
-      "reply": {
-        "tool": {
-          "id": "call_bbx_9",
-          "name": "cron_delete",
+          "id": "call_bbx_4",
+          "name": "cron_update",
           "arguments": {
             "taskId": "task-a",
-            "stopRunning": true
+            "expectedRevision": 0,
+            "message": "stale",
+            "schedule": {
+              "type": "once",
+              "runAt": "2099-01-01T00:00:00.000Z"
+            },
+            "timezone": "Nope/Zone"
           }
         }
       }
     },
     {
-      "name": "turn-10-after-tool",
+      "name": "turn-3-after-tool",
       "when": [
-        "turn-10:",
-        "\"tool_call_id\":\"call_bbx_10\""
+        "turn-3:",
+        "\"tool_call_id\":\"call_bbx_3\""
       ],
       "reply": {
-        "text": "Done 10."
+        "text": "Done 3."
       }
     },
     {
-      "name": "turn-10",
+      "name": "turn-3",
       "when": [
-        "turn-10:"
+        "turn-3:"
       ],
       "reply": {
         "tool": {
-          "id": "call_bbx_10",
+          "id": "call_bbx_3",
           "name": "cron_list",
+          "arguments": {}
+        }
+      }
+    },
+    {
+      "name": "turn-2-after-tool",
+      "when": [
+        "turn-2:",
+        "\"tool_call_id\":\"call_bbx_2\""
+      ],
+      "reply": {
+        "text": "Done 2."
+      }
+    },
+    {
+      "name": "turn-2",
+      "when": [
+        "turn-2:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_2",
+          "name": "cron_create",
           "arguments": {
-            "includeHistory": true,
-            "limit": 5
+            "message": "extra",
+            "schedule": {
+              "type": "delay",
+              "amount": 1,
+              "unit": "hour"
+            },
+            "bogus": true
           }
         }
       }
     },
     {
-      "name": "turn-11-after-tool",
+      "name": "turn-1-after-tool",
       "when": [
-        "turn-11:",
-        "\"tool_call_id\":\"call_bbx_11\""
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
       ],
       "reply": {
-        "text": "Done 11."
+        "text": "Done 1."
       }
     },
     {
-      "name": "turn-11",
+      "name": "turn-1",
       "when": [
-        "turn-11:"
+        "turn-1:"
       ],
       "reply": {
         "tool": {
-          "id": "call_bbx_11",
-          "name": "cron_run_now",
-          "arguments": {}
+          "id": "call_bbx_1",
+          "name": "cron_create",
+          "arguments": {
+            "message": "bad expr",
+            "schedule": {
+              "type": "cron",
+              "expression": "not a cron"
+            }
+          }
         }
       }
     }
@@ -488,6 +536,58 @@
         "projectKey": "{HOME}/work/alpha",
         "message": "bbx-main-session turn-11: run the tool"
       }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-2",
+        "channelKey": "test",
+        "projectKey": "{HOME}/work/alpha",
+        "message": "bbx-main-session turn-12: run the tool"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-bbx-2",
+            "requestId": "{event.requestId}",
+            "decision": "allow"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-2",
+        "channelKey": "test",
+        "projectKey": "{HOME}/work/alpha",
+        "message": "bbx-main-session turn-13: run the tool"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-bbx-2",
+            "requestId": "{event.requestId}",
+            "decision": "allow"
+          },
+          "count": 1
+        }
+      ]
     },
     {
       "sleep": 300
