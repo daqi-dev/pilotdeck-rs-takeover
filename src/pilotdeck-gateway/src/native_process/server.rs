@@ -213,6 +213,11 @@ async fn bind(
     .await
     .map_err(|error| listen_error(&error, address))?
     .with_webhook(feishu_webhook)
+    // `publicApprovals` and `publicHostCapabilities` (pilotdeck.ts:217-218).
+    .with_module_host(crate::native_http::ModuleHost {
+        approvals: crate::module_host::approvals::production_config(token.clone(), &options.env),
+        host: crate::module_host::production_config(token.clone()),
+    })
     .with_api_web(production_api_web(token, options.pilot_home.clone()))
     // `staticAssetsPath: resolve(projectRoot, "ui/dist")` (pilotdeck.ts:224).
     .with_static_root(options.project.join("ui/dist"));

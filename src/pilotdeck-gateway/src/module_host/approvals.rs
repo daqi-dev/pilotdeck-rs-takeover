@@ -999,5 +999,66 @@ fn streamed(body: Option<Bytes>) -> Body {
     StreamedBody(body).boxed()
 }
 
+/// The `authenticate` port `createLocalGateway.ts:976-985` installs: without
+/// `STAFFDECK_FORMAL_API_ORIGIN` and `STAFFDECK_APPROVAL_USER_ID` it throws
+/// 503 `APPROVAL_BINDING_UNAVAILABLE`. With both set TS loads
+/// `ui/server/staffdeck-approval-authority.mjs` and asks the StaffDeck origin
+/// (`GET /api/auth/me`); that external call is not implemented natively, so
+/// the configured case fails the way TS fails when the origin cannot be
+/// reached — a plain error, which the transport renders as 502
+/// `PUBLIC_APPROVAL_BRIDGE_FAILED`.
+struct EnvAuthenticator {
+    configured: bool,
+}
+
+impl ApprovalAuthenticator for EnvAuthenticator {
+    fn authenticate<'a>(
+        &'a self,
+        _bearer: &'a JsString,
+    ) -> Pin<Box<dyn Future<Output = Result<ApprovalSubject, ApprovalFailure>> + Send + 'a>> {
+        Box::pin(async move {
+            if !self.configured {
+                return Err(failure(503, "APPROVAL_BINDING_UNAVAILABLE"));
+            }
+            Err(ApprovalFailure {
+                status: None,
+                code: None,
+            })
+        })
+    }
+}
+
+/// The bridge `pilotdeck server` mounts (`getPublicApprovals()`,
+/// createLocalGateway.ts:964-990): the fixed binding from the
+/// `STAFFDECK_COPY_*` variables (missing ones are empty strings, which the
+/// access gate answers with 503). The session resolver and the pending store
+/// sit behind `authenticate`, which never succeeds here (see
+/// [`EnvAuthenticator`]), so neither is reachable; the store is the native
+/// pending store with no SOP profile. The project-binding mode
+/// (`STAFFDECK_PROJECT_BINDING_ENABLED=true`, a per-request binding resolver)
+/// is not modeled.
+pub(crate) fn production_config(token: String, env: &crate::config::Env) -> Config {
+    let var = |name: &str| JsString::from(env.get(name).map_or("", String::as_str));
+    let present = |name: &str| env.get(name).is_some_and(|value| !value.is_empty());
+    let bridge = ApprovalBridgeImpl {
+        binding: ApprovalBinding {
+            tenant_id: var("STAFFDECK_COPY_TENANT_ID"),
+            agent_id: var("STAFFDECK_COPY_TARGET_AGENT_ID"),
+            pilot_deck_user_id: var("STAFFDECK_COPY_PILOTDECK_USER_ID"),
+        },
+        resolve_binding: None,
+        authenticate: Arc::new(EnvAuthenticator {
+            configured: present("STAFFDECK_FORMAL_API_ORIGIN")
+                && present("STAFFDECK_APPROVAL_USER_ID"),
+        }),
+        resolve_session: None,
+        store: Arc::new(pending::PendingSopStore::new(Arc::new(|_| None))),
+    };
+    Config {
+        token,
+        bridge: Some(Arc::new(bridge)),
+    }
+}
+
 #[cfg(test)]
 mod tests;

@@ -1,0 +1,43 @@
+{
+  "name": "http-general",
+  "about": "gateway HTTP 的通用行为（GatewayServer.ts:88-135）：/health 各种方法（GET/HEAD/POST/PUT/DELETE/OPTIONS）与查询串、尾斜杠、点段与反斜杠归一化、百分号编码不解码；未知路径 404 text/plain；CORS 预检不回 CORS 头；Connection: close 请求的响应头；/auth/local-token 的非 GET 方法；带畸形 JSON 体和不符的 Content-Type 打到不读体的路由；/ws 的普通 GET（非升级）。项目目录下没有 ui/dist，静态托管不出场。",
+  "volatile": [
+    "\\.http\\.headers\\.date$"
+  ],
+  "steps": [
+    { "http": "GET /health" },
+    { "http": "HEAD /health" },
+    { "http": "POST /health", "headers": { "content-type": "application/json" }, "body": "{not json" },
+    { "http": "PUT /health", "headers": { "content-type": "text/plain" }, "body": "x" },
+    { "http": "DELETE /health" },
+    { "http": "OPTIONS /health", "headers": { "origin": "http://localhost:3001", "access-control-request-method": "POST", "access-control-request-headers": "authorization" } },
+    { "http": "PATCH /health" },
+    { "http": "GET /health?x=1&y" },
+    { "http": "GET /health/" },
+    { "http": "GET /Health" },
+    { "http": "GET /a/../health" },
+    { "http": "GET /./health" },
+    { "http": "GET /%68ealth" },
+    { "http": "GET /health%2F" },
+    { "http": "GET /health#frag" },
+    { "http": "GET /" },
+    { "http": "HEAD /" },
+    { "http": "OPTIONS /" },
+    { "http": "GET /nope" },
+    { "http": "POST /nope", "headers": { "content-type": "application/json" }, "body": "{\"a\":1}" },
+    { "http": "GET /ws" },
+    { "http": "GET /ws/" },
+    { "http": "GET /health", "headers": { "connection": "close" } },
+    { "http": "GET /nope", "headers": { "connection": "close" } },
+    { "http": "POST /auth/local-token", "headers": { "content-type": "application/json" }, "body": "{}" },
+    { "http": "HEAD /auth/local-token" },
+    { "http": "GET /auth/local-token/" },
+    { "http": "GET /auth/local-token?x=1" },
+    { "http": "GET /health", "headers": { "authorization": "Bearer wrong" } },
+    { "http": "GET /feishu/webhook" },
+    { "http": "POST /feishu/webhook", "headers": { "content-type": "application/json" }, "body": "{\"type\":\"url_verification\",\"challenge\":\"c\"}" },
+    { "http": "POST /feishu/webhook", "headers": { "content-type": "application/json" }, "body": "not json" },
+    { "http": "GET /v1/gateway-user-dialog-store/get" },
+    { "http": "GET /health", "headers": { "accept-encoding": "gzip" } }
+  ]
+}

@@ -27,8 +27,6 @@ mod bus;
 mod channel;
 #[cfg(test)]
 mod channel_tests;
-// #1316: the native HTTP router references STORE_PATH_PREFIX for the explicit
-// not-yet-open entry, so the module itself is crate-visible.
 pub mod http_store;
 mod journal;
 mod store;

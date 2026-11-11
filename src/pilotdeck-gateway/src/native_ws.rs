@@ -117,6 +117,7 @@ impl NativeWsServer {
             static_root: None,
             webhook: None,
             api_web: None,
+            module_host: None,
         };
         Ok(Self {
             // Node's checker phase anchors at the 'listening' event; this
@@ -166,6 +167,13 @@ impl NativeWsServer {
     /// metadata registry over the same home the WS lane reads.
     pub(crate) fn with_api_web(mut self, config: crate::api_web::Config) -> Self {
         self.http.api_web = Some(config);
+        self
+    }
+
+    /// Mount the public approval bridge and the public host transport
+    /// (`/api/module-host/*`, GatewayServer.ts:96-97) on this listener.
+    pub(crate) fn with_module_host(mut self, module_host: native_http::ModuleHost) -> Self {
+        self.http.module_host = Some(module_host);
         self
     }
 

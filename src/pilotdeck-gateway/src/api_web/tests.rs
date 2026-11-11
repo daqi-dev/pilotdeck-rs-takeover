@@ -319,6 +319,7 @@ async fn exchange(
 ) -> (Vec<u8>, bool) {
     let native_config = native_http::Config {
         api_web: Some(config),
+        module_host: None,
         ..native_config
     };
     let listener = TcpListener::bind("127.0.0.1:0")
@@ -425,6 +426,7 @@ fn native_config() -> native_http::Config {
         static_root: None,
         webhook: None,
         api_web: None,
+        module_host: None,
     }
 }
 
