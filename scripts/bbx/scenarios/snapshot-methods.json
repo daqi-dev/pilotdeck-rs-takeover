@@ -1,0 +1,309 @@
+{
+  "name": "snapshot-methods",
+  "about": "工作区快照的读取：PILOTDECK_STORAGE_ROOT 打开快照后，snapshot_list（按项目、会话过滤，分页、游标、limit 校验，createdAt 排序，非法 phase 略过）、snapshot_get（跨项目、不存在、参数校验）、snapshot_restore 的失败路径。快照 id 由轮次 id 散列得来、每次运行都不同，所以读取作用在预先写好的快照上；成功的恢复写进随机命名的目录，放在 snapshot-turn-restore 场景里。",
+  "env": {
+    "PILOTDECK_STORAGE_ROOT": "{HOME}/storage"
+  },
+  "files": {
+    "home/work/alpha/README.md": "alpha\n",
+    "home/work/alpha/src/a.txt": "aaa\n",
+    "home/work/beta/README.md": "beta\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-beta/.cwd": "{HOME}/work/beta\n",
+    "home/storage/objects/sha256/d3/4d/d34de011fc2d0868e4737a5f54c523b6eda966ce1297291c32e40e7e8e05ce78": "old readme\n",
+    "home/storage/objects/sha256/37/0a/370a8c04b8a65bb4494275eec227f1b694db04c76da6b0b8ae88ed1ab19790a3": "nested\n",
+    "home/storage/objects/sha256/af/25/af258e49c9bb8dae90ed82026430db02cf40a7bacdc18173dea651bcee171fda": "beta old\n",
+    "home/storage/workspaces/private-tmp-pdrs-bbx-root-home-work-alpha/sessions/s-old/snapshots/snap-a1/manifest.json": {
+      "snapshotId": "snap-a1",
+      "workspaceId": "private-tmp-pdrs-bbx-root-home-work-alpha",
+      "sessionId": "s-old",
+      "turnId": "turn-snap-a1",
+      "runId": "run-snap-a1",
+      "phase": "pre_user",
+      "abnormal": false,
+      "entries": [
+        {
+          "path": "README.md",
+          "entryType": "file",
+          "size": 11,
+          "digest": "d34de011fc2d0868e4737a5f54c523b6eda966ce1297291c32e40e7e8e05ce78",
+          "objectKey": "objects/sha256/d3/4d/d34de011fc2d0868e4737a5f54c523b6eda966ce1297291c32e40e7e8e05ce78"
+        },
+        {
+          "path": "deep/x/y.txt",
+          "entryType": "file",
+          "size": 7,
+          "digest": "370a8c04b8a65bb4494275eec227f1b694db04c76da6b0b8ae88ed1ab19790a3",
+          "objectKey": "objects/sha256/37/0a/370a8c04b8a65bb4494275eec227f1b694db04c76da6b0b8ae88ed1ab19790a3"
+        }
+      ],
+      "createdAt": "2026-01-01T00:00:01.000Z"
+    },
+    "home/storage/workspaces/private-tmp-pdrs-bbx-root-home-work-alpha/sessions/s-old/snapshots/snap-a1/_COMMITTED": "",
+    "home/storage/workspaces/private-tmp-pdrs-bbx-root-home-work-alpha/sessions/s-old/snapshots/snap-a2/manifest.json": {
+      "snapshotId": "snap-a2",
+      "workspaceId": "private-tmp-pdrs-bbx-root-home-work-alpha",
+      "sessionId": "s-old",
+      "turnId": "turn-snap-a2",
+      "runId": "run-snap-a2",
+      "phase": "post_agent",
+      "abnormal": false,
+      "entries": [
+        {
+          "path": "README.md",
+          "entryType": "file",
+          "size": 11,
+          "digest": "d34de011fc2d0868e4737a5f54c523b6eda966ce1297291c32e40e7e8e05ce78",
+          "objectKey": "objects/sha256/d3/4d/d34de011fc2d0868e4737a5f54c523b6eda966ce1297291c32e40e7e8e05ce78"
+        }
+      ],
+      "createdAt": "2026-01-01T00:00:02.000Z",
+      "failureKind": "timeout"
+    },
+    "home/storage/workspaces/private-tmp-pdrs-bbx-root-home-work-alpha/sessions/s-old/snapshots/snap-a2/_COMMITTED": "",
+    "home/storage/workspaces/private-tmp-pdrs-bbx-root-home-work-alpha/sessions/s-new/snapshots/snap-a3/manifest.json": {
+      "snapshotId": "snap-a3",
+      "workspaceId": "private-tmp-pdrs-bbx-root-home-work-alpha",
+      "sessionId": "s-new",
+      "turnId": "turn-snap-a3",
+      "runId": "run-snap-a3",
+      "phase": "pre_user",
+      "abnormal": false,
+      "entries": [
+        {
+          "path": "README.md",
+          "entryType": "file",
+          "size": 11,
+          "digest": "d34de011fc2d0868e4737a5f54c523b6eda966ce1297291c32e40e7e8e05ce78",
+          "objectKey": "objects/sha256/d3/4d/d34de011fc2d0868e4737a5f54c523b6eda966ce1297291c32e40e7e8e05ce78"
+        }
+      ],
+      "createdAt": "2026-01-01T00:00:03.000Z"
+    },
+    "home/storage/workspaces/private-tmp-pdrs-bbx-root-home-work-alpha/sessions/s-new/snapshots/snap-a3/_COMMITTED": "",
+    "home/storage/workspaces/private-tmp-pdrs-bbx-root-home-work-alpha/sessions/s-new/snapshots/snap-a4/manifest.json": {
+      "snapshotId": "snap-a4",
+      "workspaceId": "private-tmp-pdrs-bbx-root-home-work-alpha",
+      "sessionId": "s-new",
+      "turnId": "turn-snap-a4",
+      "runId": "run-snap-a4",
+      "phase": "pre_user",
+      "abnormal": false,
+      "entries": [
+        {
+          "path": "README.md",
+          "entryType": "file",
+          "size": 11,
+          "digest": "d34de011fc2d0868e4737a5f54c523b6eda966ce1297291c32e40e7e8e05ce78",
+          "objectKey": "objects/sha256/d3/4d/d34de011fc2d0868e4737a5f54c523b6eda966ce1297291c32e40e7e8e05ce78"
+        }
+      ]
+    },
+    "home/storage/workspaces/private-tmp-pdrs-bbx-root-home-work-alpha/sessions/s-new/snapshots/snap-a4/_COMMITTED": "",
+    "home/storage/workspaces/private-tmp-pdrs-bbx-root-home-work-alpha/sessions/s-new/snapshots/snap-bad-phase/manifest.json": {
+      "snapshotId": "snap-bad-phase",
+      "workspaceId": "private-tmp-pdrs-bbx-root-home-work-alpha",
+      "sessionId": "s-new",
+      "turnId": "turn-snap-bad-phase",
+      "runId": "run-snap-bad-phase",
+      "phase": "other",
+      "abnormal": false,
+      "entries": [],
+      "createdAt": "2026-01-01T00:00:05.000Z"
+    },
+    "home/storage/workspaces/private-tmp-pdrs-bbx-root-home-work-alpha/sessions/s-new/snapshots/snap-bad-phase/_COMMITTED": "",
+    "home/storage/workspaces/private-tmp-pdrs-bbx-root-home-work-beta/sessions/s-beta/snapshots/snap-b1/manifest.json": {
+      "snapshotId": "snap-b1",
+      "workspaceId": "private-tmp-pdrs-bbx-root-home-work-beta",
+      "sessionId": "s-beta",
+      "turnId": "turn-snap-b1",
+      "runId": "run-snap-b1",
+      "phase": "pre_user",
+      "abnormal": false,
+      "entries": [
+        {
+          "path": "README.md",
+          "entryType": "file",
+          "size": 9,
+          "digest": "af258e49c9bb8dae90ed82026430db02cf40a7bacdc18173dea651bcee171fda",
+          "objectKey": "objects/sha256/af/25/af258e49c9bb8dae90ed82026430db02cf40a7bacdc18173dea651bcee171fda"
+        }
+      ],
+      "createdAt": "2026-01-01T00:00:04.000Z"
+    },
+    "home/storage/workspaces/private-tmp-pdrs-bbx-root-home-work-beta/sessions/s-beta/snapshots/snap-b1/_COMMITTED": ""
+  },
+  "steps": [
+    {
+      "ws": "snapshot_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "snapshot_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "sessionKey": "s-old"
+      }
+    },
+    {
+      "ws": "snapshot_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": 2
+      }
+    },
+    {
+      "ws": "snapshot_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": 2,
+        "cursor": "snap-a2"
+      }
+    },
+    {
+      "ws": "snapshot_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "cursor": "snap-b1"
+      }
+    },
+    {
+      "ws": "snapshot_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": 0
+      }
+    },
+    {
+      "ws": "snapshot_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": 501
+      }
+    },
+    {
+      "ws": "snapshot_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": "x"
+      }
+    },
+    {
+      "ws": "snapshot_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "sessionKey": "  "
+      }
+    },
+    {
+      "ws": "snapshot_list",
+      "params": {
+        "projectKey": "{HOME}/work/beta"
+      }
+    },
+    {
+      "ws": "snapshot_list",
+      "params": {
+        "projectKey": "{HOME}/work/gamma"
+      }
+    },
+    {
+      "ws": "snapshot_list",
+      "params": {
+        "projectKey": "{PILOT_HOME}"
+      }
+    },
+    {
+      "ws": "snapshot_list",
+      "params": {
+        "projectKey": 3
+      }
+    },
+    {
+      "ws": "snapshot_get",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "snapshotId": "snap-a1"
+      }
+    },
+    {
+      "ws": "snapshot_get",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "snapshotId": "snap-b1"
+      }
+    },
+    {
+      "ws": "snapshot_get",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "snapshotId": "nope"
+      }
+    },
+    {
+      "ws": "snapshot_get",
+      "params": {
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "snapshot_get",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "snapshotId": "   "
+      }
+    },
+    {
+      "ws": "snapshot_get",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "snapshotId": 5
+      }
+    },
+    {
+      "ws": "snapshot_get",
+      "params": {
+        "projectKey": "{HOME}/work/beta",
+        "snapshotId": "snap-b1"
+      }
+    },
+    {
+      "ws": "snapshot_restore",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "snapshotId": "snap-b1"
+      }
+    },
+    {
+      "ws": "snapshot_restore",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "snapshotId": "nope"
+      }
+    },
+    {
+      "ws": "snapshot_restore",
+      "params": {
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "snapshot_restore",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "snapshotId": "snap-a1",
+        "targetProjectKey": "  "
+      }
+    },
+    {
+      "ws": "snapshot_restore",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "snapshotId": "snap-a1",
+        "targetProjectKey": "{HOME}/work/gamma"
+      }
+    }
+  ]
+}

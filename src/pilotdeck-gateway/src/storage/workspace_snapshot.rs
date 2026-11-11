@@ -15,9 +15,9 @@
 //! `_tmp/20261026-issue-293/fix-r2/probe-c.out`); the manifest is published
 //! before the marker, whose rename is the commit point (#293 fix-r3). The
 //! failure cleanup removes only the round's own staging directory, never a
-//! published path, and the long-lived `.staging` parent is never removed
-//! (a removal raced another round's `create_dir_all` into a permanent
-//! `_FAILED.json`); the walk skips `.staging/`, and the committed early-exit
+//! published path. The `.staging` parent is removed once idle (the baseline
+//! leaves nothing in the snapshot root); `create_staging` retries the mkdir
+//! a concurrent removal can race; the walk skips `.staging/`, and the committed early-exit
 //! additionally requires the manifest to be readable through the same
 //! non-blocking regular-file read the walk performs (#293 fix-r5: a planted
 //! FIFO can never hang a round or a `list()`). Manifests are
@@ -945,15 +945,12 @@ struct CapturePaths {
 /// this round's private staging directory under `<root>/.staging/`: published
 /// paths are never touched (#293 fix-r2,
 /// A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001-R2 — the shared-path unlink, and with
-/// it every ownership heuristic around it, is gone). #293 fix-r3
-/// (A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001-R3): the `.staging` parent itself is
-/// never removed. It is a long-lived directory (the root-level walk skips it,
-/// and an empty one is harmless), and a best-effort removal raced another
-/// round's `create_dir_all` — which creates the parent and then retries the
-/// child once — into an ENOENT that turned an innocent capture into a
-/// permanent `_FAILED.json` (r3 review P1-B).
+/// it every ownership heuristic around it, is gone). The idle `.staging`
+/// parent is removed afterwards like on success; the mkdir race that removal
+/// opens for a concurrent round is absorbed by `create_staging`.
 fn failure_cleanup(staging: &Path) {
     let _ = fs::remove_dir_all(staging);
+    remove_idle_staging_parent(staging);
 }
 
 /// workspaceSnapshot.ts:234-259, the try block. Every failure becomes the
@@ -984,7 +981,7 @@ fn commit(
     {
         return Err(String::from_utf16_lossy(message.units()));
     }
-    fs::create_dir_all(staging).map_err(|e| io_message(&e, "mkdir", Some(staging)))?;
+    create_staging(staging).map_err(|e| io_message(&e, "mkdir", Some(staging)))?;
     let workspace_dir = resolve(&input.workspace_dir).map_err(|e| e.to_string())?;
     let entries = scan_workspace(&workspace_dir, &paths.snapshot_root)?;
     let manifest = manifest_json(input, phase, snapshot_id, entries)?;
@@ -999,10 +996,37 @@ fn commit(
     run_round_hook(hook, SnapshotRoundStage::BeforeStagingPublish);
     publish_staging(staging, paths)?;
     // workspaceSnapshot.ts:258: rm(force) of the temporary directory. The
-    // staging equivalent removes this round's now-empty directory; the
-    // `.staging` parent stays — see `failure_cleanup` for why it must.
+    // staging equivalent removes this round's now-empty directory and then
+    // the `.staging` parent when no other round is staging: the baseline's
+    // temporary directory lives inside the partition and leaves nothing
+    // behind in the snapshot root.
     let _ = fs::remove_dir(staging);
+    remove_idle_staging_parent(staging);
     Ok(())
+}
+
+/// `create_dir_all` for this round's staging directory, robust against a
+/// concurrent round removing the idle `.staging` parent between std's parent
+/// and child mkdirs (the retry then recreates the parent).
+fn create_staging(staging: &Path) -> std::io::Result<()> {
+    let mut attempts = 0;
+    loop {
+        match fs::create_dir_all(staging) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && attempts < 8 => {
+                attempts += 1;
+            }
+            other => return other,
+        }
+    }
+}
+
+/// Best-effort removal of the `.staging` parent once it is empty (a
+/// non-recursive `rmdir`, so a concurrent round's staging directory keeps it
+/// alive; `create_staging` absorbs the remaining mkdir window).
+fn remove_idle_staging_parent(staging: &Path) {
+    if let Some(parent) = staging.parent() {
+        let _ = fs::remove_dir(parent);
+    }
 }
 
 /// The publishing step of [`commit`]: one rename of the staging directory
@@ -1958,19 +1982,11 @@ mod tests {
             !staging.exists(),
             "#293 the staging directory is consumed by the publish"
         );
-        // #293 fix-r3: the `.staging` parent is long-lived; it must hold no
-        // leftover round directory once the round settles.
+        // Like the baseline's in-partition temporary directory, a settled
+        // round leaves nothing behind in the snapshot root.
         assert!(
-            snapshot_root.join(".staging").is_dir(),
-            "#293 fix-r3 the staging parent survives the publish"
-        );
-        assert!(
-            fs::read_dir(snapshot_root.join(".staging"))
-                .expect("#293 fix-r3 the staging parent is listable")
-                .flatten()
-                .next()
-                .is_none(),
-            "#293 the staging parent holds no leftover round directory"
+            !snapshot_root.join(".staging").exists(),
+            "the idle staging parent is removed once the round settles"
         );
     }
 
@@ -2018,21 +2034,13 @@ mod tests {
         );
         assert!(
             staging_parent.exists(),
-            "#293 the staging parent stays while another round is staging"
+            "the staging parent stays while another round is staging"
         );
 
         failure_cleanup(&theirs);
         assert!(
-            staging_parent.is_dir(),
-            "#293 fix-r3 the staging parent survives the last round's cleanup"
-        );
-        assert!(
-            fs::read_dir(&staging_parent)
-                .expect("#293 fix-r3 the staging parent is listable")
-                .flatten()
-                .next()
-                .is_none(),
-            "#293 the last round's cleanup leaves the parent empty"
+            !staging_parent.exists(),
+            "the last round's cleanup removes the idle staging parent"
         );
         assert!(
             partition.join("_COMMITTED").is_file(),
@@ -2049,8 +2057,8 @@ mod tests {
     /// mkdirs: with the shared parent removed between them — which every
     /// pre-r3 settle path attempted best-effort — the retry gets ENOENT and
     /// the whole `create_dir_all` fails, the failure a round would turn into
-    /// a permanent `_FAILED.json`. Keeping the parent alive (the fix) removes
-    /// the deleter, so the window cannot exist.
+    /// a permanent `_FAILED.json`. `create_staging` retries that ENOENT, so the
+    /// round still gets its directory after an idle-parent removal.
     #[test]
     fn removing_the_staging_parent_between_mkdirs_fails_the_round() {
         let scratch = crate::test_scratch::Scratch::new("snapshot-staging-race");
@@ -2092,8 +2100,8 @@ mod tests {
         );
         // Without the removal the same algorithm creates both levels: the
         // victim round succeeds exactly when nobody deletes the parent.
-        fs::create_dir_all(&child)
-            .expect("#293 fix-r3 without the removal the round's staging directory is created");
+        create_staging(&child)
+            .expect("create_staging recreates a parent removed under it");
     }
 }
 
