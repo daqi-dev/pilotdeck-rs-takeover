@@ -1,0 +1,748 @@
+{
+ "name": "user-dialog-flow",
+ "about": "userDialogKinds 打开 input/select/confirm：三种工具的应答、取消（带原因）、空输入、工具入参校验失败；对话框挂起时按保存的 requestId 走 claim（新租约、无租约重复 claim、带租约续期）、无租约/错租约 respond、release（错租约、成功、重复）、release 后带旧租约 respond、不合法答案、成功答案、重复答案；租约过期后用旧租约 respond；轮次中止后 list 为空、respond 不再送达。",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Dialog flow\"}"
+   }
+  },
+  {
+   "name": "turn-9-after-tool",
+   "when": [
+    "turn-9:",
+    "\"tool_call_id\":\"call_ud_9\""
+   ],
+   "reply": {
+    "text": "Done 9."
+   }
+  },
+  {
+   "name": "turn-9",
+   "when": [
+    "turn-9:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_ud_9",
+     "name": "request_user_choice",
+     "arguments": {
+      "prompt": "Pick",
+      "options": [
+       {
+        "value": "a",
+        "label": "A"
+       },
+       {
+        "value": "b",
+        "description": "B"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "turn-8-after-tool",
+   "when": [
+    "turn-8:",
+    "\"tool_call_id\":\"call_ud_8\""
+   ],
+   "reply": {
+    "text": "Done 8."
+   }
+  },
+  {
+   "name": "turn-8",
+   "when": [
+    "turn-8:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_ud_8",
+     "name": "request_user_confirmation",
+     "arguments": {
+      "prompt": "Lease?"
+     }
+    }
+   }
+  },
+  {
+   "name": "turn-7-after-tool",
+   "when": [
+    "turn-7:",
+    "\"tool_call_id\":\"call_ud_7\""
+   ],
+   "reply": {
+    "text": "Done 7."
+   }
+  },
+  {
+   "name": "turn-7",
+   "when": [
+    "turn-7:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_ud_7",
+     "name": "request_user_choice",
+     "arguments": {
+      "prompt": "Pick",
+      "options": [
+       {
+        "value": "a",
+        "label": "A"
+       },
+       {
+        "value": "b",
+        "description": "B"
+       }
+      ],
+      "defaultValue": "b"
+     }
+    }
+   }
+  },
+  {
+   "name": "turn-6-after-tool",
+   "when": [
+    "turn-6:",
+    "\"tool_call_id\":\"call_ud_6\""
+   ],
+   "reply": {
+    "text": "Done 6."
+   }
+  },
+  {
+   "name": "turn-6",
+   "when": [
+    "turn-6:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_ud_6",
+     "name": "request_user_choice",
+     "arguments": {
+      "prompt": "Bad",
+      "options": [
+       {
+        "value": "a"
+       },
+       {
+        "value": "a"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "turn-5-after-tool",
+   "when": [
+    "turn-5:",
+    "\"tool_call_id\":\"call_ud_5\""
+   ],
+   "reply": {
+    "text": "Done 5."
+   }
+  },
+  {
+   "name": "turn-5",
+   "when": [
+    "turn-5:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_ud_5",
+     "name": "request_user_confirmation",
+     "arguments": {
+      "prompt": "Labels",
+      "confirmLabel": "   "
+     }
+    }
+   }
+  },
+  {
+   "name": "turn-4-after-tool",
+   "when": [
+    "turn-4:",
+    "\"tool_call_id\":\"call_ud_4\""
+   ],
+   "reply": {
+    "text": "Done 4."
+   }
+  },
+  {
+   "name": "turn-4",
+   "when": [
+    "turn-4:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_ud_4",
+     "name": "request_user_input",
+     "arguments": {
+      "prompt": "Say something"
+     }
+    }
+   }
+  },
+  {
+   "name": "turn-3-after-tool",
+   "when": [
+    "turn-3:",
+    "\"tool_call_id\":\"call_ud_3\""
+   ],
+   "reply": {
+    "text": "Done 3."
+   }
+  },
+  {
+   "name": "turn-3",
+   "when": [
+    "turn-3:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_ud_3",
+     "name": "request_user_confirmation",
+     "arguments": {
+      "prompt": "Proceed?",
+      "cancelLabel": "No way"
+     }
+    }
+   }
+  },
+  {
+   "name": "turn-2-after-tool",
+   "when": [
+    "turn-2:",
+    "\"tool_call_id\":\"call_ud_2\""
+   ],
+   "reply": {
+    "text": "Done 2."
+   }
+  },
+  {
+   "name": "turn-2",
+   "when": [
+    "turn-2:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_ud_2",
+     "name": "request_user_choice",
+     "arguments": {
+      "prompt": "Which?",
+      "options": [
+       {
+        "value": "x",
+        "label": "Ex"
+       },
+       {
+        "value": "y"
+       }
+      ],
+      "defaultValue": "y"
+     }
+    }
+   }
+  },
+  {
+   "name": "turn-1-after-tool",
+   "when": [
+    "turn-1:",
+    "\"tool_call_id\":\"call_ud_1\""
+   ],
+   "reply": {
+    "text": "Done 1."
+   }
+  },
+  {
+   "name": "turn-1",
+   "when": [
+    "turn-1:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_ud_1",
+     "name": "request_user_input",
+     "arguments": {
+      "prompt": "Name?",
+      "placeholder": "your name",
+      "allowEmpty": false
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ud",
+    "channelKey": "test",
+    "runId": "run-ud-1",
+    "message": "turn-1: input",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "input",
+      "select",
+      "confirm"
+     ]
+    }
+   },
+   "timeout": 20000,
+   "answer": [
+    {
+     "on": {
+      "type": "user_dialog_request"
+     },
+     "ws": "user_dialog_respond",
+     "params": {
+      "sessionKey": "s-ud",
+      "requestId": "{event.requestId}",
+      "result": {
+       "behavior": "answered",
+       "value": "Ada"
+      }
+     },
+     "count": 1
+    }
+   ]
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ud",
+    "channelKey": "test",
+    "runId": "run-ud-2",
+    "message": "turn-2: choice",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "input",
+      "select",
+      "confirm"
+     ]
+    }
+   },
+   "timeout": 20000,
+   "answer": [
+    {
+     "on": {
+      "type": "user_dialog_request"
+     },
+     "ws": "user_dialog_respond",
+     "params": {
+      "sessionKey": "s-ud",
+      "requestId": "{event.requestId}",
+      "result": {
+       "behavior": "answered",
+       "value": "x"
+      }
+     },
+     "count": 1
+    }
+   ]
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ud",
+    "channelKey": "test",
+    "runId": "run-ud-3",
+    "message": "turn-3: confirm cancelled",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "input",
+      "select",
+      "confirm"
+     ]
+    }
+   },
+   "timeout": 20000,
+   "answer": [
+    {
+     "on": {
+      "type": "user_dialog_request"
+     },
+     "ws": "user_dialog_respond",
+     "params": {
+      "sessionKey": "s-ud",
+      "requestId": "{event.requestId}",
+      "result": {
+       "behavior": "cancelled",
+       "reason": "nope"
+      }
+     },
+     "count": 1
+    }
+   ]
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ud",
+    "channelKey": "test",
+    "runId": "run-ud-4",
+    "message": "turn-4: empty input",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "input",
+      "select",
+      "confirm"
+     ]
+    }
+   },
+   "timeout": 20000,
+   "answer": [
+    {
+     "on": {
+      "type": "user_dialog_request"
+     },
+     "ws": "user_dialog_respond",
+     "params": {
+      "sessionKey": "s-ud",
+      "requestId": "{event.requestId}",
+      "result": {
+       "behavior": "answered",
+       "value": "   "
+      }
+     },
+     "count": 1
+    }
+   ]
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ud",
+    "channelKey": "test",
+    "runId": "run-ud-5",
+    "message": "turn-5: bad label",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "input",
+      "select",
+      "confirm"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ud",
+    "channelKey": "test",
+    "runId": "run-ud-6",
+    "message": "turn-6: duplicate options",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "input",
+      "select",
+      "confirm"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ud",
+    "channelKey": "test",
+    "runId": "run-ud-7",
+    "message": "turn-7: lease flow",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "input",
+      "select",
+      "confirm"
+     ]
+    }
+   },
+   "timeout": 3000,
+   "expectTimeout": true,
+   "save": {
+    "rid": "\"requestId\":\"([0-9a-f-]{36})\""
+   }
+  },
+  {
+   "ws": "user_dialog_list",
+   "params": {
+    "sessionKey": "s-ud"
+   }
+  },
+  {
+   "ws": "user_dialog_claim",
+   "params": {
+    "sessionKey": "s-ud",
+    "requestId": "{saved.rid}"
+   },
+   "save": {
+    "lease": "\"leaseId\":\"([0-9a-f-]{36})\""
+   }
+  },
+  {
+   "ws": "user_dialog_claim",
+   "params": {
+    "sessionKey": "s-ud",
+    "requestId": "{saved.rid}"
+   }
+  },
+  {
+   "ws": "user_dialog_claim",
+   "params": {
+    "sessionKey": "s-ud",
+    "requestId": "{saved.rid}",
+    "leaseId": "{saved.lease}",
+    "ttlMs": 60000
+   }
+  },
+  {
+   "ws": "user_dialog_list",
+   "params": {
+    "sessionKey": "s-ud"
+   }
+  },
+  {
+   "ws": "user_dialog_respond",
+   "params": {
+    "sessionKey": "s-ud",
+    "requestId": "{saved.rid}",
+    "result": {
+     "behavior": "answered",
+     "value": "a"
+    }
+   }
+  },
+  {
+   "ws": "user_dialog_respond",
+   "params": {
+    "sessionKey": "s-ud",
+    "requestId": "{saved.rid}",
+    "leaseId": "other-lease",
+    "result": {
+     "behavior": "answered",
+     "value": "a"
+    }
+   }
+  },
+  {
+   "ws": "user_dialog_release",
+   "params": {
+    "sessionKey": "s-ud",
+    "requestId": "{saved.rid}",
+    "leaseId": "other-lease"
+   }
+  },
+  {
+   "ws": "user_dialog_release",
+   "params": {
+    "sessionKey": "s-ud",
+    "requestId": "{saved.rid}",
+    "leaseId": "{saved.lease}"
+   }
+  },
+  {
+   "ws": "user_dialog_release",
+   "params": {
+    "sessionKey": "s-ud",
+    "requestId": "{saved.rid}",
+    "leaseId": "{saved.lease}"
+   }
+  },
+  {
+   "ws": "user_dialog_respond",
+   "params": {
+    "sessionKey": "s-ud",
+    "requestId": "{saved.rid}",
+    "result": {
+     "behavior": "answered",
+     "value": "zzz"
+    }
+   }
+  },
+  {
+   "ws": "user_dialog_respond",
+   "params": {
+    "sessionKey": "s-ud",
+    "requestId": "{saved.rid}",
+    "leaseId": "{saved.lease}",
+    "result": {
+     "behavior": "answered",
+     "value": "a"
+    }
+   }
+  },
+  {
+   "ws": "user_dialog_respond",
+   "params": {
+    "sessionKey": "s-ud",
+    "requestId": "{saved.rid}",
+    "result": {
+     "behavior": "answered",
+     "value": "b"
+    }
+   }
+  },
+  {
+   "sleep": 1500
+  },
+  {
+   "ws": "user_dialog_respond",
+   "params": {
+    "sessionKey": "s-ud",
+    "requestId": "{saved.rid}",
+    "result": {
+     "behavior": "answered",
+     "value": "a"
+    }
+   }
+  },
+  {
+   "ws": "user_dialog_list",
+   "params": {
+    "sessionKey": "s-ud"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ud",
+    "channelKey": "test",
+    "runId": "run-ud-8",
+    "message": "turn-8: lease expiry",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "input",
+      "select",
+      "confirm"
+     ]
+    }
+   },
+   "timeout": 3000,
+   "expectTimeout": true,
+   "save": {
+    "rid2": "\"requestId\":\"([0-9a-f-]{36})\""
+   }
+  },
+  {
+   "ws": "user_dialog_claim",
+   "params": {
+    "sessionKey": "s-ud",
+    "requestId": "{saved.rid2}",
+    "ttlMs": 1000
+   },
+   "save": {
+    "lease2": "\"leaseId\":\"([0-9a-f-]{36})\""
+   }
+  },
+  {
+   "sleep": 1500
+  },
+  {
+   "ws": "user_dialog_list",
+   "params": {
+    "sessionKey": "s-ud"
+   }
+  },
+  {
+   "ws": "user_dialog_respond",
+   "params": {
+    "sessionKey": "s-ud",
+    "requestId": "{saved.rid2}",
+    "leaseId": "{saved.lease2}",
+    "result": {
+     "behavior": "answered",
+     "value": true
+    }
+   }
+  },
+  {
+   "ws": "user_dialog_respond",
+   "params": {
+    "sessionKey": "s-ud",
+    "requestId": "{saved.rid2}",
+    "result": {
+     "behavior": "answered",
+     "value": "yes"
+    }
+   }
+  },
+  {
+   "ws": "user_dialog_respond",
+   "params": {
+    "sessionKey": "s-ud",
+    "requestId": "{saved.rid2}",
+    "result": {
+     "behavior": "answered",
+     "value": false
+    }
+   }
+  },
+  {
+   "sleep": 1500
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ud",
+    "channelKey": "test",
+    "runId": "run-ud-9",
+    "message": "turn-9: abort",
+    "sdkSessionConfig": {
+     "userDialogKinds": [
+      "input",
+      "select",
+      "confirm"
+     ]
+    }
+   },
+   "timeout": 3000,
+   "expectTimeout": true,
+   "save": {
+    "rid3": "\"requestId\":\"([0-9a-f-]{36})\""
+   }
+  },
+  {
+   "ws": "abort_turn",
+   "params": {
+    "sessionKey": "s-ud",
+    "runId": "run-ud-9"
+   }
+  },
+  {
+   "sleep": 1000
+  },
+  {
+   "ws": "user_dialog_list",
+   "params": {
+    "sessionKey": "s-ud"
+   }
+  },
+  {
+   "ws": "user_dialog_respond",
+   "params": {
+    "sessionKey": "s-ud",
+    "requestId": "{saved.rid3}",
+    "result": {
+     "behavior": "answered",
+     "value": "a"
+    }
+   }
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-ud"
+   }
+  }
+ ],
+ "settleMs": 800
+}

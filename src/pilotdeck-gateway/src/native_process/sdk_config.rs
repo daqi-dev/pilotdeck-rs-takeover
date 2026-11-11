@@ -147,8 +147,13 @@ fn is_sdk_json_schema(value: &JsValue) -> bool {
 
 /// `validateSdkSessionConfig` (InProcessGateway.ts:3210-3496), in its order.
 pub(super) fn validate(config: &JsValue) -> Result<(), SubmitError> {
-    let Some(config) = record(config) else {
-        return Err(invalid("sdkSessionConfig must be an object."));
+    // `typeof config !== "object"`: an array passes, and names none of the
+    // checked fields.
+    let empty = JsObject::new();
+    let config = match config {
+        JsValue::Object(config) => config,
+        JsValue::Array(_) => &empty,
+        _ => return Err(invalid("sdkSessionConfig must be an object.")),
     };
     let string_field = |key: &str, message: &str| -> Result<(), SubmitError> {
         match present(config, key) {
@@ -638,13 +643,14 @@ pub(super) struct NativeSdkSessionConfig {
 impl SubmitSdkSessionConfig for NativeSdkSessionConfig {
     fn validate(&self, config: &JsValue) -> Result<(), SubmitError> {
         validate(config)?;
-        let wired = config.as_object().is_some_and(|config| {
-            config
-                .own_entries()
-                .iter()
-                .filter(|(_, value)| !value.is_undefined())
-                .all(|(key, _)| WIRED_FIELDS.iter().any(|name| key.equals_str(name)))
-        });
+        let wired = matches!(config, JsValue::Array(_))
+            || config.as_object().is_some_and(|config| {
+                config
+                    .own_entries()
+                    .iter()
+                    .filter(|(_, value)| !value.is_undefined())
+                    .all(|(key, _)| WIRED_FIELDS.iter().any(|name| key.equals_str(name)))
+            });
         if wired {
             Ok(())
         } else {
