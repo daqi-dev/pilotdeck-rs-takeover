@@ -46,6 +46,21 @@ pub fn rewind_files(input: RewindFilesInput<'_>) -> JsValue {
 }
 
 fn run(input: RewindFilesInput<'_>) -> Result<JsObject, String> {
+    let mut empty_log = None;
+    let result = run_with(input, &mut empty_log);
+    // `finally { await storage.dispose() }` (ProjectRuntimeRegistry.ts:1179):
+    // an unrestored storage over an empty log saves an empty projection
+    // checkpoint; a failed save is swallowed by the binding's onError.
+    if let Some((path, session)) = empty_log {
+        let _ = crate::runtime::session::factory::save_empty_projection_checkpoint(&path, &session);
+    }
+    result
+}
+
+fn run_with(
+    input: RewindFilesInput<'_>,
+    empty_log: &mut Option<(std::path::PathBuf, JsString)>,
+) -> Result<JsObject, String> {
     let storage = input
         .adapter
         .create_session_storage(SessionStorageInput {
@@ -58,6 +73,17 @@ fn run(input: RewindFilesInput<'_>) -> Result<JsObject, String> {
     let read = storage
         .read_transcript(None)
         .map_err(|error| storage_error(error, &storage.transcript_path))?;
+    if read
+        .entries
+        .iter()
+        .filter_map(|entry| entry.get("sequence").and_then(JsValue::as_number))
+        .all(|sequence| sequence <= -1.0)
+    {
+        *empty_log = Some((
+            storage.projection_checkpoint_path.clone(),
+            input.session_key.clone(),
+        ));
+    }
     let snapshots = snapshot_entries(&read.entries)?;
     if snapshots.is_empty() {
         return Ok(failure(NO_CHECKPOINT));

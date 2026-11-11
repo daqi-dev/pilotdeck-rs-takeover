@@ -495,10 +495,19 @@ impl Families {
     /// `InteractionFamilySource` around the native source, so a decorator that
     /// wrapped the custom kernel is replaced as well. That makes
     /// `with_interaction` and `with_tools_mcp` independent of call order.
-    pub fn with_tools_mcp(mut self) -> Self {
+    pub fn with_tools_mcp(self) -> Self {
+        self.with_tools_mcp_completions(None)
+    }
+
+    /// [`Self::with_tools_mcp`] whose background task runtimes report each
+    /// settled task to `on_completion`.
+    pub fn with_tools_mcp_completions(
+        mut self,
+        on_completion: Option<crate::runtime::background::CompletionHandler>,
+    ) -> Self {
         self.mcp = Arc::new(super::tools_mcp::McpFamilySource::default());
         let execution_world: Arc<dyn ResourceFamilySource> =
-            Arc::new(super::tools_mcp::ExecutionWorldFamilySource);
+            Arc::new(super::tools_mcp::ExecutionWorldFamilySource { on_completion });
         self.execution_world = if self.execution_world.layers_interaction() {
             Arc::new(super::interaction::InteractionFamilySource::new(
                 execution_world,

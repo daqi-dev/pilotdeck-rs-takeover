@@ -109,7 +109,10 @@ impl ExecutionWorldResource {
     /// <state>/output, snapshotStore: <state>/state.json })` with the state
     /// directory `<projectRoot>/.pilotdeck/background-tasks`. Nothing is
     /// written until a task starts.
-    fn new(project_root: &std::path::Path) -> std::io::Result<Self> {
+    fn new(
+        project_root: &std::path::Path,
+        on_completion: Option<crate::runtime::background::CompletionHandler>,
+    ) -> std::io::Result<Self> {
         use crate::runtime::background::{
             BackgroundResources, BackgroundTaskRuntime, BackgroundTaskRuntimeOptions,
         };
@@ -124,6 +127,7 @@ impl ExecutionWorldResource {
                     // This runtime appends `output/` itself.
                     disk_spill_dir: Some(state_dir.clone()),
                     snapshot_store: Some(Arc::new(snapshot_store)),
+                    on_completion,
                     ..BackgroundTaskRuntimeOptions::default()
                 }),
                 subagents: Default::default(),
@@ -143,8 +147,13 @@ impl FamilyResource for ExecutionWorldResource {
     }
 }
 
-/// Production execution-world family source.
-pub struct ExecutionWorldFamilySource;
+/// Production execution-world family source. `on_completion` receives every
+/// settled task's `BackgroundTaskCompletionEvent`; the gateway projects it
+/// into the owning session's active turn (`GatewaySessionLiveProjectionBundle`).
+#[derive(Default)]
+pub struct ExecutionWorldFamilySource {
+    pub on_completion: Option<crate::runtime::background::CompletionHandler>,
+}
 
 impl ResourceFamilySource for ExecutionWorldFamilySource {
     fn family(&self) -> Family {
@@ -153,7 +162,7 @@ impl ResourceFamilySource for ExecutionWorldFamilySource {
 
     fn stage(&self, context: &StageContext, sink: &mut StageSink<'_>) -> RuntimeResult {
         let resource = Arc::new(
-            ExecutionWorldResource::new(&context.project_root())
+            ExecutionWorldResource::new(&context.project_root(), self.on_completion.clone())
                 .map_err(|error| RuntimeError::new(error.to_string()))?,
         );
         sink.register_owner(self.family(), resource.clone());

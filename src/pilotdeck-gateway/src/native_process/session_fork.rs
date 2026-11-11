@@ -655,22 +655,47 @@ fn now_iso() -> JsValue {
     )
 }
 
-/// The replacement coordinator's storage ports. Only `forkSession` is wired;
-/// `replaceLastTurn` / `finalizeLastTurnReplacement` keep the baseline's
-/// "not configured" answers until their transaction storage is ported.
+/// The replacement coordinator's storage ports: `forkSession`,
+/// `replaceLastTurn` and `finalizeLastTurnReplacement` of
+/// `GatewaySessionHistoryBundle` (createLocalGateway.ts:890-918, 1485-1486).
 pub(super) fn storage(options: &Options) -> crate::runtime::replacement::ReplacementStorage {
-    let options = options.clone();
-    let fork: crate::runtime::replacement::StorageOperation = std::sync::Arc::new(move |input| {
+    use crate::runtime::replacement::StorageOperation;
+    fn blocking(
+        options: &Options,
+        run: impl Fn(&Options, &JsValue) -> Result<JsValue, ReplacementError>
+        + Send
+        + Sync
+        + Clone
+        + 'static,
+    ) -> StorageOperation {
         let options = options.clone();
-        Box::pin(async move {
-            tokio::task::spawn_blocking(move || fork_session(&options, &input))
-                .await
-                .map_err(|error| plain(error.to_string()))?
+        std::sync::Arc::new(move |input| {
+            let (options, run) = (options.clone(), run.clone());
+            Box::pin(async move {
+                tokio::task::spawn_blocking(move || run(&options, &input))
+                    .await
+                    .map_err(|error| plain(error.to_string()))?
+            })
         })
-    });
+    }
+    // `replacementTransactionOwner = { instanceId: randomUUID(), pid }`
+    // (createLocalGateway.ts:655), one per gateway.
+    let mut owner = JsObject::new();
+    owner.insert(
+        "instanceId".into(),
+        JsValue::String(uuid::Uuid::new_v4().to_string().into()),
+    );
+    owner.insert("pid".into(), JsValue::Number(f64::from(std::process::id())));
+    let owner = JsValue::Object(owner);
     crate::runtime::replacement::ReplacementStorage {
-        fork_session: Some(fork),
-        ..Default::default()
+        fork_session: Some(blocking(options, fork_session)),
+        replace_last_turn: Some(blocking(options, move |options, input| {
+            super::session_replace::replace_last_turn(options, &owner, input)
+        })),
+        finalize_last_turn_replacement: Some(blocking(
+            options,
+            super::session_replace::finalize_last_turn_replacement,
+        )),
     }
 }
 

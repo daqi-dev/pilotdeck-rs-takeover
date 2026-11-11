@@ -774,6 +774,20 @@ pub(super) fn validate_write_snapshot_fresh(
 // machinery so a seeded entry is exactly what read_file/edit_file consult on
 // later turns.
 
+/// `await stat(path)` outside any tool wrapper (seedReadState.ts:60-74): the
+/// raw Node fs error reaches the gateway, so its `code` is the errno name
+/// (`ENOENT`), not the tool family's `tool_execution_failed`.
+fn seed_stat(path: &JsString) -> Result<Stat, crate::runtime::tools::ToolError> {
+    if let Err(error) = std::fs::metadata(os_path(path))
+        && let Some((code, _)) = crate::node_io::lookup(&error)
+    {
+        let mut failure = failed(error, "stat", path);
+        failure.code = code.into();
+        return Err(failure);
+    }
+    stat(path)
+}
+
 /// `seedAgentReadState` over the session's mutable agent file state. The
 /// caller supplies the live checkpoint (the state later turns read through
 /// `ToolContextBuilder`) plus the session's AgentRuntimeConfig `cwd` and
@@ -833,7 +847,7 @@ fn seed_with_context(
     }
     let expected = mtime_ms.floor();
     // The two stats stay apart exactly like the TS read/read/stat sequence.
-    let before = stat(&resolved.absolute)?;
+    let before = seed_stat(&resolved.absolute)?;
     if !matches!(before.kind, StatKind::File) {
         return Err(tool_error(
             "file_conflict",
@@ -844,7 +858,7 @@ fn seed_with_context(
         return Ok(false);
     }
     let content = read_text_file(&resolved.absolute)?;
-    let after = stat(&resolved.absolute)?;
+    let after = seed_stat(&resolved.absolute)?;
     if !matches!(after.kind, StatKind::File) {
         return Err(tool_error(
             "file_conflict",

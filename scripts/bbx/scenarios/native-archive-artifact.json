@@ -1,0 +1,94 @@
+{
+  "name": "native-archive-artifact",
+  "about": "native_archive_artifact 读取工件成功的路径。基线只在工具结果超过上下文预算（缺省 10000 token 或 200000 字节，ToolResultBudget.ts:17-19）时把结果落成工件，放在 <项目>/.pilotdeck/tool-results/<会话>/ 下，文件名是 <轮次>-<工具调用>.txt|json；read_file 自己会截成首尾预览，不会触发。场景用 bash（bypassPermissions）打印约 12 万字节造出一个工件。之后看 manifest、按名字读工件（整份、maxBytes 截断）、读不存在的工件、别的会话读同名工件，比较返回值和落盘。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Artifact run\"}"
+      }
+    },
+    {
+      "name": "turn-1-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
+      ],
+      "reply": {
+        "text": "Printed it."
+      }
+    },
+    {
+      "name": "turn-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1",
+          "name": "bash",
+          "arguments": {
+            "command": "i=0; while [ $i -lt 4000 ]; do echo \"row $i: the quick brown fox jumps over the lazy dog\"; i=$((i+1)); done"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-art",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-art",
+        "channelKey": "test",
+        "runId": "run-1",
+        "message": "turn-1: print a lot"
+      },
+      "timeout": 60000
+    },
+    {
+      "ws": "native_archive_manifest",
+      "params": {
+        "sessionKey": "s-art"
+      }
+    },
+    {
+      "ws": "native_archive_artifact",
+      "params": {
+        "sessionKey": "s-art",
+        "artifactName": "run-1-call_bbx_1.txt",
+        "maxBytes": 64
+      }
+    },
+    {
+      "ws": "native_archive_artifact",
+      "params": {
+        "sessionKey": "s-art",
+        "artifactName": "run-1-call_bbx_1.txt"
+      }
+    },
+    {
+      "ws": "native_archive_artifact",
+      "params": {
+        "sessionKey": "s-art",
+        "artifactName": "run-1-call_bbx_9.txt"
+      }
+    },
+    {
+      "ws": "native_archive_artifact",
+      "params": {
+        "sessionKey": "s-other",
+        "artifactName": "run-1-call_bbx_1.txt"
+      }
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "name": "session-replace-expire",
+  "about": "replace_last_turn 准备后没有提交替换轮次、也没有 finalize：事务在 60 秒（InProcessGateway.ts:216 的缺省）后自动回滚；之后读会话是原记录、备份与日志已清理，再用该事务号 finalize 被拒。场景要等 62 秒。",
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Expire run\"}" } },
+    { "name": "main", "reply": { "text": "Answer." } }
+  ],
+  "steps": [
+    { "ws": "submit_turn", "params": { "sessionKey": "s-exp", "channelKey": "test", "runId": "run-1", "message": "turn-1: first" }, "timeout": 20000 },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-exp", "channelKey": "test", "runId": "run-2", "message": "turn-2: second" }, "timeout": 20000 },
+    { "ws": "replace_last_turn", "params": { "sessionKey": "s-exp", "expectedTurnId": "run-2", "replacementTurnId": "run-3" }, "save": { "tx": "\"transactionId\":\"([0-9a-f-]{36})\"" } },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-exp" } },
+    { "sleep": 62000 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-exp" } },
+    { "ws": "finalize_last_turn_replacement", "params": { "sessionKey": "s-exp", "transactionId": "{saved.tx}", "action": "commit" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-exp", "channelKey": "test", "runId": "run-3", "message": "turn-3: after expiry" }, "timeout": 20000 }
+  ]
+}

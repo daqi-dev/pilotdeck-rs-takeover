@@ -661,18 +661,15 @@ async fn terminal_recovery_restart_restores_completed_tasks_with_output() {
             entry["output"]["totalBytes"], oracle["output"]["totalBytes"],
             "#1233 snapshot durable bytes"
         );
-        // A6.5-BACKGROUND-PERSIST-001-R2 (D6, registered deviation): the
-        // baseline's `hasDurableOutput` is `diskSpillPath !== null`, so an
-        // empty log is claimed `persisted:true`. Rust only claims bytes that
-        // actually landed, so an empty log keeps `persisted:false`; a restart
-        // restores it either way (ENOENT with zero expected bytes).
+        // The baseline's `hasDurableOutput` is `diskSpillPath !== null`
+        // (TaskOutputStore.ts:181-183): with a spill directory configured the
+        // snapshot says `persisted:true` even for an empty log (observed on a
+        // real `pilotdeck server`, bbx `tool-task-by-id`). The earlier D6
+        // deviation (A6.5-BACKGROUND-PERSIST-001-R2, never approved) is gone.
         assert_eq!(
             entry["output"]["persisted"],
-            entry["output"]["totalBytes"]
-                .as_u64()
-                .expect("#1233 total bytes")
-                > 0,
-            "#1233 snapshot persists only bytes that landed"
+            serde_json::Value::Bool(true),
+            "#1233 snapshot persisted follows the configured spill"
         );
     }
 

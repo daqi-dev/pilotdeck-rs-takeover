@@ -1,0 +1,48 @@
+{
+  "name": "session-rewind-files",
+  "about": "rewind_files：缺 sessionKey / userMessageId、没有文件检查点的会话、轮次进行中（挂在权限询问上）被拒；第一轮 write_file 新建 a.txt，第二轮 edit_file 改 a.txt 再 write_file 新建 b.txt（bypassPermissions）；消息 id 用 save 从 read_session_messages 结果里取；未知消息 id、dryRun、回退到第二轮（a.txt 回到第一轮后的内容、b.txt 删除）、再回退一次、回退到第一轮；第三轮再写 a.txt，之后另一会话用 bash 在外部改 a.txt，再回退报冲突。比较返回值和落盘。",
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Rewind run\"}" } },
+    { "name": "turn-x-done", "when": ["turn-x:", "\"tool_call_id\":\"call_bbx_x\""], "reply": { "text": "Changed." } },
+    { "name": "turn-x", "when": ["turn-x:"], "reply": { "tool": { "id": "call_bbx_x", "name": "bash", "arguments": { "command": "echo outside > a.txt" } } } },
+    { "name": "turn-3-done", "when": ["turn-3:", "\"tool_call_id\":\"call_bbx_3\""], "reply": { "text": "Recreated." } },
+    { "name": "turn-3", "when": ["turn-3:"], "reply": { "tool": { "id": "call_bbx_3", "name": "write_file", "arguments": { "file_path": "a.txt", "content": "line three\n" } } } },
+    { "name": "turn-b", "when": ["turn-b:"], "reply": { "tool": { "id": "call_bbx_b", "name": "bash", "arguments": { "command": "echo needs-permission > made.txt" } } } },
+    { "name": "turn-2-done", "when": ["turn-2:", "\"tool_call_id\":\"call_bbx_2b\""], "reply": { "text": "Edited and created." } },
+    { "name": "turn-2-write", "when": ["turn-2:", "\"tool_call_id\":\"call_bbx_2a\""], "reply": { "tool": { "id": "call_bbx_2b", "name": "write_file", "arguments": { "file_path": "b.txt", "content": "brand new\n" } } } },
+    { "name": "turn-2", "when": ["turn-2:"], "reply": { "tool": { "id": "call_bbx_2a", "name": "edit_file", "arguments": { "file_path": "a.txt", "old_string": "one", "new_string": "two" } } } },
+    { "name": "turn-1-done", "when": ["turn-1:", "\"tool_call_id\":\"call_bbx_1\""], "reply": { "text": "Created." } },
+    { "name": "turn-1", "when": ["turn-1:"], "reply": { "tool": { "id": "call_bbx_1", "name": "write_file", "arguments": { "file_path": "a.txt", "content": "line one\n" } } } }
+  ],
+  "steps": [
+    { "ws": "rewind_files", "params": {} },
+    { "ws": "rewind_files", "params": { "sessionKey": "s-rw" } },
+    { "ws": "rewind_files", "params": { "sessionKey": "s-nothing", "userMessageId": "run-1" } },
+    { "ws": "set_permission_mode", "params": { "sessionKey": "s-rw", "mode": "bypassPermissions" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-rw", "channelKey": "test", "runId": "run-1", "message": "turn-1: create a" }, "timeout": 20000 },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-rw", "channelKey": "test", "runId": "run-2", "message": "turn-2: edit a, create b" }, "timeout": 20000 },
+    {
+      "ws": "read_session_messages",
+      "params": { "sessionKey": "s-rw" },
+      "save": {
+        "m1": "\"text\":\"turn-1: create a\",\"entryId\":\"[^\"]*\",\"source\":\"history\",\"turnId\":\"([^\"]+)\"",
+        "m2": "\"text\":\"turn-2: edit a, create b\",\"entryId\":\"[^\"]*\",\"source\":\"history\",\"turnId\":\"([^\"]+)\""
+      }
+    },
+    { "ws": "rewind_files", "params": { "sessionKey": "s-rw", "userMessageId": "run-unknown" } },
+    { "ws": "rewind_files", "params": { "sessionKey": "s-rw", "userMessageId": "{saved.m2}", "dryRun": true } },
+    { "ws": "rewind_files", "params": { "sessionKey": "s-rw", "userMessageId": "{saved.m2}" } },
+    { "ws": "project_file_read", "params": { "projectKey": "{PILOT_HOME}", "path": "a.txt" } },
+    { "ws": "rewind_files", "params": { "sessionKey": "s-rw", "userMessageId": "{saved.m2}" } },
+    { "ws": "rewind_files", "params": { "sessionKey": "s-rw", "userMessageId": "{saved.m1}", "dryRun": true } },
+    { "ws": "rewind_files", "params": { "sessionKey": "s-rw", "userMessageId": "{saved.m1}" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-rw", "channelKey": "test", "runId": "run-3", "message": "turn-3: create a again" }, "timeout": 20000 },
+    { "ws": "set_permission_mode", "params": { "sessionKey": "s-ext", "mode": "bypassPermissions" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-ext", "channelKey": "test", "runId": "run-x", "message": "turn-x: change a outside" }, "timeout": 20000 },
+    { "ws": "rewind_files", "params": { "sessionKey": "s-rw", "userMessageId": "run-3", "dryRun": true } },
+    { "ws": "rewind_files", "params": { "sessionKey": "s-rw", "userMessageId": "run-3" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-busy", "channelKey": "test", "runId": "run-b", "message": "turn-b: ask" }, "timeout": 3000, "expectTimeout": true },
+    { "ws": "rewind_files", "params": { "sessionKey": "s-busy", "userMessageId": "run-b" } },
+    { "ws": "abort_turn", "params": { "sessionKey": "s-busy" } }
+  ]
+}

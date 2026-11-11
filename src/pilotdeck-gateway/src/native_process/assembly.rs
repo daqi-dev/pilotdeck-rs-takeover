@@ -415,6 +415,10 @@ async fn start_assembly(
         eprintln!("native run registry {state}");
     }
     validate_profile(&options, &env).await?;
+    // `sessionDataPlane.replacement.recover({ pilotHome })`
+    // (createLocalGateway.ts:656): settle a previous gateway's last-turn
+    // replacements before any writer can open those transcripts.
+    super::session_replace::recover_and_report(&options.home);
     // The baseline gateway never registers a project (the `.cwd` markers are
     // written by its web server and cron storage, src/web/server/
     // listProjects.ts and src/cron/runtime/CronProjectStorageProvider.ts:65),
@@ -428,7 +432,16 @@ async fn start_assembly(
     if !options.default_project_is_general() {
         register_project(&options)?;
     }
-    let project = project_registry(&options, &env);
+    // The gateway event sink of the session interaction facade
+    // (`GatewaySessionInteractionFacade.emit`): the host's coordinator is
+    // built after the session factory, so it is published into this slot.
+    // The project runtimes' background task completions use the same sink.
+    let gateway_emit: super::permission_prompt::GatewayEmitSlot = Arc::default();
+    let project = project_registry_with(
+        &options,
+        &env,
+        Some(background_completion_projection(gateway_emit.clone())),
+    );
     let snapshot_enabled = snapshot::snapshot_enabled(&options, &project).await?;
     let snapshot_recorder =
         snapshot::snapshot_recorder(&options, &project, snapshot_enabled).await?;
@@ -450,10 +463,6 @@ async fn start_assembly(
     let prepare_env = env.clone();
     let prepare_recorders = recorders.clone();
     let prepare_interactions = interactions.clone();
-    // The gateway event sink of the session interaction facade
-    // (`GatewaySessionInteractionFacade.emit`): the host's coordinator is
-    // built after the session factory, so it is published into this slot.
-    let gateway_emit: super::permission_prompt::GatewayEmitSlot = Arc::default();
     let prepare_gateway_emit = gateway_emit.clone();
     let prepare_permission_rule_sets = permission_rule_sets.clone();
     // Forward reference so the prepare closure can call sync_permission_rules
@@ -1759,7 +1768,69 @@ pub(super) fn turn_ports(
     ports.turn(identity, recorder, signal)
 }
 
+#[cfg(test)]
 pub(super) fn project_registry(options: &Options, env: &Env) -> Arc<ProjectRuntimeRegistry> {
+    project_registry_with(options, env, None)
+}
+
+/// `toGatewayBackgroundTaskCompletionStatus`
+/// (gateway/tasks/GatewayBackgroundTaskCompletionProjection.ts:20-37).
+fn background_task_completion_status(event: &JsObject) -> JsValue {
+    let field = |key: &str| event.get(key).cloned().unwrap_or(JsValue::Undefined);
+    let mut detail = JsObject::new();
+    detail.insert("taskId".into(), field("taskId"));
+    detail.insert("status".into(), field("status"));
+    detail.insert(
+        "exitCode".into(),
+        match field("exitCode") {
+            JsValue::Undefined => JsValue::Null,
+            code => code,
+        },
+    );
+    detail.insert("totalBytes".into(), field("totalBytes"));
+    detail.insert("startedAt".into(), field("startedAt"));
+    detail.insert("endedAt".into(), field("endedAt"));
+    if let Some(JsValue::String(preview)) = event.get("outputPreview") {
+        let units = preview.units();
+        let end = units
+            .iter()
+            .rposition(|unit| !crate::runtime::replacement::js_whitespace(*unit))
+            .map_or(0, |index| index + 1);
+        if end > 0 {
+            detail.insert(
+                "outputPreview".into(),
+                JsValue::String(JsString::from_utf16(units[..end].to_vec())),
+            );
+        }
+    }
+    let mut status = JsObject::new();
+    status.insert("type".into(), "agent_status".into());
+    status.insert("event".into(), "background_task_completed".into());
+    status.insert("detail".into(), JsValue::Object(detail));
+    JsValue::Object(status)
+}
+
+/// The session live projection of background task completions
+/// (`GatewaySessionLiveProjectionBundle`, ProjectSessionRuntimeBundle.ts:
+/// 668-677): a completion owned by a session is emitted into that session's
+/// active turn; with no active turn the gateway drops it, as the TS emit does.
+fn background_completion_projection(
+    emit: super::permission_prompt::GatewayEmitSlot,
+) -> crate::runtime::background::CompletionHandler {
+    Arc::new(move |event: JsObject| {
+        let (Some(emit), Some(JsValue::String(session))) = (emit.get(), event.get("sessionId"))
+        else {
+            return;
+        };
+        emit(session, background_task_completion_status(&event));
+    })
+}
+
+fn project_registry_with(
+    options: &Options,
+    env: &Env,
+    on_completion: Option<crate::runtime::background::CompletionHandler>,
+) -> Arc<ProjectRuntimeRegistry> {
     // `builtinPlugins: options.builtinPlugins ?? loadBuiltinPlugins()`
     // (ProjectRuntimeRegistry.ts:1609): one scan for the process, shared by
     // every project runtime. The MCP placeholders of those plugins resolve
@@ -1795,7 +1866,7 @@ pub(super) fn project_registry(options: &Options, env: &Env) -> Arc<ProjectRunti
             }
             .with_native_models()
             .with_context_memory()
-            .with_tools_mcp()
+            .with_tools_mcp_completions(on_completion)
             .with_builtin_mcp_paths(builtin_mcp_paths)
             .with_plugins(crate::runtime::plugins::PluginRuntimeOptions {
                 project_root: options.project.clone(),
