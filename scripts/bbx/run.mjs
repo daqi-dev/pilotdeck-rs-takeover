@@ -387,6 +387,21 @@ mock.close(); mock.closeAllConnections();
 out.serverLog = serverLog;
 
 // ── 落盘：home 与 project 下的全部文件 ──
+// .json / .jsonl 解析后比内容；另记一份原文指纹抓排版差异（缩进、空格、换行、转义、数字写法）：
+// 行数、是否以换行结尾，以及每行骨架的 sha256 计数（按哈希排序，行的先后由解析结果比）。
+// 骨架：字符串只留转义序列，数字只留写法（0 / 0.0 / 0e0）；耗时键的值先换成占位（它在两次运行间
+// 会在整数和小数之间变，见 diff.mjs 第 6 条）。diff.mjs 其余归一化对象（UUID、ISO 时间、请求指纹、
+// 随机路径段）都在字符串里，毫秒时间戳和进程号的写法不变，骨架里已经没有它们。
+const skeleton = (line) => line
+  .replace(/("(?:duration_ms|duration_seconds|durationMs)"\s*:\s*)-?[\d.eE+-]+/g, '$1D')
+  .replace(/"(?:[^"\\]|\\.)*"|-?\d+(\.\d+)?([eE][+-]?\d+)?/g, (tok, frac, exp) => tok[0] === '"'
+    ? `"${(tok.match(/\\(?:u[0-9a-fA-F]{4}|.)/g) ?? []).join('')}"` : exp ? '0e0' : frac ? '0.0' : '0');
+const rawPrint = (text) => {
+  const lines = text.split('\n'); if (text.endsWith('\n')) lines.pop();
+  const counts = {};
+  for (const l of lines) { const h = createHash('sha256').update(skeleton(l)).digest('hex').slice(0, 16); counts[h] = (counts[h] ?? 0) + 1; }
+  return { lines: lines.length, finalNewline: text.endsWith('\n'), skeletons: Object.fromEntries(Object.entries(counts).sort()) };
+};
 const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1)).flatMap((e) => {
   const p = path.join(dir, e.name);
   if (e.isDirectory()) { const inner = walk(p); return inner.length ? inner : [[p + '/', { emptyDir: true }]]; }
@@ -396,8 +411,8 @@ const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) =
   const mode = (fs.statSync(p).mode & 0o777).toString(8);
   // 非 UTF-8 文件：比长度和内容的 sha256（目前各场景的落盘里没有这类文件）。
   if (Buffer.from(text, 'utf8').compare(bytes) !== 0) return [[p, { mode, binaryBytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }]];
-  if (p.endsWith('.jsonl')) { try { return [[p, { mode, jsonl: text.split('\n').filter(Boolean).map((l) => JSON.parse(l)) }]]; } catch {} }
-  if (p.endsWith('.json')) { try { return [[p, { mode, json: JSON.parse(text) }]]; } catch {} }
+  if (p.endsWith('.jsonl')) { try { return [[p, { mode, jsonl: text.split('\n').filter(Boolean).map((l) => JSON.parse(l)), raw: rawPrint(text) }]]; } catch {} }
+  if (p.endsWith('.json')) { try { return [[p, { mode, json: JSON.parse(text), raw: rawPrint(text) }]]; } catch {} }
   return [[p, { mode, text }]];
 });
 out.tree = Object.fromEntries([...walk(home), ...walk(project)].map(([p, v]) => [p.slice(ROOT.length), v]));
