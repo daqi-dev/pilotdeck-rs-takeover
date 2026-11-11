@@ -9,6 +9,7 @@ pub mod parse;
 mod schema;
 mod stack;
 mod string;
+pub mod stringify;
 pub mod value;
 pub use doc::{Document, Documents, StreamInfo};
 use pilotdeck_protocol::JsString;

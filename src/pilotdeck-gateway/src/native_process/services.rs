@@ -35,6 +35,16 @@ pub struct Services {
     /// The gateway's session selections, including the live permission modes
     /// (`GatewaySessionPermissionModeRegistry`).
     pub session_overrides: Arc<super::SessionOverrides>,
+    /// createLocalGateway's `configStore` and its `startWatching()` handle:
+    /// `refreshConfigBeforeTurn` reloads it at every turn start.
+    pub config_store: Option<NativeConfigStore>,
+}
+
+/// The process config store with its file watcher kept alive.
+pub struct NativeConfigStore {
+    pub store: ConfigStore,
+    /// Held for its `Drop`, which stops the watcher.
+    pub _watch: Option<crate::config::store::WatchHandle>,
 }
 fn base64_encode(bytes: &[u8]) -> String {
     BASE64_STANDARD.encode(bytes)
@@ -1566,6 +1576,11 @@ impl SubmitHostServices for Services {
     }
     fn refresh(&self) -> SubmitFuture<'_, Result<(), SubmitError>> {
         Box::pin(async {
+            // `refreshConfigBeforeTurn`: `configStore.reload("turn-start")`,
+            // its failure swallowed (InProcessGateway.ts:1336-1342).
+            if let Some(config) = &self.config_store {
+                let _ = config.store.reload("turn-start").await;
+            }
             let current = crate::runtime::project::NativeConfigSource::new(
                 self.options.project.clone(),
                 self.env.clone(),
@@ -1904,6 +1919,12 @@ pub struct NativeSettingsOptions {
     /// Production passes [`ConsoleLog`]; the #1320 replay passes a recorder
     /// because the golden pins the bundle's exact log lines.
     pub log: Arc<dyn RefreshLog>,
+    /// `options.applyFlagSettings` (`registry.applyFlagSettingsForSdk`).
+    pub apply_flag_settings: Option<Arc<dyn crate::runtime::settings::ApplyFlagSettings>>,
+    /// `options.updateSettings` (`updatePilotLocalSettings` + store reload).
+    pub update_settings: Option<crate::runtime::settings::UpdateSettings>,
+    /// `options.reloadOutputStyles` (`registry.reloadOutputStylesForSdk`).
+    pub reload_output_styles: Option<Arc<dyn crate::runtime::settings::ReloadOutputStyles>>,
 }
 
 /// The composed U7 settings stack: the #1318 [`SettingsGateway`] over the
@@ -1918,6 +1939,8 @@ pub struct NativeSettings {
     // a recording server themselves and assert `has_notification_server()`
     // (`native_settings_production_binds_no_notification_server`).
     pub bundle: Arc<RefreshBundle>,
+    /// `configStore`: the turn-start reload and the file watcher read it.
+    pub store: ConfigStore,
 }
 
 /// Compose the native U7 settings stack (createLocalGateway.ts:795-831 and
@@ -1944,6 +1967,9 @@ pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
         store,
         project_root,
         log,
+        apply_flag_settings,
+        update_settings,
+        reload_output_styles,
     } = options;
     let bundle = Arc::new(RefreshBundle::new(RefreshOptions {
         config_store: Arc::new(store.clone()),
@@ -1961,16 +1987,162 @@ pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
     bundle.attach();
     let gateway = Arc::new(SettingsGateway::new(SettingsGatewayOptions {
         owner,
-        apply_flag_settings: None,
-        update_settings: None,
+        apply_flag_settings,
+        update_settings,
         resolve_settings: Some(Arc::new(ResolvedSettingsPort {
             store: store.clone(),
         })),
-        reload_output_styles: None,
+        reload_output_styles,
         reload_config: Some(bundle.clone()),
         reload_extensions: Some(bundle.clone()),
     }));
-    NativeSettings { gateway, bundle }
+    NativeSettings {
+        gateway,
+        bundle,
+        store,
+    }
+}
+
+/// `registry.applyFlagSettingsForSdk` (ProjectRuntimeRegistry.ts:914-953)
+/// over the process's session selection store: `effortLevel` is the SDK
+/// thinking override, `permissions.defaultMode` the stored permission mode
+/// the next session composes from. The gateway validated the shape first.
+pub(super) struct NativeFlagSettings {
+    pub(super) overrides: Arc<super::SessionOverrides>,
+}
+impl crate::runtime::settings::ApplyFlagSettings for NativeFlagSettings {
+    fn apply(
+        &self,
+        input: &JsValue,
+    ) -> Result<crate::runtime::settings::FlagSettings, crate::runtime::settings::SettingsError>
+    {
+        let mut result = crate::runtime::settings::FlagSettings::default();
+        let Some(session) = input.get("sessionKey").and_then(JsValue::as_string) else {
+            return Ok(result);
+        };
+        let Some(JsValue::Object(settings)) = input.get("settings") else {
+            return Ok(result);
+        };
+        if let Some(effort) = settings.get("effortLevel") {
+            if matches!(effort, JsValue::Null) {
+                self.overrides.clear_thinking(session);
+                result.cleared.push("effortLevel".into());
+            } else {
+                self.overrides.set_thinking(
+                    session,
+                    object([("enabled", JsValue::Bool(true)), ("mode", effort.clone())]),
+                );
+                result.applied.push("effortLevel".into());
+            }
+        }
+        if let Some(permissions) = settings.get("permissions") {
+            let default_mode = match permissions {
+                JsValue::Null => JsValue::Null,
+                value => value
+                    .get("defaultMode")
+                    .cloned()
+                    .unwrap_or(JsValue::Undefined),
+            };
+            match &default_mode {
+                JsValue::Null | JsValue::Undefined => {
+                    self.overrides.clear_permission_mode(session);
+                    result.cleared.push("permissions.defaultMode".into());
+                }
+                JsValue::String(mode) => {
+                    self.overrides.set_permission_mode(session, mode.clone());
+                    result.applied.push("permissions.defaultMode".into());
+                }
+                // validateSdkFlagSettings admits only the three mode strings.
+                _ => {}
+            }
+        }
+        Ok(result)
+    }
+}
+
+/// `registry.reloadOutputStylesForSdk(input)`
+/// (ProjectRuntimeRegistry.ts:1111-1121; `input = {}` when the frame has no
+/// params, InProcessGateway.ts:2387): resolve the runtime, reload its
+/// output-style registry, then close every session holding an SDK session
+/// config in that project (all of them without a `projectKey`) with
+/// `sdk_output_styles_reloaded`.
+pub struct NativeOutputStylesReload {
+    pub options: Options,
+    pub project: Arc<ProjectRuntimeRegistry>,
+    pub owner: SessionOwner,
+    pub interactions: Arc<crate::runtime::interaction::GatewayInteractionCoordinator>,
+    pub overrides: Arc<super::SessionOverrides>,
+}
+impl crate::runtime::settings::ReloadOutputStyles for NativeOutputStylesReload {
+    fn reload(
+        &self,
+        params: &JsValue,
+    ) -> crate::runtime::settings::SettingsFuture<
+        Result<
+            crate::runtime::settings::OutputStylesReload,
+            crate::runtime::settings::SettingsError,
+        >,
+    > {
+        use crate::runtime::settings::{OutputStylesReload, SettingsError};
+        let params = if params.is_undefined() {
+            JsValue::Object(JsObject::new())
+        } else {
+            params.clone()
+        };
+        let options = self.options.clone();
+        let project = self.project.clone();
+        let owner = self.owner.clone();
+        let interactions = self.interactions.clone();
+        let overrides = self.overrides.clone();
+        Box::pin(async move {
+            let error = |e: crate::runtime::connection::RequestError| {
+                SettingsError::coded(&e.code, e.message)
+            };
+            let plain = |message: String| SettingsError::plain("Error", message);
+            let project_root =
+                super::projects::route_project_with(&options, &project, &params).map_err(error)?;
+            let acquire_root = project_root.clone();
+            let lease = tokio::task::spawn_blocking(move || project.acquire(Some(&acquire_root)))
+                .await
+                .map_err(|e| plain(e.to_string()))?
+                .map_err(|e| plain(e.to_string()))?;
+            let resources = lease
+                .runtime()
+                .resources()
+                .get::<ProjectResources>()
+                .ok_or_else(|| plain("Native project resources are missing.".into()))?;
+            let plugin_resource = resources
+                .context()
+                .resource(crate::runtime::project::Resource::PluginRuntime)
+                .ok_or_else(|| plain("Native plugin runtime resource is missing.".into()))?;
+            let plugin_runtime = plugin_resource
+                .as_any()
+                .downcast_ref::<crate::runtime::project::plugins::PluginResources>()
+                .ok_or_else(|| plain("Native plugin runtime has the wrong type.".into()))?
+                .runtime
+                .clone();
+            let changed = plugin_runtime.reload_output_styles().await;
+            drop(lease);
+            let scoped =
+                matches!(params.get("projectKey"), Some(JsValue::String(key)) if !key.is_empty());
+            let reason: JsString = "sdk_output_styles_reloaded".into();
+            for (session, root) in overrides.sdk_config_sessions() {
+                if scoped && root != project_root {
+                    continue;
+                }
+                // `this.gateway?.closeSession(...)` (InProcessGateway.ts:2049-2054).
+                owner
+                    .close(&session)
+                    .await
+                    .map_err(|e| plain(e.to_string()))?;
+                interactions.close_session(&session, &reason);
+                overrides.clear_live_mode(&session);
+            }
+            Ok(OutputStylesReload {
+                changed: changed.into_iter().map(JsString::from).collect(),
+            })
+        })
+    }
 }
 
 /// The production composition for the native process
@@ -1993,6 +2165,8 @@ pub fn native_settings_for_process(
     home: &std::path::Path,
     served_project: &std::path::Path,
     env: &crate::config::Env,
+    overrides: Arc<super::SessionOverrides>,
+    output_styles: Option<Arc<dyn crate::runtime::settings::ReloadOutputStyles>>,
 ) -> std::io::Result<NativeSettings> {
     // #1320 fix-r1 F3: same anchor as every other config read of the process
     // (`NativeConfigSource`): PILOT_HOME from the environment resolved
@@ -2003,6 +2177,11 @@ pub fn native_settings_for_process(
     // `Some(home)` keeps direct callers (tests and future non-CLI
     // assemblies) anchored exactly like the CLI path.
     let pilot_home = crate::runtime::project::resolve_pilot_home(env, served_project, Some(home));
+    let writer = crate::runtime::settings::PilotLocalSettingsWriter {
+        pilot_home: pilot_home.clone(),
+        project_root: served_project.to_path_buf(),
+        env: env.clone(),
+    };
     let mut store_options = StoreOptions::new(pilot_home, served_project, env.clone());
     store_options.project = Some(served_project.to_string_lossy().into_owned());
     let store = ConfigStore::new(store_options).map_err(|error| {
@@ -2019,9 +2198,17 @@ pub fn native_settings_for_process(
         owner: owner.clone(),
         router: Arc::new(owner),
         registry: Arc::new(RegistryRefresh::new(project)),
-        store,
+        store: store.clone(),
         project_root: JsString::from(served_project.to_string_lossy().into_owned()),
         log: Arc::new(ConsoleLog),
+        apply_flag_settings: Some(Arc::new(NativeFlagSettings { overrides })),
+        // createLocalGateway.ts:1384-1401 with no organization policy.
+        update_settings: Some(crate::runtime::settings::UpdateSettings {
+            organization_denied: false,
+            writer: Arc::new(writer),
+            store: store.clone(),
+        }),
+        reload_output_styles: output_styles,
     }))
 }
 

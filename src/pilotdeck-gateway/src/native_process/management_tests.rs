@@ -1344,6 +1344,14 @@ async fn settings_capabilities_match_served_delegates() {
         &requests.options.home,
         &requests.options.project,
         &requests.env,
+        requests.session_overrides.clone(),
+        Some(std::sync::Arc::new(services::NativeOutputStylesReload {
+            options: requests.options.clone(),
+            project: requests.project.clone(),
+            owner: requests.owner.clone(),
+            interactions: requests.interactions.clone(),
+            overrides: requests.session_overrides.clone(),
+        })),
     )
     .expect("#1320 the production settings stack must compose over the fixture");
     requests.settings = native.gateway;
@@ -1422,9 +1430,20 @@ async fn settings_capabilities_match_served_delegates() {
         "#1761 the TS-unpublished settings methods must be the two reloads"
     );
     for &method in &published {
-        let result = requests
-            .settings_request(method.to_owned(), JsValue::Undefined)
-            .await;
+        // Each method with the smallest input its baseline success needs: an
+        // empty flag set, an empty localSettings update (no write), the
+        // default runtime for the style reload.
+        let params = match method {
+            "apply_flag_settings" => {
+                pilotdeck_protocol::parse_json(r#"{"sessionKey":"cap","settings":{}}"#).unwrap()
+            }
+            "update_settings" => {
+                pilotdeck_protocol::parse_json(r#"{"source":"localSettings","settings":{}}"#)
+                    .unwrap()
+            }
+            _ => JsValue::Undefined,
+        };
+        let result = requests.settings_request(method.to_owned(), params).await;
         // The baseline advertises every published settings name; the ones
         // this process cannot serve yet are declared in
         // `capabilities::ADVERTISED_NOT_SERVED` and must answer exactly the
@@ -1859,6 +1878,7 @@ async fn submit_snapshot_wiring_matches_management_workspace_id() {
     .expect("#1431 staged recorder")
     .expect("#1431 staged snapshot recorder");
     let services = crate::native_process::services::Services {
+        config_store: None,
         options: options.clone(),
         project: requests.project.clone(),
         env,
@@ -2256,6 +2276,7 @@ async fn snapshot_wiring_workspace_id_routes_to_recorder() {
         crate::native_process::management_tests::SnapshotFactory,
     ));
     let services = super::services::Services {
+        config_store: None,
         options: requests.options.clone(),
         project: requests.project.clone(),
         env: requests.env.clone(),
@@ -2362,6 +2383,7 @@ async fn snapshot_workspace_id_prefers_registered_marker() {
         ),
     );
     let services = super::services::Services {
+        config_store: None,
         options: requests.options.clone(),
         project: requests.project.clone(),
         env: requests.env.clone(),
@@ -2454,6 +2476,7 @@ async fn submit_workspace_id_treats_an_explicit_null_project_key_as_not_provided
         std::sync::Arc<crate::storage::ContentAddressedWorkspaceSnapshotRecorder>,
     >| {
         super::services::Services {
+            config_store: None,
             options: requests.options.clone(),
             project: requests.project.clone(),
             env: requests.env.clone(),

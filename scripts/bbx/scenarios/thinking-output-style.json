@@ -1,0 +1,46 @@
+{
+  "name": "thinking-output-style",
+  "about": "会话 thinking 与 output style：set_session_thinking（正常、清除、拒绝）后下一轮请求的 reasoning_effort；本地插件提供的 output style 经 output_styles_list / set_output_style（正常、未知名、空名、清除）后下一轮系统提示词体现该 style；reload_output_styles 的返回。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [low, medium, high]\n            format: openai\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "files": {
+    "home/.pilotdeck/plugins/style-plugin/plugin.json": {
+      "name": "style-plugin",
+      "version": "0.1.0",
+      "description": "Local plugin contributing output styles."
+    },
+    "home/.pilotdeck/plugins/style-plugin/output-styles/pirate.md": "---\ndescription: Talk like a pirate.\n---\n\nAlways answer in pirate speak. BBX-PIRATE-STYLE.\n",
+    "home/.pilotdeck/plugins/style-plugin/output-styles/terse.md": "---\ndescription: Very short answers.\n---\n\nAnswer in one line. BBX-TERSE-STYLE.\n"
+  },
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Style\"}" } },
+    { "name": "main", "reply": { "text": "Style turn done." } }
+  ],
+  "steps": [
+    { "ws": "set_session_thinking", "params": { "thinking": { "enabled": true, "mode": "low" } } },
+    { "ws": "set_session_thinking", "params": { "sessionKey": "s-think", "thinking": { "enabled": "yes" } } },
+    { "ws": "set_session_thinking", "params": { "sessionKey": "s-think", "thinking": { "enabled": true, "mode": "medium" } } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-think", "channelKey": "test", "message": "thinking turn one" } },
+    { "sleep": 500 },
+    { "ws": "set_session_thinking", "params": { "sessionKey": "s-think" } },
+    { "ws": "set_session_thinking", "params": { "sessionKey": "s-think", "thinking": { "enabled": true, "mode": "turbo" } } },
+    { "ws": "set_session_thinking", "params": { "sessionKey": "s-think", "thinking": null } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-think", "channelKey": "test", "message": "thinking turn two" } },
+    { "sleep": 500 },
+    { "ws": "output_styles_list", "params": {} },
+    { "ws": "set_output_style", "params": { "name": "pirate" } },
+    { "ws": "set_output_style", "params": { "sessionKey": "s-style", "name": "  " } },
+    { "ws": "set_output_style", "params": { "sessionKey": "s-style", "name": "nope" } },
+    { "ws": "set_output_style", "params": { "sessionKey": "s-style", "name": "pirate" } },
+    { "ws": "output_styles_list", "params": { "sessionKey": "s-style" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-style", "channelKey": "test", "message": "styled turn" } },
+    { "sleep": 500 },
+    { "ws": "reload_output_styles", "params": {} },
+    { "ws": "reload_output_styles", "params": { "projectKey": "{PILOT_HOME}" } },
+    { "ws": "reload_output_styles", "params": { "projectKey": "{HOME}/nowhere" } },
+    { "ws": "reload_output_styles" },
+    { "ws": "set_output_style", "params": { "sessionKey": "s-style", "name": null } },
+    { "ws": "output_styles_list", "params": { "sessionKey": "s-style" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-style", "channelKey": "test", "message": "unstyled turn" } },
+    { "sleep": 500 }
+  ]
+}

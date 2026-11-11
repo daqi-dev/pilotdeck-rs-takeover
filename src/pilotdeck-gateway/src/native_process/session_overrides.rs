@@ -15,6 +15,10 @@ struct Inner {
     permission_modes: HashMap<JsString, JsString>,
     thinking: HashMap<JsString, JsValue>,
     output_styles: HashMap<JsString, JsString>,
+    /// `sdkSessionConfigs` membership with its `sdkSessionProjects` root:
+    /// the sessions `reloadOutputStylesForSdk` closes
+    /// (ProjectRuntimeRegistry.ts:1111-1121).
+    sdk_config_projects: HashMap<JsString, std::path::PathBuf>,
     /// `GatewaySessionPermissionModeRegistry`: the live mode a session's next
     /// turn starts in, and the mode it had before entering plan mode.
     live_modes: HashMap<JsString, LiveMode>,
@@ -122,6 +126,16 @@ impl SessionOverrides {
             .remove(key);
     }
 
+    /// `applyFlagSettingsForSdk` clearing `permissions.defaultMode`
+    /// (ProjectRuntimeRegistry.ts:935-941): drop only the stored mode.
+    pub fn clear_permission_mode(&self, key: &JsString) {
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .permission_modes
+            .remove(key);
+    }
+
     pub fn set_thinking(&self, key: &JsString, thinking: JsValue) {
         self.inner
             .lock()
@@ -161,6 +175,26 @@ impl SessionOverrides {
             .unwrap_or_else(|e| e.into_inner())
             .output_styles
             .remove(key);
+    }
+
+    /// `sdkSessionConfigs.set(key, ...)` + `sdkSessionProjects.set(key, root)`.
+    pub fn mark_sdk_config(&self, key: &JsString, project_root: std::path::PathBuf) {
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .sdk_config_projects
+            .insert(key.clone(), project_root);
+    }
+
+    /// The sessions holding an SDK session config, with their project roots.
+    pub fn sdk_config_sessions(&self) -> Vec<(JsString, std::path::PathBuf)> {
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .sdk_config_projects
+            .iter()
+            .map(|(key, root)| (key.clone(), root.clone()))
+            .collect()
     }
 
     pub fn output_style(&self, key: &JsString) -> Option<JsString> {

@@ -3740,6 +3740,9 @@ async fn native_settings_production_binds_no_notification_server() {
         store,
         project_root: JsString::from("/pdrs-fixture/project"),
         log: Arc::new(ConsoleLog),
+        apply_flag_settings: None,
+        update_settings: None,
+        reload_output_styles: None,
     });
     negative_assert!(
         !settings.bundle.has_notification_server(),
@@ -3813,6 +3816,8 @@ async fn settings_store_anchors_at_pilot_home_env() {
         &flag_home,
         &served_project,
         &env,
+        Arc::default(),
+        None,
     )
     .expect("#1320 the production settings stack must compose");
     let resolved = match settings
@@ -4172,6 +4177,7 @@ async fn prepare_attachment_turn_composes_the_turn_end_to_end() {
         .expect("#1448 e2e UTF-8")
         .to_owned();
     let services = super::services::Services {
+        config_store: None,
         options: requests.options.clone(),
         project: requests.project.clone(),
         env: requests.env.clone(),
@@ -4256,6 +4262,7 @@ async fn prepare_attachment_turn_refuses_a_linked_lease_root() {
         .expect("#1448 boundary UTF-8")
         .to_owned();
     let services = super::services::Services {
+        config_store: None,
         options: requests.options.clone(),
         project: requests.project.clone(),
         env: requests.env.clone(),

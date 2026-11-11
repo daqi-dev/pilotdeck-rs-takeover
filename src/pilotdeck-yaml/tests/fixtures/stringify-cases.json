@@ -1,0 +1,3317 @@
+[
+ {
+  "name": "config",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [low, medium, high]\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\n",
+  "ops": [],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [ low, medium, high ]\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "config",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [low, medium, high]\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 4096\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [ low, medium, high ]\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "config",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [low, medium, high]\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxContextTokens"
+    ],
+    1000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "thinking"
+    ],
+    {
+     "enabled": true,
+     "budgetTokens": 2048
+    }
+   ]
+  ],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 1000\n  maxOutputTokens: 8192\n  thinking:\n    enabled: true\n    budgetTokens: 2048\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [ low, medium, high ]\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "config",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [low, medium, high]\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ]
+  ],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\n  subagents:\n    default: provider/some-model-name\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [ low, medium, high ]\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "config",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [low, medium, high]\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "extension",
+     "includeHookEvents"
+    ],
+    true
+   ]
+  ],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\n  subagents:\n    timeoutMs: 60000\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [ low, medium, high ]\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\nextension:\n  includeHookEvents: true\n",
+  "error": null
+ },
+ {
+  "name": "config",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [low, medium, high]\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "maxOutputTokens"
+    ]
+   ]
+  ],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [ low, medium, high ]\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "config",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [low, medium, high]\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "subagents"
+    ]
+   ],
+   [
+    "delete",
+    [
+     "extension",
+     "includeHookEvents"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at extension. Remaining path: includeHookEvents"
+ },
+ {
+  "name": "config",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [low, medium, high]\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\n",
+  "ops": [
+   [
+    "set",
+    [
+     "extension",
+     "builtinPluginsEnabled"
+    ],
+    {
+     "alpha": true,
+     "beta gamma": false
+    }
+   ]
+  ],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [ low, medium, high ]\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\nextension:\n  builtinPluginsEnabled:\n    alpha: true\n    beta gamma: false\n",
+  "error": null
+ },
+ {
+  "name": "config",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [low, medium, high]\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\n",
+  "ops": [
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [ low, medium, high ]\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\ntools:\n  webSearch:\n    enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "config",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [low, medium, high]\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "thinking"
+    ],
+    null
+   ]
+  ],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [ low, medium, high ]\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "config",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [low, medium, high]\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\n",
+  "ops": [
+   [
+    "set",
+    [
+     "k"
+    ],
+    2.5
+   ],
+   [
+    "set",
+    [
+     "h"
+    ],
+    false
+   ],
+   [
+    "set",
+    [
+     "i"
+    ],
+    255
+   ],
+   [
+    "set",
+    [
+     "e"
+    ],
+    "now a string"
+   ],
+   [
+    "set",
+    [
+     "p"
+    ],
+    true
+   ]
+  ],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [ low, medium, high ]\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\nk: 2.5\nh: false\ni: 255\ne: now a string\np: true\n",
+  "error": null
+ },
+ {
+  "name": "config",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [low, medium, high]\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\n",
+  "ops": [
+   [
+    "set",
+    [
+     "a"
+    ],
+    "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word more"
+   ]
+  ],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [ low, medium, high ]\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\na: word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  more\n",
+  "error": null
+ },
+ {
+  "name": "config",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [low, medium, high]\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at subagents. Remaining path: default"
+ },
+ {
+  "name": "comments",
+  "src": "# head comment\n\n# second\nagent: # trailing on agent\n  # before model\n  model: a/b # after value\n\n  maxOutputTokens: 100\nlist:\n  - one # c1\n  # before two\n  - two\n# tail comment\n",
+  "ops": [],
+  "output": "# head comment\n\n# second\nagent:\n  # trailing on agent\n  # before model\n  model: a/b # after value\n\n  maxOutputTokens: 100\nlist:\n  - one # c1\n  # before two\n  - two\n\n# tail comment\n",
+  "error": null
+ },
+ {
+  "name": "comments",
+  "src": "# head comment\n\n# second\nagent: # trailing on agent\n  # before model\n  model: a/b # after value\n\n  maxOutputTokens: 100\nlist:\n  - one # c1\n  # before two\n  - two\n# tail comment\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "# head comment\n\n# second\nagent:\n  # trailing on agent\n  # before model\n  model: a/b # after value\n\n  maxOutputTokens: 4096\nlist:\n  - one # c1\n  # before two\n  - two\n\n# tail comment\n",
+  "error": null
+ },
+ {
+  "name": "comments",
+  "src": "# head comment\n\n# second\nagent: # trailing on agent\n  # before model\n  model: a/b # after value\n\n  maxOutputTokens: 100\nlist:\n  - one # c1\n  # before two\n  - two\n# tail comment\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxContextTokens"
+    ],
+    1000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "thinking"
+    ],
+    {
+     "enabled": true,
+     "budgetTokens": 2048
+    }
+   ]
+  ],
+  "output": "# head comment\n\n# second\nagent:\n  # trailing on agent\n  # before model\n  model: a/b # after value\n\n  maxOutputTokens: 100\n  maxContextTokens: 1000\n  thinking:\n    enabled: true\n    budgetTokens: 2048\nlist:\n  - one # c1\n  # before two\n  - two\n\n# tail comment\n",
+  "error": null
+ },
+ {
+  "name": "comments",
+  "src": "# head comment\n\n# second\nagent: # trailing on agent\n  # before model\n  model: a/b # after value\n\n  maxOutputTokens: 100\nlist:\n  - one # c1\n  # before two\n  - two\n# tail comment\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ]
+  ],
+  "output": "# head comment\n\n# second\nagent:\n  # trailing on agent\n  # before model\n  model: a/b # after value\n\n  maxOutputTokens: 100\n  subagents:\n    default: provider/some-model-name\nlist:\n  - one # c1\n  # before two\n  - two\n\n# tail comment\n",
+  "error": null
+ },
+ {
+  "name": "comments",
+  "src": "# head comment\n\n# second\nagent: # trailing on agent\n  # before model\n  model: a/b # after value\n\n  maxOutputTokens: 100\nlist:\n  - one # c1\n  # before two\n  - two\n# tail comment\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "extension",
+     "includeHookEvents"
+    ],
+    true
+   ]
+  ],
+  "output": "# head comment\n\n# second\nagent:\n  # trailing on agent\n  # before model\n  model: a/b # after value\n\n  maxOutputTokens: 100\n  subagents:\n    timeoutMs: 60000\nlist:\n  - one # c1\n  # before two\n  - two\nextension:\n  includeHookEvents: true\n\n# tail comment\n",
+  "error": null
+ },
+ {
+  "name": "comments",
+  "src": "# head comment\n\n# second\nagent: # trailing on agent\n  # before model\n  model: a/b # after value\n\n  maxOutputTokens: 100\nlist:\n  - one # c1\n  # before two\n  - two\n# tail comment\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "maxOutputTokens"
+    ]
+   ]
+  ],
+  "output": "# head comment\n\n# second\nagent:\n  # trailing on agent\n  # before model\n  model: a/b # after value\nlist:\n  - one # c1\n  # before two\n  - two\n\n# tail comment\n",
+  "error": null
+ },
+ {
+  "name": "comments",
+  "src": "# head comment\n\n# second\nagent: # trailing on agent\n  # before model\n  model: a/b # after value\n\n  maxOutputTokens: 100\nlist:\n  - one # c1\n  # before two\n  - two\n# tail comment\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "subagents"
+    ]
+   ],
+   [
+    "delete",
+    [
+     "extension",
+     "includeHookEvents"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at extension. Remaining path: includeHookEvents"
+ },
+ {
+  "name": "comments",
+  "src": "# head comment\n\n# second\nagent: # trailing on agent\n  # before model\n  model: a/b # after value\n\n  maxOutputTokens: 100\nlist:\n  - one # c1\n  # before two\n  - two\n# tail comment\n",
+  "ops": [
+   [
+    "set",
+    [
+     "extension",
+     "builtinPluginsEnabled"
+    ],
+    {
+     "alpha": true,
+     "beta gamma": false
+    }
+   ]
+  ],
+  "output": "# head comment\n\n# second\nagent:\n  # trailing on agent\n  # before model\n  model: a/b # after value\n\n  maxOutputTokens: 100\nlist:\n  - one # c1\n  # before two\n  - two\nextension:\n  builtinPluginsEnabled:\n    alpha: true\n    beta gamma: false\n\n# tail comment\n",
+  "error": null
+ },
+ {
+  "name": "comments",
+  "src": "# head comment\n\n# second\nagent: # trailing on agent\n  # before model\n  model: a/b # after value\n\n  maxOutputTokens: 100\nlist:\n  - one # c1\n  # before two\n  - two\n# tail comment\n",
+  "ops": [
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "# head comment\n\n# second\nagent:\n  # trailing on agent\n  # before model\n  model: a/b # after value\n\n  maxOutputTokens: 100\nlist:\n  - one # c1\n  # before two\n  - two\ntools:\n  webSearch:\n    enabled: false\n\n# tail comment\n",
+  "error": null
+ },
+ {
+  "name": "comments",
+  "src": "# head comment\n\n# second\nagent: # trailing on agent\n  # before model\n  model: a/b # after value\n\n  maxOutputTokens: 100\nlist:\n  - one # c1\n  # before two\n  - two\n# tail comment\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "thinking"
+    ],
+    null
+   ]
+  ],
+  "output": "# head comment\n\n# second\nagent:\n  # trailing on agent\n  # before model\n  model: a/b # after value\n\n  maxOutputTokens: 100\nlist:\n  - one # c1\n  # before two\n  - two\n\n# tail comment\n",
+  "error": null
+ },
+ {
+  "name": "comments",
+  "src": "# head comment\n\n# second\nagent: # trailing on agent\n  # before model\n  model: a/b # after value\n\n  maxOutputTokens: 100\nlist:\n  - one # c1\n  # before two\n  - two\n# tail comment\n",
+  "ops": [
+   [
+    "set",
+    [
+     "k"
+    ],
+    2.5
+   ],
+   [
+    "set",
+    [
+     "h"
+    ],
+    false
+   ],
+   [
+    "set",
+    [
+     "i"
+    ],
+    255
+   ],
+   [
+    "set",
+    [
+     "e"
+    ],
+    "now a string"
+   ],
+   [
+    "set",
+    [
+     "p"
+    ],
+    true
+   ]
+  ],
+  "output": "# head comment\n\n# second\nagent:\n  # trailing on agent\n  # before model\n  model: a/b # after value\n\n  maxOutputTokens: 100\nlist:\n  - one # c1\n  # before two\n  - two\nk: 2.5\nh: false\ni: 255\ne: now a string\np: true\n\n# tail comment\n",
+  "error": null
+ },
+ {
+  "name": "comments",
+  "src": "# head comment\n\n# second\nagent: # trailing on agent\n  # before model\n  model: a/b # after value\n\n  maxOutputTokens: 100\nlist:\n  - one # c1\n  # before two\n  - two\n# tail comment\n",
+  "ops": [
+   [
+    "set",
+    [
+     "a"
+    ],
+    "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word more"
+   ]
+  ],
+  "output": "# head comment\n\n# second\nagent:\n  # trailing on agent\n  # before model\n  model: a/b # after value\n\n  maxOutputTokens: 100\nlist:\n  - one # c1\n  # before two\n  - two\na: word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  more\n\n# tail comment\n",
+  "error": null
+ },
+ {
+  "name": "comments",
+  "src": "# head comment\n\n# second\nagent: # trailing on agent\n  # before model\n  model: a/b # after value\n\n  maxOutputTokens: 100\nlist:\n  - one # c1\n  # before two\n  - two\n# tail comment\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at subagents. Remaining path: default"
+ },
+ {
+  "name": "scalars",
+  "src": "a: \"double quoted\"\nb: 'single quoted'\nc: |\n  literal\n  block\nd: >\n  folded\n  block\n  text\ne: ~\nf:\ng: null\nh: TRUE\ni: 0x1F\nj: 0o17\nk: 1.50\nl: 1e3\nm: .inf\nn: -.NaN\no: \"123\"\np: 'true'\nq: \"with: colon\"\nr: \"#hash\"\ns: \"line1\\nline2\"\nt: \"tab\\there\"\nu: 2.0\nv: -0\n",
+  "ops": [],
+  "output": "a: \"double quoted\"\nb: 'single quoted'\nc: |\n  literal\n  block\nd: >\n  folded block text\ne: ~\nf:\ng: null\nh: TRUE\ni: 0x1f\nj: 0o17\nk: 1.50\nl: 1e+3\nm: .inf\nn: -.NaN\no: \"123\"\np: 'true'\nq: \"with: colon\"\nr: \"#hash\"\ns: \"line1\\nline2\"\nt: \"tab\\there\"\nu: 2.0\nv: -0\n",
+  "error": null
+ },
+ {
+  "name": "scalars",
+  "src": "a: \"double quoted\"\nb: 'single quoted'\nc: |\n  literal\n  block\nd: >\n  folded\n  block\n  text\ne: ~\nf:\ng: null\nh: TRUE\ni: 0x1F\nj: 0o17\nk: 1.50\nl: 1e3\nm: .inf\nn: -.NaN\no: \"123\"\np: 'true'\nq: \"with: colon\"\nr: \"#hash\"\ns: \"line1\\nline2\"\nt: \"tab\\there\"\nu: 2.0\nv: -0\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "a: \"double quoted\"\nb: 'single quoted'\nc: |\n  literal\n  block\nd: >\n  folded block text\ne: ~\nf:\ng: null\nh: TRUE\ni: 0x1f\nj: 0o17\nk: 1.50\nl: 1e+3\nm: .inf\nn: -.NaN\no: \"123\"\np: 'true'\nq: \"with: colon\"\nr: \"#hash\"\ns: \"line1\\nline2\"\nt: \"tab\\there\"\nu: 2.0\nv: -0\nagent:\n  maxOutputTokens: 4096\n",
+  "error": null
+ },
+ {
+  "name": "scalars",
+  "src": "a: \"double quoted\"\nb: 'single quoted'\nc: |\n  literal\n  block\nd: >\n  folded\n  block\n  text\ne: ~\nf:\ng: null\nh: TRUE\ni: 0x1F\nj: 0o17\nk: 1.50\nl: 1e3\nm: .inf\nn: -.NaN\no: \"123\"\np: 'true'\nq: \"with: colon\"\nr: \"#hash\"\ns: \"line1\\nline2\"\nt: \"tab\\there\"\nu: 2.0\nv: -0\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxContextTokens"
+    ],
+    1000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "thinking"
+    ],
+    {
+     "enabled": true,
+     "budgetTokens": 2048
+    }
+   ]
+  ],
+  "output": "a: \"double quoted\"\nb: 'single quoted'\nc: |\n  literal\n  block\nd: >\n  folded block text\ne: ~\nf:\ng: null\nh: TRUE\ni: 0x1f\nj: 0o17\nk: 1.50\nl: 1e+3\nm: .inf\nn: -.NaN\no: \"123\"\np: 'true'\nq: \"with: colon\"\nr: \"#hash\"\ns: \"line1\\nline2\"\nt: \"tab\\there\"\nu: 2.0\nv: -0\nagent:\n  maxContextTokens: 1000\n  thinking:\n    enabled: true\n    budgetTokens: 2048\n",
+  "error": null
+ },
+ {
+  "name": "scalars",
+  "src": "a: \"double quoted\"\nb: 'single quoted'\nc: |\n  literal\n  block\nd: >\n  folded\n  block\n  text\ne: ~\nf:\ng: null\nh: TRUE\ni: 0x1F\nj: 0o17\nk: 1.50\nl: 1e3\nm: .inf\nn: -.NaN\no: \"123\"\np: 'true'\nq: \"with: colon\"\nr: \"#hash\"\ns: \"line1\\nline2\"\nt: \"tab\\there\"\nu: 2.0\nv: -0\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ]
+  ],
+  "output": "a: \"double quoted\"\nb: 'single quoted'\nc: |\n  literal\n  block\nd: >\n  folded block text\ne: ~\nf:\ng: null\nh: TRUE\ni: 0x1f\nj: 0o17\nk: 1.50\nl: 1e+3\nm: .inf\nn: -.NaN\no: \"123\"\np: 'true'\nq: \"with: colon\"\nr: \"#hash\"\ns: \"line1\\nline2\"\nt: \"tab\\there\"\nu: 2.0\nv: -0\nagent:\n  subagents:\n    default: provider/some-model-name\n",
+  "error": null
+ },
+ {
+  "name": "scalars",
+  "src": "a: \"double quoted\"\nb: 'single quoted'\nc: |\n  literal\n  block\nd: >\n  folded\n  block\n  text\ne: ~\nf:\ng: null\nh: TRUE\ni: 0x1F\nj: 0o17\nk: 1.50\nl: 1e3\nm: .inf\nn: -.NaN\no: \"123\"\np: 'true'\nq: \"with: colon\"\nr: \"#hash\"\ns: \"line1\\nline2\"\nt: \"tab\\there\"\nu: 2.0\nv: -0\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "extension",
+     "includeHookEvents"
+    ],
+    true
+   ]
+  ],
+  "output": "a: \"double quoted\"\nb: 'single quoted'\nc: |\n  literal\n  block\nd: >\n  folded block text\ne: ~\nf:\ng: null\nh: TRUE\ni: 0x1f\nj: 0o17\nk: 1.50\nl: 1e+3\nm: .inf\nn: -.NaN\no: \"123\"\np: 'true'\nq: \"with: colon\"\nr: \"#hash\"\ns: \"line1\\nline2\"\nt: \"tab\\there\"\nu: 2.0\nv: -0\nagent:\n  subagents:\n    timeoutMs: 60000\nextension:\n  includeHookEvents: true\n",
+  "error": null
+ },
+ {
+  "name": "scalars",
+  "src": "a: \"double quoted\"\nb: 'single quoted'\nc: |\n  literal\n  block\nd: >\n  folded\n  block\n  text\ne: ~\nf:\ng: null\nh: TRUE\ni: 0x1F\nj: 0o17\nk: 1.50\nl: 1e3\nm: .inf\nn: -.NaN\no: \"123\"\np: 'true'\nq: \"with: colon\"\nr: \"#hash\"\ns: \"line1\\nline2\"\nt: \"tab\\there\"\nu: 2.0\nv: -0\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "maxOutputTokens"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: maxOutputTokens"
+ },
+ {
+  "name": "scalars",
+  "src": "a: \"double quoted\"\nb: 'single quoted'\nc: |\n  literal\n  block\nd: >\n  folded\n  block\n  text\ne: ~\nf:\ng: null\nh: TRUE\ni: 0x1F\nj: 0o17\nk: 1.50\nl: 1e3\nm: .inf\nn: -.NaN\no: \"123\"\np: 'true'\nq: \"with: colon\"\nr: \"#hash\"\ns: \"line1\\nline2\"\nt: \"tab\\there\"\nu: 2.0\nv: -0\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "subagents"
+    ]
+   ],
+   [
+    "delete",
+    [
+     "extension",
+     "includeHookEvents"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: subagents"
+ },
+ {
+  "name": "scalars",
+  "src": "a: \"double quoted\"\nb: 'single quoted'\nc: |\n  literal\n  block\nd: >\n  folded\n  block\n  text\ne: ~\nf:\ng: null\nh: TRUE\ni: 0x1F\nj: 0o17\nk: 1.50\nl: 1e3\nm: .inf\nn: -.NaN\no: \"123\"\np: 'true'\nq: \"with: colon\"\nr: \"#hash\"\ns: \"line1\\nline2\"\nt: \"tab\\there\"\nu: 2.0\nv: -0\n",
+  "ops": [
+   [
+    "set",
+    [
+     "extension",
+     "builtinPluginsEnabled"
+    ],
+    {
+     "alpha": true,
+     "beta gamma": false
+    }
+   ]
+  ],
+  "output": "a: \"double quoted\"\nb: 'single quoted'\nc: |\n  literal\n  block\nd: >\n  folded block text\ne: ~\nf:\ng: null\nh: TRUE\ni: 0x1f\nj: 0o17\nk: 1.50\nl: 1e+3\nm: .inf\nn: -.NaN\no: \"123\"\np: 'true'\nq: \"with: colon\"\nr: \"#hash\"\ns: \"line1\\nline2\"\nt: \"tab\\there\"\nu: 2.0\nv: -0\nextension:\n  builtinPluginsEnabled:\n    alpha: true\n    beta gamma: false\n",
+  "error": null
+ },
+ {
+  "name": "scalars",
+  "src": "a: \"double quoted\"\nb: 'single quoted'\nc: |\n  literal\n  block\nd: >\n  folded\n  block\n  text\ne: ~\nf:\ng: null\nh: TRUE\ni: 0x1F\nj: 0o17\nk: 1.50\nl: 1e3\nm: .inf\nn: -.NaN\no: \"123\"\np: 'true'\nq: \"with: colon\"\nr: \"#hash\"\ns: \"line1\\nline2\"\nt: \"tab\\there\"\nu: 2.0\nv: -0\n",
+  "ops": [
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "a: \"double quoted\"\nb: 'single quoted'\nc: |\n  literal\n  block\nd: >\n  folded block text\ne: ~\nf:\ng: null\nh: TRUE\ni: 0x1f\nj: 0o17\nk: 1.50\nl: 1e+3\nm: .inf\nn: -.NaN\no: \"123\"\np: 'true'\nq: \"with: colon\"\nr: \"#hash\"\ns: \"line1\\nline2\"\nt: \"tab\\there\"\nu: 2.0\nv: -0\ntools:\n  webSearch:\n    enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "scalars",
+  "src": "a: \"double quoted\"\nb: 'single quoted'\nc: |\n  literal\n  block\nd: >\n  folded\n  block\n  text\ne: ~\nf:\ng: null\nh: TRUE\ni: 0x1F\nj: 0o17\nk: 1.50\nl: 1e3\nm: .inf\nn: -.NaN\no: \"123\"\np: 'true'\nq: \"with: colon\"\nr: \"#hash\"\ns: \"line1\\nline2\"\nt: \"tab\\there\"\nu: 2.0\nv: -0\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "thinking"
+    ],
+    null
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: thinking"
+ },
+ {
+  "name": "scalars",
+  "src": "a: \"double quoted\"\nb: 'single quoted'\nc: |\n  literal\n  block\nd: >\n  folded\n  block\n  text\ne: ~\nf:\ng: null\nh: TRUE\ni: 0x1F\nj: 0o17\nk: 1.50\nl: 1e3\nm: .inf\nn: -.NaN\no: \"123\"\np: 'true'\nq: \"with: colon\"\nr: \"#hash\"\ns: \"line1\\nline2\"\nt: \"tab\\there\"\nu: 2.0\nv: -0\n",
+  "ops": [
+   [
+    "set",
+    [
+     "k"
+    ],
+    2.5
+   ],
+   [
+    "set",
+    [
+     "h"
+    ],
+    false
+   ],
+   [
+    "set",
+    [
+     "i"
+    ],
+    255
+   ],
+   [
+    "set",
+    [
+     "e"
+    ],
+    "now a string"
+   ],
+   [
+    "set",
+    [
+     "p"
+    ],
+    true
+   ]
+  ],
+  "output": "a: \"double quoted\"\nb: 'single quoted'\nc: |\n  literal\n  block\nd: >\n  folded block text\ne: now a string\nf:\ng: null\nh: false\ni: 0xff\nj: 0o17\nk: 2.50\nl: 1e+3\nm: .inf\nn: -.NaN\no: \"123\"\np: true\nq: \"with: colon\"\nr: \"#hash\"\ns: \"line1\\nline2\"\nt: \"tab\\there\"\nu: 2.0\nv: -0\n",
+  "error": null
+ },
+ {
+  "name": "scalars",
+  "src": "a: \"double quoted\"\nb: 'single quoted'\nc: |\n  literal\n  block\nd: >\n  folded\n  block\n  text\ne: ~\nf:\ng: null\nh: TRUE\ni: 0x1F\nj: 0o17\nk: 1.50\nl: 1e3\nm: .inf\nn: -.NaN\no: \"123\"\np: 'true'\nq: \"with: colon\"\nr: \"#hash\"\ns: \"line1\\nline2\"\nt: \"tab\\there\"\nu: 2.0\nv: -0\n",
+  "ops": [
+   [
+    "set",
+    [
+     "a"
+    ],
+    "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word more"
+   ]
+  ],
+  "output": "a: \"word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  more\"\nb: 'single quoted'\nc: |\n  literal\n  block\nd: >\n  folded block text\ne: ~\nf:\ng: null\nh: TRUE\ni: 0x1f\nj: 0o17\nk: 1.50\nl: 1e+3\nm: .inf\nn: -.NaN\no: \"123\"\np: 'true'\nq: \"with: colon\"\nr: \"#hash\"\ns: \"line1\\nline2\"\nt: \"tab\\there\"\nu: 2.0\nv: -0\n",
+  "error": null
+ },
+ {
+  "name": "scalars",
+  "src": "a: \"double quoted\"\nb: 'single quoted'\nc: |\n  literal\n  block\nd: >\n  folded\n  block\n  text\ne: ~\nf:\ng: null\nh: TRUE\ni: 0x1F\nj: 0o17\nk: 1.50\nl: 1e3\nm: .inf\nn: -.NaN\no: \"123\"\np: 'true'\nq: \"with: colon\"\nr: \"#hash\"\ns: \"line1\\nline2\"\nt: \"tab\\there\"\nu: 2.0\nv: -0\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: subagents,default"
+ },
+ {
+  "name": "flow",
+  "src": "a: {x: 1, y: [1, 2, {z: 3}]}\nb: []\nc: {}\nd: [ \"q\", 's', plain ]\n",
+  "ops": [],
+  "output": "a: { x: 1, y: [ 1, 2, { z: 3 } ] }\nb: []\nc: {}\nd: [ \"q\", 's', plain ]\n",
+  "error": null
+ },
+ {
+  "name": "flow",
+  "src": "a: {x: 1, y: [1, 2, {z: 3}]}\nb: []\nc: {}\nd: [ \"q\", 's', plain ]\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "a: { x: 1, y: [ 1, 2, { z: 3 } ] }\nb: []\nc: {}\nd: [ \"q\", 's', plain ]\nagent:\n  maxOutputTokens: 4096\n",
+  "error": null
+ },
+ {
+  "name": "flow",
+  "src": "a: {x: 1, y: [1, 2, {z: 3}]}\nb: []\nc: {}\nd: [ \"q\", 's', plain ]\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxContextTokens"
+    ],
+    1000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "thinking"
+    ],
+    {
+     "enabled": true,
+     "budgetTokens": 2048
+    }
+   ]
+  ],
+  "output": "a: { x: 1, y: [ 1, 2, { z: 3 } ] }\nb: []\nc: {}\nd: [ \"q\", 's', plain ]\nagent:\n  maxContextTokens: 1000\n  thinking:\n    enabled: true\n    budgetTokens: 2048\n",
+  "error": null
+ },
+ {
+  "name": "flow",
+  "src": "a: {x: 1, y: [1, 2, {z: 3}]}\nb: []\nc: {}\nd: [ \"q\", 's', plain ]\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ]
+  ],
+  "output": "a: { x: 1, y: [ 1, 2, { z: 3 } ] }\nb: []\nc: {}\nd: [ \"q\", 's', plain ]\nagent:\n  subagents:\n    default: provider/some-model-name\n",
+  "error": null
+ },
+ {
+  "name": "flow",
+  "src": "a: {x: 1, y: [1, 2, {z: 3}]}\nb: []\nc: {}\nd: [ \"q\", 's', plain ]\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "extension",
+     "includeHookEvents"
+    ],
+    true
+   ]
+  ],
+  "output": "a: { x: 1, y: [ 1, 2, { z: 3 } ] }\nb: []\nc: {}\nd: [ \"q\", 's', plain ]\nagent:\n  subagents:\n    timeoutMs: 60000\nextension:\n  includeHookEvents: true\n",
+  "error": null
+ },
+ {
+  "name": "flow",
+  "src": "a: {x: 1, y: [1, 2, {z: 3}]}\nb: []\nc: {}\nd: [ \"q\", 's', plain ]\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "maxOutputTokens"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: maxOutputTokens"
+ },
+ {
+  "name": "flow",
+  "src": "a: {x: 1, y: [1, 2, {z: 3}]}\nb: []\nc: {}\nd: [ \"q\", 's', plain ]\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "subagents"
+    ]
+   ],
+   [
+    "delete",
+    [
+     "extension",
+     "includeHookEvents"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: subagents"
+ },
+ {
+  "name": "flow",
+  "src": "a: {x: 1, y: [1, 2, {z: 3}]}\nb: []\nc: {}\nd: [ \"q\", 's', plain ]\n",
+  "ops": [
+   [
+    "set",
+    [
+     "extension",
+     "builtinPluginsEnabled"
+    ],
+    {
+     "alpha": true,
+     "beta gamma": false
+    }
+   ]
+  ],
+  "output": "a: { x: 1, y: [ 1, 2, { z: 3 } ] }\nb: []\nc: {}\nd: [ \"q\", 's', plain ]\nextension:\n  builtinPluginsEnabled:\n    alpha: true\n    beta gamma: false\n",
+  "error": null
+ },
+ {
+  "name": "flow",
+  "src": "a: {x: 1, y: [1, 2, {z: 3}]}\nb: []\nc: {}\nd: [ \"q\", 's', plain ]\n",
+  "ops": [
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "a: { x: 1, y: [ 1, 2, { z: 3 } ] }\nb: []\nc: {}\nd: [ \"q\", 's', plain ]\ntools:\n  webSearch:\n    enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "flow",
+  "src": "a: {x: 1, y: [1, 2, {z: 3}]}\nb: []\nc: {}\nd: [ \"q\", 's', plain ]\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "thinking"
+    ],
+    null
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: thinking"
+ },
+ {
+  "name": "flow",
+  "src": "a: {x: 1, y: [1, 2, {z: 3}]}\nb: []\nc: {}\nd: [ \"q\", 's', plain ]\n",
+  "ops": [
+   [
+    "set",
+    [
+     "k"
+    ],
+    2.5
+   ],
+   [
+    "set",
+    [
+     "h"
+    ],
+    false
+   ],
+   [
+    "set",
+    [
+     "i"
+    ],
+    255
+   ],
+   [
+    "set",
+    [
+     "e"
+    ],
+    "now a string"
+   ],
+   [
+    "set",
+    [
+     "p"
+    ],
+    true
+   ]
+  ],
+  "output": "a: { x: 1, y: [ 1, 2, { z: 3 } ] }\nb: []\nc: {}\nd: [ \"q\", 's', plain ]\nk: 2.5\nh: false\ni: 255\ne: now a string\np: true\n",
+  "error": null
+ },
+ {
+  "name": "flow",
+  "src": "a: {x: 1, y: [1, 2, {z: 3}]}\nb: []\nc: {}\nd: [ \"q\", 's', plain ]\n",
+  "ops": [
+   [
+    "set",
+    [
+     "a"
+    ],
+    "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word more"
+   ]
+  ],
+  "output": "a: word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  more\nb: []\nc: {}\nd: [ \"q\", 's', plain ]\n",
+  "error": null
+ },
+ {
+  "name": "flow",
+  "src": "a: {x: 1, y: [1, 2, {z: 3}]}\nb: []\nc: {}\nd: [ \"q\", 's', plain ]\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: subagents,default"
+ },
+ {
+  "name": "anchors",
+  "src": "base: &b\n  x: 1\nderived: *b\nlist: &l [1, 2]\nother: *l\ns: &s scalar\nt: *s\n",
+  "ops": [],
+  "output": "base: &b\n  x: 1\nderived: *b\nlist: &l [ 1, 2 ]\nother: *l\ns: &s scalar\nt: *s\n",
+  "error": null
+ },
+ {
+  "name": "anchors",
+  "src": "base: &b\n  x: 1\nderived: *b\nlist: &l [1, 2]\nother: *l\ns: &s scalar\nt: *s\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "base: &b\n  x: 1\nderived: *b\nlist: &l [ 1, 2 ]\nother: *l\ns: &s scalar\nt: *s\nagent:\n  maxOutputTokens: 4096\n",
+  "error": null
+ },
+ {
+  "name": "anchors",
+  "src": "base: &b\n  x: 1\nderived: *b\nlist: &l [1, 2]\nother: *l\ns: &s scalar\nt: *s\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxContextTokens"
+    ],
+    1000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "thinking"
+    ],
+    {
+     "enabled": true,
+     "budgetTokens": 2048
+    }
+   ]
+  ],
+  "output": "base: &b\n  x: 1\nderived: *b\nlist: &l [ 1, 2 ]\nother: *l\ns: &s scalar\nt: *s\nagent:\n  maxContextTokens: 1000\n  thinking:\n    enabled: true\n    budgetTokens: 2048\n",
+  "error": null
+ },
+ {
+  "name": "anchors",
+  "src": "base: &b\n  x: 1\nderived: *b\nlist: &l [1, 2]\nother: *l\ns: &s scalar\nt: *s\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ]
+  ],
+  "output": "base: &b\n  x: 1\nderived: *b\nlist: &l [ 1, 2 ]\nother: *l\ns: &s scalar\nt: *s\nagent:\n  subagents:\n    default: provider/some-model-name\n",
+  "error": null
+ },
+ {
+  "name": "anchors",
+  "src": "base: &b\n  x: 1\nderived: *b\nlist: &l [1, 2]\nother: *l\ns: &s scalar\nt: *s\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "extension",
+     "includeHookEvents"
+    ],
+    true
+   ]
+  ],
+  "output": "base: &b\n  x: 1\nderived: *b\nlist: &l [ 1, 2 ]\nother: *l\ns: &s scalar\nt: *s\nagent:\n  subagents:\n    timeoutMs: 60000\nextension:\n  includeHookEvents: true\n",
+  "error": null
+ },
+ {
+  "name": "anchors",
+  "src": "base: &b\n  x: 1\nderived: *b\nlist: &l [1, 2]\nother: *l\ns: &s scalar\nt: *s\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "maxOutputTokens"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: maxOutputTokens"
+ },
+ {
+  "name": "anchors",
+  "src": "base: &b\n  x: 1\nderived: *b\nlist: &l [1, 2]\nother: *l\ns: &s scalar\nt: *s\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "subagents"
+    ]
+   ],
+   [
+    "delete",
+    [
+     "extension",
+     "includeHookEvents"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: subagents"
+ },
+ {
+  "name": "anchors",
+  "src": "base: &b\n  x: 1\nderived: *b\nlist: &l [1, 2]\nother: *l\ns: &s scalar\nt: *s\n",
+  "ops": [
+   [
+    "set",
+    [
+     "extension",
+     "builtinPluginsEnabled"
+    ],
+    {
+     "alpha": true,
+     "beta gamma": false
+    }
+   ]
+  ],
+  "output": "base: &b\n  x: 1\nderived: *b\nlist: &l [ 1, 2 ]\nother: *l\ns: &s scalar\nt: *s\nextension:\n  builtinPluginsEnabled:\n    alpha: true\n    beta gamma: false\n",
+  "error": null
+ },
+ {
+  "name": "anchors",
+  "src": "base: &b\n  x: 1\nderived: *b\nlist: &l [1, 2]\nother: *l\ns: &s scalar\nt: *s\n",
+  "ops": [
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "base: &b\n  x: 1\nderived: *b\nlist: &l [ 1, 2 ]\nother: *l\ns: &s scalar\nt: *s\ntools:\n  webSearch:\n    enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "anchors",
+  "src": "base: &b\n  x: 1\nderived: *b\nlist: &l [1, 2]\nother: *l\ns: &s scalar\nt: *s\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "thinking"
+    ],
+    null
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: thinking"
+ },
+ {
+  "name": "anchors",
+  "src": "base: &b\n  x: 1\nderived: *b\nlist: &l [1, 2]\nother: *l\ns: &s scalar\nt: *s\n",
+  "ops": [
+   [
+    "set",
+    [
+     "k"
+    ],
+    2.5
+   ],
+   [
+    "set",
+    [
+     "h"
+    ],
+    false
+   ],
+   [
+    "set",
+    [
+     "i"
+    ],
+    255
+   ],
+   [
+    "set",
+    [
+     "e"
+    ],
+    "now a string"
+   ],
+   [
+    "set",
+    [
+     "p"
+    ],
+    true
+   ]
+  ],
+  "output": "base: &b\n  x: 1\nderived: *b\nlist: &l [ 1, 2 ]\nother: *l\ns: &s scalar\nt: *s\nk: 2.5\nh: false\ni: 255\ne: now a string\np: true\n",
+  "error": null
+ },
+ {
+  "name": "anchors",
+  "src": "base: &b\n  x: 1\nderived: *b\nlist: &l [1, 2]\nother: *l\ns: &s scalar\nt: *s\n",
+  "ops": [
+   [
+    "set",
+    [
+     "a"
+    ],
+    "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word more"
+   ]
+  ],
+  "output": "base: &b\n  x: 1\nderived: *b\nlist: &l [ 1, 2 ]\nother: *l\ns: &s scalar\nt: *s\na: word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  more\n",
+  "error": null
+ },
+ {
+  "name": "anchors",
+  "src": "base: &b\n  x: 1\nderived: *b\nlist: &l [1, 2]\nother: *l\ns: &s scalar\nt: *s\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: subagents,default"
+ },
+ {
+  "name": "tags",
+  "src": "a: !!str 123\nb: !!int \"7\"\nc: !custom value\nd: !!float 3\n",
+  "ops": [],
+  "output": "a: !!str \"123\"\nb: !!int 7\nc: !custom value\nd: !!float \"3\"\n",
+  "error": null
+ },
+ {
+  "name": "tags",
+  "src": "a: !!str 123\nb: !!int \"7\"\nc: !custom value\nd: !!float 3\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "a: !!str \"123\"\nb: !!int 7\nc: !custom value\nd: !!float \"3\"\nagent:\n  maxOutputTokens: 4096\n",
+  "error": null
+ },
+ {
+  "name": "tags",
+  "src": "a: !!str 123\nb: !!int \"7\"\nc: !custom value\nd: !!float 3\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxContextTokens"
+    ],
+    1000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "thinking"
+    ],
+    {
+     "enabled": true,
+     "budgetTokens": 2048
+    }
+   ]
+  ],
+  "output": "a: !!str \"123\"\nb: !!int 7\nc: !custom value\nd: !!float \"3\"\nagent:\n  maxContextTokens: 1000\n  thinking:\n    enabled: true\n    budgetTokens: 2048\n",
+  "error": null
+ },
+ {
+  "name": "tags",
+  "src": "a: !!str 123\nb: !!int \"7\"\nc: !custom value\nd: !!float 3\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ]
+  ],
+  "output": "a: !!str \"123\"\nb: !!int 7\nc: !custom value\nd: !!float \"3\"\nagent:\n  subagents:\n    default: provider/some-model-name\n",
+  "error": null
+ },
+ {
+  "name": "tags",
+  "src": "a: !!str 123\nb: !!int \"7\"\nc: !custom value\nd: !!float 3\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "extension",
+     "includeHookEvents"
+    ],
+    true
+   ]
+  ],
+  "output": "a: !!str \"123\"\nb: !!int 7\nc: !custom value\nd: !!float \"3\"\nagent:\n  subagents:\n    timeoutMs: 60000\nextension:\n  includeHookEvents: true\n",
+  "error": null
+ },
+ {
+  "name": "tags",
+  "src": "a: !!str 123\nb: !!int \"7\"\nc: !custom value\nd: !!float 3\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "maxOutputTokens"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: maxOutputTokens"
+ },
+ {
+  "name": "tags",
+  "src": "a: !!str 123\nb: !!int \"7\"\nc: !custom value\nd: !!float 3\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "subagents"
+    ]
+   ],
+   [
+    "delete",
+    [
+     "extension",
+     "includeHookEvents"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: subagents"
+ },
+ {
+  "name": "tags",
+  "src": "a: !!str 123\nb: !!int \"7\"\nc: !custom value\nd: !!float 3\n",
+  "ops": [
+   [
+    "set",
+    [
+     "extension",
+     "builtinPluginsEnabled"
+    ],
+    {
+     "alpha": true,
+     "beta gamma": false
+    }
+   ]
+  ],
+  "output": "a: !!str \"123\"\nb: !!int 7\nc: !custom value\nd: !!float \"3\"\nextension:\n  builtinPluginsEnabled:\n    alpha: true\n    beta gamma: false\n",
+  "error": null
+ },
+ {
+  "name": "tags",
+  "src": "a: !!str 123\nb: !!int \"7\"\nc: !custom value\nd: !!float 3\n",
+  "ops": [
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "a: !!str \"123\"\nb: !!int 7\nc: !custom value\nd: !!float \"3\"\ntools:\n  webSearch:\n    enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "tags",
+  "src": "a: !!str 123\nb: !!int \"7\"\nc: !custom value\nd: !!float 3\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "thinking"
+    ],
+    null
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: thinking"
+ },
+ {
+  "name": "tags",
+  "src": "a: !!str 123\nb: !!int \"7\"\nc: !custom value\nd: !!float 3\n",
+  "ops": [
+   [
+    "set",
+    [
+     "k"
+    ],
+    2.5
+   ],
+   [
+    "set",
+    [
+     "h"
+    ],
+    false
+   ],
+   [
+    "set",
+    [
+     "i"
+    ],
+    255
+   ],
+   [
+    "set",
+    [
+     "e"
+    ],
+    "now a string"
+   ],
+   [
+    "set",
+    [
+     "p"
+    ],
+    true
+   ]
+  ],
+  "output": "a: !!str \"123\"\nb: !!int 7\nc: !custom value\nd: !!float \"3\"\nk: 2.5\nh: false\ni: 255\ne: now a string\np: true\n",
+  "error": null
+ },
+ {
+  "name": "tags",
+  "src": "a: !!str 123\nb: !!int \"7\"\nc: !custom value\nd: !!float 3\n",
+  "ops": [
+   [
+    "set",
+    [
+     "a"
+    ],
+    "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word more"
+   ]
+  ],
+  "output": "a: !!str word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  word more\nb: !!int 7\nc: !custom value\nd: !!float \"3\"\n",
+  "error": null
+ },
+ {
+  "name": "tags",
+  "src": "a: !!str 123\nb: !!int \"7\"\nc: !custom value\nd: !!float 3\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: subagents,default"
+ },
+ {
+  "name": "longs",
+  "src": "a: word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\nb: \"word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\"\nc: >\n  word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\nlist:\n  - word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\n",
+  "ops": [],
+  "output": "a: word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\nb: \"word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\"\nc: >\n  word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\nlist:\n  - word word word word word word word word word word word word word word word\n    word word word word word word word word word word word word word word word\n",
+  "error": null
+ },
+ {
+  "name": "longs",
+  "src": "a: word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\nb: \"word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\"\nc: >\n  word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\nlist:\n  - word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "a: word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\nb: \"word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\"\nc: >\n  word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\nlist:\n  - word word word word word word word word word word word word word word word\n    word word word word word word word word word word word word word word word\nagent:\n  maxOutputTokens: 4096\n",
+  "error": null
+ },
+ {
+  "name": "longs",
+  "src": "a: word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\nb: \"word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\"\nc: >\n  word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\nlist:\n  - word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxContextTokens"
+    ],
+    1000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "thinking"
+    ],
+    {
+     "enabled": true,
+     "budgetTokens": 2048
+    }
+   ]
+  ],
+  "output": "a: word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\nb: \"word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\"\nc: >\n  word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\nlist:\n  - word word word word word word word word word word word word word word word\n    word word word word word word word word word word word word word word word\nagent:\n  maxContextTokens: 1000\n  thinking:\n    enabled: true\n    budgetTokens: 2048\n",
+  "error": null
+ },
+ {
+  "name": "longs",
+  "src": "a: word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\nb: \"word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\"\nc: >\n  word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\nlist:\n  - word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ]
+  ],
+  "output": "a: word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\nb: \"word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\"\nc: >\n  word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\nlist:\n  - word word word word word word word word word word word word word word word\n    word word word word word word word word word word word word word word word\nagent:\n  subagents:\n    default: provider/some-model-name\n",
+  "error": null
+ },
+ {
+  "name": "longs",
+  "src": "a: word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\nb: \"word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\"\nc: >\n  word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\nlist:\n  - word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "extension",
+     "includeHookEvents"
+    ],
+    true
+   ]
+  ],
+  "output": "a: word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\nb: \"word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\"\nc: >\n  word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\nlist:\n  - word word word word word word word word word word word word word word word\n    word word word word word word word word word word word word word word word\nagent:\n  subagents:\n    timeoutMs: 60000\nextension:\n  includeHookEvents: true\n",
+  "error": null
+ },
+ {
+  "name": "longs",
+  "src": "a: word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\nb: \"word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\"\nc: >\n  word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\nlist:\n  - word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "maxOutputTokens"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: maxOutputTokens"
+ },
+ {
+  "name": "longs",
+  "src": "a: word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\nb: \"word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\"\nc: >\n  word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\nlist:\n  - word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "subagents"
+    ]
+   ],
+   [
+    "delete",
+    [
+     "extension",
+     "includeHookEvents"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: subagents"
+ },
+ {
+  "name": "longs",
+  "src": "a: word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\nb: \"word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\"\nc: >\n  word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\nlist:\n  - word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\n",
+  "ops": [
+   [
+    "set",
+    [
+     "extension",
+     "builtinPluginsEnabled"
+    ],
+    {
+     "alpha": true,
+     "beta gamma": false
+    }
+   ]
+  ],
+  "output": "a: word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\nb: \"word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\"\nc: >\n  word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\nlist:\n  - word word word word word word word word word word word word word word word\n    word word word word word word word word word word word word word word word\nextension:\n  builtinPluginsEnabled:\n    alpha: true\n    beta gamma: false\n",
+  "error": null
+ },
+ {
+  "name": "longs",
+  "src": "a: word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\nb: \"word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\"\nc: >\n  word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\nlist:\n  - word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\n",
+  "ops": [
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "a: word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\nb: \"word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\"\nc: >\n  word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\nlist:\n  - word word word word word word word word word word word word word word word\n    word word word word word word word word word word word word word word word\ntools:\n  webSearch:\n    enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "longs",
+  "src": "a: word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\nb: \"word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\"\nc: >\n  word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\nlist:\n  - word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "thinking"
+    ],
+    null
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: thinking"
+ },
+ {
+  "name": "longs",
+  "src": "a: word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\nb: \"word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\"\nc: >\n  word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\nlist:\n  - word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\n",
+  "ops": [
+   [
+    "set",
+    [
+     "k"
+    ],
+    2.5
+   ],
+   [
+    "set",
+    [
+     "h"
+    ],
+    false
+   ],
+   [
+    "set",
+    [
+     "i"
+    ],
+    255
+   ],
+   [
+    "set",
+    [
+     "e"
+    ],
+    "now a string"
+   ],
+   [
+    "set",
+    [
+     "p"
+    ],
+    true
+   ]
+  ],
+  "output": "a: word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\nb: \"word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\"\nc: >\n  word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\nlist:\n  - word word word word word word word word word word word word word word word\n    word word word word word word word word word word word word word word word\nk: 2.5\nh: false\ni: 255\ne: now a string\np: true\n",
+  "error": null
+ },
+ {
+  "name": "longs",
+  "src": "a: word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\nb: \"word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\"\nc: >\n  word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\nlist:\n  - word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\n",
+  "ops": [
+   [
+    "set",
+    [
+     "a"
+    ],
+    "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word more"
+   ]
+  ],
+  "output": "a: word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  more\nb: \"word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\"\nc: >\n  word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\nlist:\n  - word word word word word word word word word word word word word word word\n    word word word word word word word word word word word word word word word\n",
+  "error": null
+ },
+ {
+  "name": "longs",
+  "src": "a: word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\nb: \"word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\"\nc: >\n  word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\nlist:\n  - word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: subagents,default"
+ },
+ {
+  "name": "doc",
+  "src": "---\na: 1\n...\n",
+  "ops": [],
+  "output": "---\na: 1\n...\n",
+  "error": null
+ },
+ {
+  "name": "doc",
+  "src": "---\na: 1\n...\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "---\na: 1\nagent:\n  maxOutputTokens: 4096\n...\n",
+  "error": null
+ },
+ {
+  "name": "doc",
+  "src": "---\na: 1\n...\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxContextTokens"
+    ],
+    1000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "thinking"
+    ],
+    {
+     "enabled": true,
+     "budgetTokens": 2048
+    }
+   ]
+  ],
+  "output": "---\na: 1\nagent:\n  maxContextTokens: 1000\n  thinking:\n    enabled: true\n    budgetTokens: 2048\n...\n",
+  "error": null
+ },
+ {
+  "name": "doc",
+  "src": "---\na: 1\n...\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ]
+  ],
+  "output": "---\na: 1\nagent:\n  subagents:\n    default: provider/some-model-name\n...\n",
+  "error": null
+ },
+ {
+  "name": "doc",
+  "src": "---\na: 1\n...\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "extension",
+     "includeHookEvents"
+    ],
+    true
+   ]
+  ],
+  "output": "---\na: 1\nagent:\n  subagents:\n    timeoutMs: 60000\nextension:\n  includeHookEvents: true\n...\n",
+  "error": null
+ },
+ {
+  "name": "doc",
+  "src": "---\na: 1\n...\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "maxOutputTokens"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: maxOutputTokens"
+ },
+ {
+  "name": "doc",
+  "src": "---\na: 1\n...\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "subagents"
+    ]
+   ],
+   [
+    "delete",
+    [
+     "extension",
+     "includeHookEvents"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: subagents"
+ },
+ {
+  "name": "doc",
+  "src": "---\na: 1\n...\n",
+  "ops": [
+   [
+    "set",
+    [
+     "extension",
+     "builtinPluginsEnabled"
+    ],
+    {
+     "alpha": true,
+     "beta gamma": false
+    }
+   ]
+  ],
+  "output": "---\na: 1\nextension:\n  builtinPluginsEnabled:\n    alpha: true\n    beta gamma: false\n...\n",
+  "error": null
+ },
+ {
+  "name": "doc",
+  "src": "---\na: 1\n...\n",
+  "ops": [
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "---\na: 1\ntools:\n  webSearch:\n    enabled: false\n...\n",
+  "error": null
+ },
+ {
+  "name": "doc",
+  "src": "---\na: 1\n...\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "thinking"
+    ],
+    null
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: thinking"
+ },
+ {
+  "name": "doc",
+  "src": "---\na: 1\n...\n",
+  "ops": [
+   [
+    "set",
+    [
+     "k"
+    ],
+    2.5
+   ],
+   [
+    "set",
+    [
+     "h"
+    ],
+    false
+   ],
+   [
+    "set",
+    [
+     "i"
+    ],
+    255
+   ],
+   [
+    "set",
+    [
+     "e"
+    ],
+    "now a string"
+   ],
+   [
+    "set",
+    [
+     "p"
+    ],
+    true
+   ]
+  ],
+  "output": "---\na: 1\nk: 2.5\nh: false\ni: 255\ne: now a string\np: true\n...\n",
+  "error": null
+ },
+ {
+  "name": "doc",
+  "src": "---\na: 1\n...\n",
+  "ops": [
+   [
+    "set",
+    [
+     "a"
+    ],
+    "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word more"
+   ]
+  ],
+  "output": "---\na: word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  more\n...\n",
+  "error": null
+ },
+ {
+  "name": "doc",
+  "src": "---\na: 1\n...\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: subagents,default"
+ },
+ {
+  "name": "docComment",
+  "src": "a: 1\n\n# final\n",
+  "ops": [],
+  "output": "a: 1\n\n# final\n",
+  "error": null
+ },
+ {
+  "name": "docComment",
+  "src": "a: 1\n\n# final\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "a: 1\nagent:\n  maxOutputTokens: 4096\n\n# final\n",
+  "error": null
+ },
+ {
+  "name": "docComment",
+  "src": "a: 1\n\n# final\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxContextTokens"
+    ],
+    1000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "thinking"
+    ],
+    {
+     "enabled": true,
+     "budgetTokens": 2048
+    }
+   ]
+  ],
+  "output": "a: 1\nagent:\n  maxContextTokens: 1000\n  thinking:\n    enabled: true\n    budgetTokens: 2048\n\n# final\n",
+  "error": null
+ },
+ {
+  "name": "docComment",
+  "src": "a: 1\n\n# final\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ]
+  ],
+  "output": "a: 1\nagent:\n  subagents:\n    default: provider/some-model-name\n\n# final\n",
+  "error": null
+ },
+ {
+  "name": "docComment",
+  "src": "a: 1\n\n# final\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "extension",
+     "includeHookEvents"
+    ],
+    true
+   ]
+  ],
+  "output": "a: 1\nagent:\n  subagents:\n    timeoutMs: 60000\nextension:\n  includeHookEvents: true\n\n# final\n",
+  "error": null
+ },
+ {
+  "name": "docComment",
+  "src": "a: 1\n\n# final\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "maxOutputTokens"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: maxOutputTokens"
+ },
+ {
+  "name": "docComment",
+  "src": "a: 1\n\n# final\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "subagents"
+    ]
+   ],
+   [
+    "delete",
+    [
+     "extension",
+     "includeHookEvents"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: subagents"
+ },
+ {
+  "name": "docComment",
+  "src": "a: 1\n\n# final\n",
+  "ops": [
+   [
+    "set",
+    [
+     "extension",
+     "builtinPluginsEnabled"
+    ],
+    {
+     "alpha": true,
+     "beta gamma": false
+    }
+   ]
+  ],
+  "output": "a: 1\nextension:\n  builtinPluginsEnabled:\n    alpha: true\n    beta gamma: false\n\n# final\n",
+  "error": null
+ },
+ {
+  "name": "docComment",
+  "src": "a: 1\n\n# final\n",
+  "ops": [
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "a: 1\ntools:\n  webSearch:\n    enabled: false\n\n# final\n",
+  "error": null
+ },
+ {
+  "name": "docComment",
+  "src": "a: 1\n\n# final\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "thinking"
+    ],
+    null
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: thinking"
+ },
+ {
+  "name": "docComment",
+  "src": "a: 1\n\n# final\n",
+  "ops": [
+   [
+    "set",
+    [
+     "k"
+    ],
+    2.5
+   ],
+   [
+    "set",
+    [
+     "h"
+    ],
+    false
+   ],
+   [
+    "set",
+    [
+     "i"
+    ],
+    255
+   ],
+   [
+    "set",
+    [
+     "e"
+    ],
+    "now a string"
+   ],
+   [
+    "set",
+    [
+     "p"
+    ],
+    true
+   ]
+  ],
+  "output": "a: 1\nk: 2.5\nh: false\ni: 255\ne: now a string\np: true\n\n# final\n",
+  "error": null
+ },
+ {
+  "name": "docComment",
+  "src": "a: 1\n\n# final\n",
+  "ops": [
+   [
+    "set",
+    [
+     "a"
+    ],
+    "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word more"
+   ]
+  ],
+  "output": "a: word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  more\n\n# final\n",
+  "error": null
+ },
+ {
+  "name": "docComment",
+  "src": "a: 1\n\n# final\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: subagents,default"
+ },
+ {
+  "name": "nested",
+  "src": "agent:\n  subagents:\n    default: inherit\n    maxDepth: 2\n  thinking:\n    enabled: false\nextension:\n  builtinPluginsEnabled:\n    one: true\n",
+  "ops": [],
+  "output": "agent:\n  subagents:\n    default: inherit\n    maxDepth: 2\n  thinking:\n    enabled: false\nextension:\n  builtinPluginsEnabled:\n    one: true\n",
+  "error": null
+ },
+ {
+  "name": "nested",
+  "src": "agent:\n  subagents:\n    default: inherit\n    maxDepth: 2\n  thinking:\n    enabled: false\nextension:\n  builtinPluginsEnabled:\n    one: true\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "agent:\n  subagents:\n    default: inherit\n    maxDepth: 2\n  thinking:\n    enabled: false\n  maxOutputTokens: 4096\nextension:\n  builtinPluginsEnabled:\n    one: true\n",
+  "error": null
+ },
+ {
+  "name": "nested",
+  "src": "agent:\n  subagents:\n    default: inherit\n    maxDepth: 2\n  thinking:\n    enabled: false\nextension:\n  builtinPluginsEnabled:\n    one: true\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxContextTokens"
+    ],
+    1000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "thinking"
+    ],
+    {
+     "enabled": true,
+     "budgetTokens": 2048
+    }
+   ]
+  ],
+  "output": "agent:\n  subagents:\n    default: inherit\n    maxDepth: 2\n  thinking:\n    enabled: true\n    budgetTokens: 2048\n  maxContextTokens: 1000\nextension:\n  builtinPluginsEnabled:\n    one: true\n",
+  "error": null
+ },
+ {
+  "name": "nested",
+  "src": "agent:\n  subagents:\n    default: inherit\n    maxDepth: 2\n  thinking:\n    enabled: false\nextension:\n  builtinPluginsEnabled:\n    one: true\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ]
+  ],
+  "output": "agent:\n  subagents:\n    default: provider/some-model-name\n    maxDepth: 2\n  thinking:\n    enabled: false\nextension:\n  builtinPluginsEnabled:\n    one: true\n",
+  "error": null
+ },
+ {
+  "name": "nested",
+  "src": "agent:\n  subagents:\n    default: inherit\n    maxDepth: 2\n  thinking:\n    enabled: false\nextension:\n  builtinPluginsEnabled:\n    one: true\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "extension",
+     "includeHookEvents"
+    ],
+    true
+   ]
+  ],
+  "output": "agent:\n  subagents:\n    default: inherit\n    maxDepth: 2\n    timeoutMs: 60000\n  thinking:\n    enabled: false\nextension:\n  builtinPluginsEnabled:\n    one: true\n  includeHookEvents: true\n",
+  "error": null
+ },
+ {
+  "name": "nested",
+  "src": "agent:\n  subagents:\n    default: inherit\n    maxDepth: 2\n  thinking:\n    enabled: false\nextension:\n  builtinPluginsEnabled:\n    one: true\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "maxOutputTokens"
+    ]
+   ]
+  ],
+  "output": "agent:\n  subagents:\n    default: inherit\n    maxDepth: 2\n  thinking:\n    enabled: false\nextension:\n  builtinPluginsEnabled:\n    one: true\n",
+  "error": null
+ },
+ {
+  "name": "nested",
+  "src": "agent:\n  subagents:\n    default: inherit\n    maxDepth: 2\n  thinking:\n    enabled: false\nextension:\n  builtinPluginsEnabled:\n    one: true\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "subagents"
+    ]
+   ],
+   [
+    "delete",
+    [
+     "extension",
+     "includeHookEvents"
+    ]
+   ]
+  ],
+  "output": "agent:\n  thinking:\n    enabled: false\nextension:\n  builtinPluginsEnabled:\n    one: true\n",
+  "error": null
+ },
+ {
+  "name": "nested",
+  "src": "agent:\n  subagents:\n    default: inherit\n    maxDepth: 2\n  thinking:\n    enabled: false\nextension:\n  builtinPluginsEnabled:\n    one: true\n",
+  "ops": [
+   [
+    "set",
+    [
+     "extension",
+     "builtinPluginsEnabled"
+    ],
+    {
+     "alpha": true,
+     "beta gamma": false
+    }
+   ]
+  ],
+  "output": "agent:\n  subagents:\n    default: inherit\n    maxDepth: 2\n  thinking:\n    enabled: false\nextension:\n  builtinPluginsEnabled:\n    alpha: true\n    beta gamma: false\n",
+  "error": null
+ },
+ {
+  "name": "nested",
+  "src": "agent:\n  subagents:\n    default: inherit\n    maxDepth: 2\n  thinking:\n    enabled: false\nextension:\n  builtinPluginsEnabled:\n    one: true\n",
+  "ops": [
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "agent:\n  subagents:\n    default: inherit\n    maxDepth: 2\n  thinking:\n    enabled: false\nextension:\n  builtinPluginsEnabled:\n    one: true\ntools:\n  webSearch:\n    enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "nested",
+  "src": "agent:\n  subagents:\n    default: inherit\n    maxDepth: 2\n  thinking:\n    enabled: false\nextension:\n  builtinPluginsEnabled:\n    one: true\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "thinking"
+    ],
+    null
+   ]
+  ],
+  "output": "agent:\n  subagents:\n    default: inherit\n    maxDepth: 2\nextension:\n  builtinPluginsEnabled:\n    one: true\n",
+  "error": null
+ },
+ {
+  "name": "nested",
+  "src": "agent:\n  subagents:\n    default: inherit\n    maxDepth: 2\n  thinking:\n    enabled: false\nextension:\n  builtinPluginsEnabled:\n    one: true\n",
+  "ops": [
+   [
+    "set",
+    [
+     "k"
+    ],
+    2.5
+   ],
+   [
+    "set",
+    [
+     "h"
+    ],
+    false
+   ],
+   [
+    "set",
+    [
+     "i"
+    ],
+    255
+   ],
+   [
+    "set",
+    [
+     "e"
+    ],
+    "now a string"
+   ],
+   [
+    "set",
+    [
+     "p"
+    ],
+    true
+   ]
+  ],
+  "output": "agent:\n  subagents:\n    default: inherit\n    maxDepth: 2\n  thinking:\n    enabled: false\nextension:\n  builtinPluginsEnabled:\n    one: true\nk: 2.5\nh: false\ni: 255\ne: now a string\np: true\n",
+  "error": null
+ },
+ {
+  "name": "nested",
+  "src": "agent:\n  subagents:\n    default: inherit\n    maxDepth: 2\n  thinking:\n    enabled: false\nextension:\n  builtinPluginsEnabled:\n    one: true\n",
+  "ops": [
+   [
+    "set",
+    [
+     "a"
+    ],
+    "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word more"
+   ]
+  ],
+  "output": "agent:\n  subagents:\n    default: inherit\n    maxDepth: 2\n  thinking:\n    enabled: false\nextension:\n  builtinPluginsEnabled:\n    one: true\na: word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  more\n",
+  "error": null
+ },
+ {
+  "name": "nested",
+  "src": "agent:\n  subagents:\n    default: inherit\n    maxDepth: 2\n  thinking:\n    enabled: false\nextension:\n  builtinPluginsEnabled:\n    one: true\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ]
+   ]
+  ],
+  "output": "agent:\n  subagents:\n    maxDepth: 2\n  thinking:\n    enabled: false\nextension:\n  builtinPluginsEnabled:\n    one: true\n",
+  "error": null
+ },
+ {
+  "name": "emptyMap",
+  "src": "agent: {}\nextension:\n",
+  "ops": [],
+  "output": "agent: {}\nextension:\n",
+  "error": null
+ },
+ {
+  "name": "emptyMap",
+  "src": "agent: {}\nextension:\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "agent: { maxOutputTokens: 4096 }\nextension:\n",
+  "error": null
+ },
+ {
+  "name": "emptyMap",
+  "src": "agent: {}\nextension:\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxContextTokens"
+    ],
+    1000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "thinking"
+    ],
+    {
+     "enabled": true,
+     "budgetTokens": 2048
+    }
+   ]
+  ],
+  "output": "agent: { maxContextTokens: 1000, thinking: { enabled: true, budgetTokens: 2048 } }\nextension:\n",
+  "error": null
+ },
+ {
+  "name": "emptyMap",
+  "src": "agent: {}\nextension:\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ]
+  ],
+  "output": "agent: { subagents: { default: provider/some-model-name } }\nextension:\n",
+  "error": null
+ },
+ {
+  "name": "emptyMap",
+  "src": "agent: {}\nextension:\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "extension",
+     "includeHookEvents"
+    ],
+    true
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at extension. Remaining path: includeHookEvents"
+ },
+ {
+  "name": "emptyMap",
+  "src": "agent: {}\nextension:\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "maxOutputTokens"
+    ]
+   ]
+  ],
+  "output": "agent: {}\nextension:\n",
+  "error": null
+ },
+ {
+  "name": "emptyMap",
+  "src": "agent: {}\nextension:\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "subagents"
+    ]
+   ],
+   [
+    "delete",
+    [
+     "extension",
+     "includeHookEvents"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at extension. Remaining path: includeHookEvents"
+ },
+ {
+  "name": "emptyMap",
+  "src": "agent: {}\nextension:\n",
+  "ops": [
+   [
+    "set",
+    [
+     "extension",
+     "builtinPluginsEnabled"
+    ],
+    {
+     "alpha": true,
+     "beta gamma": false
+    }
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at extension. Remaining path: builtinPluginsEnabled"
+ },
+ {
+  "name": "emptyMap",
+  "src": "agent: {}\nextension:\n",
+  "ops": [
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "agent: {}\nextension:\ntools:\n  webSearch:\n    enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "emptyMap",
+  "src": "agent: {}\nextension:\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "thinking"
+    ],
+    null
+   ]
+  ],
+  "output": "agent: {}\nextension:\n",
+  "error": null
+ },
+ {
+  "name": "emptyMap",
+  "src": "agent: {}\nextension:\n",
+  "ops": [
+   [
+    "set",
+    [
+     "k"
+    ],
+    2.5
+   ],
+   [
+    "set",
+    [
+     "h"
+    ],
+    false
+   ],
+   [
+    "set",
+    [
+     "i"
+    ],
+    255
+   ],
+   [
+    "set",
+    [
+     "e"
+    ],
+    "now a string"
+   ],
+   [
+    "set",
+    [
+     "p"
+    ],
+    true
+   ]
+  ],
+  "output": "agent: {}\nextension:\nk: 2.5\nh: false\ni: 255\ne: now a string\np: true\n",
+  "error": null
+ },
+ {
+  "name": "emptyMap",
+  "src": "agent: {}\nextension:\n",
+  "ops": [
+   [
+    "set",
+    [
+     "a"
+    ],
+    "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word more"
+   ]
+  ],
+  "output": "agent: {}\nextension:\na: word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  more\n",
+  "error": null
+ },
+ {
+  "name": "emptyMap",
+  "src": "agent: {}\nextension:\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at subagents. Remaining path: default"
+ },
+ {
+  "name": "keep",
+  "src": "a: |+\n  kept\n\nb: 1\n",
+  "ops": [],
+  "output": "a: |+\n  kept\n\nb: 1\n",
+  "error": null
+ },
+ {
+  "name": "keep",
+  "src": "a: |+\n  kept\n\nb: 1\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "a: |+\n  kept\n\nb: 1\nagent:\n  maxOutputTokens: 4096\n",
+  "error": null
+ },
+ {
+  "name": "keep",
+  "src": "a: |+\n  kept\n\nb: 1\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxContextTokens"
+    ],
+    1000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "thinking"
+    ],
+    {
+     "enabled": true,
+     "budgetTokens": 2048
+    }
+   ]
+  ],
+  "output": "a: |+\n  kept\n\nb: 1\nagent:\n  maxContextTokens: 1000\n  thinking:\n    enabled: true\n    budgetTokens: 2048\n",
+  "error": null
+ },
+ {
+  "name": "keep",
+  "src": "a: |+\n  kept\n\nb: 1\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ]
+  ],
+  "output": "a: |+\n  kept\n\nb: 1\nagent:\n  subagents:\n    default: provider/some-model-name\n",
+  "error": null
+ },
+ {
+  "name": "keep",
+  "src": "a: |+\n  kept\n\nb: 1\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "extension",
+     "includeHookEvents"
+    ],
+    true
+   ]
+  ],
+  "output": "a: |+\n  kept\n\nb: 1\nagent:\n  subagents:\n    timeoutMs: 60000\nextension:\n  includeHookEvents: true\n",
+  "error": null
+ },
+ {
+  "name": "keep",
+  "src": "a: |+\n  kept\n\nb: 1\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "maxOutputTokens"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: maxOutputTokens"
+ },
+ {
+  "name": "keep",
+  "src": "a: |+\n  kept\n\nb: 1\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "subagents"
+    ]
+   ],
+   [
+    "delete",
+    [
+     "extension",
+     "includeHookEvents"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: subagents"
+ },
+ {
+  "name": "keep",
+  "src": "a: |+\n  kept\n\nb: 1\n",
+  "ops": [
+   [
+    "set",
+    [
+     "extension",
+     "builtinPluginsEnabled"
+    ],
+    {
+     "alpha": true,
+     "beta gamma": false
+    }
+   ]
+  ],
+  "output": "a: |+\n  kept\n\nb: 1\nextension:\n  builtinPluginsEnabled:\n    alpha: true\n    beta gamma: false\n",
+  "error": null
+ },
+ {
+  "name": "keep",
+  "src": "a: |+\n  kept\n\nb: 1\n",
+  "ops": [
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "a: |+\n  kept\n\nb: 1\ntools:\n  webSearch:\n    enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "keep",
+  "src": "a: |+\n  kept\n\nb: 1\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "thinking"
+    ],
+    null
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: thinking"
+ },
+ {
+  "name": "keep",
+  "src": "a: |+\n  kept\n\nb: 1\n",
+  "ops": [
+   [
+    "set",
+    [
+     "k"
+    ],
+    2.5
+   ],
+   [
+    "set",
+    [
+     "h"
+    ],
+    false
+   ],
+   [
+    "set",
+    [
+     "i"
+    ],
+    255
+   ],
+   [
+    "set",
+    [
+     "e"
+    ],
+    "now a string"
+   ],
+   [
+    "set",
+    [
+     "p"
+    ],
+    true
+   ]
+  ],
+  "output": "a: |+\n  kept\n\nb: 1\nk: 2.5\nh: false\ni: 255\ne: now a string\np: true\n",
+  "error": null
+ },
+ {
+  "name": "keep",
+  "src": "a: |+\n  kept\n\nb: 1\n",
+  "ops": [
+   [
+    "set",
+    [
+     "a"
+    ],
+    "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word more"
+   ]
+  ],
+  "output": "a: |-\n  word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word more\nb: 1\n",
+  "error": null
+ },
+ {
+  "name": "keep",
+  "src": "a: |+\n  kept\n\nb: 1\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: subagents,default"
+ },
+ {
+  "name": "multiDoc",
+  "src": "%YAML 1.2\n---\na: 1\n",
+  "ops": [],
+  "output": "%YAML 1.2\n---\na: 1\n",
+  "error": null
+ },
+ {
+  "name": "multiDoc",
+  "src": "%YAML 1.2\n---\na: 1\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "%YAML 1.2\n---\na: 1\nagent:\n  maxOutputTokens: 4096\n",
+  "error": null
+ },
+ {
+  "name": "multiDoc",
+  "src": "%YAML 1.2\n---\na: 1\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxContextTokens"
+    ],
+    1000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "thinking"
+    ],
+    {
+     "enabled": true,
+     "budgetTokens": 2048
+    }
+   ]
+  ],
+  "output": "%YAML 1.2\n---\na: 1\nagent:\n  maxContextTokens: 1000\n  thinking:\n    enabled: true\n    budgetTokens: 2048\n",
+  "error": null
+ },
+ {
+  "name": "multiDoc",
+  "src": "%YAML 1.2\n---\na: 1\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ]
+  ],
+  "output": "%YAML 1.2\n---\na: 1\nagent:\n  subagents:\n    default: provider/some-model-name\n",
+  "error": null
+ },
+ {
+  "name": "multiDoc",
+  "src": "%YAML 1.2\n---\na: 1\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "extension",
+     "includeHookEvents"
+    ],
+    true
+   ]
+  ],
+  "output": "%YAML 1.2\n---\na: 1\nagent:\n  subagents:\n    timeoutMs: 60000\nextension:\n  includeHookEvents: true\n",
+  "error": null
+ },
+ {
+  "name": "multiDoc",
+  "src": "%YAML 1.2\n---\na: 1\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "maxOutputTokens"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: maxOutputTokens"
+ },
+ {
+  "name": "multiDoc",
+  "src": "%YAML 1.2\n---\na: 1\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "subagents"
+    ]
+   ],
+   [
+    "delete",
+    [
+     "extension",
+     "includeHookEvents"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: subagents"
+ },
+ {
+  "name": "multiDoc",
+  "src": "%YAML 1.2\n---\na: 1\n",
+  "ops": [
+   [
+    "set",
+    [
+     "extension",
+     "builtinPluginsEnabled"
+    ],
+    {
+     "alpha": true,
+     "beta gamma": false
+    }
+   ]
+  ],
+  "output": "%YAML 1.2\n---\na: 1\nextension:\n  builtinPluginsEnabled:\n    alpha: true\n    beta gamma: false\n",
+  "error": null
+ },
+ {
+  "name": "multiDoc",
+  "src": "%YAML 1.2\n---\na: 1\n",
+  "ops": [
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "%YAML 1.2\n---\na: 1\ntools:\n  webSearch:\n    enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "multiDoc",
+  "src": "%YAML 1.2\n---\na: 1\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "thinking"
+    ],
+    null
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: thinking"
+ },
+ {
+  "name": "multiDoc",
+  "src": "%YAML 1.2\n---\na: 1\n",
+  "ops": [
+   [
+    "set",
+    [
+     "k"
+    ],
+    2.5
+   ],
+   [
+    "set",
+    [
+     "h"
+    ],
+    false
+   ],
+   [
+    "set",
+    [
+     "i"
+    ],
+    255
+   ],
+   [
+    "set",
+    [
+     "e"
+    ],
+    "now a string"
+   ],
+   [
+    "set",
+    [
+     "p"
+    ],
+    true
+   ]
+  ],
+  "output": "%YAML 1.2\n---\na: 1\nk: 2.5\nh: false\ni: 255\ne: now a string\np: true\n",
+  "error": null
+ },
+ {
+  "name": "multiDoc",
+  "src": "%YAML 1.2\n---\na: 1\n",
+  "ops": [
+   [
+    "set",
+    [
+     "a"
+    ],
+    "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word more"
+   ]
+  ],
+  "output": "%YAML 1.2\n---\na: word word word word word word word word word word word word word word word\n  word word word word word word word word word word word word word word word\n  more\n",
+  "error": null
+ },
+ {
+  "name": "multiDoc",
+  "src": "%YAML 1.2\n---\na: 1\n",
+  "ops": [
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ]
+   ]
+  ],
+  "output": null,
+  "error": "Expected YAML collection at agent. Remaining path: subagents,default"
+ }
+]

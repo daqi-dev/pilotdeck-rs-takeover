@@ -167,7 +167,14 @@ impl Requests {
     }
 
     async fn management(&self, method: &str, params: &JsValue) -> Result<JsValue, RequestError> {
-        let project_root = self.management_project(params)?;
+        // The one SkillManager of createLocalGateway serves every skill_*
+        // call; `projectKey` is the manager's own path input (project scope
+        // root), never resolved through the project registry.
+        let project_root = if method.starts_with("skill_") {
+            self.options.project.clone()
+        } else {
+            self.management_project(params)?
+        };
         if matches!(method, "manager_sessions" | "manager_browsers") {
             let gateway = ManagerGateway::from_parts(
                 Some(Arc::new(TranscriptSessionCatalog::new(Arc::new(

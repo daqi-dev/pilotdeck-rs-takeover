@@ -658,6 +658,8 @@ impl Requests {
                 ));
             }
         };
+        // `this.resolve(input.projectKey)` (ProjectRuntimeRegistry.ts:1095).
+        let project = self.route_project(params)?;
         if let Some(name) = &name {
             let styles = self.plugin_styles().await?;
             if !styles
@@ -678,12 +680,19 @@ impl Requests {
                 .set_output_style(&session_key, name.clone()),
             None => self.session_overrides.clear_output_style(&session_key),
         }
+        self.session_overrides
+            .mark_sdk_config(&session_key, project);
         // The TS callback closes with `sdk_output_style_changed` so the next
         // session composes the style's appendSystemPrompt.
+        // `this.gateway?.closeSession(...)` (InProcessGateway.ts:2049-2054):
+        // the owner, the session's interactions and its live permission mode.
         self.owner
             .close(&session_key)
             .await
             .map_err(runtime_error)?;
+        self.interactions
+            .close_session(&session_key, &"sdk_output_style_changed".into());
+        self.session_overrides.clear_live_mode(&session_key);
         let mut result = pilotdeck_protocol::JsObject::new();
         result.insert("applied".into(), JsValue::Bool(true));
         if let Some(name) = &name {

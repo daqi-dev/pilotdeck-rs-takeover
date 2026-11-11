@@ -190,6 +190,7 @@ async fn observe(name: &str) -> (Value, Value) {
         session_overrides: Arc::default(),
     };
     let services = services::Services {
+        config_store: None,
         options: options.clone(),
         env: options.environment(Env::new()),
         project: Arc::new(ProjectRuntimeRegistry::new(

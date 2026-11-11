@@ -37,6 +37,14 @@ impl SettingsError {
             message: message.into(),
         }
     }
+    /// An error carrying a runtime-determined structured code.
+    pub fn coded(code: &str, message: impl Into<JsString>) -> Self {
+        Self {
+            code: Some(JsString::from(code)),
+            name: "Error",
+            message: message.into(),
+        }
+    }
     /// A JS throw without a structured code (`TypeError`, `RangeError`, ...).
     pub fn plain(name: &'static str, message: impl Into<JsString>) -> Self {
         Self {

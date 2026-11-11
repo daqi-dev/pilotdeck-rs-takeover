@@ -157,12 +157,22 @@ fn invalid_key(key: &JsValue) -> RequestError {
     }
 }
 
+/// `registry.resolve(input.projectKey)`: runtime routing, no registration
+/// check.
+pub(crate) fn route_project_with(
+    options: &Options,
+    registry: &ProjectRuntimeRegistry,
+    params: &JsValue,
+) -> Result<PathBuf, RequestError> {
+    let key = requested_key(params).map_err(invalid_key)?;
+    stage_runtime(options, registry, key).map_err(RequestError::new)
+}
+
 impl Requests {
     /// `registry.resolve(input.projectKey)` for a request: runtime routing,
     /// no registration check.
     pub(crate) fn route_project(&self, params: &JsValue) -> Result<PathBuf, RequestError> {
-        let key = requested_key(params).map_err(invalid_key)?;
-        stage_runtime(&self.options, &self.project, key).map_err(RequestError::new)
+        route_project_with(&self.options, &self.project, params)
     }
 
     /// `dialog.projects.resolveProjectKey(input.projectKey ??
