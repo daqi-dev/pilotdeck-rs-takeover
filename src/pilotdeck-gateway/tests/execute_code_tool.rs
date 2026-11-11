@@ -219,31 +219,48 @@ fn a_nested_call_runs_through_the_runtime_under_a_derived_id() {
     );
 }
 
-/// Security review: `timeout_seconds` must bound the tool call. A grandchild
-/// that leaves the process group (`start_new_session=True`) survives the group
-/// kill and keeps the inherited stdout pipe open, so the tool only returns
-/// once that grandchild exits. The baseline behaves the same way
-/// (NodeCodeRuntimePort.ts:125-139 waits for the stdout stream to end).
+fn call_with_timeout(code: &str, timeout_seconds: f64) -> ToolCall {
+    ToolCall {
+        id: "outer".into(),
+        name: "execute_code".into(),
+        input: JsValue::Object(object([
+            ("code", JsValue::from(code)),
+            ("timeout_seconds", JsValue::Number(timeout_seconds)),
+        ])),
+    }
+}
+
+/// The pid a script printed as `pid=<n>` on its own line.
+fn printed_pid(output: &str) -> rustix::process::Pid {
+    let pid = output
+        .lines()
+        .find_map(|line| line.strip_prefix("pid="))
+        .and_then(|pid| pid.trim().parse::<i32>().ok())
+        .unwrap_or_else(|| panic!("no pid line in {output:?}"));
+    rustix::process::Pid::from_raw(pid).unwrap()
+}
+
+fn alive(pid: rustix::process::Pid) -> bool {
+    rustix::process::test_kill_process(pid).is_ok()
+}
+
+/// Deliberate deviation from the baseline (execute_code.rs module docs): the
+/// baseline only signals the process group and resolves at stream `end`, so a
+/// grandchild that left the group (`start_new_session=True`) and holds stdout
+/// keeps the same call hanging until that grandchild exits
+/// (NodeCodeRuntimePort.ts:125-139,207-222). Rust deliberately does not: the
+/// timeout bounds the call, and the grandchild, found in the process tree
+/// before the group is signalled, is killed with it.
 #[test]
-#[ignore = "secreview: execute_code timeout is not enforced when a detached grandchild holds stdout"]
-fn secreview_execute_code_timeout_bounded_despite_detached_grandchild() {
+fn execute_code_timeout_bounded_despite_detached_grandchild() {
     let cwd = Workdir::new();
     let runtime = runtime(Arc::default());
     let started = Instant::now();
     let result = block_on(runtime.execute(
-        ToolCall {
-            id: "outer".into(),
-            name: "execute_code".into(),
-            input: JsValue::Object(object([
-                (
-                    "code",
-                    JsValue::from(
-                        "import subprocess, time\nsubprocess.Popen(['sleep', '20'], start_new_session=True)\nprint('started', flush=True)\ntime.sleep(60)\n",
-                    ),
-                ),
-                ("timeout_seconds", JsValue::Number(2.0)),
-            ])),
-        },
+        call_with_timeout(
+            "import subprocess, time\np = subprocess.Popen(['sleep', '20'], start_new_session=True)\nprint('pid=%d' % p.pid, flush=True)\ntime.sleep(60)\n",
+            2.0,
+        ),
         context(&cwd, None),
     ))
     .unwrap();
@@ -253,5 +270,54 @@ fn secreview_execute_code_timeout_bounded_despite_detached_grandchild() {
     assert!(
         elapsed < Duration::from_secs(8),
         "timeout_seconds=2 but the call took {elapsed:?}"
+    );
+    let grandchild = printed_pid(&text(data.get("output")));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while alive(grandchild) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let survived = alive(grandchild);
+    if survived {
+        let _ = rustix::process::kill_process(grandchild, rustix::process::Signal::KILL);
+    }
+    assert!(
+        !survived,
+        "the detached grandchild outlived the timeout kill"
+    );
+}
+
+/// Same deviation, normal exit: the baseline clears its timeout when the
+/// script exits and then waits for the grandchild's EOF without a bound. Rust
+/// gives the pipes a short grace period and settles with what was read. The
+/// grandchild is left running, as the baseline leaves a finished script's
+/// background processes (it has been re-parented and is not ours to find).
+#[test]
+fn execute_code_normal_exit_not_held_by_detached_grandchild() {
+    let cwd = Workdir::new();
+    let runtime = runtime(Arc::default());
+    let started = Instant::now();
+    let result = block_on(runtime.execute(
+        call_with_timeout(
+            "import subprocess\np = subprocess.Popen(['sleep', '20'], start_new_session=True)\nprint('pid=%d' % p.pid, flush=True)\nprint('done')\n",
+            30.0,
+        ),
+        context(&cwd, None),
+    ))
+    .unwrap();
+    let elapsed = started.elapsed();
+    let data = result.get("data").unwrap();
+    let output = text(data.get("output"));
+    let grandchild = printed_pid(&output);
+    let survived = alive(grandchild);
+    let _ = rustix::process::kill_process(grandchild, rustix::process::Signal::KILL);
+    assert_eq!(text(data.get("status")), "success", "{data:?}");
+    assert!(output.ends_with("done\n"), "{output:?}");
+    assert!(
+        elapsed < Duration::from_secs(8),
+        "the call waited for the grandchild: {elapsed:?}"
+    );
+    assert!(
+        survived,
+        "a finished script's background process is left alone"
     );
 }

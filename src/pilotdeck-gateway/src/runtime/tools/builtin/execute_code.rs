@@ -10,8 +10,32 @@
 //! SIGKILL 500 ms later (`NodeCodeRuntimePort.ts:207-222`). The run settles
 //! when the interpreter has exited and both pipes reached EOF.
 //!
-//! Differences from the baseline, all outside what a well-formed script can
-//! observe:
+//! Deliberate deviation (security review): a descendant that leaves the
+//! group (`setsid`, `start_new_session=True`) and keeps the inherited
+//! stdout/stderr open. The baseline only signals the group and resolves at
+//! stream `end`, so for the same input it hangs until that descendant exits —
+//! past `timeout_seconds`, and with no bound at all once the interpreter exits
+//! normally, because the exit handler clears the timeout
+//! (`NodeCodeRuntimePort.ts:125-139,207-222`). Rust deliberately does not
+//! reproduce that:
+//! - once the interpreter has exited, the pipes get [`PIPE_GRACE`] to reach
+//!   EOF; then the run settles with what was read (later output is dropped);
+//! - on timeout/abort the interpreter's process tree is snapshotted before
+//!   the group is signalled, and every descendant found there gets the same
+//!   SIGTERM / SIGKILL as the group, so a detached descendant alive at that
+//!   moment is reaped too. Best effort: one that has already been re-parented
+//!   (e.g. left behind by a script that exited normally), or a platform
+//!   without `/proc` or `ps`, is not found; the grace period still bounds the
+//!   call. PIDs are signalled from that one snapshot, so a PID reused within
+//!   the 500 ms escalation window could be hit;
+//! - after a timeout/abort the call returns at most [`SETTLE_BOUND`] after
+//!   the SIGKILL even if the interpreter itself never exits.
+//!
+//! A script without such a descendant sees EOF at exit, so its output, status
+//! and duration are unchanged.
+//!
+//! Other differences from the baseline, all outside what a well-formed script
+//! can observe:
 //! - RPC connections are tasks owned by the tool future. When the script is
 //!   gone (exit, timeout, abort) an in-flight nested call is dropped; the
 //!   baseline leaves it running detached and discards its answer.
@@ -73,6 +97,13 @@ const BASE_ALLOWED_TOOLS: [&str; 7] = [
 ];
 /// `killProcess(child, true)`'s escalation delay.
 const KILL_AFTER: Duration = Duration::from_millis(500);
+/// How long the pipes may stay open after the interpreter has exited. A
+/// deliberate deviation: the baseline waits for EOF without a bound (see the
+/// module docs).
+const PIPE_GRACE: Duration = Duration::from_millis(200);
+/// Upper bound between the escalated SIGKILL and settling, for an
+/// interpreter that does not exit even then.
+const SETTLE_BOUND: Duration = Duration::from_secs(2);
 
 const INPUT_SCHEMA: &str = r#"{"type":"object","required":["code"],"additionalProperties":false,"properties":{"code":{"type":"string","description":"Python 3 source code to execute. Use `from pilotdeck_tools import ...` to call allowed PilotDeck tools."},"description":{"type":"string","description":"Optional human-readable note; ignored by execution."},"timeout_seconds":{"type":"integer","description":"Maximum execution time in seconds. Defaults to 300; maximum 300."},"max_tool_calls":{"type":"integer","description":"Maximum number of PilotDeck tool calls the script may make. Defaults to 50; maximum 50."}}}"#;
 
@@ -1069,6 +1100,14 @@ async fn run_python(
     let mut timed_out = false;
     let mut cancelled = false;
     let mut status: Option<std::process::ExitStatus> = None;
+    // Deliberate deviation (module docs): the baseline waits for both streams
+    // to end however long a detached descendant keeps them open; with the
+    // same input it hangs until that descendant exits.
+    let mut drain_until: Option<tokio::time::Instant> = None;
+    let mut settle_by: Option<tokio::time::Instant> = None;
+    // Descendants found when the timeout/abort fired; signalled with the group.
+    let mut descendants: Vec<rustix::process::Pid> = Vec::new();
+    let leader = guard.0;
     while stdout.is_some() || stderr.is_some() || status.is_none() {
         tokio::select! {
             read = async { stdout.as_mut().unwrap().read(&mut out_buffer).await }, if stdout.is_some() => {
@@ -1092,27 +1131,59 @@ async fn run_python(
                 // (`settled`); a kill that is already scheduled stays.
                 timeout_armed = false;
                 abort_armed = false;
+                drain_until = Some(tokio::time::Instant::now() + PIPE_GRACE);
+            }
+            _ = tokio::time::sleep_until(drain_until.unwrap_or(timeout_at)), if drain_until.is_some() => {
+                // A descendant still holds a pipe: stop waiting for its EOF.
+                drain_until = None;
+                stdout = None;
+                stderr = None;
+            }
+            _ = tokio::time::sleep_until(settle_by.unwrap_or(timeout_at)), if settle_by.is_some() && status.is_none() => {
+                break;
             }
             _ = tokio::time::sleep_until(timeout_at), if timeout_armed => {
                 timeout_armed = false;
                 timed_out = true;
+                if let Some(leader) = leader {
+                    descendants = descendant_pids(leader).await;
+                }
                 guard.signal(rustix::process::Signal::TERM);
+                signal_each(&descendants, rustix::process::Signal::TERM);
                 kill_at.get_or_insert(tokio::time::Instant::now() + KILL_AFTER);
             }
             _ = context.cancelled(), if abort_armed => {
                 abort_armed = false;
                 cancelled = true;
+                if let Some(leader) = leader {
+                    descendants = descendant_pids(leader).await;
+                }
                 guard.signal(rustix::process::Signal::TERM);
+                signal_each(&descendants, rustix::process::Signal::TERM);
                 kill_at.get_or_insert(tokio::time::Instant::now() + KILL_AFTER);
             }
             _ = tokio::time::sleep_until(kill_at.unwrap_or(timeout_at)), if kill_at.is_some() => {
                 kill_at = None;
                 guard.signal(rustix::process::Signal::KILL);
+                signal_each(&descendants, rustix::process::Signal::KILL);
+                settle_by = Some(tokio::time::Instant::now() + SETTLE_BOUND);
             }
         }
     }
     if kill_at.is_some() {
         guard.signal(rustix::process::Signal::KILL);
+        signal_each(&descendants, rustix::process::Signal::KILL);
+    }
+    if status.is_none() {
+        // SETTLE_BOUND elapsed: the interpreter outlived its SIGKILL. The
+        // still-armed guard and `kill_on_drop` repeat the KILL on drop.
+        return Ok(Execution {
+            exit_code: None,
+            stdout: out.finish(),
+            stderr: String::from_utf8_lossy(&err).into_owned(),
+            timed_out,
+            cancelled,
+        });
     }
     // A script that ran to completion may leave its own background
     // processes behind, as in the baseline.
@@ -1124,6 +1195,80 @@ async fn run_python(
         timed_out,
         cancelled,
     })
+}
+
+/// Send `signal` to each pid (best effort; a pid that is gone is skipped).
+fn signal_each(pids: &[rustix::process::Pid], signal: rustix::process::Signal) {
+    for pid in pids {
+        let _ = rustix::process::kill_process(*pid, signal);
+    }
+}
+
+/// Every live descendant of `root` (children, grandchildren, ...), including
+/// ones that left its session or group. Linux reads `/proc/<pid>/stat`;
+/// elsewhere `ps -A -o pid= -o ppid=` is asked. A failure yields what was
+/// found (possibly nothing): this only widens a best-effort cleanup.
+async fn descendant_pids(root: rustix::process::Pid) -> Vec<rustix::process::Pid> {
+    let table = process_table().await;
+    let mut found = vec![root.as_raw_nonzero().get()];
+    let mut index = 0;
+    while index < found.len() {
+        let parent = found[index];
+        for (pid, ppid) in &table {
+            if *ppid == parent && !found.contains(pid) {
+                found.push(*pid);
+            }
+        }
+        index += 1;
+    }
+    found
+        .into_iter()
+        .skip(1)
+        .filter_map(rustix::process::Pid::from_raw)
+        .collect()
+}
+
+/// `(pid, ppid)` for every visible process.
+async fn process_table() -> Vec<(i32, i32)> {
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(entries) = std::fs::read_dir("/proc") else {
+            return Vec::new();
+        };
+        entries
+            .flatten()
+            .filter_map(|entry| {
+                let pid: i32 = entry.file_name().to_str()?.parse().ok()?;
+                let stat = std::fs::read_to_string(entry.path().join("stat")).ok()?;
+                // `pid (comm) state ppid ...`; comm may contain spaces and ')'.
+                let rest = &stat[stat.rfind(')')? + 1..];
+                let ppid = rest.split_whitespace().nth(1)?.parse().ok()?;
+                Some((pid, ppid))
+            })
+            .collect()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let mut command = Command::new("ps");
+        command
+            .args(["-A", "-o", "pid=", "-o", "ppid="])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        let Ok(Ok(output)) = tokio::time::timeout(Duration::from_secs(2), command.output()).await
+        else {
+            return Vec::new();
+        };
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|line| {
+                let mut fields = line.split_whitespace();
+                let pid = fields.next()?.parse().ok()?;
+                let ppid = fields.next()?.parse().ok()?;
+                Some((pid, ppid))
+            })
+            .collect()
+    }
 }
 
 // ---------------------------------------------------------------------------
