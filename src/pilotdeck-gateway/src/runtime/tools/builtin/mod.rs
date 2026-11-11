@@ -13,6 +13,7 @@ pub mod mcp_resources;
 pub mod mcp_tool;
 pub mod read_file;
 pub mod read_skill;
+pub mod send_attachment;
 pub mod structured_output;
 pub mod task;
 pub mod time;

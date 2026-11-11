@@ -719,7 +719,6 @@ pub const BASELINE_TOOLS_NOT_PORTED: &[&str] = &[
     "ask_user_question",
     "execute_code",
     "mcp__funasr__transcribe_audio",
-    "send_attachment",
     "send_message",
     "subagent",
 ];
@@ -791,6 +790,7 @@ pub(super) fn native_tools(
         builtin::structured_output::StructuredOutputTool::new(),
     ));
     builtins.push(Arc::new(builtin::todo_write::TodoWriteTool::new()));
+    builtins.push(Arc::new(builtin::send_attachment::SendAttachmentTool::new()));
     builtins.extend(builtin::goal::goal_tools());
     if let Some(plugins) = &world.skills {
         builtins.push(Arc::new(builtin::read_skill::ReadSkillTool::new(
