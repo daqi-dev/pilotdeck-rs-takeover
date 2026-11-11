@@ -449,6 +449,11 @@ async fn start_assembly(
     let prepare_env = env.clone();
     let prepare_recorders = recorders.clone();
     let prepare_interactions = interactions.clone();
+    // The gateway event sink of the session interaction facade
+    // (`GatewaySessionInteractionFacade.emit`): the host's coordinator is
+    // built after the session factory, so it is published into this slot.
+    let gateway_emit: super::permission_prompt::GatewayEmitSlot = Arc::default();
+    let prepare_gateway_emit = gateway_emit.clone();
     let prepare_permission_rule_sets = permission_rule_sets.clone();
     // Forward reference so the prepare closure can call sync_permission_rules
     // after lease acquire (mirrors ProjectRuntimeRegistry.ts:305-308).
@@ -487,6 +492,7 @@ async fn start_assembly(
             let env = prepare_env.clone();
             let recorders = prepare_recorders.clone();
             let interactions = prepare_interactions.clone();
+            let gateway_emit = prepare_gateway_emit.clone();
             let permission_rule_sets = prepare_permission_rule_sets.clone();
             let mcp_config_handle = prepare_mcp_config.clone();
             let acquire_miss_report = prepare_acquire_miss_report.clone();
@@ -619,6 +625,12 @@ async fn start_assembly(
                 let mut retained = PreparedResources::default();
                 retained.retain_lease(lease);
                 let permission_lease = permission_rule_sets.acquire(&context.session_key, None);
+                let session_rules = permission_lease.rules();
+                // `LocalGatewayBootConfig.permissionTimeoutMs`.
+                let permission_timeout = super::permission_prompt::interaction_timeout(
+                    env.get("PILOTDECK_PERMISSION_TIMEOUT_MS")
+                        .map(|v| v.as_str()),
+                );
                 // Sync MCP ask rules on acquire, mirroring
                 // ProjectRuntimeRegistry.ts:305-308 where the wiring layer
                 // calls `lease.rules().ask` via syncSdkMcpPermissionRules.
@@ -763,7 +775,12 @@ async fn start_assembly(
                             lsp,
                             session_mcp,
                         )?
-                        .with_permission_mode_source(permission_source.clone());
+                        .with_permission_mode_source(permission_source.clone())
+                        .with_permission_prompt(
+                            gateway_emit,
+                            session_rules,
+                            permission_timeout,
+                        );
                         let ports = match plugin_runtime {
                             Some(plugins) => ports.with_skills(plugins),
                             None => ports,
@@ -1057,6 +1074,10 @@ async fn start_assembly(
         // legal `--drain-ms` teardown is not cut by the host's default bound.
         budget,
         move |coordinator| {
+            let emit_coordinator = coordinator.clone();
+            let _ = gateway_emit.set(Arc::new(move |session, event| {
+                emit_coordinator.emit(session, &event)
+            }));
             let owner = SessionOwner::new(SessionOwnerOptions::new(build_factory));
             let replacement = Arc::new(ReplacementCoordinator::new(
                 Default::default(),

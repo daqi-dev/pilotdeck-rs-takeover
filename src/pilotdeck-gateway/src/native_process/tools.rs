@@ -105,7 +105,17 @@ impl SessionTools {
         let context =
             permission::create_default_permission_context(DefaultPermissionContextOptions {
                 cwd: project.to_string_lossy().into_owned().into(),
-                can_prompt: Some(false),
+                // `canPrompt: override?.canPrompt ?? runtime.profile.interaction.canPrompt`
+                // (`cli/ProjectSessionFactory.ts:270`); a turn's own
+                // `canPrompt` still wins in the tool context.
+                can_prompt: Some(
+                    RuntimeProfile::resolve(
+                        &JsValue::Undefined,
+                        &RuntimeProfileOverrides::default(),
+                    )
+                    .interaction
+                    .can_prompt,
+                ),
                 plan_directory_path: Some(
                     crate::runtime::plan_todo::SessionPlanFiles::directory_for(&project),
                 ),
@@ -120,7 +130,7 @@ impl SessionTools {
             interactions,
             lsp,
             mcp,
-            permission: Arc::new(Permissions(Mutex::new((context, None)))),
+            permission: Arc::new(Permissions(Mutex::new((context, None)), Default::default())),
             permission_mode_source: None,
             world: ExecutionWorld::new(),
             goal: Arc::default(),
@@ -136,6 +146,28 @@ impl SessionTools {
         events: crate::runtime::project::interaction_events::InteractionEvents,
     ) -> Self {
         self.events = Some(events);
+        self
+    }
+
+    /// The session's gateway permission prompt (`SessionInteractionBundle`
+    /// with a gateway answerer): `emit` reaches the active `submit_turn`
+    /// stream, `rules` is the session rule set the decisions read.
+    pub fn with_permission_prompt(
+        self,
+        emit: super::permission_prompt::GatewayEmitSlot,
+        rules: crate::config::permission::RuleSetHandle,
+        timeout: Duration,
+    ) -> Self {
+        let _ = self
+            .permission
+            .1
+            .set(Arc::new(super::permission_prompt::PermissionPrompt {
+                session: self.binding.context.session_key.clone(),
+                coordinator: self.interactions.clone(),
+                emit,
+                rules,
+                timeout,
+            }));
         self
     }
 
@@ -614,6 +646,8 @@ struct Permissions(
         PermissionContext,
         Option<crate::config::permission::PermissionMode>,
     )>,
+    /// The gateway answerer, when the session has one.
+    std::sync::OnceLock<Arc<super::permission_prompt::PermissionPrompt>>,
 );
 struct Tool(
     Arc<dyn capability::ToolDefinition>,
@@ -651,7 +685,7 @@ impl PermissionDecision for Permissions {
         runtime: capability::RuntimeContext,
         id: JsString,
     ) -> HostFuture<JsValue> {
-        let context = self.0.lock().unwrap_or_else(|e| e.into_inner()).0.clone();
+        let mut context = self.0.lock().unwrap_or_else(|e| e.into_inner()).0.clone();
         let name = tool
             .fields()
             .get("name")
@@ -663,8 +697,77 @@ impl PermissionDecision for Permissions {
             .get("kind")
             .and_then(JsValue::as_string)
             .cloned();
+        let prompt = self.1.get().cloned();
+        let run = runtime
+            .clone()
+            .downcast::<crate::runtime::tools::ToolRunContext>()
+            .ok();
+        // The call's own permission context decides whether a prompt may be
+        // shown (`input.canPrompt ?? config.permissionContext.canPrompt`).
+        if let Some(can_prompt) = run
+            .as_ref()
+            .and_then(|run| run.fields.get("permissionContext"))
+            .and_then(|permission| permission.get("canPrompt"))
+            .and_then(JsValue::as_bool)
+        {
+            context.can_prompt = can_prompt;
+        }
+        // The session rule set is live: a remembered approval or a session
+        // grant applies to the very next decision.
+        if let Some(prompt) = &prompt {
+            context.rules = prompt.rules.snapshot();
+        }
         Box::pin(async move {
-            permission::decide(&context, &Tool(tool, name, kind, runtime), &input, &id).await
+            let decision = permission::decide(
+                &context,
+                &Tool(tool, name.clone(), kind, runtime),
+                &input,
+                &id,
+            )
+            .await?;
+            let asks = decision
+                .get("type")
+                .and_then(JsValue::as_string)
+                .is_some_and(|kind| kind.equals_str("ask"));
+            let (Some(prompt), Some(run), true) = (prompt, run, asks) else {
+                return Ok(decision);
+            };
+            // `ToolRuntime.runTool`: an `ask` goes through the
+            // `PermissionRequest` hooks, and the gateway callback's answer
+            // replaces the decision.
+            let suggestions = decision
+                .get("request")
+                .and_then(|request| request.get("options"));
+            let message = |text: JsString| {
+                JsValue::Object(value([
+                    ("type", "runtime".into()),
+                    ("message", JsValue::String(text)),
+                ]))
+            };
+            Ok(
+                match prompt.request(&name, &id, &input, suggestions, &run).await {
+                    super::permission_prompt::PromptOutcome::Allow => JsValue::Object(value([
+                        ("type", "allow".into()),
+                        (
+                            "reason",
+                            message(JsString::from_utf16(
+                                "PermissionRequest hook allowed "
+                                    .encode_utf16()
+                                    .chain(name.units().iter().copied())
+                                    .chain(".".encode_utf16())
+                                    .collect(),
+                            )),
+                        ),
+                    ])),
+                    super::permission_prompt::PromptOutcome::Deny(reason) => {
+                        JsValue::Object(value([
+                            ("type", "deny".into()),
+                            ("reason", message(reason.clone())),
+                            ("message", JsValue::String(reason)),
+                        ]))
+                    }
+                },
+            )
         })
     }
 }

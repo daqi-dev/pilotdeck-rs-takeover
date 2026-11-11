@@ -34,6 +34,7 @@ mod management_tests;
 mod mcp_status_tests;
 // Project routing shared by every request family: the baseline's
 // `projectKey ?? fallbackProjectRoot` read and its dialog registration rule.
+mod permission_prompt;
 mod projects;
 mod requests;
 // The product entry (`pilotdeck server`): the baseline's startGatewayServer
