@@ -503,6 +503,7 @@ fn native_stack(store: ConfigStore, stack: &Stack) -> NativeSettings {
         log: Arc::new(BundleLog(stack.probe.clone())),
         apply_flag_settings: None,
         update_settings: None,
+        reload_output_styles: None,
     });
     native.bundle.bind_server(Arc::new(BroadcastServer {
         probe: stack.probe.clone(),

@@ -781,6 +781,7 @@ fn plugin_disposal_receivers() -> (DisposalStartReceiver, Vec<DisposalReceiver>)
         disposal_requested: false,
         dispose_sender: None,
         dispose_receiver: None,
+        output_styles: Vec::new(),
     }));
     let pending = start_disposals(&mut registry, vec![plugin], &state);
     let started = registry

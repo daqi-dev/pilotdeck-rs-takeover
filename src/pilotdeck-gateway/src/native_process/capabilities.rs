@@ -172,18 +172,6 @@ pub(super) const ADVERTISED_NOT_SERVED: &[(&str, &str)] = &[
         "export/restore_session_transcript answer CAPABILITY_UNAVAILABLE (methods/history.rs)",
     ),
     (
-        "apply_flag_settings",
-        "settings delegate not bound in this process (runtime/settings/gateway.rs answers unavailable)",
-    ),
-    (
-        "update_settings",
-        "settings delegate not bound in this process (runtime/settings/gateway.rs answers unavailable)",
-    ),
-    (
-        "reload_output_styles",
-        "settings delegate not bound in this process (runtime/settings/gateway.rs answers unavailable)",
-    ),
-    (
         "sdk_session_config",
         "set_sdk_session_config is not routed by the registry (methods/mod.rs)",
     ),

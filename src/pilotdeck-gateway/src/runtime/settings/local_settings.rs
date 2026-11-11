@@ -97,7 +97,12 @@ fn plan(value: &JsValue) -> Result<Vec<Edit>, SettingsError> {
         };
         check_keys(
             agent,
-            &["maxContextTokens", "maxOutputTokens", "thinking", "subagents"],
+            &[
+                "maxContextTokens",
+                "maxOutputTokens",
+                "thinking",
+                "subagents",
+            ],
             "localSettings.agent",
         )?;
         for key in ["maxContextTokens", "maxOutputTokens"] {
@@ -205,7 +210,7 @@ fn plan(value: &JsValue) -> Result<Vec<Edit>, SettingsError> {
                     // Number.isSafeInteger
                     if !matches!(depth, JsValue::Null)
                         && !is_integer(depth)
-                            .is_some_and(|n| n >= 0.0 && n <= 9_007_199_254_740_991.0)
+                            .is_some_and(|n| (0.0..=9_007_199_254_740_991.0).contains(&n))
                     {
                         return Err(invalid(
                             "localSettings.agent.subagents.maxDepth",
@@ -284,7 +289,10 @@ fn plan(value: &JsValue) -> Result<Vec<Edit>, SettingsError> {
         }
         if let Some(web_search) = present(tools, "webSearch") {
             let Some(web_search) = record(Some(web_search)) else {
-                return Err(invalid("localSettings.tools.webSearch", "must be an object."));
+                return Err(invalid(
+                    "localSettings.tools.webSearch",
+                    "must be an object.",
+                ));
             };
             for (key, _) in web_search.entries() {
                 let text = key_text(key);
@@ -426,7 +434,10 @@ impl LocalSettingsWriter for PilotLocalSettingsWriter {
             },
         );
         let is_map = document.contents.is_some_and(|id| {
-            matches!(document.nodes[id].kind, pilotdeck_yaml::nodes::NodeKind::Map(_))
+            matches!(
+                document.nodes[id].kind,
+                pilotdeck_yaml::nodes::NodeKind::Map(_)
+            )
         });
         if !document.errors.is_empty() || !is_map {
             let detail = document

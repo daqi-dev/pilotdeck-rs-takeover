@@ -826,6 +826,11 @@ pub(crate) fn execute<F: Files>(
     let Some(project) = text_field(params, "projectKey") else {
         static UNDEFINED: JsValue = JsValue::Undefined;
         let key = params.get("projectKey").unwrap_or(&UNDEFINED);
+        // A string that is not valid UTF-8 (a lone surrogate) stays with the
+        // host; only a non-string key is Node's argument type error.
+        if matches!(key, JsValue::String(_)) {
+            return None;
+        }
         return invalid_path_argument("paths[0]", key);
     };
     if method == "project_file_read" {

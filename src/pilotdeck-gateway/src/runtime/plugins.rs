@@ -688,7 +688,10 @@ fn output_style_registry(
 ) -> Vec<PluginOutputStyleContribution> {
     let mut registry: Vec<PluginOutputStyleContribution> = Vec::new();
     for style in styles {
-        match registry.iter_mut().find(|existing| existing.name == style.name) {
+        match registry
+            .iter_mut()
+            .find(|existing| existing.name == style.name)
+        {
             Some(existing) => *existing = style,
             None => registry.push(style),
         }

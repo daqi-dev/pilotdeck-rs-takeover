@@ -1210,6 +1210,13 @@ async fn start_assembly(
                 &options.project_root,
                 &env,
                 session_overrides.clone(),
+                Some(Arc::new(super::services::NativeOutputStylesReload {
+                    options: options.clone(),
+                    project: build_project.clone(),
+                    owner: owner.clone(),
+                    interactions: interactions.clone(),
+                    overrides: session_overrides.clone(),
+                })),
             )?;
             settings.bundle.bind_server(build_connection_broadcast);
             // `configStore.startWatching()` (createLocalGateway.ts:801): a

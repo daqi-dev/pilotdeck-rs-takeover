@@ -914,7 +914,6 @@ async fn replay_case(case: &Value) {
         append_gate: Gate::new(),
     });
     let services = Arc::new(Services {
-        config_store: None,
         session: session.clone(),
         refreshed: AtomicBool::new(false),
         prepare: Gate::new(),
