@@ -83,7 +83,7 @@ M1 之后要回头处理的（入口那块发现的）：
 | P2 | 安全修复 | plan / ask 模式拦截、符号链接、`execute_code` 超时、token 接口 Host / Origin | P1 | 进行中（分支 `worktree-agent-a5b164055e58ead20`） |
 | P3 | method：轮次控制与运行记录 | abort / steer / run_* / user_dialog_* / fork / replace / export / restore / rewind 等约 24 个 | P1 | 进行中（`worktree-agent-a77e59246b587d509`，槽位 1） |
 | P4 | method：配置、模型、MCP、skills | model_* / settings / thinking / output style / skill_* / mcp_* / project_file* 等约 27 个 | P1 | 进行中（`worktree-agent-a05f5a750360a428d`，槽位 2） |
-| P5 | method：存储与自动化 | upload_* / memory_* / snapshot_* / native_archive_* / manager_* / sop_* / cron_* / always_on_* 约 25 个 | P1 | 未开始 |
+| P5 | method：存储与自动化 | upload_* / memory_* / snapshot_* / native_archive_* / manager_* / sop_* / cron_* / always_on_* 约 25 个 | P1 | 进行中（槽位 3） |
 | P6 | gateway HTTP | 12 条路由（含公共审批、上传下载）、鉴权、SSE | P1；P5 的上传 | 未开始 |
 | P7 | CLI | 25 条命令（普查里 13 条未实现）、进程内模式的落盘 | P1；连 gateway 的命令依赖 P3–P5 | 未开始 |
 | P8 | 启动流程补齐 | 全局代理、配置热重载、渠道适配器、遥测、hooks / modules 配置、停机时有客户端连着 | P4 | 未开始 |
@@ -91,7 +91,7 @@ M1 之后要回头处理的（入口那块发现的）：
 | P10 | 退役 | 删代理模式、未接线代码、旧测试装置；原版 `ui/server` 接 Rust gateway 实测；人参与的真实使用验收 | P1–P9 | 未开始 |
 | — | 阶段 B（`ui/server`）、前端 | 推迟，P10 之后再定 | P10 | 推迟 |
 
-并行规则：P3 / P4 / P5 / P6 / P7 互不依赖实现，可同时做；同时最多 3 个 Opus 子代理（额度宽裕时 4 个），各用一个 bbx 槽位（`BBX_SLOT`）；合并由主会话逐个做，合并后在主检出跑全量对拍和四条命令。给子代理的通用说明在会话的 scratchpad（`briefs/common.md`，仓库外；丢了就按 `CLAUDE.md` 和本文件重写）。
+并行规则：P3 / P4 / P5 / P6 / P7 互不依赖实现，可同时做；同时最多 4 个 Opus 子代理（人 2026-11-11 同意；撞额度上限就降回 2–3 个），各用一个 bbx 槽位（`BBX_SLOT`）；合并由主会话逐个做，合并后在主检出跑全量对拍和四条命令。给子代理的通用说明在会话的 scratchpad（`briefs/common.md`，仓库外；丢了就按 `CLAUDE.md` 和本文件重写）。
 
 速度参考：一个 Opus 子代理一轮 1–1.5 小时、约 40–60 万 token，能做完一个上面这样大小的工作包的大部分。
 
