@@ -134,7 +134,7 @@ async fn matrix(name: &str) {
                             // three startup/IO clocks get the same 60 s
                             // liveness margin the sibling nine-file sweep uses;
                             // the gate-count oracles below are unchanged.
-                            handshake_timeout: Duration::from_secs(60),
+                            handshake_timeout: Some(Duration::from_secs(60)),
                             execution_timeout: Some(Duration::from_secs(60)),
                             io_timeout: Duration::from_secs(60),
                             ..Limits::default()

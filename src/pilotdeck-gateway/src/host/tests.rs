@@ -200,7 +200,7 @@ fn limits() -> Limits {
         // deadline-pinning tests below override these fields explicitly, so
         // only the protocol-flow consumers see the margin, and no assertion or
         // error kind changes: a fixture that truly hangs still reds.
-        handshake_timeout: Duration::from_secs(60),
+        handshake_timeout: Some(Duration::from_secs(60)),
         execution_timeout: Some(Duration::from_secs(60)),
         close_timeout: Duration::from_secs(1),
         // fix-r1 (#1891 review): `io_timeout` covers the flush-side write wait
@@ -644,7 +644,7 @@ async fn zero_and_inconsistent_limits_are_rejected_before_spawn() {
     ] {
         let mut bounded = limits();
         match field {
-            "handshake_timeout" => bounded.handshake_timeout = Duration::ZERO,
+            "handshake_timeout" => bounded.handshake_timeout = Some(Duration::ZERO),
             "execution_timeout" => bounded.execution_timeout = Some(Duration::ZERO),
             "terminal_drain_timeout" => bounded.terminal_drain_timeout = Duration::ZERO,
             "io_timeout" => bounded.io_timeout = Duration::ZERO,
@@ -742,10 +742,26 @@ async fn callbacks_do_not_block_input_or_run_twice() {
     );
     println!("HOST_REJECT callback-disconnect: {error}");
 }
+/// The baseline arms no handshake timer, so by default a slow sidecar start
+/// (for example macOS's first-exec assessment of a freshly linked binary)
+/// keeps the turn waiting instead of failing it; the caller's abort still ends
+/// the wait by dropping the spawn future.
+#[tokio::test]
+async fn default_handshake_waits_without_a_local_deadline() {
+    assert_eq!(Limits::default().handshake_timeout, None);
+    let mut unbounded = limits();
+    unbounded.handshake_timeout = None;
+    let mut hang = command("handshake-hang");
+    let spawn = HostClient::spawn(&mut hang, None, unbounded);
+    assert!(
+        timeout(Duration::from_millis(300), spawn).await.is_err(),
+        "an unanswered handshake must keep waiting without a configured bound"
+    );
+}
 #[tokio::test]
 async fn timeout_and_frame_limits_close_owned_processes() {
     let mut bounded = limits();
-    bounded.handshake_timeout = Duration::from_millis(100);
+    bounded.handshake_timeout = Some(Duration::from_millis(100));
     let error = HostClient::spawn(&mut command("handshake-hang"), None, bounded)
         .await
         .err()
@@ -794,7 +810,7 @@ async fn default_execution_timeout_is_unbounded_past_former_watchdog() {
         &mut command,
         None,
         Limits {
-            handshake_timeout: Duration::from_secs(60),
+            handshake_timeout: Some(Duration::from_secs(60)),
             io_timeout: Duration::from_secs(60),
             ..Limits::default()
         },
@@ -853,7 +869,7 @@ async fn cancellation_without_terminal_exits_within_post_cancel_deadline() {
         // so the startup-side clocks get the margin; the post-cancel deadline
         // under test is virtual-clock driven and unaffected.
         let limits = Limits {
-            handshake_timeout: Duration::from_secs(60),
+            handshake_timeout: Some(Duration::from_secs(60)),
             io_timeout: Duration::from_secs(60),
             ..Limits::default()
         };
@@ -948,7 +964,7 @@ async fn late_terminal_after_cancel_wins_over_post_cancel_deadline() {
         &mut command,
         None,
         Limits {
-            handshake_timeout: Duration::from_secs(60),
+            handshake_timeout: Some(Duration::from_secs(60)),
             io_timeout: Duration::from_secs(60),
             ..Limits::default()
         },

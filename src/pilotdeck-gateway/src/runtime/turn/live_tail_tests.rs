@@ -127,7 +127,7 @@ fn setup() -> (
                     // limits under test — same-source sibling of the #978
                     // sites; the tail's observable ordering below is unchanged.
                     crate::host::Limits {
-                        handshake_timeout: Duration::from_secs(60),
+                        handshake_timeout: Some(Duration::from_secs(60)),
                         execution_timeout: Some(Duration::from_secs(60)),
                         io_timeout: Duration::from_secs(60),
                         ..Default::default()

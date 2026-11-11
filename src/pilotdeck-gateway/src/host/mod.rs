@@ -96,7 +96,16 @@ pub(crate) const POST_CANCEL_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
-    pub handshake_timeout: Duration,
+    /// Optional bound on spawn-to-capabilities. `None` (the default) waits
+    /// like the baseline: TS's sidecar client arms no handshake timer
+    /// (agentLoopSidecarClient.ts:534-590), and its default in-process loop
+    /// has no startup bound at all. The wait is not unbounded in practice: a
+    /// child that exits closes stdout (Disconnected), and a turn abort drops
+    /// the spawn future, whose Connection kills the process group. A fixed
+    /// bound here failed turns whenever macOS held a freshly linked sidecar
+    /// in its first-exec security assessment (seconds, serialized behind
+    /// every other new binary being launched), which is not a sidecar fault.
+    pub handshake_timeout: Option<Duration>,
     /// Optional overall local resource bound, not an operationDeadline or cancel
     /// request. `None` (the default) means no local execution deadline, matching
     /// TS's uncapped execute wait; `Some` arms a watchdog for the entire wait.
@@ -122,7 +131,7 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
-            handshake_timeout: Duration::from_secs(10),
+            handshake_timeout: None,
             execution_timeout: None,
             terminal_drain_timeout: Duration::from_millis(100),
             io_timeout: Duration::from_secs(5),
@@ -138,13 +147,13 @@ impl Default for Limits {
 impl Limits {
     fn validate(self) -> Result<(), HostError> {
         let zero_timeout = [
-            self.handshake_timeout,
             self.io_timeout,
             self.terminal_drain_timeout,
             self.close_timeout,
         ]
         .contains(&Duration::ZERO)
-            || self.execution_timeout == Some(Duration::ZERO);
+            || self.execution_timeout == Some(Duration::ZERO)
+            || self.handshake_timeout == Some(Duration::ZERO);
         if zero_timeout
             || self.queue_capacity == 0
             || self.max_frame_bytes == 0
@@ -163,6 +172,14 @@ impl Limits {
         {
             return Err(HostError::protocol(
                 "Sidecar execution_timeout must be representable; use None for no local deadline.",
+            ));
+        }
+        if self
+            .handshake_timeout
+            .is_some_and(|timeout| Instant::now().checked_add(timeout).is_none())
+        {
+            return Err(HostError::protocol(
+                "Sidecar handshake_timeout must be representable; use None for no local deadline.",
             ));
         }
         // Bound allocations and keep channel capacities below Semaphore::MAX_PERMITS.
@@ -480,7 +497,7 @@ impl HostClient {
     ) -> Result<Self, HostError> {
         limits.validate()?;
         let mut connection = Connection::spawn(command, limits)?;
-        let handshake = timeout(
+        let handshake = bounded(
             limits.handshake_timeout,
             handshake(&mut connection, expected_module_id, None),
         )
@@ -611,6 +628,16 @@ impl HostClient {
             append_diagnostic(&mut error, &self.connection);
             error
         })
+    }
+}
+/// `timeout` when a bound is configured, otherwise the plain future.
+async fn bounded<F: Future>(
+    limit: Option<Duration>,
+    future: F,
+) -> Result<F::Output, tokio::time::error::Elapsed> {
+    match limit {
+        Some(limit) => timeout(limit, future).await,
+        None => Ok(future.await),
     }
 }
 fn append_diagnostic(error: &mut HostError, connection: &Connection) {
