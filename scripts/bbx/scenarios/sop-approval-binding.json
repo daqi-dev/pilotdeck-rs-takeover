@@ -1,0 +1,59 @@
+{
+  "name": "sop-approval-binding",
+  "about": "设置了 STAFFDECK_COPY_* 绑定环境变量时公共审批桥在调用 StaffDeck 认证之前的校验：租户不符、bearer 缺失或格式错。认证本身需要外部服务，不在场景里。",
+  "files": {
+    "home/work/alpha/README.md": "alpha\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n"
+  },
+  "steps": [
+    {
+      "ws": "sop_status",
+      "params": {
+        "sessionKey": "s-1",
+        "approverAuthorization": "Basic x"
+      }
+    },
+    {
+      "ws": "sop_status",
+      "params": {
+        "sessionKey": "s-1",
+        "approverAuthorization": "Bearer    "
+      }
+    },
+    {
+      "ws": "sop_status",
+      "params": {
+        "sessionKey": "s-1",
+        "approverAuthorization": "Bearer x",
+        "tenantId": "t2"
+      }
+    },
+    {
+      "ws": "sop_status",
+      "params": {
+        "sessionKey": "s-1",
+        "approverAuthorization": "Bearer x",
+        "agentId": "a1",
+        "tenantId": "t1",
+        "authority": 1
+      }
+    },
+    {
+      "ws": "sop_resume",
+      "params": {
+        "sessionKey": "s-1",
+        "source": "human",
+        "requestId": "r1",
+        "waitId": "w1",
+        "message": "ok",
+        "expectedRevision": 0,
+        "approverAuthorization": "nope"
+      }
+    }
+  ],
+  "env": {
+    "STAFFDECK_COPY_TENANT_ID": "t1",
+    "STAFFDECK_COPY_TARGET_AGENT_ID": "a1",
+    "STAFFDECK_COPY_PILOTDECK_USER_ID": "u1"
+  }
+}
