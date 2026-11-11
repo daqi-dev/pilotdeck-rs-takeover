@@ -1615,11 +1615,21 @@ impl SubmitHostServices for Services {
         input: &'a JsValue,
     ) -> SubmitFuture<'a, Result<SubmitAttachmentLease, SubmitError>> {
         let store = self.upload_store.clone();
-        // `input.projectKey ?? fallbackProjectRoot`, like every other read.
+        // InProcessGateway.ts:2457: uploaded attachments never fall back to
+        // the default project; a falsy `projectKey` fails before any lease.
+        let has_project = input
+            .get("projectKey")
+            .is_some_and(crate::metadata::js_truthy);
         let project = self
             .options
             .project_root_for(input.get("projectKey").and_then(JsValue::as_string));
         Box::pin(async move {
+            if !has_project {
+                return Err(SubmitError::new(
+                    "PROJECT_NOT_FOUND",
+                    "projectKey is required for uploaded attachments.",
+                ));
+            }
             // `uploadedAttachments` is a non-empty array at this call site
             // (GatewaySubmitHost::prepare checks that before calling).
             let refs = match input.get("uploadedAttachments") {
