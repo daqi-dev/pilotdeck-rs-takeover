@@ -437,6 +437,9 @@ async fn start_assembly(
     // built after the session factory, so it is published into this slot.
     // The project runtimes' background task completions use the same sink.
     let gateway_emit: super::permission_prompt::GatewayEmitSlot = Arc::default();
+    // The deferred async-hook registry, likewise built with the host.
+    let async_hooks: super::hooks::AsyncRegistrySlot = Arc::default();
+    let prepare_async_hooks = async_hooks.clone();
     let project = project_registry_with(
         &options,
         &env,
@@ -513,6 +516,7 @@ async fn start_assembly(
             let recorders = prepare_recorders.clone();
             let interactions = prepare_interactions.clone();
             let gateway_emit = prepare_gateway_emit.clone();
+            let async_hooks = prepare_async_hooks.clone();
             let permission_rule_sets = prepare_permission_rule_sets.clone();
             let mcp_config_handle = prepare_mcp_config.clone();
             let acquire_miss_report = prepare_acquire_miss_report.clone();
@@ -709,6 +713,12 @@ async fn start_assembly(
                     .as_ref()
                     .and_then(|config| config.get("includeHookEvents"))
                     == Some(&JsValue::Bool(true));
+                // `options.sdkHooks`: only an SDK hook configuration routes
+                // async invocations to the gateway registry.
+                let sdk_hooks = sdk_config
+                    .as_ref()
+                    .and_then(|config| config.get("hooks"))
+                    .is_some_and(|hooks| !hooks.is_undefined());
                 let stored_style_content =
                     match session_overrides.output_style(&context.session_key) {
                         Some(name) => output_style_content(&staged, &name).await,
@@ -919,6 +929,7 @@ async fn start_assembly(
                             hook_settings.clone(),
                             gateway_emit.clone(),
                             include_hook_events,
+                            sdk_hooks.then(|| async_hooks.clone()),
                         )
                         .with_permission_prompt(gateway_emit, session_rules, permission_timeout)
                         .with_permission_mode_transition({
@@ -1369,6 +1380,9 @@ async fn start_assembly(
             );
             let async_hook_registry =
                 steer::build_async_hook_registry(&build_project, &owner, &coordinator);
+            if let Some(registry) = &async_hook_registry {
+                let _ = async_hooks.set(registry.clone());
+            }
             // #2294 A7.8: the one automation bundle of the native process —
             // the port of `ProjectAutomationBundle`, which now constructs the
             // one `CronManager` (the #1326 lane's manager behind the bundle's

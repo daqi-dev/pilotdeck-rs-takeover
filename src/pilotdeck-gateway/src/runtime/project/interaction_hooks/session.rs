@@ -10,7 +10,7 @@ impl InteractionHooks {
         run_id: JsString,
         settings: HooksSettings,
     ) -> Result<SessionHooks, HostError> {
-        self.bind_session_observed(binding, run_id, settings, None)
+        self.bind_session_observed(binding, run_id, settings, Default::default())
     }
     /// [`Self::bind_session`] with a host observer on the execution events.
     pub fn bind_session_observed(
@@ -18,7 +18,7 @@ impl InteractionHooks {
         mut binding: lifecycle::Binding,
         run_id: JsString,
         settings: HooksSettings,
-        observer: Option<Arc<dyn HookExecutionEventHandler>>,
+        observers: crate::runtime::hooks::runtime::HookObservers,
     ) -> Result<SessionHooks, HostError> {
         let signal = binding.signal.take();
         let scope = Self {
@@ -32,7 +32,7 @@ impl InteractionHooks {
             settings,
             None,
             &mut ModuleRouter::default(),
-            observer,
+            observers,
         )?;
         // Revocation still signals and drains an admitted executor; ordinary
         // abort must not close this scope before the lifecycle tail runs.

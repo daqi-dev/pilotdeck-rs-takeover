@@ -255,6 +255,85 @@ const scenarios = {};
   };
 }
 
+// ── SDK 会话配置的 HTTP hook ──
+{
+  // hook 请求发到假 provider 的 /hooks（按请求体匹配规则；只有 hook 请求体里有 transcriptPath）。
+  const hookReply = (name, when, body, status = 200) => ({ name, when: ['"transcriptPath"', ...when], reply: { status, body } });
+  const sdkHooks = (events) => ({
+    hooks: { url: '{MOCK}/hooks?keep=1&event=stale', headers: { 'x-bbx-hook': 'header-value', Authorization: 'Bearer sdk' }, events },
+  });
+  const provider = [
+    TITLE,
+    hookReply('hook-deny', ['"hookEventName":"PreToolUse"', 'sdk-deny'], { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'sdk hook denied' } }),
+    hookReply('hook-500', ['"hookEventName":"PostToolUse"', 'sdk-plain'], { error: 'down' }, 500),
+    hookReply('hook-context', ['"hookEventName":"UserPromptSubmit"', 'sdk-plain'], { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: 'context over http' } }),
+    hookReply('hook-async-pre', ['"hookEventName":"PreToolUse"', 'sdk-async'], { async: true, asyncHookId: 'inv-pre', asyncTimeout: 60 }),
+    hookReply('hook-async-prompt', ['"hookEventName":"UserPromptSubmit"', 'sdk-async'], { async: true, asyncHookId: 'inv-prompt', asyncTimeout: 1 }),
+    hookReply('hook-async-stop', ['"hookEventName":"Stop"', 'done sdk-async'], { async: true, asyncHookId: 'inv-stop', asyncTimeout: 60 }),
+    hookReply('hook-async-noid', ['"hookEventName":"PostToolUse"', 'sdk-async'], { async: true }),
+    hookReply('hook-other', [], {}),
+    { name: 'sdk-second', when: ['sdk-second:'], reply: { text: 'second answer' } },
+    ...toolCase('sdk-plain', 'write_file', { file_path: 'sdk-plain.txt', content: 'sdk-plain\n' }),
+    ...toolCase('sdk-deny', 'bash', { command: 'printf sdk-deny > denied.txt', description: 'deny' }),
+    ...toolCase('sdk-async', 'bash', { command: 'sleep 2; printf sdk-async', description: 'async' }),
+  ];
+  const events = {
+    UserPromptSubmit: [{}],
+    PreToolUse: [{ matcher: 'write_file' }, { matcher: 'bash', timeout: 5 }],
+    PostToolUse: [{ matcher: '' }],
+    Stop: [{}],
+  };
+  const asyncAnswer = (session) => [
+    // PreToolUse 声明 async 之后、bash 还在 sleep 时交结果：delivered，下一次模型请求带上这段上下文。
+    { on: { type: 'hook_response', hookEvent: 'PreToolUse' }, ws: 'hook_async_result', count: 1,
+      params: { sessionKey: session, invocationId: '{event.asyncInvocationId}', output: { hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: 'late context from async hook' } } } },
+    // 同一个 invocation 再交一次：duplicate。
+    { on: { type: 'hook_started', hookEvent: 'PostToolUse' }, ws: 'hook_async_result', count: 1,
+      params: { sessionKey: session, invocationId: 'inv-pre', output: { additionalContext: 'again' } } },
+    // UserPromptSubmit 的 1 秒超时到了（includeHookEvents 时有 hook_async_result expired 事件）：再交是 expired。
+    { on: { type: 'hook_async_result', status: 'expired' }, ws: 'hook_async_result', count: 1,
+      params: { sessionKey: session, invocationId: '{event.invocationId}', output: { additionalContext: 'too late' } } },
+  ];
+  scenarios['hook-sdk-http'] = {
+    about: 'sdkSessionConfig.hooks（HTTP hook）：URL 上的 event / matcher 序号覆盖原有同名参数、请求头与请求体、matcher 选择；includeHookEvents 时投影为 hook_started / hook_response（带 stdout / 退出码 / async 字段），否则为 agent_status；HTTP 500 是 non_blocking_error；HTTP 回 deny 阻止工具；additionalContext 进模型请求。异步：返回 async + asyncHookId 的登记到网关，hook_async_result 在轮次进行中交结果 → delivered（作为 steer 进下一次模型请求）、重复 → duplicate、超时 → expired（事件与结果）、轮次结束后才交（Stop 登记的）→ expired、别的会话交 → unknown、未知 id → unknown；不带 asyncHookId 的只挂在会话自己的运行时里，下一轮不受影响。',
+    provider,
+    steps: [
+      bypass('s-plain'),
+      submit('s-plain', 'sdk-plain: run', { params: { sdkSessionConfig: { ...sdkHooks(events) } } }), { sleep: 300 },
+      bypass('s-deny'),
+      submit('s-deny', 'sdk-deny: run', { params: { sdkSessionConfig: { ...sdkHooks(events), includeHookEvents: true } } }), { sleep: 300 },
+      bypass('s-async'),
+      submit('s-async', 'sdk-async: run', { params: { sdkSessionConfig: { ...sdkHooks(events), includeHookEvents: true } }, answer: asyncAnswer('s-async'), timeout: 30000 }),
+      { sleep: 500 },
+      { ws: 'hook_async_result', params: { sessionKey: 's-async', invocationId: 'inv-stop', output: {} } },
+      { ws: 'hook_async_result', params: { sessionKey: 's-async', invocationId: 'inv-pre' } },
+      { ws: 'hook_async_result', params: { sessionKey: 's-other', invocationId: 'inv-pre' } },
+      { ws: 'hook_async_result', params: { sessionKey: 's-async', invocationId: 'inv-never' } },
+      // 同一会话的下一轮：上一轮 PostToolUse 留下的不带 id 的 async（只在会话自己的运行时里挂起）不影响这一轮。
+      submit('s-async', 'sdk-second: hi', { params: { sdkSessionConfig: { ...sdkHooks(events), includeHookEvents: true } } }), { sleep: 300 },
+      read('s-async'),
+    ],
+  };
+}
+
+// ── 异步 hook 的 invocation id 冲突 ──
+{
+  const hooks = { url: '{MOCK}/hooks', events: { Stop: [{}] } };
+  scenarios['hook-sdk-async-conflict'] = {
+    about: 'SDK HTTP hook 的 Stop 返回 async + 同一个 asyncHookId：第一个会话登记后一直挂起（轮次结束不会让它过期），第二个会话的 Stop 再登记同一个 id 时网关拒绝（ASYNC_HOOK_INVOCATION_CONFLICT），这次 lifecycle 派发失败，本轮以 agent_invalid_state 失败，消息是冲突的原文。',
+    provider: [
+      TITLE,
+      { name: 'hook-stop', when: ['"transcriptPath"', '"hookEventName":"Stop"'], reply: { status: 200, body: { async: true, asyncHookId: 'inv-shared', asyncTimeout: 60 } } },
+      { name: 'main', reply: { text: 'answer' } },
+    ],
+    steps: [
+      submit('s-first', 'first: hi', { params: { sdkSessionConfig: { hooks } } }), { sleep: 300 },
+      submit('s-second', 'second: hi', { params: { sdkSessionConfig: { hooks } } }), { sleep: 300 },
+      { ws: 'hook_async_result', params: { sessionKey: 's-first', invocationId: 'inv-shared', output: {} } },
+    ],
+  };
+}
+
 const outDir = here;
 for (const [name, body] of Object.entries(scenarios)) {
   fs.writeFileSync(path.join(outDir, `${name}.json`), JSON.stringify({ name, ...body }, null, 2) + '\n');

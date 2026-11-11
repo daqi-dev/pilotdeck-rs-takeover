@@ -15,7 +15,7 @@ use crate::{
         AsyncHookCompletion, AsyncHookResponse, Cancellation, HookRuntime, HookRuntimeOptions,
         LifecycleDispatchInput, LifecycleDispatchResult, LifecycleRuntime,
         PendingAsyncHookDescriptor,
-        runtime::HookExecutionEventHandler,
+        runtime::HookObservers,
         exec::{
             CallbackFuture, CallbackHookHandler, CallbackInput, CallbackRegistration,
             CallbackResult,
@@ -148,7 +148,14 @@ impl InteractionHooks {
         permission: Option<TurnPermission>,
         router: &mut ModuleRouter,
     ) -> Result<TurnHooks, HostError> {
-        self.bind_turn_observed(binding, run_id, settings, permission, router, None)
+        self.bind_turn_observed(
+            binding,
+            run_id,
+            settings,
+            permission,
+            router,
+            HookObservers::default(),
+        )
     }
     /// [`Self::bind_turn`] with a host observer on the run's execution events.
     pub fn bind_turn_observed(
@@ -158,7 +165,7 @@ impl InteractionHooks {
         settings: HooksSettings,
         permission: Option<TurnPermission>,
         router: &mut ModuleRouter,
-        observer: Option<Arc<dyn HookExecutionEventHandler>>,
+        observers: HookObservers,
     ) -> Result<TurnHooks, HostError> {
         self.bind_with_options(
             binding,
@@ -167,7 +174,8 @@ impl InteractionHooks {
             permission,
             router,
             HookRuntimeOptions {
-                observer,
+                observer: observers.execution,
+                on_async_registered: observers.async_registered,
                 ..Default::default()
             },
         )

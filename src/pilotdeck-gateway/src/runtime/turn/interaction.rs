@@ -11,7 +11,7 @@ use crate::{
         },
     },
     runtime::{
-        hooks::{Cancellation, runtime::HookExecutionEventHandler},
+        hooks::{Cancellation, runtime::HookObservers},
         plugins::PluginSessionContributionLease,
         project::{
             ProjectResources, Resource, RuntimeLease, StageContext,
@@ -59,8 +59,9 @@ pub struct InteractionTurnInput {
 #[derive(Clone, Default)]
 pub struct HookWiring {
     /// Receives every hook execution transition of this session's runtimes
-    /// (`subscribeHookExecutionEvents`, ProjectSessionRuntimeBundle.ts:668-676).
-    pub observer: Option<Arc<dyn HookExecutionEventHandler>>,
+    /// (`subscribeHookExecutionEvents`, ProjectSessionRuntimeBundle.ts:668-676)
+    /// and their deferred async registrations.
+    pub observers: HookObservers,
     /// Receives the turn's bound lifecycle so host-side tool execution
     /// dispatches through the same runtime (`ToolRuntime.lifecycle`).
     pub turn_sink: Option<Arc<dyn Fn(Option<Arc<dyn lifecycle::LifecyclePort>>) + Send + Sync>>,
@@ -200,7 +201,7 @@ impl InteractionTurn {
                 input.hooks,
                 permission,
                 router,
-                hook_wiring.observer.clone(),
+                hook_wiring.observers.clone(),
             )?;
             if let Some(sink) = &hook_wiring.turn_sink {
                 sink(Some(Arc::new(hooks.clone())));
@@ -279,7 +280,11 @@ impl InteractionTurn {
                 notices.extend(permission.take_discard_notices());
             }
             if let Some(hooks) = &turn.ports.hooks {
-                notices.extend(hooks.take_discard_notices());
+                // The baseline's session hook runtime keeps a local async
+                // hook pending across turns and reports nothing when a turn
+                // ends (AsyncHookRegistry.ts); taking the notices only
+                // releases them.
+                let _ = hooks.take_discard_notices();
             }
             if let Some(steer) = &turn.ports.steer {
                 notices.extend(steer.take_discard_notices());

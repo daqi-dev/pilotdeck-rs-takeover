@@ -13,7 +13,10 @@ use crate::{
     hooks::protocol::{HookCommand, HookCommon, HookMatcher, HooksSettings, is_hook_event},
     host::{HostFuture, modules::lifecycle::LifecyclePort},
     runtime::{
-        hooks::{LifecycleDispatchInput, LifecycleDispatchResult, runtime::HookExecutionEventHandler},
+        hooks::{
+            LifecycleDispatchInput, LifecycleDispatchResult,
+            runtime::{AsyncHookRegistration, AsyncHookRegistrationHandler, HookExecutionEventHandler},
+        },
         tools::{ToolLifecycle, ToolRunContext},
     },
 };
@@ -183,6 +186,35 @@ impl HookExecutionEventHandler for GatewayHookProjection {
         }
         if let Some(emit) = self.emit.get() {
             emit(&self.session, JsValue::Object(projected));
+        }
+    }
+}
+
+/// The gateway's deferred async-hook registry, published once the host that
+/// owns it is built (after the session factory).
+pub(super) type AsyncRegistrySlot =
+    Arc<std::sync::OnceLock<Arc<crate::runtime::async_hooks::AsyncHookRegistry>>>;
+
+/// `registerAsyncHook` bound to one session (SessionInteractionBundle.ts:146-157,
+/// InProcessGateway.registerAsyncHook): the deferred result belongs to the
+/// session's active turn.
+pub(super) struct GatewayAsyncHooks {
+    pub session: JsString,
+    pub registry: AsyncRegistrySlot,
+    pub include_hook_events: bool,
+}
+impl AsyncHookRegistrationHandler for GatewayAsyncHooks {
+    fn handle(&self, registration: AsyncHookRegistration) -> Result<(), crate::host::HostError> {
+        match self.registry.get() {
+            Some(registry) => registry.register(crate::runtime::async_hooks::AsyncHookRegistration {
+                session_key: self.session.clone(),
+                invocation_id: registration.invocation_id,
+                hook_name: registration.hook_name,
+                hook_event: registration.hook_event,
+                timeout_ms: registration.timeout_ms,
+                include_hook_events: self.include_hook_events,
+            }),
+            None => Ok(()),
         }
     }
 }

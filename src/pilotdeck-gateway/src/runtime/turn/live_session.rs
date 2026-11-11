@@ -83,7 +83,7 @@ impl SessionLifecycle {
             },
             identity.run_id.clone(),
             input.hooks.clone(),
-            input.hook_wiring.observer.clone(),
+            input.hook_wiring.observers.clone(),
         )?;
         Ok(Some(Self {
             port: Arc::new(port),

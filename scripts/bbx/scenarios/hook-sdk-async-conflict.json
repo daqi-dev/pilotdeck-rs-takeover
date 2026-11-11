@@ -1,0 +1,90 @@
+{
+  "name": "hook-sdk-async-conflict",
+  "about": "SDK HTTP hook 的 Stop 返回 async + 同一个 asyncHookId：第一个会话登记后一直挂起（轮次结束不会让它过期），第二个会话的 Stop 再登记同一个 id 时网关拒绝（ASYNC_HOOK_INVOCATION_CONFLICT），这次 lifecycle 派发失败，本轮以 agent_invalid_state 失败，消息是冲突的原文。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Hook run\"}"
+      }
+    },
+    {
+      "name": "hook-stop",
+      "when": [
+        "\"transcriptPath\"",
+        "\"hookEventName\":\"Stop\""
+      ],
+      "reply": {
+        "status": 200,
+        "body": {
+          "async": true,
+          "asyncHookId": "inv-shared",
+          "asyncTimeout": 60
+        }
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "answer"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-first",
+        "channelKey": "test",
+        "message": "first: hi",
+        "sdkSessionConfig": {
+          "hooks": {
+            "url": "{MOCK}/hooks",
+            "events": {
+              "Stop": [
+                {}
+              ]
+            }
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-second",
+        "channelKey": "test",
+        "message": "second: hi",
+        "sdkSessionConfig": {
+          "hooks": {
+            "url": "{MOCK}/hooks",
+            "events": {
+              "Stop": [
+                {}
+              ]
+            }
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "hook_async_result",
+      "params": {
+        "sessionKey": "s-first",
+        "invocationId": "inv-shared",
+        "output": {}
+      }
+    }
+  ]
+}

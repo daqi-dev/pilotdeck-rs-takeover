@@ -308,6 +308,20 @@ where
 /// `host, connection, content-type, authorization, accept, accept-language,
 /// sec-fetch-mode, user-agent, accept-encoding, content-length`.
 pub(crate) fn undici_wire_headers(uri: &hyper::Uri, headers: &HeaderMap) -> HeaderMap {
+    fetch_wire_headers(uri, headers, "undici")
+}
+
+/// The same block for Node's global `fetch`, whose default `user-agent` is
+/// `node` (observed on the baseline's HTTP hook requests).
+pub(crate) fn node_fetch_wire_headers(uri: &hyper::Uri, headers: &HeaderMap) -> HeaderMap {
+    fetch_wire_headers(uri, headers, "node")
+}
+
+fn fetch_wire_headers(
+    uri: &hyper::Uri,
+    headers: &HeaderMap,
+    user_agent: &'static str,
+) -> HeaderMap {
     use hyper::header::{HeaderName, HeaderValue};
     let mut wire = HeaderMap::with_capacity(headers.len() + 7);
     if let Some(authority) = uri.authority()
@@ -331,7 +345,7 @@ pub(crate) fn undici_wire_headers(uri: &hyper::Uri, headers: &HeaderMap) -> Head
         (hyper::header::ACCEPT_LANGUAGE, "*", false),
         // `headersList.set`: replaces a caller value in place.
         (HeaderName::from_static("sec-fetch-mode"), "cors", true),
-        (hyper::header::USER_AGENT, "undici", false),
+        (hyper::header::USER_AGENT, user_agent, false),
         (
             hyper::header::ACCEPT_ENCODING,
             if https {

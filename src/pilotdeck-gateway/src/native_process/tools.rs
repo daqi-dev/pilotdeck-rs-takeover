@@ -119,7 +119,7 @@ pub struct SessionTools {
     /// The session's hook settings (plugin contributions, then the SDK
     /// session config) and the observer projecting their execution.
     hooks: crate::hooks::protocol::HooksSettings,
-    hook_observer: Option<Arc<dyn crate::runtime::hooks::runtime::HookExecutionEventHandler>>,
+    hook_observers: crate::runtime::hooks::runtime::HookObservers,
     /// The tool runtime's lifecycle: the current turn's bound hooks.
     tool_hooks: Arc<super::hooks::ToolHooks>,
 }
@@ -245,7 +245,7 @@ impl ForkSeed {
             user_dialog: None,
             elicitation_timeout: self.elicitation_timeout,
             hooks: Vec::new(),
-            hook_observer: None,
+            hook_observers: Default::default(),
             tool_hooks: Arc::default(),
         }
     }
@@ -311,7 +311,7 @@ impl SessionTools {
             file_history,
             user_dialog: None,
             hooks: Vec::new(),
-            hook_observer: None,
+            hook_observers: Default::default(),
             tool_hooks: Arc::default(),
             elicitation_timeout: super::permission_prompt::interaction_timeout(
                 env.get("PILOTDECK_ELICITATION_TIMEOUT_MS")
@@ -474,20 +474,34 @@ impl SessionTools {
     /// The session's hooks (`SessionInteractionBundle`): `settings` run in the
     /// session's lifecycle runtimes, the tool runtime dispatches the tool
     /// events through the same runtime, and every execution transition is
-    /// projected onto the gateway stream (`sdk`: `includeHookEvents`).
+    /// projected onto the gateway stream (`sdk`: `includeHookEvents`). With
+    /// SDK session hooks, an async output naming an invocation id is
+    /// registered with the gateway's deferred-result registry
+    /// (SessionInteractionBundle.ts:146-157).
     pub(super) fn with_hooks(
         mut self,
         settings: crate::hooks::protocol::HooksSettings,
         emit: super::permission_prompt::GatewayEmitSlot,
         sdk: bool,
+        async_registry: Option<super::hooks::AsyncRegistrySlot>,
     ) -> Self {
+        let session = self.binding.context.session_key.clone();
         self.tool_hooks.configure(&settings);
         self.hooks = settings;
-        self.hook_observer = Some(Arc::new(super::hooks::GatewayHookProjection {
-            session: self.binding.context.session_key.clone(),
-            emit,
-            sdk,
-        }));
+        self.hook_observers = crate::runtime::hooks::runtime::HookObservers {
+            execution: Some(Arc::new(super::hooks::GatewayHookProjection {
+                session: session.clone(),
+                emit,
+                sdk,
+            })),
+            async_registered: async_registry.map(|registry| {
+                Arc::new(super::hooks::GatewayAsyncHooks {
+                    session,
+                    registry,
+                    include_hook_events: sdk,
+                }) as Arc<dyn crate::runtime::hooks::runtime::AsyncHookRegistrationHandler>
+            }),
+        };
         let _ = self.permission.3.set(self.tool_hooks.clone());
         self
     }
@@ -825,7 +839,7 @@ impl SessionTools {
                 },
                 turn_ports: Default::default(),
                 hook_wiring: crate::runtime::turn::interaction::HookWiring {
-                    observer: self.hook_observer.clone(),
+                    observers: self.hook_observers.clone(),
                     turn_sink: Some({
                         let tool_hooks = self.tool_hooks.clone();
                         Arc::new(move |port| tool_hooks.bind(port))

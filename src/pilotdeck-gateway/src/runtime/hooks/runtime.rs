@@ -187,7 +187,8 @@ pub struct AsyncHookRegistration {
     pub timeout_ms: Option<f64>,
 }
 pub trait AsyncHookRegistrationHandler: Send + Sync {
-    fn handle(&self, registration: AsyncHookRegistration);
+    /// An error (an invocation id owned by another turn) rejects the dispatch.
+    fn handle(&self, registration: AsyncHookRegistration) -> Result<(), HostError>;
 }
 
 // ------------------------------------------------------------------ event bus
@@ -299,6 +300,16 @@ impl RuntimeState {
             Self::Disposed => "disposed",
         }
     }
+}
+
+/// Host consumers attached to a session's hook runtimes.
+#[derive(Clone, Default)]
+pub struct HookObservers {
+    /// Every execution transition (`subscribeExecutionEvents`).
+    pub execution: Option<Arc<dyn HookExecutionEventHandler>>,
+    /// `onAsyncHookRegistered`: an async output that names an invocation id
+    /// is handed to the gateway's deferred-result registry.
+    pub async_registered: Option<Arc<dyn AsyncHookRegistrationHandler>>,
 }
 
 pub struct HookRuntimeOptions {
@@ -468,7 +479,7 @@ impl HookRuntime {
                                 hook_event: input.event.clone(),
                                 invocation_id: invocation_id.clone(),
                                 timeout_ms: r#async.timeout_ms,
-                            });
+                            })?;
                         }
                         _ => {
                             let id = {
