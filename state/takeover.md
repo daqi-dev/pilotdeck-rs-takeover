@@ -6,22 +6,24 @@
 
 ## 现在由 Rust 承担并有证据的入口
 
-| 入口 | 证据 | 没覆盖的 |
+以两条命令的输出为准（2026-11-11 晚，提交 `22305e9bb`）：
+
+- `node scripts/bbx/check.mjs`：135 个场景，全量一次跑出 123 个 SAME；另有 3 个（`tool-send-message`、`tool-agent-general`、`cron-tools-run`）单独重跑 SAME（前两个是高负载下的时序抖动）。
+- `node scripts/bbx/coverage.mjs`：101 个 gateway method 里 95 个有正常路径的场景且全部 SAME，5 个有场景但有差异（`submit_turn`、`set_permission_mode`、`read_session_messages`、`memory_list`、`memory_wipe`——前三个是被下面那几个不一致的场景带上的），1 个没有场景（`prepare_weixin_login`，需要外部服务）。
+
+按入口分：`pilotdeck server` 启停与握手；一轮对话与 28 个常规工具、计划模式两个工具、`request_user_*` 四个工具、`cron_*` 六个工具；权限询问；子代理（一次性与后台可续跑）；会话读取、分叉、替换最后一轮、导出与恢复、文件回退；插件、skills、MCP；设置读写与热重载；上传、快照、定时任务；HTTP 的通用行为、`/api/web/*`、静态托管、飞书 webhook；CLI 的帮助与用法、`run` / `resume`、`sessions`、`chat search`、`skills migrate`、`gateway setup` 的不联网部分。
+
+仍不一致的场景（9 个）：
+
+| 场景 | 原因 | 状态 |
 |---|---|---|
-| `pilotdeck server` 的启停：参数与环境变量优先级、启动输出、token 文件、停机退出码、`/health`、`/auth/local-token`、落盘 | `server-entry-no-config` / `start-stop` / `port-host` / `token-generate` / `token-sources` 5 个场景 SAME | 停机时有客户端连着；非 git 目录的 stderr；`telemetry.enabled: true` |
-
-当前对拍结果（`node scripts/bbx/check.mjs`，2026-11-11，对拍工具加固并合并工具执行行为分支之后，57 个场景）：基线 vs Rust 6/57 SAME（6 个 `server-entry-*`，在加固后的规则下仍 SAME）。基线自比 55/57 SAME；不稳的是 `tool-subagent`（后台子代理与父轮请求到达先后不定）和 `tool-subagent-input`（场景本身坏了：基线在等一个没人答的权限询问，判 INVALID）。完整结果在 `_tmp/20261110-inventory/build/m1i-bbx.log`。
-
-其余 51 个场景都 DIFF，共同原因是还缺 `subagent`、`send_message` 两个工具的声明（`native_process/tools.rs` 的 `BASELINE_TOOLS_NOT_PORTED`）：每次模型请求少 2 个工具，连带 `content-length`、token 估算各数值、`fileSize` 不同。`turn-text` 的 51 处全属这一类。
-
-去掉这一类之后已知还剩的真实差异：
-
-- JS/TS、HTML、CSV 文件写入后的语法诊断没移植（`tool-write-file-diagnostics`）。
-- `web_fetch` 只验证了失败路径：基线总把 http 升级成 https，成功路径需要采集器提供本机 HTTPS 服务并让两侧信任证书。
-- `task_output` / `task_wait` / `task_stop` 按真实任务 id 的成功路径没覆盖：需要假 provider 能引用上一步工具结果里的值。`background_tasks` / `background_task_stop` 仍忽略 `projectKey`。
-- `survey-empty-params` 34 处、`cli-survey-offline` 17 处（M4 / M6）。
-
-临时分类的做法：`node scripts/bbx/diff.mjs a b --max 100000`，去掉 `tools[name=`、token 数值字段和 `.raw.` 后按路径分组。只用来定下一步，不作验收。
+| `cli-run-permission-mode`（91 处） | `submit_turn` 的本轮 `mode` 没用到权限决定和提示词上 | 进行中（提交选项工作包） |
+| `llm-invocations-retry`（81 处） | 没发 `retry_progress` 事件、没写 `router/events.jsonl` | 进行中（同上） |
+| `survey-empty-params`（2 处）、`cli-sessions-settings`（1 处，配置版本号） | 小差异；后者高负载下不确定 | 进行中 |
+| `cli-entry-default`、`cli-survey-offline` | 不带子命令的默认对话没做（基线这条路径自身会挂住且每轮失败，怎么处理未定） | 未派 |
+| `http-module-host`（11 处） | 公共 host 的 6 个操作没实现 | 未派 |
+| `tool-write-file-diagnostics`（297 处） | JS/TS、HTML、CSV 写后语法诊断没移植 | 未派 |
+| `memory-enabled`（2 处） | sqlite 文件只比了哈希，基线自比也不稳；需要 bbx 按表导出再比 | 未派 |
 
 ## 验收手段
 
@@ -77,21 +79,27 @@ M1 之后要回头处理的（入口那块发现的）：
 
 下表只记工作包、依赖和现在谁在做。一个工作包「做完」= 它范围内的入口都有场景且 SAME（或差异已登记为已接受），四条命令通过，范围内的占位和代理路径已删。
 
-| # | 工作包 | 范围 | 依赖 | 状态 |
-|---|---|---|---|---|
-| P1 | 对话主干 | 一轮对话、28 个工具、权限询问、会话读取、子代理、插件 | — | 主体完成。剩：JS/TS / HTML / CSV 写后语法诊断；`web_fetch` 成功路径；`task_*` 真实 id 路径 |
-| P2 | 安全修复 | plan / ask 模式拦截、符号链接、`execute_code` 超时、token 接口 Host / Origin | P1 | 进行中（分支 `worktree-agent-a5b164055e58ead20`） |
-| P3 | method：轮次控制与运行记录 | abort / steer / run_* / user_dialog_* / fork / replace / export / restore / rewind 等约 24 个 | P1 | 进行中（`worktree-agent-a77e59246b587d509`，槽位 1） |
-| P4 | method：配置、模型、MCP、skills | model_* / settings / thinking / output style / skill_* / mcp_* / project_file* 等约 27 个 | P1 | 进行中（`worktree-agent-a05f5a750360a428d`，槽位 2） |
-| P5 | method：存储与自动化 | upload_* / memory_* / snapshot_* / native_archive_* / manager_* / sop_* / cron_* / always_on_* 约 25 个 | P1 | 进行中（槽位 3） |
-| P6 | gateway HTTP | 12 条路由（含公共审批、上传下载）、鉴权、SSE | P1；P5 的上传 | 未开始 |
-| P7 | CLI | 25 条命令（普查里 13 条未实现）、进程内模式的落盘 | P1；连 gateway 的命令依赖 P3–P5 | 未开始 |
-| P8 | 启动流程补齐 | 全局代理、配置热重载、渠道适配器、遥测、hooks / modules 配置、停机时有客户端连着 | P4 | 未开始 |
-| P9 | 其余风险审查 | 并发与资源、超时 / 断连 / 重启恢复（做法同安全审查：每条发现附可复现证据，对照基线） | P2–P5 合并后 | 未开始 |
-| P10 | 退役 | 删代理模式、未接线代码、旧测试装置；原版 `ui/server` 接 Rust gateway 实测；人参与的真实使用验收 | P1–P9 | 未开始 |
-| — | 阶段 B（`ui/server`）、前端 | 推迟，P10 之后再定 | P10 | 推迟 |
+| # | 工作包 | 状态 |
+|---|---|---|
+| P1 | 对话主干、28 个工具、权限、会话读取、子代理、插件 | 完成（剩语法诊断，见 P13） |
+| P2 | 安全修复（plan / ask 模式拦截、符号链接、`execute_code` 超时、local-token 的 Host / Origin） | 完成 |
+| P3–P5 | gateway method 三个族（轮次控制与运行记录；配置、模型、MCP、skills；存储与自动化） | 完成 |
+| P6 | gateway HTTP | 主体完成。剩公共 host 的 6 个操作（`list_general_skills`、`list_model_catalog`、`model_prepare`、`model_stream`、`file_parse`、`read_sop_authority`）与审批桥的 StaffDeck 外部认证 |
+| P7 | CLI | 主体完成。剩默认对话、`cron` 探测成功后的路径（基线端口写死 18789，隔离环境比不了）、`gateway setup` 写回配置与联网登录、TUI |
+| P8a | SDK 会话配置、用户对话、计划模式工具 | 完成 9 个字段；`sdkSessionConfig` 另 17 个字段未做（带它们的配置明确回不可用） |
+| P8b | 定时任务轮次、LLM 调用记录 | 完成（google 协议与非流式路径的调用记录未做） |
+| P8c | 会话编辑、导出、文件回退、按 id 的后台任务 | 完成 |
+| P9 | 可靠性：sidecar 握手超时、会话记录顺序、配置版本号、sidecar 泄漏 | 进行中（`worktree-agent-acc1387970b6815a3`，槽位 4） |
+| P10 | 每轮提交选项、模型路由事件、启动时的配置通知 | 进行中（`worktree-agent-a0b2fe4f56bb9ec37`，槽位 1） |
+| P11 | hooks 执行器、`modules` 配置（现在带 hooks / modules 的配置被拒绝启动） | 进行中（`worktree-agent-a65c52e3be0d8a4a1`，槽位 2） |
+| P12 | always-on 完整流程（基线约 6000 行：discovery / workspace / execute / report / apply） | 未开始 |
+| P13 | 写后语法诊断（JS/TS、HTML、CSV）；`memory` 的 sqlite 比对；公共 host 6 个操作；`sdkSessionConfig` 其余字段 | 未开始 |
+| P14 | 启动流程补齐：全局代理、渠道适配器（只接了飞书和微信）、遥测、停机时有客户端连着 | 未开始 |
+| P15 | 其余风险审查（超时 / 断连 / 重启恢复；做法同安全审查） | P9 之后 |
+| P16 | 退役：删代理模式、未接线代码、旧测试装置；原版 `ui/server` 接 Rust gateway 实测；人参与的真实使用验收 | 最后 |
+| — | 阶段 B（`ui/server`）、前端 | 推迟，P16 之后再定 |
 
-并行规则：P3 / P4 / P5 / P6 / P7 互不依赖实现，可同时做；同时最多 4 个 Opus 子代理（人 2026-11-11 同意；撞额度上限就降回 2–3 个），各用一个 bbx 槽位（`BBX_SLOT`）；合并由主会话逐个做，合并后在主检出跑全量对拍和四条命令。给子代理的通用说明在会话的 scratchpad（`briefs/common.md`，仓库外；丢了就按 `CLAUDE.md` 和本文件重写）。
+并行规则：P3 / P4 / P5 / P6 / P7 互不依赖实现，可同时做；同时最多 4 个 Opus 子代理（人 2026-11-11 同意；撞额度上限就降回 2–3 个）。4 个并行加主检出的全量测试时负载均值到过 27–35，会制造假失败（握手超时、限时测试超时、时序场景抖动），遇到先单独重跑，各用一个 bbx 槽位（`BBX_SLOT`）；合并由主会话逐个做，合并后在主检出跑全量对拍和四条命令。给子代理的通用说明在会话的 scratchpad（`briefs/common.md`，仓库外；丢了就按 `CLAUDE.md` 和本文件重写）。
 
 速度参考：一个 Opus 子代理一轮 1–1.5 小时、约 40–60 万 token，能做完一个上面这样大小的工作包的大部分。
 
@@ -121,6 +129,11 @@ M1 之后要回头处理的（入口那块发现的）：
 | 2026-11-11 | bbx 比较器加两类归一化：耗时（`duration_ms` / `duration_seconds` 的数值，保留小数位数）；基线 `execute_code` 的 mkdtemp 随机后缀和溢出目录里的进程号（只认这两个固定前缀） | 基线自比也不稳；只抹数值或随机段，格式和路径其余部分照比。`tool-execute-code-traceback` 自比仍有约 50 处：随机目录名进了 traceback 文本，token 估算随之差几个；`tool-execute-code` 自比剩 `fileSize` 1 处。这两处还没处理 |
 | 2026-11-11 | 会话 `.jsonl` 里 provider 标题记录的落点不比（人确认：基线多次运行之间本身不一致）。bbx 比较前把它的内容挪到同一轮开头的固定位置，只允许越过循环开头那几类记录；位置字段不动 | 基线自比的不稳只表现为这条记录与相邻记录换位，`sequence` / `entryId` 随位置不变。注入错误检查：标题内容改一个字报 1 处；落到 `model_request` 之后报 57 处。原先 3 个不稳的自比结果重算后 SAME |
 | 2026-11-11 | 关掉 Rust 里模仿标题落点的补丁（`park_title_record: false`） | 上一条之后不再需要；关掉后 `turn-text`、`project-default`、`read-messages-paging`、`tool-todo-write` 过滤后剩余仍为 0。`Recorder::park` 及进程级冷热标志的代码待删 |
+| 2026-11-11 | 安全审查的处理：`execute_code` 的「只读」判定保持与基线一致（记为已知风险）；`execute_code` 超时回收孙进程、`/auth/local-token` 检查 Host / Origin 两处有意偏离基线 | 前者改了会明显改变日常体验；后两者是可被利用或会挂死的问题，修了不影响正常使用（前端经 `ui/server` 连 gateway，不走这个接口） |
+| 2026-11-11 | 基线会崩溃的两种请求 Rust 不照做：飞书 webhook 收到 `null` 请求体、`/api/web` 路径里非法的百分号编码 | 基线进程直接退出（前者未鉴权即可触发）；Rust 正常回错误 |
+| 2026-11-11 | 配置文件监视在被 `update_settings` 改写后继续有效（基线第一次原子替换后就失效） | 基线 bug：之后手工改配置不再热重载。登记在 `settings-update` 的 `accepted` |
+| 2026-11-11 | `update_settings` 遇到少见的 YAML 特性（自定义标签指令、YAML 1.1 特殊类型）时报写入失败；新版规范（Draft 2020-12）的表单 schema 被拒绝 | Rust 没有对应的序列化 / 校验能力，选择明确报错而不是冒险写坏或假装支持。两处文案是 Rust 自己的 |
+| 2026-11-11 | 基线第一层子代理的深度算成 2（配 `maxDepth: 2` 时子代理拿不到 `agent` 工具）照基线做；`managedPermissions.defaultMode: plan` 不生效照基线做 | 与基线文档不符但不属于崩溃或丢数据，改了会改变对外行为 |
 | 2026-11-10 | `scripts/parity`、`scripts/cli-parity` 暂留，用到时先做注入错误检查 | 静态看是真对拍，但我没跑过 |
 
 ## 停用的旧闸门
