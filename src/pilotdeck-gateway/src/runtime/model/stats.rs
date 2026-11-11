@@ -1197,7 +1197,7 @@ fn locale_compare(left: &str, right: &str) -> Ordering {
     locale_compare_js(&left.into(), &right.into())
 }
 
-fn locale_compare_js(left: &JsString, right: &JsString) -> Ordering {
+pub(crate) fn locale_compare_js(left: &JsString, right: &JsString) -> Ordering {
     static COLLATOR: OnceLock<icu_collator::CollatorBorrowed<'static>> = OnceLock::new();
     let collator = COLLATOR.get_or_init(|| {
         let locale: icu_locale_core::Locale = "en-US".parse().expect("valid locale");

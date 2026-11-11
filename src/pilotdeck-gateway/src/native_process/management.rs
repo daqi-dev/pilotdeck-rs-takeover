@@ -234,6 +234,13 @@ impl Requests {
             SkillManagerOptions::new(self.options.home.to_string_lossy().into_owned());
         options.env = Some(self.env.clone());
         options.home_dir = Some(self.options.home.to_string_lossy().into_owned());
+        // `new SkillManager({ ..., builtinSkillsRoot })`: the same bundled
+        // directory the session prompt lists (createLocalGateway.ts).
+        options.builtin_skills_root = self
+            .options
+            .builtin_skills_root
+            .as_ref()
+            .map(|root| root.to_string_lossy().into_owned());
         let snapshot = context.snapshot();
         let manager = SkillManager::new(options).map_err(skill_error)?;
         let facade = SkillsFacade::new(manager, move |_| skill_binding_from_snapshot(&snapshot));

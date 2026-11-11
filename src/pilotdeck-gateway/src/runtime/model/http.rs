@@ -2254,8 +2254,11 @@ async fn send_provider_request(
             header_map,
             encoded.clone(),
             || to_provider(NetworkFetchError::classify("fetch failed", None)),
-            |request| async {
+            |mut request| async {
                 let timeout_text = timeout_text.clone();
+                let wire =
+                    crate::fetch_redirect::undici_wire_headers(request.uri(), request.headers());
+                *request.headers_mut() = wire;
                 provider_exchange(
                     transport,
                     request,

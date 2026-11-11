@@ -245,6 +245,7 @@ mod tests {
             drain_budget: Duration::from_secs(1),
             storage_root: None,
             os_home: None,
+            builtin_skills_root: None,
         }
     }
 

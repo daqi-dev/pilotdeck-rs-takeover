@@ -58,6 +58,7 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
             .find(|token| !token.is_empty()),
         sidecar: exe_dir.unwrap_or(Path::new("")).join(SIDECAR),
         env: env.strings(),
+        builtin_skills_root: Some(builtin_root),
     };
     native_process::serve(options, |listening| {
         stdout_line(&format!("PilotDeck server listening: {}", listening.url));

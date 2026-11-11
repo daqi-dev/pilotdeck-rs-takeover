@@ -77,6 +77,18 @@ pub trait SubmitHostServices: Send + Sync {
         &'a self,
         input: &'a JsValue,
     ) -> SubmitFuture<'a, Result<JsValue, SubmitError>>;
+    /// `this.permissionModes.get(sessionKey)` (InProcessGateway.ts:1446):
+    /// the mode a plan-mode tool transition left for the next turn
+    /// (`GatewaySessionPermissionModeRegistry`). It is not the
+    /// `set_permission_mode` selection, which the baseline keeps in the
+    /// session overrides instead. No embedding tracks those transitions yet.
+    fn live_permission_mode(&self, _session: &JsString) -> Option<JsString> {
+        None
+    }
+    /// `options.defaultPermissionMode` (InProcessGateway.ts:1449).
+    fn default_permission_mode(&self) -> Option<JsString> {
+        None
+    }
     /// `recordAgentStatusMessage`.
     fn record_failure<'a>(
         &'a self,
@@ -260,56 +272,89 @@ impl SubmitHost for GatewaySubmitHost {
                 .await?;
             let model_selection = self.services.resolve_model_selection(input).await?;
             let plan = field(input, "mode") == &JsValue::from("plan");
+            // InProcessGateway.ts:1442-1455. `normalizeGatewayModeForLegacyInput`
+            // keeps only a permission mode; validation already refused other
+            // non-empty values.
+            let mode_of = |key: &str| {
+                field(input, key).as_string().filter(|mode| {
+                    ["default", "plan", "bypassPermissions"]
+                        .iter()
+                        .any(|known| mode.equals_str(known))
+                })
+            };
+            let requested = mode_of("mode").cloned();
+            let live = self.services.live_permission_mode(&run.session_key);
+            let default_mode = self.services.default_permission_mode();
+            // `inputMode ?? livePermissionMode ?? defaultPermissionMode`; the
+            // settings-file `skipPermissions` leg applies only without a
+            // default, which no embedding here has.
+            let permission_mode = requested.clone().or(live).or_else(|| default_mode.clone());
+            // `permissionModes.getBase` has no native store yet.
+            let base_permission_mode = mode_of("basePermissionMode")
+                .cloned()
+                .or_else(|| requested.filter(|mode| !mode.equals_str("plan")))
+                .or(default_mode);
+            let mut options = crate::metadata::object([
+                ("turnId", JsValue::String(run.run_id.clone())),
+                (
+                    "runMode",
+                    match field(input, "runMode") {
+                        JsValue::Null | JsValue::Undefined => {
+                            if plan {
+                                "plan"
+                            } else {
+                                "agent"
+                            }
+                        }
+                        JsValue::String(mode) if mode.equals_str("") => {
+                            if plan {
+                                "plan"
+                            } else {
+                                "agent"
+                            }
+                        }
+                        JsValue::String(mode) if mode.equals_str("plan") => "plan",
+                        JsValue::String(mode) if mode.equals_str("ask") => {
+                            if crate::mutants::on("live-run-mode-ask") {
+                                "agent"
+                            } else {
+                                "ask"
+                            }
+                        }
+                        _ => "agent",
+                    }
+                    .into(),
+                ),
+                (
+                    "allowPlanModeTools",
+                    input
+                        .get("allowPlanModeTools")
+                        .filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined))
+                        .cloned()
+                        .unwrap_or(JsValue::Bool(plan)),
+                ),
+                (
+                    "execution",
+                    crate::metadata::object([
+                        ("runId", JsValue::String(run.run_id.clone())),
+                        ("operationId", JsValue::String(run.run_id.clone())),
+                    ]),
+                ),
+            ]);
+            if let JsValue::Object(fields) = &mut options {
+                for (key, mode) in [
+                    ("permissionMode", permission_mode),
+                    ("basePermissionMode", base_permission_mode),
+                ] {
+                    if let Some(mode) = mode {
+                        fields.insert(key.into(), JsValue::String(mode));
+                    }
+                }
+            }
             Ok(PreparedTurn {
                 model_selection,
                 input: agent_input,
-                options: crate::metadata::object([
-                    ("turnId", JsValue::String(run.run_id.clone())),
-                    (
-                        "runMode",
-                        match field(input, "runMode") {
-                            JsValue::Null | JsValue::Undefined => {
-                                if plan {
-                                    "plan"
-                                } else {
-                                    "agent"
-                                }
-                            }
-                            JsValue::String(mode) if mode.equals_str("") => {
-                                if plan {
-                                    "plan"
-                                } else {
-                                    "agent"
-                                }
-                            }
-                            JsValue::String(mode) if mode.equals_str("plan") => "plan",
-                            JsValue::String(mode) if mode.equals_str("ask") => {
-                                if crate::mutants::on("live-run-mode-ask") {
-                                    "agent"
-                                } else {
-                                    "ask"
-                                }
-                            }
-                            _ => "agent",
-                        }
-                        .into(),
-                    ),
-                    (
-                        "allowPlanModeTools",
-                        input
-                            .get("allowPlanModeTools")
-                            .filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined))
-                            .cloned()
-                            .unwrap_or(JsValue::Bool(plan)),
-                    ),
-                    (
-                        "execution",
-                        crate::metadata::object([
-                            ("runId", JsValue::String(run.run_id.clone())),
-                            ("operationId", JsValue::String(run.run_id.clone())),
-                        ]),
-                    ),
-                ]),
+                options,
             })
         })
     }

@@ -37,10 +37,6 @@ oracle = root / 'src/pilotdeck-gateway/tests/fixtures/always-on-2294/oracle.json
 GATES_REPLAY = 'runtime::always_on::gates::tests::replays_the_gate_chain_golden'
 B2_REPLAY = 'native_process::assembly::automation::tests::b2_start_stop_order'
 B6_REPLAY = 'native_process::assembly::automation::tests::b6_reload_cron_only'
-NOT_ADVERTISED = (
-    'native_process::methods::always_on::tests::'
-    'always_on_methods_are_not_advertised_without_a_manager'
-)
 T1_REPLAY = 'runtime::always_on::scheduler::tests::t1_fires_with_state_and_lock_bookkeeping'
 mutations = [
     # The gate chain's lock gate is removed, so g10's held lock answers ok
@@ -94,18 +90,11 @@ mutations = [
      '            Some(previous) if changes.always_on_changed => previous.always_on.clone(),',
      B6_REPLAY,
      '#2294 factory counts'),
-    # The wired probe answers true without a manager, so describe advertises
-    # the three always-on methods on a gateway whose control is not bound —
-    # the false capability claim the not-advertised test exists to kill.
-    ('advertise-without-manager', capabilities,
-     'fn always_on(requests: &Requests) -> bool {\n'
-     '    requests.always_on.is_some()\n'
-     '}\n',
-     'fn always_on(_requests: &Requests) -> bool {\n'
-     '    true\n'
-     '}\n',
-     NOT_ADVERTISED,
-     '#2294 always_on_apply must not be advertised without an always-on manager'),
+    # 2026-11-10 (dev/takeover): the `advertise-without-manager` row is gone.
+    # It guarded "not advertised without a manager", which the baseline does
+    # not do: `pilotdeck server` always injects an alwaysOnControl
+    # (ProjectAutomationBundle.ts:364) and lists the three names (bbx
+    # `server-entry-handshake`).
     # A fired tick keeps the discovery lock, so t1's lockAfter stays true
     # against the golden's false (the bookkeeping half of the fire path).
     ('fired-tick-keeps-the-lock', scheduler,

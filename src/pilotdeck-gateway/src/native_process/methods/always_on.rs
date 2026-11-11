@@ -383,11 +383,15 @@ mod tests {
         teardown(&requests).await;
     }
 
-    // The three names must stay out of describe without a manager: TS lists
-    // them only when an `alwaysOnControl` is injected
-    // (InProcessGateway.ts:2123-2126), and this fixture binds none.
+    // The three names are advertised with or without a manager, as on the
+    // baseline: `pilotdeck server` always injects an `alwaysOnControl` — the
+    // generation's manager or the fallback control
+    // (ProjectAutomationBundle.ts:364) — so `describeServer`
+    // (InProcessGateway.ts:2123-2126) lists them for an unconfigured server
+    // too (bbx `server-entry-handshake`). What an unconfigured gateway
+    // answers is pinned by `always_on_methods_answer_not_configured_envelopes`.
     #[tokio::test]
-    async fn always_on_methods_are_not_advertised_without_a_manager() {
+    async fn always_on_methods_are_advertised_without_a_manager() {
         let (_scratch, requests) = std::panic::catch_unwind(setup).expect("#1313 fixture setup");
         let described = GatewayRequests::describe_server(&requests)
             .await
@@ -404,8 +408,8 @@ mod tests {
             });
             negative_assert_eq!(
                 advertised,
-                false,
-                "#2294 {method} must not be advertised without an always-on manager"
+                true,
+                "{method} is advertised without an always-on manager, like the baseline"
             );
         }
         teardown(&requests).await;

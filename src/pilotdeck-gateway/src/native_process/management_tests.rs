@@ -224,7 +224,6 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
         requests::Requests {
             options,
             env,
-            snapshot_enabled: true,
             memory: Arc::new(crate::runtime::memory::gateway::MemoryGateway::disabled()),
             project,
             owner: owner.clone(),
@@ -704,7 +703,7 @@ async fn production_host_management_and_restart() {
             .map(|value| value.as_str().expect("#1231 capability string"))
             .collect();
         capabilities.sort_unstable();
-        let expected = expected_capabilities(true);
+        let expected = expected_capabilities();
         negative_assert_eq!(capabilities, expected, "#1231 exact wired capability set");
         // No `assert_ts_capability_subset` here on purpose: this table runs in
         // the default (snapshots-enabled) state, and exact equality above is
@@ -1092,7 +1091,7 @@ async fn assert_storage_disabled(storage: Option<&str>, fixture: &str) {
             })
             .collect();
         capabilities.sort_unstable();
-        let expected = expected_capabilities(false);
+        let expected = expected_capabilities();
         negative_assert_eq!(
             capabilities,
             expected,
@@ -1140,42 +1139,21 @@ fn oracle_capabilities(state: &str) -> &'static [Value] {
         .unwrap_or_else(|| panic!("#1231 TS capability array missing at contract.{state}"))
 }
 
-/// Providers the management fixture leaves unbound, so their names are absent
-/// from every live advertisement here even though the TS fixture configures
-/// them: `setup()` builds the `MemoryGateway` without a projection
-/// (`MemoryGateway::is_enabled()` is false). The memory pair is exercised by
-/// `memory_management_request_disabled_gateway_returns_unavailable`, so
-/// filtering it here does not remove the only assertion covering it.
-const PROVIDERS_UNBOUND_IN_FIXTURE: &[&str] = &["memory_list", "memory_wipe"];
-
 /// The exact capability set `describe_server` must advertise (#1231).
 ///
-/// Derived from what the TS baseline actually recorded rather than from a
-/// second hand-kept list (#1352): `oracle.json` is the baseline's own
-/// `describe_server` output for the three fixture config states, all three
-/// carrying the same 50 names. The Rust set is
-///
-///   recorded − `capabilities::NOT_ADVERTISED` − providers this fixture does
-///   not bind (memory pair, and the snapshot triplet without `--storage-root`)
-///
-/// so the only way to omit a name the baseline records is to declare it, with
-/// its reason, in one of those two lists — and a name the table invents or
-/// misspells fails here. See `capability_table_covers_every_recorded_name` for
-/// the same invariant stated over the table itself rather than over a live host.
-fn expected_capabilities(with_snapshots: bool) -> Vec<&'static str> {
+/// The list is an observable output, so it follows what the baseline emits:
+/// every name `oracle.json` records (the baseline's own `describe_server`
+/// output for the fixture config states), plus the three always-on names the
+/// oracle's host did not bind and a real `pilotdeck server` does (bbx
+/// `server-entry-handshake`). The names do not depend on whether a storage
+/// root or a memory runtime is configured — the baseline advertises them in
+/// every state; what the methods answer is a separate question
+/// (`capabilities::ADVERTISED_NOT_SERVED`).
+fn expected_capabilities() -> Vec<&'static str> {
     let mut expected: Vec<&'static str> = oracle_capabilities("contract")
         .iter()
         .map(|value| value.as_str().expect("#1231 TS capability string"))
-        .filter(|name| {
-            !super::capabilities::NOT_ADVERTISED
-                .iter()
-                .any(|(declared, _)| declared == name)
-        })
-        .filter(|name| !PROVIDERS_UNBOUND_IN_FIXTURE.contains(name))
-        .filter(|name| {
-            with_snapshots
-                || !matches!(*name, "snapshot_list" | "snapshot_get" | "snapshot_restore")
-        })
+        .chain(crate::runtime::always_on::ALWAYS_ON_METHODS.iter().copied())
         // `tools::METHODS` registers the two background names only on unix, and
         // the table drops a name whose method is missing; the expectation has to
         // follow, or the exact-set test would demand a name the registry cannot
@@ -1224,6 +1202,9 @@ fn assert_ts_capability_subset(expected: &[&str]) {
         negative_assert!(
             expected
                 .iter()
+                .filter(|capability| {
+                    !crate::runtime::always_on::ALWAYS_ON_METHODS.contains(capability)
+                })
                 .all(|capability| ts_capabilities.contains(&json!(capability))),
             "#1231 wired capabilities are TS subset (contract.{state})"
         );
@@ -1452,7 +1433,19 @@ async fn settings_capabilities_match_served_delegates() {
         let result = requests
             .settings_request(method.to_owned(), JsValue::Undefined)
             .await;
-        if advertised.iter().any(|name| name == method) {
+        // The baseline advertises every published settings name; the ones
+        // this process cannot serve yet are declared in
+        // `capabilities::ADVERTISED_NOT_SERVED` and must answer exactly the
+        // unavailable error, so serving one of them (or silently dropping the
+        // declaration) fails here.
+        let declared_gap = super::capabilities::ADVERTISED_NOT_SERVED
+            .iter()
+            .any(|(name, _)| *name == method);
+        negative_assert!(
+            advertised.iter().any(|name| name == method),
+            "published settings capability {method} is advertised like the baseline"
+        );
+        if !declared_gap {
             // #1869 item 3: a non-CAPABILITY_UNAVAILABLE answer is not proof
             // the method was served — a renamed dispatch arm answers
             // `gateway_request_failed`, and a hollow delegate answers an
@@ -1623,7 +1616,7 @@ async fn production_entry_snapshot_capabilities_are_disabled() {
                     })
                     .collect();
                 capabilities.sort_unstable();
-                let expected = expected_capabilities(false);
+                let expected = expected_capabilities();
                 negative_assert_eq!(
                     capabilities,
                     expected,
@@ -1806,7 +1799,7 @@ async fn storage_root_cli_arg_wires_snapshot_capabilities() {
         .map(|v| v.as_str().expect("#1323 capability string"))
         .collect();
     capabilities.sort_unstable();
-    let expected = expected_capabilities(true);
+    let expected = expected_capabilities();
     negative_assert_eq!(
         capabilities,
         expected,

@@ -661,10 +661,13 @@ async fn configured_assembly_advertises_and_serves_the_three_always_on_names() {
 
 /// #2294 `createAlwaysOn` conditions at the assembly: a present
 /// `alwaysOn:` section whose projects are all disabled constructs no manager
-/// — the three names stay out of capabilities and the methods keep the
-/// #1313 not_configured envelopes byte for byte.
+/// and the methods keep the #1313 not_configured envelopes byte for byte. The
+/// three names are advertised all the same: the baseline publishes a fallback
+/// control when the generation has no manager
+/// (ProjectAutomationBundle.ts:364), so its `describeServer` lists them in
+/// every `pilotdeck server` (bbx `server-entry-handshake`).
 #[tokio::test]
-async fn a_disabled_always_on_section_keeps_the_three_names_gated() {
+async fn a_disabled_always_on_section_constructs_no_manager() {
     let (scratch, requests) =
         std::panic::catch_unwind(crate::native_process::management_tests::setup)
             .expect("#2294 fixture setup");
@@ -693,8 +696,8 @@ async fn a_disabled_always_on_section_keeps_the_three_names_gated() {
     let advertised = capabilities(&harness);
     for name in crate::runtime::always_on::ALWAYS_ON_METHODS {
         negative_assert!(
-            !advertised.contains(&name.to_string()),
-            "#2294 the disabled section keeps {name} out of capabilities"
+            advertised.contains(&name.to_string()),
+            "{name} is advertised with a disabled always-on section, like the baseline"
         );
     }
 

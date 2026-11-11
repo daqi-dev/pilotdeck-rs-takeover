@@ -297,6 +297,59 @@ where
     }
 }
 
+/// The header block undici's `fetch` puts on the wire for one hop, in wire
+/// order: `host`, `connection: keep-alive`, the caller's headers in insertion
+/// order, then the Fetch defaults for whichever of them the caller did not
+/// set (`accept`, `accept-language`, `sec-fetch-mode`, `user-agent`,
+/// `accept-encoding`). `content-length` is left to the HTTP client, which
+/// writes it last, as undici does.
+///
+/// Observed from the baseline (Node 22) against a recording provider:
+/// `host, connection, content-type, authorization, accept, accept-language,
+/// sec-fetch-mode, user-agent, accept-encoding, content-length`.
+pub(crate) fn undici_wire_headers(uri: &hyper::Uri, headers: &HeaderMap) -> HeaderMap {
+    use hyper::header::{HeaderName, HeaderValue};
+    let mut wire = HeaderMap::with_capacity(headers.len() + 7);
+    if let Some(authority) = uri.authority()
+        && let Ok(host) = HeaderValue::from_str(authority.as_str())
+    {
+        wire.insert(hyper::header::HOST, host);
+    }
+    wire.insert(
+        hyper::header::CONNECTION,
+        HeaderValue::from_static("keep-alive"),
+    );
+    for (name, value) in headers {
+        if name == hyper::header::HOST || name == hyper::header::CONNECTION {
+            continue;
+        }
+        wire.append(name.clone(), value.clone());
+    }
+    let https = uri.scheme_str() == Some("https");
+    let defaults: [(HeaderName, &'static str, bool); 5] = [
+        (hyper::header::ACCEPT, "*/*", false),
+        (hyper::header::ACCEPT_LANGUAGE, "*", false),
+        // `headersList.set`: replaces a caller value in place.
+        (HeaderName::from_static("sec-fetch-mode"), "cors", true),
+        (hyper::header::USER_AGENT, "undici", false),
+        (
+            hyper::header::ACCEPT_ENCODING,
+            if https {
+                "br, gzip, deflate"
+            } else {
+                "gzip, deflate"
+            },
+            false,
+        ),
+    ];
+    for (name, value, replace) in defaults {
+        if replace || !wire.contains_key(&name) {
+            wire.insert(name, HeaderValue::from_static(value));
+        }
+    }
+    wire
+}
+
 /// Fetch bad-port table (Node 22); shared by every fetch-shaped client.
 pub(crate) fn blocked_port(port: u16) -> bool {
     // Node 22 / Fetch's bad-port table. Check before any network exchange.

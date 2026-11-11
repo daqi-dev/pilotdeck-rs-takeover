@@ -10,18 +10,25 @@
 |---|---|---|
 | `pilotdeck server` 的启停：参数与环境变量优先级、启动输出、token 文件、停机退出码、`/health`、`/auth/local-token`、落盘 | `server-entry-no-config` / `start-stop` / `port-host` / `token-generate` / `token-sources` 5 个场景 SAME | 停机时有客户端连着；非 git 目录的 stderr；`telemetry.enabled: true` |
 
-当前对拍结果（`node scripts/bbx/check.mjs`，2026-11-10，多项目改造后）：基线自比 12/12 SAME；基线 vs Rust 5/12 SAME。
+当前对拍结果（`node scripts/bbx/check.mjs`，2026-11-10，M1 第三块第一轮后）：基线 vs Rust 6/12 SAME。
 
 | 场景 | 结果 |
 |---|---|
-| `server-entry-*`（除 handshake）5 个 | SAME |
-| `server-entry-handshake` | DIFF 39（全是能力列表） |
-| `turn-text` | DIFF 337 |
-| `project-default` / `project-keys` / `project-session-lifecycle` | DIFF 621 / 742 / 1164 |
-| `survey-empty-params` | DIFF 161 |
+| `server-entry-*` 6 个（含握手、能力列表 53 项） | SAME |
+| `turn-text` | DIFF 469 |
+| `project-default` / `project-keys` / `project-session-lifecycle` | DIFF 864 / 1140 / 1698 |
+| `survey-empty-params` | DIFF 38 |
 | `cli-survey-offline` | DIFF 15 |
 
-带对话的 4 个场景里，剩余差异只有这几类（都归 M1 第三块）：发给 provider 的请求、会话 `.jsonl` 与 `.projections.json` 的内容、`context_budget` 事件、能力列表、`fileSize`、`read_session_messages`。落盘路径、`serverInfo.projectKey`、`cwd`、项目解析报错已一致。数字比改造前大，是因为会话文件落到了与基线相同的路径，从「整个文件缺失算 1 处」变成逐条比内容。
+带对话的 4 个场景，会话 `.jsonl` 的记录类型、顺序、字段、请求头、`context_budget` 字段集已一致。剩余差异的原因（数字是 `turn-text` 的，用 `diff.mjs --max 100000` 统计）：
+
+- 工具声明 15 对 28，数组按下标比整体错位（392）。13 个工具没有 Rust 实现：`agent`、`ask_user_question`、`create_goal`、`execute_code`、`get_goal`、`read_skill`、`send_attachment`、`send_message`、`structured_output`、`subagent`、`todo_write`、`update_goal`、`mcp__funasr__transcribe_audio`（清单在 `native_process/tools.rs` 的 `BASELINE_TOOLS_NOT_PORTED`）。
+- 系统提示词缺内置插件带来的两行 skills（2）。基线从 `dist/src/extension/plugins/builtin/` 加载 browser-use、windows-skills、funasr。
+- 上两项派生的数值：`content-length`、`context_budget` 数值、`requestFingerprint`、`fileSize`（24）。
+- `read_session_messages` 未实现（39，含 uuid 编号错位）；`.projections.json` 13 个投影只写了 2 个（12）。两者都依赖基线 `session/projection/` 的 reducer。
+- `rename_session` 追加的 `session_metadata` 记录：基线 `sequence: 1`、`parentEntryId: null`，Rust 接着编号（只在 `project-keys`）。
+
+能力列表照基线列出但 Rust 还不能（完全）服务的，清单在 `native_process/capabilities.rs` 的 `ADVERTISED_NOT_SERVED`。
 
 ## 验收手段
 
@@ -37,7 +44,7 @@
 
 1. 入口：已提交（`pilotdeck server` 与基线同参数；Linux CI 全绿）。
 2. 多项目宿主与落盘布局：已提交。规则集中在 `native_process/projects.rs`：运行时路由是纯词法 `resolve(projectKey ?? pilot home)`；对话准入要求项目已登记（`projects/<id>/.cwd`），pilot home 免登记；gateway 自己从不登记项目。负控：把缺省项目改成 cwd，`turn-text` 报出 `sessions[0].cwd` 和 4 条落盘路径差异。
-3. 发给 provider 的请求与会话记录：未开始。工具声明 5 对 28、请求头、`context_budget`、会话文件缺 `context_snapshot` / `agent_instructions` / `compaction_*`、`read_session_messages` 未接线、能力列表 40 对 53。
+3. 发给 provider 的请求与会话记录：第一轮已提交（能力列表、请求头、会话 `.jsonl`、`context_budget` 字段、10 个工具接线）。`turn-text` 还到不了 SAME，剩下三件并行做（各自在 git worktree 里，用 `BBX_TARGET` / `BBX_BASELINE` 指向自己的构建和主检出的基线）：移植 12 个工具；会话读模型（投影 + `read_session_messages` + `rename_session` 记录）；内置插件与 funasr 的 MCP 工具。
 
 M1 之后要回头处理的（入口那块发现的）：
 
@@ -49,6 +56,14 @@ M1 之后要回头处理的（入口那块发现的）：
 - 多项目改造留下的：sop、always-on、steer、interaction、background tasks、mcp 四控仍只走缺省项目运行时；`project_files_list` / `project_file_read` 缺 key 时回的是 Rust 自造文案；设置的配置存储锚点改成了 cwd，cwd 下有项目级配置时没验证；`--native` 旧入口启动时仍登记自己的项目（`pilotdeck server` 不写）。
 - 冻结账本里有条目已不再描述真实差异（`A7.2-NATIVE-ARCHIVE-CWD-001(-R1)`、`A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001-R8/R9/R11`），没动账本。`scripts/native-witness/*`、`scripts/gateway-parity/native_evidence.py` 还写旧的 `runs.json` 路径，已不可用。
 - 带对话的场景基线自比偶发不稳（首轮 `session_metadata` 与 `compaction_started` 两条记录先后会变），遇到就重跑 `--self`。
+- 第三块第一轮留下的：
+  - 标题的 `session_metadata` 记录落点在基线里随时序变。Rust 用一个进程级「冷 / 热」标志模仿常见落点（`Recorder::park`）。只影响记录顺序。等尺子能表达「这条记录位置浮动」时改掉。
+  - 新接线的工具（`bash`、`edit_file`、`edit_notebook`、`write_file`、`task_*`、`web_fetch`）没验证执行行为，M3 做。`task_*` 没接到 `background_tasks` / `background_task_stop`；`web_fetch` 没接二级模型。
+  - 全量摘要压缩（`CompactionEngine`）没接，超阈值时 Rust 回 `skipped`。
+  - `permissionMode` / `basePermissionMode` 只用默认值，`set_permission_mode` 之后是否一致没有场景。
+  - 插件 Rust 每轮刷新，基线在会话创建时刷新。
+  - undici 默认请求头只加在模型请求路径上，MCP HTTP、hooks、web fetch 等没加也没验证。
+  - 会话记录里的 `node: v22.22.0` 是 Rust 里的常量。
 - sidecar 找不到时的报错文案是 Rust 自己的，基线没有对应物（基线默认进程内跑循环）。
 
 ## 之后

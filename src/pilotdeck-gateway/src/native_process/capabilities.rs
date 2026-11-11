@@ -4,21 +4,15 @@
 //! builds the array from `this.options.<callback>` presence, and `hello_ok`
 //! forwards that same `describeServer()` (`server/GatewayWsConnection.ts:112-115`).
 //! The recorded output of the baseline for the three fixture config states is
-//! `tests/fixtures/native-management/oracle.json` (`contract.capabilities`,
-//! `contract.emptyStorage.capabilities`, `contract.missingStorage.capabilities`
-//! — the same 50 names in all three).
+//! `tests/fixtures/native-management/oracle.json` (`contract.capabilities`); the output of a real
+//! `pilotdeck server` is compared by `scripts/bbx`.
 //!
 //! One entry per advertised name; `methods` is the wire set the name promises
-//! and `wired` is the provider probe. A name is advertised only when **every**
-//! method it promises is in the #1305 registry (`methods::registered_methods`)
-//! **and** its provider is bound in this process. Dropping a method from the
-//! registry therefore drops the advertisement instead of promising a method
-//! that answers `CAPABILITY_UNAVAILABLE`.
-//!
-//! Names TS records but this process deliberately does not advertise live in
-//! [`NOT_ADVERTISED`], one line of reason each;
-//! `capability_table_covers_every_recorded_name` pins advertised == recorded −
-//! those exceptions, so silently dropping or inventing a name fails.
+//! and `wired` is the provider probe. The list is an observable output
+//! (`hello_ok.serverInfo.capabilities` and `describe_server`), so names and
+//! order follow what the baseline emits. Names whose methods this process does
+//! not serve yet are advertised all the same and listed with what they answer
+//! in [`ADVERTISED_NOT_SERVED`].
 
 use super::methods::registered_methods;
 use super::requests::Requests;
@@ -48,32 +42,18 @@ fn runs(requests: &Requests) -> bool {
     requests.runs.is_some()
 }
 
-/// `options.snapshotList/snapshotGet/snapshotRestore`: enabled only with an
-/// explicit `--storage-root` authority.
-fn snapshots(requests: &Requests) -> bool {
-    requests.snapshot_enabled
-}
-
-/// `options.memoryList && options.memoryWipe`.
-fn memory(requests: &Requests) -> bool {
-    requests.memory.is_enabled()
-}
-
 /// `options.cron`: the six control names need the configured cron runtime.
 fn cron(requests: &Requests) -> bool {
     requests.cron.is_some()
 }
 
-/// `options.alwaysOnControl` (#2294): the three always-on names need the
-/// configured background runtime — a manager exists only when the
-/// `alwaysOn:` section has a project with `enabled: true`.
-fn always_on(requests: &Requests) -> bool {
-    requests.always_on.is_some()
-}
-
-/// Advertised names, in the order the TS baseline records them.
-// One row per name: the table is read as a table (and diffed against
-// `oracle.json` row by row), so it is laid out by hand rather than exploded
+/// Advertised names, in the order the TS baseline emits them
+/// (`InProcessGateway.ts:2089-2156`). `pilotdeck server` on the baseline binds
+/// every delegate below unconditionally except cron, so the recorded
+/// `hello_ok` of an unconfigured server carries 53 names
+/// (`scripts/bbx`, scenario `server-entry-handshake`).
+// One row per name: the table is read as a table (and diffed against the
+// baseline output row by row), so it is laid out by hand rather than exploded
 // into five lines per entry by rustfmt.
 #[rustfmt::skip]
 pub(super) const CAPABILITIES: &[Capability] = &[
@@ -92,9 +72,13 @@ pub(super) const CAPABILITIES: &[Capability] = &[
     Capability { name: "session_model_set", methods: &[], wired: compiled_in },
     Capability { name: "session_model_clear", methods: &[], wired: compiled_in },
     Capability { name: "delete_session", methods: &[], wired: compiled_in },
-    // The name covers two requests: the manifest and its entries. TS records
-    // this name in every config state (`oracle.json` contract capabilities);
-    // both methods are routed by `dispatch::route` from `LOCAL_METHODS`.
+    // Listed in [`ADVERTISED_NOT_SERVED`].
+    Capability {
+        name: "session_transcript_archive",
+        methods: &["export_session_transcript", "restore_session_transcript"],
+        wired: compiled_in,
+    },
+    // The name covers two requests: the manifest and its entries.
     Capability {
         name: "native_transcript_archive",
         methods: &["native_archive_manifest", "native_archive_entries"],
@@ -107,12 +91,28 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         methods: &["native_archive_artifact"],
         wired: compiled_in,
     },
-    Capability { name: "memory_list", methods: &[], wired: memory },
-    Capability { name: "memory_wipe", methods: &[], wired: memory },
+    // The baseline binds memory, snapshots and always-on control in every
+    // `pilotdeck server` (createLocalGateway.ts:1238-1271,
+    // ProjectAutomationBundle.ts:364), so the names are unconditional; what
+    // the methods answer when the Rust delegate is not configured is listed
+    // in [`ADVERTISED_NOT_SERVED`].
+    Capability { name: "memory_list", methods: &[], wired: compiled_in },
+    Capability { name: "memory_wipe", methods: &[], wired: compiled_in },
     Capability { name: "manager_sessions", methods: &[], wired: compiled_in },
-    Capability { name: "snapshot_list", methods: &[], wired: snapshots },
-    Capability { name: "snapshot_get", methods: &[], wired: snapshots },
-    Capability { name: "snapshot_restore", methods: &[], wired: snapshots },
+    Capability { name: "snapshot_list", methods: &[], wired: compiled_in },
+    Capability { name: "snapshot_get", methods: &[], wired: compiled_in },
+    Capability { name: "snapshot_restore", methods: &[], wired: compiled_in },
+    // Gated on `options.cron` (`InProcessGateway.ts:2114-2123`).
+    // `CRON_METHODS` owns both sides (#1325).
+    Capability { name: "cron_create", methods: &[], wired: cron },
+    Capability { name: "cron_list", methods: &[], wired: cron },
+    Capability { name: "cron_update", methods: &[], wired: cron },
+    Capability { name: "cron_delete", methods: &[], wired: cron },
+    Capability { name: "cron_stop", methods: &[], wired: cron },
+    Capability { name: "cron_run_now", methods: &[], wired: cron },
+    Capability { name: "always_on_apply", methods: &[], wired: compiled_in },
+    Capability { name: "always_on_abort", methods: &[], wired: compiled_in },
+    Capability { name: "always_on_rerun_plan", methods: &[], wired: compiled_in },
     Capability { name: "mcp_server_status", methods: &[], wired: compiled_in },
     Capability { name: "set_mcp_servers", methods: &[], wired: compiled_in },
     Capability { name: "mcp_server_reconnect", methods: &[], wired: compiled_in },
@@ -120,10 +120,13 @@ pub(super) const CAPABILITIES: &[Capability] = &[
     Capability { name: "set_mcp_permission_mode_override", methods: &[], wired: compiled_in },
     Capability { name: "project_file_read", methods: &[], wired: compiled_in },
     Capability { name: "set_permission_mode", methods: &[], wired: compiled_in },
+    Capability { name: "apply_flag_settings", methods: &[], wired: compiled_in },
+    Capability { name: "update_settings", methods: &[], wired: compiled_in },
     Capability { name: "resolve_settings", methods: &[], wired: compiled_in },
     Capability { name: "set_session_thinking", methods: &[], wired: compiled_in },
     Capability { name: "output_styles_list", methods: &[], wired: compiled_in },
     Capability { name: "set_output_style", methods: &[], wired: compiled_in },
+    Capability { name: "reload_output_styles", methods: &[], wired: compiled_in },
     Capability { name: "usage_snapshot", methods: &[], wired: compiled_in },
     Capability { name: "model_usage_snapshot", methods: &[], wired: compiled_in },
     // The capability name and the wire method differ on purpose: TS advertises
@@ -143,55 +146,78 @@ pub(super) const CAPABILITIES: &[Capability] = &[
     Capability { name: "background_task_stop", methods: &[], wired: compiled_in },
     Capability { name: "background_tasks", methods: &[], wired: compiled_in },
     Capability { name: "seed_read_state", methods: &[], wired: compiled_in },
+    // The baseline advertises this for `set_sdk_session_config`
+    // (`InProcessGateway.ts:2150`); listed in [`ADVERTISED_NOT_SERVED`].
+    Capability { name: "sdk_session_config", methods: &[NO_WIRE_METHOD], wired: compiled_in },
     Capability { name: "supported_agents", methods: &[], wired: compiled_in },
-    // TS splices these six right after the snapshot triplet, gated on
-    // `options.cron` (`InProcessGateway.ts:2114-2123`); the fixture does not
-    // configure cron, which is why they are the only table names the recorded
-    // state does not contain. `CRON_METHODS` owns both sides (#1325).
-    Capability { name: "cron_create", methods: &[], wired: cron },
-    Capability { name: "cron_list", methods: &[], wired: cron },
-    Capability { name: "cron_update", methods: &[], wired: cron },
-    Capability { name: "cron_delete", methods: &[], wired: cron },
-    Capability { name: "cron_stop", methods: &[], wired: cron },
-    Capability { name: "cron_run_now", methods: &[], wired: cron },
-    // TS splices these three right after the cron six, gated the same way on
-    // `options.alwaysOnControl` (InProcessGateway.ts:2123-2126); the fixture
-    // does not configure always-on, which is why they are the other table
-    // names the recorded state does not contain. `ALWAYS_ON_METHODS` owns
-    // both sides (#2294).
-    Capability { name: "always_on_apply", methods: &[], wired: always_on },
-    Capability { name: "always_on_abort", methods: &[], wired: always_on },
-    Capability { name: "always_on_rerun_plan", methods: &[], wired: always_on },
 ];
 
-/// TS records these names but this process must not advertise them: the
-/// delegate behind them is not bound, so the call would answer
-/// `CAPABILITY_UNAVAILABLE` and the advertisement would be a lie.
+/// Marker for a capability whose request this process does not route at all.
+/// It is skipped by the registry check so the name is still advertised the way
+/// the baseline advertises it; every such row must be in
+/// [`ADVERTISED_NOT_SERVED`].
+const NO_WIRE_METHOD: &str = "";
+
+/// Names advertised because the baseline advertises them, whose methods this
+/// process does not (fully) serve yet. The advertisement follows the baseline
+/// (the list is an observable output); the gap is the method behind it.
 ///
-/// `(name, reason)`; each reason names the owner of the missing delegate.
-// read by the capability tests only; kept in the shipping build so the
-// exception list sits next to the table it excuses
+/// `(name, what the call answers today)`.
+// read by the capability tests only; kept in the shipping build so the gap
+// list sits next to the table
 #[allow(dead_code)]
-pub(super) const NOT_ADVERTISED: &[(&str, &str)] = &[
+pub(super) const ADVERTISED_NOT_SERVED: &[(&str, &str)] = &[
     (
         "session_transcript_archive",
-        "export/restore_session_transcript are not ported (methods/history.rs answers CAPABILITY_UNAVAILABLE)",
+        "export/restore_session_transcript answer CAPABILITY_UNAVAILABLE (methods/history.rs)",
     ),
     (
         "apply_flag_settings",
-        "settings delegate not bound in this process; porting tracked by #1671",
+        "settings delegate not bound in this process (runtime/settings/gateway.rs answers unavailable)",
     ),
     (
         "update_settings",
-        "settings delegate not bound in this process; porting tracked by #1671",
+        "settings delegate not bound in this process (runtime/settings/gateway.rs answers unavailable)",
     ),
     (
         "reload_output_styles",
-        "settings delegate not bound in this process; porting tracked by #1671",
+        "settings delegate not bound in this process (runtime/settings/gateway.rs answers unavailable)",
     ),
     (
         "sdk_session_config",
-        "no `set_sdk_session_config` request exists in the wire protocol and no SDK session registry here; the #1305 registry (native_process/methods/mod.rs) routes nothing by that name",
+        "set_sdk_session_config is not routed by the registry (methods/mod.rs)",
+    ),
+    (
+        "memory_list",
+        "served only when the memory runtime is configured (assembly/memory.rs)",
+    ),
+    (
+        "memory_wipe",
+        "served only when the memory runtime is configured (assembly/memory.rs)",
+    ),
+    (
+        "snapshot_list",
+        "served only with an explicit --storage-root (assembly/snapshot.rs)",
+    ),
+    (
+        "snapshot_get",
+        "served only with an explicit --storage-root (assembly/snapshot.rs)",
+    ),
+    (
+        "snapshot_restore",
+        "served only with an explicit --storage-root (assembly/snapshot.rs)",
+    ),
+    (
+        "always_on_apply",
+        "served only when an always-on project is enabled (assembly/always_on.rs); the baseline has a fallback control",
+    ),
+    (
+        "always_on_abort",
+        "served only when an always-on project is enabled (assembly/always_on.rs); the baseline has a fallback control",
+    ),
+    (
+        "always_on_rerun_plan",
+        "served only when an always-on project is enabled (assembly/always_on.rs); the baseline has a fallback control",
     ),
 ];
 
@@ -213,7 +239,11 @@ pub(super) const OUT_OF_SCOPE: &[(&str, &str)] = &[
 
 /// The wire methods a capability promises.
 fn promised(capability: &Capability) -> impl Iterator<Item = &'static str> {
-    let explicit = capability.methods.iter().copied();
+    let explicit = capability
+        .methods
+        .iter()
+        .copied()
+        .filter(|method| *method != NO_WIRE_METHOD);
     let from_name = std::iter::once(capability.name).filter(move |_| capability.methods.is_empty());
     explicit.chain(from_name)
 }
@@ -313,34 +343,23 @@ mod tests {
         }
     }
 
-    /// The other half of the same rule, for the methods that *are* registered
-    /// but not served: `native_process/methods/history.rs:50-58` answers
-    /// `CAPABILITY_UNAVAILABLE` for both transcript-archive methods, which is
-    /// why `session_transcript_archive` sits in [`NOT_ADVERTISED`]. The
-    /// registry check alone cannot see that, so without this test a row
-    /// promising `export_session_transcript` would advertise a call that can
-    /// only fail.
-    #[test]
-    fn unserved_history_methods_are_not_promised() {
-        for method in ["export_session_transcript", "restore_session_transcript"] {
-            negative_assert!(
-                !CAPABILITIES
-                    .iter()
-                    .any(|capability| promised(capability).any(|declared| declared == method)),
-                "#1352 {method} answers CAPABILITY_UNAVAILABLE and must not be promised"
-            );
-        }
-    }
-
     /// The same property driven from the other side: drop one promised method
-    /// from the registry and the capability must stop being advertised. This
-    /// is the assertion a "declared but not wired" regression has to trip, and
-    /// it does not depend on the live registry holding the right values.
+    /// from the registry and the capability must stop being advertised. Rows
+    /// with no routed method at all (`NO_WIRE_METHOD`) have nothing to drop.
     #[test]
     fn unregistered_method_suppresses_advertisement() {
         for capability in CAPABILITIES {
             let mut partial: Vec<&str> = promised(capability).collect();
-            partial.pop().expect("#1352 capability promises a method");
+            if partial.pop().is_none() {
+                negative_assert!(
+                    ADVERTISED_NOT_SERVED
+                        .iter()
+                        .any(|(name, _)| *name == capability.name),
+                    "{} promises no method and is not declared in ADVERTISED_NOT_SERVED",
+                    capability.name
+                );
+                continue;
+            }
             negative_assert!(
                 !methods_registered(capability, &partial),
                 "#1352 {} stays advertised with a promised method missing from the registry",
@@ -355,37 +374,24 @@ mod tests {
         }
     }
 
-    /// The acceptance-narrowing invariant: advertised == recorded − declared
-    /// exceptions. Every recorded name either is advertised or carries a
-    /// reason, and no advertised name is invented — the only table entries the
-    /// recorded state does not contain are the six cron names, which TS gates
-    /// on `options.cron` (a delegate the fixture does not configure) and which
-    /// `CRON_METHODS` owns for both sides.
+    /// Every name the recorded fixture carries is in the table, in the same
+    /// relative order, and the table invents nothing: the only names beyond
+    /// the fixture are cron (gated on `options.cron`) and the three always-on
+    /// names, which the fixture's host did not bind but `pilotdeck server`
+    /// does (bbx `server-entry-handshake`).
     #[test]
     fn capability_table_covers_every_recorded_name() {
-        // The module header claims all three recorded config states carry the
-        // same names; the rest of this test only reads `contract`. Pin that
-        // claim here, so a re-recorded oracle that drops a name from one of the
-        // disabled states fails instead of quietly making the header stale.
-        let contract = recorded_names();
-        for state in ["emptyStorage", "missingStorage"] {
-            let names = recorded_capabilities(state);
-            negative_assert!(
-                names == contract,
-                "#1352 oracle contract.{state} no longer carries the same capability names as contract"
-            );
-        }
         let recorded = recorded_names();
         let table = table_names();
-        for name in &recorded {
-            let declared = NOT_ADVERTISED
-                .iter()
-                .any(|(exception, _)| exception == name);
-            negative_assert!(
-                table.contains(name) || declared,
-                "#1352 recorded TS name {name} is neither advertised nor declared in NOT_ADVERTISED"
-            );
-        }
+        let in_fixture: Vec<&str> = table
+            .iter()
+            .copied()
+            .filter(|name| recorded.contains(name))
+            .collect();
+        negative_assert!(
+            in_fixture == recorded,
+            "capability table does not carry the recorded names in recorded order: {in_fixture:?} vs {recorded:?}"
+        );
         for name in &table {
             negative_assert!(
                 recorded.contains(name)
@@ -394,40 +400,16 @@ mod tests {
                 "#1352 {name} is advertised but the TS baseline does not record it and it is neither a cron nor an always-on name"
             );
         }
-        for name in crate::runtime::cron::CRON_METHODS {
-            negative_assert!(
-                !recorded.contains(&name),
-                "#1352 cron name {name} is recorded by the fixture; the cron gate assumption is stale"
-            );
-        }
-        for name in crate::runtime::always_on::ALWAYS_ON_METHODS {
-            negative_assert!(
-                !recorded.contains(name),
-                "#2294 always-on name {name} is recorded by the fixture; the always-on gate assumption is stale"
-            );
-        }
     }
 
-    /// #1352 rule 2: no exception without a reason. A bare name would put a
-    /// "why" that only exists in a review thread back into the tree, and a
-    /// name the baseline never records would silently widen the exception
-    /// surface.
+    /// Every declared gap names an advertised row and says what it answers.
     #[test]
     fn exception_entries_carry_a_reason() {
-        let recorded = recorded_names();
-        for (name, reason) in NOT_ADVERTISED {
+        for (name, reason) in ADVERTISED_NOT_SERVED {
             negative_assert!(!reason.trim().is_empty(), "#1352 {name} has no reason");
             negative_assert!(
-                reason.contains('#') || reason.contains(".rs"),
-                "#1352 exception {name} names no tracker or source file: {reason}"
-            );
-            negative_assert!(
-                recorded.contains(name),
-                "#1352 exception {name} is not recorded by the TS baseline"
-            );
-            negative_assert!(
-                !table_names().contains(name),
-                "#1352 {name} is both advertised and declared as an exception"
+                table_names().contains(name),
+                "{name} is declared as a gap but is not advertised"
             );
         }
     }
@@ -445,7 +427,7 @@ mod tests {
             );
             negative_assert!(
                 !recorded.contains(name),
-                "#1352 out-of-scope name {name} is recorded by the fixture; move it to NOT_ADVERTISED"
+                "#1352 out-of-scope name {name} is recorded by the fixture; add it to the table"
             );
         }
     }

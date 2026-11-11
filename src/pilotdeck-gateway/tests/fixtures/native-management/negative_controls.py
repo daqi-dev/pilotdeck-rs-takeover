@@ -60,9 +60,12 @@ mutations = [
     # the code they anchored on; the behaviour is now pinned against the
     # baseline by scripts/bbx (project-default / project-keys /
     # project-session-lifecycle) and by the rewritten unit tests.
-    ('capability-invented-always_on_apply', CAPABILITIES,
+    # 2026-11-10 (dev/takeover): `always_on_apply` is advertised like the
+    # baseline now, so the invented name is one the baseline never emits
+    # (`manager_browsers`, capabilities.rs OUT_OF_SCOPE).
+    ('capability-invented-manager_browsers', CAPABILITIES,
      'Capability { name: "commands_list", methods: &[], wired: compiled_in }',
-     'Capability { name: "commands_list", methods: &[], wired: compiled_in },' + '\n    ' + 'Capability { name: "always_on_apply", methods: &[], wired: compiled_in }', HOST, '#1231 exact wired capability set'),
+     'Capability { name: "commands_list", methods: &[], wired: compiled_in },' + '\n    ' + 'Capability { name: "manager_browsers", methods: &[], wired: compiled_in }', HOST, '#1231 exact wired capability set'),
     ('capability-snapshot_list', CAPABILITIES, 'name: "snapshot_list"',
      'name: "unwired_snapshot_list"', HOST, '#1231 exact wired capability set'),
     ('capability-snapshot_get', CAPABILITIES, 'name: "snapshot_get"',
@@ -76,13 +79,11 @@ mutations = [
     ('capability-unwired-method-advertised', CAPABILITIES,
      'Capability { name: "commands_list", methods: &[], wired: compiled_in },',
      'Capability { name: "commands_list", methods: &["unwired_skill_scan"], wired: compiled_in },', TABLE, '#1352 commands_list promises a method'),
-    # #1352: registered-but-unserved methods (history.rs answers
-    # CAPABILITY_UNAVAILABLE) must not be promised by any row.
-    ('capability-unserved-history-method', CAPABILITIES,
-     'Capability { name: "commands_list", methods: &[], wired: compiled_in },',
-     'Capability { name: "commands_list", methods: &["export_session_transcript"], wired: compiled_in },',
-     'native_process::capabilities::tests::unserved_history_methods_are_not_promised',
-     '#1352 export_session_transcript answers CAPABILITY_UNAVAILABLE'),
+    # 2026-11-10 (dev/takeover): the `capability-unserved-history-method`
+    # row went with the rule it mutated. The baseline advertises
+    # `session_transcript_archive` (bbx `server-entry-handshake`), so the row
+    # promising export/restore_session_transcript is now in the table on
+    # purpose and listed in capabilities.rs ADVERTISED_NOT_SERVED.
     ('capability-registry-filter-ignored', CAPABILITIES,
      '    promised(capability).all(|method| registered.contains(&method))',
      '    let _ = (capability, registered); false', HOST, '#1231 exact wired capability set'),
@@ -241,29 +242,27 @@ mutations.append(('capability-add-reload_extensions', CAPABILITIES,
      'Capability { name: "resolve_settings", methods: &[], wired: compiled_in },' + '\n    ' + 'Capability { name: "reload_extensions", methods: &[], wired: compiled_in }', SETTINGS_CAPABILITIES, '#1320 settings method reload_extensions must stay unadvertised'))
 mutations.append(('missing-storage-defaulted', ASSEMBLY, '    register_project(&options)?;', '    let mut env = env; env.entry("PILOTDECK_STORAGE_ROOT".into()).or_insert_with(|| options.home.join("storage").to_string_lossy().into_owned());\n    register_project(&options)?;', 'native_process::management_tests::missing_storage_environment_disables_snapshots', '#1231 disabled storage snapshot result'))
 mutations.append(('empty-storage-defaulted', ASSEMBLY, '    register_project(&options)?;', '    let mut env = env; if env.get("PILOTDECK_STORAGE_ROOT").is_some_and(|value| value.is_empty()) { env.insert("PILOTDECK_STORAGE_ROOT".into(), options.home.join("storage").to_string_lossy().into_owned()); }\n    register_project(&options)?;', 'native_process::management_tests::empty_storage_environment_disables_snapshots', '#1231 disabled storage snapshot result'))
-mutations.append(('missing-storage-advertised', CAPABILITIES,
-                  'fn snapshots(requests: &Requests) -> bool {\n    requests.snapshot_enabled\n}',
-                  'fn snapshots(_requests: &Requests) -> bool {\n    true\n}', 'native_process::management_tests::missing_storage_environment_disables_snapshots', '#1231 disabled storage exact capability set'))
-mutations.append(('empty-storage-advertised', CAPABILITIES,
-                  'fn snapshots(requests: &Requests) -> bool {\n    requests.snapshot_enabled\n}',
-                  'fn snapshots(_requests: &Requests) -> bool {\n    true\n}', 'native_process::management_tests::empty_storage_environment_disables_snapshots', '#1231 disabled storage exact capability set'))
-
-
+# 2026-11-10 (dev/takeover): `missing-storage-advertised` and
+# `empty-storage-advertised` mutated the same `snapshots` probe and went with
+# it (see the note below). The two `*-storage-defaulted` rows above still pin
+# that a missing or empty storage root leaves the snapshot methods unserved.
 # fix-r3: provider-derived advertisement, explicit filter and production boundary.
-mutations.append(('snapshot-state-disabled', ASSEMBLY_SNAPSHOT, 'Ok(persistence.snapshots.is_some())', 'Ok(persistence.snapshots.is_some() && false)', HOST, '#1231 exact wired capability set'))
+# 2026-11-10 (dev/takeover): retargeted from HOST / `#1231 exact wired
+# capability set`. The snapshot names are advertised in every state now (like
+# the baseline), so the capability set no longer sees this mutant; the WIRING
+# test asserts the mutated function's result directly. Retargeted by reading
+# the assertion, not by running the mutant.
+mutations.append(('snapshot-state-disabled', ASSEMBLY_SNAPSHOT, 'Ok(persistence.snapshots.is_some())', 'Ok(persistence.snapshots.is_some() && false)', WIRING, '#1431 --storage-root enables snapshots'))
 mutations.append(('snapshot-state-enabled', ASSEMBLY_SNAPSHOT, 'Ok(persistence.snapshots.is_some())', 'Ok(persistence.snapshots.is_some() || true)', PRODUCTION, '#1231 production entry starts without snapshots'))
 mutations.append(('production-storage-authority-accepted', ENTRY, '        "PILOTDECK_STORAGE_ROOT",', '        "UNWIRED_PILOTDECK_STORAGE_ROOT",', PRODUCTION, '#1231 production entry rejects inherited snapshot authority'))
 mutations.append(('production-snapshot-authority-accepted', ENTRY, '        "PILOTDECK_SNAPSHOT_ROOT",', '        "UNWIRED_PILOTDECK_SNAPSHOT_ROOT",', PRODUCTION, '#1231 production entry rejects inherited snapshot authority'))
 mutations.append(('production-blank-authority-accepted', ENTRY, 'env.get(key).is_some_and(|v| !v.is_empty())', 'env.get(key).is_some_and(|v| !v.trim().is_empty())', PRODUCTION, '#1231 production entry rejects inherited snapshot authority'))
-mutations.append(('snapshot-list-provider-ignored', CAPABILITIES,
-                  'Capability { name: "snapshot_list", methods: &[], wired: snapshots }',
-                  'Capability { name: "snapshot_list", methods: &[], wired: compiled_in }', PRODUCTION, '#1231 production entry exact capability set'))
-mutations.append(('snapshot-get-provider-ignored', CAPABILITIES,
-                  'Capability { name: "snapshot_get", methods: &[], wired: snapshots }',
-                  'Capability { name: "snapshot_get", methods: &[], wired: compiled_in }', PRODUCTION, '#1231 production entry exact capability set'))
-mutations.append(('snapshot-restore-provider-ignored', CAPABILITIES,
-                  'Capability { name: "snapshot_restore", methods: &[], wired: snapshots }',
-                  'Capability { name: "snapshot_restore", methods: &[], wired: compiled_in }', PRODUCTION, '#1231 production entry exact capability set'))
+# 2026-11-10 (dev/takeover): the three `snapshot-*-provider-ignored` rows
+# mutated the `wired: snapshots` probe. The baseline advertises the snapshot
+# names with or without a storage root (its own oracle.json records them in
+# all three config states), so the probe is gone and the names are
+# unconditional; whether the methods serve is covered by the snapshot route
+# tests.
 # #1352: `expected` is now derived from `contract`, so a rename inside
 # `contract` moves both sides of the old subset comparison. This test's guard
 # is the exact-set assert (it also owns the `#1231 exact wired capability set`

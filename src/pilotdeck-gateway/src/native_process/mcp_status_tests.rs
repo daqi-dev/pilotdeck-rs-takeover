@@ -265,7 +265,6 @@ fn harness() -> Harness {
     let requests = Requests {
         env: options.environment(Env::new()),
         options: options.clone(),
-        snapshot_enabled: false,
         memory: Arc::new(MemoryGateway::disabled()),
         coordinator: Arc::default(),
         runs: None,

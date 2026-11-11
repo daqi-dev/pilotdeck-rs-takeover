@@ -2,6 +2,54 @@
 use super::*;
 use crate::storage::recorder::{Recorder, RecorderError};
 
+/// `createDurableContextRuntime(...).prepareForModel`
+/// (`durableContextRuntime.ts:33-54`): the delegate prepares for the step a
+/// fact recorded now would land in, and the materialization it returns is
+/// recorded (`step_started`, `context_snapshot`, `agent_instructions`) before
+/// the prepared request goes back to the loop.
+pub(super) async fn prepare_with_recorder(
+    runtime: Arc<dyn ContextRuntime>,
+    recorder: Arc<Recorder>,
+    mut input: ContextInput,
+) -> Result<JsValue, HostError> {
+    let id = |fields: &JsObject, key: &str| {
+        fields
+            .get(key)
+            .and_then(JsValue::as_string)
+            .cloned()
+            .unwrap_or_default()
+    };
+    let session = id(&input.fields, "sessionId");
+    let turn = id(&input.fields, "turnId");
+    let step = JsValue::Number(
+        recorder
+            .peek_admission_step(&turn)
+            .map_err(recorder_error)? as f64,
+    );
+    input.fields.insert("stepId".into(), step.clone());
+    let mut prepared = runtime.prepare_for_model(input).await?;
+    let JsValue::Object(result) = &mut prepared else {
+        return Ok(prepared);
+    };
+    let Some(JsValue::Object(materialization)) = result.get("materialization") else {
+        return Ok(prepared);
+    };
+    let mut materialization = materialization.clone();
+    // `stepId: prepared.materialization.stepId ?? stepId`.
+    if materialization
+        .get("stepId")
+        .is_none_or(|value| matches!(value, JsValue::Null | JsValue::Undefined))
+    {
+        materialization.insert("stepId".into(), step);
+    }
+    let materialization = JsValue::Object(materialization);
+    recorder
+        .record_context_materialization(&session, &turn, &materialization)
+        .map_err(recorder_error)?;
+    result.insert("materialization".into(), materialization);
+    Ok(prepared)
+}
+
 pub fn compact_with_recorder(
     runtime: Arc<dyn ContextRuntime>,
     recorder: Arc<Recorder>,

@@ -174,13 +174,9 @@ mutations = [
      '&& *value != JsValue::from("")) {',
      'native_process::methods::always_on::tests::always_on_methods_answer_not_configured_envelopes',
      '#1313 always_on_abort message'),
-    ('describe-advertises-always-on-apply',
-     'native_process/capabilities.rs',
-     'Capability { name: "supported_agents", methods: &[], wired: compiled_in },',
-     'Capability { name: "supported_agents", methods: &[], wired: compiled_in },\n'
-     '    Capability { name: "always_on_apply", methods: &[], wired: compiled_in },',
-     'native_process::methods::always_on::tests::always_on_methods_are_not_advertised_without_a_manager',
-     '#2294 always_on_apply must not be advertised without an always-on manager'),
+    # 2026-11-10 (dev/takeover): the `describe-advertises-always-on-apply`
+    # row is gone; the name is advertised without a manager like the baseline
+    # (bbx `server-entry-handshake`).
     ('describe-drops-async-hook-result',
      'native_process/capabilities.rs',
      'name: "async_hook_result",',

@@ -71,6 +71,11 @@ pub struct SessionContextOptions {
     /// retrieval and instruction discovery use it; otherwise the generation's
     /// project root is used (`ProjectSessionRuntimeBundle.ts:518,572`).
     pub host_workspace_root: Option<PathBuf>,
+    /// `new PluginRuntimeExtensionResolver(contributions)`
+    /// (`ProjectSessionRuntimeBundle.ts:264`): the session's plugin-derived
+    /// commands, skills and MCP instructions for the system prompt. `None`
+    /// contributes nothing.
+    pub extension: Option<Arc<dyn crate::runtime::context::ExtensionResolver>>,
 }
 
 /// Owned by one session/context composition. Scoped callers use
@@ -188,6 +193,15 @@ impl ContextStorageResources {
             memory_resolver,
             memory_retrieval_timeout_ms,
             now: Some(self.now.clone()),
+            extension: options.extension,
+            compaction: Some(Arc::new(native_compaction_port())),
+            // `new PromptContributionRegistry({ name: `agent:${sessionKey}` })`
+            // (`SessionContextRuntimeBundle.ts:164-166`): the session always
+            // owns a registry, so every materialization carries its
+            // generation.
+            prompt_contributions: Some(crate::runtime::context::PromptContributionRegistry::new(
+                None,
+            )),
             ..ContextOptions::default()
         });
         Ok(SessionContextStorage {
@@ -269,5 +283,35 @@ fn convert_runtime_context_surface(
     match value {
         super::RuntimeContextSurface::SystemPrompt => ContextRuntimeContextSurface::SystemPrompt,
         super::RuntimeContextSurface::UserMessage => ContextRuntimeContextSurface::UserMessage,
+    }
+}
+
+/// `createNativeCompactionPort` as `SessionContextRuntimeBundle.compose`
+/// builds it (`SessionContextRuntimeBundle.ts:84-161`): token budget, auto
+/// policy, micro compaction, snip and overflow recovery, all with the
+/// baseline's default protected tool names.
+///
+/// The full-summary stage (`CompactionEngine`) is not composed yet: it needs
+/// the router stream bound as a non-main-agent model port. Without it the
+/// orchestrator still evaluates the real budget snapshot and applies the micro
+/// stage, and answers `skipped` where the baseline would summarize.
+fn native_compaction_port() -> crate::runtime::context::compaction::engine::port::CompactionPort {
+    use crate::runtime::context::compaction::{
+        MicroCompactionEngine, MicroCompactionEngineOptions, SnipEngine, SnipEngineOptions,
+        engine::port::{CompactionBudgetPort, CompactionPort},
+        policy::AutoCompactionPolicy,
+        recovery::ContextOverflowRecovery,
+    };
+    let budget: Arc<dyn CompactionBudgetPort> =
+        Arc::new(crate::runtime::model::token_accounting::TokenBudgetManager::default());
+    CompactionPort {
+        budget: Some(budget.clone()),
+        policy: Some(Arc::new(AutoCompactionPolicy::new(budget))),
+        micro: Some(Arc::new(MicroCompactionEngine::new(
+            MicroCompactionEngineOptions::default(),
+        ))),
+        snip: Some(Arc::new(SnipEngine::new(SnipEngineOptions::default()))),
+        recovery: Some(Arc::new(ContextOverflowRecovery::default())),
+        ..CompactionPort::default()
     }
 }

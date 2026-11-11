@@ -1470,9 +1470,25 @@ async fn production_listener_presents_the_api_web_ledger_surface() {
 #[test]
 fn tool_policy_and_turn_environment() {
     let lsp = Arc::new(families::DefaultLsp::default());
-    let all = tools::native_tools(None, None, lsp.clone(), &tools::SessionMcpTools::empty())
-        .list()
-        .expect("#1071 native tool catalog");
+    let world = tools::ExecutionWorld::new();
+    let all = tools::native_tools(
+        None,
+        None,
+        lsp.clone(),
+        &tools::SessionMcpTools::empty(),
+        &world,
+    )
+    .list()
+    .expect("#1071 native tool catalog");
+    // A baseline tool without a Rust implementation is left out of the
+    // catalog, never declared with nothing behind it.
+    for name in tools::BASELINE_TOOLS_NOT_PORTED {
+        negative_assert!(
+            !all.iter()
+                .any(|tool| tool.fields().get("name") == Some(&(*name).into())),
+            "{name} is listed as not ported but is in the native catalog"
+        );
+    }
     negative_assert!(
         all.iter()
             .any(|tool| tool.fields().get("name") == Some(&"read_file".into())),
@@ -1483,7 +1499,8 @@ fn tool_policy_and_turn_environment() {
             Some(vec![]),
             None,
             lsp.clone(),
-            &tools::SessionMcpTools::empty()
+            &tools::SessionMcpTools::empty(),
+            &world,
         )
         .list()
         .expect("#1071 restricted catalog")
@@ -1495,6 +1512,7 @@ fn tool_policy_and_turn_environment() {
         Some(vec!["read_file".into()]),
         lsp,
         &tools::SessionMcpTools::empty(),
+        &world,
     )
     .list()
     .expect("#1071 denied catalog");
@@ -1900,7 +1918,6 @@ async fn requests_registry_switch_gates_run_reads() {
         let requests = requests::Requests {
             options: options.clone(),
             env: options.environment(Env::new()),
-            snapshot_enabled: false,
             memory: Arc::new(crate::runtime::memory::gateway::MemoryGateway::disabled()),
             coordinator: Arc::default(),
             runs,

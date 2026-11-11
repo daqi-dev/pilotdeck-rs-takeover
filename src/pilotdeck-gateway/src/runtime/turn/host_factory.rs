@@ -208,6 +208,8 @@ pub struct TurnHostFactory {
     ports: Arc<PortsFactory>,
     agent_config: Option<JsObject>,
     permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
+    /// See [`LiveSessionAdapter::as_in_process_loop`].
+    in_process_loop: bool,
 }
 
 impl TurnHostFactory {
@@ -250,6 +252,7 @@ impl TurnHostFactory {
             ports: Arc::new(ports),
             agent_config: None,
             permission_mode_source: None,
+            in_process_loop: false,
         }
     }
 
@@ -266,6 +269,13 @@ impl TurnHostFactory {
         source: Arc<dyn Fn() -> Option<JsString> + Send + Sync>,
     ) -> Self {
         self.permission_mode_source = Some(source);
+        self
+    }
+
+    /// The deployment is the gateway's own built-in loop; see
+    /// [`LiveSessionAdapter::as_in_process_loop`].
+    pub fn as_in_process_loop(mut self) -> Self {
+        self.in_process_loop = true;
         self
     }
 
@@ -290,6 +300,7 @@ impl TurnHostFactory {
         let close_timeout = self.limits.close_timeout;
         let agent_config = self.agent_config.clone();
         let permission_mode_source = self.permission_mode_source.take();
+        let in_process_loop = self.in_process_loop;
         let factory = Arc::new(self);
         let session = LiveSessionAdapter::with_interaction_signal(
             recorder,
@@ -312,9 +323,14 @@ impl TurnHostFactory {
             Some(config) => session.with_agent_config(config),
             None => session,
         };
-        match permission_mode_source {
+        let session = match permission_mode_source {
             Some(source) => session.with_permission_mode_source(source),
             None => session,
+        };
+        if in_process_loop {
+            session.as_in_process_loop()
+        } else {
+            session
         }
     }
 
@@ -437,6 +453,7 @@ impl TurnHostFactory {
                     "Leased project router resource is not a native router family.",
                 )
             })?;
+        let context_recorder = recorder.as_ref().map(|durable| durable.recorder.clone());
         let mut result = ModuleRouter {
             model: model_port::compose(
                 router.router.clone(),
@@ -495,30 +512,47 @@ impl TurnHostFactory {
                 // failure: TS's factory rethrows the constructor error from
                 // session creation unchanged (`ProjectSessionFactory.ts:160-163`),
                 // so this boundary keeps the original message and kind.
+                let session_error = |message: String| {
+                    HostError::new(
+                        if crate::mutants::on("budget-session-kind") {
+                            HostErrorKind::Protocol
+                        } else {
+                            HostErrorKind::Session
+                        },
+                        message,
+                    )
+                };
+                let extension = session_extension(&context)
+                    .await
+                    .map_err(|error| session_error(error.to_string()))?;
                 Some(Arc::new(
                     storage
-                        .create_session(tool_results_dir)
-                        .map_err(|error| {
-                            HostError::new(
-                                if crate::mutants::on("budget-session-kind") {
-                                    HostErrorKind::Protocol
-                                } else {
-                                    HostErrorKind::Session
-                                },
-                                error.message,
-                            )
-                        })?
+                        .create_session_with_options(
+                            tool_results_dir,
+                            crate::runtime::project::context_storage::SessionContextOptions {
+                                extension,
+                                ..Default::default()
+                            },
+                        )
+                        .map_err(|error| session_error(error.message))?
                         .context_runtime,
                 ) as Arc<dyn context::ContextRuntime>)
             }
         };
         if let Some(runtime) = context_runtime {
-            result.context = context::Handler::new(
+            let handler = context::Handler::new(
                 runtime,
                 context_identity,
                 context_config,
                 Some(signal.clone()),
             );
+            // `createDurableContextRuntime(context, recorder)`: a session
+            // with a durable recorder records context materializations and
+            // compaction brackets in its transcript.
+            result.context = match context_recorder {
+                Some(recorder) => handler.with_recorder(recorder),
+                None => handler,
+            };
         }
         let has_plan_todo = plan_todo.is_some();
         let mut capability = capability::Handler::new(tool_execution, tool_context, tool_observer);
@@ -533,6 +567,84 @@ impl TurnHostFactory {
         // (#570), so record the same selection the session composed.
         interaction.switches.plan_todo = has_plan_todo;
         Ok((result, interaction, lease))
+    }
+}
+
+use crate::runtime::context as context_runtime;
+
+/// `await runtime.pluginRuntime.refresh()` followed by
+/// `new PluginRuntimeExtensionResolver(contributions)`
+/// (`ProjectSessionRuntimeBundle.ts:247-264`): the generation's plugin
+/// contributions as the prompt assembler reads them. A generation without a
+/// plugin runtime contributes nothing.
+async fn session_extension(
+    context: &crate::runtime::project::StageContext,
+) -> Result<
+    Option<Arc<dyn context_runtime::ExtensionResolver>>,
+    crate::runtime::plugins::PluginRuntimeError,
+> {
+    let Some(resource) = context.resource(Resource::PluginRuntime) else {
+        return Ok(None);
+    };
+    let Some(plugins) = resource
+        .as_any()
+        .downcast_ref::<crate::runtime::project::plugins::PluginResources>()
+    else {
+        return Ok(None);
+    };
+    plugins.runtime.refresh().await?;
+    let text = |value: &pilotdeck_protocol::JsString| String::from_utf16_lossy(value.units());
+    Ok(Some(Arc::new(PluginExtension {
+        commands: plugins
+            .runtime
+            .all_commands()
+            .await
+            .into_iter()
+            .map(|command| context_runtime::ContributedCommand {
+                name: command.name,
+                description: command.description,
+                argument_hint: command.argument_hint,
+            })
+            .collect(),
+        skills: plugins
+            .runtime
+            .all_skills()
+            .await
+            .into_iter()
+            .map(|skill| context_runtime::ContributedSkill {
+                name: skill.name,
+                description: skill.description,
+                path: skill.path.to_string_lossy().into_owned(),
+            })
+            .collect(),
+        mcp_instructions: plugins
+            .runtime
+            .all_mcp_instructions()
+            .await
+            .into_iter()
+            .map(|entry| context_runtime::McpServerInstruction {
+                server_name: text(&entry.server_name),
+                instructions: Some(text(&entry.instructions)),
+            })
+            .collect(),
+    })))
+}
+
+/// The frozen contribution lists of one session composition.
+struct PluginExtension {
+    commands: Vec<context_runtime::ContributedCommand>,
+    skills: Vec<context_runtime::ContributedSkill>,
+    mcp_instructions: Vec<context_runtime::McpServerInstruction>,
+}
+impl context_runtime::ExtensionResolver for PluginExtension {
+    fn list_commands(&self) -> Vec<context_runtime::ContributedCommand> {
+        self.commands.clone()
+    }
+    fn list_skills(&self) -> Vec<context_runtime::ContributedSkill> {
+        self.skills.clone()
+    }
+    fn list_mcp_instructions(&self) -> Vec<context_runtime::McpServerInstruction> {
+        self.mcp_instructions.clone()
     }
 }
 

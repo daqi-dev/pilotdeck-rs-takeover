@@ -44,6 +44,8 @@ pub struct ServerOptions {
     pub sidecar: PathBuf,
     /// `process.env`.
     pub env: Env,
+    /// `resolveBuiltinSkillsRoot()`: the bundled skills directory.
+    pub builtin_skills_root: Option<PathBuf>,
 }
 
 /// The `GatewayServer` fields the CLI prints once the listener is up.
@@ -112,6 +114,7 @@ async fn serve_on_runtime(
                 .or_else(std::env::home_dir)
                 .unwrap_or_else(|| PathBuf::from("/")),
         ),
+        builtin_skills_root: options.builtin_skills_root.clone(),
     };
     // createLocalGateway precedes startGatewayServer in the baseline, so the
     // host and token checks below run with the gateway already built.

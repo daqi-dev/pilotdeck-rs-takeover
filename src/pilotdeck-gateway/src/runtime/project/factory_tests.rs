@@ -2309,7 +2309,7 @@ mod context_storage_tests {
             let session = storage.create_session(scratch.0.join("spill")).unwrap();
             let result = session
                 .context_runtime
-                .try_auto_compact(input(json!({})))
+                .try_auto_compact(input(json!({"messages": []})))
                 .await
                 .unwrap();
             assert_eq!(
@@ -2871,7 +2871,7 @@ mod context_storage_tests {
             .expect("protocol capabilities must supply maxContextTokens");
         let result = session
             .context_runtime
-            .try_auto_compact(input(json!({})))
+            .try_auto_compact(input(json!({"messages": []})))
             .await
             .unwrap();
         assert_eq!(

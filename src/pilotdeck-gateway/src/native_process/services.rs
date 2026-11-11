@@ -1494,6 +1494,11 @@ impl SubmitCwdService for Cwd {
     }
 }
 impl SubmitHostServices for Services {
+    fn default_permission_mode(&self) -> Option<JsString> {
+        // `resolveLocalGatewayBootConfig`: `input.permissionMode ?? "default"`
+        // (LocalGatewayBootConfig.ts:53); `pilotdeck server` passes none.
+        Some("default".into())
+    }
     fn workspace_id(&self, input: &JsValue) -> Result<Option<JsString>, SubmitError> {
         // #2562: the filter skips `undefined` *and* `null`, the same nullish
         // read the request admission gate got in #2272 (requests.rs). The

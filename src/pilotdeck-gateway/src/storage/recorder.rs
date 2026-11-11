@@ -129,16 +129,88 @@ impl From<AdapterError> for RecorderError {
 struct Turn {
     next_step: u64,
     open_step: Option<u64>,
+    /// TS `contextRecorded`: the open step already has its `context_snapshot`.
+    context_recorded: bool,
     model_requested: bool,
+    /// Writes parked by [`Recorder::park`], with the record each waits for.
+    parked: Vec<(ParkUntil, ParkedWrite)>,
+    /// The park points this turn has already passed.
+    step_seen: bool,
+    compaction_seen: bool,
 }
 impl Turn {
     fn started() -> Self {
         Self {
             next_step: 1,
             open_step: None,
+            context_recorded: false,
             model_requested: false,
+            parked: Vec::new(),
+            step_seen: false,
+            compaction_seen: false,
         }
     }
+    fn passed(&self, point: ParkUntil) -> bool {
+        match point {
+            ParkUntil::StepStarted => self.step_seen,
+            ParkUntil::CompactionStarted => self.compaction_seen,
+        }
+    }
+}
+/// A transcript write that waits for a record of its turn; see
+/// [`Recorder::park`].
+pub type ParkedWrite = Box<dyn FnOnce() + Send>;
+/// The record a parked write is released behind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParkUntil {
+    /// The turn's first `step_started`.
+    StepStarted,
+    /// The turn's first `compaction_started`.
+    CompactionStarted,
+}
+/// One `AgentInstructionLayerSnapshot` (`{scope, path, content}`), kept in the
+/// insertion order of the TS `Map` keyed by `scope \0 path`.
+#[derive(Clone)]
+struct InstructionLayer {
+    scope: JsString,
+    path: JsString,
+    content: JsValue,
+}
+impl InstructionLayer {
+    fn read(value: &JsValue) -> Option<Self> {
+        Some(Self {
+            scope: field(value, "scope").as_string()?.clone(),
+            path: field(value, "path").as_string()?.clone(),
+            content: field(value, "content").clone(),
+        })
+    }
+    fn same_key(&self, other: &Self) -> bool {
+        self.scope == other.scope && self.path == other.path
+    }
+    fn to_value(&self, action: Option<&str>) -> JsValue {
+        let mut out = JsObject::new();
+        if let Some(action) = action {
+            out.insert("action".into(), action.into());
+        }
+        out.insert("scope".into(), JsValue::String(self.scope.clone()));
+        out.insert("path".into(), JsValue::String(self.path.clone()));
+        if action != Some("remove") {
+            out.insert("content".into(), self.content.clone());
+        }
+        JsValue::Object(out)
+    }
+}
+/// TS `new Map(layers.map(layer => [key, layer]))`: a repeated key keeps its
+/// first position and takes the last value.
+fn layer_map(layers: impl IntoIterator<Item = InstructionLayer>) -> Vec<InstructionLayer> {
+    let mut map: Vec<InstructionLayer> = Vec::new();
+    for layer in layers {
+        match map.iter_mut().find(|known| known.same_key(&layer)) {
+            Some(known) => *known = layer,
+            None => map.push(layer),
+        }
+    }
+    map
 }
 /// One `compaction_started` bracket. The operation id is kept as the raw JS
 /// value: TS compares it with `===` (and stores it in a `Set` while replaying
@@ -151,6 +223,10 @@ struct Inner {
     turns: HashMap<JsString, Turn>,
     compactions: HashMap<JsString, Vec<PendingCompaction>>,
     completed_turn_id: Option<JsString>,
+    /// TS `instructionBaselineRecorded` / `instructionLayers`: session state,
+    /// rebuilt from the log by [`Recorder::restore`].
+    instruction_baseline_recorded: bool,
+    instruction_layers: Vec<InstructionLayer>,
 }
 
 /// Durable recorder over a session's shared transcript writer.
@@ -209,6 +285,8 @@ impl Recorder {
                 turns: HashMap::new(),
                 compactions: HashMap::new(),
                 completed_turn_id: None,
+                instruction_baseline_recorded: false,
+                instruction_layers: Vec::new(),
             }),
         }
     }
@@ -282,8 +360,16 @@ impl Recorder {
         let mut draft = draft("turn_result");
         draft.insert("result".into(), result);
         self.append(session_id, turn_id, draft)?;
-        inner.turns.remove(turn_id);
+        let parked = inner
+            .turns
+            .remove(turn_id)
+            .map(|turn| turn.parked)
+            .unwrap_or_default();
         inner.completed_turn_id = Some(turn_id.clone());
+        // The turn ended before the record they waited for: release them.
+        for (_, write) in parked {
+            write();
+        }
         Ok(())
     }
     /// TS `recordModelRequest`: open a step if needed, append the request, and
@@ -312,6 +398,130 @@ impl Recorder {
             turn.model_requested = true;
         }
         Ok(step)
+    }
+    /// TS `peekAdmissionStep`: the step a context/model fact recorded now
+    /// would land in — the open step until its model request is recorded,
+    /// else the next one.
+    pub fn peek_admission_step(&self, turn_id: &JsString) -> RecorderResult<u64> {
+        let inner = self.lock();
+        self.require_recording(&inner, turn_id)?;
+        let turn = &inner.turns[turn_id];
+        Ok(match turn.open_step {
+            Some(step) if !turn.model_requested => step,
+            _ => turn.next_step,
+        })
+    }
+    /// TS `recordContextMaterialization`: open the step if needed, append its
+    /// `context_snapshot` once, then the `agent_instructions` baseline or the
+    /// layer changes since the last record.
+    pub fn record_context_materialization(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+        materialization: &JsValue,
+    ) -> RecorderResult<()> {
+        let mut inner = self.lock();
+        self.require_recording(&inner, turn_id)?;
+        let (admission, needs_step) = {
+            let turn = &inner.turns[turn_id];
+            (
+                match turn.open_step {
+                    Some(step) if !turn.model_requested => step,
+                    _ => turn.next_step,
+                },
+                turn.open_step.is_none() || turn.model_requested,
+            )
+        };
+        let step_id = field(materialization, "stepId");
+        if !step_id.is_undefined() && *step_id != JsValue::Number(admission as f64) {
+            return Err(state(format!(
+                "Context materialization step {} does not match durable admission step {admission}.",
+                crate::js_value::display(step_id).unwrap_or_default()
+            )));
+        }
+        if needs_step {
+            self.open_next_step(&mut inner, session_id, turn_id)?;
+        }
+        let step = self.require_open_step(&inner, turn_id)?;
+        if !inner.turns[turn_id].context_recorded {
+            let mut draft = draft("context_snapshot");
+            draft.insert("step".into(), JsValue::Number(step as f64));
+            let generation = field(materialization, "promptGeneration");
+            if !generation.is_undefined() {
+                draft.insert("promptGeneration".into(), generation.clone());
+            }
+            draft.insert(
+                "contexts".into(),
+                JsValue::Array(array_items(field(materialization, "runtimeContexts")).to_vec()),
+            );
+            let messages = field(materialization, "runtimeContextMessages");
+            if truthy(messages) {
+                draft.insert("runtimeContextMessages".into(), messages.clone());
+            }
+            self.append(session_id, turn_id, draft)?;
+            if let Some(turn) = inner.turns.get_mut(turn_id) {
+                turn.context_recorded = true;
+            }
+        }
+        let layers = field(materialization, "instructionLayers");
+        if layers.is_undefined() {
+            return Ok(());
+        }
+        let next = layer_map(
+            array_items(layers)
+                .iter()
+                .filter_map(InstructionLayer::read),
+        );
+        let baseline = !inner.instruction_baseline_recorded;
+        let changes: Vec<JsValue> = if baseline {
+            next.iter()
+                .map(|layer| layer.to_value(Some("set")))
+                .collect()
+        } else {
+            // TS `diffInstructionLayers`.
+            let previous = &inner.instruction_layers;
+            let mut changes: Vec<(&InstructionLayer, &str)> = Vec::new();
+            for layer in &next {
+                match previous.iter().find(|prior| prior.same_key(layer)) {
+                    None => changes.push((layer, "set")),
+                    Some(prior) if prior.content != layer.content => {
+                        changes.push((layer, "replace"));
+                    }
+                    Some(_) => {}
+                }
+            }
+            for layer in previous {
+                if !next.iter().any(|known| known.same_key(layer)) {
+                    changes.push((layer, "remove"));
+                }
+            }
+            changes.sort_by(|(left, _), (right, _)| {
+                left.scope.units().cmp(right.scope.units()).then_with(|| {
+                    crate::runtime::model::stats::locale_compare_js(&left.path, &right.path)
+                })
+            });
+            changes
+                .into_iter()
+                .map(|(layer, action)| layer.to_value(Some(action)))
+                .collect()
+        };
+        if !baseline && changes.is_empty() {
+            return Ok(());
+        }
+        let mut draft = draft("agent_instructions");
+        draft.insert("step".into(), JsValue::Number(step as f64));
+        draft.insert("baseline".into(), JsValue::Bool(baseline));
+        if baseline {
+            draft.insert(
+                "layers".into(),
+                JsValue::Array(next.iter().map(|layer| layer.to_value(None)).collect()),
+            );
+        }
+        draft.insert("changes".into(), JsValue::Array(changes));
+        self.append(session_id, turn_id, draft)?;
+        inner.instruction_baseline_recorded = true;
+        inner.instruction_layers = next;
+        Ok(())
     }
     /// TS `recordModelEvent`: one `model_stream_event` per canonical event.
     pub fn record_model_event(
@@ -398,7 +608,58 @@ impl Recorder {
                 operation_id: operation_id(draft),
                 completion: None,
             });
+        // Released before this call returns to the compaction, so a parked
+        // write lands ahead of `compaction_completed`.
+        Self::release(&mut inner, turn_id, ParkUntil::CompactionStarted);
         Ok(())
+    }
+    /// Run `write` right after the turn's first record of kind `until`, or
+    /// when the turn completes without one. Returns the write back when the
+    /// turn is not recording or has already passed that record; the caller
+    /// then runs it itself.
+    ///
+    /// This exists for the background title record. The baseline starts the
+    /// title request just before the loop and appends its `session_metadata`
+    /// at the first event-loop yield after the response arrives: in a warm
+    /// process that is the `step_started` append, in a cold one (first turn
+    /// of the process) the response is still in flight then and the record
+    /// lands inside the first compaction bracket. The Rust loop starts in a
+    /// child process, long after the title request returned, so without
+    /// parking the record would always precede the step.
+    ///
+    /// A parked write must not call back into this recorder: it runs under
+    /// the recorder lock and appends through the shared writer only.
+    pub fn park(
+        &self,
+        turn_id: &JsString,
+        until: ParkUntil,
+        write: ParkedWrite,
+    ) -> Option<ParkedWrite> {
+        let mut inner = self.lock();
+        match inner.turns.get_mut(turn_id) {
+            Some(turn) if !turn.passed(until) => {
+                turn.parked.push((until, write));
+                None
+            }
+            _ => Some(write),
+        }
+    }
+    /// Mark `point` as passed for the turn and run what waited for it.
+    fn release(inner: &mut Inner, turn_id: &JsString, point: ParkUntil) {
+        let Some(turn) = inner.turns.get_mut(turn_id) else {
+            return;
+        };
+        match point {
+            ParkUntil::StepStarted => turn.step_seen = true,
+            ParkUntil::CompactionStarted => turn.compaction_seen = true,
+        }
+        let (ready, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut turn.parked)
+            .into_iter()
+            .partition(|(until, _)| *until == point);
+        turn.parked = waiting;
+        for (_, write) in ready {
+            write();
+        }
     }
     /// TS `recordCompactionCompleted` (AgentSessionEventRecorder:333-344).
     pub fn record_compaction_completed(
@@ -574,9 +835,59 @@ impl Recorder {
         if !self.writer.restore_recorder_entries(entries)? {
             return Ok(());
         }
-        inner.turns.clear();
+        // A write still parked on a dropped turn is released, not lost.
+        for (_, turn) in inner.turns.drain() {
+            for (_, write) in turn.parked {
+                write();
+            }
+        }
         inner.compactions.clear();
         inner.completed_turn_id = None;
+        // TS `restoreInstructionState(options.restoredEntries)`.
+        inner.instruction_baseline_recorded = false;
+        inner.instruction_layers.clear();
+        for entry in entries {
+            if !field(entry, "type")
+                .as_string()
+                .is_some_and(|kind| kind.equals_str("agent_instructions"))
+            {
+                continue;
+            }
+            if truthy(field(entry, "baseline")) {
+                inner.instruction_baseline_recorded = true;
+                inner.instruction_layers = layer_map(
+                    array_items(field(entry, "layers"))
+                        .iter()
+                        .filter_map(InstructionLayer::read),
+                );
+            }
+            for change in array_items(field(entry, "changes")) {
+                let Some(mut layer) = InstructionLayer::read(change) else {
+                    continue;
+                };
+                let known = inner
+                    .instruction_layers
+                    .iter()
+                    .position(|known| known.same_key(&layer));
+                if field(change, "action")
+                    .as_string()
+                    .is_some_and(|action| action.equals_str("remove"))
+                {
+                    if let Some(index) = known {
+                        inner.instruction_layers.remove(index);
+                    }
+                    continue;
+                }
+                // `content: change.content ?? ""`.
+                if matches!(layer.content, JsValue::Null | JsValue::Undefined) {
+                    layer.content = JsValue::String(JsString::from(""));
+                }
+                match known {
+                    Some(index) => inner.instruction_layers[index] = layer,
+                    None => inner.instruction_layers.push(layer),
+                }
+            }
+        }
         Ok(())
     }
     /// TS snapshotState, shared with every caller of the injected writer.
@@ -621,9 +932,11 @@ impl Recorder {
         self.append(session_id, turn_id, draft)?;
         if let Some(turn) = inner.turns.get_mut(turn_id) {
             turn.open_step = Some(step);
+            turn.context_recorded = false;
             turn.model_requested = false;
             turn.next_step = step + 1;
         }
+        Self::release(inner, turn_id, ParkUntil::StepStarted);
         Ok(step)
     }
     fn complete_step(
@@ -642,6 +955,7 @@ impl Recorder {
         self.append(session_id, turn_id, draft)?;
         if let Some(turn) = inner.turns.get_mut(turn_id) {
             turn.open_step = None;
+            turn.context_recorded = false;
             turn.model_requested = false;
         }
         Ok(())
@@ -657,6 +971,12 @@ impl Recorder {
     }
 }
 
+fn array_items(value: &JsValue) -> &[JsValue] {
+    match value {
+        JsValue::Array(items) => items,
+        _ => &[],
+    }
+}
 fn draft(kind: &str) -> JsObject {
     let mut draft = JsObject::new();
     draft.insert("type".into(), kind.into());

@@ -500,12 +500,25 @@ async fn context_memory_parent_abort_cancels_pending_and_pre_abort_skips_retriev
             assert!(!memory.cancelled());
             cancellation.cancel(None);
         }
-        let result = prepared.await.unwrap();
-        assert_eq!(memory.inputs.lock().unwrap().len(), usize::from(!pre_abort));
-        if !pre_abort {
-            assert!(memory.cancelled());
-            assert!(memory.dropped.load(Ordering::SeqCst));
+        if pre_abort {
+            // The session owns a prompt-contribution registry, like the
+            // baseline's (`SessionContextRuntimeBundle.ts:164-166`), and its
+            // snapshot runs `abortSignal.throwIfAborted()` before anything
+            // else (`PromptContributionRegistry.ts:160`,
+            // `DefaultContextRuntime.ts:184-194`): an already-aborted prepare
+            // rejects and never reaches the memory provider.
+            let error = prepared.await.expect_err("pre-aborted prepare rejects");
+            assert_eq!(error.message, "This operation was aborted");
+            assert!(memory.inputs.lock().unwrap().is_empty());
+            drop(composed);
+            drop(lease);
+            registry.dispose().await.unwrap();
+            continue;
         }
+        let result = prepared.await.unwrap();
+        assert_eq!(memory.inputs.lock().unwrap().len(), 1);
+        assert!(memory.cancelled());
+        assert!(memory.dropped.load(Ordering::SeqCst));
         assert_no_memory(&result);
         assert!(
             memory_diagnostics(&result).is_empty(),

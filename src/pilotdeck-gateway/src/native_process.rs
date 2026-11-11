@@ -265,6 +265,10 @@ pub struct Options {
     /// (`pilotdeck server`) keeps the two apart like the baseline: `home` is
     /// the resolved pilot home and this is the user's real home.
     pub os_home: Option<PathBuf>,
+    /// `resolveBuiltinSkillsRoot()` (LocalGatewayBootConfig.ts:70-85): the
+    /// bundled skills directory every project's extension runtime lists
+    /// first. `None` (the `--native` entry) lists no bundled skills.
+    pub builtin_skills_root: Option<PathBuf>,
 }
 
 pub fn native_requested(first: Option<&std::ffi::OsStr>) -> bool {
@@ -410,6 +414,7 @@ impl Options {
                 .transpose()?
                 .map(str::to_owned),
             os_home: None,
+            builtin_skills_root: None,
         })
     }
 

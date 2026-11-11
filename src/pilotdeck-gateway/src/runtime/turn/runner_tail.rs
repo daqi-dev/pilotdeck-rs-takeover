@@ -3,7 +3,7 @@
 use super::{TurnRunner, object};
 use crate::{
     host::Cancellation,
-    storage::recorder::{Recorder, RecorderResult},
+    storage::recorder::{ParkUntil, Recorder, RecorderResult},
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use pilotdeck_transport::{server::ExecutionClock, system_clock::SystemExecutionClock};
@@ -51,6 +51,10 @@ pub struct TailConfig {
     pub auto_generate_title: bool,
     pub title_provider: Option<TitleProvider>,
     pub suggestion_generator: Option<SuggestionGenerator>,
+    /// The agent loop starts out of process, after the background title is
+    /// back: park the title record behind the turn's first step (see
+    /// `Recorder::park`) instead of appending it the moment it is ready.
+    pub park_title_record: bool,
     /// Host diagnostic sink, not an AgentEvent or transcript entry.
     pub debug: Arc<dyn Fn(JsString) + Send + Sync>,
 }
@@ -62,6 +66,7 @@ impl Default for TailConfig {
             auto_generate_title: false,
             title_provider: None,
             suggestion_generator: None,
+            park_title_record: false,
             debug: Arc::new(|message| eprintln!("{}", String::from_utf16_lossy(message.units()))),
         }
     }
@@ -188,6 +193,32 @@ impl SessionTail {
         })
         .await
         .map_err(|e| super::RecorderError::State(e.to_string()))?
+    }
+    /// [`Self::record`] for a write released by the recorder on the thread
+    /// that appends the compaction bracket: same guards, no executor hop.
+    fn record_parked(self: &Arc<Self>, turn: JsString, metadata: JsObject) {
+        // Serialized with the other metadata writers when uncontended; a
+        // writer that holds the lock right now is ordered by the transcript
+        // writer itself.
+        let _serial = self.writes.clone().try_lock_owned().ok();
+        if self.disposed.is_cancelled() || titled(self.snapshot().as_object().expect("metadata")) {
+            return;
+        }
+        if self
+            .recorder
+            .writer()
+            .record_session_metadata(&self.session, &turn, JsValue::Object(metadata.clone()))
+            .is_ok()
+        {
+            merge(
+                &mut self
+                    .state
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .metadata,
+                &metadata,
+            );
+        }
     }
     fn begin_title(
         self: &Arc<Self>,
@@ -326,14 +357,29 @@ impl SessionTail {
                     );
                     fields.insert("updatedAt".into(), JsValue::String((this.now)()));
                 }
-                let _ = this
-                    .record(
-                        turn,
-                        patch.as_object().expect("title patch").clone(),
-                        false,
-                        None,
+                let patch = patch.as_object().expect("title patch").clone();
+                let tail = this.clone();
+                let parked_turn = turn.clone();
+                let parked_patch = patch.clone();
+                // See `Recorder::park`: with a loop that starts after the
+                // title is back, the record waits for the point of the turn
+                // where the baseline's lands.
+                let parked = this.config.park_title_record.then(|| {
+                    static COLD: AtomicBool = AtomicBool::new(true);
+                    let until = if COLD.swap(false, Ordering::SeqCst) {
+                        ParkUntil::CompactionStarted
+                    } else {
+                        ParkUntil::StepStarted
+                    };
+                    this.recorder.park(
+                        &turn,
+                        until,
+                        Box::new(move || tail.record_parked(parked_turn, parked_patch)),
                     )
-                    .await;
+                });
+                if !matches!(parked, Some(None)) {
+                    let _ = this.record(turn, patch, false, None).await;
+                }
             }
             pending.detach();
             pending.done.cancel(None);

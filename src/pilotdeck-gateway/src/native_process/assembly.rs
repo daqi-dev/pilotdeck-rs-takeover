@@ -686,6 +686,9 @@ async fn start_assembly(
                     // cells; an inert entry keeps the production request.
                     auto_generate_title: !loop_planned,
                     title_provider: (!loop_planned).then_some(title),
+                    // The loop runs in the sidecar, which starts after the
+                    // title request has returned.
+                    park_title_record: true,
                     ..Default::default()
                 };
                 let session = context.session_key;
@@ -739,7 +742,11 @@ async fn start_assembly(
                         // already-live session picks the change up without a
                         // close. The source reads the same store the selector
                         // method writes.
-                        .with_permission_mode_source(permission_source))
+                        .with_permission_mode_source(permission_source)
+                        // The sidecar is this gateway's own loop, which the
+                        // baseline runs in-process: no module stamp on its
+                        // messages.
+                        .as_in_process_loop())
                     }),
                 })
             })
@@ -1079,7 +1086,6 @@ async fn start_assembly(
             let cron_owner = owner.clone();
             let requests = Arc::new(super::requests::Requests {
                 project: build_project,
-                snapshot_enabled,
                 memory: memory.clone(),
                 options,
                 env,
@@ -1581,7 +1587,7 @@ pub(super) fn project_registry(options: &Options, env: &Env) -> Arc<ProjectRunti
             cwd: options.project.clone(),
             env: env.clone(),
             homedir: Some(options.homedir()),
-            builtin_skills_root: None,
+            builtin_skills_root: options.builtin_skills_root.clone(),
             now: Arc::new(SystemTime::now),
             telemetry: None,
             config_version: None,
@@ -1597,7 +1603,7 @@ pub(super) fn project_registry(options: &Options, env: &Env) -> Arc<ProjectRunti
             .with_plugins(crate::runtime::plugins::PluginRuntimeOptions {
                 project_root: options.project.clone(),
                 pilot_home: options.home.clone(),
-                builtin_skills_root: None,
+                builtin_skills_root: options.builtin_skills_root.clone(),
                 builtin_plugins: vec![],
                 builtin_plugins_enabled: HashMap::new(),
             })

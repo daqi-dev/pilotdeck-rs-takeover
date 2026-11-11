@@ -307,7 +307,12 @@ impl Handler {
                 ));
             };
             let result = match operation {
-                Operation::PrepareForModel => runtime.prepare_for_model(input).await?,
+                Operation::PrepareForModel => match recorder {
+                    Some(recorder) => {
+                        durable::prepare_with_recorder(runtime, recorder, input).await?
+                    }
+                    None => runtime.prepare_for_model(input).await?,
+                },
                 Operation::ApplyToolResults => runtime.apply_tool_results(input).await?,
                 Operation::RecoverFromModelError => runtime.recover_from_model_error(input).await?,
                 Operation::CaptureTurn => {

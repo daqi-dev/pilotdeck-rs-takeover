@@ -91,6 +91,8 @@ pub struct LiveSessionAdapter {
     /// `livePermissionMode` — the stored permission-mode selection takes
     /// effect on the next turn without a session close.
     permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
+    /// See [`Self::as_in_process_loop`].
+    in_process_loop: bool,
     tail: Option<Arc<super::runner::tail::SessionTail>>,
     recorder: Arc<Recorder>,
     history: Arc<dyn Fn() -> Vec<JsValue> + Send + Sync>,
@@ -106,6 +108,11 @@ pub(super) struct SessionState {
     pub(super) signal: crate::runtime::hooks::Cancellation,
     pub(super) status: super::live_session::SessionStatus,
     pub(super) current_turn_id: Option<JsString>,
+    /// `AgentLoopSidecarClient.modelState` (agentLoopSidecarClient.ts:263):
+    /// the loop's model session state from the last completed execution —
+    /// token calibration per route among it — handed to the next one so a
+    /// later turn of the session budgets against the provider's real usage.
+    model_state: Option<JsValue>,
 }
 
 pub(super) struct ActiveTurn(pub(super) Arc<Mutex<SessionState>>);
@@ -130,6 +137,7 @@ impl LiveSessionAdapter {
             close_timeout: crate::host::Limits::default().close_timeout,
             agent_config: None,
             permission_mode_source: None,
+            in_process_loop: false,
             tail: None,
             recorder,
             history: Arc::new(history),
@@ -164,6 +172,17 @@ impl LiveSessionAdapter {
         source: Arc<dyn Fn() -> Option<JsString> + Send + Sync>,
     ) -> Self {
         self.permission_mode_source = Some(source);
+        self
+    }
+
+    /// The child process is the gateway's own built-in agent loop, the one the
+    /// baseline runs in-process by default. There a message crosses no module
+    /// boundary, so `assistant_message` / `finalMessage` carry no
+    /// `metadata.moduleId` (the baseline stamps it only for a loop bound as an
+    /// external module, `markModuleOwnedEvent`). The integrity checks on the
+    /// wire keep using the bound module id; only the stamp is left out.
+    pub fn as_in_process_loop(mut self) -> Self {
+        self.in_process_loop = true;
         self
     }
 
@@ -233,6 +252,7 @@ impl LiveSessionAdapter {
             close_timeout: crate::host::Limits::default().close_timeout,
             agent_config: None,
             permission_mode_source: None,
+            in_process_loop: false,
             tail: None,
             recorder,
             history: Arc::new(history),
@@ -331,6 +351,11 @@ impl LiveSession for LiveSessionAdapter {
                 .payload
                 .insert("agent".into(), JsValue::Object(config));
         }
+        // agentLoopSidecarClient.ts:369,773-775: the previous execution's
+        // model state, when there is one.
+        if let Some(model_state) = self.state.lock().unwrap().model_state.clone() {
+            request.payload.insert("modelState".into(), model_state);
+        }
         let cancellation = Cancellation::default();
         let signal = crate::runtime::hooks::Cancellation::new();
         {
@@ -387,6 +412,9 @@ impl LiveSession for LiveSessionAdapter {
         // Shared between the host-side validation hook (every received event)
         // and finish()'s second, contradiction-only check; see StreamHandler.
         let integrity = Arc::new(StreamIntegrity::new());
+        integrity
+            .marks_module
+            .store(!self.in_process_loop, std::sync::atomic::Ordering::SeqCst);
         let hook_integrity = integrity.clone();
         // #1220: one coordinate allocator per turn, shared by the wire/host
         // event projection and the terminal block positioning.
@@ -929,10 +957,8 @@ impl LiveTurnStream {
         // TS markModuleOwnedEvent only interprets these two message families.
         // Other events may carry a human-readable `message` string.
         if (module_message || crate::mutants::on("live-message-field-classification"))
-            && let (Some(module), JsValue::Object(fields)) = (
-                self.integrity.module_id.lock().unwrap().as_ref(),
-                &mut event,
-            )
+            && let (Some(module), JsValue::Object(fields)) =
+                (self.integrity.marking_module().as_ref(), &mut event)
             && let Some(mut message) = fields.get("message").cloned()
         {
             mark_module_message(&mut message, module)?;
@@ -1162,6 +1188,16 @@ impl LiveTurnStream {
                         "Sidecar success final arrived before loop completion.",
                     ));
                 }
+                // `this.modelState = result.modelState`
+                // (agentLoopSidecarClient.ts:416), after the stream ran to its
+                // result.
+                if let Some(active) = &self.active {
+                    active.0.lock().unwrap().model_state = terminal
+                        .get("payload")
+                        .and_then(|payload| payload.get("modelState"))
+                        .filter(|state| !state.is_undefined())
+                        .cloned();
+                }
                 Ok(Some(self.completed_event(
                     terminal.get("payload").unwrap_or(&JsValue::Undefined),
                     true,
@@ -1208,10 +1244,9 @@ impl LiveTurnStream {
 
     fn completed_event(&self, terminal: &JsValue, position: bool) -> Result<JsValue, RuntimeError> {
         let mut terminal = terminal.clone();
-        if let (Some(module), JsValue::Object(fields)) = (
-            self.integrity.module_id.lock().unwrap().as_ref(),
-            &mut terminal,
-        ) {
+        if let (Some(module), JsValue::Object(fields)) =
+            (self.integrity.marking_module().as_ref(), &mut terminal)
+        {
             if let Some(mut result) = fields.get("result").and_then(JsValue::as_object).cloned()
                 && let Some(mut message) = result.get("finalMessage").cloned()
                 && (super::submit::truthy(&message)
@@ -1792,7 +1827,7 @@ impl StreamHandler {
             let sending = async move {
                 delivery.wait().await;
                 // TS reads the bound module at project time (protocol?.moduleId).
-                let bound_module = integrity.module_id.lock().unwrap().clone();
+                let bound_module = integrity.marking_module();
                 let (buffered, timeline) = {
                     let mut state = forwarding.lock().unwrap();
                     let buffered = state.project_host(buffered, heartbeat, bound_module.as_ref());
@@ -1983,6 +2018,9 @@ struct StreamIntegrity {
     wire_events: Mutex<usize>,
     loop_completed: Mutex<bool>,
     module_id: Mutex<Option<JsString>>,
+    /// Whether module-owned messages are stamped with `metadata.moduleId`;
+    /// see [`LiveSessionAdapter::as_in_process_loop`].
+    marks_module: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2001,7 +2039,16 @@ impl StreamIntegrity {
             wire_events: Mutex::new(0),
             loop_completed: Mutex::new(false),
             module_id: Mutex::default(),
+            marks_module: std::sync::atomic::AtomicBool::new(true),
         }
+    }
+
+    /// The bound module id when its messages are to be stamped with it.
+    fn marking_module(&self) -> Option<JsString> {
+        self.marks_module
+            .load(std::sync::atomic::Ordering::SeqCst)
+            .then(|| self.module_id.lock().unwrap().clone())
+            .flatten()
     }
 
     fn observe_event(&self, event: &JsValue) -> Result<(), RuntimeError> {

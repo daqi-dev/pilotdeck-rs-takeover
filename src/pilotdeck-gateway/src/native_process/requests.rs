@@ -25,7 +25,6 @@ use std::sync::{Arc, Mutex};
 pub struct Requests {
     pub options: Options,
     pub env: crate::config::Env,
-    pub snapshot_enabled: bool,
     pub memory: Arc<MemoryGateway>,
     pub coordinator: Arc<TurnEventCoordinator>,
     pub runs: Option<Arc<FileRegistry>>,

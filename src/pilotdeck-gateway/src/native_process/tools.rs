@@ -80,6 +80,9 @@ pub struct SessionTools {
     /// same turn never runs one mode for the sidecar and another for native
     /// tool admission.
     permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
+    /// Session-scoped execution world shared by every turn's tool registry,
+    /// so a background task started in one turn is still there in the next.
+    world: ExecutionWorld,
 }
 impl SessionTools {
     pub fn new(
@@ -108,6 +111,7 @@ impl SessionTools {
             mcp,
             permission: Arc::new(Permissions(Mutex::new((context, None)))),
             permission_mode_source: None,
+            world: ExecutionWorld::new(),
         })
     }
 
@@ -152,6 +156,7 @@ impl SessionTools {
             self.binding.context.disallowed_tools.clone(),
             self.lsp.clone(),
             &self.mcp,
+            &self.world,
         );
         let execution = Arc::new(ToolRuntime::new(
             tools,
@@ -481,11 +486,56 @@ impl MutationRecorder for Durable {
     }
 }
 
+/// Tools the baseline declares to the model in a default `pilotdeck server`
+/// session that have no Rust implementation yet (names as they appear in the
+/// provider request of bbx `turn-text`). `subagent` and `send_message` are
+/// `extraTools` of the automation bundle; `mcp__funasr__transcribe_audio`
+/// comes from the builtin `funasr` plugin's MCP server.
+#[cfg_attr(not(test), allow(dead_code))]
+pub const BASELINE_TOOLS_NOT_PORTED: &[&str] = &[
+    "agent",
+    "ask_user_question",
+    "create_goal",
+    "execute_code",
+    "get_goal",
+    "mcp__funasr__transcribe_audio",
+    "read_skill",
+    "send_attachment",
+    "send_message",
+    "structured_output",
+    "subagent",
+    "todo_write",
+    "update_goal",
+];
+
+/// The session's share of the baseline's execution world
+/// (`createNodeExecutionWorldBundle`): what the builtin tools close over.
+#[derive(Clone)]
+pub(super) struct ExecutionWorld {
+    /// `executionWorld.backgroundTasks`, behind the `task_*` tools.
+    #[cfg(unix)]
+    tasks: crate::runtime::background::BackgroundTaskRuntime,
+    /// `getURLMarkdownContent` over the process network, behind `web_fetch`.
+    fetcher: builtin::web::fetcher::UrlFetcher,
+}
+impl ExecutionWorld {
+    pub(super) fn new() -> Self {
+        Self {
+            #[cfg(unix)]
+            tasks: crate::runtime::background::BackgroundTaskRuntime::default(),
+            fetcher: builtin::web::fetcher::UrlFetcher::new(Arc::new(
+                crate::runtime::model::http::HyperModelTransport::new(),
+            )),
+        }
+    }
+}
+
 pub(super) fn native_tools(
     allowed: Option<Vec<JsString>>,
     denied: Option<Vec<JsString>>,
     lsp: Arc<super::families::DefaultLsp>,
     mcp: &SessionMcpTools,
+    world: &ExecutionWorld,
 ) -> ToolRegistry {
     let tools = ToolRegistry::new(
         None,
@@ -497,9 +547,28 @@ pub(super) fn native_tools(
                 && !denied.as_ref().is_some_and(|names| names.contains(name))
         })),
     );
-    // The isolated entry advertises the native read-only family. Mutating
-    // tools, subagents and integrations are not implied by an empty port.
-    for tool in builtin::read_only_tools() {
+    // `createBuiltinRegistry` (tool/registry/createBuiltinRegistry.ts:128):
+    // every builtin that has a Rust implementation. The ones the baseline
+    // registers and this process still lacks are listed in
+    // [`BASELINE_TOOLS_NOT_PORTED`]; they are left out rather than declared
+    // without an implementation behind them.
+    let mut builtins = builtin::read_only_tools();
+    builtins.extend(builtin::write_tools());
+    #[cfg(unix)]
+    {
+        builtins.extend(builtin::shell_tools());
+        builtins.extend(builtin::task::task_tools(Some(world.tasks.clone())));
+    }
+    builtins.push(Arc::new(builtin::web::fetch_tool::WebFetchTool::new(
+        builtin::web::fetch_tool::WebFetchToolOptions {
+            model: None,
+            provider: None,
+            model_id: None,
+            max_output_tokens: None,
+            fetcher: world.fetcher.clone(),
+        },
+    )));
+    for tool in builtins {
         tools
             .register(tool)
             .expect("native builtin names are unique");
@@ -1856,6 +1925,7 @@ mod tests {
             None,
             Arc::new(super::super::families::DefaultLsp::default()),
             &tools,
+            &ExecutionWorld::new(),
         );
         crate::negative_assert!(
             registry.has(&name),
@@ -1870,6 +1940,7 @@ mod tests {
             None,
             Arc::new(super::super::families::DefaultLsp::default()),
             &tools,
+            &ExecutionWorld::new(),
         );
         let listed = restricted
             .list()
@@ -1889,6 +1960,7 @@ mod tests {
             Some(vec![name]),
             Arc::new(super::super::families::DefaultLsp::default()),
             &tools,
+            &ExecutionWorld::new(),
         );
         crate::negative_assert!(
             !denied.has(&"mcp__a__echo".into()),
@@ -1934,6 +2006,7 @@ mod tests {
             None,
             Arc::new(super::super::families::DefaultLsp::default()),
             &SessionMcpTools::empty(),
+            &ExecutionWorld::new(),
         );
         let is_mcp = |name: &str| {
             base.get(&name.into())
