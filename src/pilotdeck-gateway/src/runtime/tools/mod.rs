@@ -181,8 +181,7 @@ pub struct FileUpdate {
     pub created: bool,
 }
 /// See [`ToolRunContext::file_saved`].
-pub type FileSavedNotifier =
-    Arc<dyn Fn(FileUpdate) -> crate::host::HostFuture<()> + Send + Sync>;
+pub type FileSavedNotifier = Arc<dyn Fn(FileUpdate) -> crate::host::HostFuture<()> + Send + Sync>;
 /// See [`ToolRunContext::execute_tool`]. The result is the nested call's
 /// tool result object (`type: "success" | "error"`).
 pub type NestedToolExecutor = Arc<

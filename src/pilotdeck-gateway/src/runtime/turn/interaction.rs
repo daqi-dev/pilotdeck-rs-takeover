@@ -54,6 +54,9 @@ pub struct InteractionTurnInput {
     pub hook_wiring: HookWiring,
 }
 
+/// Receives the turn's bound lifecycle (or `None`).
+pub type TurnHooksSink = Arc<dyn Fn(Option<Arc<dyn lifecycle::LifecyclePort>>) + Send + Sync>;
+
 /// Host-side consumers of the bound hook runtimes. None of this is read from
 /// the sidecar payload.
 #[derive(Clone, Default)]
@@ -64,7 +67,7 @@ pub struct HookWiring {
     pub observers: HookObservers,
     /// Receives the turn's bound lifecycle so host-side tool execution
     /// dispatches through the same runtime (`ToolRuntime.lifecycle`).
-    pub turn_sink: Option<Arc<dyn Fn(Option<Arc<dyn lifecycle::LifecyclePort>>) + Send + Sync>>,
+    pub turn_sink: Option<TurnHooksSink>,
     /// The host answers `PermissionRequest` with its own gateway prompt, so
     /// the hook binding must not append a second permission callback.
     pub host_permission_prompt: bool,

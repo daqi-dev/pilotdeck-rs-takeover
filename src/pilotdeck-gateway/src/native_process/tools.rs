@@ -525,7 +525,8 @@ impl SessionTools {
                     session,
                     registry,
                     include_hook_events: sdk,
-                }) as Arc<dyn crate::runtime::hooks::runtime::AsyncHookRegistrationHandler>
+                })
+                    as Arc<dyn crate::runtime::hooks::runtime::AsyncHookRegistrationHandler>
             }),
         };
         let _ = self.permission.3.set(self.tool_hooks.clone());
@@ -1314,9 +1315,12 @@ impl PermissionDecision for Permissions {
                     super::permission_prompt::PromptOutcome::Allow => {
                         JsValue::Object(value([("behavior", "allow".into())]))
                     }
-                    super::permission_prompt::PromptOutcome::Deny(reason) => JsValue::Object(
-                        value([("behavior", "deny".into()), ("message", JsValue::String(reason))]),
-                    ),
+                    super::permission_prompt::PromptOutcome::Deny(reason) => {
+                        JsValue::Object(value([
+                            ("behavior", "deny".into()),
+                            ("message", JsValue::String(reason)),
+                        ]))
+                    }
                 });
             }
             let Some(answer) = answer else {

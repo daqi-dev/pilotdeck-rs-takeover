@@ -770,8 +770,13 @@ fn file_changed_notifier(
                 if let Some(name) = hook_name {
                     metadata.insert("hookName".into(), string(name));
                 }
-                let identity =
-                    |key: &str| context.fields.get(key).cloned().unwrap_or(JsValue::Undefined);
+                let identity = |key: &str| {
+                    context
+                        .fields
+                        .get(key)
+                        .cloned()
+                        .unwrap_or(JsValue::Undefined)
+                };
                 emit(object([
                     ("type", "warning".into()),
                     ("sessionId", identity("sessionId")),
@@ -812,7 +817,11 @@ fn file_changed_notifier(
                     }
                 }
                 Ok(None) => {}
-                Err(error) => report("file_changed_hook_error", error.message.as_str().into(), None),
+                Err(error) => report(
+                    "file_changed_hook_error",
+                    error.message.as_str().into(),
+                    None,
+                ),
             }
             Ok(())
         })
@@ -857,7 +866,10 @@ fn lifecycle_metadata(effects: &[crate::runtime::hooks::HookEffect]) -> Option<J
     Some(JsValue::Object(object([
         ("blocked", blocked),
         ("additionalContext", JsValue::Array(additional)),
-        ("updatedMcpToolOutput", updated.unwrap_or(JsValue::Undefined)),
+        (
+            "updatedMcpToolOutput",
+            updated.unwrap_or(JsValue::Undefined),
+        ),
     ])))
 }
 

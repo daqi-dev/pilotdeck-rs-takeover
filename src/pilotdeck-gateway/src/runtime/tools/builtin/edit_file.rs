@@ -169,7 +169,15 @@ fn is_read_state_error(error: &ToolError) -> bool {
 fn execute(
     input: &JsValue,
     context: &ToolRunContext,
-) -> Result<(ToolOutput, String, String, crate::runtime::tools::FileUpdate), ToolError> {
+) -> Result<
+    (
+        ToolOutput,
+        String,
+        String,
+        crate::runtime::tools::FileUpdate,
+    ),
+    ToolError,
+> {
     let path = input_string(input, "file_path");
     let old = input_string(input, "old_string");
     let new = input_string(input, "new_string");

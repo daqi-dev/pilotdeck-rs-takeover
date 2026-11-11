@@ -788,58 +788,57 @@ async fn start_assembly(
                 // factory's per-session registry. An unpublished config keeps
                 // the empty composition: the ask-rule sync above already
                 // reported that wiring miss for this assembly (#1429).
-                let (session_mcp, session_mcp_release) =
-                    match mcp_config_handle.get() {
-                        Some(mcp_config) => {
-                            let provider = staged.owner(Family::McpProvider).ok_or_else(|| {
-                                RuntimeError::new("Native MCP provider is missing.")
-                            })?;
-                            let provider = provider
-                                .as_any()
-                                .downcast_ref::<McpProviderResource>()
-                                .ok_or_else(|| {
-                                    RuntimeError::new("Native MCP provider has the wrong type.")
-                                })?
-                                .provider()
-                                .clone();
-                            // #1433 fix-r1 (review P2#4): read the snapshot's
-                            // already-normalized key — `config/snapshot.rs`
-                            // normalizes it to a finite number with a floor of 1
-                            // (the TS `numberField(..., 5)` + `Math.max(1, …)`),
-                            // so re-clamping here would be a second
-                            // normalization, and the old `as usize` cast
-                            // truncated a fractional cap (TS `size >= 2.5` still
-                            // admits the third registration).
-                            let max_per_session_instances = snapshot
-                                .get("config")
-                                .and_then(|config| config.get("gateway"))
-                                .and_then(|gateway| gateway.get("maxPerSessionMcpInstances"))
-                                .and_then(JsValue::as_number)
-                                .unwrap_or(5.0);
-                            // The refreshed generation's `contributions.mcpServers`
-                            // (ProjectSessionRuntimeBundle.ts:247-279): plugin
-                            // servers — the builtin ones included — are composed
-                            // when the session is created.
-                            let plugin_servers = match session_plugins {
-                                Some(plugins) => plugins.runtime.mcp_servers().await,
-                                None => JsObject::new(),
-                            };
-                            super::tools::session_mcp_tools(super::tools::SessionMcpToolsOptions {
-                                mcp_config,
-                                plugin_servers,
-                                provider: &provider,
-                                per_session_runtimes: &session_mcp_runtimes,
-                                session_key: &context.session_key,
-                                max_per_session_instances,
-                                on_diagnostic: mcp_diagnostic.clone(),
-                            })
-                            .await?
-                        }
-                        None => (
-                            super::tools::SessionMcpTools::empty(),
-                            super::tools::SessionMcpRelease::default(),
-                        ),
-                    };
+                let (session_mcp, session_mcp_release) = match mcp_config_handle.get() {
+                    Some(mcp_config) => {
+                        let provider = staged
+                            .owner(Family::McpProvider)
+                            .ok_or_else(|| RuntimeError::new("Native MCP provider is missing."))?;
+                        let provider = provider
+                            .as_any()
+                            .downcast_ref::<McpProviderResource>()
+                            .ok_or_else(|| {
+                                RuntimeError::new("Native MCP provider has the wrong type.")
+                            })?
+                            .provider()
+                            .clone();
+                        // #1433 fix-r1 (review P2#4): read the snapshot's
+                        // already-normalized key — `config/snapshot.rs`
+                        // normalizes it to a finite number with a floor of 1
+                        // (the TS `numberField(..., 5)` + `Math.max(1, …)`),
+                        // so re-clamping here would be a second
+                        // normalization, and the old `as usize` cast
+                        // truncated a fractional cap (TS `size >= 2.5` still
+                        // admits the third registration).
+                        let max_per_session_instances = snapshot
+                            .get("config")
+                            .and_then(|config| config.get("gateway"))
+                            .and_then(|gateway| gateway.get("maxPerSessionMcpInstances"))
+                            .and_then(JsValue::as_number)
+                            .unwrap_or(5.0);
+                        // The refreshed generation's `contributions.mcpServers`
+                        // (ProjectSessionRuntimeBundle.ts:247-279): plugin
+                        // servers — the builtin ones included — are composed
+                        // when the session is created.
+                        let plugin_servers = match session_plugins {
+                            Some(plugins) => plugins.runtime.mcp_servers().await,
+                            None => JsObject::new(),
+                        };
+                        super::tools::session_mcp_tools(super::tools::SessionMcpToolsOptions {
+                            mcp_config,
+                            plugin_servers,
+                            provider: &provider,
+                            per_session_runtimes: &session_mcp_runtimes,
+                            session_key: &context.session_key,
+                            max_per_session_instances,
+                            on_diagnostic: mcp_diagnostic.clone(),
+                        })
+                        .await?
+                    }
+                    None => (
+                        super::tools::SessionMcpTools::empty(),
+                        super::tools::SessionMcpRelease::default(),
+                    ),
+                };
                 retained.push(move || Box::pin(async move { session_mcp_release.release().await }));
                 let tail = TailConfig {
                     cwd: Some(project_root.clone()),

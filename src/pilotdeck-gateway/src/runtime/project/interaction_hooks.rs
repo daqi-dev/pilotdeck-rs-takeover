@@ -15,11 +15,11 @@ use crate::{
         AsyncHookCompletion, AsyncHookResponse, Cancellation, HookRuntime, HookRuntimeOptions,
         LifecycleDispatchInput, LifecycleDispatchResult, LifecycleRuntime,
         PendingAsyncHookDescriptor,
-        runtime::HookObservers,
         exec::{
             CallbackFuture, CallbackHookHandler, CallbackInput, CallbackRegistration,
             CallbackResult,
         },
+        runtime::HookObservers,
     },
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};

@@ -468,6 +468,7 @@ fn ports(
                 elicitation_available: None,
             },
             turn_ports: Default::default(),
+            hook_wiring: Default::default(),
         },
     }
 }

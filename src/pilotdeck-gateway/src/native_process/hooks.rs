@@ -15,7 +15,9 @@ use crate::{
     runtime::{
         hooks::{
             LifecycleDispatchInput, LifecycleDispatchResult,
-            runtime::{AsyncHookRegistration, AsyncHookRegistrationHandler, HookExecutionEventHandler},
+            runtime::{
+                AsyncHookRegistration, AsyncHookRegistrationHandler, HookExecutionEventHandler,
+            },
         },
         tools::{ToolLifecycle, ToolRunContext},
     },
@@ -43,18 +45,23 @@ pub(super) fn session_hook_settings(
         return settings;
     };
     // `{ ...config.headers }`.
-    let headers = hooks.get("headers").and_then(JsValue::as_object).map(|headers| {
-        let mut copy = JsObject::new();
-        for (name, value) in headers.own_entries() {
-            copy.insert(name.clone(), value.clone());
-        }
-        copy
-    });
+    let headers = hooks
+        .get("headers")
+        .and_then(JsValue::as_object)
+        .map(|headers| {
+            let mut copy = JsObject::new();
+            for (name, value) in headers.own_entries() {
+                copy.insert(name.clone(), value.clone());
+            }
+            copy
+        });
     let Some(events) = hooks.get("events").and_then(JsValue::as_object) else {
         return settings;
     };
     for (event, matchers) in events.own_entries() {
-        if !is_hook_event(event) || event.equals_str("ConfigChange") || event.equals_str("FileChanged")
+        if !is_hook_event(event)
+            || event.equals_str("ConfigChange")
+            || event.equals_str("FileChanged")
         {
             continue;
         }
@@ -98,19 +105,17 @@ fn sdk_hook_url(url: &JsString, event: &JsString, matcher: usize) -> JsString {
         .query_pairs()
         .map(|(key, value)| (key.into_owned(), value.into_owned()))
         .collect();
-    let mut set = |name: &str, value: String| {
-        match pairs.iter().position(|(key, _)| key == name) {
-            Some(first) => {
-                pairs[first].1 = value;
-                let mut index = 0;
-                pairs.retain(|(key, _)| {
-                    let keep = key != name || index == first;
-                    index += 1;
-                    keep
-                });
-            }
-            None => pairs.push((name.to_string(), value)),
+    let mut set = |name: &str, value: String| match pairs.iter().position(|(key, _)| key == name) {
+        Some(first) => {
+            pairs[first].1 = value;
+            let mut index = 0;
+            pairs.retain(|(key, _)| {
+                let keep = key != name || index == first;
+                index += 1;
+                keep
+            });
         }
+        None => pairs.push((name.to_string(), value)),
     };
     set("event", String::from_utf16_lossy(event.units()));
     set("matcher", matcher.to_string());
@@ -141,7 +146,12 @@ impl HookExecutionEventHandler for GatewayHookProjection {
         if self.sdk {
             projected.insert(
                 "type".into(),
-                if started { "hook_started" } else { "hook_response" }.into(),
+                if started {
+                    "hook_started"
+                } else {
+                    "hook_response"
+                }
+                .into(),
             );
             projected.insert("hookName".into(), field("hookName"));
             projected.insert("hookEvent".into(), field("hookEvent"));
@@ -206,14 +216,16 @@ pub(super) struct GatewayAsyncHooks {
 impl AsyncHookRegistrationHandler for GatewayAsyncHooks {
     fn handle(&self, registration: AsyncHookRegistration) -> Result<(), crate::host::HostError> {
         match self.registry.get() {
-            Some(registry) => registry.register(crate::runtime::async_hooks::AsyncHookRegistration {
-                session_key: self.session.clone(),
-                invocation_id: registration.invocation_id,
-                hook_name: registration.hook_name,
-                hook_event: registration.hook_event,
-                timeout_ms: registration.timeout_ms,
-                include_hook_events: self.include_hook_events,
-            }),
+            Some(registry) => {
+                registry.register(crate::runtime::async_hooks::AsyncHookRegistration {
+                    session_key: self.session.clone(),
+                    invocation_id: registration.invocation_id,
+                    hook_name: registration.hook_name,
+                    hook_event: registration.hook_event,
+                    timeout_ms: registration.timeout_ms,
+                    include_hook_events: self.include_hook_events,
+                })
+            }
             None => Ok(()),
         }
     }
@@ -258,7 +270,13 @@ impl ToolLifecycle for ToolHooks {
         let (Some(port), true) = (port, configured) else {
             return Box::pin(async { Ok(None) });
         };
-        let field = |key: &str| context.fields.get(key).cloned().unwrap_or(JsValue::Undefined);
+        let field = |key: &str| {
+            context
+                .fields
+                .get(key)
+                .cloned()
+                .unwrap_or(JsValue::Undefined)
+        };
         let cwd = field("cwd").as_string().cloned().unwrap_or_default();
         let mut base = JsObject::new();
         base.insert("sessionId".into(), field("sessionId"));
@@ -271,7 +289,11 @@ impl ToolLifecycle for ToolHooks {
             payload: Some(payload),
             match_query: Some(match_query.clone()),
             cwd,
-            env: context.fields.get("env").and_then(JsValue::as_object).cloned(),
+            env: context
+                .fields
+                .get("env")
+                .and_then(JsValue::as_object)
+                .cloned(),
             signal: None,
         };
         let future = port.dispatch(input);

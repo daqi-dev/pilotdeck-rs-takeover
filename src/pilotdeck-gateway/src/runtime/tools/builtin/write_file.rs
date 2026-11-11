@@ -145,7 +145,15 @@ fn validate(input: &JsValue, context: &ToolRunContext) -> Result<Option<Vec<JsOb
 fn execute(
     input: &JsValue,
     context: &ToolRunContext,
-) -> Result<(ToolOutput, String, String, crate::runtime::tools::FileUpdate), ToolError> {
+) -> Result<
+    (
+        ToolOutput,
+        String,
+        String,
+        crate::runtime::tools::FileUpdate,
+    ),
+    ToolError,
+> {
     let path = input_path(input);
     let content_value = input_content(input);
     let content = String::from_utf16_lossy(content_value.units());
