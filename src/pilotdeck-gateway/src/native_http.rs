@@ -111,6 +111,19 @@ pub(crate) struct Config {
     /// `options.gateway`). `None` keeps the pre-#2354 surface, the shape
     /// every non-gateway listener and frozen fixture still pins.
     pub api_web: Option<crate::api_web::Config>,
+    /// The public approval bridge (`/api/module-host/approvals/*`) and the
+    /// public host transport (`/api/module-host/{describe,call}`), mounted
+    /// ahead of every other route like GatewayServer.ts:96-97. `None` keeps
+    /// them off the listener (their paths fall through to `/health`, static
+    /// and the 404).
+    pub module_host: Option<ModuleHost>,
+}
+
+/// The two module-host transports `pilotdeck server` mounts.
+#[derive(Clone)]
+pub(crate) struct ModuleHost {
+    pub approvals: crate::module_host::approvals::Config,
+    pub host: crate::module_host::Config,
 }
 
 /// Route one parsed non-upgrade request to its TS-equivalent response.
@@ -134,6 +147,26 @@ pub(crate) async fn serve_with_body(
     config: &Config,
 ) -> Result<hyper::Response<Body>, io::Error> {
     let version = request.version();
+    // `handlePublicApprovalHttpRequest`, then `handlePublicHostHttpRequest`:
+    // the first two statements of TS `handleHttpRequest`, ahead of `/health`.
+    // Each answers `None` for a path that is not its own. The parser-level
+    // admission runs first, as llhttp does under every TS handler.
+    if let Some(module_host) = &config.module_host {
+        let path = request_path(&request);
+        if path.starts_with("/api/module-host/") {
+            if let Some(rejection) = node_parser_admission(&request)? {
+                return finish(version, rejection);
+            }
+            if let Some(answer) =
+                crate::module_host::approvals::serve(&mut request, &module_host.approvals).await
+            {
+                return finish(version, answer?);
+            }
+            if let Some(answer) = crate::module_host::serve(&mut request, &module_host.host).await {
+                return finish(version, answer?);
+            }
+        }
+    }
     // #2354: the `/api/web` route group, exactly where TS's router mounts it —
     // after the `/feishu/webhook` prefix check, before static and the plain
     // 404 (GatewayServer.ts). The path prefixes are disjoint, so testing this
@@ -360,36 +393,14 @@ async fn route<B>(
     {
         let (status, text) = handler(body.to_owned()).await;
         // `respondJson` is `res.writeHead(status, {content-type:
-        // "application/json"}); res.end(JSON.stringify(body))` — a whole
-        // reply Node sizes up front, so the body is not chunked.
-        let mut response = handler_response_with_length(
+        // "application/json"}); res.end(JSON.stringify(body))`
+        // (FeishuChannel.ts:1304-1307): `writeHead` commits the headers
+        // before `end` knows the size, so Node frames the reply chunked on
+        // HTTP/1.1 (bbx `http-feishu-webhook`) and close-delimited on 1.0.
+        return Ok(handler_response(
             hyper::StatusCode::from_u16(status).unwrap_or(hyper::StatusCode::INTERNAL_SERVER_ERROR),
             "application/json",
             text,
-            keep_alive,
-        );
-        // #1947: on HTTP/1.0 the reply is close-delimited — Node's 1.0
-        // replies carry no `content-length` — so the size stays unknown to
-        // hyper, like the webhook channel's own `finalize` (#1684). The
-        // parser-level rejections keep their registered `content-length: 0`
-        // diff, so this wraps only the webhook branch.
-        if request.version() == hyper::Version::HTTP_10
-            && !crate::mutants::on("native-http-http10-framing-off")
-        {
-            let sized = std::mem::replace(response.body_mut(), streamed(None));
-            *response.body_mut() = Unsized(sized).boxed();
-        }
-        return Ok(response);
-    }
-    // A7.4's user-dialog HTTP store entry is not yet open on this listener: TS
-    // never mounts HttpGatewayUserDialogStore on the gateway port either, but
-    // #1316 makes the same-domain entry explicit instead of a generic 404 so
-    // clients can tell "not yet open" from an unknown path.
-    if path.starts_with(crate::user_dialog::http_store::STORE_PATH_PREFIX) {
-        return Ok(handler_response(
-            hyper::StatusCode::SERVICE_UNAVAILABLE,
-            "application/json",
-            "{\"error\":\"not_yet_open\",\"store\":\"gateway-user-dialog-store\"}".to_owned(),
             keep_alive,
         ));
     }
@@ -669,33 +680,6 @@ fn sized_body(body: Option<String>) -> Body {
     Full::new(body.map(Bytes::from).unwrap_or_default())
         .map_err(|never: std::convert::Infallible| match never {})
         .boxed()
-}
-
-/// A body whose size hyper cannot know (#1947): everything else delegates, so
-/// the frames and the end-of-stream flag are unchanged. Sibling of the
-/// webhook channel's `Unsized` (#1684), wrapping the one sized body this
-/// router builds for an HTTP/1.0 reply (the webhook branch's
-/// `handler_response_with_length`).
-struct Unsized(Body);
-
-impl hyper::body::Body for Unsized {
-    type Data = Bytes;
-    type Error = crate::ProxyError;
-
-    fn poll_frame(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
-        std::pin::Pin::new(&mut self.get_mut().0).poll_frame(cx)
-    }
-
-    fn is_end_stream(&self) -> bool {
-        self.0.is_end_stream()
-    }
-
-    fn size_hint(&self) -> hyper::body::SizeHint {
-        hyper::body::SizeHint::default()
-    }
 }
 
 /// A TS `writeHead(status, headers)` followed by `end(body)` with the whole

@@ -1,0 +1,53 @@
+{
+  "name": "http-static",
+  "about": "静态资源托管（staticAssetsPath 固定为 <cwd>/ui/dist，pilotdeck.ts:224；staticAssets.ts）：缺省文档、各扩展名的 MIME（大小写敏感，未知与无扩展名为 octet-stream）、目录与不存在的路径回退到 index.html、百分号编码不解码、查询串、任意方法都给文件、HEAD；/health、/auth/local-token、/api/web/* 优先于静态；/feishu/webhook 在未配置飞书时落到静态。没有缓存头。路径穿越 fetch 发不出（客户端先归一化），由 native_http 单元测试覆盖。",
+  "volatile": [
+    "\\.http\\.headers\\.date$"
+  ],
+  "files": {
+    "proj/ui/dist/index.html": "<!doctype html><title>idx</title>\n",
+    "proj/ui/dist/app.js": "console.log(1);\n",
+    "proj/ui/dist/style.css": "body{}\n",
+    "proj/ui/dist/data.json": "{\"a\":1}",
+    "proj/ui/dist/logo.svg": "<svg/>",
+    "proj/ui/dist/readme.txt": "text file\n",
+    "proj/ui/dist/UPPER.HTML": "<p>upper</p>",
+    "proj/ui/dist/LICENSE": "license\n",
+    "proj/ui/dist/hello world.txt": "space\n",
+    "proj/ui/dist/hello%20world.txt": "literal percent\n",
+    "proj/ui/dist/assets/x.js": "x()\n",
+    "proj/ui/dist/sub/page.html": "<p>sub</p>"
+  },
+  "steps": [
+    { "http": "GET /" },
+    { "http": "GET /index.html" },
+    { "http": "GET /app.js" },
+    { "http": "GET /style.css" },
+    { "http": "GET /data.json" },
+    { "http": "GET /logo.svg" },
+    { "http": "GET /readme.txt" },
+    { "http": "GET /UPPER.HTML" },
+    { "http": "GET /LICENSE" },
+    { "http": "GET /hello%20world.txt" },
+    { "http": "GET /assets/x.js" },
+    { "http": "GET /assets" },
+    { "http": "GET /assets/" },
+    { "http": "GET /sub/page.html" },
+    { "http": "GET /sub" },
+    { "http": "GET /missing/route" },
+    { "http": "GET /app.js?v=123" },
+    { "http": "HEAD /app.js" },
+    { "http": "HEAD /" },
+    { "http": "POST /app.js", "headers": { "content-type": "application/json" }, "body": "{}" },
+    { "http": "OPTIONS /", "headers": { "origin": "http://localhost:3001", "access-control-request-method": "GET" } },
+    { "http": "GET /app.js", "headers": { "connection": "close" } },
+    { "http": "GET /app.js", "headers": { "if-none-match": "*", "if-modified-since": "Wed, 21 Oct 2099 07:28:00 GMT", "range": "bytes=0-3" } },
+    { "http": "GET /health" },
+    { "http": "GET /auth/local-token" },
+    { "http": "GET /api/web/projects" },
+    { "http": "GET /api/web" },
+    { "http": "GET /feishu/webhook" },
+    { "http": "GET /ws" },
+    { "http": "GET /api/module-host/describe" }
+  ]
+}

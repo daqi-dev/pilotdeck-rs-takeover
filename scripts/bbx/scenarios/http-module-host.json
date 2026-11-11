@@ -1,0 +1,41 @@
+{
+  "name": "http-module-host",
+  "about": "公共 host 与公共审批桥的 HTTP 入口（GatewayServer.ts:96-97，publicHostHttpTransport.ts，publicApprovalHttpTransport.ts），缺省环境（无 STAFFDECK_* 变量）下：鉴权（缺头、错 token、小写 bearer 不认）、方法不对 405、畸形 JSON、principal 缺失、describe 列出的操作、未知操作 409、input 非对象与越权字段；审批桥的非对象体、多余字段、tenant/agent 不匹配、绑定不可用 503。两组路由都排在 /health 之前。",
+  "volatile": [
+    "\\.http\\.headers\\.date$"
+  ],
+  "steps": [
+    { "http": "POST /api/module-host/describe" },
+    { "http": "POST /api/module-host/describe", "headers": { "authorization": "Bearer wrong" } },
+    { "http": "POST /api/module-host/describe", "headers": { "authorization": "bearer {TOKEN}" } },
+    { "http": "GET /api/module-host/describe", "headers": { "authorization": "Bearer {TOKEN}" } },
+    { "http": "GET /api/module-host/describe" },
+    { "http": "POST /api/module-host/describe", "headers": { "authorization": "Bearer {TOKEN}" }, "body": "{bad" },
+    { "http": "POST /api/module-host/describe", "headers": { "authorization": "Bearer {TOKEN}" } },
+    { "http": "POST /api/module-host/describe", "headers": { "authorization": "Bearer {TOKEN}" }, "body": {} },
+    { "http": "POST /api/module-host/describe", "headers": { "authorization": "Bearer {TOKEN}" }, "body": { "principal": { "pilotDeckUserId": "u", "tenantId": "t", "actorUserId": "a", "agentId": " " } } },
+    { "http": "POST /api/module-host/describe", "headers": { "authorization": "Bearer {TOKEN}" }, "body": { "principal": { "pilotDeckUserId": "u", "tenantId": "t", "actorUserId": "a", "agentId": "g" } } },
+    { "http": "POST /api/module-host/call", "headers": { "authorization": "Bearer {TOKEN}" }, "body": { "principal": { "pilotDeckUserId": "u", "tenantId": "t", "actorUserId": "a", "agentId": "g" }, "operation": "nope", "input": {} } },
+    { "http": "POST /api/module-host/call", "headers": { "authorization": "Bearer {TOKEN}" }, "body": { "principal": { "pilotDeckUserId": "u", "tenantId": "t", "actorUserId": "a", "agentId": "g" }, "operation": "list_model_catalog", "input": [] } },
+    { "http": "POST /api/module-host/call", "headers": { "authorization": "Bearer {TOKEN}" }, "body": { "principal": { "pilotDeckUserId": "u", "tenantId": "t", "actorUserId": "a", "agentId": "g" }, "operation": "list_model_catalog", "input": { "tenantId": "x" } } },
+    { "http": "POST /api/module-host/describe/", "headers": { "authorization": "Bearer {TOKEN}" }, "body": {} },
+    { "http": "POST /api/module-host/approvals/status" },
+    { "http": "POST /api/module-host/approvals/status", "headers": { "authorization": "Bearer wrong" }, "body": {} },
+    { "http": "GET /api/module-host/approvals/status", "headers": { "authorization": "Bearer {TOKEN}" } },
+    { "http": "PUT /api/module-host/approvals/resume", "headers": { "authorization": "Bearer {TOKEN}" }, "body": {} },
+    { "http": "POST /api/module-host/approvals/status", "headers": { "authorization": "Bearer {TOKEN}" }, "body": "{bad" },
+    { "http": "POST /api/module-host/approvals/status", "headers": { "authorization": "Bearer {TOKEN}" } },
+    { "http": "POST /api/module-host/approvals/status", "headers": { "authorization": "Bearer {TOKEN}" }, "body": "[]" },
+    { "http": "POST /api/module-host/approvals/status", "headers": { "authorization": "Bearer {TOKEN}" }, "body": "null" },
+    { "http": "POST /api/module-host/approvals/status", "headers": { "authorization": "Bearer {TOKEN}" }, "body": { "sessionKey": "s", "extra": 1 } },
+    { "http": "POST /api/module-host/approvals/status", "headers": { "authorization": "Bearer {TOKEN}" }, "body": { "sessionKey": "s", "waitId": "w" } },
+    { "http": "POST /api/module-host/approvals/status", "headers": { "authorization": "Bearer {TOKEN}" }, "body": { "sessionKey": "s" } },
+    { "http": "POST /api/module-host/approvals/status", "headers": { "authorization": "Bearer {TOKEN}" }, "body": { "sessionKey": "s", "tenantId": "t", "agentId": "g" } },
+    { "http": "POST /api/module-host/approvals/status", "headers": { "authorization": "Bearer {TOKEN}" }, "body": { "sessionKey": "", "tenantId": "", "agentId": "" } },
+    { "http": "POST /api/module-host/approvals/status", "headers": { "authorization": "Bearer {TOKEN}" }, "body": { "sessionKey": "s", "tenantId": "", "agentId": "" } },
+    { "http": "POST /api/module-host/approvals/resume", "headers": { "authorization": "Bearer {TOKEN}" }, "body": { "sessionKey": "s", "tenantId": "", "agentId": "" } },
+    { "http": "POST /api/module-host/approvals/resume", "headers": { "authorization": "Bearer {TOKEN}" }, "body": { "sessionKey": "s", "tenantId": "", "agentId": "", "source": "human", "waitId": "w", "requestId": "r", "message": "ok", "expectedRevision": 0 } },
+    { "http": "POST /api/module-host/approvals/status/", "headers": { "authorization": "Bearer {TOKEN}" }, "body": {} },
+    { "http": "GET /api/module-host/nope" }
+  ]
+}

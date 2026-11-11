@@ -1,0 +1,178 @@
+{
+  "name": "http-feishu-webhook",
+  "about": "飞书 webhook 入口（GatewayServer.ts:113-119 → FeishuChannel.handleWebhook，FeishuChannel.ts:306-333、1073-1113）：配置 adapters.feishu 为 webhook 模式（不联网），只发不触发回发的请求：url_verification 回 challenge（verifyToken 不符也照回）、畸形 JSON 与非对象、verifyToken 不符的事件被忽略、encrypt 字段解不开被忽略、不认识的事件形状被忽略；任意方法都进 handleWebhook；/feishu/webhook/ 不匹配落到 404。真实消息事件会触发对飞书开放平台的回发（联网），不在这里做。 体为 null 的请求会让基线崩溃（FeishuChannel.ts:1081 对 null 取 .encrypt，未处理的拒绝触发 shutdownAndExit(1)），不在场景里。",
+  "volatile": [
+    "\\.http\\.headers\\.date$"
+  ],
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  feishu:\n    enabled: true\n    appId: cli_bbx\n    appSecret: bbx-secret\n    verifyToken: vtok\n    encryptKey: ekey\n    connectionMode: webhook\n",
+  "steps": [
+    {
+      "sleep": 500
+    },
+    {
+      "http": "POST /feishu/webhook",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "type": "url_verification",
+        "challenge": "c-123",
+        "token": "vtok"
+      }
+    },
+    {
+      "http": "POST /feishu/webhook",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "type": "url_verification",
+        "challenge": "c-456",
+        "token": "wrong"
+      }
+    },
+    {
+      "http": "POST /feishu/webhook",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "type": "url_verification",
+        "challenge": 7
+      }
+    },
+    {
+      "http": "POST /feishu/webhook",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{bad json"
+    },
+    {
+      "http": "POST /feishu/webhook"
+    },
+    {
+      "http": "POST /feishu/webhook",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "[]"
+    },
+    {
+      "http": "POST /feishu/webhook",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "token": "wrong",
+        "header": {
+          "event_type": "im.message.receive_v1"
+        },
+        "event": {
+          "message": {
+            "chat_id": "oc_1",
+            "message_id": "om_1",
+            "message_type": "text",
+            "content": "{\"text\":\"hi\"}"
+          }
+        }
+      }
+    },
+    {
+      "http": "POST /feishu/webhook",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "schema": "2.0",
+        "header": {
+          "token": "wrong",
+          "event_type": "im.message.receive_v1"
+        },
+        "event": {
+          "message": {
+            "chat_id": "oc_1",
+            "message_id": "om_2",
+            "message_type": "text",
+            "content": "{\"text\":\"hi\"}"
+          }
+        }
+      }
+    },
+    {
+      "http": "POST /feishu/webhook",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "encrypt": "not-base64-ciphertext"
+      }
+    },
+    {
+      "http": "POST /feishu/webhook",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "token": "vtok",
+        "type": "event_callback",
+        "event": {
+          "type": "other"
+        }
+      }
+    },
+    {
+      "http": "POST /feishu/webhook",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "token": "vtok"
+      }
+    },
+    {
+      "http": "GET /feishu/webhook"
+    },
+    {
+      "http": "PUT /feishu/webhook",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "type": "url_verification",
+        "challenge": "put"
+      }
+    },
+    {
+      "http": "POST /feishu/webhook?x=1",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "type": "url_verification",
+        "challenge": "q"
+      }
+    },
+    {
+      "http": "POST /feishu/webhook/",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "type": "url_verification",
+        "challenge": "slash"
+      }
+    },
+    {
+      "http": "POST /feishu/webhook",
+      "headers": {
+        "content-type": "application/json",
+        "connection": "close"
+      },
+      "body": {
+        "type": "url_verification",
+        "challenge": "close"
+      }
+    }
+  ]
+}

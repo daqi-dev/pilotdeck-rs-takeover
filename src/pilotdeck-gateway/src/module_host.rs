@@ -1505,6 +1505,57 @@ fn string_value(value: &str) -> JsValue {
     JsValue::String(JsString::from(value))
 }
 
+/// The provider `pilotdeck server` resolves for every principal until the
+/// native runtime ports are wired. TS advertises the runtime's
+/// `list_general_skills`, `list_model_catalog`, `model_prepare`,
+/// `model_stream`, `file_parse` and `read_sop_authority`
+/// (`createRuntimeHostCapabilityProvider`, createLocalGateway.ts:1524-1556);
+/// none of them has a native implementation behind this transport yet, so
+/// this provider advertises nothing and every call fails closed with the
+/// transport's own 409 `PILOTDECK_HOST_CAPABILITY_UNAVAILABLE` — never an
+/// answer the runtime did not produce.
+struct UnwiredRuntimeProvider;
+
+impl PublicHostProvider for UnwiredRuntimeProvider {
+    fn operations(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn call(
+        &self,
+        _operation: &str,
+        _input: &JsValue,
+        _principal: &PublicHostPrincipal,
+    ) -> Pin<Box<dyn Future<Output = Result<HostResponse, HostFailure>> + Send + '_>> {
+        // Unreachable: the transport answers 409 for any operation that
+        // `operations()` does not list, before calling the provider.
+        Box::pin(async {
+            Err(HostFailure {
+                status: Some(409),
+                code: Some("PILOTDECK_HOST_CAPABILITY_UNAVAILABLE".to_owned()),
+                message: None,
+            })
+        })
+    }
+}
+
+struct UnwiredRuntimeResolver;
+
+impl PublicHostResolver for UnwiredRuntimeResolver {
+    fn resolve(&self, _principal: &PublicHostPrincipal) -> Arc<dyn PublicHostProvider> {
+        Arc::new(UnwiredRuntimeProvider)
+    }
+}
+
+/// The transport `pilotdeck server` mounts: TS always passes a resolver
+/// (`publicHostCapabilities`, pilotdeck.ts:217), so the 501 cell is not
+/// reachable there.
+pub(crate) fn production_config(token: String) -> Config {
+    Config {
+        token,
+        capabilities: Some(Arc::new(UnwiredRuntimeResolver)),
+    }
+}
+
 /// The approvals transport (#1350), a sibling component this module's caller
 /// composes in front of it — TS mounts `handlePublicApprovalHttpRequest`
 /// before `handlePublicHostHttpRequest` (GatewayServer.ts:96).

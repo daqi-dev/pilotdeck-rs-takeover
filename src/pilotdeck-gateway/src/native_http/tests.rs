@@ -184,6 +184,7 @@ fn config_for(server: &str, fixture: &Fixture) -> Config {
         static_root,
         webhook: None,
         api_web: None,
+        module_host: None,
     }
 }
 
@@ -822,6 +823,7 @@ async fn local_token_requires_loopback_host_and_origin() {
         static_root: None,
         webhook: None,
         api_web: None,
+        module_host: None,
     };
     let cases: &[(&[(&str, &str)], u16)] = &[
         (&[("host", "127.0.0.1:18789")], 200),
@@ -899,6 +901,7 @@ async fn local_token_requires_loopback_binding() {
         static_root: None,
         webhook: None,
         api_web: None,
+        module_host: None,
     };
     let response = route("GET", "/auth/local-token", &local).await;
     assert_eq!(
@@ -965,40 +968,6 @@ async fn not_found_body_matches_ts() {
         "#1209 404 content type"
     );
     assert_eq!(body_of(response).await, "not found", "#1209 404 body bytes");
-}
-
-/// #1316: the A7.4 user-dialog HTTP store entry is not yet open on the
-/// native listener. TS never mounts HttpGatewayUserDialogStore on the gateway
-/// port either (it would be the generic 404 there), but the same-domain entry
-/// must answer explicitly, not with the unknown-path 404.
-#[tokio::test]
-async fn user_dialog_store_entry_is_explicitly_not_yet_open() {
-    let mut config = config_for("e", &roots());
-    config.static_root = None;
-    let response = route("GET", "/v1/gateway-user-dialog-store/dialogs", &config).await;
-    assert_eq!(
-        u16::from(response.status()),
-        503,
-        "#1316 user-dialog store entry is a 503"
-    );
-    assert_eq!(
-        content_type_of(&response),
-        "application/json",
-        "#1316 not-yet-open content type"
-    );
-    assert_eq!(
-        body_of(response).await,
-        "{\"error\":\"not_yet_open\",\"store\":\"gateway-user-dialog-store\"}",
-        "#1316 not-yet-open body"
-    );
-    // The prefix boundary: a path that merely contains the marker does not
-    // match; only the whole store prefix opens the explicit entry.
-    let response = route("GET", "/v1/gateway-user-dialog-storex", &config).await;
-    assert_eq!(
-        u16::from(response.status()),
-        404,
-        "#1316 a sibling path keeps the ordinary 404"
-    );
 }
 
 /// #1209: an authority-form target without CONNECT is llhttp's bare 400;
@@ -1285,11 +1254,8 @@ async fn http10_close_delimited_response() {
             raw.contains("\r\nConnection: close\r\n") && !lower.contains("keep-alive"),
             "#1209 pin {id}: HTTP/1.0 is answered close with no keep-alive: {raw:?}"
         );
-        // #1947 structural pin (ledger A8.3-CH-WEBHOOK-004-R2): this cell's
-        // reply is a streamed body — close-delimited already — so the lane's
-        // framing switch (`native-http-http10-framing-off`, bound to the
-        // webhook-json pin) cannot kill this assertion; it pins the existing
-        // framing against drift.
+        // #1947 structural pin: this cell's reply is a streamed body —
+        // close-delimited on HTTP/1.0 — pinned against drift.
         assert!(
             !lower.contains("\r\ncontent-length:"),
             "#1947 pin {id}: the HTTP/1.0 reply is close-delimited, no content-length: {raw:?}"
@@ -1307,10 +1273,9 @@ async fn http10_close_delimited_response() {
 }
 
 /// #1947: the `/feishu/webhook` reply is `respondJson` — `writeHead` +
-/// `end(JSON.stringify(body))`, the one sized body this router builds — and
-/// on HTTP/1.0 Node's reply is close-delimited with no `content-length`, so
-/// the sized body must not leak hyper's `content-length` onto the 1.0 reply
-/// (the framing fix mirrors the webhook channel's #1684 finalize). hyper's
+/// `end(JSON.stringify(body))`, chunked on HTTP/1.1 (bbx
+/// `http-feishu-webhook`) — and on HTTP/1.0 Node's reply is close-delimited
+/// with no `content-length`. hyper's
 /// `HTTP/1.0` status line stays the registered diff, so this is a raw pin on
 /// the listener's own `serve_with_body` dispatch.
 #[tokio::test]
@@ -1332,6 +1297,7 @@ async fn http10_webhook_json_is_close_delimited() {
             }))
         })),
         api_web: None,
+        module_host: None,
     };
     let server_task = tokio::spawn(async move {
         loop {
@@ -1496,6 +1462,7 @@ async fn trailing_separator_root_still_serves() {
         static_root: Some(PathBuf::from(format!("{}/", fixture.root.display()))),
         webhook: None,
         api_web: None,
+        module_host: None,
     };
     let response = route("GET", "/app.js", &config).await;
     assert_eq!(
@@ -2565,6 +2532,7 @@ async fn keep_alive_idle_close_lands_at_six_seconds() {
             static_root: None,
             webhook: None,
             api_web: None,
+            module_host: None,
         };
         let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
             server,
@@ -2690,6 +2658,7 @@ async fn idle_close_refreshes_on_read_segments() {
             static_root: None,
             webhook: None,
             api_web: None,
+            module_host: None,
         };
         let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
             server,
@@ -2766,6 +2735,7 @@ async fn handler_execution_blocks_idle_close() {
             static_root: None,
             webhook: None,
             api_web: None,
+            module_host: None,
         };
         let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
             server,
@@ -2838,6 +2808,7 @@ async fn idle_state_no_request_stays_open() {
             static_root: None,
             webhook: None,
             api_web: None,
+            module_host: None,
         };
         let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
             server,
@@ -3104,6 +3075,7 @@ async fn client_close_ends_connection_without_timer() {
             static_root: None,
             webhook: None,
             api_web: None,
+            module_host: None,
         };
         let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
             server,
@@ -3155,6 +3127,7 @@ async fn idle_deadline_and_client_close_same_instant_resolve_ok() {
             static_root: None,
             webhook: None,
             api_web: None,
+            module_host: None,
         };
         let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
             server,
@@ -3303,6 +3276,7 @@ async fn unserved_head_headers_timeout_408s_like_ts() {
                 static_root: None,
                 webhook: None,
                 api_web: None,
+                module_host: None,
             };
             let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
                 server,
@@ -3352,6 +3326,7 @@ async fn unserved_head_headers_timeout_408s_like_ts() {
                 static_root: None,
                 webhook: None,
                 api_web: None,
+                module_host: None,
             };
             let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
                 server,
@@ -3405,6 +3380,7 @@ async fn served_follow_up_head_silent_ends_at_idle_close() {
             static_root: None,
             webhook: None,
             api_web: None,
+            module_host: None,
         };
         let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
             server,
@@ -3487,6 +3463,7 @@ async fn served_follow_up_head_dribble_408s_like_ts() {
             static_root: None,
             webhook: None,
             api_web: None,
+            module_host: None,
         };
         let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
             server,
@@ -3612,6 +3589,7 @@ async fn headers_timeout_lands_on_checker_grid_like_ts() {
             static_root: None,
             webhook: None,
             api_web: None,
+            module_host: None,
         };
         // The connection begins 15 s after the listener's bind: its own
         // deadline (+75 s) is off the anchor's phase, so only the bind
@@ -3691,6 +3669,7 @@ async fn first_head_delayed_anchors_at_its_first_byte_like_ts() {
             static_root: None,
             webhook: None,
             api_web: None,
+            module_host: None,
         };
         let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
             server,
@@ -3867,6 +3846,7 @@ async fn held_response_mid_stream_head_still_408s_like_ts() {
             static_root: None,
             webhook: None,
             api_web: None,
+            module_host: None,
         };
         let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
             server,
@@ -3960,6 +3940,7 @@ async fn pipelined_mid_stream_head_keeps_own_deadline_like_ts() {
             static_root: None,
             webhook: None,
             api_web: None,
+            module_host: None,
         };
         let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
             server,
@@ -4065,6 +4046,7 @@ async fn in_flight_request_disarms_rearmed_timeout() {
             static_root: None,
             webhook: None,
             api_web: None,
+            module_host: None,
         };
         let release_rx = release_rx;
         // Both requests are `/health` (the read helper pins the 200); the
@@ -4154,6 +4136,7 @@ async fn held_response_gets_no_headers_timeout() {
             static_root: None,
             webhook: None,
             api_web: None,
+            module_host: None,
         };
         let release_rx = release_rx;
         let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
@@ -4232,6 +4215,7 @@ async fn stop_disarms_headers_timeout() {
             static_root: None,
             webhook: None,
             api_web: None,
+            module_host: None,
         };
         let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
             server,
