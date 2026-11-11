@@ -1,0 +1,39 @@
+{
+  "name": "cli-skills-migrate",
+  "about": "skills migrate 离线分支：缺省来源的 dry run 文本与 --json、各来源（cc 用户 / 项目、openclaw、hermes、--source 自定义含 ~ 展开和单技能目录）、冲突的 skip / rename / overwrite、校验失败、非法 slug、--execute 的落盘（复制内容与权限）、--from 去重与未知来源、--pilot-home 与 --project。",
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "files": {
+    "home/.claude/skills/alpha/SKILL.md": "---\nname: alpha\ndescription: Alpha skill from Claude Code\n---\nAlpha body\n",
+    "home/.claude/skills/alpha/notes.txt": "extra file\n",
+    "home/.claude/skills/beta/SKILL.md": "---\nname: beta\ndescription: Beta skill\n---\nBeta body\n",
+    "home/.claude/skills/no-skill-here/readme.txt": "not a skill\n",
+    "home/.claude/skills/.hidden/SKILL.md": "---\nname: hidden\ndescription: hidden slug\n---\nx\n",
+    "home/.claude/skills/broken/SKILL.md": "no frontmatter at all\n",
+    "proj/.claude/skills/gamma/SKILL.md": "---\nname: gamma\ndescription: Project gamma\n---\nGamma\n",
+    "home/.openclaw/workspace/skills/delta/SKILL.md": "---\nname: delta\ndescription: OpenClaw delta\n---\nDelta\n",
+    "home/.agents/skills/README.md": "empty shared dir\n",
+    "home/.hermes/skills/epsilon/SKILL.md": "---\nname: epsilon\ndescription: Hermes epsilon\n---\nEpsilon\n",
+    "home/custom-single/SKILL.md": "---\nname: custom-single\ndescription: Single skill root\n---\nSingle\n",
+    "home/.pilotdeck/skills/beta/SKILL.md": "---\nname: beta\ndescription: Existing beta\n---\nExisting\n",
+    "home/.pilotdeck/skills/beta-imported/SKILL.md": "---\nname: beta\ndescription: Existing beta imported\n---\nExisting 2\n"
+  },
+  "steps": [
+    { "cli": ["skills", "migrate"] },
+    { "cli": ["skills", "migrate", "--json"] },
+    { "cli": ["skills", "migrate", "--from", "openclaw,hermes"] },
+    { "cli": ["skills", "migrate", "--from", " CC , claude ,all", "--json"] },
+    { "cli": ["skills", "migrate", "--from", "hermes", "--source", "~/custom-single", "--source", "{HOME}/.claude/skills"] },
+    { "cli": ["skills", "migrate", "--from", "cc", "--rename"] },
+    { "cli": ["skills", "migrate", "--from", "cc", "--overwrite"] },
+    { "cli": ["skills", "migrate", "--from", "cc", "--project", "{ROOT}/elsewhere"] },
+    { "cli": ["skills", "migrate", "--from", "cc", "--pilot-home", "{ROOT}/alt-home"] },
+    { "cli": ["skills", "migrate", "--from", "cc", "--execute"] },
+    { "cli": ["skills", "migrate", "--from", "cc", "--execute", "--rename", "--json"] },
+    { "cli": ["skills", "migrate", "--from", "openclaw", "--execute", "--overwrite"] },
+    { "cli": ["skills", "migrate", "--from", "hermes", "--execute"] }
+  ]
+}

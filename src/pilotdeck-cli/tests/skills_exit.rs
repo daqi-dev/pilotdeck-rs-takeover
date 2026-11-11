@@ -37,7 +37,9 @@ fn usage_json_error_exit_and_gateway_todo_are_distinct() {
     assert_eq!(server.status.code(), Some(1));
     assert!(server.stdout.is_empty());
     assert_eq!(server.stderr, b"Config must contain an agent section.\n");
-    let todo = invoke(&["cron"]);
+    // `cron` is no longer a TODO (it probes the fixed 127.0.0.1:18789, which
+    // tests must not touch); `gateway setup` still is.
+    let todo = invoke(&["gateway", "setup"]);
     assert_eq!(todo.status.code(), Some(2));
     assert!(
         String::from_utf8(todo.stderr)

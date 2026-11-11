@@ -1,0 +1,149 @@
+{
+  "name": "cli-sessions-settings",
+  "about": "连 gateway 的只读 / 设置命令：先用 ws 造一个会话，再用 CLI 的 sessions list（缺省子命令、--project）、sessions messages（存在 / 不存在的会话）、错 token 被拒、settings get、settings set（允许的字段写进 pilotdeck.yaml、不允许的字段被拒、非对象被拒）。CLI 的 token 只认 --auth-token / PILOTDECK_SDK_AUTH_TOKEN / PILOTDECK_TOKEN / server-token 文件（src/cli/sdkCli.ts:185-188），不认场景默认的 PILOTDECK_GATEWAY_TOKEN，所以每步给 PILOTDECK_TOKEN；地址走 PILOTDECK_GATEWAY_PORT（sdkCli.ts:184）。 有会话时的 sessions list 输出里 lastModified 是文件 mtime（src/session/storage/SessionList.ts:145），基线两次运行必然不同，放在 cli-sessions-list 场景里单独比。",
+  "env": {
+    "PILOTDECK_TOKEN": "{TOKEN}"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Say hello\"}"
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "Hello from the mock."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "cli": [
+        "sessions"
+      ]
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "hello"
+      }
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "cli": [
+        "sessions",
+        "list",
+        "--project",
+        "{PROJECT}"
+      ]
+    },
+    {
+      "cli": [
+        "sessions",
+        "list",
+        "--project",
+        "{ROOT}/nowhere"
+      ]
+    },
+    {
+      "cli": [
+        "sessions",
+        "messages",
+        "s-bbx-1"
+      ]
+    },
+    {
+      "cli": [
+        "sessions",
+        "messages",
+        "s-missing"
+      ]
+    },
+    {
+      "cli": [
+        "sessions",
+        "list",
+        "--project",
+        "{ROOT}/nowhere",
+        "--auth-token",
+        "{TOKEN}"
+      ],
+      "env": {
+        "PILOTDECK_TOKEN": null
+      }
+    },
+    {
+      "cli": [
+        "sessions",
+        "list"
+      ],
+      "env": {
+        "PILOTDECK_TOKEN": "wrong"
+      }
+    },
+    {
+      "cli": [
+        "settings"
+      ]
+    },
+    {
+      "cli": [
+        "settings",
+        "get"
+      ]
+    },
+    {
+      "cli": [
+        "settings",
+        "set",
+        "{\"agent\":{\"maxOutputTokens\":4096}}"
+      ]
+    },
+    {
+      "cli": [
+        "settings",
+        "set",
+        "--json",
+        "{\"tools\":{\"webSearch\":{\"enabled\":false}}}"
+      ]
+    },
+    {
+      "cli": [
+        "settings",
+        "set",
+        "{\"provider\":{\"x\":1}}"
+      ]
+    },
+    {
+      "cli": [
+        "settings",
+        "set",
+        "[1,2]"
+      ]
+    },
+    {
+      "cli": [
+        "settings",
+        "set",
+        "{\"agent\":",
+        "{\"maxContextTokens\":",
+        "null}}"
+      ]
+    },
+    {
+      "cli": [
+        "settings",
+        "get"
+      ]
+    }
+  ]
+}

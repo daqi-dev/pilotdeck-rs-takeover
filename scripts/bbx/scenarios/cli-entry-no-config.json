@@ -1,0 +1,16 @@
+{
+  "name": "cli-entry-no-config",
+  "about": "没有 pilotdeck.yaml 时不带子命令 / 未知子命令的行为：进程内 gateway 建不起来时的输出与退出码。",
+  "server": false,
+  "config": null,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "steps": [
+    { "cli": [], "stdin": "", "timeout": 8000 },
+    { "cli": ["nonsense"], "stdin": "hello\n", "timeout": 8000 },
+    { "cli": ["tui"], "timeout": 8000 },
+    { "cli": ["cron", "list"], "timeout": 8000 }
+  ]
+}

@@ -1,0 +1,109 @@
+{
+  "name": "cli-run-permission-mode",
+  "about": "run --permission-mode：SDK 把它作为 submit_turn 的 mode / basePermissionMode 发出（packages/sdk client.js gatewayTurnPermissionMode / gatewayBasePermissionMode），基线据此改写本轮的权限模式（src/agent/turn/permissionOverrides.ts），工具的权限决定和系统提示词随之变化。另比 plan、未知值。",
+  "env": {
+    "PILOTDECK_TOKEN": "{TOKEN}"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Say hello\"}"
+      }
+    },
+    {
+      "name": "fail",
+      "when": [
+        "PLEASE_FAIL"
+      ],
+      "reply": {
+        "status": 400,
+        "body": {
+          "error": {
+            "message": "bad request from mock",
+            "type": "invalid_request_error"
+          }
+        }
+      }
+    },
+    {
+      "name": "tool-done",
+      "when": [
+        "RUN_TOOL",
+        "tool_call_id"
+      ],
+      "reply": {
+        "text": "tool finished"
+      }
+    },
+    {
+      "name": "tool",
+      "when": [
+        "RUN_TOOL"
+      ],
+      "reply": {
+        "tool": {
+          "name": "bash",
+          "arguments": {
+            "command": "echo hi-from-tool"
+          }
+        }
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "Hello from the mock."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "cli": [
+        "run",
+        "--channel",
+        "m01",
+        "--permission-mode",
+        "bypassPermissions",
+        "RUN_TOOL again"
+      ],
+      "timeout": 20000
+    },
+    {
+      "cli": [
+        "run",
+        "--channel",
+        "m02",
+        "--permission-mode",
+        "plan",
+        "hello plan"
+      ],
+      "timeout": 20000
+    },
+    {
+      "cli": [
+        "run",
+        "--channel",
+        "m03",
+        "--permission-mode",
+        "dontAsk",
+        "hello dontAsk"
+      ],
+      "timeout": 20000
+    },
+    {
+      "cli": [
+        "run",
+        "--channel",
+        "m04",
+        "--permission-mode",
+        "bogus",
+        "hello bogus"
+      ],
+      "timeout": 20000
+    }
+  ]
+}

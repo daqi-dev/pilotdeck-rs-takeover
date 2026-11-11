@@ -2,6 +2,7 @@
 mod chat_search;
 mod config;
 pub(crate) mod paths;
+mod probe;
 pub(crate) mod sdk;
 mod server;
 pub(crate) mod skills;
@@ -161,7 +162,7 @@ pub(crate) fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure>
             stderr_line("Usage: pilotdeck gateway setup [feishu|weixin|wecom]");
             Ok(1)
         }
-        Some("cron") => Err(Failure::Todo("pilotdeck cron")),
+        Some("cron") => run_cron(env, cwd),
         Some("update") => Err(Failure::Todo("pilotdeck update")),
         Some("skills") => skills_migrate::run(&argv[1..], env, cwd),
         Some("chat") => chat_search::run(&argv[1..], env, cwd),
@@ -174,6 +175,18 @@ pub(crate) fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure>
         }
         _ => run_local_cli_channel(env, cwd),
     }
+}
+
+/// handleCronCommand (src/cli/pilotdeck.ts:362-368): every cron subcommand,
+/// usage errors included, first needs a reachable local server.
+fn run_cron(env: &Env, cwd: &Path) -> Result<u8, Failure> {
+    if probe::probe_gateway_server(env, cwd).is_none() {
+        stderr_line("pilotdeck cron requires a running pilotdeck server.");
+        return Ok(1);
+    }
+    // The probe address is fixed (probeServer.ts:16), so the connected
+    // branch cannot be pointed at an isolated gateway and compared.
+    Err(Failure::Todo("pilotdeck cron against a running server"))
 }
 
 /// createLocalGateway() up to its first observable effects, then CliChannel.

@@ -1,0 +1,42 @@
+{
+  "name": "cli-entry-usage",
+  "about": "不起服务时各子命令的帮助与用法错误：help 的几种写法和多余参数、SDK 子命令在 token 齐了之后、连 gateway 之前的用法检查（sessions / settings / resume 的未知子命令与缺参数、settings set 的 JSON 语法错误）、连不上 gateway 时的报错、gateway / cron / skills / chat / tui 的用法分支。cron 的探测地址在基线里写死为 127.0.0.1:18789（src/gateway/client/probeServer.ts:16），这里只比连不上时的输出。",
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "steps": [
+    { "cli": ["help", "run"] },
+    { "cli": ["--help", "--json"] },
+    { "cli": ["-h", "extra", "words"] },
+    { "cli": ["run", "--help"], "timeout": 15000 },
+    { "cli": ["sessions", "bogus"], "env": { "PILOTDECK_TOKEN": "t" }, "timeout": 15000 },
+    { "cli": ["sessions", "messages"], "env": { "PILOTDECK_TOKEN": "t" }, "timeout": 15000 },
+    { "cli": ["sessions", "messages", "--project", "p"], "env": { "PILOTDECK_TOKEN": "t" }, "timeout": 15000 },
+    { "cli": ["settings", "bogus"], "env": { "PILOTDECK_TOKEN": "t" }, "timeout": 15000 },
+    { "cli": ["settings", "set"], "env": { "PILOTDECK_TOKEN": "t" }, "timeout": 15000 },
+    { "cli": ["settings", "set", "{bad"], "env": { "PILOTDECK_TOKEN": "t" }, "timeout": 15000 },
+    { "cli": ["settings", "set", "--json", "[1,"], "env": { "PILOTDECK_TOKEN": "t" }, "timeout": 15000 },
+    { "cli": ["resume"], "env": { "PILOTDECK_TOKEN": "t" }, "timeout": 15000 },
+    { "cli": ["resume", "--auth-token", "t", "--model", "m"], "timeout": 15000 },
+    { "cli": ["run", "hello"], "env": { "PILOTDECK_SDK_AUTH_TOKEN": "t", "PILOTDECK_GATEWAY_URL": "ws://127.0.0.1:38411/ws" }, "timeout": 15000 },
+    { "cli": ["sessions", "list", "--auth-token", "t", "--gateway-url", "ws://127.0.0.1:38411/ws"], "timeout": 15000 },
+    { "cli": ["settings", "get"], "env": { "PILOTDECK_TOKEN": "t" }, "timeout": 15000 },
+    { "cli": ["run", "hello"], "env": { "PILOTDECK_TOKEN": "" }, "timeout": 15000 },
+    { "cli": ["gateway"] },
+    { "cli": ["gateway", "Setup"] },
+    { "cli": ["gateway", "--help"] },
+    { "cli": ["cron", "--help"], "timeout": 15000 },
+    { "cli": ["cron", "create", "--message", "x"], "timeout": 15000 },
+    { "cli": ["skills", "--help"] },
+    { "cli": ["skills", "migrate", "--from", "bogus"], "timeout": 15000 },
+    { "cli": ["skills", "migrate", "--from", "cc,,nope"], "timeout": 15000 },
+    { "cli": ["chat", "--help"] },
+    { "cli": ["chat", "search", "--limit", "5"] },
+    { "cli": ["chat", "search", "--json", "--role", "user"] },
+    { "cli": ["chat", "search", "--project", "x", "--session", "y"] },
+    { "cli": ["tui", "--help"] },
+    { "cli": ["tui"], "stdin": "hello\n" }
+  ]
+}
