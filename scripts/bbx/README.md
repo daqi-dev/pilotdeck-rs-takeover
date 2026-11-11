@@ -37,7 +37,7 @@ node scripts/bbx/run.mjs rust scripts/bbx/scenarios/turn-text.json /tmp/b.json
 node scripts/bbx/diff.mjs /tmp/a.json /tmp/b.json          # 两份基线互比时加 --self，不做 STALE 检查
 ```
 
-采集是独占的（固定路径和端口 38411 / 38412；入口场景另外会用到 38413 / 38414），同一时刻只能跑一个；不要和它并行跑另一个 `check.mjs`。
+采集在一个槽位里是独占的（固定目录和端口；缺省槽位用 `/private/tmp/pdrs-bbx` 和 38411–38414），`check.mjs` 遇到锁会排队等。要并行跑，给每个并行方一个不同的槽位：`BBX_SLOT=1 node scripts/bbx/check.mjs`（1–8）。槽位只把目录名和端口换成等长的另一套，场景里写死的同名路径和端口读入时一并替换；两侧在同一槽位里跑，结论不受影响，但不同槽位的采集产物不要互相比。
 
 ## 场景格式
 

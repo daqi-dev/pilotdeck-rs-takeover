@@ -20,9 +20,15 @@ import { createHash } from 'node:crypto';
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const BASELINE = process.env.BBX_BASELINE || path.join(REPO, 'resources/PilotDeck');
 const TARGET = process.env.BBX_TARGET || path.join(REPO, 'src/target/debug');
-export const ROOT = '/private/tmp/pdrs-bbx/root';
-const GATEWAY_PORT = 38411;
-const MOCK_PORT = 38412;
+// 并行槽位：BBX_SLOT=1..8 时换一套等长的目录和端口（pdrs-bbx → pdrs-bbN，3841x → 384(1+N)x），
+// 场景文件里写死的同名路径和端口在读入时做同样的替换。两侧在同一个槽位里跑，结论不受槽位影响；
+// 不同槽位的采集产物之间不要互相比。槽位 0（缺省）就是原来的固定目录和端口。
+const SLOT = Number(process.env.BBX_SLOT || 0);
+if (!Number.isInteger(SLOT) || SLOT < 0 || SLOT > 8) { console.error('bbx: BBX_SLOT must be 0..8'); process.exit(2); }
+const slotText = (t) => SLOT ? t.replaceAll('pdrs-bbx', `pdrs-bb${SLOT}`).replaceAll('3841', `384${1 + SLOT}`) : t;
+export const ROOT = slotText('/private/tmp/pdrs-bbx/root');
+const GATEWAY_PORT = 38411 + 10 * SLOT;
+const MOCK_PORT = 38412 + 10 * SLOT;
 const TOKEN = 'bbx-token';
 const STEP_TIMEOUT_MS = 30000;
 
@@ -31,7 +37,7 @@ if (!['ts', 'rust'].includes(side) || !scenarioPath || !outPath) {
   console.error('usage: run.mjs <ts|rust> <scenario.json> <out.json>');
   process.exit(2);
 }
-const scenario = JSON.parse(fs.readFileSync(scenarioPath, 'utf8'));
+const scenario = JSON.parse(slotText(fs.readFileSync(scenarioPath, 'utf8')));
 const home = path.join(ROOT, 'home');
 const pilotHome = path.join(home, '.pilotdeck');
 const project = path.join(ROOT, 'proj');
