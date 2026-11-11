@@ -90,6 +90,67 @@ pub struct SessionTools {
     /// The generation's agent event buffer, for events the tool runtime
     /// raises itself.
     events: Option<crate::runtime::project::interaction_events::InteractionEvents>,
+    /// The subagent family behind the `agent` tool. Without it the tool is
+    /// not registered.
+    subagents: Option<super::subagents::SubagentRuntime>,
+    /// Set on the tools of a forked child session: its definition's scope.
+    fork: Option<super::subagents::ForkScope>,
+}
+
+/// What a forked child session takes over from the session that forks it
+/// (`createSubagentRuntimeComposition`): the same project, environment and
+/// services, under its own binding, config and tool scope.
+#[derive(Clone)]
+pub(super) struct ForkSeed {
+    project: PathBuf,
+    env: JsObject,
+    /// The parent session's context: the child inherits its tool allow and
+    /// deny lists (the child registry is a view of the parent's).
+    pub(super) context: crate::runtime::session::SessionContext,
+    interactions: Arc<GatewayInteractionCoordinator>,
+    permission: Arc<Permissions>,
+    lsp: Arc<super::families::DefaultLsp>,
+    mcp: SessionMcpTools,
+    world: ExecutionWorld,
+    events: Option<crate::runtime::project::interaction_events::InteractionEvents>,
+    subagents: Option<super::subagents::SubagentRuntime>,
+}
+impl ForkSeed {
+    /// The child session's tools. The permission context starts as a copy of
+    /// the parent's current one; goal and plan state are the child's own.
+    pub(super) fn child(
+        self,
+        binding: SessionBinding,
+        config: JsObject,
+        scope: super::subagents::ForkScope,
+    ) -> SessionTools {
+        let permission = self
+            .permission
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .0
+            .clone();
+        SessionTools {
+            plan_files: Arc::new(crate::runtime::plan_todo::SessionPlanFiles::new(
+                &self.project,
+            )),
+            project: self.project,
+            env: self.env,
+            binding,
+            config,
+            interactions: self.interactions,
+            permission: Arc::new(Permissions(Mutex::new((permission, None)))),
+            lsp: self.lsp,
+            mcp: self.mcp,
+            permission_mode_source: None,
+            world: self.world,
+            goal: Arc::default(),
+            events: self.events,
+            subagents: self.subagents,
+            fork: Some(scope),
+        }
+    }
 }
 impl SessionTools {
     pub fn new(
@@ -126,7 +187,30 @@ impl SessionTools {
             goal: Arc::default(),
             plan_files,
             events: None,
+            subagents: None,
+            fork: None,
         })
+    }
+
+    /// The subagent family (`oneShotSubagentPort` and the `agent` tool).
+    pub(super) fn with_subagents(mut self, subagents: super::subagents::SubagentRuntime) -> Self {
+        self.subagents = Some(subagents);
+        self
+    }
+
+    fn fork_seed(&self) -> ForkSeed {
+        ForkSeed {
+            project: self.project.clone(),
+            env: self.env.clone(),
+            context: self.binding.context.clone(),
+            interactions: self.interactions.clone(),
+            permission: self.permission.clone(),
+            lsp: self.lsp.clone(),
+            mcp: self.mcp.clone(),
+            world: self.world.clone(),
+            events: self.events.clone(),
+            subagents: self.subagents.clone(),
+        }
     }
 
     /// The project generation's event buffer (`eventEmitter` of the tool
@@ -190,6 +274,25 @@ impl SessionTools {
             &self.mcp,
             &self.world,
         );
+        // `createAgentTool({ maxSubagentDepth, subagentDepth })`: the tool
+        // exists wherever the host can fork; its description names what the
+        // next child may do under the depth cap.
+        let (subagent_depth, max_subagent_depth) = super::subagents::depths(&self.config);
+        if self.subagents.is_some() {
+            tools
+                .register(Arc::new(builtin::agent::AgentTool::new(
+                    max_subagent_depth,
+                    subagent_depth,
+                )))
+                .expect("native agent tool name is unique");
+        }
+        // A forked child sees a scoped view of that registry.
+        let tools = match &self.fork {
+            Some(scope) => tools
+                .scoped(scope.policy(subagent_depth < max_subagent_depth))
+                .expect("a fresh registry is not disposed"),
+            None => tools,
+        };
         // `createDurableToolPort`: the batch's calls and results are session
         // events around the scheduler's execution.
         let runtime = ToolRuntime::new(tools, self.permission.clone(), SchedulerMode::Concurrent);
@@ -201,6 +304,26 @@ impl SessionTools {
             })),
             None => runtime,
         };
+        // A root session's forks report to its turn buffer. A forked child's
+        // own forks report to nobody: the baseline's child dependencies carry
+        // no `eventEmitter` (`createSubagentRuntimeComposition`), so a nested
+        // fork's lifecycle and activity never reach the client.
+        let fork_events: Option<EventSink> = match (&self.fork, self.events.clone()) {
+            (None, Some(events)) => {
+                let session = identity.session_id.clone();
+                Some(Arc::new(move |event| {
+                    let _ = events.emit_forked(&session, event);
+                }) as EventSink)
+            }
+            _ => None,
+        };
+        // The whole fork tree keeps its parent-side references and its
+        // sidechains with the root session's storage (the children inherit
+        // the root's `subagentTranscript` hooks).
+        let fork_recorder = self
+            .fork
+            .as_ref()
+            .map_or_else(|| recorder.clone(), |scope| scope.root_recorder.clone());
         let execution = Arc::new(DurableTools {
             inner: Arc::new(runtime),
             recorder: recorder.clone(),
@@ -253,6 +376,17 @@ impl SessionTools {
                     turn: identity.turn_id.clone(),
                 },
             )))),
+            // `oneShotSubagentPort`: the fork contract of the `agent` tool.
+            subagent: self.subagents.as_ref().map(|subagents| {
+                subagents.port(
+                    self.fork_seed(),
+                    super::subagents::ParentTurn {
+                        recorder: fork_recorder,
+                        config: config.clone(),
+                        emit: fork_events,
+                    },
+                )
+            }),
             ..Default::default()
         };
         let sink = Durable {
@@ -271,6 +405,8 @@ impl SessionTools {
                     .zip(self.config.get("model").and_then(JsValue::as_string))
                     .map(|(p, m)| (p.clone(), m.clone())),
                 agent_max_context_tokens: self.config.get("maxContextTokens").cloned(),
+                // `isMainAgent: !config.isSubagent`.
+                is_main_agent: self.config.get("isSubagent") != Some(&JsValue::Bool(true)),
                 ..RouterModelPortOptions::main_agent()
             },
             recorder: None,
@@ -746,7 +882,6 @@ impl MutationRecorder for Durable {
 #[cfg_attr(not(test), allow(dead_code))]
 #[rustfmt::skip] // one name per line: parallel branches each delete their own
 pub const BASELINE_TOOLS_NOT_PORTED: &[&str] = &[
-    "agent",
     "ask_user_question",
     "send_message",
     "subagent",
@@ -874,7 +1009,7 @@ pub fn enabled_session_mcp_servers(mcp_config: &SdkMcpConfig, session_key: &JsSt
 /// registration keeps existing names; `per_session` holds the dedicated
 /// runtime's tools — registration replaces same-name entries
 /// (SessionMcpRuntimeBundle.ts:61-64, 138-144).
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct SessionMcpTools {
     shared: Vec<Arc<McpBridgeTool>>,
     per_session: Vec<Arc<McpBridgeTool>>,

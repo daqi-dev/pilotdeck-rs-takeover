@@ -1,0 +1,104 @@
+{
+  "name": "tool-agent-nested",
+  "about": "agent 与配置里的 subagents 段：子代理用 agent.subagents.default 指定的模型，maxDepth 为 2 时 general-purpose 子代理自己还能再派一层 plan 子代理。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\n  subagents:\n    default: bbx/helper\n    maxDepth: 2\n    timeoutMs: 120000\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        helper:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 32768\n            maxOutputTokens: 4096\ntelemetry:\n  enabled: false\n",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Tool run\"}"
+      }
+    },
+    {
+      "name": "grandchild",
+      "when": [
+        "You are a subagent of PilotDeck",
+        "CHILD-L2"
+      ],
+      "unless": [
+        "CHILD-L1"
+      ],
+      "reply": {
+        "text": "Scope: planned.\nResult: 1. step\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "child-after-tool",
+      "when": [
+        "You are a subagent of PilotDeck",
+        "CHILD-L1",
+        "\"tool_call_id\":\"call_child_1\""
+      ],
+      "reply": {
+        "text": "Scope: delegated.\nResult: the plan is one step.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "child",
+      "when": [
+        "You are a subagent of PilotDeck",
+        "CHILD-L1"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_child_1",
+          "name": "agent",
+          "arguments": {
+            "description": "Plan it",
+            "prompt": "CHILD-L2: write the plan.",
+            "subagent_type": "plan"
+          }
+        }
+      }
+    },
+    {
+      "name": "parent-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "parent",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1",
+          "name": "agent",
+          "arguments": {
+            "description": "Delegate planning",
+            "prompt": "CHILD-L1: get a plan from a planner."
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-1: run the tool"
+      },
+      "timeout": 120000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-bbx-1"
+      }
+    }
+  ]
+}

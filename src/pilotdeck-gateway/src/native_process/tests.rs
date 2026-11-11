@@ -961,10 +961,11 @@ async fn production_profile_and_registration() {
         ),
     )
     .expect("#1071 subagent fixture");
-    negative_assert!(
-        assembly::validate_profile(&options, &env).await.is_err(),
-        "#1071 unsupported subagents refused"
-    );
+    // The `agent.subagents` section is served (the `agent` tool's forks), so
+    // it no longer refuses startup; the baseline never refused it.
+    assembly::validate_profile(&options, &env)
+        .await
+        .expect("configured subagents accepted");
     std::fs::write(
         options.home.join("pilotdeck.yaml"),
         format!("{CONFIG}modules:\n  skills: {{enabled: false}}\n"),

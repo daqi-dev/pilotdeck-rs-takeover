@@ -1,0 +1,78 @@
+{
+  "name": "tool-agent-failure",
+  "about": "agent：子代理的模型请求失败（provider 回 400），子代理轮以错误结束，父轮拿到工具错误结果后继续。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Tool run\"}"
+      }
+    },
+    {
+      "name": "child",
+      "when": [
+        "You are a subagent of PilotDeck",
+        "CHILD-FAIL-1"
+      ],
+      "reply": {
+        "status": 400,
+        "body": {
+          "error": {
+            "message": "bbx child model rejected",
+            "type": "invalid_request_error"
+          }
+        }
+      }
+    },
+    {
+      "name": "parent-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "parent",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1",
+          "name": "agent",
+          "arguments": {
+            "description": "Will fail",
+            "prompt": "CHILD-FAIL-1: this request is rejected.",
+            "subagent_type": "plan"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-1: run the tool"
+      },
+      "timeout": 120000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-bbx-1"
+      }
+    }
+  ]
+}

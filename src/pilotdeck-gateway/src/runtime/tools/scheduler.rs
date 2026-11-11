@@ -274,6 +274,33 @@ impl ToolRuntime {
                     ),
                 );
             }
+            // `pre_tool_execute` / `post_tool_execute` (ToolRuntime.ts:189,
+            // 395, 424): the host derives a running subagent's tool status
+            // from this pair; for a root session's own tools they project to
+            // nothing.
+            let lifecycle = |kind: &str, success: Option<bool>| {
+                if let Some(emit) = &self.events {
+                    let identity = |key: &str| {
+                        context
+                            .fields
+                            .get(key)
+                            .cloned()
+                            .unwrap_or(JsValue::Undefined)
+                    };
+                    let mut event = object([
+                        ("type", kind.into()),
+                        ("sessionId", identity("sessionId")),
+                        ("turnId", identity("turnId")),
+                        ("toolCallId", string(call.id.clone())),
+                        ("toolName", string(name.clone())),
+                    ]);
+                    if let Some(success) = success {
+                        event.insert("success".into(), JsValue::Bool(success));
+                    }
+                    emit(event);
+                }
+            };
+            lifecycle("pre_tool_execute", None);
             match tool
                 .validate_input(call.input.clone(), context.clone())
                 .await
@@ -457,8 +484,12 @@ impl ToolRuntime {
                 .fields
                 .insert("currentPermissionDecision".into(), decision);
             match tool.execute(input, execution).await {
-                Err(error) => fail(&name, error),
+                Err(error) => {
+                    lifecycle("post_tool_execute", Some(false));
+                    fail(&name, error)
+                }
                 Ok(output) => {
+                    lifecycle("post_tool_execute", Some(true));
                     let mut metadata = output.metadata;
                     let max_bytes = tool
                         .fields()

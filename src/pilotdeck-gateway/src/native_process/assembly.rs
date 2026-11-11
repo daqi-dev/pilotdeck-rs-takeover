@@ -584,13 +584,20 @@ async fn start_assembly(
                         );
                     }
                 }
-                if let Some(limit) = env
+                let max_output_tokens_env = env
                     .get("PILOTDECK_MAX_OUTPUT_TOKENS")
                     .map(|v| crate::js_value::string_to_number(v))
-                    .filter(|v| v.is_finite() && *v > 0.0 && v.fract() == 0.0)
-                {
+                    .filter(|v| v.is_finite() && *v > 0.0 && v.fract() == 0.0);
+                if let Some(limit) = max_output_tokens_env {
                     config.insert("maxOutputTokens".into(), JsValue::Number(limit));
                 }
+                // `agent.subagents`: the model, timeout and depth cap of the
+                // session's forks.
+                let mut config = super::subagents::compose_subagents_section(
+                    &config,
+                    |provider, id| model.providers.get_capabilities(provider, id).ok(),
+                    max_output_tokens_env,
+                );
                 config.insert("jsonSelfCorrect".into(), JsValue::Bool(true));
                 config.insert(
                     "cwd".into(),
@@ -772,13 +779,22 @@ async fn start_assembly(
                             Some(events) => ports.with_events(events),
                             None => ports,
                         };
+                        let limits = crate::host::Limits {
+                            close_timeout: options.drain_budget,
+                            ..Default::default()
+                        };
+                        // A forked subagent runs the same loop deployment
+                        // against the same project registry.
+                        let ports = ports.with_subagents(super::subagents::SubagentRuntime::new(
+                            project.clone(),
+                            deployment.clone(),
+                            limits,
+                            options.home.clone(),
+                        ));
                         Ok(TurnHostFactory::new_with_signal(
                             project,
                             deployment,
-                            crate::host::Limits {
-                                close_timeout: options.drain_budget,
-                                ..Default::default()
-                            },
+                            limits,
                             Some("pilotdeck-agent-loop".into()),
                             move |identity, recorder, signal| {
                                 turn_ports(&ports, identity, recorder, signal)
@@ -1526,10 +1542,11 @@ pub(super) fn register_project_at(
 /// This entry's currently supported profile is a text main agent with native
 /// read tools. Refuse configured integrations before admitting a turn instead
 /// of silently dropping their tools/hooks or launching an implicit helper.
-/// What the native host still refuses to start with: configured hooks, module
-/// bindings and subagents, none of which it serves yet (the baseline has no
-/// such refusal). MCP servers, plugins and skills are served — see
-/// `session_mcp_tools` and the plugin runtime — and are no longer refused.
+/// What the native host still refuses to start with: configured hooks and
+/// module bindings, neither of which it serves yet (the baseline has no such
+/// refusal). MCP servers, plugins, skills and the `agent.subagents` section
+/// are served — see `session_mcp_tools`, the plugin runtime and
+/// `subagents::compose_subagents_section` — and are no longer refused.
 /// Plugins that contribute hooks stay refused with the config-level hooks.
 pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(), ProxyError> {
     use crate::runtime::plugins::{PilotExtensionPaths, PluginSource, loader};
@@ -1587,14 +1604,6 @@ pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(),
         return Err(
             "Native isolated profile does not yet support configured module bindings.".into(),
         );
-    }
-    if snapshot
-        .get("config")
-        .and_then(|v| v.get("agent"))
-        .and_then(|v| v.get("subagents"))
-        .is_some_and(|v| !v.is_undefined())
-    {
-        return Err("Native isolated profile does not yet support configured subagents.".into());
     }
     Ok(())
 }
