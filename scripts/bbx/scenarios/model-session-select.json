@@ -1,0 +1,32 @@
+{
+  "name": "model-session-select",
+  "about": "模型目录与会话模型选择：model_catalog_list（全量、query、provider 过滤、includeAuto），session_model_get / set / clear 的正常路径与主要失败路径；set 之后下一轮发给 provider 的请求用所选模型和 reasoning，clear 之后回到缺省模型。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        second:\n          displayName: Second Model\n          thinking:\n            state: enabled\n            efforts: [low, high]\n            format: openai\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    keyless:\n      protocol: openai\n      url: {MOCK}/v1\n      models:\n        orphan:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Model pick\"}" } },
+    { "name": "main-second", "when": ["\"model\":\"second\""], "reply": { "text": "Hello from second." } },
+    { "name": "main-default", "reply": { "text": "Hello from default." } }
+  ],
+  "steps": [
+    { "ws": "model_catalog_list", "params": {} },
+    { "ws": "model_catalog_list", "params": { "query": "SECOND" } },
+    { "ws": "model_catalog_list", "params": { "provider": "keyless", "includeAuto": true } },
+    { "ws": "session_model_get", "params": { "sessionKey": "s-model", "projectKey": "{PILOT_HOME}" } },
+    { "ws": "session_model_set", "params": { "sessionKey": "s-model", "projectKey": "{PILOT_HOME}" } },
+    { "ws": "session_model_set", "params": { "sessionKey": "s-model", "projectKey": "{PILOT_HOME}", "selection": { "mode": "model", "provider": "keyless", "model": "orphan" } } },
+    { "ws": "session_model_set", "params": { "sessionKey": "s-model", "projectKey": "{PILOT_HOME}", "selection": { "mode": "model", "provider": "bbx", "model": "nope" } } },
+    { "ws": "session_model_set", "params": { "sessionKey": "s-model", "projectKey": "{PILOT_HOME}", "selection": { "mode": "model", "provider": "bbx", "model": "second", "reasoning": 0.6 } } },
+    { "ws": "session_model_set", "params": { "sessionKey": "s-model", "projectKey": "{PILOT_HOME}", "selection": { "mode": "model", "provider": "bbx", "model": "second", "speed": 1 } } },
+    { "ws": "session_model_set", "params": { "sessionKey": "s-model", "projectKey": "{PILOT_HOME}", "selection": { "mode": "auto" } } },
+    { "ws": "session_model_set", "params": { "sessionKey": "s-model", "projectKey": "{PILOT_HOME}", "selection": { "mode": "model", "provider": "bbx", "model": "second", "reasoning": 0.8, "temperature": 0.3 } } },
+    { "ws": "session_model_get", "params": { "sessionKey": "s-model", "projectKey": "{PILOT_HOME}" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-model", "channelKey": "test", "message": "hello after set" } },
+    { "sleep": 500 },
+    { "ws": "session_model_clear", "params": { "projectKey": "{PILOT_HOME}" } },
+    { "ws": "session_model_clear", "params": { "sessionKey": "s-model", "projectKey": "{PILOT_HOME}" } },
+    { "ws": "session_model_get", "params": { "sessionKey": "s-model", "projectKey": "{PILOT_HOME}" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-model", "channelKey": "test", "message": "hello after clear" } },
+    { "sleep": 500 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-model" } }
+  ]
+}

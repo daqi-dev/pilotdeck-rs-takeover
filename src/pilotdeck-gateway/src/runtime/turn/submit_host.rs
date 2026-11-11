@@ -370,6 +370,9 @@ impl SubmitHost for GatewaySubmitHost {
                         fields.insert(key.into(), JsValue::String(mode));
                     }
                 }
+                if let Some(model_override) = turn_model_override(&model_selection)? {
+                    fields.insert("modelOverride".into(), model_override);
+                }
             }
             Ok(PreparedTurn {
                 model_selection,
@@ -474,6 +477,58 @@ fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
         &UNDEFINED
     })
 }
+/// InProcessGateway.ts:1571-1584: a resolved selection becomes the turn's
+/// `modelOverride` — provider, model, temperature, speed, and `thinking`
+/// derived from `reasoning` (`reasoningValueToMode`, :3551-3558).
+fn turn_model_override(model_selection: &JsValue) -> Result<Option<JsValue>, SubmitError> {
+    let selection = field(model_selection, "selection");
+    if !super::submit::truthy(selection) {
+        return Ok(None);
+    }
+    let mut out = pilotdeck_protocol::JsObject::new();
+    for key in ["provider", "model", "temperature", "speed"] {
+        let value = field(selection, key);
+        if !value.is_undefined() {
+            out.insert(key.into(), value.clone());
+        }
+    }
+    let reasoning = field(selection, "reasoning");
+    if !reasoning.is_undefined() {
+        let value = reasoning.as_number();
+        let mode = value.and_then(|value| {
+            [
+                (0.0, "off"),
+                (0.2, "minimal"),
+                (0.4, "low"),
+                (0.6, "medium"),
+                (0.8, "high"),
+                (0.9, "xhigh"),
+                (1.0, "max"),
+            ]
+            .into_iter()
+            .find(|(known, _)| *known == value)
+            .map(|(_, mode)| mode)
+        });
+        let Some(mode) = mode else {
+            return Err(SubmitError::new(
+                "UNSUPPORTED_MODEL_PARAMETER",
+                format!(
+                    "Unsupported reasoning value: {}",
+                    crate::dispatch::error_number(value.unwrap_or(f64::NAN))
+                ),
+            ));
+        };
+        out.insert(
+            "thinking".into(),
+            crate::metadata::object([
+                ("enabled", JsValue::Bool(value.is_some_and(|v| v > 0.0))),
+                ("mode", mode.into()),
+            ]),
+        );
+    }
+    Ok(Some(JsValue::Object(out)))
+}
+
 fn non_empty_array(value: &JsValue) -> bool {
     matches!(value, JsValue::Array(values) if !values.is_empty())
 }
