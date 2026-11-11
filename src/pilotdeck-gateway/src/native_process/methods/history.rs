@@ -51,10 +51,7 @@ impl Requests {
                     "exportSessionTranscript",
                     "export_session_transcript",
                 )),
-                "restore_session_transcript" => Err(unavailable(
-                    "restoreSessionTranscript",
-                    "restore_session_transcript",
-                )),
+                "restore_session_transcript" => self.restore_session_transcript(params).await,
                 "read_session_messages" => {
                     let reader = super::history_read::HistoryReader::new(self);
                     read::read_session_messages(&coordinator, Some(&reader), &params)
