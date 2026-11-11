@@ -220,8 +220,8 @@ impl InteractionTurn {
             router.turn.authorizations = None;
         }
         let tools = catalog.list().await?;
-        // No question/elicitation port is supplied by these four resources.
-        input.switches.elicitation_available = None;
+        // `interactionCapabilities.elicitationAvailable` follows the session
+        // ports' own switch (an elicitation port present or not).
         turn.manifest = turn
             .router
             .turn_manifest(

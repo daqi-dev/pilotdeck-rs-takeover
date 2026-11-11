@@ -1,0 +1,336 @@
+{
+ "name": "submit-turn-params",
+ "about": "submit_turn 其余每轮参数各一个会话：syntheticMessages（InProcessGateway.ts:1488-1494，转成带 metadata.synthetic 的用户消息）、allowedTools / disallowedTools（会话工具面）、maxBudgetUsd、modelOverride、modelSelection（model / auto）、trustedContext（pilotdeck server 没有授权器，CAPABILITY_UNAVAILABLE）、telemetry、maxTurns、timeoutMs。比发给 provider 的请求、事件流和会话记录。",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Params run\"}"
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "Hello from the mock."
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-p01",
+    "channelKey": "test",
+    "runId": "run-p01",
+    "message": "p01: hi",
+    "syntheticMessages": [
+     {
+      "text": "hint one",
+      "purpose": "channel_hint"
+     },
+     {
+      "text": "hint two"
+     }
+    ]
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-p02",
+    "channelKey": "test",
+    "runId": "run-p02",
+    "message": "p02: hi",
+    "syntheticMessages": []
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-p04",
+    "channelKey": "test",
+    "runId": "run-p04",
+    "message": "p04: hi",
+    "allowedTools": [
+     "read_file",
+     "bash"
+    ]
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-p05",
+    "channelKey": "test",
+    "runId": "run-p05",
+    "message": "p05: hi",
+    "disallowedTools": [
+     "bash",
+     "write_file"
+    ]
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-p06",
+    "channelKey": "test",
+    "runId": "run-p06",
+    "message": "p06: hi",
+    "allowedTools": [
+     "read_file",
+     "bash"
+    ],
+    "disallowedTools": [
+     "bash"
+    ]
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-p07",
+    "channelKey": "test",
+    "runId": "run-p07",
+    "message": "p07: hi",
+    "maxBudgetUsd": 5
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-p08",
+    "channelKey": "test",
+    "runId": "run-p08",
+    "message": "p08: hi",
+    "modelOverride": {
+     "provider": "bbx",
+     "model": "deterministic"
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-p09",
+    "channelKey": "test",
+    "runId": "run-p09",
+    "message": "p09: hi",
+    "modelSelection": {
+     "mode": "model",
+     "provider": "bbx",
+     "model": "deterministic"
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-p10",
+    "channelKey": "test",
+    "runId": "run-p10",
+    "message": "p10: hi",
+    "modelSelection": {
+     "mode": "auto"
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-p11",
+    "channelKey": "test",
+    "runId": "run-p11",
+    "message": "p11: hi",
+    "trustedContext": [
+     {
+      "text": "ctx",
+      "source": "x",
+      "purpose": "material_context",
+      "scope": "turn"
+     }
+    ]
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-p12",
+    "channelKey": "test",
+    "runId": "run-p12",
+    "message": "p12: hi",
+    "telemetry": {
+     "ownerModule": "session",
+     "phase": "x"
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-p13",
+    "channelKey": "test",
+    "runId": "run-p13",
+    "message": "p13: hi",
+    "maxTurns": 1
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-p14",
+    "channelKey": "test",
+    "runId": "run-p14",
+    "message": "p14: hi",
+    "timeoutMs": 60000
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-p15",
+    "channelKey": "test",
+    "runId": "run-p15",
+    "message": "p15: hi",
+    "modelOverride": {
+     "mode": "model",
+     "provider": "bbx",
+     "model": "deterministic"
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-p16",
+    "channelKey": "test",
+    "runId": "run-p16",
+    "message": "p16: hi",
+    "modelOverride": {
+     "mode": "model",
+     "provider": "nope",
+     "model": "x"
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-p17",
+    "channelKey": "test",
+    "runId": "run-p17",
+    "message": "p17: hi",
+    "modelSelection": {
+     "mode": "model",
+     "provider": "bbx",
+     "model": "deterministic"
+    },
+    "modelOverride": {
+     "mode": "model",
+     "provider": "bbx",
+     "model": "deterministic"
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-p18",
+    "channelKey": "test",
+    "runId": "run-p18",
+    "message": "p18: hi",
+    "modelSelection": "x"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-p19",
+    "channelKey": "test",
+    "runId": "run-p19",
+    "message": "p19: hi",
+    "modelSelection": {
+     "mode": "model",
+     "provider": "bbx",
+     "model": "deterministic",
+     "speed": 0.5
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  }
+ ]
+}

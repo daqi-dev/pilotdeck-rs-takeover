@@ -208,7 +208,7 @@ pub struct TurnHostFactory {
     ports: Arc<PortsFactory>,
     agent_config: Option<JsObject>,
     permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
-    run_mode_sink: Option<Arc<dyn Fn(Option<JsString>) + Send + Sync>>,
+    turn_override_sink: Option<super::live::TurnOverrideSink>,
     /// See [`LiveSessionAdapter::as_in_process_loop`].
     in_process_loop: bool,
     /// The session's project root; `None` is the registry's default project.
@@ -255,7 +255,7 @@ impl TurnHostFactory {
             ports: Arc::new(ports),
             agent_config: None,
             permission_mode_source: None,
-            run_mode_sink: None,
+            turn_override_sink: None,
             in_process_loop: false,
             project_root: None,
         }
@@ -285,9 +285,9 @@ impl TurnHostFactory {
         self
     }
 
-    /// See [`LiveSessionAdapter::with_run_mode_sink`].
-    pub fn with_run_mode_sink(mut self, sink: Arc<dyn Fn(Option<JsString>) + Send + Sync>) -> Self {
-        self.run_mode_sink = Some(sink);
+    /// See [`LiveSessionAdapter::with_turn_override_sink`].
+    pub fn with_turn_override_sink(mut self, sink: super::live::TurnOverrideSink) -> Self {
+        self.turn_override_sink = Some(sink);
         self
     }
 
@@ -319,7 +319,7 @@ impl TurnHostFactory {
         let close_timeout = self.limits.close_timeout;
         let agent_config = self.agent_config.clone();
         let permission_mode_source = self.permission_mode_source.take();
-        let run_mode_sink = self.run_mode_sink.take();
+        let turn_override_sink = self.turn_override_sink.take();
         let in_process_loop = self.in_process_loop;
         let factory = Arc::new(self);
         let session = LiveSessionAdapter::with_interaction_signal(
@@ -347,8 +347,8 @@ impl TurnHostFactory {
             Some(source) => session.with_permission_mode_source(source),
             None => session,
         };
-        let session = match run_mode_sink {
-            Some(sink) => session.with_run_mode_sink(sink),
+        let session = match turn_override_sink {
+            Some(sink) => session.with_turn_override_sink(sink),
             None => session,
         };
         if in_process_loop {

@@ -1,0 +1,156 @@
+{
+ "name": "router-errors",
+ "about": "模型请求的各类失败：provider 回 400 / 401 / 429 / 500、连接被拒（模型 baseUrl 指向本机没人监听的 9 端口，按轮 modelOverride 选它）时的事件序列（含重试期间的 agent_status retry_progress）、最终错误文案、会话记录和 router/events.jsonl。重试退避带随机抖动（delayMs），基线自比不稳。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        broken:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    dead:\n      protocol: openai\n      url: http://127.0.0.1:9/v1\n      apiKey: bbx-mock-only\n      models:\n        nowhere:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+ "env": {
+  "PILOTDECK_SNAPSHOT_ROOT": "{ROOT}/tmp/snapshots"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Router run\"}"
+   }
+  },
+  {
+   "name": "e400",
+   "when": [
+    "case-400:"
+   ],
+   "reply": {
+    "status": 400,
+    "body": {
+     "error": {
+      "message": "bad request from mock",
+      "type": "invalid_request_error"
+     }
+    }
+   }
+  },
+  {
+   "name": "e401",
+   "when": [
+    "case-401:"
+   ],
+   "reply": {
+    "status": 401,
+    "body": {
+     "error": {
+      "message": "invalid api key",
+      "type": "authentication_error"
+     }
+    }
+   }
+  },
+  {
+   "name": "e429",
+   "when": [
+    "case-429:"
+   ],
+   "reply": {
+    "status": 429,
+    "body": {
+     "error": {
+      "message": "slow down",
+      "type": "rate_limit_error"
+     }
+    }
+   }
+  },
+  {
+   "name": "e500",
+   "when": [
+    "case-500:"
+   ],
+   "reply": {
+    "status": 500,
+    "body": {
+     "error": {
+      "message": "upstream exploded",
+      "type": "server_error"
+     }
+    }
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "unexpected"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-400",
+    "channelKey": "test",
+    "runId": "run-400",
+    "message": "case-400: go"
+   },
+   "timeout": 60000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-401",
+    "channelKey": "test",
+    "runId": "run-401",
+    "message": "case-401: go"
+   },
+   "timeout": 60000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-429",
+    "channelKey": "test",
+    "runId": "run-429",
+    "message": "case-429: go"
+   },
+   "timeout": 60000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-500",
+    "channelKey": "test",
+    "runId": "run-500",
+    "message": "case-500: go"
+   },
+   "timeout": 60000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-refused",
+    "channelKey": "test",
+    "runId": "run-refused",
+    "message": "case-refused: go",
+    "modelOverride": {
+     "provider": "dead",
+     "model": "nowhere"
+    }
+   },
+   "timeout": 60000
+  },
+  {
+   "sleep": 300
+  }
+ ]
+}

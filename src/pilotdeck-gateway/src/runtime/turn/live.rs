@@ -91,8 +91,8 @@ pub struct LiveSessionAdapter {
     /// `livePermissionMode` — the stored permission-mode selection takes
     /// effect on the next turn without a session close.
     permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
-    /// See [`Self::with_run_mode_sink`].
-    run_mode_sink: Option<Arc<dyn Fn(Option<JsString>) + Send + Sync>>,
+    /// See [`Self::with_turn_override_sink`].
+    turn_override_sink: Option<TurnOverrideSink>,
     /// See [`Self::as_in_process_loop`].
     in_process_loop: bool,
     /// See [`Self::as_sidechain`].
@@ -141,7 +141,7 @@ impl LiveSessionAdapter {
             close_timeout: crate::host::Limits::default().close_timeout,
             agent_config: None,
             permission_mode_source: None,
-            run_mode_sink: None,
+            turn_override_sink: None,
             in_process_loop: false,
             sidechain: false,
             tail: None,
@@ -181,11 +181,13 @@ impl LiveSessionAdapter {
         self
     }
 
-    /// `applyRunModeOverride` (agentLoopSidecarClient.ts:432-436): every
-    /// admitted turn hands its `runMode` to the host-side config that the
-    /// tool runtime trusts; the loop's own copy in the payload is not policy.
-    pub fn with_run_mode_sink(mut self, sink: Arc<dyn Fn(Option<JsString>) + Send + Sync>) -> Self {
-        self.run_mode_sink = Some(sink);
+    /// `applyRunModeOverride` + `applyAgentPermissionOverrides`
+    /// (agentLoopSidecarClient.ts:327-328): every admitted turn hands its
+    /// options (`runMode`, `permissionMode`, `basePermissionMode`) to the
+    /// host-side config that the tool runtime trusts; the loop's own copy in
+    /// the payload is not policy.
+    pub fn with_turn_override_sink(mut self, sink: TurnOverrideSink) -> Self {
+        self.turn_override_sink = Some(sink);
         self
     }
 
@@ -276,7 +278,7 @@ impl LiveSessionAdapter {
             close_timeout: crate::host::Limits::default().close_timeout,
             agent_config: None,
             permission_mode_source: None,
-            run_mode_sink: None,
+            turn_override_sink: None,
             in_process_loop: false,
             sidechain: false,
             tail: None,
@@ -363,11 +365,16 @@ impl LiveSession for LiveSessionAdapter {
         let (mut request, mut input) = parse_execute_request(&input, &options, vec![])?;
         if let Some(config) = &self.agent_config {
             let mut config = config.clone();
-            // #1864 (b): the stored permission-mode selection is re-read on
-            // every run (InProcessGateway.ts:1443). A non-empty
-            // managedPermissions.defaultMode still wins — compose priority
-            // (shared: runtime::permission::managed_default_mode).
-            if let Some(source) = &self.permission_mode_source
+            // `applyAgentPermissionOverrides` (permissionOverrides.ts:5-19):
+            // the gateway's per-turn `permissionMode` (`inputMode ??
+            // livePermissionMode ?? defaultPermissionMode`,
+            // InProcessGateway.ts:1442-1450) replaces the composed mode. A
+            // submission without one (an embedding that resolves no mode)
+            // keeps #1864 (b): the stored selection, re-read on every run,
+            // under a non-empty managedPermissions.defaultMode.
+            if let Some(mode) = turn_permission_mode(&options) {
+                config.insert("permissionMode".into(), JsValue::String(mode));
+            } else if let Some(source) = &self.permission_mode_source
                 && crate::runtime::permission::managed_default_mode(&config).is_none()
                 && let Some(mode) = source()
             {
@@ -407,8 +414,20 @@ impl LiveSession for LiveSessionAdapter {
             state.reload_execution = Arc::default();
         }
         let active = Arc::new(ActiveTurn(self.state.clone()));
-        if let Some(sink) = &self.run_mode_sink {
-            sink(options.get("runMode").and_then(JsValue::as_string).cloned());
+        if let Some(sink) = &self.turn_override_sink
+            && let Some(before_plan) = sink(&options)
+            && let Some(JsValue::Object(agent)) = request.payload.get("agent")
+        {
+            // agentLoopSidecarClient.ts:1301-1302: the serialized config
+            // carries `permissionModeBeforePlan` when it is set.
+            let mut agent = agent.clone();
+            agent.insert(
+                "permissionModeBeforePlan".into(),
+                JsValue::String(before_plan),
+            );
+            request
+                .payload
+                .insert("agent".into(), JsValue::Object(agent));
         }
         let reload_execution = self.reload_execution_started();
         // Read the projection only after admission owns the slot. Rejected
@@ -2287,6 +2306,21 @@ impl StreamIntegrity {
         *self.state.lock().unwrap() = IntegrityState::Completed;
         Ok(())
     }
+}
+
+/// Receives each admitted turn's submit options; see
+/// [`LiveSessionAdapter::with_turn_override_sink`].
+/// It returns the `permissionModeBeforePlan` the turn's agent config carries.
+pub type TurnOverrideSink = Arc<dyn Fn(&JsValue) -> Option<JsString> + Send + Sync>;
+
+/// The turn's `permissionMode` submit option, when it names a permission
+/// mode (`isPermissionMode`).
+pub(crate) fn turn_permission_mode(options: &JsValue) -> Option<JsString> {
+    options
+        .get("permissionMode")
+        .filter(|mode| crate::runtime::permission::is_permission_mode(mode))
+        .and_then(JsValue::as_string)
+        .cloned()
 }
 
 fn parse_execute_request(

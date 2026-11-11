@@ -1,0 +1,51 @@
+{
+ "name": "config-version-startup",
+ "about": "启动后配置快照的版本号与启动到第一轮之间的 config_changed 通知：握手后立刻 resolve_settings（基线 createPilotConfigStoreSync 只加载一次，版本 1，src/pilot/config/PilotConfigStore.ts:30-50、loadPilotConfig.ts:189），等一会再读一次（文件监视只在配置文件变动时重载，启动本身不发通知），然后一轮对话（每轮开始前 reload(\"turn-start\")，版本 +1，配置没变不发通知，GatewayRuntimeRefreshBundle.ts:109-111、133-134），再读一次。",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Config run\"}"
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "Hello from the mock."
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "resolve_settings",
+   "params": {}
+  },
+  {
+   "sleep": 1500
+  },
+  {
+   "ws": "resolve_settings",
+   "params": {}
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-cfg",
+    "channelKey": "test",
+    "runId": "run-cfg-1",
+    "message": "hi"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "resolve_settings",
+   "params": {}
+  }
+ ]
+}

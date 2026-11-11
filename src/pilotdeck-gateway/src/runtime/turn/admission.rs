@@ -466,12 +466,31 @@ impl super::submit_host::SubmitAdmission for GatewaySubmitAdmission {
         input: &'a mut JsValue,
     ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>> {
         Box::pin(async move {
-            let message = field(input, "message")
-                .as_string()
-                .cloned()
-                .ok_or_else(|| {
-                    SubmitError::new("gateway_submit_failed", "message.trim is not a function")
-                })?;
+            // parseCompactCommand's `message.trim()` (InProcessGateway.ts:
+            // 3598) throws a TypeError before the first event; the WS
+            // connection answers it as a generic `gateway_request_failed`
+            // (GatewayWsConnection.ts:244-254).
+            let message = match field(input, "message") {
+                JsValue::String(message) => message.clone(),
+                JsValue::Undefined => {
+                    return Err(SubmitError::new(
+                        "gateway_request_failed",
+                        "Cannot read properties of undefined (reading 'trim')",
+                    ));
+                }
+                JsValue::Null => {
+                    return Err(SubmitError::new(
+                        "gateway_request_failed",
+                        "Cannot read properties of null (reading 'trim')",
+                    ));
+                }
+                _ => {
+                    return Err(SubmitError::new(
+                        "gateway_request_failed",
+                        "message.trim is not a function",
+                    ));
+                }
+            };
             let trimmed = trim16(message.units());
             // parseCompactCommand (InProcessGateway.ts:3597-3601):
             // /^\/compact(?:\s|$)/u marks the command, but only exactly

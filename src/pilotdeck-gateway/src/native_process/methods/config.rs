@@ -969,6 +969,63 @@ fn unavailable_message(provider: &JsString, model: &JsString) -> JsString {
 }
 
 /// modelCatalog.ts:92-100 `normalizeSessionModelSelection`.
+/// `GatewaySessionModelBundle.resolveTurnModelSelection`'s turn legs
+/// (GatewaySessionModelBundle.ts:86-108): a submitted `modelSelection` or
+/// `modelOverride` is validated against the catalog and becomes this turn's
+/// `{ selection?, source }`. `None` when the turn names neither, so the
+/// session's stored selection decides.
+pub(in crate::native_process) fn turn_model_selection(
+    input: &JsValue,
+    home: &std::path::Path,
+    env: &Env,
+) -> Result<Option<JsValue>, RequestError> {
+    let selection = input.get("modelSelection").unwrap_or(&UNDEFINED);
+    let explicit = input.get("modelOverride").unwrap_or(&UNDEFINED);
+    if !selection.is_undefined() && !explicit.is_undefined() {
+        return Err(gateway_error(
+            "INVALID_MODEL_OVERRIDE",
+            "Specify modelSelection or modelOverride, not both.",
+        ));
+    }
+    let metadata = native_metadata(home);
+    if !selection.is_undefined() {
+        if !matches!(selection, JsValue::Object(_) | JsValue::Array(_)) {
+            return Err(gateway_error(
+                "INVALID_MODEL_OVERRIDE",
+                "modelSelection must be an object.",
+            ));
+        }
+        validate_selection(selection, &metadata, env)?;
+        let selection = normalize_selection(selection);
+        return Ok(Some(if is(selection.get("mode"), "model") {
+            object([("selection", selection), ("source", "turn".into())])
+        } else {
+            object([("source", "router".into())])
+        }));
+    }
+    // `if (input.modelOverride)`: only a truthy value is a turn override.
+    if matches!(
+        explicit,
+        JsValue::Undefined | JsValue::Null | JsValue::Bool(false)
+    ) || explicit.as_string().is_some_and(|s| s.units().is_empty())
+        || explicit.as_number().is_some_and(|n| n == 0.0 || n.is_nan())
+    {
+        return Ok(None);
+    }
+    // `validateExplicitModelSelection`: only an explicit model selection.
+    if !is(explicit.get("mode"), "model") {
+        return Err(gateway_error(
+            "INVALID_MODEL_OVERRIDE",
+            "A model selection requires mode, provider, and model.",
+        ));
+    }
+    validate_selection(explicit, &metadata, env)?;
+    Ok(Some(object([
+        ("selection", normalize_selection(explicit)),
+        ("source", "turn".into()),
+    ])))
+}
+
 fn normalize_selection(selection: &JsValue) -> JsValue {
     if is(selection.get("mode"), "auto") {
         return object([("mode", "auto".into())]);
