@@ -617,6 +617,9 @@ async fn session_extension(
         return Ok(None);
     };
     plugins.runtime.refresh().await?;
+    // `replaceSkillContributions(contributions, [])` for a disabled skill
+    // module (ProjectSessionRuntimeBundle.ts:250-262).
+    let skills_disabled = crate::runtime::project::skills_module_disabled(&context.snapshot());
     let text = |value: &pilotdeck_protocol::JsString| String::from_utf16_lossy(value.units());
     Ok(Some(Arc::new(PluginExtension {
         commands: plugins
@@ -635,6 +638,7 @@ async fn session_extension(
             .all_skills()
             .await
             .into_iter()
+            .filter(|_| !skills_disabled)
             .map(|skill| context_runtime::ContributedSkill {
                 name: skill.name,
                 description: skill.description,

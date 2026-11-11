@@ -168,6 +168,17 @@ pub use factory::{
 // #1320 fix-r1 F3: shared with native_process::services.
 pub(crate) use factory::resolve_pilot_home;
 pub use memory_bundle::MemoryBundleFamilySource;
+
+/// `isDisabledModuleBinding(snapshot.config.modules?.skills)`: the generation
+/// selected no skill module (`modules.skills.enabled: false`).
+pub fn skills_module_disabled(snapshot: &pilotdeck_protocol::JsValue) -> bool {
+    snapshot
+        .get("config")
+        .and_then(|config| config.get("modules"))
+        .and_then(|modules| modules.get("skills"))
+        .and_then(|skills| skills.get("enabled"))
+        == Some(&pilotdeck_protocol::JsValue::Bool(false))
+}
 impl<F> ProjectRuntimeFactory for F
 where
     F: Fn(&Path, &mut ResourceBundle) -> RuntimeResult + Send + Sync,

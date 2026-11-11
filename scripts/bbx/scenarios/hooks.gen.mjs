@@ -422,6 +422,74 @@ hooks:
   };
 }
 
+// ── modules：不需要外部服务的绑定 ──
+{
+  const base = `schemaVersion: 1
+agent:
+  model: bbx/deterministic
+  maxContextTokens: 65536
+  maxOutputTokens: 8192
+model:
+  providers:
+    bbx:
+      protocol: openai
+      url: {MOCK}/v1
+      apiKey: bbx-mock-only
+      models:
+        deterministic:
+          capabilities:
+            supportsToolUse: true
+            maxContextTokens: 65536
+            maxOutputTokens: 8192
+telemetry:
+  enabled: false
+`;
+  const skill = { 'home/.pilotdeck/skills/bbx-user-skill/SKILL.md': '---\nname: bbx-user-skill\ndescription: A user-level skill for the modules scenario.\n---\n\nSay USER-SKILL.\n' };
+  const steps = [
+    { ws: 'skill_list', params: {} },
+    { ws: 'skill_read', params: { scope: 'user', slug: 'bbx-user-skill' } },
+    { ws: 'skill_create', params: { scope: 'user', slug: 'made', name: 'Made', description: 'Created while the module is selected.', body: 'x' } },
+    { ws: 'skill_validate', params: {} },
+    submit('s-mod', 'modules: hello'), { sleep: 300 },
+  ];
+  const provider = [TITLE, { name: 'main', reply: { text: 'answer' } }];
+  scenarios['modules-builtin'] = {
+    about: '`modules` 段里不需要外部服务的写法：agentLoop / modelProvider / tools / context 绑到内置实现（enabled: true, provider: pilotdeck），skills / knowledge 照常——与不写 modules 时行为相同（skill 管理、系统提示词里的 skills 段、发给模型的请求）。',
+    config: `${base}modules:
+  agentLoop:
+    enabled: true
+    provider: pilotdeck
+  modelProvider:
+    enabled: true
+    provider: pilotdeck
+  tools:
+    enabled: true
+    provider: pilotdeck
+  context:
+    enabled: true
+    provider: pilotdeck
+  skills:
+    enabled: true
+    provider: pilotdeck
+`,
+    files: skill,
+    provider,
+    steps,
+  };
+  scenarios['modules-skills-disabled'] = {
+    about: '`modules.skills.enabled: false`（与 `modules.knowledge.enabled: false`）：skill 管理方法全部回 SKILL_MODULE_DISABLED，会话的 skills 贡献清空（系统提示词里没有 skills 段，发给模型的请求随之变化）；knowledge 关掉不注册任何工具。',
+    config: `${base}modules:
+  skills:
+    enabled: false
+  knowledge:
+    enabled: false
+`,
+    files: skill,
+    provider,
+    steps,
+  };
+}
+
 const outDir = here;
 for (const [name, body] of Object.entries(scenarios)) {
   fs.writeFileSync(path.join(outDir, `${name}.json`), JSON.stringify({ name, ...body }, null, 2) + '\n');

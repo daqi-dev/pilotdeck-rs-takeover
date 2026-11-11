@@ -1,0 +1,64 @@
+{
+  "name": "modules-builtin",
+  "about": "`modules` 段里不需要外部服务的写法：agentLoop / modelProvider / tools / context 绑到内置实现（enabled: true, provider: pilotdeck），skills / knowledge 照常——与不写 modules 时行为相同（skill 管理、系统提示词里的 skills 段、发给模型的请求）。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  agentLoop:\n    enabled: true\n    provider: pilotdeck\n  modelProvider:\n    enabled: true\n    provider: pilotdeck\n  tools:\n    enabled: true\n    provider: pilotdeck\n  context:\n    enabled: true\n    provider: pilotdeck\n  skills:\n    enabled: true\n    provider: pilotdeck\n",
+  "files": {
+    "home/.pilotdeck/skills/bbx-user-skill/SKILL.md": "---\nname: bbx-user-skill\ndescription: A user-level skill for the modules scenario.\n---\n\nSay USER-SKILL.\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Hook run\"}"
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "answer"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "skill_list",
+      "params": {}
+    },
+    {
+      "ws": "skill_read",
+      "params": {
+        "scope": "user",
+        "slug": "bbx-user-skill"
+      }
+    },
+    {
+      "ws": "skill_create",
+      "params": {
+        "scope": "user",
+        "slug": "made",
+        "name": "Made",
+        "description": "Created while the module is selected.",
+        "body": "x"
+      }
+    },
+    {
+      "ws": "skill_validate",
+      "params": {}
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mod",
+        "channelKey": "test",
+        "message": "modules: hello"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    }
+  ]
+}

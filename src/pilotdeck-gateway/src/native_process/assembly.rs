@@ -586,6 +586,9 @@ async fn start_assembly(
                             .cloned()
                     });
                 let snapshot = staged.snapshot();
+                // `modules.skills.enabled: false` (ProjectSessionRuntimeBundle.ts:250-300):
+                // no `read_skill`, and the session contributes no skills.
+                let skills_disabled = crate::runtime::project::skills_module_disabled(&snapshot);
                 let agent = snapshot
                     .get("config")
                     .and_then(|v| v.get("agent"))
@@ -950,7 +953,8 @@ async fn start_assembly(
                             None => ports,
                         };
                         let ports = match plugin_runtime {
-                            Some(plugins) => ports.with_skills(plugins),
+                            Some(plugins) if !skills_disabled => ports.with_skills(plugins),
+                            Some(_) => ports,
                             None => ports,
                         };
                         let ports = match interaction_events {
@@ -1825,11 +1829,25 @@ pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(),
     // reports it as an unknown field and starts without it
     // (loadPilotConfig.ts:343-375). Plugin and SDK session hooks are served
     // (`native_process/hooks.rs`).
+    // `modules`: a built-in binding (`provider: pilotdeck`) and a disabled
+    // `skills` / `knowledge` slot need no outside service and are served.
+    // A protocol binding (an external module process or endpoint) and the
+    // StaffDeck `sop` module are not served yet.
+    let external = |binding: &JsValue| {
+        binding
+            .as_object()
+            .is_some_and(|binding| binding.contains_key("implementationId"))
+    };
     if snapshot
         .get("config")
         .and_then(|v| v.get("modules"))
         .and_then(JsValue::as_object)
-        .is_some_and(|modules| !modules.own_entries().is_empty())
+        .is_some_and(|modules| {
+            modules
+                .own_entries()
+                .iter()
+                .any(|(slot, binding)| slot.equals_str("sop") || external(binding))
+        })
     {
         return Err(
             "Native isolated profile does not yet support configured module bindings.".into(),
