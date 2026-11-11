@@ -1,0 +1,101 @@
+{
+  "name": "memory-default",
+  "about": "缺省配置（没有 memory 段）下 memory_list / memory_wipe 的参数校验与「memory provider 不可用」路径。",
+  "files": {
+    "home/work/alpha/README.md": "alpha\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n"
+  },
+  "steps": [
+    {
+      "ws": "memory_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "memory_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "sessionKey": "s-1"
+      }
+    },
+    {
+      "ws": "memory_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "sessionKey": "  "
+      }
+    },
+    {
+      "ws": "memory_list",
+      "params": {
+        "projectKey": "{PILOT_HOME}"
+      }
+    },
+    {
+      "ws": "memory_list",
+      "params": {
+        "projectKey": "{HOME}/work/gamma"
+      }
+    },
+    {
+      "ws": "memory_list",
+      "params": {
+        "projectKey": 3
+      }
+    },
+    {
+      "ws": "memory_list",
+      "params": null
+    },
+    {
+      "ws": "memory_wipe",
+      "params": {
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "memory_wipe",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "scope": "session"
+      }
+    },
+    {
+      "ws": "memory_wipe",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "scope": "session",
+        "sessionKey": "s-1"
+      }
+    },
+    {
+      "ws": "memory_wipe",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "scope": "project",
+        "sessionKey": "s-1"
+      }
+    },
+    {
+      "ws": "memory_wipe",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "scope": "other"
+      }
+    },
+    {
+      "ws": "memory_wipe",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "sessionKey": 7
+      }
+    },
+    {
+      "ws": "memory_wipe",
+      "params": {
+        "projectKey": "{HOME}/work/gamma"
+      }
+    }
+  ]
+}
