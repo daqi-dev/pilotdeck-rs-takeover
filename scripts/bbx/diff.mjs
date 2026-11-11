@@ -12,7 +12,7 @@
 //   4. 进程号          → <pid>（键名为 pid / ownerPid 的整数；Node 警告行前缀 "(node:1234)"；文本里的 "pid=1234"）
 //   5. requestFingerprint → <fingerprint>（键名为 requestFingerprint 的字符串；会话里已有历史时，
 //                        基线两次发出的请求体逐字节相同，这个值仍然不同）
-//   6. 耗时            → 键名为 duration_ms / duration_seconds / durationMs / waitedMs 的数值，以及文本里
+//   6. 耗时            → 键名为 duration_ms / duration_seconds / durationMs / waitedMs / delayMs（重试退避，带随机抖动）的数值，以及文本里
 //                        "duration_seconds: 0.02"、"duration_ms: 12"、"durationMs":12 的数值，
 //                        记成 <dur>。小数位数不比：基线把秒数取整到两位后按 JS 数字打印，0.10 会印成 0.1，
 //                        位数本身逐次不同。取整和打印的写法由 Rust 侧单元测试负责
@@ -57,7 +57,7 @@ export const ACCEPTED = {
     (s) => s.replace(/^\(node:<pid>\) ExperimentalWarning: .*\n\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)\n/gm, '')],
 };
 const PID_KEYS = ['pid', 'ownerPid'];
-const DURATION_KEYS = ['duration_ms', 'duration_seconds', 'durationMs', 'waitedMs'];
+const DURATION_KEYS = ['duration_ms', 'duration_seconds', 'durationMs', 'waitedMs', 'delayMs'];
 const dur = () => '<dur>';
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const ISO = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g;
