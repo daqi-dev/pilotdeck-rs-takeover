@@ -1,0 +1,480 @@
+{
+  "name": "secreview-path-symlink",
+  "about": "安全审查：默认模式下，工作区（PILOT_HOME）里的目录 / 文件符号链接指向工作区外（proj/outside），以及 .. 与大小写变体，经 read_file / write_file / edit_file / send_attachment 访问。采集器对任何权限询问一律拒绝；比两侧哪些调用不经询问就读到或写到了工作区外。第 1 轮在 bypassPermissions 下用 bash 搭链接。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Tool run\"}"
+      }
+    },
+    {
+      "name": "turn-9-after-tool",
+      "when": [
+        "turn-9:",
+        "\"tool_call_id\":\"call_bbx_9\""
+      ],
+      "reply": {
+        "text": "Done 9."
+      }
+    },
+    {
+      "name": "turn-9",
+      "when": [
+        "turn-9:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_9",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "{PILOT_HOME}/LINK-OUT/secret.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-8-after-tool",
+      "when": [
+        "turn-8:",
+        "\"tool_call_id\":\"call_bbx_8\""
+      ],
+      "reply": {
+        "text": "Done 8."
+      }
+    },
+    {
+      "name": "turn-8",
+      "when": [
+        "turn-8:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_8",
+          "name": "edit_file",
+          "arguments": {
+            "file_path": "link-out/secret.txt",
+            "old_string": "TOPSECRET",
+            "new_string": "EDITED"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-7-after-tool",
+      "when": [
+        "turn-7:",
+        "\"tool_call_id\":\"call_bbx_7\""
+      ],
+      "reply": {
+        "text": "Done 7."
+      }
+    },
+    {
+      "name": "turn-7",
+      "when": [
+        "turn-7:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_7",
+          "name": "send_attachment",
+          "arguments": {
+            "file_path": "link-out/secret.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-6-after-tool",
+      "when": [
+        "turn-6:",
+        "\"tool_call_id\":\"call_bbx_6\""
+      ],
+      "reply": {
+        "text": "Done 6."
+      }
+    },
+    {
+      "name": "turn-6",
+      "when": [
+        "turn-6:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_6",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "{PILOT_HOME}/../../proj/outside/secret.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-5-after-tool",
+      "when": [
+        "turn-5:",
+        "\"tool_call_id\":\"call_bbx_5\""
+      ],
+      "reply": {
+        "text": "Done 5."
+      }
+    },
+    {
+      "name": "turn-5",
+      "when": [
+        "turn-5:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_5",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "secret-link.txt",
+            "content": "overwritten via file link\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-4-after-tool",
+      "when": [
+        "turn-4:",
+        "\"tool_call_id\":\"call_bbx_4\""
+      ],
+      "reply": {
+        "text": "Done 4."
+      }
+    },
+    {
+      "name": "turn-4",
+      "when": [
+        "turn-4:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_4",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "secret-link.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-3-after-tool",
+      "when": [
+        "turn-3:",
+        "\"tool_call_id\":\"call_bbx_3\""
+      ],
+      "reply": {
+        "text": "Done 3."
+      }
+    },
+    {
+      "name": "turn-3",
+      "when": [
+        "turn-3:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_3",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "{PILOT_HOME}/link-out/new.txt",
+            "content": "via dir link\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-2-after-tool",
+      "when": [
+        "turn-2:",
+        "\"tool_call_id\":\"call_bbx_2\""
+      ],
+      "reply": {
+        "text": "Done 2."
+      }
+    },
+    {
+      "name": "turn-2",
+      "when": [
+        "turn-2:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_2",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "{PILOT_HOME}/link-out/secret.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-1-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "turn-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1",
+          "name": "bash",
+          "arguments": {
+            "command": "mkdir -p {PROJECT}/outside && printf 'TOPSECRET\\n' > {PROJECT}/outside/secret.txt && ln -s {PROJECT}/outside {PILOT_HOME}/link-out && ln -s {PROJECT}/outside/secret.txt {PILOT_HOME}/secret-link.txt && echo ok"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-1: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "mode": "default"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-2: run the tool"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-bbx-1",
+            "requestId": "{event.requestId}",
+            "decision": "deny",
+            "reason": "secreview denies every prompt"
+          }
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-3: run the tool"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-bbx-1",
+            "requestId": "{event.requestId}",
+            "decision": "deny",
+            "reason": "secreview denies every prompt"
+          }
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-4: run the tool"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-bbx-1",
+            "requestId": "{event.requestId}",
+            "decision": "deny",
+            "reason": "secreview denies every prompt"
+          }
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-5: run the tool"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-bbx-1",
+            "requestId": "{event.requestId}",
+            "decision": "deny",
+            "reason": "secreview denies every prompt"
+          }
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-6: run the tool"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-bbx-1",
+            "requestId": "{event.requestId}",
+            "decision": "deny",
+            "reason": "secreview denies every prompt"
+          }
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-7: run the tool"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-bbx-1",
+            "requestId": "{event.requestId}",
+            "decision": "deny",
+            "reason": "secreview denies every prompt"
+          }
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-8: run the tool"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-bbx-1",
+            "requestId": "{event.requestId}",
+            "decision": "deny",
+            "reason": "secreview denies every prompt"
+          }
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-9: run the tool"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-bbx-1",
+            "requestId": "{event.requestId}",
+            "decision": "deny",
+            "reason": "secreview denies every prompt"
+          }
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    }
+  ]
+}
