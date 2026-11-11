@@ -116,6 +116,12 @@ pub struct SessionTools {
         Vec<&'static str>,
         crate::user_dialog::GatewayUserDialogChannel,
     )>,
+    /// The session's hook settings (plugin contributions, then the SDK
+    /// session config) and the observer projecting their execution.
+    hooks: crate::hooks::protocol::HooksSettings,
+    hook_observer: Option<Arc<dyn crate::runtime::hooks::runtime::HookExecutionEventHandler>>,
+    /// The tool runtime's lifecycle: the current turn's bound hooks.
+    tool_hooks: Arc<super::hooks::ToolHooks>,
 }
 
 /// `SessionFileHistoryBundle.compose`: backups under the session's
@@ -223,6 +229,7 @@ impl ForkSeed {
                 Mutex::new((permission, None)),
                 self.permission.1.clone(),
                 Default::default(),
+                Default::default(),
             )),
             lsp: self.lsp,
             mcp: self.mcp,
@@ -237,6 +244,9 @@ impl ForkSeed {
             file_history: self.file_history,
             user_dialog: None,
             elicitation_timeout: self.elicitation_timeout,
+            hooks: Vec::new(),
+            hook_observer: None,
+            tool_hooks: Arc::default(),
         }
     }
 }
@@ -287,6 +297,7 @@ impl SessionTools {
                 Mutex::new((context, None)),
                 Default::default(),
                 Default::default(),
+                Default::default(),
             )),
             permission_mode_source: None,
             run_mode,
@@ -299,6 +310,9 @@ impl SessionTools {
             continuation: None,
             file_history,
             user_dialog: None,
+            hooks: Vec::new(),
+            hook_observer: None,
+            tool_hooks: Arc::default(),
             elicitation_timeout: super::permission_prompt::interaction_timeout(
                 env.get("PILOTDECK_ELICITATION_TIMEOUT_MS")
                     .map(|value| value.as_str()),
@@ -457,6 +471,27 @@ impl SessionTools {
         self
     }
 
+    /// The session's hooks (`SessionInteractionBundle`): `settings` run in the
+    /// session's lifecycle runtimes, the tool runtime dispatches the tool
+    /// events through the same runtime, and every execution transition is
+    /// projected onto the gateway stream (`sdk`: `includeHookEvents`).
+    pub(super) fn with_hooks(
+        mut self,
+        settings: crate::hooks::protocol::HooksSettings,
+        emit: super::permission_prompt::GatewayEmitSlot,
+        sdk: bool,
+    ) -> Self {
+        self.tool_hooks.configure(&settings);
+        self.hooks = settings;
+        self.hook_observer = Some(Arc::new(super::hooks::GatewayHookProjection {
+            session: self.binding.context.session_key.clone(),
+            emit,
+            sdk,
+        }));
+        let _ = self.permission.3.set(self.tool_hooks.clone());
+        self
+    }
+
     /// The project's `executionWorld.backgroundTasks`, behind the `task_*`
     /// tools: every session of the project shares one runtime, which the
     /// gateway's `background_tasks` / `background_task_stop` also read.
@@ -598,7 +633,8 @@ impl SessionTools {
         };
         // `createDurableToolPort`: the batch's calls and results are session
         // events around the scheduler's execution.
-        let runtime = ToolRuntime::new(tools, self.permission.clone(), SchedulerMode::Concurrent);
+        let runtime = ToolRuntime::new(tools, self.permission.clone(), SchedulerMode::Concurrent)
+            .with_lifecycle(self.tool_hooks.clone());
         let runtime = match self.events.clone() {
             // A refused event (the run was superseded or closed) is dropped,
             // like an emitter whose buffer is gone.
@@ -776,7 +812,7 @@ impl SessionTools {
                     emit: Arc::new(|_| false),
                     timeout: Duration::from_secs(30),
                 },
-                hooks: vec![],
+                hooks: self.hooks.clone(),
                 contribution: None,
                 base_env: Some(self.env.clone()),
                 signal,
@@ -788,6 +824,16 @@ impl SessionTools {
                     elicitation_available: None,
                 },
                 turn_ports: Default::default(),
+                hook_wiring: crate::runtime::turn::interaction::HookWiring {
+                    observer: self.hook_observer.clone(),
+                    turn_sink: Some({
+                        let tool_hooks = self.tool_hooks.clone();
+                        Arc::new(move |port| tool_hooks.bind(port))
+                    }),
+                    // `permission_prompt.rs` is this session's gateway
+                    // permission callback.
+                    host_permission_prompt: true,
+                },
             },
         }
     }
@@ -1085,6 +1131,9 @@ struct Permissions(
     /// `permissionModes.transition(sessionKey, mode, fallbackBase)`: a tool's
     /// mode change is carried to the session's next turn.
     std::sync::OnceLock<ModeTransition>,
+    /// The session's hooks: an `ask` dispatches `PermissionRequest` before the
+    /// gateway callback (SessionInteractionBundle.ts:136-145).
+    std::sync::OnceLock<Arc<super::hooks::ToolHooks>>,
 );
 type ModeTransition = Arc<dyn Fn(JsString, Option<JsString>) + Send + Sync>;
 struct Tool(
@@ -1136,6 +1185,7 @@ impl PermissionDecision for Permissions {
             .and_then(JsValue::as_string)
             .cloned();
         let prompt = self.1.get().cloned();
+        let hooks = self.3.get().cloned();
         let run = runtime
             .clone()
             .downcast::<crate::runtime::tools::ToolRunContext>()
@@ -1179,45 +1229,101 @@ impl PermissionDecision for Permissions {
                 .get("type")
                 .and_then(JsValue::as_string)
                 .is_some_and(|kind| kind.equals_str("ask"));
-            let (Some(prompt), Some(run), true) = (prompt, run, asks) else {
+            let (Some(run), true) = (run, asks) else {
                 return Ok(decision);
             };
             // `ToolRuntime.runTool`: an `ask` goes through the
-            // `PermissionRequest` hooks, and the gateway callback's answer
-            // replaces the decision.
+            // `PermissionRequest` hooks — the configured ones first, the
+            // gateway callback (`permission_prompt.rs`) last — and the first
+            // hook decision replaces the ask.
             let suggestions = decision
                 .get("request")
-                .and_then(|request| request.get("options"));
+                .and_then(|request| request.get("options"))
+                .cloned();
+            let mut answer = None;
+            if let Some(hooks) = &hooks {
+                let mut extra = JsObject::new();
+                extra.insert(
+                    "permissionSuggestions".into(),
+                    suggestions.clone().unwrap_or(JsValue::Undefined),
+                );
+                let effects = crate::runtime::tools::ToolLifecycle::dispatch(
+                    hooks.as_ref(),
+                    "PermissionRequest",
+                    &name,
+                    &id,
+                    &input,
+                    &run,
+                    extra,
+                )
+                .await?
+                .map(|result| result.effects)
+                .unwrap_or_default();
+                answer = effects.into_iter().find_map(|effect| match effect {
+                    crate::runtime::hooks::HookEffect::PermissionRequestResult { result } => {
+                        Some(result)
+                    }
+                    _ => None,
+                });
+            }
+            if let Some(prompt) = prompt {
+                let outcome = prompt
+                    .request(&name, &id, &input, suggestions.as_ref(), &run)
+                    .await;
+                answer.get_or_insert(match outcome {
+                    super::permission_prompt::PromptOutcome::Allow => {
+                        JsValue::Object(value([("behavior", "allow".into())]))
+                    }
+                    super::permission_prompt::PromptOutcome::Deny(reason) => JsValue::Object(
+                        value([("behavior", "deny".into()), ("message", JsValue::String(reason))]),
+                    ),
+                });
+            }
+            let Some(answer) = answer else {
+                return Ok(decision);
+            };
             let message = |text: JsString| {
                 JsValue::Object(value([
                     ("type", "runtime".into()),
                     ("message", JsValue::String(text)),
                 ]))
             };
-            Ok(
-                match prompt.request(&name, &id, &input, suggestions, &run).await {
-                    super::permission_prompt::PromptOutcome::Allow => JsValue::Object(value([
-                        ("type", "allow".into()),
-                        (
-                            "reason",
-                            message(JsString::from_utf16(
-                                "PermissionRequest hook allowed "
-                                    .encode_utf16()
-                                    .chain(name.units().iter().copied())
-                                    .chain(".".encode_utf16())
-                                    .collect(),
-                            )),
-                        ),
-                    ])),
-                    super::permission_prompt::PromptOutcome::Deny(reason) => {
-                        JsValue::Object(value([
-                            ("type", "deny".into()),
-                            ("reason", message(reason.clone())),
-                            ("message", JsValue::String(reason)),
-                        ]))
-                    }
-                },
-            )
+            let named = |prefix: &str| {
+                JsString::from_utf16(
+                    prefix
+                        .encode_utf16()
+                        .chain(name.units().iter().copied())
+                        .chain(".".encode_utf16())
+                        .collect(),
+                )
+            };
+            let behavior = answer.get("behavior").and_then(JsValue::as_string);
+            Ok(if behavior.is_some_and(|b| b.equals_str("allow")) {
+                let mut allowed = value([
+                    ("type", "allow".into()),
+                    ("reason", message(named("PermissionRequest hook allowed "))),
+                ]);
+                if let Some(updated) = answer
+                    .get("updatedInput")
+                    .filter(|updated| !matches!(updated, JsValue::Undefined))
+                {
+                    allowed.insert("updatedInput".into(), updated.clone());
+                }
+                JsValue::Object(allowed)
+            } else if behavior.is_some_and(|b| b.equals_str("deny")) {
+                let reason = answer
+                    .get("message")
+                    .and_then(JsValue::as_string)
+                    .cloned()
+                    .unwrap_or_else(|| named("PermissionRequest hook denied "));
+                JsValue::Object(value([
+                    ("type", "deny".into()),
+                    ("reason", message(reason.clone())),
+                    ("message", JsValue::String(reason)),
+                ]))
+            } else {
+                decision
+            })
         })
     }
 }

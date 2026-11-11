@@ -306,6 +306,8 @@ pub struct HookRuntimeOptions {
     pub clock: Arc<dyn Fn() -> JsString + Send + Sync>,
     pub shell: Option<Arc<dyn ShellPort>>,
     pub on_async_registered: Option<Arc<dyn AsyncHookRegistrationHandler>>,
+    /// Subscribed to the execution event bus before the runtime is handed out.
+    pub observer: Option<Arc<dyn HookExecutionEventHandler>>,
 }
 impl Default for HookRuntimeOptions {
     fn default() -> Self {
@@ -313,6 +315,7 @@ impl Default for HookRuntimeOptions {
             clock: Arc::new(default_clock),
             shell: None,
             on_async_registered: None,
+            observer: None,
         }
     }
 }
@@ -357,6 +360,11 @@ impl HookRuntime {
             Some(shell) => CommandHookExecutor::new(shell),
             None => CommandHookExecutor::default(),
         };
+        let bus = EventBus::default();
+        if let Some(observer) = options.observer {
+            // A fresh bus is never disposed, so this cannot fail.
+            let _ = bus.subscribe(observer);
+        }
         Self(Arc::new(Inner {
             settings,
             command,
@@ -365,7 +373,7 @@ impl HookRuntime {
             agent: AgentHookExecutor::default(),
             callback: CallbackHookExecutor::default(),
             pending: PendingAsyncHooks::default(),
-            bus: EventBus::default(),
+            bus,
             state: Mutex::new(RuntimeState::Active),
             in_flight: Mutex::new(0),
             drained: watch::channel(0).0,

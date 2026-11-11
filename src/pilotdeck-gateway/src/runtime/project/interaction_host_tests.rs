@@ -115,6 +115,7 @@ fn options() -> InteractionTurnInput {
         messages: vec![],
         switches: Default::default(),
         turn_ports: Default::default(),
+        hook_wiring: Default::default(),
     }
 }
 fn identity() -> ExecutionIdentity {

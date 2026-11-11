@@ -685,6 +685,30 @@ async fn start_assembly(
                 // before this session was created.
                 let sdk_config = session_overrides.sdk_config(&context.session_key);
                 let user_dialog_kinds = super::sdk_config::user_dialog_kinds(sdk_config.as_ref());
+                // `await runtime.pluginRuntime.refresh()` (ProjectSessionRuntimeBundle
+                // .ts:247-264): the session's plugin contributions are taken
+                // once, when it is created. Their hooks come first, then the
+                // SDK session config's (SessionInteractionBundle.ts:126-140).
+                let plugin_runtime_resource = staged.resource(Resource::PluginRuntime);
+                let session_plugins = plugin_runtime_resource
+                    .as_ref()
+                    .and_then(|resource| resource.as_any().downcast_ref::<PluginResources>());
+                let plugin_hooks = match session_plugins {
+                    Some(plugins) => crate::runtime::plugins::collect_plugin_hooks(
+                        &plugins
+                            .runtime
+                            .refresh()
+                            .await
+                            .map_err(|error| RuntimeError::new(error.to_string()))?,
+                    ),
+                    None => Vec::new(),
+                };
+                let hook_settings =
+                    super::hooks::session_hook_settings(plugin_hooks, sdk_config.as_ref());
+                let include_hook_events = sdk_config
+                    .as_ref()
+                    .and_then(|config| config.get("includeHookEvents"))
+                    == Some(&JsValue::Bool(true));
                 let stored_style_content =
                     match session_overrides.output_style(&context.session_key) {
                         Some(name) => output_style_content(&staged, &name).await,
@@ -779,23 +803,14 @@ async fn start_assembly(
                                 .and_then(|gateway| gateway.get("maxPerSessionMcpInstances"))
                                 .and_then(JsValue::as_number)
                                 .unwrap_or(5.0);
-                            // `await runtime.pluginRuntime.refresh()` then the
-                            // generation's `contributions.mcpServers`
+                            // The refreshed generation's `contributions.mcpServers`
                             // (ProjectSessionRuntimeBundle.ts:247-279): plugin
                             // servers — the builtin ones included — are composed
                             // when the session is created.
-                            let plugin_servers =
-                                match staged.resource(Resource::PluginRuntime).as_ref().and_then(
-                                    |resource| resource.as_any().downcast_ref::<PluginResources>(),
-                                ) {
-                                    Some(plugins) => {
-                                        plugins.runtime.refresh().await.map_err(|error| {
-                                            RuntimeError::new(error.to_string())
-                                        })?;
-                                        plugins.runtime.mcp_servers().await
-                                    }
-                                    None => JsObject::new(),
-                                };
+                            let plugin_servers = match session_plugins {
+                                Some(plugins) => plugins.runtime.mcp_servers().await,
+                                None => JsObject::new(),
+                            };
                             super::tools::session_mcp_tools(super::tools::SessionMcpToolsOptions {
                                 mcp_config,
                                 plugin_servers,
@@ -900,6 +915,11 @@ async fn start_assembly(
                         .with_sdk_permissions(sdk_config.as_ref())
                         .with_permission_mode_source(permission_source.clone())
                         .with_continuation_parent(continuation_parent.parent_ref())
+                        .with_hooks(
+                            hook_settings.clone(),
+                            gateway_emit.clone(),
+                            include_hook_events,
+                        )
                         .with_permission_prompt(gateway_emit, session_rules, permission_timeout)
                         .with_permission_mode_transition({
                             let session_overrides = session_overrides.clone();
@@ -1779,28 +1799,6 @@ pub(super) fn register_project_at(
 /// `subagents::compose_subagents_section` — and are no longer refused.
 /// Plugins that contribute hooks stay refused with the config-level hooks.
 pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(), ProxyError> {
-    use crate::runtime::plugins::{PilotExtensionPaths, PluginSource, loader};
-    let paths = PilotExtensionPaths::resolve(&options.project, &options.home);
-    let mut plugin_paths: Vec<_> = loader::discover_plugin_paths(&[
-        (paths.global_plugins_dir, PluginSource::Global),
-        (paths.project_plugins_dir, PluginSource::Project),
-    ])
-    .into_iter()
-    .map(|found| (found.path, found.source))
-    .collect();
-    if let Some(root) = &options.builtin_plugins_root {
-        plugin_paths.extend(
-            loader::load_builtin_plugins(root)
-                .iter()
-                .map(|plugin| (plugin.path.clone(), PluginSource::Builtin)),
-        );
-    }
-    if plugin_paths.iter().any(|(path, source)| {
-        loader::load_plugin_from_path(path, *source)
-            .is_ok_and(|plugin| plugin.hooks_config.is_some_and(|hooks| !hooks.is_empty()))
-    }) {
-        return Err("Native isolated profile does not yet support configured hooks.".into());
-    }
     use crate::runtime::project::ConfigSource;
     let snapshot = crate::runtime::project::NativeConfigSource::new(
         options.project.clone(),
@@ -1809,22 +1807,10 @@ pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(),
         None,
     )
     .load(&options.project)?;
-    // The fixed config loader drops unknown top-level fields from config,
-    // so inspecting config.hooks alone silently misses the supplied YAML.
-    // Plugin hooks are refused above; SDK hooks are refused by workspace_id.
-    if snapshot
-        .get("diagnostics")
-        .and_then(|value| match value {
-            JsValue::Array(rows) => Some(rows),
-            _ => None,
-        })
-        .is_some_and(|rows| {
-            rows.iter()
-                .any(|row| row.get("path") == Some(&"hooks".into()))
-        })
-    {
-        return Err("Native isolated profile does not yet support configured hooks.".into());
-    }
+    // A top-level `hooks` section is no hook source: the baseline's loader
+    // reports it as an unknown field and starts without it
+    // (loadPilotConfig.ts:343-375). Plugin and SDK session hooks are served
+    // (`native_process/hooks.rs`).
     if snapshot
         .get("config")
         .and_then(|v| v.get("modules"))

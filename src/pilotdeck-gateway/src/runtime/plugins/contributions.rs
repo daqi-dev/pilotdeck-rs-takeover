@@ -576,7 +576,9 @@ fn collect_prompt_contributions(_plugins: &[Arc<LoadedPlugin>]) -> Vec<String> {
     Vec::new()
 }
 
-fn collect_hooks(plugins: &[Arc<LoadedPlugin>]) -> HooksSettings {
+/// `loadPluginHooks` (PluginHookLoader.ts:4-28): every plugin's hooks, tagged
+/// with the plugin's name, id and root, in plugin order.
+pub fn collect_hooks(plugins: &[Arc<LoadedPlugin>]) -> HooksSettings {
     let mut combined: HooksSettings = Vec::new();
     for plugin in plugins {
         let sources = [plugin.hooks_config.as_ref()];

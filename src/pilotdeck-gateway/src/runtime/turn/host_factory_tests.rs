@@ -404,6 +404,7 @@ fn interaction(signal: Cancellation) -> InteractionTurnInput {
             elicitation_available: Some(true),
         },
         turn_ports: Default::default(),
+        hook_wiring: Default::default(),
     }
 }
 struct ToolContext;

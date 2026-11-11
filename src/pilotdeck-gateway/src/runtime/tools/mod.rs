@@ -60,6 +60,22 @@ pub trait ToolAuditRecorder: Send + Sync {
 /// The concrete type stored in `ToolRuntimeContext::audit_recorder`.
 pub struct ToolAudit(pub Arc<dyn ToolAuditRecorder>);
 
+/// `ToolRuntime.dispatchLifecycle` (ToolRuntime.ts:477-505): one lifecycle
+/// hook event around a tool call. `None` is the absent lifecycle, which the
+/// runtime treats as an empty result. `extra` is the event's own payload
+/// after `toolName` / `toolInput` / `toolUseId`.
+pub trait ToolLifecycle: Send + Sync {
+    fn dispatch(
+        &self,
+        event: &'static str,
+        tool_name: &JsString,
+        tool_call_id: &JsString,
+        tool_input: &JsValue,
+        context: &ToolRunContext,
+        extra: JsObject,
+    ) -> crate::host::HostFuture<Option<crate::runtime::hooks::LifecycleDispatchResult>>;
+}
+
 /// `PilotDeckElicitationRequest`: one batch of questions for the user. The
 /// abort signal travels with the call's [`ToolRunContext`].
 pub struct ElicitationRequest {

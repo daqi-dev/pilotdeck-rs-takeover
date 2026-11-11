@@ -53,7 +53,7 @@ pub use contributions::{
     PluginContributionLease, PluginContributionSnapshot, PluginMcpInstruction,
     PluginMcpInstructionEntry, PluginOutputStyleContribution, PluginRouterContribution,
     PluginSessionContributionLease, PluginSessionContributionSnapshot, PluginSkillContribution,
-    PluginToolContribution,
+    PluginToolContribution, collect_hooks as collect_plugin_hooks,
 };
 pub use loader::{LoadedPlugin, PluginRefreshFailure, PluginRefreshResult, PluginSource};
 pub use options::{PilotExtensionPaths, PluginRuntimeOptions};

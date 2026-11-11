@@ -6,9 +6,19 @@ pub struct SessionHooks(TurnHooks);
 impl InteractionHooks {
     pub fn bind_session(
         &self,
+        binding: lifecycle::Binding,
+        run_id: JsString,
+        settings: HooksSettings,
+    ) -> Result<SessionHooks, HostError> {
+        self.bind_session_observed(binding, run_id, settings, None)
+    }
+    /// [`Self::bind_session`] with a host observer on the execution events.
+    pub fn bind_session_observed(
+        &self,
         mut binding: lifecycle::Binding,
         run_id: JsString,
         settings: HooksSettings,
+        observer: Option<Arc<dyn HookExecutionEventHandler>>,
     ) -> Result<SessionHooks, HostError> {
         let signal = binding.signal.take();
         let scope = Self {
@@ -16,12 +26,13 @@ impl InteractionHooks {
             sessions: Arc::default(),
             permission: self.permission.clone(),
         };
-        let hooks = scope.bind_turn(
+        let hooks = scope.bind_turn_observed(
             binding,
             run_id,
             settings,
             None,
             &mut ModuleRouter::default(),
+            observer,
         )?;
         // Revocation still signals and drains an admitted executor; ordinary
         // abort must not close this scope before the lifecycle tail runs.
