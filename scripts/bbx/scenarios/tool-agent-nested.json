@@ -102,7 +102,7 @@
     }
   ],
   "volatile": [
-    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages|resultBytes)$"
+    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages|resultBytes|content-length)$"
   ],
   "volatileWhy": "工具结果文本里带随机 id（子代理 UUID / 临时目录名进了 traceback）或位数不定的耗时，文本长度逐次差几个字符，token 估算、字节数和文件大小随之变；基线自比已证明"
 }

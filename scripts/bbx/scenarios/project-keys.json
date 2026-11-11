@@ -265,12 +265,14 @@
   "accepted": [
     {
       "id": "rename-record-chain",
-      "why": "基线 rename_session / tag_session 追加的 session_metadata 记录从 sequence 1、parentEntryId null 写起，会话重新加载后永久无法开轮次（见 baseline-bug-rename-reload）；Rust 接着会话记录链写；序号因此整体后移，连带影响投影检查点里的序号、锚点和读回消息的 sequence",
+      "why": "基线 rename_session / tag_session 追加的 session_metadata 记录从 sequence 1、parentEntryId null 写起，会话重新加载后永久无法开轮次（见 baseline-bug-rename-reload）；Rust 接着会话记录链写；序号因此整体后移，连带影响投影检查点里的序号、锚点和读回消息的 sequence；记录里 parentEntryId 是 null 还是 UUID、序号位数不同，文件大小和原文骨架随之不同",
       "paths": [
         "\\.jsonl\\.jsonl\\[\\d+\\]\\.(sequence|parentEntryId)$",
         "\\.projections\\.json\\.json\\..*(asOfSequence|\\.sequence|\\.index)$",
         "\\.projections\\.json\\.json\\.anchor\\.",
-        "\\.projections\\.agent-transcript\\.metadata\\.state\\.(title|tag)$"
+        "\\.projections\\.agent-transcript\\.metadata\\.state\\.(title|tag)$",
+        "\\.fileSize$",
+        "\\.jsonl(\\.projections\\.json)?\\.raw\\.skeletons\\."
       ]
     }
   ]
