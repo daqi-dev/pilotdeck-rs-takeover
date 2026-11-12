@@ -1,0 +1,256 @@
+{
+  "name": "params-skills-reload",
+  "about": "reload_extensions.projectKey / changedPaths（GatewayRuntimeRefreshBundle.ts:84-107：projectKey 为真时只按原样字符串作废该项目运行时、标脏该项目的会话，假值走全部运行时；changedPaths 缺省 [] 并进返回值与 config_changed 通知，非数组在 join 处抛错）；skill_import.mode（SkillManager.ts:327-420，只有 \"symlink\" 建链接，其余都复制，复制出的文件 mtime 是导入时刻）；skill_delete.projectKey（createLocalGateway.ts:853-870 先 registry.resolve(projectKey ?? projectRoot)，数字在 path.resolve 抛错；SkillManager.ts:123-137,302-311 project 作用域必须是真实项目）。重载对系统提示词技能段的影响与 changedPaths 里非字符串元素的回显差异见 params-reload-extensions-diffs。",
+  "files": {
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-beta/.cwd": "{HOME}/work/beta\n",
+    "home/work/alpha/README.md": "alpha\n",
+    "home/work/beta/README.md": "beta\n",
+    "proj/import-src/link-skill/SKILL.md": "---\nname: link-skill\ndescription: A skill imported with a chosen mode.\n---\n\n# link skill\n",
+    "proj/import-src/copy-skill/SKILL.md": "---\nname: copy-skill\ndescription: A skill imported with an unknown mode value.\n---\n\n# copy skill\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Reload run\"}"
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "Answer."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-rx",
+        "channelKey": "test",
+        "projectKey": "{HOME}/work/alpha",
+        "runId": "run-rx-1",
+        "message": "rx-1: first"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "reload_extensions",
+      "params": {
+        "projectKey": "{HOME}/work/beta",
+        "changedPaths": [
+          "{HOME}/work/beta/.pilotdeck/skills"
+        ]
+      }
+    },
+    {
+      "ws": "reload_extensions",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "changedPaths": [
+          "{HOME}/work/alpha/.pilotdeck/skills/fresh-skill/SKILL.md"
+        ]
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-rx",
+        "channelKey": "test",
+        "projectKey": "{HOME}/work/alpha",
+        "runId": "run-rx-3",
+        "message": "rx-3: after alpha reload"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "reload_extensions",
+      "params": {
+        "projectKey": 123,
+        "changedPaths": [
+          "one",
+          "two"
+        ]
+      }
+    },
+    {
+      "ws": "reload_extensions",
+      "params": {
+        "projectKey": "",
+        "changedPaths": null
+      }
+    },
+    {
+      "ws": "reload_extensions",
+      "params": {
+        "changedPaths": "single-path"
+      }
+    },
+    {
+      "ws": "reload_extensions",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "changedPaths": 5
+      }
+    },
+    {
+      "ws": "reload_extensions",
+      "params": {
+        "changedPaths": []
+      }
+    },
+    {
+      "ws": "skill_import",
+      "params": {
+        "scope": "user",
+        "sourcePath": "{PROJECT}/import-src/link-skill",
+        "mode": "symlink"
+      }
+    },
+    {
+      "ws": "skill_import",
+      "params": {
+        "scope": "user",
+        "sourcePath": "{PROJECT}/import-src/copy-skill",
+        "mode": "hardlink"
+      }
+    },
+    {
+      "ws": "skill_import",
+      "params": {
+        "scope": "user",
+        "sourcePath": "{PROJECT}/import-src/copy-skill",
+        "slug": "copy-skill-2",
+        "mode": 5
+      }
+    },
+    {
+      "ws": "skill_import",
+      "params": {
+        "scope": "project",
+        "projectKey": "{HOME}/work/alpha",
+        "sourcePath": "{PROJECT}/import-src/link-skill",
+        "mode": "copy"
+      }
+    },
+    {
+      "ws": "skill_import",
+      "params": {
+        "scope": "project",
+        "projectKey": "{HOME}/work/alpha",
+        "sourcePath": "{PROJECT}/import-src/link-skill",
+        "mode": "symlink",
+        "force": true
+      }
+    },
+    {
+      "ws": "skill_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": 50
+      }
+    },
+    {
+      "ws": "skill_delete",
+      "params": {
+        "scope": "project",
+        "slug": "fresh-skill",
+        "projectKey": "{HOME}/work/beta"
+      }
+    },
+    {
+      "ws": "skill_delete",
+      "params": {
+        "scope": "project",
+        "slug": "fresh-skill"
+      }
+    },
+    {
+      "ws": "skill_delete",
+      "params": {
+        "scope": "project",
+        "slug": "fresh-skill",
+        "projectKey": null
+      }
+    },
+    {
+      "ws": "skill_delete",
+      "params": {
+        "scope": "project",
+        "slug": "fresh-skill",
+        "projectKey": "{PILOT_HOME}"
+      }
+    },
+    {
+      "ws": "skill_delete",
+      "params": {
+        "scope": "project",
+        "slug": "fresh-skill",
+        "projectKey": 123
+      }
+    },
+    {
+      "ws": "skill_delete",
+      "params": {
+        "scope": "project",
+        "slug": "fresh-skill",
+        "projectKey": ""
+      }
+    },
+    {
+      "ws": "skill_delete",
+      "params": {
+        "scope": "user",
+        "slug": "copy-skill",
+        "projectKey": 123
+      }
+    },
+    {
+      "ws": "skill_delete",
+      "params": {
+        "scope": "project",
+        "slug": "fresh-skill",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "skill_delete",
+      "params": {
+        "scope": "project",
+        "slug": "link-skill",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "skill_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": 50
+      }
+    },
+    {
+      "ws": "skill_list",
+      "params": {
+        "projectKey": {
+          "constructor": 5
+        }
+      }
+    },
+    {
+      "ws": "skill_list",
+      "params": {
+        "projectKey": {}
+      }
+    },
+    {
+      "ws": "skill_list",
+      "params": {
+        "projectKey": ""
+      }
+    }
+  ]
+}

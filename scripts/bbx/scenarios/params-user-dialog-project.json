@@ -1,0 +1,256 @@
+{
+  "name": "params-user-dialog-project",
+  "about": "user_dialog_list / claim / release / respond 的 projectKey（InProcessGateway.ts:2638-2774：校验之后先问托管 / 恢复路径，它们都走 dialog.projects.resolveProjectKey(projectKey ?? fallback)，未登记的目录报 PROJECT_NOT_FOUND；release 在本进程总线上命中时不解析项目）。默认项目里的会话挂在选择对话框上（alpha 只作为已登记的项目键传给对话框方法；带 projectKey 提交时通知里的 projectKey 差异见 params-user-dialog-notify-project），projectKey 取 alpha、未登记目录、空串、数字、不给。",
+  "files": {
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+    "home/work/alpha/README.md": "alpha\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Dialog keys\"}"
+      }
+    },
+    {
+      "name": "after-tool",
+      "when": [
+        "\"tool_call_id\":\"call_udp\""
+      ],
+      "reply": {
+        "text": "Done."
+      }
+    },
+    {
+      "name": "turn",
+      "when": [
+        "udp:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_udp",
+          "name": "request_user_choice",
+          "arguments": {
+            "prompt": "Pick",
+            "options": [
+              {
+                "value": "a",
+                "label": "A"
+              },
+              {
+                "value": "b",
+                "label": "B"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-udp",
+        "channelKey": "test",
+        "runId": "run-udp",
+        "message": "udp: choose",
+        "sdkSessionConfig": {
+          "userDialogKinds": [
+            "input",
+            "select",
+            "confirm"
+          ]
+        }
+      },
+      "timeout": 3000,
+      "expectTimeout": true,
+      "save": {
+        "rid": "\"requestId\":\"([0-9a-f-]{36})\""
+      }
+    },
+    {
+      "ws": "user_dialog_list",
+      "params": {
+        "sessionKey": "s-udp",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "user_dialog_list",
+      "params": {
+        "sessionKey": "s-udp",
+        "projectKey": "{PROJECT}"
+      }
+    },
+    {
+      "ws": "user_dialog_list",
+      "params": {
+        "sessionKey": "s-udp",
+        "projectKey": ""
+      }
+    },
+    {
+      "ws": "user_dialog_list",
+      "params": {
+        "sessionKey": "s-udp",
+        "projectKey": 123
+      }
+    },
+    {
+      "ws": "user_dialog_list",
+      "params": {
+        "sessionKey": "s-udp"
+      }
+    },
+    {
+      "ws": "user_dialog_claim",
+      "params": {
+        "sessionKey": "s-udp",
+        "requestId": "{saved.rid}",
+        "projectKey": "{PROJECT}"
+      }
+    },
+    {
+      "ws": "user_dialog_claim",
+      "params": {
+        "sessionKey": "s-udp",
+        "requestId": "{saved.rid}",
+        "projectKey": 123
+      }
+    },
+    {
+      "ws": "user_dialog_claim",
+      "params": {
+        "sessionKey": "s-udp",
+        "requestId": "no-such-request",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "user_dialog_claim",
+      "params": {
+        "sessionKey": "s-udp",
+        "requestId": "{saved.rid}",
+        "projectKey": "{HOME}/work/alpha"
+      },
+      "save": {
+        "lease": "\"leaseId\":\"([0-9a-f-]{36})\""
+      }
+    },
+    {
+      "ws": "user_dialog_release",
+      "params": {
+        "sessionKey": "s-udp",
+        "requestId": "{saved.rid}",
+        "leaseId": "wrong-lease",
+        "projectKey": "{PROJECT}"
+      }
+    },
+    {
+      "ws": "user_dialog_release",
+      "params": {
+        "sessionKey": "s-udp",
+        "requestId": "{saved.rid}",
+        "leaseId": "wrong-lease",
+        "projectKey": 123
+      }
+    },
+    {
+      "ws": "user_dialog_release",
+      "params": {
+        "sessionKey": "s-udp",
+        "requestId": "{saved.rid}",
+        "leaseId": "wrong-lease",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "user_dialog_release",
+      "params": {
+        "sessionKey": "s-udp",
+        "requestId": "{saved.rid}",
+        "leaseId": "{saved.lease}",
+        "projectKey": 123
+      }
+    },
+    {
+      "ws": "user_dialog_respond",
+      "params": {
+        "sessionKey": "s-udp",
+        "requestId": "{saved.rid}",
+        "projectKey": "{PROJECT}",
+        "result": {
+          "behavior": "answered",
+          "value": "a"
+        }
+      }
+    },
+    {
+      "ws": "user_dialog_respond",
+      "params": {
+        "sessionKey": "s-udp",
+        "requestId": "{saved.rid}",
+        "projectKey": 123,
+        "result": {
+          "behavior": "answered",
+          "value": "a"
+        }
+      }
+    },
+    {
+      "ws": "user_dialog_respond",
+      "params": {
+        "sessionKey": "s-udp",
+        "requestId": "{saved.rid}",
+        "projectKey": "",
+        "result": {
+          "behavior": "answered",
+          "value": "a"
+        }
+      }
+    },
+    {
+      "ws": "user_dialog_respond",
+      "params": {
+        "sessionKey": "s-udp",
+        "requestId": "no-such-request",
+        "projectKey": "{HOME}/work/alpha",
+        "result": {
+          "behavior": "cancelled"
+        }
+      }
+    },
+    {
+      "ws": "user_dialog_respond",
+      "params": {
+        "sessionKey": "s-udp",
+        "requestId": "{saved.rid}",
+        "projectKey": "{HOME}/work/alpha",
+        "result": {
+          "behavior": "answered",
+          "value": "b"
+        }
+      }
+    },
+    {
+      "sleep": 1000
+    },
+    {
+      "ws": "user_dialog_list",
+      "params": {
+        "sessionKey": "s-udp",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-udp"
+      }
+    }
+  ]
+}

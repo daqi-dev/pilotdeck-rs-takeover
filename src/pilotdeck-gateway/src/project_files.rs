@@ -812,13 +812,6 @@ pub(crate) fn execute<F: Files>(
         None | Some(JsValue::Null | JsValue::Undefined) => String::new(),
         Some(value) => crate::metadata::string(value)?,
     };
-    // A non-string truthy cursor has Node-specific Buffer argument diagnostics.
-    if let Some(cursor) = params.get("cursor")
-        && truthy(cursor)
-        && cursor.as_string().is_none()
-    {
-        return None;
-    }
     local_result(list(metadata, params, &project, &query))
 }
 /// Node's `ERR_INVALID_ARG_TYPE` for a non-string `path.resolve` argument;
@@ -1045,13 +1038,13 @@ fn list_with_deadline<F: Files>(
             "cursor is invalid or does not match the query.".into(),
         )
     };
-    let offset = match params
-        .get("cursor")
-        .and_then(JsValue::as_string)
-        .filter(|v| !v.is_empty())
-    {
+    // `if (!value) return 0;` then everything inside one try/catch
+    // (projectFiles.ts:169-180): a truthy non-string fails `Buffer.from` or
+    // the JSON parse and is the same INVALID_CURSOR.
+    let offset = match params.get("cursor").filter(|value| truthy(value)) {
         None => 0.0,
         Some(cursor) => {
+            let cursor = cursor.as_string().ok_or_else(invalid_cursor)?;
             let bytes = decode_base64(cursor.units()).ok_or_else(invalid_cursor)?;
             let parsed =
                 parse_json(&String::from_utf8_lossy(&bytes)).map_err(|_| invalid_cursor())?;

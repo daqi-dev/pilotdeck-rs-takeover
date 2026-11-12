@@ -741,8 +741,8 @@ impl Requests {
 
     /// InProcessGateway.ts:2423-2442: sessionKey → path → mtime → busy; the
     /// `workspaceCwd` is stored as the session's cwd override like a
-    /// submit's; the native process has no setSdkSessionConfig, so a truthy
-    /// `sdkSessionConfig` answers the unavailable shape. The router fence
+    /// submit's; a truthy `sdkSessionConfig` goes through the same
+    /// `setSdkSessionConfig` port as a submit's. The router fence
     /// (SessionRouter.ts:260-278) then seeds onto the live session.
     async fn seed_read_state(&self, params: &JsValue) -> Result<JsValue, RequestError> {
         let session_key = require_session_key(params)?;
@@ -768,11 +768,35 @@ impl Requests {
         {
             self.session_overrides.set_session_cwd(&session_key, cwd);
         }
-        if params.get("sdkSessionConfig").is_some_and(truthy) {
-            return Err(gateway_error(
-                "CAPABILITY_UNAVAILABLE",
-                "sdk_session_config is unavailable.",
-            ));
+        if let Some(config) = params.get("sdkSessionConfig").filter(|value| truthy(value)) {
+            // `validateSdkSessionConfig` then `setSdkSessionConfig(sessionKey,
+            // config, projectKey)`; a changed config closes the session so
+            // the seed lands on one built with it (InProcessGateway.ts:
+            // 2431-2436). Same port `submit_turn` uses.
+            use crate::runtime::turn::admission::SubmitSdkSessionConfig;
+            let port = super::super::sdk_config::NativeSdkSessionConfig {
+                options: self.options.clone(),
+                overrides: self.session_overrides.clone(),
+                project: self.project.clone(),
+            };
+            let submit_error = |error: crate::runtime::turn::submit::SubmitError| RequestError {
+                code: error.code,
+                message: error.message.into(),
+                details: None,
+                validation: None,
+            };
+            port.validate(config).map_err(submit_error)?;
+            let project = params.get("projectKey").and_then(JsValue::as_string);
+            if port
+                .apply(&session_key, config, project)
+                .await
+                .map_err(submit_error)?
+            {
+                self.owner
+                    .close(&session_key)
+                    .await
+                    .map_err(runtime_error)?;
+            }
         }
         let reservation = self
             .owner
@@ -798,6 +822,16 @@ impl Requests {
             disallowed_tools: None,
         };
         let result = async {
+            // A session that is not live is built for
+            // `registry.resolve(projectKey ?? fallback)`, where a non-string
+            // key fails in `path.resolve`; a live one is reused as is
+            // (SessionRouter.ts:130-136).
+            if let Some(key) = params.get("projectKey")
+                && !matches!(key, JsValue::Undefined | JsValue::Null | JsValue::String(_))
+                && self.owner.current_handle(&session_key).is_none()
+            {
+                return Err(super::super::projects::invalid_project_path(key));
+            }
             let handle = self
                 .owner
                 .get_or_create(context)
@@ -2096,31 +2130,30 @@ mod tests {
         teardown(&r).await;
     }
 
-    /// #1874: a recorder whose writer already closed must surface the close
-    /// as an error, not answer with a saved selection and nothing on disk.
-    /// The live closure's checked append is what makes the closed writer
-    /// visible; the unchecked form the cold path uses would silently no-op.
+    /// #1874: a recorder whose writer already closed must not answer with a
+    /// saved selection and nothing on disk: the lookup skips the closed
+    /// writer and the cold path appends the selection.
     #[tokio::test]
-    async fn model_set_reports_a_closed_writer_as_an_error() {
+    async fn model_set_skips_a_closed_writer_for_the_cold_path() {
         let (_scratch, r) = setup_fixture();
         let recorder = register_recorder(&r, "cw/session");
         // A close that raced the request — the exact window fix-r2's checked
         // append exists for.
         recorder.writer().close();
-        let error = r
-            .session_model_request_keyed(
-                "session_model_set".into(),
-                object([
-                    ("sessionKey", "cw-session".into()),
-                    ("selection", selection("model", "test", "test")),
-                ]),
-            )
-            .await
-            .expect_err("#1874 a closed session writer is an error, not a silent save");
+        r.session_model_request_keyed(
+            "session_model_set".into(),
+            object([
+                ("sessionKey", "cw-session".into()),
+                ("selection", selection("model", "test", "test")),
+            ]),
+        )
+        .await
+        .expect("#1874 a closed writer is not the live writer: the save takes the cold path");
+        let text = std::fs::read_to_string(recorder.writer().path())
+            .expect("#1874 the cold save wrote the transcript");
         negative_assert!(
-            String::from_utf16_lossy(error.message.units()).contains("the session writer closed"),
-            "#1874 the closed-writer error names the session writer, got {}",
-            String::from_utf16_lossy(error.message.units())
+            text.contains("model-selection"),
+            "#1874 the selection is on disk, not dropped by the closed writer"
         );
         teardown(&r).await;
     }
@@ -3247,7 +3280,7 @@ mod tests {
                 "sessionKey is required.",
             ),
             (
-                "sdkSessionConfig stays unavailable",
+                "sdkSessionConfig with a field the native port does not wire",
                 object([
                     ("sessionKey", "cfg-seed-4".into()),
                     ("path", "seeded.txt".into()),

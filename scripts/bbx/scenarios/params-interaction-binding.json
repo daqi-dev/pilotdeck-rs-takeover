@@ -1,0 +1,251 @@
+{
+  "name": "params-interaction-binding",
+  "about": "客户端自带的交互绑定参数（GatewayWsConnection.ts:121-137,450-506）：submit_turn.interactionBinding、reconnect_interaction.nextBinding、elicitation_respond.interactionBinding 总被本连接的绑定覆盖；permission_decide.interactionBinding 只在 sdk 客户端的另一条控制连接上原样生效（不匹配时不送达）。另比 permission_list.projectKey（listPermissions 只读 sessionKey）。a 普通连接上带伪造绑定提交、在权限询问上用伪造绑定作答；b sdk 连接 A 上提交并挂在权限询问上后断开（轮次保留），sdk 连接 B 上列权限、用不匹配、不带绑定作答（非对象绑定的差异见 params-permission-decide-binding-malformed）。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Binding run\"}"
+      }
+    },
+    {
+      "name": "after-tool",
+      "when": [
+        "\"tool_call_id\":\"call_ib\""
+      ],
+      "reply": {
+        "text": "Done."
+      }
+    },
+    {
+      "name": "turn",
+      "when": [
+        "ib-"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_ib",
+          "name": "bash",
+          "arguments": {
+            "command": "echo bound > bound.txt"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "reconnect_interaction",
+      "params": {
+        "sessionKey": "s-ib-a",
+        "nextBinding": {
+          "connectionId": "forged",
+          "generation": 99
+        }
+      }
+    },
+    {
+      "ws": "reconnect_interaction",
+      "params": {
+        "sessionKey": "s-ib-a",
+        "nextBinding": "junk"
+      }
+    },
+    {
+      "ws": "elicitation_respond",
+      "params": {
+        "sessionKey": "s-ib-a",
+        "requestId": "no-such-request",
+        "answer": {
+          "action": "accept"
+        },
+        "interactionBinding": {
+          "connectionId": "forged",
+          "generation": 99
+        }
+      }
+    },
+    {
+      "ws": "elicitation_respond",
+      "params": {
+        "sessionKey": "s-ib-a",
+        "requestId": "no-such-request",
+        "answer": {
+          "action": "accept"
+        },
+        "interactionBinding": 7
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ib-a",
+        "channelKey": "test",
+        "runId": "run-ib-a",
+        "message": "ib-a: write",
+        "interactionBinding": {
+          "connectionId": "forged",
+          "generation": 99
+        }
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-ib-a",
+            "requestId": "{event.requestId}",
+            "decision": "allow",
+            "interactionBinding": {
+              "connectionId": "forged-too",
+              "generation": 1
+            }
+          },
+          "count": 1
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ib-a2",
+        "channelKey": "test",
+        "runId": "run-ib-a2",
+        "message": "ib-a2: write",
+        "interactionBinding": "not-an-object"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-ib-a2",
+            "requestId": "{event.requestId}",
+            "decision": "deny",
+            "interactionBinding": null
+          },
+          "count": 1
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "disconnect": true
+    },
+    {
+      "connect": {
+        "type": "hello",
+        "protocolVersion": "1.2",
+        "clientName": "sdk",
+        "clientVersion": "0.0.0",
+        "token": "{TOKEN}"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ib-b",
+        "channelKey": "test",
+        "runId": "run-ib-b",
+        "message": "ib-b: write"
+      },
+      "timeout": 3000,
+      "expectTimeout": true
+    },
+    {
+      "disconnect": true
+    },
+    {
+      "connect": {
+        "type": "hello",
+        "protocolVersion": "1.2",
+        "clientName": "sdk",
+        "clientVersion": "0.0.0",
+        "token": "{TOKEN}"
+      }
+    },
+    {
+      "ws": "permission_list",
+      "params": {
+        "sessionKey": "s-ib-b",
+        "projectKey": "{PROJECT}"
+      },
+      "save": {
+        "req": "\"requestId\":\"([^\"]+)\""
+      }
+    },
+    {
+      "ws": "permission_list",
+      "params": {
+        "sessionKey": "s-ib-b",
+        "projectKey": 123
+      }
+    },
+    {
+      "ws": "permission_list",
+      "params": {
+        "sessionKey": "s-ib-b",
+        "projectKey": ""
+      }
+    },
+    {
+      "ws": "permission_list",
+      "params": {
+        "sessionKey": "",
+        "projectKey": "{PROJECT}"
+      }
+    },
+    {
+      "ws": "permission_decide",
+      "params": {
+        "sessionKey": "s-ib-b",
+        "requestId": "{saved.req}",
+        "decision": "allow",
+        "interactionBinding": {
+          "connectionId": "forged",
+          "generation": 1
+        }
+      }
+    },
+    {
+      "ws": "permission_list",
+      "params": {
+        "sessionKey": "s-ib-b"
+      }
+    },
+    {
+      "ws": "permission_decide",
+      "params": {
+        "sessionKey": "s-ib-b",
+        "requestId": "{saved.req}",
+        "decision": "allow"
+      }
+    },
+    {
+      "sleep": 1500
+    },
+    {
+      "ws": "permission_list",
+      "params": {
+        "sessionKey": "s-ib-b"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-ib-b"
+      }
+    },
+    {
+      "disconnect": true
+    }
+  ]
+}

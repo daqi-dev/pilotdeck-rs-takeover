@@ -1,0 +1,24 @@
+{
+  "name": "params-abort-reason-snapshot",
+  "about": "abort_turn.reason 唯一落到外部的地方：打开 PILOTDECK_STORAGE_ROOT 时中止轮次的轮后快照记下 failureKind / failureReason（InProcessGateway.ts:1287-1305,2000-2005；reason 缺省为 aborted 或 aborted:<runId>）。轮次挂在权限询问上时中止，reason 取字符串 / 空串 / 数字 / 不给（带与不带 runId），比较快照清单与落盘。",
+  "env": {
+    "PILOTDECK_STORAGE_ROOT": "{HOME}/storage"
+  },
+  "files": {
+    "home/work/alpha/README.md": "alpha\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n"
+  },
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Abort reason\"}" } },
+    { "name": "turn", "when": ["ar-"], "reply": { "tool": { "id": "call_ar", "name": "bash", "arguments": { "command": "echo ar > ar.txt" } } } }
+  ],
+  "steps": [
+    { "ws": "submit_turn", "params": { "sessionKey": "s-ar-1", "channelKey": "test", "projectKey": "{HOME}/work/alpha", "runId": "run-ar-1", "message": "ar-1: write" }, "answer": [{ "on": { "type": "permission_request" }, "ws": "abort_turn", "params": { "sessionKey": "s-ar-1", "reason": "user pressed stop" }, "count": 1 }], "timeout": 20000 },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-ar-2", "channelKey": "test", "projectKey": "{HOME}/work/alpha", "runId": "run-ar-2", "message": "ar-2: write" }, "answer": [{ "on": { "type": "permission_request" }, "ws": "abort_turn", "params": { "sessionKey": "s-ar-2", "runId": "run-ar-2", "reason": "" }, "count": 1 }], "timeout": 20000 },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-ar-3", "channelKey": "test", "projectKey": "{HOME}/work/alpha", "runId": "run-ar-3", "message": "ar-3: write" }, "answer": [{ "on": { "type": "permission_request" }, "ws": "abort_turn", "params": { "sessionKey": "s-ar-3", "reason": 42 }, "count": 1 }], "timeout": 20000 },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-ar-4", "channelKey": "test", "projectKey": "{HOME}/work/alpha", "runId": "run-ar-4", "message": "ar-4: write" }, "answer": [{ "on": { "type": "permission_request" }, "ws": "abort_turn", "params": { "sessionKey": "s-ar-4", "runId": "run-ar-4" }, "count": 1 }], "timeout": 20000 },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-ar-5", "channelKey": "test", "projectKey": "{HOME}/work/alpha", "runId": "run-ar-5", "message": "ar-5: write" }, "answer": [{ "on": { "type": "permission_request" }, "ws": "abort_turn", "params": { "sessionKey": "s-ar-5" }, "count": 1 }], "timeout": 20000 },
+    { "sleep": 800 },
+    { "ws": "snapshot_list", "params": { "projectKey": "{HOME}/work/alpha" } }
+  ]
+}

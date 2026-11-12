@@ -519,8 +519,9 @@ fn image_too_large(path: &str, bytes: u64, limit: u64) -> String {
 fn attachment_diagnostics_guidance(
     entries: &[AttachEntry],
     has_inspectable: bool,
-    project_root: &Path,
-) -> String {
+    project_root: Result<Option<&Path>, &JsValue>,
+    install_command: &str,
+) -> Result<String, SubmitError> {
     // :131-140 — the audio form wins whenever ANY audio attachment exists
     // (P1-b: presence decides, not path mappability); a form with no
     // mappable path takes the generic hint (:138).
@@ -529,11 +530,25 @@ fn attachment_diagnostics_guidance(
         .filter(|entry| is_audio_attachment(entry))
         .collect();
     if !audio_attachments.is_empty() {
-        let audio_paths: Vec<String> = audio_attachments
+        let mut audio_paths: Vec<String> = Vec::new();
+        for entry in audio_attachments
             .iter()
             .filter(|entry| !entry.path.is_empty())
-            .filter_map(|entry| map_audio_path_for_funasr(&entry.path, project_root))
-            .collect();
+        {
+            // :287 `if (!projectRoot) return undefined;`, then
+            // `resolve(projectRoot)`, which throws for a non-string root.
+            match project_root {
+                Ok(None) => {}
+                Ok(Some(root)) => audio_paths.extend(map_audio_path_for_funasr(&entry.path, root)),
+                Err(invalid) => {
+                    let error = super::projects::invalid_project_path(invalid);
+                    return Err(SubmitError::new(
+                        &error.code,
+                        String::from_utf16_lossy(error.message.units()),
+                    ));
+                }
+            }
+        }
         let mapped_hint = if audio_paths.is_empty() {
             " Pass a project-local host path to transcribe_audio; paths outside this project \
              are rejected."
@@ -549,27 +564,41 @@ fn attachment_diagnostics_guidance(
                 audio_paths.join(", ")
             )
         };
-        return format!(
+        return Ok(format!(
             "Audio attachments are not readable with read_file. When the user asks for \
              transcription, subtitles, or audio analysis, use the funasr MCP server's \
              mcp__funasr__transcribe_audio tool.{mapped_hint} If that tool reports that its \
-             runtime is missing, run {FUNASR_INSTALL_COMMAND} and retry the tool in this session."
-        );
+             runtime is missing, run {install_command} and retry the tool in this session."
+        ));
     }
     // :142-151 — no attachment with an allowedReadFiles spelling left
     // inspectable → the conversion form; otherwise the read_file-scoped form
     // (#2495: the accumulation is the caller's whole-list `some(...)`
     // pass, never gated by the note dedup).
     if !has_inspectable {
-        return "Some attachments were not shown inline. These registered files are not \
+        return Ok(
+            "Some attachments were not shown inline. These registered files are not \
                 directly inspectable with read_file; ask for a supported export or \
                 convert them before inspection."
-            .to_string();
+                .to_string(),
+        );
     }
-    "Some attachments were not shown inline. Use read_file with the exact path only for \
+    Ok(
+        "Some attachments were not shown inline. Use read_file with the exact path only for \
      readable text, image, PDF, or notebook attachments; Office/archive/binary files \
      need conversion before inspection."
-        .to_string()
+            .to_string(),
+    )
+}
+
+/// The `projectRoot` the composer's funasr audio hint is held against
+/// (GatewayAttachmentTurnComposer.ts:286-295). `submit_turn` always passes
+/// its resolved project; `steer_turn` passes `input.projectKey` as sent, so
+/// it can be absent (no mapping) or a non-string (`path.resolve` throws).
+pub(super) enum AudioProject<'a> {
+    Root(&'a Path),
+    Absent,
+    Invalid(&'a JsValue),
 }
 
 /// Composes the blocks-type agent input for a turn with attachments,
@@ -581,8 +610,41 @@ fn attachment_diagnostics_guidance(
 /// :67-72). Extracted from `prepare_attachment_turn` so the inline pipeline
 /// is unit-testable without the full native assembly;
 /// runs entirely on a blocking thread.
+#[cfg(test)]
 pub(super) fn compose_attachment_turn(
     project_dir: &Path,
+    message: &JsValue,
+    attachments: &[JsValue],
+) -> Result<JsValue, SubmitError> {
+    compose_attachment_turn_for(
+        AudioProject::Root(project_dir),
+        FUNASR_INSTALL_COMMAND,
+        message,
+        attachments,
+    )
+}
+
+/// `this.options.funasrInstallCommand ?? getPilotDeckInstallCommand()`
+/// (InProcessGateway.ts:2475): the install command of the package the builtin
+/// plugins ship in (projectMcpSpec.ts:27-37), the same value the funasr MCP
+/// placeholder resolves to; the composer's own default without a package.
+pub(super) fn funasr_install_command(options: &Options, env: &Env) -> String {
+    options
+        .builtin_plugins_root
+        .as_deref()
+        .and_then(|root| {
+            crate::runtime::mcp::registry::BuiltinMcpPaths::for_builtin_plugins(root, env).ok()
+        })
+        .map(|paths| paths.install_command)
+        .filter(|command| !command.is_empty())
+        .unwrap_or_else(|| FUNASR_INSTALL_COMMAND.to_string())
+}
+
+/// [`compose_attachment_turn`] with the audio-hint project as the caller
+/// received it and the install command the audio guidance names.
+pub(super) fn compose_attachment_turn_for(
+    project: AudioProject<'_>,
+    install_command: &str,
     message: &JsValue,
     attachments: &[JsValue],
 ) -> Result<JsValue, SubmitError> {
@@ -622,7 +684,13 @@ pub(super) fn compose_attachment_turn(
         });
     }
     // The project spelling the funasr audio hint is held against.
-    let project_canon = fs::canonicalize(project_dir).unwrap_or_else(|_| project_dir.to_path_buf());
+    let project_canon = match project {
+        AudioProject::Root(dir) => Ok(Some(
+            fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf()),
+        )),
+        AudioProject::Absent => Ok(None),
+        AudioProject::Invalid(value) => Err(value),
+    };
 
     let mut direct_blocks: Vec<JsValue> = Vec::new();
     let mut inline_blocks: Vec<JsValue> = Vec::new();
@@ -930,13 +998,22 @@ pub(super) fn compose_attachment_turn(
     // TS composer :114-122 — the guidance takes a diagnostics form when any
     // diagnostic was collected, any attachment is audio, or any attachment
     // is not read_file-inspectable; otherwise the plain form.
-    let guidance = if diagnostics.is_empty()
+    // Only computed for a note (composer :112-113 returns before it), so a
+    // root that `path.resolve` rejects fails only when the hint is built.
+    let guidance = if note_lines.is_empty() {
+        String::new()
+    } else if diagnostics.is_empty()
         && !entries.iter().any(is_audio_attachment)
         && entries.iter().all(is_read_file_inspectable)
     {
         PLAIN_PATH_NOTE_GUIDANCE.to_string()
     } else {
-        attachment_diagnostics_guidance(&entries, has_inspectable, &project_canon)
+        attachment_diagnostics_guidance(
+            &entries,
+            has_inspectable,
+            project_canon.as_ref().map(Option::as_deref).map_err(|v| *v),
+            install_command,
+        )?
     };
 
     // TS composer :67-72 — no content block, no inline block, no diagnostic,
@@ -1295,12 +1372,18 @@ impl SubmitHostServices for Services {
                 return Ok(object([("type", "text".into()), ("text", message.clone())]));
             }
             let message = message.clone();
+            let install_command = funasr_install_command(&self.options, &self.env);
             // P1-3/concurrency#5: the whole composition — the once-per-prepare
             // lease-root canonicalize (simplify#2), the per-attachment stat and
             // read — runs on a blocking thread so the async executor is not
             // blocked.
             tokio::task::spawn_blocking(move || {
-                compose_attachment_turn(&project_dir, &message, &attachments)
+                compose_attachment_turn_for(
+                    AudioProject::Root(&project_dir),
+                    &install_command,
+                    &message,
+                    &attachments,
+                )
             })
             .await
             .map_err(|e| failure(e.to_string()))?

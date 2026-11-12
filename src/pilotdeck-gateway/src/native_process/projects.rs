@@ -49,6 +49,43 @@ pub(crate) fn requested_key(params: &JsValue) -> Result<Option<&JsString>, &JsVa
     }
 }
 
+/// What `path.resolve(projectKey)` throws for a non-string key: Node's
+/// `ERR_INVALID_ARG_TYPE` naming `paths[0]`, or the plain error of a value
+/// whose `Received` text itself throws.
+pub(crate) fn invalid_project_path(value: &JsValue) -> RequestError {
+    match crate::metadata::argument_received(value) {
+        crate::metadata::ArgumentReceived::Text(received) => RequestError {
+            code: "ERR_INVALID_ARG_TYPE".into(),
+            message: crate::metadata::invalid_arg_type_message("paths[0]", &received),
+            details: None,
+            validation: None,
+        },
+        crate::metadata::ArgumentReceived::Throws { message, .. } => RequestError::new(message),
+    }
+}
+
+/// The session-history bundle's project for a request
+/// (GatewaySessionHistoryBundle.ts:254-256, `projectKey ? projectKey :
+/// fallbackProjectRoot`): a falsy key is the fallback, a truthy string is
+/// resolved as a path, any other truthy value fails in `path.resolve`.
+pub(crate) fn history_project_key(params: &JsValue) -> Result<Option<&JsString>, RequestError> {
+    match params.get("projectKey") {
+        Some(value) if crate::metadata::js_truthy(value) => match value {
+            JsValue::String(key) => Ok(Some(key)),
+            other => Err(invalid_project_path(other)),
+        },
+        _ => Ok(None),
+    }
+}
+
+/// `input.projectKey ?? options.projectRoot` inside the web history functions
+/// (forkSession.ts:345, replaceLastTurn.ts:182,240): only `undefined` / `null`
+/// fall back. An empty string is kept and resolves to the process working
+/// directory; a non-string fails in `path.resolve`.
+pub(crate) fn nullish_project_key(params: &JsValue) -> Result<Option<&JsString>, RequestError> {
+    requested_key(params).map_err(invalid_project_path)
+}
+
 /// `Unknown projectKey: ${projectKey}` with the caller's own UTF-16.
 pub(crate) fn unknown_project_message(key: &JsString) -> JsString {
     let mut units = "Unknown projectKey: ".encode_utf16().collect::<Vec<_>>();

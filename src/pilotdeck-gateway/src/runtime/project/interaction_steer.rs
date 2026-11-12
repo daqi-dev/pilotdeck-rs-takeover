@@ -155,23 +155,23 @@ pub fn active_turn_for(
     session_key: &JsString,
     active_run: Option<&JsString>,
 ) -> Option<ActiveSteerInfo> {
-    let lease = project.acquire(None).ok()?;
-    let context = lease
-        .runtime()
-        .resources()
-        .get::<super::ProjectResources>()?
-        .context();
-    let steer = context
-        .resource(super::Resource::InteractionSteer)?
-        .as_any()
-        .downcast_ref::<InteractionSteer>()?
-        .clone();
-    let info = steer.active_steer_info(session_key)?;
-    // Guard: the steer slot's run must still match the admission slot.
-    if Some(&info.run_id) != active_run {
-        return None;
-    }
-    Some(info)
+    // The session's turn runs in the runtime of the project it was submitted
+    // under (`submit_turn.projectKey`), not necessarily the fallback project,
+    // so every live generation's steer registry is consulted.
+    project.live_generations().into_iter().find_map(|runtime| {
+        let context = runtime
+            .resources()
+            .get::<super::ProjectResources>()?
+            .context();
+        let steer = context
+            .resource(super::Resource::InteractionSteer)?
+            .as_any()
+            .downcast_ref::<InteractionSteer>()?
+            .clone();
+        let info = steer.active_steer_info(session_key)?;
+        // Guard: the steer slot's run must still match the admission slot.
+        (Some(&info.run_id) == active_run).then_some(info)
+    })
 }
 
 impl ActiveSteerInfo {

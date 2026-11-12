@@ -1,0 +1,25 @@
+{
+  "name": "params-seed-read-state-cwd-type",
+  "about": "差异证明（未修，留给主会话决定）：seed_read_state 的 workspaceCwd 为真但不是字符串时，基线 setSessionCwd 原样存下（ProjectRuntimeRegistry.ts:525-529），给不在内存里的会话建会话时在路径函数上抛 ERR_INVALID_ARG_TYPE（\"path\" argument … Received type number (5)），之后这个会话再建也会失败；Rust 的会话 cwd 覆盖只收字符串，忽略了这个值，按默认目录建会话（file_not_found）。",
+  "files": {},
+  "provider": [],
+  "steps": [
+    {
+      "ws": "seed_read_state",
+      "params": {
+        "sessionKey": "s-cwd-num",
+        "workspaceCwd": 5,
+        "path": "seed.txt",
+        "mtime": 1767225600000
+      }
+    },
+    {
+      "ws": "seed_read_state",
+      "params": {
+        "sessionKey": "s-cwd-num",
+        "path": "seed.txt",
+        "mtime": 1767225600000
+      }
+    }
+  ]
+}

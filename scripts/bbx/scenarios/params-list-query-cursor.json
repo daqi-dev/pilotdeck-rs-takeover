@@ -1,0 +1,316 @@
+{
+  "name": "params-list-query-cursor",
+  "about": "带 query / cursor / limit 的列表类 method：commands_list（commands.ts:30-80，query 修剪小写、超 256 报 INVALID_QUERY、limit 缺省 50 只收 1..100 整数、cursor 是 base64url 的 {offset, signature}，与 query 不符或无法解析报 INVALID_CURSOR）、project_files_list.cursor（projectFiles.ts:29-57,169-180）、skill_list.query / cursor（SkillManager.ts:164-230）。每个参数取正常值、翻页游标、跨 query 复用游标、乱码、空串、非字符串、越界。",
+  "files": {
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+    "home/work/alpha/README.md": "alpha\n",
+    "home/work/alpha/src/a.rs": "fn a() {}\n",
+    "home/work/alpha/src/b.rs": "fn b() {}\n",
+    "home/work/alpha/src/help.rs": "fn help() {}\n",
+    "home/work/alpha/.pilotdeck/commands/deploy.md": "---\ndescription: Deploy the alpha service\n---\nDeploy it.\n",
+    "home/work/alpha/.pilotdeck/commands/helper.md": "# Help with alpha tasks\n",
+    "home/work/alpha/.pilotdeck/skills/alpha-skill/SKILL.md": "---\nname: alpha-skill\ndescription: Project skill for alpha helpers.\n---\n\n# alpha\n",
+    "home/.pilotdeck/commands/user-cmd.md": "---\ndescription: A user level command\n---\nbody\n",
+    "home/.pilotdeck/skills/user-one/SKILL.md": "---\nname: user-one\ndescription: First user skill that helps.\n---\n\n# one\n",
+    "home/.pilotdeck/skills/user-two/SKILL.md": "---\nname: user-two\ndescription: Second user skill.\n---\n\n# two\n",
+    "home/.pilotdeck/skills/user-three/SKILL.md": "---\nname: user-three\ndescription: Third user skill with help text.\n---\n\n# three\n"
+  },
+  "steps": [
+    {
+      "ws": "commands_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": 3
+      },
+      "save": {
+        "c1": "\"nextCursor\":\"([^\"]+)\""
+      }
+    },
+    {
+      "ws": "commands_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": 3,
+        "cursor": "{saved.c1}"
+      }
+    },
+    {
+      "ws": "commands_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": 3,
+        "cursor": "{saved.c1}",
+        "query": "help"
+      }
+    },
+    {
+      "ws": "commands_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "cursor": "not-a-cursor"
+      }
+    },
+    {
+      "ws": "commands_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": 2,
+        "cursor": ""
+      }
+    },
+    {
+      "ws": "commands_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "cursor": 5
+      }
+    },
+    {
+      "ws": "commands_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "query": "  HELP "
+      }
+    },
+    {
+      "ws": "commands_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "query": "deploy",
+        "limit": 1
+      }
+    },
+    {
+      "ws": "commands_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "query": "",
+        "limit": 1
+      }
+    },
+    {
+      "ws": "commands_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "query": "zzz-no-match"
+      }
+    },
+    {
+      "ws": "commands_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "query": 5
+      }
+    },
+    {
+      "ws": "commands_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "query": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    },
+    {
+      "ws": "commands_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": 0
+      }
+    },
+    {
+      "ws": "commands_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": 101
+      }
+    },
+    {
+      "ws": "commands_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": 1.5
+      }
+    },
+    {
+      "ws": "commands_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": "3"
+      }
+    },
+    {
+      "ws": "commands_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": null
+      }
+    },
+    {
+      "ws": "commands_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": 100,
+        "query": "user"
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": 2
+      },
+      "save": {
+        "f1": "\"nextCursor\":\"([^\"]+)\""
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": 2,
+        "cursor": "{saved.f1}"
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": 2,
+        "cursor": "{saved.f1}",
+        "query": "rs"
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": 2,
+        "cursor": "{saved.f1}",
+        "includeDirs": false
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "cursor": "garbage"
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": 1,
+        "cursor": ""
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "cursor": 7
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "cursor": {
+          "offset": 1
+        }
+      }
+    },
+    {
+      "ws": "skill_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": 2
+      },
+      "save": {
+        "s1": "\"nextCursor\":\"([^\"]+)\""
+      }
+    },
+    {
+      "ws": "skill_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": 2,
+        "cursor": "{saved.s1}"
+      }
+    },
+    {
+      "ws": "skill_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": 2,
+        "cursor": "{saved.s1}",
+        "query": "help"
+      }
+    },
+    {
+      "ws": "skill_list",
+      "params": {
+        "limit": 2,
+        "cursor": "{saved.s1}"
+      }
+    },
+    {
+      "ws": "skill_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "cursor": "zzz"
+      }
+    },
+    {
+      "ws": "skill_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": 1,
+        "cursor": ""
+      }
+    },
+    {
+      "ws": "skill_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "cursor": 3
+      }
+    },
+    {
+      "ws": "skill_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "query": " HELP "
+      }
+    },
+    {
+      "ws": "skill_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "query": "user",
+        "scope": "user",
+        "limit": 1
+      }
+    },
+    {
+      "ws": "skill_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "query": ""
+      }
+    },
+    {
+      "ws": "skill_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "query": 7
+      }
+    },
+    {
+      "ws": "skill_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "query": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+      }
+    }
+  ]
+}

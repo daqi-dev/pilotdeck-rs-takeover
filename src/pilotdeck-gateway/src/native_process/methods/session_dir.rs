@@ -113,14 +113,20 @@ impl Requests {
             .get("limit")
             .and_then(JsValue::as_number)
             .filter(|n| n.is_finite() && *n > 0.0);
-        let offset: f64 = params
-            .get("cursor")
-            .and_then(JsValue::as_string)
-            .and_then(|s| s.to_utf8().ok())
-            .filter(|s| !s.is_empty())
-            .and_then(|s| s.parse::<f64>().ok())
-            .filter(|n| n.is_finite())
-            .unwrap_or(0.0);
+        // `input.cursor ? Number.parseInt(input.cursor, 10) : 0`, then a
+        // non-finite result is 0 (GatewaySessionCatalog.ts:24-25): any truthy
+        // value goes through `String(...)`, a numeric prefix is kept, and a
+        // negative offset stays negative for the next-cursor arithmetic.
+        let offset: f64 = match params.get("cursor") {
+            Some(cursor) if crate::metadata::js_truthy(cursor) => {
+                let text = crate::js_value::to_string_units(cursor)
+                    .map_err(|_| RequestError::new("Maximum call stack size exceeded"))?;
+                let parsed =
+                    crate::runtime::mcp::client::parse_int(&String::from_utf16_lossy(&text));
+                if parsed.is_finite() { parsed } else { 0.0 }
+            }
+            _ => 0.0,
+        };
         let home = self.options.home.clone();
         let input = SessionCatalogListInput {
             project_root: project_root.clone(),
@@ -368,6 +374,7 @@ impl Requests {
         // the transcript after all (use its writer or report busy).
         let recorders = self.recorders.clone();
         let home = self.options.home.clone();
+        let transcript = fence_path.clone();
         let value_field: JsValue = params.get("value").cloned().unwrap_or(JsValue::Undefined);
         let value_str: Option<String> = match &value_field {
             JsValue::Null | JsValue::Undefined => None,
@@ -410,7 +417,7 @@ impl Requests {
             // append below covers both paths.
             let live = || {
                 let Some((owner, recorder)) =
-                    super::super::assembly::live_recorder(&recorders, &key_clone)
+                    super::super::assembly::live_recorder_at(&recorders, &key_clone, &transcript)
                 else {
                     return Ok(None);
                 };
@@ -522,12 +529,27 @@ impl Requests {
         // and the retired writer's no-op append reported `recorded: true`.
         // GatewaySessionHistoryBundle.ts:250: `projectKey ? projectKey :
         // fallbackProjectRoot`, no registry lookup.
-        let project_root = self.options.project_root_for(
-            params
-                .get("projectKey")
-                .and_then(JsValue::as_string)
-                .filter(|key| !key.is_empty()),
-        );
+        // A truthy non-string key fails in the bundle's `path.resolve`, which
+        // only runs when the router has no live session
+        // (InProcessGateway.ts:2068-2077); a live one records first.
+        let project_root = match super::super::projects::history_project_key(params) {
+            Ok(key) => self.options.project_root_for(key),
+            Err(error) => {
+                if let Some((_, recorder)) =
+                    super::super::assembly::live_recorder(&self.recorders, &session_key)
+                {
+                    if let Some(message) = missing_status {
+                        return Err(RequestError::new(message));
+                    }
+                    recorder
+                        .writer()
+                        .record_agent_status_message_checked(&session_key, &turn_id, &status)
+                        .map_err(|e| RequestError::new(e.to_string()))?;
+                    return Ok(object([("recorded", JsValue::Bool(true))]));
+                }
+                return Err(error);
+            }
+        };
         let recorded = record_status_message(
             self.options.home.clone(),
             project_root,
@@ -1009,12 +1031,13 @@ mod tests {
         );
     }
 
-    /// #1874: a recorder whose writer already closed must surface the close
-    /// as an error, not answer `updated: true` with nothing on disk. The live
-    /// closure's checked append is what makes the closed writer visible; the
-    /// unchecked form the cold path uses would silently no-op.
+    /// #1874: a recorder whose writer already closed must not answer
+    /// `updated: true` with nothing on disk. A closed writer is no longer the
+    /// session's writer (the baseline router forgets a closed session), so
+    /// the lookup skips it and the cold path appends the entry; a close that
+    /// races the append itself still fails the live closure's checked append.
     #[tokio::test]
-    async fn rename_reports_a_closed_writer_as_an_error() {
+    async fn rename_skips_a_closed_writer_for_the_cold_path() {
         let (_scratch, requests) = crate::native_process::management_tests::setup();
         let home = requests.options.home.clone();
         let project = requests.options.project.clone();
@@ -1041,7 +1064,7 @@ mod tests {
         // A close that raced the request — the exact window fix-r2's checked
         // append exists for.
         recorder.writer().close();
-        let error = crate::runtime::turn::gateway::GatewayRequests::request(
+        let updated = crate::runtime::turn::gateway::GatewayRequests::request(
             &requests,
             "rename_session".into(),
             crate::metadata::object([
@@ -1050,18 +1073,24 @@ mod tests {
             ]),
         )
         .await
-        .expect_err("#1874 a closed session writer is an error, not a silent rename");
+        .expect("#1874 a closed writer is not the live writer: the rename takes the cold path");
+        negative_assert_eq!(
+            updated.get("updated"),
+            Some(&pilotdeck_protocol::JsValue::Bool(true)),
+            "#1874 the cold rename reports the write"
+        );
+        let text = std::fs::read_to_string(recorder.writer().path())
+            .expect("#1874 the cold rename wrote the transcript");
         negative_assert!(
-            String::from_utf16_lossy(error.message.units()).contains("the session writer closed"),
-            "#1874 the rename error names the closed session writer, got {}",
-            String::from_utf16_lossy(error.message.units())
+            text.contains("must-not-vanish"),
+            "#1874 the rename is on disk, not dropped by the closed writer"
         );
     }
 
-    /// #1874: the status twin of the closed-writer gate — a closed writer
-    /// must be an error, not a `recorded: true` with nothing on disk.
+    /// #1874: the status twin — a writer closed before the request is skipped
+    /// and the cold path records the status on disk.
     #[tokio::test]
-    async fn status_reports_a_closed_writer_as_an_error() {
+    async fn status_skips_a_closed_writer_for_the_cold_path() {
         let (_scratch, requests) = crate::native_process::management_tests::setup();
         let home = requests.options.home.clone();
         let project = requests.options.project.clone();
@@ -1088,7 +1117,7 @@ mod tests {
         // A close that raced the request — the exact window fix-r2's checked
         // append exists for.
         recorder.writer().close();
-        let error = crate::runtime::turn::gateway::GatewayRequests::request(
+        let recorded = crate::runtime::turn::gateway::GatewayRequests::request(
             &requests,
             "record_agent_status_message".into(),
             crate::metadata::object([
@@ -1101,11 +1130,17 @@ mod tests {
             ]),
         )
         .await
-        .expect_err("#1874 a closed session writer is an error, not a recorded status");
+        .expect("#1874 a closed writer is not the live writer: the status takes the cold path");
+        negative_assert_eq!(
+            recorded.get("recorded"),
+            Some(&pilotdeck_protocol::JsValue::Bool(true)),
+            "#1874 the cold status reports the write"
+        );
+        let text = std::fs::read_to_string(recorder.writer().path())
+            .expect("#1874 the cold status wrote the transcript");
         negative_assert!(
-            String::from_utf16_lossy(error.message.units()).contains("the session writer closed"),
-            "#1874 the status error names the closed session writer, got {}",
-            String::from_utf16_lossy(error.message.units())
+            text.contains("must-not-vanish"),
+            "#1874 the status is on disk, not dropped by the closed writer"
         );
     }
 

@@ -109,31 +109,32 @@ impl Requests {
     /// `ProjectRuntimeRegistry.usageSnapshotForSdk` via this process's router stats.
     fn tools_usage_snapshot(&self, params: &JsValue) -> Result<JsValue, RequestError> {
         let session_key = optional_session_key(params);
-        let lease = self
-            .project
-            .acquire(None)
-            .map_err(|e| RequestError::new(e.to_string()))?;
-        let router_arc = lease
-            .runtime()
-            .resources()
-            .get::<ProjectResources>()
-            .ok_or_else(router_error)?
-            .context()
-            .resource(Resource::Router)
-            .ok_or_else(router_error)?;
-        let router = router_arc
-            .as_any()
-            .downcast_ref::<crate::runtime::project::model::RouterResources>()
-            .ok_or_else(router_error)?;
-        Ok(router.router.usage_snapshot(session_key.as_ref()))
+        self.with_stats_router(params, |router| router.usage_snapshot(session_key.as_ref()))
     }
 
     /// `ProjectRuntimeRegistry.modelUsageSnapshotForSdk` via this process's router stats.
     fn tools_model_usage_snapshot(&self, params: &JsValue) -> Result<JsValue, RequestError> {
         let session_key = optional_session_key(params);
+        self.with_stats_router(params, |router| {
+            router.model_usage_snapshot(session_key.as_ref())
+        })
+    }
+
+    /// The model router of `this.resolve(input.projectKey)`
+    /// (ProjectRuntimeRegistry.ts:1314,1352 → :1540-1542,
+    /// `resolve(projectKey ?? fallbackProjectRoot)`): a nullish key is the
+    /// fallback project, any string — the empty one is the working directory —
+    /// names its own runtime, and a non-string fails in `path.resolve`.
+    fn with_stats_router(
+        &self,
+        params: &JsValue,
+        read: impl FnOnce(&crate::runtime::model::router::RouterRuntime) -> JsValue,
+    ) -> Result<JsValue, RequestError> {
+        let key = super::super::projects::nullish_project_key(params)?;
+        let root = key.map(|key| self.options.project_root_for(Some(key)));
         let lease = self
             .project
-            .acquire(None)
+            .acquire(root.as_deref())
             .map_err(|e| RequestError::new(e.to_string()))?;
         let router_arc = lease
             .runtime()
@@ -147,7 +148,7 @@ impl Requests {
             .as_any()
             .downcast_ref::<crate::runtime::project::model::RouterResources>()
             .ok_or_else(router_error)?;
-        Ok(router.router.model_usage_snapshot(session_key.as_ref()))
+        Ok(read(&router.router))
     }
 
     /// `mcpServerStatusForSdk` (`ProjectRuntimeRegistry.ts:1293-1307`) via the

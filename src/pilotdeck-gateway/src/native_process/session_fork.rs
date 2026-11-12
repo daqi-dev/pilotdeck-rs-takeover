@@ -704,12 +704,12 @@ pub(super) fn fork_session(
     options: &Options,
     input: &JsValue,
 ) -> Result<JsValue, ReplacementError> {
-    // `projectKey ? projectKey : fallbackProjectRoot`.
-    let project_key = match field(input, "projectKey") {
-        JsValue::String(key) if !key.is_empty() => Some(key.clone()),
-        _ => None,
-    };
-    let project_root = options.project_root_for(project_key.as_ref());
+    // `input.projectKey ?? options.projectRoot` (forkSession.ts:345), resolved
+    // for the chat dir before the session id is sanitized
+    // (ProjectSessionStorage.ts:404-405).
+    let project_key = super::projects::nullish_project_key(input)
+        .map_err(super::session_replace::project_error)?;
+    let project_root = options.project_root_for(project_key);
     let source = session_key(input)?;
     let chat_dir = crate::session_chat_dir(
         &options.home,

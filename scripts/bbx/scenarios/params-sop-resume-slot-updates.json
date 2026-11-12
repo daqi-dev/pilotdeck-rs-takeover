@@ -1,0 +1,16 @@
+{
+  "name": "params-sop-resume-slot-updates",
+  "about": "sop_resume.slotUpdates 只在 SOP 模块开启时进入状态存储（StaffDeckSopControlPlane.ts:33-44 → SopStateStore.ts:197,234,240，开启需要 StaffDeck 绑定与外部服务，不在场景里）。这里只比模块未开启时它不改变结果：agent / system / human 来源带对象、数组、字符串、null 的 slotUpdates，带与不带 projectKey。",
+  "files": {
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+    "home/work/alpha/README.md": "alpha\n"
+  },
+  "steps": [
+    { "ws": "sop_resume", "params": { "sessionKey": "s-sop", "source": "agent", "requestId": "r1", "waitId": "w1", "message": "go", "slotUpdates": { "customer": "acme", "count": 2 } } },
+    { "ws": "sop_resume", "params": { "sessionKey": "s-sop", "source": "agent", "requestId": "r2", "waitId": "w1", "message": "go", "slotUpdates": ["not", "a", "record"] } },
+    { "ws": "sop_resume", "params": { "sessionKey": "s-sop", "source": "system", "requestId": "r3", "waitId": "w1", "message": "go", "slotUpdates": "text", "projectKey": "{HOME}/work/alpha" } },
+    { "ws": "sop_resume", "params": { "sessionKey": "s-sop", "source": "agent", "requestId": "r4", "slotUpdates": null } },
+    { "ws": "sop_resume", "params": { "sessionKey": "s-sop", "source": "human", "requestId": "r5", "waitId": "w1", "message": "ok", "expectedRevision": 0, "slotUpdates": { "approved": true } } },
+    { "ws": "sop_resume", "params": { "sessionKey": "s-sop", "source": "agent", "requestId": "r6", "waitId": "w1", "message": "go", "slotUpdates": { "x": 1 }, "projectKey": "{HOME}/work/gamma" } }
+  ]
+}

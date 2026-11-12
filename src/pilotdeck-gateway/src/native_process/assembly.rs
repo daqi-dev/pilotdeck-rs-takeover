@@ -105,12 +105,45 @@ pub(crate) fn live_recorder(
         let Some(recorder) = weak.upgrade() else {
             continue;
         };
+        // A closed session's writer can outlive the close in a stray Arc; it
+        // drops every append, so it is not the live writer (the baseline's
+        // router forgets the session on close, SessionRouter.ts:412-413).
+        if recorder.writer().is_closed() {
+            continue;
+        }
         if key == session_key {
             return Some((key.clone(), recorder));
         }
         alias = Some((key.clone(), recorder));
     }
     alias
+}
+
+/// [`live_recorder`] restricted to the writer of one transcript file. A
+/// request that names a project (`tag_session` / `rename_session` with an
+/// explicit `projectKey`) writes that project's transcript in the baseline
+/// (`createLocalGateway.ts:1116-1140` builds a storage for the resolved
+/// project), so a session loaded under another project is not its writer.
+pub(crate) fn live_recorder_at(
+    recorders: &Recorders,
+    session_key: &JsString,
+    transcript: &std::path::Path,
+) -> Option<(JsString, Arc<Recorder>)> {
+    let (owner, recorder) = live_recorder(recorders, session_key)?;
+    // Read-only identity: unlike `canonical_transcript_path` this never
+    // creates the chat directory of a project nothing has written to yet.
+    let identity = |path: &std::path::Path| {
+        path.canonicalize().unwrap_or_else(|_| {
+            match (
+                path.parent().map(std::path::Path::canonicalize),
+                path.file_name(),
+            ) {
+                (Some(Ok(parent)), Some(name)) => parent.join(name),
+                _ => path.to_path_buf(),
+            }
+        })
+    };
+    (identity(recorder.writer().path()) == identity(transcript)).then_some((owner, recorder))
 }
 
 /// The controlled registry switch for collection and testing (#1369).
