@@ -21,8 +21,9 @@ mod tools;
 pub use fire::{CronFire, CronFireDeps, CronFirePort, CronRunOutcome};
 pub use manager::{
     CronActiveRun, CronAgentGateway, CronError, CronGatewayBody, CronLogger, CronManager,
-    CronManagerConfig, CronManagerOptions, CronRuntime, CronTurnEventHandler, CronTurnEventSink,
-    CronTurnSubmit, NoopCronLogger, SessionAdmissionCronGateway,
+    CronManagerConfig, CronManagerOptions, CronResultDeliveryHandler, CronRuntime,
+    CronTurnEventHandler, CronTurnEventSink, CronTurnSubmit, NoopCronLogger,
+    SessionAdmissionCronGateway,
 };
 pub use methods::{cron_create, cron_delete, cron_list, cron_run_now, cron_stop, cron_update};
 pub use migration::{MigrationInput, migrate_cron_stores};

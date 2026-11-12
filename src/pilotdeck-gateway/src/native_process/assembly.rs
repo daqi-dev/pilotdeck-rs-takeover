@@ -1506,6 +1506,7 @@ async fn start_assembly(
                 on_turn_event: Some(cron::broadcast_turn_events(
                     build_connection_broadcast.clone(),
                 )),
+                on_result_delivery: Some(cron::deliver_to_channels(build_channels.clone())),
             };
             // `onAlwaysOnTurnEvent` (src/cli/pilotdeck.ts:82-84): the same
             // `always-on:turn-event` broadcast as cron's.

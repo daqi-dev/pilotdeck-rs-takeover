@@ -66,6 +66,32 @@ impl ChannelServer {
         }))
     }
 
+    /// `deliverCronResult` (pilotdeckServer.ts:305-309): the running channel
+    /// keyed by `originChannelKey ?? channelKey` takes the delivery; no such
+    /// channel (or one without the optional method) is `false`.
+    pub fn deliver_cron_result(
+        &self,
+        delivery: super::im_cron::CronResultDelivery,
+    ) -> BoxFuture<bool> {
+        let key = delivery
+            .origin_channel_key
+            .clone()
+            .unwrap_or_else(|| delivery.channel_key.clone());
+        let adapter = self
+            .0
+            .state
+            .lock()
+            .expect("channel state")
+            .running
+            .iter()
+            .find(|entry| entry.key == key)
+            .map(|entry| entry.adapter.clone());
+        match adapter {
+            Some(adapter) => Box::pin(async move { adapter.deliver_cron_result(&delivery).await }),
+            None => Box::pin(async { false }),
+        }
+    }
+
     pub fn start_channels(&self, channels: Vec<Arc<dyn ChannelAdapter>>) {
         for channel in channels {
             let key = channel.channel_key().clone();

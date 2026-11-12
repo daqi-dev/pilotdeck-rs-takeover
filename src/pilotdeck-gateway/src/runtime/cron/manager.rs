@@ -285,6 +285,10 @@ pub type CronTurnEventSink<'a> = &'a mut dyn FnMut(&JsValue) -> bool;
 /// `onTurnEvent(sessionKey, channelKey, event)` (CronFire.ts:26).
 pub type CronTurnEventHandler = Arc<dyn Fn(&JsString, &JsString, &JsValue) + Send + Sync>;
 
+/// `onResultDelivery(delivery)` (CronManager.ts `CreateCronManagerOptions`,
+/// CronFire.ts:228-239): the embedding's fire-and-forget delivery hook.
+pub type CronResultDeliveryHandler = Arc<dyn Fn(&JsValue) + Send + Sync>;
+
 /// TS `CronAgentGatewayPort` (CronAgentGatewayPort.ts:19-28): the only gateway
 /// operations a cron run may invoke. `submit_turn` stands for the whole
 /// event-stream turn — it returns only after the turn has unwound, handing
@@ -833,12 +837,20 @@ impl CronRuntime {
                     }
                 })
             },
-            // The app-level delivery handler is not surfaced through
-            // `CronManagerOptions` yet — the native assembly keeps the
-            // callback absent, registered as a wiring gap (not a port
-            // limitation) in A8.3-CRON-FIRE-EVENTSTREAM-001; follow-up
-            // #1826 owns the channel-delivery family.
-            on_result_delivery: None,
+            // `onResultDelivery` (CronManager.ts:200 → CronFire.ts:228): the
+            // manager's handler, read at each delivery like `onTurnEvent`.
+            on_result_delivery: {
+                let manager = self.manager.clone();
+                Some(Arc::new(move |delivery: &JsValue| {
+                    if let Some(handler) = manager
+                        .upgrade()
+                        .and_then(|manager| manager.result_delivery.get().cloned())
+                    {
+                        handler(delivery);
+                    }
+                    Ok(())
+                }))
+            },
             // `onTurnEvent` (CronManager.ts:199 → CronFire.ts:137): the
             // manager's handler, read at each event so a handler the
             // embedding installs after construction still reaches runs.
@@ -2141,6 +2153,9 @@ pub struct CronManager {
     /// `CreateCronManagerOptions.onTurnEvent` (CronManager.ts:42), installed
     /// once by the embedding (`set_turn_event_handler`).
     turn_events: std::sync::OnceLock<CronTurnEventHandler>,
+    /// `CreateCronManagerOptions.onResultDelivery`, installed once by the
+    /// embedding (`set_result_delivery_handler`).
+    result_delivery: std::sync::OnceLock<CronResultDeliveryHandler>,
 }
 
 struct ManagerState {
@@ -2164,6 +2179,7 @@ impl CronManager {
             }),
             self_weak: self_weak.clone(),
             turn_events: std::sync::OnceLock::new(),
+            result_delivery: std::sync::OnceLock::new(),
         }))
     }
 
@@ -2178,6 +2194,12 @@ impl CronManager {
     /// (CronFire.ts:105-106). A second install is ignored.
     pub fn set_turn_event_handler(&self, handler: CronTurnEventHandler) {
         let _ = self.turn_events.set(handler);
+    }
+
+    /// Install `onResultDelivery`: every finished run's delivery record is
+    /// handed to it (CronFire.ts:228-239). A second install is ignored.
+    pub fn set_result_delivery_handler(&self, handler: CronResultDeliveryHandler) {
+        let _ = self.result_delivery.set(handler);
     }
 
     /// `bindAgentGateway` (CronManager.ts:70-75).
