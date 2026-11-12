@@ -695,9 +695,24 @@ async fn real_ts_redirect_exact_boundary_without_sockets() {
     }
     impl ModelHttpTransport for BoundaryTransport {
         fn send(&self, request: hyper::Request<Full<Bytes>>) -> TransportFuture {
+            // The oracle was recorded at the TS fetch hook, before undici
+            // adds its wire defaults; the Rust request already carries that
+            // wire block (`host`, `connection`, `accept-language`,
+            // `sec-fetch-mode`, `accept-encoding`), so compare the caller's
+            // headers only.
             let mut headers = request
                 .headers()
                 .iter()
+                .filter(|(key, _)| {
+                    !matches!(
+                        key.as_str(),
+                        "host"
+                            | "connection"
+                            | "accept-language"
+                            | "sec-fetch-mode"
+                            | "accept-encoding"
+                    )
+                })
                 .map(|(key, value)| (key.as_str(), value.to_str().unwrap()))
                 .collect::<Vec<_>>();
             headers.sort();
