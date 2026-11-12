@@ -642,6 +642,12 @@ async fn start_assembly(
                 // `modules.skills.enabled: false` (ProjectSessionRuntimeBundle.ts:250-300):
                 // no `read_skill`, and the session contributes no skills.
                 let skills_disabled = crate::runtime::project::skills_module_disabled(&snapshot);
+                // `snapshot.config.modules?.knowledge` (ProjectSessionRuntimeBundle.ts:316).
+                let knowledge_binding = snapshot
+                    .get("config")
+                    .and_then(|config| config.get("modules"))
+                    .and_then(|modules| modules.get("knowledge"))
+                    .cloned();
                 // `snapshot.config.tools?.webSearch` (ProjectExecutionWorldBundle.ts:124).
                 let web_search_config = snapshot
                     .get("config")
@@ -1066,6 +1072,7 @@ async fn start_assembly(
                             session_mcp,
                         )?
                         .with_extra_tools(extra_tools, excluded_tools)
+                        .with_knowledge(knowledge_binding.as_ref())
                         .with_sandbox(profile.sandbox_mode)
                         .with_interaction(profile.interaction, can_prompt_override)
                         .with_web_search(&web_search_config)
@@ -2139,7 +2146,8 @@ pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(),
     // (loadPilotConfig.ts:343-375). Plugin and SDK session hooks are served
     // (`native_process/hooks.rs`).
     // `modules`: a built-in binding (`provider: pilotdeck`) and a disabled
-    // `skills` / `knowledge` slot need no outside service and are served.
+    // `skills` / `knowledge` slot need no outside service and are served; an
+    // external `knowledge` module is reached only by `knowledge_query`.
     // A protocol binding (an external module process or endpoint) and the
     // StaffDeck `sop` module are not served yet.
     let external = |binding: &JsValue| {
@@ -2155,7 +2163,9 @@ pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(),
             modules
                 .own_entries()
                 .iter()
-                .any(|(slot, binding)| slot.equals_str("sop") || external(binding))
+                .any(|(slot, binding)| {
+                    slot.equals_str("sop") || (external(binding) && !slot.equals_str("knowledge"))
+                })
         })
     {
         return Err(

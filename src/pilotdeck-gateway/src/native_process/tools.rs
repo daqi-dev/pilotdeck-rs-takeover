@@ -744,6 +744,11 @@ impl SessionTools {
             &self.mcp,
             &self.world,
         );
+        // `sessionTools.register(createKnowledgeQueryTool(...))`, after the
+        // composed MCP / extension tools and before the user-dialog tools.
+        if let Some(tool) = &self.world.knowledge {
+            let _ = tools.register(tool.clone());
+        }
         if let Some((kinds, channel)) = &self.user_dialog {
             for tool in builtin::request_user::user_dialog_tools(kinds, channel) {
                 tools
@@ -1798,6 +1803,9 @@ pub(super) struct ExecutionWorld {
     deferred: Option<DeferredTools>,
     /// `readSkill: { loader, lister }`: the project's plugin runtime.
     skills: Option<Arc<crate::runtime::plugins::PluginRuntime>>,
+    /// `knowledge_query` over the external `modules.knowledge` binding
+    /// (ProjectSessionRuntimeBundle.ts:316-326).
+    knowledge: Option<Arc<builtin::knowledge_query::KnowledgeQueryTool>>,
     /// `sdkSessionConfig.skills`: the session's skills restricted to these
     /// names (`filterSessionSkills`), for `read_skill` and the prompt.
     skills_filter: Option<Vec<String>>,
@@ -1831,6 +1839,7 @@ impl ExecutionWorld {
             web_search: None,
             deferred: None,
             skills: None,
+            knowledge: None,
             skills_filter: None,
             managed_tools: None,
             extra_tools: Vec::new(),
@@ -1876,6 +1885,20 @@ impl SessionTools {
     ) -> Self {
         self.world.extra_tools = extra;
         self.world.excluded_tools = excluded;
+        self
+    }
+
+    /// An external `modules.knowledge` binding: the session gets
+    /// `knowledge_query`, one module port per session as in the baseline.
+    pub(super) fn with_knowledge(mut self, binding: Option<&JsValue>) -> Self {
+        self.world.knowledge = binding
+            .filter(|binding| {
+                binding
+                    .as_object()
+                    .is_some_and(|binding| binding.contains_key("implementationId"))
+            })
+            .and_then(builtin::knowledge_query::KnowledgeQueryTool::from_binding)
+            .map(Arc::new);
         self
     }
 

@@ -1,0 +1,357 @@
+{
+ "name": "tool-knowledge-query",
+ "about": "knowledge_query（composition/domainPorts.ts:107-169，HttpModuleClient.ts:23-160，ProjectSessionRuntimeBundle.ts:316-326）：modules.knowledge 绑到外部 HTTP 模块（假 provider 兼当模块端点：GET 清单、POST module_call）时会话里多出 knowledge_query。覆盖：成功查询（宿主把 tenantId / agentId 并进输入，多余字段原样转发）、模块回结构化失败、回不合协议的应答、HTTP 500、缺 query、query 类型错误。比较发给模块的请求、工具结果与发给模型的工具清单。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  knowledge:\n    enabled: true\n    implementationId: bbx.knowledge\n    contract: staffdeck.knowledge/v1\n    transport: module-http-v2\n    endpoint: {MOCK}/kb\n    methods:\n      - query\n    tenantId: tenant-1\n    agentId: agent-1\n",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Tool run\"}"
+   }
+  },
+  {
+   "name": "kb-manifest",
+   "unless": [
+    "\""
+   ],
+   "reply": {
+    "status": 200,
+    "body": {
+     "protocolVersion": "2.0",
+     "implementationId": "bbx.knowledge",
+     "contract": "staffdeck.knowledge/v1",
+     "transport": "module-http-v2",
+     "methods": [
+      "query",
+      "list_bases"
+     ]
+    }
+   }
+  },
+  {
+   "name": "kb-ok",
+   "when": [
+    "\"method\":\"module_call\"",
+    "what is bbx"
+   ],
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "kb-resp-1",
+     "inReplyTo": "module-http-1",
+     "requestId": "knowledge-query-1",
+     "ok": true,
+     "payload": {
+      "result": {
+       "answer": "bbx is a black-box diff",
+       "citations": [
+        {
+         "id": "c1",
+         "title": "README"
+        }
+       ]
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "kb-fail",
+   "when": [
+    "\"method\":\"module_call\"",
+    "make it fail"
+   ],
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "kb-resp-2",
+     "inReplyTo": "module-http-2",
+     "requestId": "knowledge-query-2",
+     "ok": false,
+     "code": "KB_UNAVAILABLE",
+     "error": {
+      "code": "KB_UNAVAILABLE",
+      "message": "Knowledge base is rebuilding.",
+      "retryability": "retry_after_status"
+     }
+    }
+   }
+  },
+  {
+   "name": "kb-bad",
+   "when": [
+    "\"method\":\"module_call\"",
+    "bad envelope"
+   ],
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "kb-resp-3",
+     "inReplyTo": "module-http-9",
+     "ok": true,
+     "payload": {
+      "result": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "kb-500",
+   "when": [
+    "\"method\":\"module_call\"",
+    "server error"
+   ],
+   "reply": {
+    "status": 500,
+    "body": {
+     "error": "boom"
+    }
+   }
+  },
+  {
+   "name": "q06-after",
+   "when": [
+    "q06:",
+    "\"tool_call_id\":\"call_q06\""
+   ],
+   "reply": {
+    "text": "Done 06."
+   }
+  },
+  {
+   "name": "q06",
+   "when": [
+    "q06:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_q06",
+     "name": "knowledge_query",
+     "arguments": {
+      "query": "server error",
+      "tenantId": "model-tenant"
+     }
+    }
+   }
+  },
+  {
+   "name": "q05-after",
+   "when": [
+    "q05:",
+    "\"tool_call_id\":\"call_q05\""
+   ],
+   "reply": {
+    "text": "Done 05."
+   }
+  },
+  {
+   "name": "q05",
+   "when": [
+    "q05:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_q05",
+     "name": "knowledge_query",
+     "arguments": {
+      "query": "bad envelope"
+     }
+    }
+   }
+  },
+  {
+   "name": "q04-after",
+   "when": [
+    "q04:",
+    "\"tool_call_id\":\"call_q04\""
+   ],
+   "reply": {
+    "text": "Done 04."
+   }
+  },
+  {
+   "name": "q04",
+   "when": [
+    "q04:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_q04",
+     "name": "knowledge_query",
+     "arguments": {
+      "query": 5
+     }
+    }
+   }
+  },
+  {
+   "name": "q03-after",
+   "when": [
+    "q03:",
+    "\"tool_call_id\":\"call_q03\""
+   ],
+   "reply": {
+    "text": "Done 03."
+   }
+  },
+  {
+   "name": "q03",
+   "when": [
+    "q03:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_q03",
+     "name": "knowledge_query",
+     "arguments": {}
+    }
+   }
+  },
+  {
+   "name": "q02-after",
+   "when": [
+    "q02:",
+    "\"tool_call_id\":\"call_q02\""
+   ],
+   "reply": {
+    "text": "Done 02."
+   }
+  },
+  {
+   "name": "q02",
+   "when": [
+    "q02:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_q02",
+     "name": "knowledge_query",
+     "arguments": {
+      "query": "make it fail"
+     }
+    }
+   }
+  },
+  {
+   "name": "q01-after",
+   "when": [
+    "q01:",
+    "\"tool_call_id\":\"call_q01\""
+   ],
+   "reply": {
+    "text": "Done 01."
+   }
+  },
+  {
+   "name": "q01",
+   "when": [
+    "q01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_q01",
+     "name": "knowledge_query",
+     "arguments": {
+      "query": "what is bbx",
+      "knowledge_base_ids": [
+       "kb-1"
+      ]
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-kq",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-kq",
+    "channelKey": "test",
+    "message": "q01: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-kq",
+    "channelKey": "test",
+    "message": "q02: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-kq",
+    "channelKey": "test",
+    "message": "q03: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-kq",
+    "channelKey": "test",
+    "message": "q04: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-kq",
+    "channelKey": "test",
+    "message": "q05: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-kq",
+    "channelKey": "test",
+    "message": "q06: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-kq"
+   }
+  }
+ ]
+}

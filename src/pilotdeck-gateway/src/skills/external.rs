@@ -238,7 +238,16 @@ impl ModuleHttpTransport for HyperModuleTransport {
                 headers,
                 Bytes::from(request.body),
                 || crate::runtime::model::http::TransportFailure::fetch_failed(None),
-                |request| inner.send(request),
+                |mut request| {
+                    // `HttpModuleClient` uses Node's global `fetch`: undici's
+                    // wire block with its defaults (`user-agent: node`).
+                    let wire = crate::fetch_redirect::node_fetch_wire_headers(
+                        request.uri(),
+                        request.headers(),
+                    );
+                    *request.headers_mut() = wire;
+                    inner.send(request)
+                },
             );
             let response = match tokio::time::timeout_at(deadline, exchange).await {
                 Ok(response) => response.map_err(|_| ModuleTransportError::Unavailable)?,
@@ -391,11 +400,32 @@ impl Drop for WaiterGuard<'_> {
     }
 }
 
+/// Who a module call is from: `runId` (also the `operationId` and the
+/// `requestId` prefix) and the `module` target.
+#[derive(Clone, Copy, Debug)]
+struct ModuleCallScope {
+    run_id: &'static str,
+    module: &'static str,
+}
+impl ModuleCallScope {
+    const SKILLS_MANAGEMENT: Self = Self {
+        run_id: "skills-management",
+        module: "skills",
+    };
+    const KNOWLEDGE: Self = Self {
+        run_id: "knowledge",
+        module: "knowledge",
+    };
+}
+
 /// `domainPorts.ts:75-105`. One instance mirrors one `createSkillManagementPort`
 /// call: the manifest cache, `requestId` counter and HTTP `messageId` counter
 /// live on the port, exactly as they do on the TS closure.
 pub struct ExternalSkillsPort<T> {
     binding: ExternalSkillBinding,
+    /// `runId` / `operationId`, `module` and the `requestId` prefix of every
+    /// module call this port sends.
+    scope: ModuleCallScope,
     transport: Arc<T>,
     env: Arc<dyn ModuleEnvironment>,
     request_sequence: AtomicU64,
@@ -423,6 +453,7 @@ impl<T: ModuleHttpTransport + 'static> ExternalSkillsPort<T> {
     ) -> Self {
         Self {
             binding,
+            scope: ModuleCallScope::SKILLS_MANAGEMENT,
             transport,
             env,
             request_sequence: AtomicU64::new(0),
@@ -454,7 +485,8 @@ impl<T: ModuleHttpTransport + 'static> ExternalSkillsPort<T> {
             )));
         }
         let request_id = format!(
-            "skills-management-{operation}-{}",
+            "{}-{operation}-{}",
+            self.scope.run_id,
             self.next(&self.request_sequence)
         );
         let response = self.client_call(operation, &request_id, input).await?;
@@ -476,6 +508,47 @@ impl<T: ModuleHttpTransport + 'static> ExternalSkillsPort<T> {
         Ok(result)
     }
 
+    /// `createKnowledgeModulePort(binding)` (domainPorts.ts:107-128): the
+    /// same HTTP module client, sending `module: "knowledge"` calls under the
+    /// `knowledge` run / operation ids.
+    pub fn knowledge(binding: ExternalSkillBinding, transport: Arc<T>) -> Self {
+        let mut port = Self::new(binding, transport);
+        port.scope = ModuleCallScope::KNOWLEDGE;
+        port
+    }
+
+    /// `KnowledgeModulePort.call(operation, input)` (domainPorts.ts:111-126):
+    /// the declared-method check, the module call, the failure projection,
+    /// then `payload?.result` as is.
+    pub async fn knowledge_call(&self, operation: &str, input: &JsValue) -> Result<JsValue> {
+        if !self
+            .binding
+            .methods
+            .iter()
+            .any(|declared| declared == operation)
+        {
+            return Err(SkillError::protocol_failure(format!(
+                "Knowledge operation '{operation}' is not declared."
+            )));
+        }
+        let request_id = format!(
+            "{}-{operation}-{}",
+            self.scope.run_id,
+            self.next(&self.request_sequence)
+        );
+        let response = self.client_call(operation, &request_id, input).await?;
+        let object = response.as_object().expect("validated module response");
+        if object.get("ok").and_then(JsValue::as_bool) != Some(true) {
+            return Err(module_failure(object));
+        }
+        Ok(object
+            .get("payload")
+            .and_then(JsValue::as_object)
+            .and_then(|payload| payload.get("result"))
+            .cloned()
+            .unwrap_or(JsValue::Undefined))
+    }
+
     fn next(&self, counter: &AtomicU64) -> u64 {
         counter.fetch_add(1, Ordering::SeqCst) + 1
     }
@@ -492,7 +565,7 @@ impl<T: ModuleHttpTransport + 'static> ExternalSkillsPort<T> {
         self.load_manifest_cached().await?;
         let message_id = format!("module-http-{}", self.next(&self.message_sequence));
         let authorization = self.authorization()?;
-        let request = request_body(&message_id, request_id, operation, input)?;
+        let request = request_body(&self.scope, &message_id, request_id, operation, input)?;
         let body = stringify_json(&request).ok().flatten().ok_or_else(|| {
             SkillError::protocol_failure("Module call request is not serializable.")
         })?;
@@ -750,6 +823,7 @@ impl<T: ModuleHttpTransport + 'static> ExternalSkillsPort<T> {
 }
 
 fn request_body(
+    scope: &ModuleCallScope,
     message_id: &str,
     request_id: &str,
     operation: &str,
@@ -760,10 +834,10 @@ fn request_body(
         ("kind", "request".into()),
         ("method", "module_call".into()),
         ("messageId", message_id.into()),
-        ("runId", "skills-management".into()),
-        ("operationId", "skills-management".into()),
+        ("runId", scope.run_id.into()),
+        ("operationId", scope.run_id.into()),
         ("requestId", request_id.into()),
-        ("module", "skills".into()),
+        ("module", scope.module.into()),
         ("payload", JsValue::Object(payload)),
     ])))
 }
