@@ -256,6 +256,21 @@ pub fn orchestration_decide(
     let Some(config) = config else {
         return none();
     };
+    // applyOrchestration.ts:20-22 (`${undefined}` prints "undefined"; the
+    // tier list prints as Array.prototype.toString).
+    let tier_text = tier.map_or_else(
+        || "undefined".to_owned(),
+        |tier| String::from_utf16_lossy(tier.units()),
+    );
+    let trigger_tiers = config
+        .trigger_tiers
+        .iter()
+        .map(|tier| String::from_utf16_lossy(tier.units()))
+        .collect::<Vec<_>>()
+        .join(",");
+    println!(
+        "[autoOrch] input: tier={tier_text}, isMain={is_main_agent}, alreadyOrch={already_orchestrating}, triggerTiers={trigger_tiers}"
+    );
     if !config.enabled || !is_main_agent {
         return none();
     }
@@ -263,8 +278,10 @@ pub fn orchestration_decide(
         && !config.trigger_tiers.is_empty()
         && tier.is_none_or(|tier| !config.trigger_tiers.iter().any(|value| value == tier))
     {
+        println!("[autoOrch] tier \"{tier_text}\" not in triggerTiers, skipping");
         return none();
     }
+    println!("[autoOrch] orchestration active: continued={already_orchestrating}");
     let mut activated = JsObject::new();
     activated.insert(
         "tier".into(),

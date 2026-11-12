@@ -105,11 +105,19 @@ pub async fn classify_and_route(
                 )));
             }
             Ok(Ok(response)) => {
+                // classifyAndRoute.ts:137-141: console.log joins its
+                // arguments with spaces.
+                println!(
+                    "[token-saver] Judge raw content blocks (attempt {attempt}): {} | finishReason={}",
+                    json_prefix(field(&response, "content"), 500),
+                    template_text(field(&response, "finishReason")),
+                );
                 let text = response_text(&response);
                 if text.units().is_empty() {
                     if attempt < MAX_ATTEMPTS {
                         continue;
                     }
+                    eprintln!("[token-saver] Judge returned empty after retries");
                     return Ok(Some(fallback(
                         config,
                         default_tier,
@@ -126,6 +134,10 @@ pub async fn classify_and_route(
                     if attempt < MAX_ATTEMPTS {
                         continue;
                     }
+                    eprintln!(
+                        "[token-saver] parseTier failed. Judge text: {}",
+                        json_prefix(&JsValue::String(text.clone()), 300)
+                    );
                     return Ok(Some(fallback(
                         config,
                         default_tier,
@@ -448,6 +460,27 @@ fn judge_request(config: &TokenSaverConfig, prompt: JsString) -> JsValue {
     request.insert("thinking".into(), JsValue::Object(thinking));
     request.insert("stream".into(), JsValue::Bool(false));
     JsValue::Object(request)
+}
+
+/// `JSON.stringify(value).slice(0, limit)` (UTF-16 units) for a log line.
+fn json_prefix(value: &JsValue, limit: usize) -> String {
+    let text = pilotdeck_protocol::stringify_json(value)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "undefined".to_owned());
+    let units: Vec<u16> = text.encode_utf16().take(limit).collect();
+    String::from_utf16_lossy(&units)
+}
+
+/// A template-literal interpolation of a primitive (`${value}`).
+pub(super) fn template_text(value: &JsValue) -> String {
+    match value {
+        JsValue::String(text) => String::from_utf16_lossy(text.units()),
+        JsValue::Number(number) => crate::js_value::number_string(*number),
+        JsValue::Bool(flag) => flag.to_string(),
+        JsValue::Null => "null".to_owned(),
+        _ => "undefined".to_owned(),
+    }
 }
 
 fn response_text(response: &JsValue) -> JsString {

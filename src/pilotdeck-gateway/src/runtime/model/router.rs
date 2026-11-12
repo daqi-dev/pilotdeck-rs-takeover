@@ -682,6 +682,16 @@ impl RouterRuntime {
         let already_orchestrating = sticky.as_ref().is_some_and(|state| state.orchestrating);
         let token_saver_active = token_saver_enabled && token_saver_tier.is_some();
         let orch_gate = token_saver_active || already_orchestrating;
+        // RouterRuntime.ts:527-529.
+        println!(
+            "[router] decision: tier={}, model={}/{}, orchGate={orch_gate}, alreadyOrch={already_orchestrating}, resolvedFrom={resolved_from}",
+            token_saver_tier.as_ref().map_or_else(
+                || "undefined".to_owned(),
+                |tier| String::from_utf16_lossy(tier.units())
+            ),
+            String::from_utf16_lossy(selection.provider.units()),
+            String::from_utf16_lossy(selection.model.units()),
+        );
 
         let mut mutations = JsObject::new();
         if let Some(cache_aware) = cache_aware_switch {
