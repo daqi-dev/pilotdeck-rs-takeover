@@ -1,0 +1,33 @@
+{
+  "name": "loop-thinking-only",
+  "about": "只有推理没有可见文本（也没有工具调用）的应答（agent/loop/AgentLoop.ts:1265-1360 空回复守卫）。loop-finish-reasons 已覆盖 OpenAI 首次重试成功（f5）与用尽（f6），这里补：k1：Anthropic 形状 thinking 块后无文本 → empty_response_retry 提示后给出文本；k2：文本先被 length 截断、续写时只回推理 → 走 maxOutputRecoveryCount>0 的分支（1266-1318），续写提示连发直到 MAX_CONSECUTIVE_EMPTY=3，以截断的文本结束并发 empty_response 状态（attempts 3）；k3：同上但只回推理时带 finish=length → 每次把 max_tokens 加倍（empty_output_recovery，EMPTY_LENGTH_OUTPUT_RETRY_FLOOR）；k4：一轮里只回推理 → 重试后改发工具调用 → 工具成功后计数清零（2185 hasAttemptedEmptyRetry=false）→ 再次只回推理 → 再次重试后给出文本。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 1024\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    anth:\n      protocol: anthropic\n      url: {MOCK}\n      apiKey: bbx-anthropic-key\n      models:\n        claude-bbx:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "files": { "home/.pilotdeck/a.txt": "alpha\n" },
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\":\"Think\"}" } },
+    { "name": "k1-retry", "when": ["k1:", "previous response was empty"], "reply": { "text": "k1 visible." } },
+    { "name": "k1", "when": ["k1:"], "reply": { "reasoning": "anthropic silent", "text": "" } },
+    { "name": "k2-think", "when": ["k2:", "Pick up mid-sentence"], "reply": { "reasoning": "still thinking", "text": "" } },
+    { "name": "k2", "when": ["k2:"], "reply": { "text": "Part one ", "finish": "length" } },
+    { "name": "k3-think", "when": ["k3:", "Pick up mid-sentence"], "reply": { "reasoning": "long thinking", "text": "", "finish": "length" } },
+    { "name": "k3", "when": ["k3:"], "reply": { "text": "Begin ", "finish": "length" } },
+    { "name": "k4-final", "when": ["k4:", "\"tool_call_id\":\"call_k4\"", "previous response was empty"], "reply": { "text": "k4 visible." } },
+    { "name": "k4-think2", "when": ["k4:", "\"tool_call_id\":\"call_k4\""], "reply": { "reasoning": "after tool", "text": "" } },
+    { "name": "k4-tool", "when": ["k4:", "previous response was empty"], "reply": { "tool": { "id": "call_k4", "name": "read_file", "arguments": { "file_path": "a.txt" } } } },
+    { "name": "k4", "when": ["k4:"], "reply": { "reasoning": "before tool", "text": "" } }
+  ],
+  "steps": [
+    { "ws": "submit_turn", "params": { "sessionKey": "s-k1", "channelKey": "test", "message": "k1: hi", "modelOverride": { "mode": "model", "provider": "anth", "model": "claude-bbx" } }, "timeout": 30000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-k1" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-k2", "channelKey": "test", "message": "k2: hi" }, "timeout": 30000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-k2" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-k3", "channelKey": "test", "message": "k3: hi" }, "timeout": 30000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-k3" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-k4", "channelKey": "test", "message": "k4: hi" }, "timeout": 30000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-k4" } }
+  ]
+}
