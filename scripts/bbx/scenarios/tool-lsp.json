@@ -1,0 +1,553 @@
+{
+ "name": "tool-lsp",
+ "about": "lsp 工具（tool/builtin/lsp.ts:19-70，lsp/runtime/LspService.ts:43-53,91-103）：基线总是注册 lsp，但生产代码里没有任何 registerProvider 调用，所以每次查询都落到「没有 provider」。覆盖四种 operation、带扩展名 / 无扩展名 / 大写扩展名 / 绝对路径 / 越出工作区的 file_path、line 与 character 的 0、小数、负数、字符串、file_path 空白、非法 operation、缺必填、多余参数。",
+ "files": {
+  "proj/a.ts": "export const a = 1;\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Tool run\"}"
+   }
+  },
+  {
+   "name": "l13-after",
+   "when": [
+    "l13:",
+    "\"tool_call_id\":\"call_l13\""
+   ],
+   "reply": {
+    "text": "Done 13."
+   }
+  },
+  {
+   "name": "l13",
+   "when": [
+    "l13:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_l13",
+     "name": "lsp",
+     "arguments": {
+      "operation": "hover",
+      "file_path": "",
+      "line": 1,
+      "character": 0
+     }
+    }
+   }
+  },
+  {
+   "name": "l12-after",
+   "when": [
+    "l12:",
+    "\"tool_call_id\":\"call_l12\""
+   ],
+   "reply": {
+    "text": "Done 12."
+   }
+  },
+  {
+   "name": "l12",
+   "when": [
+    "l12:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_l12",
+     "name": "lsp",
+     "arguments": {
+      "operation": "hover",
+      "file_path": "a.ts",
+      "line": 1,
+      "character": 1,
+      "extra": true
+     }
+    }
+   }
+  },
+  {
+   "name": "l11-after",
+   "when": [
+    "l11:",
+    "\"tool_call_id\":\"call_l11\""
+   ],
+   "reply": {
+    "text": "Done 11."
+   }
+  },
+  {
+   "name": "l11",
+   "when": [
+    "l11:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_l11",
+     "name": "lsp",
+     "arguments": {
+      "operation": "hover",
+      "file_path": "a.ts",
+      "line": "1",
+      "character": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "l10-after",
+   "when": [
+    "l10:",
+    "\"tool_call_id\":\"call_l10\""
+   ],
+   "reply": {
+    "text": "Done 10."
+   }
+  },
+  {
+   "name": "l10",
+   "when": [
+    "l10:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_l10",
+     "name": "lsp",
+     "arguments": {
+      "operation": "hover",
+      "file_path": "a.ts",
+      "line": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "l09-after",
+   "when": [
+    "l09:",
+    "\"tool_call_id\":\"call_l09\""
+   ],
+   "reply": {
+    "text": "Done 09."
+   }
+  },
+  {
+   "name": "l09",
+   "when": [
+    "l09:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_l09",
+     "name": "lsp",
+     "arguments": {
+      "operation": "rename",
+      "file_path": "a.ts",
+      "line": 1,
+      "character": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "l08-after",
+   "when": [
+    "l08:",
+    "\"tool_call_id\":\"call_l08\""
+   ],
+   "reply": {
+    "text": "Done 08."
+   }
+  },
+  {
+   "name": "l08",
+   "when": [
+    "l08:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_l08",
+     "name": "lsp",
+     "arguments": {
+      "operation": "hover",
+      "file_path": "   ",
+      "line": 1,
+      "character": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "l07-after",
+   "when": [
+    "l07:",
+    "\"tool_call_id\":\"call_l07\""
+   ],
+   "reply": {
+    "text": "Done 07."
+   }
+  },
+  {
+   "name": "l07",
+   "when": [
+    "l07:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_l07",
+     "name": "lsp",
+     "arguments": {
+      "operation": "hover",
+      "file_path": "a.ts",
+      "line": 1.5,
+      "character": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "l06-after",
+   "when": [
+    "l06:",
+    "\"tool_call_id\":\"call_l06\""
+   ],
+   "reply": {
+    "text": "Done 06."
+   }
+  },
+  {
+   "name": "l06",
+   "when": [
+    "l06:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_l06",
+     "name": "lsp",
+     "arguments": {
+      "operation": "hover",
+      "file_path": "a.ts",
+      "line": 1,
+      "character": -2
+     }
+    }
+   }
+  },
+  {
+   "name": "l05-after",
+   "when": [
+    "l05:",
+    "\"tool_call_id\":\"call_l05\""
+   ],
+   "reply": {
+    "text": "Done 05."
+   }
+  },
+  {
+   "name": "l05",
+   "when": [
+    "l05:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_l05",
+     "name": "lsp",
+     "arguments": {
+      "operation": "hover",
+      "file_path": "a.ts",
+      "line": 0,
+      "character": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "l04-after",
+   "when": [
+    "l04:",
+    "\"tool_call_id\":\"call_l04\""
+   ],
+   "reply": {
+    "text": "Done 04."
+   }
+  },
+  {
+   "name": "l04",
+   "when": [
+    "l04:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_l04",
+     "name": "lsp",
+     "arguments": {
+      "operation": "goToImplementation",
+      "file_path": "{PROJECT}/b.TS",
+      "line": 2,
+      "character": 9
+     }
+    }
+   }
+  },
+  {
+   "name": "l03-after",
+   "when": [
+    "l03:",
+    "\"tool_call_id\":\"call_l03\""
+   ],
+   "reply": {
+    "text": "Done 03."
+   }
+  },
+  {
+   "name": "l03",
+   "when": [
+    "l03:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_l03",
+     "name": "lsp",
+     "arguments": {
+      "operation": "findReferences",
+      "file_path": "../outside.ts",
+      "line": 1,
+      "character": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "l02-after",
+   "when": [
+    "l02:",
+    "\"tool_call_id\":\"call_l02\""
+   ],
+   "reply": {
+    "text": "Done 02."
+   }
+  },
+  {
+   "name": "l02",
+   "when": [
+    "l02:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_l02",
+     "name": "lsp",
+     "arguments": {
+      "operation": "goToDefinition",
+      "file_path": "Makefile",
+      "line": 3,
+      "character": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "l01-after",
+   "when": [
+    "l01:",
+    "\"tool_call_id\":\"call_l01\""
+   ],
+   "reply": {
+    "text": "Done 01."
+   }
+  },
+  {
+   "name": "l01",
+   "when": [
+    "l01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_l01",
+     "name": "lsp",
+     "arguments": {
+      "operation": "hover",
+      "file_path": "a.ts",
+      "line": 1,
+      "character": 1
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-l",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-l",
+    "channelKey": "test",
+    "message": "l01: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-l",
+    "channelKey": "test",
+    "message": "l02: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-l",
+    "channelKey": "test",
+    "message": "l03: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-l",
+    "channelKey": "test",
+    "message": "l04: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-l",
+    "channelKey": "test",
+    "message": "l05: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-l",
+    "channelKey": "test",
+    "message": "l06: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-l",
+    "channelKey": "test",
+    "message": "l07: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-l",
+    "channelKey": "test",
+    "message": "l08: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-l",
+    "channelKey": "test",
+    "message": "l09: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-l",
+    "channelKey": "test",
+    "message": "l10: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-l",
+    "channelKey": "test",
+    "message": "l11: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-l",
+    "channelKey": "test",
+    "message": "l12: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-l",
+    "channelKey": "test",
+    "message": "l13: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-l"
+   }
+  }
+ ]
+}

@@ -1428,7 +1428,7 @@ impl crate::runtime::tools::ExecutableTool for LspTool {
             let cwd = text(context.fields.get("cwd"));
             if crate::metadata::js_trim(&cwd).is_empty() {
                 return Err(crate::runtime::tools::ToolError::new(
-                    "LSP_WORKSPACE_REQUIRED",
+                    "tool_execution_failed",
                     "LSP tool requires a workspace cwd",
                 ));
             }
@@ -1446,16 +1446,16 @@ impl crate::runtime::tools::ExecutableTool for LspTool {
                     .unwrap_or(f64::NAN)
                     - 1.0,
             );
+            // An `LspError` is no `PilotDeckToolRuntimeError`: its `LSP_*`
+            // code stays on the error object and the runtime reports the
+            // generic `tool_execution_failed` (errorRecovery.ts:176-182).
             match result {
                 Err(error) => Err(crate::runtime::tools::ToolError::new(
-                    error
-                        .js_error()
-                        .and_then(|e| e.code.clone())
-                        .unwrap_or_else(|| "tool_execution_failed".into()),
+                    "tool_execution_failed",
                     error.message,
                 )),
                 Ok(_) => Err(crate::runtime::tools::ToolError::new(
-                    "LSP_UNAVAILABLE",
+                    "tool_execution_failed",
                     "No native LSP provider is registered.",
                 )),
             }
