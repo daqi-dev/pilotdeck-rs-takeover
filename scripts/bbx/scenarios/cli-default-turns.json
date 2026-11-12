@@ -1,0 +1,74 @@
+{
+  "name": "cli-default-turns",
+  "about": "不带子命令的默认对话（CliChannel + 进程内 gateway）在已登记为项目的目录里真的跑通：先用参数直接给一句话（第一轮，生成标题），再起一个进程从 stdin 读多行连续多轮续同一会话（纯文本、空行与首尾空白、\\r\\n 行尾、读文件工具、bash、末行无换行且 provider 报 400）。基线在输入结束后不退出，步骤都声明 expectTimeout；比较被杀之前的 stdout / stderr、发给 provider 的请求，以及会话文件、runs/registry.json、router/events.jsonl。",
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "files": {
+    "proj/note.txt": "note body\nsecond line\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-proj/.cwd": "{PROJECT}\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": ["Generate a concise title"],
+      "reply": { "text": "{\"title\": \"CLI chat\"}" }
+    },
+    {
+      "name": "e400",
+      "when": ["case-400:"],
+      "reply": { "status": 400, "body": { "error": { "message": "bad request from mock", "type": "invalid_request_error" } } }
+    },
+    {
+      "name": "bash-after-tool",
+      "when": ["case-bash:", "\"tool_call_id\":\"call_cli_bash\""],
+      "reply": { "text": "Bash step done." }
+    },
+    {
+      "name": "bash",
+      "when": ["case-bash:"],
+      "reply": { "tool": { "id": "call_cli_bash", "name": "bash", "arguments": { "command": "echo from-bash" } } }
+    },
+    {
+      "name": "read-after-tool",
+      "when": ["case-read:", "\"tool_call_id\":\"call_cli_read\""],
+      "reply": { "text": "The note was read." }
+    },
+    {
+      "name": "read",
+      "when": ["case-read:"],
+      "reply": { "tool": { "id": "call_cli_read", "name": "read_file", "arguments": { "file_path": "note.txt" } } }
+    },
+    {
+      "name": "text",
+      "when": ["case-text:"],
+      "reply": { "text": "Hello from the mock.\nSecond line." }
+    },
+    {
+      "name": "argv",
+      "when": ["case-argv: from arguments"],
+      "reply": { "text": "Argument turn answered." }
+    },
+    {
+      "name": "main",
+      "reply": { "text": "unexpected" }
+    }
+  ],
+  "steps": [
+    {
+      "cli": ["case-argv:", "from", "arguments"],
+      "stdin": "ignored line\n",
+      "timeout": 12000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [],
+      "stdin": "case-text: hello there\n\n   \n  case-read: please read  \r\ncase-bash: run it\ncase-400: fail now",
+      "timeout": 25000,
+      "expectTimeout": true
+    }
+  ],
+  "settleMs": 500
+}

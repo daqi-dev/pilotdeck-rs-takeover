@@ -2,6 +2,7 @@
 //! port and concrete channel adapters (A8.3 `api-server` and `webhook`).
 pub mod api_server;
 pub mod bluebubbles;
+pub mod cli;
 pub mod feishu;
 pub(crate) mod http_client;
 pub(crate) mod im_attachment;

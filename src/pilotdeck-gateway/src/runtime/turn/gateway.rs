@@ -577,6 +577,19 @@ impl TurnGateway {
             connection,
         }
     }
+    /// `gateway.submitTurn(input)` for an embedding with no transport (the
+    /// CLI channel's in-process gateway): the same submission a connection's
+    /// `submit_turn` runs, on this serial host, with each event handed to
+    /// `emit` as it is yielded. `Err` is the error the async iterator throws.
+    pub async fn submit_turn(
+        &self,
+        params: JsValue,
+        emit: Arc<dyn Fn(JsValue) + Send + Sync>,
+    ) -> Result<(), RequestError> {
+        let gateway = self.gateway.clone();
+        self.call(async move { gateway.submit(params, &*emit).await })
+            .await?
+    }
     /// External permission/hooks also enter on the host; never expose the
     /// underlying coordinator to an external concurrent emitter.
     pub async fn emit(&self, session: JsString, event: JsValue) -> Result<bool, RequestError> {

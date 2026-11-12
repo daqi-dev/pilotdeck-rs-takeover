@@ -7,7 +7,7 @@ use pilotdeck_gateway::native_process::{self, ServerOptions};
 use std::path::{Path, PathBuf};
 
 /// The agent-loop sidecar ships beside this executable.
-const SIDECAR: &str = "pilotdeck-agent-loop-sidecar";
+pub(crate) const SIDECAR: &str = "pilotdeck-agent-loop-sidecar";
 
 /// TelemetrySender's counters (src/telemetry/sender.ts) as the shutdown bundle
 /// logs them. The Rust port has no telemetry collector yet, so nothing is ever
@@ -91,7 +91,11 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
 /// The directory is reported with symlinks resolved: the baseline's is the
 /// location of a loaded module, which Node always gives as a real path, and
 /// that path shows up in the skills section of the system prompt.
-fn builtin_plugins_root(env: &Env, cwd: &Path, exe_dir: Option<&Path>) -> Option<PathBuf> {
+pub(crate) fn builtin_plugins_root(
+    env: &Env,
+    cwd: &Path,
+    exe_dir: Option<&Path>,
+) -> Option<PathBuf> {
     let real = |path: PathBuf| std::fs::canonicalize(&path).unwrap_or(path);
     if let Some(dir) = env
         .get("PILOTDECK_BUNDLED_PLUGINS_DIR")
