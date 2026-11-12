@@ -1,0 +1,74 @@
+{
+ "name": "gap-loop-long-tool-chain",
+ "about": "一轮里连续多步工具调用（每步模型都再要一个工具，AgentLoop 主循环与 maxTurns 计数）：submit_turn.maxTurns=3，模型连续调用 bash 不停，第 4 步被 max turns 拦下（AgentLoop.ts:2211-2230 与 3750-3770 文案）。",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Gap\"}"
+   }
+  },
+  {
+   "name": "t01-after",
+   "when": [
+    "g01:",
+    "\"tool_call_id\":\"call_g01\""
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g01",
+     "name": "bash",
+     "arguments": {
+      "command": "echo step"
+     }
+    }
+   }
+  },
+  {
+   "name": "t01",
+   "when": [
+    "g01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g01",
+     "name": "bash",
+     "arguments": {
+      "command": "echo step"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-gap",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g01: go",
+    "maxTurns": 3
+   },
+   "timeout": 30000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-gap"
+   }
+  }
+ ]
+}

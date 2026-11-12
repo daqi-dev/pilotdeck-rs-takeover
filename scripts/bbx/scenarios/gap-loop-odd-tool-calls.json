@@ -1,0 +1,398 @@
+{
+ "name": "gap-loop-odd-tool-calls",
+ "about": "模型发来的非常规工具调用（agent/loop/AgentLoop.ts 工具查找与输入校验路径）：不存在的工具名、工具别名 Read / Grep / Glob（tool/builtin/readFile.ts:51 等 aliases）、大小写不对的 BASH、arguments 是 JSON 字符串 / 数组 / null（不是对象）、mcp__ 前缀但服务器不存在、search_tools（未启用 deferredTools 时不存在）。每个各一轮，看工具结果文本与事件。",
+ "files": {
+  "home/.pilotdeck/notes/n.txt": "note\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Gap\"}"
+   }
+  },
+  {
+   "name": "t10-after",
+   "when": [
+    "g10:",
+    "\"tool_call_id\":\"call_g10\""
+   ],
+   "reply": {
+    "text": "Done 10."
+   }
+  },
+  {
+   "name": "t10",
+   "when": [
+    "g10:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g10",
+     "name": "search_tools",
+     "arguments": {
+      "query": "x"
+     }
+    }
+   }
+  },
+  {
+   "name": "t09-after",
+   "when": [
+    "g09:",
+    "\"tool_call_id\":\"call_g09\""
+   ],
+   "reply": {
+    "text": "Done 09."
+   }
+  },
+  {
+   "name": "t09",
+   "when": [
+    "g09:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g09",
+     "name": "mcp__ghost__do",
+     "arguments": {}
+    }
+   }
+  },
+  {
+   "name": "t08-after",
+   "when": [
+    "g08:",
+    "\"tool_call_id\":\"call_g08\""
+   ],
+   "reply": {
+    "text": "Done 08."
+   }
+  },
+  {
+   "name": "t08",
+   "when": [
+    "g08:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g08",
+     "name": "read_file",
+     "arguments": {}
+    }
+   }
+  },
+  {
+   "name": "t07-after",
+   "when": [
+    "g07:",
+    "\"tool_call_id\":\"call_g07\""
+   ],
+   "reply": {
+    "text": "Done 07."
+   }
+  },
+  {
+   "name": "t07",
+   "when": [
+    "g07:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g07",
+     "name": "read_file",
+     "arguments": [
+      "notes/n.txt"
+     ]
+    }
+   }
+  },
+  {
+   "name": "t06-after",
+   "when": [
+    "g06:",
+    "\"tool_call_id\":\"call_g06\""
+   ],
+   "reply": {
+    "text": "Done 06."
+   }
+  },
+  {
+   "name": "t06",
+   "when": [
+    "g06:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g06",
+     "name": "read_file",
+     "arguments": "notes/n.txt"
+    }
+   }
+  },
+  {
+   "name": "t05-after",
+   "when": [
+    "g05:",
+    "\"tool_call_id\":\"call_g05\""
+   ],
+   "reply": {
+    "text": "Done 05."
+   }
+  },
+  {
+   "name": "t05",
+   "when": [
+    "g05:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g05",
+     "name": "BASH",
+     "arguments": {
+      "command": "echo hi"
+     }
+    }
+   }
+  },
+  {
+   "name": "t04-after",
+   "when": [
+    "g04:",
+    "\"tool_call_id\":\"call_g04\""
+   ],
+   "reply": {
+    "text": "Done 04."
+   }
+  },
+  {
+   "name": "t04",
+   "when": [
+    "g04:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g04",
+     "name": "Glob",
+     "arguments": {
+      "pattern": "notes/*.txt"
+     }
+    }
+   }
+  },
+  {
+   "name": "t03-after",
+   "when": [
+    "g03:",
+    "\"tool_call_id\":\"call_g03\""
+   ],
+   "reply": {
+    "text": "Done 03."
+   }
+  },
+  {
+   "name": "t03",
+   "when": [
+    "g03:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g03",
+     "name": "Grep",
+     "arguments": {
+      "pattern": "note",
+      "path": "notes"
+     }
+    }
+   }
+  },
+  {
+   "name": "t02-after",
+   "when": [
+    "g02:",
+    "\"tool_call_id\":\"call_g02\""
+   ],
+   "reply": {
+    "text": "Done 02."
+   }
+  },
+  {
+   "name": "t02",
+   "when": [
+    "g02:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g02",
+     "name": "Read",
+     "arguments": {
+      "file_path": "notes/n.txt"
+     }
+    }
+   }
+  },
+  {
+   "name": "t01-after",
+   "when": [
+    "g01:",
+    "\"tool_call_id\":\"call_g01\""
+   ],
+   "reply": {
+    "text": "Done 01."
+   }
+  },
+  {
+   "name": "t01",
+   "when": [
+    "g01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g01",
+     "name": "no_such_tool",
+     "arguments": {
+      "x": 1
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-gap",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g01: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g02: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g03: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g04: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g05: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g06: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g07: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g08: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g09: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g10: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-gap"
+   }
+  }
+ ]
+}

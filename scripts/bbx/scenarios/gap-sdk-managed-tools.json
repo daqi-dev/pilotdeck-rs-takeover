@@ -1,0 +1,118 @@
+{
+ "name": "gap-sdk-managed-tools",
+ "about": "sdkSessionConfig.managedTools（ProjectSessionRuntimeBundle.ts:340-347 blockedToolNames、ProjectRuntimeRegistry.ts:1958-1975 选择器校验）：deny 精确名与前缀通配（task_*）、allow 白名单只留几个工具、allow 与 deny 同时给、非法选择器、重复项。比较发给模型的工具清单与报错。",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Managed\"}"
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-deny",
+    "channelKey": "test",
+    "message": "deny",
+    "sdkSessionConfig": {
+     "managedTools": {
+      "allow": [],
+      "deny": [
+       "bash",
+       "task_*"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-allow",
+    "channelKey": "test",
+    "message": "allow",
+    "sdkSessionConfig": {
+     "managedTools": {
+      "allow": [
+       "read_file",
+       "glob",
+       "web_*"
+      ],
+      "deny": []
+     }
+    }
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-both",
+    "channelKey": "test",
+    "message": "both",
+    "sdkSessionConfig": {
+     "managedTools": {
+      "allow": [
+       "*"
+      ],
+      "deny": [
+       "read_file"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-badsel",
+    "channelKey": "test",
+    "message": "badsel",
+    "sdkSessionConfig": {
+     "managedTools": {
+      "allow": [],
+      "deny": [
+       "bad selector!"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-dup",
+    "channelKey": "test",
+    "message": "dup",
+    "sdkSessionConfig": {
+     "managedTools": {
+      "allow": [],
+      "deny": [
+       "bash",
+       "bash"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,49 @@
+{
+ "name": "gap-sdk-prompt-suggestions",
+ "about": "sdkSessionConfig.promptSuggestions=true（cli/ProjectSessionFactory.ts:151,195、session/prompt/PromptSuggestionGenerator.ts）：成功的一轮之后网关额外发一次模型请求生成下一句建议，并作为事件推给客户端；对照会话不开。比较事件与发给 provider 的请求。",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Suggest\"}"
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "Answer."
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sug",
+    "channelKey": "test",
+    "message": "suggest please",
+    "sdkSessionConfig": {
+     "promptSuggestions": true
+    }
+   }
+  },
+  {
+   "sleep": 1500
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-nosug",
+    "channelKey": "test",
+    "message": "no suggestion"
+   }
+  },
+  {
+   "sleep": 500
+  }
+ ],
+ "settleMs": 1000
+}

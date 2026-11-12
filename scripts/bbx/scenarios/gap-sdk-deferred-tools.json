@@ -1,0 +1,195 @@
+{
+ "name": "gap-sdk-deferred-tools",
+ "about": "sdkSessionConfig.deferredTools（cli/ProjectSessionRuntimeBundle.ts:348-370,745-775）：被延迟的工具从声明里隐藏，多出 search_tools；模型用 search_tools 搜索（命中 / 不命中），找到后再调用被隐藏的工具；deferredTools 里给一个本会话没有的工具名时报错。比较工具清单、search_tools 结果与后续调用。",
+ "files": {
+  "home/.pilotdeck/notes/d.txt": "deferred\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Deferred\"}"
+   }
+  },
+  {
+   "name": "call-after",
+   "when": [
+    "dt-call:",
+    "\"tool_call_id\":\"call_dt_read\""
+   ],
+   "reply": {
+    "text": "read done"
+   }
+  },
+  {
+   "name": "call",
+   "when": [
+    "dt-call:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_dt_read",
+     "name": "read_file",
+     "arguments": {
+      "file_path": "notes/d.txt"
+     }
+    }
+   }
+  },
+  {
+   "name": "miss-after",
+   "when": [
+    "dt-miss:",
+    "\"tool_call_id\":\"call_dt_miss\""
+   ],
+   "reply": {
+    "text": "miss done"
+   }
+  },
+  {
+   "name": "miss",
+   "when": [
+    "dt-miss:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_dt_miss",
+     "name": "search_tools",
+     "arguments": {
+      "query": "zzzz-nothing"
+     }
+    }
+   }
+  },
+  {
+   "name": "search-after",
+   "when": [
+    "dt-search:",
+    "\"tool_call_id\":\"call_dt_search\""
+   ],
+   "reply": {
+    "text": "search done"
+   }
+  },
+  {
+   "name": "search",
+   "when": [
+    "dt-search:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_dt_search",
+     "name": "search_tools",
+     "arguments": {
+      "query": "read file"
+     }
+    }
+   }
+  },
+  {
+   "name": "bad",
+   "when": [
+    "dt-bad:"
+   ],
+   "reply": {
+    "text": "bad ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-dt",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-dt",
+    "channelKey": "test",
+    "message": "dt-search: find",
+    "sdkSessionConfig": {
+     "deferredTools": [
+      {
+       "name": "read_file",
+       "searchHint": "read a file from disk"
+      },
+      {
+       "name": "glob"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-dt",
+    "channelKey": "test",
+    "message": "dt-miss: find",
+    "sdkSessionConfig": {
+     "deferredTools": [
+      {
+       "name": "read_file",
+       "searchHint": "read a file from disk"
+      },
+      {
+       "name": "glob"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-dt",
+    "channelKey": "test",
+    "message": "dt-call: read",
+    "sdkSessionConfig": {
+     "deferredTools": [
+      {
+       "name": "read_file",
+       "searchHint": "read a file from disk"
+      },
+      {
+       "name": "glob"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-dt-bad",
+    "channelKey": "test",
+    "message": "dt-bad: x",
+    "sdkSessionConfig": {
+     "deferredTools": [
+      {
+       "name": "no_such_tool"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "sleep": 300
+  }
+ ]
+}
