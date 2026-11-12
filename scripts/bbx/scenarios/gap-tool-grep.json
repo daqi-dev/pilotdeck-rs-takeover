@@ -1,0 +1,839 @@
+{
+ "name": "gap-tool-grep",
+ "about": "grep 的参数分支（tool/builtin/grep.ts:7-454）：先用 touch 排好修改时间（files_with_matches 按修改时间降序，grep.ts:203,384-398）；content 模式只对单个文件（基线多文件 content 的先后随 ripgrep 线程而变，自比不稳）；三种 output_mode、-i、-A/-B/-C/context、-n=false、glob、type、head_limit 与 offset、head_limit=0、multiline、path 指向文件、path 不存在、非法正则、无匹配、超过 500 列的长行、node_modules / dist 排除、非 ASCII 内容。",
+ "files": {
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+  "home/work/alpha/a.txt": "alpha\nNeedle one\nbeta\nneedle two\ngamma\n",
+  "home/work/alpha/b.js": "const needle = 1;\n// NEEDLE\n",
+  "home/work/alpha/sub/c.py": "needle = \"py\"\nstart\nmiddle\nend\n",
+  "home/work/alpha/long.txt": "needle xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n",
+  "home/work/alpha/node_modules/x/n.js": "needle in node_modules\n",
+  "home/work/alpha/dist/out.js": "needle in dist\n",
+  "home/work/alpha/中文.md": "查找 针 needle 中文\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Gap\"}"
+   }
+  },
+  {
+   "name": "t20-after",
+   "when": [
+    "g20:",
+    "\"tool_call_id\":\"call_g20\""
+   ],
+   "reply": {
+    "text": "Done 20."
+   }
+  },
+  {
+   "name": "t20",
+   "when": [
+    "g20:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g20",
+     "name": "grep",
+     "arguments": {
+      "pattern": "needle",
+      "output_mode": "bogus"
+     }
+    }
+   }
+  },
+  {
+   "name": "t19-after",
+   "when": [
+    "g19:",
+    "\"tool_call_id\":\"call_g19\""
+   ],
+   "reply": {
+    "text": "Done 19."
+   }
+  },
+  {
+   "name": "t19",
+   "when": [
+    "g19:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g19",
+     "name": "grep",
+     "arguments": {
+      "pattern": "针",
+      "output_mode": "content"
+     }
+    }
+   }
+  },
+  {
+   "name": "t18-after",
+   "when": [
+    "g18:",
+    "\"tool_call_id\":\"call_g18\""
+   ],
+   "reply": {
+    "text": "Done 18."
+   }
+  },
+  {
+   "name": "t18",
+   "when": [
+    "g18:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g18",
+     "name": "grep",
+     "arguments": {
+      "pattern": "needle",
+      "output_mode": "content",
+      "path": "long.txt"
+     }
+    }
+   }
+  },
+  {
+   "name": "t17-after",
+   "when": [
+    "g17:",
+    "\"tool_call_id\":\"call_g17\""
+   ],
+   "reply": {
+    "text": "Done 17."
+   }
+  },
+  {
+   "name": "t17",
+   "when": [
+    "g17:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g17",
+     "name": "grep",
+     "arguments": {
+      "pattern": "zzz_no_match"
+     }
+    }
+   }
+  },
+  {
+   "name": "t16-after",
+   "when": [
+    "g16:",
+    "\"tool_call_id\":\"call_g16\""
+   ],
+   "reply": {
+    "text": "Done 16."
+   }
+  },
+  {
+   "name": "t16",
+   "when": [
+    "g16:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g16",
+     "name": "grep",
+     "arguments": {
+      "pattern": "(unclosed"
+     }
+    }
+   }
+  },
+  {
+   "name": "t15-after",
+   "when": [
+    "g15:",
+    "\"tool_call_id\":\"call_g15\""
+   ],
+   "reply": {
+    "text": "Done 15."
+   }
+  },
+  {
+   "name": "t15",
+   "when": [
+    "g15:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g15",
+     "name": "grep",
+     "arguments": {
+      "pattern": "x",
+      "path": "nope"
+     }
+    }
+   }
+  },
+  {
+   "name": "t14-after",
+   "when": [
+    "g14:",
+    "\"tool_call_id\":\"call_g14\""
+   ],
+   "reply": {
+    "text": "Done 14."
+   }
+  },
+  {
+   "name": "t14",
+   "when": [
+    "g14:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g14",
+     "name": "grep",
+     "arguments": {
+      "pattern": "start.*end",
+      "multiline": true,
+      "output_mode": "content"
+     }
+    }
+   }
+  },
+  {
+   "name": "t13-after",
+   "when": [
+    "g13:",
+    "\"tool_call_id\":\"call_g13\""
+   ],
+   "reply": {
+    "text": "Done 13."
+   }
+  },
+  {
+   "name": "t13",
+   "when": [
+    "g13:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g13",
+     "name": "grep",
+     "arguments": {
+      "pattern": "needle",
+      "-i": true,
+      "head_limit": 1,
+      "output_mode": "count"
+     }
+    }
+   }
+  },
+  {
+   "name": "t12-after",
+   "when": [
+    "g12:",
+    "\"tool_call_id\":\"call_g12\""
+   ],
+   "reply": {
+    "text": "Done 12."
+   }
+  },
+  {
+   "name": "t12",
+   "when": [
+    "g12:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g12",
+     "name": "grep",
+     "arguments": {
+      "pattern": "needle",
+      "-i": true,
+      "head_limit": 0,
+      "output_mode": "content",
+      "path": "a.txt"
+     }
+    }
+   }
+  },
+  {
+   "name": "t11-after",
+   "when": [
+    "g11:",
+    "\"tool_call_id\":\"call_g11\""
+   ],
+   "reply": {
+    "text": "Done 11."
+   }
+  },
+  {
+   "name": "t11",
+   "when": [
+    "g11:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g11",
+     "name": "grep",
+     "arguments": {
+      "pattern": "needle",
+      "-i": true,
+      "head_limit": 2,
+      "offset": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "t10-after",
+   "when": [
+    "g10:",
+    "\"tool_call_id\":\"call_g10\""
+   ],
+   "reply": {
+    "text": "Done 10."
+   }
+  },
+  {
+   "name": "t10",
+   "when": [
+    "g10:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g10",
+     "name": "grep",
+     "arguments": {
+      "pattern": "needle",
+      "type": "py",
+      "output_mode": "content"
+     }
+    }
+   }
+  },
+  {
+   "name": "t09-after",
+   "when": [
+    "g09:",
+    "\"tool_call_id\":\"call_g09\""
+   ],
+   "reply": {
+    "text": "Done 09."
+   }
+  },
+  {
+   "name": "t09",
+   "when": [
+    "g09:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g09",
+     "name": "grep",
+     "arguments": {
+      "pattern": "needle",
+      "glob": "*.js"
+     }
+    }
+   }
+  },
+  {
+   "name": "t08-after",
+   "when": [
+    "g08:",
+    "\"tool_call_id\":\"call_g08\""
+   ],
+   "reply": {
+    "text": "Done 08."
+   }
+  },
+  {
+   "name": "t08",
+   "when": [
+    "g08:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g08",
+     "name": "grep",
+     "arguments": {
+      "pattern": "beta",
+      "output_mode": "content",
+      "context": 2,
+      "path": "a.txt"
+     }
+    }
+   }
+  },
+  {
+   "name": "t07-after",
+   "when": [
+    "g07:",
+    "\"tool_call_id\":\"call_g07\""
+   ],
+   "reply": {
+    "text": "Done 07."
+   }
+  },
+  {
+   "name": "t07",
+   "when": [
+    "g07:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g07",
+     "name": "grep",
+     "arguments": {
+      "pattern": "beta",
+      "output_mode": "content",
+      "-C": 1,
+      "-n": false,
+      "path": "a.txt"
+     }
+    }
+   }
+  },
+  {
+   "name": "t06-after",
+   "when": [
+    "g06:",
+    "\"tool_call_id\":\"call_g06\""
+   ],
+   "reply": {
+    "text": "Done 06."
+   }
+  },
+  {
+   "name": "t06",
+   "when": [
+    "g06:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g06",
+     "name": "grep",
+     "arguments": {
+      "pattern": "beta",
+      "output_mode": "content",
+      "-A": 1,
+      "-B": 1,
+      "path": "a.txt"
+     }
+    }
+   }
+  },
+  {
+   "name": "t05-after",
+   "when": [
+    "g05:",
+    "\"tool_call_id\":\"call_g05\""
+   ],
+   "reply": {
+    "text": "Done 05."
+   }
+  },
+  {
+   "name": "t05",
+   "when": [
+    "g05:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g05",
+     "name": "grep",
+     "arguments": {
+      "pattern": "needle",
+      "-i": true,
+      "output_mode": "content",
+      "path": "a.txt"
+     }
+    }
+   }
+  },
+  {
+   "name": "t04-after",
+   "when": [
+    "g04:",
+    "\"tool_call_id\":\"call_g04\""
+   ],
+   "reply": {
+    "text": "Done 04."
+   }
+  },
+  {
+   "name": "t04",
+   "when": [
+    "g04:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g04",
+     "name": "grep",
+     "arguments": {
+      "pattern": "needle",
+      "output_mode": "count"
+     }
+    }
+   }
+  },
+  {
+   "name": "t03-after",
+   "when": [
+    "g03:",
+    "\"tool_call_id\":\"call_g03\""
+   ],
+   "reply": {
+    "text": "Done 03."
+   }
+  },
+  {
+   "name": "t03",
+   "when": [
+    "g03:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g03",
+     "name": "grep",
+     "arguments": {
+      "pattern": "needle",
+      "output_mode": "content",
+      "path": "sub"
+     }
+    }
+   }
+  },
+  {
+   "name": "t02-after",
+   "when": [
+    "g02:",
+    "\"tool_call_id\":\"call_g02\""
+   ],
+   "reply": {
+    "text": "Done 02."
+   }
+  },
+  {
+   "name": "t02",
+   "when": [
+    "g02:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g02",
+     "name": "grep",
+     "arguments": {
+      "pattern": "needle"
+     }
+    }
+   }
+  },
+  {
+   "name": "t01-after",
+   "when": [
+    "g01:",
+    "\"tool_call_id\":\"call_g01\""
+   ],
+   "reply": {
+    "text": "Done 01."
+   }
+  },
+  {
+   "name": "t01",
+   "when": [
+    "g01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g01",
+     "name": "bash",
+     "arguments": {
+      "command": "touch -t 202001010003 a.txt; touch -t 202001010001 b.js; touch -t 202001010004 sub/c.py; touch -t 202001010000 long.txt; touch -t 202001010002 中文.md; echo ok"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-gap",
+    "mode": "bypassPermissions",
+    "projectKey": "{HOME}/work/alpha"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g01: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g02: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g03: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g04: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g05: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g06: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g07: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g08: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g09: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g10: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g11: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g12: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g13: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g14: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g15: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g16: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g17: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g18: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g19: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g20: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-gap",
+    "projectKey": "{HOME}/work/alpha"
+   }
+  }
+ ]
+}
