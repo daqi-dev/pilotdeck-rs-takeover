@@ -1325,7 +1325,22 @@ impl SubmitSdkSessionConfig for NativeSdkSessionConfig {
         project: Option<&'a JsString>,
         _completion: &'a TurnCompletionHandle,
     ) -> SubmitFuture<'a, Result<bool, SubmitError>> {
-        Box::pin(async move {
+        Box::pin(self.apply(session, config, project))
+    }
+}
+
+impl NativeSdkSessionConfig {
+    /// `registry.setSdkSessionConfig(sessionKey, config, projectKey)`
+    /// (ProjectRuntimeRegistry.ts:956-1040): shared by `submit_turn` and
+    /// `seed_read_state` (InProcessGateway.ts:2431-2436), which has no turn.
+    /// `Ok(true)` when the stored config changed.
+    pub(super) async fn apply(
+        &self,
+        session: &JsString,
+        config: &JsValue,
+        project: Option<&JsString>,
+    ) -> Result<bool, SubmitError> {
+        {
             // `this.resolve(projectKey)` and `sdkSessionProjects.set`.
             let root = self.options.project_root_for(project);
             validate_selector_policy(config.get("managedTools"), SelectorKind::Tools)?;
@@ -1482,6 +1497,6 @@ impl SubmitSdkSessionConfig for NativeSdkSessionConfig {
             self.overrides.set_sdk_config(session, config.clone());
             self.overrides.mark_sdk_config(session, root);
             Ok(true)
-        })
+        }
     }
 }

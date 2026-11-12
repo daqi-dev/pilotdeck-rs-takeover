@@ -1,0 +1,248 @@
+{
+  "name": "params-seed-read-state",
+  "about": "seed_read_state 的 projectKey / workspaceCwd / sdkSessionConfig（InProcessGateway.ts:2423-2441：workspaceCwd 为真时先 setSessionCwd；sdkSessionConfig 为真时校验后 setSdkSessionConfig(sessionKey, config, projectKey)，有变化就关会话；最后 router.seedReadState({sessionKey, projectKey, channelKey}) 在该项目里建会话再播种）。alpha 项目里先用一轮 bash 建 seed.txt 并固定 mtime；按 alpha / 不给 / 未登记目录 / 数字 / 空串播种；只给 workspaceCwd（alpha、空串；非字符串的差异见 params-seed-read-state-cwd-type）；带合法、非法、非对象的 sdkSessionConfig；播种后同会话 edit_file 不用先读。",
+  "files": {
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+    "home/work/alpha/README.md": "alpha\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Seed run\"}"
+      }
+    },
+    {
+      "name": "prep-done",
+      "when": [
+        "prep:",
+        "\"tool_call_id\":\"call_bbx_p\""
+      ],
+      "reply": {
+        "text": "Prepared."
+      }
+    },
+    {
+      "name": "prep",
+      "when": [
+        "prep:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_p",
+          "name": "bash",
+          "arguments": {
+            "command": "printf 'alpha\\n' > seed.txt && printf 'png' > pic.png && touch -d 2026-01-01T00:00:00Z seed.txt pic.png"
+          }
+        }
+      }
+    },
+    {
+      "name": "edit-done",
+      "when": [
+        "edit:",
+        "\"tool_call_id\":\"call_bbx_e\""
+      ],
+      "reply": {
+        "text": "Edit attempted."
+      }
+    },
+    {
+      "name": "edit",
+      "when": [
+        "edit:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_e",
+          "name": "edit_file",
+          "arguments": {
+            "file_path": "seed.txt",
+            "old_string": "alpha",
+            "new_string": "beta"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-prep",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-prep",
+        "channelKey": "test",
+        "projectKey": "{HOME}/work/alpha",
+        "runId": "run-p",
+        "message": "prep: make the file"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "seed_read_state",
+      "params": {
+        "sessionKey": "s-a",
+        "projectKey": "{HOME}/work/alpha",
+        "path": "seed.txt",
+        "mtime": 1767225600000
+      }
+    },
+    {
+      "ws": "seed_read_state",
+      "params": {
+        "sessionKey": "s-def",
+        "path": "seed.txt",
+        "mtime": 1767225600000
+      }
+    },
+    {
+      "ws": "seed_read_state",
+      "params": {
+        "sessionKey": "s-unreg",
+        "projectKey": "{PROJECT}",
+        "path": "seed.txt",
+        "mtime": 1767225600000
+      }
+    },
+    {
+      "ws": "seed_read_state",
+      "params": {
+        "sessionKey": "s-num",
+        "projectKey": 123,
+        "path": "seed.txt",
+        "mtime": 1767225600000
+      }
+    },
+    {
+      "ws": "seed_read_state",
+      "params": {
+        "sessionKey": "s-empty",
+        "projectKey": "",
+        "path": "seed.txt",
+        "mtime": 1767225600000
+      }
+    },
+    {
+      "ws": "seed_read_state",
+      "params": {
+        "sessionKey": "s-cwd",
+        "workspaceCwd": "{HOME}/work/alpha",
+        "path": "seed.txt",
+        "mtime": 1767225600000
+      }
+    },
+    {
+      "ws": "seed_read_state",
+      "params": {
+        "sessionKey": "s-cwd-empty",
+        "workspaceCwd": "",
+        "path": "seed.txt",
+        "mtime": 1767225600000
+      }
+    },
+    {
+      "ws": "seed_read_state",
+      "params": {
+        "sessionKey": "s-cfg",
+        "projectKey": "{HOME}/work/alpha",
+        "sdkSessionConfig": {
+          "userDialogKinds": [
+            "input"
+          ]
+        },
+        "path": "seed.txt",
+        "mtime": 1767225600000
+      }
+    },
+    {
+      "ws": "seed_read_state",
+      "params": {
+        "sessionKey": "s-cfg",
+        "projectKey": "{HOME}/work/alpha",
+        "sdkSessionConfig": {
+          "userDialogKinds": [
+            "input"
+          ]
+        },
+        "path": "seed.txt",
+        "mtime": 1767225600000
+      }
+    },
+    {
+      "ws": "seed_read_state",
+      "params": {
+        "sessionKey": "s-cfg-bad",
+        "projectKey": "{HOME}/work/alpha",
+        "sdkSessionConfig": {
+          "userDialogKinds": "input"
+        },
+        "path": "seed.txt",
+        "mtime": 1767225600000
+      }
+    },
+    {
+      "ws": "seed_read_state",
+      "params": {
+        "sessionKey": "s-cfg-num",
+        "projectKey": "{HOME}/work/alpha",
+        "sdkSessionConfig": 5,
+        "path": "seed.txt",
+        "mtime": 1767225600000
+      }
+    },
+    {
+      "ws": "seed_read_state",
+      "params": {
+        "sessionKey": "s-cfg-null",
+        "projectKey": "{HOME}/work/alpha",
+        "sdkSessionConfig": null,
+        "path": "seed.txt",
+        "mtime": 1767225600000
+      }
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-a",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-a",
+        "channelKey": "test",
+        "projectKey": "{HOME}/work/alpha",
+        "runId": "run-a",
+        "message": "edit: after seeding in alpha"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-cwd",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-cwd",
+        "channelKey": "test",
+        "runId": "run-c",
+        "message": "edit: after seeding with cwd"
+      },
+      "timeout": 20000
+    }
+  ]
+}
