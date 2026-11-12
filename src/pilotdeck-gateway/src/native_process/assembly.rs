@@ -1304,6 +1304,7 @@ async fn start_assembly(
             let project_admission = Arc::new(super::projects::SubmitProjectAdmission {
                 options: options.clone(),
                 registry: build_project.clone(),
+                overrides: session_overrides.clone(),
             });
             let admission = SubmitAdmissionOptions {
                 interactions: interactions.clone(),

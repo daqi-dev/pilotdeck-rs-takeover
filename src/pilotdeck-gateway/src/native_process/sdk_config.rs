@@ -30,6 +30,7 @@ pub(super) const WIRED_FIELDS: &[&str] = &[
     "additionalWorkingDirectories",
     "managedPermissions",
     "fallbackModel",
+    "managedModels",
 ];
 
 const INVALID: &str = "INVALID_SDK_SESSION_CONFIG";
@@ -752,6 +753,90 @@ fn resolve_configured_model(
     Ok(candidates.remove(0))
 }
 
+/// `validateSdkSelectorPolicy(next.managedModels, "models")`
+/// (ProjectRuntimeRegistry.ts:1958-1975), the registry's second pass after
+/// the gateway's shape check: each list's trimmed selectors are valid and
+/// distinct.
+fn validate_selector_policy(policy: Option<&JsValue>) -> Result<(), SubmitError> {
+    let Some(policy) = policy.and_then(JsValue::as_object) else {
+        return Ok(());
+    };
+    for label in ["allow", "deny"] {
+        let invalid = || {
+            err(
+                "INVALID_SDK_MANAGED_SETTINGS",
+                format!("managedModels.{label} contains an invalid selector."),
+            )
+        };
+        let Some(JsValue::Array(entries)) = policy.get(label) else {
+            return Err(invalid());
+        };
+        let mut seen: Vec<String> = Vec::new();
+        for entry in entries {
+            let Some(entry) = entry.as_string() else {
+                return Err(invalid());
+            };
+            let trimmed = crate::metadata::js_trim(&text(entry)).to_owned();
+            let valid = trimmed == "*"
+                || trimmed.split_once('/').is_some_and(|(provider, model)| {
+                    let plain = |part: &str| {
+                        !part.is_empty()
+                            && part
+                                .chars()
+                                .all(|c| c != '/' && !crate::runtime::tools::js_space(c))
+                    };
+                    plain(provider) && (model == "*" || plain(model))
+                });
+            if !valid {
+                return Err(invalid());
+            }
+            seen.push(trimmed);
+        }
+        let mut distinct = seen.clone();
+        distinct.sort();
+        distinct.dedup();
+        if distinct.len() != seen.len() {
+            return Err(err(
+                "INVALID_SDK_MANAGED_SETTINGS",
+                format!("managedModels.{label} cannot contain duplicates."),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// `assertSdkManagedModelAllowed` (ProjectRuntimeRegistry.ts:1926-1940).
+pub(super) fn assert_managed_model_allowed(
+    policy: Option<&JsValue>,
+    provider: &JsString,
+    model: &JsString,
+) -> Result<(), SubmitError> {
+    let Some(policy) = policy.and_then(JsValue::as_object) else {
+        return Ok(());
+    };
+    let (provider, model) = (text(provider), text(model));
+    let matches = |selector: &JsValue| {
+        selector.as_string().is_some_and(|selector| {
+            let selector = text(selector);
+            selector == "*"
+                || selector == format!("{provider}/*")
+                || selector == format!("{provider}/{model}")
+        })
+    };
+    let list = |label: &str| match policy.get(label) {
+        Some(JsValue::Array(entries)) => entries.clone(),
+        _ => Vec::new(),
+    };
+    let (allow, deny) = (list("allow"), list("deny"));
+    if !deny.iter().any(matches) && (allow.is_empty() || allow.iter().any(matches)) {
+        return Ok(());
+    }
+    Err(err(
+        "SDK_MANAGED_MODEL_DENIED",
+        format!("SDK managedSettings.models denies model {provider}/{model}."),
+    ))
+}
+
 /// `resolveSdkModel` (SessionAgentConfigBundle.ts:242-250): split at the first
 /// slash; an empty side or no slash keeps the parent model.
 fn resolve_sdk_model(requested: &JsString, parent: (JsValue, JsValue)) -> (JsValue, JsValue) {
@@ -766,12 +851,16 @@ fn resolve_sdk_model(requested: &JsString, parent: (JsValue, JsValue)) -> (JsVal
 }
 
 /// The model-routing fields of `SessionAgentConfigBundle.compose`
-/// (SessionAgentConfigBundle.ts:127-130): `fallbackModel` becomes the one
-/// session fallback the router tries after a pre-content retryable failure.
+/// (SessionAgentConfigBundle.ts:127-131): `fallbackModel` becomes the one
+/// session fallback the router tries after a pre-content retryable failure,
+/// and `managedModels` the session's restrictive model policy.
 pub(super) fn apply_model_fields(agent: &mut JsObject, config: Option<&JsValue>) {
     let Some(config) = config.and_then(JsValue::as_object) else {
         return;
     };
+    if let Some(policy) = present(config, "managedModels").filter(|policy| truthy(policy)) {
+        agent.insert("managedModelPolicy".into(), policy.clone());
+    }
     // `sdk?.fallbackModel ?? sdk?.settings?.agent?.fallbackModel`; `settings`
     // is not accepted by this host, so only the top-level field applies.
     let requested = match present(config, "fallbackModel") {
@@ -826,6 +915,7 @@ impl SubmitSdkSessionConfig for NativeSdkSessionConfig {
         Box::pin(async move {
             // `this.resolve(projectKey)` and `sdkSessionProjects.set`.
             let root = self.options.project_root_for(project);
+            validate_selector_policy(config.get("managedModels"))?;
             // `JSON.stringify(previous) === JSON.stringify(next)`.
             let serialize = |value: &JsValue| stringify_json(value).ok().flatten();
             let previous = self.overrides.sdk_config(session);
@@ -833,18 +923,24 @@ impl SubmitSdkSessionConfig for NativeSdkSessionConfig {
                 return Ok(false);
             }
             // `if (next.fallbackModel)`: resolvable from this project's
-            // catalog (ProjectRuntimeRegistry.ts:1014-1018).
+            // catalog and allowed by the session's model policy
+            // (ProjectRuntimeRegistry.ts:1014-1018).
             if let Some(requested) = config
                 .get("fallbackModel")
                 .and_then(JsValue::as_string)
                 .filter(|requested| !requested.is_empty())
             {
                 let model_config = project_model_config(&self.project, &root)?;
-                resolve_configured_model(
+                let resolved = resolve_configured_model(
                     &model_config,
                     requested,
                     "INVALID_SDK_FALLBACK_MODEL",
                     "fallbackModel",
+                )?;
+                assert_managed_model_allowed(
+                    config.get("managedModels"),
+                    &resolved.0,
+                    &resolved.1,
                 )?;
             }
             self.overrides.set_sdk_config(session, config.clone());
