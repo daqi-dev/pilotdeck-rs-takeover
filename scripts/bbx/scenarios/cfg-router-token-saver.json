@@ -1,0 +1,146 @@
+{
+ "name": "cfg-router-token-saver",
+ "about": "router.tokenSaver（parseRouterConfig.ts:318-520；router/tokenSaver/classifyAndRoute.ts、generateJudgePrompt.ts、parseTier.ts）：judge 指定判档模型；tiers 两档各给 model / label / description；defaultTier=simple；rules 附加到判档提示；judgeTimeoutMs=600（最小 500）。同一会话先判 simple 再判 complex（第二次提示带上一档），另一会话判档请求挂 1.5 秒超时、三次后回落缺省档，再一会话判档回复无法解析、三次后回落。用 serve 起服务，比较 stdout 里的 [token-saver] 日志、判档请求体、各轮落到的模型、router/events.jsonl。cacheAwareSwitching.enabled=false 关掉缓存感知切换；subagent.policy=skip。",
+ "server": false,
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        judge:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        cheap:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        big:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nrouter:\n  enabled: true\n  tokenSaver:\n    enabled: true\n    judge: bbx/judge\n    defaultTier: simple\n    judgeTimeoutMs: 600\n    rules:\n      - Prefer simple for greetings.\n      - Use complex for refactors.\n    subagent:\n      policy: skip\n    cacheAwareSwitching:\n      enabled: false\n    tiers:\n      simple:\n        model: bbx/cheap\n        label: Cheap tier\n        description: quick answers\n      complex:\n        model: bbx/big\n        label: Big tier\n",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Cfg\"}"
+   }
+  },
+  {
+   "name": "judge-hard",
+   "when": [
+    "model-tier classifier",
+    "ts-hard"
+   ],
+   "reply": {
+    "text": "<tier>complex</tier>"
+   }
+  },
+  {
+   "name": "judge-easy",
+   "when": [
+    "model-tier classifier",
+    "ts-easy"
+   ],
+   "reply": {
+    "text": "I think <tier>simple</tier>"
+   }
+  },
+  {
+   "name": "judge-slow",
+   "when": [
+    "model-tier classifier",
+    "ts-slow"
+   ],
+   "reply": {
+    "delayMs": 1500,
+    "text": "<tier>complex</tier>"
+   }
+  },
+  {
+   "name": "judge-junk",
+   "when": [
+    "model-tier classifier",
+    "ts-junk"
+   ],
+   "reply": {
+    "text": "no idea"
+   }
+  },
+  {
+   "name": "cheap",
+   "when": [
+    "\"model\":\"cheap\""
+   ],
+   "reply": {
+    "text": "cheap ok"
+   }
+  },
+  {
+   "name": "big",
+   "when": [
+    "\"model\":\"big\""
+   ],
+   "reply": {
+    "text": "big ok"
+   }
+  },
+  {
+   "name": "other",
+   "reply": {
+    "text": "other ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "then": [
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-a",
+      "channelKey": "test",
+      "message": "ts-easy hello"
+     },
+     "timeout": 30000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-a",
+      "channelKey": "test",
+      "message": "ts-hard refactor everything"
+     },
+     "timeout": 30000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-b",
+      "channelKey": "test",
+      "message": "ts-slow please"
+     },
+     "timeout": 30000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-c",
+      "channelKey": "test",
+      "message": "ts-junk please"
+     },
+     "timeout": 30000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  }
+ ]
+}
