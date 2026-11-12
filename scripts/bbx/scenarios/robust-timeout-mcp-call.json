@@ -1,0 +1,110 @@
+{
+  "name": "robust-timeout-mcp-call",
+  "about": "会话级 stdio MCP server 握手和列工具正常、tools/call 永不回答（PILOTDECK_MCP_TOOL_TIMEOUT_MS=1500）：调用超时后的工具结果与错误文案、轮次结局、mcp_server_status、同会话下一轮。",
+  "env": {
+    "PILOTDECK_MCP_TOOL_TIMEOUT_MS": "1500"
+  },
+  "files": {
+    "home/.pilotdeck/mcp/hang-call.mjs": "// bbx fixture: MCP stdio server that completes the handshake and lists one tool,\n// but never answers tools/call.\nimport readline from 'node:readline';\nconst send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');\nreadline.createInterface({ input: process.stdin }).on('line', (line) => {\n  let r; try { r = JSON.parse(line); } catch { return; }\n  if (r.id === undefined) return;\n  if (r.method === 'initialize') send({ jsonrpc: '2.0', id: r.id, result: { protocolVersion: r.params?.protocolVersion ?? '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'bbx-hang', version: '1.0.0' } } });\n  else if (r.method === 'tools/list') send({ jsonrpc: '2.0', id: r.id, result: { tools: [{ name: 'stall', description: 'Never returns.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } }] } });\n  else if (r.method === 'tools/call') { /* never answer */ }\n  else send({ jsonrpc: '2.0', id: r.id, result: {} });\n});\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Robust run\"}"
+      }
+    },
+    {
+      "name": "turn-2",
+      "when": [
+        "turn-2:"
+      ],
+      "reply": {
+        "text": "Done 2."
+      }
+    },
+    {
+      "name": "turn-1-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "turn-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1",
+          "name": "mcp__bbx-hang__stall",
+          "arguments": {}
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_mcp_servers",
+      "params": {
+        "sessionKey": "s-mcp",
+        "servers": {
+          "bbx-hang": {
+            "type": "stdio",
+            "command": "node",
+            "args": [
+              "{PILOT_HOME}/mcp/hang-call.mjs"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-mcp",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mcp",
+        "channelKey": "test",
+        "message": "turn-1: call the stalling tool",
+        "runId": "run-bbx-1"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "mcp_server_status",
+      "params": {
+        "sessionKey": "s-mcp"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mcp",
+        "channelKey": "test",
+        "message": "turn-2: plain",
+        "runId": "run-bbx-2"
+      },
+      "timeout": 15000
+    },
+    {
+      "ws": "set_mcp_servers",
+      "params": {
+        "sessionKey": "s-mcp",
+        "servers": {}
+      }
+    }
+  ]
+}

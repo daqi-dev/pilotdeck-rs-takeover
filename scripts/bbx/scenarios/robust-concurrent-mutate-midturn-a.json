@@ -1,0 +1,285 @@
+{
+  "name": "robust-concurrent-mutate-midturn-a",
+  "about": "轮次进行中（bash sleep 2 期间）调会改会话状态的 method：rename_session、set_permission_mode（改成 plan）、session_model_set（换模型；不带 projectKey 一次、带 projectKey 一次）。看各自的回答、对本轮后续请求（工具结果后发给 provider 的那次）的影响、轮次结局与会话记录、list_sessions。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        second:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Robust run\"}"
+      }
+    },
+    {
+      "name": "turn-4-after-tool",
+      "when": [
+        "turn-4:",
+        "\"tool_call_id\":\"call_bbx_4\""
+      ],
+      "reply": {
+        "text": "Done 4."
+      }
+    },
+    {
+      "name": "turn-4",
+      "when": [
+        "turn-4:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_4",
+          "name": "bash",
+          "arguments": {
+            "command": "sleep 2; echo t4 > t4.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-3-after-tool",
+      "when": [
+        "turn-3:",
+        "\"tool_call_id\":\"call_bbx_3\""
+      ],
+      "reply": {
+        "text": "Done 3."
+      }
+    },
+    {
+      "name": "turn-3",
+      "when": [
+        "turn-3:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_3",
+          "name": "bash",
+          "arguments": {
+            "command": "sleep 2; echo t3 > t3.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-2-after-tool",
+      "when": [
+        "turn-2:",
+        "\"tool_call_id\":\"call_bbx_2\""
+      ],
+      "reply": {
+        "text": "Done 2."
+      }
+    },
+    {
+      "name": "turn-2",
+      "when": [
+        "turn-2:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_2",
+          "name": "bash",
+          "arguments": {
+            "command": "sleep 2; echo t2 > t2.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-1-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "turn-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1",
+          "name": "bash",
+          "arguments": {
+            "command": "sleep 2; echo t1 > t1.txt"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-r",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-r",
+        "channelKey": "test",
+        "message": "turn-1: sleep",
+        "runId": "run-bbx-1"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started"
+          },
+          "ws": "rename_session",
+          "params": {
+            "sessionKey": "s-r",
+            "value": "Renamed mid-turn"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-p",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-p",
+        "channelKey": "test",
+        "message": "turn-2: sleep",
+        "runId": "run-bbx-2"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started"
+          },
+          "ws": "set_permission_mode",
+          "params": {
+            "sessionKey": "s-p",
+            "mode": "plan"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-m",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-m",
+        "channelKey": "test",
+        "message": "turn-3: sleep",
+        "runId": "run-bbx-3"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started"
+          },
+          "ws": "session_model_set",
+          "params": {
+            "sessionKey": "s-m",
+            "selection": {
+              "mode": "model",
+              "provider": "bbx",
+              "model": "second"
+            }
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-n",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-n",
+        "channelKey": "test",
+        "message": "turn-4: sleep",
+        "runId": "run-bbx-4"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started"
+          },
+          "ws": "session_model_set",
+          "params": {
+            "sessionKey": "s-n",
+            "projectKey": "{PILOT_HOME}",
+            "selection": {
+              "mode": "model",
+              "provider": "bbx",
+              "model": "second"
+            }
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "list_sessions",
+      "params": {}
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-r"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-p"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-m"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-n"
+      }
+    },
+    {
+      "ws": "session_model_get",
+      "params": {
+        "sessionKey": "s-n",
+        "projectKey": "{PILOT_HOME}"
+      }
+    }
+  ]
+}

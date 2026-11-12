@@ -1,0 +1,77 @@
+{
+  "name": "robust-restart-registry-lock-leftover",
+  "about": "上一个进程在持有运行记录文件锁时被杀，留下 runs/registry.json.lock（内容里的 pid 已死，mtime 是新的，未到 60 秒的过期线）：新进程启动后 run_get 已有记录、提交一轮（等锁 30 秒超时前后的行为）、之后再 run_get。",
+  "files": {
+    "home/.pilotdeck/runs/registry.json": {
+      "schemaVersion": 1,
+      "records": [
+        {
+          "sessionKey": "s-bbx-1",
+          "runId": "run-bbx-1",
+          "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"first question\",\"sessionKey\":\"s-bbx-1\"}",
+          "ownerPid": 99999999,
+          "state": "running",
+          "revision": 3,
+          "lastSeq": 2,
+          "acceptedAt": "2026-11-01T00:00:08.000Z",
+          "updatedAt": "2026-11-01T00:00:09.000Z"
+        }
+      ],
+      "events": {}
+    },
+    "home/.pilotdeck/runs/registry.json.lock": "{\"pid\": 99999999, \"acquiredAt\": \"2026-11-01T00:00:00.000Z\"}"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Robust run\"}"
+      }
+    },
+    {
+      "name": "turn-2",
+      "when": [
+        "turn-2:"
+      ],
+      "reply": {
+        "text": "Done 2."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "run_get",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "runId": "run-bbx-1"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-2: hello",
+        "runId": "run-bbx-2"
+      },
+      "timeout": 50000
+    },
+    {
+      "ws": "run_get",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "runId": "run-bbx-2"
+      }
+    },
+    {
+      "ws": "run_get",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "runId": "run-bbx-1"
+      }
+    }
+  ]
+}

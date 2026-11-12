@@ -1,0 +1,102 @@
+{
+  "name": "robust-timeout-submit-turn",
+  "about": "submit_turn.timeoutMs=1500 而工具 bash sleep 4 撑过超时：超时后的事件序列与终止事件、run_get、active_turn_snapshot、会话记录，sleep 写的文件是否还会出现，同会话下一轮能否正常跑。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Robust run\"}"
+      }
+    },
+    {
+      "name": "turn-2",
+      "when": [
+        "turn-2:"
+      ],
+      "reply": {
+        "text": "Done 2."
+      }
+    },
+    {
+      "name": "turn-1-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "turn-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1",
+          "name": "bash",
+          "arguments": {
+            "command": "sleep 4; echo late > late.txt"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-1: sleep long",
+        "runId": "run-bbx-1",
+        "timeoutMs": 1500
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "active_turn_snapshot",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "includeEvents": false
+      }
+    },
+    {
+      "ws": "run_get",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "runId": "run-bbx-1"
+      }
+    },
+    {
+      "sleep": 4000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-bbx-1"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-2: again",
+        "runId": "run-bbx-2"
+      },
+      "timeout": 15000
+    }
+  ]
+}

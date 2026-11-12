@@ -1,0 +1,135 @@
+{
+  "name": "robust-concurrent-two-sessions",
+  "about": "两个会话并行跑轮次：s-a 在 bash sleep 2 期间（answer 插入）提交 s-b 的一轮（也 sleep 1），看两路事件按请求 id 的归属、各自的 run_get 与会话记录。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Robust run\"}"
+      }
+    },
+    {
+      "name": "turn-2-after-tool",
+      "when": [
+        "turn-2:",
+        "\"tool_call_id\":\"call_bbx_2\""
+      ],
+      "reply": {
+        "text": "Done 2."
+      }
+    },
+    {
+      "name": "turn-2",
+      "when": [
+        "turn-2:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_2",
+          "name": "bash",
+          "arguments": {
+            "command": "sleep 1; echo b > b.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-1-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "turn-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1",
+          "name": "bash",
+          "arguments": {
+            "command": "sleep 2; echo t1 > t1.txt"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-a",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-b",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-a",
+        "channelKey": "test",
+        "message": "turn-1: sleep",
+        "runId": "run-bbx-1"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started"
+          },
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-b",
+            "channelKey": "test",
+            "runId": "run-bbx-2",
+            "message": "turn-2: other session"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 1500
+    },
+    {
+      "ws": "run_get",
+      "params": {
+        "sessionKey": "s-a",
+        "runId": "run-bbx-1"
+      }
+    },
+    {
+      "ws": "run_get",
+      "params": {
+        "sessionKey": "s-b",
+        "runId": "run-bbx-2"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-a"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-b"
+      }
+    }
+  ]
+}

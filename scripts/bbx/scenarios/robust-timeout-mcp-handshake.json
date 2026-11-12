@@ -1,0 +1,81 @@
+{
+  "name": "robust-timeout-mcp-handshake",
+  "about": "会话级 stdio MCP server 启动后对 initialize 永不回答：set_mcp_servers 的回答、mcp_server_status、随后一轮（工具声明里有没有它、轮次要等多久，握手默认 10 秒超时）、之后的 mcp_server_status 与 mcp_server_reconnect。",
+  "files": {
+    "home/.pilotdeck/mcp/silent.mjs": "// bbx fixture: MCP stdio server that reads stdin and never answers anything.\nprocess.stdin.on('data', () => {});\nsetInterval(() => {}, 1 << 30);\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Robust run\"}"
+      }
+    },
+    {
+      "name": "turn-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_mcp_servers",
+      "params": {
+        "sessionKey": "s-mcp",
+        "servers": {
+          "bbx-silent": {
+            "type": "stdio",
+            "command": "node",
+            "args": [
+              "{PILOT_HOME}/mcp/silent.mjs"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "ws": "mcp_server_status",
+      "params": {
+        "sessionKey": "s-mcp"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mcp",
+        "channelKey": "test",
+        "message": "turn-1: plain",
+        "runId": "run-bbx-1"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "mcp_server_status",
+      "params": {
+        "sessionKey": "s-mcp"
+      }
+    },
+    {
+      "ws": "mcp_server_reconnect",
+      "params": {
+        "sessionKey": "s-mcp",
+        "serverName": "bbx-silent"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "set_mcp_servers",
+      "params": {
+        "sessionKey": "s-mcp",
+        "servers": {}
+      }
+    }
+  ]
+}

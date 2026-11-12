@@ -1,0 +1,152 @@
+{
+  "name": "robust-concurrent-second-submit",
+  "about": "同一会话第一轮还在 bash sleep 2 时，同一连接上再 submit_turn 第二轮（用 answer 在 tool_call_started 时插入）：第二轮被拒还是排队、两轮各自的事件与终止事件、run_get、会话记录；再在第一轮进行中用同一 runId 重复提交。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Robust run\"}"
+      }
+    },
+    {
+      "name": "turn-3-after-tool",
+      "when": [
+        "turn-3:",
+        "\"tool_call_id\":\"call_bbx_3\""
+      ],
+      "reply": {
+        "text": "Done 3."
+      }
+    },
+    {
+      "name": "turn-3",
+      "when": [
+        "turn-3:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_3",
+          "name": "bash",
+          "arguments": {
+            "command": "sleep 2; echo t3 > t3.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-2",
+      "when": [
+        "turn-2:"
+      ],
+      "reply": {
+        "text": "Done 2."
+      }
+    },
+    {
+      "name": "turn-1-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "turn-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1",
+          "name": "bash",
+          "arguments": {
+            "command": "sleep 2; echo t1 > t1.txt"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-1: sleep",
+        "runId": "run-bbx-1"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started"
+          },
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-bbx-1",
+            "channelKey": "test",
+            "runId": "run-bbx-2",
+            "message": "turn-2: overlap"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 3000
+    },
+    {
+      "ws": "run_get",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "runId": "run-bbx-2"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-3: sleep",
+        "runId": "run-bbx-3"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started"
+          },
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-bbx-1",
+            "channelKey": "test",
+            "runId": "run-bbx-3",
+            "message": "turn-3: sleep"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 3000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-bbx-1"
+      }
+    }
+  ]
+}

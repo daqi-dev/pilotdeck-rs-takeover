@@ -1,0 +1,93 @@
+{
+  "name": "robust-timeout-elicitation-connected",
+  "about": "客户端一直连着但不回答 ask_user_question（PILOTDECK_ELICITATION_TIMEOUT_MS=1500）：超时后的事件、工具结果文案、轮次结局、之后迟到的 elicitation_respond、会话记录。",
+  "env": {
+    "PILOTDECK_ELICITATION_TIMEOUT_MS": "1500"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Robust run\"}"
+      }
+    },
+    {
+      "name": "turn-1-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "turn-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1",
+          "name": "ask_user_question",
+          "arguments": {
+            "questions": [
+              {
+                "question": "Which color?",
+                "header": "Color",
+                "options": [
+                  {
+                    "label": "Red",
+                    "description": "warm"
+                  },
+                  {
+                    "label": "Blue",
+                    "description": "cool"
+                  }
+                ],
+                "multiSelect": false
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-1: ask me",
+        "runId": "run-bbx-1"
+      },
+      "timeout": 20000,
+      "save": {
+        "rid": "\"requestId\":\"([^\"]+)\""
+      }
+    },
+    {
+      "ws": "elicitation_respond",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "requestId": "{saved.rid}",
+        "answer": {
+          "type": "answered",
+          "answers": {
+            "Which color?": "Red"
+          }
+        }
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-bbx-1"
+      }
+    }
+  ]
+}

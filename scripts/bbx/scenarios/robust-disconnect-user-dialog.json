@@ -1,0 +1,112 @@
+{
+  "name": "robust-disconnect-user-dialog",
+  "about": "轮次挂在 request_user_confirmation 的用户对话框上时断开（对话框不属于权限 / 提问总线）：重连后 user_dialog_list、active_turn_snapshot、run_get、会话记录，以及同会话下一轮。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Robust run\"}"
+      }
+    },
+    {
+      "name": "turn-2",
+      "when": [
+        "turn-2:"
+      ],
+      "reply": {
+        "text": "Done 2."
+      }
+    },
+    {
+      "name": "turn-1-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "turn-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1",
+          "name": "request_user_confirmation",
+          "arguments": {
+            "prompt": "Proceed?"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-1: confirm",
+        "runId": "run-bbx-1",
+        "sdkSessionConfig": {
+          "userDialogKinds": [
+            "confirm"
+          ]
+        }
+      },
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "disconnect": true
+    },
+    {
+      "sleep": 1500
+    },
+    {
+      "connect": true
+    },
+    {
+      "ws": "user_dialog_list",
+      "params": {
+        "sessionKey": "s-bbx-1"
+      }
+    },
+    {
+      "ws": "active_turn_snapshot",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "includeEvents": false
+      }
+    },
+    {
+      "ws": "run_get",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "runId": "run-bbx-1"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-bbx-1"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-2: again",
+        "runId": "run-bbx-2"
+      },
+      "timeout": 15000
+    }
+  ]
+}

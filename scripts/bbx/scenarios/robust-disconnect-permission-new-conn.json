@@ -1,0 +1,111 @@
+{
+  "name": "robust-disconnect-permission-new-conn",
+  "about": "轮次挂在权限询问上时断开，重连后不调 reconnect_interaction，直接在新连接上 permission_decide（旧绑定的请求）；再 permission_list、grant_session_permission 后的状态；最后 abort_turn 并看会话记录。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Robust run\"}"
+      }
+    },
+    {
+      "name": "turn-1-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "turn-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1",
+          "name": "bash",
+          "arguments": {
+            "command": "echo needs-permission > made.txt"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-1: ask",
+        "runId": "run-bbx-1"
+      },
+      "timeout": 3000,
+      "expectTimeout": true,
+      "save": {
+        "rid": "\"requestId\":\"([^\"]+)\""
+      }
+    },
+    {
+      "disconnect": true
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "connect": true
+    },
+    {
+      "ws": "permission_decide",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "requestId": "{saved.rid}",
+        "decision": "allow"
+      }
+    },
+    {
+      "sleep": 1500
+    },
+    {
+      "ws": "permission_list",
+      "params": {
+        "sessionKey": "s-bbx-1"
+      }
+    },
+    {
+      "ws": "active_turn_snapshot",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "includeEvents": false
+      }
+    },
+    {
+      "ws": "abort_turn",
+      "params": {
+        "sessionKey": "s-bbx-1"
+      }
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "run_get",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "runId": "run-bbx-1"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-bbx-1"
+      }
+    }
+  ]
+}
