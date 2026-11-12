@@ -1,6 +1,6 @@
 {
  "baseline": "cc7c4e6",
- "probeSyntax": "probe 里的每个字符串默认按子串在场景文件原文（JSON 文本，含转义）里查找；以 / 开头并以 / 结尾（可带 i 标志，如 /x/i）的按 JavaScript 正则匹配。observe 是在采集产物（_build/bbx/<场景>.<侧>.json）原文里找它的正则。where 是相对基线仓库根（resources/PilotDeck/）的「文件:行号」。",
+ "probeSyntax": "probe 里的每个字符串默认按子串在场景文件原文（JSON 文本，含转义）里查找；整串符合 ^/(.+)/([gimsuy]*)$ 的（以 / 开头、以 / 加可选标志结尾，如 /x/i）按 JavaScript 正则匹配，例如 \"/feishu/webhook\" 的结尾不是合法标志，仍按子串处理。observe 是在采集产物（_build/bbx/<场景>.<侧>.json）原文里找它的正则。where 是相对基线仓库根（resources/PilotDeck/）的「文件:行号」。",
  "dimensions": {
   "config": {
    "about": "全局配置文件 <PilotHome>/pilotdeck.yaml（PILOTDECK_CONFIG_PATH 可改路径）的全部键，到叶子键。来源：src/pilot/config/loadPilotConfig.ts 的 validateTopLevel 允许名单与各段 parse 函数（parseAgent、parseExtension、parseProxyConfig、parseTelemetryConfig）、src/model/config/parseModelConfig.ts + src/model/thinking/settings.ts（model 段）、src/pilot/config/parseMemoryConfig.ts / parseGatewayConfig.ts（gateway 与 adapters）/ parseToolsConfig.ts / parseModulesConfig.ts / parseRunPolicyConfig.ts、src/router/config/parseRouterConfig.ts、src/always-on/config/parseAlwaysOnConfig.ts、src/cron/config/parseCronConfig.ts；webui.* 来自 ui/server（gateway 只容忍）。交叉核对：每个 parse 函数里的 raw.xxx 读取与「未知键」允许名单逐个对过；grep 了直接读 YAML 的其它位置（sdkSessionSettings.ts、updateLocalSettings.ts、gatewaySetup.ts、dialog/commands.ts、SkillManager.ts）——前两者只读 agent 子集，见 sdk-session-config。动态键用 <provider>/<model>/<plugin>/<tier>/<root>/<slot>/<platform>/<tool> 表示。probe 是启发式：特异键名用「键:」；通用键名用「父键:…叶子键:」的正则，可能误报；不写 config 的场景用采集器的缺省配置，这些缺省键（schemaVersion、agent.model、model.providers… 等）不会被计入。可能遗漏：adapters.<platform>.extra 内部的平台特定键（由各渠道实现读取，见 channels 维度）；modules 的外部 catalog 子字段只在 note 里列出。",
@@ -10,8 +10,7 @@
      "where": "src/pilot/config/loadPilotConfig.ts:665",
      "note": "只接受 1；缺省给警告 CONFIG_SCHEMA_VERSION_MISSING 并按 1 处理；其它值致命 CONFIG_SCHEMA_VERSION_UNSUPPORTED。",
      "probe": [
-      "/(^|\\\\n|\")schemaVersion:/",
-      "\"schemaVersion\""
+      "/(^|\\\\n|\")schemaVersion:/"
      ]
     },
     {
@@ -19,8 +18,7 @@
      "where": "src/pilot/config/loadPilotConfig.ts:333",
      "note": "禁止出现的顶层段：出现即致命 CONFIG_PILOT_SECTION_FORBIDDEN（PilotHome 只能用 PILOT_HOME 环境变量）。",
      "probe": [
-      "/(^|\\\\n|\")pilot:/",
-      "\"pilot\""
+      "/(^|\\\\n|\")pilot:/"
      ]
     },
     {
@@ -35,8 +33,7 @@
      "where": "src/pilot/config/loadPilotConfig.ts:111",
      "note": "必需段；缺失致命 CONFIG_AGENT_MISSING；不是对象致命 CONFIG_AGENT_INVALID。",
      "probe": [
-      "/(^|\\\\n|\")agent:/",
-      "\"agent\""
+      "/(^|\\\\n|\")agent:/"
      ]
     },
     {
@@ -44,8 +41,7 @@
      "where": "src/pilot/config/loadPilotConfig.ts:121",
      "note": "必需段；缺失致命 CONFIG_MODEL_MISSING。",
      "probe": [
-      "/(^|\\\\n|\")model:/",
-      "\"model\""
+      "/(^|\\\\n|\")model:/"
      ]
     },
     {
@@ -61,8 +57,7 @@
      "where": "src/pilot/config/loadPilotConfig.ts:396",
      "note": "取值 read-only | workspace-write | danger-full-access，缺省 danger-full-access；非法值警告 CONFIG_AGENT_SANDBOX_MODE_INVALID 并回落缺省。约束模型发起的本地进程（bash、execute_code、task_*）的文件写入范围。",
      "probe": [
-      "sandboxMode:",
-      "\"sandboxMode\""
+      "sandboxMode:"
      ]
     },
     {
@@ -70,8 +65,7 @@
      "where": "src/pilot/config/loadPilotConfig.ts:397",
      "note": "取值 system_prompt | user_message，缺省 system_prompt；动态运行时上下文放进系统提示还是用户消息。非法值警告并回落。",
      "probe": [
-      "runtimeContextSurface:",
-      "\"runtimeContextSurface\""
+      "runtimeContextSurface:"
      ]
     },
     {
@@ -79,8 +73,7 @@
      "where": "src/pilot/config/loadPilotConfig.ts:398",
      "note": "取值 interactive | headless | disabled，缺省 interactive；决定新会话组合的提问 / 审批提供者（影响 ask_user_question、权限询问是否可用）。非法值警告并回落。",
      "probe": [
-      "interactionProfile:",
-      "\"interactionProfile\""
+      "interactionProfile:"
      ]
     },
     {
@@ -88,8 +81,7 @@
      "where": "src/pilot/config/loadPilotConfig.ts:400",
      "note": "正整数（向下取整），否则抛 CONFIG_INVALID_VALUE；覆盖模型目录的上下文窗口，自动压缩阈值据此计算。",
      "probe": [
-      "maxContextTokens:",
-      "\"maxContextTokens\""
+      "maxContextTokens:"
      ]
     },
     {
@@ -97,8 +89,7 @@
      "where": "src/pilot/config/loadPilotConfig.ts:401",
      "note": "正整数，否则抛 CONFIG_INVALID_VALUE；覆盖所选模型的输出 token 上限（影响请求里的 max_tokens）。",
      "probe": [
-      "maxOutputTokens:",
-      "\"maxOutputTokens\""
+      "maxOutputTokens:"
      ]
     },
     {
@@ -122,8 +113,7 @@
      "where": "src/pilot/config/loadPilotConfig.ts:403",
      "note": "已移除：出现时警告 CONFIG_AGENT_FALLBACK_MODEL_DEPRECATED，提示改用 router.fallback.default；值被忽略（但 SDK 会话设置仍从文件里读它，见 sdk-session-config）。",
      "probe": [
-      "fallbackModel:",
-      "\"fallbackModel\""
+      "fallbackModel:"
      ]
     },
     {
@@ -163,8 +153,7 @@
      "where": "src/model/config/parseModelConfig.ts:55",
      "note": "必须是非空对象，否则致命 MODEL_MISSING_PROVIDER；单个 provider 配置出错时只警告（MODEL_<code>）并把它排除出运行时。",
      "probe": [
-      "providers:",
-      "\"providers\""
+      "providers:"
      ]
     },
     {
@@ -212,8 +201,7 @@
      "where": "src/model/config/parseModelConfig.ts:122",
      "note": "对象，经 sanitizeProviderBody 清洗后合并进请求体（可覆盖采样参数等）。",
      "probe": [
-      "extraBody:",
-      "\"extraBody\""
+      "extraBody:"
      ]
     },
     {
@@ -221,8 +209,7 @@
      "where": "src/model/config/parseModelConfig.ts:129",
      "note": "openai_service_tier（仅 openai / openai-responses）或 anthropic_speed（仅 anthropic），与协议不配致命；官方 openai / anthropic provider 缺省自动设置。决定「快速模式」映射到 service_tier 还是 anthropic speed 字段。",
      "probe": [
-      "speedMapping:",
-      "\"speedMapping\""
+      "speedMapping:"
      ]
     },
     {
@@ -315,8 +302,7 @@
      "where": "src/model/thinking/settings.ts:24",
      "note": "列表，元素取 low | medium | high | xhigh | max；可选的推理强度档位（决定 reasoning_effort 等字段可取值）。",
      "probe": [
-      "efforts:",
-      "\"efforts\""
+      "efforts:"
      ]
     },
     {
@@ -332,8 +318,7 @@
      "where": "src/model/config/parseModelConfig.ts:229",
      "note": "字符串；显示名，缺省用目录里的显示名。",
      "probe": [
-      "displayName:",
-      "\"displayName\""
+      "displayName:"
      ]
     },
     {
@@ -341,8 +326,7 @@
      "where": "src/model/config/parseModelConfig.ts:264",
      "note": "布尔，否则 MODEL_INVALID_CAPABILITIES；是否向模型声明工具；缺省取目录或协议缺省能力。",
      "probe": [
-      "supportsToolUse:",
-      "\"supportsToolUse\""
+      "supportsToolUse:"
      ]
     },
     {
@@ -350,8 +334,7 @@
      "where": "src/model/config/parseModelConfig.ts:265",
      "note": "布尔，否则 MODEL_INVALID_CAPABILITIES；是否用流式请求；缺省取目录或协议缺省能力。",
      "probe": [
-      "supportsStreaming:",
-      "\"supportsStreaming\""
+      "supportsStreaming:"
      ]
     },
     {
@@ -359,8 +342,7 @@
      "where": "src/model/config/parseModelConfig.ts:266",
      "note": "布尔，否则 MODEL_INVALID_CAPABILITIES；是否允许并行工具调用（影响 parallel_tool_calls 字段）；缺省取目录或协议缺省能力。",
      "probe": [
-      "supportsParallelToolCalls:",
-      "\"supportsParallelToolCalls\""
+      "supportsParallelToolCalls:"
      ]
     },
     {
@@ -368,8 +350,7 @@
      "where": "src/model/config/parseModelConfig.ts:267",
      "note": "布尔，否则 MODEL_INVALID_CAPABILITIES；是否支持推理（显式给出时另记 supportsThinkingExplicit）；缺省取目录或协议缺省能力。",
      "probe": [
-      "supportsThinking:",
-      "\"supportsThinking\""
+      "supportsThinking:"
      ]
     },
     {
@@ -377,8 +358,7 @@
      "where": "src/model/config/parseModelConfig.ts:268",
      "note": "布尔，否则 MODEL_INVALID_CAPABILITIES；是否支持快速模式（官方 openai / anthropic provider 缺省 true）；缺省取目录或协议缺省能力。",
      "probe": [
-      "supportsSpeed:",
-      "\"supportsSpeed\""
+      "supportsSpeed:"
      ]
     },
     {
@@ -386,8 +366,7 @@
      "where": "src/model/config/parseModelConfig.ts:269",
      "note": "布尔，否则 MODEL_INVALID_CAPABILITIES；是否支持结构化输出（response_format json_schema）；缺省取目录或协议缺省能力。",
      "probe": [
-      "supportsJsonSchema:",
-      "\"supportsJsonSchema\""
+      "supportsJsonSchema:"
      ]
     },
     {
@@ -395,8 +374,7 @@
      "where": "src/model/config/parseModelConfig.ts:270",
      "note": "布尔，否则 MODEL_INVALID_CAPABILITIES；是否支持 system 角色；缺省取目录或协议缺省能力。",
      "probe": [
-      "supportsSystemPrompt:",
-      "\"supportsSystemPrompt\""
+      "supportsSystemPrompt:"
      ]
     },
     {
@@ -404,8 +382,7 @@
      "where": "src/model/config/parseModelConfig.ts:271",
      "note": "布尔，否则 MODEL_INVALID_CAPABILITIES；是否发缓存断点（cache_control）；缺省取目录或协议缺省能力。",
      "probe": [
-      "supportsPromptCache:",
-      "\"supportsPromptCache\""
+      "supportsPromptCache:"
      ]
     },
     {
@@ -429,8 +406,7 @@
      "where": "src/model/config/parseModelConfig.ts:284",
      "note": "maxContextTokens 的别名，只在 maxContextTokens 未给时生效。",
      "probe": [
-      "contextWindow:",
-      "\"contextWindow\""
+      "contextWindow:"
      ]
     },
     {
@@ -446,8 +422,7 @@
      "where": "src/model/config/parseModelConfig.ts:347",
      "note": "正数；单次请求最多图片数。",
      "probe": [
-      "maxImagesPerRequest:",
-      "\"maxImagesPerRequest\""
+      "maxImagesPerRequest:"
      ]
     },
     {
@@ -455,8 +430,7 @@
      "where": "src/model/config/parseModelConfig.ts:350",
      "note": "正数；单张图片字节上限。",
      "probe": [
-      "maxImageBytes:",
-      "\"maxImageBytes\""
+      "maxImageBytes:"
      ]
     },
     {
@@ -464,8 +438,7 @@
      "where": "src/model/config/parseModelConfig.ts:352",
      "note": "字符串列表；接受的图片 MIME。",
      "probe": [
-      "supportedImageMimeTypes:",
-      "\"supportedImageMimeTypes\""
+      "supportedImageMimeTypes:"
      ]
     },
     {
@@ -473,8 +446,7 @@
      "where": "src/model/config/parseModelConfig.ts:355",
      "note": "正数；PDF 页数上限。",
      "probe": [
-      "maxPdfPages:",
-      "\"maxPdfPages\""
+      "maxPdfPages:"
      ]
     },
     {
@@ -482,8 +454,7 @@
      "where": "src/model/config/parseModelConfig.ts:356",
      "note": "正数；PDF 字节上限。",
      "probe": [
-      "maxPdfBytes:",
-      "\"maxPdfBytes\""
+      "maxPdfBytes:"
      ]
     },
     {
@@ -491,8 +462,7 @@
      "where": "src/model/config/parseModelConfig.ts:357",
      "note": "正数；音频时长上限。",
      "probe": [
-      "maxAudioSeconds:",
-      "\"maxAudioSeconds\""
+      "maxAudioSeconds:"
      ]
     },
     {
@@ -500,8 +470,7 @@
      "where": "src/model/config/parseModelConfig.ts:358",
      "note": "auto | low | high；OpenAI 图片 detail 字段。",
      "probe": [
-      "imageDetail:",
-      "\"imageDetail\""
+      "imageDetail:"
      ]
     },
     {
@@ -525,8 +494,7 @@
      "where": "src/pilot/config/loadPilotConfig.ts:764",
      "note": "布尔，缺省 false；为 true 时 hook 执行事件对客户端可见。非布尔致命。",
      "probe": [
-      "includeHookEvents:",
-      "\"includeHookEvents\""
+      "includeHookEvents:"
      ]
     },
     {
@@ -573,8 +541,7 @@
      "where": "src/pilot/config/parseMemoryConfig.ts:220",
      "note": "last_turn（缺省）| full_session；捕获哪些对话进记忆。",
      "probe": [
-      "captureStrategy:",
-      "\"captureStrategy\""
+      "captureStrategy:"
      ]
     },
     {
@@ -582,8 +549,7 @@
      "where": "src/pilot/config/parseMemoryConfig.ts:73",
      "note": "布尔，缺省 true；捕获时是否包含助手消息。",
      "probe": [
-      "includeAssistant:",
-      "\"includeAssistant\""
+      "includeAssistant:"
      ]
     },
     {
@@ -591,8 +557,7 @@
      "where": "src/pilot/config/parseMemoryConfig.ts:74",
      "note": "正数；单条消息截断长度。",
      "probe": [
-      "maxMessageChars:",
-      "\"maxMessageChars\""
+      "maxMessageChars:"
      ]
     },
     {
@@ -600,8 +565,7 @@
      "where": "src/pilot/config/parseMemoryConfig.ts:76",
      "note": "正整数；检索超时。",
      "probe": [
-      "retrievalTimeoutMs:",
-      "\"retrievalTimeoutMs\""
+      "retrievalTimeoutMs:"
      ]
     },
     {
@@ -633,8 +597,7 @@
      "where": "src/pilot/config/parseMemoryConfig.ts:100",
      "note": "非负整数；自动建索引间隔。",
      "probe": [
-      "autoIndexIntervalMinutes:",
-      "\"autoIndexIntervalMinutes\""
+      "autoIndexIntervalMinutes:"
      ]
     },
     {
@@ -642,8 +605,7 @@
      "where": "src/pilot/config/parseMemoryConfig.ts:107",
      "note": "非负整数；自动 dream（整理）间隔。",
      "probe": [
-      "autoDreamIntervalMinutes:",
-      "\"autoDreamIntervalMinutes\""
+      "autoDreamIntervalMinutes:"
      ]
     },
     {
@@ -659,8 +621,7 @@
      "where": "src/pilot/config/parseMemoryConfig.ts:82",
      "note": "正整数；心跳批量大小。",
      "probe": [
-      "heartbeatBatchSize:",
-      "\"heartbeatBatchSize\""
+      "heartbeatBatchSize:"
      ]
     },
     {
@@ -673,7 +634,7 @@
     {
      "id": "gateway.port",
      "where": "src/pilot/config/parseGatewayConfig.ts:46",
-     "note": "数字，缺省 18789；gateway 监听端口（CLI --port / PILOTDECK_GATEWAY_PORT 优先级见 cli 维度）。",
+     "note": "数字，缺省 18789。注意：pilotdeck server 的监听端口只看 --port / PILOTDECK_GATEWAY_PORT / 18789（src/cli/pilotdeck.ts:221），不读这个键；它只被 pilotdeck tui 用来探测本机 server。",
      "probe": [
       "/gateway:[\\s\\S]{0,200}?port:/"
      ]
@@ -683,8 +644,7 @@
      "where": "src/pilot/config/parseGatewayConfig.ts:24",
      "note": "只允许 127.0.0.1，其它致命 GATEWAY_BIND_ADDRESS_UNSUPPORTED。",
      "probe": [
-      "bindAddress:",
-      "\"bindAddress\""
+      "bindAddress:"
      ]
     },
     {
@@ -700,8 +660,7 @@
      "where": "src/pilot/config/parseGatewayConfig.ts:48",
      "note": "数字，缺省 30；空闲会话回收时间。",
      "probe": [
-      "idleSessionTimeoutMinutes:",
-      "\"idleSessionTimeoutMinutes\""
+      "idleSessionTimeoutMinutes:"
      ]
     },
     {
@@ -709,8 +668,7 @@
      "where": "src/pilot/config/parseGatewayConfig.ts:49",
      "note": "数字，缺省 60；空闲扫描间隔。",
      "probe": [
-      "idleSweepIntervalSeconds:",
-      "\"idleSweepIntervalSeconds\""
+      "idleSweepIntervalSeconds:"
      ]
     },
     {
@@ -718,17 +676,15 @@
      "where": "src/pilot/config/parseGatewayConfig.ts:50",
      "note": "布尔，缺省 false；内存诊断日志。",
      "probe": [
-      "memoryDiagnostics:",
-      "\"memoryDiagnostics\""
+      "memoryDiagnostics:"
      ]
     },
     {
      "id": "gateway.staticAssetsPath",
      "where": "src/pilot/config/parseGatewayConfig.ts:51",
-     "note": "字符串；gateway 托管的静态资源目录（HTTP 静态路由）。",
+     "note": "字符串；被解析，但 server 不用它——静态资源目录固定为 <cwd>/ui/dist（src/cli/pilotdeck.ts:224），解析了不生效。",
      "probe": [
-      "staticAssetsPath:",
-      "\"staticAssetsPath\""
+      "staticAssetsPath:"
      ]
     },
     {
@@ -736,14 +692,13 @@
      "where": "src/pilot/config/parseGatewayConfig.ts:44",
      "note": "数字，缺省 5，最小 1；每会话 MCP 实例数上限，超出回落到项目级共享 MCP。",
      "probe": [
-      "maxPerSessionMcpInstances:",
-      "\"maxPerSessionMcpInstances\""
+      "maxPerSessionMcpInstances:"
      ]
     },
     {
      "id": "adapters.cli.autoConnectServer",
      "where": "src/pilot/config/parseGatewayConfig.ts:80",
-     "note": "布尔，缺省 true；CLI 是否自动连接已运行的 server。",
+     "note": "布尔，缺省 true；被解析，但 src/ 里没有任何读取处（解析了不生效）。",
      "probe": [
       "/cli:[\\s\\S]{0,60}?autoConnectServer:/"
      ]
@@ -751,7 +706,7 @@
     {
      "id": "adapters.tui.autoConnectServer",
      "where": "src/pilot/config/parseGatewayConfig.ts:81",
-     "note": "布尔，缺省 true；TUI 是否自动连接 server。",
+     "note": "布尔，缺省 true；被解析，但 src/ 里没有任何读取处（解析了不生效）。",
      "probe": [
       "/tui:[\\s\\S]{0,60}?autoConnectServer:/"
      ]
@@ -799,7 +754,7 @@
     {
      "id": "adapters.feishu.defaultSessionLabel",
      "where": "src/pilot/config/parseGatewayConfig.ts:134",
-     "note": "字符串，缺省 general；渠道会话标签。",
+     "note": "字符串，缺省 general；被解析但 src/ 里没有读取处（不生效）。",
      "probe": [
       "/feishu:[\\s\\S]{0,400}?defaultSessionLabel:/"
      ]
@@ -1081,8 +1036,7 @@
      "where": "src/router/config/parseRouterConfig.ts:177",
      "note": "非负整数，缺省 5（LiteLLM 兼容）；最多尝试几组回退。",
      "probe": [
-      "maxFallbacks:",
-      "\"maxFallbacks\""
+      "maxFallbacks:"
      ]
     },
     {
@@ -1178,8 +1132,7 @@
      "where": "src/router/config/parseRouterConfig.ts:400",
      "note": "字符串，缺省 medium（或第一个档位）；未知档位致命。",
      "probe": [
-      "defaultTier:",
-      "\"defaultTier\""
+      "defaultTier:"
      ]
     },
     {
@@ -1203,8 +1156,7 @@
      "where": "src/router/config/parseRouterConfig.ts:454",
      "note": "正整数，缺省 15000；判档超时。",
      "probe": [
-      "judgeTimeoutMs:",
-      "\"judgeTimeoutMs\""
+      "judgeTimeoutMs:"
      ]
     },
     {
@@ -1220,8 +1172,7 @@
      "where": "src/router/config/parseRouterConfig.ts:487",
      "note": "非负数，缺省 0；切换所需的最小节省比例。",
      "probe": [
-      "minSavingsRatio:",
-      "\"minSavingsRatio\""
+      "minSavingsRatio:"
      ]
     },
     {
@@ -1245,8 +1196,7 @@
      "where": "src/router/config/parseRouterConfig.ts:574",
      "note": "字符串列表；编排模式保留的工具白名单，与 blockedTools 都未给时缺省 agent/read_file/grep/glob/read_skill；两者都给时 allowedTools 优先并警告。",
      "probe": [
-      "allowedTools:",
-      "\"allowedTools\""
+      "allowedTools:"
      ]
     },
     {
@@ -1254,8 +1204,7 @@
      "where": "src/router/config/parseRouterConfig.ts:587",
      "note": "字符串列表；编排模式移除的工具（allowedTools 给出时忽略）。",
      "probe": [
-      "blockedTools:",
-      "\"blockedTools\""
+      "blockedTools:"
      ]
     },
     {
@@ -1263,8 +1212,7 @@
      "where": "src/router/config/parseRouterConfig.ts:613",
      "note": "布尔，缺省 true；编排模式用精简系统提示。",
      "probe": [
-      "slimSystemPrompt:",
-      "\"slimSystemPrompt\""
+      "slimSystemPrompt:"
      ]
     },
     {
@@ -1272,8 +1220,7 @@
      "where": "src/router/config/parseRouterConfig.ts:614",
      "note": "字符串；用某个技能扩展作为编排提示来源。",
      "probe": [
-      "skillExtensionId:",
-      "\"skillExtensionId\""
+      "skillExtensionId:"
      ]
     },
     {
@@ -1281,8 +1228,7 @@
      "where": "src/router/config/parseRouterConfig.ts:615",
      "note": "字符串；skillExtensionId 缺失时注入的编排提示，缺省 DEFAULT_ORCHESTRATION_PROMPT。",
      "probe": [
-      "orchestrationPrompt:",
-      "\"orchestrationPrompt\""
+      "orchestrationPrompt:"
      ]
     },
     {
@@ -1290,8 +1236,7 @@
      "where": "src/router/config/parseRouterConfig.ts:618",
      "note": "正整数；编排出的子代理的输出上限。",
      "probe": [
-      "subagentMaxTokens:",
-      "\"subagentMaxTokens\""
+      "subagentMaxTokens:"
      ]
     },
     {
@@ -1299,8 +1244,7 @@
      "where": "src/router/config/parseRouterConfig.ts:536",
      "note": "已弃用：出现时警告 ROUTER_AUTO_ORCHESTRATE_DEPRECATED_FIELD 并忽略。",
      "probe": [
-      "mainAgentModel:",
-      "\"mainAgentModel\""
+      "mainAgentModel:"
      ]
     },
     {
@@ -1308,8 +1252,7 @@
      "where": "src/router/config/parseRouterConfig.ts:536",
      "note": "已弃用：出现时警告 ROUTER_AUTO_ORCHESTRATE_DEPRECATED_FIELD 并忽略。",
      "probe": [
-      "subagentModel:",
-      "\"subagentModel\""
+      "subagentModel:"
      ]
     },
     {
@@ -1325,8 +1268,7 @@
      "where": "src/router/config/parseRouterConfig.ts:678",
      "note": "正安全整数；用量记录保留窗口。",
      "probe": [
-      "retentionMs:",
-      "\"retentionMs\""
+      "retentionMs:"
      ]
     },
     {
@@ -1366,8 +1308,7 @@
      "where": "src/router/config/parseRouterConfig.ts:796",
      "note": "\"provider/model\" 字符串或 {provider, model}；计算 savedCost 的对照模型。",
      "probe": [
-      "baselineModel:",
-      "\"baselineModel\""
+      "baselineModel:"
      ]
     },
     {
@@ -1399,8 +1340,7 @@
      "where": "src/always-on/config/parseAlwaysOnConfig.ts:182",
      "note": "正数，缺省 5；发现调度的 tick 间隔。",
      "probe": [
-      "tickIntervalMinutes:",
-      "\"tickIntervalMinutes\""
+      "tickIntervalMinutes:"
      ]
     },
     {
@@ -1408,8 +1348,7 @@
      "where": "src/always-on/config/parseAlwaysOnConfig.ts:188",
      "note": "缺省 60；两次触发之间的冷却。",
      "probe": [
-      "cooldownMinutes:",
-      "\"cooldownMinutes\""
+      "cooldownMinutes:"
      ]
     },
     {
@@ -1417,8 +1356,7 @@
      "where": "src/always-on/config/parseAlwaysOnConfig.ts:194",
      "note": "缺省 4；每天最多触发次数。",
      "probe": [
-      "dailyBudget:",
-      "\"dailyBudget\""
+      "dailyBudget:"
      ]
     },
     {
@@ -1426,8 +1364,7 @@
      "where": "src/always-on/config/parseAlwaysOnConfig.ts:200",
      "note": "缺省 90；心跳过期判定。",
      "probe": [
-      "heartbeatStaleSeconds:",
-      "\"heartbeatStaleSeconds\""
+      "heartbeatStaleSeconds:"
      ]
     },
     {
@@ -1435,8 +1372,7 @@
      "where": "src/always-on/config/parseAlwaysOnConfig.ts:206",
      "note": "缺省 5；最近有用户消息时不触发的窗口。",
      "probe": [
-      "recentUserMsgMinutes:",
-      "\"recentUserMsgMinutes\""
+      "recentUserMsgMinutes:"
      ]
     },
     {
@@ -1444,8 +1380,7 @@
      "where": "src/always-on/config/parseAlwaysOnConfig.ts:211",
      "note": "非空字符串，缺省 web；推送首选渠道。",
      "probe": [
-      "preferChannel:",
-      "\"preferChannel\""
+      "preferChannel:"
      ]
     },
     {
@@ -1557,8 +1492,7 @@
      "where": "src/cron/config/parseCronConfig.ts:56",
      "note": "正整数，缺省 1；并发运行上限。",
      "probe": [
-      "maxConcurrentRuns:",
-      "\"maxConcurrentRuns\""
+      "maxConcurrentRuns:"
      ]
     },
     {
@@ -1566,8 +1500,7 @@
      "where": "src/cron/config/parseCronConfig.ts:62",
      "note": "正整数，缺省 60；单次运行超时。",
      "probe": [
-      "runTimeoutMinutes:",
-      "\"runTimeoutMinutes\""
+      "runTimeoutMinutes:"
      ]
     },
     {
@@ -1575,8 +1508,7 @@
      "where": "src/pilot/config/parseToolsConfig.ts:45",
      "note": "对象；存在（即便为空）就开启 web_search 工具（旧配置兼容），enabled:false 时关闭。tools 下其它键警告 TOOLS_UNKNOWN_FIELD。",
      "probe": [
-      "webSearch:",
-      "\"webSearch\""
+      "webSearch:"
      ]
     },
     {
@@ -1600,8 +1532,7 @@
      "where": "src/pilot/config/parseToolsConfig.ts:118",
      "note": "google | bing | baidu | duckduckgo | yahoo | yandex；serpapi 用的引擎。",
      "probe": [
-      "searchEngine:",
-      "\"searchEngine\""
+      "searchEngine:"
      ]
     },
     {
@@ -1633,8 +1564,7 @@
      "where": "src/pilot/config/parseToolsConfig.ts:181",
      "note": "已移除：警告 TOOLS_WEB_SEARCH_TAVILY_KEY_DEPRECATED 并忽略。",
      "probe": [
-      "tavilyApiKey:",
-      "\"tavilyApiKey\""
+      "tavilyApiKey:"
      ]
     },
     {
@@ -1834,8 +1764,7 @@
      "where": "src/pilot/config/parseRunPolicyConfig.ts:65",
      "note": "非负整数，缺省 0；模型调用连续失败上限。",
      "probe": [
-      "modelFailureLimit:",
-      "\"modelFailureLimit\""
+      "modelFailureLimit:"
      ]
     },
     {
@@ -2274,6 +2203,107 @@
      "note": "SOP 模块：不接受：出现即致命 MODULE_STATE_MODE_UNSUPPORTED。",
      "probe": [
       "/sop:[\\s\\S]{0,1500}?\\bstateMode:/"
+     ]
+    }
+   ]
+  },
+  "project-config": {
+   "about": "项目目录 <项目>/.pilotdeck/ 下的配置文件。pilotdeck.yaml 的键集与全局相同（不重复列，见 config 维度），这里只列它的合并语义；pilotdeck.local.yaml 与 SDK 设置源只读 agent 子集，键集不同，逐个列出。来源：src/pilot/config/loadPilotConfig.ts（readYamlSource project、mergeConfigSources）、src/pilot/config/merge.ts、src/pilot/config/sdkSessionSettings.ts（sourcePath、extractSourceOverlay、SDK_SETTING_SOURCE_PRECEDENCE）。交叉核对：grep 了 getPilotProjectConfigFilePath 与 \"pilotdeck.local.yaml\" 的全部使用处。",
+   "items": [
+    {
+     "id": "project:.pilotdeck/pilotdeck.yaml",
+     "where": "src/pilot/config/loadPilotConfig.ts:87",
+     "note": "项目级配置：键集与全局 pilotdeck.yaml 完全相同（同一套 parse 函数，见 config 维度），在全局之上深合并（对象递归合并，标量 / 数组整体覆盖），环境变量覆盖（PILOT_AGENT_MODEL）再在其上。文件不存在时无操作；YAML 错误致命 CONFIG_YAML_INVALID（kind project）。server 进程用 cwd 作 projectRoot 加载一次，各项目运行时用各自项目根加载。",
+     "probe": [
+      ".pilotdeck/pilotdeck.yaml"
+     ]
+    },
+    {
+     "id": "project:merge-semantics",
+     "where": "src/pilot/config/merge.ts:20",
+     "note": "合并规则：两边都是对象才递归，否则后者整体替换（例如项目里写 model.providers.x 会与全局的 providers 合并，但写 tools.webSearch: {} 会替换整个对象）。",
+     "probe": [
+      ".pilotdeck/pilotdeck.yaml"
+     ]
+    },
+    {
+     "id": "local:.pilotdeck/pilotdeck.local.yaml",
+     "where": "src/pilot/config/sdkSessionSettings.ts:232",
+     "note": "本地设置源：只有 SDK 会话选择了 local settingSource 时读，且只取 agent 子集（下列键）；不参与 loadPilotConfig。",
+     "probe": [
+      "pilotdeck.local.yaml"
+     ]
+    },
+    {
+     "id": "sdk-source:agent.model",
+     "where": "src/pilot/config/sdkSessionSettings.ts:198",
+     "note": "SDK 设置源（user = 全局 pilotdeck.yaml、project = .pilotdeck/pilotdeck.yaml、local = .pilotdeck/pilotdeck.local.yaml）里只读取的键之一：string | null：会话主模型。按 managed < user < project < local 的固定顺序叠加，再叠 sdkSessionConfig.settings 与宿主强制值。",
+     "probe": [
+      "/(pilotdeck\\.local\\.yaml|settingSources)[\\s\\S]{0,1500}?model/"
+     ]
+    },
+    {
+     "id": "sdk-source:agent.fallbackModel",
+     "where": "src/pilot/config/sdkSessionSettings.ts:199",
+     "note": "SDK 设置源（user = 全局 pilotdeck.yaml、project = .pilotdeck/pilotdeck.yaml、local = .pilotdeck/pilotdeck.local.yaml）里只读取的键之一：string | null：会话回退模型（全局配置里这个键已弃用，但这里仍读取）。按 managed < user < project < local 的固定顺序叠加，再叠 sdkSessionConfig.settings 与宿主强制值。",
+     "probe": [
+      "/(pilotdeck\\.local\\.yaml|settingSources)[\\s\\S]{0,1500}?fallbackModel/"
+     ]
+    },
+    {
+     "id": "sdk-source:agent.maxContextTokens",
+     "where": "src/pilot/config/sdkSessionSettings.ts:200",
+     "note": "SDK 设置源（user = 全局 pilotdeck.yaml、project = .pilotdeck/pilotdeck.yaml、local = .pilotdeck/pilotdeck.local.yaml）里只读取的键之一：数字。按 managed < user < project < local 的固定顺序叠加，再叠 sdkSessionConfig.settings 与宿主强制值。",
+     "probe": [
+      "/(pilotdeck\\.local\\.yaml|settingSources)[\\s\\S]{0,1500}?maxContextTokens/"
+     ]
+    },
+    {
+     "id": "sdk-source:agent.maxOutputTokens",
+     "where": "src/pilot/config/sdkSessionSettings.ts:201",
+     "note": "SDK 设置源（user = 全局 pilotdeck.yaml、project = .pilotdeck/pilotdeck.yaml、local = .pilotdeck/pilotdeck.local.yaml）里只读取的键之一：数字。按 managed < user < project < local 的固定顺序叠加，再叠 sdkSessionConfig.settings 与宿主强制值。",
+     "probe": [
+      "/(pilotdeck\\.local\\.yaml|settingSources)[\\s\\S]{0,1500}?maxOutputTokens/"
+     ]
+    },
+    {
+     "id": "sdk-source:agent.thinking.enabled",
+     "where": "src/pilot/config/sdkSessionSettings.ts:208",
+     "note": "SDK 设置源（user = 全局 pilotdeck.yaml、project = .pilotdeck/pilotdeck.yaml、local = .pilotdeck/pilotdeck.local.yaml）里只读取的键之一：布尔。按 managed < user < project < local 的固定顺序叠加，再叠 sdkSessionConfig.settings 与宿主强制值。",
+     "probe": [
+      "/(pilotdeck\\.local\\.yaml|settingSources)[\\s\\S]{0,1500}?enabled/"
+     ]
+    },
+    {
+     "id": "sdk-source:agent.thinking.budgetTokens",
+     "where": "src/pilot/config/sdkSessionSettings.ts:209",
+     "note": "SDK 设置源（user = 全局 pilotdeck.yaml、project = .pilotdeck/pilotdeck.yaml、local = .pilotdeck/pilotdeck.local.yaml）里只读取的键之一：数字。按 managed < user < project < local 的固定顺序叠加，再叠 sdkSessionConfig.settings 与宿主强制值。",
+     "probe": [
+      "/(pilotdeck\\.local\\.yaml|settingSources)[\\s\\S]{0,1500}?budgetTokens/"
+     ]
+    },
+    {
+     "id": "sdk-source:agent.subagents.default",
+     "where": "src/pilot/config/sdkSessionSettings.ts:220",
+     "note": "SDK 设置源（user = 全局 pilotdeck.yaml、project = .pilotdeck/pilotdeck.yaml、local = .pilotdeck/pilotdeck.local.yaml）里只读取的键之一：string | null。按 managed < user < project < local 的固定顺序叠加，再叠 sdkSessionConfig.settings 与宿主强制值。",
+     "probe": [
+      "/(pilotdeck\\.local\\.yaml|settingSources)[\\s\\S]{0,1500}?default/"
+     ]
+    },
+    {
+     "id": "sdk-source:agent.subagents.timeoutMs",
+     "where": "src/pilot/config/sdkSessionSettings.ts:221",
+     "note": "SDK 设置源（user = 全局 pilotdeck.yaml、project = .pilotdeck/pilotdeck.yaml、local = .pilotdeck/pilotdeck.local.yaml）里只读取的键之一：数字。按 managed < user < project < local 的固定顺序叠加，再叠 sdkSessionConfig.settings 与宿主强制值。",
+     "probe": [
+      "/(pilotdeck\\.local\\.yaml|settingSources)[\\s\\S]{0,1500}?timeoutMs/"
+     ]
+    },
+    {
+     "id": "sdk-source:agent.subagents.maxDepth",
+     "where": "src/pilot/config/sdkSessionSettings.ts:222",
+     "note": "SDK 设置源（user = 全局 pilotdeck.yaml、project = .pilotdeck/pilotdeck.yaml、local = .pilotdeck/pilotdeck.local.yaml）里只读取的键之一：数字。按 managed < user < project < local 的固定顺序叠加，再叠 sdkSessionConfig.settings 与宿主强制值。",
+     "probe": [
+      "/(pilotdeck\\.local\\.yaml|settingSources)[\\s\\S]{0,1500}?maxDepth/"
      ]
     }
    ]
@@ -13572,6 +13602,1589 @@
     }
    ]
   },
+  "loop-behaviors": {
+   "about": "agent 循环与 turn 外围的对外行为点，一个分支一项。来源：逐段读 src/agent/loop/AgentLoop.ts 的 runOrdered（359–2240 行：steer、自动压缩、预算、流中断 / 未知 finish / 截断工具调用 / 空输出 / 缺 reasoning_content / JSON 自纠 / 反应式恢复 / max_output 三阶段、Stop hook、工具执行与模式切换、熔断、maxTurns）及其状态构造函数；上限常量在 456–478 行（MAX_OUTPUT_RECOVERY_LIMIT=50、MAX_CONSECUTIVE_EMPTY=3、MAX_JSON_SELF_CORRECT_RETRIES=3、MAX_STREAM_INTERRUPTION_RECOVERIES=2、MAX_UNKNOWN_FINISH_RECOVERIES=2、MAX_SAME_INVALID_FINGERPRINT=3）；另外 TurnRunner、InProcessGateway（session_busy、turn_timeout、run_policy_stopped、预检预算）、RouterRuntime（fallback、transient / zero-usage 重试）、并发调度器、上下文预算与压缩。stopReason / transition reason / AgentErrorCode / 模型错误码取自 src/agent/protocol/{result,state,errors}.ts 与 src/model/protocol/errors.ts 的联合类型全集。这一维度不能机械导出，可能遗漏：AgentLoop 2241 行以后的辅助函数里的细节（token 校准、预算估算）、上下文运行时（context/）内部的压缩策略分支、子代理会话（agent/sub）自己的循环差异。probe 是场景里用于触发该分支的假 provider 技巧或参数（启发式），observe 是产物里能看到它的正则。",
+   "items": [
+    {
+     "id": "loop:steer.apply-before-request",
+     "where": "src/agent/loop/AgentLoop.ts:399",
+     "note": "每次模型请求前取出 steer 邮箱里的消息，并入对话并发 steer_applied。",
+     "probe": [
+      "\"steer_turn\""
+     ],
+     "observe": "\"steer_applied\""
+    },
+    {
+     "id": "loop:steer.terminal",
+     "where": "src/agent/loop/AgentLoop.ts:1866",
+     "note": "模型本该结束时若有 steer 消息，再跑一轮（turn_continued reason user_steer）；到 maxTurns 时留在邮箱，由 TurnRunner 报 steer_unapplied。",
+     "probe": [
+      "\"steer_turn\""
+     ],
+     "observe": "\"steer_unapplied\"|user_steer"
+    },
+    {
+     "id": "loop:max_turns",
+     "where": "src/agent/loop/AgentLoop.ts:2211",
+     "note": "步数上限：submit_turn.maxTurns（或组织策略 limits.maxTurns），缺省无上限；超出时 stopReason max_turns、错误 agent_max_turns_reached、agent_status max_turns_reached。",
+     "probe": [
+      "\"maxTurns\""
+     ],
+     "observe": "max_turns"
+    },
+    {
+     "id": "loop:next_turn",
+     "where": "src/agent/loop/AgentLoop.ts:2237",
+     "note": "有工具调用且执行完：turn_continued reason next_turn，进入下一步。",
+     "probe": [
+      "\"tool\":",
+      "\"tools\":"
+     ],
+     "observe": "next_turn"
+    },
+    {
+     "id": "loop:completed",
+     "where": "src/agent/loop/AgentLoop.ts:1912",
+     "note": "没有工具调用：Stop hook 未阻断则 stopReason completed；有文本且 finish_reason=content_filter / unknown 时先发对应 agent_status。",
+     "probe": [
+      "\"text\""
+     ],
+     "observe": "\"finishReason\": ?\"completed\""
+    },
+    {
+     "id": "loop:abort.before-request",
+     "where": "src/agent/loop/AgentLoop.ts:597",
+     "note": "请求前已中止：stopReason aborted_streaming（agent_status turn_aborted）。",
+     "probe": [
+      "\"abort_turn\""
+     ],
+     "observe": "aborted_streaming"
+    },
+    {
+     "id": "loop:abort.during-stream",
+     "where": "src/agent/loop/AgentLoop.ts:862",
+     "note": "流式中被中止：保留安全的部分助手消息，stopReason aborted_streaming。",
+     "probe": [
+      "\"abort_turn\"",
+      "\"hangAfter\""
+     ],
+     "observe": "aborted_streaming"
+    },
+    {
+     "id": "loop:abort.during-tools",
+     "where": "src/agent/loop/AgentLoop.ts:1971",
+     "note": "工具执行期间中止：为未完成的工具调用补「中断」结果再结束（aborted_streaming）。",
+     "probe": [
+      "\"abort_turn\""
+     ],
+     "observe": "aborted_streaming"
+    },
+    {
+     "id": "loop:budget.max_budget",
+     "where": "src/agent/loop/AgentLoop.ts:1022",
+     "note": "一次模型请求后估算费用越过 submit_turn.maxBudgetUsd（max_budget）或 sdkSessionConfig.taskBudget（task_budget）即停止，不再执行工具。",
+     "probe": [
+      "\"maxBudgetUsd\"",
+      "\"taskBudget\""
+     ],
+     "observe": "max_budget|task_budget"
+    },
+    {
+     "id": "loop:budget.task_budget.preflight",
+     "where": "src/gateway/client/InProcessGateway.ts:1168",
+     "note": "任务预算已耗尽时 gateway 在调用循环前就直接回 turn_completed finishReason task_budget。",
+     "probe": [
+      "\"taskBudget\""
+     ],
+     "observe": "\"finishReason\": ?\"task_budget\""
+    },
+    {
+     "id": "loop:auto_compact.pre-route",
+     "where": "src/agent/loop/AgentLoop.ts:624",
+     "note": "每步请求前按上下文预算尝试自动压缩（警告 0.8、阻断 0.90 比例，见 TokenBudgetManager）；压缩成功 turn_continued reason auto_compact；压缩失败不阻断请求。",
+     "probe": [
+      "maxContextTokens: 1",
+      "/maxContextTokens: *[0-9]{3,4}\\b/"
+     ],
+     "observe": "auto_compact|compact_started"
+    },
+    {
+     "id": "loop:auto_compact.post-route",
+     "where": "src/agent/loop/AgentLoop.ts:744",
+     "note": "路由换模型后上下文窗口变小时再压缩一次。",
+     "probe": [
+      "tokenSaver:",
+      "router:"
+     ],
+     "observe": "auto_compact"
+    },
+    {
+     "id": "loop:prompt_too_long.emergency",
+     "where": "src/agent/loop/AgentLoop.ts:508",
+     "note": "紧急压缩后仍超长：stopReason prompt_too_long，错误 agent_prompt_too_long（提示 /compact 或 /new）。",
+     "probe": [
+      "context_overflow",
+      "prompt_too_long"
+     ],
+     "observe": "prompt_too_long"
+    },
+    {
+     "id": "loop:context_budget.event",
+     "where": "src/agent/loop/AgentLoop.ts:826",
+     "note": "每轮请求前发一次 context_budget 事件。",
+     "probe": [],
+     "observe": "\"type\": ?\"context_budget\""
+    },
+    {
+     "id": "loop:microcompact",
+     "where": "src/context/compaction/MicroCompactionEngine.ts:32",
+     "note": "微压缩：旧工具结果替换为「[Old tool result content compacted]」，重复失败折叠。",
+     "probe": [
+      "microcompact"
+     ],
+     "observe": "Old tool result content compacted"
+    },
+    {
+     "id": "loop:snip",
+     "where": "src/context/compaction/SnipEngine.ts:49",
+     "note": "snip 截断边界（<snip-boundary…>）。",
+     "probe": [
+      "snip"
+     ],
+     "observe": "snip-boundary"
+    },
+    {
+     "id": "loop:tool_result_budget",
+     "where": "src/context/budget/ToolResultBudget.ts:19",
+     "note": "工具结果超过 10k token / 200k 字符时外置落盘（.pilotdeck/tool-results），留 12 KB 预览。",
+     "probe": [
+      "tool-results"
+     ],
+     "observe": "tool-results"
+    },
+    {
+     "id": "loop:stream_interruption.recover",
+     "where": "src/agent/loop/AgentLoop.ts:1039",
+     "note": "流中断（连接断开等）后注入续写提示重试，最多 2 次（turn_continued model_error）。",
+     "probe": [
+      "\"breakAfter\""
+     ],
+     "observe": "stream_interruption|model_error"
+    },
+    {
+     "id": "loop:stream_interruption.exhausted",
+     "where": "src/agent/loop/AgentLoop.ts:1072",
+     "note": "流中断恢复用尽：stopReason model_error、agent_status model_request_failed。",
+     "probe": [
+      "\"breakAfter\""
+     ],
+     "observe": "model_request_failed"
+    },
+    {
+     "id": "loop:unknown_finish.recover",
+     "where": "src/agent/loop/AgentLoop.ts:1105",
+     "note": "流正常结束但 finish_reason 未知：注入提示重试，最多 2 次。",
+     "probe": [
+      "/\"finish\": ?\"(?!stop|length|tool_calls|content_filter)[a-z_]+\"/"
+     ],
+     "observe": "unknown_finish"
+    },
+    {
+     "id": "loop:unknown_finish.exhausted",
+     "where": "src/agent/loop/AgentLoop.ts:1129",
+     "note": "未知 finish_reason 恢复用尽：model_error。",
+     "probe": [
+      "/\"finish\": ?\"(?!stop|length|tool_calls|content_filter)[a-z_]+\"/"
+     ],
+     "observe": "Unknown finish reason recovery exhausted"
+    },
+    {
+     "id": "loop:repaired_truncated_tool_calls",
+     "where": "src/agent/loop/AgentLoop.ts:1169",
+     "note": "工具参数 JSON 被修补且响应被截断：不执行，先加倍 max_tokens（Phase A），再续写提示（Phase B，最多 50 次），用尽后 agent_status tool_call_recovery_exhausted。",
+     "probe": [
+      "\"rawArguments\"",
+      "\"finish\": \"length\""
+     ],
+     "observe": "tool_call_recovery_exhausted|repaired"
+    },
+    {
+     "id": "loop:large_file_repair",
+     "where": "src/agent/loop/LargeFileRepair.ts:23",
+     "note": "大文件写入的修补流程（起草前 / 后各最多 5 次、截断恢复最多 10 次）。",
+     "probe": [
+      "\"write_file\""
+     ],
+     "observe": "large"
+    },
+    {
+     "id": "loop:empty_output.retry",
+     "where": "src/agent/loop/AgentLoop.ts:1265",
+     "note": "模型空输出（无文本无工具）：第一次重试（length 时先加大 max_tokens），agent_status empty_output_recovery；连续 3 次空输出后放弃，agent_status model_empty_response_exhausted，stopReason completed。",
+     "probe": [
+      "\"text\": \"\""
+     ],
+     "observe": "empty_output_recovery|model_empty_response_exhausted"
+    },
+    {
+     "id": "loop:reasoning_content.missing",
+     "where": "src/agent/loop/AgentLoop.ts:1389",
+     "note": "provider 报缺少 reasoning_content（DeepSeek 思考模式等）：给历史助手消息补空 reasoning_content 再试一次。",
+     "probe": [
+      "reasoning_content"
+     ],
+     "observe": "reasoning_content"
+    },
+    {
+     "id": "loop:model_error.missing_tool_results",
+     "where": "src/agent/loop/AgentLoop.ts:1408",
+     "note": "模型错误时已有工具调用：补「Model error interrupted tool execution.」结果保持配对。",
+     "probe": [
+      "\"status\": 5",
+      "\"status\": 4"
+     ],
+     "observe": "Model error interrupted tool execution"
+    },
+    {
+     "id": "loop:json_self_correct",
+     "where": "src/agent/loop/AgentLoop.ts:1423",
+     "note": "工具参数非法 JSON（invalid_tool_arguments）且 jsonSelfCorrect 开启：注入纠正提示，最多 3 次。",
+     "probe": [
+      "\"rawArguments\""
+     ],
+     "observe": "invalid JSON in the arguments"
+    },
+    {
+     "id": "loop:reactive.adjust_output",
+     "where": "src/agent/loop/AgentLoop.ts:1445",
+     "note": "上下文运行时的反应式恢复：调小输出上限后重试（每 turn 一次）。",
+     "probe": [
+      "\"status\": 400"
+     ],
+     "observe": "token_cap_adjusted"
+    },
+    {
+     "id": "loop:reactive.compact_and_retry",
+     "where": "src/agent/loop/AgentLoop.ts:1476",
+     "note": "反应式恢复：压缩后重试（每 turn 一次）。",
+     "probe": [
+      "context_length_exceeded",
+      "prompt_too_long",
+      "maximum context"
+     ],
+     "observe": "compact"
+    },
+    {
+     "id": "loop:reactive.truncate_head",
+     "where": "src/agent/loop/AgentLoop.ts:1582",
+     "note": "反应式恢复：丢弃头部历史（保留比例 0.5 → 0.25）后重试。",
+     "probe": [
+      "prompt_too_long",
+      "context_length_exceeded"
+     ],
+     "observe": "truncate"
+    },
+    {
+     "id": "loop:reactive.strip_images",
+     "where": "src/agent/loop/AgentLoop.ts:1599",
+     "note": "反应式恢复：去掉图片后重试（每 turn 一次）。",
+     "probe": [
+      "image_too_large",
+      "\"image_url\""
+     ],
+     "observe": "strip"
+    },
+    {
+     "id": "loop:max_output.phase_a",
+     "where": "src/agent/loop/AgentLoop.ts:1616",
+     "note": "max_output_reached（finish length 或截断 JSON）：显式输出上限时加倍一次（不超过模型上限），agent_status token_cap_adjusted。",
+     "probe": [
+      "\"finish\": \"length\""
+     ],
+     "observe": "token_cap_adjusted"
+    },
+    {
+     "id": "loop:max_output.phase_b",
+     "where": "src/agent/loop/AgentLoop.ts:1654",
+     "note": "保留被截断的助手消息并注入「继续」提示（max_output_recovery），最多 50 次；之后 agent_status max_output_recovery_exhausted，以已有文本结束。",
+     "probe": [
+      "\"finish\": \"length\""
+     ],
+     "observe": "max_output_recovery"
+    },
+    {
+     "id": "loop:max_output.exhausted",
+     "where": "src/agent/loop/AgentLoop.ts:1842",
+     "note": "输出截断续写用尽：agent_status max_output_recovery_exhausted。",
+     "probe": [
+      "\"finish\": \"length\""
+     ],
+     "observe": "max_output_recovery_exhausted"
+    },
+    {
+     "id": "loop:model_error.surface",
+     "where": "src/agent/loop/AgentLoop.ts:1689",
+     "note": "无可用恢复的模型错误：stopReason model_error、错误 agent_model_error、agent_status model_request_failed（带 providerError）。",
+     "probe": [
+      "\"status\": 5",
+      "\"status\": 4",
+      "\"status\": 401",
+      "\"status\": 429"
+     ],
+     "observe": "model_request_failed"
+    },
+    {
+     "id": "loop:content_filter_stop",
+     "where": "src/agent/loop/AgentLoop.ts:3807",
+     "note": "有文本且 finish_reason=content_filter：agent_status content_filter_stop。",
+     "probe": [
+      "\"finish\": \"content_filter\""
+     ],
+     "observe": "content_filter_stop"
+    },
+    {
+     "id": "loop:unknown_finish_reason.status",
+     "where": "src/agent/loop/AgentLoop.ts:3863",
+     "note": "有文本且 finish_reason 归一化为 unknown：agent_status unknown_finish_reason。",
+     "probe": [
+      "/\"finish\": ?\"(?!stop|length|tool_calls|content_filter)[a-z_]+\"/"
+     ],
+     "observe": "unknown_finish_reason"
+    },
+    {
+     "id": "loop:tools.parallel",
+     "where": "src/tool/scheduler/ConcurrentToolScheduler.ts:8",
+     "note": "同一响应里的多个工具调用：isConcurrencySafe 的先并行，其余按顺序串行；结果按原顺序回填。",
+     "probe": [
+      "\"tools\":"
+     ],
+     "observe": "tool_call_finished"
+    },
+    {
+     "id": "loop:tools.event_pump",
+     "where": "src/agent/loop/AgentLoop.ts:91",
+     "note": "工具执行期间每 500 ms 泵出进度事件；子代理状态心跳 2 s。",
+     "probe": [
+      "\"agent\""
+     ],
+     "observe": "tool_progress|subagent_status"
+    },
+    {
+     "id": "loop:tools.pairing_repair",
+     "where": "src/agent/loop/ensureToolResultPairing.ts:10",
+     "note": "发请求前修复工具调用 / 结果配对（缺结果补占位）。",
+     "probe": [
+      "\"tool_call_id\""
+     ],
+     "observe": "tool_result"
+    },
+    {
+     "id": "loop:tools.mode_change",
+     "where": "src/agent/loop/AgentLoop.ts:2014",
+     "note": "工具请求切换模式（enter_plan_mode / exit_plan_mode）：更新权限模式并发 plan_mode_changed。",
+     "probe": [
+      "enter_plan_mode",
+      "exit_plan_mode"
+     ],
+     "observe": "plan_mode_changed"
+    },
+    {
+     "id": "loop:tools.structured_output",
+     "where": "src/agent/loop/AgentLoop.ts:2007",
+     "note": "structured_output 工具成功：记录结构化结果，turn_completed 前发 structured_output 事件，agent_status structured_output_completed。",
+     "probe": [
+      "structured_output",
+      "outputFormat"
+     ],
+     "observe": "structured_output"
+    },
+    {
+     "id": "loop:tools.circuit_breaker.grace",
+     "where": "src/agent/loop/AgentLoop.ts:2148",
+     "note": "一轮里所有工具调用都是 invalid_tool_input 且指纹（工具名+错误）连续相同达 3 次：先注入一次宽限提示。",
+     "probe": [
+      "\"rawArguments\"",
+      "invalid"
+     ],
+     "observe": "circuit_breaker"
+    },
+    {
+     "id": "loop:tools.circuit_breaker.stop",
+     "where": "src/agent/loop/AgentLoop.ts:2164",
+     "note": "宽限后仍重复：stopReason tool_error、错误 agent_tool_error_loop、agent_status tool_error_loop。",
+     "probe": [
+      "\"rawArguments\""
+     ],
+     "observe": "tool_error_loop"
+    },
+    {
+     "id": "loop:tools.missing_result_recovery",
+     "where": "src/agent/loop/AgentLoop.ts:512",
+     "note": "工具结果缺失且无法恢复：agent_context_recovery_failed。",
+     "probe": [],
+     "observe": "agent_context_recovery_failed"
+    },
+    {
+     "id": "loop:tools.lifecycle_blocked",
+     "where": "src/agent/loop/AgentLoop.ts:2088",
+     "note": "PostToolUse 等 hook 阻断：stopReason tool_error、agent_status lifecycle_blocked。",
+     "probe": [
+      "PostToolUse",
+      "PreToolUse"
+     ],
+     "observe": "lifecycle_blocked"
+    },
+    {
+     "id": "loop:hook.stop_block",
+     "where": "src/agent/loop/AgentLoop.ts:1884",
+     "note": "结束前派发 Stop hook；阻断时 stopReason tool_error、agent_status lifecycle_blocked。",
+     "probe": [
+      "\"Stop\""
+     ],
+     "observe": "lifecycle_blocked"
+    },
+    {
+     "id": "loop:hook.pre_model_request",
+     "where": "src/agent/loop/AgentLoop.ts:699",
+     "note": "每次模型请求前派发 PreModelRequest hook。",
+     "probe": [
+      "PreModelRequest"
+     ],
+     "observe": "PreModelRequest"
+    },
+    {
+     "id": "loop:hook.instructions_loaded",
+     "where": "src/agent/loop/AgentLoop.ts:2281",
+     "note": "指令文件变化时派发 InstructionsLoaded hook 并记录 agent_instructions。",
+     "probe": [
+      "PILOTDECK.md",
+      "InstructionsLoaded"
+     ],
+     "observe": "agent_instructions"
+    },
+    {
+     "id": "loop:hook.stop_failure",
+     "where": "src/agent/loop/AgentLoop.ts:521",
+     "note": "turn 失败结束时派发 StopFailure hook。",
+     "probe": [
+      "StopFailure"
+     ],
+     "observe": "StopFailure"
+    },
+    {
+     "id": "loop:turn.user_prompt_submit",
+     "where": "src/agent/turn/TurnRunner.ts:231",
+     "note": "TurnRunner：输入被接受后派发 UserPromptSubmit，阻断时不进入循环。",
+     "probe": [
+      "UserPromptSubmit"
+     ],
+     "observe": "UserPromptSubmit"
+    },
+    {
+     "id": "loop:turn.failed",
+     "where": "src/agent/turn/TurnRunner.ts:501",
+     "note": "TurnRunner 兜底：循环抛异常时 agent_status turn_failed + error 事件。",
+     "probe": [],
+     "observe": "turn_failed"
+    },
+    {
+     "id": "loop:gateway.session_busy",
+     "where": "src/gateway/client/InProcessGateway.ts:1050",
+     "note": "同一会话已有 turn 在跑时再次 submit_turn：agent_status session_busy（错误）。",
+     "probe": [
+      "robust-concurrent",
+      "\"submit_turn\""
+     ],
+     "observe": "session_busy"
+    },
+    {
+     "id": "loop:gateway.turn_timeout",
+     "where": "src/gateway/client/InProcessGateway.ts:1391",
+     "note": "submit_turn.timeoutMs 墙钟超时：中止 turn，agent_status turn_timeout，error code turn_timeout。",
+     "probe": [
+      "\"timeoutMs\""
+     ],
+     "observe": "turn_timeout"
+    },
+    {
+     "id": "loop:gateway.run_policy_stopped",
+     "where": "src/gateway/client/InProcessGateway.ts:1365",
+     "note": "runPolicy.failureGuard 的模型 / 工具连续失败到上限：agent_status run_policy_stopped 并中止。",
+     "probe": [
+      "failureGuard"
+     ],
+     "observe": "run_policy_stopped"
+    },
+    {
+     "id": "loop:gateway.submit_failed",
+     "where": "src/gateway/client/InProcessGateway.ts:1739",
+     "note": "turn 在进入循环前失败：agent_status gateway_submit_failed（或 SDK_MANAGED_MODEL_DENIED / GATEWAY_ORGANIZATION_*）。",
+     "probe": [
+      "managedModels",
+      "unknown/model"
+     ],
+     "observe": "gateway_submit_failed|SDK_MANAGED_MODEL_DENIED"
+    },
+    {
+     "id": "loop:gateway.compact_command",
+     "where": "src/gateway/client/InProcessGateway.ts:820",
+     "note": "/compact 手动压缩（见 slash-commands）。",
+     "probe": [
+      "\"/compact"
+     ],
+     "observe": "manual_compaction"
+    },
+    {
+     "id": "loop:gateway.plan_command",
+     "where": "src/gateway/client/InProcessGateway.ts:3567",
+     "note": "/plan 前缀转计划模式（见 slash-commands）。",
+     "probe": [
+      "\"/plan"
+     ],
+     "observe": "plan"
+    },
+    {
+     "id": "loop:router.fallback",
+     "where": "src/router/RouterRuntime.ts:804",
+     "note": "主模型失败后按 router.fallback.<scenario> 依次尝试（最多 maxFallbacks=5 组）；遥测事件 fallback_attempt。",
+     "probe": [
+      "fallback:"
+     ],
+     "observe": "fallback"
+    },
+    {
+     "id": "loop:router.transient_retry",
+     "where": "src/router/RouterRuntime.ts:861",
+     "note": "瞬时错误（429 / 5xx / 网络）按 router.transientRetry 重试：缺省 2 次，退避 500 ms 起、上限 8 s；agent_status retry_progress。",
+     "probe": [
+      "\"status\": 429",
+      "\"status\": 503",
+      "\"status\": 500",
+      "transientRetry"
+     ],
+     "observe": "retry_progress"
+    },
+    {
+     "id": "loop:router.zero_usage_retry",
+     "where": "src/router/RouterRuntime.ts:918",
+     "note": "响应 usage 全为 0 时重试（router.zeroUsageRetry，缺省 2 次）。",
+     "probe": [
+      "zeroUsageRetry",
+      "\"usage\""
+     ],
+     "observe": "zero_usage"
+    },
+    {
+     "id": "loop:router.token_saver_judge",
+     "where": "src/router/tokenSaver/classifyAndRoute.ts:90",
+     "note": "tokenSaver：先用 judge 模型判档再选模型（判档超时 15 s；解析失败 parse_failed 用 defaultTier）。",
+     "probe": [
+      "tokenSaver:"
+     ],
+     "observe": "judge"
+    },
+    {
+     "id": "loop:model.stream_retry",
+     "where": "src/model/streaming/streamModel.ts:54",
+     "note": "provider 层重试（model.providers.<p>.retry：requestMaxRetries、streamMaxRetries、退避等），与 router 重试叠加。",
+     "probe": [
+      "retry:",
+      "\"status\": 5"
+     ],
+     "observe": "retry"
+    },
+    {
+     "id": "loop:model.token_cap_adjusted",
+     "where": "src/gateway/client/GatewayAgentEventProjector.ts:229",
+     "note": "provider 以 400 拒绝 max_tokens 过大时降到它报告的上限重试，agent_status token_cap_adjusted。",
+     "probe": [
+      "max_tokens",
+      "\"status\": 400"
+     ],
+     "observe": "token_cap_adjusted"
+    },
+    {
+     "id": "loop:stopReason:completed",
+     "where": "src/agent/protocol/result.ts:11",
+     "note": "AgentStopReason 取值 completed（即 turn_completed.finishReason）。",
+     "probe": [],
+     "observe": "\"finishReason\": ?\"completed\""
+    },
+    {
+     "id": "loop:stopReason:max_turns",
+     "where": "src/agent/protocol/result.ts:12",
+     "note": "AgentStopReason 取值 max_turns（即 turn_completed.finishReason）。",
+     "probe": [],
+     "observe": "\"finishReason\": ?\"max_turns\""
+    },
+    {
+     "id": "loop:stopReason:max_budget",
+     "where": "src/agent/protocol/result.ts:13",
+     "note": "AgentStopReason 取值 max_budget（即 turn_completed.finishReason）。",
+     "probe": [],
+     "observe": "\"finishReason\": ?\"max_budget\""
+    },
+    {
+     "id": "loop:stopReason:task_budget",
+     "where": "src/agent/protocol/result.ts:14",
+     "note": "AgentStopReason 取值 task_budget（即 turn_completed.finishReason）。",
+     "probe": [],
+     "observe": "\"finishReason\": ?\"task_budget\""
+    },
+    {
+     "id": "loop:stopReason:aborted_streaming",
+     "where": "src/agent/protocol/result.ts:15",
+     "note": "AgentStopReason 取值 aborted_streaming（即 turn_completed.finishReason）。",
+     "probe": [],
+     "observe": "\"finishReason\": ?\"aborted_streaming\""
+    },
+    {
+     "id": "loop:stopReason:aborted_tools",
+     "where": "src/agent/protocol/result.ts:16",
+     "note": "AgentStopReason 取值 aborted_tools（即 turn_completed.finishReason）。类型里有，但 AgentLoop 里没有任何分支产生它。",
+     "probe": [],
+     "observe": "\"finishReason\": ?\"aborted_tools\""
+    },
+    {
+     "id": "loop:stopReason:model_error",
+     "where": "src/agent/protocol/result.ts:17",
+     "note": "AgentStopReason 取值 model_error（即 turn_completed.finishReason）。",
+     "probe": [],
+     "observe": "\"finishReason\": ?\"model_error\""
+    },
+    {
+     "id": "loop:stopReason:prompt_too_long",
+     "where": "src/agent/protocol/result.ts:18",
+     "note": "AgentStopReason 取值 prompt_too_long（即 turn_completed.finishReason）。",
+     "probe": [],
+     "observe": "\"finishReason\": ?\"prompt_too_long\""
+    },
+    {
+     "id": "loop:stopReason:tool_error",
+     "where": "src/agent/protocol/result.ts:19",
+     "note": "AgentStopReason 取值 tool_error（即 turn_completed.finishReason）。",
+     "probe": [],
+     "observe": "\"finishReason\": ?\"tool_error\""
+    },
+    {
+     "id": "loop:stopReason:unsupported_recovery",
+     "where": "src/agent/protocol/result.ts:20",
+     "note": "AgentStopReason 取值 unsupported_recovery（即 turn_completed.finishReason）。类型里有，但 AgentLoop 里没有任何分支产生它。",
+     "probe": [],
+     "observe": "\"finishReason\": ?\"unsupported_recovery\""
+    },
+    {
+     "id": "loop:turn_continued:next_turn",
+     "where": "src/agent/protocol/state.ts:5",
+     "note": "turn_continued.reason 取值 next_turn（agent_status turn_continued 的 detail.reason）。",
+     "probe": [],
+     "observe": "\"reason\": ?\"next_turn\""
+    },
+    {
+     "id": "loop:turn_continued:model_error",
+     "where": "src/agent/protocol/state.ts:6",
+     "note": "turn_continued.reason 取值 model_error（agent_status turn_continued 的 detail.reason）。",
+     "probe": [],
+     "observe": "\"reason\": ?\"model_error\""
+    },
+    {
+     "id": "loop:turn_continued:max_turns",
+     "where": "src/agent/protocol/state.ts:7",
+     "note": "turn_continued.reason 取值 max_turns（agent_status turn_continued 的 detail.reason）。类型里有，但循环里不以此为 reason 发 turn_continued。",
+     "probe": [],
+     "observe": "\"reason\": ?\"max_turns\""
+    },
+    {
+     "id": "loop:turn_continued:aborted_streaming",
+     "where": "src/agent/protocol/state.ts:8",
+     "note": "turn_continued.reason 取值 aborted_streaming（agent_status turn_continued 的 detail.reason）。类型里有，但循环里不以此为 reason 发 turn_continued。",
+     "probe": [],
+     "observe": "\"reason\": ?\"aborted_streaming\""
+    },
+    {
+     "id": "loop:turn_continued:aborted_tools",
+     "where": "src/agent/protocol/state.ts:9",
+     "note": "turn_continued.reason 取值 aborted_tools（agent_status turn_continued 的 detail.reason）。类型里有，但循环里不以此为 reason 发 turn_continued。",
+     "probe": [],
+     "observe": "\"reason\": ?\"aborted_tools\""
+    },
+    {
+     "id": "loop:turn_continued:auto_compact",
+     "where": "src/agent/protocol/state.ts:10",
+     "note": "turn_continued.reason 取值 auto_compact（agent_status turn_continued 的 detail.reason）。",
+     "probe": [],
+     "observe": "\"reason\": ?\"auto_compact\""
+    },
+    {
+     "id": "loop:turn_continued:user_steer",
+     "where": "src/agent/protocol/state.ts:11",
+     "note": "turn_continued.reason 取值 user_steer（agent_status turn_continued 的 detail.reason）。",
+     "probe": [],
+     "observe": "\"reason\": ?\"user_steer\""
+    },
+    {
+     "id": "loop:agentError:agent_aborted",
+     "where": "src/agent/protocol/errors.ts:2",
+     "note": "AgentErrorCode agent_aborted（turn_result.errors[].code / error 事件 code）。",
+     "probe": [],
+     "observe": "agent_aborted"
+    },
+    {
+     "id": "loop:agentError:agent_max_turns_reached",
+     "where": "src/agent/protocol/errors.ts:3",
+     "note": "AgentErrorCode agent_max_turns_reached（turn_result.errors[].code / error 事件 code）。",
+     "probe": [],
+     "observe": "agent_max_turns_reached"
+    },
+    {
+     "id": "loop:agentError:agent_max_budget_reached",
+     "where": "src/agent/protocol/errors.ts:4",
+     "note": "AgentErrorCode agent_max_budget_reached（turn_result.errors[].code / error 事件 code）。",
+     "probe": [],
+     "observe": "agent_max_budget_reached"
+    },
+    {
+     "id": "loop:agentError:agent_task_budget_reached",
+     "where": "src/agent/protocol/errors.ts:5",
+     "note": "AgentErrorCode agent_task_budget_reached（turn_result.errors[].code / error 事件 code）。",
+     "probe": [],
+     "observe": "agent_task_budget_reached"
+    },
+    {
+     "id": "loop:agentError:agent_model_error",
+     "where": "src/agent/protocol/errors.ts:6",
+     "note": "AgentErrorCode agent_model_error（turn_result.errors[].code / error 事件 code）。",
+     "probe": [],
+     "observe": "agent_model_error"
+    },
+    {
+     "id": "loop:agentError:agent_model_capability_error",
+     "where": "src/agent/protocol/errors.ts:7",
+     "note": "AgentErrorCode agent_model_capability_error（turn_result.errors[].code / error 事件 code）。",
+     "probe": [],
+     "observe": "agent_model_capability_error"
+    },
+    {
+     "id": "loop:agentError:agent_prompt_too_long",
+     "where": "src/agent/protocol/errors.ts:8",
+     "note": "AgentErrorCode agent_prompt_too_long（turn_result.errors[].code / error 事件 code）。",
+     "probe": [],
+     "observe": "agent_prompt_too_long"
+    },
+    {
+     "id": "loop:agentError:agent_context_recovery_failed",
+     "where": "src/agent/protocol/errors.ts:9",
+     "note": "AgentErrorCode agent_context_recovery_failed（turn_result.errors[].code / error 事件 code）。",
+     "probe": [],
+     "observe": "agent_context_recovery_failed"
+    },
+    {
+     "id": "loop:agentError:agent_tool_result_pairing_failed",
+     "where": "src/agent/protocol/errors.ts:10",
+     "note": "AgentErrorCode agent_tool_result_pairing_failed（turn_result.errors[].code / error 事件 code）。",
+     "probe": [],
+     "observe": "agent_tool_result_pairing_failed"
+    },
+    {
+     "id": "loop:agentError:agent_transcript_error",
+     "where": "src/agent/protocol/errors.ts:11",
+     "note": "AgentErrorCode agent_transcript_error（turn_result.errors[].code / error 事件 code）。",
+     "probe": [],
+     "observe": "agent_transcript_error"
+    },
+    {
+     "id": "loop:agentError:agent_execution_rejected",
+     "where": "src/agent/protocol/errors.ts:12",
+     "note": "AgentErrorCode agent_execution_rejected（turn_result.errors[].code / error 事件 code）。",
+     "probe": [],
+     "observe": "agent_execution_rejected"
+    },
+    {
+     "id": "loop:agentError:agent_invalid_state",
+     "where": "src/agent/protocol/errors.ts:13",
+     "note": "AgentErrorCode agent_invalid_state（turn_result.errors[].code / error 事件 code）。",
+     "probe": [],
+     "observe": "agent_invalid_state"
+    },
+    {
+     "id": "loop:agentError:agent_unsupported_feature",
+     "where": "src/agent/protocol/errors.ts:14",
+     "note": "AgentErrorCode agent_unsupported_feature（turn_result.errors[].code / error 事件 code）。",
+     "probe": [],
+     "observe": "agent_unsupported_feature"
+    },
+    {
+     "id": "loop:agentError:agent_tool_error_loop",
+     "where": "src/agent/protocol/errors.ts:15",
+     "note": "AgentErrorCode agent_tool_error_loop（turn_result.errors[].code / error 事件 code）。",
+     "probe": [],
+     "observe": "agent_tool_error_loop"
+    },
+    {
+     "id": "loop:modelError:prompt_too_long",
+     "where": "src/model/protocol/errors.ts:2",
+     "note": "模型错误归一化码 prompt_too_long（providerError.code / 恢复分支依据）。",
+     "probe": [],
+     "observe": "\"code\": ?\"prompt_too_long\""
+    },
+    {
+     "id": "loop:modelError:request_too_large",
+     "where": "src/model/protocol/errors.ts:3",
+     "note": "模型错误归一化码 request_too_large（providerError.code / 恢复分支依据）。",
+     "probe": [],
+     "observe": "\"code\": ?\"request_too_large\""
+    },
+    {
+     "id": "loop:modelError:max_output_reached",
+     "where": "src/model/protocol/errors.ts:4",
+     "note": "模型错误归一化码 max_output_reached（providerError.code / 恢复分支依据）。",
+     "probe": [],
+     "observe": "\"code\": ?\"max_output_reached\""
+    },
+    {
+     "id": "loop:modelError:rate_limit_error",
+     "where": "src/model/protocol/errors.ts:5",
+     "note": "模型错误归一化码 rate_limit_error（providerError.code / 恢复分支依据）。",
+     "probe": [
+      "\"status\": 429"
+     ],
+     "observe": "\"code\": ?\"rate_limit_error\""
+    },
+    {
+     "id": "loop:modelError:auth_error",
+     "where": "src/model/protocol/errors.ts:6",
+     "note": "模型错误归一化码 auth_error（providerError.code / 恢复分支依据）。",
+     "probe": [
+      "\"status\": 401",
+      "\"status\": 403"
+     ],
+     "observe": "\"code\": ?\"auth_error\""
+    },
+    {
+     "id": "loop:modelError:server_error",
+     "where": "src/model/protocol/errors.ts:7",
+     "note": "模型错误归一化码 server_error（providerError.code / 恢复分支依据）。",
+     "probe": [
+      "\"status\": 500",
+      "\"status\": 502"
+     ],
+     "observe": "\"code\": ?\"server_error\""
+    },
+    {
+     "id": "loop:modelError:timeout",
+     "where": "src/model/protocol/errors.ts:8",
+     "note": "模型错误归一化码 timeout（providerError.code / 恢复分支依据）。",
+     "probe": [],
+     "observe": "\"code\": ?\"timeout\""
+    },
+    {
+     "id": "loop:modelError:overloaded_error",
+     "where": "src/model/protocol/errors.ts:9",
+     "note": "模型错误归一化码 overloaded_error（providerError.code / 恢复分支依据）。",
+     "probe": [
+      "\"status\": 529",
+      "\"status\": 503"
+     ],
+     "observe": "\"code\": ?\"overloaded_error\""
+    },
+    {
+     "id": "loop:modelError:invalid_request",
+     "where": "src/model/protocol/errors.ts:10",
+     "note": "模型错误归一化码 invalid_request（providerError.code / 恢复分支依据）。",
+     "probe": [
+      "\"status\": 400"
+     ],
+     "observe": "\"code\": ?\"invalid_request\""
+    },
+    {
+     "id": "loop:modelError:provider_error",
+     "where": "src/model/protocol/errors.ts:11",
+     "note": "模型错误归一化码 provider_error（providerError.code / 恢复分支依据）。",
+     "probe": [],
+     "observe": "\"code\": ?\"provider_error\""
+    },
+    {
+     "id": "loop:modelError:billing",
+     "where": "src/model/protocol/errors.ts:12",
+     "note": "模型错误归一化码 billing（providerError.code / 恢复分支依据）。",
+     "probe": [],
+     "observe": "\"code\": ?\"billing\""
+    },
+    {
+     "id": "loop:modelError:model_not_found",
+     "where": "src/model/protocol/errors.ts:13",
+     "note": "模型错误归一化码 model_not_found（providerError.code / 恢复分支依据）。",
+     "probe": [
+      "\"status\": 404"
+     ],
+     "observe": "\"code\": ?\"model_not_found\""
+    },
+    {
+     "id": "loop:modelError:context_overflow",
+     "where": "src/model/protocol/errors.ts:14",
+     "note": "模型错误归一化码 context_overflow（providerError.code / 恢复分支依据）。",
+     "probe": [],
+     "observe": "\"code\": ?\"context_overflow\""
+    },
+    {
+     "id": "loop:modelError:image_too_large",
+     "where": "src/model/protocol/errors.ts:15",
+     "note": "模型错误归一化码 image_too_large（providerError.code / 恢复分支依据）。",
+     "probe": [],
+     "observe": "\"code\": ?\"image_too_large\""
+    },
+    {
+     "id": "loop:modelError:payload_too_large",
+     "where": "src/model/protocol/errors.ts:16",
+     "note": "模型错误归一化码 payload_too_large（providerError.code / 恢复分支依据）。",
+     "probe": [],
+     "observe": "\"code\": ?\"payload_too_large\""
+    },
+    {
+     "id": "loop:modelError:dns_error",
+     "where": "src/model/protocol/errors.ts:17",
+     "note": "模型错误归一化码 dns_error（providerError.code / 恢复分支依据）。",
+     "probe": [],
+     "observe": "\"code\": ?\"dns_error\""
+    },
+    {
+     "id": "loop:modelError:connection_reset",
+     "where": "src/model/protocol/errors.ts:18",
+     "note": "模型错误归一化码 connection_reset（providerError.code / 恢复分支依据）。",
+     "probe": [],
+     "observe": "\"code\": ?\"connection_reset\""
+    },
+    {
+     "id": "loop:modelError:connection_refused",
+     "where": "src/model/protocol/errors.ts:19",
+     "note": "模型错误归一化码 connection_refused（providerError.code / 恢复分支依据）。",
+     "probe": [],
+     "observe": "\"code\": ?\"connection_refused\""
+    },
+    {
+     "id": "loop:modelError:tls_error",
+     "where": "src/model/protocol/errors.ts:20",
+     "note": "模型错误归一化码 tls_error（providerError.code / 恢复分支依据）。",
+     "probe": [],
+     "observe": "\"code\": ?\"tls_error\""
+    },
+    {
+     "id": "loop:modelError:proxy_error",
+     "where": "src/model/protocol/errors.ts:21",
+     "note": "模型错误归一化码 proxy_error（providerError.code / 恢复分支依据）。",
+     "probe": [],
+     "observe": "\"code\": ?\"proxy_error\""
+    },
+    {
+     "id": "loop:modelError:unknown",
+     "where": "src/model/protocol/errors.ts:22",
+     "note": "模型错误归一化码 unknown（providerError.code / 恢复分支依据）。",
+     "probe": [],
+     "observe": "\"code\": ?\"unknown\""
+    }
+   ]
+  },
+  "hooks": {
+   "about": "hook 事件、hook 种类、配置字段、输出字段、输入字段、来源与执行结果。来源：src/extension/hooks/protocol/events.ts（PILOTDECK_HOOK_EVENTS 与不适用的旧事件）、settings.ts（PilotDeckHookCommand 联合与 matcher）、output.ts + execution/parseHookOutput.ts（stdout JSON 里被识别的每个字段）、input.ts（toLegacyHookInput 的 snake_case 输入）、config/parseHooksConfig.ts、execution/HookRuntime.ts 与各 *HookExecutor.ts；触发点用 grep 每个事件名在非协议文件里的出现位置核对——Notification、CwdChanged、WorktreeCreate、WorktreeRemove 没有触发点。hook 只来自插件（hooks.json 或内联）与 SDK 会话的 sdkSessionConfig.hooks，pilotdeck.yaml 没有 hooks 段。probe 用事件名 / 字段名（场景里的 hook 配置或 hook 脚本输出），结果类用 observe。",
+   "items": [
+    {
+     "id": "hook-event:PreToolUse",
+     "where": "src/extension/hooks/protocol/events.ts:2",
+     "note": "工具执行前；可 permissionDecision allow/deny/ask/passthrough、updatedInput 改参数、阻断；触发处 src/tool/execution/ToolRuntime.ts。",
+     "probe": [
+      "\"PreToolUse\""
+     ]
+    },
+    {
+     "id": "hook-event:PostToolUse",
+     "where": "src/extension/hooks/protocol/events.ts:3",
+     "note": "工具成功后；additionalContext、updatedMCPToolOutput；触发处 src/tool/execution/ToolRuntime.ts。",
+     "probe": [
+      "\"PostToolUse\""
+     ]
+    },
+    {
+     "id": "hook-event:PostToolUseFailure",
+     "where": "src/extension/hooks/protocol/events.ts:4",
+     "note": "工具失败后；触发处 src/tool/execution/ToolRuntime.ts。",
+     "probe": [
+      "\"PostToolUseFailure\""
+     ]
+    },
+    {
+     "id": "hook-event:Notification",
+     "where": "src/extension/hooks/protocol/events.ts:10",
+     "note": "在事件表里，但没有任何触发点（源码 @todo）。",
+     "probe": [
+      "\"Notification\""
+     ]
+    },
+    {
+     "id": "hook-event:UserPromptSubmit",
+     "where": "src/extension/hooks/protocol/events.ts:11",
+     "note": "用户输入提交时；可阻断（lifecycle_blocked）、追加上下文；触发处 src/agent/turn/TurnRunner.ts。",
+     "probe": [
+      "\"UserPromptSubmit\""
+     ]
+    },
+    {
+     "id": "hook-event:PreModelRequest",
+     "where": "src/extension/hooks/protocol/events.ts:12",
+     "note": "每次模型请求前；触发处 src/agent/loop/AgentLoop.ts。",
+     "probe": [
+      "\"PreModelRequest\""
+     ]
+    },
+    {
+     "id": "hook-event:SessionStart",
+     "where": "src/extension/hooks/protocol/events.ts:13",
+     "note": "会话开始；initialUserMessage、additionalContext、watchPaths；触发处 src/agent/session/AgentSession.ts。",
+     "probe": [
+      "\"SessionStart\""
+     ]
+    },
+    {
+     "id": "hook-event:SessionEnd",
+     "where": "src/extension/hooks/protocol/events.ts:14",
+     "note": "会话结束（独立超时 PILOTDECK_SESSION_END_HOOK_TIMEOUT_MS）；触发处 src/agent/session/AgentSession.ts。",
+     "probe": [
+      "\"SessionEnd\""
+     ]
+    },
+    {
+     "id": "hook-event:Stop",
+     "where": "src/extension/hooks/protocol/events.ts:15",
+     "note": "turn 停止前；decision=block 可让循环继续；触发处 src/agent/loop/AgentLoop.ts。",
+     "probe": [
+      "\"Stop\""
+     ]
+    },
+    {
+     "id": "hook-event:StopFailure",
+     "where": "src/extension/hooks/protocol/events.ts:16",
+     "note": "turn 以失败停止时；触发处 src/agent/loop/AgentLoop.ts。",
+     "probe": [
+      "\"StopFailure\""
+     ]
+    },
+    {
+     "id": "hook-event:SubagentStart",
+     "where": "src/extension/hooks/protocol/events.ts:17",
+     "note": "子代理开始；触发处 src/agent/sub/OneShotSubagentPort.ts。",
+     "probe": [
+      "\"SubagentStart\""
+     ]
+    },
+    {
+     "id": "hook-event:SubagentStop",
+     "where": "src/extension/hooks/protocol/events.ts:18",
+     "note": "子代理结束；触发处 src/agent/sub/OneShotSubagentPort.ts。",
+     "probe": [
+      "\"SubagentStop\""
+     ]
+    },
+    {
+     "id": "hook-event:PreCompact",
+     "where": "src/extension/hooks/protocol/events.ts:19",
+     "note": "压缩前；触发处 src/context/compaction/CompactionEngine.ts。",
+     "probe": [
+      "\"PreCompact\""
+     ]
+    },
+    {
+     "id": "hook-event:PostCompact",
+     "where": "src/extension/hooks/protocol/events.ts:20",
+     "note": "压缩后；触发处 src/context/compaction/CompactionEngine.ts。",
+     "probe": [
+      "\"PostCompact\""
+     ]
+    },
+    {
+     "id": "hook-event:PermissionRequest",
+     "where": "src/extension/hooks/protocol/events.ts:21",
+     "note": "需要权限时；decision{behavior allow(updatedInput,updatedPermissions)|deny(message,interrupt)}；触发处 src/tool/execution/ToolRuntime.ts。",
+     "probe": [
+      "\"PermissionRequest\""
+     ]
+    },
+    {
+     "id": "hook-event:PermissionDenied",
+     "where": "src/extension/hooks/protocol/events.ts:22",
+     "note": "权限被拒后；retry；触发处 src/tool/execution/ToolRuntime.ts。",
+     "probe": [
+      "\"PermissionDenied\""
+     ]
+    },
+    {
+     "id": "hook-event:Setup",
+     "where": "src/extension/hooks/protocol/events.ts:23",
+     "note": "会话初始化；触发处 src/agent/session/AgentSession.ts。",
+     "probe": [
+      "\"Setup\""
+     ]
+    },
+    {
+     "id": "hook-event:ConfigChange",
+     "where": "src/extension/hooks/protocol/events.ts:24",
+     "note": "配置变化；触发处 src/cli/SessionInteractionBundle.ts。",
+     "probe": [
+      "\"ConfigChange\""
+     ]
+    },
+    {
+     "id": "hook-event:InstructionsLoaded",
+     "where": "src/extension/hooks/protocol/events.ts:25",
+     "note": "指令文件加载 / 变化；触发处 src/agent/loop/AgentLoop.ts。",
+     "probe": [
+      "\"InstructionsLoaded\""
+     ]
+    },
+    {
+     "id": "hook-event:CwdChanged",
+     "where": "src/extension/hooks/protocol/events.ts:31",
+     "note": "在事件表里，但没有触发点（源码 @todo）。",
+     "probe": [
+      "\"CwdChanged\""
+     ]
+    },
+    {
+     "id": "hook-event:FileChanged",
+     "where": "src/extension/hooks/protocol/events.ts:37",
+     "note": "文件写入提交后（absolutePath、relativePath、changeKind），只观察不能回滚；可阻止继续（file_changed_hook_blocked）；触发处 src/cli/SessionInteractionBundle.ts。",
+     "probe": [
+      "\"FileChanged\""
+     ]
+    },
+    {
+     "id": "hook-event:WorktreeCreate",
+     "where": "src/extension/hooks/protocol/events.ts:38",
+     "note": "在事件表里，但 hook 运行时没有触发点（worktree 只发 WS 通知）；worktreePath 输出字段因此无效。",
+     "probe": [
+      "\"WorktreeCreate\""
+     ]
+    },
+    {
+     "id": "hook-event:WorktreeRemove",
+     "where": "src/extension/hooks/protocol/events.ts:39",
+     "note": "同上，没有 hook 触发点。",
+     "probe": [
+      "\"WorktreeRemove\""
+     ]
+    },
+    {
+     "id": "hook-event:Elicitation",
+     "where": "src/extension/hooks/protocol/events.ts:40",
+     "note": "ask_user_question 等提问发出前；触发处 src/gateway/elicitation/GatewayElicitationChannel.ts。",
+     "probe": [
+      "\"Elicitation\""
+     ]
+    },
+    {
+     "id": "hook-event:ElicitationResult",
+     "where": "src/extension/hooks/protocol/events.ts:41",
+     "note": "提问得到回答后；触发处 src/gateway/client/InProcessGateway.ts。",
+     "probe": [
+      "\"ElicitationResult\""
+     ]
+    },
+    {
+     "id": "hook-event:TeammateIdle",
+     "where": "src/extension/hooks/protocol/events.ts:45",
+     "note": "旧事件名，标为不适用（PILOTDECK_NOT_APPLICABLE_LEGACY_HOOK_EVENTS）：配置里出现时被识别但不触发。",
+     "probe": [
+      "\"TeammateIdle\""
+     ]
+    },
+    {
+     "id": "hook-event:TaskCreated",
+     "where": "src/extension/hooks/protocol/events.ts:46",
+     "note": "旧事件名，标为不适用（PILOTDECK_NOT_APPLICABLE_LEGACY_HOOK_EVENTS）：配置里出现时被识别但不触发。",
+     "probe": [
+      "\"TaskCreated\""
+     ]
+    },
+    {
+     "id": "hook-event:TaskCompleted",
+     "where": "src/extension/hooks/protocol/events.ts:47",
+     "note": "旧事件名，标为不适用（PILOTDECK_NOT_APPLICABLE_LEGACY_HOOK_EVENTS）：配置里出现时被识别但不触发。",
+     "probe": [
+      "\"TaskCompleted\""
+     ]
+    },
+    {
+     "id": "hook-type:command",
+     "where": "src/extension/hooks/protocol/settings.ts:5",
+     "note": "运行 shell 命令（stdin 传 snake_case 的 JSON 输入；退出码 0 成功、2 阻断、其它非阻断错误；缺省超时 10 分钟）；字段 command、shell(bash|powershell)、async、asyncRewake、timeout。",
+     "probe": [
+      "/\\\\?\"type\\\\?\": ?\\\\?\"command\\\\?\"/"
+     ]
+    },
+    {
+     "id": "hook-type:prompt",
+     "where": "src/extension/hooks/protocol/settings.ts:16",
+     "note": "让模型按 prompt 评估（字段 prompt、model、timeout）。",
+     "probe": [
+      "/\\\\?\"type\\\\?\": ?\\\\?\"prompt\\\\?\"/"
+     ]
+    },
+    {
+     "id": "hook-type:http",
+     "where": "src/extension/hooks/protocol/settings.ts:25",
+     "note": "POST 到 url（headers 里 $VAR 只展开 allowedEnvVars）；非 2xx 为非阻断错误。",
+     "probe": [
+      "/\\\\?\"type\\\\?\": ?\\\\?\"http\\\\?\"/"
+     ]
+    },
+    {
+     "id": "hook-type:agent",
+     "where": "src/extension/hooks/protocol/settings.ts:35",
+     "note": "起一个子代理执行 prompt。",
+     "probe": [
+      "/\\\\?\"type\\\\?\": ?\\\\?\"agent\\\\?\"/"
+     ]
+    },
+    {
+     "id": "hook-type:callback",
+     "where": "src/extension/hooks/protocol/settings.ts:44",
+     "note": "SDK 回调（name），用于 SDK hooks 与异步结果。",
+     "probe": [
+      "/\\\\?\"type\\\\?\": ?\\\\?\"callback\\\\?\"/"
+     ]
+    },
+    {
+     "id": "hook-config:matcher",
+     "where": "src/extension/hooks/protocol/settings.ts:51",
+     "note": "hook 配置字段 matcher：匹配工具名 / 查询（缺省匹配全部）。",
+     "probe": [
+      "/hooks[\\s\\S]{0,1500}?\\\\?\"matcher\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-config:if",
+     "where": "src/extension/hooks/protocol/settings.ts:7",
+     "note": "hook 配置字段 if：条件表达式。",
+     "probe": [
+      "/hooks[\\s\\S]{0,1500}?\\\\?\"if\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-config:statusMessage",
+     "where": "src/extension/hooks/protocol/settings.ts:9",
+     "note": "hook 配置字段 statusMessage：执行时显示的状态文本。",
+     "probe": [
+      "/hooks[\\s\\S]{0,1500}?\\\\?\"statusMessage\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-config:once",
+     "where": "src/extension/hooks/protocol/settings.ts:10",
+     "note": "hook 配置字段 once：每会话只执行一次。",
+     "probe": [
+      "/hooks[\\s\\S]{0,1500}?\\\\?\"once\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-config:timeout",
+     "where": "src/extension/hooks/protocol/settings.ts:13",
+     "note": "hook 配置字段 timeout：超时（秒）。",
+     "probe": [
+      "/hooks[\\s\\S]{0,1500}?\\\\?\"timeout\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-config:pluginName",
+     "where": "src/extension/hooks/protocol/settings.ts:53",
+     "note": "hook 配置字段 pluginName：来源插件名。",
+     "probe": [
+      "/hooks[\\s\\S]{0,1500}?\\\\?\"pluginName\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-config:pluginId",
+     "where": "src/extension/hooks/protocol/settings.ts:54",
+     "note": "hook 配置字段 pluginId：来源插件 id。",
+     "probe": [
+      "/hooks[\\s\\S]{0,1500}?\\\\?\"pluginId\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-config:pluginRoot",
+     "where": "src/extension/hooks/protocol/settings.ts:55",
+     "note": "hook 配置字段 pluginRoot：插件根目录（${CLAUDE_PLUGIN_ROOT} 等展开）。",
+     "probe": [
+      "/hooks[\\s\\S]{0,1500}?\\\\?\"pluginRoot\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-output:continue",
+     "where": "src/extension/hooks/execution/parseHookOutput.ts:26",
+     "note": "hook stdout 里第一行 JSON 对象的 continue：false 时停止。",
+     "probe": [
+      "/\\\\?\"continue\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-output:suppressOutput",
+     "where": "src/extension/hooks/execution/parseHookOutput.ts:27",
+     "note": "hook stdout 里第一行 JSON 对象的 suppressOutput：不显示输出。",
+     "probe": [
+      "/\\\\?\"suppressOutput\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-output:stopReason",
+     "where": "src/extension/hooks/execution/parseHookOutput.ts:28",
+     "note": "hook stdout 里第一行 JSON 对象的 stopReason：停止原因。",
+     "probe": [
+      "/\\\\?\"stopReason\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-output:decision",
+     "where": "src/extension/hooks/execution/parseHookOutput.ts:29",
+     "note": "hook stdout 里第一行 JSON 对象的 decision：approve | block。",
+     "probe": [
+      "/\\\\?\"decision\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-output:reason",
+     "where": "src/extension/hooks/execution/parseHookOutput.ts:30",
+     "note": "hook stdout 里第一行 JSON 对象的 reason：原因（阻断时给模型）。",
+     "probe": [
+      "/\\\\?\"reason\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-output:systemMessage",
+     "where": "src/extension/hooks/execution/parseHookOutput.ts:31",
+     "note": "hook stdout 里第一行 JSON 对象的 systemMessage：给用户的系统消息。",
+     "probe": [
+      "/\\\\?\"systemMessage\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-output:async",
+     "where": "src/extension/hooks/execution/parseHookOutput.ts:10",
+     "note": "hook stdout 里第一行 JSON 对象的 async：true 表示异步 hook（结果稍后经 hook_async_result 提交）。",
+     "probe": [
+      "/\\\\?\"async\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-output:asyncHookId",
+     "where": "src/extension/hooks/execution/parseHookOutput.ts:14",
+     "note": "hook stdout 里第一行 JSON 对象的 asyncHookId：异步调用 id。",
+     "probe": [
+      "/\\\\?\"asyncHookId\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-output:asyncTimeout",
+     "where": "src/extension/hooks/execution/parseHookOutput.ts:11",
+     "note": "hook stdout 里第一行 JSON 对象的 asyncTimeout：异步结果期限（秒）。",
+     "probe": [
+      "/\\\\?\"asyncTimeout\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-output:hookSpecificOutput",
+     "where": "src/extension/hooks/execution/parseHookOutput.ts:32",
+     "note": "hook stdout 里第一行 JSON 对象的 hookSpecificOutput：事件特定输出（见 hook-output:hookSpecificOutput.*）。",
+     "probe": [
+      "/\\\\?\"hookSpecificOutput\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-output:hookSpecificOutput.hookEventName",
+     "where": "src/extension/hooks/execution/parseHookOutput.ts:57",
+     "note": "必填，否则整个 hookSpecificOutput 忽略。",
+     "probe": [
+      "/hookSpecificOutput[\\s\\S]{0,600}?\\\\?\"hookEventName\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-output:hookSpecificOutput.additionalContext",
+     "where": "src/extension/hooks/execution/parseHookOutput.ts:63",
+     "note": "追加给模型的上下文。",
+     "probe": [
+      "/hookSpecificOutput[\\s\\S]{0,600}?\\\\?\"additionalContext\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-output:hookSpecificOutput.initialUserMessage",
+     "where": "src/extension/hooks/execution/parseHookOutput.ts:64",
+     "note": "SessionStart 时的首条用户消息。",
+     "probe": [
+      "/hookSpecificOutput[\\s\\S]{0,600}?\\\\?\"initialUserMessage\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-output:hookSpecificOutput.watchPaths",
+     "where": "src/extension/hooks/execution/parseHookOutput.ts:65",
+     "note": "要监视的路径（触发 FileChanged）。",
+     "probe": [
+      "/hookSpecificOutput[\\s\\S]{0,600}?\\\\?\"watchPaths\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-output:hookSpecificOutput.permissionDecision",
+     "where": "src/extension/hooks/execution/parseHookOutput.ts:68",
+     "note": "allow | deny | ask | passthrough。",
+     "probe": [
+      "/hookSpecificOutput[\\s\\S]{0,600}?\\\\?\"permissionDecision\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-output:hookSpecificOutput.permissionDecisionReason",
+     "where": "src/extension/hooks/execution/parseHookOutput.ts:69",
+     "note": "决定原因。",
+     "probe": [
+      "/hookSpecificOutput[\\s\\S]{0,600}?\\\\?\"permissionDecisionReason\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-output:hookSpecificOutput.updatedInput",
+     "where": "src/extension/hooks/execution/parseHookOutput.ts:70",
+     "note": "改写后的工具参数。",
+     "probe": [
+      "/hookSpecificOutput[\\s\\S]{0,600}?\\\\?\"updatedInput\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-output:hookSpecificOutput.updatedMCPToolOutput",
+     "where": "src/extension/hooks/execution/parseHookOutput.ts:71",
+     "note": "改写 MCP 工具输出。",
+     "probe": [
+      "/hookSpecificOutput[\\s\\S]{0,600}?\\\\?\"updatedMCPToolOutput\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-output:hookSpecificOutput.decision",
+     "where": "src/extension/hooks/execution/parseHookOutput.ts:72",
+     "note": "PermissionRequest 的 {behavior allow|deny, updatedInput, updatedPermissions, message, interrupt}。",
+     "probe": [
+      "/hookSpecificOutput[\\s\\S]{0,600}?\\\\?\"decision\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-output:hookSpecificOutput.retry",
+     "where": "src/extension/hooks/execution/parseHookOutput.ts:73",
+     "note": "PermissionDenied 后重试。",
+     "probe": [
+      "/hookSpecificOutput[\\s\\S]{0,600}?\\\\?\"retry\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-output:hookSpecificOutput.worktreePath",
+     "where": "src/extension/hooks/execution/parseHookOutput.ts:74",
+     "note": "WorktreeCreate 的 worktree 路径（该事件无触发点）。",
+     "probe": [
+      "/hookSpecificOutput[\\s\\S]{0,600}?\\\\?\"worktreePath\\\\?\":/"
+     ]
+    },
+    {
+     "id": "hook-input:hook_event_name",
+     "where": "src/extension/hooks/protocol/input.ts:42",
+     "note": "command / http hook 收到的输入 JSON 字段 hook_event_name；事件载荷其它字段一律 camelCase 转 snake_case。",
+     "probe": [],
+     "observe": "hook_event_name"
+    },
+    {
+     "id": "hook-input:session_id",
+     "where": "src/extension/hooks/protocol/input.ts:43",
+     "note": "command / http hook 收到的输入 JSON 字段 session_id；事件载荷其它字段一律 camelCase 转 snake_case。",
+     "probe": [],
+     "observe": "session_id"
+    },
+    {
+     "id": "hook-input:transcript_path",
+     "where": "src/extension/hooks/protocol/input.ts:44",
+     "note": "command / http hook 收到的输入 JSON 字段 transcript_path；事件载荷其它字段一律 camelCase 转 snake_case。",
+     "probe": [],
+     "observe": "transcript_path"
+    },
+    {
+     "id": "hook-input:cwd",
+     "where": "src/extension/hooks/protocol/input.ts:45",
+     "note": "command / http hook 收到的输入 JSON 字段 cwd；事件载荷其它字段一律 camelCase 转 snake_case。",
+     "probe": [],
+     "observe": "cwd"
+    },
+    {
+     "id": "hook-input:permission_mode",
+     "where": "src/extension/hooks/protocol/input.ts:48",
+     "note": "command / http hook 收到的输入 JSON 字段 permission_mode（有时）；事件载荷其它字段一律 camelCase 转 snake_case。",
+     "probe": [],
+     "observe": "permission_mode"
+    },
+    {
+     "id": "hook-input:agent_id",
+     "where": "src/extension/hooks/protocol/input.ts:49",
+     "note": "command / http hook 收到的输入 JSON 字段 agent_id（子代理内）；事件载荷其它字段一律 camelCase 转 snake_case。",
+     "probe": [],
+     "observe": "agent_id"
+    },
+    {
+     "id": "hook-input:agent_type",
+     "where": "src/extension/hooks/protocol/input.ts:50",
+     "note": "command / http hook 收到的输入 JSON 字段 agent_type（子代理内）；事件载荷其它字段一律 camelCase 转 snake_case。",
+     "probe": [],
+     "observe": "agent_type"
+    },
+    {
+     "id": "hook-source:plugin hooks/hooks.json",
+     "where": "src/extension/plugins/loading/PluginLoader.ts:76",
+     "note": "插件的 hooks：plugin.json 里 hooks 为对象则内联，为字符串则是文件路径，缺省 hooks/hooks.json。",
+     "probe": [
+      "hooks.json"
+     ]
+    },
+    {
+     "id": "hook-source:sdkSessionConfig.hooks",
+     "where": "src/gateway/protocol/types.ts:316",
+     "note": "SDK 会话的 HTTP hooks（url、headers、events）。",
+     "probe": [
+      "/sdkSessionConfig[\\s\\S]{0,800}?\"hooks\":/"
+     ]
+    },
+    {
+     "id": "hook-outcome:success",
+     "where": "src/extension/hooks/execution/HookRuntime.ts:196",
+     "note": "hook 执行结果 success：退出码 0 / HTTP 2xx；出现在 hook_response.outcome / hook_execution_completed。",
+     "probe": [],
+     "observe": "\"outcome\": ?\"success\""
+    },
+    {
+     "id": "hook-outcome:blocking",
+     "where": "src/extension/hooks/execution/HookRuntime.ts:192",
+     "note": "hook 执行结果 blocking：退出码 2：阻断（错误码 hook_blocking_error）；出现在 hook_response.outcome / hook_execution_completed。",
+     "probe": [],
+     "observe": "\"outcome\": ?\"blocking\""
+    },
+    {
+     "id": "hook-outcome:non_blocking_error",
+     "where": "src/extension/hooks/execution/HookRuntime.ts:196",
+     "note": "hook 执行结果 non_blocking_error：其它失败（hook_non_blocking_error）；出现在 hook_response.outcome / hook_execution_completed。",
+     "probe": [],
+     "observe": "\"outcome\": ?\"non_blocking_error\""
+    },
+    {
+     "id": "hook-outcome:cancelled",
+     "where": "src/extension/hooks/execution/HookRuntime.ts:196",
+     "note": "hook 执行结果 cancelled：被取消（hook_cancelled）；出现在 hook_response.outcome / hook_execution_completed。",
+     "probe": [],
+     "observe": "\"outcome\": ?\"cancelled\""
+    },
+    {
+     "id": "hook-outcome:timeout",
+     "where": "src/extension/hooks/execution/HookRuntime.ts:196",
+     "note": "hook 执行结果 timeout：超时；出现在 hook_response.outcome / hook_execution_completed。",
+     "probe": [],
+     "observe": "\"outcome\": ?\"timeout\""
+    }
+   ]
+  },
   "channels": {
    "about": "全部渠道适配器（只列，不要求能测）。来源：src/adapters/channel/ 目录（每个子目录一个渠道）、src/adapters/channel/loadEnabledChannels.ts（16 个通用平台的构造与它们读取的 config 字段）、src/cli/ChannelAdapterBundle.ts（feishu / weixin / qq / wecom 启动）、src/pilot/config/parseGatewayConfig.ts（配置键）。交叉核对：目录清单与 PLATFORM_KEYS、loadEnabledChannels 的键一一对照（wecom 在 PLATFORM_KEYS 里但由 ChannelAdapterBundle 单独创建）。端口 / 路径取自各渠道的 DEFAULT_* 常量。可能遗漏：每个渠道 extra 里更细的可选键只列了主要的。",
    "items": [
@@ -14359,6 +15972,344 @@
       "sdkSessionConfig"
      ],
      "observe": "INVALID_SDK_SESSION_CONFIG"
+    }
+   ]
+  },
+  "slash-commands": {
+   "about": "以斜杠开头、被特殊处理的消息，以及 commands_list 返回的内置命令。来源：src/gateway/client/InProcessGateway.ts（parseCompactCommand、parsePlanCommand——gateway 在 submit_turn 里只特殊处理这两个）、src/gateway/dialog/commands.ts（WEB_BUILTINS、PINNED、磁盘命令扫描、校验）、src/adapters/channel/protocol/ChannelCommandRegistry.ts（渠道命令，含别名）、各渠道 SessionMapper（/new）、QQ 触发前缀、TUI 本地命令、记忆核心的 KNOWN_SLASH_COMMANDS。交叉核对：grep 了 gateway / agent / cli / context / adapters 里所有 \"/xxx\" 字面量、startsWith(\"/\")、slash 字样。probe 匹配 submit_turn 的 message 以该命令开头，或调用 commands_list。可能遗漏：Web UI（ui/）自己解释的斜杠命令行为不在后端。",
+   "items": [
+    {
+     "id": "slash:/compact",
+     "where": "src/gateway/client/InProcessGateway.ts:3597",
+     "note": "gateway 在 submit_turn 里特殊处理：消息恰为 /compact 时执行手动压缩（agent_status manual_compaction / compact_started / compact_completed，不调模型对话）；/compact 带任何参数时只回 assistant_text_delta「用法：/compact」；没有压缩能力时 error CAPABILITY_UNAVAILABLE。",
+     "probe": [
+      "/\"message\": ?\"\\/compact(\\s|\\\\n|\")/",
+      "/\"text\": ?\"\\/compact(\\s|\\\\n|\")/"
+     ]
+    },
+    {
+     "id": "slash:/compact <args>",
+     "where": "src/gateway/client/InProcessGateway.ts:215",
+     "note": "/compact 后面带参数：回文本「用法：/compact」并结束 turn。",
+     "probe": [
+      "/\"message\": ?\"\\/compact [^\"]/"
+     ]
+    },
+    {
+     "id": "slash:/plan",
+     "where": "src/gateway/client/InProcessGateway.ts:3585",
+     "note": "gateway 在 submit_turn 里特殊处理：/plan <内容> 改成以计划模式（runMode=plan、mode=plan、allowPlanModeTools）提交 <内容>；/plan 后面为空时整个提交被丢弃（normalizePlanCommandInput 返回 undefined）。",
+     "probe": [
+      "/\"message\": ?\"\\/plan(\\s|\\\\n|\")/",
+      "/\"text\": ?\"\\/plan(\\s|\\\\n|\")/"
+     ]
+    },
+    {
+     "id": "commands_list:/clear",
+     "where": "src/gateway/dialog/commands.ts:11",
+     "note": "commands_list 返回的 Web 内置命令（namespace builtin，type builtin）：清空对话。只是目录项，gateway 本身除 /compact 外不执行它们（由 Web UI 处理）。",
+     "probe": [
+      "\"ws\": \"commands_list\"",
+      "\"ws\":\"commands_list\""
+     ],
+     "observe": "\"name\": ?\"/clear\""
+    },
+    {
+     "id": "commands_list:/model",
+     "where": "src/gateway/dialog/commands.ts:11",
+     "note": "commands_list 返回的 Web 内置命令（namespace builtin，type builtin）：查看 / 切换模型。只是目录项，gateway 本身除 /compact 外不执行它们（由 Web UI 处理）。",
+     "probe": [
+      "\"ws\": \"commands_list\"",
+      "\"ws\":\"commands_list\""
+     ],
+     "observe": "\"name\": ?\"/model\""
+    },
+    {
+     "id": "commands_list:/compact",
+     "where": "src/gateway/dialog/commands.ts:12",
+     "note": "commands_list 返回的 Web 内置命令（namespace builtin，type builtin）：压缩历史。只是目录项，gateway 本身除 /compact 外不执行它们（由 Web UI 处理）。",
+     "probe": [
+      "\"ws\": \"commands_list\"",
+      "\"ws\":\"commands_list\""
+     ],
+     "observe": "\"name\": ?\"/compact\""
+    },
+    {
+     "id": "commands_list:/cost",
+     "where": "src/gateway/dialog/commands.ts:13",
+     "note": "commands_list 返回的 Web 内置命令（namespace builtin，type builtin）：token 用量与费用。只是目录项，gateway 本身除 /compact 外不执行它们（由 Web UI 处理）。",
+     "probe": [
+      "\"ws\": \"commands_list\"",
+      "\"ws\":\"commands_list\""
+     ],
+     "observe": "\"name\": ?\"/cost\""
+    },
+    {
+     "id": "commands_list:/memory",
+     "where": "src/gateway/dialog/commands.ts:13",
+     "note": "commands_list 返回的 Web 内置命令（namespace builtin，type builtin）：打开 PILOTDECK.md 记忆文件。只是目录项，gateway 本身除 /compact 外不执行它们（由 Web UI 处理）。",
+     "probe": [
+      "\"ws\": \"commands_list\"",
+      "\"ws\":\"commands_list\""
+     ],
+     "observe": "\"name\": ?\"/memory\""
+    },
+    {
+     "id": "commands_list:/config",
+     "where": "src/gateway/dialog/commands.ts:14",
+     "note": "commands_list 返回的 Web 内置命令（namespace builtin，type builtin）：设置。只是目录项，gateway 本身除 /compact 外不执行它们（由 Web UI 处理）。",
+     "probe": [
+      "\"ws\": \"commands_list\"",
+      "\"ws\":\"commands_list\""
+     ],
+     "observe": "\"name\": ?\"/config\""
+    },
+    {
+     "id": "commands_list:/rewind",
+     "where": "src/gateway/dialog/commands.ts:14",
+     "note": "commands_list 返回的 Web 内置命令（namespace builtin，type builtin）：回到之前的状态。只是目录项，gateway 本身除 /compact 外不执行它们（由 Web UI 处理）。",
+     "probe": [
+      "\"ws\": \"commands_list\"",
+      "\"ws\":\"commands_list\""
+     ],
+     "observe": "\"name\": ?\"/rewind\""
+    },
+    {
+     "id": "commands_list:/ao",
+     "where": "src/gateway/dialog/commands.ts:15",
+     "note": "commands_list 返回的 Web 内置命令（namespace builtin，type builtin）：Always-On 任务。只是目录项，gateway 本身除 /compact 外不执行它们（由 Web UI 处理）。",
+     "probe": [
+      "\"ws\": \"commands_list\"",
+      "\"ws\":\"commands_list\""
+     ],
+     "observe": "\"name\": ?\"/ao\""
+    },
+    {
+     "id": "commands_list:/turnkey",
+     "where": "src/gateway/dialog/commands.ts:15",
+     "note": "commands_list 返回的 Web 内置命令（namespace builtin，type builtin）：turnkey 工作流。只是目录项，gateway 本身除 /compact 外不执行它们（由 Web UI 处理）。",
+     "probe": [
+      "\"ws\": \"commands_list\"",
+      "\"ws\":\"commands_list\""
+     ],
+     "observe": "\"name\": ?\"/turnkey\""
+    },
+    {
+     "id": "commands_list:/skill_install",
+     "where": "src/gateway/dialog/commands.ts:9",
+     "note": "commands_list 返回的 Web 内置命令（namespace builtin，type builtin）：安装技能。只是目录项，gateway 本身除 /compact 外不执行它们（由 Web UI 处理）。",
+     "probe": [
+      "\"ws\": \"commands_list\"",
+      "\"ws\":\"commands_list\""
+     ],
+     "observe": "\"name\": ?\"/skill_install\""
+    },
+    {
+     "id": "commands_list:/plan",
+     "where": "src/adapters/channel/protocol/ChannelCommandRegistry.ts:79",
+     "note": "渠道命令注册表里的命令，也出现在 commands_list（metadata.source=registry）：先生成计划并请求确认。IM 渠道收到 /plan 时由渠道处理。",
+     "probe": [
+      "\"ws\": \"commands_list\"",
+      "/\"message\": ?\"\\/plan(\\s|\\\\n|\")/",
+      "/\"text\": ?\"\\/plan(\\s|\\\\n|\")/"
+     ],
+     "observe": "\"name\": ?\"\\/plan\""
+    },
+    {
+     "id": "commands_list:/projects",
+     "where": "src/adapters/channel/protocol/ChannelCommandRegistry.ts:85",
+     "note": "渠道命令注册表里的命令，也出现在 commands_list（metadata.source=registry，别名 项目列表）：列项目。IM 渠道收到 /projects 时由渠道处理。",
+     "probe": [
+      "\"ws\": \"commands_list\"",
+      "/\"message\": ?\"\\/projects(\\s|\\\\n|\")/",
+      "/\"text\": ?\"\\/projects(\\s|\\\\n|\")/"
+     ],
+     "observe": "\"name\": ?\"\\/projects\""
+    },
+    {
+     "id": "commands_list:/switch-project",
+     "where": "src/adapters/channel/protocol/ChannelCommandRegistry.ts:108",
+     "note": "渠道命令注册表里的命令，也出现在 commands_list（metadata.source=registry，别名 切换项目）：切换本聊天的项目。IM 渠道收到 /switch-project 时由渠道处理。",
+     "probe": [
+      "\"ws\": \"commands_list\"",
+      "/\"message\": ?\"\\/switch-project(\\s|\\\\n|\")/",
+      "/\"text\": ?\"\\/switch-project(\\s|\\\\n|\")/"
+     ],
+     "observe": "\"name\": ?\"\\/switch-project\""
+    },
+    {
+     "id": "commands_list:/update",
+     "where": "src/adapters/channel/protocol/ChannelCommandRegistry.ts:135",
+     "note": "渠道命令注册表里的命令，也出现在 commands_list（metadata.source=registry，别名 升级 / 更新）：安装最新版本并请求重启 Web 服务。IM 渠道收到 /update 时由渠道处理。",
+     "probe": [
+      "\"ws\": \"commands_list\"",
+      "/\"message\": ?\"\\/update(\\s|\\\\n|\")/",
+      "/\"text\": ?\"\\/update(\\s|\\\\n|\")/"
+     ],
+     "observe": "\"name\": ?\"\\/update\""
+    },
+    {
+     "id": "commands_list:/status",
+     "where": "src/adapters/channel/protocol/ChannelCommandRegistry.ts:162",
+     "note": "渠道命令注册表里的命令，也出现在 commands_list（metadata.source=registry，别名 状态）：显示状态与版本。IM 渠道收到 /status 时由渠道处理。",
+     "probe": [
+      "\"ws\": \"commands_list\"",
+      "/\"message\": ?\"\\/status(\\s|\\\\n|\")/",
+      "/\"text\": ?\"\\/status(\\s|\\\\n|\")/"
+     ],
+     "observe": "\"name\": ?\"\\/status\""
+    },
+    {
+     "id": "commands_list:/search",
+     "where": "src/adapters/channel/protocol/ChannelCommandRegistry.ts:201",
+     "note": "渠道命令注册表里的命令，也出现在 commands_list（metadata.source=registry，别名 find / grep / 搜索）：跨会话搜索聊天记录。IM 渠道收到 /search 时由渠道处理。",
+     "probe": [
+      "\"ws\": \"commands_list\"",
+      "/\"message\": ?\"\\/search(\\s|\\\\n|\")/",
+      "/\"text\": ?\"\\/search(\\s|\\\\n|\")/"
+     ],
+     "observe": "\"name\": ?\"\\/search\""
+    },
+    {
+     "id": "commands_list:/help",
+     "where": "src/adapters/channel/protocol/ChannelCommandRegistry.ts:238",
+     "note": "渠道命令注册表里的命令，也出现在 commands_list（metadata.source=registry，别名 帮助）：列出命令。IM 渠道收到 /help 时由渠道处理。",
+     "probe": [
+      "\"ws\": \"commands_list\"",
+      "/\"message\": ?\"\\/help(\\s|\\\\n|\")/",
+      "/\"text\": ?\"\\/help(\\s|\\\\n|\")/"
+     ],
+     "observe": "\"name\": ?\"\\/help\""
+    },
+    {
+     "id": "channel-command:/new",
+     "where": "src/adapters/channel/protocol/ChannelCommandRegistry.ts:70",
+     "note": "IM 渠道的 /new：开新会话（各渠道 SessionMapper 处理）；commands_list 里被过滤掉不显示。",
+     "probe": [
+      "/\"message\": ?\"\\/new(\\s|\\\\n|\")/",
+      "/\"text\": ?\"\\/new(\\s|\\\\n|\")/"
+     ]
+    },
+    {
+     "id": "commands_list:<pinned>",
+     "where": "src/gateway/dialog/commands.ts:9",
+     "note": "/skill_install、/projects、/switch-project 在 commands_list 里置顶。",
+     "probe": [
+      "\"ws\": \"commands_list\""
+     ],
+     "observe": "skill_install"
+    },
+    {
+     "id": "commands_list:<project command>",
+     "where": "src/gateway/dialog/commands.ts:49",
+     "note": "项目 .pilotdeck/commands/*.md（namespace project）与项目技能、用户 <PilotHome>/commands、用户技能、插件命令也合入 commands_list；去重时内置 > 项目 > 用户。",
+     "probe": [
+      ".pilotdeck/commands",
+      "/commands/"
+     ]
+    },
+    {
+     "id": "commands_list:<errors>",
+     "where": "src/gateway/dialog/commands.ts:39",
+     "note": "commands_list 的校验：缺 projectKey → PROJECT_NOT_FOUND；query 超 256 字符 → INVALID_QUERY；limit 不在 1..100 → INVALID_LIMIT（缺省 50）。",
+     "probe": [
+      "\"ws\": \"commands_list\""
+     ],
+     "observe": "INVALID_LIMIT|INVALID_QUERY"
+    },
+    {
+     "id": "slash:<memory capture skip>",
+     "where": "src/context/memory/edgeclaw-memory-core/src/message-utils.ts:15",
+     "note": "记忆捕获时跳过只含已知斜杠命令（help、status、compact、model、new、reset、think…共 40 余个）或 !poll / !stop 的用户消息——只影响记忆，不影响对话。",
+     "probe": [
+      "/\"message\": ?\"\\/(help|status|new|reset|think|model)/"
+     ]
+    },
+    {
+     "id": "channel-command:/ask",
+     "where": "src/adapters/channel/qq/QQChannel.ts:19",
+     "note": "QQ 渠道的触发前缀之一（缺省 triggerPrefixes）。",
+     "probe": [
+      "/ask"
+     ]
+    },
+    {
+     "id": "channel-command:/chat",
+     "where": "src/adapters/channel/qq/QQChannel.ts:19",
+     "note": "QQ 渠道的触发前缀之一。",
+     "probe": [
+      "/chat"
+     ]
+    },
+    {
+     "id": "tui-command:/new",
+     "where": "src/adapters/channel/tui/app/TuiApp.tsx:678",
+     "note": "TUI 本地命令：新会话（只在 pilotdeck tui 里，不发给 gateway）。",
+     "probe": [],
+     "observe": "/new"
+    },
+    {
+     "id": "tui-command:/sessions",
+     "where": "src/adapters/channel/tui/app/TuiApp.tsx:687",
+     "note": "TUI 本地命令：会话列表（只在 pilotdeck tui 里，不发给 gateway）。",
+     "probe": [],
+     "observe": "/sessions"
+    },
+    {
+     "id": "tui-command:/switch",
+     "where": "src/adapters/channel/tui/app/TuiApp.tsx:688",
+     "note": "TUI 本地命令：切换会话（只在 pilotdeck tui 里，不发给 gateway）。",
+     "probe": [],
+     "observe": "/switch"
+    },
+    {
+     "id": "tui-command:/dashboard",
+     "where": "src/adapters/channel/tui/app/TuiApp.tsx:689",
+     "note": "TUI 本地命令：仪表盘（只在 pilotdeck tui 里，不发给 gateway）。",
+     "probe": [],
+     "observe": "/dashboard"
+    },
+    {
+     "id": "tui-command:/permissions",
+     "where": "src/adapters/channel/tui/app/TuiApp.tsx:706",
+     "note": "TUI 本地命令：权限（只在 pilotdeck tui 里，不发给 gateway）。",
+     "probe": [],
+     "observe": "/permissions"
+    },
+    {
+     "id": "tui-command:/mode",
+     "where": "src/adapters/channel/tui/app/TuiApp.tsx:765",
+     "note": "TUI 本地命令：切换模式（只在 pilotdeck tui 里，不发给 gateway）。",
+     "probe": [],
+     "observe": "/mode"
+    },
+    {
+     "id": "tui-command:/view",
+     "where": "src/adapters/channel/tui/app/TuiApp.tsx:787",
+     "note": "TUI 本地命令：查看（只在 pilotdeck tui 里，不发给 gateway）。",
+     "probe": [],
+     "observe": "/view"
+    },
+    {
+     "id": "tui-command:/clear",
+     "where": "src/adapters/channel/tui/app/TuiApp.tsx:806",
+     "note": "TUI 本地命令：清屏（只在 pilotdeck tui 里，不发给 gateway）。",
+     "probe": [],
+     "observe": "/clear"
+    },
+    {
+     "id": "tui-command:/help",
+     "where": "src/adapters/channel/tui/app/TuiApp.tsx:809",
+     "note": "TUI 本地命令：帮助（只在 pilotdeck tui 里，不发给 gateway）。",
+     "probe": [],
+     "observe": "/help"
+    },
+    {
+     "id": "tui-command:/exit",
+     "where": "src/adapters/channel/tui/app/TuiApp.tsx:812",
+     "note": "TUI 本地命令：退出（只在 pilotdeck tui 里，不发给 gateway）。",
+     "probe": [],
+     "observe": "/exit"
     }
    ]
   }
