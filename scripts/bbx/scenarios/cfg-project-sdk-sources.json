@@ -1,0 +1,126 @@
+{
+ "name": "cfg-project-sdk-sources",
+ "about": "SDK 会话的 settingSources 从三层配置文件里只取 agent 的会话子集（pilot/config/sdkSessionSettings.ts:150-260：user=全局 pilotdeck.yaml、project=<项目>/.pilotdeck/pilotdeck.yaml、local=<项目>/.pilotdeck/pilotdeck.local.yaml，按 managed<user<project<local 叠加；extractSourceOverlay 只取 model、fallbackModel、maxContextTokens、maxOutputTokens、thinking.enabled/budgetTokens、subagents.default/timeoutMs/maxDepth，其余键（含 model.providers、agent.sandboxMode）不进会话）。项目层改 model 与 maxOutputTokens，本地层再改 maxOutputTokens、thinking 与 subagents。分别用 [user]、[user, project]、[user, project, local]、[local] 跑一轮，比请求里的 model / max_tokens / 推理参数与 sdk 会话事件。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\n  subagents:\n    timeoutMs: 600000\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        proj:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        local:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        fb:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+ "files": {
+  "home/work/alpha/README.md": "alpha\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+  "home/work/alpha/.pilotdeck/pilotdeck.yaml": "agent:\n  model: bbx/proj\n  maxOutputTokens: 4000\n  fallbackModel: bbx/fb\n",
+  "home/work/alpha/.pilotdeck/pilotdeck.local.yaml": "agent:\n  model: bbx/local\n  maxOutputTokens: 3000\n  sandboxMode: read-only\n  thinking:\n    enabled: true\n    budgetTokens: 1024\n  subagents:\n    maxDepth: 1\n    timeoutMs: 1000\nmodel:\n  providers: {}\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Cfg\"}"
+   }
+  },
+  {
+   "name": "deterministic",
+   "when": [
+    "\"model\":\"deterministic\""
+   ],
+   "reply": {
+    "text": "user ok"
+   }
+  },
+  {
+   "name": "proj",
+   "when": [
+    "\"model\":\"proj\""
+   ],
+   "reply": {
+    "text": "proj ok"
+   }
+  },
+  {
+   "name": "local",
+   "when": [
+    "\"model\":\"local\""
+   ],
+   "reply": {
+    "text": "local ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-user",
+    "channelKey": "test",
+    "message": "src user",
+    "projectKey": "{HOME}/work/alpha",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "user"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-proj",
+    "channelKey": "test",
+    "message": "src project",
+    "projectKey": "{HOME}/work/alpha",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "user",
+      "project"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-local",
+    "channelKey": "test",
+    "message": "src local",
+    "projectKey": "{HOME}/work/alpha",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "user",
+      "project",
+      "local"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-only-local",
+    "channelKey": "test",
+    "message": "src only local",
+    "projectKey": "{HOME}/work/alpha",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "local"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  }
+ ]
+}

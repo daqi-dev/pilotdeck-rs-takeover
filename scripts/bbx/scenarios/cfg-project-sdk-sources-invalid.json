@@ -1,0 +1,105 @@
+{
+ "name": "cfg-project-sdk-sources-invalid",
+ "about": "settingSources 指到的配置文件内容不合法时（sdkSessionSettings.ts:160-190）：本地层根不是对象 → SDK_SETTING_SOURCE_INVALID；本地层 agent 不是对象 → INVALID_SDK_SETTINGS；本地层 agent.maxOutputTokens 不是正数；文件不存在时按空处理。比较各轮的错误事件。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\n  subagents:\n    timeoutMs: 600000\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        proj:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        local:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        fb:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+ "files": {
+  "home/work/a/README.md": "a\n",
+  "home/work/a/.pilotdeck/pilotdeck.local.yaml": "- a\n- list\n",
+  "home/work/b/README.md": "b\n",
+  "home/work/b/.pilotdeck/pilotdeck.local.yaml": "agent: 5\n",
+  "home/work/c/README.md": "c\n",
+  "home/work/c/.pilotdeck/pilotdeck.local.yaml": "agent:\n  maxOutputTokens: -3\n",
+  "home/work/d/README.md": "d\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Cfg\"}"
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-a",
+    "channelKey": "test",
+    "message": "src a",
+    "projectKey": "{HOME}/work/a",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "local"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-b",
+    "channelKey": "test",
+    "message": "src b",
+    "projectKey": "{HOME}/work/b",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "local"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-c",
+    "channelKey": "test",
+    "message": "src c",
+    "projectKey": "{HOME}/work/c",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "local"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-d",
+    "channelKey": "test",
+    "message": "src d",
+    "projectKey": "{HOME}/work/d",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "local"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  }
+ ]
+}
