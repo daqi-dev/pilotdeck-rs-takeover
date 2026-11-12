@@ -1363,6 +1363,14 @@ async fn start_assembly(
                     build_connection_broadcast.clone(),
                 )),
             };
+            // `onAlwaysOnTurnEvent` (src/cli/pilotdeck.ts:82-84): the same
+            // `always-on:turn-event` broadcast as cron's.
+            let always_on_hooks = always_on::NativeAlwaysOnHooks {
+                session_overrides: session_overrides.config_overrides(),
+                on_turn_event: Some(cron::broadcast_turn_events(
+                    build_connection_broadcast.clone(),
+                )),
+            };
             settings.bundle.bind_server(build_connection_broadcast);
             // `configStore.startWatching()` (createLocalGateway.ts:801): a
             // config file change reloads the store, which the refresh bundle
@@ -1413,7 +1421,7 @@ async fn start_assembly(
                         cron: cron_section.clone(),
                     },
                     pilot_home: options.home.clone(),
-                    make_always_on: always_on::native_factory(),
+                    make_always_on: always_on::native_factory(always_on_hooks.clone()),
                     make_cron: cron::native_factory(cron_hooks),
                 },
             )?);
@@ -1459,6 +1467,7 @@ async fn start_assembly(
                 // bundle's, so the `#1313` not_configured envelopes stay the
                 // answer exactly when no always-on provider was staged.
                 always_on: automation.always_on_manager(),
+                always_on_standalone: Default::default(),
                 settings: settings.gateway,
                 session_overrides,
             });
@@ -1509,11 +1518,27 @@ async fn start_assembly(
                         )),
                     ),
                 )));
+                let always_on_gateway: Arc<dyn crate::runtime::always_on::AlwaysOnAgentGateway> =
+                    Arc::new(always_on::NativeAlwaysOnGatewayBody::new(
+                        cron_owner.clone(),
+                        submitter.clone(),
+                    ));
+                // The standalone control's turn facade (createApplyHandler.ts:
+                // 142-150) — the same gateway the bundle's providers bind.
+                let _ = requests.always_on_standalone.set(Arc::new(
+                    crate::runtime::always_on::StandaloneAlwaysOn {
+                        gateway: always_on_gateway.clone(),
+                        session_overrides: always_on_hooks.session_overrides.clone(),
+                        on_turn_event: always_on_hooks.on_turn_event.clone(),
+                        language: always_on_section
+                            .as_ref()
+                            .map(crate::runtime::always_on::AlwaysOnConfig::from_section)
+                            .and_then(|config| config.language),
+                    },
+                ));
                 automation.attach(automation::ProjectAutomationAttachment {
                     agent_gateway: automation::ProjectAutomationAgentGateway {
-                        always_on: Arc::new(always_on::NativeAlwaysOnGatewayBody::new(
-                            cron_owner.clone(),
-                        )),
+                        always_on: always_on_gateway,
                         cron: cron_gateway.clone(),
                     },
                     is_project_busy: Some(is_project_busy),

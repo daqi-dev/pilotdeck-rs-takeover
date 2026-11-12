@@ -1955,6 +1955,7 @@ async fn requests_registry_switch_gates_run_reads() {
             prepare_weixin_login: None,
             cron: None,
             always_on: None,
+            always_on_standalone: Default::default(),
             settings: requests::Requests::stub_settings(&owner),
             session_overrides: Arc::default(),
         };

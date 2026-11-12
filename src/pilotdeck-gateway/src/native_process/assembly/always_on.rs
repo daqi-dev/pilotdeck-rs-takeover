@@ -10,33 +10,49 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use pilotdeck_protocol::JsString;
+use pilotdeck_protocol::{JsString, JsValue};
 
 use super::automation::{
     AlwaysOnBindHooks, AlwaysOnFactory, AutomationFuture, ProjectAutomationAgentGateway,
     ProjectAutomationProvider,
 };
 use crate::runtime::{
-    always_on::{AlwaysOnAgentGateway, AlwaysOnManager, AlwaysOnManagerOptions, GatewayAbortInput},
+    always_on::{
+        AlwaysOnAgentGateway, AlwaysOnManager, AlwaysOnManagerOptions, AlwaysOnTurnStream,
+        GatewayAbortInput,
+    },
     session::SessionOwner,
+    turn::submit::{TurnSubmission, TurnSubmitter},
 };
 
 /// The native process's one `AlwaysOnManager::new` (test fixtures construct
 /// their own). The bundle only calls this with a live config — every create
 /// condition is its (:287-288) decision.
-pub(super) fn native_factory() -> AlwaysOnFactory {
-    Arc::new(|input| {
+pub(super) fn native_factory(hooks: NativeAlwaysOnHooks) -> AlwaysOnFactory {
+    Arc::new(move |input| {
         let manager = AlwaysOnManager::new(AlwaysOnManagerOptions {
             config: input.config,
             pilot_home: input.pilot_home,
             now: None,
             uuid: None,
             logger: None,
+            session_overrides: Some(hooks.session_overrides.clone()),
+            on_turn_event: hooks.on_turn_event.clone(),
         })?;
         Ok(Arc::new(NativeAlwaysOnProvider {
             manager: Arc::new(manager),
         }))
     })
+}
+
+/// What the process hands every always-on manager it builds — the shared
+/// session override registry and `onAlwaysOnTurnEvent`
+/// (src/cli/pilotdeck.ts:82-84) — and the standalone control too.
+#[derive(Clone)]
+pub(crate) struct NativeAlwaysOnHooks {
+    pub session_overrides:
+        Arc<std::sync::Mutex<crate::config::session_overrides::SessionConfigOverrides>>,
+    pub on_turn_event: Option<crate::runtime::always_on::TurnEventHandler>,
 }
 
 /// The abort face the always-on control half calls
@@ -45,11 +61,23 @@ pub(super) fn native_factory() -> AlwaysOnFactory {
 /// `Error.message` the TS catch reads.
 pub(super) struct NativeAlwaysOnGatewayBody {
     owner: SessionOwner,
+    submitter: Arc<TurnSubmitter>,
 }
 
 impl NativeAlwaysOnGatewayBody {
-    pub(super) fn new(owner: SessionOwner) -> Self {
-        Self { owner }
+    pub(super) fn new(owner: SessionOwner, submitter: Arc<TurnSubmitter>) -> Self {
+        Self { owner, submitter }
+    }
+}
+
+/// The live gateway's `submitTurn` iterator as an always-on phase drains it.
+struct NativeAlwaysOnTurn(TurnSubmission);
+
+impl AlwaysOnTurnStream for NativeAlwaysOnTurn {
+    fn next_event(
+        &mut self,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<JsValue>, String>> + Send + '_>> {
+        Box::pin(async move { self.0.next().await.map_err(|error| error.message) })
     }
 }
 
@@ -73,6 +101,22 @@ impl AlwaysOnAgentGateway for NativeAlwaysOnGatewayBody {
             .map(|_| ())
             .map_err(|error| JsString::from(error.message));
         Box::pin(async move { outcome })
+    }
+
+    fn submit_turn(&self, input: JsValue) -> Box<dyn AlwaysOnTurnStream> {
+        Box::new(NativeAlwaysOnTurn(self.submitter.submit(input)))
+    }
+
+    /// `closeSession({ sessionKey, reason: "always-on/done" })`, awaited by
+    /// every phase's `finally` with its rejection swallowed. The owner's
+    /// close has no reason channel, so the reason stops at this boundary.
+    fn close_session<'a>(
+        &'a self,
+        session_key: &'a str,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+        Box::pin(async move {
+            let _ = self.owner.close(&JsString::from(session_key)).await;
+        })
     }
 }
 

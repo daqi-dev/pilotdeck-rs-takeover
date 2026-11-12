@@ -1,30 +1,44 @@
-//! Port of TS `src/always-on/runtime/DiscoveryFire.ts` — the halves the
-//! scheduler and the control surface touch: the five session-key
+//! Port of TS `src/always-on/runtime/DiscoveryFire.ts` — the five session-key
 //! derivations, the `wx` discovery lock (`acquireDiscoveryLock` /
-//! `releaseDiscoveryLock`) and the three entry points (`run`, `rerunPlan`,
-//! `runApplyPhase`).
+//! `releaseDiscoveryLock`), the shared turn plumbing (`emitEvent`,
+//! `drainTurn`, the per-phase session override) and the three entry points.
 //!
-//! The deep pipeline behind them — the five-phase discovery run, the
-//! workspace strategies, the report tools, the model turns — is deliberately
-//! NOT ported; this delivery is fail-closed at the seam. `run` answers an
-//! `internal` AlwaysOnError ("not implemented in this embedding"), and the
-//! two control entries keep only their real pre-seam checks:
-//! `rerunPlan`'s `plan_not_found` / `plan_body_missing` (DiscoveryFire.ts:
-//! 339-361) and `runApplyPhase`'s workspace read. The workspace-less cycle
-//! answers the standalone-fallback envelope (`missing_workspace`,
-//! createApplyHandler.ts:93) instead of the TS runtime path's TypeError —
-//! reading `.strategy` of `undefined` is a JS engine artifact — which is the
-//! one documented behavioral deviation of this seam
-//! (`A7.8-ALWAYS-ON-BACKGROUND-001-R1.md`).
-use std::{future::Future, io, pin::Pin, sync::Arc};
+//! `runApplyPhase` is the full baseline phase. `run` and `rerunPlan` keep
+//! the fail-closed seam past their real pre-checks: `run` answers an
+//! `internal` AlwaysOnError ("not implemented in this embedding"), and
+//! `rerunPlan` keeps `plan_not_found` / `plan_body_missing`
+//! (DiscoveryFire.ts:339-361) and the `updateStatus({status: "ready"})`
+//! write. A workspace-less cycle answers the standalone-fallback envelope
+//! (`missing_workspace`, createApplyHandler.ts:93) instead of the TS runtime
+//! path's TypeError — reading `.strategy` of `undefined` is a JS engine
+//! artifact.
+use std::{
+    future::Future,
+    io,
+    pin::Pin,
+    sync::{Arc, Mutex},
+};
 
-use pilotdeck_protocol::{JsObject, JsString, JsValue};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
 
-use crate::runtime::cron::stringify_pretty;
+use crate::{
+    config::{
+        session_overrides::{SessionConfigOverrides, UNATTENDED_SESSION_EXCLUDED_TOOLS},
+        session_value::SessionValue,
+    },
+    runtime::cron::{iso_from_epoch_ms, stringify_pretty},
+};
 
 use super::{
     AlwaysOnError, AlwaysOnPaths, DiscoveryPlanRecord, DiscoveryPlanStore, WorkCycleRecord,
+    apply::{ApplyPromptInput, build_apply_prompt, generate_workspace_diff},
+    manager::{AlwaysOnAgentGateway, ControlError},
+    paths::run_events_path,
 };
+
+/// `onTurnEvent(sessionKey, channelKey, event)` (DiscoveryFire.ts:68): the
+/// host broadcasts every always-on turn event as `always-on:turn-event`.
+pub(crate) type TurnEventHandler = Arc<dyn Fn(&JsString, &JsString, &JsValue) + Send + Sync>;
 
 /// `DiscoveryFire.deriveDiscoverySessionKey` (DiscoveryFire.ts:244-246) and
 /// its four siblings: `always-on/<phase>:project=<key>:run=<runId>`.
@@ -47,6 +61,9 @@ pub(crate) fn derive_report_session_key(project_key: &str, run_id: &str) -> Stri
 pub(crate) fn derive_apply_session_key(project_key: &str, run_id: &str) -> String {
     format!("always-on/apply:project={project_key}:run={run_id}")
 }
+
+/// The channel keys of the five phases (DiscoveryFire.ts:78-82).
+const APPLY_CHANNEL: &str = "always-on/apply";
 
 /// `acquireDiscoveryLock` (DiscoveryFire.ts:1145-1159): `mkdir -p`, then a
 /// `wx` (fail-if-exists) write of the pretty-printed payload — key order
@@ -102,7 +119,7 @@ pub(crate) struct FireOutcome {
 pub(crate) struct FireRunInput<'a> {
     pub run_id: &'a str,
     /// The timestamp the fire half's records stamp; the read side lands
-    /// with the explicitly unported fire pipeline.
+    /// with the unported discovery pipeline.
     #[allow(dead_code)]
     pub started_at_ms: f64,
 }
@@ -112,7 +129,7 @@ pub(crate) struct RerunFireInput<'a> {
     pub plan_id: &'a str,
     pub run_id: &'a str,
     /// The timestamp the fire half's records stamp; the read side lands
-    /// with the explicitly unported fire pipeline.
+    /// with the unported rerun phases.
     #[allow(dead_code)]
     pub started_at_ms: f64,
 }
@@ -120,30 +137,24 @@ pub(crate) struct RerunFireInput<'a> {
 /// `runApplyPhase` input (DiscoveryFire.ts:264-270): the cycle, its
 /// `{ id, title }` plan projection and the apply context.
 pub(crate) struct ApplyPhaseInput<'a> {
-    /// Apply-phase fields the fire pipeline consumes; the read side lands
-    /// with the explicitly unported fire half (this PR's seam returns the
-    /// documented `internal` error before touching them).
-    #[allow(dead_code)]
     pub run_id: &'a str,
     pub cycle: &'a WorkCycleRecord,
-    #[allow(dead_code)]
     pub plans: &'a [DiscoveryPlanRecord],
-    #[allow(dead_code)]
+    /// `String(input.projectName)` — `None` is `undefined`.
     pub project_name: Option<&'a str>,
-    #[allow(dead_code)]
     pub project_root: &'a str,
 }
 
 /// `rerunPlan`'s resolved result (the runtime echoes `runId` and `error`).
 pub(crate) struct RerunFireResult {
     pub run_id: String,
-    pub error: Option<super::manager::ControlError>,
+    pub error: Option<ControlError>,
 }
 
 /// `runApplyPhase`'s resolved result.
 pub(crate) struct ApplyPhaseResult {
     pub session_key: String,
-    pub error: Option<super::manager::ControlError>,
+    pub error: Option<ControlError>,
 }
 
 /// The fire seam as the scheduler and the control surface see it. The
@@ -167,16 +178,280 @@ pub(crate) trait DiscoveryFirePort: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = io::Result<ApplyPhaseResult>> + Send + 'a>>;
 }
 
-/// The fail-closed seam. Everything real before the deep pipeline — the
-/// plan lookups, the markdown read, the `updateStatus({status: "ready"})`
-/// write — runs; the pipeline itself answers `internal`.
+/// `DiscoveryFireDependencies` (DiscoveryFire.ts:48-70) as the ported phases
+/// read them.
+pub(crate) struct FireDeps {
+    /// `config.language` — the prompt language.
+    pub language: Option<String>,
+    pub paths: AlwaysOnPaths,
+    pub project_key: String,
+    pub gateway: Arc<dyn AlwaysOnAgentGateway>,
+    pub session_overrides: Arc<Mutex<SessionConfigOverrides>>,
+    pub plan_store: Arc<DiscoveryPlanStore>,
+    pub uuid: Arc<dyn Fn() -> String + Send + Sync>,
+    pub now: Arc<dyn Fn() -> f64 + Send + Sync>,
+    pub on_turn_event: Option<TurnEventHandler>,
+}
+
 pub(crate) struct DiscoveryFire {
-    plan_store: Arc<DiscoveryPlanStore>,
+    deps: FireDeps,
+}
+
+/// `JSON.stringify(value) + "\n"` appended to `file` after `mkdir -p` of its
+/// directory (AlwaysOnEventStore.ts:9-12, DiscoveryReportStore.ts:16-25).
+fn append_json_line(file: &std::path::Path, value: &JsValue) -> io::Result<()> {
+    use std::io::Write;
+    if let Some(parent) = file.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let line = stringify_json(value)
+        .map_err(|error| io::Error::other(error.to_string()))?
+        .unwrap_or_default();
+    let mut handle = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(file)?;
+    handle.write_all(format!("{line}\n").as_bytes())
+}
+
+/// `pickFirstError` (DiscoveryFire.ts:1165-1172): the first `error` event's
+/// `{ code, message }`.
+fn pick_first_error(events: &[JsValue]) -> Option<(Option<JsValue>, JsValue)> {
+    events.iter().find_map(|event| {
+        let is_error = event
+            .get("type")
+            .and_then(JsValue::as_string)
+            .is_some_and(|kind| kind.equals_str("error"));
+        is_error.then(|| {
+            (
+                event.get("code").cloned(),
+                event.get("message").cloned().unwrap_or(JsValue::Undefined),
+            )
+        })
+    })
+}
+
+/// JS `String(value)`.
+fn js_display(value: &JsValue) -> String {
+    String::from_utf16_lossy(&crate::js_value::to_string_units(value).unwrap_or_default())
+}
+
+/// `{ code: error.code ?? fallback, message: error.message }`.
+fn control_error(error: &(Option<JsValue>, JsValue), fallback: &str) -> ControlError {
+    let code = match &error.0 {
+        None | Some(JsValue::Undefined) | Some(JsValue::Null) => fallback.to_string(),
+        Some(code) => js_display(code),
+    };
+    ControlError {
+        code,
+        message: js_display(&error.1),
+    }
+}
+
+fn error_value(error: &ControlError) -> JsValue {
+    let mut out = JsObject::new();
+    out.insert("code".into(), JsValue::from(error.code.as_str()));
+    out.insert("message".into(), JsValue::from(error.message.as_str()));
+    JsValue::Object(out)
+}
+
+/// The per-phase `sessionOverrides.set` (DiscoveryFire.ts:281-287 and its
+/// siblings): the phase's cwd, `bypassPermissions`, no prompting and the
+/// unattended tool exclusions.
+fn unattended_override(cwd: &str) -> SessionValue {
+    let value = SessionValue::object();
+    value.set("cwd", JsValue::from(cwd));
+    value.set("permissionMode", JsValue::from("bypassPermissions"));
+    value.set("bypassAvailable", JsValue::Bool(true));
+    value.set("canPrompt", JsValue::Bool(false));
+    value.set(
+        "excludeTools",
+        SessionValue::array(
+            UNATTENDED_SESSION_EXCLUDED_TOOLS
+                .iter()
+                .map(|tool| SessionValue::from(JsValue::from(*tool)))
+                .collect(),
+        ),
+    );
+    value
 }
 
 impl DiscoveryFire {
-    pub(crate) fn new(plan_store: Arc<DiscoveryPlanStore>) -> Self {
-        Self { plan_store }
+    pub(crate) fn new(deps: FireDeps) -> Self {
+        Self { deps }
+    }
+
+    /// `emitEvent` (DiscoveryFire.ts:188-242): the phase event appended to
+    /// `events.jsonl`; the extra fields follow the fixed head in the call
+    /// site's key order. The append is fire-and-forget in TS — its failure
+    /// is swallowed.
+    fn emit_event(&self, run_id: &str, phase: &str, extra: Vec<(&str, JsValue)>) {
+        let mut event = JsObject::new();
+        event.insert("schemaVersion".into(), JsValue::Number(1.0));
+        event.insert("eventId".into(), JsValue::from((self.deps.uuid)().as_str()));
+        event.insert("runId".into(), JsValue::from(run_id));
+        event.insert(
+            "projectKey".into(),
+            JsValue::from(self.deps.project_key.as_str()),
+        );
+        event.insert("phase".into(), JsValue::from(phase));
+        event.insert(
+            "timestamp".into(),
+            JsValue::from(iso_from_epoch_ms((self.deps.now)()).as_str()),
+        );
+        for (key, value) in extra {
+            event.insert(key.into(), value);
+        }
+        let _ = append_json_line(&self.deps.paths.events_file, &JsValue::Object(event));
+    }
+
+    fn set_override(&self, session_key: &str, value: &SessionValue) {
+        self.deps
+            .session_overrides
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .set(&JsString::from(session_key), value);
+    }
+
+    /// The `finally` of every phase: drop the override, then
+    /// `closeSession({ reason: "always-on/done" }).catch(() => undefined)`.
+    async fn release_session(&self, session_key: &str) {
+        self.deps
+            .session_overrides
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .delete(&JsString::from(session_key));
+        self.deps.gateway.close_session(session_key).await;
+    }
+
+    /// `drainTurn` (DiscoveryFire.ts:1063-1097): submit, forward every event
+    /// to `onTurnEvent`, and with `persist_events` append it to
+    /// `runs/<runId>.events.jsonl` (append failures swallowed). A stream
+    /// failure is the iterator's throw.
+    async fn drain_turn(
+        &self,
+        session_key: &str,
+        channel_key: &str,
+        run_id: &str,
+        message: JsString,
+        persist_events: bool,
+    ) -> io::Result<Vec<JsValue>> {
+        let mut telemetry = JsObject::new();
+        telemetry.insert("ownerModule".into(), JsValue::from("always_on"));
+        telemetry.insert("executionKind".into(), JsValue::from("always_on"));
+        telemetry.insert(
+            "phase".into(),
+            JsValue::from(
+                channel_key
+                    .strip_prefix("always-on/")
+                    .unwrap_or(channel_key),
+            ),
+        );
+        let mut input = JsObject::new();
+        input.insert("sessionKey".into(), JsValue::from(session_key));
+        input.insert("channelKey".into(), JsValue::from(channel_key));
+        input.insert("message".into(), JsValue::String(message));
+        input.insert("mode".into(), JsValue::from("bypassPermissions"));
+        input.insert("runId".into(), JsValue::from(run_id));
+        input.insert(
+            "projectKey".into(),
+            JsValue::from(self.deps.project_key.as_str()),
+        );
+        input.insert("telemetry".into(), JsValue::Object(telemetry));
+        let mut stream = self.deps.gateway.submit_turn(JsValue::Object(input));
+        let session = JsString::from(session_key);
+        let channel = JsString::from(channel_key);
+        let events_file = run_events_path(&self.deps.paths, &JsString::from(run_id));
+        let mut events = Vec::new();
+        while let Some(event) = stream.next_event().await.map_err(io::Error::other)? {
+            if let Some(forward) = &self.deps.on_turn_event {
+                forward(&session, &channel, &event);
+            }
+            if persist_events {
+                let _ = append_json_line(&events_file, &event);
+            }
+            events.push(event);
+        }
+        Ok(events)
+    }
+
+    /// `runApplyPhase` (DiscoveryFire.ts:264-330).
+    async fn apply_phase(&self, input: ApplyPhaseInput<'_>) -> io::Result<ApplyPhaseResult> {
+        let Some(workspace) = &input.cycle.workspace else {
+            return Ok(ApplyPhaseResult {
+                session_key: String::new(),
+                error: Some(ControlError {
+                    code: "missing_workspace".into(),
+                    message: "Cycle has no associated workspace to apply".into(),
+                }),
+            });
+        };
+        let diff =
+            generate_workspace_diff(&workspace.strategy, &workspace.cwd, input.project_root).await;
+        let session_key = derive_apply_session_key(&self.deps.project_key, input.run_id);
+        self.emit_event(
+            input.run_id,
+            "apply_started",
+            vec![("outcome", JsValue::from("executed"))],
+        );
+        self.set_override(&session_key, &unattended_override(input.project_root));
+        // `plans.map((p) => p.title).join("; ")` — a missing title joins as "".
+        let title = input
+            .plans
+            .iter()
+            .map(|plan| plan.title.clone().unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join("; ");
+        let branch_name = workspace
+            .metadata
+            .get("branchName")
+            .and_then(JsValue::as_string)
+            .map(|branch| String::from_utf16_lossy(branch.units()));
+        let message = build_apply_prompt(&ApplyPromptInput {
+            plan_title: &title,
+            plan_id: &input.cycle.id,
+            workspace_cwd: &workspace.cwd,
+            workspace_strategy: &workspace.strategy,
+            project_name: input.project_name.unwrap_or("undefined"),
+            project_root: input.project_root,
+            diff: &diff,
+            branch_name: branch_name.as_deref(),
+            language: self.deps.language.as_deref(),
+        });
+        let drained = self
+            .drain_turn(
+                &session_key,
+                APPLY_CHANNEL,
+                &format!("{}.apply", input.run_id),
+                message,
+                true,
+            )
+            .await;
+        let result = drained.map(|events| {
+            let error =
+                pick_first_error(&events).map(|error| control_error(&error, "apply_failed"));
+            match &error {
+                Some(error) => self.emit_event(
+                    input.run_id,
+                    "run_failed",
+                    vec![
+                        ("outcome", JsValue::from("failed")),
+                        ("error", error_value(error)),
+                    ],
+                ),
+                None => self.emit_event(
+                    input.run_id,
+                    "apply_completed",
+                    vec![("outcome", JsValue::from("executed"))],
+                ),
+            }
+            ApplyPhaseResult {
+                session_key: session_key.clone(),
+                error,
+            }
+        });
+        self.release_session(&session_key).await;
+        result
     }
 }
 
@@ -198,31 +473,32 @@ impl DiscoveryFirePort for DiscoveryFire {
         input: RerunFireInput<'a>,
     ) -> Pin<Box<dyn Future<Output = io::Result<RerunFireResult>> + Send + 'a>> {
         Box::pin(async move {
+            let plan_store = &self.deps.plan_store;
             // DiscoveryFire.ts:339-349.
-            if self.plan_store.get_record(input.plan_id)?.is_none() {
+            if plan_store.get_record(input.plan_id)?.is_none() {
                 return Ok(RerunFireResult {
                     run_id: input.run_id.into(),
-                    error: Some(super::manager::ControlError {
+                    error: Some(ControlError {
                         code: "plan_not_found".into(),
                         message: format!("Plan {} not found", input.plan_id),
                     }),
                 });
             }
             // DiscoveryFire.ts:351-361.
-            if self.plan_store.read_plan_markdown(input.plan_id)?.is_none() {
+            if plan_store.read_plan_markdown(input.plan_id)?.is_none() {
                 return Ok(RerunFireResult {
                     run_id: input.run_id.into(),
-                    error: Some(super::manager::ControlError {
+                    error: Some(ControlError {
                         code: "plan_body_missing".into(),
                         message: format!("Plan markdown for {} not found on disk", input.plan_id),
                     }),
                 });
             }
             // DiscoveryFire.ts:363 — the one pre-seam write.
-            self.plan_store.update_status(input.plan_id, "ready")?;
+            plan_store.update_status(input.plan_id, "ready")?;
             Ok(RerunFireResult {
                 run_id: input.run_id.into(),
-                error: Some(super::manager::ControlError {
+                error: Some(ControlError {
                     code: "internal".into(),
                     message: "not implemented in this embedding".into(),
                 }),
@@ -234,28 +510,7 @@ impl DiscoveryFirePort for DiscoveryFire {
         &'a self,
         input: ApplyPhaseInput<'a>,
     ) -> Pin<Box<dyn Future<Output = io::Result<ApplyPhaseResult>> + Send + 'a>> {
-        Box::pin(async move {
-            // The TS runtime reads `cycle.workspace.strategy` first
-            // (DiscoveryFire.ts:273-277), so a workspace-less cycle is the
-            // missing-workspace branch; this port answers the
-            // standalone-fallback envelope instead of the engine TypeError.
-            if input.cycle.workspace.is_none() {
-                return Ok(ApplyPhaseResult {
-                    session_key: String::new(),
-                    error: Some(super::manager::ControlError {
-                        code: "missing_workspace".into(),
-                        message: "Cycle has no associated workspace to apply".into(),
-                    }),
-                });
-            }
-            Ok(ApplyPhaseResult {
-                session_key: String::new(),
-                error: Some(super::manager::ControlError {
-                    code: "internal".into(),
-                    message: "not implemented in this embedding".into(),
-                }),
-            })
-        })
+        Box::pin(self.apply_phase(input))
     }
 }
 
@@ -292,6 +547,7 @@ mod tests {
             cycle_index_file: home.join("cycles").join("index.json"),
             reports_dir: home.join("reports"),
             discovery_lock_file: home.join("locks").join("discovery.lock"),
+            ..Default::default()
         }
     }
 
@@ -383,7 +639,7 @@ mod tests {
         let home = scratch("r1-rerun");
         let paths = paths(&home);
         plan_fixture(&home);
-        let fire = DiscoveryFire::new(Arc::new(DiscoveryPlanStore::new(paths.clone())));
+        let fire = fire(paths.clone());
 
         // r1 `rerunMissing`: plan_not_found with the runId echo.
         let missing = fire
@@ -443,14 +699,96 @@ mod tests {
         );
     }
 
-    // The apply seam: a workspace-less cycle answers the standalone-fallback
-    // `missing_workspace` envelope (the documented deviation from the TS
-    // runtime path's TypeError); a workspace-bearing cycle fail-closes.
+    /// A turn facade that records the submitted input and replays a fixed
+    /// event list.
+    struct ScriptedGateway {
+        events: Vec<JsValue>,
+        submitted: Mutex<Vec<JsValue>>,
+        closed: Mutex<Vec<String>>,
+    }
+    struct ScriptedTurn(std::collections::VecDeque<JsValue>);
+    impl super::super::AlwaysOnTurnStream for ScriptedTurn {
+        fn next_event(
+            &mut self,
+        ) -> Pin<Box<dyn Future<Output = Result<Option<JsValue>, String>> + Send + '_>> {
+            let next = self.0.pop_front();
+            Box::pin(async move { Ok(next) })
+        }
+    }
+    impl AlwaysOnAgentGateway for ScriptedGateway {
+        fn abort_turn<'a>(
+            &'a self,
+            _input: super::super::GatewayAbortInput<'a>,
+        ) -> Pin<Box<dyn Future<Output = Result<(), JsString>> + Send + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn submit_turn(&self, input: JsValue) -> Box<dyn super::super::AlwaysOnTurnStream> {
+            self.submitted.lock().unwrap().push(input);
+            Box::new(ScriptedTurn(self.events.clone().into()))
+        }
+        fn close_session<'a>(
+            &'a self,
+            session_key: &'a str,
+        ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+            self.closed.lock().unwrap().push(session_key.to_string());
+            Box::pin(async {})
+        }
+    }
+
+    fn event(fields: &[(&str, &str)]) -> JsValue {
+        let mut out = JsObject::new();
+        for (key, value) in fields {
+            out.insert((*key).into(), JsValue::from(*value));
+        }
+        JsValue::Object(out)
+    }
+
+    fn fire_with(paths: AlwaysOnPaths, gateway: Arc<dyn AlwaysOnAgentGateway>) -> DiscoveryFire {
+        DiscoveryFire::new(FireDeps {
+            language: None,
+            plan_store: Arc::new(DiscoveryPlanStore::new(paths.clone())),
+            paths,
+            project_key: "/proj/a".into(),
+            gateway,
+            session_overrides: Arc::default(),
+            uuid: Arc::new(|| "u".into()),
+            now: Arc::new(|| 0.0),
+            on_turn_event: None,
+        })
+    }
+
+    fn fire(paths: AlwaysOnPaths) -> DiscoveryFire {
+        fire_with(
+            paths,
+            Arc::new(ScriptedGateway {
+                events: Vec::new(),
+                submitted: Mutex::new(Vec::new()),
+                closed: Mutex::new(Vec::new()),
+            }),
+        )
+    }
+
+    // runApplyPhase (DiscoveryFire.ts:264-330): a workspace-less cycle
+    // answers the standalone-fallback `missing_workspace` envelope (the
+    // documented deviation from the TS runtime path's TypeError); a
+    // workspace-bearing cycle submits the apply turn and its first `error`
+    // event becomes the result error and a `run_failed` phase event.
     #[tokio::test]
-    async fn apply_seam_answers_missing_workspace_then_fail_closes() {
+    async fn apply_phase_runs_the_turn_and_reports_the_first_error() {
         let home = scratch("r1-apply");
-        let paths = paths(&home);
-        let fire = DiscoveryFire::new(Arc::new(DiscoveryPlanStore::new(paths)));
+        let mut paths = paths(&home);
+        paths.events_file = home.join("events.jsonl");
+        paths.runs_dir = home.join("runs");
+        let gateway = Arc::new(ScriptedGateway {
+            events: vec![
+                event(&[("type", "turn_started")]),
+                event(&[("type", "error"), ("message", "boom")]),
+                event(&[("type", "error"), ("code", "second"), ("message", "x")]),
+            ],
+            submitted: Mutex::new(Vec::new()),
+            closed: Mutex::new(Vec::new()),
+        });
+        let fire = fire_with(paths.clone(), gateway.clone());
         let workspaceless = WorkCycleRecord {
             id: "c1".into(),
             project_key: "/proj/a".into(),
@@ -486,7 +824,7 @@ mod tests {
         );
         let workspace = super::super::cycles::WorkCycleWorkspace {
             strategy: "snapshot-copy".into(),
-            cwd: "/w".into(),
+            cwd: home.join("missing-ws").to_string_lossy().into_owned(),
             metadata: JsObject::new(),
         };
         let cycle = WorkCycleRecord {
@@ -498,18 +836,62 @@ mod tests {
                 run_id: "run-2",
                 cycle: &cycle,
                 plans: &[],
-                project_name: Some("P"),
+                project_name: None,
                 project_root: "/proj/a",
             })
             .await
             .expect("#2294 apply");
         negative_assert_eq!(
-            as_error_json(result.error),
             serde_json::json!({
-                "code": "internal",
-                "message": "not implemented in this embedding"
+                "sessionKey": result.session_key,
+                "error": as_error_json(result.error),
             }),
-            "#2294 the workspace-bearing apply fail-closes"
+            serde_json::json!({
+                "sessionKey": "always-on/apply:project=/proj/a:run=run-2",
+                "error": {"code": "apply_failed", "message": "boom"},
+            }),
+            "#2294 the first error event wins, code falling back to apply_failed"
+        );
+        let submitted = gateway.submitted.lock().unwrap().clone();
+        let input = &submitted[0];
+        negative_assert_eq!(
+            input.get("runId").and_then(JsValue::as_string).cloned(),
+            Some(JsString::from("run-2.apply")),
+            "#2294 the apply turn's run id"
+        );
+        let message = input
+            .get("message")
+            .and_then(JsValue::as_string)
+            .expect("message")
+            .to_utf8()
+            .expect("utf-8");
+        assert!(message.starts_with("Always-On apply for project \"undefined\"."));
+        negative_assert_eq!(
+            gateway.closed.lock().unwrap().clone(),
+            vec!["always-on/apply:project=/proj/a:run=run-2".to_string()],
+            "#2294 the apply session is closed"
+        );
+        let events = std::fs::read_to_string(home.join("events.jsonl")).expect("events");
+        let phases: Vec<String> = events
+            .lines()
+            .map(|line| {
+                serde_json::from_str::<serde_json::Value>(line).expect("json")["phase"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string()
+            })
+            .collect();
+        negative_assert_eq!(
+            phases,
+            vec!["apply_started".to_string(), "run_failed".to_string()],
+            "#2294 the phase events"
+        );
+        let persisted = std::fs::read_to_string(home.join("runs").join("run-2.apply.events.jsonl"))
+            .expect("run events");
+        negative_assert_eq!(
+            persisted.lines().count(),
+            3,
+            "#2294 every turn event persisted"
         );
     }
 
@@ -518,7 +900,7 @@ mod tests {
     #[tokio::test]
     async fn run_seam_fail_closes() {
         let home = scratch("run-seam");
-        let fire = DiscoveryFire::new(Arc::new(DiscoveryPlanStore::new(paths(&home))));
+        let fire = fire(paths(&home));
         let error = fire
             .run(FireRunInput {
                 run_id: "run-1",

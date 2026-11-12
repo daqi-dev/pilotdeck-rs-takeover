@@ -409,6 +409,7 @@ mod tests {
             cycle_index_file: project_dir.join("cycles").join("index.json"),
             reports_dir: project_dir.join("reports"),
             discovery_lock_file: project_dir.join("locks").join("discovery.lock"),
+            ..Default::default()
         };
         (home, DiscoveryStateStore::new(paths))
     }

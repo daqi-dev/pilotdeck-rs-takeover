@@ -22,6 +22,7 @@
 // inline with their own `#[allow(dead_code)]`; this umbrella covers the
 // rest of the unported surface (paths, mutators, tick entries).
 #![allow(dead_code)]
+mod apply;
 mod cycles;
 mod fire;
 mod gates;
@@ -29,19 +30,20 @@ mod leases;
 mod manager;
 mod paths;
 mod scheduler;
+mod standalone;
 mod state;
 mod watcher;
 
 pub(crate) use cycles::{DiscoveryPlanRecord, DiscoveryPlanStore, WorkCycleRecord, WorkCycleStore};
 pub(crate) use fire::{
-    acquire_discovery_lock, derive_execution_session_key, derive_report_session_key,
-    derive_workspace_session_key, release_discovery_lock,
+    DiscoveryFirePort, TurnEventHandler, acquire_discovery_lock, derive_execution_session_key,
+    derive_report_session_key, derive_workspace_session_key, release_discovery_lock,
 };
 pub(crate) use gates::{GateBlockReason, GateInput, evaluate_always_on_discovery_gates};
 pub(crate) use leases::{ChannelLease, ChannelLeaseRegistry};
 pub(crate) use manager::{
-    AbortInput, AlwaysOnAgentGateway, AlwaysOnManagerOptions, ApplyInput, ControlError,
-    GatewayAbortInput, RerunInput,
+    AbortInput, AlwaysOnAgentGateway, AlwaysOnManagerOptions, AlwaysOnTurnStream, ApplyInput,
+    ControlError, GatewayAbortInput, RerunInput,
 };
 // The one face that crosses the crate boundary: `native_process::requests`
 // carries it in a public field (`Requests::always_on`), the same `pub`
@@ -50,6 +52,7 @@ pub(crate) use manager::{
 pub use manager::AlwaysOnManager;
 pub(crate) use paths::{AlwaysOnPaths, resolve_always_on_paths};
 pub(crate) use scheduler::{ALWAYS_ON_METHODS, DiscoveryScheduler, SchedulerDeps};
+pub use standalone::StandaloneAlwaysOn;
 pub(crate) use state::DiscoveryStateStore;
 pub(crate) use watcher::{SignalWatcher, SignalWatcherOptions};
 

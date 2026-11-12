@@ -1,0 +1,151 @@
+{
+  "name": "always-on-apply-snapshot",
+  "about": "缺省配置（独立 Always-On control）下 always_on_apply 应用一个 snapshot-copy 形态的 work cycle：diff -ruN 算出的差异（先用一轮 bash 把文件时间固定，diff 输出里的时间戳才稳定）、apply 轮次发给 provider 的提示词、always-on:turn-event 通知、events.jsonl 与 runs/<runId>.apply.events.jsonl、apply 会话落盘、返回的 sessionKey。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Apply\"}"
+      }
+    },
+    {
+      "name": "setup-done",
+      "when": [
+        "setup-touch",
+        "call_bbx_touch"
+      ],
+      "reply": {
+        "text": "touched"
+      }
+    },
+    {
+      "name": "setup",
+      "when": [
+        "setup-touch"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_touch",
+          "name": "bash",
+          "arguments": {
+            "command": "touch -t 202601010000 {HOME}/work/alpha/README.md {HOME}/work/alpha/notes.txt {HOME}/.pilotdeck/always-on/snapshots/private-tmp-pdrs-bbx-root-home-work-alpha/run-fixed/README.md {HOME}/.pilotdeck/always-on/snapshots/private-tmp-pdrs-bbx-root-home-work-alpha/run-fixed/new.txt && echo ok"
+          }
+        }
+      }
+    },
+    {
+      "name": "apply",
+      "when": [
+        "Always-On apply for project"
+      ],
+      "reply": {
+        "text": "Applied."
+      }
+    }
+  ],
+  "files": {
+    "home/work/alpha/README.md": "alpha\n",
+    "home/work/alpha/notes.txt": "old notes\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+    "home/.pilotdeck/always-on/snapshots/private-tmp-pdrs-bbx-root-home-work-alpha/run-fixed/README.md": "alpha\nmore docs\n",
+    "home/.pilotdeck/always-on/snapshots/private-tmp-pdrs-bbx-root-home-work-alpha/run-fixed/new.txt": "new file\n",
+    "home/.pilotdeck/always-on/projects/private-tmp-pdrs-bbx-root-home-work-alpha/cycles/index.json": {
+      "schemaVersion": 1,
+      "cycles": [
+        {
+          "id": "cycle-1",
+          "projectKey": "{HOME}/work/alpha",
+          "status": "active",
+          "workspace": {
+            "strategy": "snapshot-copy",
+            "cwd": "{HOME}/.pilotdeck/always-on/snapshots/private-tmp-pdrs-bbx-root-home-work-alpha/run-fixed",
+            "metadata": {
+              "copyStrategy": "clonefile",
+              "baseSize": "8192"
+            }
+          },
+          "planIds": [
+            "plan_fixed",
+            "plan_other"
+          ],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "createdByRunId": "run-fixed"
+        }
+      ]
+    },
+    "home/.pilotdeck/always-on/projects/private-tmp-pdrs-bbx-root-home-work-alpha/plans/index.json": {
+      "schemaVersion": 1,
+      "plans": [
+        {
+          "id": "plan_fixed",
+          "title": "Add more docs",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "status": "completed",
+          "summary": "s",
+          "rationale": "r",
+          "dedupeKey": "docs",
+          "sourceRunId": "run-fixed",
+          "planFilePath": "plans/plan_fixed.md",
+          "workCycleId": "cycle-1"
+        },
+        {
+          "id": "plan_unrelated",
+          "title": "Unrelated",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "status": "ready",
+          "summary": "s",
+          "rationale": "r",
+          "dedupeKey": "x",
+          "sourceRunId": "run-x",
+          "planFilePath": "plans/plan_unrelated.md"
+        },
+        {
+          "id": "plan_other",
+          "title": "Drop notes",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "status": "completed",
+          "summary": "s",
+          "rationale": "r",
+          "dedupeKey": "notes",
+          "sourceRunId": "run-fixed",
+          "planFilePath": "plans/plan_other.md",
+          "workCycleId": "cycle-1"
+        }
+      ]
+    }
+  },
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "setup",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "setup",
+        "channelKey": "test",
+        "message": "setup-touch",
+        "projectKey": "{HOME}/work/alpha"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "always_on_apply",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "workCycleId": "cycle-1",
+        "projectName": "alpha"
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 500
+    }
+  ]
+}

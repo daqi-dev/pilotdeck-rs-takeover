@@ -18,15 +18,22 @@ use crate::metadata::{self, Metadata};
 /// AlwaysOnPaths.ts:36-77). The fields are the ones the ported halves read;
 /// the TS type's `worktreesBaseDir`/`snapshotsBaseDir` overrides only feed
 /// the workspace strategies, which stay behind the fire seam.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct AlwaysOnPaths {
     pub project_key: String,
+    pub pilot_home: PathBuf,
+    pub project_dir: PathBuf,
     pub state_file: PathBuf,
     pub plans_dir: PathBuf,
     pub plan_index_file: PathBuf,
     pub cycle_index_file: PathBuf,
     pub reports_dir: PathBuf,
+    pub runs_dir: PathBuf,
+    pub run_history_file: PathBuf,
+    pub events_file: PathBuf,
     pub discovery_lock_file: PathBuf,
+    pub worktrees_dir: PathBuf,
+    pub snapshots_dir: PathBuf,
 }
 
 /// `resolveAlwaysOnPaths({pilotHome, projectKey})` (AlwaysOnPaths.ts:36-77):
@@ -47,6 +54,12 @@ pub(crate) fn resolve_always_on_paths(
     let project_dir = metadata::resolve(&metadata::resolve(&root, "projects"), &project_id);
     Ok(AlwaysOnPaths {
         project_key: key,
+        pilot_home: home.clone(),
+        runs_dir: metadata::resolve(&project_dir, "runs"),
+        run_history_file: metadata::resolve(&project_dir, "run-history.jsonl"),
+        events_file: metadata::resolve(&project_dir, "events.jsonl"),
+        worktrees_dir: metadata::resolve(&metadata::resolve(&root, "worktrees"), &project_id),
+        snapshots_dir: metadata::resolve(&metadata::resolve(&root, "snapshots"), &project_id),
         state_file: metadata::resolve(&project_dir, "state.json"),
         plans_dir: metadata::resolve(&project_dir, "plans"),
         plan_index_file: metadata::resolve(&metadata::resolve(&project_dir, "plans"), "index.json"),
@@ -59,12 +72,21 @@ pub(crate) fn resolve_always_on_paths(
             &metadata::resolve(&project_dir, "locks"),
             "discovery.lock",
         ),
+        project_dir,
     })
 }
 
 /// `planMarkdownPath` (AlwaysOnPaths.ts:79-81).
 pub(crate) fn plan_markdown_path(paths: &AlwaysOnPaths, plan_id: &JsString) -> PathBuf {
     metadata::resolve(&paths.plans_dir, &format!("{}.md", sanitize_id(plan_id)))
+}
+
+/// `runEventsPath` (AlwaysOnPaths.ts:74-76).
+pub(crate) fn run_events_path(paths: &AlwaysOnPaths, run_id: &JsString) -> PathBuf {
+    metadata::resolve(
+        &paths.runs_dir,
+        &format!("{}.events.jsonl", sanitize_id(run_id)),
+    )
 }
 
 /// `reportMarkdownPath` (AlwaysOnPaths.ts:83-85).
@@ -211,6 +233,7 @@ mod tests {
             cycle_index_file: PathBuf::new(),
             reports_dir: PathBuf::from("/home/always-on/projects/x/reports"),
             discovery_lock_file: PathBuf::new(),
+            ..AlwaysOnPaths::default()
         };
         negative_assert_eq!(
             plan_markdown_path(&paths, &JsString::from("p 1")).to_string_lossy(),

@@ -88,7 +88,7 @@ impl Requests {
             // staged manager delegates to the control port verbatim; no
             // manager answers the #1313 envelopes.
             let Some(manager) = self.always_on.clone() else {
-                return self.standalone(&method, &params);
+                return self.standalone(&method, &params).await;
             };
             match method.as_str() {
                 // The TS reads happen in this order: the manager's runtime
@@ -166,7 +166,7 @@ impl Requests {
     /// (createApplyHandler.ts:132-170, published by
     /// ProjectAutomationBundle.ts:364). Apply reads the persisted work cycle;
     /// abort and rerun answer `not_configured`.
-    fn standalone(&self, method: &str, params: &JsValue) -> Result<JsValue, RequestError> {
+    async fn standalone(&self, method: &str, params: &JsValue) -> Result<JsValue, RequestError> {
         match method {
             "always_on_abort" => {
                 let session_key = super::input_property(params, "sessionKey")?;
@@ -190,14 +190,14 @@ impl Requests {
                     ),
                 ),
             ])),
-            _ => self.standalone_apply(params),
+            _ => self.standalone_apply(params).await,
         }
     }
 
     /// `createApplyHandler` (createApplyHandler.ts:68-104): the storage
     /// paths `path.resolve` the raw `projectKey`, the cycle is looked up by
     /// `workCycleId`, and a cycle without `workspace.cwd` is refused.
-    fn standalone_apply(&self, params: &JsValue) -> Result<JsValue, RequestError> {
+    async fn standalone_apply(&self, params: &JsValue) -> Result<JsValue, RequestError> {
         let project_key =
             super::input_property(params, "projectKey")?.unwrap_or(JsValue::Undefined);
         let JsValue::String(project_key) = &project_key else {
@@ -217,9 +217,10 @@ impl Requests {
             cwd: std::path::PathBuf::new(),
             files: crate::metadata::NativeFiles,
         };
+        let project_key = String::from_utf16_lossy(project_key.units());
         let paths = crate::runtime::always_on::resolve_always_on_paths(
             &self.options.home,
-            &String::from_utf16_lossy(project_key.units()),
+            &project_key,
             &metadata,
         )
         .map_err(io_request_error)?;
@@ -228,7 +229,7 @@ impl Requests {
             .cloned()
             .unwrap_or(JsValue::Undefined);
         let cycle = match &work_cycle_id {
-            JsValue::String(id) => crate::runtime::always_on::WorkCycleStore::new(paths)
+            JsValue::String(id) => crate::runtime::always_on::WorkCycleStore::new(paths.clone())
                 .get_record(&String::from_utf16_lossy(id.units()))
                 .map_err(io_request_error)?,
             _ => None,
@@ -258,9 +259,22 @@ impl Requests {
                 "Cycle has no associated workspace to apply".into(),
             );
         }
-        // The apply phase itself (DiscoveryFire.runApplyPhase) is not ported;
-        // a cycle with a workspace keeps the previous unconfigured answer.
-        not_configured("always_on_apply", params)
+        // `fire.runApplyPhase` (createApplyHandler.ts:97-134). A process
+        // that never published the standalone facade (unit fixtures without
+        // a turn path) keeps the unconfigured answer.
+        let Some(standalone) = self.always_on_standalone.get() else {
+            return not_configured("always_on_apply", params);
+        };
+        let project_name = wire_option(params, "projectName");
+        let result = standalone
+            .apply(paths, &project_key, &cycle, project_name.as_deref())
+            .await
+            .map_err(io_request_error)?;
+        let mut envelope = vec![("sessionKey", result.session_key.as_str().into())];
+        if let Some(error) = &result.error {
+            envelope.push(("error", control_error(error)));
+        }
+        Ok(object(envelope))
     }
 }
 
@@ -521,6 +535,8 @@ mod tests {
                 now: None,
                 uuid: None,
                 logger: None,
+                session_overrides: None,
+                on_turn_event: None,
             },
         )
         .expect("#2294 manager constructs");
