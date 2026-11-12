@@ -165,6 +165,9 @@ fn stream(
         recording: None,
         pending_event: None,
         pending_durable: None,
+        durable_message_observer: None,
+        observe_after_persist: false,
+        pending_observation: None,
         callback_cancel: None,
         accepted: false,
         preflight: 0,
@@ -4972,6 +4975,132 @@ async fn wire_durable_messages_match_ts_yield_before_callback() {
             );
             std::fs::remove_dir_all(root).expect("#748 durable fixture cleanup");
         }
+    }
+}
+
+#[tokio::test]
+async fn selected_durable_observer_commits_before_visibility_and_survives_cancelled_wait() {
+    for failure in ["none", "recording", "observer"] {
+        let scratch = crate::test_scratch::Scratch::new("durable-observer");
+        let root = scratch.path().to_path_buf();
+        let store = Arc::new(RecordingStore {
+            disk: crate::storage::JsonlTranscriptStore::new(),
+            kind: "assistant_message",
+            fail: usize::from(failure == "recording"),
+            completes: AtomicUsize::new(0),
+            attempts: AtomicUsize::new(0),
+            gate: Mutex::new(None),
+        });
+        let recorder = Arc::new(Recorder::new(
+            store.clone(),
+            crate::storage::TranscriptKey {
+                project_root: root.clone(),
+                pilot_home: root.join("home"),
+                transcript_path: root.join("session.jsonl"),
+                session_id: "session".into(),
+            },
+        ));
+        let (tx, rx) = mpsc::channel(1);
+        drop(tx);
+        let integrity = Arc::new(StreamIntegrity::new());
+        *integrity.module_id.lock().unwrap() = Some("native".into());
+        let mut turn = stream(
+            Box::pin(async { Ok(ExecuteResult::Aborted { terminal: None }) }),
+            rx,
+            integrity,
+        );
+        let runner = TurnRunner::new(
+            recorder.clone(),
+            test_lease(),
+            "session".into(),
+            "turn".into(),
+        );
+        let (runner, _) = runner.start().await.unwrap();
+        let (runner, _) = runner.accept(turn.input.clone()).await.unwrap();
+        turn.recording = Some(Recording::new(runner, Arc::new(())));
+        turn.accepted = true;
+        turn.callback_cancel = Some(Cancellation::default());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let observed_calls = calls.clone();
+        let observed_entered = entered.clone();
+        let observed_release = release.clone();
+        let path = recorder.writer().path().to_path_buf();
+        turn.durable_message_observer = Some(DurableMessageObserver {
+            matches: Arc::new(|_, message| message.get("role") == Some(&"assistant".into())),
+            on_persisted: Arc::new(move |identity, _| {
+                assert_eq!(identity.session_id, JsString::from("session"));
+                assert!(
+                    std::fs::read_to_string(&path)
+                        .unwrap()
+                        .contains("\"type\":\"assistant_message\""),
+                    "observer runs only after the real append"
+                );
+                observed_calls.fetch_add(1, Ordering::SeqCst);
+                observed_entered.notify_one();
+                let release = observed_release.clone();
+                Box::pin(async move {
+                    if failure == "observer" {
+                        return Err(
+                            crate::host::ModuleError::new("reply durable marker failed").into()
+                        );
+                    }
+                    release.notified().await;
+                    Ok(())
+                })
+            }),
+        });
+        let event = parse_json(r#"{"type":"assistant_message","message":{"role":"assistant","content":[{"type":"text","text":"sop reply"}]}}"#).unwrap();
+        let (receipt, mut ack) = oneshot::channel();
+        if failure == "none" {
+            let mut delivery = Box::pin(turn.record_event(event, false, true, Some(receipt)));
+            tokio::select! {
+                _ = entered.notified() => {},
+                result = &mut delivery => panic!("reply escaped pending observer: {result:?}"),
+            }
+            drop(delivery); // Cancellation drops the wait, not the transition.
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+            assert!(matches!(
+                ack.try_recv(),
+                Err(oneshot::error::TryRecvError::Empty)
+            ));
+            release.notify_one();
+            let delivered = turn.next().await.unwrap().unwrap();
+            assert_eq!(delivered.get("type"), Some(&"assistant_message".into()));
+            ack.await.unwrap();
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                1,
+                "re-poll must not repeat observer effects"
+            );
+        } else {
+            assert!(
+                turn.record_event(event, false, true, Some(receipt))
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                usize::from(failure == "observer")
+            );
+            assert!(ack.await.is_err());
+            let mut terminal = None;
+            while let Some(event) = turn.next().await.unwrap() {
+                assert_ne!(event.get("type"), Some(&"assistant_message".into()));
+                if event.get("type") == Some(&"turn_completed".into()) {
+                    terminal = event.get("result").cloned();
+                }
+            }
+            assert_eq!(
+                terminal.as_ref().and_then(|result| result.get("type")),
+                Some(&"error".into())
+            );
+        }
+        assert_eq!(store.attempts.load(Ordering::SeqCst), 1);
+        drop(turn);
+        drop(recorder);
     }
 }
 

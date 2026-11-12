@@ -35,6 +35,7 @@ extern crate self as pilotdeck_gateway;
 mod mutant_facade;
 pub mod node_io;
 mod pairing;
+mod pdf;
 mod process_group;
 #[cfg(all(test, unix))]
 mod process_spawn;

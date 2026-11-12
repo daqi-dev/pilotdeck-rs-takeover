@@ -24,6 +24,8 @@ use crate::{
     },
 };
 
+mod history;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PhaseKind {
     Discovery,
@@ -275,16 +277,14 @@ impl ExecutableTool for AlwaysOnTool {
                     execute_workspace(&input, &run.run_id, &run.project_key, &phase).await
                 }
                 Kind::ChatHistory => {
-                    if !found.is_some_and(|(_, phase)| phase.kind == PhaseKind::Discovery) {
+                    let Some((run, phase)) =
+                        found.filter(|(_, phase)| phase.kind == PhaseKind::Discovery)
+                    else {
                         return Err(ToolError::failed(
                             "always_on_read_chat_history is only available during Always-On discovery (Phase 1).",
                         ));
-                    }
-                    // The transcript replay behind this tool
-                    // (AlwaysOnChatHistoryTool.ts:71-132) is not ported.
-                    Err(ToolError::failed(
-                        "always_on_read_chat_history is not implemented in this embedding.",
-                    ))
+                    };
+                    history::execute(&input, &run.run_id, &phase)
                 }
             }
         })

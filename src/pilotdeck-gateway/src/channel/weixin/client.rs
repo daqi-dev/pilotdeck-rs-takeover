@@ -43,17 +43,11 @@ const MESSAGE_STATE_FINISH: f64 = 2.0;
 /// TypingStatus.TYPING.
 const TYPING_STATUS_TYPING: f64 = 1.0;
 
-type WeixinConnector =
-    hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>;
+type WeixinConnector = hyper_rustls::HttpsConnector<crate::runtime::model::http::ProxyConnect>;
 
 fn weixin_connector() -> WeixinConnector {
-    let mut http = hyper_util::client::legacy::connect::HttpConnector::new();
-    http.enforce_http(false);
-    hyper_rustls::HttpsConnectorBuilder::new()
-        .with_tls_config(crate::runtime::model::http::webpki_client_config())
-        .https_or_http()
-        .enable_http1()
-        .wrap_connector(http)
+    use crate::runtime::model::http::{ProxyConfig, proxy_https_connector, webpki_client_config};
+    proxy_https_connector(webpki_client_config(), ProxyConfig::from_settings(None))
 }
 
 /// TS errors reaching `formatWeixinError` keep their `name`; the formatted

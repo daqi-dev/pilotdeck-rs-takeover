@@ -564,6 +564,11 @@ impl SessionTools {
         self
     }
 
+    pub(super) fn with_hook_cleanup(self, cleanup: &super::hooks::SessionHookCleanup) -> Self {
+        cleanup.register(self.tool_hooks.clone());
+        self
+    }
+
     /// The session's hooks (`SessionInteractionBundle`): `settings` run in the
     /// session's lifecycle runtimes, the tool runtime dispatches the tool
     /// events through the same runtime, and every execution transition is

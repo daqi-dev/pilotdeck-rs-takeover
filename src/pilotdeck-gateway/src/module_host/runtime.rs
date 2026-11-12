@@ -566,7 +566,7 @@ impl RuntimeHost {
 
     /// `createActiveRuntimeTextParsingPort` behind the adapter's base64 and
     /// filename checks (publicHostRuntimeAdapter.ts:131-138).
-    fn file_parse(&self, input: &JsObject) -> Result<JsValue, Thrown> {
+    async fn file_parse(&self, input: &JsObject) -> Result<JsValue, Thrown> {
         let encoded = required_string(field(input, "content_base64"), "content_base64")?;
         let encoded = String::from_utf16_lossy(encoded.units());
         if !canonical_base64(&encoded) {
@@ -616,33 +616,46 @@ impl RuntimeHost {
                 "File exceeds selected extraction limit",
             ));
         }
-        if extension == ".pdf" {
-            // No PDF text extractor exists in this host (the baseline uses
-            // mupdf); answer with the extractor's own unsupported-type error.
-            return Err(parse_error(
-                415,
-                "PUBLIC_FILE_TYPE_UNSUPPORTED",
-                "This PD text extractor accepts PDF, .txt and Markdown",
-            ));
-        }
-        // `new TextDecoder("utf-8", { fatal: true }).decode(bytes)`: a leading
-        // BOM is consumed.
-        let Ok(text) = std::str::from_utf8(&bytes) else {
-            return Err(parse_error(
-                422,
-                "PUBLIC_FILE_ENCODING_UNSUPPORTED",
-                "File is not valid UTF-8",
-            ));
+        let text = if extension == ".pdf" {
+            let document = crate::pdf::Document::from_bytes(&bytes).map_err(|_| {
+                parse_error(
+                    422,
+                    "PUBLIC_FILE_PARSE_FAILED",
+                    "PDF text extraction failed",
+                )
+            })?;
+            document.text().await.map_err(|error| match error {
+                crate::pdf::Error::Unavailable => {
+                    parse_error(503, "PUBLIC_HOST_PORT_UNAVAILABLE", crate::pdf::UNAVAILABLE)
+                }
+                _ => parse_error(
+                    422,
+                    "PUBLIC_FILE_PARSE_FAILED",
+                    "PDF text extraction failed",
+                ),
+            })?
+        } else {
+            let text = std::str::from_utf8(&bytes).map_err(|_| {
+                parse_error(
+                    422,
+                    "PUBLIC_FILE_ENCODING_UNSUPPORTED",
+                    "File is not valid UTF-8",
+                )
+            })?;
+            text.strip_prefix('\u{feff}').unwrap_or(text).to_owned()
         };
-        let text = text.strip_prefix('\u{feff}').unwrap_or(text);
         let media_type = if nullish(declared) {
-            string_value("text/plain")
+            string_value(if extension == ".pdf" {
+                "application/pdf"
+            } else {
+                "text/plain"
+            })
         } else {
             declared.clone()
         };
         Ok(object_value(&[
             ("filename", JsValue::String(filename)),
-            ("text", string_value(text)),
+            ("text", string_value(&text)),
             ("mediaType", media_type),
             (
                 "metadata",
@@ -1117,7 +1130,7 @@ impl PublicHostProvider for RuntimeHost {
                         .await
                         .unwrap_or_else(Thrown::respond));
                 }
-                "file_parse" => self.file_parse(fields),
+                "file_parse" => self.file_parse(fields).await,
                 "read_sop_authority" => self.read_sop_authority(fields, &principal).await,
                 // Unreachable through the transport, which 409s any
                 // operation `operations()` does not list: the adapter's

@@ -18,6 +18,81 @@ impl DiskSopStore {
     pub(crate) fn new(profiles: ProfileResolver) -> Self {
         Self { profiles }
     }
+    /// Runtime transitions use the same directory lock and migration as
+    /// approvals. The closure returns a replacement only for actual writes.
+    pub(crate) async fn transact<T: Send + 'static>(
+        &self,
+        input: StoreStatusInput,
+        operation: impl FnOnce(
+            Option<JsValue>,
+        ) -> Result<
+            (Option<JsValue>, T),
+            crate::module_host::staffdeck::sop::SopError,
+        > + Send
+        + 'static,
+    ) -> Result<T, crate::module_host::staffdeck::sop::SopError> {
+        use crate::module_host::staffdeck::sop::SopError;
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let root = this
+                .root(input.project_key.as_ref())
+                .map_err(SopError::from)?;
+            fs::create_dir_all(&root).map_err(|_| SopError::from(storage_failure()))?;
+            this.locked(
+                input.project_key.as_ref(),
+                &input.session_key,
+                |store, raw, path| {
+                    let root = (store.profiles)(None).ok_or_else(storage_failure)?;
+                    let states = store.states.lock().map_err(|_| storage_failure())?;
+                    let migrated = states.get(&(root, input.session_key.clone())).map(|state| {
+                        let mut value = crate::metadata::object([
+                            ("schemaVersion", JsValue::Number(3.0)),
+                            ("sessionId", JsValue::String(state.session_id.clone())),
+                            ("bundle", state.bundle.clone()),
+                            ("state", state.state.clone()),
+                            ("revision", JsValue::Number(state.revision)),
+                            (
+                                "resumeRequests",
+                                JsValue::Object(state.resume_requests.clone()),
+                            ),
+                            (
+                                "updatedAt",
+                                raw.as_ref()
+                                    .and_then(|v| v.get("updatedAt"))
+                                    .filter(|v| v.as_string().is_some())
+                                    .cloned()
+                                    .unwrap_or("1970-01-01T00:00:00.000Z".into()),
+                            ),
+                        ]);
+                        if let JsValue::Object(object) = &mut value {
+                            if let Some(wait) = &state.wait {
+                                object.insert("wait".into(), wait.clone());
+                            }
+                            if let Some(delivery) = raw
+                                .as_ref()
+                                .and_then(|v| v.get("replyDelivery"))
+                                .filter(|v| valid_reply_delivery(v))
+                            {
+                                object.insert("replyDelivery".into(), delivery.clone());
+                            }
+                        }
+                        value
+                    });
+                    drop(states);
+                    let result = operation(migrated).and_then(|(replacement, result)| {
+                        if let Some(replacement) = replacement {
+                            persist(path, &replacement).map_err(SopError::from)?;
+                        }
+                        Ok(result)
+                    });
+                    Ok(result)
+                },
+            )
+            .map_err(SopError::from)?
+        })
+        .await
+        .map_err(|_| SopError::from(storage_failure()))?
+    }
     fn root(&self, project: Option<&JsValue>) -> Result<PathBuf, ApprovalFailure> {
         (self.profiles)(project)
             .map(|root| PathBuf::from(root).join("sessions"))

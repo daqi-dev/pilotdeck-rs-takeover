@@ -3,11 +3,20 @@
 set -euo pipefail
 if (( $# < 2 )); then echo 'usage: run.sh CHECKOUT OUTPUT_DIRECTORY [cargo arguments ...]' >&2; exit 2; fi
 checkout=$(cd "$1" && pwd)
+task_root=$(dirname "$checkout")
+export PATH="$task_root/tools/node/bin:$task_root/tools/pnpm/node_modules/.bin:$task_root/tools/rust/bin:$PATH"
 output=$2
 shift 2
 mkdir -p "$(dirname "$output")"
 mkdir "$output"
 output=$(cd "$output" && pwd)
+# Rust tool caches stay explicit; every product process spawned by tests sees
+# only this run's disposable home, including help/version subprocesses.
+export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+export RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+mkdir -p "$output/home/.pilotdeck"
+export HOME="$output/home"
+export PILOT_HOME="$output/home/.pilotdeck"
 exec 9>"${PDRS_BUILD_LOCK:-$(dirname "$checkout")/.build.lock}"
 flock -n 9 || { echo 'another task build holds the queue' >&2; exit 3; }
 cd "$checkout"

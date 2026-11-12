@@ -53,6 +53,10 @@ pub(super) struct SubagentRuntime {
     registry: Arc<ProjectRuntimeRegistry>,
     selection: LoopSelection,
     native_factory: Option<Arc<dyn pilotdeck_transport::server::ExecutionFactory>>,
+    extension_scope: Option<(
+        crate::extensions::NativeExtensions,
+        Arc<crate::extensions::SessionExtensions>,
+    )>,
     limits: Limits,
     /// The pilot home, for the sidechain's storage key.
     home: PathBuf,
@@ -75,6 +79,7 @@ impl SubagentRuntime {
             registry,
             selection,
             native_factory: None,
+            extension_scope: None,
             limits,
             home,
             continuations,
@@ -88,6 +93,32 @@ impl SubagentRuntime {
     ) -> Self {
         self.native_factory = Some(factory);
         self
+    }
+
+    pub(super) fn with_extension_scope(
+        mut self,
+        registry: crate::extensions::NativeExtensions,
+        snapshot: Arc<crate::extensions::SessionExtensions>,
+    ) -> Self {
+        // Copy the generation values into an unbound snapshot. Retaining the
+        // parent's binding lease would keep its session routing key alive
+        // after that parent closes while a background child is still running.
+        self.extension_scope = Some((registry, Arc::new((*snapshot).clone())));
+        self
+    }
+
+    fn bind_extensions(
+        &self,
+        project: &std::path::Path,
+        session: &JsString,
+    ) -> Result<
+        Option<Arc<crate::extensions::SessionExtensions>>,
+        crate::runtime::project::RuntimeError,
+    > {
+        self.extension_scope
+            .as_ref()
+            .map(|(registry, snapshot)| registry.bind_inherited(project, session, snapshot))
+            .transpose()
     }
 
     fn configure_factory(&self, factory: TurnHostFactory) -> TurnHostFactory {
@@ -187,6 +218,9 @@ impl SubagentRuntime {
             )
             .with_continuation_parent(parent);
         let projection = storage.projection.clone();
+        let child_extensions = self
+            .bind_extensions(&cwd, child)
+            .map_err(|error| fail(&error))?;
         let session = self
             .configure_factory(
                 TurnHostFactory::new_with_signal(
@@ -194,7 +228,10 @@ impl SubagentRuntime {
                     self.selection.deployment.clone(),
                     self.limits,
                     self.selection.expected_module_id.clone(),
-                    move |identity, recorder, signal| tools.turn(identity, recorder, signal),
+                    move |identity, recorder, signal| {
+                        let _retained_extensions = &child_extensions;
+                        tools.turn(identity, recorder, signal)
+                    },
                 )
                 .with_agent_config(config)
                 .for_project(cwd),
@@ -900,6 +937,18 @@ impl Fork {
                 root_recorder: self.parent.recorder.clone(),
             },
         );
+        let project = PathBuf::from(
+            self.parent
+                .config
+                .get("cwd")
+                .and_then(JsValue::as_string)
+                .map(text)
+                .unwrap_or_default(),
+        );
+        let child_extensions = self
+            .runtime
+            .bind_extensions(&project, child_session)
+            .map_err(|error| fail(&error))?;
         let session = self
             .runtime
             .configure_factory(
@@ -908,17 +957,13 @@ impl Fork {
                     self.runtime.selection.deployment.clone(),
                     self.runtime.limits,
                     self.runtime.selection.expected_module_id.clone(),
-                    move |identity, recorder, signal| tools.turn(identity, recorder, signal),
+                    move |identity, recorder, signal| {
+                        let _retained_extensions = &child_extensions;
+                        tools.turn(identity, recorder, signal)
+                    },
                 )
                 .with_agent_config(config)
-                .for_project(PathBuf::from(
-                    self.parent
-                        .config
-                        .get("cwd")
-                        .and_then(JsValue::as_string)
-                        .map(text)
-                        .unwrap_or_default(),
-                )),
+                .for_project(project),
             )
             .into_live_session(storage.recorder.clone(), Vec::new)
             .as_sidechain();

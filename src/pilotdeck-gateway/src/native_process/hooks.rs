@@ -8,6 +8,7 @@
 //! execution events; `ToolRuntime.dispatchLifecycle` dispatches the tool
 //! events. A `hooks` section in `pilotdeck.yaml` is not a source: the config
 //! loader reports it as an unknown top-level field (loadPilotConfig.ts:343-375).
+mod session;
 use super::permission_prompt::GatewayEmitSlot;
 use crate::{
     hooks::protocol::{HookCommand, HookCommon, HookMatcher, HooksSettings, is_hook_event},
@@ -23,6 +24,7 @@ use crate::{
     },
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
+pub(super) use session::SessionHookCleanup;
 use std::sync::{Arc, Mutex};
 
 /// `createSdkHookSettings` + `mergeHookSettings`
@@ -243,7 +245,7 @@ pub(super) struct ToolHooks {
     /// ElicitationResult): their hooks outlive the turn that asked, like the
     /// baseline's session `HookRuntime`, which a turn's end neither cancels
     /// nor waits for.
-    session: Mutex<Option<crate::runtime::hooks::LifecycleRuntime>>,
+    session: Mutex<Option<session::SessionLifecycle>>,
 }
 impl ToolHooks {
     /// The session's own runtime over `settings`, with the session's
@@ -263,7 +265,7 @@ impl ToolHooks {
             },
         );
         *self.session.lock().unwrap_or_else(|e| e.into_inner()) =
-            Some(crate::runtime::hooks::LifecycleRuntime::new(runtime));
+            Some(session::SessionLifecycle::new(runtime));
     }
     pub(super) fn configure(&self, settings: &HooksSettings) {
         *self.events.lock().unwrap_or_else(|e| e.into_inner()) = settings
@@ -282,6 +284,18 @@ impl ToolHooks {
     }
     pub(super) fn bind(&self, port: Option<Arc<dyn LifecyclePort>>) {
         *self.port.lock().unwrap_or_else(|e| e.into_inner()) = port;
+    }
+    fn close_session(&self) -> HostFuture<()> {
+        let session = self
+            .session
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        self.bind(None);
+        match session {
+            Some(session) => session.dispose(),
+            None => Box::pin(async { Ok(()) }),
+        }
     }
     /// `void this.lifecycle.dispatch({ event, baseInput: { sessionId:
     /// sessionKey, transcriptPath: "", cwd: projectRoot }, payload,
@@ -329,6 +343,15 @@ impl ToolHooks {
         runtime.spawn(async move {
             let _ = lifecycle.dispatch(input).await;
         });
+    }
+}
+impl Drop for ToolHooks {
+    fn drop(&mut self) {
+        // Explicit prepared-resource release awaits disposal. This fallback
+        // also cancels commands when a partially constructed session is dropped.
+        if let Some(session) = self.session.get_mut().unwrap_or_else(|e| e.into_inner()) {
+            session.close();
+        }
     }
 }
 /// `CompactionEngine`'s `lifecycle` (SessionContextRuntimeBundle.ts:104-119):

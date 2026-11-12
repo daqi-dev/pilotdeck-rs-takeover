@@ -1,4 +1,4 @@
-//! One owned process group and independent pipe pumps. No callbacks in pumps.
+//! One owned transport and independent pipe pumps. No callbacks in pumps.
 use super::{
     HostError, HostErrorKind, Limits,
     budget::{Budget, Frame, Lease},
@@ -23,6 +23,13 @@ use tokio::{
 enum WriteCommand {
     Frame(String, Lease),
     Flush(oneshot::Sender<()>),
+}
+
+#[derive(Clone)]
+pub(super) struct TcpEndpoint {
+    pub(super) host: String,
+    pub(super) port: u16,
+    pub(super) connect_timeout: std::time::Duration,
 }
 
 pub(super) struct Connection {
@@ -53,6 +60,51 @@ pub(super) struct Connection {
 }
 
 impl Connection {
+    pub(super) async fn tcp(
+        endpoint: &TcpEndpoint,
+        limits: Limits,
+        budget: Arc<Budget>,
+    ) -> Result<Self, HostError> {
+        // The baseline timer uses Node setTimeout normalization, including
+        // its 1 ms overflow path, independently of handshake deadlines.
+        let connect_timeout = crate::runtime::network::node_timer_duration(
+            endpoint.connect_timeout.as_millis() as f64,
+        );
+        let socket = timeout(
+            connect_timeout,
+            tokio::net::TcpStream::connect((endpoint.host.as_str(), endpoint.port)),
+        )
+        .await
+        .map_err(|_| {
+            HostError::new(
+                HostErrorKind::Timeout,
+                format!(
+                    "Timed out connecting to sidecar TCP server after {}ms.",
+                    endpoint.connect_timeout.as_millis()
+                ),
+            )
+        })?
+        .map_err(|error| {
+            let mut failure = HostError::new(
+                HostErrorKind::Io,
+                "Failed to connect to sidecar TCP server.",
+            );
+            failure.diagnostic = error.to_string();
+            failure
+        })?;
+        socket.set_nodelay(true).map_err(HostError::io)?;
+        let (read, write) = socket.into_split();
+        Ok(Self::with_streams(
+            None,
+            None,
+            write,
+            read,
+            tokio::io::empty(),
+            limits,
+            budget,
+        ))
+    }
+
     pub(super) fn spawn(command: &mut Command, limits: Limits) -> Result<Self, HostError> {
         Self::spawn_with_budget(command, limits, Budget::new(limits.max_buffered_bytes))
     }
@@ -153,6 +205,7 @@ impl Connection {
         limits: Limits,
         budget: Arc<Budget>,
     ) -> Self {
+        let tcp = child.is_none() && native.is_none();
         #[cfg(unix)]
         let group = child
             .as_ref()
@@ -191,7 +244,12 @@ impl Connection {
                             }
                         };
                         if let Err(error) = result {
-                            let _ = writer_errors.send(Err(HostError::io(error))).await;
+                            let error = if tcp {
+                                HostError::new(HostErrorKind::Io, "Failed to write to sidecar TCP socket.")
+                            } else {
+                                HostError::io(error)
+                            };
+                            let _ = writer_errors.send(Err(error)).await;
                             break;
                         }
                     }
@@ -217,21 +275,35 @@ impl Connection {
                 let available = match reader.fill_buf().await {
                     Ok([]) => {
                         if !line.is_empty()
-                            && !deliver(&reads, std::mem::take(&mut line), line_lease).await
+                            && !deliver(&reads, std::mem::take(&mut line), line_lease, tcp).await
                         {
                             return;
                         }
                         let _ = reads
                             .send(Err(HostError::new(
                                 HostErrorKind::Disconnected,
-                                "Sidecar stdout closed before execute reached a terminal event.",
+                                if tcp {
+                                    "Sidecar TCP socket closed before execute reached a terminal event."
+                                } else {
+                                    "Sidecar stdout closed before execute reached a terminal event."
+                                },
                             )))
                             .await;
                         return;
                     }
                     Ok(bytes) => bytes,
                     Err(error) => {
-                        let _ = reads.send(Err(HostError::io(error))).await;
+                        let error = if tcp {
+                            HostError::new(
+                                HostErrorKind::Io,
+                                format!(
+                                    "Sidecar TCP socket failed before execute reached a terminal event: {error}"
+                                ),
+                            )
+                        } else {
+                            HostError::io(error)
+                        };
+                        let _ = reads.send(Err(error)).await;
                         return;
                     }
                 };
@@ -255,7 +327,7 @@ impl Connection {
                 line.extend_from_slice(&available[..size]);
                 reader.consume(size);
                 if line.last() == Some(&b'\n') {
-                    if !deliver(&reads, std::mem::take(&mut line), line_lease).await {
+                    if !deliver(&reads, std::mem::take(&mut line), line_lease, tcp).await {
                         return;
                     }
                     line_lease = input_budget.reserve(0).expect("empty reservation");
@@ -577,6 +649,7 @@ async fn deliver(
     sender: &mpsc::Sender<Result<Frame, HostError>>,
     bytes: Vec<u8>,
     lease: Lease,
+    tcp: bool,
 ) -> bool {
     let value = match std::str::from_utf8(&bytes) {
         Ok(text) if text.trim().is_empty() => return true,
@@ -584,6 +657,13 @@ async fn deliver(
             .map_err(|error| HostError::protocol(format!("Malformed NDJSON: {error}"))),
         Err(error) => Err(HostError::protocol(format!("Malformed UTF-8: {error}"))),
     }
+    .map_err(|error| {
+        if tcp {
+            HostError::protocol("Sidecar TCP stream contains malformed NDJSON.")
+        } else {
+            error
+        }
+    })
     .map(|value| Frame { value, lease });
     drop(bytes);
     let valid = value.is_ok();

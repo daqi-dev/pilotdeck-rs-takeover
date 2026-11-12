@@ -663,16 +663,12 @@ async fn start_assembly(
                             .cloned()
                     });
                 let snapshot = staged.snapshot();
-                if snapshot
+                let sop_profile = snapshot
                     .get("config")
                     .and_then(|value| value.get("modules"))
                     .and_then(|value| value.get("sop"))
-                    .is_some_and(|binding| binding.get("enabled") != Some(&JsValue::Bool(false)))
-                {
-                    return Err(RuntimeError::new(
-                        "StaffDeck SOP execution is unavailable in this host.",
-                    ));
-                }
+                    .filter(|binding| binding.get("enabled") != Some(&JsValue::Bool(false)))
+                    .cloned();
                 // `modules.skills.enabled: false` (ProjectSessionRuntimeBundle.ts:250-300):
                 // no `read_skill`, and the session contributes no skills.
                 let skills_disabled = crate::runtime::project::skills_module_disabled(&snapshot);
@@ -893,6 +889,7 @@ async fn start_assembly(
                 );
                 extension_lease.append_prompts(&mut config);
                 let native_factory = extension_lease.factory();
+                let child_extensions = extension_lease.clone();
                 let mut retained = PreparedResources::default();
                 retained.push(move || {
                     Box::pin(async move {
@@ -1011,6 +1008,9 @@ async fn start_assembly(
                     ),
                 };
                 retained.push(move || Box::pin(async move { session_mcp_release.release().await }));
+                let hook_cleanup = super::hooks::SessionHookCleanup::default();
+                let hook_release = hook_cleanup.clone();
+                retained.push(move || Box::pin(async move { hook_release.release().await }));
                 let tail = TailConfig {
                     cwd: Some(session_cwd_path.clone()),
                     // `shouldCollectFileArtifacts` (ProjectRuntimeRegistry.ts:365):
@@ -1087,6 +1087,25 @@ async fn start_assembly(
                             .or_insert_with(|| options.sidecar.to_string_lossy().into_owned());
                         let selection = select_loop(&snapshot, &loop_env, &project_root)
                             .map_err(RuntimeError::new)?;
+                        if sop_profile.is_some()
+                            && !matches!(
+                                selection.deployment,
+                                crate::runtime::turn::host_factory::Deployment::Native
+                            )
+                        {
+                            return Err(RuntimeError::new(
+                                "StaffDeck SOP with an external Agent loop is unavailable in this host.",
+                            ));
+                        }
+                        let sop = sop_profile
+                            .map(|profile| {
+                                crate::module_host::staffdeck::sop::SopRuntime::new(
+                                    profile,
+                                    session.clone(),
+                                )
+                            })
+                            .transpose()
+                            .map_err(|error| RuntimeError::new(error.message))?;
                         continuation_parent.bind_recorder(binding.recorder.clone());
                         // `GatewayUserDialogChannel` (ProjectSessionRuntimeBundle.ts:
                         // 638-650): only for a session that enabled a dialog kind,
@@ -1133,6 +1152,7 @@ async fn start_assembly(
                             include_hook_events,
                             sdk_hooks.then(|| async_hooks.clone()),
                         )
+                        .with_hook_cleanup(&hook_cleanup)
                         .with_permission_prompt(gateway_emit, session_rules, permission_timeout)
                         .with_permission_mode_transition({
                             let session_overrides = session_overrides.clone();
@@ -1178,7 +1198,8 @@ async fn start_assembly(
                             options.home.clone(),
                             continuations.clone(),
                         )
-                        .with_background(background_subagents.clone());
+                        .with_background(background_subagents.clone())
+                        .with_extension_scope(extensions.clone(), child_extensions);
                         let subagents = match &native_factory {
                             Some(factory) => subagents.with_native_factory(factory.clone()),
                             None => subagents,
@@ -1188,12 +1209,17 @@ async fn start_assembly(
                             .with_native_tools(extension_tools)?;
                         ports.check_deferred_tools()?;
                         let turn_override_sink = ports.turn_override();
+                        let sop_signal = sop.clone();
+                        let sop_cwd = turn_project_root.clone();
                         let host = TurnHostFactory::new_with_signal(
                             project,
                             selection.deployment,
                             limits,
                             selection.expected_module_id,
                             move |identity, recorder, signal| {
+                                if let Some(sop) = &sop_signal {
+                                    sop.bind_signal(signal.clone());
+                                }
                                 turn_ports(&ports, identity, recorder, signal)
                             },
                         )
@@ -1206,6 +1232,22 @@ async fn start_assembly(
                         // close. The source reads the same store the selector
                         // method writes.
                         .with_permission_mode_source(permission_source);
+                        if let Some(sop) = sop {
+                            let inner = native_factory.unwrap_or_else(|| {
+                                Arc::new(
+                                    pilotdeck_transport::default_factory::OriginalAgentFactory {
+                                        clock: Arc::new(
+                                            pilotdeck_transport::system_clock::SystemExecutionClock,
+                                        ),
+                                        process_cwd: sop_cwd.to_string_lossy().as_ref().into(),
+                                    },
+                                )
+                            });
+                            return Ok(host
+                                .with_native_factory(sop.factory(inner))
+                                .with_port_decorators(sop.decorators())
+                                .with_durable_message_observer(sop.durable_observer()));
+                        }
                         Ok(match native_factory {
                             Some(factory) => host.with_native_factory(factory),
                             None => host,

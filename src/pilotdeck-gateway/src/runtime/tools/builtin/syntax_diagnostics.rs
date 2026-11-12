@@ -7,17 +7,17 @@
 //! Ported: JSON (V8 `JSON.parse` messages), Python (`python3 -c <checker>`),
 //! bash (`bash -n -s`), YAML and Markdown (front matter, code fences).
 //!
-//! Not ported — these report nothing here while the baseline reports parse
-//! errors for malformed content: JavaScript / TypeScript (the baseline runs
-//! the `typescript` compiler's parser), HTML (`parse5` error codes) and CSV /
-//! TSV (`csv-parse`). Well-formed files of these kinds produce no diagnostics
-//! on either side.
+//! JavaScript / TypeScript use Oxc, HTML uses the native WHATWG tree builder,
+//! and CSV / TSV use a strict record parser. Native parser wording is an
+//! accepted implementation difference; malformed files still report errors.
 #![cfg(unix)]
 use crate::{js_value, process_group::GroupGuard, runtime::tools::js_space};
 use pilotdeck_protocol::{JsString, JsValue, parse_json};
 use regex::Regex;
 use std::{process::Stdio, sync::LazyLock, time::Duration};
 use tokio::{io::AsyncWriteExt, process::Command};
+
+mod native;
 
 const MAX_DIAGNOSTICS: usize = 3;
 const CHECKER_TIMEOUT: Duration = Duration::from_millis(2_000);
@@ -117,6 +117,11 @@ fn extension_and_name(file_path: &str) -> (String, String) {
 async fn collect(file_path: &str, content: &str) -> Vec<SyntaxDiagnostic> {
     let (extension, name) = extension_and_name(file_path);
     match extension.as_str() {
+        ".cjs" | ".cts" | ".js" | ".jsx" | ".mjs" | ".mts" | ".ts" | ".tsx" => {
+            native::javascript(file_path, content)
+        }
+        ".html" | ".htm" => native::html(content),
+        ".csv" | ".tsv" => native::csv(content, extension == ".tsv"),
         ".json" => json_diagnostics(content),
         ".py" | ".pyw" => python_diagnostics(file_path, content)
             .await
@@ -136,8 +141,6 @@ async fn collect(file_path: &str, content: &str) -> Vec<SyntaxDiagnostic> {
         {
             bash_diagnostics(content).await
         }
-        // `.cjs .cts .js .jsx .mjs .mts .ts .tsx`, `.html .htm`, `.csv .tsv`:
-        // see the module docs.
         _ => Vec::new(),
     }
 }

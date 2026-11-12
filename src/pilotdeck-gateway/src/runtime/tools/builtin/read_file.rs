@@ -17,6 +17,8 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::io::Read;
 
+mod pdf;
+
 const MAX_PDF_PAGES_PER_REQUEST: u64 = 20;
 const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
 const PDF_EXTRACT_SIZE_THRESHOLD: u64 = 3 * 1024 * 1024;
@@ -117,7 +119,13 @@ impl ExecutableTool for ReadFileTool {
     }
 
     fn execute(&self, input: JsValue, context: ToolRunContext) -> ToolFuture<ToolOutput> {
-        Box::pin(async move { execute(&input, &context) })
+        Box::pin(async move {
+            tokio::select! {
+                biased;
+                _ = context.cancelled() => Err(tool_error("tool_aborted", "The operation was aborted.")),
+                result = execute(&input, &context) => result,
+            }
+        })
     }
 }
 
@@ -246,7 +254,7 @@ fn validate(input: &JsValue, context: &ToolRunContext) -> Option<Vec<JsObject>> 
     (!issues.is_empty()).then_some(issues)
 }
 
-fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, ToolError> {
+async fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, ToolError> {
     let input_path = field(input, "file_path")
         .as_string()
         .cloned()
@@ -283,7 +291,7 @@ fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, Tool
 
     match kind {
         ReadKind::Image => image(input, context, &resolved, &context_stat, &read_state_key),
-        ReadKind::Pdf => pdf(input, context, &resolved, &context_stat, &read_state_key),
+        ReadKind::Pdf => pdf::read(input, context, &resolved, &context_stat, &read_state_key).await,
         ReadKind::Notebook => notebook(input, context, &resolved, &context_stat, &read_state_key),
         ReadKind::Text => text_file(input, context, &resolved, &context_stat, &read_state_key),
     }
@@ -660,139 +668,6 @@ fn other_sharp_format(bytes: &[u8]) -> bool {
         || bytes.starts_with(b"GIF87a")
         || bytes.starts_with(b"GIF89a")
         || (bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP")
-}
-
-fn pdf(
-    input: &JsValue,
-    context: &ToolRunContext,
-    resolved: &ResolvedPath,
-    context_stat: &super::Stat,
-    read_state_key: &JsString,
-) -> Result<ToolOutput, ToolError> {
-    let multimodal = context.fields.get("modelMultimodal");
-    let supports = |kind: &str| {
-        multimodal
-            .and_then(|value| value.get("input"))
-            .map(|value| match value {
-                JsValue::Array(items) => items
-                    .iter()
-                    .any(|item| item.as_string().is_some_and(|value| value.equals_str(kind))),
-                _ => false,
-            })
-            .unwrap_or(false)
-    };
-    let supports_pdf = supports("pdf");
-    let supports_image = supports("image");
-    let pages = field(input, "pages")
-        .as_string()
-        .map(text)
-        .filter(|value| !value.trim().is_empty());
-    if let Some(value) = &pages
-        && parse_pdf_page_range(value).is_none()
-    {
-        return Err(tool_error(
-            "invalid_tool_input",
-            format!("Invalid PDF page range: {value}."),
-        ));
-    }
-    let page_suffix = "";
-    if let Some(_value) = &pages {
-        if !supports_image {
-            return Ok(ToolOutput {
-                content: vec![JsValue::Object(object([
-                    ("type", string("text")),
-                    (
-                        "text",
-                        string(format!(
-                            "[PDF file: {}, {} bytes{page_suffix}. Current model does not support image input; cannot render requested pages.]",
-                            text(&resolved.relative),
-                            context_stat.size
-                        )),
-                    ),
-                ]))],
-                data: Some(JsValue::Object(object([
-                    ("filePath", string(resolved.relative.clone())),
-                    ("kind", string("pdf")),
-                    ("modelSupportsImage", JsValue::Bool(false)),
-                ]))),
-                ..ToolOutput::default()
-            });
-        }
-        return Err(tool_error(
-            "result_too_large",
-            "PDF page rendering is not available in this runtime.",
-        ));
-    }
-    if !supports_pdf || context_stat.size > PDF_EXTRACT_SIZE_THRESHOLD {
-        if !supports_image {
-            return Ok(ToolOutput {
-                content: vec![JsValue::Object(object([
-                    ("type", string("text")),
-                    (
-                        "text",
-                        string(format!(
-                            "[PDF file: {}, {} bytes{page_suffix}. Current model does not support PDF input or image input.]",
-                            text(&resolved.relative),
-                            context_stat.size
-                        )),
-                    ),
-                ]))],
-                data: Some(JsValue::Object(object([
-                    ("filePath", string(resolved.relative.clone())),
-                    ("kind", string("pdf")),
-                    ("modelSupportsPdf", JsValue::Bool(false)),
-                    ("modelSupportsImage", JsValue::Bool(false)),
-                ]))),
-                ..ToolOutput::default()
-            });
-        }
-        return Err(tool_error(
-            "result_too_large",
-            "PDF page rendering is not available in this runtime.",
-        ));
-    }
-    // Model supports PDF and the file is small enough. mupdf is not in the
-    // dependency set, so page counting/rendering stays unavailable; the
-    // document-block path itself only needs the raw bytes.
-    let bytes = std::fs::read(os_path(&resolved.absolute))
-        .map_err(|error| failed(error, "open", &resolved.absolute))?;
-    read_state_set(
-        context,
-        read_state_key.clone(),
-        read_state_value(context_stat.mtime_ms, ReadKind::Pdf, input),
-    );
-    Ok(ToolOutput {
-        content: vec![JsValue::Object(object([
-            ("type", string("text")),
-            (
-                "text",
-                string(format!(
-                    "PDF file read: {} ({} bytes)",
-                    text(&resolved.relative),
-                    context_stat.size
-                )),
-            ),
-        ]))],
-        supplemental_messages: Some(vec![JsValue::Object(object([
-            ("role", string("user")),
-            (
-                "content",
-                JsValue::Array(vec![JsValue::Object(object([
-                    ("type", string("pdf")),
-                    ("mimeType", string("application/pdf")),
-                    ("data", string(BASE64.encode(&bytes))),
-                    ("bytes", JsValue::Number(bytes.len() as f64)),
-                ]))]),
-            ),
-            ("isMeta", JsValue::Bool(true)),
-        ]))]),
-        data: Some(JsValue::Object(object([
-            ("filePath", string(resolved.relative.clone())),
-            ("kind", string("pdf")),
-            ("bytes", JsValue::Number(bytes.len() as f64)),
-        ]))),
-        metadata: None,
-    })
 }
 
 fn notebook(

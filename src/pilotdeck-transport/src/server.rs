@@ -47,15 +47,43 @@ pub trait ExecutionFactory: Send + Sync + 'static {
         context: &mut ExecutionContext,
     ) -> PortResult<ExecutionTerminal>;
 }
+/// Source-level execution wrappers may consume intermediate agent events.
+/// A filtered event never allocates a wire sequence; transport acceptance,
+/// host exchanges, and the authoritative final terminal remain owner-controlled.
+pub type ExecutionEventFilter = Arc<dyn Fn(&JsString, &JsObject) -> bool + Send + Sync>;
 pub struct ExecutionContext {
     owner: ConnectionOwner,
     request: ExecuteRequest,
     stream_id: JsString,
     sequence: Arc<Mutex<f64>>,
     identities: Mutex<Vec<ExecutionIdentity>>,
+    event_filters: Vec<ExecutionEventFilter>,
     pub control: CallControl,
 }
 impl ExecutionContext {
+    /// Apply an event filter only while running `action`, including nested
+    /// factory execution. Filters compose and are restored even if action
+    /// unwinds. This does not intercept calls or change accepted-call ownership;
+    /// OriginalAgentFactory still checks uncertainty before turn completion.
+    pub fn with_event_filter<T>(
+        &mut self,
+        filter: ExecutionEventFilter,
+        action: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let depth = self.event_filters.len();
+        self.event_filters.push(filter);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| action(self)));
+        self.event_filters.truncate(depth);
+        match result {
+            Ok(value) => value,
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    }
+    fn permits_event(&self, event_type: &JsString, payload: &JsObject) -> bool {
+        self.event_filters
+            .iter()
+            .all(|filter| filter(event_type, payload))
+    }
     pub fn binding(&self) -> &pilotdeck_protocol::admission::SidecarBinding {
         self.owner.binding()
     }
@@ -120,6 +148,9 @@ impl ExecutionContext {
     }
     pub fn emit(&mut self, event_type: JsString, payload: JsObject) -> PortResult<()> {
         self.control.check()?;
+        if !self.permits_event(&event_type, &payload) {
+            return Ok(());
+        }
         // Commit sequence together with successful queue admission. Holding this
         // per-stream lock prevents retirement allocating a final in that gap;
         // no connection lock spans this bounded/cancellation-aware capacity wait.
@@ -143,6 +174,9 @@ impl ExecutionContext {
         ) || self.control.cancellation.hard_stop_cause().is_some()
         {
             return self.control.check();
+        }
+        if !self.permits_event(&event_type, &payload) {
+            return Ok(());
         }
         let delivery = CallControl {
             cancellation: Cancellation::default(),
@@ -585,6 +619,7 @@ impl ExecutionServer {
                 stream_id: work.stream_id,
                 sequence: work.sequence,
                 identities: Mutex::new(Vec::new()),
+                event_filters: Vec::new(),
                 control: work.control,
             };
             // Catching a worker panic prevents a permanently running operation.
@@ -699,6 +734,7 @@ impl ExecutionServer {
                 stream_id: op.stream_id.clone(),
                 sequence: op.sequence.clone(),
                 identities: Mutex::new(Vec::new()),
+                event_filters: Vec::new(),
                 control: CallControl {
                     cancellation: op.cancellation.clone(),
                     deadline: None,
@@ -1055,6 +1091,124 @@ mod deadline_delay_tests {
 
 fn js_whitespace(c: char) -> bool {
     matches!(c, '\u{0009}'..='\u{000D}' | '\u{0020}' | '\u{00A0}' | '\u{1680}' | '\u{2000}'..='\u{200A}' | '\u{2028}' | '\u{2029}' | '\u{202F}' | '\u{205F}' | '\u{3000}' | '\u{FEFF}')
+}
+
+#[cfg(test)]
+mod event_filter_tests {
+    use super::*;
+    use pilotdeck_protocol::admission::SidecarBinding;
+
+    fn context() -> ExecutionContext {
+        ExecutionContext {
+            owner: ConnectionOwner::new(
+                SidecarBinding {
+                    module_id: "module".into(),
+                    module_instance_id: "instance".into(),
+                    connection_generation: "generation".into(),
+                    capabilities_version: "1".into(),
+                },
+                16,
+            ),
+            request: ExecuteRequest {
+                message_id: "execute".into(),
+                run_id: "run".into(),
+                operation_id: "operation".into(),
+                request_id: "request".into(),
+                boundary: JsValue::Object(JsObject::new()),
+            },
+            stream_id: "stream".into(),
+            sequence: Arc::new(Mutex::new(0.0)),
+            identities: Mutex::new(Vec::new()),
+            event_filters: Vec::new(),
+            control: CallControl {
+                cancellation: Cancellation::default(),
+                deadline: None,
+            },
+        }
+    }
+    fn payload(kind: &str) -> JsObject {
+        object([("type", kind.into())])
+    }
+    #[test]
+    fn scoped_filter_consumes_inner_completion_without_sequence_gaps_or_terminal_filtering() {
+        let mut context = context();
+        let completions = Arc::new(Mutex::new(Vec::new()));
+        let captured = completions.clone();
+        context.with_event_filter(
+            Arc::new(move |_, payload| {
+                if payload
+                    .get("type")
+                    .is_some_and(|kind| kind == &"turn_completed".into())
+                {
+                    captured.lock().unwrap().push(payload.clone());
+                    false
+                } else {
+                    true
+                }
+            }),
+            |context| {
+                context
+                    .emit("agent_event".into(), payload("text_delta"))
+                    .unwrap();
+                context
+                    .emit("agent_event".into(), payload("turn_completed"))
+                    .unwrap();
+                context
+                    .emit_accepted("agent_event".into(), payload("turn_completed"))
+                    .unwrap();
+                context.with_event_filter(Arc::new(|_, _| false), |context| {
+                    context
+                        .emit("agent_event".into(), payload("hidden"))
+                        .unwrap();
+                });
+                assert_eq!(*context.sequence.lock().unwrap(), 1.0);
+                // The execution owner, not a factory filter, publishes the
+                // authoritative terminal and allocates its next sequence.
+                let terminal = context.event(
+                    "final".into(),
+                    payload("final"),
+                    Some(ModuleOutcome::Completed),
+                    None,
+                );
+                assert_eq!(terminal.get("sequence"), Some(&JsValue::Number(1.0)));
+                assert_eq!(terminal.get("final"), Some(&JsValue::Bool(true)));
+            },
+        );
+        assert_eq!(completions.lock().unwrap().len(), 2);
+        context
+            .emit("agent_event".into(), payload("turn_completed"))
+            .unwrap();
+        assert_eq!(*context.sequence.lock().unwrap(), 3.0);
+        assert!(context.event_filters.is_empty());
+        context.owner.close();
+    }
+    #[test]
+    fn filter_scope_restores_after_panic_and_cannot_hide_retired_control() {
+        let mut context = context();
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            context.with_event_filter(Arc::new(|_, _| false), |_| panic!("inner factory panic"));
+        }));
+        assert!(panic.is_err());
+        assert!(context.event_filters.is_empty());
+        context
+            .control
+            .cancellation
+            .cancel(CancelCause::TransportClosed);
+        context.with_event_filter(Arc::new(|_, _| false), |context| {
+            assert!(
+                context
+                    .emit("agent_event".into(), payload("turn_completed"))
+                    .is_err()
+            );
+            assert!(
+                context
+                    .emit_accepted("agent_event".into(), payload("turn_completed"))
+                    .is_err()
+            );
+        });
+        assert_eq!(*context.sequence.lock().unwrap(), 0.0);
+        context.owner.close();
+    }
 }
 
 #[cfg(test)]

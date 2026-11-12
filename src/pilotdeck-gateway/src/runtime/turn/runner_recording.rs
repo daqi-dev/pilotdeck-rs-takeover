@@ -162,6 +162,11 @@ impl Recording {
     pub(crate) fn take_callback_error(&mut self) -> Option<String> {
         self.runner.as_mut()?.callback_error.take()
     }
+    pub(crate) fn set_callback_error(&mut self, error: String) {
+        if let Some(runner) = self.runner.as_mut() {
+            runner.callback_error = Some(error);
+        }
+    }
     pub fn begin(&mut self, action: RecordingAction) -> RecorderResult<()> {
         if self.pending.is_some() {
             return Err(RecorderError::State(

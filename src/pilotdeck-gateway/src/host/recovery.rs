@@ -25,7 +25,7 @@ impl HostClient {
             HostErrorKind::Io | HostErrorKind::Disconnected
         ) || self.reconnect_attempted
             || !self.ack_enabled
-            || self.reconnect_command.is_none()
+            || self.reconnect_transport.is_none()
             || progress.stream_id.is_none()
         {
             return Err(interruption);
@@ -50,8 +50,18 @@ impl HostClient {
             }
         }
         self.connection.close().await?;
-        let command = self.reconnect_command.as_mut().expect("checked command");
-        self.connection = Connection::spawn_with_budget(command, self.limits, budget)?;
+        self.connection = match self
+            .reconnect_transport
+            .as_mut()
+            .expect("checked transport")
+        {
+            ReconnectTransport::Stdio(command) => {
+                Connection::spawn_with_budget(command, self.limits, budget)?
+            }
+            ReconnectTransport::Tcp(endpoint) => {
+                Connection::tcp(endpoint, self.limits, budget).await?
+            }
+        };
         let result = super::bounded(self.limits.handshake_timeout, async {
             let (binding, ack, cancel) =
                 handshake(&mut self.connection, None, Some((&self.binding, handler))).await?;

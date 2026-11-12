@@ -8,7 +8,7 @@ use super::{
     StageContext, StageSink,
 };
 use super::{factory::DeferredResource, memory_bundle::MemoryResolverResource};
-use crate::runtime::context::tool_budget::{ToolResultBudget, ToolResultBudgetOptions};
+use crate::runtime::context::tool_budget::ToolResultBudget;
 use crate::runtime::context::{
     DefaultContextRuntime, InstructionDiscovery, Options as ContextOptions,
     RuntimeContextSurface as ContextRuntimeContextSurface,
@@ -192,10 +192,10 @@ impl ContextStorageResources {
         // failure. This composition boundary keeps the message verbatim, so the
         // host chain reports it unchanged instead of as a host execution
         // failure (see `TurnHostFactory::assemble`).
-        let tool_result_budget = Arc::new(
-            ToolResultBudget::new(ToolResultBudgetOptions::new(tool_results_dir))
-                .map_err(|error| RuntimeError::new(error.to_string()))?,
-        );
+        let session_state = options.session_state.unwrap_or_default();
+        let (tool_result_budget, prompt_contributions) = session_state
+            .storage_resources(tool_results_dir.into())
+            .map_err(|error| RuntimeError::new(error.to_string()))?;
         let memory_retrieval_timeout_ms = self
             .snapshot
             .get("config")
@@ -218,14 +218,12 @@ impl ContextStorageResources {
             now: Some(self.now.clone()),
             extension: options.extension,
             compaction: Some(Arc::new(native_compaction_port(summary))),
-            session_state: options.session_state,
+            session_state: Some(session_state),
             // `new PromptContributionRegistry({ name: `agent:${sessionKey}` })`
             // (`SessionContextRuntimeBundle.ts:164-166`): the session always
             // owns a registry, so every materialization carries its
             // generation.
-            prompt_contributions: Some(crate::runtime::context::PromptContributionRegistry::new(
-                None,
-            )),
+            prompt_contributions: Some(prompt_contributions),
             ..ContextOptions::default()
         });
         Ok(SessionContextStorage {

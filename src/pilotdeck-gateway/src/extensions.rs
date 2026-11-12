@@ -214,12 +214,37 @@ impl NativeExtensions {
                 "More than one native execution factory applies to this project.",
             ));
         }
-        let lease = Arc::new(SessionExtensions { values });
+        let lease = Arc::new(SessionExtensions { project, values });
         state.sessions.insert(key, Arc::downgrade(&lease));
         Ok(lease)
     }
     pub(crate) fn router_family(&self) -> Arc<dyn crate::runtime::project::ResourceFamilySource> {
         Arc::new(NativeRouterFamily(self.clone()))
+    }
+    pub(crate) fn bind_inherited(
+        &self,
+        project: &Path,
+        child_id: &JsString,
+        parent: &Arc<SessionExtensions>,
+    ) -> Result<Arc<SessionExtensions>, RuntimeError> {
+        let project = project
+            .canonicalize()
+            .unwrap_or_else(|_| project.to_path_buf());
+        if project != parent.project {
+            return Err(RuntimeError::new(
+                "Native extension child scope belongs to another project.",
+            ));
+        }
+        let lease = Arc::new(SessionExtensions {
+            project: project.clone(),
+            values: parent.values.clone(),
+        });
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        state.sessions.retain(|_, value| value.strong_count() > 0);
+        state
+            .sessions
+            .insert((project, child_id.clone()), Arc::downgrade(&lease));
+        Ok(lease)
     }
 }
 
@@ -234,7 +259,9 @@ fn canonical_project(project: &Path) -> Result<PathBuf, RuntimeError> {
         .map_err(|e| RuntimeError::new(format!("Cannot resolve native extension project: {e}")))
 }
 
+#[derive(Clone)]
 pub(crate) struct SessionExtensions {
+    project: PathBuf,
     values: Vec<Arc<NativeExtension>>,
 }
 impl SessionExtensions {
@@ -531,5 +558,102 @@ mod tests {
             .recv_timeout(std::time::Duration::from_secs(5))
             .expect("extension descriptor deadlocked admission");
         worker.join().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod child_scope_tests {
+    use super::*;
+    struct Router;
+    impl CustomRouter for Router {
+        fn decide(&self, input: JsValue) -> crate::runtime::model::router::RouterFuture<JsValue> {
+            Box::pin(async { Ok(input) })
+        }
+    }
+    #[test]
+    fn child_router_keeps_parent_generation_with_independent_binding_release() {
+        let scratch = crate::test_scratch::Scratch::new("child-extension-scope");
+        let project = scratch.path().canonicalize().unwrap();
+        let extensions = NativeExtensions::default();
+        let old_router: Arc<dyn CustomRouter> = Arc::new(Router);
+        let old_registration = extensions
+            .register(
+                "loop",
+                Some(&project),
+                NativeExtension {
+                    routers: vec![("route".into(), old_router.clone())],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let parent = extensions.bind(&project, &"parent".into()).unwrap();
+        let inherited_snapshot = Arc::new((*parent).clone());
+        let new_router: Arc<dyn CustomRouter> = Arc::new(Router);
+        let _current_registration = extensions
+            .update(
+                "loop",
+                Some(&project),
+                NativeExtension {
+                    routers: vec![("route".into(), new_router.clone())],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        drop(old_registration);
+        let child = extensions
+            .bind_inherited(&project, &"child".into(), &inherited_snapshot)
+            .unwrap();
+        let other = crate::test_scratch::Scratch::new("other-child-project");
+        assert!(
+            extensions
+                .bind_inherited(other.path(), &"foreign".into(), &inherited_snapshot)
+                .is_err()
+        );
+        let current = extensions.bind(&project, &"new-session".into()).unwrap();
+        let routes = ProjectRouters {
+            extensions: extensions.clone(),
+            project,
+        };
+        assert!(Arc::ptr_eq(
+            &routes
+                .lookup_router(&"route".into(), &"child".into())
+                .unwrap(),
+            &old_router
+        ));
+        assert!(Arc::ptr_eq(
+            &routes
+                .lookup_router(&"route".into(), &"new-session".into())
+                .unwrap(),
+            &new_router
+        ));
+        drop(parent);
+        assert!(
+            routes
+                .lookup_router(&"route".into(), &"parent".into())
+                .is_none()
+        );
+        assert!(
+            routes
+                .lookup_router(&"route".into(), &"child".into())
+                .is_some()
+        );
+        drop(inherited_snapshot);
+        assert!(
+            routes
+                .lookup_router(&"route".into(), &"child".into())
+                .is_some()
+        );
+        drop(child);
+        assert!(
+            routes
+                .lookup_router(&"route".into(), &"child".into())
+                .is_none()
+        );
+        assert!(
+            routes
+                .lookup_router(&"route".into(), &"new-session".into())
+                .is_some()
+        );
+        drop(current);
     }
 }

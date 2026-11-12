@@ -23,6 +23,7 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
+    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
@@ -139,6 +140,11 @@ pub struct SessionContextState {
     prompt_cache_coordinator: Arc<super::cache::PromptCacheCoordinator>,
     time: Mutex<HashMap<Option<JsString>, TimeState>>,
     cache_sessions: Mutex<HashSet<JsString>>,
+    storage: Mutex<HashMap<PathBuf, SessionStorage>>,
+}
+struct SessionStorage {
+    budget: Arc<super::tool_budget::ToolResultBudget>,
+    contributions: PromptContributionRegistry,
 }
 impl Default for SessionContextState {
     fn default() -> Self {
@@ -151,7 +157,34 @@ impl SessionContextState {
             prompt_cache_coordinator: coordinator,
             time: Mutex::new(HashMap::new()),
             cache_sessions: Mutex::new(HashSet::new()),
+            storage: Mutex::new(HashMap::new()),
         }
+    }
+    /// Storage caches and prompt registrations have the live session's
+    /// lifetime. Turn runtimes may refresh generation-owned ports without
+    /// losing prior tool references or resetting contribution generations.
+    /// A scoped child with its own spill directory receives separate storage.
+    pub(crate) fn storage_resources(
+        &self,
+        directory: PathBuf,
+    ) -> Result<
+        (
+            Arc<super::tool_budget::ToolResultBudget>,
+            PromptContributionRegistry,
+        ),
+        super::tool_budget::ToolBudgetError,
+    > {
+        let mut storage = self.storage.lock().unwrap_or_else(|e| e.into_inner());
+        let entry = match storage.entry(directory.clone()) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => entry.insert(SessionStorage {
+                budget: Arc::new(super::tool_budget::ToolResultBudget::new(
+                    super::tool_budget::ToolResultBudgetOptions::new(directory),
+                )?),
+                contributions: PromptContributionRegistry::new(None),
+            }),
+        };
+        Ok((entry.budget.clone(), entry.contributions.clone()))
     }
     fn release_caches(&self) {
         for session_id in self.cache_sessions.lock().unwrap().drain() {
@@ -162,6 +195,14 @@ impl SessionContextState {
 impl Drop for SessionContextState {
     fn drop(&mut self) {
         self.release_caches();
+        for storage in self
+            .storage
+            .get_mut()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+        {
+            storage.contributions.dispose();
+        }
     }
 }
 #[derive(Clone)]
@@ -1642,6 +1683,30 @@ mod tests {
             locale: Some("en-US".into()),
             ..Options::default()
         })
+    }
+
+    #[test]
+    fn prompt_contribution_registrations_follow_session_storage_lifetime() {
+        let state = SessionContextState::default();
+        let directory =
+            std::env::temp_dir().join(format!("pdrs-context-state-{}", uuid::Uuid::new_v4()));
+        let (_, first) = state.storage_resources(directory.clone()).unwrap();
+        let registration = first
+            .register_section(super::super::prompt::SectionContribution {
+                name: "session-extension".into(),
+                order: 1.0,
+                text: super::super::prompt::TextProvider::Static("session prompt".into()),
+                complete: true,
+            })
+            .unwrap();
+        let (_, second) = state.storage_resources(directory).unwrap();
+        assert_eq!(second.generation(), 1);
+        assert!(registration.active());
+        drop(first);
+        assert_eq!(second.state(), "active");
+        drop(state);
+        assert_eq!(second.state(), "disposed");
+        assert!(!registration.active());
     }
 
     /// The baseline composes one context runtime per live session and keeps

@@ -34,6 +34,19 @@ use tokio::time::{Duration, Instant, sleep_until};
 type StatusReceipt = Option<oneshot::Sender<()>>;
 type ForwardedEvent = (JsValue, bool, StatusReceipt);
 
+pub type DurableMessagePredicate = Arc<dyn Fn(&ExecutionIdentity, &JsValue) -> bool + Send + Sync>;
+pub type DurableMessageCallback =
+    Arc<dyn Fn(&ExecutionIdentity, &JsValue) -> HostFuture<()> + Send + Sync>;
+
+/// A session extension can observe selected messages after their ordinary
+/// recorder transition commits and before the message becomes visible.
+/// The callback never owns the recorder or changes the wire protocol.
+#[derive(Clone)]
+pub struct DurableMessageObserver {
+    pub matches: DurableMessagePredicate,
+    pub on_persisted: DurableMessageCallback,
+}
+
 type TurnHost = (
     HostFuture<HostClient>,
     Arc<dyn HostHandler>,
@@ -103,6 +116,7 @@ pub struct LiveSessionAdapter {
     pub(super) state: Arc<Mutex<SessionState>>,
     /// See [`Self::with_maintenance`].
     maintenance: Option<Arc<MaintenanceFactory>>,
+    durable_message_observer: Option<DurableMessageObserver>,
 }
 
 /// Composes the session's context runtime outside a turn.
@@ -153,6 +167,7 @@ impl LiveSessionAdapter {
             agent_config: None,
             permission_mode_source: None,
             turn_override_sink: None,
+            durable_message_observer: None,
             in_process_loop: false,
             sidechain: false,
             tail: None,
@@ -342,6 +357,11 @@ impl LiveSessionAdapter {
         self
     }
 
+    pub fn with_durable_message_observer(mut self, observer: DurableMessageObserver) -> Self {
+        self.durable_message_observer = Some(observer);
+        self
+    }
+
     /// Invoke the factory once when executing each submitted turn. It must satisfy
     /// InteractionHost's fresh-router contract, even across a project reload
     /// that admits the same session/turn identity again.
@@ -377,6 +397,7 @@ impl LiveSessionAdapter {
             agent_config: None,
             permission_mode_source: None,
             turn_override_sink: None,
+            durable_message_observer: None,
             in_process_loop: false,
             sidechain: false,
             tail: None,
@@ -731,6 +752,9 @@ impl LiveSession for LiveSessionAdapter {
             recording: None,
             pending_event: None,
             pending_durable: None,
+            durable_message_observer: self.durable_message_observer.clone(),
+            observe_after_persist: false,
+            pending_observation: None,
             accepted: false,
             preflight: 0,
             execute_ready: Some(execute_ready),
@@ -861,6 +885,9 @@ pub(super) struct LiveTurnStream {
     // A cancelled next drops only its borrow, never the transition or payload.
     pending_event: Option<(JsValue, bool, StatusReceipt)>,
     pending_durable: Option<(JsValue, StatusReceipt)>,
+    durable_message_observer: Option<DurableMessageObserver>,
+    observe_after_persist: bool,
+    pending_observation: Option<(HostFuture<()>, JsValue, StatusReceipt)>,
     callback_cancel: Option<Cancellation>,
     accepted: bool,
     preflight: u8,
@@ -879,6 +906,12 @@ impl LiveTurn for LiveTurnStream {
     fn next(&mut self) -> SessionNext<'_> {
         Box::pin(async move {
             loop {
+                if self.pending_observation.is_some() {
+                    if let Some(event) = self.settle_observation().await? {
+                        return Ok(Some(event));
+                    }
+                    continue;
+                }
                 if self.pending_event.is_some() {
                     if let Some(event) = self.settle_recording().await? {
                         return Ok(Some(event));
@@ -1077,6 +1110,8 @@ impl LiveTurnStream {
         self.execute_ready.take();
         self.execution.take();
         self.result.take();
+        self.pending_observation.take();
+        self.observe_after_persist = false;
         self.events.close();
         while self.events.try_recv().is_ok() {}
         self.recording_ready.close();
@@ -1141,6 +1176,28 @@ impl LiveTurnStream {
             fields.insert("message".into(), message);
         }
         if durable_wire {
+            if self
+                .durable_message_observer
+                .as_ref()
+                .is_some_and(|observer| {
+                    (observer.matches)(
+                        &self.identity,
+                        event.get("message").unwrap_or(&JsValue::Undefined),
+                    )
+                })
+            {
+                self.observe_after_persist = true;
+                return self
+                    .begin_recording(
+                        RecordingAction::Durable(
+                            event.get("message").cloned().unwrap_or(JsValue::Undefined),
+                        ),
+                        event,
+                        false,
+                        receipt,
+                    )
+                    .await;
+            }
             if crate::mutants::on("live-durable-before-yield") {
                 // Reverse only callback/yield order. Durable transitions emit
                 // no event, so retain their normal Null sentinel while settling.
@@ -1265,7 +1322,20 @@ impl LiveTurnStream {
             }
         };
         if self.recording.as_ref().unwrap().callback_error().is_some() {
+            self.observe_after_persist = false;
             return Ok(None);
+        }
+        if std::mem::take(&mut self.observe_after_persist) {
+            let observer = self
+                .durable_message_observer
+                .as_ref()
+                .expect("selected observer");
+            let future = (observer.on_persisted)(
+                &self.identity,
+                event.get("message").unwrap_or(&JsValue::Undefined),
+            );
+            self.pending_observation = Some((future, event, receipt));
+            return self.settle_observation().await;
         }
         if let Some(receipt) = receipt {
             let _ = receipt.send(());
@@ -1296,6 +1366,33 @@ impl LiveTurnStream {
             if crate::mutants::on("gates-duplicate-normal-terminal") {
                 self.recorded.push_back(event.clone());
             }
+        }
+        Ok(Some(event))
+    }
+
+    async fn settle_observation(&mut self) -> Result<Option<JsValue>, RuntimeError> {
+        // Retain the future across cancellation of next(), just like the
+        // recorder transition: a side effect is never restarted on re-poll.
+        let result = self
+            .pending_observation
+            .as_mut()
+            .expect("pending observation")
+            .0
+            .as_mut()
+            .await;
+        let (_, event, receipt) = self
+            .pending_observation
+            .take()
+            .expect("settled observation");
+        if let Err(error) = result {
+            self.recording
+                .as_mut()
+                .expect("observed recording")
+                .set_callback_error(error.message);
+            return Ok(None);
+        }
+        if let Some(receipt) = receipt {
+            let _ = receipt.send(());
         }
         Ok(Some(event))
     }
@@ -2721,6 +2818,9 @@ mod tests {
             pending_event: None,
             pending_durable: None,
             callback_cancel: None,
+            durable_message_observer: None,
+            observe_after_persist: false,
+            pending_observation: None,
             accepted: false,
             preflight: 0,
             execute_ready: None,

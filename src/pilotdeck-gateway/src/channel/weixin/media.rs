@@ -34,10 +34,7 @@ use aes::{
 use bytes::Bytes;
 use http_body_util::Full;
 use hyper::{HeaderMap, Method, header};
-use hyper_util::{
-    client::legacy::{Client, connect::HttpConnector},
-    rt::TokioExecutor,
-};
+use hyper_util::{client::legacy::Client, rt::TokioExecutor};
 use pilotdeck_protocol::{JsString, JsValue};
 use std::{collections::HashSet, time::Duration};
 use tokio::time::timeout;
@@ -388,7 +385,8 @@ pub fn extract_weixin_media_url(media_owner: &JsValue) -> Option<String> {
         .find_map(|name| read_string(media.get(name)))
 }
 
-type CdnHttpClient = Client<hyper_rustls::HttpsConnector<HttpConnector>, Full<Bytes>>;
+type CdnHttpClient =
+    Client<hyper_rustls::HttpsConnector<crate::runtime::model::http::ProxyConnect>, Full<Bytes>>;
 
 /// CDN download over the shared rustls connector (`runtime::model::http`),
 /// not a copy of `weixin_connector` (#1725 item 9: the private copy dropped
@@ -409,8 +407,12 @@ impl WeixinCdnClient {
     pub fn new() -> Self {
         let config = crate::runtime::model::http::webpki_client_config();
         Self {
-            client: Client::builder(TokioExecutor::new())
-                .build(crate::runtime::model::http::https_connector(config)),
+            client: Client::builder(TokioExecutor::new()).build(
+                crate::runtime::model::http::proxy_https_connector(
+                    config,
+                    crate::runtime::model::http::ProxyConfig::from_settings(None),
+                ),
+            ),
             fetch_timeout: WEIXIN_CDN_FETCH_TIMEOUT,
         }
     }

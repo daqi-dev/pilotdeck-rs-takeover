@@ -234,6 +234,96 @@ fn memory_diagnostics(result: &JsValue) -> Vec<&JsValue> {
 fn assert_no_memory(result: &JsValue) {
     assert!(!text_field(result, "systemPrompt").contains("<memory-context>"));
 }
+
+#[tokio::test]
+async fn turn_context_recomposition_retains_session_tool_references_and_releases_storage() {
+    let scratch = Scratch::new();
+    let memory = RecordingMemory::new(Behavior::Success(0));
+    let registry = registry_for_yaml(
+        &scratch,
+        &yaml(None),
+        silent_families()
+            .with_context_memory()
+            .with_memory(memory.source(false)),
+    );
+    let lease = registry.acquire(Some(&scratch.0.join("project"))).unwrap();
+    let resource = storage(&lease);
+    let storage = resource
+        .as_any()
+        .downcast_ref::<ContextStorageResources>()
+        .unwrap();
+    let directory = scratch.0.join("project/.pilotdeck/tool-results/session");
+    let state = Arc::new(crate::runtime::context::SessionContextState::default());
+    let compose = |state: Arc<crate::runtime::context::SessionContextState>, directory: PathBuf| {
+        storage
+            .create_session_with_options(
+                directory,
+                SessionContextOptions {
+                    session_state: Some(state),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+    };
+    let first = compose(state.clone(), directory.clone());
+    let budget_weak = Arc::downgrade(&first.tool_result_budget);
+    let message = pilotdeck_protocol::parse_json(&json!({
+        "role":"user", "content":[{"type":"tool_result","toolCallId":"old-call","content":[{"type":"text","text":"x".repeat(200_001)}]}]
+    }).to_string()).unwrap();
+    let original_turn = JsValue::from("original-turn");
+    let original = first
+        .tool_result_budget
+        .apply_to_message(&message, Some(&original_turn))
+        .await
+        .unwrap();
+    drop(first);
+    assert!(
+        budget_weak.upgrade().is_some(),
+        "turn disposal must retain session tool references"
+    );
+    let second = compose(state.clone(), directory.clone());
+    assert!(Arc::ptr_eq(
+        &budget_weak.upgrade().unwrap(),
+        &second.tool_result_budget
+    ));
+    let replay = second
+        .tool_result_budget
+        .apply_to_message(&message, Some(&original_turn))
+        .await
+        .unwrap();
+    assert_eq!(
+        replay, original,
+        "recomposition must reuse the original spill reference"
+    );
+    assert_eq!(
+        std::fs::read_dir(scratch.0.join("project/.pilotdeck/tool-results/refs"))
+            .unwrap()
+            .count(),
+        1,
+        "a retained tool result must not acquire another alias"
+    );
+    let scoped = compose(state.clone(), directory.with_file_name("child"));
+    assert!(!Arc::ptr_eq(
+        &scoped.tool_result_budget,
+        &second.tool_result_budget
+    ));
+    let recreated = compose(Arc::default(), directory);
+    assert!(!Arc::ptr_eq(
+        &recreated.tool_result_budget,
+        &second.tool_result_budget
+    ));
+    drop(second);
+    drop(scoped);
+    drop(recreated);
+    drop(state);
+    assert!(
+        budget_weak.upgrade().is_none(),
+        "session disposal must release storage caches"
+    );
+    drop(resource);
+    drop(lease);
+    registry.dispose().await.unwrap();
+}
 async fn poll_pending<F: Future>(mut future: std::pin::Pin<&mut F>) {
     assert!(std::future::poll_fn(|cx| Poll::Ready(future.as_mut().poll(cx).is_pending())).await);
 }

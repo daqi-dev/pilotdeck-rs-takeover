@@ -7,7 +7,11 @@ use html5ever::{
     Attribute, ParseOpts, QualName, local_name, ns,
     tree_builder::{ElemName, ElementFlags, NodeOrText, QuirksMode, TreeSink},
 };
-use std::{borrow::Cow, cell::RefCell, collections::BTreeMap};
+use std::{
+    borrow::Cow,
+    cell::{Cell, RefCell},
+    collections::BTreeMap,
+};
 
 pub(crate) type Id = usize;
 
@@ -50,6 +54,7 @@ pub(crate) struct Node {
 pub(crate) struct Dom {
     pub nodes: Vec<Node>,
     exceeded: bool,
+    diagnostics: Vec<(u64, String)>,
 }
 
 pub(crate) const DOCUMENT: Id = 0;
@@ -309,6 +314,8 @@ impl ElemName for Name {
 #[derive(Default)]
 struct Sink {
     dom: RefCell<Dom>,
+    diagnose: bool,
+    line: Cell<u64>,
 }
 
 impl Sink {
@@ -317,6 +324,8 @@ impl Sink {
         dom.push(Kind::Document);
         Self {
             dom: RefCell::new(dom),
+            diagnose: false,
+            line: Cell::new(1),
         }
     }
     fn create(&self, kind: Kind) -> Id {
@@ -332,7 +341,17 @@ impl TreeSink for Sink {
     fn finish(self) -> Dom {
         self.dom.into_inner()
     }
-    fn parse_error(&self, _msg: Cow<'static, str>) {}
+    fn parse_error(&self, msg: Cow<'static, str>) {
+        if self.diagnose {
+            let mut dom = self.dom.borrow_mut();
+            if dom.diagnostics.len() < 3 {
+                dom.diagnostics.push((self.line.get(), msg.into_owned()));
+            }
+        }
+    }
+    fn set_current_line(&self, line: u64) {
+        self.line.set(line);
+    }
     fn get_document(&self) -> Id {
         DOCUMENT
     }
@@ -471,6 +490,41 @@ impl TreeSink for Sink {
 /// not a TS cutoff: TS still succeeds at 257. Width/allocation count has no corresponding TS limit.
 pub const MAX_DOM_DEPTH: usize = 256;
 pub const DOM_LIMIT_ERROR: &str = "Maximum call stack size exceeded";
+
+/// Parse the same HTML fragment surface used by post-write diagnostics.
+/// Retain only the displayed errors and enforce the existing DOM depth bound.
+pub(crate) fn fragment_diagnostics(html: &str) -> Vec<(u64, String)> {
+    let sink = Sink {
+        diagnose: true,
+        ..Sink::new()
+    };
+    let mut options = ParseOpts::default();
+    options.tokenizer.exact_errors = true;
+    options.tree_builder.exact_errors = true;
+    let mut parser = html5ever::parse_fragment(
+        sink,
+        options,
+        QualName::new(None, ns!(html), local_name!("template")),
+        vec![],
+        false,
+    );
+    let mut start = 0;
+    while start < html.len() {
+        let mut end = (start + 1024).min(html.len());
+        while !html.is_char_boundary(end) {
+            end -= 1;
+        }
+        parser.process(StrTendril::from_slice(&html[start..end]));
+        if parser.tokenizer.sink.sink.dom.borrow().exceeded {
+            return vec![(
+                parser.tokenizer.sink.sink.line.get(),
+                DOM_LIMIT_ERROR.into(),
+            )];
+        }
+        start = end;
+    }
+    parser.finish().diagnostics
+}
 
 /// `domino.createDocument(html)`, with a conservative resource budget.
 /// Stop feeding before an attacker can build a huge open-elements stack.

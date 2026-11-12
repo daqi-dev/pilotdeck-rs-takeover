@@ -1,4 +1,4 @@
-//! Host side of Module 2.0 over an owned stdio child (the inverse of transport/).
+//! Host side of Module 2.0 over native memory pipes, stdio, or TCP.
 //!
 //! One client owns one turn. `execute` consumes it and always closes the child;
 //! `spawn_resumable` can replace the stdio transport once, without re-executing
@@ -58,7 +58,7 @@ mod execution;
 pub mod modules;
 mod recovery;
 
-use connection::Connection;
+use connection::{Connection, TcpEndpoint};
 use pilotdeck_protocol::{
     JsObject, JsString, JsValue,
     admission::{
@@ -489,11 +489,15 @@ pub struct HostClient {
     ack_enabled: bool,
     cancel_enabled: bool,
     limits: Limits,
-    reconnect_command: Option<Command>,
+    reconnect_transport: Option<ReconnectTransport>,
     reconnect_attempted: bool,
     reconnect_succeeded: bool,
     #[cfg(test)]
     test_signals: tests::ExecutionSignals,
+}
+enum ReconnectTransport {
+    Stdio(Command),
+    Tcp(TcpEndpoint),
 }
 impl HostClient {
     /// Command is explicit so the caller controls args, cwd and isolated env.
@@ -505,6 +509,47 @@ impl HostClient {
         limits.validate()?;
         let connection = Connection::spawn(command, limits)?;
         Self::from_connection(connection, expected_module_id, limits).await
+    }
+    /// Connect to one long-lived external module. A later disconnect may
+    /// replace the socket once if that same instance advertises ack/resume;
+    /// the accepted execute and host side effects are never re-sent.
+    pub async fn connect_tcp(
+        host: &str,
+        port: u16,
+        connect_timeout: Option<Duration>,
+        expected_module_id: Option<&JsString>,
+        limits: Limits,
+    ) -> Result<Self, HostError> {
+        limits.validate()?;
+        let host = host.trim();
+        if host.is_empty() {
+            return Err(HostError::protocol("sidecar host must not be empty."));
+        }
+        if port == 0 {
+            return Err(HostError::protocol(
+                "sidecar port must be an integer between 1 and 65535.",
+            ));
+        }
+        let connect_timeout = connect_timeout.unwrap_or(Duration::from_secs(5));
+        if connect_timeout.is_zero() || !connect_timeout.subsec_nanos().is_multiple_of(1_000_000) {
+            return Err(HostError::protocol(
+                "connectTimeoutMs must be a positive integer.",
+            ));
+        }
+        let endpoint = TcpEndpoint {
+            host: host.to_owned(),
+            port,
+            connect_timeout,
+        };
+        let connection = Connection::tcp(
+            &endpoint,
+            limits,
+            budget::Budget::new(limits.max_buffered_bytes),
+        )
+        .await?;
+        let mut client = Self::from_connection(connection, expected_module_id, limits).await?;
+        client.reconnect_transport = Some(ReconnectTransport::Tcp(endpoint));
+        Ok(client)
     }
     /// Execute the built-in Rust loop inside this process. The same host
     /// capability boundary and cancellation protocol apply without a child.
@@ -552,7 +597,7 @@ impl HostClient {
                 ack_enabled,
                 cancel_enabled,
                 limits,
-                reconnect_command: None,
+                reconnect_transport: None,
                 reconnect_attempted: false,
                 reconnect_succeeded: false,
                 #[cfg(test)]
@@ -576,7 +621,7 @@ impl HostClient {
         limits: Limits,
     ) -> Result<Self, HostError> {
         let mut client = Self::spawn(&mut command, expected_module_id, limits).await?;
-        client.reconnect_command = Some(command);
+        client.reconnect_transport = Some(ReconnectTransport::Stdio(command));
         Ok(client)
     }
     pub fn binding(&self) -> &SidecarBinding {

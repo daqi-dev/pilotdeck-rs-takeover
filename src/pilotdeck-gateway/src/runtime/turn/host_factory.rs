@@ -2,14 +2,22 @@
 //! Rust loop runs in this process; explicit stdio/TCP deployments keep the
 //! same host-owned model, tool, context, permission and persistence boundary.
 //! Session state belongs to SessionPorts; only turn bindings are rebuilt.
+mod decorators;
 mod selection;
+pub use decorators::{
+    ContextPortDecorator, HostPortDecorators, ModelPortDecorator, ToolPortDecorator,
+};
 pub use selection::{LoopSelection, select_loop};
 
 use crate::{
     config::Env,
     host::{
         HostClient, HostError, HostErrorKind, Limits,
-        modules::{ModuleRouter, budget, capability, context, model::TurnContext, model_port},
+        modules::{
+            ModuleRouter, budget, capability, context,
+            model::{self, TurnContext},
+            model_port,
+        },
     },
     runtime::{
         project::{
@@ -210,6 +218,8 @@ pub struct TurnHostFactory {
     registry: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
     deployment: Deployment,
     native_factory: Option<Arc<dyn pilotdeck_transport::server::ExecutionFactory>>,
+    port_decorators: Option<HostPortDecorators>,
+    durable_message_observer: Option<super::live::DurableMessageObserver>,
     limits: Limits,
     expected_module_id: Option<JsString>,
     ports: Arc<PortsFactory>,
@@ -259,6 +269,8 @@ impl TurnHostFactory {
             in_process_loop: matches!(deployment, Deployment::Native),
             deployment,
             native_factory: None,
+            port_decorators: None,
+            durable_message_observer: None,
             limits,
             expected_module_id,
             ports: Arc::new(ports),
@@ -275,6 +287,22 @@ impl TurnHostFactory {
         factory: Arc<dyn pilotdeck_transport::server::ExecutionFactory>,
     ) -> Self {
         self.native_factory = Some(factory);
+        self
+    }
+
+    /// Decorate this session's newly composed loop-facing ports for each turn.
+    /// Compaction retains its own model composition; wrappers cannot replace
+    /// transport identities or reuse a previous turn's prepared model state.
+    pub fn with_port_decorators(mut self, decorators: HostPortDecorators) -> Self {
+        self.port_decorators = Some(decorators);
+        self
+    }
+
+    pub fn with_durable_message_observer(
+        mut self,
+        observer: super::live::DurableMessageObserver,
+    ) -> Self {
+        self.durable_message_observer = Some(observer);
         self
     }
 
@@ -338,6 +366,7 @@ impl TurnHostFactory {
         let permission_mode_source = self.permission_mode_source.take();
         let turn_override_sink = self.turn_override_sink.take();
         let in_process_loop = self.in_process_loop;
+        let durable_message_observer = self.durable_message_observer.clone();
         let factory = Arc::new(self);
         let maintenance_factory = factory.clone();
         let maintenance: Arc<super::live::MaintenanceFactory> =
@@ -367,6 +396,10 @@ impl TurnHostFactory {
             close_timeout
         })
         .with_maintenance(maintenance);
+        let session = match durable_message_observer {
+            Some(observer) => session.with_durable_message_observer(observer),
+            None => session,
+        };
         let session = match agent_config {
             Some(config) => session.with_agent_config(config),
             None => session,
@@ -407,18 +440,16 @@ impl TurnHostFactory {
         recorder: Arc<Recorder>,
         signal: crate::runtime::hooks::Cancellation,
     ) -> Result<InteractionHost, HostError> {
-        if matches!(&self.deployment, Deployment::Tcp { .. }) {
-            return Err(HostError::new(
-                HostErrorKind::Protocol,
-                "Agent loop transport 'tcp' is not supported; see #130.",
-            ));
-        }
         let lease = self
             .registry
             .acquire(self.project_root.as_deref())
             .map_err(|error| HostError::new(HostErrorKind::Protocol, error.message))?;
         let ports = (self.ports)(identity, recorder, signal);
-        let (router, input, lease) = match Self::assemble(lease, identity, ports).await {
+        let assembled = match &self.port_decorators {
+            Some(decorators) => Self::assemble_decorated(lease, identity, ports, decorators).await,
+            None => Self::assemble(lease, identity, ports).await,
+        };
+        let (router, input, lease) = match assembled {
             Ok(value) => value,
             // `assemble` owns (and therefore drops) the lease on error.
             Err(error) => return Err(error),
@@ -465,7 +496,20 @@ impl TurnHostFactory {
                         command.args(args).current_dir(cwd).env_clear().envs(env);
                         HostClient::spawn(&mut command, expected.as_ref(), limits).await
                     }
-                    Deployment::Tcp { .. } => unreachable!("TCP rejected before lease acquisition"),
+                    Deployment::Tcp {
+                        host,
+                        port,
+                        connect_timeout_ms,
+                    } => {
+                        HostClient::connect_tcp(
+                            &host,
+                            port,
+                            connect_timeout_ms.map(std::time::Duration::from_millis),
+                            expected.as_ref(),
+                            limits,
+                        )
+                        .await
+                    }
                 }
             }),
             lease,
@@ -480,6 +524,15 @@ impl TurnHostFactory {
         lease: RuntimeLease,
         identity: &ExecutionIdentity,
         ports: SessionPorts,
+    ) -> Result<(ModuleRouter, InteractionTurnInput, RuntimeLease), HostError> {
+        Self::assemble_decorated(lease, identity, ports, &HostPortDecorators::default()).await
+    }
+
+    async fn assemble_decorated(
+        lease: RuntimeLease,
+        identity: &ExecutionIdentity,
+        ports: SessionPorts,
+        decorators: &HostPortDecorators,
     ) -> Result<(ModuleRouter, InteractionTurnInput, RuntimeLease), HostError> {
         let SessionPorts {
             model,
@@ -538,14 +591,21 @@ impl TurnHostFactory {
             model.project_path.clone(),
             identity.session_id.clone(),
         );
+        let mut model_ports = model_port::ports(
+            router.router.clone(),
+            router.model_config.clone(),
+            recorder,
+            model,
+            &turn_context.session_id,
+        );
+        if let Some(decorate) = &decorators.model {
+            model_ports.execution = decorate(identity, model_ports.execution);
+        }
+        let mut model_handler =
+            model::Handler::with_ports(model_ports.execution, model_ports.metadata, turn_context);
+        model_handler.materializer = model_ports.materializer;
         let mut result = ModuleRouter {
-            model: model_port::compose(
-                router.router.clone(),
-                router.model_config.clone(),
-                recorder,
-                model,
-                turn_context,
-            ),
+            model: model_handler,
             ..Default::default()
         };
         if let Some(resource) = context.resource(Resource::TokenAccounting) {
@@ -587,6 +647,10 @@ impl TurnHostFactory {
             ),
         };
         if let Some(runtime) = context_runtime {
+            let runtime = match &decorators.context {
+                Some(decorate) => decorate(identity, runtime),
+                None => runtime,
+            };
             let handler = context::Handler::new(
                 runtime,
                 context_identity,
@@ -602,6 +666,10 @@ impl TurnHostFactory {
             };
         }
         let has_plan_todo = plan_todo.is_some();
+        let tool_execution = match &decorators.tool_execution {
+            Some(decorate) => decorate(identity, tool_execution),
+            None => tool_execution,
+        };
         let mut capability = capability::Handler::new(tool_execution, tool_context, tool_observer);
         if let Some(plan) = plan_todo {
             capability = capability.with_plan_todo(plan);
