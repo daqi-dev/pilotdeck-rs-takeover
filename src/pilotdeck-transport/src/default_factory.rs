@@ -1047,7 +1047,21 @@ impl ExecutionFactory for OriginalAgentFactory {
             (_, Err(error @ PortError::AcceptedUnknown { .. }), _) => return Err(error),
             (_, _, Err(error @ PortError::AcceptedUnknown { .. })) => return Err(error),
             (Err(error), _, _) | (Ok(_), Err(error), _) | (Ok(_), Ok(()), Err(error)) => {
-                return Err(error);
+                // The baseline's in-process AgentLoop keeps its model session
+                // state (token calibration recorded after the provider
+                // answered, AgentLoop.ts:953-958) when the turn then throws,
+                // and the session's next turn budgets against it. A failed
+                // terminal without a result carries that state back too.
+                let mut terminal = crate::server::failure_terminal(error);
+                if terminal.outcome == ModuleOutcome::Failed {
+                    terminal.payload.insert(
+                        "modelState".into(),
+                        snapshot_model_state(&preparation.model_state)
+                            .value()
+                            .clone(),
+                    );
+                }
+                return Ok(terminal);
             }
             (Ok(output), Ok(()), Ok(())) => output,
         };

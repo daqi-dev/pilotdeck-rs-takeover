@@ -22,7 +22,7 @@ use crate::storage::RunRef;
 /// setSessionCwd (InProcessGateway.ts:1269), a requested cwd is mandatory host
 /// registration: an absent service is an explicit capability refusal.
 pub trait SubmitCwdService: Send + Sync {
-    fn set(&self, session: &JsString, cwd: &JsString) -> Result<(), SubmitError>;
+    fn set(&self, session: &JsString, cwd: &JsValue) -> Result<(), SubmitError>;
 }
 
 /// `resolveUploadedAttachments`: merged attachments plus a release that the
@@ -218,7 +218,7 @@ impl SubmitHost for GatewaySubmitHost {
             .run_policy()
             .and_then(|policy| policy.get("failureGuard").cloned())
     }
-    fn set_session_cwd(&self, session: &JsString, cwd: &JsString) -> Result<(), SubmitError> {
+    fn set_session_cwd(&self, session: &JsString, cwd: &JsValue) -> Result<(), SubmitError> {
         match self.services.cwd() {
             Some(service) => service.set(session, cwd),
             None => Err(SubmitError::new(

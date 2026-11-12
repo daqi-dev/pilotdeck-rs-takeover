@@ -1362,6 +1362,13 @@ impl LiveTurnStream {
         &self,
         result: Result<ExecuteResult, HostError>,
     ) -> Result<Option<JsValue>, RuntimeError> {
+        // The in-process loop that threw still holds the model session state
+        // it recorded (AgentLoop.ts:953-958); the next turn starts from it.
+        if let Err(error) = &result
+            && let (Some(state), Some(active)) = (&error.model_state, &self.active)
+        {
+            active.0.lock().unwrap().model_state = Some(state.as_ref().clone());
+        }
         match result {
             Ok(ExecuteResult::Terminal(terminal)) => {
                 let outcome = terminal

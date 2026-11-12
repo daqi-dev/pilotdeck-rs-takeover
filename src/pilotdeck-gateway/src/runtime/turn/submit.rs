@@ -227,7 +227,7 @@ pub trait SubmitHost: Send + Sync {
     fn failure_guard_config(&self) -> Option<JsValue>;
     /// Host registration is mandatory even when the host has no cwd service:
     /// return CAPABILITY_UNAVAILABLE for a requested cwd in that case.
-    fn set_session_cwd(&self, session: &JsString, cwd: &JsString) -> Result<(), SubmitError>;
+    fn set_session_cwd(&self, session: &JsString, cwd: &JsValue) -> Result<(), SubmitError>;
     fn now_ms(&self) -> f64;
     fn abort_turn_timeout_ms(&self) -> u64;
     fn normalize<'a>(
@@ -597,9 +597,11 @@ impl TurnSubmitter {
             self.preflight_events(send, &run, early).await;
             return Ok(());
         }
-        if let Some(cwd) = field(&input, "workspaceCwd")
-            .as_string()
-            .filter(|cwd| !cwd.is_empty())
+        // `if (input.workspaceCwd && this.options.setSessionCwd)`
+        // (InProcessGateway.ts:1269-1271): any truthy value is stored as
+        // given, so a non-string one becomes the session's `config.cwd`.
+        let cwd = field(&input, "workspaceCwd");
+        if truthy(cwd)
             && let Err(error) = self.host.set_session_cwd(run.session(), cwd)
         {
             cleanup.release();

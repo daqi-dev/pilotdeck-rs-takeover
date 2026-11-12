@@ -4392,6 +4392,7 @@ fn bind_hooks(
                 session_id: "session".into(),
                 turn_id: "turn".into(),
                 cwd: "/workspace".into(),
+                non_string_cwd: None,
                 permission_mode: None,
                 base_env: Some(JsObject::new()),
                 signal: None,

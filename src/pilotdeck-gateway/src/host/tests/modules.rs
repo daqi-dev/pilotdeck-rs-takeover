@@ -113,6 +113,7 @@ fn fixture_router() -> ModuleRouter {
             session_id: "session".into(),
             turn_id: "turn".into(),
             cwd: "/fixture".into(),
+            non_string_cwd: None,
             permission_mode: None,
             base_env: None,
             signal: None,

@@ -36,6 +36,9 @@ pub struct InteractionTurnInput {
     /// Host-merged SDK/session contribution hooks, plus their owning lease.
     pub hooks: HooksSettings,
     pub contribution: Option<PluginSessionContributionLease>,
+    /// The composed `config.cwd` when it is not a string; see
+    /// [`lifecycle::Binding::non_string_cwd`].
+    pub non_string_cwd: Option<JsValue>,
     pub base_env: Option<JsObject>,
     pub signal: Cancellation,
     /// Required when the generation publishes steer. The implementation must
@@ -199,6 +202,7 @@ impl InteractionTurn {
                     session_id: identity.session_id.clone(),
                     turn_id: identity.turn_id.clone(),
                     cwd: permission_context.cwd.clone(),
+                    non_string_cwd: input.non_string_cwd.clone(),
                     permission_mode: Some(permission_context.mode.as_js_string().clone()),
                     base_env: input.base_env,
                     signal: Some(input.signal.clone()),

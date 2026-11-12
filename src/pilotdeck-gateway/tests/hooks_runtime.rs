@@ -2008,6 +2008,7 @@ async fn lifecycle_dispatch_matches_real_ts() {
             session_id: "session-1".into(),
             turn_id: "turn-1".into(),
             cwd: root.clone().into(),
+            non_string_cwd: None,
             permission_mode: Some("default".into()),
             base_env: Some(object(
                 &parse_json(r#"{"PATH":"/usr/bin:/bin","HOME":"/tmp"}"#).unwrap(),
@@ -2076,6 +2077,7 @@ async fn lifecycle_dispatch_matches_real_ts() {
         session_id: "s".into(),
         turn_id: "t".into(),
         cwd: root.clone().into(),
+        non_string_cwd: None,
         permission_mode: None,
         base_env: None,
         signal: None,
@@ -2109,6 +2111,32 @@ async fn lifecycle_dispatch_matches_real_ts() {
         "Lifecycle payload must be an object."
     );
     handler.dispose().await.unwrap();
+
+    // A non-string `config.cwd` (a truthy non-string `workspaceCwd`) makes
+    // `buildTurnEnvironment`'s `path.resolve(cwd)` throw on every dispatch.
+    for (cwd, received) in [
+        (JsValue::Number(5.0), "type number (5)"),
+        (JsValue::Bool(true), "type boolean (true)"),
+        (JsValue::Array(vec!["x".into()]), "an instance of Array"),
+    ] {
+        let handler = host_lifecycle::Handler::null(host_lifecycle::Binding {
+            session_id: "s".into(),
+            turn_id: "t".into(),
+            cwd: root.clone().into(),
+            non_string_cwd: Some(cwd),
+            permission_mode: None,
+            base_env: None,
+            signal: None,
+        });
+        let error = handler
+            .call(module_call("dispatch", "Stop", None))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            module_message(error),
+            format!("The \"paths[0]\" argument must be of type string. Received {received}")
+        );
+    }
 }
 
 /// #335 ② sibling: TS `buildTurnEnvironment` resolves a relative `cwd` through
@@ -2242,6 +2270,7 @@ async fn lifecycle_handler_dispose_keeps_session_state_across_turns() {
             session_id: "session-1".into(),
             turn_id: "turn-1".into(),
             cwd: cwd.clone().into(),
+            non_string_cwd: None,
             permission_mode: None,
             base_env: None,
             signal: None,

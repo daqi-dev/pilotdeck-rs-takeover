@@ -384,7 +384,7 @@ struct Cwd {
     session: Arc<Session>,
 }
 impl SubmitCwdService for Cwd {
-    fn set(&self, _: &JsString, _: &JsString) -> Result<(), SubmitError> {
+    fn set(&self, _: &JsString, _: &JsValue) -> Result<(), SubmitError> {
         self.session.log.host("cwd");
         Ok(())
     }

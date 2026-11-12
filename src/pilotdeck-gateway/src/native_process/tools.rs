@@ -1336,6 +1336,14 @@ impl SessionTools {
                 },
                 hooks: self.hooks.clone(),
                 contribution: None,
+                // `sessionOverride?.cwd` composed as given (SessionAgentConfigBundle.ts:57).
+                non_string_cwd: self
+                    .config
+                    .get("cwd")
+                    .filter(|cwd| {
+                        !matches!(cwd, JsValue::String(_) | JsValue::Undefined | JsValue::Null)
+                    })
+                    .cloned(),
                 base_env: Some(self.env.clone()),
                 signal,
                 steer_recorder: Some(Arc::new(sink)),
@@ -2098,6 +2106,17 @@ impl SessionTools {
         self.world.module_tools = binding
             .and_then(super::module_tools::ExternalToolPort::from_binding)
             .map(Arc::new);
+        self
+    }
+
+    /// The session's plugin contributions, taken when the session is
+    /// composed (ProjectSessionRuntimeBundle.ts:247-264) and kept by its
+    /// context runtime until the session is recreated.
+    pub(super) fn with_session_extension(
+        self,
+        extension: Option<Arc<dyn crate::runtime::context::ExtensionResolver>>,
+    ) -> Self {
+        self.context_state.freeze_session_extension(extension);
         self
     }
 

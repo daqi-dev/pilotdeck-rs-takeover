@@ -388,6 +388,39 @@ impl RefreshBundle {
         }
     }
 
+    /// `handleExtensionWatchEvent` (createLocalGateway.ts:1703-1723): the
+    /// extension watcher's settled change. One `console.log` line, then the
+    /// runtime(s) invalidated and the sessions marked dirty; unlike
+    /// `reloadExtensions`, nothing is broadcast.
+    pub fn extensions_changed(&self, project_root: Option<&JsString>, changed_paths: &[JsString]) {
+        let options = &self.inner.options;
+        let router = (options.router)();
+        let changed = join(changed_paths);
+        match project_root {
+            Some(root) => {
+                let mut message = units("[pilotdeck] Extensions changed for project ");
+                message.extend_from_slice(root.units());
+                message.extend(units(", invalidating runtime: "));
+                message.extend(changed);
+                options.log.log(&JsString::from_utf16(message));
+                options.registry.invalidate(Some(root));
+                if let Some(router) = router {
+                    router.mark_project_dirty(root, "extension_changed");
+                }
+            }
+            None => {
+                let mut message =
+                    units("[pilotdeck] Extensions changed, invalidating all runtimes: ");
+                message.extend(changed);
+                options.log.log(&JsString::from_utf16(message));
+                options.registry.invalidate(None);
+                if let Some(router) = router {
+                    router.mark_all_dirty("extension_changed");
+                }
+            }
+        }
+    }
+
     /// `refreshConfigBeforeTurn`.
     pub fn refresh_config_before_turn(
         &self,

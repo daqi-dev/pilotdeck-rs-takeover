@@ -30,11 +30,12 @@ impl SubmitSnapshots for FakeSnapshots {
 }
 struct FakeCwd(Mutex<Vec<(String, String)>>);
 impl SubmitCwdService for FakeCwd {
-    fn set(&self, session: &JsString, cwd: &JsString) -> Result<(), SubmitError> {
+    fn set(&self, session: &JsString, cwd: &JsValue) -> Result<(), SubmitError> {
+        let cwd = cwd.as_string().expect("string cwd").to_utf8().unwrap();
         self.0
             .lock()
             .unwrap()
-            .push((session.to_utf8().unwrap(), cwd.to_utf8().unwrap()));
+            .push((session.to_utf8().unwrap(), cwd));
         Ok(())
     }
 }
@@ -490,7 +491,7 @@ fn set_session_cwd_refuses_without_a_service_and_delegates_with_one() {
     let fake = Arc::new(Fake::default());
     let host = make_host(&fake);
     let error = host
-        .set_session_cwd(&"s".into(), &"/work".into())
+        .set_session_cwd(&"s".into(), &JsValue::String("/work".into()))
         .unwrap_err();
     assert_eq!(error.code, "CAPABILITY_UNAVAILABLE");
     assert_eq!(error.message, "Session cwd host capability is unavailable.");
@@ -500,7 +501,8 @@ fn set_session_cwd_refuses_without_a_service_and_delegates_with_one() {
         ..Fake::default()
     });
     let host = make_host(&fake);
-    host.set_session_cwd(&"s".into(), &"/work".into()).unwrap();
+    host.set_session_cwd(&"s".into(), &JsValue::String("/work".into()))
+        .unwrap();
     assert_eq!(
         *cwd.0.lock().unwrap(),
         vec![("s".to_string(), "/work".to_string())]

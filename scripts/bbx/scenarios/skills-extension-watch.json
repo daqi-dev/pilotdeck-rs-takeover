@@ -1,0 +1,311 @@
+{
+  "name": "skills-extension-watch",
+  "about": "扩展目录监视（ExtensionWatchManager.ts，createLocalGateway.ts:712-724、788、803、1703-1723）：服务运行中落盘技能 / mcp.json 后，基线约 250ms 去抖后打一行 stdout 并作废运行时、标脏会话，不广播任何通知。全局范围（<pilotHome>/mcp.json、plugins、skills、内置技能目录）打 [pilotdeck] Extensions changed, invalidating all runtimes: <按序排列的被监视路径>，所有会话标脏，下一轮重建后技能清单带上新技能；项目范围（项目第一次被 resolve 时开始监视 <root>/.pilotdeck/{mcp.json,plugins,skills}）打 [pilotdeck] Extensions changed for project <root>, invalidating runtime: <路径>，只标脏 projectKey 原样等于该根的会话：alpha 会话下一轮带上新的项目技能；默认项目（pilotHome）的会话 projectKey 为空，不被标脏，s-old 下一轮仍是旧清单，新会话 s-new2 才看到默认项目的新技能。同一去抖窗里的两处改动合成一行（mcp.json, skills）。",
+  "server": false,
+  "files": {
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+    "home/work/alpha/README.md": "alpha\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Watch run\"}"
+      }
+    },
+    {
+      "name": "write global-after",
+      "when": [
+        "write global:",
+        "\"tool_call_id\":\"call_global_0\""
+      ],
+      "reply": {
+        "text": "Wrote write global."
+      }
+    },
+    {
+      "name": "write global",
+      "when": [
+        "write global:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_global_0",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "{HOME}/.pilotdeck/skills/fresh-global/SKILL.md",
+            "content": "---\nname: fresh-global\ndescription: A user skill written while the server runs.\n---\n\n# fresh-global\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "write project-after",
+      "when": [
+        "write project:",
+        "\"tool_call_id\":\"call_project_0\""
+      ],
+      "reply": {
+        "text": "Wrote write project."
+      }
+    },
+    {
+      "name": "write project",
+      "when": [
+        "write project:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_project_0",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "{HOME}/work/alpha/.pilotdeck/skills/fresh-alpha/SKILL.md",
+            "content": "---\nname: fresh-alpha\ndescription: A project skill written while the server runs.\n---\n\n# fresh-alpha\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "write two-after",
+      "when": [
+        "write two:",
+        "\"tool_call_id\":\"call_two_0\""
+      ],
+      "reply": {
+        "text": "Wrote write two."
+      }
+    },
+    {
+      "name": "write two",
+      "when": [
+        "write two:"
+      ],
+      "reply": {
+        "tools": [
+          {
+            "id": "call_two_0",
+            "name": "write_file",
+            "arguments": {
+              "file_path": "{HOME}/.pilotdeck/skills/second-global/SKILL.md",
+              "content": "---\nname: second-global\ndescription: A second user skill in the same batch.\n---\n\n# second-global\n"
+            }
+          },
+          {
+            "id": "call_two_1",
+            "name": "write_file",
+            "arguments": {
+              "file_path": "{HOME}/.pilotdeck/mcp.json",
+              "content": "{\"mcpServers\": {}}\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "write default-after",
+      "when": [
+        "write default:",
+        "\"tool_call_id\":\"call_default_0\""
+      ],
+      "reply": {
+        "text": "Wrote write default."
+      }
+    },
+    {
+      "name": "write default",
+      "when": [
+        "write default:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_default_0",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "{HOME}/.pilotdeck/.pilotdeck/skills/fresh-default/SKILL.md",
+            "content": "---\nname: fresh-default\ndescription: A skill of the default project.\n---\n\n# fresh-default\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "ok"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "serve": [
+        "server"
+      ],
+      "timeout": 90000,
+      "then": [
+        {
+          "connect": true
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-old",
+            "channelKey": "test",
+            "message": "old one"
+          }
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-alpha",
+            "channelKey": "test",
+            "message": "alpha one",
+            "projectKey": "{HOME}/work/alpha"
+          }
+        },
+        {
+          "ws": "set_permission_mode",
+          "params": {
+            "sessionKey": "s-w",
+            "mode": "bypassPermissions"
+          }
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-w",
+            "channelKey": "test",
+            "message": "write global: add a user skill"
+          }
+        },
+        {
+          "sleep": 1500
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-old",
+            "channelKey": "test",
+            "message": "old two"
+          }
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-new",
+            "channelKey": "test",
+            "message": "new one"
+          }
+        },
+        {
+          "ws": "set_permission_mode",
+          "params": {
+            "sessionKey": "s-w2",
+            "mode": "bypassPermissions"
+          }
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-w2",
+            "channelKey": "test",
+            "message": "write project: add an alpha skill"
+          }
+        },
+        {
+          "sleep": 1500
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-alpha",
+            "channelKey": "test",
+            "message": "alpha two",
+            "projectKey": "{HOME}/work/alpha"
+          }
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-old",
+            "channelKey": "test",
+            "message": "old three"
+          }
+        },
+        {
+          "ws": "set_permission_mode",
+          "params": {
+            "sessionKey": "s-w3",
+            "mode": "bypassPermissions"
+          }
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-w3",
+            "channelKey": "test",
+            "message": "write two: a skill and the mcp file"
+          }
+        },
+        {
+          "sleep": 1500
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-alpha",
+            "channelKey": "test",
+            "message": "alpha three",
+            "projectKey": "{HOME}/work/alpha"
+          }
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-old",
+            "channelKey": "test",
+            "message": "old four"
+          }
+        },
+        {
+          "ws": "set_permission_mode",
+          "params": {
+            "sessionKey": "s-w4",
+            "mode": "bypassPermissions"
+          }
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-w4",
+            "channelKey": "test",
+            "message": "write default: a default project skill"
+          }
+        },
+        {
+          "sleep": 1500
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-old",
+            "channelKey": "test",
+            "message": "old five"
+          }
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-new2",
+            "channelKey": "test",
+            "message": "new two"
+          }
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    }
+  ]
+}

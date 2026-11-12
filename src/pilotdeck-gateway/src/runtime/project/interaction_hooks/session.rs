@@ -70,6 +70,7 @@ mod tests {
             session_id: "session-743".into(),
             turn_id: "turn-1".into(),
             cwd: "/tmp".into(),
+            non_string_cwd: None,
             permission_mode: None,
             base_env: None,
             signal: Some(signal),

@@ -108,6 +108,7 @@ fn options() -> InteractionTurnInput {
         },
         hooks: vec![],
         contribution: None,
+        non_string_cwd: None,
         base_env: None,
         signal: Cancellation::new(),
         steer_recorder: Some(Arc::new(Ports)),
@@ -1024,6 +1025,7 @@ async fn host_bind_waits_for_old_hook_cleanup_before_returning_replacement() {
                 session_id: "session".into(),
                 turn_id: "turn".into(),
                 cwd: root.to_string_lossy().to_string().into(),
+                non_string_cwd: None,
                 permission_mode: Some("default".into()),
                 base_env: Some(
                     parse_json(r#"{"PATH":"/usr/bin:/bin"}"#)

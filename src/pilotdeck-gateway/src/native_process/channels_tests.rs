@@ -681,10 +681,10 @@ fn startup_error(result: Result<(), crate::ProxyError>, assertion: &'static str)
 }
 
 /// An `adapters:` entry the baseline would connect with: the bundle keys
-/// whenever enabled, the credential channels with credentials, `matrix` with a
-/// homeserver its constructor cannot `.replace`. The SDK-missing channels have
-/// no such config (their SDK is never installed), so they are not listed.
-const CONNECTING_ADAPTERS: [(&str, &str); 7] = [
+/// whenever enabled, the credential channels with credentials. The
+/// SDK-missing channels have no such config (their SDK is never installed),
+/// so they are not listed.
+const CONNECTING_ADAPTERS: [(&str, &str); 6] = [
     (
         "mattermost",
         "{enabled: true, token: t, extra: {serverUrl: 'http://127.0.0.1:9'}}",
@@ -695,10 +695,6 @@ const CONNECTING_ADAPTERS: [(&str, &str); 7] = [
     ),
     ("whatsapp", "{enabled: true, extra: {bridgePath: /bridge}}"),
     ("homeassistant", "{enabled: true, token: t}"),
-    (
-        "matrix",
-        "{enabled: true, token: t, extra: {homeserver: 5}}",
-    ),
     ("qq", "{enabled: true}"),
     ("wecom", "{enabled: true}"),
 ];
@@ -1965,7 +1961,7 @@ impl SubmitHost for RecordingSubmitHost {
     fn failure_guard_config(&self) -> Option<JsValue> {
         None
     }
-    fn set_session_cwd(&self, _session: &JsString, _cwd: &JsString) -> Result<(), SubmitError> {
+    fn set_session_cwd(&self, _session: &JsString, _cwd: &JsValue) -> Result<(), SubmitError> {
         Ok(())
     }
     fn now_ms(&self) -> f64 {

@@ -701,10 +701,17 @@ pub(super) fn validate_event(
                 .and_then(|error| error.get("message"))
                 .and_then(JsValue::as_string)
         {
-            return Err(HostError::new(
+            let mut error = HostError::new(
                 HostErrorKind::LoopFailure,
                 String::from_utf16_lossy(message.units()),
-            ));
+            );
+            error.model_state = event
+                .payload
+                .get("modelState")
+                .filter(|state| !state.is_undefined())
+                .cloned()
+                .map(Box::new);
+            return Err(error);
         }
         let result = event
             .payload

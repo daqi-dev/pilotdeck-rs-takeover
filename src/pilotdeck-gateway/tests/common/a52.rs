@@ -149,7 +149,7 @@ impl SubmitHost for Host {
     fn failure_guard_config(&self) -> Option<JsValue> {
         None
     }
-    fn set_session_cwd(&self, _: &JsString, _: &JsString) -> Result<(), SubmitError> {
+    fn set_session_cwd(&self, _: &JsString, _: &JsValue) -> Result<(), SubmitError> {
         Ok(())
     }
     fn now_ms(&self) -> f64 {

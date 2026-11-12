@@ -35,6 +35,7 @@ fn binding() -> lifecycle::Binding {
         session_id: "s".into(),
         turn_id: "t".into(),
         cwd: env!("CARGO_MANIFEST_DIR").into(),
+        non_string_cwd: None,
         permission_mode: Some("default".into()),
         base_env: Some(
             json(r#"{"PATH":"/usr/bin:/bin"}"#)

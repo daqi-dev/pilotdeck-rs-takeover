@@ -9,6 +9,7 @@ mod cleanup_task;
 pub mod connection;
 pub mod context;
 pub mod cron;
+pub mod extension_watch;
 pub mod goal;
 pub mod hooks;
 pub mod interaction;

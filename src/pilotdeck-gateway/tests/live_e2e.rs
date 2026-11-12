@@ -459,6 +459,7 @@ fn ports(
             },
             hooks: vec![],
             contribution: None,
+            non_string_cwd: None,
             base_env: None,
             signal,
             steer_recorder: Some(Arc::new(Recorder)),
