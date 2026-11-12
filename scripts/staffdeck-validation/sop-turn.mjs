@@ -5,9 +5,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import net from 'node:net';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { createHash } from 'node:crypto';
+import { validationIdentity } from './identity.mjs';
 import assert from 'node:assert/strict';
 
 const args=process.argv.slice(2), arg=key=>args[args.indexOf(key)+1];
@@ -22,8 +22,6 @@ const out=path.resolve(arg('--out')), baseline=path.resolve(arg('--baseline')), 
 if(fs.existsSync(out))throw new Error('output directory must be new');
 fs.mkdirSync(out,{recursive:true});
 const root=path.join(out,'fixture'), home=path.join(root,'home'), pilot=path.join(home,'.pilotdeck'), project=path.join(root,'project');
-const hash=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-const git=cwd=>spawnSync('git',['rev-parse','HEAD'],{cwd,encoding:'utf8'}).stdout.trim();
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 let observed=[];
 const owner=http.createServer(async(req,res)=>{
@@ -118,8 +116,9 @@ async function run(side,command,argv){
     fs.writeFileSync(path.join(out,`${side}.log`),Buffer.concat(logs));assert.equal(result.signal,null,`${side} killed`);assert.equal(result.code,0,`${side} exit`);
   }
 }
-const manifest={schema:1,scenario:`sop-${mode}-${behavior}${hooksEnabled?'-hooks':''}${receiptEnabled?'-receipt':''}`,scenarioSha256:hash(new URL(import.meta.url)),tsCommit:git(baseline),rustCommit:git(path.resolve(new URL('../..',import.meta.url).pathname)),node:process.version,platform:`${process.platform}-${process.arch}`,rustBinary:rust,rustSha256:rust?hash(rust):null};let failure;
+const identity=validationIdentity({baseline,rust,scenario:new URL(import.meta.url)});
+const manifest={schema:2,scenario:`sop-${mode}-${behavior}${hooksEnabled?'-hooks':''}${receiptEnabled?'-receipt':''}`,...identity.fields,node:process.version,platform:`${process.platform}-${process.arch}`};let failure;
 try{const ts=await run('ts',process.execPath,[path.join(baseline,'dist/src/cli/pilotdeck.js')]);if(args.includes('--self'))assert.deepEqual(await run('ts-self',process.execPath,[path.join(baseline,'dist/src/cli/pilotdeck.js')]),ts);if(rust)assert.deepEqual(await run('rust',rust,[]),ts);manifest.passed=true;}
 catch(error){manifest.passed=false;manifest.error=String(error.stack??error);failure=error;}
-finally{owner.closeAllConnections();await new Promise(r=>owner.close(r));fs.writeFileSync(path.join(out,'manifest.json'),JSON.stringify(manifest,null,2));}
+finally{try{Object.assign(manifest,identity.finish());}catch(error){manifest.passed=false;manifest.identityError=String(error.stack??error);failure??=error;}owner.closeAllConnections();await new Promise(r=>owner.close(r));fs.writeFileSync(path.join(out,'manifest.json'),JSON.stringify(manifest,null,2));}
 if(failure)throw failure;console.log(JSON.stringify(manifest,null,2));

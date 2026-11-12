@@ -46,7 +46,7 @@ set +e
   ./configure --prefix="$task_root/tools/build-tools"
   make -j6
   make install
-  cargo install --locked --path "$task_root/tools/src/cargo-c-0.10.18" --root "$task_root/tools/rust"
+  cargo install --locked --features vendored-openssl --path "$task_root/tools/src/cargo-c-0.10.18" --root "$task_root/tools/rust"
   meson --version
   ninja --version
   gperf --version
