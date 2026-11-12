@@ -1491,19 +1491,14 @@ fn failure(message: impl Into<String>) -> SubmitError {
 fn unavailable(message: &str) -> SubmitError {
     SubmitError::new("CAPABILITY_UNAVAILABLE", message)
 }
-struct Cwd(std::path::PathBuf);
+/// `setSessionCwd` (createLocalGateway.ts:1481): the requested cwd is stored
+/// as the session's override, unvalidated, and only takes effect when the
+/// session is next composed.
+struct Cwd(Arc<super::SessionOverrides>);
 impl SubmitCwdService for Cwd {
-    fn set(&self, _: &JsString, cwd: &JsString) -> Result<(), SubmitError> {
-        if cwd
-            .to_utf8()
-            .is_ok_and(|cwd| crate::metadata::resolve(&self.0, &cwd) == self.0)
-        {
-            Ok(())
-        } else {
-            Err(unavailable(
-                "The isolated native process cannot change its configured project.",
-            ))
-        }
+    fn set(&self, session: &JsString, cwd: &JsString) -> Result<(), SubmitError> {
+        self.0.set_session_cwd(session, cwd);
+        Ok(())
     }
 }
 impl SubmitHostServices for Services {
@@ -1570,7 +1565,7 @@ impl SubmitHostServices for Services {
         false
     }
     fn cwd(&self) -> Option<Arc<dyn SubmitCwdService>> {
-        Some(Arc::new(Cwd(self.options.project.clone())))
+        Some(Arc::new(Cwd(self.session_overrides.clone())))
     }
     fn refresh(&self) -> SubmitFuture<'_, Result<(), SubmitError>> {
         Box::pin(async {

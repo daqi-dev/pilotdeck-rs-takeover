@@ -1270,6 +1270,15 @@ struct OwnedSession {
     storage: Arc<FactoryStorage>,
     resources: Mutex<Option<PreparedResources>>,
 }
+impl OwnedSession {
+    /// The session's `config.cwd`; the storage root for an adapter without a
+    /// composed agent config.
+    fn session_cwd(&self) -> JsString {
+        self.adapter
+            .agent_cwd()
+            .unwrap_or_else(|| JsString::from(self.storage.cwd.to_string_lossy().into_owned()))
+    }
+}
 impl LiveSession for OwnedSession {
     #[cfg(test)]
     fn reload_signal_for_test(&self) -> Option<crate::runtime::hooks::Cancellation> {
@@ -1299,18 +1308,12 @@ impl LiveSession for OwnedSession {
         // submit-side workspace snapshot wiring reads it back for the
         // snapshot input's workspace dir (runtime/turn/submit.rs) — without
         // it, every turn over a snapshots-enabled assembly refuses with
-        // "Workspace snapshot cwd is unavailable." The native process pins
-        // each session to the project root its factory key resolved
-        // (`SubmitCwdService::set` refuses any other cwd), so the session's
-        // cwd is the storage root, not a per-turn value (#1431).
+        // "Workspace snapshot cwd is unavailable." It is the composed
+        // `config.cwd` (a stored `workspaceCwd` override or the project
+        // root), fixed for the session's life.
         let mut value = self.adapter.snapshot();
         if let JsValue::Object(object) = &mut value {
-            object.insert(
-                "cwd".into(),
-                JsValue::String(JsString::from(
-                    self.storage.cwd.to_string_lossy().into_owned(),
-                )),
-            );
+            object.insert("cwd".into(), JsValue::String(self.session_cwd()));
         }
         value
     }
@@ -1325,7 +1328,7 @@ impl LiveSession for OwnedSession {
     /// and permission mode are the same ones a read_file call on this session
     /// would use, so admission decisions cannot diverge from the tool family.
     fn seed_read_state(&self, path: &JsString, mtime_ms: f64) -> Result<bool, RuntimeError> {
-        let cwd = JsString::from(self.storage.cwd.to_string_lossy().into_owned());
+        let cwd = self.session_cwd();
         crate::runtime::tools::builtin::seed_agent_read_state(
             &self.checkpoint,
             &cwd,

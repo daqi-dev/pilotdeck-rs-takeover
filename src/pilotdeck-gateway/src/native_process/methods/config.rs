@@ -740,8 +740,8 @@ impl Requests {
     }
 
     /// InProcessGateway.ts:2423-2442: sessionKey → path → mtime → busy; the
-    /// native process has no setSessionCwd callback (the `workspaceCwd`
-    /// field is silently skipped) and no setSdkSessionConfig, so a truthy
+    /// `workspaceCwd` is stored as the session's cwd override like a
+    /// submit's; the native process has no setSdkSessionConfig, so a truthy
     /// `sdkSessionConfig` answers the unavailable shape. The router fence
     /// (SessionRouter.ts:260-278) then seeds onto the live session.
     async fn seed_read_state(&self, params: &JsValue) -> Result<JsValue, RequestError> {
@@ -762,6 +762,11 @@ impl Requests {
                 "SESSION_BUSY",
                 "Cannot seed file read state while a turn is active.",
             ));
+        }
+        if let Some(JsValue::String(cwd)) = params.get("workspaceCwd")
+            && !cwd.is_empty()
+        {
+            self.session_overrides.set_session_cwd(&session_key, cwd);
         }
         if params.get("sdkSessionConfig").is_some_and(truthy) {
             return Err(gateway_error(

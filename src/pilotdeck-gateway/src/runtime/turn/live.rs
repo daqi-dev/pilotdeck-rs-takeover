@@ -171,6 +171,16 @@ impl LiveSessionAdapter {
         self
     }
 
+    /// The composed `config.cwd`: the session's working directory (the
+    /// AgentSession snapshot's `cwd`, createAgentSession.ts:148).
+    pub fn agent_cwd(&self) -> Option<JsString> {
+        self.agent_config
+            .as_ref()?
+            .get("cwd")
+            .and_then(JsValue::as_string)
+            .cloned()
+    }
+
     /// #1864 (b): the live permission-mode source, consulted on every
     /// submit. `None` keeps the composed agent config as-is.
     pub fn with_permission_mode_source(

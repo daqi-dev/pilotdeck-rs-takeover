@@ -1,0 +1,508 @@
+{
+  "name": "submit-turn-workspace-cwd",
+  "about": "submit_turn.workspaceCwd：新建会话时作为会话 cwd（系统提示词的 cwd 行、bash 工作目录、相对路径解析、工作区边界、写文件落点）；同一会话后续轮次换 workspaceCwd 是否生效；workspaceCwd 不存在、是文件、是相对路径时的行为。",
+  "files": {
+    "proj/note.txt": "project note\n",
+    "home/work/other/inner.txt": "inner body\n",
+    "home/work/afile.txt": "a file\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Cwd run\"}"
+      }
+    },
+    {
+      "name": "t6b-after",
+      "when": [
+        "t6b:",
+        "\"tool_call_id\":\"call_cwd_t6b\""
+      ],
+      "reply": {
+        "text": "Done t6b."
+      }
+    },
+    {
+      "name": "t6b",
+      "when": [
+        "t6b:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_cwd_t6b",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "inner.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "t6a-after",
+      "when": [
+        "t6a:",
+        "\"tool_call_id\":\"call_cwd_t6a\""
+      ],
+      "reply": {
+        "text": "Done t6a."
+      }
+    },
+    {
+      "name": "t6a",
+      "when": [
+        "t6a:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_cwd_t6a",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "{PROJECT}/note.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "t5c-after",
+      "when": [
+        "t5c:",
+        "\"tool_call_id\":\"call_cwd_t5c\""
+      ],
+      "reply": {
+        "text": "Done t5c."
+      }
+    },
+    {
+      "name": "t5c",
+      "when": [
+        "t5c:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_cwd_t5c",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "made-rel.txt",
+            "content": "rel\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "t5b-after",
+      "when": [
+        "t5b:",
+        "\"tool_call_id\":\"call_cwd_t5b\""
+      ],
+      "reply": {
+        "text": "Done t5b."
+      }
+    },
+    {
+      "name": "t5b",
+      "when": [
+        "t5b:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_cwd_t5b",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "inner.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "t5a-after",
+      "when": [
+        "t5a:",
+        "\"tool_call_id\":\"call_cwd_t5a\""
+      ],
+      "reply": {
+        "text": "Done t5a."
+      }
+    },
+    {
+      "name": "t5a",
+      "when": [
+        "t5a:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_cwd_t5a",
+          "name": "bash",
+          "arguments": {
+            "command": "pwd"
+          }
+        }
+      }
+    },
+    {
+      "name": "t4a-after",
+      "when": [
+        "t4a:",
+        "\"tool_call_id\":\"call_cwd_t4a\""
+      ],
+      "reply": {
+        "text": "Done t4a."
+      }
+    },
+    {
+      "name": "t4a",
+      "when": [
+        "t4a:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_cwd_t4a",
+          "name": "bash",
+          "arguments": {
+            "command": "pwd"
+          }
+        }
+      }
+    },
+    {
+      "name": "t3b-after",
+      "when": [
+        "t3b:",
+        "\"tool_call_id\":\"call_cwd_t3b\""
+      ],
+      "reply": {
+        "text": "Done t3b."
+      }
+    },
+    {
+      "name": "t3b",
+      "when": [
+        "t3b:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_cwd_t3b",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "x.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "t3a-after",
+      "when": [
+        "t3a:",
+        "\"tool_call_id\":\"call_cwd_t3a\""
+      ],
+      "reply": {
+        "text": "Done t3a."
+      }
+    },
+    {
+      "name": "t3a",
+      "when": [
+        "t3a:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_cwd_t3a",
+          "name": "bash",
+          "arguments": {
+            "command": "pwd"
+          }
+        }
+      }
+    },
+    {
+      "name": "t2a-after",
+      "when": [
+        "t2a:",
+        "\"tool_call_id\":\"call_cwd_t2a\""
+      ],
+      "reply": {
+        "text": "Done t2a."
+      }
+    },
+    {
+      "name": "t2a",
+      "when": [
+        "t2a:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_cwd_t2a",
+          "name": "bash",
+          "arguments": {
+            "command": "pwd"
+          }
+        }
+      }
+    },
+    {
+      "name": "t1d-after",
+      "when": [
+        "t1d:",
+        "\"tool_call_id\":\"call_cwd_t1d\""
+      ],
+      "reply": {
+        "text": "Done t1d."
+      }
+    },
+    {
+      "name": "t1d",
+      "when": [
+        "t1d:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_cwd_t1d",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "made.txt",
+            "content": "made\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "t1c-after",
+      "when": [
+        "t1c:",
+        "\"tool_call_id\":\"call_cwd_t1c\""
+      ],
+      "reply": {
+        "text": "Done t1c."
+      }
+    },
+    {
+      "name": "t1c",
+      "when": [
+        "t1c:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_cwd_t1c",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "{PROJECT}/note.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "t1b-after",
+      "when": [
+        "t1b:",
+        "\"tool_call_id\":\"call_cwd_t1b\""
+      ],
+      "reply": {
+        "text": "Done t1b."
+      }
+    },
+    {
+      "name": "t1b",
+      "when": [
+        "t1b:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_cwd_t1b",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "inner.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "t1a-after",
+      "when": [
+        "t1a:",
+        "\"tool_call_id\":\"call_cwd_t1a\""
+      ],
+      "reply": {
+        "text": "Done t1a."
+      }
+    },
+    {
+      "name": "t1a",
+      "when": [
+        "t1a:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_cwd_t1a",
+          "name": "bash",
+          "arguments": {
+            "command": "pwd; ls"
+          }
+        }
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "plain"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-cwd",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-cwd",
+        "channelKey": "test",
+        "message": "t1a: run",
+        "workspaceCwd": "{HOME}/work/other"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-cwd",
+        "channelKey": "test",
+        "message": "t1b: read"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-cwd",
+        "channelKey": "test",
+        "message": "t1c: read outside"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-cwd",
+        "channelKey": "test",
+        "message": "t1d: write"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-cwd",
+        "channelKey": "test",
+        "message": "t2a: switch cwd",
+        "workspaceCwd": "{PROJECT}"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-missing",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-missing",
+        "channelKey": "test",
+        "message": "t3a: missing dir",
+        "workspaceCwd": "{HOME}/work/missing"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-missing",
+        "channelKey": "test",
+        "message": "t3b: read in missing"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-file",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-file",
+        "channelKey": "test",
+        "message": "t4a: file cwd",
+        "workspaceCwd": "{HOME}/work/afile.txt"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-rel",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-rel",
+        "channelKey": "test",
+        "message": "t5a: relative cwd",
+        "workspaceCwd": "work/other"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-rel",
+        "channelKey": "test",
+        "message": "t5b: relative read"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-rel",
+        "channelKey": "test",
+        "message": "t5c: relative write"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-def",
+        "channelKey": "test",
+        "message": "t6a: outside in default mode",
+        "workspaceCwd": "{HOME}/work/other",
+        "canPrompt": false
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-def",
+        "channelKey": "test",
+        "message": "t6b: inside in default mode",
+        "canPrompt": false
+      },
+      "timeout": 30000
+    }
+  ]
+}

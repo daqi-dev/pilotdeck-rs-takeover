@@ -648,10 +648,6 @@ async fn start_assembly(
                     max_output_tokens_env,
                 );
                 config.insert("jsonSelfCorrect".into(), JsValue::Bool(true));
-                config.insert(
-                    "cwd".into(),
-                    JsValue::String(project_root.to_string_lossy().into_owned().into()),
-                );
                 // #1864: compose the session selections the three selector
                 // methods stored — the native counterpart of
                 // SessionAgentConfigBundle.compose over the registry maps.
@@ -664,6 +660,16 @@ async fn start_assembly(
                     .config_override(&context.session_key)
                     .map(|value| value.to_value())
                     .unwrap_or(JsValue::Undefined);
+                // `sessionOverride?.cwd ?? runtime.projectRoot`
+                // (SessionAgentConfigBundle.ts:57): a `workspaceCwd` or an
+                // unattended runtime's workspace, as stored.
+                let session_cwd = match unattended.get("cwd") {
+                    None | Some(JsValue::Undefined | JsValue::Null) => {
+                        JsValue::String(project_root.to_string_lossy().into_owned().into())
+                    }
+                    Some(cwd) => cwd.clone(),
+                };
+                config.insert("cwd".into(), session_cwd);
                 let override_mode = unattended
                     .get("permissionMode")
                     .and_then(JsValue::as_string)
