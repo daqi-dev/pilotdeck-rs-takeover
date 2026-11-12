@@ -225,6 +225,8 @@ const mock = http.createServer(async (req, res) => {
       // 先等已写出的块真正发到对端，再断开或挂住；直接 destroy 会把还在缓冲里的块一起丢掉。
       if (reply.breakAfter !== undefined && sent >= reply.breakAfter) { await sleep(50); res.destroy(); return; }
       if (reply.hangAfter !== undefined && sent >= reply.hangAfter) { setTimeout(() => res.destroy(), reply.hangMs ?? 60000).unref(); return; }
+      // endAfter: n 发出 n 块后正常结束响应（没有结束原因 / [DONE] / message_stop），不是断开连接。
+      if (reply.endAfter !== undefined && sent >= reply.endAfter) { res.end(); return; }
       await new Promise((done) => res.write(block, done)); sent++;
     }
     res.end();
