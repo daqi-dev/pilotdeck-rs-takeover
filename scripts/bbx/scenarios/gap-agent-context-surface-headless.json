@@ -1,0 +1,105 @@
+{
+ "name": "gap-agent-context-surface-headless",
+ "about": "agent.runtimeContextSurface=user_message 与 agent.interactionProfile=headless（loadPilotConfig.ts:397-419，context/RuntimeContextSurface.ts，interaction/InteractionProfile.ts）：运行时上下文（cwd、模型、权限模式等）从系统提示词挪到用户消息；headless 下需要交互的工具（ask_user_question 等）是否声明、硬调时的结果。比较发给 provider 的请求。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\n  runtimeContextSurface: user_message\n  interactionProfile: headless\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Gap\"}"
+   }
+  },
+  {
+   "name": "t02-after",
+   "when": [
+    "g02:",
+    "\"tool_call_id\":\"call_g02\""
+   ],
+   "reply": {
+    "text": "Done 02."
+   }
+  },
+  {
+   "name": "t02",
+   "when": [
+    "g02:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g02",
+     "name": "ask_user_question",
+     "arguments": {
+      "questions": [
+       {
+        "question": "Pick?",
+        "header": "Pick",
+        "options": [
+         {
+          "label": "A",
+          "description": "a"
+         },
+         {
+          "label": "B",
+          "description": "b"
+         }
+        ],
+        "multiSelect": false
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "t01",
+   "when": [
+    "g01:"
+   ],
+   "reply": {
+    "text": "plain"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-gap",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g01: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g02: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-gap"
+   }
+  }
+ ]
+}

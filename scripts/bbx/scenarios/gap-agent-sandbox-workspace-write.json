@@ -1,0 +1,152 @@
+{
+ "name": "gap-agent-sandbox-workspace-write",
+ "about": "agent.sandboxMode=workspace-write：bash 在工作区内写文件、写到工作区外（{ROOT}/outside）、读工作区外。比较工具结果与落盘（工作区外的落点在采集范围外，看工具输出里 ls 的结果）。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\n  sandboxMode: workspace-write\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+ "files": {
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+  "home/work/alpha/README.md": "alpha\n",
+  "outside/o.txt": "outside\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Gap\"}"
+   }
+  },
+  {
+   "name": "t03-after",
+   "when": [
+    "g03:",
+    "\"tool_call_id\":\"call_g03\""
+   ],
+   "reply": {
+    "text": "Done 03."
+   }
+  },
+  {
+   "name": "t03",
+   "when": [
+    "g03:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g03",
+     "name": "bash",
+     "arguments": {
+      "command": "cat {ROOT}/outside/o.txt"
+     }
+    }
+   }
+  },
+  {
+   "name": "t02-after",
+   "when": [
+    "g02:",
+    "\"tool_call_id\":\"call_g02\""
+   ],
+   "reply": {
+    "text": "Done 02."
+   }
+  },
+  {
+   "name": "t02",
+   "when": [
+    "g02:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g02",
+     "name": "bash",
+     "arguments": {
+      "command": "echo out > {ROOT}/outside/new.txt; echo rc=$?; ls {ROOT}/outside"
+     }
+    }
+   }
+  },
+  {
+   "name": "t01-after",
+   "when": [
+    "g01:",
+    "\"tool_call_id\":\"call_g01\""
+   ],
+   "reply": {
+    "text": "Done 01."
+   }
+  },
+  {
+   "name": "t01",
+   "when": [
+    "g01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g01",
+     "name": "bash",
+     "arguments": {
+      "command": "echo in > inside.txt && cat inside.txt"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-gap",
+    "mode": "bypassPermissions",
+    "projectKey": "{HOME}/work/alpha"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g01: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g02: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g03: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-gap",
+    "projectKey": "{HOME}/work/alpha"
+   }
+  }
+ ]
+}
