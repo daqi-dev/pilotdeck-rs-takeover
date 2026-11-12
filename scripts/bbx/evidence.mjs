@@ -88,11 +88,31 @@ export function assertionResults(assertions, artifact, side) {
     if ('exists' in a) checks.push((actual !== undefined) === a.exists);
     if ('includes' in a) checks.push(typeof actual === 'string' && actual.includes(a.includes));
     if ('matches' in a) checks.push(typeof actual === 'string' && new RegExp(a.matches).test(actual));
+    if ('imageAttachments' in a) checks.push(imageAttachmentsMatch(actual, a.imageAttachments));
     if ('syntaxDiagnostics' in a) {
       try { syntaxContract(artifact, a.syntaxDiagnostics, side); checks.push(true); } catch { checks.push(false); }
     }
     if (!checks.length) throw Error(`assertion ${a.id} has no predicate`);
     return { id: a.id, passed: checks.every(Boolean) };
+  });
+}
+export function imageAttachmentsMatch(actual, expected) {
+  if (!actual || typeof actual !== 'object' || !Number.isInteger(expected.count) || expected.count < 0) return false;
+  const attachments = [];
+  const walk = (value) => {
+    if (!value || typeof value !== 'object') return;
+    if (value.type === 'image_url') attachments.push(value.image_url?.url);
+    for (const child of Object.values(value)) walk(child);
+  };
+  walk(actual);
+  if (attachments.length !== expected.count) return false;
+  return attachments.every((url) => {
+    const match = typeof url === 'string' && /^data:([^;,]+);base64,([A-Za-z0-9+/]*={0,2})$/.exec(url);
+    if (!match || match[1] !== expected.mime || !Number.isInteger(expected.maxBytes) || expected.maxBytes <= 0) return false;
+    const bytes = Buffer.from(match[2], 'base64');
+    return bytes.length > 0 && bytes.length <= expected.maxBytes && bytes.toString('base64') === match[2]
+      && (expected.bytes === undefined || bytes.length === expected.bytes)
+      && (expected.sha256 === undefined || sha256(bytes) === expected.sha256);
   });
 }
 export function validateArtifact(artifact, scenario, expected) {

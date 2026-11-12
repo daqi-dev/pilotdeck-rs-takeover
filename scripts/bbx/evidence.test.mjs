@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { checkWorker, validateArtifact, assertionResults, loadRun, fileHash, inputIdentity } from './evidence.mjs';
+import { checkWorker, validateArtifact, assertionResults, loadRun, fileHash, inputIdentity, imageAttachmentsMatch, sha256 } from './evidence.mjs';
 const expected = [{ name: 'a' }, { name: 'b' }];
 const row = (name) => JSON.stringify({ name, status: 'SAME' }) + '\n';
 for (const [name, result] of [
@@ -97,5 +97,29 @@ test('component replacement or absence changes the recorded run identity', () =>
   } finally {
     for (const key of keys) if (previous[key] === undefined) delete process.env[key]; else process.env[key] = previous[key];
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+test('image assertions verify exact MIME, decoded payload bytes, hash and budget', () => {
+  const bytes = Buffer.from([0, 1, 255]);
+  const content = (mime, payload = bytes.toString('base64')) => [{ type: 'image_url', image_url: { url: `data:${mime};base64,${payload}` } }];
+  const expected = { count: 1, mime: 'image/jpeg', maxBytes: 3, bytes: 3, sha256: sha256(bytes) };
+  assert.equal(imageAttachmentsMatch(content('image/jpeg'), expected), true);
+  assert.equal(imageAttachmentsMatch(content('image/png'), expected), false);
+  assert.equal(imageAttachmentsMatch(content('image/jpeg', Buffer.from([0, 1, 255, 1]).toString('base64')), expected), false);
+  assert.equal(imageAttachmentsMatch(content('image/jpeg', Buffer.from([0, 1, 254]).toString('base64')), expected), false);
+  assert.equal(imageAttachmentsMatch(content('image/jpeg', '!bad'), expected), false);
+  assert.equal(imageAttachmentsMatch([], expected), false);
+  assert.equal(imageAttachmentsMatch(undefined, { count: 0 }), false);
+  assert.equal(imageAttachmentsMatch([], { count: 0 }), true);
+  assert.equal(imageAttachmentsMatch(content('image/jpeg'), { count: 0 }), false);
+});
+test('image capability cannot pass with missing execution or mutated MIME/oversize payload', () => {
+  const assertion = { id: 'real-image', path: '/images', imageAttachments: { count: 1, mime: 'image/jpeg', maxBytes: 3 } };
+  const spec = { ...scenario, assertions: [assertion] };
+  const image = (mime, bytes) => [{ type: 'image_url', image_url: { url: `data:${mime};base64,${Buffer.alloc(bytes).toString('base64')}` } }];
+  const make = () => { const a = { ...artifact(), images: image('image/jpeg', 3) }; a.evidence.assertions = assertionResults(spec.assertions, a, 'rust'); return a; };
+  assert.deepEqual(validateArtifact(make(), spec, identity), []);
+  for (const mutate of [(a) => { a.evidence.assertions = []; }, (a) => { a.images = image('image/png', 3); }, (a) => { a.images = image('image/jpeg', 4); }]) {
+    const a = make(); mutate(a); assert.ok(validateArtifact(a, spec, identity).length);
   }
 });

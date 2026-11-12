@@ -39,3 +39,16 @@ test('SQLite seed creates real rows, substitutions, and preserves ordinary JSON'
     assert.throws(() => writeSeedFile(path.join(dir, 'bad.db'), { $sqlite: [42] }, (s) => s, (v) => v), /SQL strings/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+test('binary seed writes exact bytes and rejects malformed/noncanonical base64', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bbx-binary-'));
+  try {
+    const file = path.join(dir, 'fixture'), bytes = Buffer.from([0, 255, 128, 13, 10]);
+    writeSeedFile(file, { $binaryBase64: bytes.toString('base64') }, (s) => s, (v) => v);
+    assert.deepEqual(fs.readFileSync(file), bytes);
+    for (const value of ['!', 'AQ', 'AR==', 'AA==\n', 42]) assert.throws(() => writeSeedFile(file, { $binaryBase64: value }, (s) => s, (v) => v), /canonical base64/);
+    assert.deepEqual(fs.readFileSync(file), bytes);
+    const ordinary = { $binaryBase64: 'ordinary JSON', other: 1 };
+    writeSeedFile(file, ordinary, (s) => s, (v) => v);
+    assert.deepEqual(JSON.parse(fs.readFileSync(file)), ordinary);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

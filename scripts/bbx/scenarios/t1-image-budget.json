@@ -1,0 +1,104 @@
+{
+  "name": "t1-image-budget",
+  "about": "正式WS read_file图像入口；正向验证provider图片MIME/原始payload哈希/预算或坏输入明确诊断，保持文件字节不变。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/vision\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        vision:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n          multimodal:\n            input: [text, image]\n            maxImageBytes: 350\ntelemetry:\n  enabled: false\n",
+  "env": {
+    "PILOTDECK_IMAGE_TOOL": "{IMAGE_TOOL}"
+  },
+  "files": {
+    "proj/input.png": {
+      "$binaryBase64": "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAA00lEQVR4nAHIADf/AJYnU7Aq4FfjFidgaDDu+U7GbDxwYiVTbQDNyTscx8rE4jZ0jkP3YiBZXhvliaD8ltAAVpYANgCQk1ovBJgtPQYQQnt79hiqMQRTAB0g6pHR7Vs9nRzWUyufYoV04g3xi2vs9wAUMfsExv+zP0PKuKYxYzhN8QLHBkj9jxAAo+YVonQKOGpu8cGz++CYWckChF17MJk3AFLyMLfPocFlO9a7mbI5wQJBYYj5IK4QJgB5M10EEgbrJBiA8/vuAcqi06WWdZxiZ0bjY1qlIzUz4gAAAABJRU5ErkJggg=="
+    },
+    "home/.pilotdeck/projects/t1-fixture/.cwd": "{PROJECT}\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Image test\"}"
+      }
+    },
+    {
+      "name": "verified-tool",
+      "when": [
+        "t1-image-budget",
+        "\"tool_call_id\":\"call_t1_image\"",
+        "image/jpeg"
+      ],
+      "reply": {
+        "text": "Image verified."
+      }
+    },
+    {
+      "name": "request-tool",
+      "when": [
+        "t1-image-budget"
+      ],
+      "unless": [
+        "\"tool_call_id\":\"call_t1_image\""
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_t1_image",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "input.png"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-t1-image",
+        "projectKey": "{PROJECT}",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-t1-image",
+        "projectKey": "{PROJECT}",
+        "channelKey": "test",
+        "message": "t1-image-budget"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-t1-image",
+        "projectKey": "{PROJECT}"
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "id": "verified-tool-result",
+      "path": "/provider/verified-tool/0",
+      "exists": true
+    },
+    {
+      "id": "exact-image-payload-and-budget",
+      "path": "/provider/verified-tool/0/body/messages",
+      "imageAttachments": {
+        "count": 1,
+        "mime": "image/jpeg",
+        "maxBytes": 350,
+        "bytes": 331,
+        "sha256": "0977213884b0c7785e7b3e4fd76e38228d0f0378d1dbd0cb6273061f5e95a13d"
+      }
+    },
+    {
+      "id": "input-bytes-unchanged",
+      "path": "/tree/~1proj~1input.png/sha256",
+      "equals": "994ab16230354317820ec5e7f51e9b1f8fe7f03d7ca55f6536d587c0fd6aeb0b"
+    }
+  ]
+}

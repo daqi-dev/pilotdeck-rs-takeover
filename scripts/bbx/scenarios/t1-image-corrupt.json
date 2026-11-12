@@ -1,0 +1,100 @@
+{
+  "name": "t1-image-corrupt",
+  "about": "正式WS read_file图像入口；正向验证provider图片MIME/原始payload哈希/预算或坏输入明确诊断，保持文件字节不变。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/vision\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        vision:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n          multimodal:\n            input: [text, image]\n            maxImageBytes: 20971520\ntelemetry:\n  enabled: false\n",
+  "env": {
+    "PILOTDECK_IMAGE_TOOL": "{IMAGE_TOOL}"
+  },
+  "files": {
+    "proj/input.png": {
+      "$binaryBase64": "bm90IGFuIGltYWdl"
+    },
+    "home/.pilotdeck/projects/t1-fixture/.cwd": "{PROJECT}\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Image test\"}"
+      }
+    },
+    {
+      "name": "verified-tool",
+      "when": [
+        "t1-image-corrupt",
+        "\"tool_call_id\":\"call_t1_image\"",
+        "Image file appears truncated or corrupted (12 bytes). Cannot decode."
+      ],
+      "reply": {
+        "text": "Image verified."
+      }
+    },
+    {
+      "name": "request-tool",
+      "when": [
+        "t1-image-corrupt"
+      ],
+      "unless": [
+        "\"tool_call_id\":\"call_t1_image\""
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_t1_image",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "input.png"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-t1-image",
+        "projectKey": "{PROJECT}",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-t1-image",
+        "projectKey": "{PROJECT}",
+        "channelKey": "test",
+        "message": "t1-image-corrupt"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-t1-image",
+        "projectKey": "{PROJECT}"
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "id": "verified-tool-result",
+      "path": "/provider/verified-tool/0",
+      "exists": true
+    },
+    {
+      "id": "exact-image-payload-and-budget",
+      "path": "/provider/verified-tool/0/body/messages",
+      "imageAttachments": {
+        "count": 0
+      }
+    },
+    {
+      "id": "input-bytes-unchanged",
+      "path": "/tree/~1proj~1input.png/text",
+      "equals": "not an image"
+    }
+  ]
+}

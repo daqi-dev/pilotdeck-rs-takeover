@@ -12,6 +12,13 @@ export function matchesProviderRule(rule, { method, url, body }) {
 
 export function writeSeedFile(target, content, subst, substDeep) {
   if (content && typeof content === 'object' && !Array.isArray(content)
+    && Object.keys(content).length === 1 && Object.hasOwn(content, '$binaryBase64')) {
+    const value = content.$binaryBase64;
+    if (typeof value !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) throw Error('$binaryBase64 seed must be canonical base64');
+    const bytes = Buffer.from(value, 'base64');
+    if (bytes.toString('base64') !== value) throw Error('$binaryBase64 seed must be canonical base64');
+    fs.writeFileSync(target, bytes);
+  } else if (content && typeof content === 'object' && !Array.isArray(content)
     && Object.keys(content).length === 1 && Object.hasOwn(content, '$sqlite')) {
     if (!Array.isArray(content.$sqlite) || content.$sqlite.some((sql) => typeof sql !== 'string')) throw Error('$sqlite seed must contain an array of SQL strings');
     const db = new DatabaseSync(target);
