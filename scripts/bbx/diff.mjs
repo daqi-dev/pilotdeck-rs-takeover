@@ -204,7 +204,7 @@ for (const entry of scenarioAccepted) if (entry.policy) {
   if (entry.policy !== 'syntaxDiagnostics' || entry.res.length) throw Error('unsupported value-checked accepted policy');
   const baseline = process.env.BBX_BASELINE || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../resources/PilotDeck');
   const require = createRequire(path.join(baseline, 'package.json'));
-  const tokenizer = require('js-tiktoken').getEncoding('o200k_base');
+  const tokenizer = new (require('js-tiktoken/lite').Tiktoken)(require('js-tiktoken/ranks/o200k_base'));
   entry.checked = syntaxAcceptedPaths(a, b, entry.config, (text) => tokenizer.encode(text).length, selfCompare ? ['ts', 'ts'] : ['ts', 'rust'], raw);
 }
 const stable = all.filter((d) => !scenarioVolatile.some((re) => re.test(d.at)));

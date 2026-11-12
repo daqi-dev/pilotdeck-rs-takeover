@@ -131,3 +131,5 @@ node scripts/bbx/selftest.mjs
 原生 PDF 场景以 `BBX_PDF_TOOL` 指定已从固定源码构建的组件，场景的 `env.PILOTDECK_PDF_TOOL` 可引用 `{PDF_TOOL}`。运行身份记录该路径及组件 SHA-256；缺失也明确记为 null，运行期间替换组件使证据失效。未指定时占位符解析为明确不存在的测试路径，不借用宿主其他安装。HTTP `Date` 的时间波动由各场景显式声明 `volatile`，相应正向断言仍验证响应头存在且格式正确，不全局忽略任意 Date 字段。
 
 T1 八个固定写后诊断场景另有 `syntaxDiagnostics` 正向谓词，验证真实工具结果、error/精确夹具位置/非空诊断、好文件无诊断及坏好文件字节。对应 `accepted.policy: "syntaxDiagnostics"` 必须绑定完全相同 config 的正向断言，且不能携带路径正则。`syntax-policy.mjs` 逐值核验后只接受已验证诊断串及其重算的 UTF-8 长度、JSON 请求长度、o200k token 和 calibration 派生值；具体边界见 `specs/gateway-parity/diffs/T1-SYNTAX-NATIVE-001-R1.md`。比较报告仍逐项打印 raw a/b 与接受原因，未接受的字段照常比较。该策略不改写旧运行证据，不是通用语法诊断忽略开关。
+
+依赖身份另记录实际加载的 Sharp JS 文件/addon/libvips 共享库、MuPDF 入口/loader/WASM、诊断策略实际使用的 js-tiktoken lite 入口和 o200k 编码表，并记录包 manifest 与软链接真实路径。Sharp 探测使用隔离 HOME 的新子进程，避免 require 缓存藏住替换。`BBX_IMAGE_TOOL` / `{IMAGE_TOOL}` 指定原生图像组件；身份包含组件、相邻发行 libvips 库，以及 Linux 动态链接器实际解析的 libvips 路径和哈希。缺失文件记录 null，不以固定 lockfile 代替已安装依赖的实际哈希；构建或替换这些依赖期间不得把旧 run 当作有效覆盖证据。

@@ -40,6 +40,7 @@ exec docker run --rm --name "$container_name" --network none --user "$(id -u):$(
   --env "BBX_SRC=$task_root/checkout/src" \
   --env BBX_TMP_ROOT=/tmp \
   --env "BBX_PDF_TOOL=$task_root/tools/mupdf/bin/pilotdeck-pdf" \
+  --env "BBX_IMAGE_TOOL=$task_root/tools/vips/bin/pilotdeck-image" \
   --workdir "$harness_root" \
   "${PDRS_TEST_IMAGE:-debian:bookworm-slim}" \
   node scripts/bbx/check.mjs --out "$output" "$@"

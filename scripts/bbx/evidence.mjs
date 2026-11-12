@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { syntaxContract } from './syntax-policy.mjs';
+import { nativeDependencyIdentity } from './native-identity.mjs';
 
 export const here = path.dirname(fileURLToPath(import.meta.url));
 export const repo = path.resolve(here, '../..');
@@ -46,10 +47,11 @@ export function inputIdentity() {
     })),
     components: { pdf: { path: process.env.BBX_PDF_TOOL ?? null,
       sha256: process.env.BBX_PDF_TOOL && fs.existsSync(process.env.BBX_PDF_TOOL) ? fileHash(process.env.BBX_PDF_TOOL) : null } },
+    dependencies: nativeDependencyIdentity(baseline, process.env.BBX_IMAGE_TOOL),
     baselineDist: treeHash(path.join(baseline, 'dist')),
     baselineLock: fs.existsSync(path.join(baseline, 'pnpm-lock.yaml')) ? fileHash(path.join(baseline, 'pnpm-lock.yaml')) : null,
     baselineEntry: fs.existsSync(path.join(baseline, 'dist/src/cli/pilotdeck.js')) ? fileHash(path.join(baseline, 'dist/src/cli/pilotdeck.js')) : null,
-    harness: Object.fromEntries(['check.mjs', 'run.mjs', 'diff.mjs', 'evidence.mjs', 'mock-support.mjs', 'syntax-policy.mjs'].map((name) => [name, fileHash(path.join(here, name))])),
+    harness: Object.fromEntries(['check.mjs', 'run.mjs', 'diff.mjs', 'evidence.mjs', 'mock-support.mjs', 'syntax-policy.mjs', 'native-identity.mjs'].map((name) => [name, fileHash(path.join(here, name))])),
     tools: { node: process.version, executable: fileHash(process.execPath), rust: command('rustc', ['--version'], repo), pnpm: command('pnpm', ['--version'], baseline) },
     platform: { os: process.platform, arch: process.arch, release: os.release() },
   };

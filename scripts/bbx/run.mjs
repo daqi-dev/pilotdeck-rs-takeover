@@ -58,6 +58,7 @@ const subst = (text) => text
   .replaceAll('{ROOT}', ROOT).replaceAll('{HOME}', home).replaceAll('{PILOT_HOME}', pilotHome)
   .replaceAll('{PROJECT}', project).replaceAll('{MOCK}', `http://127.0.0.1:${MOCK_PORT}`)
   .replaceAll('{PDF_TOOL}', process.env.BBX_PDF_TOOL || '/missing/bbx-pilotdeck-pdf')
+  .replaceAll('{IMAGE_TOOL}', process.env.BBX_IMAGE_TOOL || '/missing/bbx-pilotdeck-image')
   .replaceAll('{GATEWAY}', `http://127.0.0.1:${GATEWAY_PORT}`).replaceAll('{TOKEN}', TOKEN);
 // 引用前面跑出来的值：步骤或 provider 规则上写 "save": {"名字": "正则"}，正则在该步骤结果（或该次模型请求）
 // 的 JSON 文本上匹配，第一个捕获组存成这个名字；之后的步骤和 provider 应答里用 {saved.名字} 引用。
