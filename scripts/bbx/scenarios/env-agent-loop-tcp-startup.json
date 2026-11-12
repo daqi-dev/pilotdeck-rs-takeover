@@ -1,0 +1,100 @@
+{
+ "name": "env-agent-loop-tcp-startup",
+ "about": "agent 循环 tcp 部署的其余两个环境变量在启动期的解析（cli/AgentLoopDeploymentProfile.ts:45-57,128-160，createLocalGateway.ts:623 启动时解析）：PILOTDECK_AGENT_LOOP_TCP_HOST 缺省 127.0.0.1、空白串报 must not be empty；PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS 空串当作未设置、非整数 / 0 / 负数报 must be a positive integer、合法值启动正常（连接只在轮次里发生，这里不跑轮次）。比 serve 的 stdout / stderr / 退出码。stdio 部署的 PILOTDECK_AGENT_LOOP_SIDECAR_PATH 与 sidecar 进程里读的 PILOTDECK_AGENT_LOOP_FACTORY 属于 sidecar 实现，不在这里。",
+ "server": false,
+ "steps": [
+  {
+   "serve": [
+    "server",
+    "--port",
+    "38413"
+   ],
+   "env": {
+    "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+    "PILOTDECK_AGENT_LOOP_TCP_PORT": "9",
+    "PILOTDECK_AGENT_LOOP_TCP_HOST": "   "
+   },
+   "timeout": 30000
+  },
+  {
+   "serve": [
+    "server",
+    "--port",
+    "38413"
+   ],
+   "env": {
+    "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+    "PILOTDECK_AGENT_LOOP_TCP_PORT": "9",
+    "PILOTDECK_AGENT_LOOP_TCP_HOST": "127.0.0.1",
+    "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS": "soon"
+   },
+   "timeout": 30000
+  },
+  {
+   "serve": [
+    "server",
+    "--port",
+    "38413"
+   ],
+   "env": {
+    "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+    "PILOTDECK_AGENT_LOOP_TCP_PORT": "9",
+    "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS": "0"
+   },
+   "timeout": 30000
+  },
+  {
+   "serve": [
+    "server",
+    "--port",
+    "38413"
+   ],
+   "env": {
+    "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+    "PILOTDECK_AGENT_LOOP_TCP_PORT": "9",
+    "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS": "1.5"
+   },
+   "timeout": 30000
+  },
+  {
+   "serve": [
+    "server",
+    "--port",
+    "38413"
+   ],
+   "env": {
+    "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+    "PILOTDECK_AGENT_LOOP_TCP_PORT": "9",
+    "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS": "-5"
+   },
+   "timeout": 30000
+  },
+  {
+   "serve": [
+    "server",
+    "--port",
+    "38413"
+   ],
+   "env": {
+    "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+    "PILOTDECK_AGENT_LOOP_TCP_PORT": "9",
+    "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS": "  "
+   },
+   "timeout": 30000
+  },
+  {
+   "serve": [
+    "server",
+    "--port",
+    "38413"
+   ],
+   "env": {
+    "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+    "PILOTDECK_AGENT_LOOP_TCP_PORT": "9",
+    "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS": "250",
+    "PILOTDECK_AGENT_LOOP_TCP_HOST": "localhost"
+   },
+   "timeout": 30000
+  }
+ ]
+}
