@@ -239,8 +239,32 @@ pub(super) struct ToolHooks {
     /// The events the session has hooks for. Any other event's dispatch has
     /// no matcher to run, so its result is empty without a round trip.
     events: Mutex<Vec<JsString>>,
+    /// The session-scoped runtime of the gateway-side observers (Elicitation,
+    /// ElicitationResult): their hooks outlive the turn that asked, like the
+    /// baseline's session `HookRuntime`, which a turn's end neither cancels
+    /// nor waits for.
+    session: Mutex<Option<crate::runtime::hooks::LifecycleRuntime>>,
 }
 impl ToolHooks {
+    /// The session's own runtime over `settings`, with the session's
+    /// observers (execution projection, async registration, shell).
+    pub(super) fn configure_session(
+        &self,
+        settings: &HooksSettings,
+        observers: &crate::runtime::hooks::runtime::HookObservers,
+    ) {
+        let runtime = crate::runtime::hooks::HookRuntime::with_options(
+            settings.clone(),
+            crate::runtime::hooks::HookRuntimeOptions {
+                shell: observers.shell.clone(),
+                on_async_registered: observers.async_registered.clone(),
+                observer: observers.execution.clone(),
+                ..Default::default()
+            },
+        );
+        *self.session.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some(crate::runtime::hooks::LifecycleRuntime::new(runtime));
+    }
     pub(super) fn configure(&self, settings: &HooksSettings) {
         *self.events.lock().unwrap_or_else(|e| e.into_inner()) = settings
             .iter()
@@ -250,6 +274,53 @@ impl ToolHooks {
     }
     pub(super) fn bind(&self, port: Option<Arc<dyn LifecyclePort>>) {
         *self.port.lock().unwrap_or_else(|e| e.into_inner()) = port;
+    }
+    /// `void this.lifecycle.dispatch({ event, baseInput: { sessionId:
+    /// sessionKey, transcriptPath: "", cwd: projectRoot }, payload,
+    /// matchQuery: event }).catch(() => {})` — the session-scoped observers
+    /// of SessionInteractionBundle.ts:239-246 and 301-313 (Elicitation,
+    /// ElicitationResult): no permission mode, no turn environment, nobody
+    /// waits for the hooks or reads their result.
+    pub(super) fn dispatch_detached(
+        &self,
+        event: &'static str,
+        session: &JsString,
+        cwd: &JsString,
+        payload: JsObject,
+    ) {
+        let configured = self
+            .events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .any(|configured| configured.equals_str(event));
+        let lifecycle = self
+            .session
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let (Some(lifecycle), true) = (lifecycle, configured) else {
+            return;
+        };
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let mut base = JsObject::new();
+        base.insert("sessionId".into(), JsValue::String(session.clone()));
+        base.insert("transcriptPath".into(), "".into());
+        base.insert("cwd".into(), JsValue::String(cwd.clone()));
+        let input = LifecycleDispatchInput {
+            event: event.into(),
+            base_input: base,
+            payload: Some(payload),
+            match_query: Some(event.into()),
+            cwd: cwd.clone(),
+            env: None,
+            signal: None,
+        };
+        runtime.spawn(async move {
+            let _ = lifecycle.dispatch(input).await;
+        });
     }
 }
 /// `CompactionEngine`'s `lifecycle` (SessionContextRuntimeBundle.ts:104-119):
