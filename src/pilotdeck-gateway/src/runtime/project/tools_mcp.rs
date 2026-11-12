@@ -45,6 +45,24 @@ pub struct McpFamilySource {
     pub builtin_paths: BuiltinMcpPaths,
 }
 
+/// The project runtime's `onDiagnostic` (ProjectRuntimeRegistry.ts:1658-1664):
+/// `console.warn(\`[pilotdeck] ${message} for project ${projectRoot}:\`,
+/// error?.message ?? "")`, two arguments joined by one space on stderr.
+/// A failed stderr write is ignored rather than panicking.
+fn project_diagnostic_sink(
+    project_root: &std::path::Path,
+) -> crate::runtime::mcp::registry::McpDiagnosticSink {
+    let root = project_root.to_string_lossy().into_owned();
+    Arc::new(move |message: String, error: Option<RuntimeError>| {
+        use std::io::Write;
+        let detail = error.map(|error| error.message).unwrap_or_default();
+        let _ = writeln!(
+            std::io::stderr(),
+            "[pilotdeck] {message} for project {root}: {detail}"
+        );
+    })
+}
+
 impl ResourceFamilySource for McpFamilySource {
     fn family(&self) -> Family {
         Family::McpProvider
@@ -78,7 +96,7 @@ impl ResourceFamilySource for McpFamilySource {
                 .to_owned(),
             create_runtime: None,
             proxy: proxy_settings,
-            on_diagnostic: None,
+            on_diagnostic: Some(project_diagnostic_sink(&project_root)),
             environment: Arc::new(SystemEnvironment),
             builtin_paths: self.builtin_paths.clone(),
         };

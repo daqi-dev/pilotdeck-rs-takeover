@@ -131,6 +131,51 @@ struct SnapshotProgress {
     committed: bool,
     succeeded: bool,
     failure: Option<(String, String)>,
+    /// `completedEventAt`: when the pump saw `turn_completed`.
+    completed_at: Option<std::time::Instant>,
+}
+
+/// The `[gateway:turn-timing]` admission stages (InProcessGateway.ts:1319-1326):
+/// each mark records the milliseconds since the previous one.
+struct TurnTiming {
+    start: std::time::Instant,
+    previous: std::time::Instant,
+    stages: Vec<(&'static str, f64)>,
+}
+impl TurnTiming {
+    fn new() -> Self {
+        let now = std::time::Instant::now();
+        Self {
+            start: now,
+            previous: now,
+            stages: Vec::new(),
+        }
+    }
+    fn mark(&mut self, stage: &'static str) {
+        let now = std::time::Instant::now();
+        self.stages.push((stage, js_round_ms(now - self.previous)));
+        self.previous = now;
+    }
+}
+
+/// `Math.round(performance.now() - start)` in milliseconds.
+fn js_round_ms(elapsed: Duration) -> f64 {
+    (elapsed.as_secs_f64() * 1000.0 + 0.5).floor()
+}
+
+/// `console.info("[gateway:turn-timing]", JSON.stringify(fields))`: stdout,
+/// the two arguments joined by one space. A failed write is ignored.
+fn print_turn_timing(fields: Vec<(&str, JsValue)>) {
+    use std::io::Write;
+    let mut object = pilotdeck_protocol::JsObject::new();
+    for (key, value) in fields {
+        if !value.is_undefined() {
+            object.insert(key.into(), value);
+        }
+    }
+    if let Ok(Some(text)) = pilotdeck_protocol::stringify_json(&JsValue::Object(object)) {
+        let _ = writeln!(std::io::stdout(), "[gateway:turn-timing] {text}");
+    }
 }
 
 /// First-writer-wins claim on the turn's terminal record.
@@ -733,6 +778,12 @@ impl TurnSubmitter {
                             publisher.gateway_event(event);
                         })
                         .await;
+                        // The timed-out session is never reused: the baseline
+                        // closes it as soon as the timeout settled, so the
+                        // aborted loop's own terminal records (step_completed,
+                        // turn_result, turn_failed) land on a closed writer and
+                        // are dropped (InProcessGateway.ts:1824-1836).
+                        handle.close_transcript();
                     }
                     // The settlement lets a worker that observed the timeout
                     // drain and finish (which closes delivery itself).
@@ -772,6 +823,19 @@ impl TurnSubmitter {
         // TS releases admission before post_agent and the timeout close; fence
         // completion remains after both. Keep workspace ownership until then.
         cleanup.end_admission();
+        // InProcessGateway.ts:1818-1823: a slow release after the terminal.
+        let completed_at = progress.lock().unwrap().completed_at;
+        if let Some(completed_at) = completed_at {
+            let release = js_round_ms(completed_at.elapsed());
+            if release >= 200.0 {
+                print_turn_timing(vec![
+                    ("sessionKey", field(&input, "sessionKey").clone()),
+                    ("runId", JsValue::String(run.run_id.clone())),
+                    ("phase", "released".into()),
+                    ("releaseMs", JsValue::Number(release)),
+                ]);
+            }
+        }
         let timed_out = timed_out.load(Ordering::SeqCst);
         let stable = if timed_out && progress.lock().unwrap().committed {
             tokio::time::timeout(
@@ -979,11 +1043,13 @@ impl TurnSubmitter {
             workspace_id,
             recorder,
         } = context;
+        let mut timing = TurnTiming::new();
         let _ = self.host.refresh().await; // transient config refresh keeps previous snapshot
         if completion.is_cancelled() {
             publisher.gateway_event(aborted(run));
             return Ok(());
         }
+        timing.mark("configMs");
         // This pump owns exactly one active (session, run, completion) guard.
         // Current-completion checks below fence stale pumps; lexical ownership
         // drops the guard on every pump exit, including failure and timeout.
@@ -1057,6 +1123,7 @@ impl TurnSubmitter {
             publisher.gateway_event(aborted(run));
             return Ok(());
         }
+        timing.mark("selectionMs");
         let source = field(&prepared.model_selection, "source").clone();
         let selection = field(&prepared.model_selection, "selection");
         let mut last_model = None;
@@ -1120,8 +1187,27 @@ impl TurnSubmitter {
                     }
                     progress.lock().unwrap().committed = true;
                 }
+                // InProcessGateway.ts:1627-1632: a slow admission is logged.
+                timing.mark("acceptanceMs");
+                let total = js_round_ms(timing.start.elapsed());
+                if total >= 200.0 {
+                    let mut fields = vec![
+                        ("sessionKey", field(input, "sessionKey").clone()),
+                        ("runId", JsValue::String(run.run_id.clone())),
+                        ("phase", "accepted".into()),
+                        ("totalMs", JsValue::Number(total)),
+                    ];
+                    fields.extend(
+                        timing
+                            .stages
+                            .iter()
+                            .map(|(stage, ms)| (*stage, JsValue::Number(*ms))),
+                    );
+                    print_turn_timing(fields);
+                }
             }
             if is(&event, "type", "turn_completed") {
+                progress.lock().unwrap().completed_at = Some(std::time::Instant::now());
                 let result = field(&event, "result");
                 let mut progress = progress.lock().unwrap();
                 progress.succeeded =

@@ -715,6 +715,25 @@ impl super::submit_host::SubmitAdmission for GatewaySubmitAdmission {
                 )]);
             }
             if let Some(recovery) = self.options.dialog_recovery.as_ref() {
+                // The baseline's cleanup derives the session's storage path
+                // with `sessionId.replace(...)` (ProjectSessionStorage.ts:244),
+                // so a request without a string sessionKey fails here with
+                // that TypeError instead of reaching session creation.
+                let raw_key = field(input, "sessionKey");
+                let type_error = match raw_key {
+                    JsValue::String(_) => None,
+                    JsValue::Undefined => {
+                        Some("Cannot read properties of undefined (reading 'replace')")
+                    }
+                    JsValue::Null => Some("Cannot read properties of null (reading 'replace')"),
+                    _ => Some("sessionId.replace is not a function"),
+                };
+                if let Some(message) = type_error {
+                    return Ok(vec![with_hint(
+                        error_event(run, "gateway_dialog_recovery_cleanup_failed", message, true),
+                        "Retry the turn after the Gateway storage is available.",
+                    )]);
+                }
                 if let Err(error) = recovery
                     .clear_recovered(&run.session_key, run.project_key.as_ref())
                     .await

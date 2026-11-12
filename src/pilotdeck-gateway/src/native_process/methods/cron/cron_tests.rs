@@ -197,14 +197,16 @@ async fn unconfigured_cron_answers_the_require_cron_gate() {
     let unknown = route(&requests, "cron_unknown", &json("{}"))
         .await
         .expect_err("#1326 an unregistered cron-ish name is not ours");
+    // A name the baseline does not know either answers its `default:`
+    // branch (GatewayWsConnection.ts:574; bbx robust-frame-handshake).
     negative_assert_eq!(
         unknown.code,
-        "CAPABILITY_UNAVAILABLE",
+        "gateway_request_failed",
         "#1326 unknown names keep the fallback code"
     );
     negative_assert_eq!(
         wire_message(&unknown),
-        "Native gateway method cron_unknown is not configured.",
+        "Unknown gateway method cron_unknown.",
         "#1326 unknown names keep the fallback message"
     );
 

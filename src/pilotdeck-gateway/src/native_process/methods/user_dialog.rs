@@ -133,6 +133,28 @@ impl Requests {
                         (dialogs, outbox)
                     };
                     outbox.deliver();
+                    // Restart-recovered dialogs follow the live ones; a
+                    // journal entry this process still owns live is not
+                    // projected a second time (InProcessGateway.ts:2710-2733).
+                    let live_ids: Vec<JsString> = dialogs
+                        .iter()
+                        .filter_map(|d| d.get("requestId").and_then(JsValue::as_string).cloned())
+                        .collect();
+                    let project = self.dialog_project(&params)?;
+                    let recovered = super::super::dialog_recovery::list(
+                        &self.options.home,
+                        &project,
+                        &self.session_overrides,
+                        &session_key,
+                    )?;
+                    let mut dialogs = dialogs;
+                    dialogs.extend(recovered.into_iter().filter(|dialog| {
+                        !dialog
+                            .get("request")
+                            .and_then(|r| r.get("requestId"))
+                            .and_then(JsValue::as_string)
+                            .is_some_and(|id| live_ids.contains(id))
+                    }));
                     Ok(crate::metadata::object([(
                         "dialogs",
                         JsValue::Array(dialogs),
@@ -402,6 +424,39 @@ impl Requests {
                     outbox.deliver();
 
                     let answered = answer.to_value().get("behavior") == Some(&"answered".into());
+                    if snapshot.is_none() {
+                        // No live dialog: a dialog the previous process left
+                        // unanswered is recovered into the next turn's context
+                        // (InProcessGateway.ts:2663-2672).
+                        let project = self.dialog_project(&params)?;
+                        let recovered = super::super::dialog_recovery::recover(
+                            &self.options.home,
+                            &project,
+                            &self.session_overrides,
+                            &self.recorders,
+                            &session_key,
+                            &request_id,
+                            super::super::dialog_recovery::RecoveryAnswer {
+                                behavior_answered: answered,
+                                value: result_val
+                                    .get("value")
+                                    .cloned()
+                                    .unwrap_or(JsValue::Undefined),
+                                reason: match result_val.get("reason") {
+                                    Some(JsValue::String(s)) => Some(s.clone()),
+                                    _ => None,
+                                },
+                            },
+                        )
+                        .await?;
+                        if recovered {
+                            return Ok(crate::metadata::object([
+                                ("delivered", JsValue::Bool(true)),
+                                ("recovered", JsValue::Bool(true)),
+                                ("reason", "gateway_restarted".into()),
+                            ]));
+                        }
+                    }
                     if answered && snapshot.is_none() {
                         // TS validates on the peeked entry and delivers
                         // nothing when there is none (InProcessGateway.ts:2668-2674).

@@ -486,6 +486,7 @@ async fn start_assembly(
     // (the prepare closure composing each session's agent config).
     let session_overrides: Arc<super::SessionOverrides> = Arc::default();
     let prepare_overrides = session_overrides.clone();
+    let evict_session_overrides = session_overrides.clone();
     let prepare_user_dialog_bus = user_dialog_bus.clone();
     let prepare_project = project.clone();
     let prepare_options = options.clone();
@@ -499,18 +500,22 @@ async fn start_assembly(
     let prepare_mcp_config: Arc<std::sync::OnceLock<Arc<SdkMcpConfig>>> = Arc::default();
     // #1429: report at most once per assembly — a per-acquire stderr write would
     // be unbounded if the publication regressed for good.
+    // The baseline has no such report, and the server's stderr is output a
+    // user sees: production stays silent (tests inject their own observer).
     let acquire_miss_report: AcquireMissReport =
-        acquire_miss_report.unwrap_or_else(|| Arc::new(|message: &str| eprintln!("{message}")));
+        acquire_miss_report.unwrap_or_else(|| Arc::new(|_: &str| ()));
     let prepare_acquire_miss_report = acquire_miss_report.clone();
     let prepare_acquire_miss_reported: Arc<std::sync::OnceLock<()>> = Arc::default();
-    // #1433: the prepare closure's MCP composition diagnostics; production
-    // logs to stderr like the factory's session diagnostic.
-    let prepare_mcp_diagnostic: Option<crate::runtime::mcp::registry::McpDiagnosticSink> = Some(
-        Arc::new(|message: String, error: Option<RuntimeError>| match error {
-            Some(error) => eprintln!("native session MCP: {message}: {error}"),
-            None => eprintln!("native session MCP: {message}"),
-        }),
-    );
+    // #1433: the prepare closure's MCP composition diagnostics, written like
+    // the session bundle's `onDiagnostic` (ProjectRuntimeRegistry.ts:366-369):
+    // `console.warn(\`[pilotdeck] ${message}\`, error?.message ?? "")`, two
+    // arguments joined by one space on stderr.
+    let prepare_mcp_diagnostic: Option<crate::runtime::mcp::registry::McpDiagnosticSink> =
+        Some(Arc::new(|message: String, error: Option<RuntimeError>| {
+            use std::io::Write;
+            let detail = error.map(|error| error.message).unwrap_or_default();
+            let _ = writeln!(std::io::stderr(), "[pilotdeck] {message} {detail}");
+        }));
     // The `#[cfg(test)]` seam passes `false` to drive the published-miss branch;
     // production always publishes into the handle the prepare closure reads.
     let build_mcp_config = if publish_mcp_config {
@@ -1109,8 +1114,26 @@ async fn start_assembly(
                                     "Native persistence has the wrong type.".into(),
                                 )
                             })?;
-                        persistence
-                            .create_session(context.session_key.clone(), Some(open_path.clone()))
+                        let opened = persistence
+                            .create_session(context.session_key.clone(), Some(open_path.clone()));
+                        // A log that fails restore validation: the baseline
+                        // disposes that storage, and its dispose flushes an
+                        // empty projection checkpoint next to the transcript
+                        // (robust-restart-truncated-session).
+                        if let Err(
+                            crate::storage::recorder::RecorderError::Domain { .. }
+                            | crate::storage::recorder::RecorderError::Envelope { .. },
+                        ) = &opened
+                        {
+                            let mut checkpoint = open_path.clone().into_os_string();
+                            checkpoint.push(".projections.json");
+                            let _ =
+                                crate::runtime::session::factory::save_empty_projection_checkpoint(
+                                    std::path::Path::new(&checkpoint),
+                                    &context.session_key,
+                                );
+                        }
+                        opened
                     }),
                 }))
             })
@@ -1373,7 +1396,18 @@ async fn start_assembly(
                 !emit_disposed.load(std::sync::atomic::Ordering::SeqCst)
                     && emit_coordinator.emit(session, &event)
             }));
-            let owner = SessionOwner::new(SessionOwnerOptions::new(build_factory));
+            let mut owner_options = SessionOwnerOptions::new(build_factory);
+            // `onSessionEvict` (createLocalGateway.ts:846-848): every eviction
+            // except a dirty recreate drops the session's live permission
+            // mode, so the next turn starts from the stored selection or the
+            // server default.
+            let evict_overrides = evict_session_overrides.clone();
+            owner_options.on_evict = Some(Arc::new(move |key, reason| {
+                if reason != crate::runtime::session::EvictionReason::DirtyRecreate {
+                    evict_overrides.clear_live_mode(key);
+                }
+            }));
+            let owner = SessionOwner::new(owner_options);
             let _ = active_run.set({
                 let owner = owner.clone();
                 Arc::new(move |session: &JsString| owner.active_turn_run_id(session))

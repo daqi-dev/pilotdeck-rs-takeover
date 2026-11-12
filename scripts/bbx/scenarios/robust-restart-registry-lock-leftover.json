@@ -73,5 +73,17 @@
         "runId": "run-bbx-1"
       }
     }
+  ],
+  "accepted": [
+    {
+      "id": "registry-dead-owner-lock-blocks-startup",
+      "why": "基线自身 bug：上一个进程崩溃留下 runs/registry.json.lock 时，基线只把 mtime 超过 60 秒且 pid 已死的锁当作陈旧锁（RunRegistry.ts:121-137），60 秒内重启就等锁 30 秒后失败，并把这次初始化失败缓存下来（RunRegistry.ts:60-65），之后 run_get 报「Timed out acquiring run registry lock …」、submit_turn 返回 result_unknown、停机退出码 1。Rust 在锁里记录的 pid 已不存在时立即接管，照常启动和运行；pid 还活着（或还没写进锁文件）时仍按基线等待。",
+      "paths": [
+        "^\\$\\.steps\\[[0-3]\\]\\.frames",
+        "^\\$\\.tree",
+        "^\\$\\.provider",
+        "^\\$\\.shutdown\\.code$"
+      ]
+    }
   ]
 }

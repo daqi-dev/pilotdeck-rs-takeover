@@ -197,9 +197,9 @@ impl Requests {
 /// ProjectRuntimeRegistry.ts:830-838) and any failure there is reported as
 /// `INVALID_SDK_SESSION_CONFIG`; then `clearRecoveredUserDialogs` asks the
 /// dialog registry for the project (createLocalGateway.ts:1446-1449) and its
-/// rejection is reported as `gateway_dialog_recovery_cleanup_failed`. Only
-/// the project half of the dialog step is ported here: the recovered-dialog
-/// cleanup itself is not wired in this host yet. The model step checks the
+/// rejection is reported as `gateway_dialog_recovery_cleanup_failed`; the
+/// cleanup then deletes the session's restart-recovered dialog journal
+/// (`super::dialog_recovery::clear`). The model step checks the
 /// session's SDK `managedModels` (no organization policy exists here).
 pub(super) struct SubmitProjectAdmission {
     pub options: Options,
@@ -268,17 +268,22 @@ impl SubmitModelAssertion for SubmitProjectAdmission {
 impl SubmitDialogRecovery for SubmitProjectAdmission {
     fn clear_recovered<'a>(
         &'a self,
-        _session: &'a JsString,
+        session: &'a JsString,
         project: Option<&'a JsString>,
     ) -> SubmitFuture<'a, Result<(), SubmitError>> {
         Box::pin(async move {
-            self.options
-                .dialog_project(project)
-                .map(|_| ())
-                .map_err(|message| {
+            let root = self.options.dialog_project(project).map_err(|message| {
+                SubmitError::new(
+                    "PROJECT_NOT_FOUND",
+                    String::from_utf16_lossy(message.units()),
+                )
+            })?;
+            // `clearRecoveredUserDialogsForSdk` (ProjectRuntimeRegistry.ts:724-730).
+            super::dialog_recovery::clear(&self.options.home, &root, &self.overrides, session)
+                .map_err(|error| {
                     SubmitError::new(
-                        "PROJECT_NOT_FOUND",
-                        String::from_utf16_lossy(message.units()),
+                        "gateway_dialog_recovery_cleanup_failed",
+                        String::from_utf16_lossy(error.message.units()),
                     )
                 })
         })

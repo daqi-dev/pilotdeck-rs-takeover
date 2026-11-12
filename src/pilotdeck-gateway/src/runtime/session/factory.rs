@@ -809,9 +809,14 @@ impl FactoryStorage {
             // Initial restore happens before publication under the writer
             // lease. Active re-hydration preserves the live writer revision.
             if !restored.load(Ordering::SeqCst) {
-                recorder
-                    .restore(&read.entries)
-                    .map_err(|e| RuntimeError::new(e.to_string()))?;
+                if let Err(error) = recorder.restore(&read.entries) {
+                    // The baseline disposes the storage of a session whose log
+                    // fails validation, and that dispose flushes an empty
+                    // projection checkpoint (robust-restart-truncated-session).
+                    let cache = cache.clone();
+                    let _ = tokio::task::spawn_blocking(move || cache.save_unrestored()).await;
+                    return Err(RuntimeError::new(error.to_string()));
+                }
             } else if read.entries.iter().any(|entry| {
                 // #1500: `None` is deliberately not "ahead". A durable row
                 // without an ordinal cannot be the writer's own unadvanced
@@ -1319,6 +1324,9 @@ impl LiveSession for OwnedSession {
     }
     fn reload_snapshot(&self) -> Result<ReloadSnapshot, RuntimeError> {
         self.adapter.reload_snapshot()
+    }
+    fn close_transcript(&self) {
+        self.storage.recorder.writer().close();
     }
     fn draining_reload_snapshot(&self) -> Result<ReloadSnapshot, RuntimeError> {
         self.reload_source

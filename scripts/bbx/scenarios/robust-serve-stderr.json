@@ -1,0 +1,73 @@
+{
+  "name": "robust-serve-stderr",
+  "about": "pilotdeck server 自己的 stdout / stderr：新会话第一轮（会话记录还不存在）、夹杂坏行的会话续一轮，比较服务进程在这些时机打印的诊断（基线不打印，Rust 曾打印 native session: Diagnostic …）。记录校验失败的会话不放在这里：基线在那里打印一段 Node 调用栈。",
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "files": {
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-garbage.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s-garbage\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":1,\"createdAt\":\"2026-11-01T00:00:01.000Z\",\"entryId\":\"s-garbage-e-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"first question\"}]}],\"metadata\":{\"permissionMode\":\"default\",\"runMode\":\"agent\",\"basePermissionMode\":\"default\",\"allowPlanModeTools\":false},\"sessionId\":\"s-garbage\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":2,\"createdAt\":\"2026-11-01T00:00:02.000Z\",\"entryId\":\"s-garbage-e-2\",\"parentEntryId\":\"s-garbage-e-1\"}\n{\"type\":\"session_metadata\",\"metadata\":{\"firstPrompt\":\"first question\",\"lastPrompt\":\"first question\",\"title\":\"Fixture title\",\"updatedAt\":\"2026-11-01T00:00:03.000Z\"},\"sessionId\":\"s-garbage\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":3,\"createdAt\":\"2026-11-01T00:00:03.000Z\",\"entryId\":\"s-garbage-e-3\",\"parentEntryId\":\"s-garbage-e-2\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s-garbage\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":4,\"createdAt\":\"2026-11-01T00:00:04.000Z\",\"entryId\":\"s-garbage-e-4\",\"parentEntryId\":\"s-garbage-e-3\"}\n{\"type\":\"assistant_message\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"first answer\"}],\"metadata\":{\"model\":\"deterministic\"}},\"sessionId\":\"s-garbage\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":5,\"createdAt\":\"2026-11-01T00:00:05.000Z\",\"entryId\":\"s-garbage-e-5\",\"parentEntryId\":\"s-garbage-e-4\"}\n{this is not json\n\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s-garbage\",\"turnId\":\"11111111-1111-4111-8111-11111\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s-garbage\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":6,\"createdAt\":\"2026-11-01T00:00:06.000Z\",\"entryId\":\"s-garbage-e-6\",\"parentEntryId\":\"s-garbage-e-5\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"stopReason\":\"completed\",\"usage\":{\"inputTokens\":12,\"outputTokens\":4,\"totalTokens\":16},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-11-01T00:00:01.000Z\",\"finalMessage\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"first answer\"}],\"metadata\":{\"model\":\"deterministic\"}},\"sessionId\":\"s-garbage\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"completedAt\":\"2026-11-01T00:00:07.000Z\"},\"sessionId\":\"s-garbage\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":7,\"createdAt\":\"2026-11-01T00:00:07.000Z\",\"entryId\":\"s-garbage-e-7\",\"parentEntryId\":\"s-garbage-e-6\"}\n{\"type\":\"turn_started\",\"sessionId\":\"s-garbage\",\"turnId\":\"22222222-2222-4222-8222-222222222222\",\"sequence\":8,\"createdAt\":\"2026-11-01T00:00:08.000Z\",\"entryId\":\"s-garbage-e-8\",\"parentEntryId\":\"s-garbage-e-7\"}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second question\"}]}],\"metadata\":{\"permissionMode\":\"default\",\"runMode\":\"agent\",\"basePermissionMode\":\"default\",\"allowPlanModeTools\":false},\"sessionId\":\"s-garbage\",\"turnId\":\"22222222-2222-4222-8222-222222222222\",\"sequence\":9,\"createdAt\":\"2026-11-01T00:00:09.000Z\",\"entryId\":\"s-garbage-e-9\",\"parentEntryId\":\"s-garbage-e-8\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s-garbage\",\"turnId\":\"22222222-2222-4222-8222-222222222222\",\"sequence\":10,\"createdAt\":\"2026-11-01T00:00:10.000Z\",\"entryId\":\"s-garbage-e-10\",\"parentEntryId\":\"s-garbage-e-9\"}\n{\"type\":\"assistant_message\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"second answer that was cut off\"}],\"metadata\":{\"model\":\"deterministic\"}},\"sessionId\":\"s-garbage\",\"turnId\":\"22222222-2222-4222-8222-222222222222\",\"sequence\":11,\"createdAt\":\"2026-11-01T00:00:11.000Z\",\"entryId\":\"s-garbage-e-11\",\"parentEntryId\":\"s-garbage-e-10\"}\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Robust run\"}"
+      }
+    },
+    {
+      "name": "turn-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "turn-2",
+      "when": [
+        "turn-2:"
+      ],
+      "reply": {
+        "text": "Done 2."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "serve": [
+        "server"
+      ],
+      "then": [
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-new",
+            "channelKey": "test",
+            "message": "turn-1: hello",
+            "runId": "run-bbx-1"
+          },
+          "timeout": 15000
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-garbage",
+            "channelKey": "test",
+            "message": "turn-2: continue after garbage",
+            "runId": "run-bbx-2"
+          },
+          "timeout": 15000
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    }
+  ]
+}
