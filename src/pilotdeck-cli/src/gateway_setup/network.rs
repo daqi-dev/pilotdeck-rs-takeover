@@ -2,13 +2,32 @@
 //! out of feature tests without adding environment variables to the CLI.
 use super::{JsValue, log};
 use bytes::Bytes;
-use http_body_util::BodyExt;
-use hyper::{HeaderMap, Method};
+use http_body_util::{BodyExt, Full};
+use hyper::{HeaderMap, Method, Request};
 use pilotdeck_gateway::channel::weixin::{
     WeixinLoginCallbacks, WeixinLoginResult, default_login_base_url, login_with_qr,
 };
-use pilotdeck_gateway::runtime::model::http::{HyperModelTransport, fetch};
+use pilotdeck_gateway::runtime::model::http::{
+    HyperModelTransport, ModelHttpTransport, TransportFailure, TransportFuture, fetch,
+};
 use std::time::{Duration, Instant};
+
+// pilotdeck.ts:28 installs cli/proxy.ts:createLongTimeoutOptions before setup:
+// both undici budgets are 600_000 ms. A redirect starts a fresh header budget;
+// bodyTimeout is the idle interval between individual body frames.
+const TRANSPORT_TIMEOUT: Duration = Duration::from_secs(600);
+
+struct SetupTransport<T>(T);
+impl<T: ModelHttpTransport> ModelHttpTransport for SetupTransport<T> {
+    fn send(&self, request: Request<Full<Bytes>>) -> TransportFuture {
+        let exchange = self.0.send(request);
+        TransportFuture::io(async move {
+            tokio::time::timeout(TRANSPORT_TIMEOUT, exchange)
+                .await
+                .map_err(|_| TransportFailure::fetch_failed(None))?
+        })
+    }
+}
 
 pub(super) struct Response {
     pub status: u16,
@@ -103,7 +122,7 @@ async fn fetch_json(
     body: &str,
     require_ok: bool,
 ) -> Result<Response, String> {
-    let transport = HyperModelTransport::new();
+    let transport = SetupTransport(HyperModelTransport::new());
     let url = url::Url::parse(url).map_err(|_| "fetch failed".to_owned())?;
     let method = Method::from_bytes(method.as_bytes()).map_err(|_| "fetch failed".to_owned())?;
     let mut request_headers = HeaderMap::new();
@@ -114,18 +133,14 @@ async fn fetch_json(
             hyper::header::HeaderValue::from_str(value).map_err(|_| "fetch failed".to_owned())?,
         );
     }
-    let response = tokio::time::timeout(
-        Duration::from_secs(300),
-        fetch::fetch(
-            &transport,
-            url,
-            method,
-            request_headers,
-            Bytes::from(body.to_owned()),
-        ),
+    let response = fetch::fetch(
+        &transport,
+        url,
+        method,
+        request_headers,
+        Bytes::from(body.to_owned()),
     )
     .await
-    .map_err(|_| "fetch failed".to_owned())?
     .map_err(|error| error.message)?;
     let status = response.status().as_u16();
     if require_ok && !(200..300).contains(&status) {
@@ -133,7 +148,7 @@ async fn fetch_json(
     }
     let mut response_body = response.into_body();
     let mut bytes = Vec::new();
-    while let Some(frame) = tokio::time::timeout(Duration::from_secs(600), response_body.frame())
+    while let Some(frame) = tokio::time::timeout(TRANSPORT_TIMEOUT, response_body.frame())
         .await
         .map_err(|_| "terminated".to_owned())?
     {
@@ -157,4 +172,83 @@ pub(super) fn parse_response(response: &Response) -> Result<JsValue, String> {
         return Err(error);
     }
     pilotdeck_protocol::parse_json(&response.body).map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pilotdeck_gateway::runtime::model::http::ModelBody;
+    use std::sync::{Arc, Mutex};
+
+    struct DelayedTransport {
+        delays: Arc<Mutex<std::collections::VecDeque<(Duration, bool)>>>,
+    }
+    impl ModelHttpTransport for DelayedTransport {
+        fn send(&self, _request: Request<Full<Bytes>>) -> TransportFuture {
+            let (delay, redirect) = self.delays.lock().unwrap().pop_front().unwrap();
+            TransportFuture::io(async move {
+                tokio::time::sleep(delay).await;
+                let response = if redirect {
+                    hyper::Response::builder()
+                        .status(302)
+                        .header("location", "/next")
+                } else {
+                    hyper::Response::builder().status(200)
+                };
+                let body: ModelBody = Full::new(Bytes::from_static(b"{}"))
+                    .map_err(|never| match never {})
+                    .boxed();
+                Ok(response.body(body).unwrap())
+            })
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn each_redirect_has_its_own_six_hundred_second_header_budget() {
+        let inner = DelayedTransport {
+            delays: Arc::new(Mutex::new(
+                [
+                    (Duration::from_secs(400), true),
+                    (Duration::from_secs(400), false),
+                ]
+                .into(),
+            )),
+        };
+        let transport = SetupTransport(inner);
+        let before = tokio::time::Instant::now();
+        let response = fetch::fetch(
+            &transport,
+            "http://fixture.invalid/start".parse().unwrap(),
+            Method::GET,
+            HeaderMap::new(),
+            Bytes::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.status(), 200);
+        assert_eq!(before.elapsed(), Duration::from_secs(800));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_single_hop_exceeding_the_header_budget_fails() {
+        let inner = DelayedTransport {
+            delays: Arc::new(Mutex::new([(Duration::from_secs(601), false)].into())),
+        };
+        let transport = SetupTransport(inner);
+        let before = tokio::time::Instant::now();
+        let result = fetch::fetch(
+            &transport,
+            "http://fixture.invalid/start".parse().unwrap(),
+            Method::GET,
+            HeaderMap::new(),
+            Bytes::new(),
+        )
+        .await;
+        let error = match result {
+            Ok(_) => panic!("hanging response must time out"),
+            Err(error) => error,
+        };
+        assert_eq!(error.message, "fetch failed");
+        assert_eq!(before.elapsed(), TRANSPORT_TIMEOUT);
+    }
 }
