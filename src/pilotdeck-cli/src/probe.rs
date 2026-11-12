@@ -88,20 +88,24 @@ mod tests {
             "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85"
         );
         let cases = oracle["cases"].as_array().expect("C1 probe cases");
-        assert_eq!(cases.len(), 9);
+        assert_eq!(cases.len(), 13);
         for case in cases {
             let mode = case["mode"].as_str().expect("C1 probe case mode");
-            let (ok, requests) = run_probe_case(mode);
+            let (ok, requests, responses) = run_probe_case(mode);
             assert_eq!(Value::Bool(ok), case["ok"], "C1 probe {mode}");
             assert_eq!(
                 Value::from(requests),
                 case["requests"],
                 "C1 probe {mode} requests"
             );
+            assert_eq!(
+                responses, requests,
+                "C1 probe {mode} complete mock responses"
+            );
         }
     }
 
-    fn run_probe_case(mode: &str) -> (bool, usize) {
+    fn run_probe_case(mode: &str) -> (bool, usize, usize) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("C1 probe owned mock");
         listener
             .set_nonblocking(true)
@@ -110,6 +114,8 @@ mod tests {
         let mode = mode.to_owned();
         let requests = Arc::new(AtomicUsize::new(0));
         let observed = requests.clone();
+        let responses = Arc::new(AtomicUsize::new(0));
+        let sent = responses.clone();
         let (stop, stopped) = mpsc::channel();
         let server = std::thread::spawn(move || {
             let deadline = Instant::now() + Duration::from_secs(3);
@@ -125,13 +131,46 @@ mod tests {
                     }
                     Err(error) => panic!("C1 probe accept: {error}"),
                 };
+                // macOS accept inherits O_NONBLOCK from the listener. A read
+                // timeout does not clear it: without this, a request whose
+                // bytes arrive just after accept fails with WouldBlock.
                 socket
-                    .set_read_timeout(Some(Duration::from_secs(1)))
+                    .set_nonblocking(false)
+                    .expect("C1 mock blocking stream");
+                socket
+                    .set_read_timeout(Some(Duration::from_millis(25)))
                     .expect("C1 mock read timeout");
                 let mut raw = Vec::new();
                 let mut buffer = [0; 512];
                 while !raw.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
-                    let count = socket.read(&mut buffer).expect("C1 probe request");
+                    let count = match socket.read(&mut buffer) {
+                        Ok(count) => count,
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                            ) =>
+                        {
+                            if stopped.try_recv().is_ok() || Instant::now() >= deadline {
+                                // Cancellation before a full request is an
+                                // observation, not a mock-thread panic. The
+                                // caller still checks the exact request and
+                                // response counts for this named case.
+                                return;
+                            }
+                            continue;
+                        }
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                std::io::ErrorKind::ConnectionReset
+                                    | std::io::ErrorKind::ConnectionAborted
+                            ) =>
+                        {
+                            return;
+                        }
+                        Err(error) => panic!("C1 probe {mode} request: {error}"),
+                    };
                     if count == 0 {
                         return;
                     }
@@ -153,6 +192,10 @@ mod tests {
                     "body-pending" => "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nx".to_owned(),
                     "bad-header" => "HTTP/1.1 200 OK\r\ninvalid header\r\n\r\n".to_owned(),
                     "status-error" => "HTTP/1.1 503 Busy\r\nContent-Length: 0\r\n\r\n".to_owned(),
+                    "continue-then-ok" => "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned(),
+                    "continue-only" => "HTTP/1.1 100 Continue\r\n\r\n".to_owned(),
+                    "processing-then-ok" => "HTTP/1.1 102 Processing\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned(),
+                    "early-hints-then-ok" => "HTTP/1.1 103 Early Hints\r\nLink: </asset>; rel=preload\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned(),
                     "redirect-loop" => redirect("/health"),
                     "redirect-credentials" => redirect(&format!("http://user@{address}/healthy")),
                     "redirect-port" => redirect("http://127.0.0.1:25/healthy"),
@@ -163,7 +206,11 @@ mod tests {
                 socket
                     .write_all(response.as_bytes())
                     .expect("C1 probe response");
-                if matches!(mode.as_str(), "head-only" | "body-pending") {
+                sent.fetch_add(1, Ordering::SeqCst);
+                if matches!(
+                    mode.as_str(),
+                    "head-only" | "body-pending" | "continue-only"
+                ) {
                     let _ = stopped.recv_timeout(Duration::from_secs(1));
                     break;
                 }
@@ -172,6 +219,10 @@ mod tests {
         let ok = health_ok_at(&format!("http://{address}/health"), PROBE_TIMEOUT);
         let _ = stop.send(());
         server.join().expect("C1 probe owned server joined");
-        (ok, requests.load(Ordering::SeqCst))
+        (
+            ok,
+            requests.load(Ordering::SeqCst),
+            responses.load(Ordering::SeqCst),
+        )
     }
 }

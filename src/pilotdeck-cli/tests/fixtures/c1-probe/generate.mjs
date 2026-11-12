@@ -10,7 +10,7 @@ if (!baseline || !process.env.HOME || !process.env.PILOT_HOME) {
 }
 const {probeGatewayServer} = await import(pathToFileURL(resolve(baseline, 'dist/src/gateway/client/probeServer.js')));
 const cases = [];
-for (const mode of ['complete', 'head-only', 'body-pending', 'bad-header', 'redirect', 'redirect-loop', 'redirect-credentials', 'redirect-port', 'status-error']) {
+for (const mode of ['complete', 'head-only', 'body-pending', 'bad-header', 'redirect', 'redirect-loop', 'redirect-credentials', 'redirect-port', 'status-error', 'continue-then-ok', 'processing-then-ok', 'early-hints-then-ok', 'continue-only']) {
   const sockets = new Set();
   let requests = 0;
   const server = net.createServer(socket => {
@@ -24,6 +24,10 @@ for (const mode of ['complete', 'head-only', 'body-pending', 'bad-header', 'redi
         case 'body-pending': socket.write('HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nx'); break;
         case 'bad-header': socket.end('HTTP/1.1 200 OK\r\ninvalid header\r\n\r\n'); break;
         case 'status-error': socket.end('HTTP/1.1 503 Busy\r\nContent-Length: 0\r\n\r\n'); break;
+        case 'continue-then-ok': socket.end('HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'); break;
+        case 'continue-only': socket.write('HTTP/1.1 100 Continue\r\n\r\n'); break;
+        case 'processing-then-ok': socket.end('HTTP/1.1 102 Processing\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'); break;
+        case 'early-hints-then-ok': socket.end('HTTP/1.1 103 Early Hints\r\nLink: </asset>; rel=preload\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'); break;
         case 'redirect-loop': socket.end('HTTP/1.1 302 Found\r\nLocation: /health\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'); break;
         case 'redirect-credentials': socket.end(`HTTP/1.1 302 Found\r\nLocation: http://user@127.0.0.1:${server.address().port}/healthy\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`); break;
         case 'redirect-port': socket.end('HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:25/healthy\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'); break;

@@ -46,6 +46,26 @@
       "mode": "status-error",
       "ok": false,
       "requests": 1
+    },
+    {
+      "mode": "continue-then-ok",
+      "ok": false,
+      "requests": 1
+    },
+    {
+      "mode": "processing-then-ok",
+      "ok": true,
+      "requests": 1
+    },
+    {
+      "mode": "early-hints-then-ok",
+      "ok": true,
+      "requests": 1
+    },
+    {
+      "mode": "continue-only",
+      "ok": false,
+      "requests": 1
     }
   ]
 }
