@@ -1,0 +1,44 @@
+{
+  "name": "loop-multi-tool",
+  "about": "一次回复里文本加多个工具调用（tool/scheduler/ConcurrentToolScheduler.ts、agent/modules/capability/hostToolPort.ts:96-108：isConcurrencySafe 的调用先并行执行，其余按原顺序串行，结果按原顺序回填）。read_file / write_file 都不是并发安全的（tool/builtin/readFile.ts:101）。m1：文本 + 三个 read_file；m2：read_file、write_file、read_file（第一个工具前没有文本，时间线 previousId 的键序走 TurnTimeline.ts:30 的后补分支）；m3：两个 write_file 都要询问权限（默认模式，逐个应答 allow）；m4：write_file 之后跟 glob 和只读 bash（两者并发安全）——基线先跑并发安全的那组，所以 glob / cat 看不到随后才写出的文件。比较事件先后、工具结果、落盘。",
+  "files": { "home/.pilotdeck/a.txt": "alpha\n", "home/.pilotdeck/b.txt": "beta\n", "home/.pilotdeck/c.txt": "gamma\n" },
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\":\"Multi\"}" } },
+    { "name": "m1-done", "when": ["m1:", "\"tool_call_id\":\"call_m1c\""], "reply": { "text": "m1 done." } },
+    { "name": "m1", "when": ["m1:"], "reply": { "text": "Reading three files.", "tools": [
+      { "id": "call_m1a", "name": "read_file", "arguments": { "file_path": "a.txt" } },
+      { "id": "call_m1b", "name": "read_file", "arguments": { "file_path": "b.txt" } },
+      { "id": "call_m1c", "name": "read_file", "arguments": { "file_path": "c.txt" } } ] } },
+    { "name": "m2-done", "when": ["m2:", "\"tool_call_id\":\"call_m2c\""], "reply": { "text": "m2 done." } },
+    { "name": "m2", "when": ["m2:"], "reply": { "tools": [
+      { "id": "call_m2a", "name": "read_file", "arguments": { "file_path": "a.txt" } },
+      { "id": "call_m2b", "name": "write_file", "arguments": { "file_path": "out.txt", "content": "written\n" } },
+      { "id": "call_m2c", "name": "read_file", "arguments": { "file_path": "out.txt" } } ] } },
+    { "name": "m4-done", "when": ["m4:", "\"tool_call_id\":\"call_m4c\""], "reply": { "text": "m4 done." } },
+    { "name": "m4", "when": ["m4:"], "reply": { "tools": [
+      { "id": "call_m4a", "name": "write_file", "arguments": { "file_path": "out4.txt", "content": "four\n" } },
+      { "id": "call_m4b", "name": "glob", "arguments": { "pattern": "out4*" } },
+      { "id": "call_m4c", "name": "bash", "arguments": { "command": "cat out4.txt" } } ] } },
+    { "name": "m3-done", "when": ["m3:", "\"tool_call_id\":\"call_m3b\""], "reply": { "text": "m3 done." } },
+    { "name": "m3", "when": ["m3:"], "reply": { "text": "Writing two.", "tools": [
+      { "id": "call_m3a", "name": "write_file", "arguments": { "file_path": "w1.txt", "content": "one\n" } },
+      { "id": "call_m3b", "name": "write_file", "arguments": { "file_path": "w2.txt", "content": "two\n" } } ] } }
+  ],
+  "steps": [
+    { "ws": "submit_turn", "params": { "sessionKey": "s-m1", "channelKey": "test", "message": "m1: read" }, "timeout": 20000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-m1" } },
+    { "ws": "set_permission_mode", "params": { "sessionKey": "s-m2", "mode": "bypassPermissions" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-m2", "channelKey": "test", "message": "m2: mix" }, "timeout": 20000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-m2" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-m3", "channelKey": "test", "message": "m3: write" }, "timeout": 20000,
+      "answer": [ { "on": { "type": "permission_request" }, "ws": "permission_decide", "params": { "sessionKey": "s-m3", "requestId": "{event.requestId}", "decision": "allow" } } ] },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-m3" } },
+    { "ws": "set_permission_mode", "params": { "sessionKey": "s-m4", "mode": "bypassPermissions" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-m4", "channelKey": "test", "message": "m4: write then look" }, "timeout": 20000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-m4" } }
+  ]
+}

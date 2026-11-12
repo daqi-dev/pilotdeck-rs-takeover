@@ -31,6 +31,10 @@ pub(crate) struct TurnTimeline {
 struct Position {
     id: JsString,
     previous_id: Option<JsString>,
+    /// TurnTimeline.ts:30 `{ ...position, previousId }`: a provisional tool
+    /// allocated without a predecessor gains the key only on promotion, so
+    /// it serializes after `order` / `revision` instead of before them.
+    previous_appended: bool,
     order: u64,
     revision: u64,
 }
@@ -132,6 +136,7 @@ impl TurnTimeline {
                 let position = Position {
                     id: id.clone(),
                     previous_id: self.previous_id.clone(),
+                    previous_appended: false,
                     order: if crate::mutants::on("timeline-order-frozen") {
                         0
                     } else {
@@ -162,6 +167,9 @@ impl TurnTimeline {
                 })
                 .max_by_key(|candidate| candidate.order)
                 .map(|candidate| candidate.id.clone());
+            if position.previous_id.is_none() {
+                position.previous_appended = true;
+            }
             position.previous_id = previous;
             self.positions.insert(id.clone(), position.clone());
             let outdated = match &self.previous_id {
@@ -194,11 +202,15 @@ impl TurnTimeline {
         object.insert("version".into(), JsValue::Number(1.0));
         object.insert("turnId".into(), JsValue::String(self.turn_id.clone()));
         object.insert("id".into(), JsValue::String(position.id.clone()));
-        if let Some(previous) = &position.previous_id {
+        let previous = position.previous_id.as_ref();
+        if let Some(previous) = previous.filter(|_| !position.previous_appended) {
             object.insert("previousId".into(), JsValue::String(previous.clone()));
         }
         object.insert("order".into(), JsValue::Number(position.order as f64));
         object.insert("revision".into(), JsValue::Number(position.revision as f64));
+        if let Some(previous) = previous.filter(|_| position.previous_appended) {
+            object.insert("previousId".into(), JsValue::String(previous.clone()));
+        }
         if let Some(offset) = offset {
             object.insert("offset".into(), JsValue::Number(offset as f64));
         }
