@@ -603,6 +603,22 @@ impl SessionTools {
             }),
         };
         let _ = self.permission.3.set(self.tool_hooks.clone());
+        self.tool_hooks
+            .configure_session(&self.hooks, &self.hook_observers);
+        // `registerSessionHookHandler` (SessionInteractionBundle.ts:301-313):
+        // gateway-side observers (ElicitationResult) dispatch on this
+        // session's hooks. A replaced or dropped session runs nothing.
+        let hooks = Arc::downgrade(&self.tool_hooks);
+        let cwd: JsString = self.project.to_string_lossy().as_ref().into();
+        let owner = self.binding.context.session_key.clone();
+        self.interactions.register_session_hook_handler(
+            owner.clone(),
+            Arc::new(move |event, payload| {
+                if let Some(hooks) = hooks.upgrade() {
+                    hooks.dispatch_detached(event, &owner, &cwd, payload);
+                }
+            }),
+        );
         self
     }
 
@@ -1005,6 +1021,10 @@ impl SessionTools {
                             deterministic: (prompt.interaction.profile.question_provider
                                 == "deterministic")
                                 .then_some(prompt.interaction),
+                            hooks: Some((
+                                self.tool_hooks.clone(),
+                                self.project.to_string_lossy().as_ref().into(),
+                            )),
                         },
                     ))) as capability::RuntimeContext
                 }),
@@ -1196,6 +1216,7 @@ impl SessionTools {
                     // `permission_prompt.rs` is this session's gateway
                     // permission callback.
                     host_permission_prompt: true,
+                    advisory: self.tool_hooks.session_port(),
                 },
             },
         }

@@ -1,0 +1,502 @@
+{
+  "name": "hook-tool-effects",
+  "about": "工具 hook 输出里不改变流程的字段：PreToolUse 的 permissionDecision ask / passthrough 不影响执行，allow 不跳过权限询问（用户拒绝照样拒）；PermissionDenied 的 retry 不触发重试；顶层 decision:approve、reason、suppressOutput、systemMessage 不起作用；PostToolUse 的 updatedMCPToolOutput（对象、null、字符串）只进工具结果的 metadata.lifecycle；hookSpecificOutput 的 hookEventName 与事件不同照样生效、缺了整个忽略。",
+  "files": {
+    "home/.pilotdeck/plugins/bbx-effects/plugin.json": {
+      "name": "bbx-effects",
+      "version": "0.1.0",
+      "description": "bbx bbx-effects",
+      "hooks": {
+        "PreToolUse": [
+          {
+            "matcher": "bash",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs pre 0 '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"ask reason\"}}\n' '' 0",
+                "if": "bash(case-pre-ask)"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs pre 0 '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"passthrough\"}}\n' '' 0",
+                "if": "bash(case-pre-passthrough)"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs pre 0 '{\"decision\":\"approve\",\"reason\":\"approved\",\"suppressOutput\":true,\"systemMessage\":\"pre system note\"}\n' '' 0",
+                "if": "bash(case-approve)"
+              }
+            ]
+          },
+          {
+            "matcher": "write_file",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs pre 0 '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"permissionDecisionReason\":\"allowed by pre hook\"}}\n' '' 0",
+                "if": "write_file(perm-pre-allow)"
+              }
+            ]
+          }
+        ],
+        "PostToolUse": [
+          {
+            "matcher": "bash",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs post 0 '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"updatedMCPToolOutput\":{\"content\":[{\"type\":\"text\",\"text\":\"replaced by hook\"}]}}}\n' '' 0",
+                "if": "bash(case-mcp-output)"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs post 0 '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"updatedMCPToolOutput\":null}}\n' '' 0",
+                "if": "bash(case-mcp-null)"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs post 0 '{\"hookSpecificOutput\":{\"hookEventName\":\"SomethingElse\",\"additionalContext\":\"context under another event name\"}}\n' '' 0",
+                "if": "bash(case-mismatch)"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs post 0 '{\"hookSpecificOutput\":{\"additionalContext\":\"context without event name\"}}\n' '' 0",
+                "if": "bash(case-noname)"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs post 0 '{\"suppressOutput\":true,\"systemMessage\":\"post system note\",\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"updatedMCPToolOutput\":\"plain string output\"}}\n' '' 0",
+                "if": "bash(case-approve)"
+              }
+            ]
+          }
+        ],
+        "PermissionRequest": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs perm 0 '' '' 0"
+              }
+            ]
+          }
+        ],
+        "PermissionDenied": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs denied 0 '{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionDenied\",\"retry\":true}}\n' '' 0"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "home/.pilotdeck/plugins/bbx-effects/hook.mjs": "// bbx hook fixture: node hook.mjs <log> <exit> [stdout] [stderr] [sleepMs]\nimport fs from 'node:fs';\nconst [log, exit = '0', out = '', err = '', sleep = '0'] = process.argv.slice(2);\nconst dir = process.env.HOME + '/hooklog';\nconst append = (row) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(dir + '/' + log + '.jsonl', JSON.stringify(row) + '\\n'); };\nlet input = '';\nprocess.stdin.on('data', (d) => { input += d; });\nprocess.stdin.on('end', () => {\n  let parsed; try { parsed = JSON.parse(input); } catch { parsed = { raw: input }; }\n  const env = {};\n  for (const k of Object.keys(process.env).sort()) env[k] = /^PILOT/.test(k) && !/BUNDLED/.test(k) ? process.env[k] : true;\n  append({ argv: process.argv.slice(2), cwd: process.cwd(), input: parsed, env });\n  // exit \"@\": the behaviour is the JSON between HOOK<< and >> in the prompt (or the last assistant message).\n  let spec = { exit, out, err, sleep };\n  if (exit === '@') {\n    const m = /HOOK<<(.*?)>>/s.exec(String(parsed.prompt ?? parsed.lastAssistantMessage ?? ''));\n    spec = { exit: 0, out: '', err: '', sleep: 0, ...(m ? JSON.parse(m[1]) : {}) };\n  }\n  setTimeout(() => {\n    append({ argv: process.argv.slice(2), done: true });\n    if (spec.out) process.stdout.write(spec.out);\n    if (spec.err) process.stderr.write(spec.err);\n    process.exit(Number(spec.exit));\n  }, Number(spec.sleep));\n});\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Hook run\"}"
+      }
+    },
+    {
+      "name": "case-pre-ask-after",
+      "when": [
+        "case-pre-ask:",
+        "\"tool_call_id\":\"call_case_pre_ask\""
+      ],
+      "reply": {
+        "text": "done case-pre-ask"
+      }
+    },
+    {
+      "name": "case-pre-ask",
+      "when": [
+        "case-pre-ask:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_case_pre_ask",
+          "name": "bash",
+          "arguments": {
+            "command": "printf case-pre-ask",
+            "description": "case pre-ask"
+          }
+        }
+      }
+    },
+    {
+      "name": "case-pre-passthrough-after",
+      "when": [
+        "case-pre-passthrough:",
+        "\"tool_call_id\":\"call_case_pre_passthrough\""
+      ],
+      "reply": {
+        "text": "done case-pre-passthrough"
+      }
+    },
+    {
+      "name": "case-pre-passthrough",
+      "when": [
+        "case-pre-passthrough:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_case_pre_passthrough",
+          "name": "bash",
+          "arguments": {
+            "command": "printf case-pre-passthrough",
+            "description": "case pre-passthrough"
+          }
+        }
+      }
+    },
+    {
+      "name": "case-approve-after",
+      "when": [
+        "case-approve:",
+        "\"tool_call_id\":\"call_case_approve\""
+      ],
+      "reply": {
+        "text": "done case-approve"
+      }
+    },
+    {
+      "name": "case-approve",
+      "when": [
+        "case-approve:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_case_approve",
+          "name": "bash",
+          "arguments": {
+            "command": "printf case-approve",
+            "description": "case approve"
+          }
+        }
+      }
+    },
+    {
+      "name": "case-mcp-output-after",
+      "when": [
+        "case-mcp-output:",
+        "\"tool_call_id\":\"call_case_mcp_output\""
+      ],
+      "reply": {
+        "text": "done case-mcp-output"
+      }
+    },
+    {
+      "name": "case-mcp-output",
+      "when": [
+        "case-mcp-output:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_case_mcp_output",
+          "name": "bash",
+          "arguments": {
+            "command": "printf case-mcp-output",
+            "description": "case mcp-output"
+          }
+        }
+      }
+    },
+    {
+      "name": "case-mcp-null-after",
+      "when": [
+        "case-mcp-null:",
+        "\"tool_call_id\":\"call_case_mcp_null\""
+      ],
+      "reply": {
+        "text": "done case-mcp-null"
+      }
+    },
+    {
+      "name": "case-mcp-null",
+      "when": [
+        "case-mcp-null:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_case_mcp_null",
+          "name": "bash",
+          "arguments": {
+            "command": "printf case-mcp-null",
+            "description": "case mcp-null"
+          }
+        }
+      }
+    },
+    {
+      "name": "case-mismatch-after",
+      "when": [
+        "case-mismatch:",
+        "\"tool_call_id\":\"call_case_mismatch\""
+      ],
+      "reply": {
+        "text": "done case-mismatch"
+      }
+    },
+    {
+      "name": "case-mismatch",
+      "when": [
+        "case-mismatch:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_case_mismatch",
+          "name": "bash",
+          "arguments": {
+            "command": "printf case-mismatch",
+            "description": "case mismatch"
+          }
+        }
+      }
+    },
+    {
+      "name": "case-noname-after",
+      "when": [
+        "case-noname:",
+        "\"tool_call_id\":\"call_case_noname\""
+      ],
+      "reply": {
+        "text": "done case-noname"
+      }
+    },
+    {
+      "name": "case-noname",
+      "when": [
+        "case-noname:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_case_noname",
+          "name": "bash",
+          "arguments": {
+            "command": "printf case-noname",
+            "description": "case noname"
+          }
+        }
+      }
+    },
+    {
+      "name": "perm-pre-allow-after",
+      "when": [
+        "perm-pre-allow:",
+        "\"tool_call_id\":\"call_perm_pre_allow\""
+      ],
+      "reply": {
+        "text": "done perm-pre-allow"
+      }
+    },
+    {
+      "name": "perm-pre-allow",
+      "when": [
+        "perm-pre-allow:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_perm_pre_allow",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "perm-pre-allow.txt",
+            "content": "perm-pre-allow\n"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-pre-ask",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-pre-ask",
+        "channelKey": "test",
+        "message": "case-pre-ask: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-pre-passthrough",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-pre-passthrough",
+        "channelKey": "test",
+        "message": "case-pre-passthrough: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-approve",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-approve",
+        "channelKey": "test",
+        "message": "case-approve: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-mcp-output",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mcp-output",
+        "channelKey": "test",
+        "message": "case-mcp-output: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-mcp-null",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mcp-null",
+        "channelKey": "test",
+        "message": "case-mcp-null: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-mismatch",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mismatch",
+        "channelKey": "test",
+        "message": "case-mismatch: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-noname",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-noname",
+        "channelKey": "test",
+        "message": "case-noname: run the tool"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-perm-pre-allow",
+        "channelKey": "test",
+        "message": "perm-pre-allow: write the file"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-perm-pre-allow",
+            "requestId": "{event.requestId}",
+            "decision": "deny"
+          },
+          "count": 2
+        }
+      ]
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-mcp-output"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-mcp-null"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-mismatch"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-approve"
+      }
+    }
+  ]
+}

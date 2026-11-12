@@ -37,6 +37,9 @@ pub(super) struct GatewayElicitation {
     /// through `createElicitationChannelFromAnswerer`, inside the same
     /// durable bracket, without a gateway round-trip.
     pub deterministic: Option<super::permission_prompt::SessionInteraction>,
+    /// The session's hooks and project root: the `Elicitation` hook observes
+    /// each question sent to the gateway (GatewayElicitationChannel.ts:152-161).
+    pub hooks: Option<(Arc<super::hooks::ToolHooks>, JsString)>,
 }
 
 /// `createElicitationChannelFromAnswerer(createDeterministicElicitationAnswerer(),
@@ -173,6 +176,18 @@ impl GatewayElicitation {
             event.insert("metadata".into(), metadata.clone());
         }
         self.deliver(event);
+        if let Some((hooks, cwd)) = &self.hooks {
+            hooks.dispatch_detached(
+                "Elicitation",
+                &self.session,
+                cwd,
+                object([
+                    ("requestId", JsValue::String(request_id.clone())),
+                    ("toolName", JsValue::String(request.tool_name.clone())),
+                    ("toolCallId", JsValue::String(request.tool_call_id.clone())),
+                ]),
+            );
+        }
         // Whoever takes the entry off the bus settles it; a cancellation is
         // also announced so the host can drop its dialog.
         let cancel = |reason: &str| -> Option<Result<JsValue, JsString>> {

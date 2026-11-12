@@ -40,7 +40,13 @@ pub struct GatewayInteractionCoordinator {
     permission_bus: GatewayPermissionBus,
     permission_grants: Arc<GatewaySessionPermissionRuleSetRegistry>,
     on_delivered: Option<DeliveredObserver>,
+    /// `ProjectRuntimeRegistry.sessionHookHandlers`: one handler per session
+    /// key, the latest registration wins (ProjectRuntimeRegistry.ts:803-822).
+    session_hooks: std::sync::Mutex<std::collections::HashMap<JsString, SessionHookHandler>>,
 }
+/// `registerSessionHookHandler`'s handler: dispatches one hook event on the
+/// session's lifecycle without waiting for it.
+pub type SessionHookHandler = Arc<dyn Fn(&'static str, JsObject) + Send + Sync>;
 impl Default for GatewayInteractionCoordinator {
     fn default() -> Self {
         Self::new(InteractionOptions::default())
@@ -59,6 +65,27 @@ impl GatewayInteractionCoordinator {
             reconnect_port,
             permission_grants: options.permission_grants.unwrap_or_default(),
             on_delivered: options.on_elicitation_delivered,
+            session_hooks: Default::default(),
+        }
+    }
+    /// `registerSessionHookHandler(sessionKey, handler)`.
+    pub fn register_session_hook_handler(&self, owner: JsString, handler: SessionHookHandler) {
+        self.session_hooks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(owner, handler);
+    }
+    /// `dispatchSessionHook(sessionKey, event, payload)`: the session's
+    /// registered handler, if any.
+    pub fn dispatch_session_hook(&self, owner: &JsString, event: &'static str, payload: JsObject) {
+        let handler = self
+            .session_hooks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(owner)
+            .cloned();
+        if let Some(handler) = handler {
+            handler(event, payload);
         }
     }
     pub fn elicitation_bus(&self) -> &GatewayElicitationBus {
@@ -145,6 +172,12 @@ impl GatewayInteractionCoordinator {
         if let Some(observer) = &self.on_delivered {
             observer(owner, request);
         }
+        // InProcessGateway.respondElicitation (InProcessGateway.ts:2626-2636):
+        // a delivered answer dispatches the session's ElicitationResult hook.
+        let mut payload = JsObject::new();
+        payload.insert("requestId".into(), JsValue::String(request.clone()));
+        payload.insert("delivered".into(), JsValue::Bool(true));
+        self.dispatch_session_hook(owner, "ElicitationResult", payload);
         true
     }
     pub fn decide_permission(
