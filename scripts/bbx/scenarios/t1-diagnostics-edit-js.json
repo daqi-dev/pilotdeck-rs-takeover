@@ -3,7 +3,8 @@
   "about": "正式edit_file 对 js 坏/好文件分别执行；坏文件实际落盘并提供非空语法诊断，好文件成功且无诊断。",
   "files": {
     "proj/bad.js": "const value = 1;\n",
-    "proj/good.js": "const value = 1;\n"
+    "proj/good.js": "const value = 1;\n",
+    "home/.pilotdeck/projects/t1-fixture/.cwd": "{PROJECT}\n"
   },
   "provider": [
     {
