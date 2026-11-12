@@ -1,6 +1,6 @@
 # libvips / Sharp 源码组件准备
 
-2026-11-13，源码构建进行中，不能据此声明图像工具交付。
+2026-11-13，Linux ARM64 源码组件已构建，真实图像行为对比进行中，不能据此声明图像工具交付。
 
 固定 TS 基线 `cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85` 的实际 `sharp.versions` 显示 Sharp 0.34.5、libvips 8.17.3；`@img/sharp-libvips-darwin-arm64` 包版本 1.2.4。对应官方 [sharp-libvips v1.2.4](https://github.com/lovell/sharp-libvips/tree/v1.2.4) 固定提交 `20b5e899954907a3039d6e3d4c200aaa0ec52c4c`，其 `versions.properties` 与本机实际清单逐项吻合。libvips 官方 v8.17.3 对应提交 `0c9151a4f416d2f8ae20a755db218f6637050eec`。只取源码，不下载其发行的预编译包。
 
@@ -17,3 +17,9 @@ cb8 已有 cmake 和 pkg-config；没有 meson、ninja，已检查的 glib/gio/g
 GNOME 源站在此网络持续重置连接，因此四份源码从 OSU 的 BLFS 源码镜像获得，逐一匹配官方发布校验和：[GLib 2.86.1](https://download.gnome.org/sources/glib/2.86/glib-2.86.1.sha256sum)、[libxml2 2.15.1](https://download.gnome.org/sources/libxml2/2.15/libxml2-2.15.1.sha256sum)、[Pango 1.57.0](https://download.gnome.org/sources/pango/1.57/pango-1.57.0.sha256sum)、[librsvg 2.61.2](https://download.gnome.org/sources/librsvg/2.61/librsvg-2.61.2.sha256sum)。实际镜像地址、哈希及原地址在 `logs/vips-gnome-mirrors/manifest.json`，GLib 补充记录在 `logs/f2131756-vips-resume-glib2/mirror.txt`；`build-vips.sh` 已加入这四项固定哈希的显式镜像回退，其他来源不套用未核实镜像。
 
 Sharp 构建工具按 Sharp 0.34.5 自身 devDependencies 的下界固定为 node-gyp 11.5.0、node-addon-api 8.5.0，单独任务前缀以 `--ignore-scripts` 安装纯 JS/头文件依赖，保存 package-lock。`build-sharp.sh` 使用已源码构建 Node 22.22.0 的本地头文件、固定 libvips prefix 和 jobs=6，禁止下载 Node headers 或 @img 二进制；结束必须实际加载 `sharp/src/build/Release/*.node`，核对 Sharp/libvips 版本并记录 addon 哈希。该 addon 构建仍排在 libvips 完成之后。
+
+实际构建已完成：`logs/f2131756-vips-resume-cairo/script.exit` 与 `logs/f2131756-vips-finalize/script.exit` 都为 0。中间 Cairo 32 MiB 源码包首次在 120 s 收到约 31 MiB 后超时，随后断点续传完成并匹配从 Cairo 官方取得的 `cairo-1.18.4.tar.xz.sha256sum`；首败保留。libvips-cpp 共享库约 17 MiB，SHA-256 `0be6a13bfa7b96871bed6c0f9b8ff975681450a1913ffda42c968d28ec5b543f`。任务 prefix 留存 385 MiB 实际源码/补丁包、423 MiB rsvg vendor、实际 Cargo.lock、原始下载清单、恢复脚本及依赖许可证。最高 ELF GLIBC 需求为 2.38，证据 `logs/f2131756-vips-finalize/{elf-versions.txt,dynamic.txt}`；这不是其他系统/旧 libc 的发行证明。
+
+Sharp 首轮 C++ 编译 exit 0，但实际加载 exit 127（`aom_codec_version` 未解析）；原因是固定 recipe 将依赖静态纳入共享库，global build 的普通 pkg-config 未展开 heif 私有 aom 依赖。使用任务私有 `pkg-config --static` 包装后，源码编译及实际加载均通过，版本 0.34.5/8.17.3；addon SHA-256 `80f9390f6090197e527fd4dc48e57f3a3f64cb532a478f6b43b328b7bc56ae9b`。首败 `logs/da2f48a5-sharp-build`，复验 `logs/da2f48a5-sharp-build-static`，包装脚本及哈希 `logs/sharp-static-wrapper/`。没有修改 Sharp 源码。
+
+8fa6e677 的原生 C++ helper 编译通过（C++17、Wall/Wextra/Werror），同样需展开静态私有依赖；首轮链接失败与修正通过分别保存在 `logs/8fa6e677-image-build`、`logs/8fa6e677-image-build-static`。固定 da2f48a5 driver `check-image.mjs` 首次实际执行 37 组 TS createReadFileTool 与 helper 比较，34 通过、3 失败，manifest passed=false，日志 `logs/8fa6e677-image-component-check`。两个 rotate.jpg 预算场景 TS 成功产出 JPEG，helper 出现 tile 读取错误后误判预算耗尽；truncated.jpg 两侧均拒绝且主错误文字相同，但 helper stderr 额外输出带时间/PID 的 VIPS-WARNING。已交组件作者修正，未豁免。其它 34 项包含 PNG/JPEG/WebP/GIF、alpha/profile、预算阶梯等字节一致；完整实际矩阵以 manifest 为准。Rust 图像工具装配仍是后续产品候选，不能由组件构建代替。

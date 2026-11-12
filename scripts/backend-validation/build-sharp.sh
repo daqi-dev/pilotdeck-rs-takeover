@@ -18,6 +18,14 @@ export PATH="$task_root/tools/node/bin:$task_root/tools/sharp-build/node_modules
 export NODE_PATH="$task_root/tools/sharp-build/node_modules"
 export PKG_CONFIG_LIBDIR="$prefix/lib/pkgconfig"
 unset PKG_CONFIG_PATH
+pkg_config=$(command -v pkg-config)
+mkdir "$output/build-bin"
+cat > "$output/build-bin/pkg-config" <<SH
+#!/usr/bin/env bash
+exec "$pkg_config" --static "\$@"
+SH
+chmod +x "$output/build-bin/pkg-config"
+export PATH="$output/build-bin:$PATH"
 [[ $(node --version) == v22.22.0 && $(pkg-config --modversion vips-cpp) == 8.17.3 ]]
 [[ -f "$task_root/tools/node/include/node/node_api.h" ]]
 export npm_config_nodedir="$task_root/tools/node" npm_config_jobs=6
@@ -36,7 +44,7 @@ status=$?
 set -e
 printf '%s\n' "$status" > "$output/build.exit"
 (( status == 0 )) || exit "$status"
-node - "$output" <<'JS'
+node - "$output" > "$output/validate.log" 2>&1 <<'JS'
 const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto');
 const sharp = require('./');
 if (sharp.versions.sharp !== '0.34.5' || sharp.versions.vips !== '8.17.3') throw Error('wrong native library versions');

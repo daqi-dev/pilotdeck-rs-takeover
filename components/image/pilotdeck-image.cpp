@@ -116,7 +116,18 @@ static Encoded resize(const Encoded &input, int edge, int quality,
     if (alpha) image = image.premultiply().cast(format);
     if (horizontal != 1 || vertical != 1)
         image = image.resize(horizontal, VImage::option()->set("vscale", vertical)->set("kernel", VIPS_KERNEL_LANCZOS3));
-    if (rotate) image = image.autorot();
+    if (rotate) {
+        // A quarter-turn or vertical flip revisits previously decoded rows.
+        // Sharp materializes sequential pixels before this step, then clears
+        // the sequential metadata so the rotation can read them in any order.
+        int orientation = image.get_typeof(VIPS_META_ORIENTATION)
+            ? image.get_int(VIPS_META_ORIENTATION) : 1;
+        if (orientation >= 3 && orientation <= 8 && vips_image_is_sequential(image.get_image())) {
+            image = image.copy_memory().copy();
+            image.remove(VIPS_META_SEQUENTIAL);
+        }
+        image = image.autorot();
+    }
     if (alpha) image = image.unpremultiply().cast(format);
     return encode(image, mime, quality);
 }
@@ -143,6 +154,11 @@ int main(int argc, char **argv) {
         return 2;
     }
     if (VIPS_INIT(argv[0])) { std::fprintf(stderr, "libvips initialization failed\n"); return 1; }
+    // Sharp routes non-fatal VIPS warnings to its optional debug observer.
+    // They are not part of the tool's normal error message. Keep the strict
+    // fail_on policy; the caught decode error still produces the public error.
+    g_log_set_handler("VIPS", G_LOG_LEVEL_WARNING,
+        [](const gchar *, GLogLevelFlags, const gchar *, gpointer) {}, nullptr);
     vips_concurrency_set(1);
     vips_cache_set_max(0);
     vips_cache_set_max_mem(64 * 1024 * 1024);

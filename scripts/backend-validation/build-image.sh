@@ -17,9 +17,9 @@ git -C "$task_root/checkout" ls-files --error-unmatch components/image/pilotdeck
 git -C "$task_root/checkout" diff --exit-code HEAD -- components/image > "$output/helper-diff.txt"
 exec 9>"$task_root/.build.lock"
 flock -n 9 || { echo 'another task build holds the queue' >&2; exit 3; }
-{ git -C "$task_root/checkout" rev-parse HEAD; uname -a; c++ --version; pkg-config --modversion vips-cpp; pkg-config --libs vips-cpp; } > "$output/identity.txt"
+{ git -C "$task_root/checkout" rev-parse HEAD; uname -a; c++ --version; pkg-config --modversion vips-cpp; pkg-config --static --libs vips-cpp; } > "$output/identity.txt"
 set +e
-make -C "$source_root" OUT="$output/pilotdeck-image" > "$output/build.log" 2>&1
+make -C "$source_root" OUT="$output/pilotdeck-image" PKG_CONFIG='pkg-config --static' > "$output/build.log" 2>&1
 status=$?
 set -e
 printf '%s\n' "$status" > "$output/build.exit"
