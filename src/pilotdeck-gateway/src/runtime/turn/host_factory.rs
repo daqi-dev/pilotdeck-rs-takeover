@@ -198,6 +198,10 @@ pub struct SessionPorts {
     pub compaction: CompactionPorts,
     /// `sdkSessionConfig.skills`: the prompt lists only these skills.
     pub skills: Option<Vec<String>>,
+    /// The session's context-runtime state (cache generations, prompt-time
+    /// anchors) that the baseline keeps for the live session's lifetime.
+    /// `None` composes a context with fresh state, as a new session would.
+    pub context_state: Option<Arc<crate::runtime::context::SessionContextState>>,
 }
 
 /// The session's side of `CompactionEngine`'s composition: its lifecycle
@@ -472,6 +476,7 @@ impl TurnHostFactory {
             mut interaction,
             compaction,
             skills,
+            context_state,
         } = ports;
         let context = lease
             .runtime()
@@ -556,6 +561,7 @@ impl TurnHostFactory {
                     compaction,
                     compaction_model,
                     skills.as_deref(),
+                    context_state,
                 )
                 .await?,
             ),
@@ -602,6 +608,7 @@ async fn session_context_runtime(
     compaction: CompactionPorts,
     compaction_model: Arc<dyn crate::host::modules::model::ModelExecution>,
     skills: Option<&[String]>,
+    session_state: Option<Arc<crate::runtime::context::SessionContextState>>,
 ) -> Result<Arc<dyn context::ContextRuntime>, HostError> {
     let storage = context
         .resource(Resource::InstructionStorage)
@@ -651,6 +658,7 @@ async fn session_context_runtime(
                             cooldown: compaction.cooldown,
                         },
                     ),
+                    session_state,
                     ..Default::default()
                 },
             )
@@ -801,6 +809,7 @@ impl TurnHostFactory {
             ports.compaction,
             compaction_model,
             ports.skills.as_deref(),
+            ports.context_state,
         )
         .await?;
         Ok(MaintenanceContext {

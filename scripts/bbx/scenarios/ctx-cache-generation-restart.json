@@ -1,0 +1,109 @@
+{
+  "name": "ctx-cache-generation-restart",
+  "about": "gateway 重启后续写同一会话时的提示缓存代际：协调器只在进程内存里（PromptCacheCoordinator.ts:10-12 的 Map），不落盘，新进程里会话从磁盘重新载入，代际从 1 重新数；续写的第二轮在新进程里接着加一。第一个进程两轮失败（代际 1、2），停机后起第二个进程再续两轮（代际 1、2）；重载后的循环历史里保留失败轮次的空助手消息（compaction_started.messageCount）。模型一律回 400。",
+  "config": "schemaVersion: 1\nagent:\n  model: anth/claude-bbx\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    anth:\n      protocol: anthropic\n      url: {MOCK}\n      apiKey: bbx-anthropic-key\n      retry:\n        baseDelayMs: 1\n        maxDelayMs: 1\n        jitter: 0\n      models:\n        claude-bbx:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "server": false,
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Gen\"}"
+      }
+    },
+    {
+      "name": "fail",
+      "reply": {
+        "status": 400,
+        "body": {
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "bbx: rejected"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "serve": [
+        "server"
+      ],
+      "then": [
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-rs",
+            "channelKey": "test",
+            "message": "r1: first"
+          },
+          "timeout": 20000
+        },
+        {
+          "sleep": 300
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-rs",
+            "channelKey": "test",
+            "message": "r2: second"
+          },
+          "timeout": 20000
+        },
+        {
+          "sleep": 300
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    },
+    {
+      "serve": [
+        "server"
+      ],
+      "then": [
+        {
+          "connect": true
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-rs",
+            "channelKey": "test",
+            "message": "r3: after restart"
+          },
+          "timeout": 20000
+        },
+        {
+          "sleep": 300
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-rs",
+            "channelKey": "test",
+            "message": "r4: again"
+          },
+          "timeout": 20000
+        },
+        {
+          "sleep": 300
+        },
+        {
+          "ws": "read_session_messages",
+          "params": {
+            "sessionKey": "s-rs"
+          }
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    }
+  ]
+}

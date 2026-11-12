@@ -129,6 +129,10 @@ pub struct SessionTools {
     tool_hooks: Arc<super::hooks::ToolHooks>,
     /// The session's `CompactionEngine` failure cooldown.
     compaction_cooldown: crate::runtime::context::compaction::engine::SummaryCooldown,
+    /// The session's context-runtime state (prompt-cache generations and
+    /// prompt-time anchors): one per live session, like the baseline's
+    /// session-composed `DefaultContextRuntime`.
+    context_state: Arc<crate::runtime::context::SessionContextState>,
     /// The pilot home whose `permissions.json` each turn reads.
     pilot_home: Option<PathBuf>,
     /// The generation's interaction profile with the session's prompt
@@ -212,6 +216,7 @@ pub(super) struct ForkSeed {
     hooks: crate::hooks::protocol::HooksSettings,
     hook_observers: crate::runtime::hooks::runtime::HookObservers,
     interaction: super::permission_prompt::SessionInteraction,
+    context_state: Arc<crate::runtime::context::SessionContextState>,
 }
 impl ForkSeed {
     /// The child session's tools. The permission context starts as a copy of
@@ -292,6 +297,10 @@ impl ForkSeed {
             hook_observers: self.hook_observers,
             tool_hooks,
             compaction_cooldown: Arc::default(),
+            // A one-shot subagent without its own context definition runs on
+            // the parent's context runtime (`createContext` returns
+            // `undefined`), whose state is keyed by the child's session id.
+            context_state: self.context_state,
             // The child's permission context is a copy of the parent's,
             // user rules included; only the root session's turns re-read the
             // settings file.
@@ -365,6 +374,7 @@ impl SessionTools {
             hook_observers: Default::default(),
             tool_hooks: Arc::default(),
             compaction_cooldown: Arc::default(),
+            context_state: Arc::default(),
             pilot_home: Some(options.home.clone()),
             interaction: Default::default(),
             elicitation_timeout: super::permission_prompt::interaction_timeout(
@@ -483,6 +493,7 @@ impl SessionTools {
             hooks: self.hooks.clone(),
             hook_observers: self.hook_observers.clone(),
             interaction: self.interaction,
+            context_state: self.context_state.clone(),
         }
     }
 
@@ -1077,6 +1088,7 @@ impl SessionTools {
         };
         SessionPorts {
             skills: self.world.skills_filter.clone(),
+            context_state: Some(self.context_state.clone()),
             compaction,
             model: RouterModelPortOptions {
                 invocation: self.world.invocation.clone(),

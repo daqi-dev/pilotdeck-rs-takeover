@@ -777,7 +777,13 @@ fn initial_messages(
             if let Some(JsValue::Array(a)) = o.get("images") {
                 content.extend(blocks(a));
             }
-            if !content.is_empty() {
+            // The original default factory drops a message whose content
+            // comes out empty. The baseline gateway runs the loop in-process
+            // and hands it the session's messages as they are, so a failed
+            // turn's empty assistant message stays in the next turn's loop
+            // history (it is only filtered from the model request) and is
+            // counted, e.g. by `compaction_started.messageCount`.
+            if !content.is_empty() || matches!(o.get("content"), Some(JsValue::Array(_))) {
                 let mut message = object([
                     (
                         "role",

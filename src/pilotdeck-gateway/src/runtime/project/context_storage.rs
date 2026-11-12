@@ -80,6 +80,9 @@ pub struct SessionContextOptions {
     /// the port without `CompactionEngine`, as a caller that supplies no
     /// model.
     pub compaction: Option<SessionCompaction>,
+    /// The live session's context state, kept across its turns
+    /// (`SessionContextState`). `None` starts fresh.
+    pub session_state: Option<Arc<crate::runtime::context::SessionContextState>>,
 }
 
 /// What `SessionContextRuntimeBundle` hands its `CompactionEngine`
@@ -215,6 +218,7 @@ impl ContextStorageResources {
             now: Some(self.now.clone()),
             extension: options.extension,
             compaction: Some(Arc::new(native_compaction_port(summary))),
+            session_state: options.session_state,
             // `new PromptContributionRegistry({ name: `agent:${sessionKey}` })`
             // (`SessionContextRuntimeBundle.ts:164-166`): the session always
             // owns a registry, so every materialization carries its
