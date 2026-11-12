@@ -2,15 +2,85 @@
   "name": "turn-provider-400-then-text",
   "about": "同一会话：第一轮假 provider 回 400（轮次失败），第二轮正常文本。比较失败那轮之后的会话历史（基线留一条 content 为空的 assistant 消息）、下一轮 compaction_started.messageCount、发给 provider 的请求、会话读取、导出与落盘。",
   "provider": [
-    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"x\"}" } },
-    { "name": "after", "when": ["case-after:"], "reply": { "text": "after" } },
-    { "name": "e400", "when": ["case-400:"], "reply": { "status": 400, "body": { "error": { "message": "bad request from mock", "type": "invalid_request_error" } } } },
-    { "name": "main", "reply": { "text": "hi" } }
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"x\"}"
+      }
+    },
+    {
+      "name": "after",
+      "when": [
+        "case-after:"
+      ],
+      "reply": {
+        "text": "after"
+      }
+    },
+    {
+      "name": "e400",
+      "when": [
+        "case-400:"
+      ],
+      "reply": {
+        "status": 400,
+        "body": {
+          "error": {
+            "message": "bad request from mock",
+            "type": "invalid_request_error"
+          }
+        }
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "hi"
+      }
+    }
   ],
   "steps": [
-    { "ws": "submit_turn", "params": { "sessionKey": "s", "channelKey": "test", "message": "case-400: go" }, "timeout": 30000 },
-    { "ws": "read_session_messages", "params": { "sessionKey": "s" } },
-    { "ws": "submit_turn", "params": { "sessionKey": "s", "channelKey": "test", "message": "case-after: go" }, "timeout": 30000 },
-    { "ws": "read_session_messages", "params": { "sessionKey": "s" } }
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s",
+        "channelKey": "test",
+        "message": "case-400: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s",
+        "channelKey": "test",
+        "message": "case-after: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s"
+      }
+    }
+  ],
+  "accepted": [
+    {
+      "id": "sidecar-drops-empty-assistant",
+      "why": "模型请求失败的那一轮在会话历史里留下一条 content 为空的助手消息。基线默认在进程内跑循环，下一轮的历史里带着它；Rust 的循环在 sidecar 里跑，解析初始历史时丢掉空消息（基线自己的 sidecar 工厂也这样丢）。只影响 compaction 记录里的 messageCount，发给模型的请求、读会话、投影都一致",
+      "paths": [
+        "^\\$\\.tree\\..*/chats/s\\.jsonl\\.jsonl\\[\\d+\\]\\.messageCount$"
+      ]
+    }
   ]
 }

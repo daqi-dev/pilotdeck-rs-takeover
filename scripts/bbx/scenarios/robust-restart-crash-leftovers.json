@@ -253,5 +253,17 @@
         "runId": "run-bbx-5"
       }
     }
+  ],
+  "accepted": [
+    {
+      "id": "dialog-recovery-keeps-history",
+      "why": "基线 bug（丢数据）：重启后对未答的对话框作答，基线在恢复路径上把只含恢复消息的状态存成检查点，下一轮发给模型的历史只剩「恢复消息 + 新消息」，之前的对话全部丢失。Rust 保留完整历史；历史更长，之后各处的 token 估算和文件大小随之不同",
+      "paths": [
+        "^\\$\\.tree\\./home/\\.pilotdeck/projects/[^/]+/chats/",
+        "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json",
+        "^\\$\\.provider\\.turn-3",
+        "^\\$\\.steps\\[\\d+\\]\\.frames\\[\\d+\\]\\..*\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages)$"
+      ]
+    }
   ]
 }
