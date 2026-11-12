@@ -113,14 +113,20 @@ impl Requests {
             .get("limit")
             .and_then(JsValue::as_number)
             .filter(|n| n.is_finite() && *n > 0.0);
-        let offset: f64 = params
-            .get("cursor")
-            .and_then(JsValue::as_string)
-            .and_then(|s| s.to_utf8().ok())
-            .filter(|s| !s.is_empty())
-            .and_then(|s| s.parse::<f64>().ok())
-            .filter(|n| n.is_finite())
-            .unwrap_or(0.0);
+        // `input.cursor ? Number.parseInt(input.cursor, 10) : 0`, then a
+        // non-finite result is 0 (GatewaySessionCatalog.ts:24-25): any truthy
+        // value goes through `String(...)`, a numeric prefix is kept, and a
+        // negative offset stays negative for the next-cursor arithmetic.
+        let offset: f64 = match params.get("cursor") {
+            Some(cursor) if crate::metadata::js_truthy(cursor) => {
+                let text = crate::js_value::to_string_units(cursor)
+                    .map_err(|_| RequestError::new("Maximum call stack size exceeded"))?;
+                let parsed =
+                    crate::runtime::mcp::client::parse_int(&String::from_utf16_lossy(&text));
+                if parsed.is_finite() { parsed } else { 0.0 }
+            }
+            _ => 0.0,
+        };
         let home = self.options.home.clone();
         let input = SessionCatalogListInput {
             project_root: project_root.clone(),
