@@ -23,6 +23,32 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Mutex;
 
+/// `mergeMetadata` (SessionMetadataStore.ts:105-111, AgentTranscriptProjections
+/// .ts:577-583): `{ ...first, ...second, title: second.title ?? first.title,
+/// linkedPullRequest: second.linkedPullRequest ?? first.linkedPullRequest }`.
+/// The two keys always exist after a merge — `undefined` until set — so their
+/// place in the key order is fixed by the first merge, not by the first time
+/// they get a value.
+pub(crate) fn merge_session_metadata(
+    target: &mut pilotdeck_protocol::JsObject,
+    second: &pilotdeck_protocol::JsObject,
+) {
+    use pilotdeck_protocol::JsValue;
+    let resolved = ["title", "linkedPullRequest"].map(|key| {
+        let value = match second.get(key) {
+            Some(value) if !matches!(value, JsValue::Null | JsValue::Undefined) => value.clone(),
+            _ => target.get(key).cloned().unwrap_or(JsValue::Undefined),
+        };
+        (key, value)
+    });
+    for (key, value) in second.entries() {
+        target.insert(key.clone(), value.clone());
+    }
+    for (key, value) in resolved {
+        target.insert(key.into(), value);
+    }
+}
+
 /// InProcessGateway.abortTurn's volatile coordination. The live owner supplies
 /// the abort sink; this layer does not manufacture or cache AgentSessions.
 #[derive(Default)]

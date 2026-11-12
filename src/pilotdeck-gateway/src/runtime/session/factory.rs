@@ -1669,14 +1669,7 @@ fn merge_permission_denials(
     Ok(())
 }
 fn merge_metadata(target: &mut JsObject, metadata: &JsObject) {
-    for (key, value) in metadata.entries() {
-        if (key.equals_str("title") || key.equals_str("linkedPullRequest"))
-            && matches!(value, JsValue::Null | JsValue::Undefined)
-        {
-            continue;
-        }
-        target.insert(key.clone(), value.clone());
-    }
+    super::merge_session_metadata(target, metadata);
 }
 fn real_user(message: &JsValue) -> bool {
     is(field(message, "role"), "user") && field(field(message,"metadata"),"synthetic") != &JsValue::Bool(true)

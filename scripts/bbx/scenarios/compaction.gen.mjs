@@ -68,8 +68,21 @@ const scenarios = {};
   }
   steps.push(turn('s-cmp', 'note 7: short follow-up'), { sleep: 300 });
   steps.push(
-    { ws: 'read_session_messages', params: { sessionKey: 's-cmp' } },
+    {
+      ws: 'read_session_messages',
+      params: { sessionKey: 's-cmp' },
+      save: { note7: '"text":"note 7: short follow-up","entryId":"([0-9a-f-]{36})"' },
+    },
     { ws: 'export_session_transcript', params: { sessionKey: 's-cmp' } },
+    // 从第七轮的用户消息分叉：新会话带着压缩后的历史；在分叉上再问一轮。
+    {
+      ws: 'fork_session',
+      params: { sessionKey: 's-cmp', fromEntryId: '{saved.note7}' },
+      save: { forked: '"newSessionKey":"([^"]+)"' },
+    },
+    turn('{saved.forked}', 'note 8: on the fork'),
+    { sleep: 300 },
+    { ws: 'read_session_messages', params: { sessionKey: '{saved.forked}' } },
   );
   scenarios['compact-auto'] = {
     about: '自动全量压缩：上下文窗口配小，几轮长文本后用量越过 0.9，开模型请求前先发摘要请求（摘要提示词、裁剪后的输入），用摘要和保留的消息替换历史；之后一轮的请求带 compact-boundary 与摘要；读会话、导出会话都看到压缩后的结果。本文件由同目录的 compaction.gen.mjs 生成，不手改。',

@@ -110,12 +110,42 @@
       "ws": "read_session_messages",
       "params": {
         "sessionKey": "s-cmp"
+      },
+      "save": {
+        "note7": "\"text\":\"note 7: short follow-up\",\"entryId\":\"([0-9a-f-]{36})\""
       }
     },
     {
       "ws": "export_session_transcript",
       "params": {
         "sessionKey": "s-cmp"
+      }
+    },
+    {
+      "ws": "fork_session",
+      "params": {
+        "sessionKey": "s-cmp",
+        "fromEntryId": "{saved.note7}"
+      },
+      "save": {
+        "forked": "\"newSessionKey\":\"([^\"]+)\""
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "{saved.forked}",
+        "channelKey": "test",
+        "message": "note 8: on the fork"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "{saved.forked}"
       }
     }
   ]

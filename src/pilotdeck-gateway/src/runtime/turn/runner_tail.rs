@@ -363,16 +363,7 @@ impl Drop for SessionTail {
     }
 }
 fn merge(target: &mut JsObject, patch: &JsObject) {
-    for (key, value) in patch.entries() {
-        if ["title", "linkedPullRequest"]
-            .iter()
-            .any(|s| key.equals_str(s))
-            && matches!(value, JsValue::Null | JsValue::Undefined)
-        {
-            continue;
-        }
-        target.insert(key.clone(), value.clone());
-    }
+    crate::runtime::session::merge_session_metadata(target, patch);
 }
 fn titled(snapshot: &JsObject) -> bool {
     ["title", "aiTitle"]
