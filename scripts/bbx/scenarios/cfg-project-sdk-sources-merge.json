@@ -1,0 +1,258 @@
+{
+ "name": "cfg-project-sdk-sources-merge",
+ "about": "settingSources 的叠加规则（pilot/config/sdkSessionSettings.ts:115-152,192-227,375-393；SessionAgentConfigBundle.ts:60-151,252-262）：调用方给的来源顺序不影响优先级（固定 managed<user<project<local）；sdkSessionConfig.settings 盖在所有来源之上；只选 managed 且宿主没有 managed 设置时不叠加（会话用项目运行时自己的模型）；本地层的 fallbackModel 在主模型 500 后生效；本地层 thinking 只取 enabled/budgetTokens（anthropic 请求里的 thinking 预算），多余键丢掉；本地层 subagents.default 决定子代理模型，settings 里写 \"inherit\" 时子代理回到会话模型。比较事件（context_budget 的 total 即 maxContextTokens）、发给 provider 的请求（model、max_tokens、thinking）。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        proj:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        local:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        fb:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        broken:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        helper:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 32768\n            maxOutputTokens: 4096\n    anth:\n      protocol: anthropic\n      url: {MOCK}/anth/v1\n      apiKey: bbx-mock-only\n      models:\n        m:\n          capabilities:\n            supportsToolUse: true\n            supportsPromptCache: false\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+ "files": {
+  "home/work/order/README.md": "order\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-order/.cwd": "{HOME}/work/order\n",
+  "home/work/fallback/README.md": "fallback\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-fallback/.cwd": "{HOME}/work/fallback\n",
+  "home/work/think/README.md": "think\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-think/.cwd": "{HOME}/work/think\n",
+  "home/work/sub/README.md": "sub\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-sub/.cwd": "{HOME}/work/sub\n",
+  "home/work/order/.pilotdeck/pilotdeck.yaml": "agent:\n  model: bbx/proj\n  maxContextTokens: 40000\n  maxOutputTokens: 4000\n",
+  "home/work/order/.pilotdeck/pilotdeck.local.yaml": "agent:\n  maxOutputTokens: 3000\n",
+  "home/work/fallback/.pilotdeck/pilotdeck.local.yaml": "agent:\n  model: bbx/broken\n  fallbackModel: bbx/fb\n",
+  "home/work/think/.pilotdeck/pilotdeck.local.yaml": "agent:\n  model: anth/m\n  thinking:\n    enabled: true\n    budgetTokens: 1500\n    mode: adaptive\n",
+  "home/work/sub/.pilotdeck/pilotdeck.local.yaml": "agent:\n  subagents:\n    default: bbx/helper\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Cfg\"}"
+   }
+  },
+  {
+   "name": "child",
+   "when": [
+    "You are a subagent of PilotDeck",
+    "CHILD-X"
+   ],
+   "reply": {
+    "text": "Scope: looked.\nResult: fine.\nKey files: none\nFiles changed: none\nIssues: none",
+    "delayMs": 1500
+   }
+  },
+  {
+   "name": "sub-after",
+   "when": [
+    "\"tool_call_id\":\"call_sub_1\""
+   ],
+   "reply": {
+    "text": "sub done"
+   }
+  },
+  {
+   "name": "sub",
+   "when": [
+    "m-sub go"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_sub_1",
+     "name": "agent",
+     "arguments": {
+      "description": "Look",
+      "prompt": "CHILD-X: look around."
+     }
+    }
+   }
+  },
+  {
+   "name": "inherit-after",
+   "when": [
+    "\"tool_call_id\":\"call_inh_1\""
+   ],
+   "reply": {
+    "text": "inherit done"
+   }
+  },
+  {
+   "name": "inherit",
+   "when": [
+    "m-inherit go"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_inh_1",
+     "name": "agent",
+     "arguments": {
+      "description": "Look",
+      "prompt": "CHILD-X: look around."
+     }
+    }
+   }
+  },
+  {
+   "name": "broken",
+   "when": [
+    "\"model\":\"broken\""
+   ],
+   "reply": {
+    "status": 500,
+    "body": {
+     "error": {
+      "message": "upstream exploded",
+      "type": "server_error"
+     }
+    }
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-order",
+    "channelKey": "test",
+    "message": "m-order go",
+    "projectKey": "{HOME}/work/order",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "local",
+      "project"
+     ]
+    }
+   },
+   "timeout": 30000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-settings",
+    "channelKey": "test",
+    "message": "m-settings go",
+    "projectKey": "{HOME}/work/order",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "project",
+      "local"
+     ],
+     "settings": {
+      "agent": {
+       "model": "bbx/local",
+       "maxOutputTokens": 2500
+      }
+     }
+    }
+   },
+   "timeout": 30000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-managed",
+    "channelKey": "test",
+    "message": "m-managed go",
+    "projectKey": "{HOME}/work/order",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "managed"
+     ]
+    }
+   },
+   "timeout": 30000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-fallback",
+    "channelKey": "test",
+    "message": "m-fallback go",
+    "projectKey": "{HOME}/work/fallback",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "local"
+     ]
+    }
+   },
+   "timeout": 30000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-think",
+    "channelKey": "test",
+    "message": "m-think go",
+    "projectKey": "{HOME}/work/think",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "local"
+     ]
+    }
+   },
+   "timeout": 30000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sub",
+    "channelKey": "test",
+    "message": "m-sub go",
+    "projectKey": "{HOME}/work/sub",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "local"
+     ]
+    },
+    "maxTurns": 1
+   },
+   "timeout": 60000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sub-inherit",
+    "channelKey": "test",
+    "message": "m-inherit go",
+    "projectKey": "{HOME}/work/sub",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "local"
+     ],
+     "settings": {
+      "agent": {
+       "subagents": {
+        "default": "inherit"
+       }
+      }
+     }
+    },
+    "maxTurns": 1
+   },
+   "timeout": 60000
+  },
+  {
+   "sleep": 300
+  }
+ ]
+}

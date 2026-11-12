@@ -1,0 +1,337 @@
+{
+ "name": "cfg-project-sdk-sources-errors",
+ "about": "settingSources 读到的本地层能通过形状检查、却在服务端被拒的各条分支（sdkSessionSettings.ts:154-190,235-373；ProjectRuntimeRegistry.ts:976-986,1891-1940）：模型 / fallbackModel / subagents.default 在目录里找不到或有歧义（INVALID_SDK_AGENT_MODEL / INVALID_SDK_FALLBACK_MODEL / INVALID_SDK_SUBAGENT_MODEL）；YAML 语法错（SDK_SETTING_SOURCE_YAML_INVALID）；thinking 缺 enabled 或不是对象、subagents 不是对象、maxDepth 为负、model 为空白（INVALID_SDK_SETTINGS）；文件内容为 null 时按空处理；文件里的模型被 managedModels 拒绝（SDK_MANAGED_MODEL_DENIED）；文件里的非法值即使被 settings 盖住也照样报错。比较各轮的事件与落盘。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        local:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    alt:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        local:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+ "files": {
+  "home/work/unknown-model/README.md": "unknown-model\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-unknown-model/.cwd": "{HOME}/work/unknown-model\n",
+  "home/work/unknown-model/.pilotdeck/pilotdeck.local.yaml": "agent:\n  model: nope/zzz\n",
+  "home/work/ambiguous-model/README.md": "ambiguous-model\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-ambiguous-model/.cwd": "{HOME}/work/ambiguous-model\n",
+  "home/work/ambiguous-model/.pilotdeck/pilotdeck.local.yaml": "agent:\n  model: local\n",
+  "home/work/unknown-fallback/README.md": "unknown-fallback\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-unknown-fallback/.cwd": "{HOME}/work/unknown-fallback\n",
+  "home/work/unknown-fallback/.pilotdeck/pilotdeck.local.yaml": "agent:\n  fallbackModel: bbx/none\n",
+  "home/work/unknown-subagent/README.md": "unknown-subagent\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-unknown-subagent/.cwd": "{HOME}/work/unknown-subagent\n",
+  "home/work/unknown-subagent/.pilotdeck/pilotdeck.local.yaml": "agent:\n  subagents:\n    default: bbx/none\n",
+  "home/work/yaml-broken/README.md": "yaml-broken\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-yaml-broken/.cwd": "{HOME}/work/yaml-broken\n",
+  "home/work/yaml-broken/.pilotdeck/pilotdeck.local.yaml": "agent: [1, 2\n",
+  "home/work/thinking-no-enabled/README.md": "thinking-no-enabled\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-thinking-no-enabled/.cwd": "{HOME}/work/thinking-no-enabled\n",
+  "home/work/thinking-no-enabled/.pilotdeck/pilotdeck.local.yaml": "agent:\n  thinking:\n    budgetTokens: 5\n",
+  "home/work/thinking-string/README.md": "thinking-string\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-thinking-string/.cwd": "{HOME}/work/thinking-string\n",
+  "home/work/thinking-string/.pilotdeck/pilotdeck.local.yaml": "agent:\n  thinking: yes-please\n",
+  "home/work/subagents-number/README.md": "subagents-number\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-subagents-number/.cwd": "{HOME}/work/subagents-number\n",
+  "home/work/subagents-number/.pilotdeck/pilotdeck.local.yaml": "agent:\n  subagents: 3\n",
+  "home/work/maxdepth-negative/README.md": "maxdepth-negative\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-maxdepth-negative/.cwd": "{HOME}/work/maxdepth-negative\n",
+  "home/work/maxdepth-negative/.pilotdeck/pilotdeck.local.yaml": "agent:\n  subagents:\n    maxDepth: -1\n",
+  "home/work/model-empty/README.md": "model-empty\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-model-empty/.cwd": "{HOME}/work/model-empty\n",
+  "home/work/model-empty/.pilotdeck/pilotdeck.local.yaml": "agent:\n  model: '  '\n",
+  "home/work/null-root/README.md": "null-root\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-null-root/.cwd": "{HOME}/work/null-root\n",
+  "home/work/null-root/.pilotdeck/pilotdeck.local.yaml": "~\n",
+  "home/work/managed-denied/README.md": "managed-denied\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-managed-denied/.cwd": "{HOME}/work/managed-denied\n",
+  "home/work/managed-denied/.pilotdeck/pilotdeck.local.yaml": "agent:\n  model: bbx/local\n",
+  "home/work/managed-default-denied/README.md": "managed-default-denied\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-managed-default-denied/.cwd": "{HOME}/work/managed-default-denied\n",
+  "home/work/managed-default-denied/.pilotdeck/pilotdeck.local.yaml": "agent:\n  model: bbx/local\n",
+  "home/work/settings-over-bad-file/README.md": "settings-over-bad-file\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-settings-over-bad-file/.cwd": "{HOME}/work/settings-over-bad-file\n",
+  "home/work/settings-over-bad-file/.pilotdeck/pilotdeck.local.yaml": "agent:\n  maxOutputTokens: 0\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Cfg\"}"
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-unknown-model",
+    "channelKey": "test",
+    "message": "e-unknown-model go",
+    "projectKey": "{HOME}/work/unknown-model",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "local"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ambiguous-model",
+    "channelKey": "test",
+    "message": "e-ambiguous-model go",
+    "projectKey": "{HOME}/work/ambiguous-model",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "local"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-unknown-fallback",
+    "channelKey": "test",
+    "message": "e-unknown-fallback go",
+    "projectKey": "{HOME}/work/unknown-fallback",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "local"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-unknown-subagent",
+    "channelKey": "test",
+    "message": "e-unknown-subagent go",
+    "projectKey": "{HOME}/work/unknown-subagent",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "local"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-yaml-broken",
+    "channelKey": "test",
+    "message": "e-yaml-broken go",
+    "projectKey": "{HOME}/work/yaml-broken",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "local"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-thinking-no-enabled",
+    "channelKey": "test",
+    "message": "e-thinking-no-enabled go",
+    "projectKey": "{HOME}/work/thinking-no-enabled",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "local"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-thinking-string",
+    "channelKey": "test",
+    "message": "e-thinking-string go",
+    "projectKey": "{HOME}/work/thinking-string",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "local"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-subagents-number",
+    "channelKey": "test",
+    "message": "e-subagents-number go",
+    "projectKey": "{HOME}/work/subagents-number",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "local"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-maxdepth-negative",
+    "channelKey": "test",
+    "message": "e-maxdepth-negative go",
+    "projectKey": "{HOME}/work/maxdepth-negative",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "local"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-model-empty",
+    "channelKey": "test",
+    "message": "e-model-empty go",
+    "projectKey": "{HOME}/work/model-empty",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "local"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-null-root",
+    "channelKey": "test",
+    "message": "e-null-root go",
+    "projectKey": "{HOME}/work/null-root",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "local"
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-managed-denied",
+    "channelKey": "test",
+    "message": "e-managed-denied go",
+    "projectKey": "{HOME}/work/managed-denied",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "local"
+     ],
+     "managedModels": {
+      "allow": [],
+      "deny": [
+       "bbx/local"
+      ]
+     }
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-managed-default-denied",
+    "channelKey": "test",
+    "message": "e-managed-default-denied go",
+    "projectKey": "{HOME}/work/managed-default-denied",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "local"
+     ],
+     "managedModels": {
+      "allow": [],
+      "deny": [
+       "bbx/deterministic"
+      ]
+     }
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-settings-over-bad-file",
+    "channelKey": "test",
+    "message": "e-settings-over-bad-file go",
+    "projectKey": "{HOME}/work/settings-over-bad-file",
+    "sdkSessionConfig": {
+     "settingSources": [
+      "local"
+     ],
+     "settings": {
+      "agent": {
+       "maxOutputTokens": 100
+      }
+     }
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  }
+ ]
+}

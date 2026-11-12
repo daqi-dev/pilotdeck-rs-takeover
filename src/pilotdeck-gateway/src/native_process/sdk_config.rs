@@ -39,6 +39,8 @@ pub(super) const WIRED_FIELDS: &[&str] = &[
     "deferredTools",
     "persistSession",
     "promptSuggestions",
+    "settings",
+    "settingSources",
 ];
 
 /// The `agents.<id>` keys whose effect the native subagent composes. A
@@ -835,7 +837,7 @@ pub(super) struct NativeSdkSessionConfig {
 }
 
 /// `runtime.snapshot.config.model` of the project the config is set for.
-fn project_model_config(
+pub(super) fn project_model_config(
     registry: &crate::runtime::project::ProjectRuntimeRegistry,
     root: &std::path::Path,
 ) -> Result<JsValue, SubmitError> {
@@ -864,7 +866,7 @@ fn project_model_config(
 /// `resolveSdkConfiguredModel` (ProjectRuntimeRegistry.ts:1891-1924): the one
 /// catalog entry whose id, `provider/model` or bare model key equals the
 /// request.
-fn resolve_configured_model(
+pub(super) fn resolve_configured_model(
     model_config: &JsValue,
     requested: &JsString,
     code: &str,
@@ -1009,6 +1011,145 @@ pub(super) fn assert_managed_model_allowed(
     ))
 }
 
+/// `resolveSdkSettings(runtime, config)` (ProjectRuntimeRegistry.ts:1038-1056):
+/// the session overlay from the selected Gateway config files
+/// (`settingSources`: user = `<pilot home>/pilotdeck.yaml`, project =
+/// `<project>/.pilotdeck/pilotdeck.yaml`, local =
+/// `<project>/.pilotdeck/pilotdeck.local.yaml`, in that precedence) under the
+/// SDK's own `settings` (pilot/config/sdkSessionSettings.ts:81-103). The
+/// files are read on every call, like the baseline. No organization policy
+/// exists in this host, so no host defaults, managed, or enforced layers.
+pub(super) fn resolve_settings(
+    home: &std::path::Path,
+    os_home: Option<&std::path::Path>,
+    project_root: &std::path::Path,
+    config: Option<&JsValue>,
+) -> Result<Option<JsValue>, crate::runtime::sdk_session::SdkSessionError> {
+    let Some(config) = config.and_then(JsValue::as_object) else {
+        return Ok(None);
+    };
+    let env: crate::config::Env = [("PILOT_HOME".to_owned(), home.to_string_lossy().into_owned())]
+        .into_iter()
+        .collect();
+    crate::runtime::sdk_session::resolve_session_settings(
+        crate::runtime::sdk_session::ResolveSettingsOptions {
+            project_root,
+            cwd: project_root,
+            env: &env,
+            homedir: os_home,
+            host_defaults: None,
+            host_managed_settings: None,
+            host_setting_sources: None,
+            settings: present(config, "settings"),
+            setting_sources: present(config, "settingSources"),
+            host_enforced_settings: None,
+        },
+    )
+    // `mapPilotSdkSettingsError`: a settings error keeps its code as a
+    // `DialogGatewayError`.
+    .map_err(|error| {
+        if error.name == "PilotSdkSessionSettingsError" {
+            crate::runtime::sdk_session::SdkSessionError::new(error.code, error.message)
+        } else {
+            error
+        }
+    })
+}
+
+/// A settings failure inside `setSdkSessionConfig` as the submit preflight
+/// reports it: a `DialogGatewayError` keeps its code, anything else is
+/// `INVALID_SDK_SESSION_CONFIG` (InProcessGateway.ts:1105-1112).
+pub(super) fn settings_submit_error(
+    error: crate::runtime::sdk_session::SdkSessionError,
+) -> SubmitError {
+    if error.name == "DialogGatewayError" {
+        err(&error.code, error.message)
+    } else {
+        invalid(error.message)
+    }
+}
+
+/// The resolved overlay's `agent` section.
+pub(super) fn settings_agent(settings: Option<&JsValue>) -> Option<&JsObject> {
+    settings
+        .and_then(|settings| settings.get("agent"))
+        .and_then(JsValue::as_object)
+}
+
+/// Applies the resolved SDK settings overlay to the project's `agent`
+/// section before the session config is composed from it
+/// (SessionAgentConfigBundle.ts:60-151): the session model
+/// (`resolveSdkModel(settings.agent.model, agent.model)`), the context and
+/// output limits (`settings ?? agent ?? capabilities`), thinking
+/// (`settings.agent.thinking ?? agent.thinking`, under the session's own
+/// thinking override) and the subagent section (`default`: `null` drops the
+/// configured fork model, a model id resolves against the session model;
+/// `timeoutMs` / `maxDepth` replace the configured ones).
+pub(super) fn apply_settings_overlay(agent: &mut JsValue, settings: Option<&JsValue>) {
+    let Some(overlay) = settings_agent(settings) else {
+        return;
+    };
+    let JsValue::Object(section) = agent else {
+        return;
+    };
+    let current = section.get("model").cloned().unwrap_or(JsValue::Undefined);
+    let parent = (
+        current
+            .get("provider")
+            .cloned()
+            .unwrap_or(JsValue::Undefined),
+        current.get("model").cloned().unwrap_or(JsValue::Undefined),
+    );
+    let requested = match overlay.get("model").and_then(JsValue::as_string) {
+        Some(model) if !model.is_empty() => resolve_sdk_model(model, parent.clone()),
+        _ => parent.clone(),
+    };
+    if requested != parent {
+        let mut model = JsObject::new();
+        model.insert("provider".into(), requested.0.clone());
+        model.insert("model".into(), requested.1.clone());
+        section.insert("model".into(), JsValue::Object(model));
+    }
+    for key in ["maxContextTokens", "maxOutputTokens", "thinking"] {
+        if let Some(value) = present(overlay, key) {
+            section.insert(key.into(), value.clone());
+        }
+    }
+    let Some(subagents) = overlay.get("subagents").and_then(JsValue::as_object) else {
+        return;
+    };
+    let mut composed = section
+        .get("subagents")
+        .and_then(JsValue::as_object)
+        .cloned()
+        .unwrap_or_default();
+    match subagents.get("default") {
+        None => {}
+        Some(JsValue::String(model)) => {
+            let (provider, name) = resolve_sdk_model(model, requested);
+            let mut selected = JsObject::new();
+            selected.insert("provider".into(), provider);
+            selected.insert("model".into(), name);
+            composed.insert("default".into(), JsValue::Object(selected));
+        }
+        Some(_) => {
+            let mut kept = JsObject::new();
+            for (key, value) in composed.entries() {
+                if !key.equals_str("default") {
+                    kept.insert(key.clone(), value.clone());
+                }
+            }
+            composed = kept;
+        }
+    }
+    for key in ["timeoutMs", "maxDepth"] {
+        if let Some(value) = present(subagents, key) {
+            composed.insert(key.into(), value.clone());
+        }
+    }
+    section.insert("subagents".into(), JsValue::Object(composed));
+}
+
 /// `resolveSdkModel` (SessionAgentConfigBundle.ts:242-250): split at the first
 /// slash; an empty side or no slash keeps the parent model.
 fn resolve_sdk_model(requested: &JsString, parent: (JsValue, JsValue)) -> (JsValue, JsValue) {
@@ -1098,16 +1239,24 @@ pub(super) fn apply_agent_fields(agent: &mut JsObject, config: Option<&JsValue>)
 /// (SessionAgentConfigBundle.ts:127-131): `fallbackModel` becomes the one
 /// session fallback the router tries after a pre-content retryable failure,
 /// and `managedModels` the session's restrictive model policy.
-pub(super) fn apply_model_fields(agent: &mut JsObject, config: Option<&JsValue>) {
+pub(super) fn apply_model_fields(
+    agent: &mut JsObject,
+    config: Option<&JsValue>,
+    settings: Option<&JsValue>,
+) {
     let Some(config) = config.and_then(JsValue::as_object) else {
         return;
     };
     if let Some(policy) = present(config, "managedModels").filter(|policy| truthy(policy)) {
         agent.insert("managedModelPolicy".into(), policy.clone());
     }
-    // `sdk?.fallbackModel ?? sdk?.settings?.agent?.fallbackModel`; `settings`
-    // is not accepted by this host, so only the top-level field applies.
-    let requested = match present(config, "fallbackModel") {
+    // `sdk?.fallbackModel ?? sdk?.settings?.agent?.fallbackModel`, where
+    // `settings` is the resolved overlay (sources under the SDK's own).
+    let nullish = |value: &&JsValue| !matches!(value, JsValue::Null);
+    let requested = match present(config, "fallbackModel")
+        .filter(nullish)
+        .or_else(|| settings_agent(settings).and_then(|agent| present(agent, "fallbackModel")))
+    {
         None | Some(JsValue::Null) => return,
         Some(value) => value,
     };
@@ -1181,6 +1330,49 @@ impl SubmitSdkSessionConfig for NativeSdkSessionConfig {
             let root = self.options.project_root_for(project);
             validate_selector_policy(config.get("managedTools"), SelectorKind::Tools)?;
             validate_selector_policy(config.get("managedModels"), SelectorKind::Models)?;
+            // `resolveSdkSettings(runtime, next)` and the models it names
+            // (ProjectRuntimeRegistry.ts:976-986): each must resolve from the
+            // catalog and pass the session's model policy.
+            let settings = resolve_settings(
+                &self.options.home,
+                self.options.os_home.as_deref(),
+                &root,
+                Some(config),
+            )
+            .map_err(settings_submit_error)?;
+            if let Some(agent) = settings_agent(settings.as_ref()) {
+                let subagent_default = agent
+                    .get("subagents")
+                    .and_then(|subagents| subagents.get("default"));
+                for (requested, code, label) in [
+                    (
+                        agent.get("model"),
+                        "INVALID_SDK_AGENT_MODEL",
+                        "settings.agent.model",
+                    ),
+                    (
+                        agent.get("fallbackModel"),
+                        "INVALID_SDK_FALLBACK_MODEL",
+                        "fallbackModel",
+                    ),
+                    (
+                        subagent_default,
+                        "INVALID_SDK_SUBAGENT_MODEL",
+                        "settings.agent.subagents.default",
+                    ),
+                ] {
+                    let Some(requested) = requested.and_then(JsValue::as_string) else {
+                        continue;
+                    };
+                    let model_config = project_model_config(&self.project, &root)?;
+                    let resolved = resolve_configured_model(&model_config, requested, code, label)?;
+                    assert_managed_model_allowed(
+                        config.get("managedModels"),
+                        &resolved.0,
+                        &resolved.1,
+                    )?;
+                }
+            }
             // `JSON.stringify(previous) === JSON.stringify(next)`.
             let serialize = |value: &JsValue| stringify_json(value).ok().flatten();
             let previous = self.overrides.sdk_config(session);
@@ -1244,6 +1436,28 @@ impl SubmitSdkSessionConfig for NativeSdkSessionConfig {
                 }
             }
             let config = &next;
+            // `if (next.settings?.agent?.model)` (ProjectRuntimeRegistry.ts:
+            // 1006-1010): the SDK's own model, labelled `model`.
+            if let Some(requested) = config
+                .get("settings")
+                .and_then(|settings| settings.get("agent"))
+                .and_then(|agent| agent.get("model"))
+                .and_then(JsValue::as_string)
+                .filter(|requested| !requested.is_empty())
+            {
+                let model_config = project_model_config(&self.project, &root)?;
+                let resolved = resolve_configured_model(
+                    &model_config,
+                    requested,
+                    "INVALID_SDK_MODEL",
+                    "model",
+                )?;
+                assert_managed_model_allowed(
+                    config.get("managedModels"),
+                    &resolved.0,
+                    &resolved.1,
+                )?;
+            }
             // `if (next.fallbackModel)`: resolvable from this project's
             // catalog and allowed by the session's model policy
             // (ProjectRuntimeRegistry.ts:1014-1018).
