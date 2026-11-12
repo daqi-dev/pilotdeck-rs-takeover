@@ -1,0 +1,733 @@
+{
+ "name": "tool-task-params",
+ "about": "task_* 的可选参数（tool/builtin/taskTools.ts:172-500）：task_create 的 agentId（记进任务、task_list 按它过滤、gateway background_tasks 列出）、task_output 的 maxBytes（正常截断、0、负数、非整数）、task_wait 的 maxBytes（只做类型错误与未知任务：成功路径的 waitedMs 基线自己两次就不同，见 tool-task-by-id 的说明）、task_stop 的 graceMs（100、0、非整数）。任务 id 用 save 取最后一次 task_create 的结果。",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Tool run\"}"
+   }
+  },
+  {
+   "name": "k18-after",
+   "when": [
+    "k18:",
+    "\"tool_call_id\":\"call_k18\""
+   ],
+   "reply": {
+    "text": "Done 18."
+   }
+  },
+  {
+   "name": "k18",
+   "when": [
+    "k18:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k18",
+     "name": "task_create",
+     "arguments": {
+      "command": "true",
+      "agentId": 5
+     }
+    }
+   }
+  },
+  {
+   "name": "k17-after",
+   "when": [
+    "k17:",
+    "\"tool_call_id\":\"call_k17\""
+   ],
+   "reply": {
+    "text": "Done 17."
+   }
+  },
+  {
+   "name": "k17",
+   "when": [
+    "k17:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k17",
+     "name": "task_list",
+     "arguments": {
+      "agentId": "agent-b"
+     }
+    }
+   }
+  },
+  {
+   "name": "k16-after",
+   "when": [
+    "k16:",
+    "\"tool_call_id\":\"call_k16\""
+   ],
+   "reply": {
+    "text": "Done 16."
+   }
+  },
+  {
+   "name": "k16",
+   "when": [
+    "k16:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k16",
+     "name": "task_stop",
+     "arguments": {
+      "taskId": "{saved.tid3}",
+      "graceMs": 0
+     }
+    }
+   }
+  },
+  {
+   "name": "k15-after",
+   "when": [
+    "k15:",
+    "\"tool_call_id\":\"call_k15\""
+   ],
+   "reply": {
+    "text": "Done 15."
+   },
+   "save": {
+    "tid3": "[\\s\\S]*task_create taskId=([0-9a-f-]{36})"
+   }
+  },
+  {
+   "name": "k15",
+   "when": [
+    "k15:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k15",
+     "name": "task_create",
+     "arguments": {
+      "command": "sleep 30",
+      "agentId": "agent-c"
+     }
+    }
+   }
+  },
+  {
+   "name": "k14-after",
+   "when": [
+    "k14:",
+    "\"tool_call_id\":\"call_k14\""
+   ],
+   "reply": {
+    "text": "Done 14."
+   }
+  },
+  {
+   "name": "k14",
+   "when": [
+    "k14:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k14",
+     "name": "task_stop",
+     "arguments": {
+      "taskId": "{saved.tid2}",
+      "graceMs": 100
+     }
+    }
+   }
+  },
+  {
+   "name": "k13-after",
+   "when": [
+    "k13:",
+    "\"tool_call_id\":\"call_k13\""
+   ],
+   "reply": {
+    "text": "Done 13."
+   }
+  },
+  {
+   "name": "k13",
+   "when": [
+    "k13:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k13",
+     "name": "task_stop",
+     "arguments": {
+      "taskId": "{saved.tid2}",
+      "graceMs": "soon"
+     }
+    }
+   }
+  },
+  {
+   "name": "k12-after",
+   "when": [
+    "k12:",
+    "\"tool_call_id\":\"call_k12\""
+   ],
+   "reply": {
+    "text": "Done 12."
+   }
+  },
+  {
+   "name": "k12",
+   "when": [
+    "k12:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k12",
+     "name": "task_wait",
+     "arguments": {
+      "taskId": "no-such-task",
+      "maxBytes": 3,
+      "timeoutMs": 10
+     }
+    }
+   }
+  },
+  {
+   "name": "k11-after",
+   "when": [
+    "k11:",
+    "\"tool_call_id\":\"call_k11\""
+   ],
+   "reply": {
+    "text": "Done 11."
+   }
+  },
+  {
+   "name": "k11",
+   "when": [
+    "k11:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k11",
+     "name": "task_wait",
+     "arguments": {
+      "taskId": "{saved.tid1}",
+      "maxBytes": "3"
+     }
+    }
+   }
+  },
+  {
+   "name": "k10-after",
+   "when": [
+    "k10:",
+    "\"tool_call_id\":\"call_k10\""
+   ],
+   "reply": {
+    "text": "Done 10."
+   }
+  },
+  {
+   "name": "k10",
+   "when": [
+    "k10:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k10",
+     "name": "task_output",
+     "arguments": {
+      "taskId": "{saved.tid1}",
+      "maxBytes": 2.5
+     }
+    }
+   }
+  },
+  {
+   "name": "k09-after",
+   "when": [
+    "k09:",
+    "\"tool_call_id\":\"call_k09\""
+   ],
+   "reply": {
+    "text": "Done 09."
+   }
+  },
+  {
+   "name": "k09",
+   "when": [
+    "k09:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k09",
+     "name": "task_output",
+     "arguments": {
+      "taskId": "{saved.tid1}",
+      "maxBytes": -1
+     }
+    }
+   }
+  },
+  {
+   "name": "k08-after",
+   "when": [
+    "k08:",
+    "\"tool_call_id\":\"call_k08\""
+   ],
+   "reply": {
+    "text": "Done 08."
+   }
+  },
+  {
+   "name": "k08",
+   "when": [
+    "k08:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k08",
+     "name": "task_output",
+     "arguments": {
+      "taskId": "{saved.tid1}",
+      "offset": 24,
+      "maxBytes": 100
+     }
+    }
+   }
+  },
+  {
+   "name": "k07-after",
+   "when": [
+    "k07:",
+    "\"tool_call_id\":\"call_k07\""
+   ],
+   "reply": {
+    "text": "Done 07."
+   }
+  },
+  {
+   "name": "k07",
+   "when": [
+    "k07:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k07",
+     "name": "task_output",
+     "arguments": {
+      "taskId": "{saved.tid1}",
+      "offset": 5,
+      "maxBytes": 0
+     }
+    }
+   }
+  },
+  {
+   "name": "k06-after",
+   "when": [
+    "k06:",
+    "\"tool_call_id\":\"call_k06\""
+   ],
+   "reply": {
+    "text": "Done 06."
+   }
+  },
+  {
+   "name": "k06",
+   "when": [
+    "k06:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k06",
+     "name": "task_output",
+     "arguments": {
+      "taskId": "{saved.tid1}",
+      "maxBytes": 5
+     }
+    }
+   }
+  },
+  {
+   "name": "k05-after",
+   "when": [
+    "k05:",
+    "\"tool_call_id\":\"call_k05\""
+   ],
+   "reply": {
+    "text": "Done 05."
+   }
+  },
+  {
+   "name": "k05",
+   "when": [
+    "k05:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k05",
+     "name": "task_list",
+     "arguments": {
+      "agentId": ""
+     }
+    }
+   }
+  },
+  {
+   "name": "k04-after",
+   "when": [
+    "k04:",
+    "\"tool_call_id\":\"call_k04\""
+   ],
+   "reply": {
+    "text": "Done 04."
+   }
+  },
+  {
+   "name": "k04",
+   "when": [
+    "k04:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k04",
+     "name": "task_list",
+     "arguments": {
+      "agentId": "nobody",
+      "status": "running"
+     }
+    }
+   }
+  },
+  {
+   "name": "k03-after",
+   "when": [
+    "k03:",
+    "\"tool_call_id\":\"call_k03\""
+   ],
+   "reply": {
+    "text": "Done 03."
+   }
+  },
+  {
+   "name": "k03",
+   "when": [
+    "k03:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k03",
+     "name": "task_list",
+     "arguments": {
+      "agentId": "agent-a"
+     }
+    }
+   }
+  },
+  {
+   "name": "k02-after",
+   "when": [
+    "k02:",
+    "\"tool_call_id\":\"call_k02\""
+   ],
+   "reply": {
+    "text": "Done 02."
+   },
+   "save": {
+    "tid2": "[\\s\\S]*task_create taskId=([0-9a-f-]{36})"
+   }
+  },
+  {
+   "name": "k02",
+   "when": [
+    "k02:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k02",
+     "name": "task_create",
+     "arguments": {
+      "command": "sleep 30",
+      "agentId": "agent-b"
+     }
+    }
+   }
+  },
+  {
+   "name": "k01-after",
+   "when": [
+    "k01:",
+    "\"tool_call_id\":\"call_k01\""
+   ],
+   "reply": {
+    "text": "Done 01."
+   },
+   "save": {
+    "tid1": "[\\s\\S]*task_create taskId=([0-9a-f-]{36})"
+   }
+  },
+  {
+   "name": "k01",
+   "when": [
+    "k01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k01",
+     "name": "task_create",
+     "arguments": {
+      "command": "sleep 0.6; printf abcdefghijklmnopqrstuvwxyz",
+      "agentId": "agent-a"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-tk",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-tk",
+    "channelKey": "test",
+    "message": "k01: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 1500
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-tk",
+    "channelKey": "test",
+    "message": "k02: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-tk",
+    "channelKey": "test",
+    "message": "k03: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-tk",
+    "channelKey": "test",
+    "message": "k04: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-tk",
+    "channelKey": "test",
+    "message": "k05: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-tk",
+    "channelKey": "test",
+    "message": "k06: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-tk",
+    "channelKey": "test",
+    "message": "k07: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-tk",
+    "channelKey": "test",
+    "message": "k08: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-tk",
+    "channelKey": "test",
+    "message": "k09: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-tk",
+    "channelKey": "test",
+    "message": "k10: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-tk",
+    "channelKey": "test",
+    "message": "k11: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-tk",
+    "channelKey": "test",
+    "message": "k12: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-tk",
+    "channelKey": "test",
+    "message": "k13: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-tk",
+    "channelKey": "test",
+    "message": "k14: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 800
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-tk",
+    "channelKey": "test",
+    "message": "k15: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-tk",
+    "channelKey": "test",
+    "message": "k16: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 800
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-tk",
+    "channelKey": "test",
+    "message": "k17: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-tk",
+    "channelKey": "test",
+    "message": "k18: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "background_tasks",
+   "params": {
+    "sessionKey": "s-tk"
+   }
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-tk"
+   }
+  }
+ ],
+ "volatile": [
+  "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages|resultBytes|content-length)$"
+ ],
+ "volatileWhy": "工具结果文本里带位数不定的进程号，文本长度逐次差几个字符，token 估算和字节数随之变（同 tool-task）"
+}
