@@ -1,0 +1,11 @@
+{
+  "name": "agent-loop-sidecar-env-invalid",
+  "about": "agent 循环部署环境变量的出错路径：启动时 createLocalGateway 解析部署方式（src/cli/createLocalGateway.ts:623 → AgentLoopDeploymentProfile.ts:44-140），非法的 PILOTDECK_AGENT_LOOP_TRANSPORT、tcp 缺端口 / 端口越界、stdio 的空 PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND 时 server 的输出与退出码。",
+  "server": false,
+  "steps": [
+    {"serve": ["server", "--port", "38413"], "env": {"PILOTDECK_AGENT_LOOP_TRANSPORT": "bogus"}},
+    {"serve": ["server", "--port", "38413"], "env": {"PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp"}},
+    {"serve": ["server", "--port", "38413"], "env": {"PILOTDECK_AGENT_LOOP_TRANSPORT": " TCP ", "PILOTDECK_AGENT_LOOP_TCP_PORT": "70000"}},
+    {"serve": ["server", "--port", "38413"], "env": {"PILOTDECK_AGENT_LOOP_TRANSPORT": "stdio", "PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND": "  "}}
+  ]
+}

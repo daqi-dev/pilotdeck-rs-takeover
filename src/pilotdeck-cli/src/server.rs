@@ -28,6 +28,11 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
     if let Some(url) = loaded.proxy_url.as_deref() {
         super::proxy::install_from_config(env, url);
     }
+    // createLocalGateway() resolves the agent-loop deployment profile
+    // (createLocalGateway.ts:623) before the legacy skill migration; an
+    // invalid PILOTDECK_AGENT_LOOP_* variable ends the command there.
+    pilotdeck_gateway::runtime::turn::host_factory::resolve_deployment(&env.strings(), cwd)
+        .map_err(Failure::Error)?;
     // createLocalGateway(): the legacy bundled-skill migration and its output.
     let exe = std::env::current_exe()
         .ok()

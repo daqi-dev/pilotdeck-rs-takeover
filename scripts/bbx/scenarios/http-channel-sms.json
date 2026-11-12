@@ -1,0 +1,13 @@
+{
+  "name": "http-channel-sms",
+  "about": "SMS 渠道启用时 /sms/incoming 不被监听：基线的 SmsChannel 在 ESM 模块里用 require(\"twilio\")（dist/src/adapters/channel/sms/SmsChannel.js:11），require 未定义，始终走「twilio not installed」分支（SmsChannel.ts:61-64）不起 HTTP 服务。这里把 webhookPort 设成 gateway 自己的端口 38411，POST /sms/incoming 落到 gateway 的 404（GatewayServer.ts:131-133）；Rust 若另起监听或抢端口会表现为不同的应答。",
+  "volatile": [
+    "\\.http\\.headers\\.date$"
+  ],
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  sms:\n    enabled: true\n    extra:\n      accountSid: AC0000\n      authToken: bbx-token\n      phoneNumber: \"+15550000000\"\n      webhookPort: 38411\n",
+  "steps": [
+    {"sleep": 300},
+    {"http": "POST /sms/incoming", "headers": {"content-type": "application/x-www-form-urlencoded"}, "body": "From=%2B15551234567&Body=hello"},
+    {"http": "GET /health"}
+  ]
+}

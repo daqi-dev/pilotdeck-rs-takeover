@@ -1,0 +1,17 @@
+{
+  "name": "cli-run-options",
+  "about": "run 的连接与模型参数（src/cli/sdkCli.ts:43-68、:180-191）：显式 --gateway-url + --auth-token（去掉环境里的令牌）、错误令牌、连不上的地址、--model 配 --project 时作为 modelOverride 发出。每个 run 用不同的 --channel（同一渠道多个会话时落盘树排序随 uuid 变，见 cli-run-resume）。 不存在的模型见 cli-run-model-unresolvable。",
+  "env": {
+    "PILOTDECK_TOKEN": "{TOKEN}"
+  },
+  "provider": [
+    {"name": "title", "when": ["Generate a concise title"], "reply": {"text": "{\"title\": \"Say hello\"}"}},
+    {"name": "main", "reply": {"text": "Hello from the mock."}}
+  ],
+  "steps": [
+    {"cli": ["run", "--channel", "r01", "--gateway-url", "ws://127.0.0.1:38411/ws", "--auth-token", "{TOKEN}", "explicit connection"], "env": {"PILOTDECK_TOKEN": null}},
+    {"cli": ["run", "--channel", "r02", "--auth-token", "wrong-token", "hello"], "timeout": 15000},
+    {"cli": ["run", "--channel", "r03", "--gateway-url", "ws://127.0.0.1:38419/ws", "hello"], "timeout": 15000},
+    {"cli": ["run", "--channel", "r04", "--project", "{PROJECT}", "--model", "bbx/deterministic", "--json", "hello model"]}
+  ]
+}
