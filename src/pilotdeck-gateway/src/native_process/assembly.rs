@@ -1266,7 +1266,7 @@ async fn start_assembly(
     // `adapters.weixin.enabled` startup gate and the ChannelStartDeps config;
     // #1326 takes the `cron` section off the same load; #2294 takes the
     // `alwaysOn` section with it.
-    let (channel_assembly, cron_section, always_on_section) = {
+    let (channel_assembly, cron_section, always_on_section, idle_options) = {
         use crate::runtime::project::ConfigSource;
         let config = crate::runtime::project::NativeConfigSource::new(
             options.project.clone(),
@@ -1333,6 +1333,7 @@ async fn start_assembly(
         // bundle's `createAlwaysOn` gate reads the section itself (absent
         // section, or no project with `enabled: true`, constructs nothing).
         let always_on_section = automation_section("alwaysOn");
+        let idle_options = session_idle_options(config.get("gateway"));
         let channel_assembly = Arc::new(super::channels::NativeChannels::new(
             super::channels::NativeChannelsOptions {
                 pilot_home: options.home.clone(),
@@ -1361,7 +1362,12 @@ async fn start_assembly(
         if let Some(slots) = &switch_slots {
             let _ = slots.channels.set(channel_assembly.clone());
         }
-        (channel_assembly, cron_section, always_on_section)
+        (
+            channel_assembly,
+            cron_section,
+            always_on_section,
+            idle_options,
+        )
     };
     let build_channels = channel_assembly.clone();
     let cleanup_channels = channel_assembly.clone();
@@ -1419,6 +1425,10 @@ async fn start_assembly(
                     && emit_coordinator.emit(session, &event)
             }));
             let mut owner_options = SessionOwnerOptions::new(build_factory);
+            (
+                owner_options.idle_timeout_ms,
+                owner_options.idle_sweep_interval_ms,
+            ) = idle_options;
             // `onSessionEvict` (createLocalGateway.ts:846-848): every eviction
             // except a dirty recreate drops the session's live permission
             // mode, so the next turn starts from the stored selection or the
@@ -2199,6 +2209,32 @@ impl crate::runtime::model::router::RouterEventSink for RouterEventLog {
             emit(session, JsValue::Object(status));
         }
     }
+}
+
+/// `SessionRouter`'s idle options from the default runtime's `gateway`
+/// section (createLocalGateway.ts:827-831): `(idleSessionTimeoutMinutes ??
+/// 30) * 60_000` and `Math.max(0, idleSweepIntervalSeconds ?? 60) * 1_000`.
+/// The owner compares integer idle milliseconds with `>`, so the timeout is
+/// floored; a positive sweep interval follows Node's `setInterval` coercion
+/// (below 1 ms or above `TIMEOUT_MAX` runs every 1 ms, fractions truncate).
+fn session_idle_options(gateway: Option<&JsValue>) -> (i64, u64) {
+    let number = |key: &str, fallback: f64| {
+        gateway
+            .and_then(|gateway| gateway.get(key))
+            .and_then(JsValue::as_number)
+            .filter(|value| value.is_finite())
+            .unwrap_or(fallback)
+    };
+    let timeout = (number("idleSessionTimeoutMinutes", 30.0) * 60_000.0).floor();
+    let interval = number("idleSweepIntervalSeconds", 60.0).max(0.0) * 1_000.0;
+    let interval = if interval <= 0.0 {
+        0
+    } else if !(1.0..=2_147_483_647.0).contains(&interval) {
+        1
+    } else {
+        interval.trunc() as u64
+    };
+    (timeout as i64, interval)
 }
 
 fn project_registry_with(
