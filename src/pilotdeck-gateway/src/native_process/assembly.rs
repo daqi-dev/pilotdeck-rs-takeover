@@ -863,6 +863,17 @@ async fn start_assembly(
                     ),
                     None => Vec::new(),
                 };
+                // The same composition's commands, skills and MCP
+                // instructions (`new PluginRuntimeExtensionResolver(
+                // contributions)`): the context runtime lists these for the
+                // session's life, so a skill that appears or disappears
+                // after this point is not seen until the session is rebuilt.
+                let session_extension = crate::runtime::turn::host_factory::session_extension(
+                    &staged,
+                    super::sdk_config::session_skills(sdk_config.as_ref()).as_deref(),
+                )
+                .await
+                .map_err(|error| RuntimeError::new(error.to_string()))?;
                 let hook_settings =
                     super::hooks::session_hook_settings(plugin_hooks, sdk_config.as_ref());
                 let include_hook_events = sdk_config
@@ -1130,6 +1141,7 @@ async fn start_assembly(
                                 })
                                 .cloned(),
                         )
+                        .with_session_extension(session_extension.clone())
                         .with_permission_mode_source(permission_source.clone())
                         .with_continuation_parent(continuation_parent.parent_ref())
                         .with_hooks(

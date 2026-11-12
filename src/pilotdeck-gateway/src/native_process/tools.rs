@@ -2013,6 +2013,17 @@ impl SessionTools {
         self
     }
 
+    /// The session's plugin contributions, taken when the session is
+    /// composed (ProjectSessionRuntimeBundle.ts:247-264) and kept by its
+    /// context runtime until the session is recreated.
+    pub(super) fn with_session_extension(
+        self,
+        extension: Option<Arc<dyn crate::runtime::context::ExtensionResolver>>,
+    ) -> Self {
+        self.context_state.freeze_session_extension(extension);
+        self
+    }
+
     /// The SDK config's `skills` scope and `managedTools` policy.
     pub(super) fn with_sdk_tool_scope(
         mut self,

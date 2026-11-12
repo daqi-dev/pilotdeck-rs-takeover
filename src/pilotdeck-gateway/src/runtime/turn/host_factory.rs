@@ -675,10 +675,11 @@ async fn session_context_runtime(
             message,
         )
     };
-    // The contributions are the session's, not the turn's: taken by the
-    // session's first composition and kept until the session is recreated
-    // (ProjectSessionRuntimeBundle.ts:246-263), so a skill written later is
-    // not listed until a reload marks the session dirty.
+    // The contributions are the session's, not the turn's: taken when the
+    // session is created (ProjectSessionRuntimeBundle.ts:246-263; the native
+    // assembly freezes them into the session state then) and kept until the
+    // session is recreated, so a skill written later is not listed until a
+    // reload marks the session dirty. A state nobody froze takes them here.
     let extension = match session_state
         .as_ref()
         .and_then(|state| state.session_extension())
@@ -876,7 +877,7 @@ impl TurnHostFactory {
 /// (`ProjectSessionRuntimeBundle.ts:247-264`): the generation's plugin
 /// contributions as the prompt assembler reads them. A generation without a
 /// plugin runtime contributes nothing.
-async fn session_extension(
+pub(crate) async fn session_extension(
     context: &crate::runtime::project::StageContext,
     selected: Option<&[String]>,
 ) -> Result<
