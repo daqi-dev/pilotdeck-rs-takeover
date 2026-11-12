@@ -76,6 +76,10 @@ const cases = [
   ['别的记录换位', jsonl([rec('accepted_input'), rec('step_started'), rec('model_request')]), jsonl([rec('accepted_input'), rec('model_request'), rec('step_started')]), 'DIFF'],
   ['少一条记录', jsonl([rec('accepted_input'), rec('step_started')]), jsonl([rec('accepted_input')]), 'DIFF'],
 
+  ['always-on 事件文件里记录换位', art([], { tree: { '/home/.pilotdeck/always-on/projects/p/events.jsonl': { mode: '644', jsonl: [{ phase: 'a' }, { phase: 'b' }] } } }), art([], { tree: { '/home/.pilotdeck/always-on/projects/p/events.jsonl': { mode: '644', jsonl: [{ phase: 'b' }, { phase: 'a' }] } } }), 'SAME'],
+  ['always-on 事件文件里少一条', art([], { tree: { '/home/.pilotdeck/always-on/projects/p/events.jsonl': { mode: '644', jsonl: [{ phase: 'a' }, { phase: 'b' }] } } }), art([], { tree: { '/home/.pilotdeck/always-on/projects/p/events.jsonl': { mode: '644', jsonl: [{ phase: 'a' }] } } }), 'DIFF'],
+  ['always-on 事件文件里内容不同', art([], { tree: { '/home/.pilotdeck/always-on/projects/p/events.jsonl': { mode: '644', jsonl: [{ phase: 'a' }, { phase: 'b' }] } } }), art([], { tree: { '/home/.pilotdeck/always-on/projects/p/events.jsonl': { mode: '644', jsonl: [{ phase: 'a' }, { phase: 'c' }] } } }), 'DIFF'],
+  ['别的 jsonl 文件里记录换位照报', art([], { tree: { '/home/.pilotdeck/other/events.jsonl': { mode: '644', jsonl: [{ phase: 'a' }, { phase: 'b' }] } } }), art([], { tree: { '/home/.pilotdeck/other/events.jsonl': { mode: '644', jsonl: [{ phase: 'b' }, { phase: 'a' }] } } }), 'DIFF'],
   ['volatile 路径被略过', art([{ step: {}, frames: [{ used: 1 }] }], { volatile: ['\\.used$'] }), art([{ step: {}, frames: [{ used: 2 }] }], { volatile: ['\\.used$'] }), 'SAME'],
   ['volatile 之外照比', art([{ step: {}, frames: [{ used: 1, x: 1 }] }], { volatile: ['\\.used$'] }), art([{ step: {}, frames: [{ used: 2, x: 2 }] }], { volatile: ['\\.used$'] }), 'DIFF'],
   ['accepted 路径被略过', art([{ step: {}, frames: [{ v: 1 }] }], { accepted: [{ id: 'i', why: 'w', paths: ['\\.v$'] }] }), art([{ step: {}, frames: [{ v: 2 }] }], { accepted: [{ id: 'i', why: 'w', paths: ['\\.v$'] }] }), 'SAME'],

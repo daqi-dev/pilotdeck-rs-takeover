@@ -24,6 +24,7 @@
 //      存在）与循环开头的几条记录并发写入，基线两次运行的先后就不同。比较前把它的内容挪到同一轮里
 //      accepted_input / 首条 session_metadata 之后；只允许越过 FLOAT_OVER 里列的记录类型，越过别的类型不挪，
 //      照常报差异。挪的是内容，位置上的 sequence / entryId / parentEntryId / createdAt 不动（基线里它们也只随位置变）
+//  10. always-on 的 events.jsonl 不比记录先后（基线不等待地追加，先后随机），只比记录集合与内容
 // 数组按下标比。唯一的例外：元素全是带名字的对象（function.name 或 name，且名字不重复）的数组
 // 按名字对齐——缺的、多的各报一条，共有元素的相对顺序不同报一条，同名元素再逐字段比。
 // 这只改变差异的报法（少一个工具不再表现为后面所有工具都错位），不会让任何差异消失。
@@ -109,10 +110,16 @@ function settleTitleRecords(recs) {
     }
   }
 }
+// 规则 10：always-on 的 events.jsonl 不比记录先后。基线追加这个文件时不等上一条写完（DiscoveryFire 的
+// appendEvent 是 fire-and-forget），连续发出的两条事件谁先落盘是随机的。比较前按内容排序（先抹掉 id 和时间），
+// 记录的集合和每条内容照比。
+const UNORDERED_JSONL = /\/always-on\/projects\/[^/]+\/events\.jsonl$/;
+const orderKey = (r) => JSON.stringify(r).replace(UUID, 'U').replace(ISO, 'T').replace(/\d{13}(\.\d+)?/g, 'M');
 function load(file) {
   const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
   for (const [name, entry] of Object.entries(raw.tree ?? {})) {
     if (name.endsWith('.jsonl') && Array.isArray(entry?.jsonl)) settleTitleRecords(entry.jsonl);
+    if (UNORDERED_JSONL.test(name) && Array.isArray(entry?.jsonl)) entry.jsonl.sort((x, y) => (orderKey(x) < orderKey(y) ? -1 : orderKey(x) > orderKey(y) ? 1 : 0));
   }
   for (const k of Object.keys(IGNORED)) delete raw[k];
   return normalizer()(raw);
