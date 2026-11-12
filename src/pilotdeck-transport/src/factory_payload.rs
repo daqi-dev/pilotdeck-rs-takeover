@@ -721,21 +721,38 @@ fn blocks(values: &[JsValue]) -> Vec<JsValue> {
 fn message_metadata(value: Option<&JsValue>) -> Option<JsValue> {
     let o = record(value)?;
     let mut out = JsObject::new();
-    copy_string(&mut out, o, "model");
-    copy_boolean(&mut out, o, "synthetic");
-    copy_boolean(&mut out, o, "transient");
-    copy_string(&mut out, o, "transientId");
-    copy_string(&mut out, o, "toolCallId");
-    copy_boolean(&mut out, o, "compactReplacement");
-    for key in ["compactSnapshotId", "purpose", "queueItemId"] {
-        copy_string(&mut out, o, key);
-    }
-    if let Some(fork) = record(o.get("forkCarryover"))
-        && let Some(session) = string(fork.get("sourceSessionId"))
-    {
-        let mut carry = object([("sourceSessionId", JsValue::String(session))]);
-        copy_string(&mut carry, fork, "sourceTurnId");
-        out.insert("forkCarryover".into(), JsValue::Object(carry));
+    // The kept fields stay in the message's own key order: the in-process
+    // baseline hands the session's messages to the loop as they are.
+    for (key, _) in o.entries() {
+        let Some(name) = [
+            "model",
+            "synthetic",
+            "transient",
+            "transientId",
+            "toolCallId",
+            "compactReplacement",
+            "compactSnapshotId",
+            "purpose",
+            "queueItemId",
+            "forkCarryover",
+        ]
+        .into_iter()
+        .find(|name| key.equals_str(name)) else {
+            continue;
+        };
+        match name {
+            "synthetic" | "transient" | "compactReplacement" => copy_boolean(&mut out, o, name),
+            "forkCarryover" => {
+                if let Some(fork) = record(o.get("forkCarryover"))
+                    && let Some(session) = string(fork.get("sourceSessionId"))
+                {
+                    let mut carry = object([("sourceSessionId", JsValue::String(session))]);
+                    copy_string(&mut carry, fork, "sourceTurnId");
+                    out.insert("forkCarryover".into(), JsValue::Object(carry));
+                }
+            }
+            _ => copy_string(&mut out, o, name),
+        }
     }
     (!out.is_empty()).then_some(JsValue::Object(out))
 }

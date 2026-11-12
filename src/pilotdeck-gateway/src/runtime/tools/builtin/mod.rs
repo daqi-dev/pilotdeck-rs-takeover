@@ -13,6 +13,7 @@ pub mod form_dialog;
 pub mod glob;
 pub mod goal;
 pub mod grep;
+pub mod image_codec;
 pub mod mcp_resources;
 pub mod mcp_tool;
 pub mod plan_mode;

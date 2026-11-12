@@ -16,6 +16,7 @@ workspace = true
 [dependencies]
 pilotdeck-child-signals = { path = "../pilotdeck-child-signals" }
 base64 = "=0.22.1"
+png = "=0.18.1"
 libc = "=0.2.190"
 sha2.workspace = true
 # FileMemoryStore hashText uses Node crypto SHA-1 (10 hex digits).

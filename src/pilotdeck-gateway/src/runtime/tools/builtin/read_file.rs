@@ -513,15 +513,16 @@ fn image(
         .and_then(|value| value.get("imageDetail"))
         .and_then(JsValue::as_string)
         .cloned();
-    // The baseline's JPEG fast path is a pure EOI check: complete JPEGs over
-    // 1 KiB pass through unchanged when they already fit the byte budget. That
-    // path needs no sharp/decoder, so it can be reproduced exactly.
-    if mime_type == "image/jpeg" && context_stat.size as f64 <= max_image_bytes {
-        let bytes = std::fs::read(os_path(&resolved.absolute))
-            .map_err(|error| failed(error, "open", &resolved.absolute))?;
-        let has_eoi =
-            bytes.len() >= 2 && bytes[bytes.len() - 2] == 0xff && bytes[bytes.len() - 1] == 0xd9;
-        if has_eoi && bytes.len() > 1000 {
+    let bytes = std::fs::read(os_path(&resolved.absolute))
+        .map_err(|error| failed(error, "open", &resolved.absolute))?;
+    let prepared = match prepare_image(bytes.clone(), mime_type) {
+        // `compressImageForBudget` resizes an image over the budget with
+        // sharp; that resize is not ported.
+        Prepared::Image(image, _) if image.len() as f64 > max_image_bytes => Prepared::Unavailable,
+        other => other,
+    };
+    match prepared {
+        Prepared::Image(image, image_mime) => {
             read_state_set(
                 context,
                 read_state_key.clone(),
@@ -529,55 +530,136 @@ fn image(
             );
             let mut content = object([
                 ("type", string("image")),
-                ("mimeType", string("image/jpeg")),
-                ("data", string(BASE64.encode(&bytes))),
-                ("bytes", JsValue::Number(bytes.len() as f64)),
+                ("mimeType", string(image_mime)),
+                ("data", string(BASE64.encode(&image))),
+                ("bytes", JsValue::Number(image.len() as f64)),
             ]);
             if let Some(detail) = image_detail {
                 content.insert("detail".into(), JsValue::String(detail));
             }
-            return Ok(ToolOutput {
+            Ok(ToolOutput {
                 content: vec![JsValue::Object(content)],
                 supplemental_messages: None,
                 data: Some(JsValue::Object(object([
                     ("filePath", string(resolved.relative.clone())),
                     ("kind", string("image")),
-                    ("mimeType", string("image/jpeg")),
-                    ("bytes", JsValue::Number(bytes.len() as f64)),
+                    ("mimeType", string(image_mime)),
+                    ("bytes", JsValue::Number(image.len() as f64)),
                     ("originalBytes", JsValue::Number(bytes.len() as f64)),
                 ]))),
                 metadata: None,
-            });
+            })
         }
+        Prepared::DecodeFailed(error) => Ok(ToolOutput {
+            content: vec![JsValue::Object(object([
+                ("type", string("text")),
+                (
+                    "text",
+                    string(format!(
+                        "[Image file: {}, {} bytes, {mime_type}. Image decoding failed, so it was not attached as model-visible image content. Diagnostic: {error}]",
+                        text(&resolved.relative),
+                        context_stat.size
+                    )),
+                ),
+            ]))],
+            data: Some(JsValue::Object(object([
+                ("filePath", string(resolved.relative.clone())),
+                ("kind", string("image")),
+                ("mimeType", string(mime_type)),
+                ("bytes", JsValue::Number(bytes.len() as f64)),
+                ("imageDecodeFailed", JsValue::Bool(true)),
+                ("error", string(error)),
+            ]))),
+            ..ToolOutput::default()
+        }),
+        // JPEG/GIF/WebP decoding (to repair or re-encode) and the budget
+        // resize need sharp/libvips, which is not ported; report the
+        // decode-failure notice rather than an image the baseline would not
+        // have sent.
+        Prepared::Unavailable => Ok(ToolOutput {
+            content: vec![JsValue::Object(object([
+                ("type", string("text")),
+                (
+                    "text",
+                    string(format!(
+                        "[Image file: {}, {} bytes, {mime_type}. Image decoding failed, so it was not attached as model-visible image content. Diagnostic: image processing is not available in this runtime.]",
+                        text(&resolved.relative),
+                        context_stat.size
+                    )),
+                ),
+            ]))],
+            data: Some(JsValue::Object(object([
+                ("filePath", string(resolved.relative.clone())),
+                ("kind", string("image")),
+                ("mimeType", string(mime_type)),
+                ("bytes", JsValue::Number(context_stat.size as f64)),
+                ("imageDecodeFailed", JsValue::Bool(true)),
+                (
+                    "error",
+                    string("image processing is not available in this runtime"),
+                ),
+            ]))),
+            ..ToolOutput::default()
+        }),
     }
-    // Non-JPEG decoding and JPEG repair/compression require sharp, which is not
-    // in the gateway dependency set; report the same recoverable notice as the
-    // baseline's decode-failure branch.
-    Ok(ToolOutput {
-        content: vec![JsValue::Object(object([
-            ("type", string("text")),
-            (
-                "text",
-                string(format!(
-                    "[Image file: {}, {} bytes, {mime_type}. Image decoding failed, so it was not attached as model-visible image content. Diagnostic: image processing is not available in this runtime.]",
-                    text(&resolved.relative),
-                    context_stat.size
-                )),
-            ),
-        ]))],
-        data: Some(JsValue::Object(object([
-            ("filePath", string(resolved.relative.clone())),
-            ("kind", string("image")),
-            ("mimeType", string(mime_type)),
-            ("bytes", JsValue::Number(context_stat.size as f64)),
-            ("imageDecodeFailed", JsValue::Bool(true)),
-            (
-                "error",
-                string("image processing is not available in this runtime"),
-            ),
-        ]))),
-        ..ToolOutput::default()
-    })
+}
+
+enum Prepared {
+    Image(Vec<u8>, &'static str),
+    DecodeFailed(String),
+    Unavailable,
+}
+
+const PNG_SIGNATURE: [u8; 8] = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
+/// `validateAndRepairImage` (readFile.ts:733-769): a complete JPEG over 1000
+/// bytes and any other image over 1000 bytes whose header parses pass
+/// through unchanged; everything else is re-encoded by sharp as a quality-90
+/// JPEG, or reported truncated when it cannot be decoded. The re-encode is
+/// ported for PNG input ([`super::image_codec`]).
+fn prepare_image(bytes: Vec<u8>, mime_type: &'static str) -> Prepared {
+    let is_jpeg = mime_type == "image/jpeg";
+    let has_eoi = is_jpeg && bytes.len() >= 2 && bytes[bytes.len() - 2..] == [0xff, 0xd9];
+    if is_jpeg && has_eoi && bytes.len() > 1000 {
+        return Prepared::Image(bytes, mime_type);
+    }
+    if !is_jpeg && bytes.len() > 1000 && header_parses(&bytes) {
+        return Prepared::Image(bytes, mime_type);
+    }
+    let corrupted = || {
+        Prepared::DecodeFailed(format!(
+            "Image file appears truncated or corrupted ({} bytes). Cannot decode.",
+            bytes.len()
+        ))
+    };
+    if bytes.starts_with(&PNG_SIGNATURE) {
+        return match super::image_codec::decode_png(&bytes) {
+            Ok(raster) => {
+                Prepared::Image(super::image_codec::encode_jpeg_q90(&raster), "image/jpeg")
+            }
+            Err(_) => corrupted(),
+        };
+    }
+    if other_sharp_format(&bytes) {
+        return Prepared::Unavailable;
+    }
+    corrupted()
+}
+
+/// `sharp(buffer).metadata()` for the formats `read_file` accepts.
+fn header_parses(bytes: &[u8]) -> bool {
+    if bytes.starts_with(&PNG_SIGNATURE) {
+        return super::image_codec::png_header_ok(bytes);
+    }
+    other_sharp_format(bytes)
+}
+
+/// JPEG, GIF and WebP magic: formats sharp decodes that this port does not.
+fn other_sharp_format(bytes: &[u8]) -> bool {
+    bytes.starts_with(&[0xff, 0xd8, 0xff])
+        || bytes.starts_with(b"GIF87a")
+        || bytes.starts_with(b"GIF89a")
+        || (bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP")
 }
 
 fn pdf(

@@ -678,6 +678,18 @@ async fn start_assembly(
                         );
                     }
                 }
+                // `modelMultimodal = runtime.model.getMultimodal(...)`
+                // (SessionAgentConfigBundle.ts:64-69): the tools read it from
+                // their context (`read_file` images and PDFs).
+                if let Some(multimodal) = selected
+                    .get("provider")
+                    .and_then(JsValue::as_string)
+                    .zip(selected.get("model").and_then(JsValue::as_string))
+                    .and_then(|(p, m)| model.providers.get_multimodal(p, m).ok())
+                    .filter(|value| !value.is_undefined())
+                {
+                    config.insert("modelMultimodal".into(), multimodal);
+                }
                 let max_output_tokens_env = env
                     .get("PILOTDECK_MAX_OUTPUT_TOKENS")
                     .map(|v| crate::js_value::string_to_number(v))
