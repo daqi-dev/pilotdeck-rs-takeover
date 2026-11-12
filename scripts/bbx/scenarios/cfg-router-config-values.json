@@ -1,0 +1,491 @@
+{
+ "name": "cfg-router-config-values",
+ "about": "router 段各键的非法 / 边界取值（router/config/parseRouterConfig.ts 全文；loadPilotConfig.ts 合并 router 诊断，scenarios.default 与 agent.model 不一致时 CONFIG_MODEL_CONFLICT）：每个 serve 步骤用 PILOTDECK_CONFIG_PATH 指到只改一处的配置，比启动输出、退出码，能启动的再比 resolve_settings 的诊断与快照。覆盖 scenarios.default（冲突 / 不存在的模型）、fallback 未知场景 / maxFallbacks 非法 / 不是数组、transientRetry 与 zeroUsageRetry 非法值、stats 的 unit / retentionMs / 负价格 / baselineModel 非法、tokenSaver 的 tiers 为空 / defaultTier 未知 / subagent.policy 未知 / cacheAwareSwitching.minSavingsRatio 负数 / judgeTimeoutMs=0、autoOrchestrate 未知 triggerTiers 与 skillExtensionId、customRouter.extensionId 为空与指向不存在的扩展、router.enabled 非布尔；最后一项是 memory 的旧扁平写法（reasoningMode / autoIndexIntervalMinutes / autoDreamIntervalMinutes，memory.schedule 缺失时才读）。",
+ "server": false,
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+ "files": {
+  "cfgs/scenarios-conflict.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        other:\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\nrouter:\n  enabled: true\n  scenarios:\n    default: bbx/other\n",
+  "cfgs/scenarios-unknown-model.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        other:\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\nrouter:\n  enabled: true\n  scenarios:\n    default: bbx/nope\n",
+  "cfgs/fallback-unknown-scenario.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        other:\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\nrouter:\n  enabled: true\n  fallback:\n    weekend:\n      - bbx/other\n",
+  "cfgs/fallback-max-invalid.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        other:\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\nrouter:\n  enabled: true\n  fallback:\n    maxFallbacks: -1\n",
+  "cfgs/fallback-not-array.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        other:\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\nrouter:\n  enabled: true\n  fallback:\n    default: bbx/other\n",
+  "cfgs/transient-invalid.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        other:\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\nrouter:\n  enabled: true\n  transientRetry:\n    baseDelayMs: -5\n",
+  "cfgs/transient-enabled-invalid.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        other:\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\nrouter:\n  enabled: true\n  transientRetry:\n    enabled: \"yes\"\n",
+  "cfgs/zero-usage-invalid.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        other:\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\nrouter:\n  enabled: true\n  zeroUsageRetry:\n    maxAttempts: 1.5\n",
+  "cfgs/stats-unit-invalid.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        other:\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\nrouter:\n  enabled: true\n  stats:\n    modelPricing:\n      bbx/other:\n        input: 1\n        unit: EUR\n",
+  "cfgs/stats-retention-invalid.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        other:\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\nrouter:\n  enabled: true\n  stats:\n    retentionMs: 0\n",
+  "cfgs/stats-price-negative.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        other:\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\nrouter:\n  enabled: true\n  stats:\n    modelPricing:\n      bbx/other:\n        output: -1\n",
+  "cfgs/stats-baseline-invalid.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        other:\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\nrouter:\n  enabled: true\n  stats:\n    baselineModel: 5\n",
+  "cfgs/tiers-empty.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        other:\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\nrouter:\n  enabled: true\n  tokenSaver:\n    judge: bbx/other\n    tiers: {}\n",
+  "cfgs/default-tier-unknown.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        other:\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\nrouter:\n  enabled: true\n  tokenSaver:\n    judge: bbx/other\n    defaultTier: huge\n    tiers:\n      simple:\n        model: bbx/other\n",
+  "cfgs/subagent-policy-invalid.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        other:\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\nrouter:\n  enabled: true\n  tokenSaver:\n    judge: bbx/other\n    subagent:\n      policy: sometimes\n    tiers:\n      simple:\n        model: bbx/other\n",
+  "cfgs/cache-aware-ratio-invalid.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        other:\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\nrouter:\n  enabled: true\n  tokenSaver:\n    judge: bbx/other\n    cacheAwareSwitching:\n      minSavingsRatio: -0.5\n    tiers:\n      simple:\n        model: bbx/other\n",
+  "cfgs/judge-timeout-invalid.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        other:\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\nrouter:\n  enabled: true\n  tokenSaver:\n    judge: bbx/other\n    judgeTimeoutMs: 0\n    tiers:\n      simple:\n        model: bbx/other\n",
+  "cfgs/orchestrate-unknown-tier.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        other:\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\nrouter:\n  enabled: true\n  tokenSaver:\n    judge: bbx/other\n    tiers:\n      simple:\n        model: bbx/other\n  autoOrchestrate:\n    triggerTiers: [galaxy]\n    skillExtensionId: no-such-skill\n",
+  "cfgs/custom-router-invalid.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        other:\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\nrouter:\n  enabled: true\n  customRouter:\n    extensionId: \"\"\n",
+  "cfgs/custom-router-missing-extension.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        other:\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\nrouter:\n  enabled: true\n  customRouter:\n    extensionId: bbx-no-such-router\n",
+  "cfgs/router-enabled-invalid.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        other:\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\nrouter:\n  enabled: maybe\n",
+  "cfgs/memory-flat-schedule.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        other:\n          capabilities:\n            supportsToolUse: true\ntelemetry:\n  enabled: false\nrouter:\n  enabled: false\nmemory:\n  enabled: false\n  reasoningMode: accuracy_first\n  autoIndexIntervalMinutes: 5\n  autoDreamIntervalMinutes: 7\n"
+ },
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/scenarios-conflict.yaml"
+   },
+   "then": [
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/scenarios-unknown-model.yaml"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/fallback-unknown-scenario.yaml"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/fallback-max-invalid.yaml"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/fallback-not-array.yaml"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/transient-invalid.yaml"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/transient-enabled-invalid.yaml"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/zero-usage-invalid.yaml"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/stats-unit-invalid.yaml"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/stats-retention-invalid.yaml"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/stats-price-negative.yaml"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/stats-baseline-invalid.yaml"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/tiers-empty.yaml"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/default-tier-unknown.yaml"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/subagent-policy-invalid.yaml"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/cache-aware-ratio-invalid.yaml"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/judge-timeout-invalid.yaml"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/orchestrate-unknown-tier.yaml"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/custom-router-invalid.yaml"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/custom-router-missing-extension.yaml"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/router-enabled-invalid.yaml"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/memory-flat-schedule.yaml"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ],
+   "timeout": 20000
+  }
+ ]
+}
