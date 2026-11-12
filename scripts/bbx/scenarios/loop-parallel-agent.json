@@ -1,0 +1,107 @@
+{
+  "name": "loop-parallel-agent",
+  "about": "并发安全但不是只读的工具（agent，tool/builtin/agent.ts:166-167）在同一回复的多工具调用里属于先并行执行的那组（agent/modules/capability/hostToolPort.ts:96-108，ConcurrentToolScheduler.ts）。p1：write_file 排在 agent 前面，基线先跑 agent，子代理 glob 时文件还没写出。两个 agent 并行时各自子代理发出模型请求的先后是竞态（Rust 两次运行就不同），不在这里比。已知不稳：agent 工具结果里带 durationMs，位数变化会带动 resultBytes 和随后的 token 估算（--self 可见）。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Par\"}"
+      }
+    },
+    {
+      "name": "p1-done",
+      "when": [
+        "p1:",
+        "\"tool_call_id\":\"call_p1b\""
+      ],
+      "reply": {
+        "text": "p1 done."
+      }
+    },
+    {
+      "name": "child5-report",
+      "when": [
+        "CHILD-P1",
+        "\"tool_call_id\":\"call_c5\""
+      ],
+      "reply": {
+        "text": "Scope: looked.\nResult: see glob.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "child5",
+      "when": [
+        "CHILD-P1"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_c5",
+          "name": "glob",
+          "arguments": {
+            "pattern": "out5*"
+          }
+        }
+      }
+    },
+    {
+      "name": "p1",
+      "when": [
+        "p1:"
+      ],
+      "reply": {
+        "tools": [
+          {
+            "id": "call_p1a",
+            "name": "write_file",
+            "arguments": {
+              "file_path": "out5.txt",
+              "content": "five\n"
+            }
+          },
+          {
+            "id": "call_p1b",
+            "name": "agent",
+            "arguments": {
+              "description": "Look for out5",
+              "prompt": "CHILD-P1: list files named out5*.",
+              "subagent_type": "explore"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-p1",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-p1",
+        "channelKey": "test",
+        "message": "p1: write and look"
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-p1"
+      }
+    },
+    {
+      "sleep": 300
+    }
+  ]
+}
