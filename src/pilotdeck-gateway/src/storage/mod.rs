@@ -37,7 +37,10 @@ pub(crate) use transcript::{
 };
 pub(crate) use transcript_adapter::{compact_snapshot_messages, slice_index};
 
-pub(crate) use session_projections::{METADATA, TURN_SUMMARY, checkpoint_rows, subagent_entries};
+pub(crate) use session_projections::{
+    METADATA, RestoredTokenUsage, TURN_SUMMARY, checkpoint_rows_restored, restored_token_usage,
+    subagent_entries,
+};
 pub(crate) use web_messages::{
     WebReadOptions, is_background_task_input, session_info_from_entries, web_session_messages,
     web_subagent_messages,

@@ -126,6 +126,8 @@ pub struct SessionProjection {
     completed_turns: Mutex<HashSet<JsString>>,
     valid: AtomicBool,
     disposed: AtomicBool,
+    /// The token-usage checkpoint row the last restore decoded.
+    pub(super) token_usage: Mutex<Option<crate::storage::RestoredTokenUsage>>,
 }
 impl Default for SessionProjection {
     fn default() -> Self {
@@ -135,6 +137,7 @@ impl Default for SessionProjection {
             completed_turns: Mutex::default(),
             valid: AtomicBool::new(true),
             disposed: AtomicBool::new(false),
+            token_usage: Mutex::default(),
         }
     }
 }
@@ -268,8 +271,18 @@ pub(crate) fn save_cold_projection_checkpoint(
         .read_transcript(None)
         .map_err(|e| RuntimeError::new(e.to_string()))?;
     let state = project(&read.entries)?;
-    let envelope = projection_cache::envelope(session_id, &read.entries, &state);
-    FileProjectionCheckpointStore(storage.projection_checkpoint_path.clone()).save(&envelope)
+    // The cold storage restores its projections from the checkpoint before
+    // the append, like a live session (ProjectSessionStorage.ts:349-361).
+    let store = FileProjectionCheckpointStore(storage.projection_checkpoint_path.clone());
+    let token_usage =
+        projection_cache::restored_rows(store.load().as_ref(), session_id, &read.entries);
+    let envelope = projection_cache::envelope_restored(
+        session_id,
+        &read.entries,
+        &state,
+        token_usage.as_ref(),
+    );
+    store.save(&envelope)
 }
 
 pub(crate) fn try_writer_lease(path: &Path) -> Result<Option<WriterLease>, RuntimeError> {

@@ -152,6 +152,7 @@ impl ProjectionCache {
             .collect();
         entries.extend(published);
         let mut state = project(&entries)?;
+        let token_usage = restored_rows(checkpoint.as_ref(), &self.key.session_id, &entries);
         // Conversation contains replay context (including incomplete turns).
         // Keep that authoritative replay; cache only rows with standalone state.
         // #1500: the checkpoint rows are aggregated up to a numeric watermark,
@@ -218,6 +219,7 @@ impl ProjectionCache {
                 state.permission_denials = denials;
             }
         }
+        *lock(&self.projection.token_usage) = token_usage;
         *lock(&self.projection.completed_turns) = completed_turns(&entries);
         *live = entries;
         *lock(&self.projection.last_valid) = state;
@@ -311,7 +313,9 @@ impl ProjectionCache {
                     continue;
                 }
                 let state = project(&entries)?;
-                let envelope = envelope(&self.key.session_id, &entries, &state);
+                let token_usage = lock(&self.projection.token_usage).clone();
+                let envelope =
+                    envelope_restored(&self.key.session_id, &entries, &state, token_usage.as_ref());
                 self.store.save(&envelope)?;
                 return Ok(());
             }
@@ -529,10 +533,28 @@ fn valid_metadata(value: &JsValue) -> bool {
     }
     true
 }
+/// The token-usage row a restore takes from a valid checkpoint envelope.
+pub(super) fn restored_rows(
+    checkpoint: Option<&JsValue>,
+    session: &JsString,
+    entries: &[JsValue],
+) -> Option<crate::storage::RestoredTokenUsage> {
+    let checkpoint = checkpoint.filter(|value| valid_envelope(value, session, entries))?;
+    crate::storage::restored_token_usage(field(checkpoint, "projections"), last_sequence(entries))
+}
 pub(super) fn envelope(
     session: &JsString,
     entries: &[JsValue],
     state: &DurableSessionState,
+) -> JsValue {
+    envelope_restored(session, entries, state, None)
+}
+/// [`envelope`] for a session that restored projection rows.
+pub(super) fn envelope_restored(
+    session: &JsString,
+    entries: &[JsValue],
+    state: &DurableSessionState,
+    token_usage: Option<&crate::storage::RestoredTokenUsage>,
 ) -> JsValue {
     let watermark = last_sequence(entries);
     let row = |version, state| {
@@ -561,7 +583,7 @@ pub(super) fn envelope(
         (
             "projections",
             object(
-                &crate::storage::checkpoint_rows(
+                &crate::storage::checkpoint_rows_restored(
                     entries,
                     object(&[
                         ("usage", JsValue::Object(state.usage.clone())),
@@ -571,6 +593,7 @@ pub(super) fn envelope(
                         ),
                     ]),
                     JsValue::Object(state.metadata.clone()),
+                    token_usage,
                 )
                 .into_iter()
                 .map(|(name, version, state)| (name, row(version, state)))
