@@ -1,0 +1,215 @@
+{
+ "name": "tool-get-current-time-legacy-zones",
+ "about": "get_current_time 的显式时区名走 Node 自带的 ICU 数据（tool/builtin/getCurrentTime.ts:36-60），与系统是否装 tzdata-legacy 无关：tzdb 旧别名 US/Pacific、ICU 独有的 PST 和 SystemV/EST5EDT、小写的 asia/calcutta 都被接受并原样回显，Factory 被拒。只比形状：时间值靠比较器的 ISO / 毫秒归一化。",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Gap\"}"
+   }
+  },
+  {
+   "name": "z05-after",
+   "when": [
+    "z05:",
+    "\"tool_call_id\":\"call_z05\""
+   ],
+   "reply": {
+    "text": "Done 05."
+   }
+  },
+  {
+   "name": "z05",
+   "when": [
+    "z05:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_z05",
+     "name": "get_current_time",
+     "arguments": {
+      "timezone": "Factory"
+     }
+    }
+   }
+  },
+  {
+   "name": "z04-after",
+   "when": [
+    "z04:",
+    "\"tool_call_id\":\"call_z04\""
+   ],
+   "reply": {
+    "text": "Done 04."
+   }
+  },
+  {
+   "name": "z04",
+   "when": [
+    "z04:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_z04",
+     "name": "get_current_time",
+     "arguments": {
+      "timezone": "asia/calcutta"
+     }
+    }
+   }
+  },
+  {
+   "name": "z03-after",
+   "when": [
+    "z03:",
+    "\"tool_call_id\":\"call_z03\""
+   ],
+   "reply": {
+    "text": "Done 03."
+   }
+  },
+  {
+   "name": "z03",
+   "when": [
+    "z03:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_z03",
+     "name": "get_current_time",
+     "arguments": {
+      "timezone": "SystemV/EST5EDT"
+     }
+    }
+   }
+  },
+  {
+   "name": "z02-after",
+   "when": [
+    "z02:",
+    "\"tool_call_id\":\"call_z02\""
+   ],
+   "reply": {
+    "text": "Done 02."
+   }
+  },
+  {
+   "name": "z02",
+   "when": [
+    "z02:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_z02",
+     "name": "get_current_time",
+     "arguments": {
+      "timezone": "PST"
+     }
+    }
+   }
+  },
+  {
+   "name": "z01-after",
+   "when": [
+    "z01:",
+    "\"tool_call_id\":\"call_z01\""
+   ],
+   "reply": {
+    "text": "Done 01."
+   }
+  },
+  {
+   "name": "z01",
+   "when": [
+    "z01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_z01",
+     "name": "get_current_time",
+     "arguments": {
+      "timezone": "US/Pacific"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-tz",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-tz",
+    "channelKey": "test",
+    "message": "z01: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-tz",
+    "channelKey": "test",
+    "message": "z02: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-tz",
+    "channelKey": "test",
+    "message": "z03: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-tz",
+    "channelKey": "test",
+    "message": "z04: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-tz",
+    "channelKey": "test",
+    "message": "z05: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-tz"
+   }
+  }
+ ]
+}
