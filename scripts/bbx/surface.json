@@ -15998,7 +15998,7 @@
     {
      "id": "slash:/plan",
      "where": "src/gateway/client/InProcessGateway.ts:3585",
-     "note": "gateway 在 submit_turn 里特殊处理：/plan <内容> 改成以计划模式（runMode=plan、mode=plan、allowPlanModeTools）提交 <内容>；/plan 后面为空时整个提交被丢弃（normalizePlanCommandInput 返回 undefined）。",
+     "note": "gateway 在 submit_turn 里特殊处理：/plan <内容> 改成以计划模式（runMode=plan、mode=plan、allowPlanModeTools）提交 <内容>；/plan 后面为空时不调模型，只回 assistant_text_delta「用法：/plan <任务>\n例如：/plan 设计一个新功能」并 turn_completed（finishReason completed）。",
      "probe": [
       "/\"message\": ?\"\\/plan(\\s|\\\\n|\")/",
       "/\"text\": ?\"\\/plan(\\s|\\\\n|\")/"
