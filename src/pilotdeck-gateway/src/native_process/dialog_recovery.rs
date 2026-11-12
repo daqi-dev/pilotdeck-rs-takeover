@@ -140,6 +140,12 @@ pub(crate) async fn recover(
         return Ok(false);
     }
     let transcript = transcript_locks::session_transcript_path(home, project_root, session);
+    // A project with no chat directory has no journal to recover from; the
+    // fence below would create that directory, which the baseline's read of a
+    // missing journal never does.
+    if !transcript.parent().is_some_and(Path::exists) {
+        return Ok(false);
+    }
     // One recovery write at a time per transcript, like the TS per-session
     // write queue; the fence also excludes the other cold metadata writers.
     let fence = transcript_locks::acquire(&transcript).await?;

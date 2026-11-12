@@ -215,6 +215,12 @@ impl Requests {
                             ),
                         ));
                     }
+                    // `claimHostedUserDialog` runs before the bus
+                    // (InProcessGateway.ts:2748) and resolves
+                    // `projectKey ?? fallback` through the dialog registry
+                    // (createLocalGateway.ts:1434-1437) whether or not a host
+                    // protocol is configured.
+                    self.dialog_project(&params)?;
                     // TS hands the bus `input.leaseId?.trim()`
                     // (InProcessGateway.ts:2754), not the raw validated string.
                     let lease_id = lease_id.as_ref().map(trimmed);
@@ -309,6 +315,12 @@ impl Requests {
                         (released, outbox)
                     };
                     outbox.deliver();
+                    // A miss on the in-process bus falls through to
+                    // `releaseHostedUserDialog` (InProcessGateway.ts:2769-2773),
+                    // which resolves the project first.
+                    if !released {
+                        self.dialog_project(&params)?;
+                    }
                     Ok(crate::metadata::object([(
                         "released",
                         JsValue::Bool(released),
@@ -401,6 +413,10 @@ impl Requests {
                             "leaseId must be a non-empty string when provided.",
                         )
                     })?;
+                    // `submitHostedUserDialogAnswer` runs before the bus
+                    // (InProcessGateway.ts:2661) and resolves the project
+                    // first (createLocalGateway.ts:1442-1445).
+                    self.dialog_project(&params)?;
 
                     // #1442: the bus guard covers only state reads and
                     // mutations. `accepts`, `on_settled`, `resolve` and the

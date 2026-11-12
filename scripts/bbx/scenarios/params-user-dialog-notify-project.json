@@ -1,0 +1,103 @@
+{
+  "name": "params-user-dialog-notify-project",
+  "about": "差异证明（未修，留给主会话决定）：submit_turn 带 projectKey 时，基线把它记进 dialogProjectKeys，此后该会话的 user_dialog_changed 通知都带 projectKey（InProcessGateway.ts:551,569-575,774；关会话 / 关项目 / 删会话时清掉 :2044,2053,2231,2238）；Rust 记了这张表（runtime/turn/admission.rs dialog_project_keys）但没有读者，通知里没有 projectKey。",
+  "files": {
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+    "home/work/alpha/README.md": "alpha\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Dialog keys\"}"
+      }
+    },
+    {
+      "name": "after-tool",
+      "when": [
+        "\"tool_call_id\":\"call_udp\""
+      ],
+      "reply": {
+        "text": "Done."
+      }
+    },
+    {
+      "name": "turn",
+      "when": [
+        "udp:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_udp",
+          "name": "request_user_choice",
+          "arguments": {
+            "prompt": "Pick",
+            "options": [
+              {
+                "value": "a",
+                "label": "A"
+              },
+              {
+                "value": "b",
+                "label": "B"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-udp",
+        "channelKey": "test",
+        "projectKey": "{HOME}/work/alpha",
+        "runId": "run-udp",
+        "message": "udp: choose",
+        "sdkSessionConfig": {
+          "userDialogKinds": [
+            "input",
+            "select",
+            "confirm"
+          ]
+        }
+      },
+      "timeout": 3000,
+      "expectTimeout": true,
+      "save": {
+        "rid": "\"requestId\":\"([0-9a-f-]{36})\""
+      }
+    },
+    {
+      "ws": "user_dialog_claim",
+      "params": {
+        "sessionKey": "s-udp",
+        "requestId": "{saved.rid}",
+        "projectKey": "{HOME}/work/alpha"
+      },
+      "save": {
+        "lease": "\"leaseId\":\"([0-9a-f-]{36})\""
+      }
+    },
+    {
+      "ws": "user_dialog_respond",
+      "params": {
+        "sessionKey": "s-udp",
+        "requestId": "{saved.rid}",
+        "projectKey": "{HOME}/work/alpha",
+        "result": {
+          "behavior": "answered",
+          "value": "b"
+        }
+      }
+    },
+    {
+      "sleep": 1000
+    }
+  ]
+}
