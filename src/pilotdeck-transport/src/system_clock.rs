@@ -57,6 +57,9 @@ fn system_epoch_ms(now: SystemTime) -> i64 {
     }
 }
 
+#[path = "named_zone.rs"]
+pub mod named_zone;
+
 /// Same UTC ISO year/sign/millisecond form as Date.prototype.toISOString.
 /// The production wall clock is sampled separately for each trait invocation.
 pub fn format_epoch_iso(epoch_ms: i64) -> String {
@@ -241,9 +244,9 @@ fn resolve_zone_local(wall: i64, zone: tz::TimeZoneRef<'_>) -> Result<i64, JsStr
     }
 }
 
-/// One local wall-clock reading in an admitted IANA zone or fixed offset.
-/// The same checked TZif profile that backs local date parsing is used, so the
-/// gateway never re-parses timezone files or guesses an offset. `weekday` is
+/// One local wall-clock reading in a named zone or fixed offset. Named zones
+/// come from the bundled data in [`named_zone`], parsed by the same checked
+/// TZif reader that backs local date parsing; nothing guesses an offset. `weekday` is
 /// 0=Sunday..=6=Saturday (Intl `weekday: "short"` order); month/day are
 /// 1-based.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -261,16 +264,17 @@ pub struct ZonedDateTimeParts {
 
 /// A timezone admitted once and reused across many instants: the same
 /// admission rules and data source as [`zoned_datetime_parts`] (an ICU
-/// UTC-offset identifier, or an IANA name matched case-insensitively against
-/// the system zoneinfo tree), with the TZif bytes parsed a single time.
+/// UTC-offset identifier, or a name Node 22's ICU accepts, resolved from the
+/// bundled data in [`named_zone`] — never from the host zoneinfo tree), with
+/// the zone rules built a single time.
 /// #1324's minute-granular cron scan resolves a zone once and then walks up
 /// to 366*24*60 candidates over it, so the per-instant entry point's
-/// read-and-parse-per-call cost is not acceptable there.
+/// build-per-call cost is not acceptable there.
 #[derive(Clone)]
 #[allow(dead_code)] // called from main crate; flagged dead in test-only #[path] include
 pub enum ZonedPartsResolver {
     FixedOffset(i32),
-    SystemZone(tz::TimeZone),
+    Named(tz::TimeZone),
 }
 
 #[allow(dead_code)] // called from main crate; flagged dead in test-only #[path] include
@@ -278,21 +282,16 @@ impl ZonedPartsResolver {
     pub fn new(timezone: &str) -> Result<Self, JsString> {
         match parse_offset_timezone(timezone) {
             Some(offset) => Ok(Self::FixedOffset(offset)),
-            None => {
-                let bytes = timezone_tzif(timezone)
-                    .ok_or_else(|| JsString::from("Invalid time zone specified"))?;
-                Ok(Self::SystemZone(
-                    tz::TimeZone::from_tz_data(&bytes)
-                        .map_err(|_| JsString::from("Invalid time zone specified"))?,
-                ))
-            }
+            None => named_zone::named_zone(timezone)
+                .map(Self::Named)
+                .ok_or_else(|| JsString::from("Invalid time zone specified")),
         }
     }
 
     fn offset_seconds(&self, epoch_ms: i64) -> Result<i32, JsString> {
         match self {
             Self::FixedOffset(offset) => Ok(*offset),
-            Self::SystemZone(zone) => zone
+            Self::Named(zone) => zone
                 .find_local_time_type(epoch_ms.div_euclid(1000))
                 .map_err(|_| JsString::from("Invalid time zone specified"))
                 .map(|time_type| time_type.ut_offset()),
@@ -324,11 +323,10 @@ impl ZonedPartsResolver {
     }
 }
 
-/// Local fields for one UTC instant. `timezone` is an IANA name (matched
-/// case-insensitively against the system zoneinfo tree) or an ICU UTC-offset
-/// identifier such as `+05:30` / `-0800`. Invalid names are the only error;
-/// a valid name whose system TZif is unreadable is reported as invalid rather
-/// than silently formatted as UTC.
+/// Local fields for one UTC instant. `timezone` is a zone name Node 22's ICU
+/// accepts (matched ASCII case-insensitively, see [`named_zone`]) or an ICU
+/// UTC-offset identifier such as `+05:30` / `-0800`. A name ICU rejects is
+/// the only error.
 #[allow(dead_code)] // called from main crate; flagged dead in test-only #[path] include
 pub fn zoned_datetime_parts(epoch_ms: i64, timezone: &str) -> Result<ZonedDateTimeParts, JsString> {
     ZonedPartsResolver::new(timezone)?.parts_at(epoch_ms)
@@ -367,46 +365,6 @@ fn parse_offset_timezone(value: &str) -> Option<i32> {
         return None;
     }
     Some(sign * (hours * 3_600 + minutes * 60))
-}
-
-/// Resolve an IANA-like name under the admitted system zoneinfo root. Every
-/// component is matched exactly first and then case-insensitively (ICU names
-/// are case-insensitive), and the final real path must remain under the root.
-#[allow(dead_code)] // called from main crate; flagged dead in test-only #[path] include
-fn timezone_tzif(name: &str) -> Option<Vec<u8>> {
-    if name.is_empty() || name.starts_with('/') || name.contains('\0') {
-        return None;
-    }
-    let root = std::path::Path::new("/usr/share/zoneinfo");
-    let mut path = root.to_path_buf();
-    for component in name.split('/') {
-        if component.is_empty() || component == "." || component == ".." {
-            return None;
-        }
-        let exact = path.join(component);
-        if exact.exists() {
-            path = exact;
-            continue;
-        }
-        let entries = std::fs::read_dir(&path).ok()?;
-        let mut found = None;
-        for entry in entries.flatten() {
-            let file_name = entry.file_name();
-            if let Some(candidate) = file_name.to_str()
-                && candidate.eq_ignore_ascii_case(component)
-            {
-                found = Some(entry.path());
-                break;
-            }
-        }
-        path = found?;
-    }
-    let canonical_root = std::fs::canonicalize(root).ok()?;
-    let canonical = std::fs::canonicalize(&path).ok()?;
-    if !canonical.starts_with(&canonical_root) {
-        return None;
-    }
-    bounded_zone_read(&canonical)
 }
 
 /// Same 1 MiB bound as the conservative stats retention read: a zone file

@@ -1,0 +1,88 @@
+{
+ "name": "cron-create-legacy-zones",
+ "about": "cron_create 的时区合法性与解析（cron/CronTimezone.ts:1-8、runtime/CronRuntime.ts:303、584-590）走 Node 自带的 ICU 数据：tzdb 旧别名 US/Pacific、Asia/Calcutta，ICU 独有的 PST、SystemV/EST5EDT，小写 gb 都被接受，Factory 被拒；返回与 tasks.json 落盘。nextRunAt 是 ISO 时间，被比较器归一化，只比有无。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ncron:\n  enabled: true\n",
+ "files": {
+  "home/work/alpha/README.md": "alpha\n"
+ },
+ "steps": [
+  {
+   "ws": "cron_create",
+   "params": {
+    "projectKey": "{HOME}/work/alpha",
+    "message": "tz US/Pacific",
+    "schedule": {
+     "type": "cron",
+     "expression": "0 9 * * *",
+     "timezone": "US/Pacific"
+    }
+   }
+  },
+  {
+   "ws": "cron_create",
+   "params": {
+    "projectKey": "{HOME}/work/alpha",
+    "message": "tz PST",
+    "schedule": {
+     "type": "cron",
+     "expression": "0 9 * * *",
+     "timezone": "PST"
+    }
+   }
+  },
+  {
+   "ws": "cron_create",
+   "params": {
+    "projectKey": "{HOME}/work/alpha",
+    "message": "tz SystemV/EST5EDT",
+    "schedule": {
+     "type": "cron",
+     "expression": "0 9 * * *",
+     "timezone": "SystemV/EST5EDT"
+    }
+   }
+  },
+  {
+   "ws": "cron_create",
+   "params": {
+    "projectKey": "{HOME}/work/alpha",
+    "message": "tz gb",
+    "schedule": {
+     "type": "cron",
+     "expression": "0 9 * * *",
+     "timezone": "gb"
+    }
+   }
+  },
+  {
+   "ws": "cron_create",
+   "params": {
+    "projectKey": "{HOME}/work/alpha",
+    "message": "tz Factory",
+    "schedule": {
+     "type": "cron",
+     "expression": "0 9 * * *",
+     "timezone": "Factory"
+    }
+   }
+  },
+  {
+   "ws": "cron_create",
+   "params": {
+    "projectKey": "{HOME}/work/alpha",
+    "message": "task tz",
+    "schedule": {
+     "type": "cron",
+     "expression": "0 9 * * *"
+    },
+    "timezone": "Asia/Calcutta"
+   }
+  },
+  {
+   "ws": "cron_list",
+   "params": {
+    "projectKey": "{HOME}/work/alpha"
+   }
+  }
+ ]
+}
