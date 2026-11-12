@@ -675,9 +675,25 @@ async fn session_context_runtime(
             message,
         )
     };
-    let extension = session_extension(context, skills)
-        .await
-        .map_err(|error| session_error(error.to_string()))?;
+    // The contributions are the session's, not the turn's: taken by the
+    // session's first composition and kept until the session is recreated
+    // (ProjectSessionRuntimeBundle.ts:246-263), so a skill written later is
+    // not listed until a reload marks the session dirty.
+    let extension = match session_state
+        .as_ref()
+        .and_then(|state| state.session_extension())
+    {
+        Some(extension) => extension,
+        None => {
+            let extension = session_extension(context, skills)
+                .await
+                .map_err(|error| session_error(error.to_string()))?;
+            match &session_state {
+                Some(state) => state.freeze_session_extension(extension),
+                None => extension,
+            }
+        }
+    };
     Ok(Arc::new(
         storage
             .create_session_with_options(

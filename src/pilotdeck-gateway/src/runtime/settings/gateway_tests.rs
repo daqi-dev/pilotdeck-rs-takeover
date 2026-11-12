@@ -444,8 +444,8 @@ async fn extensions_reload_branches_on_the_original_project_key_truthiness() {
         );
         harness.probe.clear_events();
     }
-    // `changedPaths` entries are `String()`-coerced (the registered divergence;
-    // TS keeps `[1, true, null]` as-is in the result and the broadcast).
+    // `changedPaths` entries are echoed as given: TS keeps `[1, true, null]`
+    // as-is in the result and the broadcast; only the log line joins them.
     let mut object = JsObject::new();
     object.insert(
         "changedPaths".into(),
@@ -462,10 +462,10 @@ async fn extensions_reload_branches_on_the_original_project_key_truthiness() {
     assert_eq!(
         as_serde(&result),
         as_serde(
-            &parse_json(r#"{"reloaded":true,"changedPaths":["1","true",""]}"#)
-                .expect("#1318-r2 extensions-truthiness: the coercion expectation must parse")
+            &parse_json(r#"{"reloaded":true,"changedPaths":[1,true,null]}"#)
+                .expect("#1318-r2 extensions-truthiness: the echo expectation must parse")
         ),
-        "#1318-r2 extensions-truthiness: changedPaths entries are String()-coerced (registered divergence U7-EXTENSIONS-RELOAD-STRING-COERCION-001)"
+        "#1318-r2 extensions-truthiness: changedPaths entries are echoed as given"
     );
     assert_eq!(
         harness.probe.events(),
@@ -473,10 +473,10 @@ async fn extensions_reload_branches_on_the_original_project_key_truthiness() {
             "log:[pilotdeck] Extensions reload requested for all runtimes: 1, true, ".to_owned(),
             "invalidate:null".to_owned(),
             "mark-all-dirty:extension_changed".to_owned(),
-            r#"broadcast:config_changed:{"changedPaths":["1","true",""],"changeClasses":["extension-changed"]}"#
+            r#"broadcast:config_changed:{"changedPaths":[1,true,null],"changeClasses":["extension-changed"]}"#
                 .to_owned(),
         ],
-        "#1318-r2 extensions-truthiness: the all-runtimes events for a coerced changedPaths list"
+        "#1318-r2 extensions-truthiness: the all-runtimes events for a non-string changedPaths list"
     );
 }
 
