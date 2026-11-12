@@ -1,0 +1,123 @@
+{
+ "name": "gap-sdk-submit-failed-status",
+ "about": "会话准备失败时的 gateway_submit_failed 状态记录（InProcessGateway.ts:1706-1765 的 pump catch → emitGatewayFailureStatus → recordAgentStatusMessage，InProcessGateway.ts:2068-2078；没有活会话时走 GatewaySessionHistoryBundle.ts:205-245 的冷存储，必要时新建会话文件）：已有会话第二轮换成本会话没有的 deferredTools，会话被标脏后重建失败，状态记录接在原会话文件后面；第三轮恢复正常配置后会话照常续写；在另一个已登记项目里的新会话同样失败，记录写进该项目的 chats 目录。比较事件、read_session_messages、list_sessions 与落盘。",
+ "files": {
+  "home/work/proj/README.md": "proj\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-proj/.cwd": "{HOME}/work/proj\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Submit fail\"}"
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-live",
+    "channelKey": "test",
+    "message": "sf-1 first",
+    "sdkSessionConfig": {
+     "deferredTools": [
+      {
+       "name": "glob"
+      }
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-live",
+    "channelKey": "test",
+    "message": "sf-2 broken",
+    "sdkSessionConfig": {
+     "deferredTools": [
+      {
+       "name": "no_such_tool"
+      }
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-live",
+    "channelKey": "test",
+    "message": "sf-3 again",
+    "sdkSessionConfig": {
+     "deferredTools": [
+      {
+       "name": "glob"
+      }
+     ]
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-live"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-proj",
+    "channelKey": "test",
+    "message": "sf-4 project",
+    "sdkSessionConfig": {
+     "deferredTools": [
+      {
+       "name": "no_such_tool"
+      }
+     ]
+    },
+    "projectKey": "{HOME}/work/proj"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-proj",
+    "projectKey": "{HOME}/work/proj"
+   }
+  },
+  {
+   "ws": "list_sessions",
+   "params": {
+    "projectKey": "{HOME}/work/proj"
+   }
+  }
+ ]
+}

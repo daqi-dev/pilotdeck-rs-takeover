@@ -528,14 +528,40 @@ impl Requests {
                 .and_then(JsValue::as_string)
                 .filter(|key| !key.is_empty()),
         );
-        let fence_path = transcript_locks::session_transcript_path(
-            &self.options.home,
-            &project_root,
-            &session_key,
-        );
+        let recorded = record_status_message(
+            self.options.home.clone(),
+            project_root,
+            self.recorders.clone(),
+            session_key,
+            turn_id,
+            status,
+            missing_status,
+        )
+        .await?;
+        Ok(object([("recorded", JsValue::Bool(recorded))]))
+    }
+}
+
+/// `InProcessGateway.recordAgentStatusMessage` (InProcessGateway.ts:2068-
+/// 2078) after the request's own argument checks: the live session's writer
+/// when one is loaded, otherwise a cold transcript storage for the session
+/// (`GatewaySessionHistoryBundle.recordAgentStatusMessage`,
+/// GatewaySessionHistoryBundle.ts:205-245), which creates the transcript when
+/// it does not exist yet. `missing_status` is the TypeError a nullish status
+/// throws inside the writer.
+pub(crate) async fn record_status_message(
+    home: std::path::PathBuf,
+    project_root: std::path::PathBuf,
+    recorders: super::super::assembly::Recorders,
+    session_key: JsString,
+    turn_id: JsString,
+    status: JsValue,
+    missing_status: Option<&'static str>,
+) -> Result<bool, RequestError> {
+    {
+        let fence_path =
+            transcript_locks::session_transcript_path(&home, &project_root, &session_key);
         let write_fence = transcript_locks::acquire(&fence_path).await?;
-        let recorders = self.recorders.clone();
-        let home = self.options.home.clone();
         // The shared three-segment protocol (#1874), with #1873's error shape:
         // the live closure below is both the first lookup and the busy-lease
         // re-query, so its one checked append — a writer that closed under us
@@ -591,7 +617,7 @@ impl Requests {
         })
         .await
         .map_err(|e| RequestError::new(e.to_string()))??;
-        Ok(object([("recorded", JsValue::Bool(recorded))]))
+        Ok(recorded)
     }
 }
 

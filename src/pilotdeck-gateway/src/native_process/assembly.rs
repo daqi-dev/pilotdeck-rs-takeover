@@ -649,11 +649,22 @@ async fn start_assembly(
                     .and_then(|tools| tools.get("webSearch"))
                     .cloned()
                     .unwrap_or(JsValue::Undefined);
-                let agent = snapshot
+                let mut agent = snapshot
                     .get("config")
                     .and_then(|v| v.get("agent"))
                     .cloned()
                     .unwrap_or(JsValue::Undefined);
+                // `getSdkSessionConfig(sessionKey, runtime)`
+                // (ProjectRuntimeRegistry.ts:1025-1036): the stored config's
+                // settings are resolved again from the selected files now.
+                let sdk_settings = super::sdk_config::resolve_settings(
+                    &options.home,
+                    options.os_home.as_deref(),
+                    &project_root,
+                    session_overrides.sdk_config(&context.session_key).as_ref(),
+                )
+                .map_err(|error| RuntimeError::new(error.message))?;
+                super::sdk_config::apply_settings_overlay(&mut agent, sdk_settings.as_ref());
                 let mut config = agent.as_object().cloned().unwrap_or_default();
                 let selected = agent.get("model").cloned().unwrap_or(JsValue::Undefined);
                 for key in ["provider", "model"] {
@@ -833,7 +844,11 @@ async fn start_assembly(
                     &mut config,
                     session_overrides.sdk_config(&context.session_key).as_ref(),
                 );
-                super::sdk_config::apply_model_fields(&mut config, sdk_config.as_ref());
+                super::sdk_config::apply_model_fields(
+                    &mut config,
+                    sdk_config.as_ref(),
+                    sdk_settings.as_ref(),
+                );
                 super::sdk_config::apply_agent_fields(&mut config, sdk_config.as_ref());
                 apply_session_overrides(
                     &mut config,

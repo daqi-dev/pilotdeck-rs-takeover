@@ -220,17 +220,51 @@ impl SubmitModelAssertion for SubmitProjectAdmission {
             .map_err(|message| SubmitError::new("INVALID_SDK_SESSION_CONFIG", message))?;
         // `assertSdkManagedModelAllowed(sdkSessionConfigs.get(sessionKey)
         // ?.managedModels, model ?? runtime.snapshot.config.agent.model)`
-        // (ProjectRuntimeRegistry.ts:830-850).
-        let Some(policy) = self
-            .overrides
-            .sdk_config(session)
-            .and_then(|config| config.get("managedModels").cloned())
-        else {
+        // (ProjectRuntimeRegistry.ts:830-850). Without an explicit model the
+        // session's model is the stored config's resolved
+        // `settings.agent.model` (its setting sources read again), resolved
+        // from the catalog, before the project's default.
+        let stored = self.overrides.sdk_config(session);
+        let settings_model = match (selection, &stored) {
+            (None, Some(config)) => {
+                let settings = super::sdk_config::resolve_settings(
+                    &self.options.home,
+                    self.options.os_home.as_deref(),
+                    &root,
+                    Some(config),
+                )
+                .map_err(super::sdk_config::settings_submit_error)?;
+                match super::sdk_config::settings_agent(settings.as_ref())
+                    .and_then(|agent| agent.get("model"))
+                    .and_then(JsValue::as_string)
+                    .filter(|model| !model.is_empty())
+                {
+                    Some(requested) => {
+                        let catalog =
+                            super::sdk_config::project_model_config(&self.registry, &root)?;
+                        let (provider, model) = super::sdk_config::resolve_configured_model(
+                            &catalog,
+                            requested,
+                            "INVALID_SDK_AGENT_MODEL",
+                            "settings.agent.model",
+                        )?;
+                        let mut selected = pilotdeck_protocol::JsObject::new();
+                        selected.insert("provider".into(), JsValue::String(provider));
+                        selected.insert("model".into(), JsValue::String(model));
+                        Some(JsValue::Object(selected))
+                    }
+                    None => None,
+                }
+            }
+            _ => None,
+        };
+        let Some(policy) = stored.and_then(|config| config.get("managedModels").cloned()) else {
             return Ok(());
         };
-        let model = match selection {
-            Some(selection) => selection.clone(),
-            None => self
+        let model = match (selection, settings_model) {
+            (Some(selection), _) => selection.clone(),
+            (None, Some(model)) => model,
+            (None, None) => self
                 .registry
                 .resolve(Some(&root))
                 .ok()
