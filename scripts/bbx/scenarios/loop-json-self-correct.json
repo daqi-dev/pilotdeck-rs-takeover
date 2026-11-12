@@ -1,0 +1,26 @@
+{
+  "name": "loop-json-self-correct",
+  "about": "工具参数 JSON 不合法且 jsonrepair 也补不了时（model/providers/openai/stream.ts:190-215 抛 invalid_tool_arguments，retryable）。gateway 固定开启 jsonSelfCorrect（cli/SessionAgentConfigBundle.ts:142），但流式路径上这个错误在流读取中途抛出，streamModel.ts:322-333 把它包成带 streamInterruption（tool_call 阶段）的错误，循环先走流中断恢复（AgentLoop.ts:1039，最多 2 次），json 自纠分支（1420）实际走不到——这里固定的是基线实际行为。j1：第一次参数非法，按流中断提示后给出合法调用并执行；j2：一直非法（带文本），恢复 2 次用尽，model_error；j3：同一回复里一个合法调用加一个非法调用，合法的那个也不执行。",
+  "files": { "home/.pilotdeck/a.txt": "alpha\n" },
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\":\"Json\"}" } },
+    { "name": "j1-done", "when": ["j1:", "\"tool_call_id\":\"call_j1\""], "reply": { "text": "j1 done." } },
+    { "name": "j1-corrected", "when": ["j1:", "No incomplete tool call was executed"], "reply": { "tool": { "id": "call_j1", "name": "read_file", "arguments": { "file_path": "a.txt" } } } },
+    { "name": "j1", "when": ["j1:"], "reply": { "tool": { "id": "call_j1x", "name": "read_file", "rawArguments": "{\"file_path\":\"a.txt\",,}" } } },
+    { "name": "j2", "when": ["j2:"], "reply": { "text": "Trying.", "tool": { "id": "call_j2x", "name": "read_file", "rawArguments": "}{" } } },
+    { "name": "j3-done", "when": ["j3:", "\"tool_call_id\":\"call_j3\""], "reply": { "text": "j3 done." } },
+    { "name": "j3-corrected", "when": ["j3:", "No incomplete tool call was executed"], "reply": { "tool": { "id": "call_j3", "name": "read_file", "arguments": { "file_path": "a.txt" } } } },
+    { "name": "j3", "when": ["j3:"], "reply": { "tools": [ { "id": "call_j3a", "name": "read_file", "arguments": { "file_path": "a.txt" } }, { "id": "call_j3b", "name": "read_file", "rawArguments": "}{" } ] } }
+  ],
+  "steps": [
+    { "ws": "submit_turn", "params": { "sessionKey": "s-j1", "channelKey": "test", "message": "j1: read" }, "timeout": 20000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-j1" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-j2", "channelKey": "test", "message": "j2: read" }, "timeout": 20000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-j2" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-j3", "channelKey": "test", "message": "j3: read" }, "timeout": 20000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-j3" } }
+  ]
+}
