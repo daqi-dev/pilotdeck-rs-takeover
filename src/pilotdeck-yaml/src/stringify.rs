@@ -5,8 +5,8 @@
 // baseline's updatePilotLocalSettings applies before `document.toString()`.
 //
 // Scope: documents parsed with the default (YAML 1.2 core) schema, default
-// toString options. Shapes outside that scope — `%YAML`/custom `%TAG`
-// directives, yaml-1.1 collections and scalars (set, omap, pairs, binary,
+// toString options plus lineWidth and singleQuote. Shapes outside that scope —
+// `%YAML`/custom `%TAG` directives, yaml-1.1 collections and scalars (set, omap, pairs, binary,
 // timestamp, merge keys), lone UTF-16 surrogates — are reported as
 // [`StringifyError::Unsupported`] instead of being rendered differently.
 use crate::{
@@ -26,6 +26,28 @@ const LINE_WIDTH: usize = 80;
 const MIN_CONTENT_WIDTH: usize = 20;
 const INDENT_STEP: &str = "  ";
 const DOUBLE_QUOTED_MIN_MULTI_LINE_LENGTH: usize = 40;
+
+/// The output options used by the baseline's YAML configuration writers.
+///
+/// Other formatting settings retain yaml@2.9.0's defaults.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StringifyOptions {
+    /// Preferred width in UTF-16 code units. Zero disables line wrapping.
+    pub line_width: usize,
+    /// `None` chooses quotes to minimize escaping; `Some(false)` disallows
+    /// single quotes, including on previously single-quoted scalar nodes.
+    /// `Some(true)` prefers single quotes when neither quote style wins.
+    pub single_quote: Option<bool>,
+}
+
+impl Default for StringifyOptions {
+    fn default() -> Self {
+        Self {
+            line_width: LINE_WIDTH,
+            single_quote: None,
+        }
+    }
+}
 
 /// A failure of an edit or of stringification.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -342,10 +364,20 @@ impl EditableDocument {
 
     /// `doc.toString()` with the default options.
     pub fn to_yaml_string(&self) -> Result<String, StringifyError> {
+        self.to_yaml_string_with_options(StringifyOptions::default())
+    }
+
+    /// `doc.toString({ lineWidth, singleQuote })` with all other options at
+    /// their defaults. Existing calls to [`Self::to_yaml_string`] are unchanged.
+    pub fn to_yaml_string_with_options(
+        &self,
+        options: StringifyOptions,
+    ) -> Result<String, StringifyError> {
         self.check_supported()?;
         let printer = Printer {
             ed: self,
             anchors: RefCell::new(HashSet::new()),
+            options,
         };
         printer.document()
     }
@@ -483,6 +515,7 @@ enum TagKind {
 struct Printer<'a> {
     ed: &'a EditableDocument,
     anchors: RefCell<HashSet<String>>,
+    options: StringifyOptions,
 }
 
 type R<T> = Result<T, StringifyError>;
@@ -1216,7 +1249,7 @@ impl Printer<'_> {
         }
         if !req_newline {
             let len = lines.iter().map(|l| jlen(l) + 2).sum::<usize>() + 2;
-            req_newline = len > LINE_WIDTH;
+            req_newline = self.options.line_width > 0 && len > self.options.line_width;
         }
         if req_newline {
             let mut s = start.to_string();
@@ -1551,6 +1584,7 @@ impl Printer<'_> {
                 Fold::Quoted,
                 self.fold_options(ctx, false),
                 None,
+                self.options.line_width,
             )
         }
     }
@@ -1559,7 +1593,10 @@ impl Printer<'_> {
         static WS_NEWLINE: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r"[ \t]\n|\n[ \t]").unwrap());
         static NEWLINES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n+").unwrap());
-        if (ctx.implicit_key && value.contains('\n')) || WS_NEWLINE.is_match(value) {
+        if self.options.single_quote == Some(false)
+            || (ctx.implicit_key && value.contains('\n'))
+            || WS_NEWLINE.is_match(value)
+        {
             return self.double_quoted(value, ctx);
         }
         let indent = if !ctx.indent.is_empty() {
@@ -1583,6 +1620,7 @@ impl Printer<'_> {
                 Fold::Flow,
                 self.fold_options(ctx, false),
                 None,
+                self.options.line_width,
             )
         }
     }
@@ -1590,10 +1628,12 @@ impl Printer<'_> {
     fn quoted_string(&self, value: &str, ctx: &Ctx) -> String {
         let has_double = value.contains('"');
         let has_single = value.contains('\'');
-        if has_double && !has_single {
+        if self.options.single_quote != Some(false)
+            && ((has_double && !has_single)
+                || (has_double == has_single && self.options.single_quote == Some(true)))
+        {
             self.single_quoted(value, ctx)
         } else {
-            // hasSingle && !hasDouble, or singleQuote null → double quotes.
             self.double_quoted(value, ctx)
         }
     }
@@ -1624,7 +1664,7 @@ impl Printer<'_> {
         } else if style == "BLOCK_LITERAL" {
             true
         } else {
-            !line_length_over_limit(value, jlen(&indent))
+            !line_length_over_limit(value, self.options.line_width, jlen(&indent))
         };
         if value.is_empty() {
             return if literal { "|\n".into() } else { ">\n".into() };
@@ -1708,6 +1748,7 @@ impl Printer<'_> {
                 } else {
                     None
                 },
+                self.options.line_width,
             );
             if !literal_fallback {
                 return format!(">{header}\n{indent}{body}");
@@ -1774,6 +1815,7 @@ impl Printer<'_> {
                 Fold::Flow,
                 self.fold_options(ctx, false),
                 None,
+                self.options.line_width,
             )
         }
     }
@@ -1890,9 +1932,12 @@ fn replace_more_indented(re: &Regex, s: &str) -> String {
     out
 }
 
-fn line_length_over_limit(s: &str, indent_length: usize) -> bool {
+fn line_length_over_limit(s: &str, line_width: usize, indent_length: usize) -> bool {
+    if line_width == 0 {
+        return false;
+    }
     let units: Vec<u16> = s.encode_utf16().collect();
-    let limit = LINE_WIDTH as isize - indent_length as isize;
+    let limit = line_width.min(isize::MAX as usize) as isize - indent_length as isize;
     let len = units.len() as isize;
     if len <= limit {
         return false;
@@ -1920,7 +1965,7 @@ enum Fold {
     Quoted,
 }
 
-/// `foldFlowLines(text, indent, mode, { indentAtStart, lineWidth: 80,
+/// `foldFlowLines(text, indent, mode, { indentAtStart, lineWidth,
 /// minContentWidth: 20, onOverflow })` over UTF-16 code units.
 fn fold_flow_lines(
     text: &str,
@@ -1928,11 +1973,19 @@ fn fold_flow_lines(
     mode: Fold,
     indent_at_start: Option<usize>,
     on_overflow: Option<&mut bool>,
+    line_width: usize,
 ) -> String {
+    if line_width == 0 {
+        return text.to_string();
+    }
     let t: Vec<u16> = text.encode_utf16().collect();
     let indent_len = jlen(indent) as isize;
-    let line_width = LINE_WIDTH as isize;
-    let min_content_width = MIN_CONTENT_WIDTH as isize;
+    let line_width = line_width.min(isize::MAX as usize - 1) as isize;
+    let min_content_width = if line_width < MIN_CONTENT_WIDTH as isize {
+        0
+    } else {
+        MIN_CONTENT_WIDTH as isize
+    };
     let end_step = (1 + min_content_width).max(1 + line_width - indent_len);
     if t.len() as isize <= end_step {
         return text.to_string();

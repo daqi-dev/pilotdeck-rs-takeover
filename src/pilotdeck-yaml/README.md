@@ -39,12 +39,16 @@ assert!(value.as_object().is_some());
 | `src/sop/staffdeck/StaffDeckSopDefinitions.ts` | 19 | parseDocument，`prettyErrors:false` |
 | `src/gateway/dialog/commands.ts` | 138 | parseYaml，默认选项 |
 | `src/tool/builtin/filesystem/syntaxDiagnostics.ts` | 221、306 | parseDocument，`lineCounter` + `prettyErrors:false` |
-| `src/cli/commands/gatewaySetup.ts` | 619 | parseYaml，默认选项；stringify 另做 |
+| `src/cli/commands/gatewaySetup.ts` | 619、625–631 | parseYaml，默认选项；stringify 使用 `lineWidth:0, singleQuote:false` |
 | `ui/server/staffdeck-publish-route.js` | 45 | 注入 `createAtomicBundleStore({parse:parseYaml})`；`staffdeck-publish-runtime.mjs:74` 只传源码 |
 
 扩展 grep 还发现 3 个非测试文件：`ui/server/services/pilotdeckConfig.js:786,1035,1317` 使用默认 parseYaml，`:1023` 使用 `parseDocument(...,{keepSourceTokens:true})`；`ui/server/routes/config.js:843` 和 `ui/server/routes/modules.js:55,547` 使用默认 parseYaml。因此本 crate 支持 prettyErrors、keepSourceTokens、lineCounter，其他解析行为采用原版默认值，且保留源码 `%YAML 1.1` / `%YAML 1.2` 的 schema 切换。
 
 `Options::from_js` 只接受 prettyErrors / keepSourceTokens 的 boolean 值；其余键和错误类型返回带 option name/message 的 `UnsupportedOption`。lineCounter 是有状态回调对象，通过 Rust 的类型化字段提供。version、schema、customTags、strict、compat、stringKeys、uniqueKeys、intAsBigInt、merge、maxAliasCount、mapAsMap、reviver、logLevel 等非基线选项不接受，不会悄悄忽略。json/failsafe 标签表保留在移植源码中，但不额外开放 schema 选项。
+
+`stringify::EditableDocument` 提供配置编辑所需的 `set_in`、`delete_in` 和 `to_yaml_string`。`to_yaml_string_with_options(StringifyOptions { line_width: 0, single_quote: Some(false) })` 对应 gateway setup 的输出设置：关闭折行，需引号的字符串使用双引号。普通字符串仍可不加引号，多行字符串仍按基线使用块标量。默认选项为宽度 80 和自动选择引号；原 `to_yaml_string()` 保持该默认行为。该 API 不扩大文档形态支持，仍明确拒绝原先不支持的 directives、YAML 1.1 特殊节点和孤立 surrogate。
+
+新增选项的基线样本在 `tests/fixtures/stringify-options.json`，由 Node 22.22.0 和固定基线的 yaml 2.9.0 录制，涵盖中文/emoji、单双引号、长行、多行、flow collection 和原有注释；原默认格式 oracle 不变。重录时用隔离的 HOME/PILOT_HOME 运行 `tests/record_stringify_options.mjs <baseline>/node_modules/yaml`，并将 stdout 保存为该 fixture。`cargo test -p pilotdeck-yaml --test stringify_options --test stringify` 同时检查选项与旧默认输出。
 
 ## 对应关系和边界
 

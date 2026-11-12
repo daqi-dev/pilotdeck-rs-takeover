@@ -1,0 +1,761 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "yaml": "2.9.0",
+  "cases": [
+    {
+      "name": "quotes/default",
+      "value": {
+        "plain": "中文",
+        "quoted": "say: \"hello\"",
+        "apostrophe": "it's: true",
+        "both": "'say': \"hello\"",
+        "boolean": "true",
+        "empty": ""
+      },
+      "options": {},
+      "output": "plain: 中文\nquoted: 'say: \"hello\"'\napostrophe: \"it's: true\"\nboth: \"'say': \\\"hello\\\"\"\nboolean: \"true\"\nempty: \"\"\n"
+    },
+    {
+      "name": "quotes/setup",
+      "value": {
+        "plain": "中文",
+        "quoted": "say: \"hello\"",
+        "apostrophe": "it's: true",
+        "both": "'say': \"hello\"",
+        "boolean": "true",
+        "empty": ""
+      },
+      "options": {
+        "lineWidth": 0,
+        "singleQuote": false
+      },
+      "output": "plain: 中文\nquoted: \"say: \\\"hello\\\"\"\napostrophe: \"it's: true\"\nboth: \"'say': \\\"hello\\\"\"\nboolean: \"true\"\nempty: \"\"\n"
+    },
+    {
+      "name": "quotes/no-fold",
+      "value": {
+        "plain": "中文",
+        "quoted": "say: \"hello\"",
+        "apostrophe": "it's: true",
+        "both": "'say': \"hello\"",
+        "boolean": "true",
+        "empty": ""
+      },
+      "options": {
+        "lineWidth": 0
+      },
+      "output": "plain: 中文\nquoted: 'say: \"hello\"'\napostrophe: \"it's: true\"\nboth: \"'say': \\\"hello\\\"\"\nboolean: \"true\"\nempty: \"\"\n"
+    },
+    {
+      "name": "quotes/prefer-single",
+      "value": {
+        "plain": "中文",
+        "quoted": "say: \"hello\"",
+        "apostrophe": "it's: true",
+        "both": "'say': \"hello\"",
+        "boolean": "true",
+        "empty": ""
+      },
+      "options": {
+        "lineWidth": 22,
+        "singleQuote": true
+      },
+      "output": "plain: 中文\nquoted: 'say: \"hello\"'\napostrophe: \"it's: true\"\nboth: '''say'': \"hello\"'\nboolean: 'true'\nempty: ''\n"
+    },
+    {
+      "name": "quotes/very-narrow",
+      "value": {
+        "plain": "中文",
+        "quoted": "say: \"hello\"",
+        "apostrophe": "it's: true",
+        "both": "'say': \"hello\"",
+        "boolean": "true",
+        "empty": ""
+      },
+      "options": {
+        "lineWidth": 8,
+        "singleQuote": false
+      },
+      "output": "plain: 中文\nquoted:\n  \"say:\n  \\\"hel\\\n  lo\\\"\"\napostrophe:\n  \"it's:\n  true\"\nboth:\n  \"'say':\n  \\\"hel\\\n  lo\\\"\"\nboolean: \"true\"\nempty: \"\"\n"
+    },
+    {
+      "name": "long-plain/default",
+      "value": {
+        "nested": {
+          "description": "中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word"
+        }
+      },
+      "options": {},
+      "output": "nested:\n  description: 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀\n    long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀\n    long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n"
+    },
+    {
+      "name": "long-plain/setup",
+      "value": {
+        "nested": {
+          "description": "中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word"
+        }
+      },
+      "options": {
+        "lineWidth": 0,
+        "singleQuote": false
+      },
+      "output": "nested:\n  description: 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n"
+    },
+    {
+      "name": "long-plain/no-fold",
+      "value": {
+        "nested": {
+          "description": "中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word"
+        }
+      },
+      "options": {
+        "lineWidth": 0
+      },
+      "output": "nested:\n  description: 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n"
+    },
+    {
+      "name": "long-plain/prefer-single",
+      "value": {
+        "nested": {
+          "description": "中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word"
+        }
+      },
+      "options": {
+        "lineWidth": 22,
+        "singleQuote": true
+      },
+      "output": "nested:\n  description:\n    中文😀 long word\n    中文😀 long word 中文😀\n    long word 中文😀 long\n    word 中文😀 long word\n    中文😀 long word 中文😀\n    long word 中文😀 long\n    word 中文😀 long word\n    中文😀 long word 中文😀\n    long word 中文😀 long\n    word 中文😀 long word\n    中文😀 long word\n"
+    },
+    {
+      "name": "long-plain/very-narrow",
+      "value": {
+        "nested": {
+          "description": "中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word"
+        }
+      },
+      "options": {
+        "lineWidth": 8,
+        "singleQuote": false
+      },
+      "output": "nested:\n  description:\n    中文😀\n    long\n    word\n    中文😀\n    long\n    word\n    中文😀\n    long\n    word\n    中文😀\n    long\n    word\n    中文😀\n    long\n    word\n    中文😀\n    long\n    word\n    中文😀\n    long\n    word\n    中文😀\n    long\n    word\n    中文😀\n    long\n    word\n    中文😀\n    long\n    word\n    中文😀\n    long\n    word\n    中文😀\n    long\n    word\n    中文😀\n    long\n    word\n    中文😀\n    long\n    word\n"
+    },
+    {
+      "name": "long-double/default",
+      "value": {
+        "nested": {
+          "description": "\"中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\""
+        }
+      },
+      "options": {},
+      "output": "nested:\n  description: '\"中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀\n    long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀\n    long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\"'\n"
+    },
+    {
+      "name": "long-double/setup",
+      "value": {
+        "nested": {
+          "description": "\"中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\""
+        }
+      },
+      "options": {
+        "lineWidth": 0,
+        "singleQuote": false
+      },
+      "output": "nested:\n  description: \"\\\"中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\\\"\"\n"
+    },
+    {
+      "name": "long-double/no-fold",
+      "value": {
+        "nested": {
+          "description": "\"中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\""
+        }
+      },
+      "options": {
+        "lineWidth": 0
+      },
+      "output": "nested:\n  description: '\"中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\"'\n"
+    },
+    {
+      "name": "long-double/prefer-single",
+      "value": {
+        "nested": {
+          "description": "\"中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\""
+        }
+      },
+      "options": {
+        "lineWidth": 22,
+        "singleQuote": true
+      },
+      "output": "nested:\n  description:\n    '\"中文😀 long word\n    中文😀 long word 中文😀\n    long word 中文😀 long\n    word 中文😀 long word\n    中文😀 long word 中文😀\n    long word 中文😀 long\n    word 中文😀 long word\n    中文😀 long word 中文😀\n    long word 中文😀 long\n    word 中文😀 long word\n    中文😀 long word\"'\n"
+    },
+    {
+      "name": "long-double/very-narrow",
+      "value": {
+        "nested": {
+          "description": "\"中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\""
+        }
+      },
+      "options": {
+        "lineWidth": 8,
+        "singleQuote": false
+      },
+      "output": "nested:\n  description:\n    \"\\\"\\\n    中文😀\n    long\n    word\n    中文😀\n    long\n    word\n    中文😀\n    long\n    word\n    中文😀\n    long\n    word\n    中文😀\n    long\n    word\n    中文😀\n    long\n    word\n    中文😀\n    long\n    word\n    中文😀\n    long\n    word\n    中文😀\n    long\n    word\n    中文😀\n    long\n    word\n    中文😀\n    long\n    word\n    中文😀\n    long\n    word\n    中文😀\n    long\n    word\n    中文😀\n    long\n    word\\\n    \\\"\"\n"
+    },
+    {
+      "name": "new-multiline/default",
+      "value": {
+        "message": "中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n第二行\n",
+        "leading": " first\n second",
+        "trailing": "line\n  "
+      },
+      "options": {},
+      "output": "message: >\n  中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n  中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n  中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n\n  第二行\nleading: |2-\n   first\n   second\ntrailing: \"line\\n  \"\n"
+    },
+    {
+      "name": "new-multiline/setup",
+      "value": {
+        "message": "中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n第二行\n",
+        "leading": " first\n second",
+        "trailing": "line\n  "
+      },
+      "options": {
+        "lineWidth": 0,
+        "singleQuote": false
+      },
+      "output": "message: |\n  中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n  第二行\nleading: |2-\n   first\n   second\ntrailing: \"line\\n  \"\n"
+    },
+    {
+      "name": "new-multiline/no-fold",
+      "value": {
+        "message": "中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n第二行\n",
+        "leading": " first\n second",
+        "trailing": "line\n  "
+      },
+      "options": {
+        "lineWidth": 0
+      },
+      "output": "message: |\n  中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n  第二行\nleading: |2-\n   first\n   second\ntrailing: \"line\\n  \"\n"
+    },
+    {
+      "name": "new-multiline/prefer-single",
+      "value": {
+        "message": "中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n第二行\n",
+        "leading": " first\n second",
+        "trailing": "line\n  "
+      },
+      "options": {
+        "lineWidth": 22,
+        "singleQuote": true
+      },
+      "output": "message: >\n  中文😀 long word 中文😀\n  long word 中文😀 long\n  word 中文😀 long word\n  中文😀 long word 中文😀\n  long word 中文😀 long\n  word 中文😀 long word\n  中文😀 long word 中文😀\n  long word 中文😀 long\n  word 中文😀 long word\n  中文😀 long word 中文😀\n  long word\n\n  第二行\nleading: |2-\n   first\n   second\ntrailing: \"line\\n  \"\n"
+    },
+    {
+      "name": "new-multiline/very-narrow",
+      "value": {
+        "message": "中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n第二行\n",
+        "leading": " first\n second",
+        "trailing": "line\n  "
+      },
+      "options": {
+        "lineWidth": 8,
+        "singleQuote": false
+      },
+      "output": "message: >\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n\n  第二行\nleading: >2-\n   first\n   second\ntrailing:\n  \"line\\\n  \\n  \"\n"
+    },
+    {
+      "name": "control/default",
+      "value": {
+        "message": "nul\u0000 bell\u0007 tab\t newline\nnext"
+      },
+      "options": {},
+      "output": "message: \"nul\\0 bell\\a tab\\t newline\n\n  next\"\n"
+    },
+    {
+      "name": "control/setup",
+      "value": {
+        "message": "nul\u0000 bell\u0007 tab\t newline\nnext"
+      },
+      "options": {
+        "lineWidth": 0,
+        "singleQuote": false
+      },
+      "output": "message: \"nul\\0 bell\\a tab\\t newline\n\n  next\"\n"
+    },
+    {
+      "name": "control/no-fold",
+      "value": {
+        "message": "nul\u0000 bell\u0007 tab\t newline\nnext"
+      },
+      "options": {
+        "lineWidth": 0
+      },
+      "output": "message: \"nul\\0 bell\\a tab\\t newline\n\n  next\"\n"
+    },
+    {
+      "name": "control/prefer-single",
+      "value": {
+        "message": "nul\u0000 bell\u0007 tab\t newline\nnext"
+      },
+      "options": {
+        "lineWidth": 22,
+        "singleQuote": true
+      },
+      "output": "message:\n  \"nul\\0 bell\\a tab\\t\n  newline\n\n  next\"\n"
+    },
+    {
+      "name": "control/very-narrow",
+      "value": {
+        "message": "nul\u0000 bell\u0007 tab\t newline\nnext"
+      },
+      "options": {
+        "lineWidth": 8,
+        "singleQuote": false
+      },
+      "output": "message:\n  \"nul\\0\n  bell\\a\n  tab\\t\n  newli\\\n  ne\n\n  next\"\n"
+    },
+    {
+      "name": "sequences/default",
+      "value": {
+        "adapters": [
+          {
+            "type": "wecom",
+            "botId": "mock-only",
+            "secret": "\"中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\"",
+            "lines": [
+              "first: \"quoted\"",
+              "第二行"
+            ]
+          }
+        ]
+      },
+      "options": {},
+      "output": "adapters:\n  - type: wecom\n    botId: mock-only\n    secret: '\"中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long\n      word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long\n      word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\"'\n    lines:\n      - 'first: \"quoted\"'\n      - 第二行\n"
+    },
+    {
+      "name": "sequences/setup",
+      "value": {
+        "adapters": [
+          {
+            "type": "wecom",
+            "botId": "mock-only",
+            "secret": "\"中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\"",
+            "lines": [
+              "first: \"quoted\"",
+              "第二行"
+            ]
+          }
+        ]
+      },
+      "options": {
+        "lineWidth": 0,
+        "singleQuote": false
+      },
+      "output": "adapters:\n  - type: wecom\n    botId: mock-only\n    secret: \"\\\"中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\\\"\"\n    lines:\n      - \"first: \\\"quoted\\\"\"\n      - 第二行\n"
+    },
+    {
+      "name": "sequences/no-fold",
+      "value": {
+        "adapters": [
+          {
+            "type": "wecom",
+            "botId": "mock-only",
+            "secret": "\"中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\"",
+            "lines": [
+              "first: \"quoted\"",
+              "第二行"
+            ]
+          }
+        ]
+      },
+      "options": {
+        "lineWidth": 0
+      },
+      "output": "adapters:\n  - type: wecom\n    botId: mock-only\n    secret: '\"中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\"'\n    lines:\n      - 'first: \"quoted\"'\n      - 第二行\n"
+    },
+    {
+      "name": "sequences/prefer-single",
+      "value": {
+        "adapters": [
+          {
+            "type": "wecom",
+            "botId": "mock-only",
+            "secret": "\"中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\"",
+            "lines": [
+              "first: \"quoted\"",
+              "第二行"
+            ]
+          }
+        ]
+      },
+      "options": {
+        "lineWidth": 22,
+        "singleQuote": true
+      },
+      "output": "adapters:\n  - type: wecom\n    botId: mock-only\n    secret:\n      '\"中文😀 long word\n      中文😀 long word 中文😀\n      long word 中文😀 long\n      word 中文😀 long word\n      中文😀 long word 中文😀\n      long word 中文😀 long\n      word 中文😀 long word\n      中文😀 long word 中文😀\n      long word 中文😀 long\n      word 中文😀 long word\n      中文😀 long word\"'\n    lines:\n      - 'first: \"quoted\"'\n      - 第二行\n"
+    },
+    {
+      "name": "sequences/very-narrow",
+      "value": {
+        "adapters": [
+          {
+            "type": "wecom",
+            "botId": "mock-only",
+            "secret": "\"中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\"",
+            "lines": [
+              "first: \"quoted\"",
+              "第二行"
+            ]
+          }
+        ]
+      },
+      "options": {
+        "lineWidth": 8,
+        "singleQuote": false
+      },
+      "output": "adapters:\n  - type: wecom\n    botId:\n      mock-only\n    secret: \"\\\"中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\\\"\"\n    lines:\n      - \"first: \\\"quoted\\\"\"\n      - 第二行\n"
+    },
+    {
+      "name": "narrow/default",
+      "value": {
+        "text": "one two three four five six seven eight nine ten",
+        "quoted": "# one two three four five six seven eight nine ten"
+      },
+      "options": {},
+      "output": "text: one two three four five six seven eight nine ten\nquoted: \"# one two three four five six seven eight nine ten\"\n"
+    },
+    {
+      "name": "narrow/setup",
+      "value": {
+        "text": "one two three four five six seven eight nine ten",
+        "quoted": "# one two three four five six seven eight nine ten"
+      },
+      "options": {
+        "lineWidth": 0,
+        "singleQuote": false
+      },
+      "output": "text: one two three four five six seven eight nine ten\nquoted: \"# one two three four five six seven eight nine ten\"\n"
+    },
+    {
+      "name": "narrow/no-fold",
+      "value": {
+        "text": "one two three four five six seven eight nine ten",
+        "quoted": "# one two three four five six seven eight nine ten"
+      },
+      "options": {
+        "lineWidth": 0
+      },
+      "output": "text: one two three four five six seven eight nine ten\nquoted: \"# one two three four five six seven eight nine ten\"\n"
+    },
+    {
+      "name": "narrow/prefer-single",
+      "value": {
+        "text": "one two three four five six seven eight nine ten",
+        "quoted": "# one two three four five six seven eight nine ten"
+      },
+      "options": {
+        "lineWidth": 22,
+        "singleQuote": true
+      },
+      "output": "text:\n  one two three four\n  five six seven eight\n  nine ten\nquoted:\n  '# one two three\n  four five six seven\n  eight nine ten'\n"
+    },
+    {
+      "name": "narrow/very-narrow",
+      "value": {
+        "text": "one two three four five six seven eight nine ten",
+        "quoted": "# one two three four five six seven eight nine ten"
+      },
+      "options": {
+        "lineWidth": 8,
+        "singleQuote": false
+      },
+      "output": "text: one\n  two\n  three\n  four\n  five\n  six\n  seven\n  eight\n  nine\n  ten\nquoted:\n  \"# one\n  two\n  three\n  four\n  five\n  six\n  seven\n  eight\n  nine\n  ten\"\n"
+    },
+    {
+      "name": "parsed-single/default",
+      "src": "first: 'say: \"hello\"'\nsecond: 'it''s true'\n",
+      "options": {},
+      "output": "first: 'say: \"hello\"'\nsecond: 'it''s true'\n"
+    },
+    {
+      "name": "parsed-single/setup",
+      "src": "first: 'say: \"hello\"'\nsecond: 'it''s true'\n",
+      "options": {
+        "lineWidth": 0,
+        "singleQuote": false
+      },
+      "output": "first: \"say: \\\"hello\\\"\"\nsecond: \"it's true\"\n"
+    },
+    {
+      "name": "parsed-single/no-fold",
+      "src": "first: 'say: \"hello\"'\nsecond: 'it''s true'\n",
+      "options": {
+        "lineWidth": 0
+      },
+      "output": "first: 'say: \"hello\"'\nsecond: 'it''s true'\n"
+    },
+    {
+      "name": "parsed-single/prefer-single",
+      "src": "first: 'say: \"hello\"'\nsecond: 'it''s true'\n",
+      "options": {
+        "lineWidth": 22,
+        "singleQuote": true
+      },
+      "output": "first: 'say: \"hello\"'\nsecond: 'it''s true'\n"
+    },
+    {
+      "name": "parsed-single/very-narrow",
+      "src": "first: 'say: \"hello\"'\nsecond: 'it''s true'\n",
+      "options": {
+        "lineWidth": 8,
+        "singleQuote": false
+      },
+      "output": "first:\n  \"say:\n  \\\"hel\\\n  lo\\\"\"\nsecond:\n  \"it's\n  true\"\n"
+    },
+    {
+      "name": "parsed-long-single/default",
+      "src": "text: '中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word'\n",
+      "options": {},
+      "output": "text: '中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long\n  word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long\n  word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word'\n"
+    },
+    {
+      "name": "parsed-long-single/setup",
+      "src": "text: '中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word'\n",
+      "options": {
+        "lineWidth": 0,
+        "singleQuote": false
+      },
+      "output": "text: \"中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\"\n"
+    },
+    {
+      "name": "parsed-long-single/no-fold",
+      "src": "text: '中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word'\n",
+      "options": {
+        "lineWidth": 0
+      },
+      "output": "text: '中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word'\n"
+    },
+    {
+      "name": "parsed-long-single/prefer-single",
+      "src": "text: '中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word'\n",
+      "options": {
+        "lineWidth": 22,
+        "singleQuote": true
+      },
+      "output": "text:\n  '中文😀 long word 中文😀\n  long word 中文😀 long\n  word 中文😀 long word\n  中文😀 long word 中文😀\n  long word 中文😀 long\n  word 中文😀 long word\n  中文😀 long word 中文😀\n  long word 中文😀 long\n  word 中文😀 long word\n  中文😀 long word 中文😀\n  long word'\n"
+    },
+    {
+      "name": "parsed-long-single/very-narrow",
+      "src": "text: '中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word'\n",
+      "options": {
+        "lineWidth": 8,
+        "singleQuote": false
+      },
+      "output": "text:\n  \"中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\"\n"
+    },
+    {
+      "name": "parsed-long-double/default",
+      "src": "text: \"中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\"\n",
+      "options": {},
+      "output": "text: \"中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long\n  word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long\n  word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\"\n"
+    },
+    {
+      "name": "parsed-long-double/setup",
+      "src": "text: \"中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\"\n",
+      "options": {
+        "lineWidth": 0,
+        "singleQuote": false
+      },
+      "output": "text: \"中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\"\n"
+    },
+    {
+      "name": "parsed-long-double/no-fold",
+      "src": "text: \"中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\"\n",
+      "options": {
+        "lineWidth": 0
+      },
+      "output": "text: \"中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\"\n"
+    },
+    {
+      "name": "parsed-long-double/prefer-single",
+      "src": "text: \"中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\"\n",
+      "options": {
+        "lineWidth": 22,
+        "singleQuote": true
+      },
+      "output": "text:\n  \"中文😀 long word 中文😀\n  long word 中文😀 long\n  word 中文😀 long word\n  中文😀 long word 中文😀\n  long word 中文😀 long\n  word 中文😀 long word\n  中文😀 long word 中文😀\n  long word 中文😀 long\n  word 中文😀 long word\n  中文😀 long word 中文😀\n  long word\"\n"
+    },
+    {
+      "name": "parsed-long-double/very-narrow",
+      "src": "text: \"中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\"\n",
+      "options": {
+        "lineWidth": 8,
+        "singleQuote": false
+      },
+      "output": "text:\n  \"中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\"\n"
+    },
+    {
+      "name": "parsed-flow/default",
+      "src": "list: [\"中文 0 value\", \"中文 1 value\", \"中文 2 value\", \"中文 3 value\", \"中文 4 value\", \"中文 5 value\", \"中文 6 value\", \"中文 7 value\", \"中文 8 value\", \"中文 9 value\", \"中文 10 value\", \"中文 11 value\"]\n",
+      "options": {},
+      "output": "list:\n  [\n    \"中文 0 value\",\n    \"中文 1 value\",\n    \"中文 2 value\",\n    \"中文 3 value\",\n    \"中文 4 value\",\n    \"中文 5 value\",\n    \"中文 6 value\",\n    \"中文 7 value\",\n    \"中文 8 value\",\n    \"中文 9 value\",\n    \"中文 10 value\",\n    \"中文 11 value\"\n  ]\n"
+    },
+    {
+      "name": "parsed-flow/setup",
+      "src": "list: [\"中文 0 value\", \"中文 1 value\", \"中文 2 value\", \"中文 3 value\", \"中文 4 value\", \"中文 5 value\", \"中文 6 value\", \"中文 7 value\", \"中文 8 value\", \"中文 9 value\", \"中文 10 value\", \"中文 11 value\"]\n",
+      "options": {
+        "lineWidth": 0,
+        "singleQuote": false
+      },
+      "output": "list: [ \"中文 0 value\", \"中文 1 value\", \"中文 2 value\", \"中文 3 value\", \"中文 4 value\", \"中文 5 value\", \"中文 6 value\", \"中文 7 value\", \"中文 8 value\", \"中文 9 value\", \"中文 10 value\", \"中文 11 value\" ]\n"
+    },
+    {
+      "name": "parsed-flow/no-fold",
+      "src": "list: [\"中文 0 value\", \"中文 1 value\", \"中文 2 value\", \"中文 3 value\", \"中文 4 value\", \"中文 5 value\", \"中文 6 value\", \"中文 7 value\", \"中文 8 value\", \"中文 9 value\", \"中文 10 value\", \"中文 11 value\"]\n",
+      "options": {
+        "lineWidth": 0
+      },
+      "output": "list: [ \"中文 0 value\", \"中文 1 value\", \"中文 2 value\", \"中文 3 value\", \"中文 4 value\", \"中文 5 value\", \"中文 6 value\", \"中文 7 value\", \"中文 8 value\", \"中文 9 value\", \"中文 10 value\", \"中文 11 value\" ]\n"
+    },
+    {
+      "name": "parsed-flow/prefer-single",
+      "src": "list: [\"中文 0 value\", \"中文 1 value\", \"中文 2 value\", \"中文 3 value\", \"中文 4 value\", \"中文 5 value\", \"中文 6 value\", \"中文 7 value\", \"中文 8 value\", \"中文 9 value\", \"中文 10 value\", \"中文 11 value\"]\n",
+      "options": {
+        "lineWidth": 22,
+        "singleQuote": true
+      },
+      "output": "list:\n  [\n    \"中文 0 value\",\n    \"中文 1 value\",\n    \"中文 2 value\",\n    \"中文 3 value\",\n    \"中文 4 value\",\n    \"中文 5 value\",\n    \"中文 6 value\",\n    \"中文 7 value\",\n    \"中文 8 value\",\n    \"中文 9 value\",\n    \"中文 10 value\",\n    \"中文 11 value\"\n  ]\n"
+    },
+    {
+      "name": "parsed-flow/very-narrow",
+      "src": "list: [\"中文 0 value\", \"中文 1 value\", \"中文 2 value\", \"中文 3 value\", \"中文 4 value\", \"中文 5 value\", \"中文 6 value\", \"中文 7 value\", \"中文 8 value\", \"中文 9 value\", \"中文 10 value\", \"中文 11 value\"]\n",
+      "options": {
+        "lineWidth": 8,
+        "singleQuote": false
+      },
+      "output": "list:\n  [\n    \n      \"中文\n      0\n      v\\\n      a\\\n      l\\\n      u\\\n      e\",\n    \n      \"中文\n      1\n      v\\\n      a\\\n      l\\\n      u\\\n      e\",\n    \n      \"中文\n      2\n      v\\\n      a\\\n      l\\\n      u\\\n      e\",\n    \n      \"中文\n      3\n      v\\\n      a\\\n      l\\\n      u\\\n      e\",\n    \n      \"中文\n      4\n      v\\\n      a\\\n      l\\\n      u\\\n      e\",\n    \n      \"中文\n      5\n      v\\\n      a\\\n      l\\\n      u\\\n      e\",\n    \n      \"中文\n      6\n      v\\\n      a\\\n      l\\\n      u\\\n      e\",\n    \n      \"中文\n      7\n      v\\\n      a\\\n      l\\\n      u\\\n      e\",\n    \n      \"中文\n      8\n      v\\\n      a\\\n      l\\\n      u\\\n      e\",\n    \n      \"中文\n      9\n      v\\\n      a\\\n      l\\\n      u\\\n      e\",\n    \n      \"中文\n      10\n      v\\\n      a\\\n      l\\\n      u\\\n      e\",\n    \n      \"中文\n      11\n      v\\\n      a\\\n      l\\\n      u\\\n      e\"\n  ]\n"
+    },
+    {
+      "name": "parsed-literal/default",
+      "src": "message: |\n  中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n  last\n",
+      "options": {},
+      "output": "message: |\n  中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n  last\n"
+    },
+    {
+      "name": "parsed-literal/setup",
+      "src": "message: |\n  中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n  last\n",
+      "options": {
+        "lineWidth": 0,
+        "singleQuote": false
+      },
+      "output": "message: |\n  中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n  last\n"
+    },
+    {
+      "name": "parsed-literal/no-fold",
+      "src": "message: |\n  中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n  last\n",
+      "options": {
+        "lineWidth": 0
+      },
+      "output": "message: |\n  中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n  last\n"
+    },
+    {
+      "name": "parsed-literal/prefer-single",
+      "src": "message: |\n  中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n  last\n",
+      "options": {
+        "lineWidth": 22,
+        "singleQuote": true
+      },
+      "output": "message: |\n  中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n  last\n"
+    },
+    {
+      "name": "parsed-literal/very-narrow",
+      "src": "message: |\n  中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n  last\n",
+      "options": {
+        "lineWidth": 8,
+        "singleQuote": false
+      },
+      "output": "message: |\n  中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n  last\n"
+    },
+    {
+      "name": "parsed-folded/default",
+      "src": "message: >\n  中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n  last\n",
+      "options": {},
+      "output": "message: >\n  中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n  中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n  中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word last\n"
+    },
+    {
+      "name": "parsed-folded/setup",
+      "src": "message: >\n  中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n  last\n",
+      "options": {
+        "lineWidth": 0,
+        "singleQuote": false
+      },
+      "output": "message: >\n  中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word last\n"
+    },
+    {
+      "name": "parsed-folded/no-fold",
+      "src": "message: >\n  中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n  last\n",
+      "options": {
+        "lineWidth": 0
+      },
+      "output": "message: >\n  中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word last\n"
+    },
+    {
+      "name": "parsed-folded/prefer-single",
+      "src": "message: >\n  中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n  last\n",
+      "options": {
+        "lineWidth": 22,
+        "singleQuote": true
+      },
+      "output": "message: >\n  中文😀 long word 中文😀\n  long word 中文😀 long\n  word 中文😀 long word\n  中文😀 long word 中文😀\n  long word 中文😀 long\n  word 中文😀 long word\n  中文😀 long word 中文😀\n  long word 中文😀 long\n  word 中文😀 long word\n  中文😀 long word 中文😀\n  long word last\n"
+    },
+    {
+      "name": "parsed-folded/very-narrow",
+      "src": "message: >\n  中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\n  last\n",
+      "options": {
+        "lineWidth": 8,
+        "singleQuote": false
+      },
+      "output": "message: >\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  last\n"
+    },
+    {
+      "name": "parsed-comments/default",
+      "src": "# heading\nmessage: '中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word' # keep\nlist: [one, two, three] # tail\n",
+      "options": {},
+      "output": "# heading\nmessage: '中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long\n  word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long\n  word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word' # keep\nlist: [ one, two, three ] # tail\n"
+    },
+    {
+      "name": "parsed-comments/setup",
+      "src": "# heading\nmessage: '中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word' # keep\nlist: [one, two, three] # tail\n",
+      "options": {
+        "lineWidth": 0,
+        "singleQuote": false
+      },
+      "output": "# heading\nmessage: \"中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word\" # keep\nlist: [ one, two, three ] # tail\n"
+    },
+    {
+      "name": "parsed-comments/no-fold",
+      "src": "# heading\nmessage: '中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word' # keep\nlist: [one, two, three] # tail\n",
+      "options": {
+        "lineWidth": 0
+      },
+      "output": "# heading\nmessage: '中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word' # keep\nlist: [ one, two, three ] # tail\n"
+    },
+    {
+      "name": "parsed-comments/prefer-single",
+      "src": "# heading\nmessage: '中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word' # keep\nlist: [one, two, three] # tail\n",
+      "options": {
+        "lineWidth": 22,
+        "singleQuote": true
+      },
+      "output": "# heading\nmessage:\n  '中文😀 long word 中文😀\n  long word 中文😀 long\n  word 中文😀 long word\n  中文😀 long word 中文😀\n  long word 中文😀 long\n  word 中文😀 long word\n  中文😀 long word 中文😀\n  long word 中文😀 long\n  word 中文😀 long word\n  中文😀 long word 中文😀\n  long word' # keep\nlist: [ one, two, three ] # tail\n"
+    },
+    {
+      "name": "parsed-comments/very-narrow",
+      "src": "# heading\nmessage: '中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word 中文😀 long word' # keep\nlist: [one, two, three] # tail\n",
+      "options": {
+        "lineWidth": 8,
+        "singleQuote": false
+      },
+      "output": "# heading\nmessage:\n  \"中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\n  中文😀\n  long\n  word\" # keep\nlist:\n  [\n    one,\n    two,\n    three\n  ] # tail\n"
+    }
+  ]
+}
