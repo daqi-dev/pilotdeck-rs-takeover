@@ -264,6 +264,11 @@ async fn create(
     input: &JsValue,
     context: &ToolRunContext,
 ) -> Result<ToolOutput, ToolError> {
+    // Deliberate deviation (as in `bash`'s runner): a turn that is already
+    // aborted starts no new background process.
+    if context.is_aborted() {
+        return Err(ToolError::aborted());
+    }
     let task = runtime
         .start(StartTaskSpec {
             command: field(input, "command").clone(),

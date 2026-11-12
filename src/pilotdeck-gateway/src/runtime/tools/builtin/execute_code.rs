@@ -1130,6 +1130,18 @@ async fn run_python(
         &workspace,
         None,
     )?;
+    // Deliberate deviation (as in `bash`'s runner): an interpreter is never
+    // started for a turn that is already aborted; the run reports
+    // `cancelled` as an abort during the run would.
+    if context.is_aborted() {
+        return Ok(Execution {
+            exit_code: None,
+            stdout: String::new(),
+            stderr: String::new(),
+            timed_out: false,
+            cancelled: true,
+        });
+    }
     let mut command = Command::new(&prepared.executable);
     command
         .args(&prepared.args)
@@ -1157,8 +1169,9 @@ async fn run_python(
     let mut err_buffer = vec![0u8; 64 * 1024];
     let timeout_at = tokio::time::Instant::now() + Duration::from_secs_f64(timeout_seconds);
     let mut timeout_armed = true;
-    // `addEventListener("abort")` on an already-aborted signal never fires.
-    let mut abort_armed = !context.is_aborted();
+    // Armed even when the abort landed between the check above and the
+    // spawn: the interpreter is stopped at once rather than run.
+    let mut abort_armed = true;
     let mut kill_at: Option<tokio::time::Instant> = None;
     let mut timed_out = false;
     let mut cancelled = false;

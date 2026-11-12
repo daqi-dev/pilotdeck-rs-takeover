@@ -43,6 +43,7 @@ async fn test_output_spill_write_and_read() {
     let runtime = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
         max_tasks: Some(8),
         completion_preview_bytes: None,
+        sandbox: Default::default(),
         on_completion: None,
         now: Some(Arc::new(system_now)),
         disk_spill_dir: Some(spill_dir.clone()),
@@ -166,6 +167,7 @@ async fn test_snapshot_persistence_and_recovery() {
     let runtime1 = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
         max_tasks: Some(8),
         completion_preview_bytes: None,
+        sandbox: Default::default(),
         on_completion: None,
         now: Some(Arc::new(system_now)),
         disk_spill_dir: Some(spill_dir.clone()),
@@ -228,6 +230,7 @@ async fn test_snapshot_persistence_and_recovery() {
     let runtime2 = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
         max_tasks: Some(8),
         completion_preview_bytes: None,
+        sandbox: Default::default(),
         on_completion: None,
         now: Some(Arc::new(system_now)),
         disk_spill_dir: Some(spill_dir),
@@ -276,6 +279,7 @@ async fn test_unsettled_task_restored_as_cancelled() {
     let runtime1 = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
         max_tasks: Some(8),
         completion_preview_bytes: None,
+        sandbox: Default::default(),
         on_completion: None,
         now: Some(Arc::new(system_now)),
         disk_spill_dir: Some(spill_dir.clone()),
@@ -319,6 +323,7 @@ async fn test_unsettled_task_restored_as_cancelled() {
     let runtime2 = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
         max_tasks: Some(8),
         completion_preview_bytes: None,
+        sandbox: Default::default(),
         on_completion: None,
         now: Some(Arc::new(system_now)),
         disk_spill_dir: Some(spill_dir),

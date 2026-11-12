@@ -552,6 +552,14 @@ async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult
     };
     let prepared = prepare_spawn(&command, &options.cwd, options.env.as_deref(), env)
         .map_err(ToolError::failed)?;
+    // Deliberate deviation from the baseline (commandRunner.ts:94 spawns
+    // first and listens for `abort` afterwards; a listener added to an
+    // already-aborted signal never fires, so the command runs to completion):
+    // once the turn is aborted — `abort_turn`, or the user closing / deleting
+    // the session — a command that has not started yet must not start.
+    if options.signal.as_ref().is_some_and(AbortSignal::aborted) {
+        return Err(ToolError::aborted());
+    }
     let mut process = prepared.command(Stdio::piped());
     process.kill_on_drop(true);
     let mut child = match process.spawn() {
@@ -581,11 +589,9 @@ async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult
     drop(child.stdin.take());
     let mut stdout = child.stdout.take();
     let mut stderr = child.stderr.take();
-    // `addEventListener("abort")` on an already-aborted signal never fires.
-    let mut abort_armed = options
-        .signal
-        .as_ref()
-        .is_some_and(|signal| !signal.aborted());
+    // Armed even if the signal fired between the check above and the spawn
+    // (same deviation): the group is terminated at once instead of running.
+    let mut abort_armed = options.signal.is_some();
     let timeout_at = tokio::time::Instant::now() + timer_delay(options.timeout_ms);
 
     let limit = options

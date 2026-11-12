@@ -936,3 +936,53 @@ fn stream_cap_defaults_to_v8_max_string_length() {
         .collect();
     assert_eq!(tail, vec!["xyz", "Q"]);
 }
+
+/// Deliberate deviation from the baseline (`commandRunner.ts:94` spawns and
+/// then listens for `abort`, so an already-aborted turn still ran the
+/// command): once the turn's signal has fired, neither the native runner nor
+/// the sandboxed one starts the process, and the call reports `tool_aborted`.
+#[tokio::test]
+async fn an_already_aborted_signal_never_starts_the_command() {
+    use pilotdeck_gateway::runtime::{
+        project::SandboxMode,
+        tools::{builtin::bash::executable::SandboxedShellRunner, sandbox::Sandbox},
+    };
+    let root = std::env::temp_dir().join(format!("pre-abort-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let runners: Vec<(&str, Arc<dyn CommandRunner>)> = vec![
+        ("native", Arc::new(NodeShellCommandRunner)),
+        (
+            "sandboxed",
+            Arc::new(SandboxedShellRunner {
+                sandbox: Sandbox::new(SandboxMode::WorkspaceWrite),
+            }),
+        ),
+    ];
+    for (label, runner) in runners {
+        let marker = root.join(format!("{label}-ran"));
+        let tool = BashTool::with_options(BashToolOptions {
+            runner: Some(runner),
+            ..BashToolOptions::default()
+        });
+        let signal = ToolCancellation::default();
+        signal.cancel();
+        let fields = object([
+            ("cwd", JsValue::from(root.to_string_lossy().as_ref())),
+            ("sessionId", JsValue::from("s1")),
+            ("turnId", JsValue::from("t1")),
+        ]);
+        let context = host_context(fields, Some(signal), None);
+        let input = JsValue::Object(object([(
+            "command",
+            JsValue::from(format!("touch '{}'", marker.display()).as_str()),
+        )]));
+        let error = match tool.execute(input, context).await {
+            Ok(_) => panic!("{label}: an aborted call must not succeed"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, "tool_aborted", "{label}");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(!marker.exists(), "{label}: the command was started");
+    }
+    fs::remove_dir_all(&root).unwrap();
+}
