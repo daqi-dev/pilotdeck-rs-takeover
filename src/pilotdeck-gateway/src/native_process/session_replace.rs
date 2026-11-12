@@ -100,19 +100,26 @@ fn without(object: &JsObject, keys: &[&str]) -> JsObject {
     copy
 }
 
-/// `projectKey ?? options.projectRoot`, then the bundle's `projectKey ? … :
-/// fallbackProjectRoot`; both collapse to the same rule for the chat dir.
-fn chat_dir(options: &Options, input: &JsValue) -> PathBuf {
-    let key = match field(input, "projectKey") {
-        JsValue::String(key) if !key.is_empty() => Some(key.clone()),
-        _ => None,
-    };
-    let project_root = options.project_root_for(key.as_ref());
-    crate::session_chat_dir(
+/// `input.projectKey ?? options.projectRoot` (replaceLastTurn.ts:182,240):
+/// only a nullish key falls back; an empty string resolves to the working
+/// directory and a non-string fails in `path.resolve`.
+fn chat_dir(options: &Options, input: &JsValue) -> Result<PathBuf, ReplacementError> {
+    let key = super::projects::nullish_project_key(input).map_err(project_error)?;
+    let project_root = options.project_root_for(key);
+    Ok(crate::session_chat_dir(
         &options.home,
         &project_root,
         &project_root.to_string_lossy(),
-    )
+    ))
+}
+
+/// A `path.resolve` failure on `projectKey`, as the history functions throw it.
+pub(super) fn project_error(error: crate::runtime::connection::RequestError) -> ReplacementError {
+    ReplacementError {
+        code: (error.code == "ERR_INVALID_ARG_TYPE").then_some("ERR_INVALID_ARG_TYPE"),
+        message: String::from_utf16_lossy(error.message.units()),
+        details: None,
+    }
 }
 
 struct Paths {
@@ -264,7 +271,7 @@ pub(super) fn replace_last_turn(
             "sessionKey, expectedTurnId, and replacementTurnId are required.",
         ));
     };
-    let chat_dir = chat_dir(options, input);
+    let chat_dir = chat_dir(options, input)?;
     let transcript = chat_dir.join(format!(
         "{}.jsonl",
         crate::storage::sanitize_session_id(session)
@@ -410,7 +417,7 @@ pub(super) fn finalize_last_turn_replacement(
             "Replacement action must be commit or rollback.",
         ));
     }
-    let chat_dir = chat_dir(options, input);
+    let chat_dir = chat_dir(options, input)?;
     let paths = paths(&chat_dir, session, &transaction_text);
     if commit {
         remove_forced(&paths.backup).map_err(|error| plain(error.to_string()))?;

@@ -883,6 +883,11 @@ impl TranscriptWriter {
         }
         Ok(())
     }
+    /// Whether [`Self::begin_close`] has fenced this writer: it accepts no more
+    /// appends, so the session it served is no longer the transcript's writer.
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::SeqCst)
+    }
     /// JsonlTranscriptWriter.close: later appends resolve without writing,
     /// and close waits for any append that already acquired the commit lock.
     pub fn close(&self) {

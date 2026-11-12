@@ -368,6 +368,7 @@ impl Requests {
         // the transcript after all (use its writer or report busy).
         let recorders = self.recorders.clone();
         let home = self.options.home.clone();
+        let transcript = fence_path.clone();
         let value_field: JsValue = params.get("value").cloned().unwrap_or(JsValue::Undefined);
         let value_str: Option<String> = match &value_field {
             JsValue::Null | JsValue::Undefined => None,
@@ -410,7 +411,7 @@ impl Requests {
             // append below covers both paths.
             let live = || {
                 let Some((owner, recorder)) =
-                    super::super::assembly::live_recorder(&recorders, &key_clone)
+                    super::super::assembly::live_recorder_at(&recorders, &key_clone, &transcript)
                 else {
                     return Ok(None);
                 };
@@ -522,12 +523,27 @@ impl Requests {
         // and the retired writer's no-op append reported `recorded: true`.
         // GatewaySessionHistoryBundle.ts:250: `projectKey ? projectKey :
         // fallbackProjectRoot`, no registry lookup.
-        let project_root = self.options.project_root_for(
-            params
-                .get("projectKey")
-                .and_then(JsValue::as_string)
-                .filter(|key| !key.is_empty()),
-        );
+        // A truthy non-string key fails in the bundle's `path.resolve`, which
+        // only runs when the router has no live session
+        // (InProcessGateway.ts:2068-2077); a live one records first.
+        let project_root = match super::super::projects::history_project_key(&params) {
+            Ok(key) => self.options.project_root_for(key),
+            Err(error) => {
+                if let Some((_, recorder)) =
+                    super::super::assembly::live_recorder(&self.recorders, &session_key)
+                {
+                    if let Some(message) = missing_status {
+                        return Err(RequestError::new(message));
+                    }
+                    recorder
+                        .writer()
+                        .record_agent_status_message_checked(&session_key, &turn_id, &status)
+                        .map_err(|e| RequestError::new(e.to_string()))?;
+                    return Ok(object([("recorded", JsValue::Bool(true))]));
+                }
+                return Err(error);
+            }
+        };
         let recorded = record_status_message(
             self.options.home.clone(),
             project_root,
