@@ -104,6 +104,9 @@
       ],
       "then": [
         {
+          "connect": true
+        },
+        {
           "ws": "sop_resume",
           "params": {
             "sessionKey": "s/a",
@@ -147,7 +150,7 @@
     },
     {
       "id": "restart-duplicate",
-      "path": "/steps/1/then/0/frames/0/result/duplicate",
+      "path": "/steps/1/then/1/frames/0/result/duplicate",
       "equals": true
     }
   ]

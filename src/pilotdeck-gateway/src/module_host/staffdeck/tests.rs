@@ -234,7 +234,7 @@ async fn transcript_filename_alias_does_not_bypass_original_catalog() {
     std::fs::create_dir_all(&chat).unwrap();
     let admission = r#"{"tenantId":"t","agentId":"a","actorUserId":"u","pilotDeckUserId":"owner","projectKey":"/p","credentialId":"c","staffDeckOrigin":"http://localhost"}"#;
     let record = format!(
-        r#"{{"type":"session_metadata","metadata":{{"staffDeckAdmission":{admission}}},"sessionId":"s/a","turnId":"host-admission","sequence":1,"createdAt":"2026-01-01T00:00:00.000Z","entryId":"e","parentEntryId":null}}"#
+        r#"{{"type":"session_metadata","metadata":{{"title":"Admission alias","staffDeckAdmission":{admission}}},"sessionId":"s/a","turnId":"host-admission","sequence":1,"createdAt":"2026-01-01T00:00:00.000Z","entryId":"e","parentEntryId":null}}"#
     );
     std::fs::write(chat.join("s_a.jsonl"), record + "\n").unwrap();
     assert!(!catalog_has_session(&scratch.0, &project, &"s/a".into()).await);

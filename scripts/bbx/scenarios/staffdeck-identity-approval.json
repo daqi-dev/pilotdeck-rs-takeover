@@ -424,6 +424,54 @@
       "id": "restart-active",
       "path": "/steps/1/then/1/http/body/status/state/status",
       "equals": "active"
+    },
+    {
+      "id": "http-date-0-0",
+      "path": "/steps/0/then/0/http/headers/date",
+      "matches": "^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [0-9]{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} GMT$"
+    },
+    {
+      "id": "http-date-0-1",
+      "path": "/steps/0/then/1/http/headers/date",
+      "matches": "^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [0-9]{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} GMT$"
+    },
+    {
+      "id": "http-date-0-2",
+      "path": "/steps/0/then/2/http/headers/date",
+      "matches": "^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [0-9]{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} GMT$"
+    },
+    {
+      "id": "http-date-0-3",
+      "path": "/steps/0/then/3/http/headers/date",
+      "matches": "^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [0-9]{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} GMT$"
+    },
+    {
+      "id": "http-date-0-4",
+      "path": "/steps/0/then/4/http/headers/date",
+      "matches": "^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [0-9]{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} GMT$"
+    },
+    {
+      "id": "http-date-0-5",
+      "path": "/steps/0/then/5/http/headers/date",
+      "matches": "^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [0-9]{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} GMT$"
+    },
+    {
+      "id": "http-date-0-6",
+      "path": "/steps/0/then/6/http/headers/date",
+      "matches": "^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [0-9]{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} GMT$"
+    },
+    {
+      "id": "http-date-1-0",
+      "path": "/steps/1/then/0/http/headers/date",
+      "matches": "^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [0-9]{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} GMT$"
+    },
+    {
+      "id": "http-date-1-1",
+      "path": "/steps/1/then/1/http/headers/date",
+      "matches": "^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [0-9]{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} GMT$"
     }
+  ],
+  "volatile": [
+    "\\.http\\.headers\\.date$"
   ]
 }

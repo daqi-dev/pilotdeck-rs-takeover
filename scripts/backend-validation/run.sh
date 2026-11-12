@@ -27,6 +27,8 @@ if [[ -s "$output/status.txt" ]]; then echo 'build checkout must be clean' >&2; 
 export CARGO_BUILD_JOBS=6
 cd src
 if (( $# )); then
+  printf '%q ' cargo "$@" > "$output/cargo.command"
+  printf '\n' >> "$output/cargo.command"
   set +e
   cargo "$@" > "$output/cargo.log" 2>&1
   result=$?

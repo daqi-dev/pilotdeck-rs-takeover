@@ -7,6 +7,9 @@ output=$2
 mkdir -p "$(dirname "$output")"
 mkdir "$output"
 output=$(cd "$output" && pwd)
+mkdir -p "$output/home/.pilotdeck"
+export HOME="$output/home"
+export PILOT_HOME="$output/home/.pilotdeck"
 export PATH="$task_root/tools/node/bin:$task_root/tools/pnpm/node_modules/.bin:$task_root/tools/rust/bin:$PATH"
 [[ $(node --version) == v22.22.0 ]]
 [[ $(pnpm --version) == 10.32.1 ]]

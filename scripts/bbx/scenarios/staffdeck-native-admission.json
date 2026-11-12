@@ -120,6 +120,9 @@
       ],
       "then": [
         {
+          "connect": true
+        },
+        {
           "ws": "read_session_messages",
           "params": {
             "sessionKey": "admitted"

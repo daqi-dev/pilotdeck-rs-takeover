@@ -1,27 +1,26 @@
-//! Process-level exit codes for the config branches that remain unimplemented.
+//! Process-level config failures, including the implemented StaffDeck binding
+//! transform. Baseline cc7c4e6 CLI evidence: B1/failure-probes/baseline.json.
 use std::{fs, process::Command};
 
 #[test]
-fn staffdeck_binding_and_host_config_still_exit_two() {
+fn staffdeck_binding_uses_config_errors_and_host_only_config_remains_explicit() {
     let root = std::env::temp_dir().join(format!("pdrs-d1-config-exit-{}", std::process::id()));
     fs::create_dir_all(root.join("project")).unwrap();
     fs::create_dir_all(root.join("home")).unwrap();
     let config = root.join("pilotdeck.yaml");
-    for (binding, yaml, expected) in [
-        (
-            "true",
-            "a: [\n",
-            "StaffDeck project binding (applyProjectBinding)",
-        ),
+    for (binding, yaml, code, expected) in [
+        ("true", "a: [\n", 1, "Failed to parse default config YAML."),
         (
             "true",
             "schemaVersion: 1\n",
-            "StaffDeck project binding (applyProjectBinding)",
+            1,
+            "Config must contain an agent section.",
         ),
         (
             "false",
             "schemaVersion: 1\nagent: {model: constructor/m}\nmodel: {}\n",
-            "config requiring JavaScript host support",
+            2,
+            "pilotdeck-rs TODO: config requiring JavaScript host support is not implemented yet.",
         ),
     ] {
         fs::write(&config, yaml).unwrap();
@@ -35,14 +34,12 @@ fn staffdeck_binding_and_host_config_still_exit_two() {
             .env("STAFFDECK_PROJECT_BINDING_ENABLED", binding)
             .output()
             .unwrap();
-        assert_eq!(output.status.code(), Some(2), "{output:?}");
+        assert_eq!(output.status.code(), Some(code), "{output:?}");
         assert!(output.stdout.is_empty());
         assert!(
             String::from_utf8(output.stderr)
                 .unwrap()
-                .ends_with(&format!(
-                    "pilotdeck-rs TODO: {expected} is not implemented yet.\n"
-                ))
+                .ends_with(&format!("{expected}\n"))
         );
     }
     fs::remove_dir_all(root).unwrap();

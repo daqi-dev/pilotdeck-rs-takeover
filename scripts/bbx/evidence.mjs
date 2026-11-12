@@ -43,6 +43,8 @@ export function inputIdentity() {
     binaries: Object.fromEntries(['pilotdeck', 'pilotdeck-agent-loop-sidecar'].map((name) => {
       const file = path.join(target, name); return [name, fs.existsSync(file) ? fileHash(file) : null];
     })),
+    components: { pdf: { path: process.env.BBX_PDF_TOOL ?? null,
+      sha256: process.env.BBX_PDF_TOOL && fs.existsSync(process.env.BBX_PDF_TOOL) ? fileHash(process.env.BBX_PDF_TOOL) : null } },
     baselineDist: treeHash(path.join(baseline, 'dist')),
     baselineLock: fs.existsSync(path.join(baseline, 'pnpm-lock.yaml')) ? fileHash(path.join(baseline, 'pnpm-lock.yaml')) : null,
     baselineEntry: fs.existsSync(path.join(baseline, 'dist/src/cli/pilotdeck.js')) ? fileHash(path.join(baseline, 'dist/src/cli/pilotdeck.js')) : null,
