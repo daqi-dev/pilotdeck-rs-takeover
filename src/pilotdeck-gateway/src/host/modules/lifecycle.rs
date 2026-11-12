@@ -56,6 +56,10 @@ pub struct Handler {
     /// them (`this.dispatchLifecycle(...).catch(() => {})`, AgentLoop.ts:699,
     /// 2281), so their hooks neither hold the turn's terminal nor end with it.
     advisory: Option<Arc<dyn LifecyclePort>>,
+    /// The turn's user-abort signal for the advisory events. `Binding::signal`
+    /// is the bound turn runtime's own signal, which also fires when the turn
+    /// simply ends; this one fires only on abort (or session close).
+    advisory_signal: Option<Cancellation>,
 }
 impl Handler {
     pub fn new(runtime: LifecycleRuntime, binding: Binding) -> Self {
@@ -65,11 +69,14 @@ impl Handler {
         Self {
             ports: Some(Ports { runtime, binding }),
             advisory: None,
+            advisory_signal: None,
         }
     }
-    /// Route the advisory events to `port`, answered without waiting.
-    pub fn set_advisory(&mut self, port: Arc<dyn LifecyclePort>) {
+    /// Route the advisory events to `port`, answered without waiting, under
+    /// the turn's abort `signal`.
+    pub fn set_advisory(&mut self, port: Arc<dyn LifecyclePort>, signal: Option<Cancellation>) {
         self.advisory = Some(port);
+        self.advisory_signal = signal;
     }
     /// TS `NullLifecycleRuntime`: dispatch is empty. This handler's `dispose` is
     /// a no-op (the dispatcher never disposes the session runtime).
@@ -135,10 +142,14 @@ impl Handler {
                 && (event.equals_str("PreModelRequest") || event.equals_str("InstructionsLoaded"))
                 && let Ok(runtime) = tokio::runtime::Handle::try_current()
             {
-                // The host's turn signal also fires when a turn simply ends;
-                // the baseline's abort signal does not, so these hooks run on.
+                // Detached from the turn's own hook runtime (whose jobs and
+                // signal end with the turn), but under the turn's abort
+                // signal: the baseline dispatches with `signal:
+                // input.abortSignal` (sidecarDefaultModuleDispatcher.ts:
+                // 383-389), so a user abort kills these hooks while a turn
+                // that simply ends does not.
                 let future = advisory.dispatch(LifecycleDispatchInput {
-                    signal: None,
+                    signal: handler.advisory_signal.clone(),
                     ..input
                 });
                 runtime.spawn(async move {

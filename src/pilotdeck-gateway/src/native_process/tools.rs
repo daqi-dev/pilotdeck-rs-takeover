@@ -1284,6 +1284,9 @@ impl SessionTools {
                     // permission callback.
                     host_permission_prompt: true,
                     advisory: self.tool_hooks.session_port(),
+                    // Filled in by the live session with the turn's
+                    // user-abort signal.
+                    advisory_signal: None,
                 },
             },
         }

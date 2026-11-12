@@ -53,6 +53,11 @@ const plugin = (name, hooks, where = 'home/.pilotdeck/plugins') => ({
   [`${where}/${name}/hook.mjs`]: HOOK_SCRIPT,
 });
 
+// 收到 SIGTERM 后 300ms 才退出，其余行为与 hook.mjs 相同（参数照传）。
+const TERM_LATE = `// bbx hook fixture: hook.mjs that outlives SIGTERM by 300ms
+process.on('SIGTERM', () => { setTimeout(() => process.exit(143), 300); });
+await import('./hook.mjs');
+`;
 const TITLE = { name: 'title', when: ['Generate a concise title'], reply: { text: '{"title": "Hook run"}' } };
 // 每个用例一个会话：消息里带标记，模型先发一次工具调用，拿到结果后回一句话。
 const toolCase = (marker, tool, args, id = `call_${marker.replace(/-/g, '_')}`) => [
@@ -534,6 +539,43 @@ hooks:
     steps: [bypass('s-model'), submit('s-model', 'model-case: run the tool'), { sleep: 2500 }],
     settleMs: 500,
   };
+  // 用户中止这一轮时 hook 还在跑：基线派发时带着轮次的中止信号
+  // （sidecarDefaultModuleDispatcher.ts:378-391、AgentLoop.ts:699-702 / 2281-2283），
+  // 中止即杀 hook 进程（hooklog 没有 done 行）。模型 0.8 秒后才吐第一块文本然后挂住，收到这块文本就中止：
+  // 那时 hook 进程已经起来并记下开始行（立刻中止的话进程可能还没起来，开始行有无取决于时机），
+  // 中止落在流进行中、hook 睡完之前。之后同一会话再跑一轮：hook 照常派发、跑完。
+  // hook 进程收到 SIGTERM 后再活 300ms 才退出（term.mjs 包一层 hook.mjs）：被杀的 hook 的执行结果因此确定地落在
+  // 中止的一轮收尾之后、不上这一轮的流。不包这层时它与被截断的 assistant_block 只差几毫秒，Rust 侧五次里有一次先后颠倒。
+  // 两个事件各一个场景：同时杀两个 hook 时两条 hook_execution_completed 的先后取决于进程退出的先后，基线自比不稳。
+  for (const [name, event, log] of [
+    ['hook-model-request-cancelled', 'PreModelRequest', 'pre-model'],
+    ['hook-instructions-loaded-cancelled', 'InstructionsLoaded', 'instructions'],
+  ]) {
+    const session = `s-${log}-cancel`;
+    scenarios[name] = {
+      about: `${event} hook 执行中用户中止这一轮：hook 进程被杀（hooklog 没有 done 行）、中止的一轮照常收尾；同一会话下一轮的 hook 照常派发并跑完。`,
+      files: {
+        ...plugin('bbx-model-cancel', { [event]: [{ hooks: [{ ...cmd(log, { sleep: 3000 }), command: cmd(log, { sleep: 3000 }).command.replace('hook.mjs', 'term.mjs') }] }] }),
+        'home/.pilotdeck/plugins/bbx-model-cancel/term.mjs': TERM_LATE,
+      },
+      provider: [
+        TITLE,
+        { name: 'next', when: ['next-case:'], reply: { text: 'next reply' } },
+        { name: 'slow', when: ['slow-case:'], reply: { chunks: ['partial ', 'never sent'], delayMs: 800, hangAfter: 1, hangMs: 6000 } },
+      ],
+      steps: [
+        bypass(session),
+        submit(session, 'slow-case: answer slowly', { answer: [{
+          on: { type: 'assistant_text_delta' }, ws: 'abort_turn', params: { sessionKey: session }, count: 1,
+        }] }),
+        { sleep: 4000 },
+        submit(session, 'next-case: answer'),
+        { sleep: 3800 },
+        read(session),
+      ],
+      settleMs: 500,
+    };
+  }
 }
 
 // ── Elicitation / ElicitationResult：提问发出与得到回答时 ──
