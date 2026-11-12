@@ -853,7 +853,10 @@ fn ledger_lock_file_exists_only_while_held() {
         .unwrap()
         .map(|e| e.unwrap().file_name())
         .collect();
-    assert!(siblings.is_empty(), "nothing beside the transcript while held: {siblings:?}");
+    assert!(
+        siblings.is_empty(),
+        "nothing beside the transcript while held: {siblings:?}"
+    );
     assert!(
         matches!(super::LedgerLock::acquire(&scratch.path()), Err(LedgerError::Io(e)) if e.kind() == io::ErrorKind::WouldBlock),
         "a second holder is refused while the first is alive"

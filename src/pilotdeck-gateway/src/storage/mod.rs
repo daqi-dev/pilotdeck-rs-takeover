@@ -30,11 +30,11 @@ pub use transcript_adapter::{
     project_subagent_references, sanitize_session_id,
 };
 
+#[cfg(test)]
+pub(crate) use transcript::ledger_lock_path;
 pub(crate) use transcript::{
     LedgerLock, MAX_BYTES as TRANSCRIPT_MAX_BYTES, canonical_transcript_path,
 };
-#[cfg(test)]
-pub(crate) use transcript::ledger_lock_path;
 pub(crate) use transcript_adapter::{compact_snapshot_messages, slice_index};
 
 pub(crate) use session_projections::{METADATA, TURN_SUMMARY, checkpoint_rows, subagent_entries};

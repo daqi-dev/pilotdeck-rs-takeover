@@ -2137,7 +2137,8 @@ mod tests {
         // The fence inode lives outside the session directory
         // (`storage::ledger_lock_path`); a directory there cannot be opened.
         let lock = crate::storage::ledger_lock_path(
-            &crate::storage::canonical_transcript_path(&transcript_path).expect("#1873 canonical path"),
+            &crate::storage::canonical_transcript_path(&transcript_path)
+                .expect("#1873 canonical path"),
         )
         .expect("#1873 the ledger lock directory");
         std::fs::create_dir(&lock).expect("#1873 the broken ledger lock is in place");
