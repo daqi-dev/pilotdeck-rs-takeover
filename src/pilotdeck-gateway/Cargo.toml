@@ -61,6 +61,8 @@ bytes = "=1.10.1"
 httpdate = "=1.0.3"
 # #867: pull-based Node fetch response decoding, pure Rust codecs.
 async-compression = { version = "=0.4.51", features = ["tokio", "gzip", "zlib", "deflate", "brotli"] }
+# Stateful RFC 7692 WebSocket decompression; reuse the locked pure-Rust backend.
+flate2 = { version = "=1.1.10", default-features = false, features = ["zlib-rs"] }
 # A6.4-pr5 (human-approved 2026-10-20): pure-Rust TLS for provider HTTPS.
 # ring backend (no cmake/aws-lc), webpki-roots = Mozilla bundle like Node.
 rustls = { version = "=0.23.45", default-features = false, features = ["std", "tls12", "ring"] }

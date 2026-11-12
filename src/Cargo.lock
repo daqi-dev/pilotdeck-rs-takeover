@@ -1387,6 +1387,7 @@ dependencies = [
  "base64",
  "bytes",
  "cbc",
+ "flate2",
  "futures-util",
  "html5ever",
  "http-body",
