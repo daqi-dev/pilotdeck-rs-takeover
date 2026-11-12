@@ -42,7 +42,7 @@ async fn google_exchange_orders_response_timeout_and_parent() {
         let model = JsValue::from("m");
         let body = JsValue::Null;
         let mut pending = Box::pin(send_google_request(
-            &transport, &provider, &model, &body, &options,
+            &transport, &provider, &model, &body, &options, true,
         ));
         poll_pending(pending.as_mut()).await;
         tokio::time::advance(Duration::from_millis(130)).await;
@@ -100,7 +100,7 @@ async fn google_redirect_retains_absolute_deadline_and_second_hop_source() {
     let model = JsValue::from("m");
     let body = JsValue::Null;
     let mut pending = Box::pin(send_google_request(
-        &transport, &provider, &model, &body, &options,
+        &transport, &provider, &model, &body, &options, true,
     ));
     poll_pending(pending.as_mut()).await;
     tokio::time::advance(Duration::from_millis(60)).await;

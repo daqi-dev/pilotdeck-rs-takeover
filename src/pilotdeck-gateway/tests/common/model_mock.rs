@@ -342,8 +342,30 @@ pub fn thrown(error: &ModelStreamError) -> JsValue {
 }
 pub fn entry(key: &str, value: JsValue) -> String {
     let mut record = JsObject::new();
-    record.insert(key.into(), value);
+    record.insert(key.into(), strip_sdk_response(&value));
     json(&JsValue::Object(record))
+}
+
+/// The fixture generator drops the SDK's `sdkHttpResponse` (response headers,
+/// clock-derived `date`) from every recorded value (`generate.mts`
+/// `stripSdkResponse`); drop it from the replayed side the same way. The
+/// baseline does put it on Google chunks — that is checked end to end by the
+/// bbx scenario `proto-google-basic`.
+fn strip_sdk_response(value: &JsValue) -> JsValue {
+    match value {
+        JsValue::Array(items) => JsValue::Array(items.iter().map(strip_sdk_response).collect()),
+        JsValue::Object(object) => {
+            let mut out = JsObject::new();
+            for (key, entry) in object.own_entries() {
+                if key.equals_str("sdkHttpResponse") {
+                    continue;
+                }
+                out.insert(key.clone(), strip_sdk_response(entry));
+            }
+            JsValue::Object(out)
+        }
+        other => other.clone(),
+    }
 }
 
 pub fn tls_material() -> (rustls::RootCertStore, Arc<rustls::ServerConfig>) {

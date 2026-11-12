@@ -1,0 +1,1216 @@
+{
+ "name": "proto-google-request",
+ "about": "用公共 host 的 model_stream 直接驱动 Google Gemini 请求组装（model/providers/google/request.ts、schema.ts，经 @google/genai 2.10.0 的 generateContentParametersToMldev 落到线上）与流解析（stream.ts）。k1 结构化输出→generationConfig.responseMimeType / responseJsonSchema；k2–k5 toolConfig.functionCallingConfig（ANY / NONE / ANY+allowedFunctionNames / AUTO）与工具 schema 清洗（parametersJsonSchema）；k6 systemInstruction、maxOutputTokens、inlineData / fileData、PDF、thought + thoughtSignature、functionCall（id 清洗、非对象参数→{value}）、functionResponse（按 id 找名字、出错→error、结果里的图片→parts）、同角色合并；k7 第一条是助手消息时补用户消息、空文本丢弃；k8 gemini-3 thinkingLevel high（模型名别名 gemini-3-pro→gemini-3-pro-preview）；k9 只 includeThoughts；k10 非 gemini-3 不带 thinkingConfig；k11 url 带 v1beta、自定义头（与 SDK 头的合并顺序）、extraBody 深合并并剔除 temperature、流式不带 X-Server-Timeout；k12 流里的 thought、分块文本、不带 id 的工具调用（按 responseId 合成）；k13 带 id 的工具调用（清洗、重复去重）；k14 用量带 cachedContentTokenCount / thoughtsTokenCount；k15–k17 finishReason MAX_TOKENS / RECITATION / 未知；k18 HTTP 400；k19 HTTP 503（重试后出错）。",
+ "config": "schemaVersion: 1\nagent:\n  model: gem/gemini-bbx\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    gem:\n      protocol: google\n      url: {MOCK}\n      apiKey: bbx-google-key\n      retry:\n        baseDelayMs: 1\n        maxDelayMs: 1\n        jitter: 0\n      models:\n        gemini-bbx:\n          multimodal:\n            input: [text, image, pdf]\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        gemini-3-pro:\n          thinking:\n            state: enabled\n            efforts: [low, high]\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        gemini-bbx-think:\n          thinking:\n            state: enabled\n            efforts: [low]\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    gem2:\n      protocol: google\n      url: {MOCK}/v1beta\n      apiKey: bbx-google-key-2\n      timeoutMs: 45000\n      headers:\n        X-Bbx-Trace: trace-1\n        Content-Type: application/json; charset=utf-8\n      extraBody:\n        temperature: 0.3\n        generationConfig:\n          temperature: 0.5\n          topK: 7\n        safetySettings:\n          - category: HARM_CATEGORY_HARASSMENT\n            threshold: BLOCK_NONE\n      models:\n        gemini-bbx:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+ "provider": [
+  {
+   "name": "k1",
+   "when": [
+    "k1: structured"
+   ],
+   "reply": {
+    "text": "{\"value\":42,\"tags\":[\"a\"]}"
+   }
+  },
+  {
+   "name": "k12",
+   "when": [
+    "k12: reasoning and tool"
+   ],
+   "reply": {
+    "reasoning": "chain of thought",
+    "chunks": [
+     "look",
+     "ing"
+    ],
+    "text": "looking",
+    "tool": {
+     "name": "lookup",
+     "arguments": {
+      "q": "z"
+     }
+    }
+   }
+  },
+  {
+   "name": "k13",
+   "when": [
+    "k13: ids"
+   ],
+   "reply": {
+    "tools": [
+     {
+      "id": "fc 1/a",
+      "name": "lookup",
+      "arguments": {
+       "q": "a"
+      }
+     },
+     {
+      "id": "fc_1_a",
+      "name": "lookup",
+      "arguments": {
+       "q": "b"
+      }
+     },
+     {
+      "name": "lookup",
+      "arguments": {
+       "q": "c"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "name": "k14",
+   "when": [
+    "k14: cached usage"
+   ],
+   "reply": {
+    "text": "cached",
+    "usage": {
+     "prompt_tokens": 100,
+     "completion_tokens": 7,
+     "total_tokens": 110,
+     "prompt_tokens_details": {
+      "cached_tokens": 64
+     },
+     "completion_tokens_details": {
+      "reasoning_tokens": 3
+     }
+    }
+   }
+  },
+  {
+   "name": "k15",
+   "when": [
+    "k15: max tokens"
+   ],
+   "reply": {
+    "text": "partial",
+    "finish": "MAX_TOKENS"
+   }
+  },
+  {
+   "name": "k16",
+   "when": [
+    "k16: recitation"
+   ],
+   "reply": {
+    "text": "quoted",
+    "finish": "RECITATION"
+   }
+  },
+  {
+   "name": "k17",
+   "when": [
+    "k17: odd finish"
+   ],
+   "reply": {
+    "text": "odd",
+    "finish": "FINISH_REASON_UNSPECIFIED"
+   }
+  },
+  {
+   "name": "k18",
+   "when": [
+    "k18: http 400"
+   ],
+   "reply": {
+    "status": 400,
+    "body": {
+     "error": {
+      "code": 400,
+      "message": "Invalid value at 'generation_config'.",
+      "status": "INVALID_ARGUMENT",
+      "details": [
+       {
+        "@type": "type.googleapis.com/google.rpc.BadRequest",
+        "fieldViolations": [
+         {
+          "field": "generation_config",
+          "description": "bad"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "k19",
+   "when": [
+    "k19: http 503"
+   ],
+   "reply": {
+    "status": 503,
+    "body": {
+     "error": {
+      "code": 503,
+      "message": "The model is overloaded. Please try again later.",
+      "status": "UNAVAILABLE"
+     }
+    }
+   }
+  },
+  {
+   "name": "other",
+   "reply": {
+    "text": "ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "http": "POST /api/module-host/call",
+   "headers": {
+    "authorization": "Bearer {TOKEN}"
+   },
+   "body": {
+    "principal": {
+     "pilotDeckUserId": "u",
+     "tenantId": "t",
+     "actorUserId": "a",
+     "agentId": "g"
+    },
+    "operation": "model_stream",
+    "input": {
+     "requestId": "k1",
+     "modelId": "gem/gemini-bbx",
+     "request": {
+      "messages": [
+       {
+        "role": "user",
+        "content": [
+         {
+          "type": "text",
+          "text": "k1: structured"
+         }
+        ]
+       }
+      ],
+      "outputSchema": {
+       "name": "answer",
+       "description": "The answer.",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "value": {
+          "type": "number"
+         },
+         "tags": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         }
+        },
+        "required": [
+         "value"
+        ],
+        "additionalProperties": false
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "http": "POST /api/module-host/call",
+   "headers": {
+    "authorization": "Bearer {TOKEN}"
+   },
+   "body": {
+    "principal": {
+     "pilotDeckUserId": "u",
+     "tenantId": "t",
+     "actorUserId": "a",
+     "agentId": "g"
+    },
+    "operation": "model_stream",
+    "input": {
+     "requestId": "k2",
+     "modelId": "gem/gemini-bbx",
+     "request": {
+      "messages": [
+       {
+        "role": "user",
+        "content": [
+         {
+          "type": "text",
+          "text": "k2: tools"
+         }
+        ]
+       }
+      ],
+      "tools": [
+       {
+        "name": "lookup",
+        "description": "Tool lookup",
+        "inputSchema": {
+         "type": "object",
+         "properties": {
+          "q": {
+           "type": "string"
+          },
+          "n": {
+           "type": "integer"
+          },
+          "mode": {
+           "anyOf": [
+            {
+             "const": "a"
+            },
+            {
+             "const": "b"
+            }
+           ]
+          }
+         },
+         "required": [
+          "q"
+         ],
+         "additionalProperties": false
+        }
+       },
+       {
+        "name": "fetch",
+        "description": "Tool fetch",
+        "inputSchema": {
+         "type": "object",
+         "properties": {
+          "q": {
+           "type": "string"
+          },
+          "n": {
+           "type": "integer"
+          },
+          "mode": {
+           "anyOf": [
+            {
+             "const": "a"
+            },
+            {
+             "const": "b"
+            }
+           ]
+          }
+         },
+         "required": [
+          "q"
+         ],
+         "additionalProperties": false
+        }
+       }
+      ],
+      "toolChoice": "required",
+      "metadata": {
+       "user_id": "u7"
+      }
+     }
+    }
+   }
+  },
+  {
+   "http": "POST /api/module-host/call",
+   "headers": {
+    "authorization": "Bearer {TOKEN}"
+   },
+   "body": {
+    "principal": {
+     "pilotDeckUserId": "u",
+     "tenantId": "t",
+     "actorUserId": "a",
+     "agentId": "g"
+    },
+    "operation": "model_stream",
+    "input": {
+     "requestId": "k3",
+     "modelId": "gem/gemini-bbx",
+     "request": {
+      "messages": [
+       {
+        "role": "user",
+        "content": [
+         {
+          "type": "text",
+          "text": "k3: none"
+         }
+        ]
+       }
+      ],
+      "tools": [
+       {
+        "name": "lookup",
+        "description": "Tool lookup",
+        "inputSchema": {
+         "type": "object",
+         "properties": {
+          "q": {
+           "type": "string"
+          },
+          "n": {
+           "type": "integer"
+          },
+          "mode": {
+           "anyOf": [
+            {
+             "const": "a"
+            },
+            {
+             "const": "b"
+            }
+           ]
+          }
+         },
+         "required": [
+          "q"
+         ],
+         "additionalProperties": false
+        }
+       }
+      ],
+      "toolChoice": "none"
+     }
+    }
+   }
+  },
+  {
+   "http": "POST /api/module-host/call",
+   "headers": {
+    "authorization": "Bearer {TOKEN}"
+   },
+   "body": {
+    "principal": {
+     "pilotDeckUserId": "u",
+     "tenantId": "t",
+     "actorUserId": "a",
+     "agentId": "g"
+    },
+    "operation": "model_stream",
+    "input": {
+     "requestId": "k4",
+     "modelId": "gem/gemini-bbx",
+     "request": {
+      "messages": [
+       {
+        "role": "user",
+        "content": [
+         {
+          "type": "text",
+          "text": "k4: named"
+         }
+        ]
+       }
+      ],
+      "tools": [
+       {
+        "name": "lookup",
+        "description": "Tool lookup",
+        "inputSchema": {
+         "type": "object",
+         "properties": {
+          "q": {
+           "type": "string"
+          },
+          "n": {
+           "type": "integer"
+          },
+          "mode": {
+           "anyOf": [
+            {
+             "const": "a"
+            },
+            {
+             "const": "b"
+            }
+           ]
+          }
+         },
+         "required": [
+          "q"
+         ],
+         "additionalProperties": false
+        }
+       },
+       {
+        "name": "fetch",
+        "description": "Tool fetch",
+        "inputSchema": {
+         "type": "object",
+         "properties": {
+          "q": {
+           "type": "string"
+          },
+          "n": {
+           "type": "integer"
+          },
+          "mode": {
+           "anyOf": [
+            {
+             "const": "a"
+            },
+            {
+             "const": "b"
+            }
+           ]
+          }
+         },
+         "required": [
+          "q"
+         ],
+         "additionalProperties": false
+        }
+       }
+      ],
+      "toolChoice": {
+       "type": "tool",
+       "name": "fetch"
+      }
+     }
+    }
+   }
+  },
+  {
+   "http": "POST /api/module-host/call",
+   "headers": {
+    "authorization": "Bearer {TOKEN}"
+   },
+   "body": {
+    "principal": {
+     "pilotDeckUserId": "u",
+     "tenantId": "t",
+     "actorUserId": "a",
+     "agentId": "g"
+    },
+    "operation": "model_stream",
+    "input": {
+     "requestId": "k5",
+     "modelId": "gem/gemini-bbx",
+     "request": {
+      "messages": [
+       {
+        "role": "user",
+        "content": [
+         {
+          "type": "text",
+          "text": "k5: auto"
+         }
+        ]
+       }
+      ],
+      "tools": [
+       {
+        "name": "lookup",
+        "description": "Tool lookup",
+        "inputSchema": {
+         "type": "object",
+         "properties": {
+          "q": {
+           "type": "string"
+          },
+          "n": {
+           "type": "integer"
+          },
+          "mode": {
+           "anyOf": [
+            {
+             "const": "a"
+            },
+            {
+             "const": "b"
+            }
+           ]
+          }
+         },
+         "required": [
+          "q"
+         ],
+         "additionalProperties": false
+        }
+       }
+      ],
+      "toolChoice": "auto"
+     }
+    }
+   }
+  },
+  {
+   "http": "POST /api/module-host/call",
+   "headers": {
+    "authorization": "Bearer {TOKEN}"
+   },
+   "body": {
+    "principal": {
+     "pilotDeckUserId": "u",
+     "tenantId": "t",
+     "actorUserId": "a",
+     "agentId": "g"
+    },
+    "operation": "model_stream",
+    "input": {
+     "requestId": "k6",
+     "modelId": "gem/gemini-bbx",
+     "request": {
+      "systemPrompt": "be brief",
+      "maxOutputTokens": 123,
+      "tools": [
+       {
+        "name": "lookup",
+        "description": "Tool lookup",
+        "inputSchema": {
+         "type": "object",
+         "properties": {
+          "q": {
+           "type": "string"
+          },
+          "n": {
+           "type": "integer"
+          },
+          "mode": {
+           "anyOf": [
+            {
+             "const": "a"
+            },
+            {
+             "const": "b"
+            }
+           ]
+          }
+         },
+         "required": [
+          "q"
+         ],
+         "additionalProperties": false
+        }
+       }
+      ],
+      "messages": [
+       {
+        "role": "user",
+        "content": [
+         {
+          "type": "text",
+          "text": "k6: look"
+         },
+         {
+          "type": "image",
+          "source": "base64",
+          "mimeType": "image/png",
+          "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+         },
+         {
+          "type": "image",
+          "source": "url",
+          "mimeType": "image/png",
+          "data": "https://example.invalid/a.png"
+         },
+         {
+          "type": "pdf",
+          "source": "base64",
+          "mimeType": "application/pdf",
+          "data": "JVBERi0xLjQKJcOkw7zDtsOfCjEgMCBvYmoKPDw+PgplbmRvYmoKdHJhaWxlcgo8PD4+CiUlRU9GCg=="
+         }
+        ]
+       },
+       {
+        "role": "assistant",
+        "content": [
+         {
+          "type": "thinking",
+          "text": "first thought",
+          "signature": "sig-1"
+         },
+         {
+          "type": "text",
+          "text": "calling"
+         },
+         {
+          "type": "tool_call",
+          "id": "call 1/x",
+          "name": "lookup",
+          "input": {
+           "q": "x"
+          }
+         },
+         {
+          "type": "tool_call",
+          "id": "call_2",
+          "name": "lookup",
+          "input": "raw string"
+         }
+        ]
+       },
+       {
+        "role": "user",
+        "content": [
+         {
+          "type": "tool_result",
+          "toolCallId": "call 1/x",
+          "isError": false,
+          "content": [
+           {
+            "type": "text",
+            "text": "found"
+           },
+           {
+            "type": "image",
+            "source": "base64",
+            "mimeType": "image/png",
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+           }
+          ]
+         },
+         {
+          "type": "tool_result",
+          "toolCallId": "call_2",
+          "isError": true,
+          "content": [
+           {
+            "type": "text",
+            "text": "boom"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "role": "user",
+        "content": [
+         {
+          "type": "text",
+          "text": "k6: and"
+         }
+        ]
+       },
+       {
+        "role": "assistant",
+        "content": [
+         {
+          "type": "thinking",
+          "text": "only thinking"
+         }
+        ]
+       },
+       {
+        "role": "user",
+        "content": [
+         {
+          "type": "text",
+          "text": "k6: again"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "http": "POST /api/module-host/call",
+   "headers": {
+    "authorization": "Bearer {TOKEN}"
+   },
+   "body": {
+    "principal": {
+     "pilotDeckUserId": "u",
+     "tenantId": "t",
+     "actorUserId": "a",
+     "agentId": "g"
+    },
+    "operation": "model_stream",
+    "input": {
+     "requestId": "k7",
+     "modelId": "gem/gemini-bbx",
+     "request": {
+      "messages": [
+       {
+        "role": "assistant",
+        "content": [
+         {
+          "type": "text",
+          "text": "k7: I spoke first"
+         }
+        ]
+       },
+       {
+        "role": "user",
+        "content": [
+         {
+          "type": "text",
+          "text": ""
+         },
+         {
+          "type": "text",
+          "text": "k7: then you"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "http": "POST /api/module-host/call",
+   "headers": {
+    "authorization": "Bearer {TOKEN}"
+   },
+   "body": {
+    "principal": {
+     "pilotDeckUserId": "u",
+     "tenantId": "t",
+     "actorUserId": "a",
+     "agentId": "g"
+    },
+    "operation": "model_stream",
+    "input": {
+     "requestId": "k8",
+     "modelId": "gem/gemini-3-pro",
+     "request": {
+      "messages": [
+       {
+        "role": "user",
+        "content": [
+         {
+          "type": "text",
+          "text": "k8: think high"
+         }
+        ]
+       }
+      ],
+      "thinking": {
+       "enabled": true,
+       "mode": "high"
+      }
+     }
+    }
+   }
+  },
+  {
+   "http": "POST /api/module-host/call",
+   "headers": {
+    "authorization": "Bearer {TOKEN}"
+   },
+   "body": {
+    "principal": {
+     "pilotDeckUserId": "u",
+     "tenantId": "t",
+     "actorUserId": "a",
+     "agentId": "g"
+    },
+    "operation": "model_stream",
+    "input": {
+     "requestId": "k9",
+     "modelId": "gem/gemini-3-pro",
+     "request": {
+      "messages": [
+       {
+        "role": "user",
+        "content": [
+         {
+          "type": "text",
+          "text": "k9: think default"
+         }
+        ]
+       }
+      ],
+      "thinking": {
+       "enabled": true
+      }
+     }
+    }
+   }
+  },
+  {
+   "http": "POST /api/module-host/call",
+   "headers": {
+    "authorization": "Bearer {TOKEN}"
+   },
+   "body": {
+    "principal": {
+     "pilotDeckUserId": "u",
+     "tenantId": "t",
+     "actorUserId": "a",
+     "agentId": "g"
+    },
+    "operation": "model_stream",
+    "input": {
+     "requestId": "k10",
+     "modelId": "gem/gemini-bbx-think",
+     "request": {
+      "messages": [
+       {
+        "role": "user",
+        "content": [
+         {
+          "type": "text",
+          "text": "k10: not gemini 3"
+         }
+        ]
+       }
+      ],
+      "thinking": {
+       "enabled": true
+      }
+     }
+    }
+   }
+  },
+  {
+   "http": "POST /api/module-host/call",
+   "headers": {
+    "authorization": "Bearer {TOKEN}"
+   },
+   "body": {
+    "principal": {
+     "pilotDeckUserId": "u",
+     "tenantId": "t",
+     "actorUserId": "a",
+     "agentId": "g"
+    },
+    "operation": "model_stream",
+    "input": {
+     "requestId": "k11",
+     "modelId": "gem2/gemini-bbx",
+     "request": {
+      "messages": [
+       {
+        "role": "user",
+        "content": [
+         {
+          "type": "text",
+          "text": "k11: custom provider"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "http": "POST /api/module-host/call",
+   "headers": {
+    "authorization": "Bearer {TOKEN}"
+   },
+   "body": {
+    "principal": {
+     "pilotDeckUserId": "u",
+     "tenantId": "t",
+     "actorUserId": "a",
+     "agentId": "g"
+    },
+    "operation": "model_stream",
+    "input": {
+     "requestId": "k12",
+     "modelId": "gem/gemini-bbx",
+     "request": {
+      "messages": [
+       {
+        "role": "user",
+        "content": [
+         {
+          "type": "text",
+          "text": "k12: reasoning and tool"
+         }
+        ]
+       }
+      ],
+      "tools": [
+       {
+        "name": "lookup",
+        "description": "Tool lookup",
+        "inputSchema": {
+         "type": "object",
+         "properties": {
+          "q": {
+           "type": "string"
+          },
+          "n": {
+           "type": "integer"
+          },
+          "mode": {
+           "anyOf": [
+            {
+             "const": "a"
+            },
+            {
+             "const": "b"
+            }
+           ]
+          }
+         },
+         "required": [
+          "q"
+         ],
+         "additionalProperties": false
+        }
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "http": "POST /api/module-host/call",
+   "headers": {
+    "authorization": "Bearer {TOKEN}"
+   },
+   "body": {
+    "principal": {
+     "pilotDeckUserId": "u",
+     "tenantId": "t",
+     "actorUserId": "a",
+     "agentId": "g"
+    },
+    "operation": "model_stream",
+    "input": {
+     "requestId": "k13",
+     "modelId": "gem/gemini-bbx",
+     "request": {
+      "messages": [
+       {
+        "role": "user",
+        "content": [
+         {
+          "type": "text",
+          "text": "k13: ids"
+         }
+        ]
+       }
+      ],
+      "tools": [
+       {
+        "name": "lookup",
+        "description": "Tool lookup",
+        "inputSchema": {
+         "type": "object",
+         "properties": {
+          "q": {
+           "type": "string"
+          },
+          "n": {
+           "type": "integer"
+          },
+          "mode": {
+           "anyOf": [
+            {
+             "const": "a"
+            },
+            {
+             "const": "b"
+            }
+           ]
+          }
+         },
+         "required": [
+          "q"
+         ],
+         "additionalProperties": false
+        }
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "http": "POST /api/module-host/call",
+   "headers": {
+    "authorization": "Bearer {TOKEN}"
+   },
+   "body": {
+    "principal": {
+     "pilotDeckUserId": "u",
+     "tenantId": "t",
+     "actorUserId": "a",
+     "agentId": "g"
+    },
+    "operation": "model_stream",
+    "input": {
+     "requestId": "k14",
+     "modelId": "gem/gemini-bbx",
+     "request": {
+      "messages": [
+       {
+        "role": "user",
+        "content": [
+         {
+          "type": "text",
+          "text": "k14: cached usage"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "http": "POST /api/module-host/call",
+   "headers": {
+    "authorization": "Bearer {TOKEN}"
+   },
+   "body": {
+    "principal": {
+     "pilotDeckUserId": "u",
+     "tenantId": "t",
+     "actorUserId": "a",
+     "agentId": "g"
+    },
+    "operation": "model_stream",
+    "input": {
+     "requestId": "k15",
+     "modelId": "gem/gemini-bbx",
+     "request": {
+      "messages": [
+       {
+        "role": "user",
+        "content": [
+         {
+          "type": "text",
+          "text": "k15: max tokens"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "http": "POST /api/module-host/call",
+   "headers": {
+    "authorization": "Bearer {TOKEN}"
+   },
+   "body": {
+    "principal": {
+     "pilotDeckUserId": "u",
+     "tenantId": "t",
+     "actorUserId": "a",
+     "agentId": "g"
+    },
+    "operation": "model_stream",
+    "input": {
+     "requestId": "k16",
+     "modelId": "gem/gemini-bbx",
+     "request": {
+      "messages": [
+       {
+        "role": "user",
+        "content": [
+         {
+          "type": "text",
+          "text": "k16: recitation"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "http": "POST /api/module-host/call",
+   "headers": {
+    "authorization": "Bearer {TOKEN}"
+   },
+   "body": {
+    "principal": {
+     "pilotDeckUserId": "u",
+     "tenantId": "t",
+     "actorUserId": "a",
+     "agentId": "g"
+    },
+    "operation": "model_stream",
+    "input": {
+     "requestId": "k17",
+     "modelId": "gem/gemini-bbx",
+     "request": {
+      "messages": [
+       {
+        "role": "user",
+        "content": [
+         {
+          "type": "text",
+          "text": "k17: odd finish"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "http": "POST /api/module-host/call",
+   "headers": {
+    "authorization": "Bearer {TOKEN}"
+   },
+   "body": {
+    "principal": {
+     "pilotDeckUserId": "u",
+     "tenantId": "t",
+     "actorUserId": "a",
+     "agentId": "g"
+    },
+    "operation": "model_stream",
+    "input": {
+     "requestId": "k18",
+     "modelId": "gem/gemini-bbx",
+     "request": {
+      "messages": [
+       {
+        "role": "user",
+        "content": [
+         {
+          "type": "text",
+          "text": "k18: http 400"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "http": "POST /api/module-host/call",
+   "headers": {
+    "authorization": "Bearer {TOKEN}"
+   },
+   "body": {
+    "principal": {
+     "pilotDeckUserId": "u",
+     "tenantId": "t",
+     "actorUserId": "a",
+     "agentId": "g"
+    },
+    "operation": "model_stream",
+    "input": {
+     "requestId": "k19",
+     "modelId": "gem/gemini-bbx",
+     "request": {
+      "messages": [
+       {
+        "role": "user",
+        "content": [
+         {
+          "type": "text",
+          "text": "k19: http 503"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  }
+ ],
+ "volatile": [
+  "\\.http\\.headers\\.date$"
+ ]
+}
