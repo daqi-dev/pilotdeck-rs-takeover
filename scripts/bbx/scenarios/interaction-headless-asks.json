@@ -1,0 +1,577 @@
+{
+ "name": "interaction-headless-asks",
+ "about": "agent.interactionProfile=headless（interaction/InteractionProfile.ts，ProfiledPermissionDecisionPort.ts，InteractionPolicy.ts，deterministicElicitationAnswerer.ts，SessionInteractionBundle.ts:117-262）：缺省权限模式下要询问的 write_file / bash、ask_user_question（多选与单选）、计划模式的 exit_plan_mode 批准，是否发询问、结果是什么。采集器对任何询问都会应答（权限允许、提问取消），所以多发询问会体现为差异而不是超时。最后一轮客户端在 submit_turn 上带 canPrompt:true 试图重新打开询问。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\n  interactionProfile: headless\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Ia\"}"
+   }
+  },
+  {
+   "name": "i08-after",
+   "when": [
+    "i08:",
+    "\"tool_call_id\":\"call_i08\""
+   ],
+   "reply": {
+    "text": "Done i08."
+   }
+  },
+  {
+   "name": "i08",
+   "when": [
+    "i08:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_i08",
+     "name": "write_file",
+     "arguments": {
+      "file_path": "notes/b.txt",
+      "content": "b\n"
+     }
+    }
+   }
+  },
+  {
+   "name": "i07-after",
+   "when": [
+    "i07:",
+    "\"tool_call_id\":\"call_i07\""
+   ],
+   "reply": {
+    "text": "Done i07."
+   }
+  },
+  {
+   "name": "i07",
+   "when": [
+    "i07:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_i07",
+     "name": "bash",
+     "arguments": {
+      "command": "ls notes made.txt 2>&1; true"
+     }
+    }
+   }
+  },
+  {
+   "name": "i06-after",
+   "when": [
+    "i06:",
+    "\"tool_call_id\":\"call_i06\""
+   ],
+   "reply": {
+    "text": "Done i06."
+   }
+  },
+  {
+   "name": "i06",
+   "when": [
+    "i06:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_i06",
+     "name": "exit_plan_mode",
+     "arguments": {
+      "plan_file_path": ".pilotdeck/plans/plan.md"
+     }
+    }
+   }
+  },
+  {
+   "name": "i05-after",
+   "when": [
+    "i05:",
+    "\"tool_call_id\":\"call_i05\""
+   ],
+   "reply": {
+    "text": "Done i05."
+   }
+  },
+  {
+   "name": "i05",
+   "when": [
+    "i05:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_i05",
+     "name": "write_file",
+     "arguments": {
+      "file_path": ".pilotdeck/plans/plan.md",
+      "content": "# Plan\n\nStep one.\n"
+     }
+    }
+   }
+  },
+  {
+   "name": "i04-after",
+   "when": [
+    "i04:",
+    "\"tool_call_id\":\"call_i04\""
+   ],
+   "reply": {
+    "text": "Done i04."
+   }
+  },
+  {
+   "name": "i04",
+   "when": [
+    "i04:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_i04",
+     "name": "enter_plan_mode",
+     "arguments": {}
+    }
+   }
+  },
+  {
+   "name": "i03-after",
+   "when": [
+    "i03:",
+    "\"tool_call_id\":\"call_i03\""
+   ],
+   "reply": {
+    "text": "Done i03."
+   }
+  },
+  {
+   "name": "i03",
+   "when": [
+    "i03:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_i03",
+     "name": "ask_user_question",
+     "arguments": {
+      "questions": [
+       {
+        "question": "Many?",
+        "header": "Many",
+        "options": [
+         {
+          "label": "X",
+          "description": "x"
+         },
+         {
+          "label": "Y",
+          "description": "y"
+         }
+        ],
+        "multiSelect": true
+       },
+       {
+        "question": "One?",
+        "header": "One",
+        "options": [
+         {
+          "label": "P",
+          "description": "p"
+         },
+         {
+          "label": "Q",
+          "description": "q"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "i02-after",
+   "when": [
+    "i02:",
+    "\"tool_call_id\":\"call_i02\""
+   ],
+   "reply": {
+    "text": "Done i02."
+   }
+  },
+  {
+   "name": "i02",
+   "when": [
+    "i02:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_i02",
+     "name": "bash",
+     "arguments": {
+      "command": "touch made.txt; echo made"
+     }
+    }
+   }
+  },
+  {
+   "name": "i01-after",
+   "when": [
+    "i01:",
+    "\"tool_call_id\":\"call_i01\""
+   ],
+   "reply": {
+    "text": "Done i01."
+   }
+  },
+  {
+   "name": "i01",
+   "when": [
+    "i01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_i01",
+     "name": "write_file",
+     "arguments": {
+      "file_path": "notes/a.txt",
+      "content": "a\n"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ia",
+    "channelKey": "test",
+    "message": "i01: go",
+    "allowPlanModeTools": true
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-ia",
+      "requestId": "{event.requestId}",
+      "decision": "allow"
+     }
+    },
+    {
+     "on": {
+      "type": "elicitation_request"
+     },
+     "ws": "elicitation_respond",
+     "params": {
+      "sessionKey": "s-ia",
+      "requestId": "{event.requestId}",
+      "answer": {
+       "type": "cancelled",
+       "reason": "bbx would have answered"
+      }
+     }
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ia",
+    "channelKey": "test",
+    "message": "i02: go",
+    "allowPlanModeTools": true
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-ia",
+      "requestId": "{event.requestId}",
+      "decision": "allow"
+     }
+    },
+    {
+     "on": {
+      "type": "elicitation_request"
+     },
+     "ws": "elicitation_respond",
+     "params": {
+      "sessionKey": "s-ia",
+      "requestId": "{event.requestId}",
+      "answer": {
+       "type": "cancelled",
+       "reason": "bbx would have answered"
+      }
+     }
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ia",
+    "channelKey": "test",
+    "message": "i03: go",
+    "allowPlanModeTools": true
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-ia",
+      "requestId": "{event.requestId}",
+      "decision": "allow"
+     }
+    },
+    {
+     "on": {
+      "type": "elicitation_request"
+     },
+     "ws": "elicitation_respond",
+     "params": {
+      "sessionKey": "s-ia",
+      "requestId": "{event.requestId}",
+      "answer": {
+       "type": "cancelled",
+       "reason": "bbx would have answered"
+      }
+     }
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ia",
+    "channelKey": "test",
+    "message": "i04: go",
+    "allowPlanModeTools": true
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-ia",
+      "requestId": "{event.requestId}",
+      "decision": "allow"
+     }
+    },
+    {
+     "on": {
+      "type": "elicitation_request"
+     },
+     "ws": "elicitation_respond",
+     "params": {
+      "sessionKey": "s-ia",
+      "requestId": "{event.requestId}",
+      "answer": {
+       "type": "cancelled",
+       "reason": "bbx would have answered"
+      }
+     }
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ia",
+    "channelKey": "test",
+    "message": "i05: go",
+    "allowPlanModeTools": true
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-ia",
+      "requestId": "{event.requestId}",
+      "decision": "allow"
+     }
+    },
+    {
+     "on": {
+      "type": "elicitation_request"
+     },
+     "ws": "elicitation_respond",
+     "params": {
+      "sessionKey": "s-ia",
+      "requestId": "{event.requestId}",
+      "answer": {
+       "type": "cancelled",
+       "reason": "bbx would have answered"
+      }
+     }
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ia",
+    "channelKey": "test",
+    "message": "i06: go",
+    "allowPlanModeTools": true
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-ia",
+      "requestId": "{event.requestId}",
+      "decision": "allow"
+     }
+    },
+    {
+     "on": {
+      "type": "elicitation_request"
+     },
+     "ws": "elicitation_respond",
+     "params": {
+      "sessionKey": "s-ia",
+      "requestId": "{event.requestId}",
+      "answer": {
+       "type": "cancelled",
+       "reason": "bbx would have answered"
+      }
+     }
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ia",
+    "channelKey": "test",
+    "message": "i07: go",
+    "allowPlanModeTools": true
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-ia",
+      "requestId": "{event.requestId}",
+      "decision": "allow"
+     }
+    },
+    {
+     "on": {
+      "type": "elicitation_request"
+     },
+     "ws": "elicitation_respond",
+     "params": {
+      "sessionKey": "s-ia",
+      "requestId": "{event.requestId}",
+      "answer": {
+       "type": "cancelled",
+       "reason": "bbx would have answered"
+      }
+     }
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ia",
+    "channelKey": "test",
+    "message": "i08: go",
+    "allowPlanModeTools": true,
+    "canPrompt": true,
+    "mode": "default"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-ia",
+      "requestId": "{event.requestId}",
+      "decision": "allow"
+     }
+    },
+    {
+     "on": {
+      "type": "elicitation_request"
+     },
+     "ws": "elicitation_respond",
+     "params": {
+      "sessionKey": "s-ia",
+      "requestId": "{event.requestId}",
+      "answer": {
+       "type": "cancelled",
+       "reason": "bbx would have answered"
+      }
+     }
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-ia"
+   }
+  }
+ ]
+}

@@ -32,6 +32,65 @@ pub(super) struct GatewayElicitation {
     pub emit: GatewayEmitSlot,
     pub recorder: Arc<Recorder>,
     pub timeout: Duration,
+    /// `questionProvider: "deterministic"` (the headless profile): the
+    /// request is answered by `createDeterministicElicitationAnswerer`
+    /// through `createElicitationChannelFromAnswerer`, inside the same
+    /// durable bracket, without a gateway round-trip.
+    pub deterministic: Option<super::permission_prompt::SessionInteraction>,
+}
+
+/// `createElicitationChannelFromAnswerer(createDeterministicElicitationAnswerer(),
+/// { policy, policyMode, canPrompt })`.
+fn deterministic_answer(
+    request: &ElicitationRequest,
+    interaction: &super::permission_prompt::SessionInteraction,
+) -> JsValue {
+    if let Some(reason) = interaction.refusal(true) {
+        return JsValue::Object(object([
+            ("type", "cancelled".into()),
+            ("reason", reason.into()),
+        ]));
+    }
+    let mut answers = JsObject::new();
+    if let JsValue::Array(questions) = &request.questions {
+        for question in questions.iter() {
+            let text = match question.get("question") {
+                Some(JsValue::String(text)) => text.clone(),
+                Some(other) => crate::js_value::to_string_units(other)
+                    .map(JsString::from_utf16)
+                    .unwrap_or_default(),
+                None => "undefined".into(),
+            };
+            let first = match question.get("options") {
+                Some(JsValue::Array(options)) if !options.is_empty() => Some(
+                    options[0]
+                        .get("label")
+                        .cloned()
+                        .unwrap_or(JsValue::Undefined),
+                ),
+                _ => None,
+            };
+            let multi = question
+                .get("multiSelect")
+                .is_some_and(|value| match value {
+                    JsValue::Undefined | JsValue::Null => false,
+                    JsValue::Bool(value) => *value,
+                    JsValue::Number(value) => *value != 0.0 && !value.is_nan(),
+                    JsValue::String(value) => !value.is_empty(),
+                    _ => true,
+                });
+            let answer = match first {
+                Some(label) if multi => JsValue::Array(vec![label]),
+                Some(label) => label,
+                None => "yes".into(),
+            };
+            answers.insert(text, answer);
+        }
+    }
+    JsValue::Object(object([
+        ("type", "answered".into()),
+        ("answers", JsValue::Object(answers)),
+    ]))
 }
 
 impl GatewayElicitation {
@@ -175,7 +234,11 @@ impl ElicitationChannel for GatewayElicitation {
                     ]),
                 )
                 .await?;
-            match channel.round_trip(&request, &context).await {
+            let answer = match &channel.deterministic {
+                Some(interaction) => Ok(deterministic_answer(&request, interaction)),
+                None => channel.round_trip(&request, &context).await,
+            };
+            match answer {
                 Ok(answer) => {
                     let cancelled = answer.get("type") == Some(&JsValue::from("cancelled"));
                     let mut draft = object([

@@ -131,6 +131,9 @@ pub struct SessionTools {
     compaction_cooldown: crate::runtime::context::compaction::engine::SummaryCooldown,
     /// The pilot home whose `permissions.json` each turn reads.
     pilot_home: Option<PathBuf>,
+    /// The generation's interaction profile with the session's prompt
+    /// admission.
+    interaction: super::permission_prompt::SessionInteraction,
 }
 
 /// `SessionFileHistoryBundle.compose`: backups under the session's
@@ -208,6 +211,7 @@ pub(super) struct ForkSeed {
     /// `dependencies.lifecycle`.
     hooks: crate::hooks::protocol::HooksSettings,
     hook_observers: crate::runtime::hooks::runtime::HookObservers,
+    interaction: super::permission_prompt::SessionInteraction,
 }
 impl ForkSeed {
     /// The child session's tools. The permission context starts as a copy of
@@ -286,6 +290,7 @@ impl ForkSeed {
             // user rules included; only the root session's turns re-read the
             // settings file.
             pilot_home: None,
+            interaction: self.interaction,
         }
     }
 }
@@ -355,6 +360,7 @@ impl SessionTools {
             tool_hooks: Arc::default(),
             compaction_cooldown: Arc::default(),
             pilot_home: Some(options.home.clone()),
+            interaction: Default::default(),
             elicitation_timeout: super::permission_prompt::interaction_timeout(
                 env.get("PILOTDECK_ELICITATION_TIMEOUT_MS")
                     .map(|value| value.as_str()),
@@ -470,6 +476,7 @@ impl SessionTools {
             elicitation_timeout: self.elicitation_timeout,
             hooks: self.hooks.clone(),
             hook_observers: self.hook_observers.clone(),
+            interaction: self.interaction,
         }
     }
 
@@ -511,7 +518,32 @@ impl SessionTools {
                 emit,
                 rules,
                 timeout,
+                interaction: self.interaction,
             }));
+        self
+    }
+
+    /// `runtime.profile.interaction` and `override?.canPrompt ??
+    /// profile.canPrompt` (ProjectSessionFactory.ts:268-271): the session's
+    /// permission context starts from that admission
+    /// (SessionAgentConfigBundle.ts:175) and the interaction providers follow
+    /// the profile. Set before [`Self::with_permission_prompt`].
+    pub(super) fn with_interaction(
+        mut self,
+        profile: crate::runtime::project::InteractionProfile,
+        can_prompt_override: Option<bool>,
+    ) -> Self {
+        let can_prompt = can_prompt_override.unwrap_or(profile.can_prompt);
+        self.interaction = super::permission_prompt::SessionInteraction {
+            profile,
+            can_prompt,
+        };
+        self.permission
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .0
+            .can_prompt = profile.can_prompt;
         self
     }
 
@@ -866,17 +898,28 @@ impl SessionTools {
             goal: Some(Arc::new(crate::runtime::goal::GoalSessions(goal))),
             plan_files: Some(self.plan_files.clone()),
             // The gateway elicitation channel, inside its durable bracket.
-            elicitation: self.permission.1.get().map(|prompt| {
-                Arc::new(crate::runtime::tools::ToolElicitation(Arc::new(
-                    super::elicitation::GatewayElicitation {
-                        session: prompt.session.clone(),
-                        coordinator: prompt.coordinator.clone(),
-                        emit: prompt.emit.clone(),
-                        recorder: recorder.clone(),
-                        timeout: self.elicitation_timeout,
-                    },
-                ))) as capability::RuntimeContext
-            }),
+            // `questionProvider` (SessionInteractionBundle.ts:228-262):
+            // `gateway` asks over the session stream, `deterministic`
+            // answers locally, `disabled` composes no channel.
+            elicitation: self
+                .permission
+                .1
+                .get()
+                .filter(|prompt| prompt.interaction.profile.question_provider != "disabled")
+                .map(|prompt| {
+                    Arc::new(crate::runtime::tools::ToolElicitation(Arc::new(
+                        super::elicitation::GatewayElicitation {
+                            session: prompt.session.clone(),
+                            coordinator: prompt.coordinator.clone(),
+                            emit: prompt.emit.clone(),
+                            recorder: recorder.clone(),
+                            timeout: self.elicitation_timeout,
+                            deterministic: (prompt.interaction.profile.question_provider
+                                == "deterministic")
+                                .then_some(prompt.interaction),
+                        },
+                    ))) as capability::RuntimeContext
+                }),
             file_history: Some(self.file_history.clone()),
             // The live mode: `enter_plan_mode` / `exit_plan_mode` switch it
             // between two tool batches of one turn.
@@ -1046,7 +1089,12 @@ impl SessionTools {
                     // `interaction: { elicitationAvailable: true }` whenever
                     // the session has an elicitation port
                     // (sidecarHostModulePorts.ts:206-207).
-                    elicitation_available: self.permission.1.get().map(|_| true),
+                    elicitation_available: self
+                        .permission
+                        .1
+                        .get()
+                        .filter(|prompt| prompt.interaction.profile.question_provider != "disabled")
+                        .map(|_| true),
                 },
                 turn_ports: Default::default(),
                 hook_wiring: crate::runtime::turn::interaction::HookWiring {
@@ -1463,6 +1511,12 @@ impl PermissionDecision for Permissions {
             let (Some(run), true) = (run, asks) else {
                 return Ok(decision);
             };
+            if let Some(denied) = prompt
+                .as_ref()
+                .and_then(|prompt| prompt.interaction.admit_permission_ask())
+            {
+                return Ok(denied);
+            }
             // `ToolRuntime.runTool`: an `ask` goes through the
             // `PermissionRequest` hooks — the configured ones first, the
             // gateway callback (`permission_prompt.rs`) last — and the first

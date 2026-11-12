@@ -1004,6 +1004,7 @@ async fn start_assembly(
                         )?
                         .with_extra_tools(extra_tools, excluded_tools)
                         .with_sandbox(profile.sandbox_mode)
+                        .with_interaction(profile.interaction, can_prompt_override)
                         .with_prompt_policy(can_prompt_override, bypass_available_override)
                         .with_sdk_permissions(sdk_config.as_ref())
                         .with_permission_mode_source(permission_source.clone())
