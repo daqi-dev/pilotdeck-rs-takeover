@@ -55,7 +55,9 @@ async fn count_transport_speaks_https_with_the_shared_connector() {
         assert_eq!(exchange.requests.len(), 1);
         assert_eq!(
             json(&JsValue::Object(exchange.requests[0].clone())),
-            r#"{"method":"POST","path":"/v1/messages/count_tokens","headers":[],"body":"{\"model\":\"m\"}"}"#
+            // Node's global `fetch` default header block (the baseline's
+            // count requests carry `user-agent: node`; bbx cfg-provider-capabilities).
+            r#"{"method":"POST","path":"/v1/messages/count_tokens","headers":[["accept","*/*"],["accept-encoding","br, gzip, deflate"],["accept-language","*"],["connection","keep-alive"],["sec-fetch-mode","cors"],["user-agent","node"]],"body":"{\"model\":\"m\"}"}"#
         );
     }
     // Mozilla roots do not trust the throwaway CA: the handshake fails.
