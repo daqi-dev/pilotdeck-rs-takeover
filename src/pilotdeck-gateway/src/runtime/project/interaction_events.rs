@@ -16,6 +16,10 @@ struct State {
     closed: bool,
     releases: usize,
     turns: HashMap<JsString, Arc<Mutex<TurnState>>>,
+    /// Session events raised while the session has no current run (a manual
+    /// compaction's maintenance turn). The baseline's session event buffer
+    /// keeps them until the next turn drains it, under that turn's run.
+    carried: HashMap<JsString, Vec<JsObject>>,
 }
 struct TurnState {
     identity: event::TurnIdentity,
@@ -47,11 +51,15 @@ impl InteractionEvents {
         if state.closed {
             return Err(closed());
         }
+        let carried = state
+            .carried
+            .remove(&identity.session_id)
+            .unwrap_or_default();
         let turn = Arc::new(Mutex::new(TurnState {
             identity: identity.clone(),
             run_id,
             closed: false,
-            events: Vec::new(),
+            events: carried,
             notices: Vec::new(),
         }));
         if let Some(previous) = state
@@ -98,6 +106,22 @@ impl InteractionEvents {
             },
             event,
         )
+    }
+
+    /// A session event raised outside any run: held for the session's next
+    /// run (see `State::carried`).
+    pub fn carry(&self, event: JsObject) -> Result<(), HostError> {
+        let mut state = lock(&self.state);
+        if state.closed {
+            return Err(closed());
+        }
+        let Some(session) = event.get("sessionId").and_then(JsValue::as_string).cloned() else {
+            return Err(
+                ModuleError::new("Sidecar host event does not match the active turn.").into(),
+            );
+        };
+        state.carried.entry(session).or_default().push(event);
+        Ok(())
     }
 
     /// An event raised on behalf of a subagent, for the current run of the

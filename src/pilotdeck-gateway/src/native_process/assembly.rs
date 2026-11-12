@@ -1415,6 +1415,9 @@ async fn start_assembly(
                     overrides: session_overrides.clone(),
                     project: build_project.clone(),
                 })),
+                compaction: Some(Arc::new(super::manual_compaction::OwnerCompaction {
+                    owner: owner.clone(),
+                })),
                 model_assertion: Some(project_admission.clone()),
                 dialog_recovery: Some(project_admission),
                 ..SubmitAdmissionOptions::new(replacement.clone())

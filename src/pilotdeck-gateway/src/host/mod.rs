@@ -471,7 +471,7 @@ impl Cancellation {
             }
         }
     }
-    pub(super) fn reason(&self) -> Option<JsString> {
+    pub(crate) fn reason(&self) -> Option<JsString> {
         self.0.borrow().clone()
     }
 }

@@ -43,6 +43,7 @@ mod requests;
 // The product entry (`pilotdeck server`): the baseline's startGatewayServer
 // options over the same assembly and listener the `--native` entry uses.
 mod local;
+mod manual_compaction;
 pub use local::{LocalGateway, LocalOptions};
 mod server;
 pub use server::{DEFAULT_PORT, Listening, ServerOptions, parse_port, serve};

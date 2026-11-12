@@ -10,8 +10,8 @@ pub(crate) mod transcript_locks;
 pub use admission::{SessionAdmission, TurnReservation};
 pub use completion::{CompletionAbortReason, TurnCompletionFence, TurnCompletionHandle};
 pub use handle::{
-    HandleActivity, HandleState, LiveSession, LiveSessionHandle, LiveTurn, SessionNext,
-    SessionSubmission,
+    CompactFuture, HandleActivity, HandleState, LiveSession, LiveSessionHandle, LiveTurn,
+    SessionNext, SessionSubmission,
 };
 pub use owner::{
     EvictionReason, MaintenanceReservation, SessionContext, SessionEvictionSnapshot,

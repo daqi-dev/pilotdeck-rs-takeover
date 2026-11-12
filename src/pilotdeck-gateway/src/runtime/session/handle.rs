@@ -10,6 +10,9 @@ use tokio::sync::watch;
 pub type SessionNext<'a> =
     Pin<Box<dyn Future<Output = Result<Option<JsValue>, RuntimeError>> + Send + 'a>>;
 
+/// The manual compaction result (`ManualCompactionResult`).
+pub type CompactFuture = Pin<Box<dyn Future<Output = Result<JsValue, RuntimeError>> + Send>>;
+
 /// Native AgentEvent stream, including SessionEnd hooks after turn_completed.
 /// input_accepted MUST follow the session's successful recordAcceptedInput;
 /// a failed write yields the native failure/status/completion events instead.
@@ -54,6 +57,16 @@ pub trait LiveSession: Send + Sync {
         Err(RuntimeError::new(
             "Agent session seed read state is unavailable.",
         ))
+    }
+    /// `AgentSession.compact` (AgentSession.ts:111-131): one manual
+    /// compaction maintenance turn. The caller holds the handle's
+    /// maintenance slot; `cancel` is the maintenance abort.
+    fn compact(&self, _turn: JsString, _cancel: crate::host::Cancellation) -> CompactFuture {
+        Box::pin(async {
+            Err(RuntimeError::new(
+                "Manual compaction is unavailable for this agent session.",
+            ))
+        })
     }
     fn snapshot(&self) -> JsValue;
     /// May be called repeatedly while `dispose()` is in progress and after its
@@ -338,6 +351,18 @@ impl LiveSessionHandle {
         progress.maintenance = maintenance;
         progress.cancelled = None;
         Ok(HandleActivity(self.clone()))
+    }
+
+    /// `AgentHandle.compact` → `runMaintenance` (AgentHandle.ts:131-169):
+    /// the idle maintenance slot is reserved for the whole operation, and a
+    /// handle abort cancels it.
+    pub async fn compact(
+        &self,
+        turn: JsString,
+        cancel: crate::host::Cancellation,
+    ) -> Result<JsValue, RuntimeError> {
+        let _activity = self.begin_maintenance()?;
+        self.0.session.compact(turn, cancel).await
     }
 
     /// Admission is reserved before invoking host code, with no synchronous
