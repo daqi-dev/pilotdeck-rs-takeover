@@ -2,6 +2,37 @@ use super::complete::retry_decide_request;
 use super::*;
 use std::{future::Future, pin::Pin};
 
+/// Every Error projection a `JsError` carries is recognized as an Error
+/// instance (durable records store `{}` for it); a provider's parsed JSON
+/// error body is not, even when it has a `code` or a `name`.
+#[test]
+fn error_instance_raws_cover_every_js_error_shape_and_no_provider_body() {
+    for error in [
+        ModelStreamError::thrown("TypeError", "terminated").as_js_error(),
+        ModelStreamError::thrown("StreamIdleTimeoutError", "idle").as_js_error(),
+        errors::NetworkFetchError::new("network_timeout", "t", JsValue::Undefined).as_js_error(),
+        errors::NetworkFetchError::classify("fetch failed", None).as_js_error(),
+    ] {
+        assert!(is_error_instance_raw(&error.raw), "{:?}", error.raw);
+    }
+    for raw in [
+        r#"{"name":"ApiError","status":500}"#,
+        r#"{"errno":-2,"code":"ENOENT","syscall":"open","path":"/x"}"#,
+    ] {
+        assert!(is_error_instance_raw(&parse_json(raw).unwrap()), "{raw}");
+    }
+    for raw in [
+        r#"{"error":{"message":"bad","type":"invalid_request_error","code":"bbx_bad"}}"#,
+        r#"{"code":"network_timeout"}"#,
+        r#"{"name":"NetworkFetchError","code":"network_timeout","message":"x"}"#,
+        r#"{"name":"ApiError","status":500,"error":{}}"#,
+        r#"{"name":"SomethingElse"}"#,
+        r#"[]"#,
+    ] {
+        assert!(!is_error_instance_raw(&parse_json(raw).unwrap()), "{raw}");
+    }
+}
+
 struct PendingBody;
 impl hyper::body::Body for PendingBody {
     type Data = Bytes;

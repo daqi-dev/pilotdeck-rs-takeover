@@ -1,0 +1,23 @@
+{
+  "name": "loop-error-raw-durable",
+  "about": "模型错误 details.raw 的落盘形状。基线 normalizeModelError（model/errors/normalizeModelError.ts:32,58）把抛出的 Error 对象本身放进 raw；实时投影（providerError.raw）用 JSON.stringify 看到它的自有字段，会话记录写入前 JsonlTranscriptWriter（session/transcript/JsonlTranscriptWriter.ts:193,300）先 structuredClone 整条记录，任何 Error 实例都被克隆成只剩不可枚举 message/stack 的普通 Error，落盘为 {}；provider 回的 JSON 错误体是普通对象，原样保留。e1：流发出一块后断开（TypeError: terminated 一类，重试用尽）；e2：provider 地址连不上（NetworkFetchError）；e3：400 JSON 错误体（raw 保留错误体）；e4：流一块不发就停住（NetworkFetchError network_timeout）。retry 次数设 0、退避设小。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      retry:\n        requestMaxRetries: 0\n        streamMaxRetries: 0\n        streamIdleTimeoutMs: 300\n        baseDelayMs: 1\n        maxDelayMs: 1\n        jitter: 0\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    dead:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: bbx-mock-only\n      retry:\n        requestMaxRetries: 0\n        streamMaxRetries: 0\n        baseDelayMs: 1\n        maxDelayMs: 1\n        jitter: 0\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\":\"Raw\"}" } },
+    { "name": "e1", "when": ["e1:"], "reply": { "chunks": ["Hello ", "there"], "breakAfter": 1 } },
+    { "name": "e3", "when": ["e3:"], "reply": { "status": 400, "body": { "error": { "message": "bbx bad request", "type": "invalid_request_error", "code": "bbx_bad" } } } },
+    { "name": "e4", "when": ["e4:"], "reply": { "text": "never sent", "hangAfter": 0, "hangMs": 3000 } }
+  ],
+  "steps": [
+    { "ws": "submit_turn", "params": { "sessionKey": "s-e1", "channelKey": "test", "message": "e1: break" }, "timeout": 30000 },
+    { "sleep": 300 },
+    { "ws": "session_model_set", "params": { "sessionKey": "s-e2", "projectKey": "{PILOT_HOME}", "selection": { "mode": "model", "provider": "dead", "model": "deterministic" } } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-e2", "channelKey": "test", "message": "e2: refused" }, "timeout": 30000 },
+    { "sleep": 300 },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-e3", "channelKey": "test", "message": "e3: bad request" }, "timeout": 30000 },
+    { "sleep": 300 },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-e4", "channelKey": "test", "message": "e4: idle" }, "timeout": 30000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-e2" } }
+  ]
+}

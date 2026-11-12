@@ -101,19 +101,51 @@ fn is_stream_guard_error(name: &JsString) -> bool {
     .any(|n| name.equals_str(n))
 }
 
-/// Whether `raw` is the projection [`ModelStreamError::as_js_error`] makes of
-/// one of those Error instances (`{ name }`). TS keeps the Error itself as
-/// `details.raw`; `JsonlTranscriptWriter`'s `structuredClone` turns it into a
-/// plain Error whose JSON is `{}` (the own `name` is not cloned), so durable
-/// records must store `{}` while live events keep `{"name":…}`.
-pub(crate) fn is_stream_guard_raw(raw: &JsValue) -> bool {
-    match raw {
-        JsValue::Object(fields) if fields.len() == 1 => fields
-            .get("name")
-            .and_then(JsValue::as_string)
-            .is_some_and(is_stream_guard_error),
-        _ => false,
+/// Whether `raw` is the `JSON.stringify` projection of an `Error` instance —
+/// one of the shapes a [`JsError`] of this model layer carries:
+///
+/// - a built-in or plain `Error` (`TypeError: terminated`, `SyntaxError`,
+///   `AbortError`, `Missing response body.`): `{}`;
+/// - a `streamModel.ts` stream guard error (own `name`): `{ name }`;
+/// - `NetworkFetchError` (`network/fetch.ts`, own `code`, `cause`, `name`);
+/// - a Node fs/system `Error` (own `errno`, `code`, `syscall`, `path`);
+/// - the Google SDK `ApiError` (own `name: "ApiError"`, `status`).
+///
+/// TS keeps the Error object itself as `details.raw`. Live projections
+/// (`providerError.raw`) `JSON.stringify` it; the transcript writer
+/// (`JsonlTranscriptWriter.ts:193,300`) `structuredClone`s every entry first,
+/// which turns any Error into a plain Error with only non-enumerable
+/// `message` / `stack` (/ `cause`), whose JSON is `{}` — whatever its class.
+/// Durable records therefore store `{}` for all of them, while the plain
+/// provider bodies (parsed JSON) survive the clone unchanged.
+/// `normalize_model_error` asserts that every `ErrorInput::Error` raw is
+/// recognized here, so a new Error class cannot silently bypass this.
+pub(crate) fn is_error_instance_raw(raw: &JsValue) -> bool {
+    let JsValue::Object(fields) = raw else {
+        return false;
+    };
+    let keys_within = |allowed: &[&str]| {
+        fields
+            .entries()
+            .iter()
+            .all(|(key, _)| allowed.iter().any(|name| key.equals_str(name)))
+    };
+    let name = fields.get("name").and_then(JsValue::as_string);
+    if fields.is_empty() {
+        return true;
     }
+    if fields.len() == 1 && name.is_some_and(is_stream_guard_error) {
+        return true;
+    }
+    if name.is_some_and(|name| name.equals_str("NetworkFetchError")) {
+        return keys_within(&["code", "cause", "name"]);
+    }
+    if name.is_some_and(|name| name.equals_str("ApiError")) {
+        return keys_within(&["name", "status"]);
+    }
+    name.is_none()
+        && fields.get("syscall").and_then(JsValue::as_string).is_some()
+        && keys_within(&["errno", "code", "syscall", "path"])
 }
 
 /// What `streamModel` throws.
