@@ -500,16 +500,21 @@ async fn start_assembly(
     let prepare_mcp_config: Arc<std::sync::OnceLock<Arc<SdkMcpConfig>>> = Arc::default();
     // #1429: report at most once per assembly — a per-acquire stderr write would
     // be unbounded if the publication regressed for good.
+    // The baseline has no such report, and the server's stderr is output a
+    // user sees: production stays silent (tests inject their own observer).
     let acquire_miss_report: AcquireMissReport =
-        acquire_miss_report.unwrap_or_else(|| Arc::new(|message: &str| eprintln!("{message}")));
+        acquire_miss_report.unwrap_or_else(|| Arc::new(|_: &str| ()));
     let prepare_acquire_miss_report = acquire_miss_report.clone();
     let prepare_acquire_miss_reported: Arc<std::sync::OnceLock<()>> = Arc::default();
-    // #1433: the prepare closure's MCP composition diagnostics; production
-    // logs to stderr like the factory's session diagnostic.
+    // #1433: the prepare closure's MCP composition diagnostics, written like
+    // the session bundle's `onDiagnostic` (ProjectRuntimeRegistry.ts:366-369):
+    // `console.warn(\`[pilotdeck] ${message}\`, error?.message ?? "")`, two
+    // arguments joined by one space on stderr.
     let prepare_mcp_diagnostic: Option<crate::runtime::mcp::registry::McpDiagnosticSink> = Some(
-        Arc::new(|message: String, error: Option<RuntimeError>| match error {
-            Some(error) => eprintln!("native session MCP: {message}: {error}"),
-            None => eprintln!("native session MCP: {message}"),
+        Arc::new(|message: String, error: Option<RuntimeError>| {
+            use std::io::Write;
+            let detail = error.map(|error| error.message).unwrap_or_default();
+            let _ = writeln!(std::io::stderr(), "[pilotdeck] {message} {detail}");
         }),
     );
     // The `#[cfg(test)]` seam passes `false` to drive the published-miss branch;
@@ -1100,14 +1105,9 @@ async fn start_assembly(
                 &context.session_key,
             )
         })),
-        // The baseline prints no transcript-restore diagnostic. On the CLI
-        // channel stderr is the user's terminal (and compared output), so
-        // nothing is written there.
-        diagnostic: if in_process_cli {
-            Arc::new(|_| ())
-        } else {
-            Arc::new(|d| eprintln!("native session: {d:?}"))
-        },
+        // The baseline prints no transcript-restore diagnostic on any
+        // channel; the server's stdout / stderr is output a user sees.
+        diagnostic: Arc::new(|_| ()),
     }));
     let built = (|| -> Result<_, ProxyError> {
         // TS parity: an unconfigured runRegistry is simply absent, so the file
