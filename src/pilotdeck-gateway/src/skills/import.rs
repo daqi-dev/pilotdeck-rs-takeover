@@ -398,6 +398,13 @@ fn copy_entry(
     Ok(())
 }
 
+fn copy_file_data(src: &str, dest: &str) -> std::io::Result<()> {
+    let mut reader = fs::File::open(src)?;
+    let mut writer = fs::File::create(dest)?;
+    std::io::copy(&mut reader, &mut writer)?;
+    Ok(())
+}
+
 fn copy_non_directory(
     src_stat: &Metadata,
     dest_stat: Option<&Metadata>,
@@ -413,7 +420,10 @@ fn copy_non_directory(
         if dest_stat.is_some() {
             fs::remove_file(dest).map_err(|e| SkillError::io(&e, "unlink", Some(dest)))?;
         }
-        fs::copy(src, dest).map_err(|e| SkillError::io_pair(&e, "copyfile", src, dest))?;
+        // libuv's copyfile copies the bytes only: the copy gets a fresh
+        // mtime. `std::fs::copy` on macOS clones the file and keeps the
+        // source's timestamps, which `skill_list` / `skill_read` then report.
+        copy_file_data(src, dest).map_err(|e| SkillError::io_pair(&e, "copyfile", src, dest))?;
         return set_mode(dest, src_stat);
     }
     if kind.is_symlink() {
