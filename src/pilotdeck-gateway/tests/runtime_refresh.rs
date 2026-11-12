@@ -49,9 +49,6 @@ fn object(entries: Vec<(&str, JsValue)>) -> JsValue {
 fn string(value: &JsString) -> JsValue {
     JsValue::String(value.clone())
 }
-fn strings(values: &[JsString]) -> JsValue {
-    JsValue::Array(values.iter().map(string).collect())
-}
 fn record(calls: &Calls, name: &str, mut args: Vec<(&str, JsValue)>) {
     args.insert(0, ("call", name.into()));
     calls.lock().unwrap().push(object(args));
@@ -364,7 +361,10 @@ async fn settle() {
 fn outcome(outcome: &ReloadOutcome) -> JsValue {
     object(vec![
         ("reloaded", JsValue::Bool(outcome.reloaded)),
-        ("changedPaths", strings(&outcome.changed_paths)),
+        (
+            "changedPaths",
+            JsValue::Array(outcome.changed_paths.clone()),
+        ),
     ])
 }
 
@@ -489,7 +489,7 @@ async fn replay(scenario: &JsValue) {
                         .map(|key| key.as_string().unwrap().clone()),
                     changed_paths: input
                         .and_then(|input| field(input, "changedPaths"))
-                        .map(js_strings),
+                        .map(|paths| js_strings(paths).into_iter().map(JsValue::String).collect()),
                 });
                 out.push(("result", outcome(&result)));
             }

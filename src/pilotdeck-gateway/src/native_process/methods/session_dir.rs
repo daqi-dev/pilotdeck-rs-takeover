@@ -225,6 +225,8 @@ impl Requests {
             self.interactions.close_session(key, &reason);
             // `this.permissionModes.clear(input.sessionKey)`.
             self.session_overrides.clear_live_mode(key);
+            // `this.dialogProjectKeys.delete(input.sessionKey)`.
+            self.session_overrides.dialog_project_keys().delete(key);
         }
         Ok(object([("ok", JsValue::Bool(true))]))
     }
@@ -336,6 +338,9 @@ impl Requests {
             .clear_sdk_session_state(&JsValue::String(key.clone()));
         self.session_overrides.clear_thinking(&key);
         self.session_overrides.clear_sdk_config(&key);
+        // InProcessGateway.ts:2238: `this.dialogProjectKeys.delete(...)`
+        // once the delete succeeded.
+        self.session_overrides.dialog_project_keys().delete(&key);
         // GatewayWsConnection.ts:342: `.then(() => ({ ok: true }))`.
         Ok(object([("ok", JsValue::Bool(true))]))
     }
@@ -476,6 +481,7 @@ impl Requests {
             self.interactions
                 .close_session(key, &"project_closed".into());
             self.session_overrides.clear_live_mode(key);
+            self.session_overrides.dialog_project_keys().delete(key);
         }
         let session_keys: Vec<JsValue> = keys.into_iter().map(JsValue::String).collect();
         Ok(object([("sessionKeys", JsValue::Array(session_keys))]))

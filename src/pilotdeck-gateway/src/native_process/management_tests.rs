@@ -426,7 +426,7 @@ async fn route_refresh_reread_matches_ts() {
             changed_paths: Some(vec![row["family"].as_str().expect("#1231 family").into()]),
         });
         negative_assert_eq!(
-            json!({"reloaded":refreshed.reloaded,"changedPaths":refreshed.changed_paths.iter().map(|s|s.to_utf8().expect("#1231 changed path")).collect::<Vec<_>>()}),
+            json!({"reloaded":refreshed.reloaded,"changedPaths":refreshed.changed_paths.iter().map(|s|s.as_string().expect("#1231 changed path").to_utf8().expect("#1231 changed path")).collect::<Vec<_>>()}),
             row["refreshed"],
             "#1231 refresh result"
         );

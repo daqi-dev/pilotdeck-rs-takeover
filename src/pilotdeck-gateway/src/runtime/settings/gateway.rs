@@ -465,7 +465,10 @@ fn unsupported() -> JsValue {
 fn reload_outcome(outcome: &ReloadOutcome) -> JsValue {
     let mut object = JsObject::new();
     object.insert("reloaded".into(), JsValue::Bool(outcome.reloaded));
-    object.insert("changedPaths".into(), strings(&outcome.changed_paths));
+    object.insert(
+        "changedPaths".into(),
+        JsValue::Array(outcome.changed_paths.clone()),
+    );
     JsValue::Object(object)
 }
 
@@ -677,20 +680,18 @@ fn extensions_reload(params: &JsValue) -> Result<ExtensionsReload, SettingsError
     };
     let changed_paths = match object.get("changedPaths") {
         None | Some(JsValue::Undefined | JsValue::Null) => None,
-        Some(JsValue::Array(items)) => Some(
-            items
-                .iter()
-                .map(|item| {
-                    Ok(match item {
-                        JsValue::Null | JsValue::Undefined => JsString::from(""),
-                        JsValue::String(text) => text.clone(),
-                        value => JsString::from_utf16(
-                            js_value::to_string_units_checked(value).map_err(to_string_throw)?,
-                        ),
-                    })
-                })
-                .collect::<Result<Vec<_>, SettingsError>>()?,
-        ),
+        // The elements stay as given; only `join`'s `ToString` can throw here.
+        Some(JsValue::Array(items)) => {
+            for item in items {
+                if !matches!(
+                    item,
+                    JsValue::Null | JsValue::Undefined | JsValue::String(_)
+                ) {
+                    js_value::to_string_units_checked(item).map_err(to_string_throw)?;
+                }
+            }
+            Some(items.clone())
+        }
         // A non-array `changedPaths` has no `join`: the bundle method throws
         // the property-access TypeError, exactly like
         // `changedPaths.join(", ")` in TS.

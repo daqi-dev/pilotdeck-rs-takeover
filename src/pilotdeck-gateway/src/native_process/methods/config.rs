@@ -763,9 +763,9 @@ impl Requests {
                 "Cannot seed file read state while a turn is active.",
             ));
         }
-        if let Some(JsValue::String(cwd)) = params.get("workspaceCwd")
-            && !cwd.is_empty()
-        {
+        // `if (input.workspaceCwd && ...) setSessionCwd(...)`
+        // (InProcessGateway.ts:2430): any truthy value is stored as is.
+        if let Some(cwd) = params.get("workspaceCwd").filter(|value| truthy(value)) {
             self.session_overrides.set_session_cwd(&session_key, cwd);
         }
         if let Some(config) = params.get("sdkSessionConfig").filter(|value| truthy(value)) {

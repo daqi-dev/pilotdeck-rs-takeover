@@ -193,18 +193,21 @@ impl ConfigChangeNotice {
     }
 }
 
-/// `{ reloaded: true, changedPaths }`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// `{ reloaded: true, changedPaths }`. `reloadExtensions` echoes the caller's
+/// `changedPaths` elements as given, strings or not, so they stay values.
+#[derive(Clone, Debug, PartialEq)]
 pub struct ReloadOutcome {
     pub reloaded: bool,
-    pub changed_paths: Vec<JsString>,
+    pub changed_paths: Vec<JsValue>,
 }
 
-/// `reloadExtensions` input.
+/// `reloadExtensions` input. `changed_paths` is the caller's array as given
+/// (`input?.changedPaths ?? []`): the log line joins it, the result and the
+/// `config_changed` notification carry it unchanged.
 #[derive(Clone, Debug, Default)]
 pub struct ExtensionsReload {
     pub project_key: Option<JsString>,
-    pub changed_paths: Option<Vec<JsString>>,
+    pub changed_paths: Option<Vec<JsValue>>,
 }
 
 /// `afterTurnCompleted` input.
@@ -322,7 +325,10 @@ impl RefreshBundle {
             let result = reload.await;
             drop(capture);
             result?;
-            let changed_paths = std::mem::take(&mut *lock(&captured));
+            let changed_paths = std::mem::take(&mut *lock(&captured))
+                .into_iter()
+                .map(JsValue::String)
+                .collect();
             Ok(ReloadOutcome {
                 reloaded: true,
                 changed_paths,
@@ -336,7 +342,7 @@ impl RefreshBundle {
         let options = &self.inner.options;
         let changed_paths = input.changed_paths.unwrap_or_default();
         let router = (options.router)();
-        let mut shown = join(&changed_paths);
+        let mut shown = join_values(&changed_paths);
         if shown.is_empty() {
             shown = units("(manual)");
         }
@@ -364,13 +370,18 @@ impl RefreshBundle {
                 }
             }
         }
-        broadcast(
-            &self.inner,
-            &ConfigChangeNotice {
-                changed_paths: changed_paths.clone(),
-                change_classes: vec!["extension-changed".into()],
-            },
-        );
+        // `broadcastNotification("config_changed", { changedPaths,
+        // changeClasses })` with the caller's array as given.
+        let server = lock(&self.inner.server).clone();
+        if let Some(server) = server {
+            let mut payload = JsObject::new();
+            payload.insert("changedPaths".into(), JsValue::Array(changed_paths.clone()));
+            payload.insert(
+                "changeClasses".into(),
+                JsValue::Array(vec![JsValue::String("extension-changed".into())]),
+            );
+            server.broadcast_notification("config_changed", &JsValue::Object(payload));
+        }
         ReloadOutcome {
             reloaded: true,
             changed_paths,
@@ -432,6 +443,26 @@ fn join(paths: &[JsString]) -> Vec<u16> {
             out.extend(units(", "));
         }
         out.extend_from_slice(path.units());
+    }
+    out
+}
+
+/// `changedPaths.join(", ")` over caller-given values: `null` / `undefined`
+/// elements are empty, the rest go through `ToString` (the caller has already
+/// rejected values whose `ToString` throws).
+fn join_values(paths: &[JsValue]) -> Vec<u16> {
+    let mut out = Vec::new();
+    for (index, path) in paths.iter().enumerate() {
+        if index > 0 {
+            out.extend(units(", "));
+        }
+        match path {
+            JsValue::Null | JsValue::Undefined => {}
+            JsValue::String(text) => out.extend_from_slice(text.units()),
+            value => {
+                out.extend(crate::js_value::to_string_units_checked(value).unwrap_or_default())
+            }
+        }
     }
     out
 }

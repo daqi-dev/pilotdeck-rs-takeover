@@ -1227,23 +1227,27 @@ async fn stop_prefix_can_reenter_close() {
         .expect("#1327 prefix reentry memoized close");
 }
 
-// #1386 A8.3 (#1302 B): the 11 unmigrated channels refuse native startup
-// through `reject_unmigrated_channels`, the seam production assembly calls
+// #1386 A8.3 (#1302 B): the channels without a Rust implementation refuse
+// native startup — `qq` / `wecom` whenever enabled, the loader-table keys only
+// when the baseline would get past its first start check (its SDKs are never
+// installed, so the six SDK channels are never refused; the four credential
+// channels are refused once credentials are present) — through
+// `reject_unmigrated_channels`, the seam production assembly calls
 // from `native_process/assembly.rs` (before `NativeChannels` is constructed,
 // #1763). The seam takes no mounts and no console callback, so a rejection can
 // never come after an adapter construction or a `console.error` line — there
 // is nothing to construct or log through.
 const UNMIGRATED_REJECTION_PHRASE: &str = crate::channel::loader::UNMIGRATED_REASON;
-/// The eight keys #1302 B keeps in Rust (outside `UNMIGRATED_CHANNEL_KEYS`);
+/// The seven keys #1302 B keeps in Rust (outside `UNMIGRATED_CHANNEL_KEYS`);
 /// `reject_unmigrated_channels` must leave them alone. #2301 closed the
-/// transition: the six loader-table keys construct at startup through
+/// transition: the five loader-table keys construct at startup through
 /// `native_process::channels::production_loader_mounts`
 /// (`load_enabled_channels` now has its production caller), `weixin` /
 /// `feishu` through the bundle constructors — so every key here is built,
 /// not merely tolerated. The name stays `unmigrated_subset_channels_stay_loadable`
 /// (the 13 `A8.3-CHANNEL-*-001` entries cite it by name); the terminal
 /// reading is "an implemented key must not be rejected".
-const SUBSET_CHANNEL_KEYS: [&str; 8] = [
+const SUBSET_CHANNEL_KEYS: [&str; 7] = [
     "weixin",
     "feishu",
     "apiServer",
@@ -1251,8 +1255,64 @@ const SUBSET_CHANNEL_KEYS: [&str; 8] = [
     "wecomCallback",
     "sms",
     "bluebubbles",
-    "slack",
 ];
+
+/// The loader keys a connecting config refuses: the four credential channels
+/// with their credentials present, and `matrix` with a homeserver its
+/// baseline constructor cannot `.replace`.
+const REFUSED_LOADER_KEYS: [&str; 5] = [
+    "mattermost",
+    "signal",
+    "whatsapp",
+    "matrix",
+    "homeassistant",
+];
+/// The SDK-missing loader keys and the line each one's start logs.
+const SDK_MISSING_KEYS: [(&str, &str); 6] = [
+    (
+        "telegram",
+        "telegram: grammy not installed; run `npm install grammy`",
+    ),
+    (
+        "discord",
+        "discord: discord.js not installed; run `npm install discord.js`",
+    ),
+    (
+        "slack",
+        "slack: @slack/bolt not installed; run `npm install @slack/bolt`",
+    ),
+    (
+        "matrix",
+        "matrix: matrix-bot-sdk not installed; run `npm install matrix-bot-sdk`",
+    ),
+    (
+        "dingtalk",
+        "dingtalk: dingtalk-stream not installed; run `npm install dingtalk-stream`",
+    ),
+    (
+        "email",
+        "email: imapflow and/or nodemailer not installed; run `npm install imapflow nodemailer`",
+    ),
+];
+
+fn no_env(_: &str) -> Option<JsString> {
+    None
+}
+
+/// The channel config a baseline would connect with, `enabled` spelled as
+/// given.
+fn connecting_cfg(key: &str, enabled: &str) -> String {
+    let rest = match key {
+        "mattermost" => r#","token":"t","extra":{"serverUrl":"http://127.0.0.1:9"}"#,
+        "signal" => r#","extra":{"account":"+15550000000"}"#,
+        "whatsapp" => r#","extra":{"bridgePath":"/bridge"}"#,
+        "homeassistant" => r#","token":"t""#,
+        "matrix" => r#","token":"t","extra":{"homeserver":5}"#,
+        "telegram" | "discord" | "slack" => r#","token":"t""#,
+        _ => "",
+    };
+    format!("\"{key}\":{{\"enabled\":{enabled}{rest}}}")
+}
 
 fn adapters_config(entries: &str) -> JsValue {
     pilotdeck_protocol::parse_json(entries).expect("#1386 adapters config JSON")
@@ -1262,14 +1322,14 @@ fn enabled_adapters(keys: &[&str]) -> JsValue {
     adapters_config(&format!(
         "{{{}}}",
         keys.iter()
-            .map(|key| format!("\"{key}\":{{\"enabled\":true}}"))
+            .map(|key| connecting_cfg(key, "true"))
             .collect::<Vec<_>>()
             .join(",")
     ))
 }
 
 fn rejection_of(adapters: &JsValue, assertion: &'static str) -> String {
-    let result = reject_unmigrated_channels(Some(adapters));
+    let result = reject_unmigrated_channels_with_env(Some(adapters), &no_env);
     crate::negative_assert!(result.is_err(), "{assertion}");
     result
         .expect_err("#1386 checked unmigrated rejection")
@@ -1297,14 +1357,6 @@ fn assert_rejects_unmigrated(key: &str) {
 }
 
 #[test]
-fn rejects_unmigrated_telegram() {
-    assert_rejects_unmigrated("telegram");
-}
-#[test]
-fn rejects_unmigrated_discord() {
-    assert_rejects_unmigrated("discord");
-}
-#[test]
 fn rejects_unmigrated_matrix() {
     assert_rejects_unmigrated("matrix");
 }
@@ -1320,13 +1372,112 @@ fn rejects_unmigrated_signal() {
 fn rejects_unmigrated_whatsapp() {
     assert_rejects_unmigrated("whatsapp");
 }
+
+// The baseline ships none of the six SDKs, so these channels log one line on
+// start and the gateway keeps running — even with credentials configured.
 #[test]
-fn rejects_unmigrated_dingtalk() {
-    assert_rejects_unmigrated("dingtalk");
+fn sdk_missing_loader_channels_are_not_refused() {
+    for (key, _) in SDK_MISSING_KEYS {
+        if key == "matrix" {
+            continue;
+        }
+        crate::negative_assert!(
+            reject_unmigrated_channels_with_env(Some(&enabled_adapters(&[key])), &no_env).is_ok(),
+            "an SDK-missing channel is never refused"
+        );
+    }
+    let matrix = adapters_config(
+        r#"{"matrix":{"enabled":true,"token":"t","extra":{"homeserver":"https://m.example"}}}"#,
+    );
+    crate::negative_assert!(
+        reject_unmigrated_channels_with_env(Some(&matrix), &no_env).is_ok(),
+        "matrix with a string homeserver is not refused"
+    );
 }
+
+// The four credential channels log their credential line and keep running
+// when nothing is configured; the environment fallbacks count as configured.
 #[test]
-fn rejects_unmigrated_email() {
-    assert_rejects_unmigrated("email");
+fn credential_channels_without_credentials_are_not_refused() {
+    for key in ["mattermost", "signal", "whatsapp", "homeassistant"] {
+        let bare = adapters_config(&format!("{{\"{key}\":{{\"enabled\":true}}}}"));
+        crate::negative_assert!(
+            reject_unmigrated_channels_with_env(Some(&bare), &no_env).is_ok(),
+            "a credential channel without credentials is not refused"
+        );
+        let env_var: &[&str] = match key {
+            "mattermost" => &["MATTERMOST_URL", "MATTERMOST_TOKEN"],
+            "signal" => &["SIGNAL_ACCOUNT"],
+            "whatsapp" => &["WHATSAPP_BRIDGE_PATH"],
+            _ => &["HASS_TOKEN"],
+        };
+        let vars = env_var.to_vec();
+        let env = move |name: &str| vars.contains(&name).then(|| JsString::from("x"));
+        crate::negative_assert!(
+            reject_unmigrated_channels_with_env(Some(&bare), &env).is_err(),
+            "environment credentials make the channel connect, so it is refused"
+        );
+    }
+    // `bridgePath` is trimmed before the check.
+    let blank = adapters_config(r#"{"whatsapp":{"enabled":true,"extra":{"bridgePath":"  "}}}"#);
+    crate::negative_assert!(
+        reject_unmigrated_channels_with_env(Some(&blank), &no_env).is_ok(),
+        "a blank bridgePath is missing"
+    );
+}
+
+// The production mounts build the unavailable channel, whose start logs the
+// baseline line through the channel log and returns a no-op handle.
+#[tokio::test]
+async fn unavailable_channels_log_the_baseline_line_on_start() {
+    let mut mounts = ChannelLoaderMounts::default();
+    super::unavailable::register_with_env(&mut mounts, Arc::new(no_env));
+    let mut cases: Vec<(&str, &str)> = SDK_MISSING_KEYS.to_vec();
+    cases.extend([
+        (
+            "mattermost",
+            "mattermost: serverUrl and token are required (MATTERMOST_URL, MATTERMOST_TOKEN)",
+        ),
+        ("signal", "signal: SIGNAL_ACCOUNT / account not set"),
+        (
+            "whatsapp",
+            "whatsapp: bridgePath / WHATSAPP_BRIDGE_PATH is required",
+        ),
+        ("homeassistant", "homeassistant: HASS_TOKEN not set"),
+    ]);
+    for (key, line) in cases {
+        let adapters = adapters_config(&format!("{{\"{key}\":{{\"enabled\":true}}}}"));
+        let mut errors = Vec::new();
+        let channels = load_enabled_channels(
+            Some(&adapters),
+            &LoadEnabledChannelsOptions { pilot_home: None },
+            &mounts,
+            &mut |message| errors.push(message),
+        );
+        crate::negative_assert!(errors.is_empty(), "loader errors: {errors:?}");
+        crate::negative_assert_eq!(channels.len(), 1, "the channel is constructed");
+        let logged = Arc::new(Mutex::new(Vec::new()));
+        let sink = logged.clone();
+        let handle = channels[0]
+            .start(ChannelStartDeps {
+                config: None,
+                report_status: None,
+                log: Some(Arc::new(move |level: &str, message: &str| {
+                    sink.lock()
+                        .expect("log sink")
+                        .push(format!("{level}:{message}"));
+                })),
+                turn_gateway: None,
+            })
+            .await
+            .expect("the unavailable channel starts");
+        crate::negative_assert_eq!(
+            logged.lock().expect("log sink").clone(),
+            vec![format!("error:{line}")],
+            "the start logs exactly the baseline line"
+        );
+        handle.stop("test").await.expect("no-op stop");
+    }
 }
 #[test]
 fn rejects_unmigrated_homeassistant() {
@@ -1360,19 +1511,16 @@ fn unmigrated_bundle_channels_require_strict_boolean_true() {
     }
 }
 
-// The other nine keys are consumed by `loadEnabledChannels`'s
+// The loader keys are consumed by `loadEnabledChannels`'s
 // `if (!cfg?.enabled) continue`, i.e. JS truthiness — so a non-boolean truthy
-// `enabled` must still reject.
+// `enabled` on a connecting config must still reject.
 #[test]
 fn unmigrated_loader_channels_use_js_truthiness() {
-    for key in UNMIGRATED_CHANNEL_KEYS {
-        if STRICT_TRUE_CHANNEL_KEYS.contains(key) {
-            continue;
-        }
+    for key in REFUSED_LOADER_KEYS {
         for truthy in ["1", "-1", "\"true\"", "\"1\"", "[]", "{}"] {
-            let adapters = adapters_config(&format!("{{\"{key}\":{{\"enabled\":{truthy}}}}}"));
+            let adapters = adapters_config(&format!("{{{}}}", connecting_cfg(key, truthy)));
             crate::negative_assert!(
-                reject_unmigrated_channels(Some(&adapters)).is_err(),
+                reject_unmigrated_channels_with_env(Some(&adapters), &no_env).is_err(),
                 "#1386 loader channel uses JS truthiness"
             );
         }
@@ -1395,8 +1543,8 @@ fn strict_true_channel_keys_are_exactly_qq_and_wecom() {
         .filter(|key| !STRICT_TRUE_CHANNEL_KEYS.contains(key))
         .count();
     crate::negative_assert!(
-        loader_keys == 9,
-        "#1386 nine loader keys keep JS truthiness next to the two strict keys"
+        loader_keys == 10,
+        "#1386 ten loader keys keep JS truthiness next to the two strict keys"
     );
 }
 
@@ -1519,10 +1667,17 @@ fn unmigrated_rejection_order_is_deterministic() {
         "#1386 unmigrated rejection order"
     );
     // An in-table key wins over the out-of-table `wecom`.
-    let mixed = enabled_adapters(&["wecom", "email"]);
+    let mixed = enabled_adapters(&["wecom", "whatsapp"]);
     let message = rejection_of(&mixed, "#1386 unmigrated rejection order");
     crate::negative_assert!(
-        message.contains("channel \"email\""),
+        message.contains("channel \"whatsapp\""),
+        "#1386 unmigrated rejection order"
+    );
+    // An SDK-missing key is never refused, so `wecom` is reported.
+    let sdk = enabled_adapters(&["wecom", "email"]);
+    let message = rejection_of(&sdk, "#1386 unmigrated rejection order");
+    crate::negative_assert!(
+        message.contains("channel \"wecom\""),
         "#1386 unmigrated rejection order"
     );
     // The reverse of a CHANNEL_LOADER_KEYS adjacency: `mattermost` is
@@ -1534,11 +1689,11 @@ fn unmigrated_rejection_order_is_deterministic() {
         message.contains("channel \"mattermost\""),
         "#1386 unmigrated rejection order"
     );
-    // The table's tail: `discord` is reported before `telegram`.
-    let tail = enabled_adapters(&["discord", "telegram"]);
+    // `signal` is reported before `matrix`.
+    let tail = enabled_adapters(&["matrix", "signal"]);
     let message = rejection_of(&tail, "#1386 unmigrated rejection order");
     crate::negative_assert!(
-        message.contains("channel \"discord\""),
+        message.contains("channel \"signal\""),
         "#1386 unmigrated rejection order"
     );
 }
@@ -1562,8 +1717,7 @@ fn unmigrated_rejection_order_is_deterministic() {
 #[test]
 fn loader_keys_partition_rejected_and_implemented() {
     // The implemented loader-mount group as of #2301 (terminal wiring).
-    const IMPLEMENTED_LOADER_KEYS: [&str; 6] = [
-        "slack",
+    const IMPLEMENTED_LOADER_KEYS: [&str; 5] = [
         "bluebubbles",
         "wecomCallback",
         "sms",
@@ -1577,8 +1731,8 @@ fn loader_keys_partition_rejected_and_implemented() {
         .collect();
     crate::negative_assert_eq!(
         rejected.len(),
-        9,
-        "#1853 nine loader keys sit in the unmigrated rejection table"
+        10,
+        "#1853 ten loader keys sit in the unmigrated rejection table"
     );
     // Covering: every loader key belongs to exactly one of the two groups.
     // This is the fail-closed cell — a key added to `CHANNEL_LOADER_KEYS`
@@ -1664,7 +1818,15 @@ fn loader_keys_partition_rejected_and_implemented() {
     //   non_rejected_loader_key` / `startup_builds_the_enabled_loader_
     //   channels`).
     for key in &rejected {
-        assert_rejects_unmigrated(key);
+        if REFUSED_LOADER_KEYS.contains(key) {
+            assert_rejects_unmigrated(key);
+        } else {
+            crate::negative_assert!(
+                reject_unmigrated_channels_with_env(Some(&enabled_adapters(&[key])), &no_env)
+                    .is_ok(),
+                "an SDK-missing loader key is never refused"
+            );
+        }
     }
     for key in IMPLEMENTED_LOADER_KEYS {
         let adapters = enabled_adapters(&[key]);

@@ -17,6 +17,7 @@ pub mod sms;
 #[cfg(test)]
 mod tests;
 pub mod turn_submitter;
+pub mod unavailable;
 pub mod webhook;
 pub mod wecom_callback;
 pub mod weixin;

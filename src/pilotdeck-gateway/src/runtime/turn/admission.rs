@@ -155,24 +155,57 @@ impl SubmitAdmissionOptions {
     }
 }
 
+/// `dialogProjectKeys` (InProcessGateway.ts:551): the project a session's
+/// last `submit_turn` named. Written on admission (:774), read when a
+/// `user_dialog_changed` notification is forwarded (:569-575), and dropped
+/// when the session or its project is closed or the session is deleted
+/// (:2044, :2053, :2231, :2238). One instance per gateway, shared by the
+/// admission, the dialog bus observer and the session methods.
+#[derive(Clone, Default)]
+pub struct DialogProjectKeys(Arc<Mutex<HashMap<JsString, JsValue>>>);
+
+impl DialogProjectKeys {
+    pub fn get(&self, session: &JsString) -> Option<JsValue> {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(session)
+            .cloned()
+    }
+    pub fn set(&self, session: JsString, project: JsValue) {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(session, project);
+    }
+    pub fn delete(&self, session: &JsString) {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(session);
+    }
+}
+
 pub struct GatewaySubmitAdmission {
     options: SubmitAdmissionOptions,
-    /// `dialogProjectKeys` (InProcessGateway.ts:774); consumption is 7b.
-    dialog_project_keys: Mutex<HashMap<JsString, JsValue>>,
+    dialog_project_keys: DialogProjectKeys,
 }
 impl GatewaySubmitAdmission {
     pub fn new(options: SubmitAdmissionOptions) -> Self {
+        Self::with_dialog_project_keys(options, DialogProjectKeys::default())
+    }
+    /// An admission recording into the gateway's shared [`DialogProjectKeys`].
+    pub fn with_dialog_project_keys(
+        options: SubmitAdmissionOptions,
+        dialog_project_keys: DialogProjectKeys,
+    ) -> Self {
         Self {
             options,
-            dialog_project_keys: Mutex::new(HashMap::new()),
+            dialog_project_keys,
         }
     }
     pub fn dialog_project_key(&self, session: &JsString) -> Option<JsValue> {
-        self.dialog_project_keys
-            .lock()
-            .unwrap()
-            .get(session)
-            .cloned()
+        self.dialog_project_keys.get(session)
     }
 
     /// modelCatalog.ts:92-100 `normalizeSessionModelSelection`: drop retired
@@ -382,14 +415,11 @@ impl super::submit_host::SubmitAdmission for GatewaySubmitAdmission {
                 // Same key-domain rule as the interaction binding below: TS
                 // keeps this per raw session key, so folding a non-string key
                 // into the shared `""` bucket would hand `""`'s project to
-                // every non-string session. No reader consumes the map yet
-                // (`dialog_project_key` has no call sites), but the bucket must
-                // not be shared by construction (#1632 r9 concurrency P2).
+                // every non-string session. The dialog notifications look the
+                // map up by their string `sessionKey`.
                 if let Some(session) = field(input, "sessionKey").as_string() {
                     self.dialog_project_keys
-                        .lock()
-                        .unwrap()
-                        .insert(session.clone(), field(input, "projectKey").clone());
+                        .set(session.clone(), field(input, "projectKey").clone());
                 }
             }
             if truthy(field(input, "interactionBinding")) {

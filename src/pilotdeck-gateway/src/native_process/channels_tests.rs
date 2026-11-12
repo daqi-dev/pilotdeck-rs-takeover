@@ -680,11 +680,34 @@ fn startup_error(result: Result<(), crate::ProxyError>, assertion: &'static str)
     crate::test_negative_receipt::expect_err(result, assertion).to_string()
 }
 
+/// An `adapters:` entry the baseline would connect with: the bundle keys
+/// whenever enabled, the credential channels with credentials, `matrix` with a
+/// homeserver its constructor cannot `.replace`. The SDK-missing channels have
+/// no such config (their SDK is never installed), so they are not listed.
+const CONNECTING_ADAPTERS: [(&str, &str); 7] = [
+    (
+        "mattermost",
+        "{enabled: true, token: t, extra: {serverUrl: 'http://127.0.0.1:9'}}",
+    ),
+    (
+        "signal",
+        "{enabled: true, extra: {account: '+15550000000'}}",
+    ),
+    ("whatsapp", "{enabled: true, extra: {bridgePath: /bridge}}"),
+    ("homeassistant", "{enabled: true, token: t}"),
+    (
+        "matrix",
+        "{enabled: true, token: t, extra: {homeserver: 5}}",
+    ),
+    ("qq", "{enabled: true}"),
+    ("wecom", "{enabled: true}"),
+];
+
 #[tokio::test]
 async fn startup_refuses_every_unmigrated_channel() {
-    for key in crate::channel::loader::UNMIGRATED_CHANNEL_KEYS {
+    for (key, cfg) in CONNECTING_ADAPTERS {
         let error = startup_error(
-            start_with_adapters(&format!("  {key}: {{enabled: true}}\n")).await,
+            start_with_adapters(&format!("  {key}: {cfg}\n")).await,
             "#1763 enabled unmigrated channel must refuse native startup",
         );
         crate::negative_assert!(
@@ -710,13 +733,13 @@ async fn startup_refuses_every_unmigrated_channel() {
 #[tokio::test]
 async fn startup_rejection_reaches_stderr_in_the_debug_form() {
     let error = crate::test_negative_receipt::expect_err(
-        start_with_adapters("  telegram: {enabled: true}\n").await,
+        start_with_adapters("  qq: {enabled: true}\n").await,
         "#1763 enabled unmigrated channel must refuse native startup",
     );
     let printed = format!("Error: {error:?}");
     crate::negative_assert_eq!(
         printed,
-        "Error: Error(\"[adapters] channel \\\"telegram\\\" 未迁移到 Rust，需继续使用 TS gateway\")",
+        "Error: Error(\"[adapters] channel \\\"qq\\\" 未迁移到 Rust，需继续使用 TS gateway\")",
         "#1763 the process stderr line is the Debug form of ChannelError"
     );
 }
@@ -764,7 +787,7 @@ async fn startup_builds_the_enabled_feishu_channel() {
 async fn startup_folds_non_boolean_enabled_spellings() {
     for spelling in ["1", "\"true\"", "\"1\"", "[]", "{}"] {
         crate::test_negative_receipt::expect_ok(
-            start_with_adapters(&format!("  telegram: {{enabled: {spelling}}}\n")).await,
+            start_with_adapters(&format!("  qq: {{enabled: {spelling}}}\n")).await,
             "#1763 non-boolean enabled folds to false in the config snapshot",
         );
     }
@@ -793,6 +816,25 @@ async fn startup_accepts_configs_without_an_unmigrated_channel() {
         start_with_adapters("  weixin: {enabled: false}\n").await,
         "#1763 a disabled implemented bundle channel starts",
     );
+    // The SDK-missing channels and the credential channels without
+    // credentials start like the baseline: one log line, no refusal.
+    for key in [
+        "telegram",
+        "discord",
+        "slack",
+        "matrix",
+        "dingtalk",
+        "email",
+        "mattermost",
+        "signal",
+        "whatsapp",
+        "homeassistant",
+    ] {
+        crate::test_negative_receipt::expect_ok(
+            start_with_adapters(&format!("  {key}: {{enabled: true}}\n")).await,
+            "an enabled channel the baseline only logs for starts",
+        );
+    }
 }
 
 // --------------------------------------------------------------- #2301 loader
@@ -807,11 +849,10 @@ async fn startup_accepts_configs_without_an_unmigrated_channel() {
 // implemented set identical to the non-rejected table tail.
 #[test]
 fn production_mounts_cover_every_non_rejected_loader_key() {
+    // Every loader key is mounted: the implemented ones natively, the rest as
+    // the baseline's log-one-line channel (`channel::unavailable`).
     let mounts = super::channels::production_loader_mounts();
     for key in crate::channel::loader::CHANNEL_LOADER_KEYS {
-        if crate::channel::loader::UNMIGRATED_CHANNEL_KEYS.contains(&key) {
-            continue;
-        }
         crate::negative_assert!(
             mounts.is_registered(key),
             "#2301 loader key \"{key}\" is neither rejected nor mounted in production"

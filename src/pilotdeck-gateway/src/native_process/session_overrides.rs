@@ -48,6 +48,9 @@ pub struct SessionOverrides {
     /// handler per session, in registration order; a session registering
     /// again replaces its handler in place, like `Map#set`.
     config_change: std::sync::Mutex<Vec<(JsString, ConfigChangeHandler)>>,
+    /// `dialogProjectKeys` (InProcessGateway.ts:551), shared with the submit
+    /// admission and the `user_dialog_changed` broadcast.
+    dialog_project_keys: crate::runtime::turn::admission::DialogProjectKeys,
 }
 
 /// A session's SDK `ConfigChange` dispatch, given `{ changedPaths,
@@ -55,6 +58,11 @@ pub struct SessionOverrides {
 pub type ConfigChangeHandler = std::sync::Arc<dyn Fn(&JsValue) + Send + Sync>;
 
 impl SessionOverrides {
+    /// The gateway's `dialogProjectKeys` map.
+    pub fn dialog_project_keys(&self) -> &crate::runtime::turn::admission::DialogProjectKeys {
+        &self.dialog_project_keys
+    }
+
     /// `registerSdkConfigChangeHandler(sessionKey, handler)`.
     pub fn register_config_change(&self, key: &JsString, handler: ConfigChangeHandler) {
         let mut handlers = self.config_change.lock().unwrap_or_else(|e| e.into_inner());
@@ -102,12 +110,14 @@ impl SessionOverrides {
     /// `registry.setSessionCwd(sessionKey, cwd)` (ProjectRuntimeRegistry.ts:
     /// 525-529): `{ ...existing, cwd }` in the shared override registry, read
     /// when the session is next composed (SessionAgentConfigBundle.ts:57).
-    pub fn set_session_cwd(&self, key: &JsString, cwd: &JsString) {
+    /// The value is stored as given: the TS caller only checks truthiness, so
+    /// a non-string `workspaceCwd` becomes the session's `config.cwd` too.
+    pub fn set_session_cwd(&self, key: &JsString, cwd: &JsValue) {
         let mut config = self.config.lock().unwrap_or_else(|e| e.into_inner());
         let value = config
             .get(key)
             .unwrap_or_else(crate::config::session_value::SessionValue::object);
-        value.set("cwd", JsValue::String(cwd.clone()));
+        value.set("cwd", cwd.clone());
         config.set(key, &value);
     }
 

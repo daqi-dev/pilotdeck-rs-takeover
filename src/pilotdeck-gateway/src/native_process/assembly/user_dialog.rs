@@ -20,14 +20,26 @@ pub(super) fn build_user_dialog_bus() -> Arc<Mutex<GatewayUserDialogBus>> {
 }
 
 /// `onUserDialogChange(change)` → `broadcastNotification("user_dialog_changed",
-/// change)` (createLocalGateway.ts:1053-1058).
+/// change)` (createLocalGateway.ts:1053-1058). The gateway first adds the
+/// session's `projectKey` from `dialogProjectKeys` when it has one
+/// (InProcessGateway.ts:570-575); only truthy values are ever stored.
 pub(super) fn bind_broadcast(
     bus: &Arc<Mutex<GatewayUserDialogBus>>,
     broadcast: Arc<crate::runtime::connection::ConnectionBroadcast>,
+    dialog_project_keys: crate::runtime::turn::admission::DialogProjectKeys,
 ) {
     bus.lock()
         .unwrap_or_else(|e| e.into_inner())
-        .set_observer(Arc::new(move |change| {
+        .set_observer(Arc::new(move |mut change| {
+            let project_key = change
+                .get("sessionKey")
+                .and_then(pilotdeck_protocol::JsValue::as_string)
+                .and_then(|session| dialog_project_keys.get(session));
+            if let (Some(project_key), pilotdeck_protocol::JsValue::Object(fields)) =
+                (project_key, &mut change)
+            {
+                fields.insert("projectKey".into(), project_key);
+            }
             broadcast.broadcast("user_dialog_changed", &change);
             Ok(())
         }));

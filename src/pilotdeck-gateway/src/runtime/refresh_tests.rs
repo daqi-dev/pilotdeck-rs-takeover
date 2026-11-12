@@ -239,8 +239,8 @@ async fn config_change_drives_registry_then_router_then_broadcast() {
     h._scratch.write(&other_model());
     let (a, b) = tokio::join!(h.bundle.reload_config(), h.bundle.reload_config());
     let paths = vec![
-        JsString::from("agent.model.id"),
-        JsString::from("agent.model.model"),
+        JsValue::String(JsString::from("agent.model.id")),
+        JsValue::String(JsString::from("agent.model.model")),
     ];
     assert_eq!(a.unwrap().changed_paths, paths);
     assert_eq!(b.unwrap().changed_paths, paths);

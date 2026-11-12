@@ -1297,6 +1297,52 @@ impl OwnedSession {
             .unwrap_or_else(|| JsString::from(self.storage.cwd.to_string_lossy().into_owned()))
     }
 }
+
+/// `seedAgentReadState` over a non-string `config.cwd` (a truthy non-string
+/// `workspaceCwd` stored by `setSessionCwd`): `resolvePilotDeckWorkspacePath`
+/// (pathSafety.ts:19-41) rejects an empty or NUL-bearing path first, then hands
+/// the cwd to a Node path function that throws `ERR_INVALID_ARG_TYPE`: a
+/// relative path goes through `path.join(cwd, p)` ("path"); an absolute one
+/// through `path.relative(cwd, …)` under bypassPermissions ("from") or
+/// `path.resolve(root)` for the workspace roots ("paths[0]"). `None` leaves
+/// the call to the string path.
+fn non_string_seed_cwd(
+    path: &JsString,
+    cwd: &JsValue,
+    permission_mode: &JsString,
+) -> Option<RuntimeError> {
+    if matches!(cwd, JsValue::String(_) | JsValue::Undefined | JsValue::Null)
+        || path.is_empty()
+        || path.units().contains(&0)
+    {
+        return None;
+    }
+    let argument = if !crate::runtime::tools::builtin::is_absolute(path) {
+        "path"
+    } else if permission_mode.equals_str("bypassPermissions") {
+        "from"
+    } else {
+        "paths[0]"
+    };
+    let (name, code, message) = match crate::metadata::argument_received(cwd) {
+        crate::metadata::ArgumentReceived::Text(received) => (
+            "TypeError",
+            Some("ERR_INVALID_ARG_TYPE".into()),
+            crate::metadata::invalid_arg_type_message(argument, &received),
+        ),
+        crate::metadata::ArgumentReceived::Throws { name, message } => (name, None, message),
+    };
+    Some(
+        RuntimeError::new(String::from_utf16_lossy(message.units())).with_js_error(
+            crate::runtime::project::RuntimeJsError {
+                name: name.into(),
+                code,
+                message,
+                requires_host: false,
+            },
+        ),
+    )
+}
 impl LiveSession for OwnedSession {
     #[cfg(test)]
     fn reload_signal_for_test(&self) -> Option<crate::runtime::hooks::Cancellation> {
@@ -1357,6 +1403,13 @@ impl LiveSession for OwnedSession {
     /// and permission mode are the same ones a read_file call on this session
     /// would use, so admission decisions cannot diverge from the tool family.
     fn seed_read_state(&self, path: &JsString, mtime_ms: f64) -> Result<bool, RuntimeError> {
+        if let Some(error) = self
+            .adapter
+            .agent_cwd_value()
+            .and_then(|cwd| non_string_seed_cwd(path, &cwd, &self.adapter.permission_mode()))
+        {
+            return Err(error);
+        }
         let cwd = self.session_cwd();
         crate::runtime::tools::builtin::seed_agent_read_state(
             &self.checkpoint,

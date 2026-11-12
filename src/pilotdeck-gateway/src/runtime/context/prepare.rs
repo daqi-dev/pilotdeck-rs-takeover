@@ -139,6 +139,13 @@ pub struct SessionContextState {
     prompt_cache_coordinator: Arc<super::cache::PromptCacheCoordinator>,
     time: Mutex<HashMap<Option<JsString>, TimeState>>,
     cache_sessions: Mutex<HashSet<JsString>>,
+    /// The session's plugin contributions (commands, skills, MCP
+    /// instructions). The baseline refreshes the plugin runtime and takes
+    /// this snapshot once, when the session is composed
+    /// (ProjectSessionRuntimeBundle.ts:246-263); later turns keep it until
+    /// the session itself is recreated. The outer `None` is "not taken yet".
+    #[allow(clippy::type_complexity)]
+    extension: Mutex<Option<Option<Arc<dyn ExtensionResolver>>>>,
 }
 impl Default for SessionContextState {
     fn default() -> Self {
@@ -151,7 +158,29 @@ impl SessionContextState {
             prompt_cache_coordinator: coordinator,
             time: Mutex::new(HashMap::new()),
             cache_sessions: Mutex::new(HashSet::new()),
+            extension: Mutex::new(None),
         }
+    }
+    /// The contribution snapshot taken by the session's first composition,
+    /// if any.
+    #[allow(clippy::type_complexity)]
+    pub fn session_extension(&self) -> Option<Option<Arc<dyn ExtensionResolver>>> {
+        self.extension
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+    /// Records the session's contribution snapshot; an earlier one wins.
+    #[allow(clippy::type_complexity)]
+    pub fn freeze_session_extension(
+        &self,
+        extension: Option<Arc<dyn ExtensionResolver>>,
+    ) -> Option<Arc<dyn ExtensionResolver>> {
+        self.extension
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_or_insert(extension)
+            .clone()
     }
     fn release_caches(&self) {
         for session_id in self.cache_sessions.lock().unwrap().drain() {

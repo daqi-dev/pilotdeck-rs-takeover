@@ -272,6 +272,12 @@ impl LiveSessionAdapter {
             .cloned()
     }
 
+    /// The composed `config.cwd` as stored, string or not: a non-string
+    /// `workspaceCwd` override reaches the agent config unchanged.
+    pub fn agent_cwd_value(&self) -> Option<JsValue> {
+        self.agent_config.as_ref()?.get("cwd").cloned()
+    }
+
     /// #1864 (b): the live permission-mode source, consulted on every
     /// submit. `None` keeps the composed agent config as-is.
     pub fn with_permission_mode_source(
