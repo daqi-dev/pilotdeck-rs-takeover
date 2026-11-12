@@ -158,6 +158,58 @@ pub fn ports(
     }
 }
 
+/// The model `CompactionEngine` summarizes with
+/// (`SessionContextRuntimeBundle.ts:91-101`): `router.stream(request,
+/// { sessionId: sessionKey, turnId: "compact", projectPath, abortSignal,
+/// isMainAgent: false })` — routed as a non-main call, not recorded in the
+/// session transcript, without sticky state or an invocation audit.
+pub fn compaction_execution(
+    router: Arc<RouterRuntime>,
+    model_config: JsValue,
+    project_path: Option<JsString>,
+    session_id: JsString,
+) -> Arc<dyn ModelExecution> {
+    Arc::new(CompactionExecution {
+        inner: RouterModelPort {
+            router,
+            model_config,
+            options: RouterModelPortOptions {
+                is_main_agent: false,
+                project_path,
+                ..RouterModelPortOptions::default()
+            },
+        },
+        session_id,
+    })
+}
+
+struct CompactionExecution {
+    inner: RouterModelPort,
+    session_id: JsString,
+}
+impl CompactionExecution {
+    fn context(&self, mut context: JsObject) -> JsObject {
+        context.insert("sessionId".into(), JsValue::String(self.session_id.clone()));
+        context.insert("turnId".into(), "compact".into());
+        context
+    }
+}
+impl ModelExecution for CompactionExecution {
+    fn prepare(&self, input: PrepareInput) -> ModelFuture<PreparedInvocation> {
+        self.inner.prepare(PrepareInput {
+            request: input.request,
+            context: self.context(input.context),
+        })
+    }
+    fn stream(&self, input: StreamInput) -> ModelFuture<Box<dyn ModelStream>> {
+        self.inner.stream(StreamInput {
+            prepared: input.prepared,
+            context: self.context(input.context),
+            abort: input.abort,
+        })
+    }
+}
+
 /// One turn's model handler over the router runtime: the `bindTurn`
 /// equivalent of `sidecarHostModulePorts.ts:279-312`.
 ///

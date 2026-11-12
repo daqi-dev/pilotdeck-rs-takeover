@@ -115,6 +115,16 @@ impl TurnTimeline {
         }
     }
 
+    /// `timeline.position(`compact:${compactionId}`)`: the coordinate
+    /// `AgentLoop`'s `onCompactPersisted` wrapper stamps on a persisted compact
+    /// boundary (AgentLoop.ts:333-337). The runner's allocator has seen the
+    /// host's compact_started / compact_completed events, so the position
+    /// carries their revision like the in-process loop's own timeline does.
+    pub(crate) fn compact_boundary_position(&mut self, compaction_id: &JsString) -> JsObject {
+        let position = self.position(&joined("compact:", Some(compaction_id)), false);
+        self.position_object(&position, None)
+    }
+
     fn position(&mut self, id: &JsString, provisional: bool) -> Position {
         let mut position = match self.positions.get(id) {
             Some(position) => position.clone(),

@@ -1886,7 +1886,7 @@ impl StreamHandler {
                     }
                     if self.forwarding.lock().unwrap().stopped || Instant::now() < self.forwarding.lock().unwrap().deadline() { continue; }
                     self.forwarding.lock().unwrap().activity = Some(Instant::now());
-                    if let Err(error) = self.forward(Box::pin(async { Ok(()) }), None, Some(delivery), false, true).await { break error; }
+                    if let Err(error) = self.forward(Box::pin(async { Ok(()) }), None, Some(delivery), false, true, false).await { break error; }
                 }
             } => {
                 if let Some(cancel) = &self.callback_cancel {
@@ -1906,6 +1906,7 @@ impl StreamHandler {
         delivery: Option<Delivery>,
         module: bool,
         heartbeat: bool,
+        send_first: bool,
     ) -> HostFuture<T> {
         // Capture and validate synchronously at callback invocation. Even a
         // subsequently dropped callback must leave contradiction evidence.
@@ -2029,6 +2030,10 @@ impl StreamHandler {
                 Ok(())
             };
             let mut applied = applied;
+            if send_first {
+                sending.await?;
+                return applied.await;
+            }
             if module {
                 // A long module callback must not sequester its captured host
                 // events. After the pump deadline, drive application and sends
@@ -2050,6 +2055,60 @@ impl StreamHandler {
     }
 }
 
+/// `turn.persist_compaction` (the sidecar's `onCompactPersisted`).
+fn is_persist_compaction(call: &JsValue) -> bool {
+    let text = |value: Option<&JsValue>, expected: &str| {
+        value
+            .and_then(JsValue::as_string)
+            .is_some_and(|text| text.equals_str(expected))
+    };
+    text(call.get("module"), "turn")
+        && text(
+            call.get("payload")
+                .and_then(|payload| payload.get("operation")),
+            "persist_compaction",
+        )
+}
+
+/// Replace `boundary.compactMetadata.timeline` of a compact boundary with
+/// the runner timeline's coordinate for the same compaction, keeping the
+/// field where the loop put it. Any other boundary passes unchanged.
+fn reposition_compact_boundary(
+    mut call: JsValue,
+    timeline: &Mutex<super::timeline::TurnTimeline>,
+) -> JsValue {
+    let JsValue::Object(fields) = &mut call else {
+        return call;
+    };
+    let Some(JsValue::Object(payload)) = fields.get("payload") else {
+        return call;
+    };
+    let Some(JsValue::Object(boundary)) = payload.get("boundary") else {
+        return call;
+    };
+    let Some(JsValue::Object(metadata)) = boundary.get("compactMetadata") else {
+        return call;
+    };
+    let (Some(id), true) = (
+        metadata
+            .get("compactionId")
+            .and_then(JsValue::as_string)
+            .filter(|id| !id.is_empty()),
+        metadata.get("timeline").is_some(),
+    ) else {
+        return call;
+    };
+    let position = timeline.lock().unwrap().compact_boundary_position(id);
+    let mut metadata = metadata.clone();
+    metadata.insert("timeline".into(), JsValue::Object(position));
+    let mut boundary = boundary.clone();
+    boundary.insert("compactMetadata".into(), JsValue::Object(metadata));
+    let mut payload = payload.clone();
+    payload.insert("boundary".into(), JsValue::Object(boundary));
+    fields.insert("payload".into(), JsValue::Object(payload));
+    call
+}
+
 impl HostHandler for StreamHandler {
     fn module_call(&self, call: JsValue) -> HostFuture<JsObject> {
         // Called on the driver task in arrival order: capture the wire events
@@ -2058,12 +2117,33 @@ impl HostHandler for StreamHandler {
             forwarding: self.forwarding.clone(),
             upto: self.forwarding.lock().unwrap().wire_next,
         };
+        // A compact boundary is persisted with the runner timeline's
+        // coordinate. Host events captured before this call (the engine's
+        // compact_started / compact_completed) are projected first, then the
+        // boundary is positioned and persisted.
+        let timeline = self.forwarding.lock().unwrap().timeline.clone();
+        if let Some(timeline) = timeline.filter(|_| is_persist_compaction(&call)) {
+            let inner = self.inner.clone();
+            let applied: HostFuture<JsObject> = Box::pin(async move {
+                let call = reposition_compact_boundary(call, &timeline);
+                inner.module_call(call).await
+            });
+            return self.forward(
+                Box::pin(PRIOR_WIRE_EVENTS.scope(barrier, applied)),
+                None,
+                None,
+                true,
+                false,
+                true,
+            );
+        }
         let applied = self.inner.module_call(call);
         self.forward(
             Box::pin(PRIOR_WIRE_EVENTS.scope(barrier, applied)),
             None,
             None,
             true,
+            false,
             false,
         )
     }
@@ -2146,6 +2226,7 @@ impl HostHandler for StreamHandler {
             applied,
             if final_event { None } else { payload },
             Some(delivery),
+            false,
             false,
             false,
         )

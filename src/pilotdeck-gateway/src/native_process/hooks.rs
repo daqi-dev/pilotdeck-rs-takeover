@@ -252,6 +252,52 @@ impl ToolHooks {
         *self.port.lock().unwrap_or_else(|e| e.into_inner()) = port;
     }
 }
+/// `CompactionEngine`'s `lifecycle` (SessionContextRuntimeBundle.ts:104-119):
+/// PreCompact / PostCompact through the session's hooks of the current turn,
+/// with the base input `{ sessionId: sessionKey, transcriptPath: "", cwd:
+/// projectRoot, permissionMode: "default" }` and the event name as the match
+/// query. The dispatch result is not consulted.
+pub(super) struct CompactionHooks {
+    pub hooks: Arc<ToolHooks>,
+    pub session: JsString,
+    pub cwd: JsString,
+}
+impl crate::runtime::context::compaction::engine::CompactionLifecycle for CompactionHooks {
+    fn dispatch(&self, event: &'static str, payload: JsValue) -> HostFuture<()> {
+        let configured = self
+            .hooks
+            .events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .any(|configured| configured.equals_str(event));
+        let port = self
+            .hooks
+            .port
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let (Some(port), true) = (port, configured) else {
+            return Box::pin(async { Ok(()) });
+        };
+        let mut base = JsObject::new();
+        base.insert("sessionId".into(), JsValue::String(self.session.clone()));
+        base.insert("transcriptPath".into(), "".into());
+        base.insert("cwd".into(), JsValue::String(self.cwd.clone()));
+        base.insert("permissionMode".into(), "default".into());
+        let future = port.dispatch(LifecycleDispatchInput {
+            event: event.into(),
+            base_input: base,
+            payload: payload.as_object().cloned(),
+            match_query: Some(event.into()),
+            cwd: self.cwd.clone(),
+            env: None,
+            signal: None,
+        });
+        Box::pin(async move { future.await.map(|_| ()) })
+    }
+}
+
 impl ToolLifecycle for ToolHooks {
     fn dispatch(
         &self,
