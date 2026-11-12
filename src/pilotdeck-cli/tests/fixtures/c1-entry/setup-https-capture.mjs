@@ -83,6 +83,13 @@ const specs = [
     text: '微信登录失败: Failed to fetch QR code: 503', untouched: true, creds: false,
     routes: [{ host: hosts[3], path: qrPath, method: 'GET', status: 503, reply: {} }] },
 ];
+for (const spec of specs) for (const route of spec.routes) {
+  if (route.path === tokenPath) {
+    route.body = { app_id: 'c1-fixture-app', app_secret: 'c1-fixture-secret' };
+    route.headers = { 'content-type': 'application/json; charset=utf-8' };
+  } else if (route.host === hosts[2]) route.headers = { 'user-agent': 'PilotDeck/1.0' };
+  else if (route.path === statusPath) route.headers = { 'ilink-app-clientversion': '1' };
+}
 fs.writeFileSync(path.join(output, 'identity.json'), JSON.stringify({
   side, node: process.version, platform: `${os.platform()}-${os.arch()}`, entry,
   executableSha256: createHash('sha256').update(fs.readFileSync(entry)).digest('hex'),
@@ -110,6 +117,7 @@ for (const spec of specs) {
       assert.ok(route, 'no unexpected extra request');
       assert.equal(req.headers.host, route.host); assert.equal(req.url, route.path); assert.equal(req.method, route.method);
       if (route.body) assert.deepEqual(body, route.body);
+      for (const [name, value] of Object.entries(route.headers ?? {})) assert.equal(req.headers[name], value, `required request header ${name}`);
       res.writeHead(route.status ?? 200, { 'content-type': 'application/json' }); res.end(JSON.stringify(route.reply));
     } catch (error) { mockFailure = error.message; res.writeHead(500); res.end('{}'); }
   });
