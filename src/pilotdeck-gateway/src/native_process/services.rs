@@ -1470,6 +1470,9 @@ pub struct NativeSettingsOptions {
     pub update_settings: Option<crate::runtime::settings::UpdateSettings>,
     /// `options.reloadOutputStyles` (`registry.reloadOutputStylesForSdk`).
     pub reload_output_styles: Option<Arc<dyn crate::runtime::settings::ReloadOutputStyles>>,
+    /// `dispatchSdkConfigChange` (createLocalGateway.ts:817): the sessions'
+    /// SDK `ConfigChange` hooks. `None` dispatches nothing.
+    pub sdk: Option<Arc<dyn crate::runtime::refresh::SdkConfigChange>>,
 }
 
 /// The composed U7 settings stack: the #1318 [`SettingsGateway`] over the
@@ -1515,6 +1518,7 @@ pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
         apply_flag_settings,
         update_settings,
         reload_output_styles,
+        sdk,
     } = options;
     let bundle = Arc::new(RefreshBundle::new(RefreshOptions {
         config_store: Arc::new(store.clone()),
@@ -1523,7 +1527,7 @@ pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
         router: Arc::new(move || Some(router.clone())),
         project_root,
         memory_diagnostics: None,
-        sdk: None,
+        sdk,
         log,
     }));
     // `runtimeRefresh.attach()` (createLocalGateway.ts:831): without the
@@ -1739,7 +1743,10 @@ pub fn native_settings_for_process(
             ),
         )
     })?;
+    let sdk: Arc<dyn crate::runtime::refresh::SdkConfigChange> =
+        Arc::new(SdkConfigChangeDispatch(overrides.clone()));
     Ok(native_settings(NativeSettingsOptions {
+        sdk: Some(sdk),
         owner: owner.clone(),
         router: Arc::new(owner),
         registry: Arc::new(RegistryRefresh::new(project)),
@@ -1755,4 +1762,13 @@ pub fn native_settings_for_process(
         }),
         reload_output_styles: output_styles,
     }))
+}
+
+/// `(payload) => registry.dispatchSdkConfigChange(payload)`
+/// (createLocalGateway.ts:817) over the gateway's session registry.
+struct SdkConfigChangeDispatch(Arc<super::SessionOverrides>);
+impl crate::runtime::refresh::SdkConfigChange for SdkConfigChangeDispatch {
+    fn dispatch_sdk_config_change(&self, change: &crate::runtime::refresh::ConfigChangeNotice) {
+        self.0.dispatch_config_change(&change.to_js());
+    }
 }

@@ -496,6 +496,7 @@ fn own_store(root: &Path, name: &str, probe: &Probe) -> (ConfigStore, PathBuf) {
 /// `reload_extensions` wired), bound to the shared broadcast server.
 fn native_stack(store: ConfigStore, stack: &Stack) -> NativeSettings {
     let native = native_settings(NativeSettingsOptions {
+        sdk: None,
         owner: stack.probe.owner(),
         router: Arc::new(BundleRouter(stack.probe.clone())),
         registry: stack.settling.clone(),

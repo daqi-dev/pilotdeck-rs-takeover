@@ -622,6 +622,52 @@ impl SessionTools {
         self
     }
 
+    /// `configChangeLifecycle` + `registerConfigChangeHandler`
+    /// (SessionInteractionBundle.ts:170-180, 286-299): a session whose SDK
+    /// hooks name `ConfigChange` registers a handler the gateway's config
+    /// change dispatch calls. The handler holds the session's hooks weakly,
+    /// so a dropped session runs nothing. Call after [`Self::with_hooks`],
+    /// whose execution projection the runtime shares.
+    pub(super) fn with_sdk_config_change(
+        self,
+        sdk_config: Option<&JsValue>,
+        registry: &super::SessionOverrides,
+    ) -> Self {
+        // `fileChangedLifecycle` (SessionInteractionBundle.ts:181-192): the
+        // same session-scoped composition for the SDK `FileChanged` hooks.
+        let file_changed = super::hooks::sdk_file_changed_settings(sdk_config);
+        if file_changed
+            .iter()
+            .any(|(_, matchers)| !matchers.is_empty())
+        {
+            self.tool_hooks
+                .configure_file_changed(&file_changed, &self.hook_observers);
+        }
+        let settings = super::hooks::sdk_config_change_settings(sdk_config);
+        if settings.iter().all(|(_, matchers)| matchers.is_empty()) {
+            return self;
+        }
+        let observers = crate::runtime::hooks::runtime::HookObservers {
+            execution: self.hook_observers.execution.clone(),
+            async_registered: None,
+            shell: self.hook_observers.shell.clone(),
+        };
+        self.tool_hooks
+            .configure_config_change(&settings, &observers);
+        let hooks = Arc::downgrade(&self.tool_hooks);
+        let cwd: JsString = self.project.to_string_lossy().as_ref().into();
+        let owner = self.binding.context.session_key.clone();
+        registry.register_config_change(
+            &owner.clone(),
+            Arc::new(move |payload| {
+                if let Some(hooks) = hooks.upgrade() {
+                    hooks.dispatch_config_change(&owner, &cwd, payload);
+                }
+            }),
+        );
+        self
+    }
+
     /// The project's `executionWorld.backgroundTasks`, behind the `task_*`
     /// tools: every session of the project shares one runtime, which the
     /// gateway's `background_tasks` / `background_task_stop` also read.
@@ -920,6 +966,15 @@ impl SessionTools {
         // events around the scheduler's execution.
         let runtime = ToolRuntime::new(tools, self.permission.clone(), SchedulerMode::Concurrent)
             .with_lifecycle(self.tool_hooks.clone());
+        // `context.fileUpdateNotifier`: the session's SDK `FileChanged`
+        // hooks, ahead of the runtime's own `FileChanged` dispatch.
+        let runtime = match self.tool_hooks.sdk_file_saved(
+            self.binding.context.session_key.clone(),
+            self.project.to_string_lossy().as_ref().into(),
+        ) {
+            Some(notifier) => runtime.with_file_update_notifier(notifier),
+            None => runtime,
+        };
         let runtime = match self.events.clone() {
             // A refused event (the run was superseded or closed) is dropped,
             // like an emitter whose buffer is gone.

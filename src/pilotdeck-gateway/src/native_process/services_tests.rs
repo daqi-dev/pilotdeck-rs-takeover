@@ -2102,6 +2102,7 @@ async fn native_settings_production_binds_no_notification_server() {
     let root = std::env::temp_dir().join(format!("pdrs-1320-f2-{}", uuid::Uuid::new_v4()));
     let store = scratch_store(&root.join("home"), SETTINGS_YAML);
     let settings = native_settings(NativeSettingsOptions {
+        sdk: None,
         owner: settings_owner(),
         router: Arc::new(NullRouter),
         registry: Arc::new(NullRegistry),

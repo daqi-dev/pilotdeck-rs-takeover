@@ -1097,6 +1097,7 @@ async fn start_assembly(
                             include_hook_events,
                             sdk_hooks.then(|| async_hooks.clone()),
                         )
+                        .with_sdk_config_change(sdk_config.as_ref(), &session_overrides)
                         .with_permission_prompt(gateway_emit, session_rules, permission_timeout)
                         .with_permission_mode_transition({
                             let session_overrides = session_overrides.clone();

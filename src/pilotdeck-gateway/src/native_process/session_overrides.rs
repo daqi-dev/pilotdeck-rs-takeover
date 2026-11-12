@@ -44,9 +44,41 @@ pub struct SessionOverrides {
     /// is composed (ProjectSessionFactory.ts:222).
     config:
         std::sync::Arc<std::sync::Mutex<crate::config::session_overrides::SessionConfigOverrides>>,
+    /// `sdkConfigChangeHandlers` (ProjectRuntimeRegistry.ts:824-828): one
+    /// handler per session, in registration order; a session registering
+    /// again replaces its handler in place, like `Map#set`.
+    config_change: std::sync::Mutex<Vec<(JsString, ConfigChangeHandler)>>,
 }
 
+/// A session's SDK `ConfigChange` dispatch, given `{ changedPaths,
+/// changeClasses }`.
+pub type ConfigChangeHandler = std::sync::Arc<dyn Fn(&JsValue) + Send + Sync>;
+
 impl SessionOverrides {
+    /// `registerSdkConfigChangeHandler(sessionKey, handler)`.
+    pub fn register_config_change(&self, key: &JsString, handler: ConfigChangeHandler) {
+        let mut handlers = self.config_change.lock().unwrap_or_else(|e| e.into_inner());
+        match handlers.iter_mut().find(|(existing, _)| existing == key) {
+            Some((_, current)) => *current = handler,
+            None => handlers.push((key.clone(), handler)),
+        }
+    }
+
+    /// `dispatchSdkConfigChange(payload)`: every registered session's
+    /// handler, outside the lock.
+    pub fn dispatch_config_change(&self, payload: &JsValue) {
+        let handlers: Vec<ConfigChangeHandler> = self
+            .config_change
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .map(|(_, handler)| handler.clone())
+            .collect();
+        for handler in handlers {
+            handler(payload);
+        }
+    }
+
     /// The shared `SessionConfigOverrides` registry the automation runtimes
     /// write (`ProjectAutomationBundle.sessionOverrides`).
     pub fn config_overrides(
