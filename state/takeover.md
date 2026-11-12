@@ -6,14 +6,29 @@
 
 ## 现在在哪
 
-以命令输出为准，不手写进度：
+以命令输出为准，不手写进度。2026-11-12 上午的阶段验收（没有子代理在跑的安静机器，提交见 git 历史里本次更新）：
 
-- `node scripts/bbx/check.mjs --slots 5,6,7,8`：全量对拍，四个槽位并行约 15 分钟。2026-11-12 凌晨（提交 `e3db837ed`）：237 个场景 218 个 SAME。不一致的 19 个：16 个 `gap-*`（缺口审查找出的真实缺口，正在修）、`compact-manual`（已在随后合并的分支里修好）、`robust-frame-handshake`（5 处，正在修）、`tool-write-file-diagnostics`（未做）。
-- `node scripts/bbx/coverage.mjs`：101 个 gateway method 里 87 个有场景且全部 SAME，13 个被不一致的场景带上，1 个没有场景（`prepare_weixin_login`）。
-- `node scripts/bbx/selftest.mjs`：比较器自测，56 个例子。改 `diff.mjs` 前后都跑。
-- `scripts/ui-smoke/`：把原版 `ui/server` 接到基线或 Rust gateway 上跑前端的典型流程并比较全部流量。2026-11-12 的结果：协议层零不兼容（基线自比 2 次、Rust 1 次；没覆盖断线重连、gateway 重启、多标签页）。
+- `node scripts/bbx/check.mjs --slots 5,6,7,8`：319 个场景 310 个 SAME。
+- 四条命令：fmt、clippy、文档测试通过；`nextest` 7749 个里只有本机已知的 3 个失败（安静机器上 11 分钟）。
+- `node scripts/bbx/coverage.mjs`：101 个 gateway method 里 94 个有场景且全部 SAME，6 个被不一致的场景带上，1 个没有场景。
+- `node scripts/bbx/coverage.mjs --surface`：基线对外表面清单（`scripts/bbx/surface.json`，18 个维度 2008 项）里 1479 项被 SAME 的场景碰到（74%）。各维度还没碰到的：config 99、env 135、ws-params 45、tool-params 35、provider-protocols 30、hooks 30、cli 23、files 22、loop-behaviors 22、events 16、channels 16、records 10、tools 8、http 7、slash-commands 5、sdk-session-config 4。`--surface <维度>` 逐项列出。没碰到的项里有一部分是基线只解析不使用的键、渠道与外部服务、Windows 专用。
+- `node scripts/bbx/selftest.mjs`：比较器自测 58 个例子。
+- `scripts/ui-smoke/`：原版 `ui/server` 接 Rust gateway，协议层零不兼容（2026-11-12 凌晨跑的，之后没重跑）。
 
-Rust 已有实现和场景的：`pilotdeck server` 启停；对话主干与全部常规工具、计划模式工具、`request_user_*`、`cron_*`、always-on 工具；权限询问；一次性与后台子代理；hooks（插件与 SDK 两处来源）；自动与手动上下文压缩；会话读取、分叉、替换、导出恢复、文件回退；插件、skills、MCP；设置读写与热重载；上传、快照、定时任务、always-on；HTTP 路由（含公共 host 的 6 个操作，PDF 解析除外）；CLI 的 `run` / `resume` / `sessions` / `settings` / `chat search` / `skills migrate` / 默认对话 / `gateway setup` 的不联网部分。
+不一致的 9 个场景：
+
+| 场景 | 原因 |
+|---|---|
+| `cfg-project-sdk-sources`、`-invalid` | `sdkSessionConfig.settingSources` 没接，项目级和本地配置文件里的设置在 Rust 上不起作用 |
+| `gap-sdk-deferred-tools` | 会话准备失败时少写一条 `gateway_submit_failed` 状态记录 |
+| `gap-tool-read-file-vision` | 按页渲染 PDF 没移植（基线用 mupdf） |
+| `tool-write-file-diagnostics` | JS/TS、HTML、CSV 写后语法诊断没移植 |
+| `sdk-config-agents-background` | 后台自定义子代理的时序（Rust 的子代理在父轮中途就跑完）；用假 provider 的 `delayMs` 固定时序后再看 |
+| `loop-stream-idle` | 会话记录里流守卫错误的 `details.raw`（基线落成 `{}`） |
+| `proto-anthropic-basic` | 缓存代际 `generation`：Rust 每轮重建上下文运行时，丢了会话级状态 |
+| `robust-restart-truncated-session` | `list_sessions` 里两个会话的先后偶发对调（mtime 相同） |
+
+Rust 已有实现和场景的：`pilotdeck server` 启停；对话主干与全部工具（含 `web_search`、计划模式、`request_user_*`、`cron_*`、always-on 工具）；权限询问、`permissions.json`、沙箱模式、交互配置；一次性与后台子代理；hooks；自动与手动上下文压缩；循环里的截断续写、流中断恢复、并行工具调用；OpenAI chat 与 Anthropic 两种协议；会话读取、分叉、替换、导出恢复、文件回退；插件、skills、MCP；设置读写与热重载；上传、快照、定时任务、always-on；HTTP 路由；CLI 的主要命令与默认对话；provider / router / gateway / cron 等配置键。
 
 **重要的认识（2026-11-12）：「有场景且一致」不等于做完。** 场景大多是实现者自己写的。一次只看基线源码和场景、不看 Rust 实现的缺口审查，半小时找出 16 处差异，包括安全相关的配置在 Rust 里不生效（`agent.sandboxMode`、`~/.pilotdeck/permissions.json`、`agent.interactionProfile`）和整个缺失的 `web_search` 工具。它还留下一份没来得及测的缺口清单（报告在会话记录里；合并进来的 `gap-*` 场景是已测的部分）。
 
@@ -38,13 +53,7 @@ Rust 已有实现和场景的：`pilotdeck server` 启停；对话主干与全�
 
 整体安排（人已同意）：先收住手上的；再建立「基线对外表面」的完整清单并把覆盖统计扩展到各维度；之后按真实使用排优先级（界面用到的约 45 个 method 是地基，已验证）；清理旧代码提前做；最后是发布版本与性能、需要人参与的真实环境验收。
 
-在途的子代理（都是 Opus，各自一个 worktree，分支名 `worktree-agent-<id>`）：
-
-| 工作包 | 内容 | 槽位 |
-|---|---|---|
-| 安全配置修复 | `agent.sandboxMode`、`permissions.json`、`agent.interactionProfile`、已中止就不启动子进程（有意偏离基线）、failureGuard 跳闸后的收尾。前三项要求做一轮「试着绕过」 | 1 |
-| 功能缺口修复 | `web_search`、多模态读文件、附件路径、`glob` 细节、运行记录里缺失的 sessionKey、不稳定的测试、`sdkSessionConfig` 的 `deferredTools` / `persistSession` / `promptSuggestions` | 2 |
-| 基线对外表面清单 | 只读基线，产出 `scripts/bbx/surface.json`：16 个维度（配置键、文件、环境变量、工具与参数、事件、记录类型、协议字段、CLI、HTTP、WS method 与参数、循环行为、hooks、渠道、SDK 配置、斜杠命令），每项带基线出处和 `probe` | 3 |
+在途的子代理：无（2026-11-12 上午这一批六个分支已全部合并）。
 
 主会话自己要做的：
 
