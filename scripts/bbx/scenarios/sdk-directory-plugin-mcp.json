@@ -1,0 +1,276 @@
+{
+  "name": "sdk-directory-plugin-mcp",
+  "about": "SDK-only directory manifest MCP: actual initialize/list/call, separate session scope, replace and clear exact-PID liveness at later real model tool result. Candidate requires fixed TS calibration; no eventual-exit proof. Trusted POSIX fixture deliberately remains after EOF until close escalation SIGTERM.",
+  "files": {
+    "home/.pilotdeck/sdk-mcp-witness/server.mjs": "import fs from 'node:fs';\nimport readline from 'node:readline';\nconst [generation,root]=process.argv.slice(2);\nconst alive=pid=>{try{process.kill(pid,0);return true}catch(e){if(e.code==='ESRCH')return false;throw e}};\nconst record=method=>fs.appendFileSync(root+'/events.jsonl',JSON.stringify({generation,method,pid:process.pid,identity:'SDK-MCP-INSTANCE-'+generation})+'\\n');\nfs.writeFileSync(root+'/'+generation+'.json',JSON.stringify({pid:process.pid,identity:'SDK-MCP-INSTANCE-'+generation}));\nrecord('spawn');\nconst keep=setInterval(()=>{},10000);\nprocess.on('SIGTERM',()=>process.exit(0));\nconst send=(id,result)=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',id,result})+'\\n');\nreadline.createInterface({input:process.stdin}).on('line',line=>{\n let r;try{r=JSON.parse(line)}catch{return}\n if(r.id===undefined)return;\n record(r.method);\n if(r.method==='initialize')send(r.id,{protocolVersion:r.params.protocolVersion,capabilities:{tools:{}},serverInfo:{name:'sdk-directory-owned',version:'1.0.0'}});\n else if(r.method==='tools/list')send(r.id,{tools:[{name:'probe',description:'SDK directory owned lifecycle witness',inputSchema:{type:'object',properties:{},additionalProperties:false}}]});\n else if(r.method==='tools/call'){\n  const prior=generation==='B'?JSON.parse(fs.readFileSync(root+'/A.json')):null;\n  if(prior&&prior.identity!=='SDK-MCP-INSTANCE-A')throw Error('Invalid prior identity');\n  const old=prior?alive(prior.pid):null;\n  send(r.id,{content:[{type:'text',text:JSON.stringify({marker:'SDK-MCP-CALL-'+generation,previousAlive:old})}]});\n }else send(r.id,{});\n});\n// Deliberately keep the instance alive on EOF. The fixed SDK's close escalates\n// to SIGTERM, awaiting child close before replacement. No timing-based assertion.\n",
+    "home/.pilotdeck/sdk-mcp-witness/probe.mjs": "import fs from 'node:fs';\nconst root=process.argv[2];\nconst alive=pid=>{try{process.kill(pid,0);return true}catch(e){if(e.code==='ESRCH')return false;throw e}};\nfor(const generation of ['A','B'])if(JSON.parse(fs.readFileSync(root+'/'+generation+'.json')).identity!=='SDK-MCP-INSTANCE-'+generation)throw Error('Invalid instance identity');\nconst result={marker:'SDK-MCP-CLEAR-PROBE',aAlive:alive(JSON.parse(fs.readFileSync(root+'/A.json')).pid),bAlive:alive(JSON.parse(fs.readFileSync(root+'/B.json')).pid)};\nconsole.log(JSON.stringify(result));\nif(result.aAlive||result.bAlive)process.exitCode=9;\n",
+    "home/.pilotdeck/sdk-directory-mcp/local-a/plugin.json": {
+      "name": "sdk-owned-a",
+      "version": "1.0.0",
+      "mcpServers": {
+        "sdk-owned": {
+          "command": "node",
+          "args": [
+            "{PILOT_HOME}/sdk-mcp-witness/server.mjs",
+            "A",
+            "{PILOT_HOME}/sdk-mcp-witness"
+          ],
+          "perSession": true
+        }
+      }
+    },
+    "home/.pilotdeck/sdk-directory-mcp/local-b/plugin.json": {
+      "name": "sdk-owned-b",
+      "version": "1.0.0",
+      "mcpServers": {
+        "sdk-owned": {
+          "command": "node",
+          "args": [
+            "{PILOT_HOME}/sdk-mcp-witness/server.mjs",
+            "B",
+            "{PILOT_HOME}/sdk-mcp-witness"
+          ],
+          "perSession": true
+        }
+      }
+    }
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"SDK MCP\"}"
+      }
+    },
+    {
+      "name": "clear-final",
+      "when": [
+        "SDK-MCP-PHASE-CLEAR",
+        "\"tool_call_id\":\"call_sdk_mcp_clear\""
+      ],
+      "reply": {
+        "text": "SDK-MCP-DONE-CLEAR"
+      }
+    },
+    {
+      "name": "clear-initial",
+      "when": [
+        "SDK-MCP-PHASE-CLEAR"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_sdk_mcp_clear",
+          "name": "bash",
+          "arguments": {
+            "command": "node '{PILOT_HOME}/sdk-mcp-witness/probe.mjs' '{PILOT_HOME}/sdk-mcp-witness'"
+          }
+        }
+      }
+    },
+    {
+      "name": "isolated",
+      "when": [
+        "SDK-MCP-PHASE-ISOLATED"
+      ],
+      "reply": {
+        "text": "SDK-MCP-DONE-ISOLATED"
+      }
+    },
+    {
+      "name": "b-final",
+      "when": [
+        "SDK-MCP-PHASE-B",
+        "\"tool_call_id\":\"call_sdk_mcp_b\""
+      ],
+      "reply": {
+        "text": "SDK-MCP-DONE-B"
+      }
+    },
+    {
+      "name": "b-initial",
+      "when": [
+        "SDK-MCP-PHASE-B"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_sdk_mcp_b",
+          "name": "mcp__sdk-owned__probe",
+          "arguments": {}
+        }
+      }
+    },
+    {
+      "name": "a-final",
+      "when": [
+        "SDK-MCP-PHASE-A",
+        "\"tool_call_id\":\"call_sdk_mcp_a\""
+      ],
+      "reply": {
+        "text": "SDK-MCP-DONE-A"
+      }
+    },
+    {
+      "name": "a-initial",
+      "when": [
+        "SDK-MCP-PHASE-A"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_sdk_mcp_a",
+          "name": "mcp__sdk-owned__probe",
+          "arguments": {}
+        }
+      }
+    },
+    {
+      "name": "unexpected",
+      "reply": {
+        "text": "SDK-MCP-UNEXPECTED"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "sdk-mcp-shared",
+        "channelKey": "test",
+        "runId": "sdk-mcp-a",
+        "message": "SDK-MCP-PHASE-A",
+        "sdkSessionConfig": {
+          "plugins": [
+            {
+              "type": "local",
+              "path": "{PILOT_HOME}/sdk-directory-mcp/local-a"
+            }
+          ]
+        }
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "sdk-mcp-isolated",
+        "channelKey": "test",
+        "runId": "sdk-mcp-isolated",
+        "message": "SDK-MCP-PHASE-ISOLATED"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "sdk-mcp-shared",
+        "channelKey": "test",
+        "runId": "sdk-mcp-b",
+        "message": "SDK-MCP-PHASE-B",
+        "sdkSessionConfig": {
+          "plugins": [
+            {
+              "type": "local",
+              "path": "{PILOT_HOME}/sdk-directory-mcp/local-b"
+            }
+          ]
+        }
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "sdk-mcp-shared",
+        "channelKey": "test",
+        "runId": "sdk-mcp-clear",
+        "message": "SDK-MCP-PHASE-CLEAR",
+        "sdkSessionConfig": {}
+      },
+      "timeout": 30000
+    }
+  ],
+  "assertions": [
+    {
+      "id": "a-initial-model",
+      "path": "/provider/a-initial/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "a-initial-unique",
+      "path": "/provider/a-initial/1",
+      "exists": false
+    },
+    {
+      "id": "a-final-model",
+      "path": "/provider/a-final/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "a-final-unique",
+      "path": "/provider/a-final/1",
+      "exists": false
+    },
+    {
+      "id": "isolated-model",
+      "path": "/provider/isolated/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "isolated-unique",
+      "path": "/provider/isolated/1",
+      "exists": false
+    },
+    {
+      "id": "b-initial-model",
+      "path": "/provider/b-initial/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "b-initial-unique",
+      "path": "/provider/b-initial/1",
+      "exists": false
+    },
+    {
+      "id": "b-final-model",
+      "path": "/provider/b-final/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "b-final-unique",
+      "path": "/provider/b-final/1",
+      "exists": false
+    },
+    {
+      "id": "clear-initial-model",
+      "path": "/provider/clear-initial/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "clear-initial-unique",
+      "path": "/provider/clear-initial/1",
+      "exists": false
+    },
+    {
+      "id": "clear-final-model",
+      "path": "/provider/clear-final/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "clear-final-unique",
+      "path": "/provider/clear-final/1",
+      "exists": false
+    },
+    {
+      "id": "no-unexpected",
+      "path": "/provider/unexpected/0",
+      "exists": false
+    },
+    {
+      "id": "no-default",
+      "path": "/provider/default/0",
+      "exists": false
+    }
+  ]
+}
