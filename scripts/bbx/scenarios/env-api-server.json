@@ -1,0 +1,174 @@
+{
+ "name": "env-api-server",
+ "about": "apiServer 渠道的环境变量兜底（adapters/channel/api-server/ApiServerChannel.ts:47-55,454-460；loadEnabledChannels.ts:101-107 只从配置传 extra.port 与 apiKey）：配置里只写 enabled 时，API_SERVER_HOST / PORT / KEY / MODEL_NAME / CORS_ORIGINS 决定监听地址与端口、Bearer key、/v1/models 报告的模型名、CORS 允许源（逗号分隔、去空白；* 放行任意源）；配置里的 apiKey 与 extra.port 优先于环境变量；不设环境变量时用缺省（端口 8642 这里不碰，只比 key 为空时免鉴权）；API_SERVER_PORT 不是数字时渠道启动失败、只打一行错误，gateway 照常运行。gateway 用 serve 起在 38413，apiServer 监听在采集器 http 步骤连的 38411。",
+ "server": false,
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  apiServer:\n    enabled: true\n",
+ "files": {
+  "cfgs/with-cfg.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  apiServer:\n    enabled: true\n    apiKey: cfg-key\n    extra:\n      port: 38411\n",
+  "cfgs/disabled.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n"
+ },
+ "volatile": [
+  "\\.http\\.headers\\.date$"
+ ],
+ "steps": [
+  {
+   "serve": [
+    "server",
+    "--port",
+    "38413"
+   ],
+   "env": {
+    "API_SERVER_HOST": "127.0.0.1",
+    "API_SERVER_PORT": "38411",
+    "API_SERVER_KEY": "env-key",
+    "API_SERVER_MODEL_NAME": "bbx-env-model",
+    "API_SERVER_CORS_ORIGINS": " http://a.test , ,http://b.test"
+   },
+   "timeout": 30000,
+   "then": [
+    {
+     "http": "GET /v1/models",
+     "headers": {
+      "authorization": "Bearer env-key",
+      "content-type": "application/json"
+     }
+    },
+    {
+     "http": "POST /v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer wrong",
+      "content-type": "application/json"
+     },
+     "body": "{bad json"
+    },
+    {
+     "http": "OPTIONS /v1/chat/completions",
+     "headers": {
+      "origin": "http://a.test"
+     }
+    },
+    {
+     "http": "OPTIONS /v1/chat/completions",
+     "headers": {
+      "origin": "http://b.test"
+     }
+    },
+    {
+     "http": "OPTIONS /v1/chat/completions",
+     "headers": {
+      "origin": "http://c.test"
+     }
+    },
+    {
+     "http": "POST /v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer env-key",
+      "content-type": "application/json",
+      "origin": "http://a.test"
+     },
+     "body": "{bad json"
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server",
+    "--port",
+    "38413"
+   ],
+   "env": {
+    "API_SERVER_PORT": "38411",
+    "API_SERVER_CORS_ORIGINS": "*"
+   },
+   "timeout": 30000,
+   "then": [
+    {
+     "http": "GET /v1/models",
+     "headers": {
+      "content-type": "application/json"
+     }
+    },
+    {
+     "http": "POST /v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer wrong",
+      "content-type": "application/json"
+     },
+     "body": "{bad json"
+    },
+    {
+     "http": "OPTIONS /v1/chat/completions",
+     "headers": {
+      "origin": "http://a.test"
+     }
+    },
+    {
+     "http": "OPTIONS /v1/chat/completions",
+     "headers": {
+      "origin": "http://b.test"
+     }
+    },
+    {
+     "http": "OPTIONS /v1/chat/completions",
+     "headers": {
+      "origin": "http://c.test"
+     }
+    },
+    {
+     "http": "POST /v1/chat/completions",
+     "headers": {
+      "content-type": "application/json",
+      "origin": "http://a.test"
+     },
+     "body": "{bad json"
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server",
+    "--port",
+    "38413"
+   ],
+   "env": {
+    "API_SERVER_PORT": "1",
+    "API_SERVER_KEY": "env-key",
+    "API_SERVER_MODEL_NAME": "bbx-env-model",
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/with-cfg.yaml"
+   },
+   "timeout": 30000,
+   "then": [
+    {
+     "http": "GET /v1/models"
+    },
+    {
+     "http": "POST /v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer env-key",
+      "content-type": "application/json"
+     },
+     "body": "{bad json"
+    },
+    {
+     "http": "POST /v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer cfg-key",
+      "content-type": "application/json"
+     },
+     "body": "{bad json"
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server",
+    "--port",
+    "38413"
+   ],
+   "env": {
+    "API_SERVER_PORT": "not-a-port"
+   },
+   "timeout": 30000
+  }
+ ]
+}

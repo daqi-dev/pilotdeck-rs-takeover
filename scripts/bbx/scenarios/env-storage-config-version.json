@@ -1,0 +1,106 @@
+{
+ "name": "env-storage-config-version",
+ "about": "调用存储的其余环境变量（storage/invocationStorage.ts:25-41，读取方 cli/createLocalGateway.ts:1023 → Gateway → TurnRunner 的 InvocationLogContext）：PILOTDECK_STORAGE_CONFIG_VERSION（去首尾空白）写进 llm/invocations.jsonl 每条记录的 storageConfigVersion，空白串回落 env；PILOTDECK_DATABASE_URL / SCHEMA / TABLE 与 PILOTDECK_OBJECT_PREFIX 只被解析、全仓库没有读取方（不改任何输出）；PILOTDECK_LEGAL_* 七个变量的解析函数 resolveLegalStorageConfig（storage/legalDataStorage.ts:26）没有调用方，设置了也没有任何效果。两次 serve：一次带版本号与全部无效变量，一次版本号为空白串。",
+ "server": false,
+ "env": {
+  "PILOTDECK_STORAGE_ROOT": "{HOME}/storage",
+  "PILOTDECK_SNAPSHOT_ROOT": "{ROOT}/tmp/snapshots"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Audit\"}"
+   }
+  },
+  {
+   "name": "reply",
+   "when": [
+    "case-"
+   ],
+   "reply": {
+    "text": "ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 30000,
+   "env": {
+    "PILOTDECK_STORAGE_CONFIG_VERSION": "  v-bbx-7  ",
+    "PILOTDECK_DATABASE_URL": "postgres://127.0.0.1:9/db",
+    "PILOTDECK_DATABASE_SCHEMA": "audit",
+    "PILOTDECK_DATABASE_TABLE": "calls",
+    "PILOTDECK_OBJECT_PREFIX": "prefix/",
+    "PILOTDECK_LEGAL_STORAGE_ROOT": "{HOME}/legal",
+    "PILOTDECK_LEGAL_SNAPSHOT_ROOT": "{HOME}/legal-snap",
+    "PILOTDECK_LEGAL_DATABASE_URL": "postgres://127.0.0.1:9/legal",
+    "PILOTDECK_LEGAL_DATABASE_SCHEMA": "legal",
+    "PILOTDECK_LEGAL_DATABASE_TABLE": "records",
+    "PILOTDECK_LEGAL_OBJECT_PREFIX": "legal/",
+    "PILOTDECK_LEGAL_STORAGE_CONFIG_VERSION": "legal-v1"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-a",
+      "channelKey": "test",
+      "message": "case-a: hi",
+      "projectKey": "{HOME}/work/alpha"
+     },
+     "timeout": 20000
+    },
+    {
+     "sleep": 500
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 30000,
+   "env": {
+    "PILOTDECK_STORAGE_CONFIG_VERSION": "   "
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-b",
+      "channelKey": "test",
+      "message": "case-b: hi",
+      "projectKey": "{HOME}/work/alpha"
+     },
+     "timeout": 20000
+    },
+    {
+     "sleep": 500
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  }
+ ],
+ "files": {
+  "home/work/alpha/README.md": "alpha\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n"
+ }
+}

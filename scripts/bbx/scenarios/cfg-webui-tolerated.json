@@ -1,0 +1,142 @@
+{
+ "name": "cfg-webui-tolerated",
+ "about": "webui 段（pilot/config/loadPilotConfig.ts:356-366 只容忍不解析；:856-880 parseProxyConfig 的旧写法迁移）：webui 下任意子键（officePreview.service / binaryPath / spreadsheetMode、runtime.contextWindow、onboarding.modelConfigurationId、staffdeckCopy、未知键）都不出诊断、不进配置快照；没有顶层 proxy 时 webui.runtime.httpsProxy 迁移成 proxy.url，给 info 诊断 CONFIG_PROXY_MIGRATED，启动输出里出现这个代理；有顶层 proxy 时不迁移；httpsProxy 为空串或不是字符串、webui 或 webui.runtime 不是对象时都不迁移也不报错。比启动输出、resolve_settings 的 config 与 diagnostics。",
+ "server": false,
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+ "files": {
+  "cfgs/full.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nwebui:\n  officePreview:\n    service: libreoffice\n    binaryPath: /opt/libreoffice/soffice\n    spreadsheetMode: legacy\n  runtime:\n    contextWindow: 1000\n    httpsProxy: http://webui-proxy.invalid:9\n  onboarding:\n    modelConfigurationId: m-1\n  staffdeckCopy:\n    enabled: true\n  bogus: 1\n",
+  "cfgs/with-proxy.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nproxy:\n  url: http://top-proxy.invalid:10\nwebui:\n  runtime:\n    httpsProxy: http://webui-proxy.invalid:9\n",
+  "cfgs/empty.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nwebui:\n  runtime:\n    httpsProxy: \"\"\n",
+  "cfgs/non-string.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nwebui:\n  runtime:\n    httpsProxy: 9\n",
+  "cfgs/not-object.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nwebui: 5\n",
+  "cfgs/runtime-not-object.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nwebui:\n  runtime: http://x.invalid:1\n"
+ },
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/full.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/with-proxy.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/empty.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/non-string.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/not-object.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/runtime-not-object.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  }
+ ]
+}

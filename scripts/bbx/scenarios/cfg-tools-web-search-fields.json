@@ -1,0 +1,137 @@
+{
+ "name": "cfg-tools-web-search-fields",
+ "about": "tools.webSearch 里还没比过的键（pilot/config/parseToolsConfig.ts:163-300、tool/builtin/webSearch.ts:333-347,860-868）：customProvider.sourceField / publishedAtField 指到结果项里的字段路径，看 web_search 结果里的 source / publishedAt；已移除的 region / tavilyApiKey 只给警告 TOOLS_WEB_SEARCH_REGION_DEPRECATED / TOOLS_WEB_SEARCH_TAVILY_KEY_DEPRECATED（resolve_settings 的 diagnostics 与配置快照）；再用 serve 起三份配置：两个字段都不写（缺省 source / publishedAt，快照里没有这两个键）、sourceField 不是字符串、publishedAtField 是空白串（TOOLS_WEB_SEARCH_CUSTOM_STRING_INVALID，致命）。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ntools:\n  webSearch:\n    enabled: true\n    provider: custom\n    endpoint: {MOCK}/search\n    apiKey: search-key\n    region: us\n    tavilyApiKey: tvly-legacy\n    customProvider:\n      name: BBX Search\n      method: POST\n      queryParam: q\n      resultsPath: choices\n      titleField: finish_reason\n      urlField: index\n      snippetField: message.content\n      sourceField: message.role\n      publishedAtField: finish_reason\n",
+ "files": {
+  "cfgs/default-fields.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ntools:\n  webSearch:\n    enabled: true\n    provider: custom\n    endpoint: {MOCK}/search\n    apiKey: search-key\n    customProvider:\n      name: BBX Search\n      method: POST\n      queryParam: q\n      resultsPath: choices\n      titleField: finish_reason\n      urlField: index\n      snippetField: message.content\n",
+  "cfgs/bad-source.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ntools:\n  webSearch:\n    enabled: true\n    provider: custom\n    endpoint: {MOCK}/search\n    apiKey: search-key\n    region: us\n    tavilyApiKey: tvly-legacy\n    customProvider:\n      name: BBX Search\n      method: POST\n      queryParam: q\n      resultsPath: choices\n      titleField: finish_reason\n      urlField: index\n      snippetField: message.content\n      sourceField: 5\n      publishedAtField: finish_reason\n",
+  "cfgs/bad-published.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ntools:\n  webSearch:\n    enabled: true\n    provider: custom\n    endpoint: {MOCK}/search\n    apiKey: search-key\n    region: us\n    tavilyApiKey: tvly-legacy\n    customProvider:\n      name: BBX Search\n      method: POST\n      queryParam: q\n      resultsPath: choices\n      titleField: finish_reason\n      urlField: index\n      snippetField: message.content\n      sourceField: message.role\n      publishedAtField: \"  \"\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Gap\"}"
+   }
+  },
+  {
+   "name": "search-endpoint",
+   "when": [
+    "\"q\":"
+   ],
+   "reply": {
+    "text": "search body"
+   }
+  },
+  {
+   "name": "t01-after",
+   "when": [
+    "w01:",
+    "\"tool_call_id\":\"call_w01\""
+   ],
+   "reply": {
+    "text": "Done 01."
+   }
+  },
+  {
+   "name": "t01",
+   "when": [
+    "w01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_w01",
+     "name": "web_search",
+     "arguments": {
+      "query": "pilotdeck fields"
+     }
+    }
+   }
+  }
+ ],
+ "server": false,
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 40000,
+   "then": [
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "s-ws",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-ws",
+      "channelKey": "test",
+      "message": "w01: go"
+     },
+     "timeout": 20000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "ws": "read_session_messages",
+     "params": {
+      "sessionKey": "s-ws"
+     }
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/default-fields.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/bad-source.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/bad-published.yaml"
+   },
+   "timeout": 20000
+  }
+ ]
+}

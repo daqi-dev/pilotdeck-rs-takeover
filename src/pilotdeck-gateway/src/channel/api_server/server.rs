@@ -133,12 +133,22 @@ pub(crate) async fn accept_loop(
     while tasks.join_next().await.is_some() {}
 }
 
-pub(crate) async fn resolve_address(host: &str, port: f64) -> io::Result<std::net::SocketAddr> {
+/// Node's synchronous `server.listen` port check: anything that is not an
+/// integer in 0..=65535 throws `RangeError [ERR_SOCKET_BAD_PORT]`, which the
+/// TS `start` catch prints as-is (`${e}` of a RangeError, no `Error:` prefix).
+pub(crate) fn bad_port_message(port: f64) -> Option<String> {
     if !port.is_finite() || port < 0.0 || port > 65535.0 || port.fract() != 0.0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "options.port should be >= 0 and < 65536",
+        return Some(format!(
+            "RangeError [ERR_SOCKET_BAD_PORT]: options.port should be >= 0 and < 65536. Received type number ({}).",
+            format_port(port)
         ));
+    }
+    None
+}
+
+pub(crate) async fn resolve_address(host: &str, port: f64) -> io::Result<std::net::SocketAddr> {
+    if let Some(message) = bad_port_message(port) {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, message));
     }
     let host = if host.is_empty() { "0.0.0.0" } else { host };
     let mut addresses = lookup_host((host, port as u16)).await?;

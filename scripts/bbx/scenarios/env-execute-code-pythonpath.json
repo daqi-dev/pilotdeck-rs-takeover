@@ -1,0 +1,141 @@
+{
+ "name": "env-execute-code-pythonpath",
+ "about": "execute_code 子进程环境里由宿主环境决定的部分（tool/builtin/executeCode.ts:805-822 buildChildEnv；transport 选择见 tool/execution-world/ExecutionTransportPort.ts:33）：宿主有 PYTHONPATH 时临时根前置、原值保留在后面（能 import 原值目录里的模块）；宿主 PYTHONPATH 为空串时只有临时根；非 Windows 走 uds，子进程里没有 PILOTDECK_RPC_HOST / PORT / TOKEN（只有 PILOTDECK_RPC_SOCKET）。两次 serve 分别带不同的 PYTHONPATH，比工具结果。",
+ "server": false,
+ "files": {
+  "pylib/bbxmod.py": "VALUE = 'from-host-pythonpath'\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Env\"}"
+   }
+  },
+  {
+   "name": "after-1",
+   "when": [
+    "\"tool_call_id\":\"call_env1\""
+   ],
+   "reply": {
+    "text": "Done."
+   }
+  },
+  {
+   "name": "run-1",
+   "when": [
+    "env-run1:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_env1",
+     "name": "execute_code",
+     "arguments": {
+      "code": "import os\npp = os.environ['PYTHONPATH'].split(os.pathsep)\nprint(pp[0] == os.environ['PILOTDECK_EXECUTE_CODE_TEMP_ROOT'], pp[1:])\nprint(sorted(k for k in os.environ if k.startswith('PILOTDECK_RPC')))\ntry:\n    import bbxmod\n    print('bbxmod', bbxmod.VALUE)\nexcept ImportError as e:\n    print('no bbxmod')\n"
+     }
+    }
+   }
+  },
+  {
+   "name": "after-2",
+   "when": [
+    "\"tool_call_id\":\"call_env2\""
+   ],
+   "reply": {
+    "text": "Done."
+   }
+  },
+  {
+   "name": "run-2",
+   "when": [
+    "env-run2:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_env2",
+     "name": "execute_code",
+     "arguments": {
+      "code": "import os\npp = os.environ['PYTHONPATH'].split(os.pathsep)\nprint(pp[0] == os.environ['PILOTDECK_EXECUTE_CODE_TEMP_ROOT'], pp[1:])\nprint(sorted(k for k in os.environ if k.startswith('PILOTDECK_RPC')))\ntry:\n    import bbxmod\n    print('bbxmod', bbxmod.VALUE)\nexcept ImportError as e:\n    print('no bbxmod')\n"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PYTHONPATH": "{ROOT}/pylib:{ROOT}/missing-dir"
+   },
+   "timeout": 40000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "s-env1",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-env1",
+      "channelKey": "test",
+      "message": "env-run1: go"
+     },
+     "timeout": 30000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PYTHONPATH": ""
+   },
+   "timeout": 40000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "s-env2",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-env2",
+      "channelKey": "test",
+      "message": "env-run2: go"
+     },
+     "timeout": 30000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  }
+ ]
+}

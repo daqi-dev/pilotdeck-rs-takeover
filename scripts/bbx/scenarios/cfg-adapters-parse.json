@@ -1,0 +1,108 @@
+{
+ "name": "cfg-adapters-parse",
+ "about": "adapters 段里没比过的键（pilot/config/parseGatewayConfig.ts:55-170；读取方 cli/ChannelAdapterBundle.ts:128-170、adapters/channel/loadEnabledChannels.ts、各渠道构造函数）：cli / tui.autoConnectServer 与 feishu.defaultSessionLabel 只解析不使用；feishu.permissionMode、weixin.enabled、qq.*、12 个通用平台渠道（telegram … homeassistant）的 enabled / token / apiKey / webhookUrl / extra。解析全部静默：类型不对的值回落缺省或丢掉，不出诊断（比 resolve_settings 的配置快照与 diagnostics）；adapters 不是对象致命 ADAPTERS_CONFIG_INVALID。最后两份把 bluebubbles、wecomCallback 两个通用渠道enabled 但不给凭据，比服务启动输出：每个渠道只报缺依赖 / 缺凭据，不联网；再带上部分渠道环境变量（WECOM_CORP_ID / WECOM_CB_TOKEN / WECOM_ENCODING_AES_KEY 让企业微信回调渠道越过第一道检查、报缺 secret / agentId；只给 BLUEBUBBLES_SERVER_URL 时仍报缺凭据）。其余十个通用渠道（含 slack）enabled 时的启动行为另见 cfg-adapters-unmigrated，证明环境变量兜底被读到且仍不联网。",
+ "server": false,
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+ "files": {
+  "cfgs/parsed.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  cli:\n    autoConnectServer: false\n  tui:\n    autoConnectServer: true\n  feishu:\n    enabled: false\n    appId: cli_bbx\n    defaultSessionLabel: ops\n    permissionMode: bypassPermissions\n  weixin:\n    enabled: false\n  qq:\n    enabled: false\n    appId: qq-app\n    clientSecret: qq-secret\n    allowGroups: [g1, g2]\n    triggerPrefixes: ['/ai', '!']\n    maxMessageLength: 1500\n  telegram:\n    enabled: false\n    token: tok-telegram\n    apiKey: key-telegram\n    webhookUrl: http://127.0.0.1:9/telegram\n    extra:\n      note: telegram\n  discord:\n    enabled: false\n    token: tok-discord\n    apiKey: key-discord\n    webhookUrl: http://127.0.0.1:9/discord\n    extra:\n      note: discord\n  slack:\n    enabled: false\n    token: tok-slack\n    apiKey: key-slack\n    webhookUrl: http://127.0.0.1:9/slack\n    extra:\n      note: slack\n  matrix:\n    enabled: false\n    token: tok-matrix\n    apiKey: key-matrix\n    webhookUrl: http://127.0.0.1:9/matrix\n    extra:\n      note: matrix\n  mattermost:\n    enabled: false\n    token: tok-mattermost\n    apiKey: key-mattermost\n    webhookUrl: http://127.0.0.1:9/mattermost\n    extra:\n      note: mattermost\n  signal:\n    enabled: false\n    token: tok-signal\n    apiKey: key-signal\n    webhookUrl: http://127.0.0.1:9/signal\n    extra:\n      note: signal\n  whatsapp:\n    enabled: false\n    token: tok-whatsapp\n    apiKey: key-whatsapp\n    webhookUrl: http://127.0.0.1:9/whatsapp\n    extra:\n      note: whatsapp\n  bluebubbles:\n    enabled: false\n    token: tok-bluebubbles\n    apiKey: key-bluebubbles\n    webhookUrl: http://127.0.0.1:9/bluebubbles\n    extra:\n      note: bluebubbles\n  dingtalk:\n    enabled: false\n    token: tok-dingtalk\n    apiKey: key-dingtalk\n    webhookUrl: http://127.0.0.1:9/dingtalk\n    extra:\n      note: dingtalk\n  wecomCallback:\n    enabled: false\n    token: tok-wecomCallback\n    apiKey: key-wecomCallback\n    webhookUrl: http://127.0.0.1:9/wecomCallback\n    extra:\n      note: wecomCallback\n  email:\n    enabled: false\n    token: tok-email\n    apiKey: key-email\n    webhookUrl: http://127.0.0.1:9/email\n    extra:\n      note: email\n  homeassistant:\n    enabled: false\n    token: tok-homeassistant\n    apiKey: key-homeassistant\n    webhookUrl: http://127.0.0.1:9/homeassistant\n    extra:\n      note: homeassistant\n",
+  "cfgs/invalid.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  cli:\n    autoConnectServer: \"no\"\n  tui: true\n  feishu:\n    enabled: \"yes\"\n    defaultSessionLabel: 7\n    permissionMode: yolo\n    connectionMode: carrier-pigeon\n    domainName: example\n  weixin:\n    enabled: 1\n  qq:\n    enabled: false\n    appId: 5\n    allowGroups: [g1, 2, null]\n    triggerPrefixes: '/ai'\n    maxMessageLength: '1500'\n  telegram:\n    enabled: \"true\"\n    token: 5\n    webhookUrl: [x]\n    extra: notanobject\n  discord:\n    enabled: \"true\"\n    token: 5\n    webhookUrl: [x]\n    extra: notanobject\n  slack:\n    enabled: \"true\"\n    token: 5\n    webhookUrl: [x]\n    extra: notanobject\n  matrix:\n    enabled: \"true\"\n    token: 5\n    webhookUrl: [x]\n    extra: notanobject\n  mattermost:\n    enabled: \"true\"\n    token: 5\n    webhookUrl: [x]\n    extra: notanobject\n  signal:\n    enabled: \"true\"\n    token: 5\n    webhookUrl: [x]\n    extra: notanobject\n  whatsapp:\n    enabled: \"true\"\n    token: 5\n    webhookUrl: [x]\n    extra: notanobject\n  bluebubbles:\n    enabled: \"true\"\n    token: 5\n    webhookUrl: [x]\n    extra: notanobject\n  dingtalk:\n    enabled: \"true\"\n    token: 5\n    webhookUrl: [x]\n    extra: notanobject\n  wecomCallback:\n    enabled: \"true\"\n    token: 5\n    webhookUrl: [x]\n    extra: notanobject\n  email:\n    enabled: \"true\"\n    token: 5\n    webhookUrl: [x]\n    extra: notanobject\n  homeassistant:\n    enabled: \"true\"\n    token: 5\n    webhookUrl: [x]\n    extra: notanobject\n  bogusPlatform:\n    enabled: true\n",
+  "cfgs/not-object.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters: [telegram]\n",
+  "cfgs/bluebubbles-no-creds.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  bluebubbles:\n    enabled: true\n",
+  "cfgs/bluebubbles-env.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  bluebubbles:\n    enabled: true\n",
+  "cfgs/wecom-callback-no-creds.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  wecomCallback:\n    enabled: true\n",
+  "cfgs/wecom-callback-env.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  wecomCallback:\n    enabled: true\n"
+ },
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/parsed.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/invalid.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/not-object.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/bluebubbles-no-creds.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/bluebubbles-env.yaml",
+    "BLUEBUBBLES_SERVER_URL": "http://127.0.0.1:9"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/wecom-callback-no-creds.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/wecom-callback-env.yaml",
+    "WECOM_CORP_ID": "corp-env",
+    "WECOM_CB_TOKEN": "tok-env",
+    "WECOM_ENCODING_AES_KEY": "aes-env"
+   },
+   "timeout": 20000
+  }
+ ]
+}
