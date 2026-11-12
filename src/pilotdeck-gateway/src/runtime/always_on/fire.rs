@@ -940,10 +940,9 @@ mod tests {
             .await
             .expect("#2294 run");
         negative_assert_eq!(outcome.outcome, "no_plan".to_string(), "#2294 outcome");
-        let state: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(&paths.state_file).expect("#2294 state"),
-        )
-        .expect("#2294 state json");
+        let state: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&paths.state_file).expect("#2294 state"))
+                .expect("#2294 state json");
         negative_assert_eq!(state["lastFireOutcome"], "no_plan", "#2294 state outcome");
         assert!(state["dormant"].is_object());
         let history = std::fs::read_to_string(&paths.run_history_file).expect("#2294 history");
