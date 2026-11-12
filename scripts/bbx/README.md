@@ -39,6 +39,8 @@ node scripts/bbx/diff.mjs /tmp/a.json /tmp/b.json          # 两份基线互比�
 
 采集在一个槽位里是独占的（固定目录和端口；缺省槽位用 `/private/tmp/pdrs-bbx` 和 38411–38414），`check.mjs` 遇到锁会排队等。要并行跑，给每个并行方一个不同的槽位：`BBX_SLOT=1 node scripts/bbx/check.mjs`（1–8）。槽位只把目录名和端口换成等长的另一套，场景里写死的同名路径和端口读入时一并替换；两侧在同一槽位里跑，结论不受影响，但不同槽位的采集产物不要互相比。
 
+改 `diff.mjs` 之后先跑比较器自测：`node scripts/bbx/selftest.mjs`。它给比较器喂成对的小产物，检查每条归一化规则该抹的抹掉了、规则旁边「差一点」的改动仍然报差异。新增归一化规则时同时加这两类例子。
+
 ## 场景格式
 
 `scenarios/*.json`：

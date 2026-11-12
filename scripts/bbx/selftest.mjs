@@ -1,0 +1,93 @@
+#!/usr/bin/env node
+// 黑盒对拍 · 比较器自测。给 diff.mjs 喂成对的小产物，检查两件事：
+//   该抹掉的（基线自己两次也不同的值）确实判 SAME；
+//   抹掉之外的任何改动仍然判 DIFF——每条归一化规则旁边都放一个「差一点就该报」的例子。
+// 改 diff.mjs 之后先跑它：node scripts/bbx/selftest.mjs（退出码 0 表示全部符合预期）。
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bbx-selftest-'));
+const verdict = (a, b, extra = []) => {
+  fs.writeFileSync(path.join(dir, 'a.json'), JSON.stringify(a));
+  fs.writeFileSync(path.join(dir, 'b.json'), JSON.stringify(b));
+  const r = spawnSync(process.execPath, [path.join(here, 'diff.mjs'), path.join(dir, 'a.json'), path.join(dir, 'b.json'), '--quiet', ...extra], { encoding: 'utf8' });
+  return r.stdout.trim().split('\n').pop().split(' ')[0];
+};
+const art = (steps, more = {}) => ({ scenario: 't', side: 'x', steps, notifications: [], provider: {}, tree: {}, ...more });
+const frame = (v) => art([{ step: { ws: 'm' }, frames: [v] }]);
+const U1 = '11111111-1111-4111-8111-111111111111', U2 = '22222222-2222-4222-8222-222222222222', U3 = '33333333-3333-4333-8333-333333333333';
+const H1 = 'a'.repeat(64), H2 = 'b'.repeat(64);
+const rec = (type, extra = {}) => ({ type, turnId: 't1', sequence: 0, entryId: 'e', parentEntryId: null, createdAt: '2026-01-01T00:00:00.000Z', ...extra });
+const title = rec('session_metadata', { metadata: { aiTitle: 'T', titleSource: 'provider' } });
+const jsonl = (records) => art([], { tree: { '/home/x/chats/s.jsonl': { mode: '644', jsonl: records.map((r, i) => ({ ...r, sequence: i + 1, entryId: `e${i}` })) } } });
+
+const cases = [
+  // [说明, a, b, 期望, diff.mjs 额外参数]
+  ['相同', frame({ a: 1 }), frame({ a: 1 }), 'SAME'],
+  ['值不同', frame({ a: 1 }), frame({ a: 2 }), 'DIFF'],
+  ['多一个键', frame({ a: 1 }), frame({ a: 1, b: 2 }), 'DIFF'],
+  ['键顺序不同', frame({ a: 1, b: 2 }), frame({ b: 2, a: 1 }), 'DIFF'],
+  ['类型不同', frame({ a: 1 }), frame({ a: '1' }), 'DIFF'],
+  ['数组顺序不同', frame({ a: [1, 2] }), frame({ a: [2, 1] }), 'DIFF'],
+  ['不比较 side / startMs / serverLog', art([], { side: 'ts', startMs: 1, serverLog: 'x' }), art([], { side: 'rust', startMs: 9, serverLog: 'y' }), 'SAME'],
+
+  ['UUID 不同', frame({ id: U1 }), frame({ id: U2 }), 'SAME'],
+  ['UUID 的相等关系变了', frame({ a: U1, b: U1 }), frame({ a: U2, b: U3 }), 'DIFF'],
+  ['UUID 对非 UUID', frame({ id: U1 }), frame({ id: 'fixed' }), 'DIFF'],
+  ['ISO 时间不同', frame({ t: '2026-01-01T00:00:00.000Z' }), frame({ t: '2026-02-02T11:22:33.444Z' }), 'SAME'],
+  ['ISO 时间对空值', frame({ t: '2026-01-01T00:00:00.000Z' }), frame({ t: null }), 'DIFF'],
+  ['毫秒时间戳不同', frame({ t: 1794000000000 }), frame({ t: 1794000009999 }), 'SAME'],
+  ['毫秒时间戳整数对小数', frame({ t: 1794000000000 }), frame({ t: 1794000000000.5 }), 'DIFF'],
+  ['范围外的大数不抹', frame({ t: 1294000000000 }), frame({ t: 1294000000001 }), 'DIFF'],
+  ['文本里的毫秒时间戳', frame({ s: '"lastModified": 1794000000000,' }), frame({ s: '"lastModified": 1794000009999,' }), 'SAME'],
+  ['十六进制串里的 13 位数字不抹', frame({ s: 'ab1794000000000cd' }), frame({ s: 'ab1794000009999cd' }), 'DIFF'],
+  ['pid 键', frame({ pid: 100, ownerPid: 5 }), frame({ pid: 200, ownerPid: 6 }), 'SAME'],
+  ['别的键里的小整数不抹', frame({ count: 100 }), frame({ count: 200 }), 'DIFF'],
+  ['文本里的 pid=', frame({ s: 'task pid=123 running' }), frame({ s: 'task pid=45678 running' }), 'SAME'],
+  ['requestFingerprint', frame({ requestFingerprint: 'aaa' }), frame({ requestFingerprint: 'bbb' }), 'SAME'],
+  ['别的指纹类字段不抹', frame({ contentHash: 'aaa' }), frame({ contentHash: 'bbb' }), 'DIFF'],
+  ['耗时键', frame({ durationMs: 5, duration_ms: 1, duration_seconds: 0.04, waitedMs: 0, delayMs: 300 }), frame({ durationMs: 77, duration_ms: 9, duration_seconds: 0.1, waitedMs: 1, delayMs: 412 }), 'SAME'],
+  ['耗时键缺失', frame({ durationMs: 5 }), frame({}), 'DIFF'],
+  ['别的毫秒字段不抹', frame({ timeoutMs: 5 }), frame({ timeoutMs: 6 }), 'DIFF'],
+  ['文本里的耗时', frame({ s: 'status: ok\nduration_seconds: 0.04\n- duration_ms: 3' }), frame({ s: 'status: ok\nduration_seconds: 0.1\n- duration_ms: 12' }), 'SAME'],
+  ['文本里耗时旁边的字', frame({ s: 'status: ok\nduration_seconds: 0.04' }), frame({ s: 'status: fail\nduration_seconds: 0.04' }), 'DIFF'],
+  ['execute_code 临时目录后缀', frame({ s: '/tmp/pilotdeck_execute_code_AbC123/script.py' }), frame({ s: '/tmp/pilotdeck_execute_code_Zz9Yx8/script.py' }), 'SAME'],
+  ['execute_code 临时目录的父路径', frame({ s: '/tmp/pilotdeck_execute_code_AbC123/script.py' }), frame({ s: '/var/pilotdeck_execute_code_AbC123/script.py' }), 'DIFF'],
+  ['溢出目录里的进程号', frame({ s: '/tmp/pilotdeck-tool-output/123/s/x.txt' }), frame({ s: '/tmp/pilotdeck-tool-output/4567/s/x.txt' }), 'SAME'],
+  ['溢出目录换了位置', frame({ s: '/tmp/pilotdeck-tool-output/123/s/x.txt' }), frame({ s: '/home/tool-results/s/x.txt' }), 'DIFF'],
+  ['快照 id', frame({ snapshotId: H1, p: `/x/snapshots/${H1}/m.json` }), frame({ snapshotId: H2, p: `/x/snapshots/${H2}/m.json` }), 'SAME'],
+  ['快照 id 与路径不再对应', frame({ snapshotId: H1, p: `/x/snapshots/${H1}/m.json` }), frame({ snapshotId: H1, p: `/x/snapshots/${H2}/m.json` }), 'DIFF'],
+  ['别处的 64 位哈希不抹', frame({ sha256: H1 }), frame({ sha256: H2 }), 'DIFF'],
+  ['快照恢复目录后缀', frame({ s: '/w/.pilotdeck-restore-AbC123' }), frame({ s: '/w/.pilotdeck-restore-Zz9Yx8' }), 'SAME'],
+  ['Node 运行时警告', frame({ stderr: '(node:1) ExperimentalWarning: SQLite is an experimental feature\n(Use `node --trace-warnings ...` to show where the warning was created)\nreal\n' }), frame({ stderr: 'real\n' }), 'SAME'],
+  ['警告之外的 stderr', frame({ stderr: '(node:1) ExperimentalWarning: x\n(Use `node --trace-warnings ...` to show where the warning was created)\nreal\n' }), frame({ stderr: 'other\n' }), 'DIFF'],
+
+  ['带名字的数组少一个', frame({ tools: [{ name: 'a' }, { name: 'b' }] }), frame({ tools: [{ name: 'a' }] }), 'DIFF'],
+  ['带名字的数组顺序不同', frame({ tools: [{ name: 'a' }, { name: 'b' }] }), frame({ tools: [{ name: 'b' }, { name: 'a' }] }), 'DIFF'],
+  ['带名字的数组里同名元素内容不同', frame({ tools: [{ name: 'a', d: 1 }] }), frame({ tools: [{ name: 'a', d: 2 }] }), 'DIFF'],
+
+  ['标题记录与循环开头的记录换位', jsonl([rec('accepted_input'), title, rec('step_started'), rec('model_request')]), jsonl([rec('accepted_input'), rec('step_started'), title, rec('model_request')]), 'SAME'],
+  ['标题记录落到 model_request 之后', jsonl([rec('accepted_input'), title, rec('step_started'), rec('model_request')]), jsonl([rec('accepted_input'), rec('step_started'), rec('model_request'), title]), 'DIFF'],
+  ['标题内容不同', jsonl([rec('accepted_input'), title]), jsonl([rec('accepted_input'), { ...title, metadata: { aiTitle: 'X', titleSource: 'provider' } }]), 'DIFF'],
+  ['别的记录换位', jsonl([rec('accepted_input'), rec('step_started'), rec('model_request')]), jsonl([rec('accepted_input'), rec('model_request'), rec('step_started')]), 'DIFF'],
+  ['少一条记录', jsonl([rec('accepted_input'), rec('step_started')]), jsonl([rec('accepted_input')]), 'DIFF'],
+
+  ['volatile 路径被略过', art([{ step: {}, frames: [{ used: 1 }] }], { volatile: ['\\.used$'] }), art([{ step: {}, frames: [{ used: 2 }] }], { volatile: ['\\.used$'] }), 'SAME'],
+  ['volatile 之外照比', art([{ step: {}, frames: [{ used: 1, x: 1 }] }], { volatile: ['\\.used$'] }), art([{ step: {}, frames: [{ used: 2, x: 2 }] }], { volatile: ['\\.used$'] }), 'DIFF'],
+  ['accepted 路径被略过', art([{ step: {}, frames: [{ v: 1 }] }], { accepted: [{ id: 'i', why: 'w', paths: ['\\.v$'] }] }), art([{ step: {}, frames: [{ v: 2 }] }], { accepted: [{ id: 'i', why: 'w', paths: ['\\.v$'] }] }), 'SAME'],
+  ['accepted 一处没命中算差异', art([{ step: {}, frames: [{ v: 1 }] }], { accepted: [{ id: 'i', why: 'w', paths: ['\\.v$'] }] }), art([{ step: {}, frames: [{ v: 1 }] }], { accepted: [{ id: 'i', why: 'w', paths: ['\\.v$'] }] }), 'DIFF'],
+  ['自比时不查 accepted 是否命中', art([{ step: {}, frames: [{ v: 1 }] }], { accepted: [{ id: 'i', why: 'w', paths: ['\\.v$'] }] }), art([{ step: {}, frames: [{ v: 1 }] }], { accepted: [{ id: 'i', why: 'w', paths: ['\\.v$'] }] }), 'SAME', ['--self']],
+];
+
+let bad = 0;
+for (const [name, a, b, expected, extra] of cases) {
+  const got = verdict(a, b, extra);
+  if (got !== expected) { bad++; console.log(`不符合预期  ${name}：期望 ${expected}，实际 ${got}`); }
+}
+fs.rmSync(dir, { recursive: true, force: true });
+console.log(bad ? `比较器自测：${cases.length - bad}/${cases.length} 符合预期` : `比较器自测：${cases.length}/${cases.length} 符合预期`);
+process.exit(bad ? 1 : 0);
