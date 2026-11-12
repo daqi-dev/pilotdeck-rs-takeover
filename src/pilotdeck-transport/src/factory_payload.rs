@@ -420,19 +420,34 @@ fn timeline(value: Option<&JsValue>) -> Option<JsValue> {
     if o.get("version").and_then(JsValue::as_number) != Some(1.0) {
         return None;
     }
-    let mut out = object([
-        ("version", JsValue::Number(1.0)),
-        ("turnId", JsValue::String(string(o.get("turnId"))?)),
-        ("id", JsValue::String(string(o.get("id"))?)),
-    ]);
-    copy_string(&mut out, o, "previousId");
-    out.insert("order".into(), JsValue::Number(integer(o.get("order"))?));
-    out.insert(
-        "revision".into(),
-        JsValue::Number(integer(o.get("revision"))?),
-    );
-    if let Some(n) = integer(o.get("offset")) {
-        out.insert("offset".into(), JsValue::Number(n));
+    let turn = string(o.get("turnId"))?;
+    let id = string(o.get("id"))?;
+    let order = integer(o.get("order"))?;
+    let revision = integer(o.get("revision"))?;
+    // The kept fields stay in the block's own key order, as in
+    // `message_metadata`: the in-process baseline hands the session's
+    // messages to the loop as they are, and a timeline whose `previousId`
+    // was attached after `revision` keeps it last in the next turn's
+    // request history.
+    let mut out = JsObject::new();
+    for (key, _) in o.entries() {
+        let value = match () {
+            _ if key.equals_str("version") => JsValue::Number(1.0),
+            _ if key.equals_str("turnId") => JsValue::String(turn.clone()),
+            _ if key.equals_str("id") => JsValue::String(id.clone()),
+            _ if key.equals_str("previousId") => match string(o.get("previousId")) {
+                Some(previous) => JsValue::String(previous),
+                None => continue,
+            },
+            _ if key.equals_str("order") => JsValue::Number(order),
+            _ if key.equals_str("revision") => JsValue::Number(revision),
+            _ if key.equals_str("offset") => match integer(o.get("offset")) {
+                Some(offset) => JsValue::Number(offset),
+                None => continue,
+            },
+            _ => continue,
+        };
+        out.insert(key.clone(), value);
     }
     Some(JsValue::Object(out))
 }

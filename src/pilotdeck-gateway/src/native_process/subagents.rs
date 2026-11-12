@@ -1070,6 +1070,17 @@ impl Fork {
         request: ForkRequest,
         context: ToolRunContext,
     ) -> Result<ForkReport, JsString> {
+        self.run_reporting_start(request, context, None).await
+    }
+
+    /// [`Self::run`], signalling `started` once the parent-side
+    /// `subagent_started` record is durable.
+    async fn run_reporting_start(
+        self,
+        request: ForkRequest,
+        context: ToolRunContext,
+        started: Option<tokio::sync::oneshot::Sender<()>>,
+    ) -> Result<ForkReport, JsString> {
         let definition = definitions_from_config(&self.parent.config)
             .into_iter()
             .find(|definition| definition.id == text(&request.definition_id))
@@ -1112,6 +1123,9 @@ impl Fork {
             ("subagentSessionId", JsValue::String(child_session.clone())),
         ]))
         .await?;
+        if let Some(started) = started {
+            let _ = started.send(());
+        }
         // `dispatchSubagentLifecycle("SubagentStart")` between the durable
         // start and the start event (OneShotSubagentPort.ts:129-147).
         self.lifecycle(
@@ -1263,6 +1277,15 @@ impl SubagentFork for Fork {
                         text(&request.definition_id)
                     ))
                 })?;
+            // `BackgroundSubagentRuntime.start` runs the fork from a
+            // microtask queued before `launchBackground` resolves, and the
+            // fork's synchronous prefix (`OneShotSubagentPort.ts:94-128`)
+            // records `subagent_started` in the parent transcript before
+            // the parent's tool runtime regains control: the start record
+            // lands ahead of the `agent` call's `tool_result`. The task id
+            // is therefore returned only once that record is durable (or the
+            // fork failed before writing it).
+            let (started, recorded) = tokio::sync::oneshot::channel();
             let task = background.start(crate::runtime::background::StartBackgroundSubagentInput {
                 kind: Some(crate::runtime::background::SubagentKind::Background),
                 session_id: fork.session.clone(),
@@ -1273,10 +1296,13 @@ impl SubagentFork for Fork {
                 run: Box::new(move |signal| {
                     Box::pin(async move {
                         let context = detached_context(&context, signal);
-                        fork.run(request, context).await.map(|_| ())
+                        fork.run_reporting_start(request, context, Some(started))
+                            .await
+                            .map(|_| ())
                     })
                 }),
             });
+            let _ = recorded.await;
             Ok(task.task_id)
         }))
     }
