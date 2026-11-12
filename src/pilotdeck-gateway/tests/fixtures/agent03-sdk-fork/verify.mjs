@@ -6,7 +6,7 @@ import {createHash} from 'node:crypto';
 const [artifactPath,scenarioPath]=process.argv.slice(2);assert.ok(artifactPath&&scenarioPath);
 const bytes=fs.readFileSync(artifactPath),scenarioBytes=fs.readFileSync(scenarioPath);
 const a=JSON.parse(bytes),scenario=JSON.parse(scenarioBytes);const sha=x=>createHash('sha256').update(x).digest('hex');
-assert.equal(a.scenario,scenario.name);assert.ok(['ts','rust'].includes(a.side));assert.ok(Array.isArray(a.failures));assert.deepEqual(a.failures.filter(f=>!f.expected),[]);
+assert.equal(a.scenario,scenario.name);assert.ok(['ts','rust'].includes(a.side));assert.equal(a.evidence?.schema,1);assert.equal(a.evidence?.side,a.side);assert.equal(a.evidence?.scenario?.sha256,sha(scenarioBytes),'artifact bound to exact scenario bytes');assert.equal(a.evidence?.inputs?.ts?.commit,'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85');assert.ok(a.evidence?.runId);assert.ok(Array.isArray(a.failures));assert.deepEqual(a.failures.filter(f=>!f.expected),[]);
 const one=name=>{const rows=a.provider?.[name];assert.equal(rows?.length,1,`${name}: actual model request count`);return rows[0].body};
 const text=v=>typeof v==='string'?v:JSON.stringify(v);const names=b=>(b.tools??[]).map(t=>t.function?.name??t.name);
 const parent=one('parent'),child=one('child-alpha'),beta=one('child-beta'),mcp=one('child-mcp'),after=one('child-after-mcp'),observer=one('observer'),second=one('second');one('parent-after');one('parent-check');

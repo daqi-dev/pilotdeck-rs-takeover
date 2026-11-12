@@ -184,7 +184,22 @@
           }
         }
       },
-      "timeout": 60000
+      "timeout": 60000,
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request",
+            "toolName": "mcp__agent03-private__echo"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "agent03-parent",
+            "requestId": "{event.requestId}",
+            "decision": "allow"
+          },
+          "count": 1
+        }
+      ]
     },
     {
       "sleep": 1200
