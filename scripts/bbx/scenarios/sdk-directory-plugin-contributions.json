@@ -1,0 +1,332 @@
+{
+  "name": "sdk-directory-plugin-contributions",
+  "about": "正式WS submit_turn.sdkSessionConfig.plugins加载Gateway本地绝对data目录（放sdk-directory-plugins，避免被user/project自动发现）：同session snapshot完整名command展开与模型/落盘一致、selected read_skill实际内容、hidden拒读、outputStyle实际系统提示；独立session无目录贡献；同session切换B再{}清空，原历史保留而系统scope更新；不存在目录失败不调模型。候选需E0固定TS两轮与真实negative校准后再Rust，尚未宣称通过。MCP连接生命周期另立专项，此场景不含MCP假配置。",
+  "files": {
+    "home/.pilotdeck/sdk-directory-plugins/local-a/plugin.json": {
+      "name": "sdk-directory-a",
+      "version": "1.0.0",
+      "description": "Independently authored SDK-local data fixture"
+    },
+    "home/.pilotdeck/sdk-directory-plugins/local-a/commands/probe.md": "---\ndescription: SDK-DIR-COMMAND-DESC-A\n---\nSDK-DIR-COMMAND-A\n",
+    "home/.pilotdeck/sdk-directory-plugins/local-a/skills/chosen/SKILL.md": "---\nname: chosen\ndescription: SDK-DIR-DESC-A\n---\nSDK-DIR-SKILL-A\n",
+    "home/.pilotdeck/sdk-directory-plugins/local-a/skills/hidden/SKILL.md": "---\nname: hidden\ndescription: SDK-DIR-HIDDEN-DESC-A\n---\nSDK-DIR-HIDDEN-A\n",
+    "home/.pilotdeck/sdk-directory-plugins/local-a/output-styles/blue.md": "---\ndescription: SDK directory style A\n---\nSDK-DIR-STYLE-A\n",
+    "home/.pilotdeck/sdk-directory-plugins/local-b/plugin.json": {
+      "name": "sdk-directory-b",
+      "version": "1.0.0",
+      "description": "Independently authored SDK-local data fixture"
+    },
+    "home/.pilotdeck/sdk-directory-plugins/local-b/commands/probe.md": "---\ndescription: SDK-DIR-COMMAND-DESC-B\n---\nSDK-DIR-COMMAND-B\n",
+    "home/.pilotdeck/sdk-directory-plugins/local-b/skills/chosen/SKILL.md": "---\nname: chosen\ndescription: SDK-DIR-DESC-B\n---\nSDK-DIR-SKILL-B\n",
+    "home/.pilotdeck/sdk-directory-plugins/local-b/skills/hidden/SKILL.md": "---\nname: hidden\ndescription: SDK-DIR-HIDDEN-DESC-B\n---\nSDK-DIR-HIDDEN-B\n",
+    "home/.pilotdeck/sdk-directory-plugins/local-b/output-styles/red.md": "---\ndescription: SDK directory style B\n---\nSDK-DIR-STYLE-B\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"SDK directory plugin fixture\"}"
+      }
+    },
+    {
+      "name": "cleared",
+      "when": [
+        "SDK-DIR-CLEARED"
+      ],
+      "reply": {
+        "text": "SDK-DIR-CLEARED-DONE"
+      }
+    },
+    {
+      "name": "isolated",
+      "when": [
+        "SDK-DIR-ISOLATED"
+      ],
+      "reply": {
+        "text": "SDK-DIR-ISOLATED-DONE"
+      }
+    },
+    {
+      "name": "b-final",
+      "when": [
+        "SDK-DIR-PHASE-B",
+        "\"tool_call_id\":\"call_sdk_dir_b\""
+      ],
+      "reply": {
+        "text": "SDK-DIR-B-DONE"
+      }
+    },
+    {
+      "name": "b-initial",
+      "when": [
+        "SDK-DIR-PHASE-B"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_sdk_dir_b",
+          "name": "read_skill",
+          "arguments": {
+            "skillName": "local-b:chosen"
+          }
+        }
+      }
+    },
+    {
+      "name": "a-final",
+      "when": [
+        "SDK-DIR-PHASE-A",
+        "\"tool_call_id\":\"call_sdk_dir_hidden\""
+      ],
+      "reply": {
+        "text": "SDK-DIR-A-DONE"
+      }
+    },
+    {
+      "name": "a-hidden",
+      "when": [
+        "SDK-DIR-PHASE-A",
+        "\"tool_call_id\":\"call_sdk_dir_a\""
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_sdk_dir_hidden",
+          "name": "read_skill",
+          "arguments": {
+            "skillName": "local-a:hidden"
+          }
+        }
+      }
+    },
+    {
+      "name": "a-initial",
+      "when": [
+        "SDK-DIR-PHASE-A"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_sdk_dir_a",
+          "name": "read_skill",
+          "arguments": {
+            "skillName": "local-a:chosen"
+          }
+        }
+      }
+    },
+    {
+      "name": "unexpected",
+      "reply": {
+        "text": "SDK-DIR-UNEXPECTED"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "sdk-dir-shared",
+        "channelKey": "test",
+        "runId": "sdk-dir-a",
+        "message": "/local-a:probe SDK-DIR-PHASE-A",
+        "sdkSessionConfig": {
+          "plugins": [
+            {
+              "type": "local",
+              "path": "{PILOT_HOME}/sdk-directory-plugins/local-a"
+            }
+          ],
+          "skills": [
+            "local-a:chosen"
+          ],
+          "outputStyle": "local-a:blue"
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "sdk-dir-shared"
+      },
+      "timeout": 5000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "sdk-dir-isolated",
+        "channelKey": "test",
+        "runId": "sdk-dir-isolated",
+        "message": "SDK-DIR-ISOLATED"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "sdk-dir-isolated"
+      },
+      "timeout": 5000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "sdk-dir-shared",
+        "channelKey": "test",
+        "runId": "sdk-dir-b",
+        "message": "/local-b:probe SDK-DIR-PHASE-B",
+        "sdkSessionConfig": {
+          "plugins": [
+            {
+              "type": "local",
+              "path": "{PILOT_HOME}/sdk-directory-plugins/local-b"
+            }
+          ],
+          "skills": [
+            "local-b:chosen"
+          ],
+          "outputStyle": "local-b:red"
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "sdk-dir-shared"
+      },
+      "timeout": 5000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "sdk-dir-shared",
+        "channelKey": "test",
+        "runId": "sdk-dir-cleared",
+        "message": "SDK-DIR-CLEARED",
+        "sdkSessionConfig": {}
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "sdk-dir-shared"
+      },
+      "timeout": 5000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "sdk-dir-missing",
+        "channelKey": "test",
+        "runId": "sdk-dir-missing",
+        "message": "SDK-DIR-MISSING",
+        "sdkSessionConfig": {
+          "plugins": [
+            {
+              "type": "local",
+              "path": "{PILOT_HOME}/sdk-directory-plugins/not-present"
+            }
+          ]
+        }
+      },
+      "timeout": 20000
+    }
+  ],
+  "assertions": [
+    {
+      "id": "a-initial-model",
+      "path": "/provider/a-initial/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "a-initial-unique",
+      "path": "/provider/a-initial/1",
+      "exists": false
+    },
+    {
+      "id": "a-hidden-model",
+      "path": "/provider/a-hidden/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "a-hidden-unique",
+      "path": "/provider/a-hidden/1",
+      "exists": false
+    },
+    {
+      "id": "a-final-model",
+      "path": "/provider/a-final/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "a-final-unique",
+      "path": "/provider/a-final/1",
+      "exists": false
+    },
+    {
+      "id": "b-initial-model",
+      "path": "/provider/b-initial/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "b-initial-unique",
+      "path": "/provider/b-initial/1",
+      "exists": false
+    },
+    {
+      "id": "b-final-model",
+      "path": "/provider/b-final/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "b-final-unique",
+      "path": "/provider/b-final/1",
+      "exists": false
+    },
+    {
+      "id": "isolated-model",
+      "path": "/provider/isolated/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "isolated-unique",
+      "path": "/provider/isolated/1",
+      "exists": false
+    },
+    {
+      "id": "cleared-model",
+      "path": "/provider/cleared/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "cleared-unique",
+      "path": "/provider/cleared/1",
+      "exists": false
+    },
+    {
+      "id": "no-unexpected-provider",
+      "path": "/provider/unexpected/0",
+      "exists": false
+    },
+    {
+      "id": "no-default-provider",
+      "path": "/provider/default/0",
+      "exists": false
+    }
+  ]
+}

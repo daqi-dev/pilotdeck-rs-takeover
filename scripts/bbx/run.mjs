@@ -557,7 +557,20 @@ const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) =
   }
   // 其它非 UTF-8 文件：比长度和内容的 sha256。
   if (Buffer.from(text, 'utf8').compare(bytes) !== 0) return [[p, { mode, binaryBytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }]];
-  if (p.endsWith('.jsonl')) { try { return [[p, { mode, jsonl: text.split('\n').filter(Boolean).map((l) => JSON.parse(l)), raw: rawPrint(text) }]]; } catch {} }
+  if (p.endsWith('.jsonl')) {
+    try {
+      const jsonl = text.split('\n').filter(Boolean).map((l) => JSON.parse(l));
+      // Preserve a witness from the actual file bytes. A value policy may
+      // reconstruct canonical JSONL only when both this hash and length agree;
+      // parsing alone cannot prove whitespace, escapes or number spellings.
+      evidence.persistedFiles ??= {};
+      evidence.persistedFiles[p.slice(ROOT.length)] = {
+        byteLength: bytes.length,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+      };
+      return [[p, { mode, jsonl, raw: rawPrint(text) }]];
+    } catch {}
+  }
   if (p.endsWith('.json')) { try { return [[p, { mode, json: JSON.parse(text), raw: rawPrint(text) }]]; } catch {} }
   return [[p, { mode, text }]];
 });

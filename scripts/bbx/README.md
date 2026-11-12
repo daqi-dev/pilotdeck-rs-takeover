@@ -134,6 +134,8 @@ T1 八个固定写后诊断场景另有 `syntaxDiagnostics` 正向谓词，验�
 
 `backend-core-channel-recovery` 使用显式 `volatilePolicies: [{"policy":"coreChannelPollAfter"}]`，只处理 TS 双轮已证实波动的 BlueBubbles 启动轮询 `after` 秒值。独立合同核验固定两阶段、请求数量及次序、URL 唯一查询字段、实际 durable input 与时间范围；两侧 URL 仅替换该十进制值后仍须完全相同，其他 URL 字节、headers、body 和请求序号继续比较。比较器逐条打印原值和理由，身份验证同时要求声明与原场景完全相同并执行合同，不能仅添加路径豁免。旧的七处 DIFF 和 verifier 字节错误仍保留；新规则需要固定候选重新运行，不能改写旧运行结果。
 
+`agent03-sdk-fork` 的 `sdkAgent03DerivedValues` 只处理已取证的子代理随机 UUID/耗时报告引起的 token 与文件大小派生值。单侧合同使用固定哈希的 o200k 实现重算完整 canonical 请求，并逐条验证 calibration、对外事件和持久化投影；双侧只接受由验证后输入推导出的精确数值路径。JSONL 的采集见证位于 `evidence.persistedFiles`，直接记录实际文件字节的长度和 SHA-256；canonical 重构只有两者均匹配才可用于文件大小正判。缺见证、业务内容变化、无法重算或投影错配都拒绝，不忽略任意 token/byte 字段。原 0e 的 DIFF90 与合成见证诊断保持独立，正式规则需新采集验证。
+
 依赖身份另记录实际加载的 Sharp JS 文件/addon/libvips 共享库、MuPDF 入口/loader/WASM、诊断策略实际使用的 js-tiktoken lite 入口和 o200k 编码表，并记录包 manifest 与软链接真实路径。Sharp 探测使用隔离 HOME 的新子进程，避免 require 缓存藏住替换。`BBX_IMAGE_TOOL` / `{IMAGE_TOOL}` 指定原生图像组件；身份包含组件、相邻发行 libvips 库，以及 Linux 动态链接器实际解析的 libvips 路径和哈希。缺失文件记录 null，不以固定 lockfile 代替已安装依赖的实际哈希；构建或替换这些依赖期间不得把旧 run 当作有效覆盖证据。
 
 二进制输入夹具使用严格单键对象 `{"$binaryBase64":"..."}`，仅接受规范 base64，写入解码后的原始字节；多键对象仍按普通 JSON 写入。图像正向断言可用 `imageAttachments: {count, mime, maxBytes, bytes?, sha256?}` 检查所选 provider messages 下的全部 `image_url`：要求精确数量、MIME、规范 data URL、非空内容、预算上限，以及可选的精确长度和 SHA-256。`count: 0` 用于坏图像确实未附加的证明，所选路径仍必须存在。该谓词不改变比较输出，也不忽略图像 payload；缺失执行记录、错误 MIME、超出预算和 payload 被改写均失败。

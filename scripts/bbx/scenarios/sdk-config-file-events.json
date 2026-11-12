@@ -1,0 +1,502 @@
+{
+  "name": "sdk-config-file-events",
+  "about": "真实server WS submit_turn.sdkSessionConfig HTTP callbacks；A/B会话各实际模型write_file并精确relative matcher；真实update_settings触发A唯一ConfigChange；close_session后第二次settings更新无旧callback，同key显式{}重建及B不匹配文件后第三次更新仍无旧callback。独立verify逐条检查headers/URL/body、更新次序、两个session与durable文件/历史。仅新增私有场景，TS自比待E0 Docker校准，不在本机绕18789保护。",
+  "provider": [
+    {
+      "name": "hook-a",
+      "method": "POST",
+      "path": "/sdk-hooks/a",
+      "reply": {
+        "status": 200,
+        "body": {}
+      }
+    },
+    {
+      "name": "hook-b",
+      "method": "POST",
+      "path": "/sdk-hooks/b",
+      "reply": {
+        "status": 200,
+        "body": {}
+      }
+    },
+    {
+      "name": "title",
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"SDK events\"}"
+      }
+    },
+    {
+      "name": "b-nonmatch-after",
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "when": [
+        "SDK-EVENT-B-NONMATCH",
+        "\"tool_call_id\":\"call_b_nonmatch\""
+      ],
+      "reply": {
+        "text": "SDK-EVENT-B-NONMATCH-DONE"
+      }
+    },
+    {
+      "name": "b-nonmatch",
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "when": [
+        "SDK-EVENT-B-NONMATCH"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_b_nonmatch",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "sdk-unmatched.txt",
+            "content": "SDK-B-UNMATCHED\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "a-reopen-after",
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "when": [
+        "SDK-EVENT-A-REOPEN",
+        "\"tool_call_id\":\"call_a_reopen\""
+      ],
+      "reply": {
+        "text": "SDK-EVENT-A-REOPEN-DONE"
+      }
+    },
+    {
+      "name": "a-reopen",
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "when": [
+        "SDK-EVENT-A-REOPEN"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_a_reopen",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "sdk-reopened.txt",
+            "content": "SDK-A-REOPENED\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "b-create-after",
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "when": [
+        "SDK-EVENT-B-CREATE",
+        "\"tool_call_id\":\"call_b_create\""
+      ],
+      "reply": {
+        "text": "SDK-EVENT-B-CREATE-DONE"
+      }
+    },
+    {
+      "name": "b-create",
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "when": [
+        "SDK-EVENT-B-CREATE"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_b_create",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "sdk-b.txt",
+            "content": "SDK-B-CREATED\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "a-create-after",
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "when": [
+        "SDK-EVENT-A-CREATE",
+        "\"tool_call_id\":\"call_a_create\""
+      ],
+      "reply": {
+        "text": "SDK-EVENT-A-CREATE-DONE"
+      }
+    },
+    {
+      "name": "a-create",
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "when": [
+        "SDK-EVENT-A-CREATE"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_a_create",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "sdk-a.txt",
+            "content": "SDK-A-CREATED\n"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-sdk-event-a",
+        "mode": "bypassPermissions"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-sdk-event-a",
+        "channelKey": "test",
+        "message": "SDK-EVENT-A-CREATE",
+        "sdkSessionConfig": {
+          "hooks": {
+            "url": "{MOCK}/sdk-hooks/a?retained=1&event=stale&matcher=old",
+            "headers": {
+              "x-sdk-owner": "a"
+            },
+            "events": {
+              "ConfigChange": [
+                {}
+              ],
+              "FileChanged": [
+                {
+                  "matcher": "sdk-a.txt"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-sdk-event-b",
+        "mode": "bypassPermissions"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-sdk-event-b",
+        "channelKey": "test",
+        "message": "SDK-EVENT-B-CREATE",
+        "sdkSessionConfig": {
+          "hooks": {
+            "url": "{MOCK}/sdk-hooks/b?retained=1&event=stale&matcher=old",
+            "headers": {
+              "x-sdk-owner": "b"
+            },
+            "events": {
+              "FileChanged": [
+                {
+                  "matcher": "sdk-b.txt"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "update_settings",
+      "params": {
+        "source": "localSettings",
+        "settings": {
+          "agent": {
+            "maxOutputTokens": 4096
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "close_session",
+      "params": {
+        "sessionKey": "s-sdk-event-a"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 200
+    },
+    {
+      "ws": "update_settings",
+      "params": {
+        "source": "localSettings",
+        "settings": {
+          "agent": {
+            "maxOutputTokens": 2048
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-sdk-event-a",
+        "mode": "bypassPermissions"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-sdk-event-a",
+        "channelKey": "test",
+        "message": "SDK-EVENT-A-REOPEN",
+        "sdkSessionConfig": {}
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-sdk-event-b",
+        "mode": "bypassPermissions"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-sdk-event-b",
+        "channelKey": "test",
+        "message": "SDK-EVENT-B-NONMATCH",
+        "sdkSessionConfig": {
+          "hooks": {
+            "url": "{MOCK}/sdk-hooks/b?retained=1&event=stale&matcher=old",
+            "headers": {
+              "x-sdk-owner": "b"
+            },
+            "events": {
+              "FileChanged": [
+                {
+                  "matcher": "sdk-b.txt"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "update_settings",
+      "params": {
+        "source": "localSettings",
+        "settings": {
+          "agent": {
+            "maxOutputTokens": 1024
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-sdk-event-a"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-sdk-event-b"
+      },
+      "timeout": 20000
+    }
+  ],
+  "assertions": [
+    {
+      "id": "hook-a-exactly-file-and-config",
+      "path": "/provider/hook-a/length",
+      "equals": 2
+    },
+    {
+      "id": "hook-b-only-own-file",
+      "path": "/provider/hook-b/length",
+      "equals": 1
+    },
+    {
+      "id": "hook-a-post",
+      "path": "/provider/hook-a/0/method",
+      "equals": "POST"
+    },
+    {
+      "id": "hook-a-owns-session",
+      "path": "/provider/hook-a/0/body/sessionId",
+      "equals": "s-sdk-event-a"
+    },
+    {
+      "id": "hook-a-file-event",
+      "path": "/provider/hook-a/0/body/hookEventName",
+      "equals": "FileChanged"
+    },
+    {
+      "id": "hook-b-post",
+      "path": "/provider/hook-b/0/method",
+      "equals": "POST"
+    },
+    {
+      "id": "hook-b-owns-session",
+      "path": "/provider/hook-b/0/body/sessionId",
+      "equals": "s-sdk-event-b"
+    },
+    {
+      "id": "hook-b-file-event",
+      "path": "/provider/hook-b/0/body/hookEventName",
+      "equals": "FileChanged"
+    },
+    {
+      "id": "a-file-exact-matcher",
+      "path": "/provider/hook-a/0/body/filePath",
+      "equals": "sdk-a.txt"
+    },
+    {
+      "id": "b-file-exact-matcher",
+      "path": "/provider/hook-b/0/body/filePath",
+      "equals": "sdk-b.txt"
+    },
+    {
+      "id": "a-created",
+      "path": "/provider/hook-a/0/body/changeType",
+      "equals": "created"
+    },
+    {
+      "id": "b-created",
+      "path": "/provider/hook-b/0/body/changeType",
+      "equals": "created"
+    },
+    {
+      "id": "real-config-callback",
+      "path": "/provider/hook-a/1/body/hookEventName",
+      "equals": "ConfigChange"
+    },
+    {
+      "id": "real-config-session",
+      "path": "/provider/hook-a/1/body/sessionId",
+      "equals": "s-sdk-event-a"
+    },
+    {
+      "id": "real-config-path",
+      "path": "/provider/hook-a/1/body/changedPaths",
+      "equals": [
+        "agent.maxOutputTokens"
+      ]
+    },
+    {
+      "id": "real-config-class",
+      "path": "/provider/hook-a/1/body/changeClasses",
+      "equals": [
+        "next-request"
+      ]
+    },
+    {
+      "id": "a-create-one-model-call",
+      "path": "/provider/a-create/length",
+      "equals": 1
+    },
+    {
+      "id": "a-create-one-continuation",
+      "path": "/provider/a-create-after/length",
+      "equals": 1
+    },
+    {
+      "id": "a-create-real-file",
+      "path": "/tree/~1proj~1sdk-a.txt/text",
+      "equals": "SDK-A-CREATED\n"
+    },
+    {
+      "id": "b-create-one-model-call",
+      "path": "/provider/b-create/length",
+      "equals": 1
+    },
+    {
+      "id": "b-create-one-continuation",
+      "path": "/provider/b-create-after/length",
+      "equals": 1
+    },
+    {
+      "id": "b-create-real-file",
+      "path": "/tree/~1proj~1sdk-b.txt/text",
+      "equals": "SDK-B-CREATED\n"
+    },
+    {
+      "id": "a-reopen-one-model-call",
+      "path": "/provider/a-reopen/length",
+      "equals": 1
+    },
+    {
+      "id": "a-reopen-one-continuation",
+      "path": "/provider/a-reopen-after/length",
+      "equals": 1
+    },
+    {
+      "id": "a-reopen-real-file",
+      "path": "/tree/~1proj~1sdk-reopened.txt/text",
+      "equals": "SDK-A-REOPENED\n"
+    },
+    {
+      "id": "b-nonmatch-one-model-call",
+      "path": "/provider/b-nonmatch/length",
+      "equals": 1
+    },
+    {
+      "id": "b-nonmatch-one-continuation",
+      "path": "/provider/b-nonmatch-after/length",
+      "equals": 1
+    },
+    {
+      "id": "b-nonmatch-real-file",
+      "path": "/tree/~1proj~1sdk-unmatched.txt/text",
+      "equals": "SDK-B-UNMATCHED\n"
+    }
+  ],
+  "settleMs": 300
+}

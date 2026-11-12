@@ -47,6 +47,7 @@ import { fileURLToPath } from 'node:url';
 import { syntaxAcceptedPaths } from './syntax-policy.mjs';
 import { isDeepStrictEqual } from 'node:util';
 import { channelPollVolatilePaths } from './channel-poll-policy.mjs';
+import { sdkAgentDerivedPaths } from './sdk-agent-policy.mjs';
 
 const args = process.argv.slice(2);
 const files = args.filter((a) => !a.startsWith('--'));
@@ -205,9 +206,15 @@ const raw = files.slice(0, 2).map((file) => JSON.parse(fs.readFileSync(file, 'ut
 // captures remain immutable, and every accepted URL is printed below.
 if (!isDeepStrictEqual(raw[0].volatilePolicies ?? [], raw[1].volatilePolicies ?? [])) throw Error('volatile value policy mismatch');
 const timeValues = new Map();
+const timePolicies = new Map();
 for (const entry of raw[0].volatilePolicies ?? []) {
-  if (!isDeepStrictEqual(entry, { policy: 'coreChannelPollAfter' })) throw Error('unsupported volatile value policy');
-  for (const [at, reason] of channelPollVolatilePaths(raw[0], raw[1], entry)) timeValues.set(at, reason);
+  let paths;
+  if (isDeepStrictEqual(entry, { policy: 'coreChannelPollAfter' })) paths = channelPollVolatilePaths(raw[0], raw[1], entry);
+  else if (isDeepStrictEqual(entry, { policy: 'sdkAgent03DerivedValues' })) {
+    const baseline = process.env.BBX_BASELINE || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../resources/PilotDeck');
+    paths = await sdkAgentDerivedPaths(raw[0], raw[1], a, b, entry, baseline);
+  } else throw Error('unsupported volatile value policy');
+  for (const [at, reason] of paths) { timeValues.set(at, reason); timePolicies.set(at, entry.policy); }
 }
 const scenarioAccepted = (raw[0].accepted ?? []).map((x) => ({ ...x, res: (x.paths ?? []).map((p) => new RegExp(p)), hits: 0 }));
 for (const entry of scenarioAccepted) if (entry.policy) {
@@ -238,7 +245,7 @@ if (!quiet) {
   console.log(`  不比较的字段: ${Object.entries(IGNORED).map(([k, why]) => `${k}（${why}）`).join('；')}`);
   console.log(`  已接受差异: ${Object.entries(ACCEPTED).map(([k, [why]]) => `${k}（${why}）`).join('；')}`);
   if (scenarioVolatile.length) console.log(`  场景声明的不稳定路径: ${scenarioVolatile.map(String).join(' ')}（因此略过 ${all.length - regexStable.length} 处）`);
-  for (const d of regexStable.filter((d) => timeValues.has(d.at))) console.log(`  VOLATILE-VALUE coreChannelPollAfter ${d.at}: ${timeValues.get(d.at)}\n      raw a: ${show(d.a)}\n      raw b: ${show(d.b)}`);
+  for (const d of regexStable.filter((d) => timeValues.has(d.at))) console.log(`  VOLATILE-VALUE ${timePolicies.get(d.at)} ${d.at}: ${timeValues.get(d.at)}\n      raw a: ${show(d.a)}\n      raw b: ${show(d.b)}`);
   for (const x of scenarioAccepted) console.log(`  场景登记的已接受差异: ${x.id}（${x.why}）略过 ${x.hits} 处`);
   for (const d of acceptedValues) console.log(`  ACCEPTED ${d.id} ${d.at}: ${d.reason}\n      raw a: ${show(d.a)}\n      raw b: ${show(d.b)}`);
   for (const d of diffs.slice(0, max)) console.log(`  ${d.at}\n      a: ${show(d.a)}\n      b: ${show(d.b)}`);
