@@ -1,0 +1,204 @@
+{
+ "name": "always-on-chat-history",
+ "about": "always_on_read_chat_history（always-on/tool/AlwaysOnChatHistoryTool.ts:37-132，ChatDigestBuilder.ts:44-93）：先在项目里建两个用户会话（第二个会话里模型调用该工具：普通会话里它被移除，报 tool_not_found；第二个会话的助手长回复用来覆盖 300 字截断），之后调度器触发的 discovery 轮次依次用别名 chat_1 / chat_2、真实 sessionId、不存在的别名、非字符串 sessionId、缺 sessionId 调用该工具，最后不出计划。比较工具结果（标题、消息条数、对话文本）、错误码与文案、发给 provider 的请求。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nalwaysOn:\n  trigger:\n    tickIntervalMinutes: 0.05\n  projects:\n    {HOME}/work/alpha:\n      enabled: true\n",
+ "files": {
+  "home/work/alpha/README.md": "alpha\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"AO\"}"
+   }
+  },
+  {
+   "name": "discovery-done",
+   "when": [
+    "autonomous Always-On discovery",
+    "\"tool_call_id\":\"call_c6\""
+   ],
+   "reply": {
+    "text": "Nothing to do."
+   }
+  },
+  {
+   "name": "discovery-c6",
+   "when": [
+    "autonomous Always-On discovery",
+    "\"tool_call_id\":\"call_c5\""
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_c6",
+     "name": "always_on_read_chat_history",
+     "arguments": {}
+    }
+   }
+  },
+  {
+   "name": "discovery-c5",
+   "when": [
+    "autonomous Always-On discovery",
+    "\"tool_call_id\":\"call_c4\""
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_c5",
+     "name": "always_on_read_chat_history",
+     "arguments": {
+      "sessionId": 7
+     }
+    }
+   }
+  },
+  {
+   "name": "discovery-c4",
+   "when": [
+    "autonomous Always-On discovery",
+    "\"tool_call_id\":\"call_c3\""
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_c4",
+     "name": "always_on_read_chat_history",
+     "arguments": {
+      "sessionId": "chat_9"
+     }
+    }
+   }
+  },
+  {
+   "name": "discovery-c3",
+   "when": [
+    "autonomous Always-On discovery",
+    "\"tool_call_id\":\"call_c2\""
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_c3",
+     "name": "always_on_read_chat_history",
+     "arguments": {
+      "sessionId": "user-chat"
+     }
+    }
+   }
+  },
+  {
+   "name": "discovery-c2",
+   "when": [
+    "autonomous Always-On discovery",
+    "\"tool_call_id\":\"call_c1\""
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_c2",
+     "name": "always_on_read_chat_history",
+     "arguments": {
+      "sessionId": "chat_2"
+     }
+    }
+   }
+  },
+  {
+   "name": "discovery-c1",
+   "when": [
+    "autonomous Always-On discovery"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_c1",
+     "name": "always_on_read_chat_history",
+     "arguments": {
+      "sessionId": "chat_1"
+     }
+    }
+   }
+  },
+  {
+   "name": "user2-done",
+   "when": [
+    "second chat asks",
+    "\"tool_call_id\":\"call_u1\""
+   ],
+   "reply": {
+    "text": "   LLLLLLLLLLLLLLLLLLLL long answer text. long answer text. long answer text. long answer text. long answer text. long answer text. long answer text. long answer text. long answer text. long answer text. long answer text. long answer text. long answer text. long answer text. long answer text. long answer text. long answer text. long answer text. long answer text. long answer text. long answer text. long answer text. long answer text. long answer text. long answer text.    "
+   }
+  },
+  {
+   "name": "user2",
+   "when": [
+    "second chat asks"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_u1",
+     "name": "always_on_read_chat_history",
+     "arguments": {
+      "sessionId": "chat_1"
+     }
+    }
+   }
+  },
+  {
+   "name": "user-b",
+   "when": [
+    "follow-up question"
+   ],
+   "reply": {
+    "text": "second answer"
+   }
+  },
+  {
+   "name": "user",
+   "when": [
+    "hello from the user"
+   ],
+   "reply": {
+    "text": "hi"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "user-chat",
+    "channelKey": "web",
+    "message": "hello from the user\nsecond line",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "user-chat",
+    "channelKey": "web",
+    "message": "  follow-up question  ",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "user-chat-2",
+    "channelKey": "web",
+    "message": "second chat asks for history",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 14000
+  }
+ ],
+ "volatile": [
+  "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.system|breakdown\\.total|breakdown\\.messages|resultBytes|content-length)$"
+ ]
+}
