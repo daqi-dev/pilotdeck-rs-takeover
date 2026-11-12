@@ -58,11 +58,29 @@ set -euo pipefail
 (( $# == 1 )) && [[ "$1" == https://* ]] || exit 2
 key=$(printf '%s' "$1" | sha256sum | cut -d' ' -f1)
 file="$PDRS_VIPS_DOWNLOADS/$key.source"
+# These four GNOME release hashes are published by the corresponding official
+# .sha256sum files. OSU hosts identical source archives; never accept an
+# unchecked mirror response or silently substitute a different source release.
+expected=''
+mirror=''
+case "$1" in
+  https://download.gnome.org/sources/glib/2.86/glib-2.86.1.tar.xz) expected=119d1708ca022556d6d2989ee90ad1b82bd9c0d1667e066944a6d0020e2d5e57; mirror=glib/glib-2.86.1.tar.xz ;;
+  https://download.gnome.org/sources/libxml2/2.15/libxml2-2.15.1.tar.xz) expected=c008bac08fd5c7b4a87f7b8a71f283fa581d80d80ff8d2efd3b26224c39bc54c; mirror=libxml2/libxml2-2.15.1.tar.xz ;;
+  https://download.gnome.org/sources/pango/1.57/pango-1.57.0.tar.xz) expected=890640c841dae77d3ae3d8fe8953784b930fa241b17423e6120c7bfdf8b891e7; mirror=pango/pango-1.57.0.tar.xz ;;
+  https://download.gnome.org/sources/librsvg/2.61/librsvg-2.61.2.tar.xz) expected=4644d83623dd61cc4479c2b3c372e1da2b281552ebc90035c8d1ac502eb1dc00; mirror=librsvg/librsvg-2.61.2.tar.xz ;;
+esac
 if [[ ! -f "$file" ]]; then
-  curl --fail --show-error --silent --location --retry 3 --retry-max-time 60 "$1" -o "$file.partial"
+  if ! curl --fail --show-error --silent --location --connect-timeout 15 --max-time 120 --retry 3 --retry-all-errors --retry-max-time 120 "$1" -o "$file.partial"; then
+    [[ -n "$expected" && -n "$mirror" ]] || exit 1
+    mirror="https://ftp2.osuosl.org/pub/blfs/conglomeration/$mirror"
+    curl --fail --show-error --silent --location --connect-timeout 15 --max-time 120 "$mirror" -o "$file.partial"
+    printf '%s\t%s\t%s\n' "$1" "$mirror" "$expected" >> "$PDRS_VIPS_DOWNLOADS/mirrors.tsv"
+  fi
+  [[ -z "$expected" || $(sha256sum "$file.partial" | cut -d' ' -f1) == "$expected" ]]
   mv "$file.partial" "$file"
 fi
 hash=$(sha256sum "$file" | cut -d' ' -f1)
+[[ -z "$expected" || "$hash" == "$expected" ]]
 printf '%s\t%s\t%s\n' "$key" "$hash" "$1" >> "$PDRS_VIPS_DOWNLOADS/manifest.tsv"
 cat "$file"
 DOWNLOAD

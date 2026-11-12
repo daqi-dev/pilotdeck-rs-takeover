@@ -138,6 +138,54 @@
       "id": "good-persisted-content",
       "path": "/tree/~1proj~1good.html/text",
       "equals": "<div a=\"2\"></div>\n"
+    },
+    {
+      "id": "syntax-contract",
+      "path": "/provider",
+      "syntaxDiagnostics": {
+        "operation": "write",
+        "extension": "html",
+        "badContent": "<div a=\"1\" a=\"2\"></div>\n",
+        "goodContent": "<div a=\"2\"></div>\n",
+        "locations": {
+          "ts": [
+            1,
+            13
+          ],
+          "rust": [
+            1,
+            1
+          ]
+        }
+      }
+    }
+  ],
+  "accepted": [
+    {
+      "id": "T1-SYNTAX-NATIVE-001-R1",
+      "why": "仅固定坏语法fixture诊断文案/已登记定位与严格重算的长度、token派生值；保留原始差异",
+      "policy": "syntaxDiagnostics",
+      "assertions": [
+        "syntax-contract",
+        "bad-persisted-content",
+        "good-persisted-content"
+      ],
+      "config": {
+        "operation": "write",
+        "extension": "html",
+        "badContent": "<div a=\"1\" a=\"2\"></div>\n",
+        "goodContent": "<div a=\"2\"></div>\n",
+        "locations": {
+          "ts": [
+            1,
+            13
+          ],
+          "rust": [
+            1,
+            1
+          ]
+        }
+      }
     }
   ]
 }

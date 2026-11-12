@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { syntaxContract } from './syntax-policy.mjs';
 
 export const here = path.dirname(fileURLToPath(import.meta.url));
 export const repo = path.resolve(here, '../..');
@@ -48,7 +49,7 @@ export function inputIdentity() {
     baselineDist: treeHash(path.join(baseline, 'dist')),
     baselineLock: fs.existsSync(path.join(baseline, 'pnpm-lock.yaml')) ? fileHash(path.join(baseline, 'pnpm-lock.yaml')) : null,
     baselineEntry: fs.existsSync(path.join(baseline, 'dist/src/cli/pilotdeck.js')) ? fileHash(path.join(baseline, 'dist/src/cli/pilotdeck.js')) : null,
-    harness: Object.fromEntries(['check.mjs', 'run.mjs', 'diff.mjs', 'evidence.mjs', 'mock-support.mjs'].map((name) => [name, fileHash(path.join(here, name))])),
+    harness: Object.fromEntries(['check.mjs', 'run.mjs', 'diff.mjs', 'evidence.mjs', 'mock-support.mjs', 'syntax-policy.mjs'].map((name) => [name, fileHash(path.join(here, name))])),
     tools: { node: process.version, executable: fileHash(process.execPath), rust: command('rustc', ['--version'], repo), pnpm: command('pnpm', ['--version'], baseline) },
     platform: { os: process.platform, arch: process.arch, release: os.release() },
   };
@@ -85,6 +86,9 @@ export function assertionResults(assertions, artifact, side) {
     if ('exists' in a) checks.push((actual !== undefined) === a.exists);
     if ('includes' in a) checks.push(typeof actual === 'string' && actual.includes(a.includes));
     if ('matches' in a) checks.push(typeof actual === 'string' && new RegExp(a.matches).test(actual));
+    if ('syntaxDiagnostics' in a) {
+      try { syntaxContract(artifact, a.syntaxDiagnostics, side); checks.push(true); } catch { checks.push(false); }
+    }
     if (!checks.length) throw Error(`assertion ${a.id} has no predicate`);
     return { id: a.id, passed: checks.every(Boolean) };
   });
@@ -101,8 +105,11 @@ export function validateArtifact(artifact, scenario, expected) {
   const assertions = assertionResults(scenario.assertions, artifact, expected.side);
   if (!isDeepStrictEqual(evidence?.assertions, assertions)) errors.push('required assertions were not executed');
   if (assertions.some((a) => !a.skipped && !a.passed)) errors.push('required assertion failed');
+  if (!isDeepStrictEqual(artifact.accepted ?? [], scenario.accepted ?? [])) errors.push('accepted policy mismatch');
   if (expected.side === 'rust') for (const accepted of scenario.accepted ?? []) {
     if (!Array.isArray(accepted.assertions) || !accepted.assertions.length || accepted.assertions.some((id) => !assertions.some((a) => a.id === id && a.passed))) errors.push(`accepted difference ${accepted.id} lacks executed positive assertions`);
+    if (accepted.policy === 'syntaxDiagnostics' && !scenario.assertions?.some((a) => accepted.assertions.includes(a.id)
+      && isDeepStrictEqual(a.syntaxDiagnostics, accepted.config))) errors.push('syntax policy lacks matching contract assertion');
   }
   return errors;
 }

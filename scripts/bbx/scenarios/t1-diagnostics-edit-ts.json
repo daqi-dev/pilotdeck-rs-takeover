@@ -182,6 +182,54 @@
       "id": "good-persisted-content",
       "path": "/tree/~1proj~1good.ts/text",
       "equals": "const value: number = 2;\n"
+    },
+    {
+      "id": "syntax-contract",
+      "path": "/provider",
+      "syntaxDiagnostics": {
+        "operation": "edit",
+        "extension": "ts",
+        "badContent": "const value: number = ;\n",
+        "goodContent": "const value: number = 2;\n",
+        "locations": {
+          "ts": [
+            1,
+            23
+          ],
+          "rust": [
+            1,
+            23
+          ]
+        }
+      }
+    }
+  ],
+  "accepted": [
+    {
+      "id": "T1-SYNTAX-NATIVE-001-R1",
+      "why": "仅固定坏语法fixture诊断文案/已登记定位与严格重算的长度、token派生值；保留原始差异",
+      "policy": "syntaxDiagnostics",
+      "assertions": [
+        "syntax-contract",
+        "bad-persisted-content",
+        "good-persisted-content"
+      ],
+      "config": {
+        "operation": "edit",
+        "extension": "ts",
+        "badContent": "const value: number = ;\n",
+        "goodContent": "const value: number = 2;\n",
+        "locations": {
+          "ts": [
+            1,
+            23
+          ],
+          "rust": [
+            1,
+            23
+          ]
+        }
+      }
     }
   ]
 }

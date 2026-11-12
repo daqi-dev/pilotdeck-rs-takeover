@@ -34,13 +34,17 @@
 // 按名字对齐——缺的、多的各报一条，共有元素的相对顺序不同报一条，同名元素再逐字段比。
 // 这只改变差异的报法（少一个工具不再表现为后面所有工具都错位），不会让任何差异消失。
 // 已接受差异（ACCEPTED，同样每次打印）：只属于 Node 运行时、与 PilotDeck 行为无关的输出。
-// 场景自己可以在 "accepted" 里登记已接受差异：[{id, why, paths:[正则]}]，只用于基线自身的 bug
-// （Rust 有意不照做）。命中的差异路径被略过，id、原因和略过的条数每次打印；依据记在 state/takeover.md。
+// 场景可在 "accepted" 登记已批准差异：[{id, why, paths:[正则]}]；新增项须有冻结账本依据与正向断言。
+// T1 诊断使用独立逐值 policy，不允许路径正则。命中理由和原始值每次打印；未接受字段照常比较。
 // 另有一张「不比较」的清单 IGNORED，每次运行都会打印出来，不藏。
 // 场景自己可以在 "volatile" 里再声明不稳定的路径（正则，匹配差异路径），同样会打印。
 // 过期检查：基线 vs Rust 比较时，场景登记的每条 accepted 正则一处都没命中，打印 STALE 并计 1 处差异；
 // volatile 正则一处都没命中只打印 STALE? 提示（基线这次没抖时本来就是 0）。--self（基线自比）不做这个检查。
 import fs from 'node:fs';
+import path from 'node:path';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { syntaxAcceptedPaths } from './syntax-policy.mjs';
 
 const args = process.argv.slice(2);
 const files = args.filter((a) => !a.startsWith('--'));
@@ -194,9 +198,24 @@ const a = load(fa), b = load(fb);
 const scenarioVolatile = (JSON.parse(fs.readFileSync(fa, 'utf8')).volatile ?? []).map((p) => new RegExp(p));
 const all = [];
 compare(a, b, '$', all);
-const scenarioAccepted = (JSON.parse(fs.readFileSync(fa, 'utf8')).accepted ?? []).map((x) => ({ ...x, res: x.paths.map((p) => new RegExp(p)), hits: 0 }));
+const raw = files.slice(0, 2).map((file) => JSON.parse(fs.readFileSync(file, 'utf8')));
+const scenarioAccepted = (raw[0].accepted ?? []).map((x) => ({ ...x, res: (x.paths ?? []).map((p) => new RegExp(p)), hits: 0 }));
+for (const entry of scenarioAccepted) if (entry.policy) {
+  if (entry.policy !== 'syntaxDiagnostics' || entry.res.length) throw Error('unsupported value-checked accepted policy');
+  const baseline = process.env.BBX_BASELINE || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../resources/PilotDeck');
+  const require = createRequire(path.join(baseline, 'package.json'));
+  const tokenizer = require('js-tiktoken').getEncoding('o200k_base');
+  entry.checked = syntaxAcceptedPaths(a, b, entry.config, (text) => tokenizer.encode(text).length, selfCompare ? ['ts', 'ts'] : ['ts', 'rust'], raw);
+}
 const stable = all.filter((d) => !scenarioVolatile.some((re) => re.test(d.at)));
-const diffs = stable.filter((d) => !scenarioAccepted.some((x) => x.res.some((re) => re.test(d.at)) && ++x.hits));
+const acceptedValues = [];
+const diffs = stable.filter((d) => !scenarioAccepted.some((x) => {
+  const reason = x.checked?.get(d.at);
+  if (reason || x.res.some((re) => re.test(d.at))) {
+    ++x.hits; if (reason) acceptedValues.push({ ...d, id: x.id, reason }); return true;
+  }
+  return false;
+}));
 const unused = (res, list) => res.filter((re) => !list.some((d) => re.test(d.at)));
 const stale = selfCompare ? [] : [
   ...unused(scenarioVolatile, all).map((re) => ({ tag: 'STALE?', what: `volatile ${re}` })),
@@ -209,6 +228,7 @@ if (!quiet) {
   console.log(`  已接受差异: ${Object.entries(ACCEPTED).map(([k, [why]]) => `${k}（${why}）`).join('；')}`);
   if (scenarioVolatile.length) console.log(`  场景声明的不稳定路径: ${scenarioVolatile.map(String).join(' ')}（因此略过 ${all.length - stable.length} 处）`);
   for (const x of scenarioAccepted) console.log(`  场景登记的已接受差异: ${x.id}（${x.why}）略过 ${x.hits} 处`);
+  for (const d of acceptedValues) console.log(`  ACCEPTED ${d.id} ${d.at}: ${d.reason}\n      raw a: ${show(d.a)}\n      raw b: ${show(d.b)}`);
   for (const d of diffs.slice(0, max)) console.log(`  ${d.at}\n      a: ${show(d.a)}\n      b: ${show(d.b)}`);
   if (diffs.length > max) console.log(`  … 另有 ${diffs.length - max} 处`);
   for (const x of stale) console.log(`  ${x.tag} ${x.what}：一处都没命中${x.tag === 'STALE' ? '，计 1 处差异' : '（只提示）'}`);

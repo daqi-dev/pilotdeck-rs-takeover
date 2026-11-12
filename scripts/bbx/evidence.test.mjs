@@ -73,7 +73,7 @@ test('accepted difference needs a positive assertion linked to it', () => {
   const spec = { ...scenario, accepted: [{ id: 'fixed-bug', paths: ['steps'] }] };
   assert.ok(validateArtifact(artifact(), spec, identity).some((e) => e.includes('positive assertions')));
   spec.accepted[0].assertions = ['version'];
-  assert.deepEqual(validateArtifact(artifact(), spec, identity), []);
+  assert.deepEqual(validateArtifact({ ...artifact(), accepted: spec.accepted }, spec, identity), []);
 });
 test('side-specific positive assertions are explicit, not silently omitted', () => {
   const assertions = [{ id: 'rust-value', sides: ['rust'], path: '/value', equals: 1 }];

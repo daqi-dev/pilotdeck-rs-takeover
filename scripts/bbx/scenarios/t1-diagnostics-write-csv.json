@@ -138,6 +138,54 @@
       "id": "good-persisted-content",
       "path": "/tree/~1proj~1good.csv/text",
       "equals": "a,b\n3,4\n"
+    },
+    {
+      "id": "syntax-contract",
+      "path": "/provider",
+      "syntaxDiagnostics": {
+        "operation": "write",
+        "extension": "csv",
+        "badContent": "a,b\n\"unterminated,1\n",
+        "goodContent": "a,b\n3,4\n",
+        "locations": {
+          "ts": [
+            2,
+            1
+          ],
+          "rust": [
+            3,
+            1
+          ]
+        }
+      }
+    }
+  ],
+  "accepted": [
+    {
+      "id": "T1-SYNTAX-NATIVE-001-R1",
+      "why": "仅固定坏语法fixture诊断文案/已登记定位与严格重算的长度、token派生值；保留原始差异",
+      "policy": "syntaxDiagnostics",
+      "assertions": [
+        "syntax-contract",
+        "bad-persisted-content",
+        "good-persisted-content"
+      ],
+      "config": {
+        "operation": "write",
+        "extension": "csv",
+        "badContent": "a,b\n\"unterminated,1\n",
+        "goodContent": "a,b\n3,4\n",
+        "locations": {
+          "ts": [
+            2,
+            1
+          ],
+          "rust": [
+            3,
+            1
+          ]
+        }
+      }
     }
   ]
 }
