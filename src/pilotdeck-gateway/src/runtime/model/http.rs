@@ -20,6 +20,8 @@
 //! `None` resolves the environment exactly as before.
 #![allow(clippy::result_large_err)]
 
+pub mod fetch;
+
 use base64::Engine as _;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, combinators::BoxBody};
