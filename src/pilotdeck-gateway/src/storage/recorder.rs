@@ -348,7 +348,7 @@ impl Recorder {
         };
         self.complete_step(&mut inner, session_id, turn_id, outcome)?;
         let mut draft = draft("turn_result");
-        draft.insert("result".into(), result);
+        draft.insert("result".into(), clone_stream_guard_errors(result));
         self.append(session_id, turn_id, draft)?;
         inner.turns.remove(turn_id);
         inner.completed_turn_id = Some(turn_id.clone());
@@ -1139,6 +1139,42 @@ pub(super) fn validate_compaction_failed(entry: &JsValue) -> RecorderResult<()> 
         ));
     }
     Ok(())
+}
+/// The turn result's `errors[].details.raw` is the thrown Error in TS; the
+/// transcript writer's `structuredClone` drops the stream-guard errors' own
+/// `name`, so it lands as `{}` (see `is_stream_guard_raw`).
+fn clone_stream_guard_errors(mut result: JsValue) -> JsValue {
+    let JsValue::Object(fields) = &mut result else {
+        return result;
+    };
+    let Some(JsValue::Array(errors)) = fields.get("errors") else {
+        return result;
+    };
+    if !errors.iter().any(|error| {
+        crate::runtime::model::http::is_stream_guard_raw(field(field(error, "details"), "raw"))
+    }) {
+        return result;
+    }
+    let errors = errors
+        .iter()
+        .map(|error| {
+            let raw = field(field(error, "details"), "raw");
+            if !crate::runtime::model::http::is_stream_guard_raw(raw) {
+                return error.clone();
+            }
+            let mut error = error.clone();
+            if let JsValue::Object(error) = &mut error
+                && let Some(JsValue::Object(details)) = error.get("details")
+            {
+                let mut details = details.clone();
+                details.insert("raw".into(), JsValue::Object(JsObject::new()));
+                error.insert("details".into(), JsValue::Object(details));
+            }
+            error
+        })
+        .collect();
+    fields.insert("errors".into(), JsValue::Array(errors));
+    result
 }
 /// `stripRawFields` (AgentSessionEventRecorder.ts:568-577).
 fn strip_raw_fields(value: &JsValue) -> JsValue {

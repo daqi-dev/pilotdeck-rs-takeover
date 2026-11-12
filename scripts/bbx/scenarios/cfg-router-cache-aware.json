@@ -1,0 +1,94 @@
+{
+ "name": "cfg-router-cache-aware",
+ "about": "router.tokenSaver.cacheAwareSwitching（router/policy/RouterCachePolicy.ts）：第一轮判 simple 落到 bbx/cheap，回复的 usage 里 90% 是缓存读；第二轮判 complex 想切到 bbx/big，按 stats.modelPricing 估算留在 cheap 的缓存成本（0.46E）与切到 big 的预填成本（0.3E），minSavingsRatio=0 时切换（mutation switched）。比较第二轮落到的模型与 router/events.jsonl。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        judge:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        cheap:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        big:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nrouter:\n  enabled: true\n  tokenSaver:\n    judge: bbx/judge\n    defaultTier: simple\n    cacheAwareSwitching:\n      enabled: true\n      minSavingsRatio: 0\n    tiers:\n      simple:\n        model: bbx/cheap\n      complex:\n        model: bbx/big\n  stats:\n    modelPricing:\n      bbx/cheap:\n        input: 1\n        output: 1\n        cacheRead: 0.4\n      bbx/big:\n        input: 0.3\n        output: 1\n",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Cfg\"}"
+   }
+  },
+  {
+   "name": "judge-hard",
+   "when": [
+    "model-tier classifier",
+    "ca-hard"
+   ],
+   "reply": {
+    "text": "<tier>complex</tier>"
+   }
+  },
+  {
+   "name": "judge-easy",
+   "when": [
+    "model-tier classifier",
+    "ca-easy"
+   ],
+   "reply": {
+    "text": "<tier>simple</tier>"
+   }
+  },
+  {
+   "name": "cheap",
+   "when": [
+    "\"model\":\"cheap\""
+   ],
+   "reply": {
+    "text": "cheap ok",
+    "usage": {
+     "prompt_tokens": 10000,
+     "completion_tokens": 10,
+     "total_tokens": 10010,
+     "prompt_tokens_details": {
+      "cached_tokens": 9000
+     }
+    }
+   }
+  },
+  {
+   "name": "big",
+   "when": [
+    "\"model\":\"big\""
+   ],
+   "reply": {
+    "text": "big ok"
+   }
+  },
+  {
+   "name": "other",
+   "reply": {
+    "text": "other ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ca",
+    "channelKey": "test",
+    "message": "ca-easy hello"
+   },
+   "timeout": 30000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ca",
+    "channelKey": "test",
+    "message": "ca-hard refactor everything"
+   },
+   "timeout": 30000
+  },
+  {
+   "sleep": 300
+  }
+ ]
+}

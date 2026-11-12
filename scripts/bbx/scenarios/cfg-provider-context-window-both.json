@@ -1,0 +1,35 @@
+{
+ "name": "cfg-provider-context-window-both",
+ "about": "maxContextTokens=40000 与 contextWindow=30000 同时给时以 maxContextTokens 为准（parseModelConfig.ts:283 只在 maxContextTokens 未给时读别名）。",
+ "config": "schemaVersion: 1\nagent:\n  model: cwp/cw\nmodel:\n  providers:\n    cwp:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        cw:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 40000\n            maxOutputTokens: 8192\n            contextWindow: 30000\ntelemetry:\n  enabled: false\n",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Cfg\"}"
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "cw ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-cw",
+    "channelKey": "test",
+    "message": "cw go"
+   }
+  },
+  {
+   "sleep": 300
+  }
+ ]
+}

@@ -1,0 +1,76 @@
+{
+ "name": "cfg-gateway-mcp-instances-floor",
+ "about": "gateway.maxPerSessionMcpInstances=0 按下限 1 处理（parseGatewayConfig.ts:52 Math.max(1, …)），结果应与 cfg-gateway-mcp-instances 相同。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ngateway:\n  maxPerSessionMcpInstances: 0\n",
+ "files": {
+  "home/.pilotdeck/mcp.json": {
+   "mcpServers": {
+    "bbx-echo": {
+     "command": "node",
+     "args": [
+      "{PILOT_HOME}/mcp/echo-server.mjs",
+      "shared"
+     ]
+    },
+    "bbx-session": {
+     "command": "node",
+     "args": [
+      "{PILOT_HOME}/mcp/echo-server.mjs",
+      "session"
+     ],
+     "perSession": true
+    }
+   }
+  },
+  "home/.pilotdeck/mcp/echo-server.mjs": "// bbx fixture: minimal MCP stdio server (newline-delimited JSON-RPC 2.0).\n// argv[2] labels the instance so each configured server answers differently.\nimport readline from 'node:readline';\nconst label = process.argv[2] ?? 'unlabelled';\nconst send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');\nconst tool = {\n  name: 'echo',\n  description: 'Echo the given text back, prefixed with the server label (' + label + ').',\n  inputSchema: {\n    type: 'object',\n    properties: { text: { type: 'string', description: 'Text to echo.' } },\n    required: ['text'],\n    additionalProperties: false,\n  },\n};\nreadline.createInterface({ input: process.stdin }).on('line', (line) => {\n  let request;\n  try { request = JSON.parse(line); } catch { return; }\n  if (request.id === undefined) return; // notification\n  if (request.method === 'initialize') {\n    send({ jsonrpc: '2.0', id: request.id, result: {\n      protocolVersion: request.params?.protocolVersion ?? '2024-11-05',\n      capabilities: { tools: {} },\n      serverInfo: { name: 'bbx-echo-' + label, version: '1.0.0' },\n    } });\n  } else if (request.method === 'tools/list') {\n    send({ jsonrpc: '2.0', id: request.id, result: { tools: [tool] } });\n  } else if (request.method === 'tools/call') {\n    const text = String(request.params?.arguments?.text ?? '');\n    send({ jsonrpc: '2.0', id: request.id, result: { content: [{ type: 'text', text: 'echo[' + label + ']: ' + text }] } });\n  } else if (request.method === 'ping') {\n    send({ jsonrpc: '2.0', id: request.id, result: {} });\n  } else {\n    send({ jsonrpc: '2.0', id: request.id, error: { code: -32601, message: 'Method not found: ' + request.method } });\n  }\n});\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Cfg\"}"
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-one",
+    "channelKey": "test",
+    "message": "mcp-cap s-one"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 500
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-two",
+    "channelKey": "test",
+    "message": "mcp-cap s-two"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 500
+  },
+  {
+   "ws": "mcp_server_status",
+   "params": {
+    "sessionKey": "s-two"
+   }
+  }
+ ]
+}

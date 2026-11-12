@@ -101,6 +101,21 @@ fn is_stream_guard_error(name: &JsString) -> bool {
     .any(|n| name.equals_str(n))
 }
 
+/// Whether `raw` is the projection [`ModelStreamError::as_js_error`] makes of
+/// one of those Error instances (`{ name }`). TS keeps the Error itself as
+/// `details.raw`; `JsonlTranscriptWriter`'s `structuredClone` turns it into a
+/// plain Error whose JSON is `{}` (the own `name` is not cloned), so durable
+/// records must store `{}` while live events keep `{"name":…}`.
+pub(crate) fn is_stream_guard_raw(raw: &JsValue) -> bool {
+    match raw {
+        JsValue::Object(fields) if fields.len() == 1 => fields
+            .get("name")
+            .and_then(JsValue::as_string)
+            .is_some_and(is_stream_guard_error),
+        _ => false,
+    }
+}
+
 /// What `streamModel` throws.
 #[derive(Clone, Debug)]
 pub enum ModelStreamError {

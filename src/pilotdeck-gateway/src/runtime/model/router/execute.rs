@@ -407,6 +407,14 @@ impl RouterRuntime {
                         );
                         if retry.retry {
                             let delay = http::js_round(retry.delay_ms);
+                            // RouterRuntime.ts:829-831.
+                            eprintln!(
+                                "[PilotDeck] transientRetry: {} (attempt {}/{}, delay={}ms)",
+                                super::classify::template_text(field(&error, "code")),
+                                crate::js_value::number_string(transient + 1.0),
+                                crate::js_value::number_string(retry.max_attempts),
+                                crate::js_value::number_string(delay),
+                            );
                             self.emit_execute(
                                 ctx,
                                 "pilotdeck_router_transient_retry",
@@ -458,6 +466,15 @@ impl RouterRuntime {
                 let retry =
                     policy::retry_decide(&self.config, "zero_usage", zero_attempt, None, 0.0);
                 if !outcome.content && outcome.zero_usage() && retry.retry {
+                    // RouterRuntime.ts:887-890.
+                    eprintln!(
+                        "[PilotDeck] zeroUsageRetry: empty response from {}/{} (attempt {}/{}, session={})",
+                        super::classify::template_text(&attempt.provider),
+                        super::classify::template_text(&attempt.model),
+                        crate::js_value::number_string(zero_attempt),
+                        crate::js_value::number_string(retry.max_attempts),
+                        String::from_utf16_lossy(ctx.session_id.units()),
+                    );
                     self.emit_execute(
                         ctx,
                         "pilotdeck_router_zero_usage_retry",

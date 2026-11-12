@@ -1,0 +1,106 @@
+{
+ "name": "cfg-memory-root-dir",
+ "about": "memory.rootDir 改到 {HOME}/memroot（parseMemoryConfig.ts:71，缺省 <PilotHome>/memory），其余与 memory-enabled 相同（edgeclaw，不配模型）：memory_list / memory_wipe 的返回与落盘位置。另给 maxMessageChars、retrievalTimeoutMs、heartbeatBatchSize 与 schedule（reasoningMode、autoIndexIntervalMinutes=0、autoDreamIntervalMinutes=0）合法的非缺省值，看启动与这些方法不受影响、resolve_settings 的快照一致；它们的作用都要记忆模型参与，见报告。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmemory:\n  enabled: true\n  provider: edgeclaw\n  captureStrategy: last_turn\n  includeAssistant: false\n  rootDir: {HOME}/memroot\n  maxMessageChars: 500\n  retrievalTimeoutMs: 1500\n  heartbeatBatchSize: 3\n  schedule:\n    reasoningMode: accuracy_first\n    autoIndexIntervalMinutes: 0\n    autoDreamIntervalMinutes: 0\n",
+ "files": {
+  "home/work/alpha/README.md": "alpha\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n"
+ },
+ "steps": [
+  {
+   "ws": "memory_list",
+   "params": {
+    "projectKey": "{HOME}/work/alpha"
+   }
+  },
+  {
+   "ws": "memory_list",
+   "params": {
+    "projectKey": "{HOME}/work/alpha",
+    "sessionKey": "s-1"
+   }
+  },
+  {
+   "ws": "memory_list",
+   "params": {
+    "projectKey": "{HOME}/work/alpha",
+    "sessionKey": "  "
+   }
+  },
+  {
+   "ws": "memory_list",
+   "params": {
+    "projectKey": "{PILOT_HOME}"
+   }
+  },
+  {
+   "ws": "memory_list",
+   "params": {
+    "projectKey": "{HOME}/work/gamma"
+   }
+  },
+  {
+   "ws": "memory_list",
+   "params": {
+    "projectKey": 3
+   }
+  },
+  {
+   "ws": "memory_list",
+   "params": null
+  },
+  {
+   "ws": "memory_wipe",
+   "params": {
+    "projectKey": "{HOME}/work/alpha"
+   }
+  },
+  {
+   "ws": "memory_wipe",
+   "params": {
+    "projectKey": "{HOME}/work/alpha",
+    "scope": "session"
+   }
+  },
+  {
+   "ws": "memory_wipe",
+   "params": {
+    "projectKey": "{HOME}/work/alpha",
+    "scope": "session",
+    "sessionKey": "s-1"
+   }
+  },
+  {
+   "ws": "memory_wipe",
+   "params": {
+    "projectKey": "{HOME}/work/alpha",
+    "scope": "project",
+    "sessionKey": "s-1"
+   }
+  },
+  {
+   "ws": "memory_wipe",
+   "params": {
+    "projectKey": "{HOME}/work/alpha",
+    "scope": "other"
+   }
+  },
+  {
+   "ws": "memory_wipe",
+   "params": {
+    "projectKey": "{HOME}/work/alpha",
+    "sessionKey": 7
+   }
+  },
+  {
+   "ws": "memory_wipe",
+   "params": {
+    "projectKey": "{HOME}/work/gamma"
+   }
+  },
+  {
+   "ws": "resolve_settings",
+   "params": {}
+  }
+ ]
+}

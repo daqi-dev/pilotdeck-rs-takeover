@@ -1,0 +1,111 @@
+{
+ "name": "cfg-router-auto-orchestrate",
+ "about": "router.autoOrchestrate（parseRouterConfig.ts:525-645；RouterRuntime 编排模式）：判档为 complex（triggerTiers）时进入编排模式：allowedTools 只留 agent 与 read_file（同时给了 blockedTools，应以 allowedTools 为准并警告）、slimSystemPrompt=false、orchestrationPrompt 自定义、subagentMaxTokens=1000；mainAgentModel / subagentModel 已弃用只警告。判 simple 的一轮不进编排。比较请求里的工具与系统提示、事件、resolve_settings 的诊断。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        judge:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        cheap:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        big:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nrouter:\n  enabled: true\n  tokenSaver:\n    judge: bbx/judge\n    defaultTier: simple\n    tiers:\n      simple:\n        model: bbx/cheap\n      complex:\n        model: bbx/big\n  autoOrchestrate:\n    triggerTiers: [complex]\n    allowedTools: [agent, read_file]\n    blockedTools: [bash]\n    slimSystemPrompt: false\n    orchestrationPrompt: BBX-ORCHESTRATION-PROMPT follow the plan.\n    subagentMaxTokens: 1000\n    mainAgentModel: bbx/big\n    subagentModel: bbx/cheap\n",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Cfg\"}"
+   }
+  },
+  {
+   "name": "judge-hard",
+   "when": [
+    "model-tier classifier",
+    "ts-hard"
+   ],
+   "reply": {
+    "text": "<tier>complex</tier>"
+   }
+  },
+  {
+   "name": "judge-easy",
+   "when": [
+    "model-tier classifier",
+    "ts-easy"
+   ],
+   "reply": {
+    "text": "I think <tier>simple</tier>"
+   }
+  },
+  {
+   "name": "judge-slow",
+   "when": [
+    "model-tier classifier",
+    "ts-slow"
+   ],
+   "reply": {
+    "delayMs": 1500,
+    "text": "<tier>complex</tier>"
+   }
+  },
+  {
+   "name": "judge-junk",
+   "when": [
+    "model-tier classifier",
+    "ts-junk"
+   ],
+   "reply": {
+    "text": "no idea"
+   }
+  },
+  {
+   "name": "cheap",
+   "when": [
+    "\"model\":\"cheap\""
+   ],
+   "reply": {
+    "text": "cheap ok"
+   }
+  },
+  {
+   "name": "big",
+   "when": [
+    "\"model\":\"big\""
+   ],
+   "reply": {
+    "text": "big ok"
+   }
+  },
+  {
+   "name": "other",
+   "reply": {
+    "text": "other ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-a",
+    "channelKey": "test",
+    "message": "ts-easy hello"
+   },
+   "timeout": 30000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-b",
+    "channelKey": "test",
+    "message": "ts-hard refactor everything"
+   },
+   "timeout": 30000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "resolve_settings",
+   "params": {}
+  }
+ ]
+}

@@ -1,0 +1,38 @@
+{
+ "name": "cfg-config-warnings",
+ "about": "能启动但带警告的配置（只改诊断、不改行为的键）：未知顶层键 CONFIG_UNKNOWN_FIELD（loadPilotConfig.ts:343-376）；已移除的 agent.fallbackModel（:403-412）；已弃用的 agent.thinking 在 enabled 不是 true 时整段丢弃（:474-482）；agent.subagents.params / 未知子键（:494-520）；extension 未知键（:777-787）；memory 未知键、memory.schedule 未知键、memory.model 指向不存在的 provider（parseMemoryConfig.ts:46-66、:116-127、:150-170，enabled=false 不起记忆）；gateway.tokenPath 已移除（parseGatewayConfig.ts:34-42）、staticAssetsPath 解析但不用（静态目录仍是 <cwd>/ui/dist，这里放一个 index.html 看 GET / 是否被它影响）、port 不决定监听端口、idleSessionTimeoutMinutes / memoryDiagnostics 类型不对时静默回落缺省；cron 时区非法、并发数与超时非正整数、未知键（parseCronConfig.ts:40-80，回落缺省并警告）；runPolicy 与 failureGuard 的未知键（parseRunPolicyConfig.ts:20-30、80-90）。用 serve 起服务比启动输出，resolve_settings 比诊断与配置快照，再看 /health 与 GET /。",
+ "server": false,
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\n  fallbackModel: bbx/deterministic\n  thinking:\n    enabled: false\n    budgetTokens: 5\n  subagents:\n    timeoutMs: 1000\n    params:\n      temperature: 1\n    bogus: 2\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nunknownTop: 1\nextension:\n  bogus: true\nmemory:\n  enabled: false\n  bogus: 1\n  model: nope/none\n  schedule:\n    reasoningMode: answer_first\n    bogus: 1\ngateway:\n  tokenPath: /tmp/nowhere/token\n  staticAssetsPath: {ROOT}/static\n  port: 1234\n  idleSessionTimeoutMinutes: soon\n  memoryDiagnostics: yes-please\ncron:\n  enabled: false\n  timezone: Mars/Base\n  maxConcurrentRuns: 0\n  runTimeoutMinutes: 1.5\n  bogus: 1\nrunPolicy:\n  bogus: 1\n  failureGuard:\n    bogus: 1\n",
+ "files": {
+  "static/index.html": "<html>static-assets-path-should-not-be-served</html>\n"
+ },
+ "volatile": [
+  "\\.http\\.headers\\.date$"
+ ],
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "then": [
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "ws": "describe_server",
+     "params": {}
+    },
+    {
+     "http": "GET /health"
+    },
+    {
+     "http": "GET /"
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  }
+ ]
+}

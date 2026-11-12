@@ -167,6 +167,9 @@ impl Requests {
 impl GatewayRequests for Requests {
     fn describe_server(&self) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async {
+            // `router.sessionCount()` sweeps idle sessions before counting
+            // (SessionRouter.ts:389-392), even with the periodic sweep off.
+            self.owner.sweep_idle();
             Ok(object([
                 ("mode", "in_process".into()),
                 (

@@ -1,0 +1,168 @@
+{
+ "name": "cfg-extension-include-hook-events",
+ "about": "extension.includeHookEvents=true（loadPilotConfig.ts:763-775 解析；运行时只读 sdkSessionConfig.includeHookEvents（ProjectSessionRuntimeBundle.ts:382、674），配置里的这个键只参与 classifyChanges.ts:32 的变更分类）：与 hook-user-prompt-submit 相同的插件 hook 与步骤，事件格式与不配时一致（hook 事件仍以 agent_status 出现）。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nextension:\n  includeHookEvents: true\n",
+ "files": {
+  "home/.pilotdeck/plugins/bbx-prompt/plugin.json": {
+   "name": "bbx-prompt",
+   "version": "0.1.0",
+   "description": "bbx bbx-prompt",
+   "hooks": {
+    "UserPromptSubmit": [
+     {
+      "hooks": [
+       {
+        "type": "command",
+        "command": "node hook.mjs prompt @ '' '' 0"
+       }
+      ]
+     },
+     {
+      "matcher": "UserPromptSubmit",
+      "hooks": [
+       {
+        "type": "command",
+        "command": "node hook.mjs prompt-second 0 '' '' 0"
+       },
+       {
+        "type": "command",
+        "command": "node hook.mjs prompt-if-no 0 '' '' 0",
+        "if": "X(nothing)"
+       },
+       {
+        "type": "command",
+        "command": "node hook.mjs prompt-if-yes 0 '' '' 0",
+        "if": "X"
+       }
+      ]
+     },
+     {
+      "matcher": "Other",
+      "hooks": [
+       {
+        "type": "command",
+        "command": "node hook.mjs prompt-nomatch 0 '' '' 0"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "home/.pilotdeck/plugins/bbx-prompt/hook.mjs": "// bbx hook fixture: node hook.mjs <log> <exit> [stdout] [stderr] [sleepMs]\nimport fs from 'node:fs';\nconst [log, exit = '0', out = '', err = '', sleep = '0'] = process.argv.slice(2);\nconst dir = process.env.HOME + '/hooklog';\nconst append = (row) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(dir + '/' + log + '.jsonl', JSON.stringify(row) + '\\n'); };\nlet input = '';\nprocess.stdin.on('data', (d) => { input += d; });\nprocess.stdin.on('end', () => {\n  let parsed; try { parsed = JSON.parse(input); } catch { parsed = { raw: input }; }\n  const env = {};\n  for (const k of Object.keys(process.env).sort()) env[k] = /^PILOT/.test(k) && !/BUNDLED/.test(k) ? process.env[k] : true;\n  append({ argv: process.argv.slice(2), cwd: process.cwd(), input: parsed, env });\n  // exit \"@\": the behaviour is the JSON between HOOK<< and >> in the prompt (or the last assistant message).\n  let spec = { exit, out, err, sleep };\n  if (exit === '@') {\n    const m = /HOOK<<(.*?)>>/s.exec(String(parsed.prompt ?? parsed.lastAssistantMessage ?? ''));\n    spec = { exit: 0, out: '', err: '', sleep: 0, ...(m ? JSON.parse(m[1]) : {}) };\n  }\n  setTimeout(() => {\n    append({ argv: process.argv.slice(2), done: true });\n    if (spec.out) process.stdout.write(spec.out);\n    if (spec.err) process.stderr.write(spec.err);\n    process.exit(Number(spec.exit));\n  }, Number(spec.sleep));\n});\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Hook run\"}"
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "answer"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-pass",
+    "channelKey": "test",
+    "message": "case-pass: HOOK<<{}>>"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-context",
+    "channelKey": "test",
+    "message": "case-context: HOOK<<{\"out\":\"{\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"UserPromptSubmit\\\",\\\"additionalContext\\\":\\\"extra context <&> \\\\\\\"q\\\\\\\"\\\\nline two\\\"}}\\n\"}>>"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-context-system",
+    "channelKey": "test",
+    "message": "case-context-system: HOOK<<{\"out\":\"{\\\"systemMessage\\\":\\\"system note\\\",\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"UserPromptSubmit\\\",\\\"additionalContext\\\":\\\"second context\\\"}}\\n\"}>>"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-block",
+    "channelKey": "test",
+    "message": "case-block: HOOK<<{\"exit\":2,\"err\":\"prompt blocked\\n\"}>>"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-json-block",
+    "channelKey": "test",
+    "message": "case-json-block: HOOK<<{\"out\":\"{\\\"decision\\\":\\\"block\\\",\\\"reason\\\":\\\"json said no\\\"}\\n\"}>>"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-fail",
+    "channelKey": "test",
+    "message": "case-fail: HOOK<<{\"exit\":1,\"err\":\"non blocking\\n\",\"out\":\"garbage {\"}>>"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-garbage",
+    "channelKey": "test",
+    "message": "case-garbage: HOOK<<{\"out\":\"[1,2]\\n{\\\"a\\\":\"}>>"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-block"
+   }
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-context"
+   }
+  }
+ ]
+}

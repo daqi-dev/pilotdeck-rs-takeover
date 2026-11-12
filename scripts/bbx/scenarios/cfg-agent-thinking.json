@@ -1,0 +1,67 @@
+{
+ "name": "cfg-agent-thinking",
+ "about": "已弃用但仍生效的 agent.thinking（loadPilotConfig.ts:474-482 只在 enabled===true 时保留 {enabled, budgetTokens}；SessionAgentConfigBundle.ts:165-171 作为会话 thinking 的最后一级回落；pilotdeck-agent-loop-default-factory.ts:801-818 asThinkingConfig）：enabled=true + budgetTokens=2048 时 anthropic 与 openai 两种协议请求里的推理参数。",
+ "config": "schemaVersion: 1\nagent:\n  model: anth/m\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\n  thinking:\n    enabled: true\n    budgetTokens: 2048\nmodel:\n  providers:\n    anth:\n      protocol: anthropic\n      url: {MOCK}/anth/v1\n      apiKey: bbx-mock-only\n      models:\n        m:\n          capabilities:\n            supportsToolUse: true\n            supportsPromptCache: false\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Cfg\"}"
+   }
+  },
+  {
+   "name": "anth",
+   "when": [
+    "th-an"
+   ],
+   "reply": {
+    "text": "anth ok"
+   }
+  },
+  {
+   "name": "oa",
+   "when": [
+    "th-oa"
+   ],
+   "reply": {
+    "text": "oa ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-an",
+    "channelKey": "test",
+    "message": "th-an go"
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-oa",
+    "channelKey": "test",
+    "message": "th-oa go",
+    "modelOverride": {
+     "mode": "model",
+     "provider": "bbx",
+     "model": "deterministic"
+    }
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "resolve_settings",
+   "params": {}
+  }
+ ]
+}

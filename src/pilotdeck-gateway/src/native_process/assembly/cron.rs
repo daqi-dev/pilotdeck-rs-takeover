@@ -47,6 +47,31 @@ fn manager_config(section: &JsValue) -> CronManagerConfig {
     }
 }
 
+/// The server's `cronLogger` (src/cli/pilotdeck.ts:70-75): `info` to stdout,
+/// `warn` to stderr, `[cron] <message>` plus ` <JSON.stringify(data)>` when
+/// data was passed. Every TS call site passes either no data or a non-empty
+/// object literal, so an empty meta here means "no data".
+struct ConsoleCronLogger;
+impl ConsoleCronLogger {
+    fn line(message: &str, meta: &JsObject) -> String {
+        if meta.is_empty() {
+            return format!("[cron] {message}");
+        }
+        match pilotdeck_protocol::stringify_json(&JsValue::Object(meta.clone())) {
+            Ok(Some(data)) => format!("[cron] {message} {data}"),
+            _ => format!("[cron] {message}"),
+        }
+    }
+}
+impl crate::runtime::cron::CronLogger for ConsoleCronLogger {
+    fn info(&self, message: &str, meta: &JsObject) {
+        println!("{}", Self::line(message, meta));
+    }
+    fn warn(&self, message: &str, meta: &JsObject) {
+        eprintln!("{}", Self::line(message, meta));
+    }
+}
+
 pub(super) fn cron_io_error(error: CronError) -> std::io::Error {
     std::io::Error::other(String::from_utf16_lossy(error.message().units()))
 }
@@ -70,12 +95,15 @@ pub(super) fn build(
         session_overrides: Some(hooks.session_overrides.clone()),
         now: None,
         uuid: None,
-        logger: None,
+        logger: Some(Arc::new(ConsoleCronLogger)),
         scheduler_idle_poll_ms: None,
     })
     .map_err(cron_io_error)?;
     if let Some(handler) = &hooks.on_turn_event {
         manager.set_turn_event_handler(handler.clone());
+    }
+    if let Some(handler) = &hooks.on_result_delivery {
+        manager.set_result_delivery_handler(handler.clone());
     }
     Ok(Some(manager))
 }
@@ -87,6 +115,64 @@ pub(super) struct NativeCronHooks {
     pub session_overrides:
         Arc<std::sync::Mutex<crate::config::session_overrides::SessionConfigOverrides>>,
     pub on_turn_event: Option<crate::runtime::cron::CronTurnEventHandler>,
+    pub on_result_delivery: Option<crate::runtime::cron::CronResultDeliveryHandler>,
+}
+
+/// `onCronResultDelivery` (src/cli/pilotdeck.ts:88-98): hand the record to
+/// the channel server without awaiting it; `false` warns that no channel
+/// handled it.
+pub(super) fn deliver_to_channels(
+    channels: Arc<super::super::channels::NativeChannels>,
+) -> crate::runtime::cron::CronResultDeliveryHandler {
+    // Cron runs call this from the scheduler's own thread (no ambient
+    // runtime), so the delivery is spawned on the gateway runtime captured
+    // at assembly.
+    let runtime = tokio::runtime::Handle::try_current().ok();
+    Arc::new(move |delivery: &JsValue| {
+        let text = |key: &str| match delivery.get(key) {
+            Some(JsValue::String(value)) => Some(value.clone()),
+            _ => None,
+        };
+        let channel_key = |key: &str| text(key).map(crate::channel::protocol::ChannelKey::new);
+        let task_id = text("taskId").unwrap_or_default();
+        let run_id = text("runId").unwrap_or_default();
+        let record = crate::channel::im_cron::CronResultDelivery {
+            task_id: task_id.clone(),
+            run_id: run_id.clone(),
+            session_key: text("sessionKey").unwrap_or_default(),
+            channel_key: channel_key("channelKey")
+                .unwrap_or_else(|| crate::channel::protocol::ChannelKey::new("")),
+            origin_session_key: text("originSessionKey"),
+            origin_channel_key: channel_key("originChannelKey"),
+            text: text("text").unwrap_or_default(),
+        };
+        let delivered = channels.server().deliver_cron_result(record);
+        let task_id = String::from_utf16_lossy(task_id.units());
+        let run_id = String::from_utf16_lossy(run_id.units());
+        let report = async move {
+            if !delivered.await {
+                eprintln!("[cron] result delivery was not handled task={task_id} run={run_id}");
+            }
+        };
+        match tokio::runtime::Handle::try_current()
+            .ok()
+            .or_else(|| runtime.clone())
+        {
+            Some(handle) => {
+                handle.spawn(report);
+            }
+            None => {
+                std::thread::spawn(move || {
+                    if let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                    {
+                        runtime.block_on(report);
+                    }
+                });
+            }
+        }
+    })
 }
 
 /// `onCronTurnEvent` (src/cli/pilotdeck.ts:85-87): every cron turn event is

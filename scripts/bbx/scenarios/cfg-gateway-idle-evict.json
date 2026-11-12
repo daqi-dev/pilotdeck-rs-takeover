@@ -1,0 +1,55 @@
+{
+ "name": "cfg-gateway-idle-evict",
+ "about": "gateway.idleSessionTimeoutMinutes=0.005（0.3 秒）与 idleSweepIntervalSeconds=0.2（createLocalGateway.ts:827-831 → SessionRouter.ts:101-106、471-485）：一轮结束后空闲超过 0.3 秒的会话在下一次扫描时被逐出；重连后 hello_ok 的 sessionCount 与 describe_server、会话记录比较。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ngateway:\n  idleSessionTimeoutMinutes: 0.005\n  idleSweepIntervalSeconds: 0.2\n",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Cfg\"}"
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "idle ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "describe_server",
+   "params": {}
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-idle",
+    "channelKey": "test",
+    "message": "hello idle"
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "disconnect": true
+  },
+  {
+   "sleep": 1500
+  },
+  {
+   "connect": true
+  },
+  {
+   "ws": "describe_server",
+   "params": {}
+  },
+  {
+   "disconnect": true
+  }
+ ]
+}

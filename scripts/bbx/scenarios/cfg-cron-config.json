@@ -1,0 +1,158 @@
+{
+ "name": "cfg-cron-config",
+ "about": "cron 段的配置键（cron/config/parseCronConfig.ts；CronRuntime.ts:133-134、227-231；CronScheduler.ts:97）：timezone=Asia/Shanghai 作为新建任务的缺省时区；用 serve 起服务，比较 cron 日志（src/cli/pilotdeck.ts:70-75 的 cronLogger：[cron] cron manager started / cron runtime started 等）、通知、provider 请求、运行历史与 tasks.json。初始任务与 cron-auto-fire 相同。maxConcurrentRuns 在这里保持 1（=2 时两个任务并发运行，基线自比 UUID 出现顺序不稳，见报告）；runTimeoutMinutes=5 只在超时前生效，这里不测超时本身（最小 1 分钟）。",
+ "server": false,
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ncron:\n  enabled: true\n  timezone: Asia/Shanghai\n  maxConcurrentRuns: 1\n  runTimeoutMinutes: 5\n",
+ "files": {
+  "home/work/alpha/README.md": "alpha\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+  "home/.pilotdeck/cron/projects/private-tmp-pdrs-bbx-root-home-work-alpha/tasks.json": {
+   "schemaVersion": 1,
+   "tasks": [
+    {
+     "schemaVersion": 1,
+     "taskId": "task-once",
+     "message": "auto-once-msg",
+     "status": "scheduled",
+     "sessionKey": "cron:task-once",
+     "channelKey": "cron",
+     "projectKey": "{HOME}/work/alpha",
+     "timezone": "UTC",
+     "originSessionKey": "origin-s",
+     "originChannelKey": "web",
+     "createdAt": "2026-01-01T00:00:00.000Z",
+     "updatedAt": "2026-01-01T00:00:00.000Z",
+     "revision": 0,
+     "schedule": {
+      "type": "once",
+      "runAt": "2000-01-01T00:00:00.000Z"
+     },
+     "nextRunAt": "2000-01-01T00:00:00.000Z"
+    },
+    {
+     "schemaVersion": 1,
+     "taskId": "task-cron",
+     "message": "auto-cron-msg",
+     "status": "scheduled",
+     "sessionKey": "cron:task-cron",
+     "channelKey": "cron",
+     "projectKey": "{HOME}/work/alpha",
+     "timezone": "UTC",
+     "originSessionKey": "origin-s",
+     "originChannelKey": "web",
+     "createdAt": "2026-01-01T00:00:00.000Z",
+     "updatedAt": "2026-01-01T00:00:00.000Z",
+     "revision": 0,
+     "schedule": {
+      "type": "cron",
+      "expression": "0 9 * * *",
+      "timezone": "UTC"
+     },
+     "nextRunAt": "2000-01-02T09:00:00.000Z",
+     "scheduleComputationVersion": 3
+    },
+    {
+     "schemaVersion": 1,
+     "taskId": "task-later",
+     "message": "later-msg",
+     "status": "scheduled",
+     "sessionKey": "cron:task-later",
+     "channelKey": "cron",
+     "projectKey": "{HOME}/work/alpha",
+     "timezone": "UTC",
+     "originSessionKey": "origin-s",
+     "originChannelKey": "web",
+     "createdAt": "2026-01-01T00:00:00.000Z",
+     "updatedAt": "2026-01-01T00:00:00.000Z",
+     "revision": 0,
+     "schedule": {
+      "type": "once",
+      "runAt": "2099-01-01T00:00:00.000Z"
+     },
+     "nextRunAt": "2099-01-01T00:00:00.000Z"
+    }
+   ]
+  }
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Cron auto\"}"
+   }
+  },
+  {
+   "name": "once",
+   "when": [
+    "auto-once-msg"
+   ],
+   "reply": {
+    "text": "Once fired."
+   }
+  },
+  {
+   "name": "cron",
+   "when": [
+    "auto-cron-msg"
+   ],
+   "reply": {
+    "text": "Cron fired."
+   }
+  }
+ ],
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "then": [
+    {
+     "ws": "cron_delete",
+     "params": {
+      "taskId": "task-later",
+      "projectKey": "{HOME}/work/alpha"
+     }
+    },
+    {
+     "sleep": 4000
+    },
+    {
+     "ws": "cron_list",
+     "params": {
+      "projectKey": "{HOME}/work/alpha",
+      "includeHistory": true
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/alpha",
+      "message": "tz default",
+      "schedule": {
+       "type": "cron",
+       "expression": "30 8 * * *"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/alpha",
+      "message": "tz explicit",
+      "schedule": {
+       "type": "cron",
+       "expression": "30 8 * * *"
+      },
+      "timezone": "UTC"
+     }
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  }
+ ]
+}
