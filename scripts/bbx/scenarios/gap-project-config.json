@@ -1,0 +1,76 @@
+{
+ "name": "gap-project-config",
+ "about": "项目级配置 <项目>/.pilotdeck/pilotdeck.yaml（pilot/config/loadPilotConfig.ts:85-105，项目层优先于用户层）：alpha 项目的配置把 agent.model 改成 second 并改 maxOutputTokens；同一服务里默认项目的会话仍用用户配置。比较两边各一轮发给 provider 的请求（model、max_tokens）与 describe_project。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        second:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 4096\ntelemetry:\n  enabled: false\n",
+ "files": {
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+  "home/work/alpha/.pilotdeck/pilotdeck.yaml": "agent:\n  model: bbx/second\n  maxOutputTokens: 2048\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Project\"}"
+   }
+  },
+  {
+   "name": "alpha",
+   "when": [
+    "pc-alpha:"
+   ],
+   "reply": {
+    "text": "alpha ok"
+   }
+  },
+  {
+   "name": "home",
+   "when": [
+    "pc-home:"
+   ],
+   "reply": {
+    "text": "home ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-alpha",
+    "channelKey": "test",
+    "message": "pc-alpha: hi",
+    "projectKey": "{HOME}/work/alpha"
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-home",
+    "channelKey": "test",
+    "message": "pc-home: hi"
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "describe_project",
+   "params": {
+    "projectKey": "{HOME}/work/alpha"
+   }
+  },
+  {
+   "ws": "session_model_get",
+   "params": {
+    "sessionKey": "s-alpha",
+    "projectKey": "{HOME}/work/alpha"
+   }
+  }
+ ]
+}

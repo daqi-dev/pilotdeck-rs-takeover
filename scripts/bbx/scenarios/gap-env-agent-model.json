@@ -1,0 +1,47 @@
+{
+ "name": "gap-env-agent-model",
+ "about": "环境变量 PILOT_AGENT_MODEL 覆盖 agent.model（pilot/config/loadPilotConfig.ts:53-55,295-305）：配置里缺省是 deterministic，环境变量选 bbx/second。比较一轮发给 provider 的 model 与 max_tokens、session_model_get、model_catalog_list。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        second:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 4096\ntelemetry:\n  enabled: false\n",
+ "env": {
+  "PILOT_AGENT_MODEL": "bbx/second"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Env\"}"
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-env",
+    "channelKey": "test",
+    "message": "hi"
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "session_model_get",
+   "params": {
+    "sessionKey": "s-env"
+   }
+  },
+  {
+   "ws": "resolve_settings"
+  }
+ ]
+}

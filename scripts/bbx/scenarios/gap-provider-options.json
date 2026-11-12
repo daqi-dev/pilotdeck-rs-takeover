@@ -1,0 +1,127 @@
+{
+ "name": "gap-provider-options",
+ "about": "provider / model 配置键对发给 provider 的请求的影响（model/config/parseModelConfig.ts:110-124、parseModelDefinition:206-236、model/protocol/capabilities.ts）：apiKey 用 ${ENV} 从环境变量取、url 末尾斜杠、headers（含覆盖 User-Agent）、extraBody（嵌套对象、数值；基线里与 model / messages 同名的键会盖掉请求体本身，这里不测）、timeoutMs、模型 aliases 与 displayName、supportsParallelToolCalls、supportsStreaming=false（非流式请求）、supportsToolUse=false + supportsSystemPrompt=false。每轮用 modelOverride 选模型，最后用别名 nick 选一次，再看 model_catalog_list。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    custom:\n      protocol: openai\n      url: {MOCK}/custom/v1/\n      apiKey: ${BBX_GAP_KEY}\n      timeoutMs: 30000\n      headers:\n        X-Bbx-Header: from-config\n        User-Agent: bbx-agent/1.0\n      extraBody:\n        provider:\n          order: [a, b]\n        top_k: 7\n        temperature: 0.25\n      models:\n        real-model-id:\n          displayName: Real Model\n          aliases: [nick]\n          capabilities:\n            supportsToolUse: true\n            supportsParallelToolCalls: true\n            maxContextTokens: 32000\n            maxOutputTokens: 1000\n        nostream:\n          capabilities:\n            supportsToolUse: true\n            supportsStreaming: false\n            maxContextTokens: 32000\n            maxOutputTokens: 1000\n        nosystem:\n          capabilities:\n            supportsToolUse: false\n            supportsSystemPrompt: false\n            maxContextTokens: 32000\n            maxOutputTokens: 1000\ntelemetry:\n  enabled: false\n",
+ "env": {
+  "BBX_GAP_KEY": "key-from-env"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Options\"}"
+   }
+  },
+  {
+   "name": "real",
+   "when": [
+    "po-real:"
+   ],
+   "reply": {
+    "text": "real ok"
+   }
+  },
+  {
+   "name": "nostream",
+   "when": [
+    "po-nostream:"
+   ],
+   "reply": {
+    "text": "nostream ok"
+   }
+  },
+  {
+   "name": "nosystem",
+   "when": [
+    "po-nosystem:"
+   ],
+   "reply": {
+    "text": "nosystem ok"
+   }
+  },
+  {
+   "name": "alias",
+   "when": [
+    "po-alias:"
+   ],
+   "reply": {
+    "text": "alias ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-real",
+    "channelKey": "test",
+    "message": "po-real: hi",
+    "modelOverride": {
+     "mode": "model",
+     "provider": "custom",
+     "model": "real-model-id"
+    }
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-nostream",
+    "channelKey": "test",
+    "message": "po-nostream: hi",
+    "modelOverride": {
+     "mode": "model",
+     "provider": "custom",
+     "model": "nostream"
+    }
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-nosystem",
+    "channelKey": "test",
+    "message": "po-nosystem: hi",
+    "modelOverride": {
+     "mode": "model",
+     "provider": "custom",
+     "model": "nosystem"
+    }
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-alias",
+    "channelKey": "test",
+    "message": "po-alias: hi",
+    "modelOverride": {
+     "mode": "model",
+     "provider": "custom",
+     "model": "nick"
+    }
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "model_catalog_list",
+   "params": {
+    "provider": "custom"
+   }
+  }
+ ]
+}
