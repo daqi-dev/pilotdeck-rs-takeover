@@ -51,6 +51,11 @@ struct Ports {
 #[derive(Clone, Default)]
 pub struct Handler {
     ports: Option<Ports>,
+    /// The session-scoped runtime for the loop's advisory events
+    /// (`PreModelRequest`, `InstructionsLoaded`). The loop never awaits
+    /// them (`this.dispatchLifecycle(...).catch(() => {})`, AgentLoop.ts:699,
+    /// 2281), so their hooks neither hold the turn's terminal nor end with it.
+    advisory: Option<Arc<dyn LifecyclePort>>,
 }
 impl Handler {
     pub fn new(runtime: LifecycleRuntime, binding: Binding) -> Self {
@@ -59,7 +64,12 @@ impl Handler {
     pub fn with_port(runtime: Arc<dyn LifecyclePort>, binding: Binding) -> Self {
         Self {
             ports: Some(Ports { runtime, binding }),
+            advisory: None,
         }
+    }
+    /// Route the advisory events to `port`, answered without waiting.
+    pub fn set_advisory(&mut self, port: Arc<dyn LifecyclePort>) {
+        self.advisory = Some(port);
     }
     /// TS `NullLifecycleRuntime`: dispatch is empty. This handler's `dispose` is
     /// a no-op (the dispatcher never disposes the session runtime).
@@ -112,18 +122,36 @@ impl Handler {
                 &ports.binding.session_id,
                 &ports.binding.turn_id,
             )?;
-            let result = ports
-                .runtime
-                .dispatch(LifecycleDispatchInput {
-                    event: event.clone(),
-                    base_input,
-                    payload,
-                    match_query: Some(event.clone()),
-                    cwd: ports.binding.cwd.clone(),
-                    env: Some(env),
-                    signal: ports.binding.signal.clone(),
-                })
-                .await?;
+            let input = LifecycleDispatchInput {
+                event: event.clone(),
+                base_input,
+                payload,
+                match_query: Some(event.clone()),
+                cwd: ports.binding.cwd.clone(),
+                env: Some(env),
+                signal: ports.binding.signal.clone(),
+            };
+            if let Some(advisory) = &handler.advisory
+                && (event.equals_str("PreModelRequest") || event.equals_str("InstructionsLoaded"))
+                && let Ok(runtime) = tokio::runtime::Handle::try_current()
+            {
+                // The host's turn signal also fires when a turn simply ends;
+                // the baseline's abort signal does not, so these hooks run on.
+                let future = advisory.dispatch(LifecycleDispatchInput {
+                    signal: None,
+                    ..input
+                });
+                runtime.spawn(async move {
+                    let _ = future.await;
+                });
+                let mut response = JsObject::new();
+                response.insert(
+                    "result".into(),
+                    serialize_lifecycle_dispatch_result(&LifecycleDispatchResult::default()),
+                );
+                return Ok(response);
+            }
+            let result = ports.runtime.dispatch(input).await?;
             let mut response = JsObject::new();
             response.insert(
                 "result".into(),

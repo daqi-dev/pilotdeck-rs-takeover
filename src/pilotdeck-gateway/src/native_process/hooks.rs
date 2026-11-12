@@ -272,6 +272,14 @@ impl ToolHooks {
             .map(|(event, _)| event.clone())
             .collect();
     }
+    /// The session-scoped runtime as a lifecycle port, once configured.
+    pub(super) fn session_port(&self) -> Option<Arc<dyn LifecyclePort>> {
+        self.session
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .map(|runtime| Arc::new(runtime) as Arc<dyn LifecyclePort>)
+    }
     pub(super) fn bind(&self, port: Option<Arc<dyn LifecyclePort>>) {
         *self.port.lock().unwrap_or_else(|e| e.into_inner()) = port;
     }

@@ -1204,6 +1204,7 @@ impl SessionTools {
                     // `permission_prompt.rs` is this session's gateway
                     // permission callback.
                     host_permission_prompt: true,
+                    advisory: self.tool_hooks.session_port(),
                 },
             },
         }

@@ -71,6 +71,9 @@ pub struct HookWiring {
     /// The host answers `PermissionRequest` with its own gateway prompt, so
     /// the hook binding must not append a second permission callback.
     pub host_permission_prompt: bool,
+    /// The session-scoped runtime the loop's advisory lifecycle events
+    /// (`PreModelRequest`, `InstructionsLoaded`) run on, detached from the turn.
+    pub advisory: Option<Arc<dyn lifecycle::LifecyclePort>>,
 }
 #[derive(Clone, Default)]
 pub struct InteractionPorts {
@@ -206,6 +209,9 @@ impl InteractionTurn {
                 router,
                 hook_wiring.observers.clone(),
             )?;
+            if let Some(advisory) = &hook_wiring.advisory {
+                router.lifecycle.set_advisory(advisory.clone());
+            }
             if let Some(sink) = &hook_wiring.turn_sink {
                 sink(Some(Arc::new(hooks.clone())));
             }
