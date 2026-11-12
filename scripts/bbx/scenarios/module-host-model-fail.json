@@ -1,0 +1,137 @@
+{
+  "name": "module-host-model-fail",
+  "about": "model_stream 在 provider 回 400 / 500 时：200 + ndjson 头之后，流里是 request_started 与 error 事件（500 按重试策略重试），然后正常结束；之后宿主照常可用。",
+  "volatile": [
+    "\\.http\\.headers\\.date$"
+  ],
+  "provider": [
+    {
+      "name": "fail400",
+      "when": [
+        "BBX_FAIL_400"
+      ],
+      "reply": {
+        "status": 400,
+        "body": {
+          "error": {
+            "message": "bad request from mock",
+            "type": "invalid_request_error"
+          }
+        }
+      }
+    },
+    {
+      "name": "fail500",
+      "when": [
+        "BBX_FAIL_500"
+      ],
+      "reply": {
+        "status": 500,
+        "body": {
+          "error": {
+            "message": "boom",
+            "type": "server_error"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "f1",
+          "modelId": "bbx/deterministic",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "BBX_FAIL_400"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "f2",
+          "modelId": "bbx/deterministic",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "BBX_FAIL_500"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_prepare",
+        "input": {
+          "requestId": "after",
+          "modelId": "bbx/deterministic",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hi"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

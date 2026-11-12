@@ -1,0 +1,646 @@
+{
+  "name": "module-host-ops",
+  "about": "公共 host 的读类操作（createLocalGateway.ts:1524-1556 的 createRuntimeHostCapabilityProvider）：describe 列出的操作；list_general_skills（skillManager.list，项目根为回退项目 pilotHome，输入被忽略）；list_model_catalog（modelCatalogList includeAuto:false 加 name/enabled/is_default）；file_parse（activeRuntimeTextParsing.ts：扩展名、mediaType、maxBytes、大小、UTF-8 解码与各错误）；read_sop_authority（nativeSopAuthority.ts：输入校验与无安装所有者时的拒绝）。 不放用户 skill：新写文件的 mtime 带小数且位数逐次不同，会让 content-length 在基线自比时就不稳。",
+  "volatile": [
+    "\\.http\\.headers\\.date$"
+  ],
+  "steps": [
+    {
+      "http": "POST /api/module-host/describe",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "list_general_skills",
+        "input": {}
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "list_general_skills",
+        "input": {
+          "scope": "user",
+          "query": "zzz",
+          "limit": 1
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "list_model_catalog",
+        "input": {}
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "list_model_catalog",
+        "input": {
+          "query": "nothing"
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "file_parse",
+        "input": {
+          "filename": "a.txt",
+          "content_base64": "aGVsbG8Kd29ybGQ="
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "file_parse",
+        "input": {
+          "filename": "B.MD",
+          "content_base64": "IyBUCg==",
+          "media_type": "text/markdown"
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "file_parse",
+        "input": {
+          "filename": "c.markdown",
+          "content_base64": "",
+          "media_type": null
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "file_parse",
+        "input": {
+          "filename": "d.json",
+          "content_base64": "e30="
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "file_parse",
+        "input": {
+          "filename": "noext",
+          "content_base64": "eA=="
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "file_parse",
+        "input": {
+          "filename": "a.txt"
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "file_parse",
+        "input": {
+          "filename": "a.txt",
+          "content_base64": "  "
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "file_parse",
+        "input": {
+          "filename": "a.txt",
+          "content_base64": "abc"
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "file_parse",
+        "input": {
+          "filename": "a.txt",
+          "content_base64": "YQ"
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "file_parse",
+        "input": {
+          "content_base64": "eA=="
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "file_parse",
+        "input": {
+          "filename": " ",
+          "content_base64": "eA=="
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "file_parse",
+        "input": {
+          "filename": "a.txt",
+          "content_base64": "eA==",
+          "media_type": 5
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "file_parse",
+        "input": {
+          "filename": "a.txt",
+          "content_base64": "eA==",
+          "max_bytes": 0
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "file_parse",
+        "input": {
+          "filename": "a.txt",
+          "content_base64": "eA==",
+          "max_bytes": 1.5
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "file_parse",
+        "input": {
+          "filename": "a.txt",
+          "content_base64": "eA==",
+          "max_bytes": 20971521
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "file_parse",
+        "input": {
+          "filename": "a.txt",
+          "content_base64": "eHl6",
+          "max_bytes": 2
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "file_parse",
+        "input": {
+          "filename": "a.txt",
+          "content_base64": "eHk=",
+          "max_bytes": 2
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "file_parse",
+        "input": {
+          "filename": "bad.txt",
+          "content_base64": "//4AYQ=="
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "file_parse",
+        "input": {
+          "filename": "bom.txt",
+          "content_base64": "77u/aGk="
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "file_parse",
+        "input": {
+          "filename": "dir/x.Txt",
+          "content_base64": "5Lit5paH"
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "file_parse",
+        "input": {
+          "filename": ".txt",
+          "content_base64": "ZG90"
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "read_sop_authority",
+        "input": {}
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "read_sop_authority",
+        "input": {
+          "sessionKey": "s",
+          "projectKey": "{PILOT_HOME}",
+          "expectedRevision": 1,
+          "requestId": "r",
+          "admissionCredentialId": "c",
+          "extra": 1
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "read_sop_authority",
+        "input": {
+          "sessionKey": "s",
+          "projectKey": "{PILOT_HOME}",
+          "expectedRevision": 0,
+          "requestId": "r",
+          "admissionCredentialId": "c"
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "read_sop_authority",
+        "input": {
+          "sessionKey": " ",
+          "projectKey": "{PILOT_HOME}",
+          "expectedRevision": 1,
+          "requestId": "r",
+          "admissionCredentialId": "c"
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "read_sop_authority",
+        "input": {
+          "sessionKey": "s",
+          "projectKey": "{PILOT_HOME}",
+          "expectedRevision": 1.5,
+          "requestId": "r",
+          "admissionCredentialId": "c"
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "read_sop_authority",
+        "input": {
+          "sessionKey": "s",
+          "projectKey": "{PILOT_HOME}",
+          "expectedRevision": 1,
+          "requestId": "r",
+          "admissionCredentialId": "c"
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "read_sop_authority",
+        "input": {
+          "sessionKey": "s",
+          "expectedRevision": 1,
+          "requestId": "r",
+          "admissionCredentialId": "c"
+        }
+      }
+    }
+  ]
+}

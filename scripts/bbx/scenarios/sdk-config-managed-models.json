@@ -1,0 +1,158 @@
+{
+  "name": "sdk-config-managed-models",
+  "about": "sdkSessionConfig.managedModels（SessionAgentConfigBundle.ts:131 managedModelPolicy → 路由；ProjectRuntimeRegistry.ts:966,1014-1018 服务端校验）：拒绝主模型时这一轮回 SDK_MANAGED_MODEL_DENIED；provider/* 放行并与 fallbackModel 一起用时照常回退；选择器重复回 INVALID_SDK_MANAGED_SETTINGS；fallbackModel 被策略拒绝时在设置配置时就回 SDK_MANAGED_MODEL_DENIED；只放行主模型时回退候选被过滤掉。比较事件、发给 provider 的请求、会话落盘。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/broken\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        broken:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    alt:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Fallback run\"}"
+      }
+    },
+    {
+      "name": "broken",
+      "when": [
+        "\"model\":\"broken\""
+      ],
+      "reply": {
+        "status": 500,
+        "body": {
+          "error": {
+            "message": "upstream exploded",
+            "type": "server_error"
+          }
+        }
+      }
+    },
+    {
+      "name": "fallback",
+      "when": [
+        "\"model\":\"deterministic\""
+      ],
+      "reply": {
+        "text": "Hello from fallback."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-deny",
+        "channelKey": "test",
+        "runId": "run-s-deny",
+        "message": "hello",
+        "sdkSessionConfig": {
+          "managedModels": {
+            "allow": [],
+            "deny": [
+              "bbx/broken"
+            ]
+          }
+        }
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-star",
+        "channelKey": "test",
+        "runId": "run-s-star",
+        "message": "hello",
+        "sdkSessionConfig": {
+          "fallbackModel": "bbx/deterministic",
+          "managedModels": {
+            "allow": [
+              "bbx/*"
+            ],
+            "deny": []
+          }
+        }
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-dup",
+        "channelKey": "test",
+        "runId": "run-s-dup",
+        "message": "hello",
+        "sdkSessionConfig": {
+          "managedModels": {
+            "allow": [
+              "bbx/*",
+              "bbx/*"
+            ],
+            "deny": []
+          }
+        }
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-dupdeny",
+        "channelKey": "test",
+        "runId": "run-s-dupdeny",
+        "message": "hello",
+        "sdkSessionConfig": {
+          "managedModels": {
+            "allow": [],
+            "deny": [
+              "alt/*",
+              "alt/*"
+            ]
+          }
+        }
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-fbdeny",
+        "channelKey": "test",
+        "runId": "run-s-fbdeny",
+        "message": "hello",
+        "sdkSessionConfig": {
+          "fallbackModel": "bbx/deterministic",
+          "managedModels": {
+            "allow": [],
+            "deny": [
+              "bbx/deterministic"
+            ]
+          }
+        }
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-only",
+        "channelKey": "test",
+        "runId": "run-s-only",
+        "message": "hello",
+        "sdkSessionConfig": {
+          "fallbackModel": "alt/deterministic",
+          "managedModels": {
+            "allow": [
+              "bbx/broken",
+              "alt/deterministic"
+            ],
+            "deny": [
+              "alt/*"
+            ]
+          }
+        }
+      },
+      "timeout": 30000
+    }
+  ]
+}

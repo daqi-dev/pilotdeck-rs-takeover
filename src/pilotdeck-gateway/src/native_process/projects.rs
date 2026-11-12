@@ -198,23 +198,70 @@ impl Requests {
 /// `INVALID_SDK_SESSION_CONFIG`; then `clearRecoveredUserDialogs` asks the
 /// dialog registry for the project (createLocalGateway.ts:1446-1449) and its
 /// rejection is reported as `gateway_dialog_recovery_cleanup_failed`. Only
-/// the project half of each step is ported here: the model allow-list and the
-/// recovered-dialog cleanup themselves are not wired in this host yet.
+/// the project half of the dialog step is ported here: the recovered-dialog
+/// cleanup itself is not wired in this host yet. The model step checks the
+/// session's SDK `managedModels` (no organization policy exists here).
 pub(super) struct SubmitProjectAdmission {
     pub options: Options,
     pub registry: Arc<ProjectRuntimeRegistry>,
+    /// The stored `sdkSessionConfig`s whose `managedModels` the selected
+    /// model must pass.
+    pub overrides: Arc<super::SessionOverrides>,
 }
 
 impl SubmitModelAssertion for SubmitProjectAdmission {
     fn assert(
         &self,
-        _session: &JsString,
-        _selection: Option<&JsValue>,
+        session: &JsString,
+        selection: Option<&JsValue>,
         project: Option<&JsString>,
     ) -> Result<(), SubmitError> {
-        stage_runtime(&self.options, &self.registry, project)
-            .map(|_| ())
-            .map_err(|message| SubmitError::new("INVALID_SDK_SESSION_CONFIG", message))
+        let root = stage_runtime(&self.options, &self.registry, project)
+            .map_err(|message| SubmitError::new("INVALID_SDK_SESSION_CONFIG", message))?;
+        // `assertSdkManagedModelAllowed(sdkSessionConfigs.get(sessionKey)
+        // ?.managedModels, model ?? runtime.snapshot.config.agent.model)`
+        // (ProjectRuntimeRegistry.ts:830-850).
+        let Some(policy) = self
+            .overrides
+            .sdk_config(session)
+            .and_then(|config| config.get("managedModels").cloned())
+        else {
+            return Ok(());
+        };
+        let model = match selection {
+            Some(selection) => selection.clone(),
+            None => self
+                .registry
+                .resolve(Some(&root))
+                .ok()
+                .and_then(|runtime| {
+                    runtime
+                        .resources()
+                        .get::<crate::runtime::project::ProjectResources>()
+                        .and_then(|resources| {
+                            resources
+                                .context()
+                                .snapshot()
+                                .get("config")
+                                .and_then(|config| config.get("agent"))
+                                .and_then(|agent| agent.get("model"))
+                                .cloned()
+                        })
+                })
+                .unwrap_or(JsValue::Undefined),
+        };
+        let text = |key: &str| {
+            model
+                .get(key)
+                .and_then(JsValue::as_string)
+                .cloned()
+                .unwrap_or_default()
+        };
+        super::sdk_config::assert_managed_model_allowed(
+            Some(&policy),
+            &text("provider"),
+            &text("model"),
+        )
     }
 }
 

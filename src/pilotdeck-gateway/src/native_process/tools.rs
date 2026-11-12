@@ -919,7 +919,32 @@ impl SessionTools {
                 agent_max_context_tokens: self.config.get("maxContextTokens").cloned(),
                 // `isMainAgent: !config.isSubagent`.
                 is_main_agent: self.config.get("isSubagent") != Some(&JsValue::Bool(true)),
-                ..RouterModelPortOptions::main_agent()
+                // `managedModelPolicy: config.managedModelPolicy`
+                // (AgentSessionRuntimeBundle.ts:190).
+                managed_model_policy: self.config.get("managedModelPolicy").and_then(|policy| {
+                    let list = |label: &str| match policy.get(label) {
+                        Some(JsValue::Array(entries)) => entries
+                            .iter()
+                            .filter_map(|entry| entry.as_string().cloned())
+                            .collect(),
+                        _ => Vec::new(),
+                    };
+                    policy
+                        .as_object()
+                        .map(|_| crate::runtime::model::router::ManagedModelPolicy {
+                            allow: list("allow"),
+                            deny: list("deny"),
+                        })
+                }),
+                // `fallbackModels: config.fallbackModels`
+                // (AgentSessionRuntimeBundle.ts:189).
+                fallback_models: match self.config.get("fallbackModels") {
+                    Some(JsValue::Array(models)) => models
+                        .iter()
+                        .filter_map(crate::runtime::model::router::RouterModelRef::from_value)
+                        .collect(),
+                    _ => Vec::new(),
+                },
             },
             recorder: None,
             tool_results_dir: session_tool_results_dir(&self.project, &identity.session_id),
