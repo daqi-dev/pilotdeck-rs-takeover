@@ -1,0 +1,1252 @@
+{
+ "name": "modules-tools",
+ "about": "modules.tools 绑到外部能力模块（parseModulesConfig.ts:120-190，runtimePorts.ts:33-138，hostToolPort.ts:136-330，HttpModuleClient.ts）：catalog 里的工具和宿主工具一起发给模型；调用经 HTTP 模块客户端先 GET 清单、再 POST module:capability 的 module_call（每个会话一个客户端）。外部工具不过宿主的权限判定与输入校验：默认模式下 permissions.json 的 disallowedTools 命中、plan 模式都照常执行且不发权限询问，缺必填参数也照发。覆盖：成功、模块回结构化失败（未知 code 与已知工具错误码）、payload 无 type、inReplyTo 不符、成功应答带失败字段、HTTP 500、HTTP 503 带结构化失败、超时（timeoutMs）、应答不是对象、CANCELLED（宿主抛出取消）、payload 本身是错误结果。",
+ "volatile": ["^\\$\\.provider\\.m-[a-z0-9-]+\\[\\d+\\]\\.(body\\.requestId|headers\\.content-length)$"],
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  tools:\n    enabled: true\n    implementationId: bbx.tools\n    contract: pilotdeck.tools/v1\n    transport: module-http-v2\n    endpoint: {MOCK}/tools\n    timeoutMs: 1500\n    methods:\n      - execute\n    catalog:\n      - name: bbx_echo\n        description: Echo text through the external capability module.\n        inputSchema:\n          type: object\n          properties:\n            text:\n              type: string\n          required:\n            - text\n",
+ "files": {
+  "home/.pilotdeck/permissions.json": {
+   "version": 1,
+   "allowedTools": [],
+   "disallowedTools": [
+    "bbx_echo"
+   ],
+   "askTools": []
+  }
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Tool run\"}"
+   }
+  },
+  {
+   "name": "manifest",
+   "unless": [
+    "\""
+   ],
+   "reply": {
+    "status": 200,
+    "body": {
+     "protocolVersion": "2.0",
+     "implementationId": "bbx.tools",
+     "contract": "pilotdeck.tools/v1",
+     "transport": "module-http-v2",
+     "methods": [
+      "execute"
+     ]
+    }
+   }
+  },
+  {
+   "name": "m-t01",
+   "when": [
+    "\"method\":\"module_call\"",
+    "\"toolCallId\":\"call_t01\""
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "r",
+     "inReplyTo": "{saved.mid}",
+     "requestId": "{saved.rid}",
+     "ok": true,
+     "payload": {
+      "type": "success",
+      "toolCallId": "call_t01",
+      "toolName": "bbx_echo",
+      "content": [
+       {
+        "type": "text",
+        "text": "bbx_echo t01"
+       }
+      ],
+      "startedAt": "2026-01-01T00:00:00.000Z",
+      "completedAt": "2026-01-01T00:00:00.000Z"
+     }
+    }
+   }
+  },
+  {
+   "name": "m-t02",
+   "when": [
+    "\"method\":\"module_call\"",
+    "\"toolCallId\":\"call_t02\""
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "r",
+     "inReplyTo": "{saved.mid}",
+     "requestId": "{saved.rid}",
+     "ok": true,
+     "payload": {
+      "type": "success",
+      "toolCallId": "call_t02",
+      "toolName": "bbx_echo",
+      "content": [
+       {
+        "type": "text",
+        "text": "bbx_echo t02"
+       }
+      ],
+      "startedAt": "2026-01-01T00:00:00.000Z",
+      "completedAt": "2026-01-01T00:00:00.000Z"
+     }
+    }
+   }
+  },
+  {
+   "name": "m-t03",
+   "when": [
+    "\"method\":\"module_call\"",
+    "\"toolCallId\":\"call_t03\""
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "r",
+     "inReplyTo": "{saved.mid}",
+     "requestId": "{saved.rid}",
+     "ok": false,
+     "code": "BBX_FAIL",
+     "error": {
+      "code": "BBX_FAIL",
+      "message": "Module says no.",
+      "retryability": "safe"
+     }
+    }
+   }
+  },
+  {
+   "name": "m-t04",
+   "when": [
+    "\"method\":\"module_call\"",
+    "\"toolCallId\":\"call_t04\""
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "r",
+     "inReplyTo": "{saved.mid}",
+     "requestId": "{saved.rid}",
+     "ok": false,
+     "code": "permission_denied",
+     "error": {
+      "code": "permission_denied",
+      "message": "Module denied.",
+      "retryability": "unsafe"
+     }
+    }
+   }
+  },
+  {
+   "name": "m-t05",
+   "when": [
+    "\"method\":\"module_call\"",
+    "\"toolCallId\":\"call_t05\""
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "r",
+     "inReplyTo": "{saved.mid}",
+     "requestId": "{saved.rid}",
+     "ok": true,
+     "payload": {
+      "result": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "m-t06",
+   "when": [
+    "\"method\":\"module_call\"",
+    "\"toolCallId\":\"call_t06\""
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "r",
+     "inReplyTo": "module-http-999",
+     "requestId": "{saved.rid}",
+     "ok": true,
+     "payload": {
+      "type": "success",
+      "toolCallId": "call_t06",
+      "toolName": "bbx_echo",
+      "content": [
+       {
+        "type": "text",
+        "text": "bbx_echo t06"
+       }
+      ],
+      "startedAt": "2026-01-01T00:00:00.000Z",
+      "completedAt": "2026-01-01T00:00:00.000Z"
+     }
+    }
+   }
+  },
+  {
+   "name": "m-t07",
+   "when": [
+    "\"method\":\"module_call\"",
+    "\"toolCallId\":\"call_t07\""
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "r",
+     "inReplyTo": "{saved.mid}",
+     "requestId": "{saved.rid}",
+     "ok": true,
+     "payload": {
+      "type": "success",
+      "toolCallId": "call_t07",
+      "toolName": "bbx_echo",
+      "content": [
+       {
+        "type": "text",
+        "text": "bbx_echo t07"
+       }
+      ],
+      "startedAt": "2026-01-01T00:00:00.000Z",
+      "completedAt": "2026-01-01T00:00:00.000Z"
+     },
+     "code": "X"
+    }
+   }
+  },
+  {
+   "name": "m-t08",
+   "when": [
+    "\"method\":\"module_call\"",
+    "\"toolCallId\":\"call_t08\""
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 500,
+    "body": {
+     "error": "boom"
+    }
+   }
+  },
+  {
+   "name": "m-t09",
+   "when": [
+    "\"method\":\"module_call\"",
+    "\"toolCallId\":\"call_t09\""
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 503,
+    "body": {
+     "kind": "response",
+     "messageId": "r",
+     "inReplyTo": "{saved.mid}",
+     "requestId": "{saved.rid}",
+     "ok": false,
+     "code": "BUSY",
+     "error": {
+      "code": "BUSY",
+      "message": "Module busy.",
+      "retryability": "retry_after_status"
+     }
+    }
+   }
+  },
+  {
+   "name": "m-t10",
+   "when": [
+    "\"method\":\"module_call\"",
+    "\"toolCallId\":\"call_t10\""
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "text": "late",
+    "delayMs": 3000
+   }
+  },
+  {
+   "name": "m-t11",
+   "when": [
+    "\"method\":\"module_call\"",
+    "\"toolCallId\":\"call_t11\""
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 200,
+    "body": "not an envelope"
+   }
+  },
+  {
+   "name": "m-t12",
+   "when": [
+    "\"method\":\"module_call\"",
+    "\"toolCallId\":\"call_t12\""
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "r",
+     "inReplyTo": "{saved.mid}",
+     "requestId": "{saved.rid}",
+     "ok": true,
+     "payload": {
+      "type": "success",
+      "toolCallId": "call_t12",
+      "toolName": "bbx_echo",
+      "content": [
+       {
+        "type": "text",
+        "text": "bbx_echo t12"
+       }
+      ],
+      "startedAt": "2026-01-01T00:00:00.000Z",
+      "completedAt": "2026-01-01T00:00:00.000Z"
+     }
+    }
+   }
+  },
+  {
+   "name": "m-t14",
+   "when": [
+    "\"method\":\"module_call\"",
+    "\"toolCallId\":\"call_t14\""
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "r",
+     "inReplyTo": "{saved.mid}",
+     "requestId": "{saved.rid}",
+     "ok": false,
+     "code": "CANCELLED",
+     "error": {
+      "code": "CANCELLED",
+      "message": "Stopped.",
+      "retryability": "safe"
+     }
+    }
+   }
+  },
+  {
+   "name": "m-t15",
+   "when": [
+    "\"method\":\"module_call\"",
+    "\"toolCallId\":\"call_t15\""
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "r",
+     "inReplyTo": "{saved.mid}",
+     "requestId": "{saved.rid}",
+     "ok": true,
+     "payload": {
+      "type": "error",
+      "toolCallId": "call_t15",
+      "toolName": "bbx_echo",
+      "error": {
+       "code": "tool_execution_failed",
+       "message": "payload err"
+      },
+      "content": [
+       {
+        "type": "text",
+        "text": "payload err"
+       }
+      ],
+      "startedAt": "2026-01-01T00:00:00.000Z",
+      "completedAt": "2026-01-01T00:00:00.000Z"
+     }
+    }
+   }
+  },
+  {
+   "name": "t01-after",
+   "when": [
+    "t01:",
+    "\"tool_call_id\":\"call_t01\""
+   ],
+   "reply": {
+    "text": "Done t01."
+   }
+  },
+  {
+   "name": "t02-after",
+   "when": [
+    "t02:",
+    "\"tool_call_id\":\"call_t02\""
+   ],
+   "reply": {
+    "text": "Done t02."
+   }
+  },
+  {
+   "name": "t03-after",
+   "when": [
+    "t03:",
+    "\"tool_call_id\":\"call_t03\""
+   ],
+   "reply": {
+    "text": "Done t03."
+   }
+  },
+  {
+   "name": "t04-after",
+   "when": [
+    "t04:",
+    "\"tool_call_id\":\"call_t04\""
+   ],
+   "reply": {
+    "text": "Done t04."
+   }
+  },
+  {
+   "name": "t05-after",
+   "when": [
+    "t05:",
+    "\"tool_call_id\":\"call_t05\""
+   ],
+   "reply": {
+    "text": "Done t05."
+   }
+  },
+  {
+   "name": "t06-after",
+   "when": [
+    "t06:",
+    "\"tool_call_id\":\"call_t06\""
+   ],
+   "reply": {
+    "text": "Done t06."
+   }
+  },
+  {
+   "name": "t07-after",
+   "when": [
+    "t07:",
+    "\"tool_call_id\":\"call_t07\""
+   ],
+   "reply": {
+    "text": "Done t07."
+   }
+  },
+  {
+   "name": "t08-after",
+   "when": [
+    "t08:",
+    "\"tool_call_id\":\"call_t08\""
+   ],
+   "reply": {
+    "text": "Done t08."
+   }
+  },
+  {
+   "name": "t09-after",
+   "when": [
+    "t09:",
+    "\"tool_call_id\":\"call_t09\""
+   ],
+   "reply": {
+    "text": "Done t09."
+   }
+  },
+  {
+   "name": "t10-after",
+   "when": [
+    "t10:",
+    "\"tool_call_id\":\"call_t10\""
+   ],
+   "reply": {
+    "text": "Done t10."
+   }
+  },
+  {
+   "name": "t11-after",
+   "when": [
+    "t11:",
+    "\"tool_call_id\":\"call_t11\""
+   ],
+   "reply": {
+    "text": "Done t11."
+   }
+  },
+  {
+   "name": "t12-after",
+   "when": [
+    "t12:",
+    "\"tool_call_id\":\"call_t12\""
+   ],
+   "reply": {
+    "text": "Done t12."
+   }
+  },
+  {
+   "name": "t14-after",
+   "when": [
+    "t14:",
+    "\"tool_call_id\":\"call_t14\""
+   ],
+   "reply": {
+    "text": "Done t14."
+   }
+  },
+  {
+   "name": "t15-after",
+   "when": [
+    "t15:",
+    "\"tool_call_id\":\"call_t15\""
+   ],
+   "reply": {
+    "text": "Done t15."
+   }
+  },
+  {
+   "name": "t15",
+   "when": [
+    "t15:"
+   ],
+   "reply": {
+    "tools": [
+     {
+      "id": "call_t15",
+      "name": "bbx_echo",
+      "arguments": {
+       "text": "a"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "name": "t14",
+   "when": [
+    "t14:"
+   ],
+   "reply": {
+    "tools": [
+     {
+      "id": "call_t14",
+      "name": "bbx_echo",
+      "arguments": {
+       "text": "a"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "name": "t12",
+   "when": [
+    "t12:"
+   ],
+   "reply": {
+    "tools": [
+     {
+      "id": "call_t12",
+      "name": "bbx_echo",
+      "arguments": {}
+     }
+    ]
+   }
+  },
+  {
+   "name": "t11",
+   "when": [
+    "t11:"
+   ],
+   "reply": {
+    "tools": [
+     {
+      "id": "call_t11",
+      "name": "bbx_echo",
+      "arguments": {
+       "text": "a"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "name": "t10",
+   "when": [
+    "t10:"
+   ],
+   "reply": {
+    "tools": [
+     {
+      "id": "call_t10",
+      "name": "bbx_echo",
+      "arguments": {
+       "text": "a"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "name": "t09",
+   "when": [
+    "t09:"
+   ],
+   "reply": {
+    "tools": [
+     {
+      "id": "call_t09",
+      "name": "bbx_echo",
+      "arguments": {
+       "text": "a"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "name": "t08",
+   "when": [
+    "t08:"
+   ],
+   "reply": {
+    "tools": [
+     {
+      "id": "call_t08",
+      "name": "bbx_echo",
+      "arguments": {
+       "text": "a"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "name": "t07",
+   "when": [
+    "t07:"
+   ],
+   "reply": {
+    "tools": [
+     {
+      "id": "call_t07",
+      "name": "bbx_echo",
+      "arguments": {
+       "text": "a"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "name": "t06",
+   "when": [
+    "t06:"
+   ],
+   "reply": {
+    "tools": [
+     {
+      "id": "call_t06",
+      "name": "bbx_echo",
+      "arguments": {
+       "text": "a"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "name": "t05",
+   "when": [
+    "t05:"
+   ],
+   "reply": {
+    "tools": [
+     {
+      "id": "call_t05",
+      "name": "bbx_echo",
+      "arguments": {
+       "text": "a"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "name": "t04",
+   "when": [
+    "t04:"
+   ],
+   "reply": {
+    "tools": [
+     {
+      "id": "call_t04",
+      "name": "bbx_echo",
+      "arguments": {
+       "text": "a"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "name": "t03",
+   "when": [
+    "t03:"
+   ],
+   "reply": {
+    "tools": [
+     {
+      "id": "call_t03",
+      "name": "bbx_echo",
+      "arguments": {
+       "text": "a"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "name": "t02",
+   "when": [
+    "t02:"
+   ],
+   "reply": {
+    "tools": [
+     {
+      "id": "call_t02",
+      "name": "bbx_echo",
+      "arguments": {
+       "text": "a"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "name": "t01",
+   "when": [
+    "t01:"
+   ],
+   "reply": {
+    "tools": [
+     {
+      "id": "call_t01",
+      "name": "bbx_echo",
+      "arguments": {
+       "text": "a"
+      }
+     }
+    ]
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-t01",
+    "channelKey": "test",
+    "message": "t01: go"
+   },
+   "timeout": 20000,
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-t01",
+      "requestId": "{event.requestId}",
+      "decision": "deny"
+     }
+    }
+   ]
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-t02",
+    "mode": "plan"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-t02",
+    "channelKey": "test",
+    "message": "t02: go"
+   },
+   "timeout": 20000,
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-t02",
+      "requestId": "{event.requestId}",
+      "decision": "deny"
+     }
+    }
+   ]
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-t03",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-t03",
+    "channelKey": "test",
+    "message": "t03: go"
+   },
+   "timeout": 20000,
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-t03",
+      "requestId": "{event.requestId}",
+      "decision": "deny"
+     }
+    }
+   ]
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-t04",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-t04",
+    "channelKey": "test",
+    "message": "t04: go"
+   },
+   "timeout": 20000,
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-t04",
+      "requestId": "{event.requestId}",
+      "decision": "deny"
+     }
+    }
+   ]
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-t05",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-t05",
+    "channelKey": "test",
+    "message": "t05: go"
+   },
+   "timeout": 20000,
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-t05",
+      "requestId": "{event.requestId}",
+      "decision": "deny"
+     }
+    }
+   ]
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-t06",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-t06",
+    "channelKey": "test",
+    "message": "t06: go"
+   },
+   "timeout": 20000,
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-t06",
+      "requestId": "{event.requestId}",
+      "decision": "deny"
+     }
+    }
+   ]
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-t07",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-t07",
+    "channelKey": "test",
+    "message": "t07: go"
+   },
+   "timeout": 20000,
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-t07",
+      "requestId": "{event.requestId}",
+      "decision": "deny"
+     }
+    }
+   ]
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-t08",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-t08",
+    "channelKey": "test",
+    "message": "t08: go"
+   },
+   "timeout": 20000,
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-t08",
+      "requestId": "{event.requestId}",
+      "decision": "deny"
+     }
+    }
+   ]
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-t09",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-t09",
+    "channelKey": "test",
+    "message": "t09: go"
+   },
+   "timeout": 20000,
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-t09",
+      "requestId": "{event.requestId}",
+      "decision": "deny"
+     }
+    }
+   ]
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-t10",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-t10",
+    "channelKey": "test",
+    "message": "t10: go"
+   },
+   "timeout": 20000,
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-t10",
+      "requestId": "{event.requestId}",
+      "decision": "deny"
+     }
+    }
+   ]
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-t11",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-t11",
+    "channelKey": "test",
+    "message": "t11: go"
+   },
+   "timeout": 20000,
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-t11",
+      "requestId": "{event.requestId}",
+      "decision": "deny"
+     }
+    }
+   ]
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-t12",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-t12",
+    "channelKey": "test",
+    "message": "t12: go"
+   },
+   "timeout": 20000,
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-t12",
+      "requestId": "{event.requestId}",
+      "decision": "deny"
+     }
+    }
+   ]
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-t14",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-t14",
+    "channelKey": "test",
+    "message": "t14: go"
+   },
+   "timeout": 20000,
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-t14",
+      "requestId": "{event.requestId}",
+      "decision": "deny"
+     }
+    }
+   ]
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-t15",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-t15",
+    "channelKey": "test",
+    "message": "t15: go"
+   },
+   "timeout": 20000,
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-t15",
+      "requestId": "{event.requestId}",
+      "decision": "deny"
+     }
+    }
+   ]
+  },
+  {
+   "sleep": 300
+  }
+ ]
+}
