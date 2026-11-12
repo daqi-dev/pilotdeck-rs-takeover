@@ -329,6 +329,7 @@ pub(super) async fn start_with_webhook(
                 ProxyError::from("channel assembly slot was not constructed during assembly")
             })?,
             release_interactions: switch_slots.release_interactions.get().cloned(),
+            module_host: switch_slots.module_host.get().cloned(),
         },
     ))
 }
@@ -450,6 +451,19 @@ async fn start_assembly(
             active_run: active_run.clone(),
         })),
     );
+    // The public host provider reads the same project runtimes the sessions
+    // run on (createLocalGateway.ts:1524-1556).
+    if let Some(slots) = &switch_slots {
+        let _ = slots
+            .module_host
+            .set(Arc::new(crate::module_host::runtime::RuntimeHost {
+                home: options.home.clone(),
+                project: options.project.clone(),
+                builtin_skills_root: options.builtin_skills_root.clone(),
+                env: env.clone(),
+                registry: project.clone(),
+            }));
+    }
     let snapshot_enabled = snapshot::snapshot_enabled(&options, &project).await?;
     let snapshot_recorder =
         snapshot::snapshot_recorder(&options, &project, snapshot_enabled).await?;

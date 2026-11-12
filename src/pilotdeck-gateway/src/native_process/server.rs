@@ -126,7 +126,10 @@ async fn serve_on_runtime(
     // host and token checks below run with the gateway already built.
     let (host, feishu_webhook, switch_handles) =
         assembly::start_with_webhook(process, options.env.clone()).await?;
-    let (server, started) = match bind(&options, &host, feishu_webhook).await {
+    let module_host = switch_handles.module_host.clone().ok_or_else(|| {
+        ProxyError::from("module host provider was not constructed during assembly")
+    })?;
+    let (server, started) = match bind(&options, &host, feishu_webhook, module_host).await {
         Ok(bound) => bound,
         Err(error) => {
             let _ = host.shutdown(DRAIN_BUDGET).await;
@@ -179,6 +182,7 @@ async fn bind(
     options: &ServerOptions,
     host: &crate::runtime::turn::gateway::TurnGateway,
     feishu_webhook: crate::native_http::WebhookResolver,
+    module_host: std::sync::Arc<crate::module_host::runtime::RuntimeHost>,
 ) -> Result<(crate::native_ws::NativeWsServer, Option<PathBuf>), ProxyError> {
     let name = options.host.as_deref().unwrap_or("127.0.0.1");
     let loopback = name == "127.0.0.1" || name == "localhost";
@@ -216,7 +220,7 @@ async fn bind(
     // `publicApprovals` and `publicHostCapabilities` (pilotdeck.ts:217-218).
     .with_module_host(crate::native_http::ModuleHost {
         approvals: crate::module_host::approvals::production_config(token.clone(), &options.env),
-        host: crate::module_host::production_config(token.clone()),
+        host: crate::module_host::production_config(token.clone(), module_host),
     })
     .with_api_web(production_api_web(token, options.pilot_home.clone()))
     // `staticAssetsPath: resolve(projectRoot, "ui/dist")` (pilotdeck.ts:224).

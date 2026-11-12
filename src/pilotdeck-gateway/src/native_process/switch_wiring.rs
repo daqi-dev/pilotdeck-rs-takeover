@@ -44,6 +44,9 @@ pub(crate) struct AssemblySwitchHandles {
     pub(crate) cron: Option<Arc<CronStopHandle>>,
     pub(crate) channels: Arc<NativeChannels>,
     pub(crate) release_interactions: Option<ReleaseInteractions>,
+    /// The public host capability provider over the project runtimes
+    /// (`getPublicHostCapabilities`, createLocalGateway.ts:1524).
+    pub(crate) module_host: Option<Arc<crate::module_host::runtime::RuntimeHost>>,
 }
 
 /// What the stop does about turns parked on a user prompt: the baseline's
@@ -62,6 +65,7 @@ pub(crate) struct AssemblySwitchSlots {
     pub(crate) cron: Arc<std::sync::OnceLock<Arc<CronStopHandle>>>,
     pub(crate) channels: Arc<std::sync::OnceLock<Arc<NativeChannels>>>,
     pub(crate) release_interactions: Arc<std::sync::OnceLock<ReleaseInteractions>>,
+    pub(crate) module_host: Arc<std::sync::OnceLock<Arc<crate::module_host::runtime::RuntimeHost>>>,
 }
 
 /// A1's single admission flip: the channel server's close and the native WS
