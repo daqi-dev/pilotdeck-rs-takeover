@@ -2,106 +2,106 @@
 
 新会话先读这份，再读 `CLAUDE.md` 和 `.42cog/intent.md`，然后看 `git log`。不要往 `state/board.md` 追加；`state/` 下其余文件是上一轮流水线的记录，只当线索。
 
-最后更新：2026-11-11（剩余工作估算）
+最后更新：2026-11-12
 
-## 现在由 Rust 承担并有证据的入口
+## 现在在哪
 
-以两条命令的输出为准（2026-11-11 晚，提交 `22305e9bb`）：
+以命令输出为准，不手写进度：
 
-- `node scripts/bbx/check.mjs`：135 个场景，全量一次跑出 123 个 SAME；另有 3 个（`tool-send-message`、`tool-agent-general`、`cron-tools-run`）单独重跑 SAME（前两个是高负载下的时序抖动）。
-- `node scripts/bbx/coverage.mjs`：101 个 gateway method 里 95 个有正常路径的场景且全部 SAME，5 个有场景但有差异（`submit_turn`、`set_permission_mode`、`read_session_messages`、`memory_list`、`memory_wipe`——前三个是被下面那几个不一致的场景带上的），1 个没有场景（`prepare_weixin_login`，需要外部服务）。
+- `node scripts/bbx/check.mjs --slots 5,6,7,8`：全量对拍，四个槽位并行约 15 分钟。2026-11-12 凌晨（提交 `e3db837ed`）：237 个场景 218 个 SAME。不一致的 19 个：16 个 `gap-*`（缺口审查找出的真实缺口，正在修）、`compact-manual`（已在随后合并的分支里修好）、`robust-frame-handshake`（5 处，正在修）、`tool-write-file-diagnostics`（未做）。
+- `node scripts/bbx/coverage.mjs`：101 个 gateway method 里 87 个有场景且全部 SAME，13 个被不一致的场景带上，1 个没有场景（`prepare_weixin_login`）。
+- `node scripts/bbx/selftest.mjs`：比较器自测，56 个例子。改 `diff.mjs` 前后都跑。
+- `scripts/ui-smoke/`：把原版 `ui/server` 接到基线或 Rust gateway 上跑前端的典型流程并比较全部流量。2026-11-12 的结果：协议层零不兼容（基线自比 2 次、Rust 1 次；没覆盖断线重连、gateway 重启、多标签页）。
 
-按入口分：`pilotdeck server` 启停与握手；一轮对话与 28 个常规工具、计划模式两个工具、`request_user_*` 四个工具、`cron_*` 六个工具；权限询问；子代理（一次性与后台可续跑）；会话读取、分叉、替换最后一轮、导出与恢复、文件回退；插件、skills、MCP；设置读写与热重载；上传、快照、定时任务；HTTP 的通用行为、`/api/web/*`、静态托管、飞书 webhook；CLI 的帮助与用法、`run` / `resume`、`sessions`、`chat search`、`skills migrate`、`gateway setup` 的不联网部分。
+Rust 已有实现和场景的：`pilotdeck server` 启停；对话主干与全部常规工具、计划模式工具、`request_user_*`、`cron_*`、always-on 工具；权限询问；一次性与后台子代理；hooks（插件与 SDK 两处来源）；自动与手动上下文压缩；会话读取、分叉、替换、导出恢复、文件回退；插件、skills、MCP；设置读写与热重载；上传、快照、定时任务、always-on；HTTP 路由（含公共 host 的 6 个操作，PDF 解析除外）；CLI 的 `run` / `resume` / `sessions` / `settings` / `chat search` / `skills migrate` / 默认对话 / `gateway setup` 的不联网部分。
 
-仍不一致的场景（9 个）：
+**重要的认识（2026-11-12）：「有场景且一致」不等于做完。** 场景大多是实现者自己写的。一次只看基线源码和场景、不看 Rust 实现的缺口审查，半小时找出 16 处差异，包括安全相关的配置在 Rust 里不生效（`agent.sandboxMode`、`~/.pilotdeck/permissions.json`、`agent.interactionProfile`）和整个缺失的 `web_search` 工具。它还留下一份没来得及测的缺口清单（报告在会话记录里；合并进来的 `gap-*` 场景是已测的部分）。
 
-| 场景 | 原因 | 状态 |
+## 验收手段与流程
+
+`scripts/bbx/`（说明见其 README）。同一场景先后喂给基线和 Rust 二进制，比较 WS 帧、HTTP、CLI 输出、发给假 provider 的请求、落盘文件。
+
+合并一个分支后的流程（2026-11-12 起）：
+
+1. `cd src && cargo build -p pilotdeck-cli -p pilotdeck-gateway -p pilotdeck-transport && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings`
+2. `node scripts/bbx/check.mjs --slots 5,6,7,8`（槽位 5–8 留给主检出，1–4 给子代理）
+3. 通过就推送。全量 `nextest` 和文档测试交给接手仓库的 CI（Linux，每次推送跑四条命令）；CI 红了再修。
+4. 每个阶段收尾：停掉所有子代理，在安静的机器上跑一遍完整的四条命令和全量对拍，以那次为准。
+
+踩过的坑：
+
+- 不要让两轮 `nextest` 重叠，也不要在 `nextest` 运行期间合并或重新构建：它会按不同的特性组合重新链接 `pilotdeck`，新链接的文件在 macOS 上首次执行要过安全评估，对拍开头几步会超时；旧测试对着新二进制还可能永远等不到退出。
+- `nextest` 加 `timeout 3600`。本机已知失败 3 个（见「已知的坑」）；`native_process::settings_tests::reload_ticket_releases_after_settlement` 间歇失败（正在查）；两个限时测试在高负载下会超时。
+- 机器 10 核。4–5 个子代理并行时负载均值 15–35。子代理的通用说明要求它们构建最多用 4 核、全量只在收尾跑一次。
+
+## 正在做（2026-11-12）
+
+整体安排（人已同意）：先收住手上的；再建立「基线对外表面」的完整清单并把覆盖统计扩展到各维度；之后按真实使用排优先级（界面用到的约 45 个 method 是地基，已验证）；清理旧代码提前做；最后是发布版本与性能、需要人参与的真实环境验收。
+
+在途的子代理（都是 Opus，各自一个 worktree，分支名 `worktree-agent-<id>`）：
+
+| 工作包 | 内容 | 槽位 |
 |---|---|---|
-| `cli-run-permission-mode`（91 处） | `submit_turn` 的本轮 `mode` 没用到权限决定和提示词上 | 进行中（提交选项工作包） |
-| `llm-invocations-retry`（81 处） | 没发 `retry_progress` 事件、没写 `router/events.jsonl` | 进行中（同上） |
-| `survey-empty-params`（2 处）、`cli-sessions-settings`（1 处，配置版本号） | 小差异；后者高负载下不确定 | 进行中 |
-| `cli-entry-default`、`cli-survey-offline` | 不带子命令的默认对话没做（基线这条路径自身会挂住且每轮失败，怎么处理未定） | 未派 |
-| `http-module-host`（11 处） | 公共 host 的 6 个操作没实现 | 未派 |
-| `tool-write-file-diagnostics`（297 处） | JS/TS、HTML、CSV 写后语法诊断没移植 | 未派 |
-| `memory-enabled`（2 处） | sqlite 文件只比了哈希，基线自比也不稳；需要 bbx 按表导出再比 | 未派 |
+| 安全配置修复 | `agent.sandboxMode`、`permissions.json`、`agent.interactionProfile`、已中止就不启动子进程（有意偏离基线）、failureGuard 跳闸后的收尾。前三项要求做一轮「试着绕过」 | 1 |
+| 功能缺口修复 | `web_search`、多模态读文件、附件路径、`glob` 细节、运行记录里缺失的 sessionKey、不稳定的测试、`sdkSessionConfig` 的 `deferredTools` / `persistSession` / `promptSuggestions` | 2 |
+| 基线对外表面清单 | 只读基线，产出 `scripts/bbx/surface.json`：16 个维度（配置键、文件、环境变量、工具与参数、事件、记录类型、协议字段、CLI、HTTP、WS method 与参数、循环行为、hooks、渠道、SDK 配置、斜杠命令），每项带基线出处和 `probe` | 3 |
 
-## 验收手段
+主会话自己要做的：
 
-`scripts/bbx/`（说明见其 README）。同一场景先后喂给基线 `node dist/src/cli/pilotdeck.js` 和 Rust 二进制，比较 WS 帧、HTTP、CLI 输出、发给假 provider 的请求、落盘文件。
+1. 清单出来后扩展 `coverage.mjs` 到各维度。
+2. 评估 sidecar 这一层要不要保留：Rust 每轮起一个子进程跑循环，基线默认进程内。握手超时、空助手消息被丢、错误原文丢失、中止时机、落盘顺序、个别选项没传，都出在这条进程边界上。循环本体是独立的 crate（`pilotdeck-agent`），理论上可以直接链接进 gateway。读 `pilotdeck-transport` 与 `host/` 两层后判断可行性和代价，再决定。
+3. 安全修复合并后，亲自读一遍权限判定、沙箱、路径检查的代码。
+4. 给人一份「需要过目的决定」清单（见下）。
 
-- 改完代码：`(cd src && cargo build -p pilotdeck-gateway -p pilotdeck-transport -p pilotdeck-cli) && node scripts/bbx/check.mjs`
-- 新场景先跑 `--self`（基线自比）确认稳定。
-- 注入错误检查的记录：2026-11-10 把 `native_process/methods/tools.rs` 里 `background_task_stop` 的 `sessionKey is required.` 改一个字母，`survey-empty-params` 从 181 变 182 并指出该处，还原后回 181。注入点必须先确认在被调用路径上。
+还没派的：
 
-## 正在做
+- 缺口审查留下的未测清单：流中途断开后的恢复、`finish_reason=length` 的续写、非法工具参数的自动纠正、只有 thinking 没有文本、并行工具调用、`reasoning_content` 的解析与回传、`speedMapping` / `service_tier`、流空闲超时、若干配置键（`gateway.*`、`memory.*`、`agent.fallbackModel` 等）、LSP 与 MCP 资源工具。假 provider 已支持这些应答形态（多工具调用、非法参数、推理文本、分块、`finish`、`breakAfter`、`hangAfter`、`delayMs`）和 Anthropic messages 形状。
+- 别的协议形状（OpenAI responses、Google）：假 provider 还没有。
+- 写后语法诊断（JS/TS、HTML、CSV）：基线用 TypeScript 编译器等解析器出报错文案，逐字一致可能做不到；倾向登记为已知差异。
+- always-on 的 `always_on_read_chat_history` 工具（调用回未实现）；`sdkSessionConfig` 的 `agents` 少见子项与其余字段；公共 host 的 PDF 解析与 StaffDeck 相关路径；渠道适配器；完整 TUI；遥测的本地队列文件。
+- 对拍工具还缺：多条并存的 WS 连接、原始帧、发信号后继续执行步骤、假 provider 记录 CONNECT、`save` 按 JSON 路径整值保存、`files` 写二进制。
+- 清理：旧测试装置（`tests/fixtures/**/negative_controls.py`、`mutants::on`）、透明代理模式、未接线代码。
+- 发布版本构建与性能测量（启动耗时、每轮开销、内存、并发会话）。
 
-**M1 最小闭环**，分三块：
+## 需要人过目的决定
 
-1. 入口：已提交（`pilotdeck server` 与基线同参数；Linux CI 全绿）。
-2. 多项目宿主与落盘布局：已提交。规则集中在 `native_process/projects.rs`：运行时路由是纯词法 `resolve(projectKey ?? pilot home)`；对话准入要求项目已登记（`projects/<id>/.cwd`），pilot home 免登记；gateway 自己从不登记项目。注入错误检查：把缺省项目改成 cwd，`turn-text` 报出 `sessions[0].cwd` 和 4 条落盘路径差异。
-3. 发给 provider 的请求与会话记录：权限询问（`permission_request` / `permission_decide`、`ask_user_question`、写工具文件历史）、工具 `agent`（一次性子代理运行时，`agent.subagents` 配置生效）、`execute_code` 都已合并。`turn-text` 到 SAME 只差 `subagent`、`send_message` 两个工具。`execute_code` 次任务的子代理（验证 `bash` / `write_file` / `edit_file` / `task_*` / `web_fetch` 的执行行为，修溢出文件位置）因额度中断，改动在它的 worktree 里，恢复后要先同步主线。
-4. 三个分支合并后、M1 收尾前：Rust 风险审查（见「剩余工作估算」）。
-5. 尺子复核（2026-11-11，Fable）：已看过 Opus 期间加的两类归一化。随机路径段的规则只认两个固定前缀，`tool-execute-code-truncate` 里两侧溢出路径的真实差异仍被报出。耗时原先保留小数位数，但基线 0.10 会印成 0.1，位数逐次不同，会让自比偶发不稳，已改为整体记成 `<dur>`；耗时的取整与打印格式 bbx 不比，`execute_code` 目前没有专门的单元测试盯这一点，待补。
+有意偏离基线（Rust 不照做）：
 
-并行做法：每个子代理一个 git worktree（`.claude/worktrees/`），自己的 `src/target`，在 worktree 里建 `resources/PilotDeck` 符号链接指向主检出的基线；bbx 靠独占锁排队。`negative_anchor_selfcheck` 在多个 worktree 并发时会卡住，让子代理跳过它，合并后在主检出单独跑（2026-11-11 在 `7bdfa0781` 上单独跑：通过，103 秒）。
+| 事项 | 基线 | Rust | 登记处 |
+|---|---|---|---|
+| 改名 / 打标签后重载会话 | 会话永久开不了轮次 | 记录接着链写 | `rename-record-chain` |
+| 配置文件监视 | 第一次被改写后失效 | 持续有效 | `config-watch-survives-rewrite` |
+| 飞书 webhook 收到 `null`、`/api/web` 路径带非法百分号编码 | 进程退出 | 回错误 | 场景 `about` |
+| `/auth/local-token` | 不看 Host / Origin | 只认本机地址 | `server-local-token-origin` |
+| `execute_code` 超时 | 管不住脱离进程组的孙进程 | 回收并限时返回 | 代码注释与测试 |
+| 崩溃后残留的运行记录锁 | 能启动但运行记录全部失效 | 持锁进程已死就接管 | `registry-dead-owner-lock-blocks-startup` |
+| 重启后对未答对话框作答 | 之后丢掉全部会话历史 | 保留历史 | `dialog-recovery-keeps-history` |
+| 客户端不发关闭帧就断开后停机 | 不退出 | 正常退出 | 未登记（需要对拍工具支持只断 TCP） |
+| 中止信号先于子进程启动 | 命令仍会执行 | 不启动（修复在途） | 待登记 |
+| sidecar 握手 | 无对应物 | 不设时限 | — |
+| 遥测上报到外部地址 | `telemetry.enabled` 时上报 | 不实现 | 待登记 |
 
-M1 之后要回头处理的（入口那块发现的）：
+保持与基线一致的已知风险或怪异行为（人可以决定让 Rust 修掉）：
 
-- 停机时还有客户端连着：基线一直等到客户端断开再退出 0；Rust 等 5 秒后以 1001 关连接、退出 1。还没定怎么对齐，也没有场景覆盖。
-- `validate_profile`：配了 MCP server、plugins、skills、hooks、modules、subagents 时 Rust 拒绝启动，基线没有这个限制。在做到对应功能的里程碑时去掉。
-- 基线在非 git 目录启动会往 stderr 漏两行 `fatal: not a git repository`；入口场景用 `DOCKER_CONTAINER=1`、`COMMIT_HASH=bbx` 让基线跳过，等于没覆盖。
-- Rust 没有遥测采集器，停机行打印的是全 0 常量；`telemetry.enabled: true` 时与基线不同。
-- 基线 server 启动流程里有、Rust 还没有的：全局代理、配置热重载（接了多少未核实）、渠道只有飞书和微信、公共审批与公共 host 的 HTTP 路由、路由事件写 `router/events.jsonl`。
-- 多项目改造留下的：sop、always-on、steer、interaction、background tasks、mcp 四控仍只走缺省项目运行时；`project_files_list` / `project_file_read` 缺 key 时回的是 Rust 自造文案；设置的配置存储锚点改成了 cwd，cwd 下有项目级配置时没验证；`--native` 旧入口启动时仍登记自己的项目（`pilotdeck server` 不写）。
-- 冻结账本里有条目已不再描述真实差异（`A7.2-NATIVE-ARCHIVE-CWD-001(-R1)`、`A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001-R8/R9/R11`），没动账本。`scripts/native-witness/*`、`scripts/gateway-parity/native_evidence.py` 还写旧的 `runs.json` 路径，已不可用。
-- 带对话的场景基线自比偶发不稳（首轮 `session_metadata` 与 `compaction_started` 两条记录先后会变），遇到就重跑 `--self`。
-- 第三块第一轮留下的：
-  - 标题的 `session_metadata` 记录落点在基线里随时序变。Rust 用一个进程级「冷 / 热」标志模仿常见落点（`Recorder::park`）。只影响记录顺序。等尺子能表达「这条记录位置浮动」时改掉。
-  - 新接线的工具（`bash`、`edit_file`、`edit_notebook`、`write_file`、`task_*`、`web_fetch`）没验证执行行为，M3 做。`task_*` 没接到 `background_tasks` / `background_task_stop`；`web_fetch` 没接二级模型。
-  - 全量摘要压缩（`CompactionEngine`）没接，超阈值时 Rust 回 `skipped`。
-  - `permissionMode` / `basePermissionMode` 只用默认值，`set_permission_mode` 之后是否一致没有场景。
-  - 插件 Rust 每轮刷新，基线在会话创建时刷新。
-  - undici 默认请求头只加在模型请求路径上，MCP HTTP、hooks、web fetch 等没加也没验证。
-  - 会话记录里的 `node: v22.22.0` 是 Rust 里的常量。
-- 第二轮（三个并行分支）留下的：
-  - 工具批次落盘前最多等 2 秒让 `assistant_message` 先落盘（基线没有对应物，是 Rust 的同步手段）。
-  - `reload_output_styles` 仍回 unavailable；browser-use 的会话级参数准备没移植（默认布局下不触发）；hooks、modules、subagents 配置仍被 `validate_profile` 拒绝，带 hooks 的插件也拒绝。
-  - 内置插件目录缺省找可执行文件上一级或上两级的 `builtin-plugins`；Node 取 `PATH` 上第一个 `node`。发布布局定下来时要重看。
-  - `export_session_transcript`、`restore_session_transcript`、`fork_session`、`replace_last_turn`、`finalize_last_turn_replacement` 没做。
-  - 投影归约器对畸形记录比基线宽（基线抛错丢投影，Rust 多数情况当不匹配）。
-  - 项目级（`<项目>/.pilotdeck/`）的插件、skills、`mcp.json` 没有场景；MCP 工具的权限询问路径没覆盖。
-- `execute_code` 合并后（2026-11-11）的剩余差异：基线结果里的耗时（`duration_seconds`、`tool_call_log[].duration_ms`，也嵌在结果文本里）两次跑不同，4 个场景自比都不是 SAME，要先定尺子怎么处理；输出过长时溢出文件的路径不同（基线 `<ROOT>/tmp/pilotdeck-tool-output/<pid>/…`，Rust `<pilot home>/tool-results/…`），第二个溢出文件名也不同；RPC 回调写文件时 Rust 缺 `file_snapshot_recorded` 记录（文件历史，写工具共有的缺口）；`permissionMode` 和工具结果块键顺序归权限询问分支。
-- sidecar 找不到时的报错文案是 Rust 自己的，基线没有对应物（基线默认进程内跑循环）。
+- `execute_code` 把 Python 自带的写文件和执行命令当只读，默认模式下不询问；子进程继承宿主全部环境变量。
+- hook 进程继承 gateway 的全部环境变量，包括 gateway token。
+- `always_on_abort` 返回已中止，但那一轮照常跑完（基线传错了运行 id）。
+- 第一层子代理的深度算成 2；`managedPermissions.defaultMode: plan` 不生效。
+- 默认对话在输入结束后不退出；在未登记的目录里每轮都失败。
+- 会话文件里某一轮缺结束记录时，会话永久不可续写。
+- 导出空会话报「归档无效」而不是「会话为空」。
+
+Rust 明确报错而不假装支持（文案是 Rust 自己的）：`update_settings` 遇到少见的 YAML 特性；Draft 2020-12 的表单 schema；公共 host 的 PDF 解析。
+
+已接受的小差异：模型请求失败后的空助手消息在 sidecar 里被丢（只影响一个内部计数，`sidecar-drops-empty-assistant`）。
+
+一次越界（2026-11-11）：一个子代理在没有隔离 home 的情况下运行过 `pilotdeck --version`，可能读取了真实的 `~/.pilotdeck`（它报告没有写）。之后通用说明里加了硬规则。
 
 ## 计划
 
-进度不手写，以两条命令的输出为准：`node scripts/bbx/check.mjs`（场景 SAME 数）和 `node scripts/bbx/coverage.mjs`（101 个 gateway method 各有没有正常路径的场景、是不是 SAME）。2026-11-11：场景 57/64 SAME；method 有场景且全 SAME 20，有差异 4，未覆盖 77。
+工作包的历史状态见 git 历史里本文件的旧版本（2026-11-11 的计划表 P1–P16）。P1–P11 已完成或并入上面的清单；P12（always-on）主体完成。之后不再维护工作包编号，以上面「正在做」「还没派的」为准，进度以命令输出为准。
 
-下表只记工作包、依赖和现在谁在做。一个工作包「做完」= 它范围内的入口都有场景且 SAME（或差异已登记为已接受），四条命令通过，范围内的占位和代理路径已删。
-
-| # | 工作包 | 状态 |
-|---|---|---|
-| P1 | 对话主干、28 个工具、权限、会话读取、子代理、插件 | 完成（剩语法诊断，见 P13） |
-| P2 | 安全修复（plan / ask 模式拦截、符号链接、`execute_code` 超时、local-token 的 Host / Origin） | 完成 |
-| P3–P5 | gateway method 三个族（轮次控制与运行记录；配置、模型、MCP、skills；存储与自动化） | 完成 |
-| P6 | gateway HTTP | 主体完成。剩公共 host 的 6 个操作（`list_general_skills`、`list_model_catalog`、`model_prepare`、`model_stream`、`file_parse`、`read_sop_authority`）与审批桥的 StaffDeck 外部认证 |
-| P7 | CLI | 主体完成。剩默认对话、`cron` 探测成功后的路径（基线端口写死 18789，隔离环境比不了）、`gateway setup` 写回配置与联网登录、TUI |
-| P8a | SDK 会话配置、用户对话、计划模式工具 | 完成 9 个字段；`sdkSessionConfig` 另 17 个字段未做（带它们的配置明确回不可用） |
-| P8b | 定时任务轮次、LLM 调用记录 | 完成（google 协议与非流式路径的调用记录未做） |
-| P8c | 会话编辑、导出、文件回退、按 id 的后台任务 | 完成 |
-| P9 | 可靠性：sidecar 握手超时、会话记录顺序、配置版本号、sidecar 泄漏 | 进行中（`worktree-agent-acc1387970b6815a3`，槽位 4） |
-| P10 | 每轮提交选项、模型路由事件、启动时的配置通知 | 进行中（`worktree-agent-a0b2fe4f56bb9ec37`，槽位 1） |
-| P11 | hooks 执行器、`modules` 配置（现在带 hooks / modules 的配置被拒绝启动） | 进行中（`worktree-agent-a65c52e3be0d8a4a1`，槽位 2） |
-| P12 | always-on 完整流程（基线约 6000 行：discovery / workspace / execute / report / apply） | 未开始 |
-| P13 | 写后语法诊断（JS/TS、HTML、CSV）；`memory` 的 sqlite 比对；公共 host 6 个操作；`sdkSessionConfig` 其余字段 | 未开始 |
-| P14 | 启动流程补齐：全局代理、渠道适配器（只接了飞书和微信）、遥测、停机时有客户端连着 | 未开始 |
-| P15 | 其余风险审查（超时 / 断连 / 重启恢复；做法同安全审查） | P9 之后 |
-| P16 | 退役：删代理模式、未接线代码、旧测试装置；原版 `ui/server` 接 Rust gateway 实测；人参与的真实使用验收 | 最后 |
-| — | 阶段 B（`ui/server`）、前端 | 推迟，P16 之后再定 |
-
-并行规则：P3 / P4 / P5 / P6 / P7 互不依赖实现，可同时做；同时最多 4 个 Opus 子代理（人 2026-11-11 同意；撞额度上限就降回 2–3 个）。4 个并行加主检出的全量测试时负载均值到过 27–35，会制造假失败（握手超时、限时测试超时、时序场景抖动），遇到先单独重跑，各用一个 bbx 槽位（`BBX_SLOT`）；合并由主会话逐个做，合并后在主检出跑全量对拍和四条命令。给子代理的通用说明在会话的 scratchpad（`briefs/common.md`，仓库外；丢了就按 `CLAUDE.md` 和本文件重写）。
-
-速度参考：一个 Opus 子代理一轮 1–1.5 小时、约 40–60 万 token，能做完一个上面这样大小的工作包的大部分。
+并行规则：同时最多 4–5 个 Opus 子代理，各用一个 bbx 槽位（1–4）；合并由主会话逐个做。给子代理的通用说明在会话的 scratchpad（`briefs/common.md`，仓库外；丢了就按 `CLAUDE.md` 和本文件重写，要点：环境与隔离、构建限 4 核、什么算事实、不许占位、不改比较器、不加豁免、只按自己的进程号停进程、运行 `pilotdeck` 必须隔离 home、在自己的 worktree 分支上提交、报告格式）。模型分工：主会话 Fable，子代理 Opus，验证不用 fork。
 
 ## 原仓库的新提交与 PR（2026-11-11 查看）
 
