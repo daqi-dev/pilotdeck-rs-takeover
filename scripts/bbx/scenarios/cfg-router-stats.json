@@ -1,0 +1,58 @@
+{
+ "name": "cfg-router-stats",
+ "about": "router.stats（parseRouterConfig.ts:646-735；router/stats/*：落盘 ~/.pilotdeck/router/stats.jsonl）：modelPricing 给 bbx/priced 定价（input / output / cacheRead / unit=¥/百万 Token），baselineModel 用对象写法指向 bbx/baseline（另给它定价，用来算 savedCost），retentionMs 很大；一轮在 bbx/priced 上的对话后比 stats.jsonl、usage_snapshot / model_usage_snapshot 与 resolve_settings。filePath 不从 YAML 读（schema.ts:66），这里写一个 {ROOT} 下的路径，看它是否被忽略。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/priced\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      retry:\n        streamMaxRetries: 0\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        broken:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        fb1:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        fb2:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        zero:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        priced:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        baseline:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nrouter:\n  enabled: true\n  stats:\n    enabled: true\n    retentionMs: 86400000000\n    filePath: {ROOT}/should-not-exist/stats.jsonl\n    baselineModel:\n      provider: bbx\n      model: baseline\n    modelPricing:\n      bbx/priced:\n        input: 3\n        output: 15\n        cacheRead: 0.3\n        unit: ¥/百万 Token\n      bbx/baseline:\n        input: 30\n        output: 150\n",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Cfg\"}"
+   }
+  },
+  {
+   "name": "priced",
+   "when": [
+    "\"model\":\"priced\""
+   ],
+   "unless": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "priced ok",
+    "usage": {
+     "prompt_tokens": 1200,
+     "completion_tokens": 300,
+     "total_tokens": 1500
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-priced",
+    "channelKey": "test",
+    "message": "st go"
+   }
+  },
+  {
+   "sleep": 500
+  },
+  {
+   "ws": "usage_snapshot",
+   "params": {}
+  },
+  {
+   "ws": "model_usage_snapshot",
+   "params": {}
+  },
+  {
+   "ws": "resolve_settings",
+   "params": {}
+  }
+ ]
+}

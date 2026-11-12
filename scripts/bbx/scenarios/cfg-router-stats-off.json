@@ -1,0 +1,50 @@
+{
+ "name": "cfg-router-stats-off",
+ "about": "router.stats.enabled=false：同样一轮对话后不写 router/stats.jsonl（RouterRuntime 的 stats 观察者按 enabled 关闭）；对照 cfg-router-stats。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/priced\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      retry:\n        streamMaxRetries: 0\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        broken:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        fb1:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        fb2:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        zero:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        priced:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        baseline:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nrouter:\n  enabled: true\n  stats:\n    enabled: false\n    modelPricing:\n      bbx/priced:\n        input: 3\n        output: 15\n",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Cfg\"}"
+   }
+  },
+  {
+   "name": "priced",
+   "when": [
+    "\"model\":\"priced\""
+   ],
+   "unless": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "priced ok",
+    "usage": {
+     "prompt_tokens": 1200,
+     "completion_tokens": 300,
+     "total_tokens": 1500
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-priced",
+    "channelKey": "test",
+    "message": "st go"
+   }
+  },
+  {
+   "sleep": 500
+  },
+  {
+   "ws": "model_usage_snapshot",
+   "params": {}
+  }
+ ]
+}

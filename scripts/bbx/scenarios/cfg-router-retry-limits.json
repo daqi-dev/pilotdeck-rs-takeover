@@ -1,0 +1,124 @@
+{
+ "name": "cfg-router-retry-limits",
+ "about": "router 的重试与回退上限（router/config/parseRouterConfig.ts:155-320；router/policy/RouterRetryPolicy.ts；router/RouterRuntime.ts:733-920；router/fallback/runFallbackChain.ts:50-70）：fallback.default 给 fb1、fb2 两个回退但 maxFallbacks=1，只试 fb1；最后一个计划失败后按 transientRetry（maxAttempts=1、baseDelayMs=0、maxDelayMs=0，退避为 0 才能比 stderr 外的事件）再试一次；zeroUsageRetry.maxAttempts=2 时零用量空回复再请求一次后放弃。provider 的 streamMaxRetries=0 去掉流层重试。比较事件、provider 请求次数、router/events.jsonl 与会话记录。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/broken\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      retry:\n        streamMaxRetries: 0\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        broken:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        fb1:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        fb2:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        zero:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        priced:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        baseline:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nrouter:\n  enabled: true\n  fallback:\n    maxFallbacks: 1\n    default:\n      - bbx/fb1\n      - bbx/fb2\n  transientRetry:\n    maxAttempts: 1\n    baseDelayMs: 0\n    maxDelayMs: 0\n  zeroUsageRetry:\n    maxAttempts: 2\n",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Cfg\"}"
+   }
+  },
+  {
+   "name": "broken",
+   "when": [
+    "\"model\":\"broken\""
+   ],
+   "unless": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "status": 500,
+    "body": {
+     "error": {
+      "message": "boom",
+      "type": "server_error"
+     }
+    }
+   }
+  },
+  {
+   "name": "fb1",
+   "when": [
+    "\"model\":\"fb1\""
+   ],
+   "unless": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "status": 500,
+    "body": {
+     "error": {
+      "message": "boom",
+      "type": "server_error"
+     }
+    }
+   }
+  },
+  {
+   "name": "fb2",
+   "when": [
+    "\"model\":\"fb2\""
+   ],
+   "unless": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "fb2 ok"
+   }
+  },
+  {
+   "name": "zero",
+   "when": [
+    "\"model\":\"zero\""
+   ],
+   "unless": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "",
+    "usage": {
+     "prompt_tokens": 0,
+     "completion_tokens": 0,
+     "total_tokens": 0
+    }
+   }
+  },
+  {
+   "name": "deterministic",
+   "when": [
+    "\"model\":\"deterministic\""
+   ],
+   "unless": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-fail",
+    "channelKey": "test",
+    "message": "rt-fail go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-zero",
+    "channelKey": "test",
+    "message": "rt-zero go",
+    "modelOverride": {
+     "mode": "model",
+     "provider": "bbx",
+     "model": "zero"
+    }
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  }
+ ]
+}
