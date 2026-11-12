@@ -80,6 +80,8 @@ node scripts/bbx/diff.mjs /tmp/a.json /tmp/b.json          # 两份基线互比�
 - 两侧在同一台机器、同一个 Node / 同一份构建上跑，不防本机被人动手脚，只防实现不一致。
 - 假 provider 只有 OpenAI chat completions 形状。别的协议（Anthropic 等）需要时再加。
 
+落盘的 sqlite 数据库按内容比：每张表的建表语句和全部行（行排序后比），不比文件字节。
+
 ## 已知不覆盖
 
 - **协议帧和 HTTP 体按解析结果比，不比原始字节**：WS 帧、HTTP 响应体、发给 provider 的请求体都先 `JSON.parse` 再比，键的顺序会比，但空格、转义写法、数字写法（`1` 与 `1.0`）看不到。原文指纹只做在落盘的 `.json` / `.jsonl` 上。

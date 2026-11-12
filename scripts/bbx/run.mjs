@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const BASELINE = process.env.BBX_BASELINE || path.join(REPO, 'resources/PilotDeck');
@@ -431,7 +432,25 @@ const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) =
   const bytes = fs.readFileSync(p);
   const text = bytes.toString('utf8');
   const mode = (fs.statSync(p).mode & 0o777).toString(8);
-  // 非 UTF-8 文件：比长度和内容的 sha256（目前各场景的落盘里没有这类文件）。
+  // sqlite 数据库：文件字节逐次不同（页内空闲区、时间戳），比的是内容——每张表的建表语句和全部行
+  // （行按其 JSON 文本排序）。-wal / -shm 伴随文件只记有没有。
+  if (/-(wal|shm)$/.test(p)) return [[p, { mode, sqliteAux: true }]];
+  if (bytes.subarray(0, 16).toString('latin1') === 'SQLite format 3\0') {
+    try {
+      const db = new DatabaseSync(p, { readOnly: true });
+      const objects = db.prepare("SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name").all();
+      const tables = {};
+      for (const o of objects) {
+        if (o.type !== 'table') continue;
+        tables[o.name] = db.prepare(`SELECT * FROM "${o.name.replaceAll('"', '""')}"`).all()
+          .map((row) => Object.fromEntries(Object.entries(row).map(([k, v]) => [k, typeof v === 'bigint' ? Number(v) : v instanceof Uint8Array ? { blobSha256: createHash('sha256').update(v).digest('hex') } : v])))
+          .sort((a, b) => (JSON.stringify(a) < JSON.stringify(b) ? -1 : 1));
+      }
+      db.close();
+      return [[p, { mode, sqlite: { objects: objects.map((o) => ({ ...o })), tables } }]];
+    } catch (error) { return [[p, { mode, sqliteError: String(error.message ?? error) }]]; }
+  }
+  // 其它非 UTF-8 文件：比长度和内容的 sha256。
   if (Buffer.from(text, 'utf8').compare(bytes) !== 0) return [[p, { mode, binaryBytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }]];
   if (p.endsWith('.jsonl')) { try { return [[p, { mode, jsonl: text.split('\n').filter(Boolean).map((l) => JSON.parse(l)), raw: rawPrint(text) }]]; } catch {} }
   if (p.endsWith('.json')) { try { return [[p, { mode, json: JSON.parse(text), raw: rawPrint(text) }]]; } catch {} }
