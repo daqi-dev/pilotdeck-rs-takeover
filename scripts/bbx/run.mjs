@@ -180,23 +180,78 @@ const mock = http.createServer(async (req, res) => {
   capture(rule.save, raw);
   const reply = withSaved(rule.reply ?? {});
   if (reply.status) { res.writeHead(reply.status, { 'content-type': 'application/json' }); res.end(JSON.stringify(reply.body ?? {})); return; }
-  const message = reply.tool
-    ? { role: 'assistant', content: null, tool_calls: [{ id: reply.tool.id ?? 'call_bbx_1', type: 'function', function: { name: reply.tool.name, arguments: JSON.stringify(reply.tool.arguments ?? {}) } }] }
-    : { role: 'assistant', content: reply.text ?? 'BBX_OK' };
-  const finish = reply.tool ? 'tool_calls' : 'stop';
-  const usage = { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 };
+  // 应答的组成：文本（text 或分块的 chunks）、推理文本（reasoning）、零到多个工具调用（tool / tools；
+  // rawArguments 原样当参数字符串，用来回非法 JSON）、结束原因（finish）。delayMs 先等一会儿再回；
+  // breakAfter: n 流里发出 n 块后断开连接；hangAfter: n 发出 n 块后挂住不结束（hangMs 后断开，缺省 60 秒）。
+  const calls = [...(reply.tool ? [reply.tool] : []), ...(reply.tools ?? [])].map((t, i) => ({
+    id: t.id ?? `call_bbx_${i + 1}`, type: 'function',
+    function: { name: t.name, arguments: t.rawArguments ?? JSON.stringify(t.arguments ?? {}) },
+  }));
+  const text = reply.text ?? (calls.length ? null : reply.chunks ? reply.chunks.join('') : 'BBX_OK');
+  const finish = reply.finish ?? (calls.length ? 'tool_calls' : 'stop');
+  const usage = reply.usage ?? { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 };
+  if (reply.delayMs) await sleep(reply.delayMs);
+  // 流式输出的公共部分：按块写，支持中途断开和挂住。
+  const stream = (blocks) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    let sent = 0;
+    for (const block of blocks) {
+      if (reply.breakAfter !== undefined && sent >= reply.breakAfter) { res.destroy(); return; }
+      if (reply.hangAfter !== undefined && sent >= reply.hangAfter) { setTimeout(() => res.destroy(), reply.hangMs ?? 60000).unref(); return; }
+      res.write(block); sent++;
+    }
+    res.end();
+  };
+  // Anthropic messages 形状（请求路径以 /messages 结尾）。
+  if (/\/messages(\?|$)/.test(req.url)) {
+    const stop = reply.finish ?? (calls.length ? 'tool_use' : 'end_turn');
+    const content = [
+      ...(reply.reasoning ? [{ type: 'thinking', thinking: reply.reasoning, signature: 'sig_bbx' }] : []),
+      ...(text !== null ? [{ type: 'text', text }] : []),
+      ...calls.map((c) => ({ type: 'tool_use', id: c.id, name: c.function.name, input: (() => { try { return JSON.parse(c.function.arguments); } catch { return {}; } })() })),
+    ];
+    const head = { id: 'msg_bbx', type: 'message', role: 'assistant', model: body?.model };
+    if (!body?.stream) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ...head, content, stop_reason: stop, stop_sequence: null, usage: { input_tokens: usage.prompt_tokens, output_tokens: usage.completion_tokens } }));
+      return;
+    }
+    const ev = (type, data) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`;
+    const blocks = [ev('message_start', { message: { ...head, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: usage.prompt_tokens, output_tokens: 0 } } })];
+    let index = 0;
+    const block = (start, deltas) => {
+      blocks.push(ev('content_block_start', { index, content_block: start }));
+      for (const delta of deltas) blocks.push(ev('content_block_delta', { index, delta }));
+      blocks.push(ev('content_block_stop', { index })); index++;
+    };
+    if (reply.reasoning) block({ type: 'thinking', thinking: '' }, [{ type: 'thinking_delta', thinking: reply.reasoning }, { type: 'signature_delta', signature: 'sig_bbx' }]);
+    if (text !== null) block({ type: 'text', text: '' }, (reply.chunks ?? [text]).map((t) => ({ type: 'text_delta', text: t })));
+    for (const c of calls) block({ type: 'tool_use', id: c.id, name: c.function.name, input: {} }, [{ type: 'input_json_delta', partial_json: c.function.arguments }]);
+    blocks.push(ev('message_delta', { delta: { stop_reason: stop, stop_sequence: null }, usage: { output_tokens: usage.completion_tokens } }), ev('message_stop', {}));
+    stream(blocks); return;
+  }
+  // OpenAI chat completions 形状。
+  const message = {
+    role: 'assistant', content: text,
+    ...(reply.reasoning ? { reasoning_content: reply.reasoning } : {}),
+    ...(calls.length ? { tool_calls: calls } : {}),
+  };
   if (!body?.stream) {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ id: 'chatcmpl-bbx', model: body?.model, choices: [{ index: 0, message, finish_reason: finish }], usage }));
     return;
   }
-  res.writeHead(200, { 'content-type': 'text/event-stream' });
-  const delta = message.tool_calls
-    ? { role: 'assistant', tool_calls: message.tool_calls.map((t) => ({ index: 0, ...t })) }
-    : { role: 'assistant', content: message.content };
-  res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`);
-  res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: finish }], usage })}\n\n`);
-  res.end('data: [DONE]\n\n');
+  const deltas = [
+    ...(reply.reasoning ? [{ reasoning_content: reply.reasoning }] : []),
+    ...(text !== null ? (reply.chunks ?? [text]).map((t) => ({ content: t })) : []),
+    ...(calls.length ? [{ tool_calls: calls.map((t, i) => ({ index: i, ...t })) }] : []),
+  ];
+  if (deltas.length) deltas[0] = { role: 'assistant', ...deltas[0] };
+  stream([
+    ...deltas.map((delta) => `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`),
+    `data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: finish }], usage })}\n\n`,
+    'data: [DONE]\n\n',
+  ]);
 });
 await new Promise((r) => mock.listen(MOCK_PORT, '127.0.0.1', r));
 
