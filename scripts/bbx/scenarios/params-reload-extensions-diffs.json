@@ -1,0 +1,99 @@
+{
+  "name": "params-reload-extensions-diffs",
+  "about": "差异证明（未修，留给主会话决定）：a 基线的会话在运行时被作废或会话被标脏之前沿用建会话时的技能清单——alpha 会话跑一轮后新建项目技能、按 beta 重载，下一轮系统提示词里没有新技能，按 alpha 重载后才有（GatewayRuntimeRefreshBundle.ts:90-97，SessionRouter.ts:349-359）；Rust 每轮都重新扫描，按 beta 重载后（甚至不重载）就带上了新技能。b changedPaths 里的非字符串元素基线原样回显在返回值和 config_changed 通知里，Rust 转成了字符串。",
+  "files": {
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-beta/.cwd": "{HOME}/work/beta\n",
+    "home/work/alpha/README.md": "alpha\n",
+    "home/work/beta/README.md": "beta\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Reload run\"}"
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "Answer."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-rx",
+        "channelKey": "test",
+        "projectKey": "{HOME}/work/alpha",
+        "runId": "run-rx-1",
+        "message": "rx-1: first"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "skill_create",
+      "params": {
+        "scope": "project",
+        "slug": "fresh-skill",
+        "projectKey": "{HOME}/work/alpha",
+        "content": "---\nname: fresh-skill\ndescription: Freshly created project skill for alpha.\n---\nFresh body.\n"
+      }
+    },
+    {
+      "ws": "reload_extensions",
+      "params": {
+        "projectKey": "{HOME}/work/beta",
+        "changedPaths": [
+          "{HOME}/work/beta/.pilotdeck/skills"
+        ]
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-rx",
+        "channelKey": "test",
+        "projectKey": "{HOME}/work/alpha",
+        "runId": "run-rx-2",
+        "message": "rx-2: after beta reload"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "reload_extensions",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "changedPaths": [
+          "{HOME}/work/alpha/.pilotdeck/skills/fresh-skill/SKILL.md"
+        ]
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-rx",
+        "channelKey": "test",
+        "projectKey": "{HOME}/work/alpha",
+        "runId": "run-rx-3",
+        "message": "rx-3: after alpha reload"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "reload_extensions",
+      "params": {
+        "changedPaths": [
+          1,
+          "two",
+          null
+        ]
+      }
+    }
+  ]
+}

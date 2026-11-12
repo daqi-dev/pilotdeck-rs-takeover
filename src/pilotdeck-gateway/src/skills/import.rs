@@ -414,6 +414,14 @@ fn copy_non_directory(
             fs::remove_file(dest).map_err(|e| SkillError::io(&e, "unlink", Some(dest)))?;
         }
         fs::copy(src, dest).map_err(|e| SkillError::io_pair(&e, "copyfile", src, dest))?;
+        // `fs.cp` without `preserveTimestamps` leaves the copy with the time
+        // it was written (bbx params-skills-reload: the imported SKILL.md's
+        // `mtime` is the import time), while the platform copy here carries
+        // the source's timestamps over.
+        // futimens needs only ownership, so a read-only copy still takes it.
+        fs::File::open(dest)
+            .and_then(|file| file.set_modified(std::time::SystemTime::now()))
+            .map_err(|e| SkillError::io(&e, "utime", Some(dest)))?;
         return set_mode(dest, src_stat);
     }
     if kind.is_symlink() {

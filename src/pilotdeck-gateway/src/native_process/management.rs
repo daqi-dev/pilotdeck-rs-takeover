@@ -167,11 +167,20 @@ impl Requests {
     }
 
     async fn management(&self, method: &str, params: &JsValue) -> Result<JsValue, RequestError> {
-        // The one SkillManager of createLocalGateway serves every skill_*
-        // call; `projectKey` is the manager's own path input (project scope
-        // root), never resolved through the project registry.
+        // `resolveSkillManager(input.projectKey)` (createLocalGateway.ts:
+        // 853-870): list/read/write/create/delete/import pick the manager
+        // from the skills binding of `registry.resolve(projectKey ??
+        // projectRoot)` — a non-string key fails in `path.resolve`, an empty
+        // one is the working directory — while validate/scan always use the
+        // default project. The key stays the manager's own project-scope input.
         let project_root = if method.starts_with("skill_") {
-            self.options.project.clone()
+            match method {
+                "skill_validate" | "skill_scan" => self.options.project.clone(),
+                _ => match super::projects::nullish_project_key(params)? {
+                    Some(key) => self.options.project_root_for(Some(key)),
+                    None => self.options.project.clone(),
+                },
+            }
         } else {
             self.management_project(params)?
         };
