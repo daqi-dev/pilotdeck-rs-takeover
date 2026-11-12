@@ -1,0 +1,116 @@
+{
+ "name": "cfg-always-on-trigger",
+ "about": "alwaysOn 段里没比过的键（always-on/config/parseAlwaysOnConfig.ts:51-330，闸门 always-on/runtime/DiscoveryGates.ts:27-80）：已移除的 alwaysOn.enabled / discovery / plan / cron / dormancy / workspace / execution、trigger.enabled、projects.<root>.sessionKey / workspace 只给 ALWAYS_ON_FIELD_REMOVED 警告；trigger.cooldownMinutes / dailyBudget / heartbeatStaleSeconds / recentUserMsgMinutes / preferChannel 的合法值进配置快照；dailyBudget=0 时调度器（3 秒一跳，等约 8 秒）每跳都被 daily_budget 挡住，不发 discovery 请求、不写 always-on 落盘文件。再用 serve 起几份非法取值：数字非法 ALWAYS_ON_NUMBER_INVALID 回落缺省、preferChannel 空串或非字符串 ALWAYS_ON_TRIGGER_PREFER_CHANNEL_INVALID、language 非法、trigger 不是对象 ALWAYS_ON_TRIGGER_INVALID（致命）、项目值不是对象 ALWAYS_ON_PROJECT_INVALID（致命）。",
+ "server": false,
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nalwaysOn:\n  enabled: true\n  language: zh-CN\n  discovery: {}\n  plan: {maxPlans: 2}\n  cron: {}\n  dormancy: {idleHours: 1}\n  workspace: {provider: git}\n  execution: {maxTurns: 3}\n  bogusTop: 1\n  trigger:\n    enabled: true\n    tickIntervalMinutes: 0.05\n    cooldownMinutes: 0\n    dailyBudget: 0\n    heartbeatStaleSeconds: 30\n    recentUserMsgMinutes: 0\n    preferChannel: feishu\n  projects:\n    {HOME}/work/alpha:\n      enabled: true\n      sessionKey: s-fixed\n      workspace: {provider: copy}\n      bogus: 1\n",
+ "files": {
+  "home/work/alpha/README.md": "alpha\n",
+  "cfgs/invalid.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nalwaysOn:\n  trigger:\n    tickIntervalMinutes: 0\n    cooldownMinutes: -1\n    dailyBudget: 1.5\n    heartbeatStaleSeconds: \"90\"\n    recentUserMsgMinutes: -5\n    preferChannel: \"\"\n  projects:\n    {HOME}/work/alpha:\n      enabled: \"yes\"\n",
+  "cfgs/invalid2.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nalwaysOn:\n  language: fr\n  trigger:\n    dailyBudget: -1\n    cooldownMinutes: .inf\n    preferChannel: 7\n",
+  "cfgs/trigger-not-object.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nalwaysOn:\n  trigger: 5\n",
+  "cfgs/project-not-object.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nalwaysOn:\n  projects:\n    /tmp/x: true\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"AO\"}"
+   }
+  },
+  {
+   "name": "discovery",
+   "when": [
+    "autonomous Always-On discovery"
+   ],
+   "reply": {
+    "text": "should not fire"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 40000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "sleep": 8000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/invalid.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/invalid2.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/trigger-not-object.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/project-not-object.yaml"
+   },
+   "timeout": 20000
+  }
+ ]
+}

@@ -35,7 +35,7 @@ pub(super) fn native_factory(hooks: NativeAlwaysOnHooks) -> AlwaysOnFactory {
             pilot_home: input.pilot_home,
             now: None,
             uuid: None,
-            logger: None,
+            logger: Some(Arc::new(ConsoleAlwaysOnLogger)),
             session_overrides: Some(hooks.session_overrides.clone()),
             on_turn_event: hooks.on_turn_event.clone(),
             on_worktree_created: hooks.on_worktree_created.clone(),
@@ -44,6 +44,32 @@ pub(super) fn native_factory(hooks: NativeAlwaysOnHooks) -> AlwaysOnFactory {
             manager: Arc::new(manager),
         }))
     })
+}
+
+/// The server's `alwaysOnLogger` (src/cli/pilotdeck.ts:64-69): `info` to
+/// stdout, `warn` to stderr, `[always-on] <message>` plus
+/// ` <JSON.stringify(data)>` when data was passed. Every TS call site passes
+/// either no data or a non-empty object literal, so an empty meta here means
+/// "no data" (the cron logger in `assembly/cron.rs` follows the same rule).
+struct ConsoleAlwaysOnLogger;
+impl ConsoleAlwaysOnLogger {
+    fn line(message: &str, meta: &pilotdeck_protocol::JsObject) -> String {
+        if meta.is_empty() {
+            return format!("[always-on] {message}");
+        }
+        match pilotdeck_protocol::stringify_json(&JsValue::Object(meta.clone())) {
+            Ok(Some(data)) => format!("[always-on] {message} {data}"),
+            _ => format!("[always-on] {message}"),
+        }
+    }
+}
+impl crate::runtime::always_on::AlwaysOnLogger for ConsoleAlwaysOnLogger {
+    fn info(&self, message: &str, meta: &pilotdeck_protocol::JsObject) {
+        println!("{}", Self::line(message, meta));
+    }
+    fn warn(&self, message: &str, meta: &pilotdeck_protocol::JsObject) {
+        eprintln!("{}", Self::line(message, meta));
+    }
 }
 
 /// What the process hands every always-on manager it builds — the shared
