@@ -9,7 +9,7 @@
 - cb8 Linux aarch64：`/home/clawbox-08/ws/pilotdeck-rs-cc2c`，`checkout` 保持8fa供验证；独立组件源码clone允许后续提交，必须分别记录身份。
 - 全部产品命令（含help/version）隔离 HOME/PILOT_HOME，Cargo使用 `/Users/da/.cargo`、Rustup `/Users/da/.rustup`。不得接触真实 `~/.pilotdeck`、受保护的 `~/ws/PilotDeck-rust-program-20261009` 或参考材料。测试外发全部mock；没有真实服务、推送、发布授权。
 - 根会话实际额度是主+3子智能体；项目配置12未热生效。唯一本地重型槽jobs4，cb8唯一重型槽jobs6，各最多2个正式harness/BBX。不要杀别的任务进程。
-- 独立C1聊天 `01a1d10e-8941-7392-bd13-9bb63886a7c9`（host local），用户明确授权双方直接协调。worktree `/Users/da/.codex/worktrees/c1-cli-completion/pilotdeck-rs-cc2c`，branch `codex/c1-cli-completion`，已有10子智能体，不新建聊天/增槽。同步merge `8086ab52` 不得cherry-pick。
+- 独立C1聊天 `01a1d10e-8941-7392-bd13-9bb63886a7c9`（host local），用户明确授权双方直接协调。worktree `/Users/da/.codex/worktrees/c1-cli-completion/pilotdeck-rs-cc2c`，branch `codex/c1-cli-completion`，实际已创建12子智能体，当前8活跃/4空闲或已完成；加本会话3活跃，共11活跃子智能体。两协调者另计，不新建聊天/增槽。同步merge `8086ab52` 不得cherry-pick。
 
 ## 分工和当前状态
 
@@ -50,3 +50,11 @@
 5. C1 Signal/Mattermost/HomeAssistant、共享网络/精确取消、S1原子restore、M1 Google complete冻结待check。WS压缩20格oracle确认8位窗口；root依赖提交936271b3(flate2) +4db0e19c(zlib-rs safe API)，已要求作者同步。WhatsApp独立新源码待集成，其他渠道尚未完成。
 6. O1已有placeholder证据：CLI server固定零snapshot，assembly telemetry None；读TS collector/sender/context和observer后实现真实队列，所有测试绑定loopback。已请求C1复用空闲作者做新gateway telemetry模块；若未确认不要双方重复写。root保留CLI/native server/assembly接线。
 7. 更新本文件和包报告；最终仍需同一集成SHA全量fmt/clippy/nextest/doc、适用BBX、native/外部模块和StaffDeck组合重启路径、最小/完整发行包、无Node、性能和跨平台报告。GitHubCI尚未实际运行；真实外部服务保持明确待验。
+
+## 全局收口调整（用户询问进度后已执行）
+
+- 明确承认批次过大、首编偏晚、集成及文档滞后；不将不同新根因当作效率合理的证明。停止扩大本批审计，只完成已有矩阵；WhatsApp/O1已分配独立任务继续。P0条件具备，P1主干有证据但完整验收未关，P2进行中，P3未完成，不报告无可靠分母的完成百分比。
+- Linux8fa focused nextest已完成552/552通过、7572未选，不能称全量。a903 helper独立37/37已通过。TCP最新4组正式全部通过（formal-compare-3/orphan-compare-2/active-repeat-2/completed-repeat-2），binary92d98abcf84c92f5b93bb13434ca5dd14c5cb8696aafbc8265cae49810d04902。
+- 本地clippy-5通过46.52秒/build-3通过54.36秒；clippy-4测试模块位置首败保留且修复。新CLI 7d3ddddb60e35aa5eeb23c9b989c0ecbac0cd2dfa9c706c29f4e1e93b0b8254f：B1 cancel_model-2首轮取消已完全修复，整体仍失败于恢复轮父wire最终回复超前于已排队的节点事件。B1/R1正在统一审查事件顺序屏障，暂不扩新变体。
+- 唯一本地重型槽又交C1一次定点修正后的all-targets check（首失败10lib/39test含重复，未运行测试）；主线暂不cargo。C1返回槽后root跑最新SOP/TCP相关单测。E0无重型任务，正在独立审T1组件管理并准备既有3条正式image TS自比。
+- C1 SDK cancel存在两轮同TS挂起，未标通过，已要求复用空闲作者定位实际读流/abort归属，不靠延长timeout。全量四门、适用BBX、性能与完整发行仍必须执行。
