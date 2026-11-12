@@ -1014,7 +1014,7 @@ pub fn decode(
 /// `PILOTDECK_AGENT_LOOP_TRANSPORT=stdio` and its environment reaches this
 /// child unchanged (`AgentLoopDeploymentProfile.ts:66-73`). Without it this
 /// process is the gateway's own in-process loop.
-fn external_deployment() -> bool {
+pub(crate) fn external_deployment() -> bool {
     static EXTERNAL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *EXTERNAL.get_or_init(|| {
         std::env::var("PILOTDECK_AGENT_LOOP_TRANSPORT")

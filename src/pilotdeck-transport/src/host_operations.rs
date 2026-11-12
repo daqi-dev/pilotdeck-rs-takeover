@@ -2256,6 +2256,27 @@ pub(crate) fn call<E: HostExchange>(
                 .map(js_string)
                 .transpose()?
                 .unwrap_or_else(|| "Capability module failed.".into());
+            // An external capability module's `ok: false, outcome:
+            // "result_unknown"` makes the in-process tool port throw an
+            // Error whose code is RESULT_UNKNOWN (hostToolPort.ts:283-285,
+            // 309-318); the host forwards it as this response's `code`
+            // (agentLoopSidecarClient.ts:1237-1250). AgentLoop rethrows that
+            // terminal tool error instead of building missing results
+            // (AgentLoop.ts:1960-1961, 3899-3907), so the whole turn fails
+            // with the module's message. An explicitly deployed sidecar is
+            // the baseline's external loop, whose own port reads the
+            // envelope only; it keeps the per-batch rejection.
+            if !crate::factory_payload::external_deployment()
+                && response
+                    .get("code")
+                    .and_then(JsValue::as_string)
+                    .is_some_and(|code| code.equals_str("RESULT_UNKNOWN"))
+            {
+                return Err(PortError::SourceException {
+                    message,
+                    boundary: exchanged.boundary.clone(),
+                });
+            }
             return Ok(HostReply::ToolBatchRejected {
                 message,
                 boundary: exchanged.boundary.clone(),
