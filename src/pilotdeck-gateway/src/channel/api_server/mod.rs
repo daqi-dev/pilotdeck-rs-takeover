@@ -349,6 +349,10 @@ impl ChannelAdapter for ApiServerChannel {
                 );
                 return Ok(noop_handle());
             }
+            if let Some(message) = server::bad_port_message(port) {
+                channel.log("error", &format!("api-server: failed to start: {message}"));
+                return Ok(noop_handle());
+            }
             let address = match server::resolve_address(&resolved.host, port).await {
                 Ok(address) => address,
                 Err(error) => {
