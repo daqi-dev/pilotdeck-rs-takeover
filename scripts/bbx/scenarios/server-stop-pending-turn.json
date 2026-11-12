@@ -1,0 +1,25 @@
+{
+  "name": "server-stop-pending-turn",
+  "about": "`pilotdeck server` 停机时还有一轮卡在长工具调用（bash sleep）里：客户端先断开，再 SIGTERM。比较停机输出、退出码与落盘（runs/registry.json 的状态、会话记录、残留文件）。",
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Pending\"}" } },
+    { "name": "after-tool", "when": ["case-pending:", "\"tool_call_id\":\"call_bbx_pending\""], "reply": { "text": "Should not run." } },
+    { "name": "pending", "when": ["case-pending:"], "reply": { "tool": { "id": "call_bbx_pending", "name": "bash", "arguments": { "command": "sleep 20; echo slept" } } } }
+  ],
+  "steps": [
+    {
+      "serve": ["server"],
+      "then": [
+        { "ws": "set_permission_mode", "params": { "sessionKey": "s-pending", "mode": "bypassPermissions" } },
+        { "ws": "submit_turn", "params": { "sessionKey": "s-pending", "channelKey": "test", "runId": "run-pending", "message": "case-pending: sleep" }, "timeout": 3000, "expectTimeout": true },
+        { "sleep": 500 },
+        { "disconnect": true }
+      ]
+    }
+  ]
+}
