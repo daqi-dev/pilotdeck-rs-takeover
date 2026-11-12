@@ -1,0 +1,14 @@
+{
+  "name": "agent-loop-sidecar-stdio",
+  "about": "PILOTDECK_AGENT_LOOP_TRANSPORT=stdio：gateway 每轮起第二个可执行入口 pilotdeck-agent-loop-sidecar（src/cli/AgentLoopDeploymentProfile.ts:62-80、src/cli/pilotdeck-agent-loop-sidecar.ts），经 stdio 协议跑 agent 循环。比一轮纯文本对话的帧、发给 provider 的请求与落盘。已知：基线在会话 .jsonl 里多写 agent_loop_operation_started / accepted / terminal 三条记录（src/agent/modules/transport/sessionOperationLedger.ts），其中 binding.moduleInstanceId、binding.connectionGeneration、streamId 是随机串，基线自比在这些路径上不同；Rust 不写这三条记录。",
+  "env": {
+    "PILOTDECK_AGENT_LOOP_TRANSPORT": "stdio"
+  },
+  "provider": [
+    {"name": "title", "when": ["Generate a concise title"], "reply": {"text": "{\"title\": \"Sidecar\"}"}},
+    {"name": "main", "reply": {"text": "Hello from the sidecar mock."}}
+  ],
+  "steps": [
+    {"ws": "submit_turn", "params": {"sessionKey": "s-bbx-sidecar", "channelKey": "test", "message": "hello sidecar"}, "timeout": 60000}
+  ]
+}
