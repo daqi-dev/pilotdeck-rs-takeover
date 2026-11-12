@@ -31,7 +31,16 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
     // createLocalGateway() resolves the agent-loop deployment profile
     // (createLocalGateway.ts:623) before the legacy skill migration; an
     // invalid PILOTDECK_AGENT_LOOP_* variable ends the command there.
-    pilotdeck_gateway::runtime::turn::host_factory::resolve_deployment(&env.strings(), cwd)
+    let snapshot = pilotdeck_gateway::config::load_snapshot(
+        &pilot_home,
+        cwd,
+        &env.strings(),
+        Some("."),
+        1.0,
+        "",
+    )
+    .map_err(|error| Failure::Error(String::from_utf16_lossy(error.message.units())))?;
+    pilotdeck_gateway::runtime::turn::host_factory::select_loop(&snapshot, &env.strings(), cwd)
         .map_err(Failure::Error)?;
     // createLocalGateway(): the legacy bundled-skill migration and its output.
     let exe = std::env::current_exe()

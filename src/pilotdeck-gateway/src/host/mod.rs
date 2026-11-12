@@ -503,7 +503,37 @@ impl HostClient {
         limits: Limits,
     ) -> Result<Self, HostError> {
         limits.validate()?;
-        let mut connection = Connection::spawn(command, limits)?;
+        let connection = Connection::spawn(command, limits)?;
+        Self::from_connection(connection, expected_module_id, limits).await
+    }
+    /// Execute the built-in Rust loop inside this process. The same host
+    /// capability boundary and cancellation protocol apply without a child.
+    pub async fn native(
+        cwd: &std::path::Path,
+        expected_module_id: Option<&JsString>,
+        limits: Limits,
+    ) -> Result<Self, HostError> {
+        limits.validate()?;
+        let connection = Connection::native(cwd, limits, None)?;
+        Self::from_connection(connection, expected_module_id, limits).await
+    }
+    /// Run a registered Rust execution factory within the native capability
+    /// boundary. External stdio/TCP peers never receive this factory.
+    pub async fn native_with_factory(
+        cwd: &std::path::Path,
+        expected_module_id: Option<&JsString>,
+        limits: Limits,
+        factory: Arc<dyn pilotdeck_transport::server::ExecutionFactory>,
+    ) -> Result<Self, HostError> {
+        limits.validate()?;
+        let connection = Connection::native(cwd, limits, Some(factory))?;
+        Self::from_connection(connection, expected_module_id, limits).await
+    }
+    async fn from_connection(
+        mut connection: Connection,
+        expected_module_id: Option<&JsString>,
+        limits: Limits,
+    ) -> Result<Self, HostError> {
         let handshake = bounded(
             limits.handshake_timeout,
             handshake(&mut connection, expected_module_id, None),

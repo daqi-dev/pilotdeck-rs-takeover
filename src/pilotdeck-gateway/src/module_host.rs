@@ -182,7 +182,10 @@ pub(crate) trait PublicHostProvider: Send + Sync {
 /// the validated principal. An absent resolver (a `Config` without
 /// `capabilities`) is the transport's 501.
 pub(crate) trait PublicHostResolver: Send + Sync {
-    fn resolve(&self, principal: &PublicHostPrincipal) -> Arc<dyn PublicHostProvider>;
+    fn resolve(
+        &self,
+        principal: &PublicHostPrincipal,
+    ) -> Result<Arc<dyn PublicHostProvider>, HostFailure>;
 }
 
 /// The transport's routing inputs: the bearer token and the optional
@@ -308,7 +311,15 @@ pub(crate) async fn serve(
             version,
         )));
     };
-    let provider = resolver.resolve(&principal);
+    let provider = match resolver.resolve(&principal) {
+        Ok(provider) => provider,
+        Err(failure) => {
+            return Some(Ok(finalize(
+                host_failure_response(failure, keep_alive),
+                version,
+            )));
+        }
+    };
     let operations = if crate::mutants::on("module-host-describe-filter-off") {
         provider.operations()
     } else {
@@ -377,28 +388,8 @@ pub(crate) async fn serve(
     let response = match provider.call(&operation, &call_input, &principal).await {
         Ok(response) => response,
         Err(failure) => {
-            let code = failure.code.unwrap_or_else(|| {
-                if crate::mutants::on("module-host-failure-default-off") {
-                    String::new()
-                } else {
-                    "PUBLIC_HOST_TRANSPORT_FAILED".to_owned()
-                }
-            });
-            let body = match &failure.message {
-                Some(message) => format!(
-                    "{{\"code\":{},\"message\":{}}}",
-                    json_text(&code),
-                    json_text(message)
-                ),
-                None => format!("{{\"code\":{}}}", json_text(&code)),
-            };
             return Some(Ok(finalize(
-                send_json(
-                    hyper::StatusCode::from_u16(failure.status.unwrap_or(502))
-                        .unwrap_or(hyper::StatusCode::BAD_GATEWAY),
-                    &body,
-                    keep_alive,
-                ),
+                host_failure_response(failure, keep_alive),
                 version,
             )));
         }
@@ -407,6 +398,30 @@ pub(crate) async fn serve(
         provider_response(response, keep_alive),
         version,
     )))
+}
+
+fn host_failure_response(failure: HostFailure, keep_alive: bool) -> hyper::Response<Body> {
+    let code = failure.code.unwrap_or_else(|| {
+        if crate::mutants::on("module-host-failure-default-off") {
+            String::new()
+        } else {
+            "PUBLIC_HOST_TRANSPORT_FAILED".to_owned()
+        }
+    });
+    let body = match &failure.message {
+        Some(message) => format!(
+            "{{\"code\":{},\"message\":{}}}",
+            json_text(&code),
+            json_text(message)
+        ),
+        None => format!("{{\"code\":{}}}", json_text(&code)),
+    };
+    send_json(
+        hyper::StatusCode::from_u16(failure.status.unwrap_or(502))
+            .unwrap_or(hyper::StatusCode::BAD_GATEWAY),
+        &body,
+        keep_alive,
+    )
 }
 
 /// Node answers every HTTP/1.0 request with a `Connection: close` response
@@ -1227,8 +1242,11 @@ pub(crate) struct CatalogPort {
 pub(crate) struct ModuleHostResolver(pub(crate) Arc<ModuleHostPorts>);
 
 impl PublicHostResolver for ModuleHostResolver {
-    fn resolve(&self, _principal: &PublicHostPrincipal) -> Arc<dyn PublicHostProvider> {
-        Arc::clone(&self.0) as Arc<dyn PublicHostProvider>
+    fn resolve(
+        &self,
+        _principal: &PublicHostPrincipal,
+    ) -> Result<Arc<dyn PublicHostProvider>, HostFailure> {
+        Ok(Arc::clone(&self.0) as Arc<dyn PublicHostProvider>)
     }
 }
 
@@ -1518,6 +1536,7 @@ pub(crate) fn production_config(token: String, host: Arc<runtime::RuntimeHost>) 
 
 /// The runtime host capability provider behind `production_config`.
 pub(crate) mod runtime;
+pub(crate) mod staffdeck;
 
 /// The approvals transport (#1350), a sibling component this module's caller
 /// composes in front of it — TS mounts `handlePublicApprovalHttpRequest`

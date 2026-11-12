@@ -85,16 +85,6 @@ async fn serve_on_runtime(
     options: ServerOptions,
     listening: impl FnOnce(&Listening),
 ) -> Result<(), ProxyError> {
-    // The sidecar has no baseline counterpart (the baseline runs the agent
-    // loop in-process by default), so neither does this message. Checking it
-    // here keeps a broken install from surfacing only on the first turn.
-    if !options.sidecar.is_file() {
-        return Err(format!(
-            "pilotdeck server requires the agent loop sidecar at {}",
-            options.sidecar.display()
-        )
-        .into());
-    }
     ensure_router_dir(&options.pilot_home);
     let process = Options {
         home: options.pilot_home.clone(),
@@ -221,7 +211,10 @@ async fn bind(
     .with_webhook(feishu_webhook)
     // `publicApprovals` and `publicHostCapabilities` (pilotdeck.ts:217-218).
     .with_module_host(crate::native_http::ModuleHost {
-        approvals: crate::module_host::approvals::production_config(token.clone(), &options.env),
+        approvals: crate::module_host::approvals::production_config(
+            token.clone(),
+            module_host.clone(),
+        ),
         host: crate::module_host::production_config(token.clone(), module_host),
     })
     .with_api_web(production_api_web(token, options.pilot_home.clone()))

@@ -555,6 +555,15 @@ impl Families {
         self
     }
 
+    /// Install the embedding's project/session-scoped native router registry.
+    pub fn with_native_extensions(
+        mut self,
+        extensions: crate::extensions::NativeExtensions,
+    ) -> Self {
+        self.router_custom_routers = Some(extensions.router_family());
+        self
+    }
+
     /// Publish the interaction capability marker (permission, hooks, event,
     /// steer) for A6.9-pr3c2. This is a factory-level marker on the
     /// execution-world family, not the per-turn ports: their binding stays

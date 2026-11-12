@@ -1,23 +1,10 @@
-//! Per-turn host assembly from a real project lease, then the stdio sidecar.
-//!
-//! This is the Rust landing point for `AgentLoopDeploymentProfile.ts:20-110`,
-//! `AgentSessionRuntimeBundle.ts:242-290`, `sidecarHostModulePorts.ts:240-322`
-//! and `stdioAgentLoopSidecarConnection.ts:31-60`: the deployment selects one
-//! stdio sidecar, every actual turn acquires the current project generation,
-//! builds a fresh `ModuleRouter` from that lease, and only then spawns the
-//! child. The child never supplies model, budget, context or capability ports.
-//!
-//! `capability` and `turn` are session-owned in TS (`dependencies.tools`,
-//! session steer/persistence). They arrive through [`SessionPorts`]; model,
-//! budget and context are rebuilt from the lease for every turn. No handler is
-//! reused across turns or generations: `model_port::compose`, the lease's
-//! token accounting and `ContextStorageResources::create_session` all return
-//! turn-owned state.
-//!
-//! The lease is acquired during assembly; the returned connection is lazy.
-//! LiveSession binds the handler and commits start/accepted input before polling
-//! that connection. Failed gates therefore create no child; cancellation/drop
-//! still retains the lease until any outstanding recorder write exits.
+//! Per-turn host capabilities from a project-generation lease. The built-in
+//! Rust loop runs in this process; explicit stdio/TCP deployments keep the
+//! same host-owned model, tool, context, permission and persistence boundary.
+//! Session state belongs to SessionPorts; only turn bindings are rebuilt.
+mod selection;
+pub use selection::{LoopSelection, select_loop};
+
 use crate::{
     config::Env,
     host::{
@@ -44,8 +31,7 @@ use std::{
 };
 use tokio::process::Command;
 
-/// `AgentLoopDeploymentProfile` (TS lines 11-38). TCP is parsed for exact
-/// error/selection parity, but the native host factory has no TCP transport.
+/// `AgentLoopDeploymentProfile` (TS lines 11-38).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Deployment {
     Native,
@@ -63,8 +49,8 @@ pub enum Deployment {
 }
 
 /// `resolveAgentLoopDeploymentProfile` (`AgentLoopDeploymentProfile.ts:44-81`).
-/// Error text is byte-for-byte the TS baseline; the tcp selection is kept so
-/// `create` can reject it explicitly (#130) instead of inventing a fallback.
+/// Validation follows the fixed baseline; the default stdio executable is the
+/// shipped Rust sidecar rather than Node plus the old JavaScript entry.
 pub fn resolve_deployment(env: &Env, cwd: &Path) -> Result<Deployment, String> {
     let transport = env
         .get("PILOTDECK_AGENT_LOOP_TRANSPORT")
@@ -89,26 +75,26 @@ pub fn resolve_deployment(env: &Env, cwd: &Path) -> Result<Deployment, String> {
                 env.get("PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND")
                     .map(String::as_str),
                 &std::env::current_exe()
-                    .map(|path| path.to_string_lossy().into_owned())
-                    .unwrap_or_else(|_| "pilotdeck".into()),
+                    .ok()
+                    .and_then(|path| {
+                        path.parent()
+                            .map(|dir| dir.join("pilotdeck-agent-loop-sidecar"))
+                    })
+                    .unwrap_or_else(|| cwd.join("pilotdeck-agent-loop-sidecar"))
+                    .to_string_lossy(),
                 "PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND",
             )?;
-            let sidecar_path = match env
+            let args = env
                 .get("PILOTDECK_AGENT_LOOP_SIDECAR_PATH")
-                .map(String::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                Some(value) => crate::metadata::resolve(cwd, value),
-                // TS resolves `new URL("./pilotdeck-agent-loop-sidecar.js",
-                // import.meta.url)`. The native sibling is the sidecar binary
-                // next to the gateway executable.
-                None => std::env::current_exe()
-                    .ok()
-                    .and_then(|path| path.parent().map(Path::to_path_buf))
-                    .unwrap_or_else(|| cwd.to_path_buf())
-                    .join("pilotdeck-agent-loop-sidecar.js"),
-            };
+                .filter(|value| !value.trim().is_empty())
+                .map(|value| {
+                    vec![
+                        crate::metadata::resolve(cwd, value.trim())
+                            .to_string_lossy()
+                            .into_owned(),
+                    ]
+                })
+                .unwrap_or_default();
             // A stdio child is per-turn; it must not inherit the parent's TCP
             // deployment config (`AgentLoopDeploymentProfile.ts:70-73`).
             let mut child_env = env.clone();
@@ -116,7 +102,7 @@ pub fn resolve_deployment(env: &Env, cwd: &Path) -> Result<Deployment, String> {
             child_env.remove("PILOTDECK_AGENT_LOOP_TCP_PORT");
             Ok(Deployment::Stdio {
                 command,
-                args: vec![sidecar_path.to_string_lossy().into_owned()],
+                args,
                 cwd: cwd.to_path_buf(),
                 env: child_env,
             })
@@ -223,6 +209,7 @@ type PortsFactory = dyn Fn(&ExecutionIdentity, Arc<Recorder>, crate::runtime::ho
 pub struct TurnHostFactory {
     registry: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
     deployment: Deployment,
+    native_factory: Option<Arc<dyn pilotdeck_transport::server::ExecutionFactory>>,
     limits: Limits,
     expected_module_id: Option<JsString>,
     ports: Arc<PortsFactory>,
@@ -269,16 +256,26 @@ impl TurnHostFactory {
     ) -> Self {
         Self {
             registry,
+            in_process_loop: matches!(deployment, Deployment::Native),
             deployment,
+            native_factory: None,
             limits,
             expected_module_id,
             ports: Arc::new(ports),
             agent_config: None,
             permission_mode_source: None,
             turn_override_sink: None,
-            in_process_loop: false,
             project_root: None,
         }
+    }
+
+    /// Install a source-level Rust extension for native deployments only.
+    pub fn with_native_factory(
+        mut self,
+        factory: Arc<dyn pilotdeck_transport::server::ExecutionFactory>,
+    ) -> Self {
+        self.native_factory = Some(factory);
+        self
     }
 
     /// Lease each turn's runtime from the session's own project, so the
@@ -389,8 +386,8 @@ impl TurnHostFactory {
         }
     }
 
-    /// Acquire one generation lease and prepare a lazy sidecar connection. Unsupported
-    /// transports fail before any lease exists, so they cannot leak.
+    /// Acquire one generation lease and prepare the selected lazy connection.
+    /// Cancellation/drop owns that lease even while connecting or handshaking.
     pub async fn create(
         &self,
         identity: &ExecutionIdentity,
@@ -410,26 +407,12 @@ impl TurnHostFactory {
         recorder: Arc<Recorder>,
         signal: crate::runtime::hooks::Cancellation,
     ) -> Result<InteractionHost, HostError> {
-        let (command, args, cwd, env) = match &self.deployment {
-            Deployment::Stdio {
-                command,
-                args,
-                cwd,
-                env,
-            } => (command, args, cwd, env),
-            Deployment::Native => {
-                return Err(HostError::new(
-                    HostErrorKind::Protocol,
-                    "Agent loop transport 'native' has no sidecar host factory.",
-                ));
-            }
-            Deployment::Tcp { .. } => {
-                return Err(HostError::new(
-                    HostErrorKind::Protocol,
-                    "Agent loop transport 'tcp' is not supported; see #130.",
-                ));
-            }
-        };
+        if matches!(&self.deployment, Deployment::Tcp { .. }) {
+            return Err(HostError::new(
+                HostErrorKind::Protocol,
+                "Agent loop transport 'tcp' is not supported; see #130.",
+            ));
+        }
         let lease = self
             .registry
             .acquire(self.project_root.as_deref())
@@ -440,13 +423,50 @@ impl TurnHostFactory {
             // `assemble` owns (and therefore drops) the lease on error.
             Err(error) => return Err(error),
         };
-        let mut command = Command::new(command);
-        command.args(args).current_dir(cwd).env_clear().envs(env);
+        let deployment = self.deployment.clone();
+        let native_factory = self.native_factory.clone();
         let expected = self.expected_module_id.clone();
         let limits = self.limits;
+        let cwd = lease
+            .runtime()
+            .resources()
+            .get::<ProjectResources>()
+            .ok_or_else(|| {
+                HostError::new(
+                    HostErrorKind::Protocol,
+                    "Leased project resources are missing.",
+                )
+            })?
+            .context()
+            .project_root()
+            .to_path_buf();
         Ok(InteractionHost {
             client: Box::pin(async move {
-                HostClient::spawn(&mut command, expected.as_ref(), limits).await
+                match deployment {
+                    Deployment::Native => match native_factory {
+                        Some(factory) => {
+                            HostClient::native_with_factory(
+                                &cwd,
+                                expected.as_ref(),
+                                limits,
+                                factory,
+                            )
+                            .await
+                        }
+                        None => HostClient::native(&cwd, expected.as_ref(), limits).await,
+                    },
+                    Deployment::Stdio {
+                        command,
+                        args,
+                        cwd,
+                        env,
+                    } => {
+                        let mut command = Command::new(command);
+                        command.args(args).current_dir(cwd).env_clear().envs(env);
+                        HostClient::spawn(&mut command, expected.as_ref(), limits).await
+                    }
+                    Deployment::Tcp { .. } => unreachable!("TCP rejected before lease acquisition"),
+                }
             }),
             lease,
             router,

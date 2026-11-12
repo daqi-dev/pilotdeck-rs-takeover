@@ -44,13 +44,15 @@ pub struct LocalGateway {
 
 impl LocalGateway {
     pub fn start(options: LocalOptions) -> Result<Self, ProxyError> {
-        if !options.sidecar.is_file() {
-            return Err(format!(
-                "pilotdeck requires the agent loop sidecar at {}",
-                options.sidecar.display()
-            )
-            .into());
-        }
+        Self::start_with_extensions(options, crate::extensions::NativeExtensions::default())
+    }
+
+    /// Start the production gateway assembly with Rust source-level extensions.
+    /// Keep registration tokens alive to admit their contributions to new sessions.
+    pub fn start_with_extensions(
+        options: LocalOptions,
+        extensions: crate::extensions::NativeExtensions,
+    ) -> Result<Self, ProxyError> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
@@ -81,10 +83,15 @@ impl LocalGateway {
                 in_process_cli: true,
             };
             let (host, _webhook, _switch) =
-                assembly::start_with_webhook(process, options.env.clone()).await?;
+                assembly::start_with_extensions(process, options.env.clone(), extensions).await?;
             Ok::<_, ProxyError>(host)
         })?;
         Ok(Self { runtime, host })
+    }
+
+    /// Drain sessions, tool tasks and their retained extension resources.
+    pub fn shutdown(&self, budget: Duration) -> Result<(), String> {
+        self.runtime.block_on(self.host.shutdown(budget))
     }
 
     /// `for await (const event of gateway.submitTurn(input))`: blocks until

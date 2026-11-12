@@ -56,6 +56,9 @@ pub struct Handler {
     /// them (`this.dispatchLifecycle(...).catch(() => {})`, AgentLoop.ts:699,
     /// 2281), so their hooks neither hold the turn's terminal nor end with it.
     advisory: Option<Arc<dyn LifecyclePort>>,
+    /// Original user/session cancellation, distinct from the turn binding's
+    /// disposal signal. Normal completion does not abort advisory hooks.
+    advisory_signal: Option<crate::runtime::hooks::Cancellation>,
 }
 impl Handler {
     pub fn new(runtime: LifecycleRuntime, binding: Binding) -> Self {
@@ -65,11 +68,20 @@ impl Handler {
         Self {
             ports: Some(Ports { runtime, binding }),
             advisory: None,
+            advisory_signal: None,
         }
     }
     /// Route the advisory events to `port`, answered without waiting.
     pub fn set_advisory(&mut self, port: Arc<dyn LifecyclePort>) {
         self.advisory = Some(port);
+    }
+    pub fn set_advisory_with_signal(
+        &mut self,
+        port: Arc<dyn LifecyclePort>,
+        signal: crate::runtime::hooks::Cancellation,
+    ) {
+        self.advisory = Some(port);
+        self.advisory_signal = Some(signal);
     }
     /// TS `NullLifecycleRuntime`: dispatch is empty. This handler's `dispose` is
     /// a no-op (the dispatcher never disposes the session runtime).
@@ -135,10 +147,10 @@ impl Handler {
                 && (event.equals_str("PreModelRequest") || event.equals_str("InstructionsLoaded"))
                 && let Ok(runtime) = tokio::runtime::Handle::try_current()
             {
-                // The host's turn signal also fires when a turn simply ends;
-                // the baseline's abort signal does not, so these hooks run on.
+                // Preserve explicit user/session cancellation while allowing
+                // normal completion to release the regular turn binding.
                 let future = advisory.dispatch(LifecycleDispatchInput {
-                    signal: None,
+                    signal: handler.advisory_signal.clone(),
                     ..input
                 });
                 runtime.spawn(async move {
@@ -295,4 +307,71 @@ pub fn validate_dispatch_result(value: &JsValue) -> Result<(), JsString> {
 /// TS `moduleFailure` projection: message precedence and the error code.
 pub fn module_failure(value: &JsValue) -> (JsString, Option<JsString>) {
     crate::runtime::hooks::runtime::lifecycle_module_failure(value)
+}
+
+#[cfg(test)]
+mod advisory_tests {
+    use super::*;
+    use pilotdeck_protocol::parse_json;
+    use std::time::Duration;
+    use tokio::sync::{Notify, mpsc};
+
+    struct WaitingHook {
+        entered: mpsc::UnboundedSender<Cancellation>,
+        exited: Arc<Notify>,
+    }
+    impl LifecyclePort for WaitingHook {
+        fn dispatch(&self, input: LifecycleDispatchInput) -> HostFuture<LifecycleDispatchResult> {
+            let signal = input.signal.expect("advisory hook must receive user abort");
+            self.entered.send(signal.clone()).unwrap();
+            let exited = self.exited.clone();
+            Box::pin(async move {
+                signal.cancelled().await;
+                exited.notify_one();
+                Ok(LifecycleDispatchResult::default())
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn advisory_hooks_keep_user_abort_but_survive_normal_turn_cleanup() {
+        for event in ["PreModelRequest", "InstructionsLoaded"] {
+            let user_abort = Cancellation::new();
+            let turn_cleanup = Cancellation::new();
+            let mut handler = Handler::null(Binding {
+                session_id: "session".into(),
+                turn_id: "turn".into(),
+                cwd: "/project".into(),
+                permission_mode: None,
+                base_env: Some(JsObject::new()),
+                signal: Some(turn_cleanup.clone()),
+            });
+            let (entered, mut observed) = mpsc::unbounded_channel();
+            let exited = Arc::new(Notify::new());
+            handler.set_advisory_with_signal(
+                Arc::new(WaitingHook {
+                    entered,
+                    exited: exited.clone(),
+                }),
+                user_abort.clone(),
+            );
+            handler
+                .call(
+                    parse_json(&format!(
+                        r#"{{"payload":{{"operation":"dispatch","event":"{event}"}}}}"#
+                    ))
+                    .unwrap(),
+                )
+                .await
+                .unwrap();
+            let signal = observed.recv().await.unwrap();
+            assert!(signal.same_channel(&user_abort));
+            turn_cleanup.abort();
+            assert!(!signal.is_aborted(), "normal turn cleanup aborted {event}");
+            user_abort.abort();
+            tokio::time::timeout(Duration::from_secs(2), exited.notified())
+                .await
+                .unwrap();
+        }
+    }
 }

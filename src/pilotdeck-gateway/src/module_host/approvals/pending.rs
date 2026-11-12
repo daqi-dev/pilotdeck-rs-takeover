@@ -33,6 +33,9 @@
 //! the later wiring lane will construct the real one.
 #![cfg_attr(not(test), allow(dead_code))]
 
+mod disk;
+pub(crate) use disk::DiskSopStore;
+
 use super::{
     ApprovalFailure, ApprovalPendingStore, ResumeSource, StoreAuthority, StoreResumeInput,
     StoreStatusInput, js_truthy, state_error,

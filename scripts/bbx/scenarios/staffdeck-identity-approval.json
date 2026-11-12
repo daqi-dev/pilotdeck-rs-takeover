@@ -1,0 +1,429 @@
+{
+  "name": "staffdeck-identity-approval",
+  "about": "真实server入口以mock正式身份源重新认证原始admission；审批成功/receipt重放、跨tenant与跨owner拒绝、活动SOP authority与陈旧revision拒绝。所有凭据均fixture。",
+  "server": false,
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic: {}\nmodules:\n  sop:\n    enabled: true\n    provider: staffdeck\n    endpoint: {MOCK}\n    definitionsPath: '{PILOT_HOME}/staffdeck/sops.json'\n    defaultSopId: sop\n    discoveryEndpoint: {MOCK}/api/v1\n    discoveryAgentId: a\n    discoveryApiKey: abcdefghijklmnopqrst-full-test-key\ntelemetry:\n  enabled: false\n",
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx",
+    "STAFFDECK_COPY_TENANT_ID": "t",
+    "STAFFDECK_COPY_ACTOR_USER_ID": "u",
+    "STAFFDECK_COPY_PILOTDECK_USER_ID": "owner",
+    "STAFFDECK_COPY_TARGET_AGENT_ID": "a",
+    "STAFFDECK_FORMAL_API_ORIGIN": "{MOCK}",
+    "STAFFDECK_SOP_MANAGEMENT_CREDENTIAL_ID": "c",
+    "STAFFDECK_COPY_USER_TOKEN": "actor-test-token",
+    "STAFFDECK_SOP_MANAGEMENT_API_KEY": "abcdefghijklmnopqrst-full-test-key",
+    "STAFFDECK_APPROVAL_USER_ID": "u"
+  },
+  "files": {
+    "home/.pilotdeck/auth.db": {
+      "$sqlite": [
+        "CREATE TABLE users (id TEXT, is_active INTEGER)",
+        "INSERT INTO users VALUES ('owner',1)"
+      ]
+    },
+    "home/.pilotdeck/staffdeck/sops.json": {
+      "sops": [
+        {
+          "id": "sop",
+          "version": "1",
+          "content": {
+            "nodes": [
+              {
+                "node_id": "node",
+                "type": "handoff",
+                "assignee_user_id": "u"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "home/.pilotdeck/projects/b1-general/.cwd": "{PILOT_HOME}\n",
+    "home/.pilotdeck/projects/b1-general/chats/s-human.jsonl": "{\"type\":\"session_metadata\",\"metadata\":{\"staffDeckAdmission\":{\"pilotDeckUserId\":\"owner\",\"tenantId\":\"t\",\"actorUserId\":\"u\",\"agentId\":\"a\",\"projectKey\":\"{PILOT_HOME}\",\"credentialId\":\"c\",\"staffDeckOrigin\":\"{MOCK}\"},\"title\":\"s-human\"},\"sessionId\":\"s-human\",\"turnId\":\"host-admission\",\"sequence\":1,\"createdAt\":\"2026-01-01T00:00:00.000Z\",\"entryId\":\"s-human-admission\",\"parentEntryId\":null}\n",
+    "home/.pilotdeck/sop/sessions/cy1odW1hbg.json": {
+      "schemaVersion": 3,
+      "sessionId": "s-human",
+      "bundle": {
+        "sops": [
+          {
+            "id": "sop",
+            "version": "1",
+            "content": {
+              "nodes": [
+                {
+                  "node_id": "node",
+                  "type": "handoff",
+                  "assignee_user_id": "u"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "state": {
+        "status": "handoff",
+        "selected_skill_id": "sop",
+        "active_skill_id": "sop",
+        "active_step_id": "node",
+        "slots_json": {}
+      },
+      "revision": 2,
+      "resumeRequests": {},
+      "updatedAt": "2026-01-01T00:00:00.000Z",
+      "wait": {
+        "id": "wait",
+        "kind": "handoff",
+        "skillId": "sop",
+        "stepId": "node",
+        "createdAt": "2026-01-01T00:00:00.000Z"
+      }
+    },
+    "home/.pilotdeck/projects/b1-general/chats/s-active.jsonl": "{\"type\":\"session_metadata\",\"metadata\":{\"staffDeckAdmission\":{\"pilotDeckUserId\":\"owner\",\"tenantId\":\"t\",\"actorUserId\":\"u\",\"agentId\":\"a\",\"projectKey\":\"{PILOT_HOME}\",\"credentialId\":\"c\",\"staffDeckOrigin\":\"{MOCK}\"},\"title\":\"s-active\"},\"sessionId\":\"s-active\",\"turnId\":\"host-admission\",\"sequence\":1,\"createdAt\":\"2026-01-01T00:00:00.000Z\",\"entryId\":\"s-active-admission\",\"parentEntryId\":null}\n",
+    "home/.pilotdeck/sop/sessions/cy1hY3RpdmU.json": {
+      "schemaVersion": 3,
+      "sessionId": "s-active",
+      "bundle": {
+        "sops": [
+          {
+            "id": "sop",
+            "version": "1",
+            "content": {
+              "nodes": [
+                {
+                  "node_id": "node",
+                  "type": "handoff",
+                  "assignee_user_id": "u"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "state": {
+        "status": "active",
+        "selected_skill_id": "sop",
+        "active_skill_id": "sop",
+        "active_step_id": "node",
+        "slots_json": {}
+      },
+      "revision": 2,
+      "resumeRequests": {},
+      "updatedAt": "2026-01-01T00:00:00.000Z"
+    }
+  },
+  "provider": [
+    {
+      "name": "staff-auth",
+      "method": "GET",
+      "path": "/api/auth/me",
+      "reply": {
+        "status": 200,
+        "body": {
+          "id": "u",
+          "tenant_id": "t",
+          "source": "web",
+          "role": "member",
+          "disabled": false
+        }
+      }
+    },
+    {
+      "name": "staff-credentials",
+      "method": "GET",
+      "path": "/api/auth/me/api-credentials",
+      "reply": {
+        "status": 200,
+        "body": [
+          {
+            "id": "c",
+            "user_id": "u",
+            "status": "active",
+            "access": "user_full_access",
+            "key_prefix": "abcdefghijklmnopqrst…"
+          }
+        ]
+      }
+    },
+    {
+      "name": "staff-target",
+      "method": "GET",
+      "path": "/api/v1/agents/a",
+      "reply": {
+        "status": 200,
+        "body": {
+          "id": "a",
+          "status": "active",
+          "is_overall": false
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "serve": [
+        "server"
+      ],
+      "then": [
+        {
+          "http": "POST /api/module-host/approvals/status",
+          "headers": {
+            "authorization": "Bearer {TOKEN}",
+            "x-staffdeck-approver-authorization": "Bearer reviewer-test-token"
+          },
+          "body": {
+            "sessionKey": "s-human",
+            "projectKey": "{PILOT_HOME}",
+            "tenantId": "t",
+            "agentId": "a"
+          }
+        },
+        {
+          "http": "POST /api/module-host/approvals/resume",
+          "headers": {
+            "authorization": "Bearer {TOKEN}",
+            "x-staffdeck-approver-authorization": "Bearer reviewer-test-token"
+          },
+          "body": {
+            "sessionKey": "s-human",
+            "projectKey": "{PILOT_HOME}",
+            "source": "human",
+            "requestId": "human-r",
+            "waitId": "wait",
+            "message": "approved",
+            "expectedRevision": 2,
+            "tenantId": "t",
+            "agentId": "a"
+          }
+        },
+        {
+          "http": "POST /api/module-host/call",
+          "headers": {
+            "authorization": "Bearer {TOKEN}"
+          },
+          "body": {
+            "principal": {
+              "pilotDeckUserId": "owner",
+              "tenantId": "t",
+              "actorUserId": "u",
+              "agentId": "a"
+            },
+            "operation": "read_sop_authority",
+            "input": {
+              "sessionKey": "s-active",
+              "projectKey": "{PILOT_HOME}",
+              "expectedRevision": 2,
+              "requestId": "authority-r",
+              "admissionCredentialId": "c"
+            }
+          }
+        },
+        {
+          "http": "POST /api/module-host/call",
+          "headers": {
+            "authorization": "Bearer {TOKEN}"
+          },
+          "body": {
+            "principal": {
+              "pilotDeckUserId": "owner",
+              "tenantId": "foreign",
+              "actorUserId": "u",
+              "agentId": "a"
+            },
+            "operation": "read_sop_authority",
+            "input": {
+              "sessionKey": "s-active",
+              "projectKey": "{PILOT_HOME}",
+              "expectedRevision": 2,
+              "requestId": "authority-r",
+              "admissionCredentialId": "c"
+            }
+          }
+        },
+        {
+          "http": "POST /api/module-host/call",
+          "headers": {
+            "authorization": "Bearer {TOKEN}"
+          },
+          "body": {
+            "principal": {
+              "pilotDeckUserId": "other",
+              "tenantId": "t",
+              "actorUserId": "u",
+              "agentId": "a"
+            },
+            "operation": "read_sop_authority",
+            "input": {
+              "sessionKey": "s-active",
+              "projectKey": "{PILOT_HOME}",
+              "expectedRevision": 2,
+              "requestId": "authority-r",
+              "admissionCredentialId": "c"
+            }
+          }
+        },
+        {
+          "http": "POST /api/module-host/call",
+          "headers": {
+            "authorization": "Bearer {TOKEN}"
+          },
+          "body": {
+            "principal": {
+              "pilotDeckUserId": "owner",
+              "tenantId": "t",
+              "actorUserId": "u",
+              "agentId": "a"
+            },
+            "operation": "read_sop_authority",
+            "input": {
+              "sessionKey": "s-active",
+              "projectKey": "{PILOT_HOME}",
+              "expectedRevision": 1,
+              "requestId": "authority-r",
+              "admissionCredentialId": "c"
+            }
+          }
+        },
+        {
+          "http": "POST /api/module-host/approvals/status",
+          "headers": {
+            "authorization": "Bearer {TOKEN}",
+            "x-staffdeck-approver-authorization": "Bearer reviewer-test-token"
+          },
+          "body": {
+            "sessionKey": "s-human",
+            "projectKey": "{PILOT_HOME}",
+            "tenantId": "foreign",
+            "agentId": "a"
+          }
+        }
+      ]
+    },
+    {
+      "serve": [
+        "server"
+      ],
+      "then": [
+        {
+          "http": "POST /api/module-host/approvals/resume",
+          "headers": {
+            "authorization": "Bearer {TOKEN}",
+            "x-staffdeck-approver-authorization": "Bearer reviewer-test-token"
+          },
+          "body": {
+            "sessionKey": "s-human",
+            "projectKey": "{PILOT_HOME}",
+            "source": "human",
+            "requestId": "human-r",
+            "waitId": "wait",
+            "message": "approved",
+            "expectedRevision": 2,
+            "tenantId": "t",
+            "agentId": "a"
+          }
+        },
+        {
+          "http": "POST /api/module-host/approvals/status",
+          "headers": {
+            "authorization": "Bearer {TOKEN}",
+            "x-staffdeck-approver-authorization": "Bearer reviewer-test-token"
+          },
+          "body": {
+            "sessionKey": "s-human",
+            "projectKey": "{PILOT_HOME}",
+            "tenantId": "t",
+            "agentId": "a"
+          }
+        }
+      ]
+    }
+  ],
+  "assertions": [
+    {
+      "id": "first-0-status",
+      "path": "/steps/0/then/0/http/status",
+      "equals": 200
+    },
+    {
+      "id": "first-0-body",
+      "path": "/steps/0/then/0/http/body/status/approval/assigneeUserId",
+      "equals": "u"
+    },
+    {
+      "id": "first-1-status",
+      "path": "/steps/0/then/1/http/status",
+      "equals": 200
+    },
+    {
+      "id": "first-1-body",
+      "path": "/steps/0/then/1/http/body/accepted",
+      "equals": true
+    },
+    {
+      "id": "first-2-status",
+      "path": "/steps/0/then/2/http/status",
+      "equals": 200
+    },
+    {
+      "id": "first-2-body",
+      "path": "/steps/0/then/2/http/body/sopId",
+      "equals": "sop"
+    },
+    {
+      "id": "first-3-status",
+      "path": "/steps/0/then/3/http/status",
+      "equals": 403
+    },
+    {
+      "id": "first-3-body",
+      "path": "/steps/0/then/3/http/body/code",
+      "equals": "SOP_AUTHORITY_ADMISSION_MISMATCH"
+    },
+    {
+      "id": "first-4-status",
+      "path": "/steps/0/then/4/http/status",
+      "equals": 403
+    },
+    {
+      "id": "first-4-body",
+      "path": "/steps/0/then/4/http/body/code",
+      "equals": "SOP_AUTHORITY_SESSION_DENIED"
+    },
+    {
+      "id": "first-5-status",
+      "path": "/steps/0/then/5/http/status",
+      "equals": 409
+    },
+    {
+      "id": "first-5-body",
+      "path": "/steps/0/then/5/http/body/code",
+      "equals": "SOP_REVISION_CONFLICT"
+    },
+    {
+      "id": "first-6-status",
+      "path": "/steps/0/then/6/http/status",
+      "equals": 403
+    },
+    {
+      "id": "first-6-body",
+      "path": "/steps/0/then/6/http/body/code",
+      "equals": "APPROVAL_SUBJECT_MISMATCH"
+    },
+    {
+      "id": "restart-duplicate",
+      "path": "/steps/1/then/0/http/body/duplicate",
+      "equals": true
+    },
+    {
+      "id": "restart-revision",
+      "path": "/steps/1/then/0/http/body/revision",
+      "equals": 3
+    },
+    {
+      "id": "restart-active",
+      "path": "/steps/1/then/1/http/body/status/state/status",
+      "equals": "active"
+    }
+  ]
+}

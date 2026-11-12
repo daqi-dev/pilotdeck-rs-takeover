@@ -1,0 +1,23 @@
+{
+  "name": "native-loop-ignores-sidecar-command",
+  "about": "默认native正式入口：故意配置不存在的sidecar命令和脚本，仍完成两轮模型调用并读取同一会话。验证native不依赖外部sidecar/Node执行入口，且会话状态跨轮保留。",
+  "env": {
+    "PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND": "{ROOT}/missing-agent-loop-executable",
+    "PILOTDECK_AGENT_LOOP_SIDECAR_PATH": "{ROOT}/missing-agent-loop.js"
+  },
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Native execution\"}" } },
+    { "name": "main", "reply": { "text": "Native loop completed." } }
+  ],
+  "steps": [
+    { "ws": "submit_turn", "params": { "sessionKey": "s-native-no-sidecar", "channelKey": "test", "message": "first native turn" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-native-no-sidecar", "channelKey": "test", "message": "second native turn" } },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-native-no-sidecar" } }
+  ],
+  "assertions": [
+    { "id": "native-no-failures", "path": "/failures", "equals": [] },
+    { "id": "native-first-model", "path": "/provider/main/0/method", "equals": "POST" },
+    { "id": "native-second-model", "path": "/provider/main/1/method", "equals": "POST" },
+    { "id": "native-history-readable", "path": "/steps/2/frames/0/ok", "equals": true }
+  ]
+}

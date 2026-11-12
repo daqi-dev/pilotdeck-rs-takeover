@@ -210,7 +210,9 @@ impl InteractionTurn {
                 hook_wiring.observers.clone(),
             )?;
             if let Some(advisory) = &hook_wiring.advisory {
-                router.lifecycle.set_advisory(advisory.clone());
+                router
+                    .lifecycle
+                    .set_advisory_with_signal(advisory.clone(), input.signal.clone());
             }
             if let Some(sink) = &hook_wiring.turn_sink {
                 sink(Some(Arc::new(hooks.clone())));

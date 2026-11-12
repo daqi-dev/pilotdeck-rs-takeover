@@ -35,7 +35,7 @@ use crate::{
             js_space,
             registry::ToolPolicy,
         },
-        turn::host_factory::{Deployment, TurnHostFactory},
+        turn::host_factory::{LoopSelection, TurnHostFactory},
     },
     storage::{JsonlTranscriptStore, TranscriptKey, recorder::Recorder},
 };
@@ -51,7 +51,8 @@ const SUMMARY_PREVIEW_BYTES: usize = 4 * 1024;
 #[derive(Clone)]
 pub(super) struct SubagentRuntime {
     registry: Arc<ProjectRuntimeRegistry>,
-    deployment: Deployment,
+    selection: LoopSelection,
+    native_factory: Option<Arc<dyn pilotdeck_transport::server::ExecutionFactory>>,
     limits: Limits,
     /// The pilot home, for the sidechain's storage key.
     home: PathBuf,
@@ -65,18 +66,34 @@ pub(super) struct SubagentRuntime {
 impl SubagentRuntime {
     pub(super) fn new(
         registry: Arc<ProjectRuntimeRegistry>,
-        deployment: Deployment,
+        selection: LoopSelection,
         limits: Limits,
         home: PathBuf,
         continuations: Arc<super::continuations::Continuations>,
     ) -> Self {
         Self {
             registry,
-            deployment,
+            selection,
+            native_factory: None,
             limits,
             home,
             continuations,
             background: None,
+        }
+    }
+
+    pub(super) fn with_native_factory(
+        mut self,
+        factory: Arc<dyn pilotdeck_transport::server::ExecutionFactory>,
+    ) -> Self {
+        self.native_factory = Some(factory);
+        self
+    }
+
+    fn configure_factory(&self, factory: TurnHostFactory) -> TurnHostFactory {
+        match &self.native_factory {
+            Some(native) => factory.with_native_factory(native.clone()),
+            None => factory,
         }
     }
 
@@ -170,24 +187,27 @@ impl SubagentRuntime {
             )
             .with_continuation_parent(parent);
         let projection = storage.projection.clone();
-        let session = TurnHostFactory::new_with_signal(
-            self.registry.clone(),
-            self.deployment.clone(),
-            self.limits,
-            Some("pilotdeck-agent-loop".into()),
-            move |identity, recorder, signal| tools.turn(identity, recorder, signal),
-        )
-        .with_agent_config(config)
-        .as_in_process_loop()
-        .into_live_session(storage.recorder.clone(), move || {
-            projection
-                .snapshot()
-                .map(|state| state.messages)
-                .unwrap_or_default()
-        })
-        // A full session, not a one-shot sidechain: its TurnRunner records
-        // the loop's status messages like any session's.
-        .with_tail(tail);
+        let session = self
+            .configure_factory(
+                TurnHostFactory::new_with_signal(
+                    self.registry.clone(),
+                    self.selection.deployment.clone(),
+                    self.limits,
+                    self.selection.expected_module_id.clone(),
+                    move |identity, recorder, signal| tools.turn(identity, recorder, signal),
+                )
+                .with_agent_config(config)
+                .for_project(cwd),
+            )
+            .into_live_session(storage.recorder.clone(), move || {
+                projection
+                    .snapshot()
+                    .map(|state| state.messages)
+                    .unwrap_or_default()
+            })
+            // A full session, not a one-shot sidechain: its TurnRunner records
+            // the loop's status messages like any session's.
+            .with_tail(tail);
         Ok((Arc::new(session), storage))
     }
 
@@ -880,17 +900,28 @@ impl Fork {
                 root_recorder: self.parent.recorder.clone(),
             },
         );
-        let session = TurnHostFactory::new_with_signal(
-            self.runtime.registry.clone(),
-            self.runtime.deployment.clone(),
-            self.runtime.limits,
-            Some("pilotdeck-agent-loop".into()),
-            move |identity, recorder, signal| tools.turn(identity, recorder, signal),
-        )
-        .with_agent_config(config)
-        .as_in_process_loop()
-        .into_live_session(storage.recorder.clone(), Vec::new)
-        .as_sidechain();
+        let session = self
+            .runtime
+            .configure_factory(
+                TurnHostFactory::new_with_signal(
+                    self.runtime.registry.clone(),
+                    self.runtime.selection.deployment.clone(),
+                    self.runtime.limits,
+                    self.runtime.selection.expected_module_id.clone(),
+                    move |identity, recorder, signal| tools.turn(identity, recorder, signal),
+                )
+                .with_agent_config(config)
+                .for_project(PathBuf::from(
+                    self.parent
+                        .config
+                        .get("cwd")
+                        .and_then(JsValue::as_string)
+                        .map(text)
+                        .unwrap_or_default(),
+                )),
+            )
+            .into_live_session(storage.recorder.clone(), Vec::new)
+            .as_sidechain();
         let turn_id = JsString::from(format!("{}-t0", text(&request.subagent_id)));
         let mut turn = session
             .submit(

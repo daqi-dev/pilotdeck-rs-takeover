@@ -40,7 +40,7 @@ use crate::{
         turn::{
             admission::{GatewaySubmitAdmission, SubmitAdmissionOptions},
             gateway::{GatewayServices, TurnGateway},
-            host_factory::{Deployment, TurnHostFactory},
+            host_factory::{TurnHostFactory, select_loop},
             projector::{
                 GatewayAgentEventProjector, GatewayAgentEventProjectorOptions,
                 GatewayToolResultArtifactStore,
@@ -230,6 +230,7 @@ const MCP_ASK_SYNC_SKIPPED: &str = "native session: MCP ask rule sync skipped \
 /// always uses `Default`: the rule-set registry is created in place, the MCP
 /// config is published, and an acquire miss goes to stderr.
 pub(super) struct AssemblySeams {
+    pub extensions: crate::extensions::NativeExtensions,
     pub permission_rule_sets: Option<Arc<GatewaySessionPermissionRuleSetRegistry>>,
     pub acquire_miss_report: Option<AcquireMissReport>,
     pub publish_mcp_config: bool,
@@ -238,6 +239,7 @@ pub(super) struct AssemblySeams {
 impl Default for AssemblySeams {
     fn default() -> Self {
         Self {
+            extensions: crate::extensions::NativeExtensions::default(),
             permission_rule_sets: None,
             acquire_miss_report: None,
             publish_mcp_config: true,
@@ -300,6 +302,21 @@ pub(super) async fn start_with_webhook(
     ),
     ProxyError,
 > {
+    start_with_extensions(options, env, crate::extensions::NativeExtensions::default()).await
+}
+
+pub(super) async fn start_with_extensions(
+    options: Options,
+    env: Env,
+    extensions: crate::extensions::NativeExtensions,
+) -> Result<
+    (
+        TurnGateway,
+        crate::native_http::WebhookResolver,
+        super::switch_wiring::AssemblySwitchHandles,
+    ),
+    ProxyError,
+> {
     let slot = Arc::new(std::sync::OnceLock::new());
     let switch_slots = super::switch_wiring::AssemblySwitchSlots::default();
     let host = start_assembly(
@@ -310,7 +327,10 @@ pub(super) async fn start_with_webhook(
         Arc::new(|error| eprintln!("native project cleanup: {error}")),
         Some(slot.clone()),
         Some(switch_slots.clone()),
-        AssemblySeams::default(),
+        AssemblySeams {
+            extensions,
+            ..AssemblySeams::default()
+        },
     )
     .await?;
     let slot = slot.get().cloned().ok_or_else(|| {
@@ -360,6 +380,7 @@ pub(super) async fn start_observed_with_permission_rule_sets(
         None,
         None,
         AssemblySeams {
+            extensions: crate::extensions::NativeExtensions::default(),
             permission_rule_sets: Some(permission_rule_sets),
             acquire_miss_report: Some(miss_report),
             publish_mcp_config,
@@ -380,6 +401,7 @@ async fn start_assembly(
     seams: AssemblySeams,
 ) -> Result<TurnGateway, ProxyError> {
     let AssemblySeams {
+        extensions,
         permission_rule_sets,
         acquire_miss_report,
         publish_mcp_config,
@@ -450,6 +472,7 @@ async fn start_assembly(
     let project = project_registry_with(
         &options,
         &env,
+        extensions.clone(),
         Some(background_completion_projection(gateway_emit.clone())),
         Some(Arc::new(RouterEventLog {
             path: options.home.join("router").join("events.jsonl"),
@@ -459,16 +482,15 @@ async fn start_assembly(
     );
     // The public host provider reads the same project runtimes the sessions
     // run on (createLocalGateway.ts:1524-1556).
+    let module_host = Arc::new(crate::module_host::runtime::RuntimeHost {
+        home: options.home.clone(),
+        project: options.project.clone(),
+        builtin_skills_root: options.builtin_skills_root.clone(),
+        env: env.clone(),
+        registry: project.clone(),
+    });
     if let Some(slots) = &switch_slots {
-        let _ = slots
-            .module_host
-            .set(Arc::new(crate::module_host::runtime::RuntimeHost {
-                home: options.home.clone(),
-                project: options.project.clone(),
-                builtin_skills_root: options.builtin_skills_root.clone(),
-                env: env.clone(),
-                registry: project.clone(),
-            }));
+        let _ = slots.module_host.set(module_host.clone());
     }
     let snapshot_enabled = snapshot::snapshot_enabled(&options, &project).await?;
     let snapshot_recorder =
@@ -552,6 +574,7 @@ async fn start_assembly(
         writer_busy_wait_timeout: options.drain_budget,
         prepare: Arc::new(move |context, session_mcp_runtimes| {
             let project = prepare_project.clone();
+            let extensions = extensions.clone();
             let options = prepare_options.clone();
             let env = prepare_env.clone();
             let recorders = prepare_recorders.clone();
@@ -574,6 +597,7 @@ async fn start_assembly(
                 // the runtime, the working directory and the storage of the
                 // project its first turn named.
                 let project_root = options.project_root_for(context.project_key.as_ref());
+                let extension_lease = extensions.bind(&project_root, &context.session_key)?;
                 let lease = project.acquire(Some(&project_root))?;
                 let resources = lease
                     .runtime()
@@ -639,6 +663,16 @@ async fn start_assembly(
                             .cloned()
                     });
                 let snapshot = staged.snapshot();
+                if snapshot
+                    .get("config")
+                    .and_then(|value| value.get("modules"))
+                    .and_then(|value| value.get("sop"))
+                    .is_some_and(|binding| binding.get("enabled") != Some(&JsValue::Bool(false)))
+                {
+                    return Err(RuntimeError::new(
+                        "StaffDeck SOP execution is unavailable in this host.",
+                    ));
+                }
                 // `modules.skills.enabled: false` (ProjectSessionRuntimeBundle.ts:250-300):
                 // no `read_skill`, and the session contributes no skills.
                 let skills_disabled = crate::runtime::project::skills_module_disabled(&snapshot);
@@ -795,6 +829,7 @@ async fn start_assembly(
                         .map(crate::runtime::cron::cron_tools)
                         .unwrap_or_default(),
                 );
+                let extension_tools = extension_lease.tools();
                 // `sessionOverride?.permissionMode ?? options.permissionMode`
                 // (SessionAgentConfigBundle.ts:52-56).
                 let stored_permission_mode = override_mode
@@ -856,7 +891,15 @@ async fn start_assembly(
                     stored_thinking.as_ref(),
                     stored_style_content.as_deref(),
                 );
+                extension_lease.append_prompts(&mut config);
+                let native_factory = extension_lease.factory();
                 let mut retained = PreparedResources::default();
+                retained.push(move || {
+                    Box::pin(async move {
+                        drop(extension_lease);
+                        Ok(())
+                    })
+                });
                 retained.retain_lease(lease);
                 // `acquirePermissionRuleSet({ permissionRules:
                 // override?.permissionRules })` (ProjectSessionFactory.ts:
@@ -1038,12 +1081,12 @@ async fn start_assembly(
                             })
                         };
                         let turn_project_root = project_root.clone();
-                        let deployment = Deployment::Stdio {
-                            command: options.sidecar.to_string_lossy().into_owned(),
-                            args: options.sidecar_args.clone(),
-                            cwd: project_root.clone(),
-                            env: env.clone(),
-                        };
+                        let mut loop_env = env.clone();
+                        loop_env
+                            .entry("PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND".into())
+                            .or_insert_with(|| options.sidecar.to_string_lossy().into_owned());
+                        let selection = select_loop(&snapshot, &loop_env, &project_root)
+                            .map_err(RuntimeError::new)?;
                         continuation_parent.bind_recorder(binding.recorder.clone());
                         // `GatewayUserDialogChannel` (ProjectSessionRuntimeBundle.ts:
                         // 638-650): only for a session that enabled a dialog kind,
@@ -1128,23 +1171,28 @@ async fn start_assembly(
                         };
                         // A forked subagent runs the same loop deployment
                         // against the same project registry.
-                        let ports = ports.with_subagents(
-                            super::subagents::SubagentRuntime::new(
-                                project.clone(),
-                                deployment.clone(),
-                                limits,
-                                options.home.clone(),
-                                continuations.clone(),
-                            )
-                            .with_background(background_subagents.clone()),
-                        );
+                        let subagents = super::subagents::SubagentRuntime::new(
+                            project.clone(),
+                            selection.clone(),
+                            limits,
+                            options.home.clone(),
+                            continuations.clone(),
+                        )
+                        .with_background(background_subagents.clone());
+                        let subagents = match &native_factory {
+                            Some(factory) => subagents.with_native_factory(factory.clone()),
+                            None => subagents,
+                        };
+                        let ports = ports
+                            .with_subagents(subagents)
+                            .with_native_tools(extension_tools)?;
                         ports.check_deferred_tools()?;
                         let turn_override_sink = ports.turn_override();
-                        Ok(TurnHostFactory::new_with_signal(
+                        let host = TurnHostFactory::new_with_signal(
                             project,
-                            deployment,
+                            selection.deployment,
                             limits,
-                            Some("pilotdeck-agent-loop".into()),
+                            selection.expected_module_id,
                             move |identity, recorder, signal| {
                                 turn_ports(&ports, identity, recorder, signal)
                             },
@@ -1157,11 +1205,11 @@ async fn start_assembly(
                         // already-live session picks the change up without a
                         // close. The source reads the same store the selector
                         // method writes.
-                        .with_permission_mode_source(permission_source)
-                        // The sidecar is this gateway's own loop, which the
-                        // baseline runs in-process: no module stamp on its
-                        // messages.
-                        .as_in_process_loop())
+                        .with_permission_mode_source(permission_source);
+                        Ok(match native_factory {
+                            Some(factory) => host.with_native_factory(factory),
+                            None => host,
+                        })
                     }),
                 })
             })
@@ -1254,7 +1302,20 @@ async fn start_assembly(
                 }))
             })
         }),
-        admission: None,
+        admission: Some(Arc::new(move |context| {
+            let host = module_host.clone();
+            Box::pin(async move {
+                let project = context
+                    .project_key
+                    .as_ref()
+                    .map(|key| PathBuf::from(String::from_utf16_lossy(key.units())));
+                Ok(crate::module_host::staffdeck::create_session_admission(
+                    &host,
+                    project.as_deref(),
+                )
+                .await)
+            })
+        })),
         tool_results_dir: Some(Arc::new(move |context| {
             super::tools::session_tool_results_dir(
                 &budget_options.project_root_for(context.project_key.as_ref()),
@@ -2152,10 +2213,9 @@ pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(),
         .and_then(|v| v.get("modules"))
         .and_then(JsValue::as_object)
         .is_some_and(|modules| {
-            modules
-                .own_entries()
-                .iter()
-                .any(|(slot, binding)| slot.equals_str("sop") || external(binding))
+            modules.own_entries().iter().any(|(slot, binding)| {
+                !slot.equals_str("sop") && !slot.equals_str("agentLoop") && external(binding)
+            })
         })
     {
         return Err(
@@ -2189,7 +2249,13 @@ pub(super) fn turn_ports(
 
 #[cfg(test)]
 pub(super) fn project_registry(options: &Options, env: &Env) -> Arc<ProjectRuntimeRegistry> {
-    project_registry_with(options, env, None, None)
+    project_registry_with(
+        options,
+        env,
+        crate::extensions::NativeExtensions::default(),
+        None,
+        None,
+    )
 }
 
 /// `toGatewayBackgroundTaskCompletionStatus`
@@ -2344,6 +2410,7 @@ fn session_idle_options(gateway: Option<&JsValue>) -> (i64, u64) {
 fn project_registry_with(
     options: &Options,
     env: &Env,
+    extensions: crate::extensions::NativeExtensions,
     on_completion: Option<crate::runtime::background::CompletionHandler>,
     router_events: Option<Arc<dyn crate::runtime::model::router::RouterEventSink>>,
 ) -> Arc<ProjectRuntimeRegistry> {
@@ -2392,6 +2459,7 @@ fn project_registry_with(
                 builtin_plugins,
                 builtin_plugins_enabled: HashMap::new(),
             })
+            .with_native_extensions(extensions)
             .with_interaction(),
         })),
     ))

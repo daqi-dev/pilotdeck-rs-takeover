@@ -1,0 +1,154 @@
+{
+  "name": "staffdeck-sop-persistence",
+  "about": "已持久的SOP external_task wait经正式WS入口恢复；重复receipt不重复提交；重启后仍能重放。无需外部账号或模型。",
+  "server": false,
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic: {}\nmodules:\n  sop:\n    enabled: true\n    provider: staffdeck\n    endpoint: {MOCK}\n    definitionsPath: '{PILOT_HOME}/staffdeck/sops.json'\n    defaultSopId: sop\ntelemetry:\n  enabled: false\n",
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "files": {
+    "home/.pilotdeck/staffdeck/sops.json": {
+      "sops": [
+        {
+          "id": "sop",
+          "version": "1",
+          "content": {
+            "nodes": [
+              {
+                "node_id": "node",
+                "type": "response"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "home/.pilotdeck/sop/sessions/cy9h.json": {
+      "schemaVersion": 3,
+      "sessionId": "s/a",
+      "bundle": {
+        "sops": [
+          {
+            "id": "sop",
+            "version": "1",
+            "content": {
+              "nodes": [
+                {
+                  "node_id": "node",
+                  "type": "response"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "state": {
+        "status": "waiting_external_task",
+        "selected_skill_id": "sop",
+        "active_step_id": "node",
+        "slots_json": {
+          "before": true
+        }
+      },
+      "revision": 2,
+      "wait": {
+        "id": "wait",
+        "kind": "external_task",
+        "createdAt": "2026-01-01T00:00:00.000Z"
+      },
+      "resumeRequests": {},
+      "updatedAt": "2026-01-01T00:00:00.000Z"
+    }
+  },
+  "steps": [
+    {
+      "serve": [
+        "server"
+      ],
+      "then": [
+        {
+          "ws": "sop_status",
+          "params": {
+            "sessionKey": "s/a"
+          }
+        },
+        {
+          "ws": "sop_resume",
+          "params": {
+            "sessionKey": "s/a",
+            "source": "external_task",
+            "requestId": "r",
+            "waitId": "wait",
+            "message": "done",
+            "expectedRevision": 2,
+            "slotUpdates": {
+              "after": true
+            }
+          }
+        },
+        {
+          "ws": "sop_status",
+          "params": {
+            "sessionKey": "s/a"
+          }
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    },
+    {
+      "serve": [
+        "server"
+      ],
+      "then": [
+        {
+          "ws": "sop_resume",
+          "params": {
+            "sessionKey": "s/a",
+            "source": "external_task",
+            "requestId": "r",
+            "waitId": "wait",
+            "message": "done",
+            "expectedRevision": 2,
+            "slotUpdates": {
+              "after": true
+            }
+          }
+        },
+        {
+          "ws": "sop_status",
+          "params": {
+            "sessionKey": "s/a"
+          }
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    }
+  ],
+  "assertions": [
+    {
+      "id": "first-started",
+      "path": "/steps/0/serve/reached",
+      "equals": true
+    },
+    {
+      "id": "second-started",
+      "path": "/steps/1/serve/reached",
+      "equals": true
+    },
+    {
+      "id": "resume-accepted",
+      "path": "/steps/0/then/1/frames/0/result/accepted",
+      "equals": true
+    },
+    {
+      "id": "restart-duplicate",
+      "path": "/steps/1/then/0/frames/0/result/duplicate",
+      "equals": true
+    }
+  ]
+}

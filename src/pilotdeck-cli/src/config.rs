@@ -13,13 +13,7 @@ pub fn load(
     cwd: &Path,
     pilot_home: &Path,
 ) -> Result<pilotdeck_gateway::config::Config, Failure> {
-    // applyProjectBinding precedes the first fatal check in TS. The gateway's
-    // read-only binding support does not implement the CLI's StaffDeck flow.
-    if env.get("STAFFDECK_PROJECT_BINDING_ENABLED") == Some(std::ffi::OsStr::new("true")) {
-        return Err(Failure::Todo(
-            "StaffDeck project binding (applyProjectBinding)",
-        ));
-    }
+    // The shared loader applies project binding before config validation.
     pilotdeck_gateway::config::load_project(pilot_home, cwd, &env.strings(), Some(".")).map_err(
         |error| {
             if error.requires_host {
@@ -294,14 +288,19 @@ mod tests {
     #[test]
     fn project_binding_runs_before_the_first_fatal_like_ts() {
         let binding = Some(("STAFFDECK_PROJECT_BINDING_ENABLED", "true"));
-        for (name, yaml) in [
-            ("binding-agent", "schemaVersion: 1\n"),
-            ("binding-yaml", "a: [\n"),
+        for (name, yaml, expected) in [
+            (
+                "binding-agent",
+                "schemaVersion: 1\n",
+                "Config must contain an agent section.",
+            ),
+            (
+                "binding-yaml",
+                "a: [\n",
+                "Failed to parse default config YAML.",
+            ),
         ] {
-            assert_eq!(
-                run(name, yaml, binding),
-                "TODO StaffDeck project binding (applyProjectBinding)"
-            );
+            assert_eq!(run(name, yaml, binding), expected);
         }
         assert_eq!(
             run(

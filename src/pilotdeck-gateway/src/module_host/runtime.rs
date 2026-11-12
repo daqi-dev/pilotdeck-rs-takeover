@@ -9,19 +9,8 @@
 //! (activeRuntimeTextParsing.ts) and `read_sop_authority`
 //! (nativeSopAuthority.ts).
 //!
-//! Known gaps, reported rather than imitated:
-//! - `file_parse` of a `.pdf`: the baseline extracts text with mupdf, which
-//!   has no Rust counterpart here; a PDF is answered with the extractor's own
-//!   unsupported-type error after the same input checks.
-//! - `read_sop_authority`: the StaffDeck admission authentication
-//!   (`authenticateNativeStaffDeckAdmission`) and the SOP state read are
-//!   remote calls this host does not make, so a request that passes the
-//!   owner/project/session checks ends in `SOP_AUTHORITY_ADMISSION_MISMATCH`,
-//!   which is also the baseline's outcome whenever StaffDeck is not
-//!   configured or not reachable.
-//! - `STAFFDECK_PROJECT_BINDING_ENABLED=true`: the per-principal project
-//!   binding (`projectForStaffDeckPrincipal`) is not resolved; the fallback
-//!   project serves every principal.
+//! Project binding and SOP authority are resolved from original installation
+//! ownership, persisted admission and the configured StaffDeck authority.
 use super::{
     HostBody, HostEvent, HostFailure, HostResponse, PublicHostPrincipal, PublicHostProvider,
     PublicHostResolver, js_truthy, object_value, off_worker, string_value,
@@ -61,8 +50,18 @@ pub(crate) struct RuntimeHost {
 pub(crate) struct RuntimeHostResolver(pub Arc<RuntimeHost>);
 
 impl PublicHostResolver for RuntimeHostResolver {
-    fn resolve(&self, _principal: &PublicHostPrincipal) -> Arc<dyn PublicHostProvider> {
-        Arc::clone(&self.0) as Arc<dyn PublicHostProvider>
+    fn resolve(
+        &self,
+        principal: &PublicHostPrincipal,
+    ) -> Result<Arc<dyn PublicHostProvider>, HostFailure> {
+        let Some(project) =
+            super::staffdeck::project_for_principal(&self.0.home, &self.0.env, principal)?
+        else {
+            return Ok(Arc::clone(&self.0) as Arc<dyn PublicHostProvider>);
+        };
+        let mut host = super::staffdeck::clone_host(&self.0);
+        host.project = project;
+        Ok(Arc::new(host))
     }
 }
 
@@ -220,13 +219,13 @@ fn required_string<'a>(value: &'a JsValue, name: &str) -> Result<&'a JsString, T
 impl RuntimeHost {
     fn lease(&self) -> Result<RuntimeLease, Thrown> {
         self.registry
-            .acquire(None)
+            .acquire(Some(&self.project))
             .map_err(|error| plain_error(error.to_string()))
     }
 
     /// `isDisabledModuleBinding(runtime.snapshot.config.modules?.skills)`.
     fn skills_disabled(&self) -> bool {
-        let Ok(lease) = self.registry.acquire(None) else {
+        let Ok(lease) = self.registry.acquire(Some(&self.project)) else {
             return false;
         };
         let Some(resources) = lease.runtime().resources().get::<ProjectResources>() else {
@@ -253,7 +252,10 @@ impl RuntimeHost {
     async fn catalog(&self) -> Result<JsValue, Thrown> {
         let metadata = self.metadata();
         let env = self.env.clone();
-        let params = object_value(&[("includeAuto", JsValue::Bool(false))]);
+        let params = object_value(&[
+            ("includeAuto", JsValue::Bool(false)),
+            ("projectKey", self.project.to_string_lossy().as_ref().into()),
+        ]);
         match off_worker(move || crate::model_catalog::execute(&metadata, &params, &env)).await {
             Ok(Ok(result)) => Ok(result),
             Ok(Err(error)) => Err(Thrown::Coded {
@@ -656,9 +658,16 @@ impl RuntimeHost {
     async fn read_sop_authority(
         &self,
         input: &JsObject,
-        pilot_deck_user_id: &JsString,
+        principal: &PublicHostPrincipal,
     ) -> Result<JsValue, Thrown> {
-        let authority = |code: &str| coded(403, code, code);
+        let pilot_deck_user_id = &principal.pilot_deck_user_id;
+        let authority = |code: &str| {
+            coded(
+                if code.contains("REVISION") { 409 } else { 403 },
+                code,
+                code,
+            )
+        };
         const KEYS: [&str; 5] = [
             "sessionKey",
             "projectKey",
@@ -745,9 +754,74 @@ impl RuntimeHost {
         }) {
             return Err(authority("SOP_AUTHORITY_SESSION_DENIED"));
         }
-        // The admission is re-authenticated against StaffDeck before it is
-        // trusted; this host does not make that call (module docs).
-        Err(authority("SOP_AUTHORITY_ADMISSION_MISMATCH"))
+        let project_path = PathBuf::from(String::from_utf16_lossy(
+            field(input, "projectKey")
+                .as_string()
+                .unwrap_or(&JsString::default())
+                .units(),
+        ));
+        let admission = super::staffdeck::session_admission(self, &project_path, &session_key)
+            .await
+            .ok_or_else(|| authority("SOP_AUTHORITY_ADMISSION_MISMATCH"))?;
+        for (key, expected) in [
+            ("pilotDeckUserId", &principal.pilot_deck_user_id),
+            ("tenantId", &principal.tenant_id),
+            ("actorUserId", &principal.actor_user_id),
+            ("agentId", &principal.agent_id),
+        ] {
+            if admission.get(key).and_then(JsValue::as_string) != Some(expected) {
+                return Err(authority("SOP_AUTHORITY_ADMISSION_MISMATCH"));
+            }
+        }
+        if admission.get("credentialId") != input.get("admissionCredentialId")
+            || admission.get("projectKey") != input.get("projectKey")
+        {
+            return Err(authority("SOP_AUTHORITY_ADMISSION_MISMATCH"));
+        }
+        let store =
+            super::approvals::production_store(Arc::new(super::staffdeck::clone_host(self)));
+        let state = store
+            .authority(
+                &super::approvals::StoreStatusInput {
+                    session_key,
+                    project_key: input.get("projectKey").cloned(),
+                },
+                field(input, "expectedRevision")
+                    .as_number()
+                    .unwrap_or_default(),
+            )
+            .await
+            .map_err(|error| {
+                let code = error
+                    .code
+                    .as_ref()
+                    .and_then(JsValue::as_string)
+                    .map(|v| String::from_utf16_lossy(v.units()))
+                    .unwrap_or_else(|| "Error".into());
+                if matches!(
+                    code.as_str(),
+                    "SOP_REVISION_CONFLICT" | "SOP_AUTHORITY_STATE_INACTIVE"
+                ) {
+                    authority(&code)
+                } else {
+                    Thrown::Coded {
+                        status: None,
+                        code: code.as_str().into(),
+                        message: super::staffdeck::sop_error_message(&code).into(),
+                    }
+                }
+            })?;
+        let mut result = JsObject::new();
+        for key in ["sessionKey", "projectKey", "expectedRevision", "requestId"] {
+            result.insert(key.into(), field(input, key).clone());
+        }
+        result.insert("admission".into(), admission);
+        if let JsValue::Object(ref state) = state {
+            for (key, value) in state.own_entries() {
+                result.insert(key.clone(), value.clone());
+            }
+        }
+        Ok(JsValue::Object(result))
     }
 }
 
@@ -931,7 +1005,7 @@ fn node_extname(path: &str) -> &str {
 
 /// `readNativeInstallationOwner(env.DATABASE_PATH || pilotHome/auth.db)`:
 /// the single active user's id, read-only; any failure is "no owner".
-fn installation_owner(env: &Env, home: &std::path::Path) -> Option<JsString> {
+pub(super) fn installation_owner(env: &Env, home: &std::path::Path) -> Option<JsString> {
     use rusqlite::{OpenFlags, types::ValueRef};
     let path = env
         .get("DATABASE_PATH")
@@ -965,7 +1039,7 @@ fn installation_owner(env: &Env, home: &std::path::Path) -> Option<JsString> {
 
 /// `dialog.projects.listProjectKeys` (projectRegistry.ts:29-39): the General
 /// workspace first, then each registered project once per resolved path.
-fn project_keys(
+pub(super) fn project_keys(
     metadata: &Metadata<NativeFiles>,
     home: &std::path::Path,
 ) -> std::io::Result<Vec<JsString>> {
@@ -1017,7 +1091,12 @@ impl PublicHostProvider for RuntimeHost {
     ) -> Pin<Box<dyn Future<Output = Result<HostResponse, HostFailure>> + Send + '_>> {
         let operation = operation.to_owned();
         let input = input.clone();
-        let user = principal.pilot_deck_user_id.clone();
+        let principal = PublicHostPrincipal {
+            pilot_deck_user_id: principal.pilot_deck_user_id.clone(),
+            tenant_id: principal.tenant_id.clone(),
+            actor_user_id: principal.actor_user_id.clone(),
+            agent_id: principal.agent_id.clone(),
+        };
         Box::pin(async move {
             let Some(fields) = record(&input) else {
                 return Ok(json(
@@ -1039,7 +1118,7 @@ impl PublicHostProvider for RuntimeHost {
                         .unwrap_or_else(Thrown::respond));
                 }
                 "file_parse" => self.file_parse(fields),
-                "read_sop_authority" => self.read_sop_authority(fields, &user).await,
+                "read_sop_authority" => self.read_sop_authority(fields, &principal).await,
                 // Unreachable through the transport, which 409s any
                 // operation `operations()` does not list: the adapter's
                 // `unavailable(operation, "unknown")`.

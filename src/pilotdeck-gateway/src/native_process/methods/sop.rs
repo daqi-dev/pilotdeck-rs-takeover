@@ -1,24 +1,20 @@
 use super::super::requests::Requests;
-use crate::runtime::connection::{Call, RequestError};
+use crate::{
+    module_host::{
+        approvals::{
+            self, ApprovalFailure, ApprovalPendingStore, ResumeSource, StoreResumeInput,
+            StoreStatusInput,
+        },
+        runtime::RuntimeHost,
+        staffdeck,
+    },
+    runtime::connection::{Call, RequestError},
+};
 use pilotdeck_protocol::{JsString, JsValue};
+use std::sync::Arc;
 
-// Wire names are the WebSocket frame method names from the TS frames registry
-// (frames.ts:47-48). `pilotdeck server` always wires `sopStatus` /
-// `resumeSop` (createLocalGateway.ts:1072-1090): the StaffDeck control plane
-// answers per project from `modules.sop`, and the public approval bridge
-// (composition/publicApprovalBridge.ts) guards the human-approval paths.
 pub(super) const METHODS: &[&str] = &["sop_status", "sop_resume"];
 pub(super) const HANDLER: super::Handler = super::Handler::AfterAdmission(Requests::sop_request);
-
-fn unavailable(message: &str) -> RequestError {
-    RequestError {
-        code: "CAPABILITY_UNAVAILABLE".into(),
-        message: message.into(),
-        details: None,
-        validation: None,
-    }
-}
-
 fn coded(code: &str, message: &str) -> RequestError {
     RequestError {
         code: code.into(),
@@ -27,46 +23,45 @@ fn coded(code: &str, message: &str) -> RequestError {
         validation: None,
     }
 }
-
-/// `failure(status, code)` (publicApprovalBridge.ts:20): message is the code,
-/// and the WS boundary reports the status as `details.httpStatus`.
 fn approval_failure(status: u16, code: &str) -> RequestError {
     RequestError {
-        code: code.into(),
-        message: code.into(),
         details: Some(Box::new(crate::metadata::object([(
             "httpStatus",
             JsValue::Number(f64::from(status)),
         )]))),
-        validation: None,
+        ..coded(code, code)
     }
 }
-
-/// `StaffDeckSopControlPlane.store` without a `modules.sop` profile
-/// (StaffDeckSopControlPlane.ts:49). The native config never carries the
-/// module (the profile validation refuses `modules`), so every control-plane
-/// call lands here.
-fn sop_module_disabled() -> RequestError {
-    coded(
-        "SOP_MODULE_DISABLED",
-        "The StaffDeck SOP module is not enabled for this project.",
-    )
-}
-
-/// `nonempty` (publicApprovalBridge.ts:19).
-fn nonempty(value: Option<&JsValue>) -> bool {
-    match value {
-        Some(JsValue::String(text)) => {
-            !crate::metadata::js_trim(&String::from_utf16_lossy(text.units())).is_empty()
+fn failed(error: ApprovalFailure, params: &JsValue) -> RequestError {
+    let code = error
+        .code
+        .as_ref()
+        .and_then(JsValue::as_string)
+        .map(|v| String::from_utf16_lossy(v.units()))
+        .unwrap_or_else(|| "gateway_request_failed".into());
+    if let Some(status) = error.status {
+        return approval_failure(status, &code);
+    }
+    let message = match code.as_str() {
+        "SOP_SESSION_NOT_FOUND" => format!(
+            "No StaffDeck SOP state exists for '{}'.",
+            string(params, "sessionKey").to_utf8().unwrap_or_default()
+        ),
+        "SOP_RESUME_REQUEST_CONFLICT" => {
+            "This request id already belongs to a different SOP resume payload.".into()
         }
-        _ => false,
-    }
+        "SOP_APPROVAL_LEGACY_RECEIPT" => "Old receipt has no authenticated approval facts.".into(),
+        _ => staffdeck::sop_error_message(&code).into(),
+    };
+    coded(&code, &message)
 }
-
-fn own(params: &JsValue, key: &str) -> bool {
-    params.get(key).is_some()
+fn string(params: &JsValue, key: &str) -> JsString {
+    params
+        .get(key)
+        .and_then(JsValue::as_string)
+        .cloned()
+        .unwrap_or_default()
 }
-
 impl Requests {
     pub(in crate::native_process) fn sop_request(
         &self,
@@ -74,106 +69,92 @@ impl Requests {
         params: JsValue,
     ) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async move {
+            let session = super::input_property(&params, "sessionKey")?
+                .and_then(|v| v.as_string().cloned())
+                .unwrap_or_default();
+            let host = Arc::new(RuntimeHost {
+                home: self.options.home.clone(),
+                project: self.options.project.clone(),
+                builtin_skills_root: self.options.builtin_skills_root.clone(),
+                env: self.env.clone(),
+                registry: Arc::clone(&self.project),
+            });
             if method == "sop_status" {
-                // createLocalGateway.ts:1072-1080.
                 let authorization = super::input_property(&params, "approverAuthorization")?;
                 if authorization
                     .as_ref()
                     .is_some_and(crate::metadata::js_truthy)
                 {
-                    return Err(self.approval_access(&params));
+                    return approvals::production_bridge(host)
+                        .status(&params)
+                        .await
+                        .map_err(|e| failed(e, &params));
                 }
-                return Err(sop_module_disabled());
+                let snapshot = approvals::production_store(host)
+                    .status(&StoreStatusInput {
+                        session_key: session,
+                        project_key: params.get("projectKey").cloned(),
+                    })
+                    .await
+                    .map_err(|e| failed(e, &params))?;
+                let Some(snapshot) = snapshot else {
+                    return Ok(JsValue::Null);
+                };
+                if snapshot
+                    .get("wait")
+                    .and_then(|wait| wait.get("kind"))
+                    .and_then(JsValue::as_string)
+                    .is_some_and(|kind| kind.equals_str("external_task"))
+                {
+                    let mut result = pilotdeck_protocol::JsObject::new();
+                    if let Some(fields) = snapshot.as_object() {
+                        for (key, value) in fields.own_entries() {
+                            if !key.equals_str("approval") && !key.equals_str("approvalError") {
+                                result.insert(key.clone(), value.clone());
+                            }
+                        }
+                    }
+                    return Ok(JsValue::Object(result));
+                }
+                if !snapshot.get("wait").is_some_and(crate::metadata::js_truthy) {
+                    return Ok(JsValue::Null);
+                }
+                return Err(approval_failure(401, "APPROVAL_AUTH_REQUIRED"));
             }
-            // InProcessGateway.ts:639-653.
-            let session_key = super::input_property(&params, "sessionKey")?;
-            if let Some(JsValue::String(key)) = &session_key
-                && self.owner.has_active_turn(key)
-            {
+            if self.owner.has_active_turn(&session) {
                 return Err(coded(
                     "SESSION_BUSY",
                     "Cannot resume StaffDeck SOP while a turn is active.",
                 ));
             }
-            // createLocalGateway.ts:1081-1089.
-            if own(&params, "authority") || own(&params, "subject") {
+            if params.get("authority").is_some() || params.get("subject").is_some() {
                 return Err(approval_failure(400, "APPROVAL_AUTHORITY_OVERRIDE"));
             }
-            if params
-                .get("source")
-                .and_then(JsValue::as_string)
-                .is_some_and(|source| source.equals_str("human"))
-            {
-                // publicApprovalBridge.ts:66-69.
-                let revision_ok = matches!(
-                    params.get("expectedRevision"),
-                    Some(JsValue::Number(n)) if n.fract() == 0.0 && *n >= 0.0 && *n <= 9_007_199_254_740_991.0
-                );
-                if !nonempty(params.get("waitId"))
-                    || !nonempty(params.get("requestId"))
-                    || !nonempty(params.get("message"))
-                    || !revision_ok
-                {
-                    return Err(approval_failure(400, "APPROVAL_INPUT_INVALID"));
-                }
-                return Err(self.approval_access(&params));
+            if string(&params, "source").equals_str("human") {
+                return approvals::production_bridge(host)
+                    .resume(&params)
+                    .await
+                    .map_err(|e| failed(e, &params));
             }
-            Err(sop_module_disabled())
+            approvals::production_store(host)
+                .resume(&StoreResumeInput {
+                    session_key: session,
+                    project_key: params.get("projectKey").cloned(),
+                    request_id: string(&params, "requestId"),
+                    wait_id: string(&params, "waitId"),
+                    message: string(&params, "message"),
+                    source: if string(&params, "source").equals_str("external_task") {
+                        ResumeSource::ExternalTask
+                    } else {
+                        ResumeSource::Invalid
+                    },
+                    expected_revision: params.get("expectedRevision").and_then(JsValue::as_number),
+                    slot_updates: params.get("slotUpdates").cloned(),
+                    authority: None,
+                })
+                .await
+                .map_err(|e| failed(e, &params))
         })
-    }
-
-    /// `access(input)` of the public approval bridge
-    /// (publicApprovalBridge.ts:31-42) up to the bearer check. Past it the
-    /// bridge authenticates against StaffDeck (an external service the
-    /// native process has no client for), and a project-scoped binding
-    /// (`STAFFDECK_PROJECT_BINDING_ENABLED`) resolves through the same
-    /// service; both stay unavailable.
-    fn approval_access(&self, params: &JsValue) -> RequestError {
-        let unported =
-            || unavailable("StaffDeck SOP is not configured on this isolated native process.");
-        let env = |key: &str| self.env.get(key).cloned().unwrap_or_default();
-        if env("STAFFDECK_PROJECT_BINDING_ENABLED") == "true" {
-            return unported();
-        }
-        let binding = [
-            env("STAFFDECK_COPY_TENANT_ID"),
-            env("STAFFDECK_COPY_TARGET_AGENT_ID"),
-            env("STAFFDECK_COPY_PILOTDECK_USER_ID"),
-        ];
-        if !nonempty(params.get("sessionKey")) {
-            return approval_failure(400, "APPROVAL_INPUT_INVALID");
-        }
-        if own(params, "authority") || own(params, "subject") {
-            return approval_failure(400, "APPROVAL_AUTHORITY_OVERRIDE");
-        }
-        let mismatched = |key: &str, expected: &str| match params.get(key) {
-            None | Some(JsValue::Undefined) => false,
-            Some(JsValue::String(value)) => !value.equals_str(expected),
-            Some(_) => true,
-        };
-        if mismatched("tenantId", &binding[0]) || mismatched("agentId", &binding[1]) {
-            return approval_failure(403, "APPROVAL_SUBJECT_MISMATCH");
-        }
-        if !binding
-            .iter()
-            .all(|value| nonempty(Some(&JsValue::String(JsString::from(value.as_str())))))
-        {
-            return approval_failure(503, "APPROVAL_BINDING_UNAVAILABLE");
-        }
-        let bearer_ok = match params.get("approverAuthorization") {
-            Some(JsValue::String(value)) => {
-                let text = String::from_utf16_lossy(value.units());
-                let units: Vec<u16> = text.encode_utf16().collect();
-                let head = String::from_utf16_lossy(&units[..units.len().min(7)]);
-                let rest = String::from_utf16_lossy(&units[units.len().min(7)..]);
-                head.to_lowercase() == "bearer " && !crate::metadata::js_trim(&rest).is_empty()
-            }
-            _ => false,
-        };
-        if !bearer_ok {
-            return approval_failure(401, "APPROVAL_AUTH_REQUIRED");
-        }
-        unported()
     }
 }
 

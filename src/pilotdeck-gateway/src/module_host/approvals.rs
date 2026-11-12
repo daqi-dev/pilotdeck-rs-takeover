@@ -38,7 +38,7 @@
 //! `ui/server/staffdeck-approval-authority.mjs` and performs network calls);
 //! it stays injected, never implemented here.
 #![cfg_attr(not(test), allow(dead_code))]
-mod pending;
+pub(crate) mod pending;
 
 use crate::{Body, model_catalog::trim};
 use bytes::Bytes;
@@ -117,6 +117,7 @@ fn state_error(code: &str) -> ApprovalFailure {
 
 /// The `PublicApprovalSubject` (`StaffDeckApprovalAuthority['subject']`): the
 /// authenticated approver facts the authenticate port returns.
+#[derive(Clone)]
 pub(crate) struct ApprovalSubject {
     pub tenant_id: JsString,
     pub source: JsString,
@@ -176,6 +177,7 @@ pub(crate) trait ApprovalBindingResolver: Send + Sync {
 pub(crate) enum ResumeSource {
     Human,
     ExternalTask,
+    Invalid,
 }
 
 impl ResumeSource {
@@ -183,12 +185,14 @@ impl ResumeSource {
         match self {
             ResumeSource::Human => "human",
             ResumeSource::ExternalTask => "external_task",
+            ResumeSource::Invalid => "",
         }
     }
 }
 
 /// The status input the pending store receives, the TS `sopControl.status`
 /// callback's shape.
+#[derive(Clone)]
 pub(crate) struct StoreStatusInput {
     pub session_key: JsString,
     pub project_key: Option<JsValue>,
@@ -197,6 +201,7 @@ pub(crate) struct StoreStatusInput {
 /// The resume input the pending store receives, the TS `sopControl.resume`
 /// callback's shape: everything but the authority is caller input, and the
 /// authority is what the bridge's access pipeline resolved.
+#[derive(Clone)]
 pub(crate) struct StoreResumeInput {
     pub session_key: JsString,
     pub project_key: Option<JsValue>,
@@ -211,6 +216,7 @@ pub(crate) struct StoreResumeInput {
 
 /// `StaffDeckApprovalAuthority` as the bridge constructs it: the resolved
 /// session's tenant and the authenticated subject.
+#[derive(Clone)]
 pub(crate) struct StoreAuthority {
     pub tenant_id: JsString,
     pub session_id: JsString,
@@ -999,64 +1005,45 @@ fn streamed(body: Option<Bytes>) -> Body {
     StreamedBody(body).boxed()
 }
 
-/// The `authenticate` port `createLocalGateway.ts:976-985` installs: without
-/// `STAFFDECK_FORMAL_API_ORIGIN` and `STAFFDECK_APPROVAL_USER_ID` it throws
-/// 503 `APPROVAL_BINDING_UNAVAILABLE`. With both set TS loads
-/// `ui/server/staffdeck-approval-authority.mjs` and asks the StaffDeck origin
-/// (`GET /api/auth/me`); that external call is not implemented natively, so
-/// the configured case fails the way TS fails when the origin cannot be
-/// reached — a plain error, which the transport renders as 502
-/// `PUBLIC_APPROVAL_BRIDGE_FAILED`.
-struct EnvAuthenticator {
-    configured: bool,
+/// Production approval authority and original-session join; the same disk
+/// store is consumed by HTTP, WS and SOP capability reads.
+pub(crate) fn production_store(host: Arc<super::runtime::RuntimeHost>) -> pending::DiskSopStore {
+    pending::DiskSopStore::new(Arc::new(move |project| {
+        let project = project
+            .and_then(JsValue::as_string)
+            .map(|value| std::path::PathBuf::from(String::from_utf16_lossy(value.units())));
+        let profile = super::staffdeck::sop_profile(&host, project.as_deref())?;
+        super::staffdeck::text(&profile, "stateRoot")
+    }))
 }
 
-impl ApprovalAuthenticator for EnvAuthenticator {
-    fn authenticate<'a>(
-        &'a self,
-        _bearer: &'a JsString,
-    ) -> Pin<Box<dyn Future<Output = Result<ApprovalSubject, ApprovalFailure>> + Send + 'a>> {
-        Box::pin(async move {
-            if !self.configured {
-                return Err(failure(503, "APPROVAL_BINDING_UNAVAILABLE"));
-            }
-            Err(ApprovalFailure {
-                status: None,
-                code: None,
-            })
-        })
-    }
-}
-
-/// The bridge `pilotdeck server` mounts (`getPublicApprovals()`,
-/// createLocalGateway.ts:964-990): the fixed binding from the
-/// `STAFFDECK_COPY_*` variables (missing ones are empty strings, which the
-/// access gate answers with 503). The session resolver and the pending store
-/// sit behind `authenticate`, which never succeeds here (see
-/// [`EnvAuthenticator`]), so neither is reachable; the store is the native
-/// pending store with no SOP profile. The project-binding mode
-/// (`STAFFDECK_PROJECT_BINDING_ENABLED=true`, a per-request binding resolver)
-/// is not modeled.
-pub(crate) fn production_config(token: String, env: &crate::config::Env) -> Config {
-    let var = |name: &str| JsString::from(env.get(name).map_or("", String::as_str));
-    let present = |name: &str| env.get(name).is_some_and(|value| !value.is_empty());
-    let bridge = ApprovalBridgeImpl {
+pub(crate) fn production_bridge(host: Arc<super::runtime::RuntimeHost>) -> Arc<dyn ApprovalBridge> {
+    let var = |name: &str| JsString::from(host.env.get(name).map_or("", String::as_str));
+    let access = Arc::new(super::staffdeck::NativeApprovalAccess(Arc::clone(&host)));
+    Arc::new(ApprovalBridgeImpl {
         binding: ApprovalBinding {
             tenant_id: var("STAFFDECK_COPY_TENANT_ID"),
             agent_id: var("STAFFDECK_COPY_TARGET_AGENT_ID"),
             pilot_deck_user_id: var("STAFFDECK_COPY_PILOTDECK_USER_ID"),
         },
-        resolve_binding: None,
-        authenticate: Arc::new(EnvAuthenticator {
-            configured: present("STAFFDECK_FORMAL_API_ORIGIN")
-                && present("STAFFDECK_APPROVAL_USER_ID"),
-        }),
-        resolve_session: None,
-        store: Arc::new(pending::PendingSopStore::new(Arc::new(|_| None))),
-    };
+        resolve_binding: (host
+            .env
+            .get("STAFFDECK_PROJECT_BINDING_ENABLED")
+            .map(String::as_str)
+            == Some("true"))
+        .then(|| access.clone() as Arc<dyn ApprovalBindingResolver>),
+        authenticate: Arc::new(super::staffdeck::FixedApprovalAuthenticator(
+            host.env.clone(),
+        )),
+        resolve_session: Some(access),
+        store: Arc::new(production_store(host)),
+    })
+}
+
+pub(crate) fn production_config(token: String, host: Arc<super::runtime::RuntimeHost>) -> Config {
     Config {
         token,
-        bridge: Some(Arc::new(bridge)),
+        bridge: Some(production_bridge(host)),
     }
 }
 

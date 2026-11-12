@@ -26,7 +26,8 @@ enum WriteCommand {
 }
 
 pub(super) struct Connection {
-    child: Child,
+    child: Option<Child>,
+    native: Option<JoinHandle<pilotdeck_transport::server::ShutdownReport>>,
     #[cfg(unix)]
     group: Option<rustix::process::Pid>,
     outgoing: Option<mpsc::Sender<WriteCommand>>,
@@ -72,13 +73,91 @@ impl Connection {
             .kill_on_drop(true)
             .spawn()
             .map_err(HostError::io)?;
+        let stdin = child.stdin.take().expect("piped stdin");
+        let stdout = child.stdout.take().expect("piped stdout");
+        let stderr_pipe = child.stderr.take().expect("piped stderr");
+        Ok(Self::with_streams(
+            Some(child),
+            None,
+            stdin,
+            stdout,
+            stderr_pipe,
+            limits,
+            budget,
+        ))
+    }
+
+    /// The native loop uses bounded memory pipes; no executable or OS process is
+    /// involved. Its blocking protocol server runs on owned worker threads.
+    pub(super) fn native(
+        cwd: &std::path::Path,
+        limits: Limits,
+        factory: Option<Arc<dyn pilotdeck_transport::server::ExecutionFactory>>,
+    ) -> Result<Self, HostError> {
+        use pilotdeck_protocol::admission::SidecarBinding;
+        use pilotdeck_transport::{
+            default_factory::OriginalAgentFactory, server::ExecutionServer, stdio::ConnectionOwner,
+            system_clock::SystemExecutionClock,
+        };
+        let cwd = cwd
+            .to_str()
+            .ok_or_else(|| HostError::protocol("Process cwd is not valid UTF8."))?;
+        let (host, loop_io) = tokio::io::duplex(64 * 1024);
+        let (host_read, host_write) = tokio::io::split(host);
+        let (loop_read, loop_write) = tokio::io::split(loop_io);
+        let instance = format!("pilotdeck-agent-loop-instance-{}", uuid::Uuid::new_v4());
+        let binding = SidecarBinding {
+            module_id: "pilotdeck-agent-loop".into(),
+            module_instance_id: instance.clone().into(),
+            connection_generation: format!("{instance}-{}", uuid::Uuid::new_v4()).into(),
+            capabilities_version: "1".into(),
+        };
+        let clock = Arc::new(SystemExecutionClock);
+        let factory = factory.unwrap_or_else(|| {
+            Arc::new(OriginalAgentFactory {
+                clock: clock.clone(),
+                process_cwd: cwd.into(),
+            })
+        });
+        let server = ExecutionServer::new(ConnectionOwner::new(binding, 64), factory, clock, 32);
+        let runtime = tokio::runtime::Handle::current();
+        let reader = BlockingRead {
+            io: loop_read,
+            runtime: runtime.clone(),
+        };
+        let writer = BlockingWrite {
+            io: loop_write,
+            runtime,
+        };
+        let grace = limits.close_timeout;
+        let native = tokio::task::spawn_blocking(move || {
+            server.serve(std::io::BufReader::new(reader), writer, grace)
+        });
+        Ok(Self::with_streams(
+            None,
+            Some(native),
+            host_write,
+            host_read,
+            tokio::io::empty(),
+            limits,
+            Budget::new(limits.max_buffered_bytes),
+        ))
+    }
+
+    fn with_streams(
+        child: Option<Child>,
+        native: Option<JoinHandle<pilotdeck_transport::server::ShutdownReport>>,
+        mut stdin: impl tokio::io::AsyncWrite + Unpin + Send + 'static,
+        stdout: impl tokio::io::AsyncRead + Unpin + Send + 'static,
+        mut stderr_pipe: impl tokio::io::AsyncRead + Unpin + Send + 'static,
+        limits: Limits,
+        budget: Arc<Budget>,
+    ) -> Self {
         #[cfg(unix)]
         let group = child
-            .id()
+            .as_ref()
+            .and_then(Child::id)
             .and_then(|pid| rustix::process::Pid::from_raw(pid as i32));
-        let mut stdin = child.stdin.take().expect("piped stdin");
-        let stdout = child.stdout.take().expect("piped stdout");
-        let mut stderr_pipe = child.stderr.take().expect("piped stderr");
         let (outgoing, mut writes) = mpsc::channel(limits.queue_capacity);
         let (reads, incoming) = mpsc::channel(limits.queue_capacity);
         let (ack, mut acks) = watch::channel(None::<Arc<String>>);
@@ -198,8 +277,9 @@ impl Connection {
                 tail.drain(..excess);
             }
         });
-        Ok(Self {
+        Self {
             child,
+            native,
             #[cfg(unix)]
             group,
             outgoing: Some(outgoing),
@@ -217,7 +297,7 @@ impl Connection {
             term_sent: Arc::new(AtomicUsize::new(0)),
             #[cfg(test)]
             reap_deadline: None,
-        })
+        }
     }
 
     pub(super) fn send(&self, value: &JsValue) -> Result<(), HostError> {
@@ -318,7 +398,7 @@ impl Connection {
             .into()
     }
     pub(super) fn pid(&self) -> Option<u32> {
-        self.child.id()
+        self.child.as_ref().and_then(Child::id)
     }
 
     #[cfg(test)]
@@ -364,6 +444,29 @@ impl Connection {
             .map_err(|error| HostError::io(error.into()))
     }
     async fn stop_child(&mut self) -> Result<(), HostError> {
+        if let Some(mut native) = self.native.take() {
+            // Closing the host halves wakes both native pipe workers. The
+            // protocol server retires its loop and joins every worker.
+            let report = timeout(self.limits.close_timeout.saturating_mul(2), &mut native)
+                .await
+                .map_err(|_| {
+                    HostError::new(HostErrorKind::Timeout, "Native agent loop did not stop.")
+                })?
+                .map_err(|error| {
+                    HostError::protocol(format!("Native agent loop failed: {error}"))
+                })?;
+            return if report.complete() {
+                Ok(())
+            } else {
+                Err(HostError::new(
+                    HostErrorKind::Timeout,
+                    "Native agent loop workers did not stop.",
+                ))
+            };
+        }
+        if self.child.is_none() {
+            return Ok(());
+        }
         #[cfg(unix)]
         {
             if !self.wait_for_exit_unreaped().await? {
@@ -378,18 +481,24 @@ impl Connection {
         }
         #[cfg(not(unix))]
         {
-            if let Ok(result) = timeout(self.limits.close_timeout, self.child.wait()).await {
+            if let Ok(result) = timeout(
+                self.limits.close_timeout,
+                self.child.as_mut().expect("owned child").wait(),
+            )
+            .await
+            {
                 return result.map(|_| ()).map_err(HostError::io);
             }
-            let _ = self.child.start_kill();
+            let _ = self.child.as_mut().expect("owned child").start_kill();
         }
-        timeout(self.reap_deadline(), self.child.wait())
-            .await
-            .map_err(|_| {
-                HostError::new(HostErrorKind::Timeout, "Sidecar did not exit after kill.")
-            })?
-            .map(|_| ())
-            .map_err(HostError::io)
+        timeout(
+            self.reap_deadline(),
+            self.child.as_mut().expect("owned child").wait(),
+        )
+        .await
+        .map_err(|_| HostError::new(HostErrorKind::Timeout, "Sidecar did not exit after kill."))?
+        .map(|_| ())
+        .map_err(HostError::io)
     }
     pub(super) async fn close(&mut self) -> Result<(), HostError> {
         if self.closed {
@@ -439,6 +548,31 @@ impl Drop for Connection {
         // Child::kill_on_drop also reaps dropped spawn/execute futures.
     }
 }
+// These adapters are used only by ExecutionServer's dedicated OS threads, never
+// on a Tokio worker. The duplex capacity bounds pending protocol bytes and its
+// closure unblocks synchronous Read/Write on cancellation or client drop.
+struct BlockingRead<T> {
+    io: T,
+    runtime: tokio::runtime::Handle,
+}
+impl<T: tokio::io::AsyncRead + Unpin> std::io::Read for BlockingRead<T> {
+    fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+        self.runtime.block_on(self.io.read(bytes))
+    }
+}
+struct BlockingWrite<T> {
+    io: T,
+    runtime: tokio::runtime::Handle,
+}
+impl<T: tokio::io::AsyncWrite + Unpin> std::io::Write for BlockingWrite<T> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.runtime.block_on(self.io.write(bytes))
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.runtime.block_on(self.io.flush())
+    }
+}
+
 async fn deliver(
     sender: &mpsc::Sender<Result<Frame, HostError>>,
     bytes: Vec<u8>,
@@ -455,7 +589,7 @@ async fn deliver(
     let valid = value.is_ok();
     sender.send(value).await.is_ok() && valid
 }
-async fn optional_write(stdin: &mut tokio::process::ChildStdin, line: &str) {
+async fn optional_write(stdin: &mut (impl tokio::io::AsyncWrite + Unpin), line: &str) {
     // TS client:943-970: cancel and ACK failures never enter the input stream.
     if let Err(error) = stdin.write_all(line.as_bytes()).await {
         best_effort_log(format_args!(
@@ -593,7 +727,7 @@ mod tests {
         assert!(connection.wait_for_exit_unreaped().await.unwrap());
         connection.kill_group();
         assert!(connection.group.is_none());
-        connection.child.wait().await.unwrap();
+        connection.child.as_mut().unwrap().wait().await.unwrap();
         assert_eq!(connection.pid(), None);
         connection.close().await.unwrap();
         assert!(connection.group.is_none());

@@ -1,0 +1,156 @@
+{
+  "name": "staffdeck-native-admission",
+  "about": "默认native普通会话通过正式actor/credential/target认证后落host-admission，模型完成后重启恢复同一会话；不通过人工seed伪装admission创建。",
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx",
+    "STAFFDECK_COPY_TENANT_ID": "t",
+    "STAFFDECK_COPY_ACTOR_USER_ID": "u",
+    "STAFFDECK_COPY_PILOTDECK_USER_ID": "owner",
+    "STAFFDECK_COPY_TARGET_AGENT_ID": "a",
+    "STAFFDECK_FORMAL_API_ORIGIN": "{MOCK}",
+    "STAFFDECK_SOP_MANAGEMENT_CREDENTIAL_ID": "c",
+    "STAFFDECK_COPY_USER_TOKEN": "actor-test-token",
+    "STAFFDECK_SOP_MANAGEMENT_API_KEY": "abcdefghijklmnopqrst-full-test-key",
+    "STAFFDECK_APPROVAL_USER_ID": "u"
+  },
+  "provider": [
+    {
+      "name": "staff-auth",
+      "method": "GET",
+      "path": "/api/auth/me",
+      "reply": {
+        "status": 200,
+        "body": {
+          "id": "u",
+          "tenant_id": "t",
+          "source": "web",
+          "role": "member",
+          "disabled": false
+        }
+      }
+    },
+    {
+      "name": "staff-credentials",
+      "method": "GET",
+      "path": "/api/auth/me/api-credentials",
+      "reply": {
+        "status": 200,
+        "body": [
+          {
+            "id": "c",
+            "user_id": "u",
+            "status": "active",
+            "access": "user_full_access",
+            "key_prefix": "abcdefghijklmnopqrst…"
+          }
+        ]
+      }
+    },
+    {
+      "name": "staff-target",
+      "method": "GET",
+      "path": "/api/v1/agents/a",
+      "reply": {
+        "status": 200,
+        "body": {
+          "id": "a",
+          "status": "active",
+          "is_overall": false
+        }
+      }
+    },
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Admitted\"}"
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "Hello from the admitted native session."
+      }
+    }
+  ],
+  "files": {
+    "home/.pilotdeck/auth.db": {
+      "$sqlite": [
+        "CREATE TABLE users (id TEXT, is_active INTEGER)",
+        "INSERT INTO users VALUES ('owner',1)"
+      ]
+    },
+    "home/.pilotdeck/projects/b1-general/.cwd": "{PILOT_HOME}\n"
+  },
+  "steps": [
+    {
+      "serve": [
+        "server"
+      ],
+      "then": [
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "admitted",
+            "channelKey": "test",
+            "message": "admitted hello"
+          }
+        },
+        {
+          "sleep": 500
+        },
+        {
+          "ws": "read_session_messages",
+          "params": {
+            "sessionKey": "admitted"
+          }
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    },
+    {
+      "serve": [
+        "server"
+      ],
+      "then": [
+        {
+          "ws": "read_session_messages",
+          "params": {
+            "sessionKey": "admitted"
+          }
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    }
+  ],
+  "assertions": [
+    {
+      "id": "created-admission",
+      "path": "/tree/~1home~1.pilotdeck~1projects~1b1-general~1chats~1admitted.jsonl/jsonl/0/metadata/staffDeckAdmission/credentialId",
+      "equals": "c"
+    },
+    {
+      "id": "created-owner",
+      "path": "/tree/~1home~1.pilotdeck~1projects~1b1-general~1chats~1admitted.jsonl/jsonl/0/metadata/staffDeckAdmission/pilotDeckUserId",
+      "equals": "owner"
+    },
+    {
+      "id": "host-authorship",
+      "path": "/tree/~1home~1.pilotdeck~1projects~1b1-general~1chats~1admitted.jsonl/jsonl/0/turnId",
+      "equals": "host-admission"
+    },
+    {
+      "id": "model-invoked",
+      "path": "/provider/main",
+      "exists": true
+    }
+  ]
+}

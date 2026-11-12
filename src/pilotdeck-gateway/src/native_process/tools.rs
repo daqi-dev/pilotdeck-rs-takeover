@@ -676,6 +676,28 @@ impl SessionTools {
         Ok(self)
     }
 
+    /// Validate native contributions against the complete session catalog before
+    /// publishing them. A name or alias collision is an admission error, never
+    /// an ignored registration or an implicit replacement of a builtin.
+    pub fn with_native_tools(
+        mut self,
+        tools: Vec<Arc<dyn crate::runtime::tools::ExecutableTool>>,
+    ) -> Result<Self, RuntimeError> {
+        if tools.is_empty() {
+            return Ok(self);
+        }
+        let registry = self.session_registry(&self.config);
+        for tool in &tools {
+            registry.register(tool.clone()).map_err(|error| {
+                RuntimeError::new(format!(
+                    "Native extension tool registration failed: {error}"
+                ))
+            })?;
+        }
+        self.world.extra_tools.extend(tools);
+        Ok(self)
+    }
+
     /// The deferred-tool check against the session's composed registry.
     pub fn check_deferred_tools(&self) -> Result<(), RuntimeError> {
         let Some((requested, _)) = &self.world.deferred else {

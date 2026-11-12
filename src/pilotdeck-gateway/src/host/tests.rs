@@ -8,6 +8,7 @@ mod cancel_exit;
 mod event;
 mod model;
 mod modules;
+mod native;
 mod resume;
 
 /// Test-only observations plus an opt-in reconnect gate. Production builds

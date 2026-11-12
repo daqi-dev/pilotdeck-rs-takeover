@@ -5,6 +5,7 @@ mod api_web;
 pub mod channel;
 pub mod config;
 mod dispatch;
+pub mod extensions;
 mod fetch_redirect;
 mod frame;
 // #1468/#1494: the resolved path of an already-open handle (macOS
