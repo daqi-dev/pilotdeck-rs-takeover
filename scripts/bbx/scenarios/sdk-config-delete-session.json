@@ -1,0 +1,50 @@
+{
+  "name": "sdk-config-delete-session",
+  "about": "delete_session 清掉会话的 SDK 配置（createLocalGateway.ts deleteSession → registry.clearSdkSessionState）：带 sdkSessionConfig（appendSystemPrompt、managedTools、skills）聊一轮，删除会话，同名会话再建、不带 sdkSessionConfig 聊一轮，看模型请求的系统提示词与工具声明不再带上一份配置；再带回同一份配置时它重新生效。",
+  "files": {
+    "home/.pilotdeck/skills/alpha-skill/SKILL.md": "---\nname: alpha-skill\ndescription: The alpha skill for the bbx delete scenario.\n---\n\n# alpha\n\nReply with ALPHA when asked.\n",
+    "home/.pilotdeck/skills/beta-skill/SKILL.md": "---\nname: beta-skill\ndescription: The beta skill for the bbx delete scenario.\n---\n\n# beta\n\nReply with BETA when asked.\n"
+  },
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Delete run\"}" } },
+    { "name": "turn-1", "when": ["turn-1:"], "reply": { "text": "one" } },
+    { "name": "turn-2", "when": ["turn-2:"], "reply": { "text": "two" } },
+    { "name": "turn-3", "when": ["turn-3:"], "reply": { "text": "three" } },
+    { "name": "main", "reply": { "text": "ok" } }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-del",
+        "channelKey": "test",
+        "message": "turn-1: with the sdk config",
+        "sdkSessionConfig": {
+          "appendSystemPrompt": "SDK-APPEND-MARKER",
+          "managedTools": { "allow": ["read_*", "grep"], "deny": [] },
+          "skills": ["alpha-skill"]
+        }
+      }
+    },
+    { "sleep": 300 },
+    { "ws": "delete_session", "params": { "sessionKey": "s-del" } },
+    { "sleep": 300 },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-del", "channelKey": "test", "message": "turn-2: recreated without config" } },
+    { "sleep": 300 },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-del",
+        "channelKey": "test",
+        "message": "turn-3: the same config again",
+        "sdkSessionConfig": {
+          "appendSystemPrompt": "SDK-APPEND-MARKER",
+          "managedTools": { "allow": ["read_*", "grep"], "deny": [] },
+          "skills": ["alpha-skill"]
+        }
+      }
+    },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-del" } }
+  ]
+}

@@ -998,6 +998,16 @@ async fn start_assembly(
                         .with_extra_tools(extra_tools, excluded_tools)
                         .with_prompt_policy(can_prompt_override, bypass_available_override)
                         .with_sdk_permissions(sdk_config.as_ref())
+                        .with_sdk_tool_scope(
+                            super::sdk_config::session_skills(sdk_config.as_ref()),
+                            sdk_config
+                                .as_ref()
+                                .and_then(|config| config.get("managedTools"))
+                                .filter(|policy| {
+                                    !matches!(policy, JsValue::Undefined | JsValue::Null)
+                                })
+                                .cloned(),
+                        )
                         .with_permission_mode_source(permission_source.clone())
                         .with_continuation_parent(continuation_parent.parent_ref())
                         .with_hooks(

@@ -948,6 +948,7 @@ impl SessionTools {
             cooldown: self.compaction_cooldown.clone(),
         };
         SessionPorts {
+            skills: self.world.skills_filter.clone(),
             compaction,
             model: RouterModelPortOptions {
                 invocation: self.world.invocation.clone(),
@@ -1637,6 +1638,12 @@ pub(super) struct ExecutionWorld {
     fetcher: builtin::web::fetcher::UrlFetcher,
     /// `readSkill: { loader, lister }`: the project's plugin runtime.
     skills: Option<Arc<crate::runtime::plugins::PluginRuntime>>,
+    /// `sdkSessionConfig.skills`: the session's skills restricted to these
+    /// names (`filterSessionSkills`), for `read_skill` and the prompt.
+    skills_filter: Option<Vec<String>>,
+    /// `sdkSessionConfig.managedTools`: the `{ allow, deny }` selector policy
+    /// (`blockedToolNames`' `managed`).
+    managed_tools: Option<JsValue>,
     /// The gateway's `extraTools` (the automation providers' tools,
     /// `ProjectExecutionWorldBundle.ts:107-111`), registered after the
     /// builtins.
@@ -1658,6 +1665,8 @@ impl ExecutionWorld {
                 crate::runtime::model::http::HyperModelTransport::new(),
             )),
             skills: None,
+            skills_filter: None,
+            managed_tools: None,
             extra_tools: Vec::new(),
             excluded_tools: Vec::new(),
             invocation: None,
@@ -1703,6 +1712,17 @@ impl SessionTools {
         self
     }
 
+    /// The SDK config's `skills` scope and `managedTools` policy.
+    pub(super) fn with_sdk_tool_scope(
+        mut self,
+        skills: Option<Vec<String>>,
+        managed_tools: Option<JsValue>,
+    ) -> Self {
+        self.world.skills_filter = skills;
+        self.world.managed_tools = managed_tools;
+        self
+    }
+
     /// The session override's `canPrompt` / `bypassAvailable`
     /// (`ProjectSessionFactory.ts:270`, `SessionAgentConfigBundle.ts:183`).
     pub(super) fn with_prompt_policy(
@@ -1723,6 +1743,31 @@ impl SessionTools {
     }
 }
 
+/// `blockedToolNames`' `restrict(managed)` (ProjectSessionRuntimeBundle.ts:
+/// 783-794): a tool a `deny` selector matches is blocked; with a non-empty
+/// `allow`, so is a tool no `allow` selector matches.
+fn managed_tool_blocked(policy: &JsValue, name: &JsString) -> bool {
+    let selectors = |key: &str| match policy.get(key) {
+        Some(JsValue::Array(items)) => items
+            .iter()
+            .filter_map(JsValue::as_string)
+            .map(|selector| String::from_utf16_lossy(selector.units()))
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+    let name = String::from_utf16_lossy(name.units());
+    // `matchesToolSelector`: `*`, the exact name, or a `prefix*`.
+    let matches = |selector: &String| {
+        selector == "*"
+            || *selector == name
+            || selector
+                .strip_suffix('*')
+                .is_some_and(|prefix| name.starts_with(prefix))
+    };
+    let allow = selectors("allow");
+    selectors("deny").iter().any(matches) || (!allow.is_empty() && !allow.iter().any(matches))
+}
+
 pub(super) fn native_tools(
     allowed: Option<Vec<JsString>>,
     denied: Option<Vec<JsString>>,
@@ -1730,13 +1775,17 @@ pub(super) fn native_tools(
     mcp: &SessionMcpTools,
     world: &ExecutionWorld,
 ) -> ToolRegistry {
+    let managed = world.managed_tools.clone();
     let tools = ToolRegistry::new(
         None,
         Some(Arc::new(move |tool| {
             let Some(name) = tool.fields().get("name").and_then(JsValue::as_string) else {
                 return false;
             };
-            allowed.as_ref().is_none_or(|names| names.contains(name))
+            !managed
+                .as_ref()
+                .is_some_and(|policy| managed_tool_blocked(policy, name))
+                && allowed.as_ref().is_none_or(|names| names.contains(name))
                 && !denied.as_ref().is_some_and(|names| names.contains(name))
         })),
     );
@@ -1777,9 +1826,10 @@ pub(super) fn native_tools(
     builtins.push(Arc::new(builtin::send_attachment::SendAttachmentTool::new()));
     builtins.extend(builtin::goal::goal_tools());
     if let Some(plugins) = &world.skills {
-        builtins.push(Arc::new(builtin::read_skill::ReadSkillTool::new(
-            plugins.clone(),
-        )));
+        builtins.push(Arc::new(
+            builtin::read_skill::ReadSkillTool::new(plugins.clone())
+                .with_selected(world.skills_filter.clone()),
+        ));
     }
     for tool in builtins {
         tools

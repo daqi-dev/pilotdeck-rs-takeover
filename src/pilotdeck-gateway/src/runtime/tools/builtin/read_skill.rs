@@ -16,12 +16,17 @@ use std::sync::Arc;
 pub struct ReadSkillTool {
     fields: JsObject,
     plugins: Arc<PluginRuntime>,
+    /// An SDK skill-scoped session's names (ProjectSessionRuntimeBundle.ts:
+    /// 302-316): the loader answers only an exact selected name and the
+    /// lister lists only the selected skills.
+    selected: Option<Vec<String>>,
 }
 
 impl ReadSkillTool {
     pub fn new(plugins: Arc<PluginRuntime>) -> Self {
         Self {
             plugins,
+            selected: None,
             fields: object([
                 ("name", string("read_skill")),
                 ("aliases", JsValue::Array(vec![string("ReadSkill")])),
@@ -40,6 +45,13 @@ impl ReadSkillTool {
                 ),
             ]),
         }
+    }
+}
+
+impl ReadSkillTool {
+    pub fn with_selected(mut self, selected: Option<Vec<String>>) -> Self {
+        self.selected = selected;
+        self
     }
 }
 
@@ -92,16 +104,27 @@ fn render(name: &str, content: Option<String>, available: &[(String, String)]) -
 impl ExecutableTool for ReadSkillTool {
     fn execute(&self, input: JsValue, _context: ToolRunContext) -> ToolFuture<ToolOutput> {
         let plugins = self.plugins.clone();
+        let selected = self.selected.clone();
         Box::pin(async move {
             let name = match field(&input, "skillName") {
                 JsValue::String(name) => text(name),
                 other => crate::js_value::display(other).unwrap_or_default(),
             };
-            let content = plugins.load_skill_prompt(&name).await;
+            let chosen = |skill: &str| {
+                selected
+                    .as_ref()
+                    .is_none_or(|names| names.iter().any(|name| name == skill))
+            };
+            let content = if chosen(&name) {
+                plugins.load_skill_prompt(&name).await
+            } else {
+                None
+            };
             let available: Vec<(String, String)> = plugins
                 .all_skills()
                 .await
                 .into_iter()
+                .filter(|skill| chosen(&skill.name))
                 .map(|skill| (skill.name, skill.path.to_string_lossy().into_owned()))
                 .collect();
             Ok(ToolOutput {

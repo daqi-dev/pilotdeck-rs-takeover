@@ -239,6 +239,15 @@ impl SessionOverrides {
             .cloned()
     }
 
+    /// `sdkSessionConfigs.delete(key)` + `sdkSessionProjects.delete(key)`
+    /// (`clearSdkSessionState`, ProjectRuntimeRegistry.ts:776-787): the whole
+    /// config row, its output-style selection included.
+    pub fn clear_sdk_config(&self, key: &JsString) {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner.sdk_configs.remove(key);
+        inner.sdk_config_projects.remove(key);
+    }
+
     /// `sdkSessionConfigs.set(key, config)`.
     pub fn set_sdk_config(&self, key: &JsString, config: JsValue) {
         self.inner
@@ -255,6 +264,16 @@ impl SessionOverrides {
             .unwrap_or_else(|e| e.into_inner())
             .sdk_config_projects
             .insert(key.clone(), project_root);
+    }
+
+    /// `sdkSessionProjects.get(key)` for a session with an SDK config.
+    pub fn sdk_config_project(&self, key: &JsString) -> Option<std::path::PathBuf> {
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .sdk_config_projects
+            .get(key)
+            .cloned()
     }
 
     /// The sessions holding an SDK session config, with their project roots.

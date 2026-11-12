@@ -196,6 +196,8 @@ pub struct SessionPorts {
     pub interaction: InteractionTurnInput,
     /// Session-owned inputs of the context's `CompactionEngine`.
     pub compaction: CompactionPorts,
+    /// `sdkSessionConfig.skills`: the prompt lists only these skills.
+    pub skills: Option<Vec<String>>,
 }
 
 /// The session's side of `CompactionEngine`'s composition: its lifecycle
@@ -469,6 +471,7 @@ impl TurnHostFactory {
             turn,
             mut interaction,
             compaction,
+            skills,
         } = ports;
         let context = lease
             .runtime()
@@ -547,8 +550,14 @@ impl TurnHostFactory {
         let context_runtime = match context_runtime {
             Some(runtime) => Some(runtime),
             None => Some(
-                session_context_runtime(&context, tool_results_dir, compaction, compaction_model)
-                    .await?,
+                session_context_runtime(
+                    &context,
+                    tool_results_dir,
+                    compaction,
+                    compaction_model,
+                    skills.as_deref(),
+                )
+                .await?,
             ),
         };
         if let Some(runtime) = context_runtime {
@@ -592,6 +601,7 @@ async fn session_context_runtime(
     tool_results_dir: PathBuf,
     compaction: CompactionPorts,
     compaction_model: Arc<dyn crate::host::modules::model::ModelExecution>,
+    skills: Option<&[String]>,
 ) -> Result<Arc<dyn context::ContextRuntime>, HostError> {
     let storage = context
         .resource(Resource::InstructionStorage)
@@ -624,7 +634,7 @@ async fn session_context_runtime(
             message,
         )
     };
-    let extension = session_extension(context)
+    let extension = session_extension(context, skills)
         .await
         .map_err(|error| session_error(error.to_string()))?;
     Ok(Arc::new(
@@ -790,6 +800,7 @@ impl TurnHostFactory {
             ports.tool_results_dir,
             ports.compaction,
             compaction_model,
+            ports.skills.as_deref(),
         )
         .await?;
         Ok(MaintenanceContext {
@@ -807,6 +818,7 @@ impl TurnHostFactory {
 /// plugin runtime contributes nothing.
 async fn session_extension(
     context: &crate::runtime::project::StageContext,
+    selected: Option<&[String]>,
 ) -> Result<
     Option<Arc<dyn context_runtime::ExtensionResolver>>,
     crate::runtime::plugins::PluginRuntimeError,
@@ -843,6 +855,8 @@ async fn session_extension(
             .await
             .into_iter()
             .filter(|_| !skills_disabled)
+            // `filterSessionSkills(contributions, sdkSessionConfig.skills)`.
+            .filter(|skill| selected.is_none_or(|names| names.contains(&skill.name)))
             .map(|skill| context_runtime::ContributedSkill {
                 name: skill.name,
                 description: skill.description,

@@ -1,0 +1,22 @@
+{
+  "name": "sdk-config-skills",
+  "about": "sdkSessionConfig.skills（ProjectSessionRuntimeBundle.ts filterSessionSkills + read_skill 替换；ProjectRuntimeRegistry.ts resolveSdkSessionSkills）：把会话可用的 skills 限定为列出的几个——系统提示词的 skills 段只剩选中的，read_skill 读选中的返回内容、读没选中的回 not found；名字找不到时 submit 回 SDK_SKILL_NOT_FOUND。",
+  "files": {
+    "home/.pilotdeck/skills/alpha-skill/SKILL.md": "---\nname: alpha-skill\ndescription: The alpha skill for the bbx skills scenario.\n---\n\n# alpha\n\nReply with ALPHA when asked.\n",
+    "home/.pilotdeck/skills/beta-skill/SKILL.md": "---\nname: beta-skill\ndescription: The beta skill for the bbx skills scenario.\n---\n\n# beta\n\nReply with BETA when asked.\n"
+  },
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Skills run\"}" } },
+    { "name": "after-beta", "when": ["turn-1:", "\"tool_call_id\":\"call_s2\""], "reply": { "text": "Done 1." } },
+    { "name": "read-beta", "when": ["turn-1:", "\"tool_call_id\":\"call_s1\""], "reply": { "tool": { "id": "call_s2", "name": "read_skill", "arguments": { "skillName": "beta-skill" } } } },
+    { "name": "read-alpha", "when": ["turn-1:"], "reply": { "tool": { "id": "call_s1", "name": "read_skill", "arguments": { "skillName": "alpha-skill" } } } },
+    { "name": "main", "reply": { "text": "ok" } }
+  ],
+  "steps": [
+    { "ws": "submit_turn", "params": { "sessionKey": "s-sk", "channelKey": "test", "message": "turn-1: read the skills", "sdkSessionConfig": { "skills": ["alpha-skill"] } } },
+    { "sleep": 300 },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-sk-bad", "channelKey": "test", "message": "turn-2: unknown skill", "sdkSessionConfig": { "skills": ["no-such-skill"] } } },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-sk" } }
+  ]
+}
