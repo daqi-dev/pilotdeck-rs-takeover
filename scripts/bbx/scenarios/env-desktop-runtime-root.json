@@ -1,0 +1,162 @@
+{
+ "name": "env-desktop-runtime-root",
+ "about": "桌面版环境变量（pilot/writablePaths.ts:36-64 isDesktopRuntimeProjectRoot / isVirtualProjectRoot；读取方 extension/skills/SkillManager.ts:113-121、tool/builtin/planFile.ts:17-45）：PILOTDECK_DESKTOP=1 且 PILOTDECK_DESKTOP_RUNTIME_ROOT 等于项目根（带不带尾部斜杠都按 resolve 后比较）时，该项目算虚拟项目——项目级 skill_create 被拒（project_required）、计划文件目录改到 <PilotHome> 下；运行时根以外的项目照常能建项目级 skill。服务端日志不比（skill 落盘后基线的扩展目录监视会打一行 Extensions changed，Rust 没有扩展目录监视，另行处理）。",
+ "env": {
+  "PILOTDECK_DESKTOP": "1",
+  "PILOTDECK_DESKTOP_RUNTIME_ROOT": "{PROJECT}/"
+ },
+ "files": {
+  "home/work/alpha/README.md": "alpha\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Desk\"}"
+   }
+  },
+  {
+   "name": "plan-after-1",
+   "when": [
+    "\"tool_call_id\":\"call_plan_1\""
+   ],
+   "reply": {
+    "text": "Planned."
+   }
+  },
+  {
+   "name": "plan-1",
+   "when": [
+    "desk-1:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_plan_1",
+     "name": "enter_plan_mode",
+     "arguments": {}
+    }
+   }
+  },
+  {
+   "name": "plan-after-2",
+   "when": [
+    "\"tool_call_id\":\"call_plan_2\""
+   ],
+   "reply": {
+    "text": "Planned."
+   }
+  },
+  {
+   "name": "plan-2",
+   "when": [
+    "desk-2:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_plan_2",
+     "name": "enter_plan_mode",
+     "arguments": {}
+    }
+   }
+  },
+  {
+   "name": "plan-after-3",
+   "when": [
+    "\"tool_call_id\":\"call_plan_3\""
+   ],
+   "reply": {
+    "text": "Planned."
+   }
+  },
+  {
+   "name": "plan-3",
+   "when": [
+    "desk-3:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_plan_3",
+     "name": "enter_plan_mode",
+     "arguments": {}
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "skill_create",
+   "params": {
+    "scope": "project",
+    "slug": "proj-skill-1",
+    "projectKey": "{PROJECT}",
+    "content": "---\nname: proj-skill-1\ndescription: Project scoped skill created by content.\n---\nProject body.\n"
+   }
+  },
+  {
+   "ws": "skill_create",
+   "params": {
+    "scope": "project",
+    "slug": "proj-skill-2",
+    "projectKey": "{HOME}/work/alpha",
+    "content": "---\nname: proj-skill-2\ndescription: Project scoped skill created by content.\n---\nProject body.\n"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-desk-1",
+    "channelKey": "test",
+    "message": "desk-1: plan",
+    "allowPlanModeTools": true
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-desk-1",
+      "requestId": "{event.requestId}",
+      "decision": "allow"
+     }
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-desk-2",
+    "channelKey": "test",
+    "projectKey": "{HOME}/work/alpha",
+    "message": "desk-2: plan",
+    "allowPlanModeTools": true
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-desk-2",
+      "requestId": "{event.requestId}",
+      "decision": "allow"
+     }
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  }
+ ]
+}
