@@ -1,0 +1,564 @@
+{
+ "name": "cfg-modules-binding",
+ "about": "modules 段里外部绑定与 SOP 的键（pilot/config/parseModulesConfig.ts:27-491）只比解析与启动期诊断。致命诊断启动时只打印第一条，所以每份配置只改一个字段、用 serve 单独起一次：未知槽位 MODULES_UNKNOWN_FIELD 与未知字段 MODULE_UNKNOWN_FIELD（警告，defaultBaseId / resultLimit 在允许名单里静默接受，比 resolve_settings）；stateMode 致命；外部 HTTP 绑定的 implementationId / contract / transport / endpoint / manifestPath / callPath / timeoutMs / methods / catalog 非法、contract 与槽位不符、credentialEnv 用在非 knowledge 槽位或名字不合规、带凭据的 knowledge 绑定 agentId 不符或带调用方身份字段、deployment 不是对象 / 未知 mode / build 缺 context 或 dockerfile / 端口越界 / healthPath / image 缺镜像；agentLoop 的 stdio（command / args / env / methods）与 tcp（host / port / connectTimeoutMs）非法；选了外部核心模块却没把其余槽位都绑上（MODULE_CORE_BINDING_REQUIRED，同时带 frontendModule / tenantId / actorUserId / agentId / connectTimeoutMs）。SOP：enabled 不是布尔、stateMode、不是对象、legacy 写法 provider / endpoint / definitionsPath / defaultSopId / timeoutMs / contextMode / discoveryEndpoint / discoveryAgentId / discoveryApiKey（${VAR} 未设置）/ discoveryTimeoutMs 非法、provider 与协议字段冲突、协议绑定的 implementationId / contract / transport / manifestPath 非法、deployment 非法、enabled=false 时其余字段不校验。真正连外部模块与 StaffDeck 的部分需要外部服务，不在场景里。",
+ "server": false,
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+ "files": {
+  "cfgs/unknown-fields.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  bogusSlot: {}\n  skills:\n    enabled: true\n    provider: \"pilotdeck\"\n    bogusKey: 1\n    defaultBaseId: \"base-1\"\n    resultLimit: 3\n",
+  "cfgs/state-mode.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  skills:\n    enabled: true\n    provider: \"pilotdeck\"\n    stateMode: \"shared\"\n",
+  "cfgs/impl-id-blank.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  context:\n    enabled: true\n    implementationId: \"  \"\n    contract: \"pilotdeck.context/v1\"\n    transport: \"module-http-v2\"\n    endpoint: \"http://127.0.0.1:9\"\n",
+  "cfgs/contract-not-string.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  context:\n    enabled: true\n    implementationId: \"ext.context\"\n    contract: 5\n    transport: \"module-http-v2\"\n    endpoint: \"http://127.0.0.1:9\"\n",
+  "cfgs/transport-empty.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  context:\n    enabled: true\n    implementationId: \"ext.context\"\n    contract: \"pilotdeck.context/v1\"\n    transport: \"\"\n    endpoint: \"http://127.0.0.1:9\"\n",
+  "cfgs/transport-unsupported.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  context:\n    enabled: true\n    implementationId: \"ext.context\"\n    contract: \"pilotdeck.context/v1\"\n    transport: \"module-grpc-v2\"\n    endpoint: \"http://127.0.0.1:9\"\n",
+  "cfgs/endpoint-ftp.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  context:\n    enabled: true\n    implementationId: \"ext.context\"\n    contract: \"pilotdeck.context/v1\"\n    transport: \"module-http-v2\"\n    endpoint: \"ftp://modules.invalid\"\n",
+  "cfgs/manifest-path-relative.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  context:\n    enabled: true\n    implementationId: \"ext.context\"\n    contract: \"pilotdeck.context/v1\"\n    transport: \"module-http-v2\"\n    endpoint: \"http://127.0.0.1:9\"\n    manifestPath: \"module-manifest\"\n",
+  "cfgs/call-path-relative.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  context:\n    enabled: true\n    implementationId: \"ext.context\"\n    contract: \"pilotdeck.context/v1\"\n    transport: \"module-http-v2\"\n    endpoint: \"http://127.0.0.1:9\"\n    callPath: \"call\"\n",
+  "cfgs/timeout-fraction.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  context:\n    enabled: true\n    implementationId: \"ext.context\"\n    contract: \"pilotdeck.context/v1\"\n    transport: \"module-http-v2\"\n    endpoint: \"http://127.0.0.1:9\"\n    timeoutMs: 1.5\n",
+  "cfgs/methods-duplicate.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  context:\n    enabled: true\n    implementationId: \"ext.context\"\n    contract: \"pilotdeck.context/v1\"\n    transport: \"module-http-v2\"\n    endpoint: \"http://127.0.0.1:9\"\n    methods: [\"list\", \"list\"]\n",
+  "cfgs/contract-mismatch.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  context:\n    enabled: true\n    implementationId: \"ext.context\"\n    contract: \"pilotdeck.tools/v1\"\n    transport: \"module-http-v2\"\n    endpoint: \"http://127.0.0.1:9\"\n",
+  "cfgs/tools-catalog-missing.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  tools:\n    enabled: true\n    implementationId: \"ext.tools\"\n    contract: \"pilotdeck.tools/v1\"\n    transport: \"module-http-v2\"\n    endpoint: \"http://127.0.0.1:9\"\n",
+  "cfgs/tools-catalog-entry-invalid.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  tools:\n    enabled: true\n    implementationId: \"ext.tools\"\n    contract: \"pilotdeck.tools/v1\"\n    transport: \"module-http-v2\"\n    endpoint: \"http://127.0.0.1:9\"\n    catalog: [{\"name\": \"t1\", \"description\": \"\", \"inputSchema\": {}}]\n",
+  "cfgs/credential-env-wrong-slot.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  context:\n    enabled: true\n    implementationId: \"ext.context\"\n    contract: \"pilotdeck.context/v1\"\n    transport: \"module-http-v2\"\n    endpoint: \"http://127.0.0.1:9\"\n    credentialEnv: \"CONTEXT_KEY\"\n",
+  "cfgs/credential-env-lowercase.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  knowledge:\n    enabled: true\n    implementationId: \"staffdeck.knowledge\"\n    contract: \"staffdeck.knowledge/v1\"\n    transport: \"module-http-v2\"\n    endpoint: \"http://127.0.0.1:9\"\n    manifestPath: \"/api/v1/knowledge-module/module-manifest\"\n    callPath: \"/api/v1/agents/agent-1/knowledge-module/v2/module/call\"\n    agentId: \"agent-1\"\n    credentialEnv: \"lower_case\"\n",
+  "cfgs/knowledge-auth-agent-mismatch.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  knowledge:\n    enabled: true\n    implementationId: \"staffdeck.knowledge\"\n    contract: \"staffdeck.knowledge/v1\"\n    transport: \"module-http-v2\"\n    endpoint: \"http://127.0.0.1:9\"\n    manifestPath: \"/api/v1/knowledge-module/module-manifest\"\n    callPath: \"/api/v1/agents/other/knowledge-module/v2/module/call\"\n    agentId: \"agent-1\"\n    credentialEnv: \"KNOWLEDGE_KEY\"\n",
+  "cfgs/knowledge-auth-caller-identity.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  knowledge:\n    enabled: true\n    implementationId: \"staffdeck.knowledge\"\n    contract: \"staffdeck.knowledge/v1\"\n    transport: \"module-http-v2\"\n    endpoint: \"http://127.0.0.1:9\"\n    manifestPath: \"/api/v1/knowledge-module/module-manifest\"\n    callPath: \"/api/v1/agents/agent-1/knowledge-module/v2/module/call\"\n    agentId: \"agent-1\"\n    credentialEnv: \"KNOWLEDGE_KEY\"\n    tenantId: \"t-1\"\n",
+  "cfgs/deployment-not-object.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  context:\n    enabled: true\n    implementationId: \"ext.context\"\n    contract: \"pilotdeck.context/v1\"\n    transport: \"module-http-v2\"\n    endpoint: \"http://127.0.0.1:9\"\n    deployment: 5\n",
+  "cfgs/deployment-mode.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  context:\n    enabled: true\n    implementationId: \"ext.context\"\n    contract: \"pilotdeck.context/v1\"\n    transport: \"module-http-v2\"\n    endpoint: \"http://127.0.0.1:9\"\n    deployment:\n      mode: \"k8s\"\n",
+  "cfgs/deployment-build-context.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  context:\n    enabled: true\n    implementationId: \"ext.context\"\n    contract: \"pilotdeck.context/v1\"\n    transport: \"module-http-v2\"\n    endpoint: \"http://127.0.0.1:9\"\n    deployment:\n      mode: \"build\"\n      port: 8080\n",
+  "cfgs/deployment-build-dockerfile.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  context:\n    enabled: true\n    implementationId: \"ext.context\"\n    contract: \"pilotdeck.context/v1\"\n    transport: \"module-http-v2\"\n    endpoint: \"http://127.0.0.1:9\"\n    deployment:\n      mode: \"build\"\n      context: \".\"\n      dockerfile: \"\"\n      port: 8080\n",
+  "cfgs/deployment-port.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  context:\n    enabled: true\n    implementationId: \"ext.context\"\n    contract: \"pilotdeck.context/v1\"\n    transport: \"module-http-v2\"\n    endpoint: \"http://127.0.0.1:9\"\n    deployment:\n      mode: \"image\"\n      image: \"img:1\"\n      port: 70000\n",
+  "cfgs/deployment-health-path.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  context:\n    enabled: true\n    implementationId: \"ext.context\"\n    contract: \"pilotdeck.context/v1\"\n    transport: \"module-http-v2\"\n    endpoint: \"http://127.0.0.1:9\"\n    deployment:\n      mode: \"image\"\n      image: \"img:1\"\n      port: 8080\n      healthPath: \"health\"\n",
+  "cfgs/deployment-image.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  context:\n    enabled: true\n    implementationId: \"ext.context\"\n    contract: \"pilotdeck.context/v1\"\n    transport: \"module-http-v2\"\n    endpoint: \"http://127.0.0.1:9\"\n    deployment:\n      mode: \"image\"\n      port: 8080\n",
+  "cfgs/loop-command-empty.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  agentLoop:\n    enabled: true\n    implementationId: \"ext.loop\"\n    contract: \"pilotdeck.agent-loop/v1\"\n    transport: \"module-stdio-v2\"\n    command: \"\"\n",
+  "cfgs/loop-args-invalid.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  agentLoop:\n    enabled: true\n    implementationId: \"ext.loop\"\n    contract: \"pilotdeck.agent-loop/v1\"\n    transport: \"module-stdio-v2\"\n    command: \"/bin/false\"\n    args: [1]\n",
+  "cfgs/loop-env-invalid.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  agentLoop:\n    enabled: true\n    implementationId: \"ext.loop\"\n    contract: \"pilotdeck.agent-loop/v1\"\n    transport: \"module-stdio-v2\"\n    command: \"/bin/false\"\n    env:\n      A: 1\n",
+  "cfgs/loop-methods-invalid.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  agentLoop:\n    enabled: true\n    implementationId: \"ext.loop\"\n    contract: \"pilotdeck.agent-loop/v1\"\n    transport: \"module-stdio-v2\"\n    command: \"/bin/false\"\n    methods: []\n",
+  "cfgs/loop-host-blank.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  agentLoop:\n    enabled: true\n    implementationId: \"ext.loop\"\n    contract: \"pilotdeck.agent-loop/v1\"\n    transport: \"module-tcp-v2\"\n    host: \"  \"\n    port: 9\n",
+  "cfgs/loop-port-range.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  agentLoop:\n    enabled: true\n    implementationId: \"ext.loop\"\n    contract: \"pilotdeck.agent-loop/v1\"\n    transport: \"module-tcp-v2\"\n    host: \"127.0.0.1\"\n    port: 70000\n",
+  "cfgs/loop-connect-timeout.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  agentLoop:\n    enabled: true\n    implementationId: \"ext.loop\"\n    contract: \"pilotdeck.agent-loop/v1\"\n    transport: \"module-tcp-v2\"\n    host: \"127.0.0.1\"\n    port: 9\n    connectTimeoutMs: -1\n",
+  "cfgs/core-binding-required.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  agentLoop:\n    enabled: true\n    implementationId: \"ext.loop\"\n    contract: \"pilotdeck.agent-loop/v1\"\n    transport: \"module-tcp-v2\"\n    host: \"127.0.0.1\"\n    port: 9\n    frontendModule: \"fe-loop\"\n    connectTimeoutMs: 500\n  skills:\n    enabled: true\n    implementationId: \"ext.skills\"\n    contract: \"pilotdeck.skills/v1\"\n    transport: \"module-http-v2\"\n    endpoint: \"http://127.0.0.1:9\"\n    frontendModule: \"fe-skills\"\n    tenantId: \"t-1\"\n    actorUserId: \"u-1\"\n    agentId: \"a-1\"\n",
+  "cfgs/sop-enabled-invalid.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  sop:\n    enabled: \"yes\"\n",
+  "cfgs/sop-state-mode.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  sop:\n    enabled: true\n    provider: \"staffdeck\"\n    endpoint: \"http://127.0.0.1:9\"\n    definitionsPath: \"sop/defs\"\n    defaultSopId: \"s1\"\n    stateMode: \"shared\"\n",
+  "cfgs/sop-not-object.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  sop: on-please\n",
+  "cfgs/sop-provider-invalid.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  sop:\n    enabled: true\n    provider: \"other\"\n    endpoint: \"http://127.0.0.1:9\"\n    definitionsPath: \"sop/defs\"\n    defaultSopId: \"s1\"\n",
+  "cfgs/sop-endpoint-invalid.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  sop:\n    enabled: true\n    provider: \"staffdeck\"\n    endpoint: \"not a url\"\n    definitionsPath: \"sop/defs\"\n    defaultSopId: \"s1\"\n",
+  "cfgs/sop-definitions-blank.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  sop:\n    enabled: true\n    provider: \"staffdeck\"\n    endpoint: \"http://127.0.0.1:9\"\n    definitionsPath: \"  \"\n    defaultSopId: \"s1\"\n",
+  "cfgs/sop-default-id-empty.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  sop:\n    enabled: true\n    provider: \"staffdeck\"\n    endpoint: \"http://127.0.0.1:9\"\n    definitionsPath: \"sop/defs\"\n    defaultSopId: \"\"\n",
+  "cfgs/sop-timeout-invalid.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  sop:\n    enabled: true\n    provider: \"staffdeck\"\n    endpoint: \"http://127.0.0.1:9\"\n    definitionsPath: \"sop/defs\"\n    defaultSopId: \"s1\"\n    timeoutMs: 0\n",
+  "cfgs/sop-context-mode-invalid.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  sop:\n    enabled: true\n    provider: \"staffdeck\"\n    endpoint: \"http://127.0.0.1:9\"\n    definitionsPath: \"sop/defs\"\n    defaultSopId: \"s1\"\n    contextMode: \"fork\"\n",
+  "cfgs/sop-discovery-endpoint.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  sop:\n    enabled: true\n    provider: \"staffdeck\"\n    endpoint: \"http://127.0.0.1:9\"\n    definitionsPath: \"sop/defs\"\n    defaultSopId: \"s1\"\n    discoveryAgentId: \"agent\"\n    discoveryApiKey: \"k\"\n",
+  "cfgs/sop-discovery-agent.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  sop:\n    enabled: true\n    provider: \"staffdeck\"\n    endpoint: \"http://127.0.0.1:9\"\n    definitionsPath: \"sop/defs\"\n    defaultSopId: \"s1\"\n    discoveryEndpoint: \"http://127.0.0.1:9\"\n    discoveryApiKey: \"k\"\n",
+  "cfgs/sop-discovery-key-missing.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  sop:\n    enabled: true\n    provider: \"staffdeck\"\n    endpoint: \"http://127.0.0.1:9\"\n    definitionsPath: \"sop/defs\"\n    defaultSopId: \"s1\"\n    discoveryEndpoint: \"http://127.0.0.1:9\"\n    discoveryAgentId: \"agent\"\n    discoveryApiKey: \"${SOP_DISCOVERY_KEY_MISSING}\"\n",
+  "cfgs/sop-discovery-timeout.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  sop:\n    enabled: true\n    provider: \"staffdeck\"\n    endpoint: \"http://127.0.0.1:9\"\n    definitionsPath: \"sop/defs\"\n    defaultSopId: \"s1\"\n    discoveryEndpoint: \"http://127.0.0.1:9\"\n    discoveryAgentId: \"agent\"\n    discoveryApiKey: \"k\"\n    discoveryPath: \"/discover\"\n    discoveryTimeoutMs: -2\n",
+  "cfgs/sop-binding-conflict.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  sop:\n    enabled: true\n    provider: \"staffdeck\"\n    endpoint: \"http://127.0.0.1:9\"\n    definitionsPath: \"sop/defs\"\n    defaultSopId: \"s1\"\n    implementationId: \"staffdeck.sop\"\n",
+  "cfgs/sop-impl-id-blank.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  sop:\n    enabled: true\n    implementationId: \"  \"\n    contract: \"sop.lifecycle/v2\"\n    transport: \"sop-http-v2\"\n    endpoint: \"http://127.0.0.1:9\"\n    definitionsPath: \"sop/defs\"\n    defaultSopId: \"s1\"\n",
+  "cfgs/sop-contract-invalid.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  sop:\n    enabled: true\n    implementationId: \"staffdeck.sop\"\n    contract: \"sop.lifecycle/v1\"\n    transport: \"sop-http-v2\"\n    endpoint: \"http://127.0.0.1:9\"\n    definitionsPath: \"sop/defs\"\n    defaultSopId: \"s1\"\n",
+  "cfgs/sop-transport-invalid.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  sop:\n    enabled: true\n    implementationId: \"staffdeck.sop\"\n    contract: \"sop.lifecycle/v2\"\n    transport: \"sop-http-v1\"\n    endpoint: \"http://127.0.0.1:9\"\n    definitionsPath: \"sop/defs\"\n    defaultSopId: \"s1\"\n",
+  "cfgs/sop-manifest-path-invalid.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  sop:\n    enabled: true\n    implementationId: \"staffdeck.sop\"\n    contract: \"sop.lifecycle/v2\"\n    transport: \"sop-http-v2\"\n    endpoint: \"http://127.0.0.1:9\"\n    definitionsPath: \"sop/defs\"\n    defaultSopId: \"s1\"\n    manifestPath: \"healthz\"\n    frontendModule: \"fe-sop\"\n",
+  "cfgs/sop-deployment-invalid.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  sop:\n    enabled: true\n    provider: \"staffdeck\"\n    endpoint: \"http://127.0.0.1:9\"\n    definitionsPath: \"sop/defs\"\n    defaultSopId: \"s1\"\n    deployment:\n      mode: \"image\"\n      image: \"\"\n      port: 8080\n",
+  "cfgs/sop-disabled.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  sop:\n    enabled: false\n    endpoint: \"not a url\"\n"
+ },
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/unknown-fields.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/state-mode.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/impl-id-blank.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/contract-not-string.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/transport-empty.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/transport-unsupported.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/endpoint-ftp.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/manifest-path-relative.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/call-path-relative.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/timeout-fraction.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/methods-duplicate.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/contract-mismatch.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/tools-catalog-missing.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/tools-catalog-entry-invalid.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/credential-env-wrong-slot.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/credential-env-lowercase.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/knowledge-auth-agent-mismatch.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/knowledge-auth-caller-identity.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/deployment-not-object.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/deployment-mode.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/deployment-build-context.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/deployment-build-dockerfile.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/deployment-port.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/deployment-health-path.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/deployment-image.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/loop-command-empty.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/loop-args-invalid.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/loop-env-invalid.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/loop-methods-invalid.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/loop-host-blank.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/loop-port-range.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/loop-connect-timeout.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/core-binding-required.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/sop-enabled-invalid.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/sop-state-mode.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/sop-not-object.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/sop-provider-invalid.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/sop-endpoint-invalid.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/sop-definitions-blank.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/sop-default-id-empty.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/sop-timeout-invalid.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/sop-context-mode-invalid.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/sop-discovery-endpoint.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/sop-discovery-agent.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/sop-discovery-key-missing.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/sop-discovery-timeout.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/sop-binding-conflict.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/sop-impl-id-blank.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/sop-contract-invalid.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/sop-transport-invalid.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/sop-manifest-path-invalid.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/sop-deployment-invalid.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/sop-disabled.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  }
+ ]
+}
