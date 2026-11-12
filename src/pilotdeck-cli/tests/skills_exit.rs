@@ -2,7 +2,7 @@
 use std::{fs, process::Command};
 
 #[test]
-fn usage_json_error_exit_and_gateway_todo_are_distinct() {
+fn usage_json_error_exit_and_gateway_cancel_are_distinct() {
     let root = std::env::temp_dir().join(format!("pdrs-skills-exit-{}", std::process::id()));
     fs::create_dir_all(root.join("source/bad")).unwrap();
     fs::write(root.join("source/bad/SKILL.md"), "no frontmatter").unwrap();
@@ -37,10 +37,9 @@ fn usage_json_error_exit_and_gateway_todo_are_distinct() {
     assert_eq!(server.status.code(), Some(1));
     assert!(server.stdout.is_empty());
     assert_eq!(server.stderr, b"Config must contain an agent section.\n");
-    // `cron` and `gateway setup` are no longer TODO entries (cron probes the
-    // fixed 127.0.0.1:18789, which tests must not touch); the iLink QR login
-    // that `gateway setup weixin` reaches on a "yes" still is.
-    let todo = {
+    // Setup cancellation stays offline. A positive iLink answer now performs
+    // the real QR flow and belongs in the isolated HTTPS mock suite.
+    let cancelled = {
         use std::io::Write;
         let mut child = Command::new(env!("CARGO_BIN_EXE_pilotdeck"))
             .env_clear()
@@ -53,14 +52,15 @@ fn usage_json_error_exit_and_gateway_todo_are_distinct() {
             .stderr(std::process::Stdio::piped())
             .spawn()
             .unwrap();
-        child.stdin.take().unwrap().write_all(b"y\n").unwrap();
+        child.stdin.take().unwrap().write_all(b"n\n").unwrap();
         child.wait_with_output().unwrap()
     };
-    assert_eq!(todo.status.code(), Some(2));
+    assert_eq!(cancelled.status.code(), Some(0));
+    assert!(cancelled.stderr.is_empty());
     assert!(
-        String::from_utf8(todo.stderr)
+        String::from_utf8(cancelled.stdout)
             .unwrap()
-            .starts_with("pilotdeck-rs TODO: ")
+            .ends_with("已取消。\n")
     );
     assert!(!root.join("pilot").exists());
     fs::remove_dir_all(root).unwrap();
