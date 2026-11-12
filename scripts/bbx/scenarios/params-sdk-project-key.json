@@ -1,0 +1,42 @@
+{
+  "name": "params-sdk-project-key",
+  "about": "SDK 控制类 method 的 projectKey：usage_snapshot / model_usage_snapshot 与 set_mcp_servers 用它选项目运行时（ProjectRuntimeRegistry.ts:1184-1222,1310-1375,1540-1551，`resolve(projectKey ?? fallback)`，数字在 path.resolve 抛错，空串是工作目录）；mcp_server_reconnect / mcp_server_toggle / set_mcp_permission_mode_override / apply_flag_settings 不读它（InProcessGateway.ts:2293-2348，ProjectRuntimeRegistry.ts:914-953,1223-1293）。在 alpha 项目跑一轮后按项目取统计；给会话配 SDK MCP 服务后用各种 projectKey 开关 / 重连 / 改权限模式 / 应用 flag。",
+  "files": {
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+    "home/work/alpha/README.md": "alpha\n"
+  },
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Sdk keys\"}" } },
+    { "name": "main", "reply": { "text": "Answer." } }
+  ],
+  "steps": [
+    { "ws": "submit_turn", "params": { "sessionKey": "s-sk", "channelKey": "test", "projectKey": "{HOME}/work/alpha", "runId": "run-sk", "message": "sk: hello" }, "timeout": 20000 },
+    { "ws": "usage_snapshot", "params": { "projectKey": "{HOME}/work/alpha" } },
+    { "ws": "usage_snapshot", "params": { "projectKey": "{HOME}/work/alpha", "sessionKey": "s-sk" } },
+    { "ws": "usage_snapshot", "params": { "sessionKey": "s-sk" } },
+    { "ws": "usage_snapshot", "params": { "projectKey": "" } },
+    { "ws": "usage_snapshot", "params": { "projectKey": 123 } },
+    { "ws": "usage_snapshot", "params": { "projectKey": "{ROOT}/nowhere" } },
+    { "ws": "model_usage_snapshot", "params": { "projectKey": "{HOME}/work/alpha" } },
+    { "ws": "model_usage_snapshot", "params": { "projectKey": "{HOME}/work/alpha", "sessionKey": "s-sk" } },
+    { "ws": "model_usage_snapshot", "params": { "sessionKey": "s-sk" } },
+    { "ws": "model_usage_snapshot", "params": { "projectKey": "" } },
+    { "ws": "model_usage_snapshot", "params": { "projectKey": [] } },
+    { "ws": "set_mcp_servers", "params": { "sessionKey": "s-mcp", "projectKey": "{HOME}/work/alpha", "servers": { "local-a": { "type": "stdio", "command": "/bin/echo", "args": ["a"] } } } },
+    { "ws": "set_mcp_servers", "params": { "sessionKey": "s-mcp-2", "projectKey": 123, "servers": { "local-b": { "type": "stdio", "command": "/bin/echo" } } } },
+    { "ws": "set_mcp_servers", "params": { "sessionKey": "s-mcp-3", "projectKey": "", "servers": { "local-c": { "type": "stdio", "command": "/bin/echo" } } } },
+    { "ws": "mcp_server_status", "params": { "sessionKey": "s-mcp", "projectKey": "{HOME}/work/alpha" } },
+    { "ws": "mcp_server_toggle", "params": { "sessionKey": "s-mcp", "serverName": "local-a", "enabled": false, "projectKey": 123 } },
+    { "ws": "mcp_server_reconnect", "params": { "sessionKey": "s-mcp", "serverName": "local-a", "projectKey": "{ROOT}/nowhere" } },
+    { "ws": "mcp_server_toggle", "params": { "sessionKey": "s-mcp", "serverName": "local-a", "enabled": true, "projectKey": "" } },
+    { "ws": "mcp_server_reconnect", "params": { "sessionKey": "s-mcp", "serverName": "local-a", "projectKey": 123 } },
+    { "ws": "mcp_server_reconnect", "params": { "sessionKey": "s-mcp", "serverName": "local-a", "projectKey": "{HOME}/work/alpha" } },
+    { "ws": "mcp_server_status", "params": { "sessionKey": "s-mcp", "projectKey": "{HOME}/work/alpha" } },
+    { "ws": "set_mcp_permission_mode_override", "params": { "sessionKey": "s-mcp", "serverName": "local-a", "mode": "auto", "projectKey": 123 } },
+    { "ws": "set_mcp_permission_mode_override", "params": { "sessionKey": "s-mcp", "serverName": "local-a", "mode": "default", "projectKey": "{ROOT}/nowhere" } },
+    { "ws": "set_mcp_permission_mode_override", "params": { "sessionKey": "s-mcp", "serverName": "local-a", "mode": null, "projectKey": "" } },
+    { "ws": "apply_flag_settings", "params": { "sessionKey": "s-mcp", "settings": { "effortLevel": "high" }, "projectKey": 123 } },
+    { "ws": "apply_flag_settings", "params": { "sessionKey": "s-mcp", "settings": { "permissions": { "defaultMode": "plan" } }, "projectKey": "{ROOT}/nowhere" } },
+    { "ws": "apply_flag_settings", "params": { "sessionKey": "s-mcp", "settings": { "effortLevel": null, "permissions": null }, "projectKey": "" } }
+  ]
+}
