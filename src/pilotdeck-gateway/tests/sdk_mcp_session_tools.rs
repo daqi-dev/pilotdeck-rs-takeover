@@ -220,6 +220,7 @@ async fn compose(
         session_key: &session_key.into(),
         max_per_session_instances: 5.0,
         on_diagnostic: None,
+        browser_use: None,
     })
     .await
     .expect("#1433 session composition")

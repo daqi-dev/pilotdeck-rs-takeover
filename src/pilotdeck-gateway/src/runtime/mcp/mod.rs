@@ -12,6 +12,7 @@
 //!   runtime, the MCP-to-tool bridge, and project/session ownership.
 
 pub mod bridge;
+pub mod browser_use;
 pub mod client;
 pub mod gateway;
 #[cfg(test)]

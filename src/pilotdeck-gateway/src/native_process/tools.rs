@@ -2338,6 +2338,13 @@ pub struct SessionMcpToolsOptions<'a> {
     pub max_per_session_instances: f64,
     /// `onDiagnostic`; production writes to stderr.
     pub on_diagnostic: Option<McpDiagnosticSink>,
+    /// `preparePerSessionSpecs` (ProjectRuntimeRegistry.ts:345-351): the
+    /// browser-use spec preparation, with the gateway environment it reads.
+    /// `None` passes the per-session specs through unchanged.
+    pub browser_use: Option<(
+        crate::runtime::mcp::browser_use::BrowserUsePreparation,
+        crate::config::Env,
+    )>,
 }
 
 /// #1433: `SessionMcpRuntimeBundle.compose()` — build one session's MCP tool
@@ -2397,6 +2404,20 @@ pub async fn session_mcp_tools(
         diagnostic(limit_diagnostic(), None);
         return Ok((tools, release));
     }
+    // `preparePerSessionSpecs` runs after the capacity pre-check and before
+    // the runtime is created (SessionMcpRuntimeBundle.ts:79-81); a failure
+    // to create the output directory fails the composition like the TS
+    // `mkdirSync` throw.
+    let specs = match &options.browser_use {
+        Some((preparation, env)) => preparation
+            .prepare(
+                specs,
+                &crate::storage::sanitize_session_id(options.session_key),
+                &|name| env.get(name).cloned(),
+            )
+            .map_err(|error| RuntimeError::new(error.to_string()))?,
+        None => specs,
+    };
     let runtime = options.provider.create_runtime(specs);
     // #2442: the pre-check above and the insertion below are two separate
     // lock acquisitions; another session's concurrent prepare can register
@@ -2762,6 +2783,7 @@ mod tests {
             session_key: &JsString::from(session_key),
             max_per_session_instances,
             on_diagnostic,
+            browser_use: None,
         })
         .await
     }
