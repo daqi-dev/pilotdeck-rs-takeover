@@ -1,0 +1,147 @@
+{
+  "name": "robust-frame-handshake",
+  "about": "握手与帧边界：握手前先发 request 帧、协议版本 1.1 / 空串、缺 clientVersion、token 类型不对、hello 是 JSON 字符串 / 数组、未知 type、clientName 不在名单里；握手成功后未知 method、params 是字符串 / 数组、submit_turn 缺 sessionKey / message / 空 message、permission_decide / elicitation_respond / abort_turn 不带参数。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Robust run\"}"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "connect": {
+        "type": "request",
+        "id": "q0",
+        "method": "describe_server",
+        "params": {}
+      }
+    },
+    {
+      "connect": {
+        "type": "hello",
+        "protocolVersion": "1.1",
+        "clientName": "test",
+        "clientVersion": "0.0.0",
+        "token": "{TOKEN}"
+      }
+    },
+    {
+      "connect": {
+        "type": "hello",
+        "protocolVersion": "",
+        "clientName": "test",
+        "clientVersion": "0.0.0",
+        "token": "{TOKEN}"
+      }
+    },
+    {
+      "connect": {
+        "type": "hello",
+        "protocolVersion": "1.2",
+        "clientName": "test",
+        "token": "{TOKEN}"
+      }
+    },
+    {
+      "connect": {
+        "type": "hello",
+        "protocolVersion": "1.2",
+        "clientName": "test",
+        "clientVersion": "0.0.0",
+        "token": 12345
+      }
+    },
+    {
+      "connect": "hello"
+    },
+    {
+      "connect": [
+        {
+          "type": "hello",
+          "protocolVersion": "1.2",
+          "clientName": "test",
+          "clientVersion": "0.0.0",
+          "token": "{TOKEN}"
+        }
+      ]
+    },
+    {
+      "connect": {
+        "type": "hullo",
+        "protocolVersion": "1.2"
+      }
+    },
+    {
+      "connect": {
+        "type": "hello",
+        "protocolVersion": "1.2",
+        "clientName": "not-a-known-client",
+        "clientVersion": "0.0.0",
+        "token": "{TOKEN}"
+      }
+    },
+    {
+      "disconnect": true
+    },
+    {
+      "connect": true
+    },
+    {
+      "ws": "no_such_method",
+      "params": {}
+    },
+    {
+      "ws": "describe_server",
+      "params": "a string"
+    },
+    {
+      "ws": "list_sessions",
+      "params": [
+        1,
+        2
+      ]
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "channelKey": "test",
+        "message": "no session"
+      },
+      "timeout": 8000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test"
+      },
+      "timeout": 8000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": ""
+      },
+      "timeout": 8000
+    },
+    {
+      "ws": "permission_decide",
+      "params": {}
+    },
+    {
+      "ws": "elicitation_respond",
+      "params": {}
+    },
+    {
+      "ws": "abort_turn",
+      "params": {}
+    }
+  ]
+}
