@@ -20,7 +20,7 @@
 
 ## 范围与安全边界
 
-本轮包含全部后端、非 TUI CLI、StaffDeck，排除 Web 前端、ui/server、桌面壳和 TUI。默认核心 Rust native 不依赖 Node，保留独立 sidecar、Rust 源码级扩展、MCP、Hook 和 stdio/TCP 外部扩展。旧 JS 函数加载不在范围内。
+本轮包含全部后端和非 TUI CLI；用户已于 2026-11-13 将 StaffDeck 本期延期，排除 Web 前端、ui/server、桌面壳和 TUI。默认核心 Rust native 不依赖 Node，保留独立 sidecar、Rust 源码级扩展、MCP、Hook 和 stdio/TCP 外部扩展。旧 JS 函数加载不在范围内。
 
 所有产品命令（包括 help/version）必须隔离 HOME 与 PILOT_HOME。不得接触真实 `~/.pilotdeck`、凭据或 `~/ws/PilotDeck-rust-program-20261009/`，不得启停其他任务进程。只按本任务记录的明确 PID 管理进程，不使用按名称批量终止。产品自动化只用本地 mock；固定 18789 场景使用 Docker 私有网络，不映射宿主端口。
 
