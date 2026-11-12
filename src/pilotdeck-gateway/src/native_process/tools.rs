@@ -1256,6 +1256,14 @@ impl SessionTools {
                 },
                 hooks: self.hooks.clone(),
                 contribution: None,
+                // `sessionOverride?.cwd` composed as given (SessionAgentConfigBundle.ts:57).
+                non_string_cwd: self
+                    .config
+                    .get("cwd")
+                    .filter(|cwd| {
+                        !matches!(cwd, JsValue::String(_) | JsValue::Undefined | JsValue::Null)
+                    })
+                    .cloned(),
                 base_env: Some(self.env.clone()),
                 signal,
                 steer_recorder: Some(Arc::new(sink)),

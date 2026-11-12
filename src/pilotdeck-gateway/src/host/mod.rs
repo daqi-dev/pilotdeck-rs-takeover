@@ -244,6 +244,9 @@ pub struct HostError {
     pub diagnostic: String,
     /// How the sidecar process ended, when the failure closed it.
     pub exit: Option<Box<SidecarExit>>,
+    /// A [`HostErrorKind::LoopFailure`]'s `modelState`: what the loop had
+    /// recorded before it failed, kept for the session's next turn.
+    pub model_state: Option<Box<JsValue>>,
 }
 
 /// How a sidecar child process ended (TS `ExitStatus`,
@@ -303,6 +306,7 @@ impl HostError {
             module_error: None,
             diagnostic: String::new(),
             exit: None,
+            model_state: None,
         }
     }
     fn protocol(message: impl Into<String>) -> Self {

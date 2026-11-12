@@ -1,0 +1,21 @@
+{
+  "name": "params-submit-turn-cwd-type",
+  "about": "submit_turn 的 workspaceCwd 为真但不是字符串（数字、true、对象、数组）时，基线只看真值就原样存成会话 cwd（InProcessGateway.ts:1269-1271 → ProjectRuntimeRegistry.ts:525-529 → SessionAgentConfigBundle.ts:57 的 config.cwd）：系统提示词里是 String(cwd)，模型照常答完，随后 Stop 钩子派发时 buildTurnEnvironment 的 path.resolve(cwd)（TurnEnvironment.ts:14-15，AgentLoop.ts:1884）抛 ERR_INVALID_ARG_TYPE，这一轮以 turn_failed / agent_invalid_state 结束，之后同一会话每轮都这样；失败前记下的 token 校准仍留给下一轮（AgentLoop.ts:953-958）。对照：已在内存里的会话再带非字符串 workspaceCwd 不立即生效，close_session 后重建才生效；0 和空串这类假值不存。",
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Cwd type\"}" } },
+    { "name": "main", "reply": { "text": "ok" } }
+  ],
+  "steps": [
+    { "ws": "submit_turn", "params": { "sessionKey": "s-num", "channelKey": "test", "message": "num 1", "workspaceCwd": 5 } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-num", "channelKey": "test", "message": "num 2" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-true", "channelKey": "test", "message": "true 1", "workspaceCwd": true } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-obj", "channelKey": "test", "message": "obj 1", "workspaceCwd": { "a": 1 } } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-arr", "channelKey": "test", "message": "arr 1", "workspaceCwd": ["x"] } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-late", "channelKey": "test", "message": "late 1" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-late", "channelKey": "test", "message": "late 2", "workspaceCwd": 7 } },
+    { "ws": "close_session", "params": { "sessionKey": "s-late" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-late", "channelKey": "test", "message": "late 3" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-zero", "channelKey": "test", "message": "zero 1", "workspaceCwd": 0 } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-empty", "channelKey": "test", "message": "empty 1", "workspaceCwd": "" } }
+  ]
+}

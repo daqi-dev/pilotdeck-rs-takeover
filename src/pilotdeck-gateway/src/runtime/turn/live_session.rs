@@ -77,6 +77,7 @@ impl SessionLifecycle {
                 session_id: identity.session_id.clone(),
                 turn_id: identity.turn_id.clone(),
                 cwd: cwd.clone(),
+                non_string_cwd: None,
                 permission_mode: None,
                 base_env: input.base_env.clone(),
                 signal: Some(signal),

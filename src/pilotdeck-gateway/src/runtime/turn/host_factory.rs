@@ -811,6 +811,7 @@ impl TurnHostFactory {
                         session_id: identity.session_id.clone(),
                         turn_id: identity.turn_id.clone(),
                         cwd: interaction.permission.context.cwd.clone(),
+                        non_string_cwd: interaction.non_string_cwd.clone(),
                         permission_mode: Some(
                             interaction.permission.context.mode.as_js_string().clone(),
                         ),

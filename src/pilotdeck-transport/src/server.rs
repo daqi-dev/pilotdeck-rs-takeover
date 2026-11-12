@@ -915,7 +915,7 @@ fn phase_name(phase: OperationPhase) -> &'static str {
         OperationPhase::Resolving => "resolving",
     }
 }
-fn failure_terminal(error: PortError) -> ExecutionTerminal {
+pub(crate) fn failure_terminal(error: PortError) -> ExecutionTerminal {
     let accepted_call = if let PortError::AcceptedUnknown {
         identity,
         last_applied_sequence,

@@ -33,6 +33,11 @@ pub struct Binding {
     pub session_id: JsString,
     pub turn_id: JsString,
     pub cwd: JsString,
+    /// The composed `config.cwd` when it is not a string (a truthy
+    /// non-string `workspaceCwd` stored by `setSessionCwd`). The loop's
+    /// `buildTurnEnvironment` (TurnEnvironment.ts:14-15) then throws from
+    /// `path.resolve(cwd)` on every dispatch.
+    pub non_string_cwd: Option<JsValue>,
     pub permission_mode: Option<JsString>,
     /// Host config environment, or the process environment when absent.
     pub base_env: Option<JsObject>,
@@ -115,6 +120,9 @@ impl Handler {
                 .ports
                 .as_ref()
                 .expect("presence checked before payload parsing");
+            if let Some(cwd) = &ports.binding.non_string_cwd {
+                return Err(non_string_cwd_error(cwd));
+            }
             let base_input = base_input(&ports.binding);
             let env = build_turn_environment(
                 ports.binding.base_env.as_ref(),
@@ -186,6 +194,22 @@ fn base_input(binding: &Binding) -> JsObject {
         input.insert("permissionMode".into(), JsValue::String(mode.clone()));
     }
     input
+}
+
+/// Node's `path.resolve(cwd)` over a non-string cwd: `ERR_INVALID_ARG_TYPE`
+/// on its first argument, `paths[0]`.
+fn non_string_cwd_error(cwd: &JsValue) -> HostError {
+    let error = match crate::metadata::argument_received(cwd) {
+        crate::metadata::ArgumentReceived::Text(received) => {
+            let mut error = ModuleError::new(crate::metadata::invalid_arg_type_message(
+                "paths[0]", &received,
+            ));
+            error.code = Some("ERR_INVALID_ARG_TYPE".into());
+            error
+        }
+        crate::metadata::ArgumentReceived::Throws { message, .. } => ModuleError::new(message),
+    };
+    error.into()
 }
 
 /// TS `buildTurnEnvironment`: base env (or process env) plus the three

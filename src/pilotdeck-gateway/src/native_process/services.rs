@@ -1116,9 +1116,8 @@ fn unavailable(message: &str) -> SubmitError {
 /// session is next composed.
 struct Cwd(Arc<super::SessionOverrides>);
 impl SubmitCwdService for Cwd {
-    fn set(&self, session: &JsString, cwd: &JsString) -> Result<(), SubmitError> {
-        self.0
-            .set_session_cwd(session, &JsValue::String(cwd.clone()));
+    fn set(&self, session: &JsString, cwd: &JsValue) -> Result<(), SubmitError> {
+        self.0.set_session_cwd(session, cwd);
         Ok(())
     }
 }

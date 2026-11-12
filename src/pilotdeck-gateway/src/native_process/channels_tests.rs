@@ -1965,7 +1965,7 @@ impl SubmitHost for RecordingSubmitHost {
     fn failure_guard_config(&self) -> Option<JsValue> {
         None
     }
-    fn set_session_cwd(&self, _session: &JsString, _cwd: &JsString) -> Result<(), SubmitError> {
+    fn set_session_cwd(&self, _session: &JsString, _cwd: &JsValue) -> Result<(), SubmitError> {
         Ok(())
     }
     fn now_ms(&self) -> f64 {
