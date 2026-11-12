@@ -1685,6 +1685,13 @@ impl MutationRecorder for Durable {
     }
 }
 
+/// `sdkSessionConfig.deferredTools` (name, searchHint) with the session's
+/// revealed names.
+type DeferredTools = (
+    Vec<(JsString, Option<JsString>)>,
+    builtin::search_tools::RevealedTools,
+);
+
 /// The session's share of the baseline's execution world
 /// (`createNodeExecutionWorldBundle`): what the builtin tools close over.
 #[derive(Clone)]
@@ -1703,10 +1710,7 @@ pub(super) struct ExecutionWorld {
     )>,
     /// `sdkSessionConfig.deferredTools` (name, searchHint) and the names this
     /// session's `search_tools` calls revealed.
-    deferred: Option<(
-        Vec<(JsString, Option<JsString>)>,
-        builtin::search_tools::RevealedTools,
-    )>,
+    deferred: Option<DeferredTools>,
     /// `readSkill: { loader, lister }`: the project's plugin runtime.
     skills: Option<Arc<crate::runtime::plugins::PluginRuntime>>,
     /// The gateway's `extraTools` (the automation providers' tools,

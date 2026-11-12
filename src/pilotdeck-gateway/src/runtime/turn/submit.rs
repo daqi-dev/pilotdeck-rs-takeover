@@ -461,7 +461,7 @@ impl TurnSubmitter {
                 return Ok(());
             }
         }
-        cleanup.reservation = self.owner.begin_turn(&run.session(), &run.run_id);
+        cleanup.reservation = self.owner.begin_turn(run.session(), &run.run_id);
         if cleanup.reservation.is_none() {
             cleanup.release();
             // TS busy distinguishes explicit null/false from an absent field,
@@ -472,7 +472,7 @@ impl TurnSubmitter {
             } else {
                 format!(
                     "Session {} already has an active turn.",
-                    display(&run.session())
+                    display(run.session())
                 )
             };
             let hint =
@@ -480,7 +480,7 @@ impl TurnSubmitter {
             let exact_message = if sdk_admission {
                 JsValue::from(message.as_str())
             } else {
-                busy_message(&run.session())
+                busy_message(run.session())
             };
             if !sdk_admission {
                 let mut busy = status("session_busy", &message, hint, "session");
@@ -558,7 +558,7 @@ impl TurnSubmitter {
             .await;
             return Ok(());
         }
-        let completion = self.owner.begin_completion(&run.session(), &run.run_id);
+        let completion = self.owner.begin_completion(run.session(), &run.run_id);
         cleanup.completion = Some(completion.clone());
         admitted(&run);
         if sdk {
@@ -570,7 +570,7 @@ impl TurnSubmitter {
                     Ok(changed) => {
                         if changed {
                             self.owner
-                                .mark_session_dirty(&run.session(), "sdk_session_config_changed");
+                                .mark_session_dirty(run.session(), "sdk_session_config_changed");
                         }
                         None
                     }
@@ -600,7 +600,7 @@ impl TurnSubmitter {
         if let Some(cwd) = field(&input, "workspaceCwd")
             .as_string()
             .filter(|cwd| !cwd.is_empty())
-            && let Err(error) = self.host.set_session_cwd(&run.session(), cwd)
+            && let Err(error) = self.host.set_session_cwd(run.session(), cwd)
         {
             cleanup.release();
             self.preflight_events(
@@ -665,7 +665,7 @@ impl TurnSubmitter {
                 if !worker_timeout.load(Ordering::SeqCst)
                     && submitter
                         .owner
-                        .is_current_completion(&worker_run.session(), &worker_completion)
+                        .is_current_completion(worker_run.session(), &worker_completion)
                     && worker_terminal.claim()
                 {
                     submitter
@@ -754,7 +754,7 @@ impl TurnSubmitter {
                     let ms = timeout.expect("timer only fires with a timeout");
                     let message = format!("Turn exceeded the {}ms timeout.", crate::js_value::number_string(ms));
                     let hint = "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.";
-                    let _ = self.host.reject_pending(&run.session(), "turn_timeout");
+                    let _ = self.host.reject_pending(run.session(), "turn_timeout");
                     let _ = handle.abort(&format!("timeout:{}", display(&run.run_id)).into());
                     if owns_terminal {
                         let mut failure = status("turn_timeout", &message, hint, "turn");
@@ -824,7 +824,7 @@ impl TurnSubmitter {
             let _ = barrier.await;
         };
         tokio::join!(manage, consume);
-        let rejected = self.host.reject_pending(&run.session(), "turn_ended");
+        let rejected = self.host.reject_pending(run.session(), "turn_ended");
         // TS releases admission before post_agent and the timeout close; fence
         // completion remains after both. Keep workspace ownership until then.
         cleanup.end_admission();
@@ -855,7 +855,7 @@ impl TurnSubmitter {
         self.capture_post(&workspace, &progress, &run, timed_out, stable)
             .await;
         if timed_out {
-            let close = self.owner.close(&run.session());
+            let close = self.owner.close(run.session());
             tokio::spawn(async move {
                 let _ = close.await;
             });
@@ -983,7 +983,7 @@ impl TurnSubmitter {
                 return;
             };
             input.workspace_stable = Some(stable);
-            let abort = self.owner.aborted_turn_reason(&run.session(), &run.run_id);
+            let abort = self.owner.aborted_turn_reason(run.session(), &run.run_id);
             input.failure_kind = Some(if timed_out {
                 "timeout".into()
             } else {
@@ -1086,7 +1086,7 @@ impl TurnSubmitter {
             {
                 progress.lock().unwrap().input = Some(WorkspaceSnapshotInput {
                     workspace_id: display(workspace),
-                    session_id: display(&run.session()),
+                    session_id: display(run.session()),
                     turn_id: display(&run.run_id),
                     run_id: display(&run.run_id),
                     workspace_dir: display(cwd),
@@ -1162,7 +1162,7 @@ impl TurnSubmitter {
             .map_err(|error| SubmitError::new("gateway_submit_failed", error.message))?
         {
             if timed_out.load(Ordering::SeqCst)
-                || !self.owner.is_current_completion(&run.session(), completion)
+                || !self.owner.is_current_completion(run.session(), completion)
             {
                 break;
             }
@@ -1309,7 +1309,7 @@ impl TurnSubmitter {
                 && !timed_out.load(Ordering::SeqCst)
                 && self
                     .owner
-                    .is_current_completion(&run.session(), completion)
+                    .is_current_completion(run.session(), completion)
                 && !guard.is_tripped()
                 && let Some(trip) = guard.observe(&event)
                 // Same single-writer rule as the pump failure path: a policy
@@ -1369,7 +1369,7 @@ impl Cleanup<'_> {
     fn end_admission(&mut self) {
         if let Some(reservation) = self.reservation.take() {
             self.submitter.owner.end_turn(
-                &self.run.session(),
+                self.run.session(),
                 Some(&self.run.run_id),
                 Some(&reservation),
             );
@@ -1389,14 +1389,14 @@ impl Cleanup<'_> {
         if let Some(completion) = self.completion.take() {
             self.submitter
                 .owner
-                .clear_turn_abort_reason(&self.run.session(), &self.run.run_id);
+                .clear_turn_abort_reason(self.run.session(), &self.run.run_id);
             self.submitter
                 .owner
-                .complete_turn(&self.run.session(), &completion);
+                .complete_turn(self.run.session(), &completion);
         }
         self.submitter
             .host
-            .release_claim(&self.run.session(), &self.run.run_id);
+            .release_claim(self.run.session(), &self.run.run_id);
     }
 }
 impl Drop for Cleanup<'_> {

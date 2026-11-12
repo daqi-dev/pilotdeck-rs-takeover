@@ -164,9 +164,9 @@ impl Drop for SubmissionDrain {
         let mut drains = self.drains.lock().unwrap();
         if let Some((run, done)) = drains.active.remove(&self.id) {
             if let Some(run) = run
-                && drains.current.get(&run.session()) == Some(&self.id)
+                && drains.current.get(run.session()) == Some(&self.id)
             {
-                drains.current.remove(&run.session());
+                drains.current.remove(run.session());
             }
             done.send_replace(true);
         }

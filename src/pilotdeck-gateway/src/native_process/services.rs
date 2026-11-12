@@ -1372,7 +1372,7 @@ impl SubmitHostServices for Services {
             .recorders
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .get(&run.session())
+            .get(run.session())
             .and_then(std::sync::Weak::upgrade);
         let run = run.clone();
         let status = status.clone();
@@ -1382,7 +1382,7 @@ impl SubmitHostServices for Services {
             tokio::task::spawn_blocking(move || {
                 recorder
                     .writer()
-                    .record_agent_status_message(&run.session(), &run.run_id, &status)
+                    .record_agent_status_message(run.session(), &run.run_id, &status)
             })
             .await
             .map_err(|e| failure(e.to_string()))?

@@ -381,7 +381,7 @@ pub fn encode_jpeg_q90(raster: &Raster) -> Vec<u8> {
         let mut y = Vec::with_capacity(width * height);
         let mut cb = Vec::with_capacity(width * height);
         let mut cr = Vec::with_capacity(width * height);
-        for pixel in raster.samples.chunks_exact(3) {
+        for pixel in raster.samples.as_chunks::<3>().0 {
             let (l, b, r) = rgb_ycc(pixel[0].into(), pixel[1].into(), pixel[2].into());
             y.push(l);
             cb.push(b);
