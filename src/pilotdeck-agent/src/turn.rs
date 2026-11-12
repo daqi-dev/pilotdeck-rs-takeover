@@ -375,6 +375,11 @@ pub enum TurnEvent {
     AgentStatus {
         event: JsString,
         detail: BoundarySnapshot,
+        /// `AgentStatusMessage.text` when it differs from `detail.message`
+        /// (the budget statuses). The public `agent_status` event never
+        /// carries it; the host records it in the durable status, as the
+        /// baseline's in-process `onAgentStatusMessage(status)` does.
+        text: Option<JsString>,
     },
     Failed {
         error: BoundarySnapshot,
@@ -1636,6 +1641,7 @@ pub fn run_admitted_turn(
                         &mut state.timeline,
                         input,
                         TurnEvent::AgentStatus {
+                            text: None,
                             event: "lifecycle_blocked".into(),
                             detail: lifecycle_blocked_status(reason),
                         },
@@ -1676,6 +1682,7 @@ pub fn run_admitted_turn(
                     &mut state.timeline,
                     input,
                     TurnEvent::AgentStatus {
+                        text: None,
                         event: "content_filter_stop".into(),
                         detail: content_filter_status(),
                     },
@@ -2087,6 +2094,7 @@ pub fn run_admitted_turn(
                 &mut state.timeline,
                 input,
                 TurnEvent::AgentStatus {
+                    text: None,
                     event: "lifecycle_blocked".into(),
                     detail: BoundarySnapshot::capture(&JsValue::Object(detail)),
                 },
@@ -2661,6 +2669,7 @@ fn finish_pre_model_abort(
                 &mut state.timeline,
                 input,
                 TurnEvent::AgentStatus {
+                    text: None,
                     event: "turn_aborted".into(),
                     detail: abort_status_detail(reason),
                 },
@@ -2918,6 +2927,7 @@ fn finish_early_stream_exhausted(
         &mut state.timeline,
         ports.input,
         TurnEvent::AgentStatus {
+            text: None,
             event: status_event,
             detail,
         },
@@ -3001,6 +3011,7 @@ fn finish_emergency_compaction(
         &mut state.timeline,
         ports.input,
         TurnEvent::AgentStatus {
+            text: None,
             event: "model_request_failed".into(),
             detail,
         },
@@ -3081,6 +3092,7 @@ fn finish_plain_model_stream_throw(
         &mut state.timeline,
         ports.input,
         TurnEvent::AgentStatus {
+            text: None,
             event: "model_request_failed".into(),
             detail: plain_model_failure_status(&message),
         },
@@ -3426,7 +3438,11 @@ fn finish_ordinary_model_error(
         &mut state.timeline,
         ports.input,
         // AgentLoop.toAgentStatusEvent excludes the internal status text.
-        TurnEvent::AgentStatus { event, detail },
+        TurnEvent::AgentStatus {
+            event,
+            detail,
+            text: None,
+        },
     )?;
     emit_event(
         ports.events,
@@ -3649,9 +3665,16 @@ fn finish_budget_terminal(
         ports.events,
         &mut state.timeline,
         ports.input,
-        // AgentLoop's status projection omits text; the sidecar client falls
-        // back to the event name. Keep the diagnostic in StopFailure/errors.
+        // AgentLoop.ts:1014-1019: the durable status text is the error
+        // message (its detail is the error details, without a message). The
+        // public event omits it; the host records it.
         TurnEvent::AgentStatus {
+            text: plan
+                .error
+                .value()
+                .get("message")
+                .and_then(JsValue::as_string)
+                .cloned(),
             event: plan.status_event,
             detail: plan.status_detail,
         },
@@ -3758,7 +3781,11 @@ fn finish_tool_terminal(
         ports.events,
         &mut state.timeline,
         ports.input,
-        TurnEvent::AgentStatus { event, detail },
+        TurnEvent::AgentStatus {
+            event,
+            detail,
+            text: None,
+        },
     )?;
     capture_turn_advisory(
         ports.host,
@@ -4271,6 +4298,7 @@ fn finish_aborted_stream(
                 &mut state.timeline,
                 input,
                 TurnEvent::AgentStatus {
+                    text: None,
                     event: "turn_aborted".into(),
                     detail: abort_status_detail(reason),
                 },
@@ -4658,6 +4686,7 @@ fn apply_pre_emission_output_plan(
                     &mut state.timeline,
                     ports.input,
                     TurnEvent::AgentStatus {
+                        text: None,
                         event: "tool_error_loop".into(),
                         detail: large_file_stop_status(reason.clone()),
                     },
@@ -5401,7 +5430,11 @@ fn emit_output_plan_status(
         events,
         &mut state.timeline,
         input,
-        TurnEvent::AgentStatus { event, detail },
+        TurnEvent::AgentStatus {
+            event,
+            detail,
+            text: None,
+        },
     )
 }
 fn finish_output_plan_terminal(

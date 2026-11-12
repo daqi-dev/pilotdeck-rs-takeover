@@ -392,6 +392,20 @@ impl TurnRunner {
         if let (Some(detail), JsValue::Object(status)) = (detail, &mut status) {
             status.insert("detail".into(), detail.clone());
         }
+        // The loop sends `text` only for the durable record; the public
+        // agent_status event (AgentLoop.ts:383-389) never carries it.
+        let event = match &event {
+            JsValue::Object(fields) if fields.contains_key("text") => {
+                let mut public = JsObject::new();
+                for (key, value) in fields.entries() {
+                    if !key.equals_str("text") {
+                        public.insert(key.clone(), value.clone());
+                    }
+                }
+                JsValue::Object(public)
+            }
+            _ => event,
+        };
         if !self.status_records {
             return Ok((self, vec![event]));
         }
