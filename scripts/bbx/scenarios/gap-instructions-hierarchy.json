@@ -1,0 +1,79 @@
+{
+ "name": "gap-instructions-hierarchy",
+ "about": "PILOTDECK.md 指令文件的多层发现（context/instructions/InstructionDiscovery.ts:47-72）：PILOTDECK_MANAGED_CONFIG 下的 managed、用户级 ~/.pilotdeck/PILOTDECK.md 与 rules/*.md（按名排序，跳过 SKILL.md 与非 .md）、项目根的 PILOTDECK.md / .pilotdeck/PILOTDECK.md / .pilotdeck/rules/*.md / PILOTDECK.local.md，只含空白的文件跳过；第二个会话 workspaceCwd 指到项目子目录，子目录里的 PILOTDECK.md 排在根之后。比较发给 provider 的系统提示词。",
+ "env": {
+  "PILOTDECK_MANAGED_CONFIG": "{ROOT}/managed"
+ },
+ "files": {
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+  "managed/PILOTDECK.md": "BBX-MANAGED rule.\n",
+  "home/.pilotdeck/PILOTDECK.md": "  BBX-USER instructions.  \n\n",
+  "home/.pilotdeck/rules/b-second.md": "BBX-USER-RULE-B\n",
+  "home/.pilotdeck/rules/a-first.md": "BBX-USER-RULE-A\n",
+  "home/.pilotdeck/rules/SKILL.md": "BBX-SHOULD-NOT-APPEAR-SKILL\n",
+  "home/.pilotdeck/rules/notes.txt": "BBX-SHOULD-NOT-APPEAR-TXT\n",
+  "home/work/alpha/PILOTDECK.md": "BBX-PROJECT root instructions.\n",
+  "home/work/alpha/.pilotdeck/PILOTDECK.md": "BBX-PROJECT-DOT instructions.\n",
+  "home/work/alpha/.pilotdeck/rules/z.md": "BBX-PROJECT-RULE-Z\n",
+  "home/work/alpha/.pilotdeck/rules/m.md": "   \n",
+  "home/work/alpha/PILOTDECK.local.md": "BBX-LOCAL private.\n",
+  "home/work/alpha/sub/PILOTDECK.md": "BBX-SUBDIR instructions.\n",
+  "home/work/alpha/sub/PILOTDECK.local.md": "BBX-SUBDIR-LOCAL.\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Instructions\"}"
+   }
+  },
+  {
+   "name": "root",
+   "when": [
+    "ins-root:"
+   ],
+   "reply": {
+    "text": "ok root"
+   }
+  },
+  {
+   "name": "sub",
+   "when": [
+    "ins-sub:"
+   ],
+   "reply": {
+    "text": "ok sub"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-root",
+    "channelKey": "test",
+    "message": "ins-root: hi",
+    "projectKey": "{HOME}/work/alpha"
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sub",
+    "channelKey": "test",
+    "message": "ins-sub: hi",
+    "projectKey": "{HOME}/work/alpha",
+    "workspaceCwd": "{HOME}/work/alpha/sub"
+   }
+  },
+  {
+   "sleep": 300
+  }
+ ]
+}

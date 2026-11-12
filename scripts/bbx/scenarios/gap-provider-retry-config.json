@@ -1,0 +1,45 @@
+{
+ "name": "gap-provider-retry-config",
+ "about": "provider.retry 配置（model/protocol/canonical.ts ProviderRetryConfig、parseModelConfig.ts parseRetryConfig）：streamMaxRetries=0 时 500 不重试；requestMaxRetries / streamMaxRetries=1 且 baseDelayMs 很小时重试一次；retry 字段为负数时配置报错（这里只看前两种）。比较事件序列与 provider 收到的请求次数。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      retry:\n        streamMaxRetries: 0\n        requestMaxRetries: 0\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Retry\"}"
+   }
+  },
+  {
+   "name": "fail",
+   "when": [
+    "rt-fail:"
+   ],
+   "reply": {
+    "status": 500,
+    "body": {
+     "error": {
+      "message": "boom",
+      "type": "server_error"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-retry",
+    "channelKey": "test",
+    "message": "rt-fail: hi"
+   },
+   "timeout": 30000
+  },
+  {
+   "sleep": 300
+  }
+ ]
+}

@@ -1,0 +1,544 @@
+{
+ "name": "gap-tool-glob",
+ "about": "glob 的参数分支（tool/builtin/glob.ts:90-149 与 extractGlobBaseDirectory）：先用 touch 把各文件的修改时间排成与字典序不同的顺序（结果按修改时间升序，filesystem/ripgrepFiles.ts:60,76-77）；递归 **、path 限定子目录、limit 截断、绝对路径模式（拆出基目录）、绝对模式指向工作区外、path 不存在、path 是文件、无匹配、隐藏目录与 .gitignore / node_modules、非 ASCII 文件名、花括号与字符类、缺 pattern。",
+ "files": {
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+  "home/work/alpha/a.ts": "a\n",
+  "home/work/alpha/b.md": "b\n",
+  "home/work/alpha/sub/c.ts": "c\n",
+  "home/work/alpha/sub/deep/d.ts": "d\n",
+  "home/work/alpha/sub/e.js": "e\n",
+  "home/work/alpha/.hidden/h.ts": "h\n",
+  "home/work/alpha/node_modules/m/i.ts": "i\n",
+  "home/work/alpha/ignored/g.ts": "g\n",
+  "home/work/alpha/.gitignore": "ignored/\n",
+  "home/work/alpha/文档/说明.ts": "z\n",
+  "outside/o.txt": "o\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Gap\"}"
+   }
+  },
+  {
+   "name": "t13-after",
+   "when": [
+    "g13:",
+    "\"tool_call_id\":\"call_g13\""
+   ],
+   "reply": {
+    "text": "Done 13."
+   }
+  },
+  {
+   "name": "t13",
+   "when": [
+    "g13:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g13",
+     "name": "glob",
+     "arguments": {
+      "pattern": "*.ts",
+      "path": ".."
+     }
+    }
+   }
+  },
+  {
+   "name": "t12-after",
+   "when": [
+    "g12:",
+    "\"tool_call_id\":\"call_g12\""
+   ],
+   "reply": {
+    "text": "Done 12."
+   }
+  },
+  {
+   "name": "t12",
+   "when": [
+    "g12:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g12",
+     "name": "glob",
+     "arguments": {}
+    }
+   }
+  },
+  {
+   "name": "t11-after",
+   "when": [
+    "g11:",
+    "\"tool_call_id\":\"call_g11\""
+   ],
+   "reply": {
+    "text": "Done 11."
+   }
+  },
+  {
+   "name": "t11",
+   "when": [
+    "g11:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g11",
+     "name": "glob",
+     "arguments": {
+      "pattern": "[ab].*"
+     }
+    }
+   }
+  },
+  {
+   "name": "t10-after",
+   "when": [
+    "g10:",
+    "\"tool_call_id\":\"call_g10\""
+   ],
+   "reply": {
+    "text": "Done 10."
+   }
+  },
+  {
+   "name": "t10",
+   "when": [
+    "g10:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g10",
+     "name": "glob",
+     "arguments": {
+      "pattern": "**/*.{ts,js}",
+      "path": "sub"
+     }
+    }
+   }
+  },
+  {
+   "name": "t09-after",
+   "when": [
+    "g09:",
+    "\"tool_call_id\":\"call_g09\""
+   ],
+   "reply": {
+    "text": "Done 09."
+   }
+  },
+  {
+   "name": "t09",
+   "when": [
+    "g09:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g09",
+     "name": "glob",
+     "arguments": {
+      "pattern": "**/*.rs"
+     }
+    }
+   }
+  },
+  {
+   "name": "t08-after",
+   "when": [
+    "g08:",
+    "\"tool_call_id\":\"call_g08\""
+   ],
+   "reply": {
+    "text": "Done 08."
+   }
+  },
+  {
+   "name": "t08",
+   "when": [
+    "g08:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g08",
+     "name": "glob",
+     "arguments": {
+      "pattern": "*.ts",
+      "path": "a.ts"
+     }
+    }
+   }
+  },
+  {
+   "name": "t07-after",
+   "when": [
+    "g07:",
+    "\"tool_call_id\":\"call_g07\""
+   ],
+   "reply": {
+    "text": "Done 07."
+   }
+  },
+  {
+   "name": "t07",
+   "when": [
+    "g07:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g07",
+     "name": "glob",
+     "arguments": {
+      "pattern": "*.ts",
+      "path": "nope"
+     }
+    }
+   }
+  },
+  {
+   "name": "t06-after",
+   "when": [
+    "g06:",
+    "\"tool_call_id\":\"call_g06\""
+   ],
+   "reply": {
+    "text": "Done 06."
+   }
+  },
+  {
+   "name": "t06",
+   "when": [
+    "g06:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g06",
+     "name": "glob",
+     "arguments": {
+      "pattern": "{ROOT}/outside/*.txt"
+     }
+    }
+   }
+  },
+  {
+   "name": "t05-after",
+   "when": [
+    "g05:",
+    "\"tool_call_id\":\"call_g05\""
+   ],
+   "reply": {
+    "text": "Done 05."
+   }
+  },
+  {
+   "name": "t05",
+   "when": [
+    "g05:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g05",
+     "name": "glob",
+     "arguments": {
+      "pattern": "{HOME}/work/alpha/sub/*.ts"
+     }
+    }
+   }
+  },
+  {
+   "name": "t04-after",
+   "when": [
+    "g04:",
+    "\"tool_call_id\":\"call_g04\""
+   ],
+   "reply": {
+    "text": "Done 04."
+   }
+  },
+  {
+   "name": "t04",
+   "when": [
+    "g04:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g04",
+     "name": "glob",
+     "arguments": {
+      "pattern": "**/*.ts",
+      "limit": 2
+     }
+    }
+   }
+  },
+  {
+   "name": "t03-after",
+   "when": [
+    "g03:",
+    "\"tool_call_id\":\"call_g03\""
+   ],
+   "reply": {
+    "text": "Done 03."
+   }
+  },
+  {
+   "name": "t03",
+   "when": [
+    "g03:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g03",
+     "name": "glob",
+     "arguments": {
+      "pattern": "*.ts",
+      "path": "sub"
+     }
+    }
+   }
+  },
+  {
+   "name": "t02-after",
+   "when": [
+    "g02:",
+    "\"tool_call_id\":\"call_g02\""
+   ],
+   "reply": {
+    "text": "Done 02."
+   }
+  },
+  {
+   "name": "t02",
+   "when": [
+    "g02:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g02",
+     "name": "glob",
+     "arguments": {
+      "pattern": "**/*.ts"
+     }
+    }
+   }
+  },
+  {
+   "name": "t01-after",
+   "when": [
+    "g01:",
+    "\"tool_call_id\":\"call_g01\""
+   ],
+   "reply": {
+    "text": "Done 01."
+   }
+  },
+  {
+   "name": "t01",
+   "when": [
+    "g01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g01",
+     "name": "bash",
+     "arguments": {
+      "command": "touch -t 202001010005 a.ts; touch -t 202001010001 sub/deep/d.ts; touch -t 202001010003 sub/c.ts; touch -t 202001010002 .hidden/h.ts; touch -t 202001010004 ignored/g.ts; touch -t 202001010000 文档/说明.ts; touch -t 202001010006 b.md; touch -t 202001010003 sub/e.js; echo ok"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-gap",
+    "mode": "bypassPermissions",
+    "projectKey": "{HOME}/work/alpha"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g01: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g02: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g03: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g04: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g05: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g06: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g07: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g08: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g09: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g10: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g11: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g12: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g13: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-gap",
+    "projectKey": "{HOME}/work/alpha"
+   }
+  }
+ ]
+}

@@ -1,0 +1,71 @@
+{
+ "name": "gap-sdk-persist-session-false",
+ "about": "sdkSessionConfig.persistSession=false 的临时会话（ProjectRuntimeRegistry.ts:868，InProcessGateway.ts:3217）：一轮对话后 list_sessions、read_session_messages、落盘目录里都不应出现它；再用同一 sessionKey 不带该配置提交；persistSession=true 被拒。比较落盘文件与各方法结果。",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Ephemeral\"}"
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-eph",
+    "channelKey": "test",
+    "message": "ephemeral hi",
+    "sdkSessionConfig": {
+     "persistSession": false
+    }
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "list_sessions"
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-eph"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-eph",
+    "channelKey": "test",
+    "message": "second hi"
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "list_sessions"
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-eph-true",
+    "channelKey": "test",
+    "message": "x",
+    "sdkSessionConfig": {
+     "persistSession": true
+    }
+   }
+  }
+ ]
+}

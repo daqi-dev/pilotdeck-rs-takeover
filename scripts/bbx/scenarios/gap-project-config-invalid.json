@@ -1,0 +1,71 @@
+{
+ "name": "gap-project-config-invalid",
+ "about": "项目级 .pilotdeck/pilotdeck.yaml 不是合法 YAML、或根不是对象时（loadPilotConfig.ts:239-276 CONFIG_YAML_INVALID / CONFIG_ROOT_INVALID 为 fatal）：在该项目里提交一轮的结果、describe_project，以及默认项目是否受影响。",
+ "files": {
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+  "home/work/alpha/.pilotdeck/pilotdeck.yaml": "agent: [unclosed\n",
+  "home/work/beta/README.md": "beta\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-beta/.cwd": "{HOME}/work/beta\n",
+  "home/work/beta/.pilotdeck/pilotdeck.yaml": "- just\n- a list\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Invalid\"}"
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-alpha",
+    "channelKey": "test",
+    "message": "hi alpha",
+    "projectKey": "{HOME}/work/alpha"
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-beta",
+    "channelKey": "test",
+    "message": "hi beta",
+    "projectKey": "{HOME}/work/beta"
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-home",
+    "channelKey": "test",
+    "message": "hi home"
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "describe_project",
+   "params": {
+    "projectKey": "{HOME}/work/alpha"
+   }
+  }
+ ]
+}

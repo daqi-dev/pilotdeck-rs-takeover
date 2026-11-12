@@ -1,0 +1,99 @@
+{
+ "name": "gap-unicode-session",
+ "about": "非 ASCII 的 sessionKey、消息、标题与工具参数：中文 / emoji / 组合字符的 sessionKey 与消息，provider 回的中文标题（rename_session 有已知的基线记录差异，见 baseline-bug-rename-reload，这里不测），write_file 写中文文件名与内容，list_sessions 与 read_session_messages、落盘文件名。",
+ "files": {},
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"中文标题 🚀\"}"
+   }
+  },
+  {
+   "name": "w-after",
+   "when": [
+    "写文件",
+    "\"tool_call_id\":\"call_uw\""
+   ],
+   "reply": {
+    "text": "已写好 ✅"
+   }
+  },
+  {
+   "name": "w",
+   "when": [
+    "写文件"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_uw",
+     "name": "write_file",
+     "arguments": {
+      "file_path": "笔记/日记 📝.txt",
+      "content": "第一行\n👍🏽 é\n"
+     }
+    }
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "你好！👋 Ünïcödé"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "会话-一",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "会话-一",
+    "channelKey": "test",
+    "message": "你好 🌏 é"
+   }
+  },
+  {
+   "sleep": 500
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "会话-一",
+    "channelKey": "test",
+    "message": "请写文件"
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "emoji-🚀",
+    "channelKey": "test",
+    "message": "hi"
+   }
+  },
+  {
+   "sleep": 500
+  },
+  {
+   "ws": "list_sessions"
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "会话-一"
+   }
+  }
+ ]
+}

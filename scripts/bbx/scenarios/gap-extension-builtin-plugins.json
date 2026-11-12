@@ -1,0 +1,41 @@
+{
+ "name": "gap-extension-builtin-plugins",
+ "about": "extension.builtinPluginsEnabled 关掉内置插件 funasr（pilot/config/loadPilotConfig.ts:747-763）：发给模型的工具清单里不再有 mcp__funasr__*；同时给一个非布尔值的项（被过滤）。比较请求里的工具清单与 mcp_server_status。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nextension:\n  builtinPluginsEnabled:\n    funasr: false\n    other: \"yes\"\n",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Ext\"}"
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ext",
+    "channelKey": "test",
+    "message": "hi"
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "mcp_server_status",
+   "params": {
+    "sessionKey": "s-ext"
+   }
+  }
+ ]
+}

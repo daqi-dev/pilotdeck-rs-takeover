@@ -1,0 +1,188 @@
+{
+ "name": "gap-permissions-json-skip",
+ "about": "permissions.json 的 skipPermissions=true（InProcessGateway.ts:1447-1450）：会话没设权限模式时是否按 bypassPermissions 跑（基线里服务端缺省权限模式先于它生效）：bash 与 write_file 是否询问；显式 set_permission_mode default 的另一会话写文件。采集器对任何询问一律拒绝。",
+ "files": {
+  "home/.pilotdeck/permissions.json": {
+   "version": 1,
+   "allowedTools": [],
+   "askTools": [],
+   "disallowedTools": [],
+   "skipPermissions": true
+  }
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Gap\"}"
+   }
+  },
+  {
+   "name": "t03-after",
+   "when": [
+    "g03:",
+    "\"tool_call_id\":\"call_g03\""
+   ],
+   "reply": {
+    "text": "Done 03."
+   }
+  },
+  {
+   "name": "t03",
+   "when": [
+    "g03:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g03",
+     "name": "write_file",
+     "arguments": {
+      "file_path": "notes/default.txt",
+      "content": "d\n"
+     }
+    }
+   }
+  },
+  {
+   "name": "t02-after",
+   "when": [
+    "g02:",
+    "\"tool_call_id\":\"call_g02\""
+   ],
+   "reply": {
+    "text": "Done 02."
+   }
+  },
+  {
+   "name": "t02",
+   "when": [
+    "g02:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g02",
+     "name": "write_file",
+     "arguments": {
+      "file_path": "notes/skip.txt",
+      "content": "skip\n"
+     }
+    }
+   }
+  },
+  {
+   "name": "t01-after",
+   "when": [
+    "g01:",
+    "\"tool_call_id\":\"call_g01\""
+   ],
+   "reply": {
+    "text": "Done 01."
+   }
+  },
+  {
+   "name": "t01",
+   "when": [
+    "g01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g01",
+     "name": "bash",
+     "arguments": {
+      "command": "echo skip-mode"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g01: go"
+   },
+   "timeout": 15000,
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-gap",
+      "requestId": "{event.requestId}",
+      "decision": "deny",
+      "reason": "bbx denies"
+     }
+    }
+   ]
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g02: go"
+   },
+   "timeout": 15000,
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-gap",
+      "requestId": "{event.requestId}",
+      "decision": "deny",
+      "reason": "bbx denies"
+     }
+    }
+   ]
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-default",
+    "mode": "default"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-default",
+    "channelKey": "test",
+    "message": "g03: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-default",
+      "requestId": "{event.requestId}",
+      "decision": "deny",
+      "reason": "bbx denies"
+     }
+    }
+   ],
+   "timeout": 15000
+  },
+  {
+   "sleep": 300
+  }
+ ]
+}

@@ -1,0 +1,192 @@
+{
+ "name": "gap-attachments-image",
+ "about": "图片进入对话的两条入口与模型能力（InProcessGateway.ts:1474 起把附件提升为内容块、model/protocol/multimodal.ts downgradeUnsupportedContent）：经 upload_create / upload_part / upload_complete 上传一张真实 PNG 后在 submit_turn.uploadedAttachments 引用；submit_turn.attachments 直接给 type=image 的本地路径、type=text 的内联内容、type=file 的文本文件。主模型不支持图片时一轮，用 session_model_set 切到声明 multimodal.input 含 image 的 vision 模型后再一轮。比较发给 provider 的请求里图片怎么出现与会话记录。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        vision:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n          multimodal:\n            input: [text, image, pdf]\ntelemetry:\n  enabled: false\n",
+ "files": {
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+  "home/work/alpha/notes.txt": "attached text file\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Images\"}"
+   }
+  },
+  {
+   "name": "mk-after",
+   "when": [
+    "mk-png:",
+    "\"tool_call_id\":\"call_mk\""
+   ],
+   "reply": {
+    "text": "made"
+   }
+  },
+  {
+   "name": "mk",
+   "when": [
+    "mk-png:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_mk",
+     "name": "bash",
+     "arguments": {
+      "command": "echo iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg== | base64 -d > {HOME}/work/alpha/pic.png && echo ok"
+     }
+    }
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "Seen."
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-mk",
+    "mode": "bypassPermissions",
+    "projectKey": "{HOME}/work/alpha"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-mk",
+    "channelKey": "test",
+    "message": "mk-png: make",
+    "projectKey": "{HOME}/work/alpha"
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "upload_create",
+   "params": {
+    "projectKey": "{HOME}/work/alpha",
+    "files": [
+     {
+      "clientFileId": "img",
+      "name": "dot.png",
+      "relativePath": "dot.png",
+      "size": 70,
+      "mimeType": "image/png"
+     }
+    ]
+   },
+   "save": {
+    "up": "\"uploadId\":\"([^\"]+)\""
+   }
+  },
+  {
+   "ws": "upload_part",
+   "params": {
+    "uploadId": "{saved.up}",
+    "clientFileId": "img",
+    "contentBase64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+   }
+  },
+  {
+   "ws": "upload_complete",
+   "params": {
+    "uploadId": "{saved.up}"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-img",
+    "channelKey": "test",
+    "message": "look at the upload",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": [
+     {
+      "uploadId": "{saved.up}"
+     }
+    ]
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-img",
+    "channelKey": "test",
+    "message": "look at direct attachments",
+    "projectKey": "{HOME}/work/alpha",
+    "attachments": [
+     {
+      "type": "image",
+      "name": "pic.png",
+      "path": "{HOME}/work/alpha/pic.png",
+      "mimeType": "image/png"
+     },
+     {
+      "type": "text",
+      "name": "inline.txt",
+      "content": "inline attachment text"
+     },
+     {
+      "type": "file",
+      "name": "notes.txt",
+      "path": "{HOME}/work/alpha/notes.txt",
+      "mimeType": "text/plain"
+     }
+    ]
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "session_model_set",
+   "params": {
+    "sessionKey": "s-img",
+    "projectKey": "{HOME}/work/alpha",
+    "selection": {
+     "mode": "model",
+     "provider": "bbx",
+     "model": "vision"
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-img",
+    "channelKey": "test",
+    "message": "vision look",
+    "projectKey": "{HOME}/work/alpha",
+    "attachments": [
+     {
+      "type": "image",
+      "name": "pic.png",
+      "path": "{HOME}/work/alpha/pic.png",
+      "mimeType": "image/png"
+     }
+    ]
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-img",
+    "projectKey": "{HOME}/work/alpha"
+   }
+  }
+ ]
+}

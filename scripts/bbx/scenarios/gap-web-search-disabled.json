@@ -1,0 +1,61 @@
+{
+ "name": "gap-web-search-disabled",
+ "about": "tools.webSearch 缺省（没有这一段）与 enabled=false、以及 enabled 但缺 apiKey / endpoint 时（webSearch.ts:236-260 checkWebSearchAvailability）：工具清单里有没有 web_search；模型硬调时的错误。这里是 enabled 但 custom 缺 endpoint 与 apiKey。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ntools:\n  webSearch:\n    enabled: true\n    provider: custom\n",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Search\"}"
+   }
+  },
+  {
+   "name": "call-after",
+   "when": [
+    "ws-call:",
+    "\"tool_call_id\":\"call_ws\""
+   ],
+   "reply": {
+    "text": "done"
+   }
+  },
+  {
+   "name": "call",
+   "when": [
+    "ws-call:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_ws",
+     "name": "web_search",
+     "arguments": {
+      "query": "x"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-ws",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ws",
+    "channelKey": "test",
+    "message": "ws-call: go"
+   }
+  },
+  {
+   "sleep": 300
+  }
+ ]
+}

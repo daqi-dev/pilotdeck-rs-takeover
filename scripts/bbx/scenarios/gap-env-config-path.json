@@ -1,0 +1,47 @@
+{
+ "name": "gap-env-config-path",
+ "about": "环境变量 PILOTDECK_CONFIG_PATH 指定配置文件位置（loadPilotConfig.ts:57-61）：~/.pilotdeck/pilotdeck.yaml 不存在，配置放在 {ROOT}/alt/pd.yaml，其中模型 maxOutputTokens 与默认不同。比较 describe_server、一轮的请求、resolve_settings。",
+ "config": null,
+ "env": {
+  "PILOTDECK_CONFIG_PATH": "{ROOT}/alt/pd.yaml"
+ },
+ "files": {
+  "alt/pd.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 1234\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 1234\ntelemetry:\n  enabled: false\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Path\"}"
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "describe_server"
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-path",
+    "channelKey": "test",
+    "message": "hi"
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "resolve_settings"
+  }
+ ]
+}

@@ -1,0 +1,221 @@
+{
+ "name": "gap-tool-read-file-vision",
+ "about": "read_file 在主模型声明 multimodal.input [text, image, pdf] 时（readFile.ts:189-300）：真实 PNG 作为图片内容回给模型、内容不是图片的 .png、PDF 整读、PDF 按页渲染（pages=1）。比较发给 provider 的请求里图片 / PDF 怎么出现（OpenAI chat 形状），以及会话记录。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/vision\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        vision:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n          multimodal:\n            input: [text, image, pdf]\ntelemetry:\n  enabled: false\n",
+ "files": {
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+  "home/work/alpha/doc.pdf": "%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Gap\"}"
+   }
+  },
+  {
+   "name": "t05-after",
+   "when": [
+    "g05:",
+    "\"tool_call_id\":\"call_g05\""
+   ],
+   "reply": {
+    "text": "Done 05."
+   }
+  },
+  {
+   "name": "t05",
+   "when": [
+    "g05:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g05",
+     "name": "read_file",
+     "arguments": {
+      "file_path": "doc.pdf",
+      "pages": "1"
+     }
+    }
+   }
+  },
+  {
+   "name": "t04-after",
+   "when": [
+    "g04:",
+    "\"tool_call_id\":\"call_g04\""
+   ],
+   "reply": {
+    "text": "Done 04."
+   }
+  },
+  {
+   "name": "t04",
+   "when": [
+    "g04:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g04",
+     "name": "read_file",
+     "arguments": {
+      "file_path": "doc.pdf"
+     }
+    }
+   }
+  },
+  {
+   "name": "t03-after",
+   "when": [
+    "g03:",
+    "\"tool_call_id\":\"call_g03\""
+   ],
+   "reply": {
+    "text": "Done 03."
+   }
+  },
+  {
+   "name": "t03",
+   "when": [
+    "g03:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g03",
+     "name": "read_file",
+     "arguments": {
+      "file_path": "fake.png"
+     }
+    }
+   }
+  },
+  {
+   "name": "t02-after",
+   "when": [
+    "g02:",
+    "\"tool_call_id\":\"call_g02\""
+   ],
+   "reply": {
+    "text": "Done 02."
+   }
+  },
+  {
+   "name": "t02",
+   "when": [
+    "g02:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g02",
+     "name": "read_file",
+     "arguments": {
+      "file_path": "dot.png"
+     }
+    }
+   }
+  },
+  {
+   "name": "t01-after",
+   "when": [
+    "g01:",
+    "\"tool_call_id\":\"call_g01\""
+   ],
+   "reply": {
+    "text": "Done 01."
+   }
+  },
+  {
+   "name": "t01",
+   "when": [
+    "g01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g01",
+     "name": "bash",
+     "arguments": {
+      "command": "echo iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg== | base64 -d > dot.png && printf 'not an image' > fake.png && echo ok"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-gap",
+    "mode": "bypassPermissions",
+    "projectKey": "{HOME}/work/alpha"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g01: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g02: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g03: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g04: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g05: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  }
+ ]
+}
