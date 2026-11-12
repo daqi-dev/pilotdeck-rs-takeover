@@ -286,6 +286,23 @@ pub(crate) fn descriptor_error(source: io::Error, syscall: &'static str) -> io::
     )
 }
 
+/// `fs.copyFile` / `fs.cp` for one regular file. Node (libuv) copies the
+/// bytes and the mode, and the destination's mtime is the time of the copy.
+/// `std::fs::copy` clones the file on macOS (`fclonefileat`), which also
+/// carries the source's mtime over — observable wherever the copy's mtime is
+/// reported or sorted on (imported skills, forked sessions, restored files).
+pub fn copy_file(
+    from: impl AsRef<std::path::Path>,
+    to: impl AsRef<std::path::Path>,
+) -> io::Result<u64> {
+    let mut source = std::fs::File::open(from)?;
+    let permissions = source.metadata()?.permissions();
+    let mut target = std::fs::File::create(to)?;
+    let copied = io::copy(&mut source, &mut target)?;
+    target.set_permissions(permissions)?;
+    Ok(copied)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -703,21 +720,4 @@ mod tests {
             }
         }
     }
-}
-
-/// `fs.copyFile` / `fs.cp` for one regular file. Node (libuv) copies the
-/// bytes and the mode, and the destination's mtime is the time of the copy.
-/// `std::fs::copy` clones the file on macOS (`fclonefileat`), which also
-/// carries the source's mtime over — observable wherever the copy's mtime is
-/// reported or sorted on (imported skills, forked sessions, restored files).
-pub fn copy_file(
-    from: impl AsRef<std::path::Path>,
-    to: impl AsRef<std::path::Path>,
-) -> io::Result<u64> {
-    let mut source = std::fs::File::open(from)?;
-    let permissions = source.metadata()?.permissions();
-    let mut target = std::fs::File::create(to)?;
-    let copied = io::copy(&mut source, &mut target)?;
-    target.set_permissions(permissions)?;
-    Ok(copied)
 }
