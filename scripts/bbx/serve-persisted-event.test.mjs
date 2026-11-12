@@ -48,7 +48,7 @@ async function capture(mode) {
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'bbx-persisted-trigger-'));
   const scripts=path.join(root,'scripts/bbx'),base=path.join(root,'baseline'),bin=path.join(root,'bin');
   for(const dir of [scripts,path.join(base,'dist/src/cli'),bin])fs.mkdirSync(dir,{recursive:true});
-  for(const name of ['run.mjs','check.mjs','diff.mjs','evidence.mjs','mock-support.mjs','syntax-policy.mjs','native-identity.mjs','serve-persisted-event.mjs'])fs.copyFileSync(new URL(name,import.meta.url),path.join(scripts,name));
+  for(const name of ['run.mjs','check.mjs','diff.mjs','evidence.mjs','mock-support.mjs','syntax-policy.mjs','native-identity.mjs','serve-persisted-event.mjs', 'channel-poll-policy.mjs'])fs.copyFileSync(new URL(name,import.meta.url),path.join(scripts,name));
   const ports=[await boundPort(),await boundPort()];assert(!ports.includes(18789));
   const runner=path.join(scripts,'run.mjs');let source=fs.readFileSync(runner,'utf8');
   source=source.replace('const GATEWAY_PORT = 38411 + 10 * SLOT;',`const GATEWAY_PORT = ${ports[0]};`).replace('const MOCK_PORT = 38412 + 10 * SLOT;',`const MOCK_PORT = ${ports[1]};`);fs.writeFileSync(runner,source);

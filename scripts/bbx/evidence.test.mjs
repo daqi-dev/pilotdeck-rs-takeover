@@ -24,6 +24,20 @@ function artifact() {
   return a;
 }
 test('complete artifact', () => assert.deepEqual(validateArtifact(artifact(), scenario, identity), []));
+test('time-value policy cannot be added to a capture or silently removed', () => {
+  const policy = [{ policy: 'coreChannelPollAfter' }];
+  assert.ok(validateArtifact({ ...artifact(), volatilePolicies: policy }, scenario, identity)
+    .includes('volatile value policy mismatch'));
+  assert.ok(validateArtifact(artifact(), { ...scenario, volatilePolicies: policy }, identity)
+    .includes('volatile value policy mismatch'));
+});
+test('declared time-value policy validates actual data even with no linked assertion', () => {
+  for (const policy of [{ policy: 'unknown' }, { policy: 'coreChannelPollAfter', paths: ['.*'] }, { policy: 'coreChannelPollAfter' }]) {
+    const declaration = [policy];
+    assert.ok(validateArtifact({ ...artifact(), volatilePolicies: declaration },
+      { ...scenario, volatilePolicies: declaration }, identity).length);
+  }
+});
 for (const [name, mutate] of [
   ['Rust timeout while TS succeeds', (a) => { a.failures.push({ at: 'steps[0]', kind: 'timeout', expected: false }); }],
   ['missing steps', (a) => { a.steps = []; }],

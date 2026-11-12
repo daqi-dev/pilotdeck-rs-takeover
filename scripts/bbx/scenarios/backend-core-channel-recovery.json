@@ -1,6 +1,6 @@
 {
   "name": "backend-core-channel-recovery",
-  "about": "真实CLI server默认native：配置加载→BlueBubbles实际HTTP轮询→native模型write_file→真实渠道权限提示和用户1答复→PILOT_HOME/notes隔离文件及同session落盘→正常停机→新进程同HOME恢复→同渠道新输入→模型请求含首轮真实tool/assistant历史→恢复回复。provider本地mock同时提供渠道HTTP；仅用现method/path/statusbody/save，无产品import/MockTurnGateway/stdio脚本hook。两个serve按序，不碰18789；本机不运行，交隔离cb8。phase输入转移由首轮after-tool实际模型请求捕获，不根据sleep制造成功；固定等待后全部真实回执/单次模型请求/文件/历史必须断言。需同时运行独立verify.mjs，TS双轮未运行。",
+  "about": "真实CLI server默认native：配置加载→BlueBubbles实际HTTP轮询→native模型write_file→真实渠道权限提示和用户1答复→PILOT_HOME/notes隔离文件及同session落盘→正常停机→新进程同HOME恢复→同渠道新输入→模型请求含首轮真实tool/assistant历史→恢复回复。provider本地mock同时提供渠道HTTP；仅用现method/path/statusbody/save，无产品import/MockTurnGateway/stdio脚本hook。两个serve按序，不碰18789；本机不运行，交隔离cb8。phase输入转移由首轮after-tool实际模型请求捕获，不根据sleep制造成功；固定等待后全部真实回执/单次模型请求/文件/历史必须断言。需同时运行独立verify.mjs，TS双轮未运行。 固定TS双轮证明两phase各4/3次poll仅after=start秒-5随墙钟变；coreChannelPollAfter只在限定channel-poll/GET/path及唯一query字段、真实两phase/持久输入时间证据通过后处理after值，保留URL其它字节和全部业务差异，不用整URL volatile。",
   "server": false,
   "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  bluebubbles:\n    enabled: true\n    token: core-channel-password\n    extra:\n      serverUrl: {MOCK}\n",
   "provider": [
@@ -156,6 +156,9 @@
           "sleep": 5000
         },
         {
+          "connect": true
+        },
+        {
           "ws": "read_session_messages",
           "params": {
             "sessionKey": "bluebubbles:chat=core-chat:general"
@@ -206,7 +209,7 @@
     },
     {
       "id": "phase-2-disconnect",
-      "path": "/steps/1/then/2/disconnected",
+      "path": "/steps/1/then/3/disconnected",
       "equals": true
     },
     {
@@ -258,6 +261,11 @@
       "id": "real-file-bytes",
       "path": "/tree/~1home~1.pilotdeck~1notes~1core-artifact.txt/text",
       "equals": "CORE-RECOVER core-message\n"
+    }
+  ],
+  "volatilePolicies": [
+    {
+      "policy": "coreChannelPollAfter"
     }
   ]
 }

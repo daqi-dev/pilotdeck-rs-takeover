@@ -36,6 +36,16 @@
       }
     },
     {
+      "name": "parent-after",
+      "when": [
+        "AG03-PARENT-BEGIN",
+        "\"tool_call_id\":\"ag03-agent\""
+      ],
+      "reply": {
+        "text": "AG03-PARENT-DONE"
+      }
+    },
+    {
       "name": "child-after-mcp",
       "when": [
         "AG03-CHILD-DIRECTIVE",
@@ -90,16 +100,6 @@
             "skillName": "agent03-alpha"
           }
         }
-      }
-    },
-    {
-      "name": "parent-after",
-      "when": [
-        "AG03-PARENT-BEGIN",
-        "\"tool_call_id\":\"ag03-agent\""
-      ],
-      "reply": {
-        "text": "AG03-PARENT-DONE"
       }
     },
     {

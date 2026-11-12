@@ -30,7 +30,9 @@ node scripts/bbx/check.mjs backend-core-channel-recovery --out NEW_PARITY_DIR
 node scripts/bbx/fixtures/backend-core-channel-recovery/verify.mjs ACTUAL_RUST_JSON
 ```
 
-当前没有增加任何volatile/accepted。GET轮询次数和after参数可能在TS双轮变化，先保存实际self差异；只可根据真实双轮证据后增窄规则，并保留独立门对每个原始GET的method/path/password/limit/after及阶段模型请求验证。不能整体忽略渠道出站、历史、provider模型请求或落盘。
+没有整字段volatile正则或accepted行为豁免。419真实TS双轮业务capture均无failures，self DIFF7仅7个channel-poll URL中的after epoch秒数。固定TS start设置floor(Date.now()/1000)-5；本mock dateCreated恒1/2，不推进cursor、不按after过滤，因此该数值只锚定此phase启动墙钟。新声明volatilePolicies:[{policy:"coreChannelPollAfter"}]由独立channel-poll-policy严格value-check：仅精确场景/provider/GET/path，query仅password/after/limit且唯一，两个实际serve阶段的完整poll与durable accepted input时间相互核对后，只处理after十进制value；其余URL字节、headers/body、record index/count、出站、模型、历史及文件全部保留比较。公共policy/diff/evidence/run由主协调与h1_protocol实现，本作者不修改。
+
+419 a/b两phase各4/3次poll，after a=1794523716/1794523725，b=1794523731/1794523740；各phase accepted_input.createdAt减(after+5)分别.706/.346/.899/.522秒。它们是实际观测，不把经验2秒当基线保证，policy的有界时序按场景已声明预算处理。新policy尚待固定candidate正式重跑，不能回写419原DIFF7为SAME。
 
 ## 必需负控
 
@@ -49,3 +51,17 @@ node scripts/bbx/fixtures/backend-core-channel-recovery/verify.mjs NEW_NEGATIVE_
 ## 当前状态
 
 JSON与两脚本语法已检查；TS双轮、真实错误负控、独立6格negative、Rust正式重放均未执行。未改run/evidence，未改产品源码，未使用真实凭据/账号/18789服务。
+
+
+## 首次实际self失败及精确修正
+
+E0固定4525候选Docker TS双轮为INVALID，双方仅phase-2-disconnect断言失败，原始 `_tmp/20261113-e0-resume/4525bb2a-core-channel-self/`完整保留，不计通过。两个server自然exit0，第二阶段模型恢复规则实际命中，但第二次历史read未发到新进程：run.disconnect后ws对象仍非null且CLOSED，read步骤只对null ws自动connect，因而读取旧连接遗留__closed。场景现第二serve在history read前显式connect:true；phase2断言路径then/2→then/3，值仍严格true；私有verify按步骤类型查唯一history/disconnect并核新hello_ok在第二次read之前。没有改run/evidence、没有加等待或减弱业务断言。修正后尚待新snapshot完整TSself/严格门/真实wrongreply；首次INVALID不能用旧业务断言局部过来覆盖。
+
+
+首轮raw同时核实模型initial1/aftertool1/recovered1、渠道send4以及同session两条accepted_input。scenario工具content声明为literal反斜杠n两个字符，内建file-byte断言与实际文件一致；独立verify初稿误把同一常量写成JS newline，现用String.raw精确匹配既有输入，未改场景、文件期望或原artifact。此修正待新snapshot正式正/负验证，不能据只读核对把旧INVALID改成通过。
+
+
+419 strict门首次失败已保留：原String.raw“修正”误读了JSON展示转义。实际scenario、4525/419 raw文件、JSON.parse后的工具arguments均26字节且最后一字节10（LF）；不是literal反斜杠n。现在仅恢复verify两处真实LF常量，保持场景输入与内建精确file断言，不改变任何原artifact。先前文字里literal反斜杠n的陈述撤回，以本段字节核实为准。strict门正控未过之前，6破坏负控和实际wrongreply均不计通过。
+
+
+恢复正确LF常量后，用verifier c073541d对419原始产物做只读独立重验：TS1正控+6corruption通过、TS2正控通过，原artifact SHA90f46687.../292b0180...前后不变，日志_tmp/20261113-backend-core-channel-recovery/strict-byte-recheck。该重验不改原SELF分数或strict首次失败，实际wrongreply和新policy self仍须由E0在新固定candidate执行。

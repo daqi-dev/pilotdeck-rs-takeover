@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { syntaxContract } from './syntax-policy.mjs';
 import { nativeDependencyIdentity } from './native-identity.mjs';
 import { validatePersistedRunTriggers } from './serve-persisted-event.mjs';
+import { channelPollContract } from './channel-poll-policy.mjs';
 
 export const here = path.dirname(fileURLToPath(import.meta.url));
 export const repo = path.resolve(here, '../..');
@@ -52,7 +53,7 @@ export function inputIdentity() {
     baselineDist: treeHash(path.join(baseline, 'dist')),
     baselineLock: fs.existsSync(path.join(baseline, 'pnpm-lock.yaml')) ? fileHash(path.join(baseline, 'pnpm-lock.yaml')) : null,
     baselineEntry: fs.existsSync(path.join(baseline, 'dist/src/cli/pilotdeck.js')) ? fileHash(path.join(baseline, 'dist/src/cli/pilotdeck.js')) : null,
-    harness: Object.fromEntries(['check.mjs', 'run.mjs', 'diff.mjs', 'evidence.mjs', 'mock-support.mjs', 'syntax-policy.mjs', 'native-identity.mjs', 'serve-persisted-event.mjs'].map((name) => [name, fileHash(path.join(here, name))])),
+    harness: Object.fromEntries(['check.mjs', 'run.mjs', 'diff.mjs', 'evidence.mjs', 'mock-support.mjs', 'syntax-policy.mjs', 'native-identity.mjs', 'serve-persisted-event.mjs', 'channel-poll-policy.mjs'].map((name) => [name, fileHash(path.join(here, name))])),
     tools: { node: process.version, executable: fileHash(process.execPath), rust: command('rustc', ['--version'], repo), pnpm: command('pnpm', ['--version'], baseline) },
     platform: { os: process.platform, arch: process.arch, release: os.release() },
   };
@@ -130,6 +131,11 @@ export function validateArtifact(artifact, scenario, expected) {
   if (!isDeepStrictEqual(evidence?.assertions, assertions)) errors.push('required assertions were not executed');
   if (assertions.some((a) => !a.skipped && !a.passed)) errors.push('required assertion failed');
   if (!isDeepStrictEqual(artifact.accepted ?? [], scenario.accepted ?? [])) errors.push('accepted policy mismatch');
+  if (!isDeepStrictEqual(artifact.volatilePolicies ?? [], scenario.volatilePolicies ?? [])) errors.push('volatile value policy mismatch');
+  for (const policy of scenario.volatilePolicies ?? []) {
+    if (!isDeepStrictEqual(policy, { policy: 'coreChannelPollAfter' })) errors.push('unsupported volatile value policy');
+    else try { channelPollContract(artifact, policy); } catch (error) { errors.push(error.message); }
+  }
   if (expected.side === 'rust') for (const accepted of scenario.accepted ?? []) {
     if (!Array.isArray(accepted.assertions) || !accepted.assertions.length || accepted.assertions.some((id) => !assertions.some((a) => a.id === id && a.passed))) errors.push(`accepted difference ${accepted.id} lacks executed positive assertions`);
     if (accepted.policy === 'syntaxDiagnostics' && !scenario.assertions?.some((a) => accepted.assertions.includes(a.id)

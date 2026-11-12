@@ -132,6 +132,8 @@ node scripts/bbx/selftest.mjs
 
 T1 八个固定写后诊断场景另有 `syntaxDiagnostics` 正向谓词，验证真实工具结果、error/精确夹具位置/非空诊断、好文件无诊断及坏好文件字节。对应 `accepted.policy: "syntaxDiagnostics"` 必须绑定完全相同 config 的正向断言，且不能携带路径正则。`syntax-policy.mjs` 逐值核验后只接受已验证诊断串及其重算的 UTF-8 长度、JSON 请求长度、o200k token 和 calibration 派生值；具体边界见 `specs/gateway-parity/diffs/T1-SYNTAX-NATIVE-001-R1.md`。比较报告仍逐项打印 raw a/b 与接受原因，未接受的字段照常比较。该策略不改写旧运行证据，不是通用语法诊断忽略开关。
 
+`backend-core-channel-recovery` 使用显式 `volatilePolicies: [{"policy":"coreChannelPollAfter"}]`，只处理 TS 双轮已证实波动的 BlueBubbles 启动轮询 `after` 秒值。独立合同核验固定两阶段、请求数量及次序、URL 唯一查询字段、实际 durable input 与时间范围；两侧 URL 仅替换该十进制值后仍须完全相同，其他 URL 字节、headers、body 和请求序号继续比较。比较器逐条打印原值和理由，身份验证同时要求声明与原场景完全相同并执行合同，不能仅添加路径豁免。旧的七处 DIFF 和 verifier 字节错误仍保留；新规则需要固定候选重新运行，不能改写旧运行结果。
+
 依赖身份另记录实际加载的 Sharp JS 文件/addon/libvips 共享库、MuPDF 入口/loader/WASM、诊断策略实际使用的 js-tiktoken lite 入口和 o200k 编码表，并记录包 manifest 与软链接真实路径。Sharp 探测使用隔离 HOME 的新子进程，避免 require 缓存藏住替换。`BBX_IMAGE_TOOL` / `{IMAGE_TOOL}` 指定原生图像组件；身份包含组件、相邻发行 libvips 库，以及 Linux 动态链接器实际解析的 libvips 路径和哈希。缺失文件记录 null，不以固定 lockfile 代替已安装依赖的实际哈希；构建或替换这些依赖期间不得把旧 run 当作有效覆盖证据。
 
 二进制输入夹具使用严格单键对象 `{"$binaryBase64":"..."}`，仅接受规范 base64，写入解码后的原始字节；多键对象仍按普通 JSON 写入。图像正向断言可用 `imageAttachments: {count, mime, maxBytes, bytes?, sha256?}` 检查所选 provider messages 下的全部 `image_url`：要求精确数量、MIME、规范 data URL、非空内容、预算上限，以及可选的精确长度和 SHA-256。`count: 0` 用于坏图像确实未附加的证明，所选路径仍必须存在。该谓词不改变比较输出，也不忽略图像 payload；缺失执行记录、错误 MIME、超出预算和 payload 被改写均失败。
