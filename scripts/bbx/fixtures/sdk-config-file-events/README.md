@@ -47,3 +47,9 @@ node scripts/bbx/fixtures/sdk-config-file-events/verify.mjs --self-test NEW_TS_S
 - 对候选Rust临时变异将relative matcher误用absolute，或将SDK事件state跨session共享：对应matcher/隔离断言必须失败。
 
 负控源码/二进制必须与正式候选分开封存，并由E0记录实际身份及退出码；未运行负控不能说已KILLED。当前本私有fixture只准备了上述严格判据，尚无正式BBX成绩。
+
+## 第一次正式TS校准与修正
+
+E0在固定Docker基线跑完第一轮，采集本身exit0，真实四轮模型/write_file/续写及三条hook均存在；四条文件断言失败。原始`_tmp/20261113-e0-resume/e8e46ee3-config-first/capture.json`显示四文件全部正确写在`/home/.pilotdeck/`（默认General workspace），FileChanged/ConfigChange的cwd与root同为`.../root/home/.pilotdeck`，并非场景最初预测的`/proj`。原first0、四条failures及verifier失败保留。
+
+候选仅按这个实际证据将四个tree断言和verifier工作区后缀改为精确General路径；没有放宽文件内容、数量、callback、payload或注销条件。修正前artifact因旧scenario identity与缓存断言失败，不能伪造更新后通过；必须由E0在新目录重新采集TS双轮并执行严格verifier/负控。

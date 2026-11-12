@@ -78,3 +78,28 @@ test('captured scenario diagnostic rejects causal mutations', {skip: !process.en
   ];
   for(const corrupt of corruptions) {const a=structuredClone(raws[0]);corrupt(a);if(a.evidence.persistedFiles)witness(a);await assert.rejects(run(a,raws[1]));}
 });
+
+test('actual e8 capture derives only validated report and HTTP lengths', {skip: !process.env.AGENT03_E8_ROOT}, async () => {
+  const {readFileSync} = await import('node:fs');
+  const {sdkAgentDerivedPaths,sdkAgentContract} = await import('./sdk-agent-policy.mjs');
+  const dir=process.env.AGENT03_E8_ROOT, base=process.env.AGENT03_BASELINE_ROOT;
+  const raws=[1,2].map(i=>JSON.parse(readFileSync(`${dir}/agent03-sdk-fork.ts-${i}.json`)));
+  const normalize = raw => {
+    const b=structuredClone(raw), events=b.tree['/home/.pilotdeck/runs/registry.json'].json.events;
+    for(const [step,index] of [[0,28],[3,6]]) {const e=b.steps[step].frames[index].event, old=`\0agent03-parent\0${e.runId}`, id=`<fake-run-${step}>`;events[`\0agent03-parent\0${id}`]=events[old];delete events[old];e.runId=id;}
+    return b;
+  };
+  const run=(a,b)=>sdkAgentDerivedPaths(a,b,normalize(a),normalize(b),{policy:'sdkAgent03DerivedValues'},base);
+  sdkAgentContract(raws[0],{policy:'sdkAgent03DerivedValues'},base);
+  const paths=await run(...raws);
+  assert.equal(paths.size,94);
+  for(const p of ['$.steps[0].frames[24].event.resultBytes','$.provider.parent-after[0].headers.content-length','$.provider.parent-check[0].headers.content-length']) assert.ok(paths.has(p));
+  const corruptions=[
+    a=>a.steps[0].frames[24].event.resultBytes++,
+    a=>a.provider['parent-after'][0].headers['content-length']='41236',
+    a=>{const r=a.provider['parent-check'][0];r.body.messages[0].content+=' extra';r.headers['content-length']=String(Buffer.byteLength(JSON.stringify(r.body)));},
+    a=>{const r=a.provider['parent-after'][0];r.body.messages.find(m=>m.tool_call_id==='ag03-agent').content+=' wrong';r.headers['content-length']=String(Buffer.byteLength(JSON.stringify(r.body)));},
+    a=>{const id=a.steps[0].frames[28].event.runId;a.tree['/home/.pilotdeck/runs/registry.json'].json.events[`\0agent03-parent\0${id}`][24].event.resultBytes++;},
+  ];
+  for(const corrupt of corruptions) {const a=structuredClone(raws[0]);corrupt(a);await assert.rejects(run(a,raws[1]));}
+});

@@ -181,6 +181,23 @@ function derivedValues(a, normalized, count) {
     events.push(entry.detail);
   }
   const m=new Map();
+  const completed=a.steps?.[0]?.frames?.[24]?.event;
+  insist(completed?.type==='tool_call_finished' && completed.toolCallId==='ag03-agent' && completed.toolName==='agent' && completed.ok===true
+    && completed.resultPreview===report && completed.resultBytes===Buffer.byteLength(report,'utf8')
+    && isDeepStrictEqual(completed.data,JSON.parse(report.slice(PREFIX.length))) && completed.runId===events[0].runId, 'agent report byte count');
+  const nrun=normalized?.steps?.[0]?.frames?.[28]?.event?.runId;
+  const nregistry=normalized?.tree?.[REGISTRY_PATH]?.json?.events?.[`\0agent03-parent\0${nrun}`];
+  const registryEvent=a.tree?.[REGISTRY_PATH]?.json?.events?.[`\0agent03-parent\0${events[0].runId}`]?.[24]?.event;
+  sameEvent(registryEvent,completed,'agent result registry');
+  insist(nregistry?.[24]?.event?.resultBytes===completed.resultBytes, 'normalized agent result registry');
+  m.set('$.steps[0].frames[24].event.resultBytes',completed.resultBytes);
+  m.set(`$.tree.${REGISTRY_PATH}.json.events.\0agent03-parent\0${nrun}[24].event.resultBytes`,completed.resultBytes);
+  for (const name of ['parent-after','parent-check']) {
+    const request=a.provider[name][0], length=request.headers?.['content-length'];
+    insist(request.method==='POST' && request.headers?.['content-type']==='application/json' && typeof length==='string'
+      && /^[1-9][0-9]*$/.test(length) && Number(length)===Buffer.byteLength(JSON.stringify(request.body),'utf8'), 'model request byte count');
+    m.set(`$.provider.${name}[0].headers.content-length`,length);
+  }
   for (const [i, event] of events.entries()) {
     const frame = a.steps?.[i===0?0:3]?.frames?.[i===0?28:6]?.event;
     const detail = history.messages?.[i===0?4:7]?.payload?.detail;
@@ -213,6 +230,17 @@ function derivedValues(a, normalized, count) {
 export async function sdkAgentDerivedPaths(left,right,normalizedLeft,normalizedRight,declaration,baselineRoot) {
   const count = loadPinnedTokenizer(baselineRoot);
   insist(isDeepStrictEqual(declaration,{policy:'sdkAgent03DerivedValues'}), 'declaration');
+  for (const name of ['parent-after','parent-check']) {
+    const comparable = raw => {
+      const body=structuredClone(raw.provider?.[name]?.[0]?.body);
+      const results=body?.messages?.filter(m=>m.role==='tool' && m.tool_call_id==='ag03-agent');
+      insist(results?.length===1, 'model request report association');
+      validateAgentReport(results[0].content);
+      results[0].content='<validated-agent-result>';
+      return body;
+    };
+    insist(isDeepStrictEqual(comparable(left),comparable(right)), `model ${name} body differs outside report`);
+  }
   for (const index of [10,33,52]) {
     const a = comparableRequest(left.tree?.[PARENT_PATH]?.jsonl?.[index]?.request);
     const b = comparableRequest(right.tree?.[PARENT_PATH]?.jsonl?.[index]?.request);
