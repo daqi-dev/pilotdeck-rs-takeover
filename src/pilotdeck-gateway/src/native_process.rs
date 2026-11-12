@@ -66,6 +66,7 @@ mod switch_wiring;
 #[cfg(test)]
 mod switch_wiring_tests;
 pub use session_overrides::SessionOverrides;
+mod module_tools;
 mod subagents;
 mod tools;
 // #1433: the session MCP tool composition (SessionMcpRuntimeBundle) behind

@@ -400,6 +400,16 @@ impl Drop for WaiterGuard<'_> {
     }
 }
 
+/// One `module_call` with caller-chosen identity ([`ExternalSkillsPort::module_call`]).
+pub struct ModuleCall {
+    pub run_id: JsString,
+    pub operation_id: JsString,
+    pub idempotency_key: Option<JsString>,
+    pub request_id: String,
+    pub module: &'static str,
+    pub payload: JsObject,
+}
+
 /// Who a module call is from: `runId` (also the `operationId` and the
 /// `requestId` prefix) and the `module` target.
 #[derive(Clone, Copy, Debug)]
@@ -553,6 +563,37 @@ impl<T: ModuleHttpTransport + 'static> ExternalSkillsPort<T> {
         counter.fetch_add(1, Ordering::SeqCst) + 1
     }
 
+    /// `HttpModuleClient.call(input)` (HttpModuleClient.ts:30-62) with the
+    /// caller's own identity and payload: the capability tool port
+    /// (`hostToolPort.ts`) sends the turn's run / operation ids and a
+    /// `module: "capability"` payload. Returns the validated response
+    /// envelope, `ok: false` included.
+    pub async fn module_call(&self, call: ModuleCall) -> Result<JsValue> {
+        self.load_manifest_cached().await?;
+        let message_id = format!("module-http-{}", self.next(&self.message_sequence));
+        let authorization = self.authorization()?;
+        let mut request = object([
+            ("kind", "request".into()),
+            ("method", "module_call".into()),
+            ("messageId", message_id.as_str().into()),
+            ("runId", JsValue::String(call.run_id)),
+            ("operationId", JsValue::String(call.operation_id)),
+        ]);
+        if let Some(key) = call.idempotency_key {
+            request.insert("idempotencyKey".into(), JsValue::String(key));
+        }
+        request.insert("requestId".into(), call.request_id.as_str().into());
+        request.insert("module".into(), call.module.into());
+        request.insert("payload".into(), JsValue::Object(call.payload));
+        self.post_call(
+            &message_id,
+            &call.request_id,
+            &JsValue::Object(request),
+            authorization,
+        )
+        .await
+    }
+
     async fn client_call(
         &self,
         operation: &str,
@@ -566,7 +607,18 @@ impl<T: ModuleHttpTransport + 'static> ExternalSkillsPort<T> {
         let message_id = format!("module-http-{}", self.next(&self.message_sequence));
         let authorization = self.authorization()?;
         let request = request_body(&self.scope, &message_id, request_id, operation, input)?;
-        let body = stringify_json(&request).ok().flatten().ok_or_else(|| {
+        self.post_call(&message_id, request_id, &request, authorization)
+            .await
+    }
+
+    async fn post_call(
+        &self,
+        message_id: &str,
+        request_id: &str,
+        request: &JsValue,
+        authorization: Option<String>,
+    ) -> Result<JsValue> {
+        let body = stringify_json(request).ok().flatten().ok_or_else(|| {
             SkillError::protocol_failure("Module call request is not serializable.")
         })?;
         let response = self
@@ -578,7 +630,7 @@ impl<T: ModuleHttpTransport + 'static> ExternalSkillsPort<T> {
                 authorization,
             )
             .await?;
-        validate_response(&response, &message_id, request_id)?;
+        validate_response(&response, message_id, request_id)?;
         Ok(response)
     }
 

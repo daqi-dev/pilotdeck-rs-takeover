@@ -681,6 +681,12 @@ async fn start_assembly(
                     .and_then(|config| config.get("modules"))
                     .and_then(|modules| modules.get("knowledge"))
                     .cloned();
+                // `snapshot.config.modules?.tools` (SessionAgentConfigBundle.ts:159-163).
+                let tools_binding = snapshot
+                    .get("config")
+                    .and_then(|config| config.get("modules"))
+                    .and_then(|modules| modules.get("tools"))
+                    .cloned();
                 // `snapshot.config.tools?.webSearch` (ProjectExecutionWorldBundle.ts:124).
                 let web_search_config = snapshot
                     .get("config")
@@ -1113,6 +1119,7 @@ async fn start_assembly(
                         )?
                         .with_extra_tools(extra_tools, excluded_tools)
                         .with_knowledge(knowledge_binding.as_ref())
+                        .with_module_tools(tools_binding.as_ref())
                         .with_sandbox(profile.sandbox_mode)
                         .with_interaction(profile.interaction, can_prompt_override)
                         .with_web_search(&web_search_config)
@@ -1187,6 +1194,7 @@ async fn start_assembly(
                             .with_background(background_subagents.clone()),
                         );
                         ports.check_deferred_tools()?;
+                        ports.check_module_tools()?;
                         let turn_override_sink = ports.turn_override();
                         // The baseline's env deployment names no expected
                         // module (`createAgentLoopDeploymentFactory(profile,
@@ -2200,7 +2208,8 @@ pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(),
     // (`native_process/hooks.rs`).
     // `modules`: a built-in binding (`provider: pilotdeck`) and a disabled
     // `skills` / `knowledge` slot need no outside service and are served; an
-    // external `knowledge` module is reached only by `knowledge_query`.
+    // external `knowledge` module is reached only by `knowledge_query`, an
+    // external `tools` module is composed ahead of the session's tools.
     // A protocol binding (an external module process or endpoint) and the
     // StaffDeck `sop` module are not served yet.
     let external = |binding: &JsValue| {
@@ -2214,7 +2223,10 @@ pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(),
         .and_then(JsValue::as_object)
         .is_some_and(|modules| {
             modules.own_entries().iter().any(|(slot, binding)| {
-                slot.equals_str("sop") || (external(binding) && !slot.equals_str("knowledge"))
+                slot.equals_str("sop")
+                    || (external(binding)
+                        && !slot.equals_str("knowledge")
+                        && !slot.equals_str("tools"))
             })
         })
     {
