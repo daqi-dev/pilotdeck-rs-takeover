@@ -23,7 +23,8 @@
 //   8. 标题记录的落点：会话 .jsonl 里由 provider 生成标题的那条 session_metadata 记录（metadata.titleSource
 //      存在）与循环开头的几条记录并发写入，基线两次运行的先后就不同。比较前把它的内容挪到同一轮里
 //      accepted_input / 首条 session_metadata 之后；只允许越过 FLOAT_OVER 里列的记录类型，越过别的类型不挪，
-//      照常报差异。挪的是内容，位置上的 sequence / entryId / parentEntryId / createdAt 不动（基线里它们也只随位置变）
+//      照常报差异。挪的是内容，位置上的 sequence / entryId / parentEntryId / createdAt 不动（基线里它们也只随位置变）；
+//      同一会话的投影检查点里抄下来的这些位置字段跟着改
 //  10. always-on 的 events.jsonl 不比记录先后（基线不等待地追加，先后随机），只比记录集合与内容
 //  11. 服务进程 stdout 里的 "[gateway:turn-timing] {…}" 行整行去掉：它只在某一步耗时超过 200ms 时才打印，
 //      打不打、数值多少都随机器快慢变
@@ -100,6 +101,9 @@ const FLOAT_OVER = ['step_started', 'context_snapshot', 'agent_instructions', 'c
 const SLOT_KEYS = ['sequence', 'entryId', 'parentEntryId', 'createdAt'];
 const isTitle = (r) => r?.type === 'session_metadata' && r.metadata && typeof r.metadata === 'object' && 'titleSource' in r.metadata;
 function settleTitleRecords(recs) {
+  // 返回被挪动的记录：原来所在位置的 entryId → 挪动后所在位置的位置字段。投影检查点里抄了这些记录的
+  // 位置字段（sequence / entryId / parentEntryId，以及等于 sequence - 1 的 index），要跟着改。
+  const moved = new Map();
   for (let i = 0; i < recs.length; i++) {
     if (!isTitle(recs[i])) continue;
     let j = i;
@@ -109,9 +113,20 @@ function settleTitleRecords(recs) {
     const payloads = [recs[i], ...recs.slice(j, i)];
     const slots = recs.slice(j, i + 1);
     for (let k = 0; k <= i - j; k++) {
+      if (typeof payloads[k].entryId === 'string') moved.set(payloads[k].entryId, slots[k]);
       recs[j + k] = Object.fromEntries(Object.keys(payloads[k]).map((key) => [key, SLOT_KEYS.includes(key) ? slots[k][key] : payloads[k][key]]));
     }
   }
+  return moved;
+}
+function resettleProjections(v, moved) {
+  if (Array.isArray(v)) { v.forEach((x) => resettleProjections(x, moved)); return; }
+  if (!v || typeof v !== 'object') return;
+  const slot = typeof v.entryId === 'string' && 'sequence' in v ? moved.get(v.entryId) : undefined;
+  const inner = v.entry && typeof v.entry === 'object' && typeof v.entry.entryId === 'string' ? moved.get(v.entry.entryId) : undefined;
+  if (inner && typeof v.index === 'number' && typeof inner.sequence === 'number') v.index = inner.sequence - 1;
+  for (const x of Object.values(v)) resettleProjections(x, moved);
+  if (slot) for (const key of SLOT_KEYS) if (key in v && key in slot && key !== 'createdAt') v[key] = slot[key];
 }
 // 规则 10：always-on 的 events.jsonl 不比记录先后。基线追加这个文件时不等上一条写完（DiscoveryFire 的
 // appendEvent 是 fire-and-forget），连续发出的两条事件谁先落盘是随机的。比较前按内容排序（先抹掉 id 和时间），
@@ -121,7 +136,11 @@ const orderKey = (r) => JSON.stringify(r).replace(UUID, 'U').replace(ISO, 'T').r
 function load(file) {
   const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
   for (const [name, entry] of Object.entries(raw.tree ?? {})) {
-    if (name.endsWith('.jsonl') && Array.isArray(entry?.jsonl)) settleTitleRecords(entry.jsonl);
+    if (name.endsWith('.jsonl') && Array.isArray(entry?.jsonl)) {
+      const moved = settleTitleRecords(entry.jsonl);
+      const projections = raw.tree[`${name}.projections.json`];
+      if (moved.size && projections?.json) resettleProjections(projections.json, moved);
+    }
     if (UNORDERED_JSONL.test(name) && Array.isArray(entry?.jsonl)) entry.jsonl.sort((x, y) => (orderKey(x) < orderKey(y) ? -1 : orderKey(x) > orderKey(y) ? 1 : 0));
   }
   for (const k of Object.keys(IGNORED)) delete raw[k];
