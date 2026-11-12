@@ -113,7 +113,10 @@ pub(crate) fn production_loader_mounts() -> ChannelLoaderMounts {
     let mut mounts = ChannelLoaderMounts::default();
     crate::channel::sms::register(&mut mounts);
     crate::channel::bluebubbles::register(&mut mounts);
-    crate::channel::slack::register(&mut mounts);
+    // The baseline ships no `@slack/bolt`, so its slack channel only ever
+    // logs `not installed`; the native Socket Mode port
+    // (`crate::channel::slack`) is no longer mounted in production.
+    crate::channel::unavailable::register(&mut mounts);
     crate::channel::api_server::register(&mut mounts);
     crate::channel::webhook::register(&mut mounts);
     mounts.register(

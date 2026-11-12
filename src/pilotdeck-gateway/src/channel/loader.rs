@@ -33,10 +33,12 @@ pub const CHANNEL_LOADER_KEYS: [&str; 15] = [
     "webhook",
 ];
 
-/// The 11 channel config keys not migrated to Rust (#1302 B, #1386): enabling
-/// any of them must abort native startup. The set is the nine
-/// `CHANNEL_LOADER_KEYS` members plus `qq` and `wecom`, which TS builds
-/// through `ChannelAdapterBundle` instead of the loader table. The order is
+/// The 12 channel config keys without a Rust implementation (#1302 B,
+/// #1386). The set is ten `CHANNEL_LOADER_KEYS` members plus `qq` and
+/// `wecom`, which TS builds through `ChannelAdapterBundle` instead of the
+/// loader table. Enabling `qq` / `wecom` aborts native startup; a loader key
+/// aborts it only when the baseline would get past its first start check
+/// ([`unavailable_start`]). The order is
 /// deterministic — reverse `CHANNEL_LOADER_KEYS` order, then `qq`, then
 /// `wecom`; the first enabled key in this order is the one reported. Reverse
 /// order on purpose: a table that repeats `CHANNEL_LOADER_KEYS`'s own
@@ -51,6 +53,7 @@ pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[
     "signal",
     "mattermost",
     "matrix",
+    "slack",
     "discord",
     "telegram",
     "qq",
@@ -100,7 +103,20 @@ fn rejects_enabled(key: &str, cfg: &JsValue) -> bool {
 /// constructed (and therefore before any adapter construction or
 /// `console.error` line); see also [`reject_unimplemented_bundle_channels`]
 /// for the `weixin` / `feishu` keys this table cannot cover.
+///
+/// The loader-table keys among them are refused only when the baseline would
+/// get past its first start check (see [`unavailable_start`]); with the SDK
+/// missing or the credentials absent the baseline logs one line and keeps
+/// running, and so does Rust (`unavailable::UnavailableChannel`).
 pub fn reject_unmigrated_channels(adapters: Option<&JsValue>) -> Result<(), ChannelError> {
+    reject_unmigrated_channels_with_env(adapters, &process_env)
+}
+
+/// [`reject_unmigrated_channels`] over an explicit environment lookup.
+pub fn reject_unmigrated_channels_with_env(
+    adapters: Option<&JsValue>,
+    env: &EnvLookupFn,
+) -> Result<(), ChannelError> {
     let Some(adapters) = adapters else {
         return Ok(());
     };
@@ -108,13 +124,160 @@ pub fn reject_unmigrated_channels(adapters: Option<&JsValue>) -> Result<(), Chan
         let Some(cfg) = adapters.get(key) else {
             continue;
         };
-        if rejects_enabled(key, cfg) {
-            return Err(ChannelError::error(format!(
-                "[adapters] channel \"{key}\" 未迁移到 Rust，需继续使用 TS gateway"
-            )));
+        if !rejects_enabled(key, cfg) {
+            continue;
         }
+        if CHANNEL_LOADER_KEYS.contains(key) {
+            let options = build_options(key, cfg, &LoadEnabledChannelsOptions { pilot_home: None });
+            if let Some(UnavailableStart::Line(_)) = unavailable_start(key, &options, env) {
+                continue;
+            }
+        }
+        return Err(ChannelError::error(format!(
+            "[adapters] channel \"{key}\" 未迁移到 Rust，需继续使用 TS gateway"
+        )));
     }
     Ok(())
+}
+
+/// `process.env[name]`.
+pub type EnvLookupFn = dyn Fn(&str) -> Option<JsString> + Send + Sync;
+
+pub(crate) fn process_env(name: &str) -> Option<JsString> {
+    std::env::var(name).ok().map(JsString::from)
+}
+
+/// How a loader-table channel without a Rust implementation starts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UnavailableStart {
+    /// The baseline's start logs this line through `logger.error` and returns
+    /// a no-op handle; the process keeps running.
+    Line(&'static str),
+    /// The baseline would go further (a real connection, or a constructor
+    /// input shape whose failure Rust does not reproduce): startup is
+    /// refused instead.
+    Unsupported,
+}
+
+/// The six loader channels whose SDK the baseline does not ship
+/// (`grammy`, `discord.js`, `@slack/bolt`, `matrix-bot-sdk`,
+/// `dingtalk-stream`, `imapflow` / `nodemailer` are absent from its
+/// `package.json`): `start` always stops at the `not installed` branch
+/// (TelegramChannel.ts:50-53, DiscordChannel.ts:48-51, SlackChannel.ts:49-52,
+/// MatrixChannel.ts:61-64, DingTalkChannel.ts:56-59, EmailChannel.ts:61-64).
+const SDK_MISSING_LINES: &[(&str, &str)] = &[
+    (
+        "telegram",
+        "telegram: grammy not installed; run `npm install grammy`",
+    ),
+    (
+        "discord",
+        "discord: discord.js not installed; run `npm install discord.js`",
+    ),
+    (
+        "slack",
+        "slack: @slack/bolt not installed; run `npm install @slack/bolt`",
+    ),
+    (
+        "matrix",
+        "matrix: matrix-bot-sdk not installed; run `npm install matrix-bot-sdk`",
+    ),
+    (
+        "dingtalk",
+        "dingtalk: dingtalk-stream not installed; run `npm install dingtalk-stream`",
+    ),
+    (
+        "email",
+        "email: imapflow and/or nodemailer not installed; run `npm install imapflow nodemailer`",
+    ),
+];
+
+/// The loader channels Rust does not implement, by key: what the baseline's
+/// constructor and first start check do with these options (`options` is the
+/// object [`build_options`] makes) and this environment. `None` for keys Rust
+/// implements.
+pub fn unavailable_start(
+    key: &str,
+    options: &JsObject,
+    env: &EnvLookupFn,
+) -> Option<UnavailableStart> {
+    use UnavailableStart::{Line, Unsupported};
+    let undefined = JsValue::Undefined;
+    let option = |name: &str| options.get(name).unwrap_or(&undefined).clone();
+    // `options.x ?? process.env.X ?? fallback`.
+    let either = |name: &str, var: &str, fallback: JsValue| {
+        let value = option(name);
+        if !nullish(&value) {
+            return value;
+        }
+        env(var).map(JsValue::String).unwrap_or(fallback)
+    };
+    let truthy = |value: &JsValue| js_truthy(Some(value));
+    if let Some((_, line)) = SDK_MISSING_LINES.iter().find(|(name, _)| *name == key) {
+        // MatrixChannel's constructor calls `.replace` on the homeserver
+        // (MatrixChannel.ts constructor) before `start` is ever reached.
+        if key == "matrix"
+            && !matches!(
+                either("homeserver", "MATRIX_HOMESERVER", "".into()),
+                JsValue::String(_)
+            )
+        {
+            return Some(Unsupported);
+        }
+        return Some(Line(line));
+    }
+    match key {
+        // MattermostChannel.ts:48-49 constructor, :57-60 start.
+        "mattermost" => {
+            let token = either("token", "MATTERMOST_TOKEN", "".into());
+            let server_url = either("serverUrl", "MATTERMOST_URL", "".into());
+            Some(if !truthy(&server_url) || !truthy(&token) {
+                Line(
+                    "mattermost: serverUrl and token are required (MATTERMOST_URL, MATTERMOST_TOKEN)",
+                )
+            } else {
+                Unsupported
+            })
+        }
+        // SignalChannel.ts:83-87 constructor (`normalizeBaseUrl` calls
+        // `.replace`), :93-96 start.
+        "signal" => {
+            let rest_url = either("restUrl", "SIGNAL_HTTP_URL", "http://127.0.0.1:8080".into());
+            let account = either("account", "SIGNAL_ACCOUNT", "".into());
+            Some(
+                if matches!(rest_url, JsValue::String(_)) && !truthy(&account) {
+                    Line("signal: SIGNAL_ACCOUNT / account not set")
+                } else {
+                    Unsupported
+                },
+            )
+        }
+        // WhatsAppChannel.ts:51-54 constructor (`.trim()`,
+        // `normalizeBaseUrl`), :61-64 start.
+        "whatsapp" => {
+            let bridge_path = either("bridgePath", "WHATSAPP_BRIDGE_PATH", "".into());
+            let bridge_url = either("bridgeUrl", "WHATSAPP_BRIDGE_URL", "".into());
+            Some(match (&bridge_path, &bridge_url) {
+                (JsValue::String(path), JsValue::String(_))
+                    if crate::metadata::js_trim(&String::from_utf16_lossy(path.units()))
+                        .is_empty() =>
+                {
+                    Line("whatsapp: bridgePath / WHATSAPP_BRIDGE_PATH is required")
+                }
+                _ => Unsupported,
+            })
+        }
+        // HomeAssistantChannel.ts:67 constructor, :76-79 start.
+        "homeassistant" => {
+            let token = either("token", "HASS_TOKEN", JsValue::Undefined);
+            Some(if truthy(&token) {
+                Unsupported
+            } else {
+                Line("homeassistant: HASS_TOKEN not set")
+            })
+        }
+        _ => None,
+    }
 }
 
 /// The `ChannelAdapterBundle` keys that are not in [`CHANNEL_LOADER_KEYS`].
