@@ -1,0 +1,1318 @@
+{
+ "name": "permissions-json-syntax",
+ "about": "~/.pilotdeck/permissions.json 的规则语法与优先级（permission/settings.ts，InProcessGateway.ts:1441-1457,1566-1569，agent/turn/permissionOverrides.ts replaceUserRules）与绕过尝试：allow 规则 Bash(touch allowed*) 面对 &&、;、$()、|、换行、大小写、多空格、引号；deny 规则 Bash(rm *) 面对绝对路径、前导空格、;、command 前缀、大写；Bash(git push*)；Read 在 askTools、Glob 在 allow、Write 在 deny；同一条同时在 allow 与 deny；会话授权（grant_session_permission）与文件 deny 冲突；permission_decide remember 后文件不变；会话进行中用 write_file 改写文件后下一轮生效；allow 与 ask 同时命中。缺省权限模式，采集器按轮允许或拒绝。",
+ "files": {
+  "home/.pilotdeck/permissions.json": {
+   "version": 1,
+   "allowedTools": [
+    "Bash(touch allowed*)",
+    "  Bash( echo hi* )  ",
+    "Glob",
+    "Bash(rm -f nothing-granted)"
+   ],
+   "disallowedTools": [
+    "Bash(rm *)",
+    "Bash(git push*)",
+    "Write",
+    "Bash(rm -f nothing-granted)"
+   ],
+   "askTools": [
+    "Read",
+    "Bash(touch allowed-z)"
+   ],
+   "skipPermissions": false
+  },
+  "home/.pilotdeck/notes/p.txt": "perm\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Pj\"}"
+   }
+  },
+  {
+   "name": "p25-after",
+   "when": [
+    "p25:",
+    "\"tool_call_id\":\"call_p25\""
+   ],
+   "reply": {
+    "text": "Done p25."
+   }
+  },
+  {
+   "name": "p25",
+   "when": [
+    "p25:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_p25",
+     "name": "bash",
+     "arguments": {
+      "command": "ls -a; cat permissions.json | head -c 300; echo"
+     }
+    }
+   }
+  },
+  {
+   "name": "p24-after",
+   "when": [
+    "p24:",
+    "\"tool_call_id\":\"call_p24\""
+   ],
+   "reply": {
+    "text": "Done p24."
+   }
+  },
+  {
+   "name": "p24",
+   "when": [
+    "p24:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_p24",
+     "name": "bash",
+     "arguments": {
+      "command": "touch allowed-z"
+     }
+    }
+   }
+  },
+  {
+   "name": "p23-after",
+   "when": [
+    "p23:",
+    "\"tool_call_id\":\"call_p23\""
+   ],
+   "reply": {
+    "text": "Done p23."
+   }
+  },
+  {
+   "name": "p23",
+   "when": [
+    "p23:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_p23",
+     "name": "bash",
+     "arguments": {
+      "command": "touch late-x"
+     }
+    }
+   }
+  },
+  {
+   "name": "p22-after",
+   "when": [
+    "p22:",
+    "\"tool_call_id\":\"call_p22\""
+   ],
+   "reply": {
+    "text": "Done p22."
+   }
+  },
+  {
+   "name": "p22",
+   "when": [
+    "p22:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_p22",
+     "name": "bash",
+     "arguments": {
+      "command": "printf '%s\\n' '{\"version\": 1, \"allowedTools\": [\"Bash(touch late*)\"], \"disallowedTools\": [\"Write\"]}' > permissions.json"
+     }
+    }
+   }
+  },
+  {
+   "name": "p21-after",
+   "when": [
+    "p21:",
+    "\"tool_call_id\":\"call_p21\""
+   ],
+   "reply": {
+    "text": "Done p21."
+   }
+  },
+  {
+   "name": "p21",
+   "when": [
+    "p21:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_p21",
+     "name": "bash",
+     "arguments": {
+      "command": "touch remembered.txt"
+     }
+    }
+   }
+  },
+  {
+   "name": "p20-after",
+   "when": [
+    "p20:",
+    "\"tool_call_id\":\"call_p20\""
+   ],
+   "reply": {
+    "text": "Done p20."
+   }
+  },
+  {
+   "name": "p20",
+   "when": [
+    "p20:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_p20",
+     "name": "bash",
+     "arguments": {
+      "command": "touch remembered.txt"
+     }
+    }
+   }
+  },
+  {
+   "name": "p19-after",
+   "when": [
+    "p19:",
+    "\"tool_call_id\":\"call_p19\""
+   ],
+   "reply": {
+    "text": "Done p19."
+   }
+  },
+  {
+   "name": "p19",
+   "when": [
+    "p19:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_p19",
+     "name": "bash",
+     "arguments": {
+      "command": "rm -f nothing-granted"
+     }
+    }
+   }
+  },
+  {
+   "name": "p18-after",
+   "when": [
+    "p18:",
+    "\"tool_call_id\":\"call_p18\""
+   ],
+   "reply": {
+    "text": "Done p18."
+   }
+  },
+  {
+   "name": "p18",
+   "when": [
+    "p18:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_p18",
+     "name": "write_file",
+     "arguments": {
+      "file_path": "notes/w.txt",
+      "content": "w\n"
+     }
+    }
+   }
+  },
+  {
+   "name": "p17-after",
+   "when": [
+    "p17:",
+    "\"tool_call_id\":\"call_p17\""
+   ],
+   "reply": {
+    "text": "Done p17."
+   }
+  },
+  {
+   "name": "p17",
+   "when": [
+    "p17:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_p17",
+     "name": "glob",
+     "arguments": {
+      "pattern": "notes/*"
+     }
+    }
+   }
+  },
+  {
+   "name": "p16-after",
+   "when": [
+    "p16:",
+    "\"tool_call_id\":\"call_p16\""
+   ],
+   "reply": {
+    "text": "Done p16."
+   }
+  },
+  {
+   "name": "p16",
+   "when": [
+    "p16:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_p16",
+     "name": "read_file",
+     "arguments": {
+      "file_path": "notes/p.txt"
+     }
+    }
+   }
+  },
+  {
+   "name": "p15-after",
+   "when": [
+    "p15:",
+    "\"tool_call_id\":\"call_p15\""
+   ],
+   "reply": {
+    "text": "Done p15."
+   }
+  },
+  {
+   "name": "p15",
+   "when": [
+    "p15:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_p15",
+     "name": "bash",
+     "arguments": {
+      "command": "git push origin main"
+     }
+    }
+   }
+  },
+  {
+   "name": "p14-after",
+   "when": [
+    "p14:",
+    "\"tool_call_id\":\"call_p14\""
+   ],
+   "reply": {
+    "text": "Done p14."
+   }
+  },
+  {
+   "name": "p14",
+   "when": [
+    "p14:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_p14",
+     "name": "bash",
+     "arguments": {
+      "command": "RM -f nothing"
+     }
+    }
+   }
+  },
+  {
+   "name": "p13-after",
+   "when": [
+    "p13:",
+    "\"tool_call_id\":\"call_p13\""
+   ],
+   "reply": {
+    "text": "Done p13."
+   }
+  },
+  {
+   "name": "p13",
+   "when": [
+    "p13:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_p13",
+     "name": "bash",
+     "arguments": {
+      "command": "command rm -f nothing"
+     }
+    }
+   }
+  },
+  {
+   "name": "p12-after",
+   "when": [
+    "p12:",
+    "\"tool_call_id\":\"call_p12\""
+   ],
+   "reply": {
+    "text": "Done p12."
+   }
+  },
+  {
+   "name": "p12",
+   "when": [
+    "p12:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_p12",
+     "name": "bash",
+     "arguments": {
+      "command": "echo hi; rm -f nothing"
+     }
+    }
+   }
+  },
+  {
+   "name": "p11-after",
+   "when": [
+    "p11:",
+    "\"tool_call_id\":\"call_p11\""
+   ],
+   "reply": {
+    "text": "Done p11."
+   }
+  },
+  {
+   "name": "p11",
+   "when": [
+    "p11:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_p11",
+     "name": "bash",
+     "arguments": {
+      "command": " rm -f nothing"
+     }
+    }
+   }
+  },
+  {
+   "name": "p10-after",
+   "when": [
+    "p10:",
+    "\"tool_call_id\":\"call_p10\""
+   ],
+   "reply": {
+    "text": "Done p10."
+   }
+  },
+  {
+   "name": "p10",
+   "when": [
+    "p10:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_p10",
+     "name": "bash",
+     "arguments": {
+      "command": "/bin/rm -f nothing"
+     }
+    }
+   }
+  },
+  {
+   "name": "p09-after",
+   "when": [
+    "p09:",
+    "\"tool_call_id\":\"call_p09\""
+   ],
+   "reply": {
+    "text": "Done p09."
+   }
+  },
+  {
+   "name": "p09",
+   "when": [
+    "p09:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_p09",
+     "name": "bash",
+     "arguments": {
+      "command": "'touch' allowed-i"
+     }
+    }
+   }
+  },
+  {
+   "name": "p08-after",
+   "when": [
+    "p08:",
+    "\"tool_call_id\":\"call_p08\""
+   ],
+   "reply": {
+    "text": "Done p08."
+   }
+  },
+  {
+   "name": "p08",
+   "when": [
+    "p08:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_p08",
+     "name": "bash",
+     "arguments": {
+      "command": "touch  allowed-h"
+     }
+    }
+   }
+  },
+  {
+   "name": "p07-after",
+   "when": [
+    "p07:",
+    "\"tool_call_id\":\"call_p07\""
+   ],
+   "reply": {
+    "text": "Done p07."
+   }
+  },
+  {
+   "name": "p07",
+   "when": [
+    "p07:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_p07",
+     "name": "bash",
+     "arguments": {
+      "command": "TOUCH allowed-g"
+     }
+    }
+   }
+  },
+  {
+   "name": "p06-after",
+   "when": [
+    "p06:",
+    "\"tool_call_id\":\"call_p06\""
+   ],
+   "reply": {
+    "text": "Done p06."
+   }
+  },
+  {
+   "name": "p06",
+   "when": [
+    "p06:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_p06",
+     "name": "bash",
+     "arguments": {
+      "command": "touch allowed-f\ntouch sneaky-newline.txt"
+     }
+    }
+   }
+  },
+  {
+   "name": "p05-after",
+   "when": [
+    "p05:",
+    "\"tool_call_id\":\"call_p05\""
+   ],
+   "reply": {
+    "text": "Done p05."
+   }
+  },
+  {
+   "name": "p05",
+   "when": [
+    "p05:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_p05",
+     "name": "bash",
+     "arguments": {
+      "command": "touch allowed-e | tee sneaky-pipe.txt"
+     }
+    }
+   }
+  },
+  {
+   "name": "p04-after",
+   "when": [
+    "p04:",
+    "\"tool_call_id\":\"call_p04\""
+   ],
+   "reply": {
+    "text": "Done p04."
+   }
+  },
+  {
+   "name": "p04",
+   "when": [
+    "p04:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_p04",
+     "name": "bash",
+     "arguments": {
+      "command": "touch allowed-d $(touch sneaky-subst.txt)"
+     }
+    }
+   }
+  },
+  {
+   "name": "p03-after",
+   "when": [
+    "p03:",
+    "\"tool_call_id\":\"call_p03\""
+   ],
+   "reply": {
+    "text": "Done p03."
+   }
+  },
+  {
+   "name": "p03",
+   "when": [
+    "p03:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_p03",
+     "name": "bash",
+     "arguments": {
+      "command": "touch allowed-c; touch sneaky-semicolon.txt"
+     }
+    }
+   }
+  },
+  {
+   "name": "p02-after",
+   "when": [
+    "p02:",
+    "\"tool_call_id\":\"call_p02\""
+   ],
+   "reply": {
+    "text": "Done p02."
+   }
+  },
+  {
+   "name": "p02",
+   "when": [
+    "p02:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_p02",
+     "name": "bash",
+     "arguments": {
+      "command": "touch allowed-b && rm -f allowed-a"
+     }
+    }
+   }
+  },
+  {
+   "name": "p01-after",
+   "when": [
+    "p01:",
+    "\"tool_call_id\":\"call_p01\""
+   ],
+   "reply": {
+    "text": "Done p01."
+   }
+  },
+  {
+   "name": "p01",
+   "when": [
+    "p01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_p01",
+     "name": "bash",
+     "arguments": {
+      "command": "touch allowed-a"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-pj",
+    "channelKey": "test",
+    "message": "p01: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-pj",
+      "requestId": "{event.requestId}",
+      "decision": "deny",
+      "reason": "bbx denies"
+     }
+    }
+   ],
+   "timeout": 15000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-pj",
+    "channelKey": "test",
+    "message": "p02: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-pj",
+      "requestId": "{event.requestId}",
+      "decision": "deny",
+      "reason": "bbx denies"
+     }
+    }
+   ],
+   "timeout": 15000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-pj",
+    "channelKey": "test",
+    "message": "p03: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-pj",
+      "requestId": "{event.requestId}",
+      "decision": "deny",
+      "reason": "bbx denies"
+     }
+    }
+   ],
+   "timeout": 15000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-pj",
+    "channelKey": "test",
+    "message": "p04: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-pj",
+      "requestId": "{event.requestId}",
+      "decision": "deny",
+      "reason": "bbx denies"
+     }
+    }
+   ],
+   "timeout": 15000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-pj",
+    "channelKey": "test",
+    "message": "p05: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-pj",
+      "requestId": "{event.requestId}",
+      "decision": "deny",
+      "reason": "bbx denies"
+     }
+    }
+   ],
+   "timeout": 15000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-pj",
+    "channelKey": "test",
+    "message": "p06: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-pj",
+      "requestId": "{event.requestId}",
+      "decision": "deny",
+      "reason": "bbx denies"
+     }
+    }
+   ],
+   "timeout": 15000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-pj",
+    "channelKey": "test",
+    "message": "p07: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-pj",
+      "requestId": "{event.requestId}",
+      "decision": "deny",
+      "reason": "bbx denies"
+     }
+    }
+   ],
+   "timeout": 15000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-pj",
+    "channelKey": "test",
+    "message": "p08: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-pj",
+      "requestId": "{event.requestId}",
+      "decision": "deny",
+      "reason": "bbx denies"
+     }
+    }
+   ],
+   "timeout": 15000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-pj",
+    "channelKey": "test",
+    "message": "p09: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-pj",
+      "requestId": "{event.requestId}",
+      "decision": "deny",
+      "reason": "bbx denies"
+     }
+    }
+   ],
+   "timeout": 15000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-pj",
+    "channelKey": "test",
+    "message": "p10: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-pj",
+      "requestId": "{event.requestId}",
+      "decision": "deny",
+      "reason": "bbx denies"
+     }
+    }
+   ],
+   "timeout": 15000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-pj",
+    "channelKey": "test",
+    "message": "p11: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-pj",
+      "requestId": "{event.requestId}",
+      "decision": "deny",
+      "reason": "bbx denies"
+     }
+    }
+   ],
+   "timeout": 15000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-pj",
+    "channelKey": "test",
+    "message": "p12: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-pj",
+      "requestId": "{event.requestId}",
+      "decision": "deny",
+      "reason": "bbx denies"
+     }
+    }
+   ],
+   "timeout": 15000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-pj",
+    "channelKey": "test",
+    "message": "p13: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-pj",
+      "requestId": "{event.requestId}",
+      "decision": "deny",
+      "reason": "bbx denies"
+     }
+    }
+   ],
+   "timeout": 15000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-pj",
+    "channelKey": "test",
+    "message": "p14: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-pj",
+      "requestId": "{event.requestId}",
+      "decision": "deny",
+      "reason": "bbx denies"
+     }
+    }
+   ],
+   "timeout": 15000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-pj",
+    "channelKey": "test",
+    "message": "p15: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-pj",
+      "requestId": "{event.requestId}",
+      "decision": "deny",
+      "reason": "bbx denies"
+     }
+    }
+   ],
+   "timeout": 15000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-pj",
+    "channelKey": "test",
+    "message": "p16: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-pj",
+      "requestId": "{event.requestId}",
+      "decision": "allow"
+     }
+    }
+   ],
+   "timeout": 15000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-pj",
+    "channelKey": "test",
+    "message": "p17: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-pj",
+      "requestId": "{event.requestId}",
+      "decision": "deny",
+      "reason": "bbx denies"
+     }
+    }
+   ],
+   "timeout": 15000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-pj",
+    "channelKey": "test",
+    "message": "p18: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-pj",
+      "requestId": "{event.requestId}",
+      "decision": "allow"
+     }
+    }
+   ],
+   "timeout": 15000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "grant_session_permission",
+   "params": {
+    "sessionKey": "s-pj",
+    "entry": "Bash(rm -f nothing-granted)"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-pj",
+    "channelKey": "test",
+    "message": "p19: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-pj",
+      "requestId": "{event.requestId}",
+      "decision": "allow"
+     }
+    }
+   ],
+   "timeout": 15000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-pj",
+    "channelKey": "test",
+    "message": "p20: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-pj",
+      "requestId": "{event.requestId}",
+      "decision": "allow",
+      "remember": true
+     }
+    }
+   ],
+   "timeout": 15000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-pj",
+    "channelKey": "test",
+    "message": "p21: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-pj",
+      "requestId": "{event.requestId}",
+      "decision": "deny",
+      "reason": "bbx denies"
+     }
+    }
+   ],
+   "timeout": 15000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-pj",
+    "channelKey": "test",
+    "message": "p22: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-pj",
+      "requestId": "{event.requestId}",
+      "decision": "allow"
+     }
+    }
+   ],
+   "timeout": 15000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-pj",
+    "channelKey": "test",
+    "message": "p23: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-pj",
+      "requestId": "{event.requestId}",
+      "decision": "deny",
+      "reason": "bbx denies"
+     }
+    }
+   ],
+   "timeout": 15000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-pj",
+    "channelKey": "test",
+    "message": "p24: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-pj",
+      "requestId": "{event.requestId}",
+      "decision": "deny",
+      "reason": "bbx denies"
+     }
+    }
+   ],
+   "timeout": 15000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-pj",
+    "channelKey": "test",
+    "message": "p25: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-pj",
+      "requestId": "{event.requestId}",
+      "decision": "allow"
+     }
+    }
+   ],
+   "timeout": 15000
+  },
+  {
+   "sleep": 200
+  }
+ ]
+}
