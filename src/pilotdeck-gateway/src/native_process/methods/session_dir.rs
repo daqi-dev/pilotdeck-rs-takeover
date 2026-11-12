@@ -1688,13 +1688,12 @@ mod tests {
         r.owner.shutdown().await.expect("#1310 shutdown");
         r.project.dispose().await.expect("#1310 dispose");
     }
-}
 
-#[cfg(test)]
-struct RemoveDir(std::path::PathBuf);
-#[cfg(test)]
-impl Drop for RemoveDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir(&self.0);
+    /// Removes a broken ledger lock planted outside the scratch directory.
+    struct RemoveDir(std::path::PathBuf);
+    impl Drop for RemoveDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir(&self.0);
+        }
     }
 }

@@ -3453,13 +3453,12 @@ mod tests {
             .expect("#1457 the concurrently written transcript still loads");
         teardown(&r).await;
     }
-}
 
-#[cfg(test)]
-struct RemoveDir(std::path::PathBuf);
-#[cfg(test)]
-impl Drop for RemoveDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir(&self.0);
+    /// Removes a broken ledger lock planted outside the scratch directory.
+    struct RemoveDir(std::path::PathBuf);
+    impl Drop for RemoveDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir(&self.0);
+        }
     }
 }
