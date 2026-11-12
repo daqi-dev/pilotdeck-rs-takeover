@@ -806,9 +806,11 @@ impl LiveSession for LiveSessionAdapter {
     fn abort(&self, reason: &JsString) -> RuntimeResult {
         let mut state = self.state.lock().unwrap();
         state.signal.abort();
-        state.user_abort.abort();
         state.status = super::live_session::SessionStatus::Aborted;
         if let Some(cancellation) = &state.active {
+            // Only a running turn's own abort signal: a finished turn's
+            // advisory hooks outlive it and are not this abort's to kill.
+            state.user_abort.abort();
             cancellation.cancel(Some(reason.clone()));
         }
         Ok(())
