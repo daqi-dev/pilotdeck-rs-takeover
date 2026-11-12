@@ -1,0 +1,317 @@
+{
+  "name": "permission-subagent-background",
+  "about": "后台子代理（sdkSessionConfig.agents 的 background: true）在父轮还在跑时调 bash：父轮自己的 bash（agent 不询问）与子代理的 bash 都要询问，全部经父会话的流发出，父轮的在前；s-bg-allow 两次都批准（子代理的文件落盘），s-bg-deny 批准父轮的、拒绝子代理的（文件不落盘、子代理照常回报告）。之后 background_tasks 与下一轮。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Sub ask\"}"
+      }
+    },
+    {
+      "name": "next",
+      "when": [
+        "next:"
+      ],
+      "reply": {
+        "text": "next done"
+      }
+    },
+    {
+      "name": "bgallow-parent-after",
+      "when": [
+        "PARENT-bgallow",
+        "\"tool_call_id\":\"call_sleep\""
+      ],
+      "reply": {
+        "text": "parent done bgallow"
+      }
+    },
+    {
+      "name": "bgallow-parent",
+      "when": [
+        "PARENT-bgallow"
+      ],
+      "reply": {
+        "tools": [
+          {
+            "id": "call_parent",
+            "name": "agent",
+            "arguments": {
+              "description": "Run bgallow",
+              "prompt": "CHILD-bgallow: write the file.",
+              "subagent_type": "worker"
+            }
+          },
+          {
+            "id": "call_sleep",
+            "name": "bash",
+            "arguments": {
+              "command": "sleep 2",
+              "description": "parent waits"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "bgallow-child-after",
+      "when": [
+        "CHILD-bgallow",
+        "\"tool_call_id\":\"call_child\""
+      ],
+      "reply": {
+        "text": "Scope: ran.\nResult: done.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "bgallow-child",
+      "when": [
+        "CHILD-bgallow"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_child",
+          "name": "bash",
+          "arguments": {
+            "command": "printf bgallow > bg-allow.txt",
+            "description": "child bgallow"
+          }
+        }
+      }
+    },
+    {
+      "name": "bgdeny-parent-after",
+      "when": [
+        "PARENT-bgdeny",
+        "\"tool_call_id\":\"call_sleep\""
+      ],
+      "reply": {
+        "text": "parent done bgdeny"
+      }
+    },
+    {
+      "name": "bgdeny-parent",
+      "when": [
+        "PARENT-bgdeny"
+      ],
+      "reply": {
+        "tools": [
+          {
+            "id": "call_parent",
+            "name": "agent",
+            "arguments": {
+              "description": "Run bgdeny",
+              "prompt": "CHILD-bgdeny: write the file.",
+              "subagent_type": "worker"
+            }
+          },
+          {
+            "id": "call_sleep",
+            "name": "bash",
+            "arguments": {
+              "command": "sleep 2",
+              "description": "parent waits"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "bgdeny-child-after",
+      "when": [
+        "CHILD-bgdeny",
+        "\"tool_call_id\":\"call_child\""
+      ],
+      "reply": {
+        "text": "Scope: ran.\nResult: done.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "bgdeny-child",
+      "when": [
+        "CHILD-bgdeny"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_child",
+          "name": "bash",
+          "arguments": {
+            "command": "printf bgdeny > bg-deny.txt",
+            "description": "child bgdeny"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bg-allow",
+        "channelKey": "test",
+        "message": "PARENT-bgallow launch",
+        "sdkSessionConfig": {
+          "agents": {
+            "worker": {
+              "description": "Writes in the background.",
+              "prompt": "WORKER-SUFFIX: do as told.",
+              "tools": [
+                "bash"
+              ],
+              "background": true
+            }
+          }
+        }
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-bg-allow",
+            "requestId": "{event.requestId}",
+            "decision": "allow"
+          },
+          "count": 2
+        }
+      ]
+    },
+    {
+      "sleep": 1500
+    },
+    {
+      "ws": "background_tasks",
+      "params": {
+        "sessionKey": "s-bg-allow"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bg-allow",
+        "channelKey": "test",
+        "message": "next: after",
+        "sdkSessionConfig": {
+          "agents": {
+            "worker": {
+              "description": "Writes in the background.",
+              "prompt": "WORKER-SUFFIX: do as told.",
+              "tools": [
+                "bash"
+              ],
+              "background": true
+            }
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-bg-allow"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bg-deny",
+        "channelKey": "test",
+        "message": "PARENT-bgdeny launch",
+        "sdkSessionConfig": {
+          "agents": {
+            "worker": {
+              "description": "Writes in the background.",
+              "prompt": "WORKER-SUFFIX: do as told.",
+              "tools": [
+                "bash"
+              ],
+              "background": true
+            }
+          }
+        }
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-bg-deny",
+            "requestId": "{event.requestId}",
+            "decision": "allow"
+          },
+          "count": 1
+        },
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-bg-deny",
+            "requestId": "{event.requestId}",
+            "decision": "deny",
+            "reason": "not the child"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 1500
+    },
+    {
+      "ws": "background_tasks",
+      "params": {
+        "sessionKey": "s-bg-deny"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bg-deny",
+        "channelKey": "test",
+        "message": "next: after",
+        "sdkSessionConfig": {
+          "agents": {
+            "worker": {
+              "description": "Writes in the background.",
+              "prompt": "WORKER-SUFFIX: do as told.",
+              "tools": [
+                "bash"
+              ],
+              "background": true
+            }
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-bg-deny"
+      }
+    }
+  ],
+  "volatile": [
+    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages|resultBytes|content-length)$"
+  ],
+  "volatileWhy": "子代理结果文本里带位数不定的耗时，token 估算随之变；基线自比已证明（三次自比都只差在这些字段上）"
+}
