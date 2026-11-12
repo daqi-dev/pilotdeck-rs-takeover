@@ -52,6 +52,7 @@ if (files.length < 2) { console.error('usage: diff.mjs <a.json> <b.json> [--max 
 // 不比较的顶层字段，以及原因。
 export const IGNORED = {
   side: '采集侧标记',
+  evidence: '运行身份和必需断言，由 check.mjs 逐侧严格核验，不作行为归一化',
   startMs: '启动耗时，性能指标，单独报告',
   serverLog: '服务进程自己的日志输出；CLI 子命令的 stdout/stderr 在 steps 里照常比较',
   failures: '超时 / 连不上的汇总，由 check.mjs 判 INVALID；对应的输出在 steps 里照常比较',

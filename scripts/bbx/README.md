@@ -5,7 +5,7 @@
 ## 它为什么可信
 
 - **被测对象是真进程**：基线是 `node dist/src/cli/pilotdeck.js server --port N`，Rust 是编译出来的 `pilotdeck server --port N`，参数和环境变量两侧相同。采集器不 import 任何一侧的代码。
-- **输入完全相同**：两侧先后在同一个固定路径 `/private/tmp/pdrs-bbx/root` 的干净目录里跑，同样的配置文件、同样的初始文件、同样的环境变量、同样的端口、同一个假 provider、同样的步骤。路径和端口因此不需要归一化。
+- **输入完全相同**：两侧先后在同一个隔离路径 `<BBX_TMP_ROOT 或系统 tmp>/pdrs-bbx/root` 的干净目录里跑，同样的配置文件、同样的初始文件、同样的环境变量、同样的端口、同一个假 provider、同样的步骤。路径和端口因此不需要归一化。
 - **记录的是原样输出**：WS 帧（重连前后各条连接上的通知都保留）、HTTP 响应（状态、头、体）、CLI 的 stdout / stderr / 退出码、假 provider 收到的请求（方法、路径、头、体）、结束后 home 和 project 下的全部文件、停机退出码。落盘文件：文本文件比全文和权限；非 UTF-8 文件比长度、sha256 和权限；`.json` / `.jsonl` 比解析结果，另比一份原文指纹（行数、是否以换行结尾、每行排版骨架的哈希计数），缩进、空格、换行、转义写法、数字写法（`1` 与 `1.0`）的差异因此也会报出来。
 - **归一化规则都写在 `diff.mjs` 开头**，每条都是「基线自己连跑两次也会变」的东西：UUID、时间戳、进程号、请求指纹、耗时、两处随机路径段、会话文件里标题记录的落点。场景还可以声明 `volatile`（基线自比已证明不稳的路径）和 `accepted`（基线自身的 bug，Rust 不照做），两者每次比较都会打印略过了几处。基线 vs Rust 时，`accepted` 里某条正则一处都没命中会报 `STALE` 并计 1 处差异（过期的豁免让场景变红）；`volatile` 一处没命中只提示 `STALE?`。不比较的字段只有四个（采集侧标记、启动耗时、服务进程日志、失败汇总；失败汇总由 `check.mjs` 单独判定）。
 - **失败不算一致**：启动失败、步骤超时（含被采集器杀掉的 `cli` / `serve`、`disconnect` 等不到关闭）、连不上、停机等不到退出，都记进产物的 `failures`。只要有未声明为预期的失败，`check.mjs` 就判 `INVALID`，两侧失败得一模一样也不行。
@@ -13,7 +13,7 @@
 - **自检**：`check.mjs --self` 让基线跑两次互相比。必须 SAME，否则该场景不稳定，结论不能用。
 - **能抓错**：见下面「注入错误检查」。
 
-总共三个脚本、不到 700 行，没有依赖。
+采集、比较、完整运行清单与覆盖统计均使用 Node 内置库。
 
 ## 用法
 
@@ -27,7 +27,7 @@ node scripts/bbx/check.mjs                   # 基线 vs Rust，全部场景
 node scripts/bbx/check.mjs turn-text         # 只跑一个场景
 ```
 
-产物默认在 `_build/bbx/`：每个场景两侧各一份原始采集 `<场景>.<侧>.json` 和一份差异 `<场景>.diff.txt`。`--out DIR` 可改位置。每个场景的判定是 `SAME`、`DIFF N`、`INVALID`（有非预期的失败，括号里是差异结论和失败位置）或 `RUN FAILED`（采集器没跑完，例如锁被占、二进制比源码旧）。退出码 0 表示全部 SAME。
+每次运行创建一个全新目录，默认在 `_build/bbx/<时间-随机 ID>/`：每个场景两侧各一份原始采集 `<场景>.<侧>.json` 和一份差异 `<场景>.diff.txt`。`--out DIR` 可指定尚不存在的新目录；目录已存在直接失败，不覆盖旧报告。`manifest.json` 保存本次完整结果，失败运行也保留，后续重跑必须使用另一个目录。每个场景的判定是 `SAME`、`DIFF N`、`INVALID`（有非预期的失败，括号里是差异结论和失败位置）或 `RUN FAILED`（采集器没跑完，例如锁被占、二进制比源码旧）。退出码 0 表示全部 SAME。
 
 单步使用：
 
@@ -37,7 +37,7 @@ node scripts/bbx/run.mjs rust scripts/bbx/scenarios/turn-text.json /tmp/b.json
 node scripts/bbx/diff.mjs /tmp/a.json /tmp/b.json          # 两份基线互比时加 --self，不做 STALE 检查
 ```
 
-采集在一个槽位里是独占的（固定目录和端口；缺省槽位用 `/private/tmp/pdrs-bbx` 和 38411–38414），`check.mjs` 遇到锁会排队等。要并行跑，给每个并行方一个不同的槽位：`BBX_SLOT=1 node scripts/bbx/check.mjs`（1–8）。槽位只把目录名和端口换成等长的另一套，场景里写死的同名路径和端口读入时一并替换；两侧在同一槽位里跑，结论不受影响，但不同槽位的采集产物不要互相比。
+采集在一个槽位里是独占的（固定目录和端口；缺省槽位用 `<BBX_TMP_ROOT 或系统 tmp>/pdrs-bbx` 和 38411–38414），`check.mjs` 遇到锁会排队等。要并行跑，给每个并行方一个不同的槽位：`BBX_SLOT=1 node scripts/bbx/check.mjs`（1–8）。槽位只把目录名和端口换成等长的另一套，场景里写死的同名路径和端口读入时一并替换；两侧在同一槽位里跑，结论不受影响，但不同槽位的采集产物不要互相比。
 
 改 `diff.mjs` 之后先跑比较器自测：`node scripts/bbx/selftest.mjs`。它给比较器喂成对的小产物，检查每条归一化规则该抹的抹掉了、规则旁边「差一点」的改动仍然报差异。新增归一化规则时同时加这两类例子。
 
@@ -49,7 +49,7 @@ node scripts/bbx/diff.mjs /tmp/a.json /tmp/b.json          # 两份基线互比�
 |---|---|
 | `name` / `about` | 名字和它想证明什么 |
 | `config` | `pilotdeck.yaml` 的内容；省略用默认（指向假 provider）；`null` 表示不写配置文件 |
-| `files` | 初始文件，键是相对根目录的路径（`home/.pilotdeck/...`、`proj/...`），值是字符串或 JSON |
+| `files` | 初始文件，键是相对根目录的路径（`home/.pilotdeck/...`、`proj/...`），值是字符串或 JSON；单键对象 `{"$sqlite": ["CREATE TABLE ...", "INSERT ..."]}` 在指定路径以事务创建 SQLite fixture，SQL 也支持路径占位符 |
 | `env` | 额外环境变量 |
 | `provider` | 假 provider 的应答规则，按顺序匹配请求体文本：`when` 全部包含、`unless` 全部不包含；`reply` 可以是 `{text}`、`{tool:{name,arguments}}`、`{status,body}`。规则里的字符串（含工具参数）可用下面的 `{ROOT}` 等占位符。请求按命中的规则名分组记录 |
 | `server` | `false` 表示不起服务（纯 CLI 场景） |
@@ -59,7 +59,7 @@ node scripts/bbx/diff.mjs /tmp/a.json /tmp/b.json          # 两份基线互比�
 | `expectStartFailure` | `true` 表示 `"server"` 起的服务预期启动失败。`serve` / `cli` 步骤里进程自己退出是被比较的输出，不需要声明 |
 | `settleMs` | 最后一步之后、收尾前等待的毫秒数，缺省 300 |
 | `volatile` | 该场景里确认不稳定的差异路径（正则）。会被略过并打印。用之前先用 `--self` 证明它确实不稳定 |
-| `accepted` | 已接受差异 `[{id, why, paths: [正则]}]`，只用于基线自身的 bug（Rust 有意不照做）。命中的差异略过并打印条数；基线 vs Rust 时某条正则一处都没命中报 `STALE`，计 1 处差异 |
+| `accepted` | 已接受差异 `[{id, why, paths: [正则], assertions: [断言 ID]}]`，只用于基线自身的 bug（Rust 有意不照做）。命中的差异略过并打印条数；基线 vs Rust 时某条正则一处都没命中报 `STALE`，计 1 处差异 |
 
 `ws` 步骤可以带 `answer`，用来在这一步等待期间应答服务端发来的询问（权限询问、提问）：`"answer": [{"on": {"type": "permission_request"}, "ws": "permission_decide", "params": {"sessionKey": "s", "requestId": "{event.requestId}", "decision": "allow"}, "count": 1}]`。收集该步骤的帧时，每遇到一个属于本步骤、且 `on` 里各字段都与事件相等的事件帧，就用第一条还有余量的规则发一个请求；`params` 里的 `{event.字段}` 换成触发事件的字段值，`count` 是该规则最多应答几次（缺省不限）。发出的请求和它收到的帧记在该步骤的 `answers` 里，照常比较。两侧用的是同一段采集代码。
 
@@ -94,3 +94,36 @@ node scripts/bbx/diff.mjs /tmp/a.json /tmp/b.json          # 两份基线互比�
 - **原文指纹的粒度**：只比每行骨架的计数，不比行的先后（先后由解析结果比）；字符串里只看转义序列，不看普通字符；文件里的字符串长度和数字的位数不在指纹里（它们的值由解析结果比）。
 - **落盘范围**：只采 `home` 和 `proj` 两棵树；`TMPDIR`（`{ROOT}/tmp`）和其他位置的文件不比。`serverLog`（`"server"` 起的服务进程自己的输出）不比。
 - **未声明的失败只判 INVALID，不判谁对**：一侧超时一侧不超时时，差异照常在 `steps` 里报，但场景整体是 INVALID，要先修场景（或确认是 Rust 的挂起）再看差异。
+
+## 完整运行证据（2026-11-13）
+
+`check.mjs` 逐一核对选择的场景集合；子工作者非零退出、信号退出、无输出、缺失、重复或多余场景均失败。每侧产物必须有相同运行 ID、场景 SHA-256、源码身份、二进制 SHA-256、TS 构建树哈希、工具与平台、装置哈希。运行结束再次检查输入，运行期间源码、二进制或场景变化会使整次结果无效。比较器不比较这些采集元数据，由入口独立严格核验；双方 `failures` 均参与失败判定。
+
+覆盖统计必须明确指定本次目录：
+
+```sh
+node scripts/bbx/coverage.mjs --out _build/bbx/<本次目录>
+node scripts/bbx/coverage.mjs --out _build/bbx/<本次目录> --surface
+node --test scripts/bbx/evidence.test.mjs scripts/bbx/check.test.mjs
+node scripts/bbx/selftest.mjs
+```
+
+`coverage.mjs` 不再把零散或陈旧 `.diff.txt` 当结果。它读取已完成的 `manifest.json`，检查报告及原始产物哈希、当前场景与输入身份，再报告通过、失败、跳过、阻塞。旧产物需重新运行；新的局部运行仅证明所选场景，其余显示未跑。
+
+场景可声明 `assertions`，每项必须有唯一 `id`、指向最终原始采集产物的 JSON Pointer `path`，以及 `equals` / `exists` / `includes` / `matches` 中至少一个谓词。可选 `sides: ["rust"]` 或 `["ts"]` 明确限制侧别；省略则两侧都执行。例如：
+
+```json
+{
+  "assertions": [
+    {"id": "version-exit", "path": "/steps/0/cli/exitCode", "equals": 0},
+    {"id": "rust-fixed-output", "sides": ["rust"], "path": "/steps/0/cli/stdout", "includes": "expected text"}
+  ],
+  "accepted": [{"id": "documented-bug", "why": "见差异证据", "paths": ["steps"], "assertions": ["rust-fixed-output"]}]
+}
+```
+
+必需断言未实际执行或失败均使结果 INVALID。每项 `accepted` 必须引用已执行且通过的 Rust 正向断言；旧场景仅有忽略路径的做法不再足以通过（当前 8 个历史场景待补证，不自行更改它们的产品期望）。
+
+`BBX_TMP_ROOT` 只指定临时目录的父目录，实际清理由采集器自身的槽位目录承担；Linux 无需创建 `/private/tmp`。`BBX_COLLECT_TIMEOUT_MS` 为单次采集/比较进程的最长等待时间，默认 600000 ms；超过后终止该进程并按失败记录。CLI 子进程使用独立进程组，超时和收尾只清理本次创建的进程。
+
+固定 18789 场景必须在 Docker 私有网络内运行，采集器的占用保护保持启用。容器不映射宿主端口、不挂载真实用户 home，使用非特权 UID；该结果不能替代 Seatbelt 等宿主专项测试。

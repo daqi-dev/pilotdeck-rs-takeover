@@ -1,0 +1,82 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { checkWorker, validateArtifact, assertionResults, loadRun, fileHash, inputIdentity } from './evidence.mjs';
+const expected = [{ name: 'a' }, { name: 'b' }];
+const row = (name) => JSON.stringify({ name, status: 'SAME' }) + '\n';
+for (const [name, result] of [
+  ['nonzero without output', { code: 1, stdout: '' }],
+  ['signal without output', { code: null, signal: 'SIGTERM', stdout: '' }],
+  ['partial scenarios', { code: 0, stdout: row('a') }],
+  ['duplicate scenarios', { code: 0, stdout: row('a') + row('a') }],
+  ['malformed output', { code: 0, stdout: row('a') + 'not JSON\n' }],
+  ['successful rows but nonzero exit', { code: 7, stdout: row('a') + row('b') }],
+]) test(name, () => assert.ok(checkWorker(expected, result).errors.length));
+test('complete successful worker', () => assert.deepEqual(checkWorker(expected, { code: 0, stdout: row('a') + row('b') }).errors, []));
+const scenario = { steps: [{ cli: ['--version'] }], assertions: [{ id: 'version', path: '/steps/0/cli/stdout', includes: '1.0' }] };
+const identity = { runId: 'run', side: 'rust', scenario: { name: 'a', sha256: 'abc' }, inputs: { binaries: { pilotdeck: 'hash' } } };
+function artifact() {
+  const a = { steps: [{ cli: { stdout: '1.0' } }], failures: [] };
+  a.evidence = { schema: 1, ...identity, assertions: assertionResults(scenario.assertions, a) };
+  return a;
+}
+test('complete artifact', () => assert.deepEqual(validateArtifact(artifact(), scenario, identity), []));
+for (const [name, mutate] of [
+  ['Rust timeout while TS succeeds', (a) => { a.failures.push({ at: 'steps[0]', kind: 'timeout', expected: false }); }],
+  ['missing steps', (a) => { a.steps = []; }],
+  ['missing failures', (a) => { delete a.failures; }],
+  ['stale run identity', (a) => { a.evidence.runId = 'old'; }],
+  ['scenario hash mismatch', (a) => { a.evidence.scenario = { name: 'a', sha256: 'changed' }; }],
+  ['binary hash mismatch', (a) => { a.evidence.inputs = { binaries: { pilotdeck: 'changed' } }; }],
+  ['required assertion not executed', (a) => { a.evidence.assertions = []; }],
+  ['required assertion failed', (a) => { a.steps[0].cli.stdout = 'wrong'; }],
+]) test(name, () => { const a = artifact(); mutate(a); assert.ok(validateArtifact(a, scenario, identity).length); });
+test('old SAME report cannot replace a complete manifest', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bbx-evidence-'));
+  try { fs.writeFileSync(path.join(dir, 'a.diff.txt'), 'SAME\n'); assert.throws(() => loadRun(dir)); }
+  finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+test('existing output directory is rejected without touching old report', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bbx-existing-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'a.diff.txt'), 'SAME\n');
+    const r = spawnSync(process.execPath, [new URL('./check.mjs', import.meta.url).pathname, '--out', dir], { encoding: 'utf8' });
+    assert.notEqual(r.status, 0); assert.equal(fs.readFileSync(path.join(dir, 'a.diff.txt'), 'utf8'), 'SAME\n');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+test('manifest refuses changed raw artifact even with SAME report', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bbx-manifest-'));
+  try {
+    const spec = path.join(dir, 'a.json'); fs.writeFileSync(spec, JSON.stringify(scenario));
+    fs.writeFileSync(path.join(dir, 'a.ts.json'), '{}');
+    fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ schema: 1, complete: true, mode: 'compare', scenarios: [{ name: 'a', path: spec, sha256: fileHash(spec) }], results: [{ name: 'a', status: 'SAME', files: { 'a.ts.json': 'old-hash' } }] }));
+    assert.throws(() => loadRun(dir, { verifyCurrent: false }), /artifact changed/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+for (const [name, code] of [['actual child nonzero', 'process.exit(7)'], ['actual child signal', "process.kill(process.pid, 'SIGTERM')"]]) {
+  test(name, () => {
+    const r = spawnSync(process.execPath, ['-e', code], { encoding: 'utf8' });
+    assert.ok(checkWorker([{ name: 'a' }], { code: r.status, signal: r.signal, error: r.error, stdout: r.stdout }).errors.length);
+  });
+}
+test('coverage rejects parent worker errors even when all rows claim SAME', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bbx-worker-error-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ errors: ['worker exit=7'], complete: true }));
+    assert.throws(() => loadRun(dir), /validation errors/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+test('accepted difference needs a positive assertion linked to it', () => {
+  const spec = { ...scenario, accepted: [{ id: 'fixed-bug', paths: ['steps'] }] };
+  assert.ok(validateArtifact(artifact(), spec, identity).some((e) => e.includes('positive assertions')));
+  spec.accepted[0].assertions = ['version'];
+  assert.deepEqual(validateArtifact(artifact(), spec, identity), []);
+});
+test('side-specific positive assertions are explicit, not silently omitted', () => {
+  const assertions = [{ id: 'rust-value', sides: ['rust'], path: '/value', equals: 1 }];
+  assert.deepEqual(assertionResults(assertions, { value: 2 }, 'ts'), [{ id: 'rust-value', skipped: true }]);
+  assert.deepEqual(assertionResults(assertions, { value: 2 }, 'rust'), [{ id: 'rust-value', passed: false }]);
+});

@@ -14,12 +14,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadRun } from './evidence.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '../..');
 const args = process.argv.slice(2);
 const outDir = args.includes('--out') ? args[args.indexOf('--out') + 1] : path.join(repo, '_build/bbx');
-const frames = fs.readFileSync(path.join(repo, 'resources/PilotDeck/src/gateway/protocol/frames.ts'), 'utf8');
+let run;
+try { run = loadRun(path.resolve(outDir)); } catch (error) { console.error(`bbx coverage: ${error.message}; pass --out for a completed, unchanged run`); process.exit(1); }
+const frames = fs.readFileSync(path.join(process.env.BBX_BASELINE || path.join(repo, 'resources/PilotDeck'), 'src/gateway/protocol/frames.ts'), 'utf8');
 const methods = [...frames.match(/WsGatewayMethod\s*=([^;]+);/s)[1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
 
 // 场景里所有 ws 调用（含 serve.then、answer 里的）。
@@ -32,14 +35,11 @@ const calls = (v, found = new Set()) => {
   return found;
 };
 const verdictOf = (name) => {
-  const file = path.join(outDir, `${name}.diff.txt`);
-  if (!fs.existsSync(file)) return '未跑';
-  const raw = path.join(outDir, `${name}.ts.json`);
-  const failures = fs.existsSync(raw) ? (JSON.parse(fs.readFileSync(raw, 'utf8')).failures ?? []).filter((x) => !x.expected) : [];
-  if (failures.length) return 'INVALID';
-  return fs.readFileSync(file, 'utf8').trim().split('\n').pop().startsWith('SAME') ? 'SAME' : 'DIFF';
+  const row = run.results.find((r) => r.name === name);
+  return !row ? '未跑' : row.status === 'SAME' ? 'SAME' : 'INVALID';
 };
 
+console.log(`本次完整结果：通过 ${run.counts.passed}，失败 ${run.counts.failed}，跳过 ${run.counts.skipped}，阻塞 ${run.counts.blocked}；run ${run.runId}`);
 const by = Object.fromEntries(methods.map((m) => [m, []]));
 const scenarios = fs.readdirSync(path.join(here, 'scenarios')).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5));
 let same = 0;
@@ -65,7 +65,8 @@ if (args.includes('--surface')) {
   const surface = JSON.parse(fs.readFileSync(path.join(here, 'surface.json'), 'utf8'));
   const matcher = (p) => { const m = /^\/(.+)\/([gimsuy]*)$/.exec(p); if (m) { const re = new RegExp(m[1], m[2].replace('g', '')); return (t) => re.test(t); } return (t) => t.includes(p); };
   const texts = scenarios.map((name) => {
-    const art = path.join(outDir, `${name}.ts.json`);
+    const recorded = run.results.find((r) => r.name === name)?.artifacts?.[0];
+    const art = recorded ? path.join(outDir, recorded) : '';
     return { name, verdict: verdictOf(name), scenario: fs.readFileSync(path.join(here, 'scenarios', `${name}.json`), 'utf8'), artifact: fs.existsSync(art) ? fs.readFileSync(art, 'utf8') : '' };
   });
   console.log(`基线对外表面：${Object.keys(surface.dimensions).length} 个维度（场景 ${same}/${scenarios.length} SAME）`);

@@ -17,6 +17,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
+import { randomUUID } from 'node:crypto';
+import os from 'node:os';
+import { inputIdentity, scenarioIdentity, assertionResults } from './evidence.mjs';
+import { matchesProviderRule, writeSeedFile } from './mock-support.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const BASELINE = process.env.BBX_BASELINE || path.join(REPO, 'resources/PilotDeck');
@@ -26,8 +30,12 @@ const TARGET = process.env.BBX_TARGET || path.join(REPO, 'src/target/debug');
 // 不同槽位的采集产物之间不要互相比。槽位 0（缺省）就是原来的固定目录和端口。
 const SLOT = Number(process.env.BBX_SLOT || 0);
 if (!Number.isInteger(SLOT) || SLOT < 0 || SLOT > 8) { console.error('bbx: BBX_SLOT must be 0..8'); process.exit(2); }
-const slotText = (t) => SLOT ? t.replaceAll('pdrs-bbx', `pdrs-bb${SLOT}`).replaceAll('3841', `384${1 + SLOT}`) : t;
-export const ROOT = slotText('/private/tmp/pdrs-bbx/root');
+const TEMP_BASE = path.resolve(process.env.BBX_TMP_ROOT || os.tmpdir());
+export const ROOT = path.join(TEMP_BASE, SLOT ? `pdrs-bb${SLOT}` : 'pdrs-bbx', 'root');
+const slotText = (t) => {
+  const rooted = t.replaceAll('/private/tmp/pdrs-bbx/root', ROOT);
+  return SLOT ? rooted.replaceAll('3841', `384${1 + SLOT}`) : rooted;
+};
 const GATEWAY_PORT = 38411 + 10 * SLOT;
 const MOCK_PORT = 38412 + 10 * SLOT;
 const TOKEN = 'bbx-token';
@@ -39,6 +47,7 @@ if (!['ts', 'rust'].includes(side) || !scenarioPath || !outPath) {
   process.exit(2);
 }
 const scenario = JSON.parse(slotText(fs.readFileSync(scenarioPath, 'utf8')));
+const evidence = { schema: 1, runId: process.env.BBX_RUN_ID || randomUUID(), side, scenario: scenarioIdentity(scenarioPath), inputs: inputIdentity() };
 const home = path.join(ROOT, 'home');
 const pilotHome = path.join(home, '.pilotdeck');
 const project = path.join(ROOT, 'proj');
@@ -169,7 +178,7 @@ for (const [index, [rel, content]] of seedFiles.entries()) {
   const target = path.join(ROOT, rel);
   if (!target.startsWith(ROOT + '/')) throw new Error(`file escapes root: ${rel}`);
   fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.writeFileSync(target, typeof content === 'string' ? subst(content) : JSON.stringify(substDeep(content), null, 2) + '\n');
+  writeSeedFile(target, content, subst, substDeep);
   fs.utimesSync(target, seedBase + index, seedBase + index);
 }
 
@@ -184,7 +193,7 @@ const mock = http.createServer(async (req, res) => {
   const parts = []; for await (const p of req) parts.push(p);
   const raw = Buffer.concat(parts).toString('utf8');
   let body = null; try { body = JSON.parse(raw); } catch {}
-  const rule = rules.find((r) => (r.when ?? []).every((s) => raw.includes(s)) && (r.unless ?? []).every((s) => !raw.includes(s)));
+  const rule = rules.find((r) => matchesProviderRule(r, { method: req.method, url: req.url, body: raw }));
   (providerRequests[rule.name] ??= []).push({
     method: req.method, url: req.url, headers: req.headers, body: body ?? { raw },
   });
@@ -428,12 +437,13 @@ const runStep = async (step) => {
   }
   if (step.cli) {
     const [cmd, ...prefix] = SIDES[side].cli;
-    const child = spawn(cmd, [...prefix, ...substDeep(step.cli)], { cwd: step.cwd ? subst(step.cwd) : project, env: stepEnv(step), stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(cmd, [...prefix, ...substDeep(step.cli)], { cwd: step.cwd ? subst(step.cwd) : project, env: stepEnv(step), stdio: ['pipe', 'pipe', 'pipe'], detached: true });
+    children.push(child);
     let stdout = '', stderr = '';
     child.stdout.on('data', (d) => { stdout += d; }); child.stderr.on('data', (d) => { stderr += d; });
     child.stdin.end(step.stdin ?? '');
     let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, step.timeout ?? STEP_TIMEOUT_MS);
+    const timer = setTimeout(() => { timedOut = true; try { process.kill(-child.pid, 'SIGKILL'); } catch {} }, step.timeout ?? STEP_TIMEOUT_MS);
     const [exitCode, signal] = await new Promise((r) => child.on('close', (c, s) => r([c, s])));
     clearTimeout(timer);
     return { cli: { exitCode, signal, stdout, stderr }, ...(timedOut && { timedOut }) };
@@ -526,6 +536,9 @@ const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) =
 });
 out.tree = Object.fromEntries([...walk(home), ...walk(project)].map(([p, v]) => [p.slice(ROOT.length), v]));
 fs.mkdirSync(path.dirname(path.resolve(outPath)), { recursive: true });
+evidence.assertions = assertionResults(scenario.assertions, out, side);
+for (const assertion of evidence.assertions) if (!assertion.skipped && !assertion.passed) out.failures.push({ at: `assertions.${assertion.id}`, kind: 'assertion', expected: false });
+out.evidence = evidence;
 fs.writeFileSync(outPath, JSON.stringify(out, null, 1) + '\n');
 console.error(`bbx: ${side} ${scenario.name}: ${out.startFailure ? 'START FAILED' : `${out.steps.length} steps`} -> ${outPath}`);
 process.exit(0);
