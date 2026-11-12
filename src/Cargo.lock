@@ -1023,6 +1023,8 @@ dependencies = [
 name = "pilotdeck-agent"
 version = "0.1.0"
 dependencies = [
+ "icu_collator",
+ "icu_locale_core",
  "pilotdeck-protocol",
  "pilotdeck-tokenizer",
  "sha2",
@@ -1084,6 +1086,7 @@ dependencies = [
  "icu_locale_core",
  "icu_normalizer",
  "libc",
+ "pilotdeck-agent",
  "pilotdeck-child-signals",
  "pilotdeck-protocol",
  "pilotdeck-tokenizer",

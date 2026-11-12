@@ -1,0 +1,36 @@
+{
+  "name": "loop-stream-idle",
+  "about": "流中途停住（空闲超时）后的两层恢复。provider 层（model/streaming/streamModel.ts:300-335）：只有可见文本时按 LiteLLM 方式续写（continuationRequest.ts，retry_progress reason continuation），有工具调用 / 推理时不续写，直接回带 streamInterruption 的错误；循环层（agent/loop/AgentLoop.ts:1039-1072，最多 2 次）按中断阶段注入提示（3128-3147）。retry.streamIdleTimeoutMs 设成 300、退避设小以缩短场景。d1：文本两块后停住 → provider 续写成功；d2：文本每次都停住 → provider 续写用尽后循环恢复 2 次再用尽（model_error）；d3：工具调用阶段停住 → 不执行半截调用，提示后给出正常调用；d4：推理阶段停住；d5：一块都没发就停住（empty 阶段）。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      retry:\n        streamIdleTimeoutMs: 300\n        baseDelayMs: 1\n        maxDelayMs: 1\n        jitter: 0\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "files": { "home/.pilotdeck/a.txt": "alpha\n" },
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\":\"Idle\"}" } },
+    { "name": "d1-continued", "when": ["d1:", "in continuation of this text"], "reply": { "text": "ld!" } },
+    { "name": "d1", "when": ["d1:"], "reply": { "chunks": ["Hello ", "wor", "ld"], "hangAfter": 2, "hangMs": 3000 } },
+    { "name": "d2", "when": ["d2:"], "reply": { "chunks": ["Again ", "and again"], "hangAfter": 1, "hangMs": 3000 } },
+    { "name": "d3-done", "when": ["d3:", "\"tool_call_id\":\"call_d3\""], "reply": { "text": "d3 done." } },
+    { "name": "d3-resumed", "when": ["d3:", "No incomplete tool call was executed"], "reply": { "tool": { "id": "call_d3", "name": "read_file", "arguments": { "file_path": "a.txt" } } } },
+    { "name": "d3", "when": ["d3:"], "reply": { "tool": { "id": "call_d3x", "name": "read_file", "arguments": { "file_path": "a.txt" } }, "hangAfter": 1, "hangMs": 3000 } },
+    { "name": "d4-resumed", "when": ["d4:", "disconnected during reasoning"], "reply": { "text": "d4 answer." } },
+    { "name": "d4", "when": ["d4:"], "reply": { "reasoning": "thinking hard", "text": "never sent", "hangAfter": 1, "hangMs": 3000 } },
+    { "name": "d5-resumed", "when": ["d5:", "disconnected before producing a response"], "reply": { "text": "d5 answer." } },
+    { "name": "d5", "when": ["d5:"], "reply": { "text": "never sent", "hangAfter": 0, "hangMs": 3000 } }
+  ],
+  "steps": [
+    { "ws": "submit_turn", "params": { "sessionKey": "s-d1", "channelKey": "test", "message": "d1: hi" }, "timeout": 30000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-d1" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-d2", "channelKey": "test", "message": "d2: hi" }, "timeout": 30000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-d2" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-d3", "channelKey": "test", "message": "d3: read" }, "timeout": 30000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-d3" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-d4", "channelKey": "test", "message": "d4: think" }, "timeout": 30000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-d4" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-d5", "channelKey": "test", "message": "d5: hi" }, "timeout": 30000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-d5" } }
+  ]
+}

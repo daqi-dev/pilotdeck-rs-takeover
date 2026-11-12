@@ -167,6 +167,115 @@ fn cache_tools(prepared: &JsValue) -> PortResult<Vec<JsValue>> {
         _ => Err(source_error("input.tools is not iterable", prepared)),
     }
 }
+/// JS `String(value)` for wire values (they carry no user `toString`).
+fn js_to_string(value: &JsValue) -> JsString {
+    match value {
+        JsValue::String(s) => s.clone(),
+        JsValue::Undefined => "undefined".into(),
+        JsValue::Null => "null".into(),
+        JsValue::Bool(b) => if *b { "true" } else { "false" }.into(),
+        JsValue::Number(n) if n.is_nan() => "NaN".into(),
+        JsValue::Number(n) if n.is_infinite() => {
+            if *n > 0.0 { "Infinity" } else { "-Infinity" }.into()
+        }
+        JsValue::Number(_) => stringify_json(value)
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+            .as_str()
+            .into(),
+        JsValue::Object(_) => "[object Object]".into(),
+        JsValue::Array(items) => {
+            let mut units = vec![];
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    units.push(u16::from(b','));
+                }
+                if !matches!(item, JsValue::Undefined | JsValue::Null) {
+                    units.extend_from_slice(js_to_string(item).units());
+                }
+            }
+            JsString::from_utf16(units)
+        }
+    }
+}
+/// `CachePlan.ts:buildCachePlan`'s `[...input.tools].sort(...)`:
+/// `left.name.localeCompare(right.name)`, ties broken by comparing the two
+/// `stableSerialize` texts with `localeCompare`, in this process's default
+/// locale (the sidecar inherits the gateway's environment). JS
+/// `Array.prototype.sort` never passes `undefined` elements to the comparator;
+/// they move to the end. The TypeErrors keep the JS evaluation order of the
+/// comparator expression.
+fn sort_cache_tools(mut tools: Vec<JsValue>, prepared: &JsValue) -> PortResult<Vec<JsValue>> {
+    use std::cmp::Ordering;
+    let undefined = tools.iter().filter(|tool| tool.is_undefined()).count();
+    tools.retain(|tool| !tool.is_undefined());
+    if tools.len() > 1 {
+        let locale = crate::collation::node_locale(|key| std::env::var(key).ok());
+        let collator = crate::collation::build_node_collator(&locale, true).ok_or_else(|| {
+            gap(
+                "REQUEST_CACHE_COLLATION_DATA",
+                "Collation data unavailable.",
+                prepared,
+            )
+        })?;
+        let read = |value: &JsValue, key: &str| -> PortResult<JsValue> {
+            match value {
+                JsValue::Undefined | JsValue::Null => Err(source_error(
+                    &format!(
+                        "Cannot read properties of {} (reading '{key}')",
+                        if value.is_undefined() {
+                            "undefined"
+                        } else {
+                            "null"
+                        }
+                    ),
+                    prepared,
+                )),
+                _ => Ok(value.get(key).cloned().unwrap_or(JsValue::Undefined)),
+            }
+        };
+        let compare = |left: &JsValue, right: &JsValue| -> PortResult<Ordering> {
+            let left_name = read(left, "name")?;
+            if matches!(left_name, JsValue::Undefined | JsValue::Null) {
+                read(&left_name, "localeCompare")?;
+            }
+            let right_name = read(right, "name")?;
+            let JsValue::String(ref left_name) = left_name else {
+                return Err(source_error(
+                    "left.name.localeCompare is not a function",
+                    prepared,
+                ));
+            };
+            let right_name = js_to_string(&right_name);
+            let order =
+                collator.compare_utf16_preserving_surrogates(left_name.units(), right_name.units());
+            if order != Ordering::Equal {
+                return Ok(order);
+            }
+            let left = stable_serialize(left)?.unwrap_or_else(|| "undefined".into());
+            let right = stable_serialize(right)?.unwrap_or_else(|| "undefined".into());
+            Ok(collator.compare(&left, &right))
+        };
+        // The comparator must stay infallible for `sort_by`, so the first
+        // failure is captured and surfaced after the sort.
+        let mut failure = None;
+        tools.sort_by(|a, b| {
+            if failure.is_some() {
+                return Ordering::Equal;
+            }
+            compare(a, b).unwrap_or_else(|error| {
+                failure = Some(error);
+                Ordering::Equal
+            })
+        });
+        if let Some(error) = failure {
+            return Err(error);
+        }
+    }
+    tools.extend(std::iter::repeat_n(JsValue::Undefined, undefined));
+    Ok(tools)
+}
 fn build_cache_plan(
     prepared: &JsValue,
     messages: &[JsValue],
@@ -181,14 +290,7 @@ fn build_cache_plan(
     if selected.len() > 3 {
         selected.drain(..selected.len() - 3);
     }
-    let tools = cache_tools(prepared)?;
-    if tools.len() > 1 {
-        return Err(gap(
-            "REQUEST_CACHE_LOCALE_COLLATION_PROFILE",
-            "Original tool ordering uses name.localeCompare followed by stableSerialize.localeCompare; multiple tools require an independently verified Node locale/ICU profile and a pure Rust collation implementation. No ASCII or UTF16 substitute was applied.",
-            prepared,
-        ));
-    }
+    let tools = sort_cache_tools(cache_tools(prepared)?, prepared)?;
     let system = prepared.get("systemPrompt");
     let fingerprint_value = JsValue::Object(object([
         ("provider", JsValue::String(route.provider.clone())),

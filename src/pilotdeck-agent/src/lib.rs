@@ -6,6 +6,7 @@ use pilotdeck_protocol::model::{
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 pub mod budget_terminal;
 mod budget_terminal_policy;
+pub mod collation;
 pub mod compaction_persistence;
 mod compaction_persistence_policy;
 pub mod compaction_terminal;

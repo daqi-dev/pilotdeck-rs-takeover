@@ -33,7 +33,6 @@ extern crate self as pilotdeck_gateway;
 #[allow(clippy::duplicate_mod)]
 mod mutant_facade;
 mod node_io;
-mod node_locale;
 mod pairing;
 mod process_group;
 #[cfg(all(test, unix))]
@@ -71,6 +70,9 @@ mod test_node_provenance;
 #[cfg(test)]
 #[path = "../tests/common/oracle_locale.rs"]
 mod test_oracle_locale;
+// `tests/common/oracle_locale.rs` reads the production parser as `crate::node_locale`.
+#[cfg(test)]
+use pilotdeck_agent::collation as node_locale;
 #[cfg(test)]
 #[path = "../tests/common/permission_faults.rs"]
 mod test_permission_faults;

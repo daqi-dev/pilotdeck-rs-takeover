@@ -95,14 +95,10 @@ impl ToolRuntime {
         // Predicates are evaluated for the entire batch before any call starts.
         // Single-call batches bypass the predicate, exactly like TS.
         for (index, call) in calls.iter().enumerate() {
-            // Deliberate deviation (fixtures/tool-runtime/README.md): TS runs
-            // every concurrencySafe tool in the concurrent phase; here only
-            // those that are also read-only do, so a sibling error, which
-            // drops the concurrent batch, never cuts a write short. Other safe
-            // Ledger: specs/gateway-parity/accepted-diffs.md
-            // A6.5-TOOLS-SCHEDULE-001 (unapproved). Other safe
-            // tools (e.g. agent) run in the sequential phase. isReadOnly is
-            // asked only of concurrencySafe tools; a throw counts as false.
+            // ConcurrentToolScheduler.ts / hostToolPort.ts:96-108: every
+            // concurrencySafe call (including non-read-only ones such as
+            // `agent`) runs in the concurrent phase, before the sequential
+            // rest, whatever its position in the batch.
             let tool = self.registry.get(&call.name);
             let safe = self.mode == SchedulerMode::Concurrent
                 && calls.len() > 1
@@ -110,9 +106,6 @@ impl ToolRuntime {
                     .as_ref()
                     .map(|t| t.is_concurrency_safe(&call.input))
                     .transpose()?
-                    .is_some_and(|v| truthy(&v))
-                && tool
-                    .and_then(|t| t.is_read_only(&call.input).ok())
                     .is_some_and(|v| truthy(&v));
             if safe {
                 concurrent.push(index);
@@ -121,29 +114,29 @@ impl ToolRuntime {
             }
         }
         let mut slots = vec![None; calls.len()];
-        // Owned futures, not JoinHandles: early error, host abort, timeout and
-        // Drop synchronously destroy every unfinished sibling future.
+        // Owned futures, not JoinHandles: host abort, timeout and Drop of the
+        // whole batch synchronously destroy every unfinished sibling future.
         let mut pending: Vec<_> = concurrent
             .into_iter()
             .map(|index| {
+                let runtime = self.clone();
+                let call = calls[index].clone();
+                let context = context.clone();
                 (
                     index,
                     Some(Box::pin(
-                        self.execute(calls[index].clone(), context.clone()),
+                        async move { runtime.execute(call, context).await },
                     )),
                 )
             })
             .collect();
         // TS Promise.all rejects on the first error and lets the started
-        // siblings finish detached. Ledger: specs/gateway-parity/accepted-diffs.md
-        // A6.5-TOOLS-CANCEL-001 (unapproved). Deliberate deviation: the rejection is
-        // reported at the same moment, but the batch owns the siblings and
-        // drops them. Only read-only concurrency-safe tools run here (see the
-        // classification above), so no write is cut short, and a
-        // non-cooperative sibling cannot hold the error back. The pass that
-        // sees the error still polls every sibling once, as Promise.all's
-        // synchronous map runs each up to its first await.
-        poll_fn(|cx| {
+        // siblings finish detached: the rejection is reported at once and the
+        // unfinished siblings (which may write, e.g. `agent`) are handed to
+        // the runtime instead of being cut short. The pass that sees the error
+        // still polls every sibling once, as Promise.all's synchronous map
+        // runs each up to its first await.
+        let outcome = poll_fn(|cx| {
             let mut unfinished = false;
             let mut first_error = None;
             for (index, slot) in &mut pending {
@@ -170,7 +163,13 @@ impl ToolRuntime {
                 Poll::Ready(Ok(()))
             }
         })
-        .await?;
+        .await;
+        if let Err(error) = outcome {
+            for future in pending.into_iter().filter_map(|(_, slot)| slot) {
+                tokio::spawn(future);
+            }
+            return Err(error);
+        }
         for index in sequential {
             slots[index] = Some(self.execute(calls[index].clone(), context.clone()).await?);
         }

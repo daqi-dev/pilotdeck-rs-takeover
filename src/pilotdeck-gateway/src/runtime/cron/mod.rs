@@ -55,7 +55,8 @@ use std::{
 use icu_collator::CollatorBorrowed;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 
-use crate::{js_value, node_locale::node_locale, project_files::node_collator};
+use crate::{js_value, project_files::node_collator};
+use pilotdeck_agent::collation::node_locale;
 
 /// TS `CronRuntimeLogger` (src/cron/runtime/CronRuntime.ts), storage slice:
 /// the migration's `warn` channel.

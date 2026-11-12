@@ -1,0 +1,30 @@
+{
+  "name": "loop-stream-interrupt",
+  "about": "流中途断开后的恢复（agent/loop/AgentLoop.ts:1039-1072，最多 2 次；提示文案 3128-3147 按中断阶段 text / tool_call / reasoning 区分）。i1：文本发出两块后断开 → 保留已显示的部分文本，注入「从断处继续」提示，续写成功；i2：每次都在第一块后断开 → 恢复 2 次用尽，model_error（Stream interruption recovery exhausted）；i3：工具调用块发出后断开（tool_call 阶段）→ 不执行半截调用，提示后给出正常调用；i4：推理文本发出后断开（reasoning 阶段）。",
+  "files": { "home/.pilotdeck/a.txt": "alpha\n" },
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\":\"Cut\"}" } },
+    { "name": "i1-resumed", "when": ["i1:", "disconnected mid-response"], "reply": { "text": "rest of it." } },
+    { "name": "i1", "when": ["i1:"], "reply": { "chunks": ["Hello ", "wor", "ld"], "hangAfter": 2, "hangMs": 100 } },
+    { "name": "i2", "when": ["i2:"], "reply": { "chunks": ["Again ", "and again"], "hangAfter": 1, "hangMs": 100 } },
+    { "name": "i3-done", "when": ["i3:", "\"tool_call_id\":\"call_i3\""], "reply": { "text": "i3 done." } },
+    { "name": "i3-resumed", "when": ["i3:", "No incomplete tool call was executed"], "reply": { "tool": { "id": "call_i3", "name": "read_file", "arguments": { "file_path": "a.txt" } } } },
+    { "name": "i3", "when": ["i3:"], "reply": { "text": "Reading.", "tool": { "id": "call_i3x", "name": "read_file", "arguments": { "file_path": "a.txt" } }, "hangAfter": 2, "hangMs": 100 } },
+    { "name": "i4-resumed", "when": ["i4:", "disconnected during reasoning"], "reply": { "text": "i4 answer." } },
+    { "name": "i4", "when": ["i4:"], "reply": { "reasoning": "thinking hard", "text": "never sent", "hangAfter": 1, "hangMs": 100 } }
+  ],
+  "steps": [
+    { "ws": "submit_turn", "params": { "sessionKey": "s-i1", "channelKey": "test", "message": "i1: hi" }, "timeout": 30000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-i1" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-i2", "channelKey": "test", "message": "i2: hi" }, "timeout": 30000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-i2" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-i3", "channelKey": "test", "message": "i3: read" }, "timeout": 30000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-i3" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-i4", "channelKey": "test", "message": "i4: think" }, "timeout": 30000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-i4" } }
+  ]
+}

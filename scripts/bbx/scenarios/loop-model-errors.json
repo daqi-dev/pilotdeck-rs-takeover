@@ -1,0 +1,291 @@
+{
+ "name": "loop-model-errors",
+ "about": "provider 回 HTTP 错误时的归一化码（model/errors/normalizeModelError.ts、model/protocol/errors.ts:112-140 的文案模式）与循环的处理（AgentLoop.ts:1440-1700：可恢复的先反应式恢复，否则 model_error 并附 providerError）。每个会话一种（context_overflow / prompt_too_long 两种不在这里：provider 一直回这类错误时基线的循环不会停，见报告）：e1 401 invalid api key→auth_error；e2 402 insufficient_quota→billing；e3 404 model_not_found；e4 413→payload_too_large；e5 400 request too large；e8 400 image exceeds→image_too_large（strip_images，1599）；e9 400 max output tokens exceeded→max_output_reached；e10 408 timeout；e11 503 overloaded；e12 400 无法归类→invalid_request；e13 400 带 retry-after 的 rate limit 文案。retry 退避设成 1ms。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      retry:\n        baseDelayMs: 1\n        maxDelayMs: 1\n        jitter: 0\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Err\"}"
+   }
+  },
+  {
+   "name": "e1",
+   "when": [
+    "e1:"
+   ],
+   "reply": {
+    "status": 401,
+    "body": {
+     "error": {
+      "message": "Incorrect API key provided: bbx-****.",
+      "type": "invalid_request_error",
+      "code": "invalid_api_key"
+     }
+    }
+   }
+  },
+  {
+   "name": "e2",
+   "when": [
+    "e2:"
+   ],
+   "reply": {
+    "status": 402,
+    "body": {
+     "error": {
+      "message": "You exceeded your current quota, please check your plan and billing details.",
+      "type": "insufficient_quota",
+      "code": "insufficient_quota"
+     }
+    }
+   }
+  },
+  {
+   "name": "e3",
+   "when": [
+    "e3:"
+   ],
+   "reply": {
+    "status": 404,
+    "body": {
+     "error": {
+      "message": "The model `deterministic` does not exist or you do not have access to it.",
+      "type": "invalid_request_error",
+      "code": "model_not_found"
+     }
+    }
+   }
+  },
+  {
+   "name": "e4",
+   "when": [
+    "e4:"
+   ],
+   "reply": {
+    "status": 413,
+    "body": {
+     "error": {
+      "message": "Payload exceeds the server limit."
+     }
+    }
+   }
+  },
+  {
+   "name": "e5",
+   "when": [
+    "e5:"
+   ],
+   "reply": {
+    "status": 400,
+    "body": {
+     "error": {
+      "message": "Request too large for model in organization.",
+      "type": "invalid_request_error"
+     }
+    }
+   }
+  },
+  {
+   "name": "e8",
+   "when": [
+    "e8:"
+   ],
+   "reply": {
+    "status": 400,
+    "body": {
+     "error": {
+      "message": "image exceeds 5 MB maximum",
+      "type": "invalid_request_error"
+     }
+    }
+   }
+  },
+  {
+   "name": "e9",
+   "when": [
+    "e9:"
+   ],
+   "reply": {
+    "status": 400,
+    "body": {
+     "error": {
+      "message": "Maximum output tokens exceeded for this request.",
+      "type": "invalid_request_error"
+     }
+    }
+   }
+  },
+  {
+   "name": "e10",
+   "when": [
+    "e10:"
+   ],
+   "reply": {
+    "status": 408,
+    "body": {
+     "error": {
+      "message": "Request timed out."
+     }
+    }
+   }
+  },
+  {
+   "name": "e11",
+   "when": [
+    "e11:"
+   ],
+   "reply": {
+    "status": 503,
+    "body": {
+     "error": {
+      "message": "The server is overloaded, please try again later.",
+      "type": "overloaded_error"
+     }
+    }
+   }
+  },
+  {
+   "name": "e12",
+   "when": [
+    "e12:"
+   ],
+   "reply": {
+    "status": 400,
+    "body": {
+     "error": {
+      "message": "Something odd about field foo.",
+      "type": "invalid_request_error"
+     }
+    }
+   }
+  },
+  {
+   "name": "e13",
+   "when": [
+    "e13:"
+   ],
+   "reply": {
+    "status": 400,
+    "body": {
+     "error": {
+      "message": "Rate limit reached for requests. Please try again in 0.001s."
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-e1",
+    "channelKey": "test",
+    "message": "e1: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-e2",
+    "channelKey": "test",
+    "message": "e2: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-e3",
+    "channelKey": "test",
+    "message": "e3: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-e4",
+    "channelKey": "test",
+    "message": "e4: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-e5",
+    "channelKey": "test",
+    "message": "e5: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-e8",
+    "channelKey": "test",
+    "message": "e8: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-e9",
+    "channelKey": "test",
+    "message": "e9: go"
+   },
+   "timeout": 90000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-e10",
+    "channelKey": "test",
+    "message": "e10: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-e11",
+    "channelKey": "test",
+    "message": "e11: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-e12",
+    "channelKey": "test",
+    "message": "e12: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-e13",
+    "channelKey": "test",
+    "message": "e13: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 500
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-e8"
+   }
+  }
+ ]
+}

@@ -1,0 +1,114 @@
+{
+  "name": "loop-budget",
+  "about": "预算上限（agent/loop/AgentLoop.ts:960-1035）：provider 的 usage 带 cost（model/response/normalizeUsage.ts:29 nativeCost）时按它累计花费。b1：submit_turn.maxBudgetUsd=0.01，第一次请求就花 0.02，带的工具调用不执行，stopReason max_budget、agent_max_budget_reached，落盘状态的 text 是错误文案（1014-1019）；b2：maxBudgetUsd 足够，两步共花 0.004 正常结束。sdkSessionConfig.taskBudget 的任务预算不在这里：Rust 没有接线 taskBudgetSnapshot（createLocalGateway.ts:1450），submit 直接回 CAPABILITY_UNAVAILABLE。",
+  "files": {
+    "home/.pilotdeck/a.txt": "alpha\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Budget\"}"
+      }
+    },
+    {
+      "name": "b1",
+      "when": [
+        "b1:"
+      ],
+      "reply": {
+        "text": "Spending.",
+        "tool": {
+          "id": "call_b1",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "a.txt"
+          }
+        },
+        "usage": {
+          "prompt_tokens": 12,
+          "completion_tokens": 4,
+          "total_tokens": 16,
+          "cost": 0.02
+        }
+      }
+    },
+    {
+      "name": "b2-done",
+      "when": [
+        "b2:",
+        "\"tool_call_id\":\"call_b2\""
+      ],
+      "reply": {
+        "text": "b2 done.",
+        "usage": {
+          "prompt_tokens": 12,
+          "completion_tokens": 4,
+          "total_tokens": 16,
+          "cost": 0.002
+        }
+      }
+    },
+    {
+      "name": "b2",
+      "when": [
+        "b2:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_b2",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "a.txt"
+          }
+        },
+        "usage": {
+          "prompt_tokens": 12,
+          "completion_tokens": 4,
+          "total_tokens": 16,
+          "cost": 0.002
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-b1",
+        "channelKey": "test",
+        "message": "b1: spend",
+        "maxBudgetUsd": 0.01
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-b1"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-b2",
+        "channelKey": "test",
+        "message": "b2: spend",
+        "maxBudgetUsd": 1
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "sleep": 300
+    }
+  ]
+}

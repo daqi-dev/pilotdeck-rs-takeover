@@ -66,8 +66,14 @@ impl Default for HyperCountTransport {
 impl ProviderCountTransport for HyperCountTransport {
     fn post(&self, request: CountHttpRequest) -> CountFuture {
         let client = self.client.clone();
-        CountFuture::io(fetch_count(request, move |request| {
+        CountFuture::io(fetch_count(request, move |mut request| {
             let client = client.clone();
+            // TokenAccountingRuntime.ts:271 posts through Node's global
+            // `fetch`: its default request headers (user-agent `node`) go on
+            // the wire like any other global-fetch call.
+            let wire =
+                crate::fetch_redirect::node_fetch_wire_headers(request.uri(), request.headers());
+            *request.headers_mut() = wire;
             async move { client.request(request).await.map_err(|_| failed()) }
         }))
     }

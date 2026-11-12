@@ -218,9 +218,16 @@ pub fn event(input: &TurnInput, event: &TurnEvent) -> BoundarySnapshot {
         TurnEvent::StopFailure { error } => {
             text(&mut out, "error", error);
         }
-        TurnEvent::AgentStatus { event, detail } => {
+        TurnEvent::AgentStatus {
+            event,
+            detail,
+            text: status_text,
+        } => {
             text(&mut out, "event", event);
             put(&mut out, "detail", detail.value().clone());
+            if let Some(status_text) = status_text {
+                text(&mut out, "text", status_text);
+            }
         }
         TurnEvent::ModelRequestStarted { route } => {
             text(&mut out, "model", &route.model);

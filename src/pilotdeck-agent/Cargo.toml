@@ -9,6 +9,9 @@ license-file.workspace = true
 pilotdeck-protocol.workspace = true
 pilotdeck-tokenizer = { path = "../pilotdeck-tokenizer" }
 sha2.workspace = true
+# CachePlan.ts sorts tools with `localeCompare`; same pinned ICU data as the gateway.
+icu_collator = "=2.1.1"
+icu_locale_core = "=2.3.0"
 
 [lints]
 workspace = true
