@@ -1,0 +1,34 @@
+{
+  "name": "loop-max-output-tools",
+  "about": "工具调用输出被截断的恢复（agent/loop/AgentLoop.ts:1169 修补后截断、1616 Phase A 加倍、1654 Phase B 续写；model/providers/openai/stream.ts:190-230 截断判定）与空回复配 length 时加大 max_tokens（1222-1269 empty_output_recovery）。agent.maxOutputTokens 设成 1024（低于模型上限 8192）让 Phase A 有余地。t1：参数能被 jsonrepair 补全且 finish=length → 流解析直接抛 max_output_reached，循环按「流在工具调用阶段中断」恢复（1039），续写提示后给出正常调用；t2：参数能补全、finish=tool_calls → 修补的调用不执行，先加倍到 2048（token_cap_adjusted）再续写；t3：参数补不全且 finish=length，一直如此 → 流中断恢复 2 次用尽，model_error；t4：空文本配 length → empty_output_recovery 1024→4096。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 1024\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "files": { "home/.pilotdeck/a.txt": "alpha\n" },
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\":\"Cut\"}" } },
+    { "name": "t1-done", "when": ["t1:", "\"tool_call_id\":\"call_t1\""], "reply": { "text": "t1 done." } },
+    { "name": "t1-resumed", "when": ["t1:", "No incomplete tool call was executed"], "reply": { "tool": { "id": "call_t1", "name": "read_file", "arguments": { "file_path": "a.txt" } } } },
+    { "name": "t1", "when": ["t1:"], "reply": { "tool": { "id": "call_t1x", "name": "read_file", "rawArguments": "{\"file_path\": \"a.t" }, "finish": "length" } },
+    { "name": "t2-done", "when": ["t2:", "\"tool_call_id\":\"call_t2\""], "reply": { "text": "t2 done." } },
+    { "name": "t2-resumed", "when": ["t2:", "smaller pieces"], "reply": { "tool": { "id": "call_t2", "name": "read_file", "arguments": { "file_path": "a.txt" } } } },
+    { "name": "t2", "when": ["t2:"], "reply": { "tool": { "id": "call_t2x", "name": "read_file", "rawArguments": "{\"file_path\": \"a.txt\"" } } },
+    { "name": "t3-done", "when": ["t3:", "\"tool_call_id\":\"call_t3\""], "reply": { "text": "t3 done." } },
+    { "name": "t3-resumed", "when": ["t3:", "smaller pieces"], "reply": { "tool": { "id": "call_t3", "name": "read_file", "arguments": { "file_path": "a.txt" } } } },
+    { "name": "t3", "when": ["t3:"], "reply": { "tool": { "id": "call_t3x", "name": "read_file", "rawArguments": "}{" }, "finish": "length" } },
+    { "name": "t4-retried", "when": ["t4:", "previous response was empty"], "reply": { "text": "t4 visible." } },
+    { "name": "t4", "when": ["t4:"], "reply": { "text": "", "finish": "length" } }
+  ],
+  "steps": [
+    { "ws": "submit_turn", "params": { "sessionKey": "s-t1", "channelKey": "test", "message": "t1: read" }, "timeout": 20000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-t1" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-t2", "channelKey": "test", "message": "t2: read" }, "timeout": 20000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-t2" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-t3", "channelKey": "test", "message": "t3: read" }, "timeout": 20000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-t3" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-t4", "channelKey": "test", "message": "t4: hi" }, "timeout": 20000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-t4" } }
+  ]
+}
