@@ -126,25 +126,28 @@ async fn attachment_projection_matches_actual_frozen_steer_oracle() {
 async fn real_request_enqueues_attachment_content_and_registered_read_authority() {
     let fixture = Scratch::new();
     let (_scratch, requests) = crate::native_process::management_tests::setup();
-    let _reservation = requests
+    let reservation = requests
         .owner
         .begin_turn(&"session".into(), &"run".into())
         .unwrap();
-    let lease = requests.project.acquire(None).unwrap();
-    let resource = lease
-        .runtime()
-        .resources()
-        .get::<crate::runtime::project::ProjectResources>()
-        .unwrap()
-        .context()
-        .resource(crate::runtime::project::Resource::InteractionSteer)
-        .unwrap();
-    let steer = resource
-        .as_any()
-        .downcast_ref::<crate::runtime::project::interaction_steer::InteractionSteer>()
-        .unwrap()
-        .clone();
-    let _turn = steer
+    // Clone the resource within the acquisition scope; the test must not
+    // hold a generation lease while asking project.dispose to drain it.
+    let steer = {
+        let lease = requests.project.acquire(None).unwrap();
+        lease
+            .runtime()
+            .resources()
+            .get::<crate::runtime::project::ProjectResources>()
+            .unwrap()
+            .context()
+            .resource(crate::runtime::project::Resource::InteractionSteer)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<crate::runtime::project::interaction_steer::InteractionSteer>()
+            .unwrap()
+            .clone()
+    };
+    let turn = steer
         .bind_session("session".into(), None)
         .unwrap()
         .start_turn(
@@ -205,6 +208,86 @@ async fn real_request_enqueues_attachment_content_and_registered_read_authority(
                 .as_ref()
         ))
     );
-    requests.owner.shutdown().await.unwrap();
-    requests.project.dispose().await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), turn.close())
+        .await
+        .expect("staged turn cleanup is bounded")
+        .unwrap();
+    drop(info);
+    drop(turn);
+    drop(reservation);
+    tokio::time::timeout(std::time::Duration::from_secs(3), requests.owner.shutdown())
+        .await
+        .expect("session shutdown must not await this test's reservation")
+        .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        requests.project.dispose(),
+    )
+    .await
+    .expect("project disposal must not await this test's lease")
+    .unwrap();
+}
+
+#[tokio::test]
+async fn display_name_without_suffix_falls_back_to_path_but_explicit_suffix_still_wins() {
+    let fixture = Scratch::new();
+    for name in ["display", " display ", "", ".hidden-name"] {
+        let attachment = object([
+            ("type", "text".into()),
+            ("name", name.into()),
+            (
+                "path",
+                fixture
+                    .0
+                    .join("project/link.txt")
+                    .to_string_lossy()
+                    .as_ref()
+                    .into(),
+            ),
+        ]);
+        let (content, _) = prepare_steer_content(
+            fixture.0.join("project"),
+            "steered".into(),
+            vec![attachment],
+        )
+        .await
+        .unwrap();
+        assert!(
+            array(&content).iter().any(|block| block
+                .get("text")
+                .and_then(JsValue::as_string)
+                .is_some_and(|text| String::from_utf16_lossy(text.units())
+                    .contains("REGISTERED-STEER-CONTENT"))),
+            "extension-free display name must not hide the actual .txt path: {name}"
+        );
+    }
+    let attachment = object([
+        ("type", "text".into()),
+        ("name", "explicit.bin".into()),
+        (
+            "path",
+            fixture
+                .0
+                .join("project/link.txt")
+                .to_string_lossy()
+                .as_ref()
+                .into(),
+        ),
+    ]);
+    let (content, _) = prepare_steer_content(
+        fixture.0.join("project"),
+        "steered".into(),
+        vec![attachment],
+    )
+    .await
+    .unwrap();
+    assert!(
+        !array(&content).iter().any(|block| block
+            .get("text")
+            .and_then(JsValue::as_string)
+            .is_some_and(
+                |text| String::from_utf16_lossy(text.units()).contains("REGISTERED-STEER-CONTENT")
+            )),
+        "an actual display-name suffix retains TS precedence over the opaque storage suffix"
+    );
 }

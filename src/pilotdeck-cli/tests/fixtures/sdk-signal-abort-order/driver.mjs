@@ -27,11 +27,11 @@ for(const mode of (process.env.H1_CASES?.split(',')??['final-and-abort-batch','f
  const record=(kind,data={})=>timeline.push({seq:counter++,ns:String(process.hrtime.bigint()-began),kind,...data});
  const server=new ws.WebSocketServer({host:'127.0.0.1',port:0});await new Promise(resolve=>server.once('listening',resolve));
  const url=`ws://127.0.0.1:${server.address().port}/diagnostic`;record('mock_listening',{url});
- let conn=0,child,submit,abort,abortSocket,signaled=false,stdout='',stderr='',scheduled=[];const sockets=new Set();
+ let conn=0,child,submit,abort,abortSocket,signaled=false,stdout='',stderr='',scheduled=[];const sockets=new Set(),socketClosures=new Map();
  const send=(socket,frame,label)=>{record('gateway_to_cli',{connection:socket.connection,label,readyState:socket.readyState,frame});if(socket.readyState===ws.WebSocket.OPEN)socket.send(JSON.stringify(frame),error=>record('send_callback',{label,error:error?.message??null}));else record('delivery_prevented',{label,readyState:socket.readyState});};
  const finishSubmit=()=>send(submit.socket,{type:'response',id:submit.id,ok:true,result:{}},'submit_final_response');
  const finishAbort=()=>send(abortSocket,{type:'response',id:abort.id,ok:true,result:{aborted:true}},'abort_turn_response');
- server.on('connection',socket=>{socket.connection=++conn;sockets.add(socket);record('ws_open',{connection:conn});socket.on('close',(code,reason)=>{record('ws_close',{connection:socket.connection,code,reason:String(reason)});});socket.on('error',error=>record('ws_error',{message:error.message}));socket.on('message',bytes=>{
+ server.on('connection',socket=>{socket.connection=++conn;sockets.add(socket);socketClosures.set(socket,new Promise(resolve=>socket.once('close',resolve)));record('ws_open',{connection:conn});socket.on('close',(code,reason)=>{record('ws_close',{connection:socket.connection,code,reason:String(reason)});});socket.on('error',error=>record('ws_error',{message:error.message}));socket.on('message',bytes=>{
   const raw=String(bytes);record('cli_to_gateway',{connection:socket.connection,raw});const frame=JSON.parse(raw);
   if(frame.type==='hello'){send(socket,{type:'hello_ok',protocolVersion:frame.protocolVersion,serverVersion:'fixed-protocol-mock',serverInfo:{mode:'remote',projectKey:path.join(run,'project'),capabilities:[]}},'hello_ok');return;}
   if(frame.type!=='request')throw Error(`unexpected frame ${raw}`);
@@ -80,10 +80,21 @@ for(const mode of (process.env.H1_CASES?.split(',')??['final-and-abort-batch','f
  child=spawn(executable,argv.slice(1),{cwd:path.join(run,'project'),env,stdio:['ignore','pipe','pipe']});record('cli_spawn',{pid:child.pid,argv});
  child.stdout.on('data',chunk=>{const text=String(chunk);stdout+=text;record('cli_stdout',{text});if(!signaled&&stdout.includes('pilotdeck.assistant_block')&&stdout.includes('C1 partial')){signaled=true;record('signal_sent',{signal:'SIGINT',pid:child.pid,delivered:child.kill('SIGINT')});}});
  child.stderr.on('data',chunk=>{const text=String(chunk);stderr+=text;record('cli_stderr',{text});});
- const deadline=setTimeout(()=>{record('diagnostic_child_timeout',{pid:child.pid});child.kill('SIGKILL');},12000);
+ const deadline=setTimeout(()=>{record('diagnostic_child_timeout',{pid:child.pid});child.kill('SIGKILL');},mode==='abort-timeout'?40000:12000);
  const result=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('close',(code,signal)=>resolve({code,signal}));});
  clearTimeout(deadline);scheduled.forEach(clearTimeout);record('cli_exit',result);
- sockets.forEach(socket=>socket.terminate());await new Promise(resolve=>server.close(resolve));
+ let closeTimer;
+ const naturalCloses=await Promise.race([
+  Promise.all([...socketClosures.values()]).then(()=>true),
+  new Promise(resolve=>{closeTimer=setTimeout(()=>resolve(false),1000);}),
+ ]);
+ clearTimeout(closeTimer);
+ if(!naturalCloses){
+  record('diagnostic_socket_close_timeout',{sockets:[...sockets].map(socket=>({connection:socket.connection,readyState:socket.readyState}))});
+  for(const socket of sockets)if(socket.readyState!==ws.WebSocket.CLOSED){record('forced_socket_cleanup',{connection:socket.connection,readyState:socket.readyState});socket.terminate();}
+  await Promise.all([...socketClosures.values()]);
+ }
+ await new Promise(resolve=>server.close(resolve));
  await writeFile(path.join(run,'timeline.jsonl'),timeline.map(item=>JSON.stringify(item)).join('\n')+'\n');await writeFile(path.join(run,'stdout.txt'),stdout);await writeFile(path.join(run,'stderr.txt'),stderr);
  const summary={mode,...result,signaled,abortObserved:Boolean(abort),submitObserved:Boolean(submit),unhandledClosed:stderr.includes('PilotDeckError: Gateway client closed.'),gatewayClosedError:stderr.includes('Gateway client closed.'),canonicalAbort:stdout.trimEnd().split('\n').at(-1)==='{"status":"aborted","reason":"CLI interrupted"}',stdoutLastLines:stdout.trimEnd().split('\n').slice(-3)};summaries.push(summary);await writeFile(path.join(run,'summary.json'),JSON.stringify(summary,null,2)+'\n');
 }

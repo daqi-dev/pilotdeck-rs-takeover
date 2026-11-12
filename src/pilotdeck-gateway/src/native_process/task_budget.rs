@@ -740,6 +740,7 @@ mod tests {
         let provider = ControlProvider::start("structured_output");
         let home = scratch.0.join("home");
         let project = scratch.0.join("project");
+        super::super::assembly::register_project(&scratch.options()).unwrap();
         let path = home.join("pilotdeck.yaml");
         std::fs::write(&path,format!("schemaVersion: 1\nagent: {{model: fixture/mock}}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://{}/v1\n      apiKey: fixture-local-only\n      models: {{mock: {{capabilities: {{supportsToolUse: true}}}}}}\nrouter:\n  stats:\n    modelPricing:\n      fixture/mock: {{input: 1000000, output: 1000000}}\ntelemetry: {{enabled: false}}\n",provider.address)).unwrap();
         let options = || LocalOptions {
@@ -784,7 +785,9 @@ mod tests {
         assert!(
             first
                 .iter()
-                .any(|event| event.get("type") == Some(&JsValue::from("turn_completed")))
+                .any(|event| event.get("type") == Some(&JsValue::from("turn_completed"))),
+            "actual gateway events: {first:?}; model requests: {:?}",
+            provider.requests.lock().unwrap()
         );
         let ledger_path = home.join("gateway/sdk-task-budget-ledger.jsonl");
         let records: Vec<_> = std::fs::read_to_string(&ledger_path)

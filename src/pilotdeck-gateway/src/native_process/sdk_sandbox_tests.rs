@@ -126,6 +126,14 @@ mod native_calls {
         extensions: NativeExtensions,
     ) -> LocalGateway {
         let home = scratch.0.join("home");
+        let project = scratch.0.join("project");
+        // A non-General LocalGateway project must be registered just like the
+        // CLI does before session admission. Use the production storage key,
+        // not a hand-built project slug that could silently select General.
+        let chats = crate::session_chat_dir(&home, &project, &project.to_string_lossy());
+        let directory = chats.parent().unwrap();
+        std::fs::create_dir_all(directory).unwrap();
+        std::fs::write(directory.join(".cwd"), format!("{}\n", project.display())).unwrap();
         let config = home.join("pilotdeck.yaml");
         std::fs::write(&config,format!("schemaVersion: 1\nagent: {{model: fixture/mock}}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://{}/v1\n      apiKey: fixture-local-only\n      models: {{mock: {{capabilities: {{supportsToolUse: true}}}}}}\ntelemetry: {{enabled: false}}\n",provider.address)).unwrap();
         let env = [
@@ -142,7 +150,7 @@ mod native_calls {
         LocalGateway::start_with_extensions(
             LocalOptions {
                 pilot_home: home.clone(),
-                project: scratch.0.join("project"),
+                project,
                 os_home: Some(home),
                 sidecar: scratch.0.join("absent-sidecar"),
                 env,
@@ -160,7 +168,7 @@ mod native_calls {
         marker: &str,
         policy: Option<serde_json::Value>,
     ) -> Vec<JsValue> {
-        let mut config = serde_json::json!({"permissionMode":"bypassPermissions"});
+        let mut config = serde_json::json!({});
         if let Some(policy) = policy {
             config["sandbox"] = policy;
         }
@@ -175,6 +183,12 @@ mod native_calls {
             .expect("valid SDK policy is implemented before the config gate is opened");
         let result = events.lock().unwrap().clone();
         assert!(!result.is_empty());
+        assert!(
+            !result.iter().any(|event| event.get("code")
+                == Some(&JsValue::from("INVALID_SDK_SESSION_CONFIG"))
+                || event.get("code") == Some(&JsValue::from("PROJECT_NOT_FOUND"))),
+            "fixture must reach the actual policy, not fail SDK syntax: {result:?}"
+        );
         result
     }
     fn advertised(requests: &[serde_json::Value], marker: &str, expected: bool) {

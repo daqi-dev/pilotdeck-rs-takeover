@@ -173,6 +173,14 @@ fn formal_native_submit_write_tool_invokes_sdk_file_changed_http_hook() {
     let project = scratch.0.join("project");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir(&project).unwrap();
+    // A non-General workspace must be registered in the real project catalog.
+    // Seeding this marker follows assembly::register_project's storage contract.
+    let chats = crate::session_chat_dir(&home, &project, &project.to_string_lossy());
+    let storage = chats
+        .parent()
+        .expect("registered project storage directory");
+    std::fs::create_dir_all(storage).unwrap();
+    std::fs::write(storage.join(".cwd"), project.to_string_lossy().as_bytes()).unwrap();
     let provider = ControlProvider::start_with_arguments(
         "write_file",
         r#"{"file_path":"a.txt","content":"saved by native tool"}"#,
@@ -213,16 +221,29 @@ fn formal_native_submit_write_tool_invokes_sdk_file_changed_http_hook() {
         )
         .unwrap();
     gateway.shutdown(Duration::from_secs(10)).unwrap();
+    let observed = events.lock().unwrap().clone();
+    assert!(
+        !observed
+            .iter()
+            .any(|event| event.get("type") == Some(&"error".into())),
+        "formal SDK submit failed before the write: events={observed:?}; model requests={:?}",
+        provider.requests.lock().unwrap()
+    );
+    let model_requests = provider.requests.lock().unwrap().clone();
+    assert!(
+        model_requests
+            .iter()
+            .any(|request| request["messages"]
+                .as_array()
+                .is_some_and(|messages| messages
+                    .iter()
+                    .any(|message| message["role"] == "tool"
+                        && message["tool_call_id"] == "native-call"))),
+        "formal SDK submit must execute the real write tool before continuation: events={observed:?}; model requests={model_requests:?}"
+    );
     assert_eq!(
         std::fs::read_to_string(project.join("a.txt")).unwrap(),
         "saved by native tool"
-    );
-    assert!(
-        !events
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|event| event.get("type") == Some(&"error".into()))
     );
     runtime.block_on(async move {
         let mut mock = mock;

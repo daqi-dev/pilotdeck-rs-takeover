@@ -23,6 +23,7 @@ for(const mode of cases){
  assert.equal(aborts[0].params.runId,submits[0].params.runId,`${mode}: exact current run`);
  assert.equal(aborts[0].params.reason,'CLI interrupted');
  assert.equal(timeline.filter(e=>e.kind==='signal_sent'&&e.signal==='SIGINT'&&e.delivered===true).length,1,`${mode}: real signal`);
+ assert(!timeline.some(e=>['diagnostic_socket_close_timeout','forced_socket_cleanup'].includes(e.kind)),`${mode}: forced or timed-out socket cleanup cannot prove natural release`);
  assert(!timeline.some(e=>e.kind==='diagnostic_child_timeout'),`${mode}: natural exit required`);
  assert.equal(summary.code,1);assert.equal(summary.signal,null);
  const stdout=await read(`${mode}/stdout.txt`);const stderr=await read(`${mode}/stderr.txt`);

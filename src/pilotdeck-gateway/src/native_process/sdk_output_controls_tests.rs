@@ -186,13 +186,30 @@ impl ExecutionFactory for ChildEventFactory {
         request: &ExecuteRequest,
         context: &mut ExecutionContext,
     ) -> pilotdeck_agent::ports::PortResult<ExecutionTerminal> {
-        for kind in ["text_delta", "thinking_delta"] {
-            let payload=parse_json(&format!(r#"{{"subagentId":"child-1","subagentType":"general","event":{{"type":"{kind}","text":"child fragment"}}}}"#)).unwrap().as_object().unwrap().clone();
-            context.emit("subagent_model_event".into(), payload)?;
-        }
         let decoded = OriginalFactoryPayloadDecoder
             .decode(&request.boundary, &"/".into())
             .expect("SDK control native payload");
+        for kind in ["text_delta", "thinking_delta"] {
+            let mut payload = JsObject::new();
+            payload.insert(
+                "sessionId".into(),
+                JsValue::String(decoded.input.session_id.clone()),
+            );
+            payload.insert(
+                "turnId".into(),
+                JsValue::String(decoded.input.turn_id.clone()),
+            );
+            payload.insert("subagentId".into(), JsValue::from("child-1"));
+            payload.insert("subagentType".into(), JsValue::from("general"));
+            payload.insert(
+                "event".into(),
+                crate::metadata::object([
+                    ("type", JsValue::from(kind)),
+                    ("text", JsValue::from("child fragment")),
+                ]),
+            );
+            context.emit("subagent_model_event".into(), payload)?;
+        }
         pilotdeck_transport::default_factory::OriginalAgentFactory {
             clock: Arc::new(pilotdeck_transport::system_clock::SystemExecutionClock),
             process_cwd: decoded.config.cwd,
@@ -209,6 +226,10 @@ fn run_control(config: Value, tool: &str, emit_child: bool) -> Run {
     let scratch = Scratch::new();
     let home = scratch.0.join("home");
     let project = scratch.0.join("project");
+    // LocalGateway mirrors the CLI gateway and does not register a project.
+    // Real SDK dialog recovery requires the same marker written by setup/UI.
+    let registration_options = Options::parse(scratch.args()).unwrap();
+    assembly::register_project(&registration_options).unwrap();
     let provider = ControlProvider::start(tool);
     let config_path = home.join("pilotdeck.yaml");
     std::fs::write(&config_path,format!("schemaVersion: 1\nagent: {{model: fixture/mock}}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://{}/v1\n      apiKey: fixture-local-only\n      models: {{mock: {{capabilities: {{supportsToolUse: true}}}}}}\ntelemetry: {{enabled: false}}\n",provider.address)).unwrap();

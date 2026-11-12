@@ -209,12 +209,13 @@ fn extension_of(source: &str) -> String {
 /// extension, else the path's: upload stores use an opaque id on disk, so
 /// the original filename carries the format.
 fn resolver_extension(entry: &AttachEntry) -> String {
-    let trimmed = entry.name.trim();
-    extension_of(if trimmed.is_empty() {
-        entry.path.as_str()
+    let named_extension = extension_of(entry.name.trim());
+    if named_extension.is_empty() {
+        let absolute = attachment_lexical(&cached_process_cwd().unwrap_or_default(), entry);
+        extension_of(&absolute.to_string_lossy())
     } else {
-        trimmed
-    })
+        named_extension
+    }
 }
 
 /// `detectImageMime` (AttachmentResolver.ts): the magic bytes of the four
