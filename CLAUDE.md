@@ -1,7 +1,7 @@
 # PilotDeck-RS 协作说明
 
 > `AGENTS.md` 是指向本文件的软链接。
-> 2026-11-10 起，本分支由一个会话直接负责，向人直接汇报；本文件替换了上一套多模型流水线的说明。
+> 2026-11-13 起按用户提供的 `docs/plan/backend-completion.md` 并行执行；唯一进度入口为 `state/backend-handoff.md`，协作规则见 `scripts/agents/common.md`。本轮排除前端、ui/server、桌面壳和 TUI，覆盖全部后端及非 TUI CLI。该明确范围优先于下述历史意向书。
 > 旧版用 `git show de356427e:CLAUDE.md` 查看，它是待核实的历史记录，不是当前指令。
 > 远端 `main` 上仍有其他 agent 按旧说明工作，所以本文件只留在接手分支上，不要合回 `main`。
 
