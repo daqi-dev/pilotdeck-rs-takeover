@@ -295,7 +295,7 @@ async fn host_pump_stops_before_dispose_closes_port() {
         .unwrap()
         .push_back(Err(HostError::new(HostErrorKind::Protocol, "closed port")));
     handler
-        .forward(Box::pin(async { Ok(()) }), None, None, false, true)
+        .forward(Box::pin(async { Ok(()) }), None, None, false, true, false)
         .await
         .unwrap();
     advance(&mut task, 1000).await;

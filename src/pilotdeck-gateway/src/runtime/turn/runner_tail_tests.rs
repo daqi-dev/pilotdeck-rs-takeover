@@ -128,7 +128,7 @@ fn checkpoint(f: &Fixture, tail: &SessionTail, row: &JsValue, label: &str) {
         .find(|s| s.get("label") == Some(&label.into()))
         .expect("#742 tail checkpoint");
     assert_eq!(
-        tail.snapshot(),
+        json_visible(tail.snapshot()),
         *field(snapshot, "metadata"),
         "#742 tail checkpoint metadata {label}"
     );
@@ -448,7 +448,7 @@ async fn replay(name: &str, row: &JsValue) {
         "#742 tail transcript bytes {name}"
     );
     assert_eq!(
-        tail.snapshot(),
+        json_visible(tail.snapshot()),
         *field(row, "metadata"),
         "#742 tail final metadata {name}"
     );
@@ -783,4 +783,20 @@ async fn metadata_write_retains_owner_and_serial_lock() {
         assert!(tail.writes.try_lock().is_ok(),"#742 metadata worker releases lock");
         assert_eq!(tail.snapshot().get("firstPrompt"),Some(&"request".into()),"#742 metadata completes merge after cancellation");
     }).await;
+}
+
+/// The metadata as JSON shows it: `mergeMetadata` keeps `title` and
+/// `linkedPullRequest` keys with `undefined` values, which the recorded TS
+/// snapshots (JSON) omit.
+fn json_visible(value: JsValue) -> JsValue {
+    let Some(object) = value.as_object() else {
+        return value;
+    };
+    let mut visible = pilotdeck_protocol::JsObject::new();
+    for (key, child) in object.entries() {
+        if !child.is_undefined() {
+            visible.insert(key.clone(), child.clone());
+        }
+    }
+    JsValue::Object(visible)
 }
