@@ -1,0 +1,149 @@
+{
+  "name": "cli-chat-search-args",
+  "about": "chat search 参数解析的边角（src/cli/commands/chatSearch.ts:50-55 readNumberFlag 用 Number() 而不是 parseInt：小数、科学计数、十六进制、负数、前后空白都照 Number 的规则读，读不出有限数时当作没给；:79-88 关键字过滤只去掉 --project / --limit / --role / --session 后面的词，--pilot-home 后面的值会留在关键字里；单横线词留在关键字里；旗标在末尾缺值）。会话文件与 cli-chat-search 相同。",
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "files": {
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-proj/chats/s-orchard.jsonl": "{\"type\": \"session_metadata\", \"sessionId\": \"s-orchard\", \"createdAt\": \"2026-03-01T00:00:00.000Z\", \"metadata\": {\"aiTitle\": \"Orchard planning\"}}\n{\"type\": \"accepted_input\", \"sessionId\": \"s-orchard\", \"createdAt\": \"2026-03-01T09:05:00.000Z\", \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"Tell me about Apple trees\"}]}]}\n{\"type\": \"assistant_message\", \"sessionId\": \"s-orchard\", \"createdAt\": \"2026-03-01T09:05:02.000Z\", \"message\": {\"role\": \"assistant\", \"content\": [{\"type\": \"text\", \"text\": \"Bananas are yellow; apples are red.\"}]}}\n{not json at all\n\n{\"type\": \"accepted_input\", \"sessionId\": \"s-orchard\", \"createdAt\": \"2026-03-01T13:45:00.000Z\", \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"  multi\\n line\\tapple   question  \"}]}]}\n{\"type\": \"durable_message\", \"sessionId\": \"s-orchard\", \"createdAt\": \"2026-03-01T13:45:03.000Z\", \"message\": {\"role\": \"assistant\", \"content\": [{\"type\": \"text\", \"text\": \"lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum the APPLE is hidden in the middle of a very long line dolor sit amet dolor sit amet dolor sit amet dolor sit amet dolor sit amet dolor sit amet dolor sit amet dolor sit amet dolor sit amet dolor sit amet\"}]}}\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-proj/chats/s-cherry-session-with-long-id.jsonl": "{\"type\": \"session_metadata\", \"sessionId\": \"s-cherry-session-with-long-id\", \"createdAt\": \"2026-03-01T00:00:00.000Z\", \"metadata\": {\"title\": \"Custom cherry title\", \"aiTitle\": \"ignored ai\"}}\n{\"type\": \"accepted_input\", \"sessionId\": \"s-cherry-session-with-long-id\", \"createdAt\": \"2026-02-28T23:59:00.000Z\", \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"what about cherries\"}]}]}\n{\"type\": \"assistant_message\", \"sessionId\": \"s-cherry-session-with-long-id\", \"createdAt\": \"\", \"message\": {\"role\": \"assistant\", \"content\": [{\"type\": \"text\", \"text\": \"Cherry season is short; an apple keeps longer.\"}]}}\n{\"type\": \"accepted_input\", \"sessionId\": \"s-cherry-session-with-long-id\", \"createdAt\": \"not-a-date\", \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"and an apple?\"}]}]}\n{\"type\": \"assistant_message\", \"sessionId\": \"s-cherry-session-with-long-id\", \"message\": {\"role\": \"assistant\", \"content\": [{\"type\": \"thinking\", \"text\": \"apple thoughts\"}, {\"type\": \"text\", \"text\": \"   \"}]}}\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-proj/chats/always-on-discovery:s1.jsonl": "{\"type\": \"accepted_input\", \"sessionId\": \"always-on-discovery:s1\", \"createdAt\": \"2026-03-02T00:00:00.000Z\", \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"internal apple\"}]}]}\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-proj/chats/notes.txt": "apple in a non-jsonl file\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-general.jsonl": "{\"type\": \"accepted_input\", \"sessionId\": \"s-general\", \"createdAt\": \"2026-03-03T07:00:00.000Z\", \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"General workspace apple pie\"}]}]}\n{\"type\": \"assistant_message\", \"sessionId\": \"s-general\", \"createdAt\": \"2026-03-03T07:00:01.000Z\", \"message\": {\"role\": \"assistant\", \"content\": [{\"type\": \"text\", \"text\": \"Pie needs APPLES.\"}]}}\n",
+    "home/.pilotdeck/projects/other-project/chats/s-other.jsonl": "{\"type\": \"session_metadata\", \"sessionId\": \"s-other\", \"createdAt\": \"2026-03-01T00:00:00.000Z\", \"metadata\": {\"aiTitle\": \"Other project\"}}\n{\"type\": \"accepted_input\", \"sessionId\": \"s-other\", \"createdAt\": \"2026-03-04T18:30:00.000Z\", \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"apple elsewhere\"}]}]}\n"
+  },
+  "steps": [
+    {
+      "cli": [
+        "chat",
+        "search",
+        "apple",
+        "--limit",
+        "1.5"
+      ]
+    },
+    {
+      "cli": [
+        "chat",
+        "search",
+        "apple",
+        "--limit",
+        "1e1",
+        "--json"
+      ]
+    },
+    {
+      "cli": [
+        "chat",
+        "search",
+        "apple",
+        "--limit",
+        "-1"
+      ]
+    },
+    {
+      "cli": [
+        "chat",
+        "search",
+        "apple",
+        "--limit",
+        "0x2"
+      ]
+    },
+    {
+      "cli": [
+        "chat",
+        "search",
+        "apple",
+        "--limit",
+        " 2 "
+      ]
+    },
+    {
+      "cli": [
+        "chat",
+        "search",
+        "apple",
+        "--limit",
+        ""
+      ]
+    },
+    {
+      "cli": [
+        "chat",
+        "search",
+        "apple",
+        "--limit",
+        "Infinity"
+      ]
+    },
+    {
+      "cli": [
+        "chat",
+        "search",
+        "--pilot-home",
+        "{PILOT_HOME}",
+        "apple"
+      ]
+    },
+    {
+      "cli": [
+        "chat",
+        "search",
+        "-i",
+        "apple"
+      ]
+    },
+    {
+      "cli": [
+        "chat",
+        "search",
+        "apple",
+        "--role"
+      ]
+    },
+    {
+      "cli": [
+        "chat",
+        "search",
+        "apple",
+        "--session"
+      ]
+    },
+    {
+      "cli": [
+        "chat",
+        "search",
+        "apple",
+        "--project"
+      ]
+    },
+    {
+      "cli": [
+        "chat",
+        "search",
+        "--regex",
+        "APPLE"
+      ]
+    },
+    {
+      "cli": [
+        "chat",
+        "search",
+        "--regex",
+        "",
+        "--json"
+      ]
+    },
+    {
+      "cli": [
+        "chat",
+        "search",
+        "  ",
+        "  "
+      ]
+    }
+  ]
+}
