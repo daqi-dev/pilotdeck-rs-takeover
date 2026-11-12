@@ -1,0 +1,223 @@
+{
+ "name": "cfg-provider-capabilities",
+ "about": "speedMapping 与几项模型能力键（parseModelConfig.ts:125-147 parseSpeedMapping、:250-310 parseCapabilities / applyOfficialSpeedDefault；gateway/dialog/modelCatalog.ts:31、74-80；model/request/validateModelRequest.ts:32；providers/openai/request.ts:87、anthropic/request.ts:117；streamModel.ts:831 fast-mode beta 头；context/DefaultContextRuntime.ts:392 缓存断点）：官方 id openai 缺省 openai_service_tier + supportsSpeed；anthropic 协议显式 anthropic_speed；openai 协议显式 openai_service_tier；不配 speedMapping 时 supportsSpeed 无效；speed=1 与 speed=0.2 的请求体；supportsPromptCache=false 去掉 anthropic 缓存断点；supportsThinking / supportsJsonSchema 只被解析（运行时不读）；非法值各一（speedMapping 与协议不配 / 未知值、能力不是布尔、contextWindow 非正（contextWindow 的作用见 cfg-provider-context-window））。比 model_catalog_list、resolve_settings、各轮事件和 provider 收到的请求。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    openai:\n      protocol: openai\n      url: {MOCK}/oa/v1\n      apiKey: bbx-mock-only\n      models:\n        bbx-gpt:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    anth:\n      protocol: anthropic\n      url: {MOCK}/anth/v1\n      apiKey: bbx-mock-only\n      speedMapping: anthropic_speed\n      models:\n        fast:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n            supportsSpeed: true\n        nocache:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n            supportsPromptCache: false\n    oaism:\n      protocol: openai\n      url: {MOCK}/oaism/v1\n      apiKey: bbx-mock-only\n      speedMapping: openai_service_tier\n      models:\n        fast:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n            supportsSpeed: true\n            supportsThinking: false\n            supportsJsonSchema: false\n        slow:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    oainosm:\n      protocol: openai\n      url: {MOCK}/oainosm/v1\n      apiKey: bbx-mock-only\n      models:\n        fast:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n            supportsSpeed: true\n    bad1:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      speedMapping: anthropic_speed\n      models:\n        m: {}\n    bad2:\n      protocol: anthropic\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      speedMapping: fast\n      models:\n        m: {}\n    bad3:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        m:\n          capabilities:\n            supportsSpeed: \"yes\"\n    bad4:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        m:\n          capabilities:\n            supportsPromptCache: 1\n    bad5:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        m:\n          capabilities:\n            contextWindow: 0\n    bad6:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        m:\n          capabilities:\n            supportsJsonSchema: null\n            supportsThinking: false\ntelemetry:\n  enabled: false\n",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Cfg\"}"
+   }
+  },
+  {
+   "name": "oa",
+   "when": [
+    "sp-oa"
+   ],
+   "reply": {
+    "text": "oa ok"
+   }
+  },
+  {
+   "name": "anth",
+   "when": [
+    "sp-an"
+   ],
+   "reply": {
+    "text": "anth ok"
+   }
+  },
+  {
+   "name": "oaism",
+   "when": [
+    "sp-sm"
+   ],
+   "reply": {
+    "text": "sm ok"
+   }
+  },
+  {
+   "name": "nosm",
+   "when": [
+    "sp-no"
+   ],
+   "reply": {
+    "text": "nosm ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "model_catalog_list",
+   "params": {}
+  },
+  {
+   "ws": "resolve_settings",
+   "params": {}
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-oa1",
+    "channelKey": "test",
+    "message": "sp-oa fast",
+    "modelOverride": {
+     "mode": "model",
+     "provider": "openai",
+     "model": "bbx-gpt",
+     "speed": 1
+    }
+   },
+   "timeout": 15000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-oa2",
+    "channelKey": "test",
+    "message": "sp-oa slow",
+    "modelOverride": {
+     "mode": "model",
+     "provider": "openai",
+     "model": "bbx-gpt",
+     "speed": 0.2
+    }
+   },
+   "timeout": 15000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-an1",
+    "channelKey": "test",
+    "message": "sp-an fast",
+    "modelOverride": {
+     "mode": "model",
+     "provider": "anth",
+     "model": "fast",
+     "speed": 1
+    }
+   },
+   "timeout": 15000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-an2",
+    "channelKey": "test",
+    "message": "sp-an slow",
+    "modelOverride": {
+     "mode": "model",
+     "provider": "anth",
+     "model": "fast",
+     "speed": 0.2
+    }
+   },
+   "timeout": 15000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-an3",
+    "channelKey": "test",
+    "message": "sp-an nocache",
+    "modelOverride": {
+     "mode": "model",
+     "provider": "anth",
+     "model": "nocache"
+    }
+   },
+   "timeout": 15000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-an4",
+    "channelKey": "test",
+    "message": "sp-an nocache speed",
+    "modelOverride": {
+     "mode": "model",
+     "provider": "anth",
+     "model": "nocache",
+     "speed": 1
+    }
+   },
+   "timeout": 15000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sm1",
+    "channelKey": "test",
+    "message": "sp-sm fast",
+    "modelOverride": {
+     "mode": "model",
+     "provider": "oaism",
+     "model": "fast",
+     "speed": 1
+    }
+   },
+   "timeout": 15000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sm2",
+    "channelKey": "test",
+    "message": "sp-sm slow model",
+    "modelOverride": {
+     "mode": "model",
+     "provider": "oaism",
+     "model": "slow",
+     "speed": 1
+    }
+   },
+   "timeout": 15000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-no1",
+    "channelKey": "test",
+    "message": "sp-no fast",
+    "modelOverride": {
+     "mode": "model",
+     "provider": "oainosm",
+     "model": "fast",
+     "speed": 1
+    }
+   },
+   "timeout": 15000
+  },
+  {
+   "sleep": 300
+  }
+ ]
+}

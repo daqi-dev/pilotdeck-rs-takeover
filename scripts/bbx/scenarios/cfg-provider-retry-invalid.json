@@ -1,0 +1,26 @@
+{
+ "name": "cfg-provider-retry-invalid",
+ "about": "retry 各键的非法值（parseModelConfig.ts:170-190：非数、负数、非有限数报 MODEL_INVALID_CONFIG_VALUE，该 provider 被排除，loadPilotConfig.ts:702-709 记 warning）；retry 不是对象时整段忽略（parseRetryConfig 返回 undefined，provider 仍可用）。比 resolve_settings 的 diagnostics 与 model_catalog_list，以及服务启动输出。",
+ "server": false,
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    r1:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      retry:\n        requestMaxRetries: -1\n      models:\n        m: {}\n    r2:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      retry:\n        streamMaxRetries: \"2\"\n      models:\n        m: {}\n    r3:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      retry:\n        streamIdleTimeoutMs: .inf\n      models:\n        m: {}\n    r4:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      retry:\n        maxStreamingDurationMs: true\n      models:\n        m: {}\n    r5:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      retry:\n        repeatedChunkLimit: [3]\n      models:\n        m: {}\n    r6:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      retry:\n        baseDelayMs: -0.5\n      models:\n        m: {}\n    r7:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      retry:\n        maxDelayMs: null\n      models:\n        m: {}\n    r8:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      retry:\n        jitter: {a: 1}\n      models:\n        m: {}\n    r9:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      retry: 5\n      models:\n        m: {}\ntelemetry:\n  enabled: false\n",
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "then": [
+    {
+     "ws": "resolve_settings",
+     "params": {}
+    },
+    {
+     "ws": "model_catalog_list",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  }
+ ]
+}
