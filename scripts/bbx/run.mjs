@@ -320,8 +320,11 @@ const mock = http.createServer(async (req, res) => {
   // Google Gemini generateContent 形状（路径 …/models/<模型>:generateContent 或 :streamGenerateContent?alt=sse）。
   // finish 是 finishReason（缺省 STOP，工具调用也是 STOP）；推理文本是 thought: true 的部分，带 thoughtSignature。
   // 工具调用只在规则里显式写了 id 时才带 functionCall.id（真实 Gemini API 通常不带）。用量换算成 usageMetadata。
+  // @google/genai 把整份应答头（含 date）挂在每个结果对象的 sdkHttpResponse 上，基线会把它带进事件和落盘，
+  // 所以这里固定 date 头，免得两次运行只差一个时间。
   const google = req.url.match(/\/models\/([^/:?]+):(generateContent|streamGenerateContent)(\?|$)/);
   if (google) {
+    res.setHeader('date', 'Thu, 01 Jan 2026 00:00:00 GMT');
     const finishReason = reply.finish ?? 'STOP';
     const given = [...(reply.tool ? [reply.tool] : []), ...(reply.tools ?? [])];
     const cached = usage.prompt_tokens_details?.cached_tokens;
