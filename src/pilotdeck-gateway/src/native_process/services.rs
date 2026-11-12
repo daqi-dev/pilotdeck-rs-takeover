@@ -1368,25 +1368,30 @@ impl SubmitHostServices for Services {
         run: &'a RunRef,
         status: &'a JsValue,
     ) -> SubmitFuture<'a, Result<(), SubmitError>> {
-        let recorder = self
-            .recorders
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(run.session())
-            .and_then(std::sync::Weak::upgrade);
-        let run = run.clone();
-        let status = status.clone();
+        // `this.recordAgentStatusMessage(...)` (InProcessGateway.ts:2068-2078):
+        // the live session's writer, or — when the session never came up, e.g.
+        // its preparation failed — a cold storage for the session, which
+        // creates the transcript (GatewaySessionHistoryBundle.ts:205-245).
+        // Its project is `projectKey ? projectKey : fallbackProjectRoot`.
+        let project_root = self.options.project_root_for(
+            run.project_key
+                .as_ref()
+                .filter(|key| !key.units().is_empty()),
+        );
+        let future = super::methods::session_dir::record_status_message(
+            self.options.home.clone(),
+            project_root,
+            self.recorders.clone(),
+            run.session().clone(),
+            run.run_id.clone(),
+            status.clone(),
+            None,
+        );
         Box::pin(async move {
-            let recorder =
-                recorder.ok_or_else(|| failure("Native session recorder is unavailable."))?;
-            tokio::task::spawn_blocking(move || {
-                recorder
-                    .writer()
-                    .record_agent_status_message(run.session(), &run.run_id, &status)
-            })
-            .await
-            .map_err(|e| failure(e.to_string()))?
-            .map_err(|e| failure(e.to_string()))
+            future
+                .await
+                .map(|_| ())
+                .map_err(|e| failure(String::from_utf16_lossy(e.message.units())))
         })
     }
     fn after_turn(&self, _: &RunRef) -> Result<(), SubmitError> {
