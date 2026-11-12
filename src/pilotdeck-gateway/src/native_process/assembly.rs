@@ -490,6 +490,43 @@ async fn start_assembly(
             active_run: active_run.clone(),
         })),
     );
+    // `new ExtensionWatchManager({ pilotHome, builtinSkillsRoot, onChange })`
+    // with `onProjectActivated: watchProject` (createLocalGateway.ts:712-
+    // 724, 788, 803): the global extension paths from here on, each project's
+    // from its first resolve. A settled change goes to the refresh bundle
+    // (`handleExtensionWatchEvent`), published below once it exists; the slot
+    // is weak so the bundle → registry → watcher chain is not a cycle.
+    let extension_watch_target: Arc<
+        std::sync::OnceLock<std::sync::Weak<crate::runtime::refresh::RefreshBundle>>,
+    > = Arc::default();
+    {
+        use crate::runtime::extension_watch::{
+            ExtensionWatchManager, ExtensionWatchOptions, ExtensionWatchScope,
+        };
+        let target = extension_watch_target.clone();
+        let watch = ExtensionWatchManager::start(ExtensionWatchOptions {
+            pilot_home: options.home.clone(),
+            builtin_skills_root: options.builtin_skills_root.clone(),
+            on_change: Arc::new(move |event| {
+                let Some(bundle) = target.get().and_then(std::sync::Weak::upgrade) else {
+                    return;
+                };
+                let changed: Vec<pilotdeck_protocol::JsString> = event
+                    .changed_paths
+                    .iter()
+                    .map(|path| path.as_str().into())
+                    .collect();
+                match &event.scope {
+                    ExtensionWatchScope::Global => bundle.extensions_changed(None, &changed),
+                    ExtensionWatchScope::Project(root) => bundle.extensions_changed(
+                        Some(&root.to_string_lossy().as_ref().into()),
+                        &changed,
+                    ),
+                }
+            }),
+        });
+        project.set_on_project_activated(Arc::new(move |root| watch.watch_project(root)));
+    }
     // The public host provider reads the same project runtimes the sessions
     // run on (createLocalGateway.ts:1524-1556).
     if let Some(slots) = &switch_slots {
@@ -1711,6 +1748,7 @@ async fn start_assembly(
                 })),
             };
             settings.bundle.bind_server(build_connection_broadcast);
+            let _ = extension_watch_target.set(Arc::downgrade(&settings.bundle));
             // `configStore.startWatching()` (createLocalGateway.ts:801): a
             // config file change reloads the store, which the refresh bundle
             // turns into runtime refresh + `config_changed`.

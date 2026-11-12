@@ -388,7 +388,11 @@ pub struct ProjectRuntimeRegistry {
     executor: Handle,
     state: Mutex<RegistryState>,
     reload_gate: Arc<tokio::sync::Mutex<()>>,
+    /// `onProjectActivated` (ProjectRuntimeRegistry.ts:214, 1544).
+    on_project_activated: Mutex<Option<ProjectActivated>>,
 }
+/// Called with the resolved root on every `resolve`, cached or not.
+pub type ProjectActivated = Arc<dyn Fn(&Path) + Send + Sync>;
 impl ProjectRuntimeRegistry {
     pub fn new(
         fallback_project_root: impl Into<PathBuf>,
@@ -405,7 +409,16 @@ impl ProjectRuntimeRegistry {
                 disposal: None,
             }),
             reload_gate: Arc::new(tokio::sync::Mutex::new(())),
+            on_project_activated: Mutex::new(None),
         }
+    }
+    /// Install the `onProjectActivated` option (the extension watcher's
+    /// `watchProject`).
+    pub fn set_on_project_activated(&self, callback: ProjectActivated) {
+        *self
+            .on_project_activated
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(callback);
     }
     /// Whether `dispose` has been called (reload/resolve now fail).
     pub fn is_disposed(&self) -> bool {
@@ -458,6 +471,16 @@ impl ProjectRuntimeRegistry {
     ) -> Result<Arc<ProjectRuntime>, RuntimeError> {
         Self::assert_active(state)?;
         let root = resolve_path(key.unwrap_or(&self.fallback_project_root))?;
+        // `this.options.onProjectActivated?.(projectRoot)` before the cache
+        // lookup, so every resolve of the project reports it.
+        let activated = self
+            .on_project_activated
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(activated) = activated {
+            activated(&root);
+        }
         if let Some((_, runtime)) = state.current.iter().find(|(path, _)| path == &root) {
             return Ok(Arc::clone(runtime));
         }
