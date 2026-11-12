@@ -6,6 +6,8 @@ use super::{
     put, response_text, retry_number, send_provider_request, throw_if_aborted,
 };
 
+mod google;
+
 // ---------------------------------------------------------------------------
 // Non-streaming complete path (`complete` / `parseModelResponse` in
 // streamModel.ts), moved from http.rs byte for byte (#1111).
@@ -638,9 +640,9 @@ pub(super) fn is_retryable_request_error(error: &ModelStreamError) -> bool {
 
 /// `complete(request, config, options)` — non-streaming HTTP path.
 /// `streamModel.ts:76`: sends `stream: false`, reads the full body, returns the
-/// parsed response object. HTTP status errors throw immediately (the baseline
-/// does not retry a non-2xx complete); only transport failures use the linear
-/// request retry policy.
+/// parsed response object. The fetch protocols do not retry HTTP status errors;
+/// Google runs its entire SDK exchange, including status/body errors, through
+/// the same linear request retry policy.
 pub async fn complete_model(
     transport: &dyn ModelHttpTransport,
     request: &JsValue,
@@ -651,14 +653,6 @@ pub async fn complete_model(
     put(&mut current, "stream", JsValue::Bool(false));
     let (provider, _) = providers::validate_model_request(&current, config)?;
 
-    // P1-2: Google protocol not supported in complete path
-    if is(field(&provider, "protocol"), "google") {
-        return Err(ModelStreamError::thrown(
-            "UnsupportedProtocol",
-            "complete(): Google protocol is not supported in non-streaming mode",
-        ));
-    }
-
     let (max_retries, _) = retry_decide_request(&provider, 0.0, 0.0);
     let mut attempt = 0.0;
     // `streamModel.ts:92`: `for (attempt = 0; attempt <= maxRetries; attempt++)`.
@@ -668,6 +662,21 @@ pub async fn complete_model(
         throw_if_aborted(options)?;
         let (provider_now, model_now) = providers::validate_model_request(&current, config)?;
         let body = providers::build_model_request(&current, &provider_now, &model_now)?;
+        if is(field(&provider, "protocol"), "google") {
+            match google::complete_attempt(transport, &provider, &current, body, options).await {
+                Ok(response) => return Ok(response),
+                Err(error) => {
+                    if attempt < max_retries && is_retryable_request_error(&error) {
+                        let (_, delay_ms) =
+                            retry_decide_request(&provider, attempt, (options.random)());
+                        let _ = delay(delay_ms, options).await?;
+                        attempt += 1.0;
+                        continue;
+                    }
+                    return Err(error);
+                }
+            }
+        }
         let response =
             match send_provider_request(transport, &provider, &body, options, false).await {
                 Ok(response) => response,

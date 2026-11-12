@@ -1175,6 +1175,14 @@ fn resolve_endpoint(raw_url: &str) -> (String, String) {
 /// `createGoogleClient(...).models.generateContentStream` endpoint, without
 /// the leading model path rewriting performed by `tModel`.
 pub(crate) fn endpoint(provider: &JsValue, model: &JsValue) -> Result<String, ModelStreamError> {
+    endpoint_with_stream(provider, model, true)
+}
+
+pub(crate) fn endpoint_with_stream(
+    provider: &JsValue,
+    model: &JsValue,
+    stream: bool,
+) -> Result<String, ModelStreamError> {
     let (base_url, api_version) = resolve_endpoint(&trim_input(field(provider, "url"), "rawUrl")?);
     let base = base_url.trim_end_matches('/');
     let mut url = String::new();
@@ -1191,7 +1199,11 @@ pub(crate) fn endpoint(provider: &JsValue, model: &JsValue) -> Result<String, Mo
     };
     url.push('/');
     url.push_str(&path);
-    url.push_str(":streamGenerateContent?alt=sse");
+    url.push_str(if stream {
+        ":streamGenerateContent?alt=sse"
+    } else {
+        ":generateContent"
+    });
     Ok(url)
 }
 
@@ -1456,7 +1468,7 @@ fn event<const N: usize>(entries: [(&str, JsValue); N]) -> JsValue {
 }
 
 /// `generateContentResponseFromMldev` field order.
-fn sdk_response(wire: &JsValue) -> JsValue {
+pub(crate) fn sdk_response(wire: &JsValue) -> JsValue {
     let Some(record) = wire.as_object() else {
         return JsValue::Object(value_object());
     };

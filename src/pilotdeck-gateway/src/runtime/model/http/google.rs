@@ -63,9 +63,35 @@ pub(super) async fn send_google_request(
     body: &JsValue,
     options: &StreamOptions,
 ) -> Result<Response<(ModelBody, bool)>, (ModelStreamError, bool)> {
+    send_google_request_mode(transport, provider, model, body, options, true, None).await
+}
+
+/// The complete caller owns the SDK's provider timeout across both headers and
+/// body. Streaming retains its existing idle deadline and request dump behavior.
+pub(super) async fn send_google_request_mode(
+    transport: &dyn ModelHttpTransport,
+    provider: &JsValue,
+    model: &JsValue,
+    body: &JsValue,
+    options: &StreamOptions,
+    stream: bool,
+    complete_deadline: Option<tokio::time::Instant>,
+) -> Result<Response<(ModelBody, bool)>, (ModelStreamError, bool)> {
     let timeout_ms = idle_timeout_ms(provider, options);
     let final_body = providers::google::final_body(body, provider);
-    let headers = providers::google::headers(provider).map_err(|error| (error, false))?;
+    let mut headers = providers::google::headers(provider).map_err(|error| (error, false))?;
+    if !stream
+        && let Some(timeout) = field(provider, "timeoutMs")
+            .as_number()
+            .filter(|ms| *ms > 0.0)
+    {
+        // SDK getHeadersInternal appends this after custom headers; a custom
+        // case-insensitive match is joined, never overwritten.
+        headers.push((
+            "x-server-timeout".into(),
+            JsValue::String(crate::js_value::number_string((timeout / 1000.0).ceil()).into()),
+        ));
+    }
     let encoded = crate::js_value::json_stringify(&final_body)
         .map_err(|_| {
             (
@@ -78,7 +104,7 @@ pub(super) async fn send_google_request(
     // to a file under the OS temp directory before the SDK send
     // (TS `streamModel.ts:395-401`). Google carries its model in the URL, so
     // the log line's model comes from the canonical request, not the body.
-    if std::env::var("PILOTDECK_DUMP_REQUEST").as_deref() == Ok("1") {
+    if stream && std::env::var("PILOTDECK_DUMP_REQUEST").as_deref() == Ok("1") {
         // A failed write surfaces like TS: the throw lands in the Google
         // attempt catch → `toProviderError` → one non-retryable error event,
         // and the SDK send never happens (probe: 0 server hits with a
@@ -87,10 +113,19 @@ pub(super) async fn send_google_request(
             return Err((dump_failure_error(provider, &failure), false));
         }
     }
-    let endpoint = providers::google::endpoint(provider, model).map_err(|error| (error, false))?;
+    let endpoint = if stream {
+        providers::google::endpoint(provider, model)
+    } else {
+        providers::google::endpoint_with_stream(provider, model, false)
+    }
+    .map_err(|error| (error, false))?;
     let (url, header_map) = build_http_request(&endpoint, &headers)
         .map_err(|error| (ModelStreamError::thrown("TypeError", error.message), false))?;
-    let deadline = tokio::time::Instant::now() + duration(timeout_ms);
+    let deadline = if stream {
+        Some(tokio::time::Instant::now() + duration(timeout_ms))
+    } else {
+        complete_deadline
+    };
     crate::fetch_redirect::follow(
         url,
         hyper::Method::POST,
@@ -102,9 +137,12 @@ pub(super) async fn send_google_request(
                 transport,
                 request,
                 options,
-                Some(deadline),
+                deadline,
                 |failure| ModelStreamError::thrown("TypeError", failure.message),
                 || {
+                    if !stream {
+                        return ModelStreamError::abort();
+                    }
                     ModelStreamError::thrown(
                         "StreamIdleTimeoutError",
                         format!(
