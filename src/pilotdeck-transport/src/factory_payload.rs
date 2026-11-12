@@ -797,8 +797,10 @@ fn initial_messages(
             // and hands it the session's messages as they are, so a failed
             // turn's empty assistant message stays in the next turn's loop
             // history (it is only filtered from the model request) and is
-            // counted, e.g. by `compaction_started.messageCount`.
-            if !content.is_empty() || matches!(o.get("content"), Some(JsValue::Array(_))) {
+            // counted, e.g. by `compaction_started.messageCount`. A message
+            // whose blocks were all rejected keeps the factory behavior.
+            let source_empty = matches!(o.get("content"), Some(JsValue::Array(a)) if a.is_empty());
+            if !content.is_empty() || source_empty {
                 let mut message = object([
                     (
                         "role",
