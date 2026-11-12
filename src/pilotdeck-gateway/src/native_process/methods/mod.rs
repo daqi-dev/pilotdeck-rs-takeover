@@ -110,11 +110,125 @@ pub(super) async fn before_admission(
 pub(super) fn request(requests: &Requests, method: String, params: JsValue) -> Call<'_, Response> {
     match lookup(&method).map(|family| &family.handler) {
         Some(Handler::AfterAdmission(handler)) => handler(requests, method, params),
-        // Unknown methods retain the original A4 Forward error without
-        // dispatching a family that was not selected by the registry.
-        _ => Box::pin(async move { metadata::unavailable(method) }),
+        // A baseline method this host has not wired keeps the explicit
+        // CAPABILITY_UNAVAILABLE refusal; a name the baseline does not know
+        // either gets its `default:` branch (GatewayWsConnection.ts:574).
+        _ if BASELINE_METHODS.contains(&method.as_str()) => {
+            Box::pin(async move { metadata::unavailable(method) })
+        }
+        _ => Box::pin(async move {
+            Err(RequestError::new(format!(
+                "Unknown gateway method {method}."
+            )))
+        }),
     }
 }
+
+/// Every method the baseline WebSocket connection dispatches: the `case`
+/// labels of `GatewayWsConnection.ts` plus the connection-level `submit_turn`.
+const BASELINE_METHODS: &[&str] = &[
+    "abort_turn",
+    "active_turn_snapshot",
+    "always_on_abort",
+    "always_on_apply",
+    "always_on_rerun_plan",
+    "apply_flag_settings",
+    "background_task_stop",
+    "background_tasks",
+    "cancel_steer",
+    "close_project_sessions",
+    "close_session",
+    "commands_list",
+    "cron_create",
+    "cron_delete",
+    "cron_list",
+    "cron_run_now",
+    "cron_stop",
+    "cron_update",
+    "delete_session",
+    "describe_project",
+    "describe_server",
+    "elicitation_respond",
+    "export_session_transcript",
+    "finalize_last_turn_replacement",
+    "fork_session",
+    "grant_session_permission",
+    "hook_async_result",
+    "list_projects",
+    "list_sessions",
+    "manager_browsers",
+    "manager_sessions",
+    "mcp_server_reconnect",
+    "mcp_server_status",
+    "mcp_server_toggle",
+    "memory_list",
+    "memory_wipe",
+    "model_catalog_list",
+    "model_usage_snapshot",
+    "native_archive_artifact",
+    "native_archive_entries",
+    "native_archive_manifest",
+    "new_session",
+    "output_styles_list",
+    "permission_decide",
+    "permission_list",
+    "prepare_weixin_login",
+    "project_file_read",
+    "project_files_list",
+    "read_session_messages",
+    "read_subagent_messages",
+    "reconnect_interaction",
+    "record_agent_status_message",
+    "reload_config",
+    "reload_extensions",
+    "reload_output_styles",
+    "rename_session",
+    "replace_last_turn",
+    "resolve_settings",
+    "restore_session_transcript",
+    "resume_session",
+    "rewind_files",
+    "run_events",
+    "run_get",
+    "run_reattach",
+    "seed_read_state",
+    "session_model_clear",
+    "session_model_get",
+    "session_model_set",
+    "set_mcp_permission_mode_override",
+    "set_mcp_servers",
+    "set_output_style",
+    "set_permission_mode",
+    "set_session_thinking",
+    "skill_create",
+    "skill_delete",
+    "skill_import",
+    "skill_list",
+    "skill_read",
+    "skill_scan",
+    "skill_validate",
+    "skill_write",
+    "snapshot_get",
+    "snapshot_list",
+    "snapshot_restore",
+    "sop_resume",
+    "sop_status",
+    "steer_turn",
+    "submit_turn",
+    "supported_agents",
+    "tag_session",
+    "update_settings",
+    "upload_cancel",
+    "upload_complete",
+    "upload_create",
+    "upload_get",
+    "upload_part",
+    "usage_snapshot",
+    "user_dialog_claim",
+    "user_dialog_list",
+    "user_dialog_release",
+    "user_dialog_respond",
+];
 
 /// `input.<key>` read at the top of a TS method body. The wire `params` reach
 /// the method untouched, so only a nullish `params` throws; every other shape
