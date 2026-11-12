@@ -1,0 +1,24 @@
+{
+  "name": "cli-resume-options",
+  "about": "resume 的参数（src/cli/sdkCli.ts:43-87）：--stream-json、--project + --channel、--permission-mode、--model + --project、显式 --gateway-url + --auth-token（去掉环境里的令牌）；出错路径：错误令牌。会话先用 ws submit_turn 造好，resume 前断开那条 ws 连接（同 cli-run-resume）。",
+  "env": {
+    "PILOTDECK_TOKEN": "{TOKEN}"
+  },
+  "provider": [
+    {"name": "title", "when": ["Generate a concise title"], "reply": {"text": "{\"title\": \"Say hello\"}"}},
+    {"name": "main", "reply": {"text": "Hello from the mock."}}
+  ],
+  "steps": [
+    {"ws": "submit_turn", "params": {"sessionKey": "s-bbx-r", "channelKey": "cli", "message": "first"}},
+    {"sleep": 500},
+    {"disconnect": true},
+    {"cli": ["resume", "--stream-json", "s-bbx-r", "second"]},
+    {"cli": ["resume", "--project", "{PROJECT}", "--channel", "web", "s-bbx-r", "third"]},
+    {"cli": ["resume", "--permission-mode", "plan", "s-bbx-r", "fourth"], "timeout": 20000},
+    {"cli": ["resume", "--project", "{PROJECT}", "--model", "bbx/deterministic", "--json", "s-bbx-r", "fifth"]},
+    {"cli": ["resume", "--gateway-url", "ws://127.0.0.1:38411/ws", "--auth-token", "{TOKEN}", "s-bbx-r", "sixth"], "env": {"PILOTDECK_TOKEN": null}},
+    {"cli": ["resume", "--auth-token", "wrong-token", "s-bbx-r", "seventh"], "timeout": 15000},
+    {"connect": true},
+    {"ws": "read_session_messages", "params": {"sessionKey": "s-bbx-r"}}
+  ]
+}
