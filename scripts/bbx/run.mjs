@@ -26,7 +26,14 @@ const TARGET = process.env.BBX_TARGET || path.join(REPO, 'src/target/debug');
 // 不同槽位的采集产物之间不要互相比。槽位 0（缺省）就是原来的固定目录和端口。
 const SLOT = Number(process.env.BBX_SLOT || 0);
 if (!Number.isInteger(SLOT) || SLOT < 0 || SLOT > 8) { console.error('bbx: BBX_SLOT must be 0..8'); process.exit(2); }
-const slotText = (t) => SLOT ? t.replaceAll('pdrs-bbx', `pdrs-bb${SLOT}`).replaceAll('3841', `384${1 + SLOT}`) : t;
+// 根目录的父目录：macOS 上是 /private/tmp（/tmp 的物理路径），其他平台是 /tmp。场景里写死的
+// /private/tmp/pdrs-bbx 在读入时换成本平台的写法。两侧在同一台机器上跑，路径长度随平台变不影响结论；
+// 不同平台的采集产物不要互相比。
+const TMP_BASE = process.platform === 'darwin' ? '/private/tmp' : '/tmp';
+const slotText = (t) => {
+  const local = TMP_BASE === '/private/tmp' ? t : t.replaceAll('/private/tmp/pdrs-bbx', `${TMP_BASE}/pdrs-bbx`);
+  return SLOT ? local.replaceAll('pdrs-bbx', `pdrs-bb${SLOT}`).replaceAll('3841', `384${1 + SLOT}`) : local;
+};
 export const ROOT = slotText('/private/tmp/pdrs-bbx/root');
 const GATEWAY_PORT = 38411 + 10 * SLOT;
 const MOCK_PORT = 38412 + 10 * SLOT;
@@ -128,7 +135,15 @@ const portOpen = (port) => new Promise((resolve) => {
 // 基线 CLI 的若干路径会探测写死的默认端口 18789（真实 PilotDeck 的默认端口）。
 // 那里有人监听时一律拒跑，免得碰到本机正在运行的实例。用 lsof 看，不去连它。
 import { spawnSync } from 'node:child_process';
-if (spawnSync('lsof', ['-nP', '-iTCP:18789', '-sTCP:LISTEN'], { encoding: 'utf8' }).stdout.trim()) {
+// 没有 lsof 的机器（常见于 Linux）改用 ss；两个都没有就拒跑，不当作「没人监听」。
+const listening18789 = (() => {
+  const lsof = spawnSync('lsof', ['-nP', '-iTCP:18789', '-sTCP:LISTEN'], { encoding: 'utf8' });
+  if (!lsof.error) return lsof.stdout.trim() !== '';
+  const ss = spawnSync('ss', ['-H', '-ltn', 'sport = :18789'], { encoding: 'utf8' });
+  if (!ss.error && ss.status === 0) return ss.stdout.trim() !== '';
+  console.error('bbx: neither lsof nor ss is usable; cannot check port 18789'); process.exit(5);
+})();
+if (listening18789) {
   console.error('bbx: something is listening on 18789 (a real PilotDeck?); refusing to run'); process.exit(5);
 }
 for (const p of [GATEWAY_PORT, MOCK_PORT]) {
