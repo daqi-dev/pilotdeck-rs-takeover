@@ -28,6 +28,30 @@ fn websocket_config() -> WebSocketConfig {
         .max_message_size(Some(MAX_RECEIVE_BYTES))
 }
 
+/// The URL checks Node's built-in `WebSocket` constructor (undici) runs before
+/// it connects (`new Socket(this.options.url)`, packages/sdk/src/transport.ts:115).
+/// Each throws a `SyntaxError` DOMException whose message the CLI prints:
+/// a parse failure wraps the URL `TypeError` (`"TypeError: Invalid URL"`),
+/// `http:` / `https:` are accepted as `ws:` / `wss:`, any other scheme is
+/// rejected with its protocol, and a fragment (even an empty one) is refused.
+fn websocket_url(url: &str) -> Result<String, String> {
+    let Ok(mut parsed) = url::Url::parse(url) else {
+        return Err("TypeError: Invalid URL".to_owned());
+    };
+    let scheme = match parsed.scheme() {
+        "http" | "ws" => "ws",
+        "https" | "wss" => "wss",
+        other => return Err(format!("Expected a ws: or wss: protocol, got {other}:")),
+    };
+    if parsed.fragment().is_some() {
+        return Err("Got fragment".to_owned());
+    }
+    if parsed.scheme() != scheme && parsed.set_scheme(scheme).is_err() {
+        return Err("TypeError: Invalid URL".to_owned());
+    }
+    Ok(parsed.into())
+}
+
 fn error(message: &str) -> Failure {
     Failure::Error(message.into())
 }
@@ -162,11 +186,12 @@ impl Transport {
         connection: &Connection,
         settings_order: bool,
     ) -> Result<Self, Failure> {
+        let url = websocket_url(&connection.gateway_url).map_err(|message| error(&message))?;
         // Retain P02's registered 128 MiB receive bounds on every connection.
         let config = websocket_config();
         let (socket, _) = timeout(
             CONNECT_TIMEOUT,
-            connect_async_with_config(&connection.gateway_url, Some(config), false),
+            connect_async_with_config(&url, Some(config), false),
         )
         .await
         .map_err(|_| error("Gateway connection timed out."))?

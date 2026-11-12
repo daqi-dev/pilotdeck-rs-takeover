@@ -1,0 +1,113 @@
+{
+ "name": "env-sdk-gateway-url",
+ "about": "连 gateway 的 CLI 子命令选地址的顺序（cli/sdkCli.ts:180-184）：--gateway-url > PILOTDECK_SDK_GATEWAY_URL > PILOTDECK_GATEWAY_URL > ws://127.0.0.1:${PILOTDECK_GATEWAY_PORT}/ws。PILOTDECK_SDK_GATEWAY_URL 指向活的 gateway、其余两个指向没人监听的端口时能连上；反过来时连不上（比 stderr 与退出码）；--gateway-url 盖过它；值不是合法 URL 时的报错。命令用 sessions list --project <不存在的目录>（输出稳定）。",
+ "env": {
+  "PILOTDECK_TOKEN": "{TOKEN}"
+ },
+ "steps": [
+  {
+   "cli": [
+    "sessions",
+    "list",
+    "--project",
+    "{ROOT}/nowhere"
+   ],
+   "env": {
+    "PILOTDECK_SDK_GATEWAY_URL": "ws://127.0.0.1:38411/ws",
+    "PILOTDECK_GATEWAY_URL": "ws://127.0.0.1:9/ws",
+    "PILOTDECK_GATEWAY_PORT": "9"
+   }
+  },
+  {
+   "cli": [
+    "sessions",
+    "list",
+    "--project",
+    "{ROOT}/nowhere"
+   ],
+   "env": {
+    "PILOTDECK_SDK_GATEWAY_URL": "ws://127.0.0.1:9/ws",
+    "PILOTDECK_GATEWAY_URL": "ws://127.0.0.1:38411/ws"
+   }
+  },
+  {
+   "cli": [
+    "sessions",
+    "list",
+    "--project",
+    "{ROOT}/nowhere",
+    "--gateway-url",
+    "ws://127.0.0.1:38411/ws"
+   ],
+   "env": {
+    "PILOTDECK_SDK_GATEWAY_URL": "ws://127.0.0.1:9/ws"
+   }
+  },
+  {
+   "cli": [
+    "sessions",
+    "list",
+    "--project",
+    "{ROOT}/nowhere"
+   ],
+   "env": {
+    "PILOTDECK_SDK_GATEWAY_URL": "not a url"
+   }
+  },
+  {
+   "cli": [
+    "sessions",
+    "list",
+    "--project",
+    "{ROOT}/nowhere"
+   ],
+   "env": {
+    "PILOTDECK_SDK_GATEWAY_URL": ""
+   }
+  },
+  {
+   "cli": [
+    "sessions",
+    "list",
+    "--project",
+    "{ROOT}/nowhere"
+   ],
+   "env": {
+    "PILOTDECK_SDK_GATEWAY_URL": "ftp://127.0.0.1:9/ws"
+   }
+  },
+  {
+   "cli": [
+    "sessions",
+    "list",
+    "--project",
+    "{ROOT}/nowhere"
+   ],
+   "env": {
+    "PILOTDECK_SDK_GATEWAY_URL": "ws://127.0.0.1:38411/ws#frag"
+   }
+  },
+  {
+   "cli": [
+    "sessions",
+    "list",
+    "--project",
+    "{ROOT}/nowhere"
+   ],
+   "env": {
+    "PILOTDECK_SDK_GATEWAY_URL": "http://127.0.0.1:38411/ws"
+   }
+  },
+  {
+   "cli": [
+    "sessions",
+    "list",
+    "--project",
+    "{ROOT}/nowhere"
+   ],
+   "env": {
+    "PILOTDECK_SDK_GATEWAY_URL": "/ws"
+   }
+  }
+ ]
+}
