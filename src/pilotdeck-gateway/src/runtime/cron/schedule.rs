@@ -3,14 +3,12 @@
 //! Pure computation shared by the manager's create/update paths, the
 //! recovery pass, and the #2295 fire/scheduler halves.
 //!
-//! Timezone data profile (decision card
-//! `state/decisions-20261102-issue1324-cron-tz.md`): *validity* follows the
-//! recorded ICU 78.2 zone list shared with config validation
-//! (`config/sections.rs::valid_timezone`), *rules* come from the checked
-//! system-TZif resolver in `pilotdeck-transport`, same profile as the shipped
-//! `get_current_time` tool. An ICU-valid legacy alias zone that the host
-//! zoneinfo tree lacks resolves fail-closed to `None`; that divergence is
-//! registered in `specs/gateway-parity/diffs/`.
+//! Timezone data profile: *validity* and *rules* both come from the bundled
+//! zone data in `pilotdeck_transport::system_clock::named_zone` (the names
+//! Node 22's ICU accepts, including legacy aliases such as `US/Pacific`),
+//! shared with config validation (`config/sections.rs::valid_timezone`) and
+//! the `get_current_time` tool. The host zoneinfo tree is not consulted, so a
+//! host without `tzdata-legacy` resolves the same zones as one with it.
 use std::{collections::HashMap, fmt, sync::Mutex};
 
 use pilotdeck_protocol::JsString;
@@ -106,27 +104,20 @@ pub fn delay_to_milliseconds(amount: f64, unit: DelayUnit) -> Option<f64> {
 
 /// #2181: the per-manager zone→resolver cache. TS resolves cron zones
 /// through `Intl.DateTimeFormat`, and V8 caches zone data internally; the
-/// port's `ZonedPartsResolver` re-opened and re-parsed the TZif file on
-/// every `cron.create`/`cron.update`. A zone's *rules* cannot change inside
-/// one process lifetime (tzdata is not hot-reloaded), so one successful
-/// parse per zone is pinned here. A *failed* parse is **not** memoized:
-/// `ZonedPartsResolver::new` folds every read failure — the zone missing
-/// from this host's tree, a transient `io::Error`, tzdata installed after
-/// the process started — into the same `Err`, and `A8.3-CRON-TZ-ALIAS-001`
-/// records the user-visible contract of the per-call reads this cache
-/// replaced: an environment that recovers must resolve on the next call,
-/// exactly like the TS gateway re-reading the zone. The key space is
-/// bounded by the `is_valid_cron_timezone` gate every production caller
-/// passes through, **after case folding**: the zoneinfo lookup (like ICU)
-/// is case-insensitive, so the cache key is the lowercased zone — ASCII
-/// case variants of one zone share the memoized parse instead of each
-/// becoming its own permanent map entry (an unbounded, attacker-shaped key
-/// space otherwise). #2314: the `get_current_time` tool lane shares this
-/// cache type through its own process-lifetime instance and has **no**
-/// validity gate in front of it — there the boundedness argument is the
-/// resolver itself: only a successful parse is inserted, and a successful
-/// parse requires a sanitized, canonicalized-under-the-root zoneinfo file,
-/// so the key space stays bounded by the host tree.
+/// port's `ZonedPartsResolver` used to rebuild the zone rules on every
+/// `cron.create`/`cron.update`. A zone's *rules* cannot change inside one
+/// process lifetime (they are bundled data), so one successful parse per
+/// zone is pinned here. A *failed* parse is **not** memoized — a name ICU
+/// rejects is cheap to reject again, and not memoizing it keeps the map
+/// bounded by the accepted names. The cache key is the lowercased zone:
+/// zone lookup (like ICU) is ASCII case-insensitive, so case variants of one
+/// zone share the memoized parse instead of each becoming its own permanent
+/// map entry (an unbounded, attacker-shaped key space otherwise). #2314: the
+/// `get_current_time` tool lane shares this cache type through its own
+/// process-lifetime instance and has **no** validity gate in front of it —
+/// there the boundedness argument is the resolver itself: only a successful
+/// parse is inserted, and a successful parse requires a name from the
+/// bundled zone set or a UTC-offset identifier.
 ///
 /// The miss path parses *outside* the lock (#2314 double-check: drop lock →
 /// parse → re-acquire → insert): the callers run in `spawn_blocking`
@@ -160,15 +151,13 @@ impl CronZoneResolverCache {
     }
 
     /// One zone's resolver, parsed at most once per cache *on success*
-    /// (per concurrent first-caller: see the module doc's double-check
+    /// (per concurrent first-caller: see the type doc's double-check
     /// caveat): a hit returns a clone of the memoized resolver. A failed
-    /// parse is returned without memoizing it — the next call re-probes the
-    /// zoneinfo tree (see the module doc: the environment must be allowed
-    /// to recover, like the per-call reads this cache replaced).
+    /// parse is returned without memoizing it.
     pub(crate) fn resolver(&self, timezone: &str) -> Result<ZonedPartsResolver, JsString> {
-        // The zoneinfo parse is case-insensitive (like ICU), so the cache key
-        // is the folded zone: case variants of one zone must share one entry
-        // instead of each holding its own permanent copy of the TZif data.
+        // Zone lookup is case-insensitive (like ICU), so the cache key is the
+        // folded zone: case variants of one zone must share one entry instead
+        // of each holding its own permanent copy of the zone rules.
         let cache_key = timezone.to_lowercase();
         {
             let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -176,9 +165,9 @@ impl CronZoneResolverCache {
                 return cached.clone();
             }
         }
-        // #2314: the blocking zoneinfo read/parse runs outside the lock
-        // (double-check), so a slow miss cannot serialize other zones'
-        // hits. The seam is the parking point for the interleaving tests.
+        // #2314: the parse runs outside the lock (double-check), so a slow
+        // miss cannot serialize other zones' hits. The seam is the parking
+        // point for the interleaving tests.
         #[cfg(test)]
         if let Some(hook) = self
             .parse_hook
@@ -287,11 +276,12 @@ pub fn compute_next_cron_run_at(
     compute_next_resolved(&parsed, after_epoch_ms, zone_cache.resolver(timezone))
 }
 
-/// The minute scan with the resolver-construction result injected: a valid
-/// per the recorded ICU list but unresolvable zone (legacy alias zones on
-/// split tzdata installs) fails closed to `Ok(None)` rather than silently
-/// computing in UTC. Kept as its own entry point so that branch stays pinned
-/// by a gateway test without depending on this host lacking a zone file.
+/// The minute scan with the resolver-construction result injected: a zone
+/// that fails to resolve fails closed to `Ok(None)` rather than silently
+/// computing in UTC. Validity and rules share one bundled data source, so
+/// production cannot reach that branch after `is_valid_cron_timezone`; it is
+/// kept as its own entry point so the fail-closed branch stays pinned by a
+/// gateway test.
 pub(super) fn compute_next_resolved(
     cron: &ParsedCron,
     after_epoch_ms: f64,
@@ -319,8 +309,8 @@ pub(super) fn compute_next_resolved(
     Ok(None)
 }
 
-/// `isValidCronTimezone` (CronTimezone.ts:1): the recorded ICU 78.2 zone
-/// list plus UTC-offset identifiers, the same acceptance as Node 22's
+/// `isValidCronTimezone` (CronTimezone.ts:1): the zone names Node 22's ICU
+/// accepts plus UTC-offset identifiers, the same acceptance as Node 22's
 /// `Intl.DateTimeFormat` constructor (shared with config validation).
 pub fn is_valid_cron_timezone(timezone: &str) -> bool {
     crate::config::valid_timezone(timezone)

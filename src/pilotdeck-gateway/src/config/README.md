@@ -82,6 +82,10 @@ JS Number 字符串转换→安全正整数→Node 的有符号 int32 PID 边界
 `catalog-data.json`、`contracts.json`、`timezones.json` 是离线运行基线导出器
 得到的固定数据；记录脚本为 `tests/record_config_data.mts`。timezone 名称来自
 该 Node/ICU 接受的标准名称与系统 zoneinfo 别名，另按基线接受 UTC offset。
+`valid_timezone` 现在不再读 `timezones.json`：时区名的合法性与规则都来自
+`pilotdeck-transport` 的 `system_clock::named_zone`（内置 tzdb 加 ICU 独有名字），
+与 cron、`get_current_time` 共用一处；`timezones.json` 缺了 ICU 接受的 40 个非 tzdb 名字
+（`PST`、`IST`、`SystemV/*` 等），见 `tests/fixtures/tz-names/`。
 URL 检查使用固定版本 `url` crate；现有 Cargo.lock 包版本没有升级。
 
 本目录消费者为本地 `model_catalog_list` 与 `session_model_get`。加载先于 query 类型处理；provider

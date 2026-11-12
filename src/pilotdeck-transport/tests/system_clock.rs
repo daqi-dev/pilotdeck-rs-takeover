@@ -1166,10 +1166,86 @@ fn resolver_weekday_agrees_with_gregorian_calendar() {
 }
 
 #[test]
-fn resolver_rejects_zones_the_host_tree_lacks() {
-    assert!(system_clock::ZonedPartsResolver::new("Not/AZone").is_err());
-    assert!(system_clock::ZonedPartsResolver::new("").is_err());
-    assert!(system_clock::ZonedPartsResolver::new("Z").is_err());
+fn resolver_rejects_names_icu_rejects() {
+    // `Factory`, `localtime` and `posixrules` are files in many zoneinfo
+    // trees but not zones Node 22's ICU accepts.
+    for zone in [
+        "Not/AZone",
+        "",
+        "Z",
+        "Factory",
+        "localtime",
+        "posixrules",
+        "posix/US/Pacific",
+        "Etc/GMT+13",
+        "US//Pacific",
+        "Asia/Shanghai/",
+        "\u{dc}TC",
+    ] {
+        assert!(
+            system_clock::ZonedPartsResolver::new(zone).is_err(),
+            "{zone:?} must be rejected"
+        );
+    }
+}
+
+/// Node v22.22.0 resolves these from its bundled ICU data on any host; the
+/// resolver must too, without the host zoneinfo tree (Ubuntu 24.04 ships the
+/// `backward` links only in the optional `tzdata-legacy` package). Offsets
+/// at 2026-01-01T00:00Z / 2026-07-01T00:00Z as measured in Node.
+#[test]
+fn legacy_and_icu_only_names_resolve_from_bundled_data() {
+    for (zone, january, july) in [
+        ("US/Pacific", -28_800, -25_200),
+        ("us/PACIFIC", -28_800, -25_200),
+        ("Asia/Calcutta", 19_800, 19_800),
+        ("GB", 0, 3_600),
+        ("PRC", 28_800, 28_800),
+        ("UTC", 0, 0),
+        ("Etc/GMT+5", -18_000, -18_000),
+        ("EST5EDT", -18_000, -14_400),
+        ("Canada/Eastern", -18_000, -14_400),
+        ("PST", -28_800, -25_200),
+        ("IST", 19_800, 19_800),
+        ("US/Pacific-New", -28_800, -25_200),
+        ("SystemV/AST4", -14_400, -14_400),
+        ("SystemV/EST5EDT", -18_000, -14_400),
+    ] {
+        let resolver = system_clock::ZonedPartsResolver::new(zone)
+            .unwrap_or_else(|_| panic!("{zone} must resolve"));
+        for (epoch, offset) in [(1_767_225_600_000, january), (1_782_864_000_000, july)] {
+            assert_eq!(
+                resolver.parts_at(epoch).unwrap().offset_seconds,
+                offset,
+                "{zone} @ {epoch}"
+            );
+        }
+    }
+}
+
+/// ICU's `SystemV/*DT` zones keep daylight time from the last Sunday of
+/// April 02:00 to the last Sunday of October 02:00 (local) in every year,
+/// unlike tzdb's `EST5EDT`; boundaries measured in Node v22.22.0.
+#[test]
+fn system_v_daylight_rule_matches_icu() {
+    let system_v = system_clock::ZonedPartsResolver::new("SystemV/EST5EDT").unwrap();
+    let offset = |epoch| system_v.parts_at(epoch).unwrap().offset_seconds;
+    assert_eq!(offset(1_773_576_000_000), -18_000); // 2026-03-15T12:00Z, New York is on DST
+    assert_eq!(offset(1_808_636_399_000), -18_000); // 2027-04-25T06:59:59Z
+    assert_eq!(offset(1_808_636_400_000), -14_400); // 2027-04-25T07:00:00Z
+    assert_eq!(offset(1_824_962_399_000), -14_400); // 2027-10-31T05:59:59Z
+    assert_eq!(offset(1_824_962_400_000), -18_000); // 2027-10-31T06:00:00Z
+    // Standard time only until the first summer, 1902-04-27T07:00Z.
+    assert_eq!(offset(-2_208_988_800_000), -18_000); // 1900-01-01T00:00Z
+    assert_eq!(offset(-2_135_869_201_000), -18_000); // 1902-04-27T06:59:59Z
+    assert_eq!(offset(-2_135_869_200_000), -14_400); // 1902-04-27T07:00:00Z
+    // 1974 and 1975 deviate from the recurring rule.
+    assert_eq!(offset(126_687_599_000), -18_000); // 1974-01-06T06:59:59Z
+    assert_eq!(offset(126_687_600_000), -14_400); // 1974-01-06T07:00:00Z
+    assert_eq!(offset(154_504_799_000), -14_400); // 1974-11-24T05:59:59Z
+    assert_eq!(offset(154_504_800_000), -18_000); // 1974-11-24T06:00:00Z
+    assert_eq!(offset(162_370_799_000), -18_000); // 1975-02-23T06:59:59Z
+    assert_eq!(offset(162_370_800_000), -14_400); // 1975-02-23T07:00:00Z
 }
 
 #[test]

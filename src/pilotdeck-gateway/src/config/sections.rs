@@ -678,11 +678,9 @@ pub(super) fn always_on(raw: &JsValue, d: &mut Diagnostics) -> Result<(), Error>
 }
 pub(crate) fn valid_timezone(s: &str) -> bool {
     // Node 22 accepts case-insensitive ICU zone IDs plus UTC offset identifiers.
-    static ZONES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
-    let zones = ZONES.get_or_init(|| {
-        serde_json::from_str(include_str!("timezones.json")).expect("recorded ICU zones")
-    });
-    if s.is_ascii() && zones.binary_search(&s.to_lowercase()).is_ok() {
+    // The named-zone set is the bundled one the rules come from, so validity
+    // never depends on which tzdata packages the host has installed.
+    if pilotdeck_transport::system_clock::named_zone::is_named_zone(s) {
         return true;
     }
     static OFFSET: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {

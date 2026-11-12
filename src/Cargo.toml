@@ -26,6 +26,9 @@ serde_json = { version = "=1.0.151", features = ["raw_value"] }
 ryu-js = "=1.0.3"
 sha2 = "=0.10.9"
 tz-rs = { version = "=0.7.3", default-features = false, features = ["alloc"] }
+# IANA tzdb 2025b compiled to TZif, embedded as data (no build script, no deps):
+# named zones resolve like Node/ICU without reading the host zoneinfo tree.
+jiff-tzdb = "=0.1.4"
 # #1265 (human decision #1264 选 C): bounded JS RegExp prototype. Pinned to the
 # exact crates.io release; the bundled QuickJS-NG C sources are compiled from
 # source by rquickjs-sys, no prebuilt binary is downloaded. Optional per-crate:

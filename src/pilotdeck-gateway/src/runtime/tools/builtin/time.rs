@@ -1,10 +1,11 @@
-//! `get_current_time` (baseline `tool/builtin/getCurrentTime.ts`). Formatting
-//! uses the same checked system TZif profile as the gateway's date parser via
-//! `pilotdeck-transport`; no new timezone crate is linked into the gateway.
+//! `get_current_time` (baseline `tool/builtin/getCurrentTime.ts`). An explicit
+//! `timezone` resolves from the bundled zone data in
+//! `pilotdeck_transport::system_clock::named_zone` (the names Node 22's ICU
+//! accepts, legacy aliases included; the host zoneinfo tree is not read) or
+//! as a UTC-offset identifier, and is echoed back as given after trimming.
 //! Zone resolution goes through the #2314 process-lifetime
 //! [`CronZoneResolverCache`] (same folding + lowercase key as the cron lane,
-//! one TZif parse per zone instead of one per call — `A8.3-CRON-TZ-ALIAS-001`
-//! registers this tool as the same pathway).
+//! one parse per zone instead of one per call).
 use std::sync::{Arc, LazyLock};
 
 use super::{object, string, text, tool_error};
@@ -121,9 +122,8 @@ fn execute(
     }
     let epoch_ms = now.trunc() as i64;
     // #2314: same cache, folding, and lowercase key as the cron lane — one
-    // TZif parse per zone per process instead of one per call. A failure is
-    // not memoized (`A8.3-CRON-TZ-ALIAS-001`'s per-call re-probe contract);
-    // the parse runs outside the cache lock.
+    // parse per zone per process instead of one per call. A failure is not
+    // memoized; the parse runs outside the cache lock.
     let parts = zone_cache
         .resolver(&timezone)
         .and_then(|resolver| resolver.parts_at(epoch_ms))
@@ -281,9 +281,8 @@ mod zone_cache_tests {
     }
 
     /// #2314: the tool routes through the `CronZoneResolverCache` — a second
-    /// call for the same zone must not re-open and re-parse the TZif file,
-    /// and must compute the same output (`A8.3-CRON-TZ-ALIAS-001` registers
-    /// this tool as the same pathway the #2181 cron fix covered).
+    /// call for the same zone must not re-parse the zone, and must compute
+    /// the same output (the same pathway the #2181 cron fix covered).
     #[test]
     fn tool_zone_cache_parses_each_zone_once() {
         let cache = Arc::new(CronZoneResolverCache::new());
@@ -352,10 +351,8 @@ mod zone_cache_tests {
         );
     }
 
-    /// #2314: the tool lane keeps `A8.3-CRON-TZ-ALIAS-001`'s failure-side
-    /// contract — a zone this host tree lacks is not memoized as a failure,
-    /// every call re-probes (an environment that recovers must resolve on
-    /// the next call) and still reports the tool's invalid-timezone error.
+    /// #2314: a name ICU rejects is not memoized as a failure — every call
+    /// re-probes and still reports the tool's invalid-timezone error.
     #[test]
     fn tool_zone_cache_reprobes_unresolved_zones() {
         let cache = Arc::new(CronZoneResolverCache::new());

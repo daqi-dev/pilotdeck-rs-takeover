@@ -6,11 +6,8 @@
 //! `RangeError: Invalid time value` the minute scan throws when the aligned
 //! candidate leaves the Date range. The generator pins nothing: every input
 //! is an explicit epoch and every `runAt` string is timezone-independent, so
-//! this replay is host-timezone independent (the one deliberate divergence —
-//! an ICU-valid legacy alias zone whose host TZif tree lacks the link, e.g.
-//! `US/Pacific` on a split tzdata install — never reaches `computeNextRunAt`
-//! cells; its validity and resolution cells only exercise the recorded-list
-//! acceptance, which is host independent).
+//! this replay is host-timezone independent; zone names resolve from bundled
+//! data, so it is independent of the host's tzdata packages too.
 use std::sync::LazyLock;
 
 use pilotdeck_protocol::{JsString, JsValue};
@@ -296,9 +293,9 @@ fn once_local_wall_unresolvable_fails_closed() {
     );
 }
 
-/// #1324: an ICU-valid zone whose resolver construction fails (a legacy
-/// alias the host zoneinfo tree lacks) fails closed to `Undefined`, never
-/// silently falls back to UTC.
+/// #1324: a zone whose resolver construction fails fails closed to
+/// `Undefined`, never silently falls back to UTC (production cannot reach
+/// this after `is_valid_cron_timezone`; the branch is pinned directly).
 #[test]
 fn zone_resolver_failure_fails_closed() {
     let expression: JsString = "0 9 * * *".into();
@@ -319,7 +316,7 @@ fn zone_resolver_failure_fails_closed() {
 
 /// #2181: the same zone resolves once — the second `compute_next_cron_run_at`
 /// call reuses the cached `ZonedPartsResolver` instead of re-opening and
-/// re-parsing the TZif file, and computes the same next run.
+/// re-parsing the zone, and computes the same next run.
 #[test]
 fn zone_resolver_cache_parses_each_zone_once() {
     let cache = CronZoneResolverCache::new();
@@ -339,7 +336,7 @@ fn zone_resolver_cache_parses_each_zone_once() {
     );
 }
 
-/// #2181: the cache key is the folded zone. The zoneinfo parse is
+/// #2181: the cache key is the folded zone. Zone lookup is
 /// case-insensitive (like ICU), so case variants of one zone must share the
 /// memoized parse instead of each becoming its own permanent map entry —
 /// an unfoldable key space would let a caller shape unbounded memory by
@@ -363,14 +360,10 @@ fn zone_resolver_cache_folds_case_variants_into_one_entry() {
 }
 
 /// #2181: a zone that fails to resolve is **not** memoized — the second
-/// call re-probes the zoneinfo tree, so a failure caused by the environment
-/// (an ICU-valid legacy alias this host tree lacks, tzdata installed after
-/// the process started, a transient `io::Error`) self-heals on the next call
-/// exactly like the per-call reads `A8.3-CRON-TZ-ALIAS-001` records, while
+/// call re-probes, so rejected names never accumulate in the map, while
 /// each individual call still fails closed. The zone is fed straight to the
 /// cache (the production path's `is_valid_cron_timezone` gate rejects it
-/// before the cache, so this pins the cache itself without depending on
-/// this host lacking a zone).
+/// before the cache, so this pins the cache itself).
 #[test]
 fn zone_resolver_cache_reprobes_unresolved_zones() {
     let cache = CronZoneResolverCache::new();
