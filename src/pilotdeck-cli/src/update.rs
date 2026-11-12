@@ -7,10 +7,18 @@
 //! Rust runtime nor claims to update a standalone Rust distribution. A native
 //! installation without the script fails before looking for Node.
 use crate::{Failure, stderr_line};
+use rustix::process::{Pid, Signal, WaitId, WaitIdOptions, waitid};
+use signal_hook::consts::signal::{SIGINT, SIGTERM};
 use std::io::{self, Read, Write};
+use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::process::{Command, ExitStatus, Stdio};
-use std::sync::mpsc::{SyncSender, sync_channel};
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::{
+    Arc, OnceLock,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+    mpsc::{SyncSender, sync_channel},
+};
+use std::time::{Duration, Instant};
 
 const MISSING_UPDATER: &str = "This installation does not include the Git Web updater. Use application settings or update manually.";
 
@@ -43,6 +51,10 @@ fn find_update_root(start: Option<&Path>) -> Option<&Path> {
 }
 
 fn run_process(root: &Path, argv: &[String]) -> io::Result<ExitStatus> {
+    let signals = UpdateSignals::install()?;
+    if let Some(signal) = signals.take() {
+        finish_with_signal(signal);
+    }
     // The baseline inherits its Node executable (`process.execPath`). A Rust
     // CLI only needs Node for this optional Web-management command, resolved
     // through the installation owner's PATH. No TS gateway/agent fallback is
@@ -54,14 +66,21 @@ fn run_process(root: &Path, argv: &[String]) -> io::Result<ExitStatus> {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .process_group(0)
         .spawn()?;
     let stdout = child.stdout.take().expect("piped updater stdout");
     let stderr = child.stderr.take().expect("piped updater stderr");
+    let owner = OwnedUpdater::new(child);
 
     // Drain both pipes concurrently: waiting for either stream first can
     // deadlock a verbose build. The bounded queue keeps streamed build output
     // bounded in memory. The baseline forwards both streams to CLI stdout.
-    let relay_result = std::thread::scope(|scope| {
+    std::thread::scope(|scope| {
+        let output_finished = Arc::new(AtomicBool::new(false));
+        let supervisor_finished = Arc::clone(&output_finished);
+        // Cancellation must continue even if the user's stdout is blocked or
+        // a separately-owned Web guardian keeps an inherited pipe open.
+        let supervisor = scope.spawn(move || supervise(owner, signals, supervisor_finished));
         let (sender, receiver) = sync_channel(16);
         let stdout_sender = sender.clone();
         let stdout_reader = scope.spawn(move || read_output(stdout, stdout_sender));
@@ -71,19 +90,204 @@ fn run_process(root: &Path, argv: &[String]) -> io::Result<ExitStatus> {
             let _ = output.write_all(&chunk);
             let _ = output.flush();
         }
+        output_finished.store(true, Ordering::SeqCst);
         let stdout_result = stdout_reader
             .join()
             .map_err(|_| io::Error::other("updater stdout reader failed"))?;
         let stderr_result = stderr_reader
             .join()
             .map_err(|_| io::Error::other("updater stderr reader failed"))?;
-        stdout_result.and(stderr_result)
-    });
-    // Reap the exact child even if a pipe read failed. Signal termination has
-    // no code, which the CLI maps to failure just as the baseline maps null.
-    let status = child.wait();
-    relay_result?;
-    status
+        let status = supervisor
+            .join()
+            .map_err(|_| io::Error::other("updater supervisor failed"))?;
+        stdout_result.and(stderr_result)?;
+        status
+    })
+}
+
+struct SignalRegistration {
+    pending: Arc<AtomicUsize>,
+    default_action: Arc<AtomicBool>,
+    active: AtomicBool,
+}
+
+static UPDATE_SIGNALS: OnceLock<Result<Arc<SignalRegistration>, String>> = OnceLock::new();
+
+struct UpdateSignals(Arc<SignalRegistration>);
+
+impl UpdateSignals {
+    fn install() -> io::Result<Self> {
+        let registration = UPDATE_SIGNALS
+            .get_or_init(|| {
+                let registration = Arc::new(SignalRegistration {
+                    pending: Arc::new(AtomicUsize::new(0)),
+                    default_action: Arc::new(AtomicBool::new(true)),
+                    active: AtomicBool::new(false),
+                });
+                for signal in [SIGINT, SIGTERM] {
+                    signal_hook::flag::register_conditional_default(
+                        signal,
+                        Arc::clone(&registration.default_action),
+                    )
+                    .map_err(|error| error.to_string())?;
+                    signal_hook::flag::register_usize(
+                        signal,
+                        Arc::clone(&registration.pending),
+                        signal as usize,
+                    )
+                    .map_err(|error| error.to_string())?;
+                }
+                Ok(registration)
+            })
+            .as_ref()
+            .map_err(|error| io::Error::other(error.clone()))?;
+        if registration.active.swap(true, Ordering::SeqCst) {
+            return Err(io::Error::other(
+                "update signal listeners are already active",
+            ));
+        }
+        registration.pending.store(0, Ordering::SeqCst);
+        registration.default_action.store(false, Ordering::SeqCst);
+        Ok(Self(Arc::clone(registration)))
+    }
+
+    fn take(&self) -> Option<i32> {
+        match self.0.pending.swap(0, Ordering::SeqCst) as i32 {
+            signal @ (SIGINT | SIGTERM) => Some(signal),
+            _ => None,
+        }
+    }
+}
+
+impl Drop for UpdateSignals {
+    fn drop(&mut self) {
+        // signal-hook retains its OS handler; a conditional default restores
+        // the normal process behavior outside this command's owned lifetime.
+        self.0.default_action.store(true, Ordering::SeqCst);
+        self.0.active.store(false, Ordering::SeqCst);
+    }
+}
+
+struct OwnedUpdater {
+    child: Child,
+    group: Option<Pid>,
+}
+
+impl OwnedUpdater {
+    fn new(child: Child) -> Self {
+        let group = Pid::from_raw(child.id() as i32).expect("spawn returned positive updater PID");
+        Self {
+            child,
+            group: Some(group),
+        }
+    }
+
+    fn exited(&mut self) -> io::Result<bool> {
+        let group = self.group.expect("updater has not been reaped");
+        match waitid(
+            WaitId::Pid(group),
+            WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
+        ) {
+            Ok(status) => Ok(status.is_some()),
+            Err(rustix::io::Errno::INTR) => Ok(false),
+            Err(error) => {
+                if error == rustix::io::Errno::CHILD {
+                    // An externally reaped PID is no longer an ownership
+                    // certificate. Never signal that numeric group again.
+                    self.group = None;
+                }
+                Err(error.into())
+            }
+        }
+    }
+
+    fn signal(&self, signal: Signal) {
+        if let Some(group) = self.group {
+            let _ = rustix::process::kill_process_group(group, signal);
+        }
+    }
+
+    fn reap(&mut self) -> io::Result<ExitStatus> {
+        // The last group signal has already been sent. Dropping the anchor
+        // before wait prevents any later path from targeting a reused PGID.
+        self.group = None;
+        self.child.wait()
+    }
+}
+
+impl Drop for OwnedUpdater {
+    fn drop(&mut self) {
+        if self.group.is_some() {
+            self.signal(Signal::KILL);
+            let _ = self.reap();
+        }
+    }
+}
+
+fn supervise(
+    mut owner: OwnedUpdater,
+    signals: UpdateSignals,
+    output_finished: Arc<AtomicBool>,
+) -> io::Result<ExitStatus> {
+    loop {
+        if let Some(signal) = signals.take() {
+            // D1-UPDATE-CANCEL-OWNERSHIP-001: only this newly-created group
+            // belongs to the CLI. Web server tasks and explicitly detached
+            // Web build guardians have separate ownership and are not killed.
+            owner.signal(if signal == SIGINT {
+                Signal::INT
+            } else {
+                Signal::TERM
+            });
+            let grace = Instant::now() + Duration::from_secs(3);
+            while Instant::now() < grace && signals.take().is_none() {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            // Keep the leader waitable (including as a zombie) through this
+            // final signal, so its PID/group cannot be reused underneath us.
+            owner.signal(Signal::KILL);
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                match owner.exited() {
+                    Ok(true) => {
+                        if let Err(error) = owner.reap() {
+                            stderr_line(&format!(
+                                "Update cancellation could not reap the updater: {error}"
+                            ));
+                        }
+                        break;
+                    }
+                    Ok(false) if Instant::now() < deadline => {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Ok(false) => {
+                        stderr_line("Update cancellation could not confirm updater termination.");
+                        break;
+                    }
+                    Err(error) => {
+                        stderr_line(&format!(
+                            "Update cancellation could not confirm updater termination: {error}"
+                        ));
+                        break;
+                    }
+                }
+            }
+            // Preserve the parent's observable signal status after cleanup,
+            // rather than converting user cancellation into an update result.
+            finish_with_signal(signal);
+        }
+        if output_finished.load(Ordering::SeqCst) && owner.exited()? {
+            return owner.reap();
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn finish_with_signal(signal: i32) -> ! {
+    let _ = signal_hook::low_level::emulate_default_handler(signal);
+    // INT and TERM terminate above; retain a failing fallback if the platform
+    // cannot emulate its default handler.
+    std::process::exit(128 + signal)
 }
 
 fn read_output(mut stream: impl Read, sender: SyncSender<Vec<u8>>) -> io::Result<()> {
