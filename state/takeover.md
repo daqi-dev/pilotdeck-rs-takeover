@@ -134,6 +134,11 @@ Rust 明确报错而不假装支持（文案是 Rust 自己的）：`update_sett
 2. Node 运行时的 `ExperimentalWarning` 两行 stderr 算已接受差异（`scripts/bbx/diff.mjs` 的 `ACCEPTED`）。
 3. 此后这类取舍（已接受差异、阶段顺序、范围内的做法）由我决定，在里程碑汇报里说明决定了什么和依据。我对这句话的理解不包括：推送到原仓库、改接手仓库可见性、对外发布、删除远端资源、改 `intent.md` 的收敛方向，这些仍然先问。
 
+2026-11-12 人答复：
+
+4. 「可以推，这些决策您都可以做。」——对拍通过、gitleaks 无命中时，把 `dev/takeover` 推到接手仓库（remote `takeover`）不必再问。
+5. 「阶段B和前端不用做。」——范围只剩 gateway（A）、sidecar（C）、CLI（D）。原版 `ui/server` 接 Rust gateway 的兼容性仍然要保。`.42cog/intent.md` 的收敛方向还写着 `ui/server` 和前端，尚未同步，等人改或明确让我改。
+
 ## 做过的决定
 
 | 日期 | 决定 | 依据 |
