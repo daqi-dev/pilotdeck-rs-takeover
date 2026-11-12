@@ -1,0 +1,252 @@
+{
+ "name": "tool-mcp-resources-unwired",
+ "about": "list_mcp_resources / read_mcp_resource（tool/builtin/mcpResources.ts:11-60）在基线里只定义和导出，gateway 的组合路径（createBuiltinRegistry.ts:128-206、ProjectSessionRuntimeBundle.ts:243-330）没有任何注册调用。模型照样发出带 serverId / uri 的调用（含别名 ListMcpResourcesTool、ReadMcpResourceTool 和非法参数）时，比较工具结果与发给 provider 的工具清单，证明 Rust 同样不暴露这两个工具。",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Tool run\"}"
+   }
+  },
+  {
+   "name": "m06-after",
+   "when": [
+    "m06:",
+    "\"tool_call_id\":\"call_m06\""
+   ],
+   "reply": {
+    "text": "Done 06."
+   }
+  },
+  {
+   "name": "m06",
+   "when": [
+    "m06:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_m06",
+     "name": "ReadMcpResourceTool",
+     "arguments": {
+      "serverId": "bbx-server",
+      "uri": "file:///bbx/readme"
+     }
+    }
+   }
+  },
+  {
+   "name": "m05-after",
+   "when": [
+    "m05:",
+    "\"tool_call_id\":\"call_m05\""
+   ],
+   "reply": {
+    "text": "Done 05."
+   }
+  },
+  {
+   "name": "m05",
+   "when": [
+    "m05:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_m05",
+     "name": "ListMcpResourcesTool",
+     "arguments": {
+      "serverId": 7
+     }
+    }
+   }
+  },
+  {
+   "name": "m04-after",
+   "when": [
+    "m04:",
+    "\"tool_call_id\":\"call_m04\""
+   ],
+   "reply": {
+    "text": "Done 04."
+   }
+  },
+  {
+   "name": "m04",
+   "when": [
+    "m04:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_m04",
+     "name": "read_mcp_resource",
+     "arguments": {
+      "serverId": "bbx-server"
+     }
+    }
+   }
+  },
+  {
+   "name": "m03-after",
+   "when": [
+    "m03:",
+    "\"tool_call_id\":\"call_m03\""
+   ],
+   "reply": {
+    "text": "Done 03."
+   }
+  },
+  {
+   "name": "m03",
+   "when": [
+    "m03:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_m03",
+     "name": "read_mcp_resource",
+     "arguments": {
+      "serverId": "bbx-server",
+      "uri": "file:///bbx/readme"
+     }
+    }
+   }
+  },
+  {
+   "name": "m02-after",
+   "when": [
+    "m02:",
+    "\"tool_call_id\":\"call_m02\""
+   ],
+   "reply": {
+    "text": "Done 02."
+   }
+  },
+  {
+   "name": "m02",
+   "when": [
+    "m02:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_m02",
+     "name": "list_mcp_resources",
+     "arguments": {
+      "serverId": "bbx-server"
+     }
+    }
+   }
+  },
+  {
+   "name": "m01-after",
+   "when": [
+    "m01:",
+    "\"tool_call_id\":\"call_m01\""
+   ],
+   "reply": {
+    "text": "Done 01."
+   }
+  },
+  {
+   "name": "m01",
+   "when": [
+    "m01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_m01",
+     "name": "list_mcp_resources",
+     "arguments": {}
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-m",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-m",
+    "channelKey": "test",
+    "message": "m01: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-m",
+    "channelKey": "test",
+    "message": "m02: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-m",
+    "channelKey": "test",
+    "message": "m03: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-m",
+    "channelKey": "test",
+    "message": "m04: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-m",
+    "channelKey": "test",
+    "message": "m05: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-m",
+    "channelKey": "test",
+    "message": "m06: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-m"
+   }
+  }
+ ]
+}

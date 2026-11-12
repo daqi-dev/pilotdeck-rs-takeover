@@ -1,0 +1,102 @@
+{
+ "name": "tool-agent-depth",
+ "about": "agent 嵌套超过 agent.subagents.maxDepth（缺省 1）：general-purpose 子代理里模型再调 agent（tool/builtin/agent.ts:383-390 subagent_depth_exceeded，或子代理里根本没有 agent 工具），比较子代理拿到的工具清单与工具结果、父轮结果。",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Depth\"}"
+   }
+  },
+  {
+   "name": "child-after",
+   "when": [
+    "child-directive-zz",
+    "\"tool_call_id\":\"call_grand\""
+   ],
+   "reply": {
+    "text": "child done"
+   }
+  },
+  {
+   "name": "child",
+   "when": [
+    "child-directive-zz"
+   ],
+   "unless": [
+    "\"tool_call_id\":\"call_dp1\""
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_grand",
+     "name": "agent",
+     "arguments": {
+      "description": "grandchild task",
+      "prompt": "grand-directive"
+     }
+    }
+   }
+  },
+  {
+   "name": "parent-after",
+   "when": [
+    "dp1:",
+    "\"tool_call_id\":\"call_dp1\""
+   ],
+   "reply": {
+    "text": "Done."
+   }
+  },
+  {
+   "name": "parent",
+   "when": [
+    "dp1:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_dp1",
+     "name": "agent",
+     "arguments": {
+      "description": "child task",
+      "prompt": "child-directive-zz: do it",
+      "subagent_type": "general-purpose"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-dp",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-dp",
+    "channelKey": "test",
+    "message": "dp1: go"
+   },
+   "timeout": 30000
+  },
+  {
+   "sleep": 500
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-dp"
+   }
+  }
+ ],
+ "volatile": [
+  "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages|resultBytes|content-length)$"
+ ],
+ "volatileWhy": "子代理结果里的耗时位数不定，token 估算随之变（同 tool-agent-general）"
+}

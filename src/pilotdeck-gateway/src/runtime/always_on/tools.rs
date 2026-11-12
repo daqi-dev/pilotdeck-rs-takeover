@@ -275,20 +275,159 @@ impl ExecutableTool for AlwaysOnTool {
                     execute_workspace(&input, &run.run_id, &run.project_key, &phase).await
                 }
                 Kind::ChatHistory => {
-                    if !found.is_some_and(|(_, phase)| phase.kind == PhaseKind::Discovery) {
+                    let Some((run, phase)) =
+                        found.filter(|(_, phase)| phase.kind == PhaseKind::Discovery)
+                    else {
                         return Err(ToolError::failed(
                             "always_on_read_chat_history is only available during Always-On discovery (Phase 1).",
                         ));
-                    }
-                    // The transcript replay behind this tool
-                    // (AlwaysOnChatHistoryTool.ts:71-132) is not ported.
-                    Err(ToolError::failed(
-                        "always_on_read_chat_history is not implemented in this embedding.",
-                    ))
+                    };
+                    execute_chat_history(&input, &run.run_id, &run.project_key, &phase)
                 }
             }
         })
     }
+}
+
+/// `ASSISTANT_TEXT_LIMIT` (AlwaysOnChatHistoryTool.ts:35), in UTF-16 units.
+const ASSISTANT_TEXT_LIMIT: usize = 300;
+
+/// AlwaysOnChatHistoryTool.ts:63-132: resolve a digest alias, replay the
+/// session transcript and return its user / assistant text.
+fn execute_chat_history(
+    input: &JsValue,
+    run_id: &str,
+    project_key: &str,
+    phase: &PhaseContext,
+) -> Result<ToolOutput, ToolError> {
+    let requested = text_field(input, "sessionId");
+    let real = phase
+        .state()
+        .chat_aliases
+        .iter()
+        .find(|(alias, _)| *alias == requested)
+        .map(|(_, id)| id.clone())
+        .unwrap_or_else(|| requested.clone());
+    let project_id = phase
+        .paths
+        .project_dir
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let chat_dir = crate::metadata::resolve(
+        &crate::metadata::resolve(
+            &crate::metadata::resolve(&phase.paths.pilot_home, "projects"),
+            &project_id,
+        ),
+        "chats",
+    );
+    let real_js = JsString::from(real.as_str());
+    let transcript = chat_dir.join(format!(
+        "{}.jsonl",
+        crate::storage::sanitize_session_id(&real_js)
+    ));
+    let read = crate::storage::read_transcript(&transcript)
+        .map_err(|error| ToolError::failed(error.to_string()))?;
+    if read.entries.is_empty() {
+        let reason = read
+            .diagnostics
+            .first()
+            .map(|diagnostic| diagnostic.message.clone())
+            .unwrap_or_else(|| "No transcript entries found.".into());
+        return Err(ToolError::failed(format!(
+            "Could not read session {requested}: {reason}"
+        )));
+    }
+    let replay = crate::runtime::session::factory::project_transcript(&read.entries)
+        .map_err(|error| ToolError::failed(error.message.to_string()))?;
+    let nullish =
+        |value: Option<&JsValue>| matches!(value, None | Some(JsValue::Undefined | JsValue::Null));
+    let summary = || {
+        crate::runtime::manager::file_catalog::list_sessions(
+            &chat_dir,
+            std::path::Path::new(project_key),
+            false,
+        )
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(_, info)| info)
+        .find(|info| {
+            info.get("sessionId")
+                .and_then(JsValue::as_string)
+                .is_some_and(|id| id.equals_str(&real))
+        })
+        .and_then(|info| info.get("summary").cloned())
+    };
+    let title_value = [
+        replay.metadata.get("title").cloned(),
+        replay.metadata.get("aiTitle").cloned(),
+    ]
+    .into_iter()
+    .find(|value| !nullish(value.as_ref()))
+    .flatten()
+    .or_else(|| summary().filter(|value| !nullish(Some(value))));
+    let title = match title_value {
+        Some(value) => {
+            String::from_utf16_lossy(&crate::js_value::to_string_units(&value).unwrap_or_default())
+        }
+        None => real.clone(),
+    };
+    let mut conversation = Vec::new();
+    for message in &replay.messages {
+        let role = match message.get("role").and_then(JsValue::as_string) {
+            Some(role) if role.equals_str("user") => "user",
+            Some(role) if role.equals_str("assistant") => "assistant",
+            _ => continue,
+        };
+        let Some(JsValue::Array(blocks)) = message.get("content") else {
+            continue;
+        };
+        let parts: Vec<String> = blocks
+            .iter()
+            .filter(|block| {
+                block
+                    .get("type")
+                    .and_then(JsValue::as_string)
+                    .is_some_and(|kind| kind.equals_str("text"))
+            })
+            .filter_map(|block| match block.get("text") {
+                Some(JsValue::String(text)) => {
+                    Some(js_trim(&String::from_utf16_lossy(text.units())).to_string())
+                }
+                _ => None,
+            })
+            .filter(|text| !text.is_empty())
+            .collect();
+        if parts.is_empty() {
+            continue;
+        }
+        let full = parts.join("\n\n");
+        let units: Vec<u16> = full.encode_utf16().collect();
+        let text = if role == "assistant" && units.len() > ASSISTANT_TEXT_LIMIT {
+            format!(
+                "{}...",
+                String::from_utf16_lossy(&units[..ASSISTANT_TEXT_LIMIT])
+            )
+        } else {
+            full
+        };
+        let mut entry = JsObject::new();
+        entry.insert("role".into(), JsValue::from(role));
+        entry.insert("text".into(), JsValue::from(text.as_str()));
+        entry.insert("createdAt".into(), JsValue::from(""));
+        conversation.push(JsValue::Object(entry));
+    }
+    let count = conversation.len();
+    let mut data = JsObject::new();
+    data.insert("sessionId".into(), JsValue::from(real.as_str()));
+    data.insert("title".into(), JsValue::from(title.as_str()));
+    data.insert("messageCount".into(), JsValue::Number(count as f64));
+    data.insert("conversation".into(), JsValue::Array(conversation));
+    Ok(output(
+        format!("Session \"{title}\" \u{2014} {count} messages."),
+        data,
+        run_metadata(run_id),
+    ))
 }
 
 /// AlwaysOnDiscoveryPlanTool.ts:60-120.

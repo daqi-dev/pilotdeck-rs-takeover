@@ -1,0 +1,417 @@
+{
+ "name": "tool-error-codes-misc",
+ "about": "几个没有场景碰到的工具错误码：read_file 显式 limit 下超过文本预算（readFile.ts:480-507,715-726 result_too_large，带与不带 offset）；bypassPermissions 下往缺省禁写目录 .git / node_modules / dist 写（filesystem/pathSafety.ts:12,28-36 path_not_allowed，write_file 与 edit_file）；未配置 tools.webSearch 时硬调 web_search 与别名 WebSearch（ToolRuntime.ts:100-112 tool_unavailable）。",
+ "files": {
+  "proj/dist/a.txt": "old\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Tool run\"}"
+   }
+  },
+  {
+   "name": "x10-after",
+   "when": [
+    "x10:",
+    "\"tool_call_id\":\"call_x10\""
+   ],
+   "reply": {
+    "text": "Done 10."
+   }
+  },
+  {
+   "name": "x10",
+   "when": [
+    "x10:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_x10",
+     "name": "WebSearch",
+     "arguments": {
+      "query": "bbx"
+     }
+    }
+   }
+  },
+  {
+   "name": "x09-after",
+   "when": [
+    "x09:",
+    "\"tool_call_id\":\"call_x09\""
+   ],
+   "reply": {
+    "text": "Done 09."
+   }
+  },
+  {
+   "name": "x09",
+   "when": [
+    "x09:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_x09",
+     "name": "web_search",
+     "arguments": {
+      "query": "bbx"
+     }
+    }
+   }
+  },
+  {
+   "name": "x08-after",
+   "when": [
+    "x08:",
+    "\"tool_call_id\":\"call_x08\""
+   ],
+   "reply": {
+    "text": "Done 08."
+   }
+  },
+  {
+   "name": "x08",
+   "when": [
+    "x08:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_x08",
+     "name": "write_file",
+     "arguments": {
+      "file_path": "distribution/a.txt",
+      "content": "ok\n"
+     }
+    }
+   }
+  },
+  {
+   "name": "x07-after",
+   "when": [
+    "x07:",
+    "\"tool_call_id\":\"call_x07\""
+   ],
+   "reply": {
+    "text": "Done 07."
+   }
+  },
+  {
+   "name": "x07",
+   "when": [
+    "x07:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_x07",
+     "name": "edit_file",
+     "arguments": {
+      "file_path": "dist/a.txt",
+      "old_string": "old",
+      "new_string": "new"
+     }
+    }
+   }
+  },
+  {
+   "name": "x06-after",
+   "when": [
+    "x06:",
+    "\"tool_call_id\":\"call_x06\""
+   ],
+   "reply": {
+    "text": "Done 06."
+   }
+  },
+  {
+   "name": "x06",
+   "when": [
+    "x06:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_x06",
+     "name": "write_file",
+     "arguments": {
+      "file_path": "node_modules/pkg/index.js",
+      "content": "x\n"
+     }
+    }
+   }
+  },
+  {
+   "name": "x05-after",
+   "when": [
+    "x05:",
+    "\"tool_call_id\":\"call_x05\""
+   ],
+   "reply": {
+    "text": "Done 05."
+   }
+  },
+  {
+   "name": "x05",
+   "when": [
+    "x05:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_x05",
+     "name": "write_file",
+     "arguments": {
+      "file_path": ".git/config",
+      "content": "x\n"
+     }
+    }
+   }
+  },
+  {
+   "name": "x04-after",
+   "when": [
+    "x04:",
+    "\"tool_call_id\":\"call_x04\""
+   ],
+   "reply": {
+    "text": "Done 04."
+   }
+  },
+  {
+   "name": "x04",
+   "when": [
+    "x04:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_x04",
+     "name": "read_file",
+     "arguments": {
+      "file_path": "big.txt",
+      "offset": 2990,
+      "limit": 5
+     }
+    }
+   }
+  },
+  {
+   "name": "x03-after",
+   "when": [
+    "x03:",
+    "\"tool_call_id\":\"call_x03\""
+   ],
+   "reply": {
+    "text": "Done 03."
+   }
+  },
+  {
+   "name": "x03",
+   "when": [
+    "x03:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_x03",
+     "name": "read_file",
+     "arguments": {
+      "file_path": "big.txt",
+      "offset": 10,
+      "limit": 2500
+     }
+    }
+   }
+  },
+  {
+   "name": "x02-after",
+   "when": [
+    "x02:",
+    "\"tool_call_id\":\"call_x02\""
+   ],
+   "reply": {
+    "text": "Done 02."
+   }
+  },
+  {
+   "name": "x02",
+   "when": [
+    "x02:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_x02",
+     "name": "read_file",
+     "arguments": {
+      "file_path": "big.txt",
+      "limit": 3000
+     }
+    }
+   }
+  },
+  {
+   "name": "x01-after",
+   "when": [
+    "x01:",
+    "\"tool_call_id\":\"call_x01\""
+   ],
+   "reply": {
+    "text": "Done 01."
+   }
+  },
+  {
+   "name": "x01",
+   "when": [
+    "x01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_x01",
+     "name": "bash",
+     "arguments": {
+      "command": "for i in $(seq 1 3000); do printf '%099d\\n' $i; done > big.txt; wc -c big.txt"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-x",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-x",
+    "channelKey": "test",
+    "message": "x01: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-x",
+    "channelKey": "test",
+    "message": "x02: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-x",
+    "channelKey": "test",
+    "message": "x03: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-x",
+    "channelKey": "test",
+    "message": "x04: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-x",
+    "channelKey": "test",
+    "message": "x05: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-x",
+    "channelKey": "test",
+    "message": "x06: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-x",
+    "channelKey": "test",
+    "message": "x07: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-x",
+    "channelKey": "test",
+    "message": "x08: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-x",
+    "channelKey": "test",
+    "message": "x09: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-x",
+    "channelKey": "test",
+    "message": "x10: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-x"
+   }
+  }
+ ],
+ "volatile": [
+  "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages|resultBytes|content-length)$"
+ ],
+ "volatileWhy": "bash 结果里的耗时位数不定，token 估算随之变（同其他工具场景）"
+}

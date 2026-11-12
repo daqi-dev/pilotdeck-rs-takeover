@@ -14,6 +14,7 @@ pub mod glob;
 pub mod goal;
 pub mod grep;
 pub mod image_codec;
+pub mod knowledge_query;
 pub mod mcp_resources;
 pub mod mcp_tool;
 pub mod plan_mode;

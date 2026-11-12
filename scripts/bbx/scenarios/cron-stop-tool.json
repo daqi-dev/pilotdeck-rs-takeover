@@ -1,0 +1,420 @@
+{
+ "name": "cron-stop-tool",
+ "about": "cron_stop 的 runId（cron/tool/CronStopTool.ts:5-31，CronManager.ts:156-162,249-266，CronRuntime.ts:367-386,422-436）：cron_run_now 触发一次性任务、其 cron 会话的模型请求挂住时，用 cron_list 里的 lastRunId 按 runId 停掉正在跑的一轮（一次性任务随之删除）；再停一次、未知 runId、taskId 与 runId 不匹配、空参数、runId 类型错误。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ncron:\n  enabled: true\n",
+ "files": {
+  "home/work/alpha/README.md": "alpha\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+  "home/.pilotdeck/cron/projects/private-tmp-pdrs-bbx-root-home-work-alpha/tasks.json": {
+   "schemaVersion": 1,
+   "tasks": [
+    {
+     "schemaVersion": 1,
+     "taskId": "task-a",
+     "message": "cron-turn: summarize",
+     "status": "scheduled",
+     "sessionKey": "cron:task-a",
+     "channelKey": "cron",
+     "projectKey": "{HOME}/work/alpha",
+     "timezone": "UTC",
+     "originSessionKey": "origin-s",
+     "originChannelKey": "web",
+     "createdAt": "2026-01-01T00:00:00.000Z",
+     "updatedAt": "2026-01-01T00:00:00.000Z",
+     "revision": 0,
+     "schedule": {
+      "type": "cron",
+      "expression": "0 9 * * *",
+      "timezone": "UTC"
+     },
+     "nextRunAt": "2099-01-01T09:00:00.000Z",
+     "scheduleComputationVersion": 3
+    }
+   ]
+  }
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Tool run\"}"
+   }
+  },
+  {
+   "name": "cron-fired",
+   "when": [
+    "cron-turn: summarize"
+   ],
+   "unless": [
+    "k0"
+   ],
+   "reply": {
+    "text": "Fired.",
+    "delayMs": 8000
+   }
+  },
+  {
+   "name": "k09-after",
+   "when": [
+    "k09:",
+    "\"tool_call_id\":\"call_k09\""
+   ],
+   "reply": {
+    "text": "Done 09."
+   }
+  },
+  {
+   "name": "k09",
+   "when": [
+    "k09:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k09",
+     "name": "cron_list",
+     "arguments": {
+      "includeHistory": true
+     }
+    }
+   }
+  },
+  {
+   "name": "k08-after",
+   "when": [
+    "k08:",
+    "\"tool_call_id\":\"call_k08\""
+   ],
+   "reply": {
+    "text": "Done 08."
+   }
+  },
+  {
+   "name": "k08",
+   "when": [
+    "k08:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k08",
+     "name": "cron_stop",
+     "arguments": {
+      "runId": 3
+     }
+    }
+   }
+  },
+  {
+   "name": "k07-after",
+   "when": [
+    "k07:",
+    "\"tool_call_id\":\"call_k07\""
+   ],
+   "reply": {
+    "text": "Done 07."
+   }
+  },
+  {
+   "name": "k07",
+   "when": [
+    "k07:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k07",
+     "name": "cron_stop",
+     "arguments": {}
+    }
+   }
+  },
+  {
+   "name": "k06-after",
+   "when": [
+    "k06:",
+    "\"tool_call_id\":\"call_k06\""
+   ],
+   "reply": {
+    "text": "Done 06."
+   }
+  },
+  {
+   "name": "k06",
+   "when": [
+    "k06:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k06",
+     "name": "cron_stop",
+     "arguments": {
+      "taskId": "task-a",
+      "runId": "run-missing"
+     }
+    }
+   }
+  },
+  {
+   "name": "k05-after",
+   "when": [
+    "k05:",
+    "\"tool_call_id\":\"call_k05\""
+   ],
+   "reply": {
+    "text": "Done 05."
+   }
+  },
+  {
+   "name": "k05",
+   "when": [
+    "k05:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k05",
+     "name": "cron_stop",
+     "arguments": {
+      "runId": "run-missing"
+     }
+    }
+   }
+  },
+  {
+   "name": "k04-after",
+   "when": [
+    "k04:",
+    "\"tool_call_id\":\"call_k04\""
+   ],
+   "reply": {
+    "text": "Done 04."
+   }
+  },
+  {
+   "name": "k04",
+   "when": [
+    "k04:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k04",
+     "name": "cron_stop",
+     "arguments": {
+      "runId": "{saved.rid}"
+     }
+    }
+   }
+  },
+  {
+   "name": "k03-after",
+   "when": [
+    "k03:",
+    "\"tool_call_id\":\"call_k03\""
+   ],
+   "reply": {
+    "text": "Done 03."
+   }
+  },
+  {
+   "name": "k03",
+   "when": [
+    "k03:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k03",
+     "name": "cron_stop",
+     "arguments": {
+      "runId": "{saved.rid}"
+     }
+    }
+   }
+  },
+  {
+   "name": "k02-after",
+   "when": [
+    "k02:",
+    "\"tool_call_id\":\"call_k02\""
+   ],
+   "reply": {
+    "text": "Done 02."
+   },
+   "save": {
+    "rid": "lastRunId\\W+([0-9a-f-]{36})"
+   }
+  },
+  {
+   "name": "k02",
+   "when": [
+    "k02:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k02",
+     "name": "cron_list",
+     "arguments": {}
+    }
+   }
+  },
+  {
+   "name": "k01-after",
+   "when": [
+    "k01:",
+    "\"tool_call_id\":\"call_k01\""
+   ],
+   "reply": {
+    "text": "Done 01."
+   }
+  },
+  {
+   "name": "k01",
+   "when": [
+    "k01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k01",
+     "name": "cron_run_now",
+     "arguments": {
+      "taskId": "task-a"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-cs",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-cs",
+    "channelKey": "test",
+    "message": "k01: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 3000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-cs",
+    "channelKey": "test",
+    "message": "k02: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-cs",
+    "channelKey": "test",
+    "message": "k03: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 1000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-cs",
+    "channelKey": "test",
+    "message": "k04: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-cs",
+    "channelKey": "test",
+    "message": "k05: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-cs",
+    "channelKey": "test",
+    "message": "k06: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-cs",
+    "channelKey": "test",
+    "message": "k07: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-cs",
+    "channelKey": "test",
+    "message": "k08: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-cs",
+    "channelKey": "test",
+    "message": "k09: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-cs"
+   }
+  }
+ ],
+ "volatile": [
+  "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages|resultBytes|content-length)$"
+ ]
+}

@@ -1,0 +1,688 @@
+{
+ "name": "tool-ask-user-question-extras",
+ "about": "ask_user_question 的可选参数（tool/builtin/askUserQuestion.ts:138-180,183-280,285-370；tool/elicitation/validateHtmlPreview.ts）：选项的 preview（HTML 片段；纯文本、整页文档、<script> 三种被拒）、metadata.source 随 elicitation_request 转给客户端、客户端回答里带 annotations（preview / notes）时给模型的文本、预置 answers 带 annotations 的短路路径；annotations / metadata / metadata.source 的类型错误与 metadata 的多余键。",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Tool run\"}"
+   }
+  },
+  {
+   "name": "a11-after",
+   "when": [
+    "a11:",
+    "\"tool_call_id\":\"call_a11\""
+   ],
+   "reply": {
+    "text": "Done 11."
+   }
+  },
+  {
+   "name": "a11",
+   "when": [
+    "a11:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_a11",
+     "name": "ask_user_question",
+     "arguments": {
+      "questions": [
+       {
+        "question": "Which color?",
+        "header": "Color",
+        "options": [
+         {
+          "label": "Red",
+          "description": "warm",
+          "preview": 7
+         },
+         {
+          "label": "Blue",
+          "description": "cool"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "a10-after",
+   "when": [
+    "a10:",
+    "\"tool_call_id\":\"call_a10\""
+   ],
+   "reply": {
+    "text": "Done 10."
+   }
+  },
+  {
+   "name": "a10",
+   "when": [
+    "a10:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_a10",
+     "name": "ask_user_question",
+     "arguments": {
+      "questions": [
+       {
+        "question": "Which color?",
+        "header": "Color",
+        "options": [
+         {
+          "label": "Red",
+          "description": "warm"
+         },
+         {
+          "label": "Blue",
+          "description": "cool"
+         }
+        ]
+       }
+      ],
+      "metadata": "plain"
+     }
+    }
+   }
+  },
+  {
+   "name": "a09-after",
+   "when": [
+    "a09:",
+    "\"tool_call_id\":\"call_a09\""
+   ],
+   "reply": {
+    "text": "Done 09."
+   }
+  },
+  {
+   "name": "a09",
+   "when": [
+    "a09:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_a09",
+     "name": "ask_user_question",
+     "arguments": {
+      "questions": [
+       {
+        "question": "Which color?",
+        "header": "Color",
+        "options": [
+         {
+          "label": "Red",
+          "description": "warm"
+         },
+         {
+          "label": "Blue",
+          "description": "cool"
+         }
+        ]
+       }
+      ],
+      "metadata": {
+       "source": "x",
+       "channel": "y"
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "a08-after",
+   "when": [
+    "a08:",
+    "\"tool_call_id\":\"call_a08\""
+   ],
+   "reply": {
+    "text": "Done 08."
+   }
+  },
+  {
+   "name": "a08",
+   "when": [
+    "a08:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_a08",
+     "name": "ask_user_question",
+     "arguments": {
+      "questions": [
+       {
+        "question": "Which color?",
+        "header": "Color",
+        "options": [
+         {
+          "label": "Red",
+          "description": "warm"
+         },
+         {
+          "label": "Blue",
+          "description": "cool"
+         }
+        ]
+       }
+      ],
+      "metadata": {
+       "source": 5
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "a07-after",
+   "when": [
+    "a07:",
+    "\"tool_call_id\":\"call_a07\""
+   ],
+   "reply": {
+    "text": "Done 07."
+   }
+  },
+  {
+   "name": "a07",
+   "when": [
+    "a07:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_a07",
+     "name": "ask_user_question",
+     "arguments": {
+      "questions": [
+       {
+        "question": "Which color?",
+        "header": "Color",
+        "options": [
+         {
+          "label": "Red",
+          "description": "warm"
+         },
+         {
+          "label": "Blue",
+          "description": "cool"
+         }
+        ]
+       }
+      ],
+      "answers": {
+       "Which color?": "Blue"
+      },
+      "annotations": "oops"
+     }
+    }
+   }
+  },
+  {
+   "name": "a06-after",
+   "when": [
+    "a06:",
+    "\"tool_call_id\":\"call_a06\""
+   ],
+   "reply": {
+    "text": "Done 06."
+   }
+  },
+  {
+   "name": "a06",
+   "when": [
+    "a06:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_a06",
+     "name": "ask_user_question",
+     "arguments": {
+      "questions": [
+       {
+        "question": "Which color?",
+        "header": "Color",
+        "options": [
+         {
+          "label": "Red",
+          "description": "warm",
+          "preview": "<b>r</b>"
+         },
+         {
+          "label": "Blue",
+          "description": "cool"
+         }
+        ]
+       }
+      ],
+      "answers": {
+       "Which color?": "Red"
+      },
+      "annotations": {
+       "Which color?": {
+        "preview": "<b>r</b>",
+        "notes": "picked early"
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "a05-after",
+   "when": [
+    "a05:",
+    "\"tool_call_id\":\"call_a05\""
+   ],
+   "reply": {
+    "text": "Done 05."
+   }
+  },
+  {
+   "name": "a05",
+   "when": [
+    "a05:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_a05",
+     "name": "ask_user_question",
+     "arguments": {
+      "questions": [
+       {
+        "question": "Which color?",
+        "header": "Color",
+        "options": [
+         {
+          "label": "Red",
+          "description": "warm"
+         },
+         {
+          "label": "Blue",
+          "description": "cool",
+          "preview": "<div><SCRIPT>alert(1)</SCRIPT></div>"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "a04-after",
+   "when": [
+    "a04:",
+    "\"tool_call_id\":\"call_a04\""
+   ],
+   "reply": {
+    "text": "Done 04."
+   }
+  },
+  {
+   "name": "a04",
+   "when": [
+    "a04:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_a04",
+     "name": "ask_user_question",
+     "arguments": {
+      "questions": [
+       {
+        "question": "Which color?",
+        "header": "Color",
+        "options": [
+         {
+          "label": "Red",
+          "description": "warm",
+          "preview": "<!DOCTYPE html><p>x</p>"
+         },
+         {
+          "label": "Blue",
+          "description": "cool"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "a03-after",
+   "when": [
+    "a03:",
+    "\"tool_call_id\":\"call_a03\""
+   ],
+   "reply": {
+    "text": "Done 03."
+   }
+  },
+  {
+   "name": "a03",
+   "when": [
+    "a03:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_a03",
+     "name": "ask_user_question",
+     "arguments": {
+      "questions": [
+       {
+        "question": "Which color?",
+        "header": "Color",
+        "options": [
+         {
+          "label": "Red",
+          "description": "warm",
+          "preview": "just red"
+         },
+         {
+          "label": "Blue",
+          "description": "cool"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "a02-after",
+   "when": [
+    "a02:",
+    "\"tool_call_id\":\"call_a02\""
+   ],
+   "reply": {
+    "text": "Done 02."
+   }
+  },
+  {
+   "name": "a02",
+   "when": [
+    "a02:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_a02",
+     "name": "ask_user_question",
+     "arguments": {
+      "questions": [
+       {
+        "question": "Which size?",
+        "header": "Size",
+        "options": [
+         {
+          "label": "S",
+          "description": "small"
+         },
+         {
+          "label": "L",
+          "description": "large"
+         }
+        ]
+       }
+      ],
+      "metadata": {}
+     }
+    }
+   }
+  },
+  {
+   "name": "a01-after",
+   "when": [
+    "a01:",
+    "\"tool_call_id\":\"call_a01\""
+   ],
+   "reply": {
+    "text": "Done 01."
+   }
+  },
+  {
+   "name": "a01",
+   "when": [
+    "a01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_a01",
+     "name": "ask_user_question",
+     "arguments": {
+      "questions": [
+       {
+        "question": "Which color?",
+        "header": "Color",
+        "options": [
+         {
+          "label": "Red",
+          "description": "warm",
+          "preview": "<div style=\"color:red\">red</div>"
+         },
+         {
+          "label": "Blue",
+          "description": "cool",
+          "preview": "<pre>blue</pre>"
+         }
+        ],
+        "multiSelect": false
+       }
+      ],
+      "metadata": {
+       "source": "bbx-onboarding"
+      }
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-auq",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-auq",
+    "channelKey": "test",
+    "message": "a01: go"
+   },
+   "timeout": 15000,
+   "answer": [
+    {
+     "on": {
+      "type": "elicitation_request"
+     },
+     "ws": "elicitation_respond",
+     "params": {
+      "sessionKey": "s-auq",
+      "requestId": "{event.requestId}",
+      "answer": {
+       "type": "answered",
+       "answers": {
+        "Which color?": "Red"
+       },
+       "annotations": {
+        "Which color?": {
+         "preview": "<div style=\"color:red\">red</div>",
+         "notes": "warm is better"
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-auq",
+    "channelKey": "test",
+    "message": "a02: go"
+   },
+   "timeout": 15000,
+   "answer": [
+    {
+     "on": {
+      "type": "elicitation_request"
+     },
+     "ws": "elicitation_respond",
+     "params": {
+      "sessionKey": "s-auq",
+      "requestId": "{event.requestId}",
+      "answer": {
+       "type": "answered",
+       "answers": {
+        "Which size?": [
+         "S",
+         "L"
+        ]
+       },
+       "annotations": {
+        "Which size?": {
+         "notes": ""
+        },
+        "Other?": {
+         "notes": "ignored"
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-auq",
+    "channelKey": "test",
+    "message": "a03: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-auq",
+    "channelKey": "test",
+    "message": "a04: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-auq",
+    "channelKey": "test",
+    "message": "a05: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-auq",
+    "channelKey": "test",
+    "message": "a06: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-auq",
+    "channelKey": "test",
+    "message": "a07: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-auq",
+    "channelKey": "test",
+    "message": "a08: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-auq",
+    "channelKey": "test",
+    "message": "a09: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-auq",
+    "channelKey": "test",
+    "message": "a10: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-auq",
+    "channelKey": "test",
+    "message": "a11: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-auq"
+   }
+  }
+ ]
+}
