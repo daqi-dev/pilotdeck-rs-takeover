@@ -119,6 +119,12 @@ const portFree = (port) => new Promise((resolve) => {
   const s = net.createServer().once('error', () => resolve(false))
     .once('listening', () => s.close(() => resolve(true))).listen(port, '127.0.0.1');
 });
+// 等服务起来时用「能不能连上」来探，不用 portFree：后者要自己绑一下端口，正好撞上服务在绑的那一刻时，
+// 服务会因 EADDRINUSE 启动失败（采集器自己造成的偶发）。
+const portOpen = (port) => new Promise((resolve) => {
+  const s = net.connect(port, '127.0.0.1');
+  s.once('connect', () => { s.destroy(); resolve(true); }).once('error', () => resolve(false));
+});
 // 基线 CLI 的若干路径会探测写死的默认端口 18789（真实 PilotDeck 的默认端口）。
 // 那里有人监听时一律拒跑，免得碰到本机正在运行的实例。用 lsof 看，不去连它。
 import { spawnSync } from 'node:child_process';
@@ -291,7 +297,7 @@ if (wantServer) {
   for (;;) {
     if (server.exitCode !== null) { out.startFailure = { exitCode: server.exitCode, log: serverLog }; break; }
     if (Date.now() - t0 > 60000) { out.startFailure = { timeout: true, log: serverLog }; break; }
-    if (!(await portFree(GATEWAY_PORT))) break;
+    if (await portOpen(GATEWAY_PORT)) break;
     await sleep(50);
   }
   out.startMs = Date.now() - t0;
