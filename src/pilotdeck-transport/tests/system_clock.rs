@@ -1267,3 +1267,97 @@ fn offset_admission_rejects_multibyte_bodies_without_panicking() {
         );
     }
 }
+
+struct ZoneRoot(std::path::PathBuf);
+impl ZoneRoot {
+    fn new() -> Self {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "pdrs-zone-links-{}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        ));
+        std::fs::create_dir(&path).unwrap();
+        Self(path)
+    }
+    fn write(&self, name: &str, bytes: &[u8]) {
+        let path = self.0.join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+    }
+    fn read(&self, name: &str) -> Option<Vec<u8>> {
+        system_clock::timezone_tzif_from_root(&self.0, name)
+    }
+}
+impl Drop for ZoneRoot {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn split_timezone_links_resolve_canonical_bytes_and_offsets() {
+    let root = ZoneRoot::new();
+    let bytes = la_tzif();
+    root.write("America/Los_Angeles", &bytes);
+    root.write("tzdata.zi", b"# synthetic split installation\nL America/Los_Angeles US/Pacific\nLink US/Pacific Test/Chain # link to link\n");
+    assert!(!root.0.join("US/Pacific").exists());
+    for name in [
+        "America/Los_Angeles",
+        "US/Pacific",
+        "us/pACific",
+        "test/CHAIN",
+    ] {
+        let resolved = root
+            .read(name)
+            .expect("installed links resolve without alias files");
+        assert_eq!(resolved, bytes);
+        for wall in [0, 1_767_225_600_000, 1_783_036_800_000] {
+            assert_eq!(
+                system_clock::resolve_tzif_local(wall, &resolved).expect("alias timezone offset"),
+                system_clock::resolve_tzif_local(wall, &bytes).expect("canonical timezone offset"),
+            );
+        }
+    }
+    // A directly installed zone retains priority over metadata aliases.
+    root.write("US/Pacific", b"direct zone bytes");
+    assert_eq!(root.read("US/Pacific"), Some(b"direct zone bytes".to_vec()));
+}
+
+#[test]
+fn split_timezone_links_refuse_cycles_invalid_targets_and_missing_data() {
+    let root = ZoneRoot::new();
+    root.write("tzdata.zi", b"L Cycle/B Cycle/A\nLink Cycle/A Cycle/B\nL ../outside Bad/Parent\nL /etc/localtime Bad/Absolute\nL Missing/Zone Bad/Missing\n");
+    for name in [
+        "Cycle/A",
+        "bad/parent",
+        "Bad/Absolute",
+        "Bad/Missing",
+        "../outside",
+        "/etc/localtime",
+        "Cycle//A",
+    ] {
+        assert_eq!(root.read(name), None, "unsafe or unresolved link {name}");
+    }
+    std::fs::remove_file(root.0.join("tzdata.zi")).unwrap();
+    assert_eq!(root.read("US/Pacific"), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn split_timezone_links_refuse_symlink_escape_for_zones_and_metadata() {
+    let root = ZoneRoot::new();
+    let outside = ZoneRoot::new();
+    outside.write("Zone", b"outside zone");
+    root.write("tzdata.zi", b"L Escaped Alias\n");
+    std::os::unix::fs::symlink(outside.0.join("Zone"), root.0.join("Escaped")).unwrap();
+    assert_eq!(root.read("Alias"), None);
+    std::fs::remove_file(root.0.join("tzdata.zi")).unwrap();
+    outside.write("links", b"L Escaped Alias\n");
+    std::os::unix::fs::symlink(outside.0.join("links"), root.0.join("tzdata.zi")).unwrap();
+    assert_eq!(root.read("Alias"), None);
+}

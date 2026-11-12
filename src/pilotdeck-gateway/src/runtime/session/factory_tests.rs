@@ -1250,8 +1250,7 @@ async fn production_adapter_dispatches_to_host() {
         }
     };
     assert_eq!(
-        failure.message,
-        "Host execution failed: HOST_DISPATCH_LEASE_BOOM",
+        failure.message, "Host execution failed: HOST_DISPATCH_LEASE_BOOM",
         "#745 host factory execution conclusion"
     );
     assert_eq!(

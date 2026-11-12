@@ -235,8 +235,8 @@ fn plan(value: &JsValue) -> Result<Vec<Edit>, SettingsError> {
             "localSettings.extension",
         )?;
         let mut extension_edits = Vec::new();
-        if let Some(include) = present(extension, "includeHookEvents") {
-            if !matches!(include, JsValue::Null | JsValue::Bool(_)) {
+        if let Some(include_hook_events) = present(extension, "includeHookEvents") {
+            if !matches!(include_hook_events, JsValue::Null | JsValue::Bool(_)) {
                 return Err(invalid(
                     "localSettings.extension.includeHookEvents",
                     "must be a boolean or null.",
@@ -244,7 +244,8 @@ fn plan(value: &JsValue) -> Result<Vec<Edit>, SettingsError> {
             }
             extension_edits.push((
                 vec!["extension", "includeHookEvents"],
-                (!matches!(include, JsValue::Null)).then(|| include.clone()),
+                (!matches!(include_hook_events, JsValue::Null))
+                    .then(|| include_hook_events.clone()),
             ));
         }
         if let Some(enabled) = present(extension, "builtinPluginsEnabled") {

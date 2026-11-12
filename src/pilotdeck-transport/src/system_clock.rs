@@ -374,10 +374,69 @@ fn parse_offset_timezone(value: &str) -> Option<i32> {
 /// are case-insensitive), and the final real path must remain under the root.
 #[allow(dead_code)] // called from main crate; flagged dead in test-only #[path] include
 fn timezone_tzif(name: &str) -> Option<Vec<u8>> {
-    if name.is_empty() || name.starts_with('/') || name.contains('\0') {
+    timezone_tzif_from_root(std::path::Path::new("/usr/share/zoneinfo"), name)
+}
+
+/// Resolve installed TZif files and links declared by the same installation's
+/// tzdata.zi. Split tzdata packages can retain Link records while omitting
+/// backward-compatibility symlinks. No offset or alias is guessed here.
+/// The injectable root permits missing-link and hostile-data tests without
+/// modifying the system zoneinfo tree or process environment.
+pub fn timezone_tzif_from_root(root: &std::path::Path, name: &str) -> Option<Vec<u8>> {
+    if !safe_zone_name(name) {
         return None;
     }
-    let root = std::path::Path::new("/usr/share/zoneinfo");
+    if let Some(path) = timezone_path(root, name) {
+        return bounded_zone_read(&path);
+    }
+    let metadata = timezone_path(root, "tzdata.zi")?;
+    let data = bounded_zone_read(&metadata)?;
+    let data = std::str::from_utf8(&data).ok()?;
+    let mut current = name.to_owned();
+    let mut visited = Vec::new();
+    // A bounded chain also refuses malformed/cyclic installation metadata.
+    for _ in 0..32 {
+        if visited
+            .iter()
+            .any(|name: &String| name.eq_ignore_ascii_case(&current))
+        {
+            return None;
+        }
+        visited.push(current.clone());
+        let target = data.lines().find_map(|line| {
+            let mut fields = line.split('#').next()?.split_whitespace();
+            if !matches!(fields.next()?, "L" | "Link") {
+                return None;
+            }
+            let target = fields.next()?;
+            let alias = fields.next()?;
+            (fields.next().is_none() && alias.eq_ignore_ascii_case(&current)).then_some(target)
+        })?;
+        if !safe_zone_name(target) {
+            return None;
+        }
+        if let Some(path) = timezone_path(root, target) {
+            return bounded_zone_read(&path);
+        }
+        current = target.to_owned();
+    }
+    None
+}
+
+fn safe_zone_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'_' | b'-' | b'+' | b'.')
+        })
+        && name
+            .split('/')
+            .all(|part| !part.is_empty() && part != "." && part != "..")
+}
+
+fn timezone_path(root: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
+    if !safe_zone_name(name) {
+        return None;
+    }
     let mut path = root.to_path_buf();
     for component in name.split('/') {
         if component.is_empty() || component == "." || component == ".." {
@@ -406,7 +465,7 @@ fn timezone_tzif(name: &str) -> Option<Vec<u8>> {
     if !canonical.starts_with(&canonical_root) {
         return None;
     }
-    bounded_zone_read(&canonical)
+    Some(canonical)
 }
 
 /// Same 1 MiB bound as the conservative stats retention read: a zone file
