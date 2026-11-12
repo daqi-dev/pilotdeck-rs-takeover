@@ -6,7 +6,7 @@
 // 归一化只有下面四条，都是「同一侧连跑两次也会变」的值，别的一律按原样比：
 //   1. UUID            → <uuid:N>，N 是它在该侧输出里第一次出现的序号（保留「同一个 id」的关系）
 //   2. ISO 时间戳      → <iso>
-//   3. 毫秒时间戳      → <ms>（1.6e12 ~ 2.0e12 之间的整数；文本里独立出现的同范围 13 位整数同样处理，
+//   3. 毫秒时间戳      → <ms>（1.6e12 ~ 2.0e12 之间的整数；文本里独立出现的同范围 13 位整数同样处理（前后紧挨十六进制字符或小数点的不算，免得误伤哈希），
 //                        例如 CLI 输出的 JSON 文本里的 lastModified）；带小数的记成 <ms.frac>，
 //                        这样「一侧整数、一侧小数」仍然算差异
 //   4. 进程号          → <pid>（键名为 pid / ownerPid 的整数；Node 警告行前缀 "(node:1234)"；文本里的 "pid=1234"）
@@ -71,7 +71,7 @@ function normalizer() {
     if (!ids.has(k)) ids.set(k, ids.size + 1);
     return `<uuid:${ids.get(k)}>`;
   }).replace(ISO, '<iso>').replace(/\(node:\d+\)/g, '(node:<pid>)')
-    .replace(/(?<![\d.])1[6-9]\d{11}(?![\d.])/g, '<ms>')
+    .replace(/(?<![\da-fA-F.])1[6-9]\d{11}(?![\da-fA-F.])/g, '<ms>')
     .replace(/pilotdeck_execute_code_[A-Za-z0-9]{6}/g, 'pilotdeck_execute_code_<tmp>')
     .replace(/\.pilotdeck-restore-[A-Za-z0-9]{6}/g, '.pilotdeck-restore-<tmp>')
     .replace(/(\/snapshots\/)([0-9a-f]{64})/g, (_, pre, id) => pre + snap(id))
