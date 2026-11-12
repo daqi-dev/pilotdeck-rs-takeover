@@ -398,8 +398,10 @@ hooks:
 // ── 子代理：SubagentStart / SubagentStop，子代理自己的工具调用 ──
 {
   const hooks = {
-    // SubagentStart / SubagentStop 的执行事件投影在父会话的流上，与子代理状态事件的先后在基线里不稳定，
-    // 所以这里不配；它们由手工对比验证（见报告）。子代理自己的 hook 事件带子会话 id，不投影。
+    // SubagentStart / SubagentStop 对父会话派发，执行事件投影在父会话的流上；hook 睡 300 毫秒，
+    // 让它的执行事件与子代理状态事件的先后固定。子代理自己的 hook 事件带子会话 id，不投影。
+    SubagentStart: [{ matcher: 'SubagentStart', hooks: [cmd('subagent-start', { sleep: 300, out: json({ decision: 'block', reason: 'not honoured' }) })] }],
+    SubagentStop: [{ hooks: [cmd('subagent-stop', { sleep: 300, exit: 2, err: 'not honoured either\n' })] }],
     SessionStart: [{ hooks: [cmd('session', {})] }],
     Setup: [{ hooks: [cmd('session', {})] }],
     SessionEnd: [{ hooks: [cmd('session', {})] }],
@@ -409,7 +411,7 @@ hooks:
     Stop: [{ hooks: [cmd('stop', {})] }],
   };
   scenarios['hook-subagent'] = {
-    about: '插件 hook 与一次性子代理（agent 工具）：子代理自己的工具调用（glob）派发 PreToolUse / PostToolUse、子代理结束派发 Stop，用的是父会话的 hook 配置、子会话的 id 与轮次环境，不投影到网关流；SessionStart / Setup / UserPromptSubmit / SessionEnd 只对父会话派发。',
+    about: '插件 hook 与一次性子代理（agent 工具）：SubagentStart / SubagentStop 在子代理开始与结束时对父会话派发（subagentId、subagentType、success），等它执行完，阻止不起作用；子代理自己的工具调用（glob）派发 PreToolUse / PostToolUse、子代理结束派发 Stop，用的是父会话的 hook 配置、子会话的 id 与轮次环境，不投影到网关流；SessionStart / Setup / UserPromptSubmit / SessionEnd 只对父会话派发。',
     files: plugin('bbx-sub', hooks),
     provider: [
       TITLE,
@@ -419,6 +421,137 @@ hooks:
       { name: 'parent', when: ['turn-1:'], reply: { tool: { id: 'call_parent', name: 'agent', arguments: { description: 'Look around', prompt: 'CHILD-HOOK-7: look for files.', subagentType: 'Explorer' } } } },
     ],
     steps: [submit('s-sub', 'turn-1: delegate'), { sleep: 300 }],
+    volatile: ['\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages|resultBytes|content-length)$'],
+    volatileWhy: '子代理结果文本里带位数不定的耗时，token 估算随之变；基线自比已证明',
+  };
+}
+
+// ── 工具 hook 输出里其余的字段：只解析不生效的、只进 metadata 的 ──
+{
+  const specific = (event, rest) => json({ hookSpecificOutput: { hookEventName: event, ...rest } });
+  const hooks = {
+    PreToolUse: [
+      { matcher: 'bash', hooks: [
+        cmd('pre', { if: 'bash(case-pre-ask)', out: specific('PreToolUse', { permissionDecision: 'ask', permissionDecisionReason: 'ask reason' }) }),
+        cmd('pre', { if: 'bash(case-pre-passthrough)', out: specific('PreToolUse', { permissionDecision: 'passthrough' }) }),
+        cmd('pre', { if: 'bash(case-approve)', out: json({ decision: 'approve', reason: 'approved', suppressOutput: true, systemMessage: 'pre system note' }) }),
+      ] },
+      { matcher: 'write_file', hooks: [
+        cmd('pre', { if: 'write_file(perm-pre-allow)', out: specific('PreToolUse', { permissionDecision: 'allow', permissionDecisionReason: 'allowed by pre hook' }) }),
+      ] },
+    ],
+    PostToolUse: [{ matcher: 'bash', hooks: [
+      cmd('post', { if: 'bash(case-mcp-output)', out: specific('PostToolUse', { updatedMCPToolOutput: { content: [{ type: 'text', text: 'replaced by hook' }] } }) }),
+      cmd('post', { if: 'bash(case-mcp-null)', out: specific('PostToolUse', { updatedMCPToolOutput: null }) }),
+      cmd('post', { if: 'bash(case-mismatch)', out: specific('SomethingElse', { additionalContext: 'context under another event name' }) }),
+      cmd('post', { if: 'bash(case-noname)', out: json({ hookSpecificOutput: { additionalContext: 'context without event name' } }) }),
+      cmd('post', { if: 'bash(case-approve)', out: json({ suppressOutput: true, systemMessage: 'post system note', hookSpecificOutput: { hookEventName: 'PostToolUse', updatedMCPToolOutput: 'plain string output' } }) }),
+    ] }],
+    PermissionRequest: [{ hooks: [cmd('perm')] }],
+    PermissionDenied: [{ hooks: [cmd('denied', { out: specific('PermissionDenied', { retry: true }) })] }],
+  };
+  const cases = ['pre-ask', 'pre-passthrough', 'approve', 'mcp-output', 'mcp-null', 'mismatch', 'noname'];
+  const provider = [TITLE];
+  const steps = [];
+  for (const c of cases) {
+    provider.push(...toolCase(`case-${c}`, 'bash', { command: `printf case-${c}`, description: `case ${c}` }));
+    steps.push(bypass(`s-${c}`), submit(`s-${c}`, `case-${c}: run the tool`), { sleep: 300 });
+  }
+  provider.push(...toolCase('perm-pre-allow', 'write_file', { file_path: 'perm-pre-allow.txt', content: 'perm-pre-allow\n' }));
+  steps.push(submit('s-perm-pre-allow', 'perm-pre-allow: write the file', { answer: [{
+    on: { type: 'permission_request' }, ws: 'permission_decide',
+    params: { sessionKey: 's-perm-pre-allow', requestId: '{event.requestId}', decision: 'deny' }, count: 2,
+  }] }), { sleep: 300 });
+  steps.push(read('s-mcp-output'), read('s-mcp-null'), read('s-mismatch'), read('s-approve'));
+  scenarios['hook-tool-effects'] = {
+    about: '工具 hook 输出里不改变流程的字段：PreToolUse 的 permissionDecision ask / passthrough 不影响执行，allow 不跳过权限询问（用户拒绝照样拒）；PermissionDenied 的 retry 不触发重试；顶层 decision:approve、reason、suppressOutput、systemMessage 不起作用；PostToolUse 的 updatedMCPToolOutput（对象、null、字符串）只进工具结果的 metadata.lifecycle；hookSpecificOutput 的 hookEventName 与事件不同照样生效、缺了整个忽略。',
+    files: plugin('bbx-effects', hooks),
+    provider,
+    steps,
+  };
+}
+
+// ── 会话 hook 的输出与只解析不使用的配置字段；没有触发点的事件 ──
+{
+  const never = ['Notification', 'CwdChanged', 'WorktreeCreate', 'WorktreeRemove', 'TeammateIdle', 'TaskCreated', 'TaskCompleted'];
+  const hooks = {
+    // 插件 hook 的 pluginName / pluginId / pluginRoot 由加载器按插件覆盖（hook 的工作目录仍是插件根）。
+    SessionStart: [{ pluginName: 'spoofed', pluginId: 'spoofed@nowhere', pluginRoot: '/nonexistent-root', hooks: [
+      // 命令 hook 的 timeout 不生效（只有 SessionEnd 有自己的超时）：睡 1.5 秒也照样跑完。
+      cmd('session-start', { statusMessage: 'starting up', once: true, timeout: 1, sleep: 1500, out: json({
+        systemMessage: 'start note', suppressOutput: true,
+        hookSpecificOutput: { hookEventName: 'SessionStart', initialUserMessage: 'initial message from hook', watchPaths: ['watched.txt', 7], additionalContext: 'ignored' },
+      }) }),
+    ] }],
+    Setup: [{ hooks: [cmd('setup', { shell: 'powershell', async: true, asyncRewake: true, out: json({ hookSpecificOutput: { hookEventName: 'Setup', worktreePath: '/tmp/nowhere' } }) })] }],
+    UserPromptSubmit: [{ hooks: [cmd('prompt', { once: true, statusMessage: 'checking prompt' })] }],
+    ...Object.fromEntries(never.map((event) => [event, [{ hooks: [cmd(`never-${event}`)] }]])),
+  };
+  scenarios['hook-session-effects'] = {
+    about: 'SessionStart / Setup 的输出（initialUserMessage、watchPaths、worktreePath、systemMessage、suppressOutput）都不影响会话；配置字段 statusMessage、once（同一会话第二轮照样执行）、命令 hook 的 timeout、shell、async、asyncRewake 只解析不使用；插件 matcher 上自带的 pluginName / pluginId / pluginRoot 被加载器覆盖。Notification、CwdChanged、WorktreeCreate、WorktreeRemove 没有触发点，TeammateIdle、TaskCreated、TaskCompleted 不是 hook 事件：配置了也从不执行。',
+    files: plugin('bbx-sess', hooks),
+    provider: [TITLE, { name: 'main', reply: { text: 'answer' } }],
+    steps: [
+      submit('s-sess', 'first: hello'), { sleep: 300 },
+      submit('s-sess', 'second: again'), { sleep: 300 },
+      read('s-sess'),
+    ],
+  };
+}
+
+// ── PreModelRequest / InstructionsLoaded：每次模型请求前，不等待 ──
+{
+  const hooks = {
+    PreModelRequest: [{ matcher: 'PreModelRequest', hooks: [cmd('pre-model', { out: json({ decision: 'block', reason: 'not honoured' }) })] }],
+    InstructionsLoaded: [{ hooks: [cmd('instructions', { exit: 2, err: 'not honoured either\n' })] }],
+  };
+  scenarios['hook-model-request'] = {
+    about: '插件的 PreModelRequest 与 InstructionsLoaded hook：一轮里每次模型请求前各派发一次（工具调用的一轮两次），收到 provider / model 与 hasSystemPrompt；派发不等待、结果不影响请求（阻止也不起作用）。',
+    files: plugin('bbx-model', hooks),
+    provider: [TITLE, ...toolCase('model-case', 'bash', { command: 'printf model-case', description: 'model case' })],
+    steps: [bypass('s-model'), submit('s-model', 'model-case: run the tool'), { sleep: 1000 }],
+    settleMs: 1000,
+  };
+}
+
+// ── Elicitation / ElicitationResult：提问发出与得到回答时 ──
+{
+  const hooks = {
+    Elicitation: [{ matcher: 'Elicitation', hooks: [cmd('elicitation', { out: json({ decision: 'block', reason: 'not honoured' }) })] }],
+    ElicitationResult: [{ hooks: [cmd('elicitation-result', { exit: 2, err: 'not honoured either\n' })] }],
+  };
+  const question = { questions: [{ question: 'Which color?', header: 'Color', options: [{ label: 'Red', description: 'warm' }, { label: 'Blue', description: 'cool' }], multiSelect: false }] };
+  scenarios['hook-elicitation'] = {
+    about: '插件的 Elicitation / ElicitationResult hook：ask_user_question 的提问发给客户端时派发 Elicitation（requestId、toolName、toolCallId），回答送达后派发 ElicitationResult（requestId、delivered）；都不等待，阻止不起作用。',
+    files: plugin('bbx-ask', hooks),
+    provider: [TITLE, ...toolCase('ask-case', 'ask_user_question', question)],
+    steps: [
+      submit('s-ask', 'ask-case: ask me', { answer: [{
+        on: { type: 'elicitation_request' }, ws: 'elicitation_respond', count: 1,
+        params: { sessionKey: 's-ask', requestId: '{event.requestId}', answer: { type: 'answered', answers: { 'Which color?': 'Red' } } },
+      }] }),
+      { sleep: 1000 },
+      read('s-ask'),
+    ],
+    settleMs: 1000,
+  };
+}
+
+// ── hook 被取消：轮次在 hook 执行中被中止 ──
+{
+  const hooks = { PreToolUse: [{ matcher: 'bash', hooks: [cmd('pre-slow', { sleep: 3000 })] }] };
+  scenarios['hook-cancelled'] = {
+    about: 'PreToolUse hook 执行中轮次被中止：hook 进程被杀（hooklog 没有 done 行），执行结果 outcome 为 cancelled，工具不执行。',
+    files: plugin('bbx-cancel', hooks),
+    provider: [TITLE, ...toolCase('cancel-case', 'bash', { command: 'printf ran > ran.txt', description: 'cancel case' })],
+    steps: [
+      bypass('s-cancel'),
+      submit('s-cancel', 'cancel-case: run the tool', { answer: [{
+        on: { type: 'agent_status', event: 'hook_execution_started' }, ws: 'abort_turn', params: { sessionKey: 's-cancel' }, count: 1,
+      }] }),
+      { sleep: 3500 },
+      read('s-cancel'),
+    ],
   };
 }
 
