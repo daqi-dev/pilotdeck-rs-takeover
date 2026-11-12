@@ -1,0 +1,124 @@
+{
+  "name": "robust-restart-truncated-session",
+  "about": "会话文件被截断 / 夹杂坏行（模拟写到一半被杀）：s-trunc 末尾是半条 assistant_message 且没有换行（第二轮没有 turn_result），s-corrupt 中间有非 JSON 行、空行和半条记录且第一轮的 step_completed 丢了，s-garbage 同样夹杂坏行但记录齐全。会话都带标题（不触发标题生成）。list_sessions、read_session_messages，在三个会话上各续一轮，再读一次，比落盘（新记录是否接在半条记录后面）。",
+  "files": {
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-trunc.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s-trunc\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":1,\"createdAt\":\"2026-11-01T00:00:01.000Z\",\"entryId\":\"s-trunc-e-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"first question\"}]}],\"metadata\":{\"permissionMode\":\"default\",\"runMode\":\"agent\",\"basePermissionMode\":\"default\",\"allowPlanModeTools\":false},\"sessionId\":\"s-trunc\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":2,\"createdAt\":\"2026-11-01T00:00:02.000Z\",\"entryId\":\"s-trunc-e-2\",\"parentEntryId\":\"s-trunc-e-1\"}\n{\"type\":\"session_metadata\",\"metadata\":{\"firstPrompt\":\"first question\",\"lastPrompt\":\"first question\",\"title\":\"Fixture title\",\"updatedAt\":\"2026-11-01T00:00:03.000Z\"},\"sessionId\":\"s-trunc\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":3,\"createdAt\":\"2026-11-01T00:00:03.000Z\",\"entryId\":\"s-trunc-e-3\",\"parentEntryId\":\"s-trunc-e-2\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s-trunc\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":4,\"createdAt\":\"2026-11-01T00:00:04.000Z\",\"entryId\":\"s-trunc-e-4\",\"parentEntryId\":\"s-trunc-e-3\"}\n{\"type\":\"assistant_message\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"first answer\"}],\"metadata\":{\"model\":\"deterministic\"}},\"sessionId\":\"s-trunc\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":5,\"createdAt\":\"2026-11-01T00:00:05.000Z\",\"entryId\":\"s-trunc-e-5\",\"parentEntryId\":\"s-trunc-e-4\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s-trunc\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":6,\"createdAt\":\"2026-11-01T00:00:06.000Z\",\"entryId\":\"s-trunc-e-6\",\"parentEntryId\":\"s-trunc-e-5\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"stopReason\":\"completed\",\"usage\":{\"inputTokens\":12,\"outputTokens\":4,\"totalTokens\":16},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-11-01T00:00:01.000Z\",\"finalMessage\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"first answer\"}],\"metadata\":{\"model\":\"deterministic\"}},\"sessionId\":\"s-trunc\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"completedAt\":\"2026-11-01T00:00:07.000Z\"},\"sessionId\":\"s-trunc\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":7,\"createdAt\":\"2026-11-01T00:00:07.000Z\",\"entryId\":\"s-trunc-e-7\",\"parentEntryId\":\"s-trunc-e-6\"}\n{\"type\":\"turn_started\",\"sessionId\":\"s-trunc\",\"turnId\":\"22222222-2222-4222-8222-222222222222\",\"sequence\":8,\"createdAt\":\"2026-11-01T00:00:08.000Z\",\"entryId\":\"s-trunc-e-8\",\"parentEntryId\":\"s-trunc-e-7\"}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second question\"}]}],\"metadata\":{\"permissionMode\":\"default\",\"runMode\":\"agent\",\"basePermissionMode\":\"default\",\"allowPlanModeTools\":false},\"sessionId\":\"s-trunc\",\"turnId\":\"22222222-2222-4222-8222-222222222222\",\"sequence\":9,\"createdAt\":\"2026-11-01T00:00:09.000Z\",\"entryId\":\"s-trunc-e-9\",\"parentEntryId\":\"s-trunc-e-8\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s-trunc\",\"turnId\":\"22222222-2222-4222-8222-222222222222\",\"sequence\":10,\"createdAt\":\"2026-11-01T00:00:10.000Z\",\"entryId\":\"s-trunc-e-10\",\"parentEntryId\":\"s-trunc-e-9\"}\n{\"type\":\"assistant_message\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"second answer that was cut off\"}],\"metadata\":{\"model\":\"deterministic\"}},\"sessio",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-corrupt.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s-corrupt\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":1,\"createdAt\":\"2026-11-01T00:00:01.000Z\",\"entryId\":\"s-corrupt-e-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"first question\"}]}],\"metadata\":{\"permissionMode\":\"default\",\"runMode\":\"agent\",\"basePermissionMode\":\"default\",\"allowPlanModeTools\":false},\"sessionId\":\"s-corrupt\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":2,\"createdAt\":\"2026-11-01T00:00:02.000Z\",\"entryId\":\"s-corrupt-e-2\",\"parentEntryId\":\"s-corrupt-e-1\"}\n{\"type\":\"session_metadata\",\"metadata\":{\"firstPrompt\":\"first question\",\"lastPrompt\":\"first question\",\"title\":\"Fixture title\",\"updatedAt\":\"2026-11-01T00:00:03.000Z\"},\"sessionId\":\"s-corrupt\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":3,\"createdAt\":\"2026-11-01T00:00:03.000Z\",\"entryId\":\"s-corrupt-e-3\",\"parentEntryId\":\"s-corrupt-e-2\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s-corrupt\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":4,\"createdAt\":\"2026-11-01T00:00:04.000Z\",\"entryId\":\"s-corrupt-e-4\",\"parentEntryId\":\"s-corrupt-e-3\"}\n{\"type\":\"assistant_message\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"first answer\"}],\"metadata\":{\"model\":\"deterministic\"}},\"sessionId\":\"s-corrupt\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":5,\"createdAt\":\"2026-11-01T00:00:05.000Z\",\"entryId\":\"s-corrupt-e-5\",\"parentEntryId\":\"s-corrupt-e-4\"}\n{this is not json\n\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s-corrupt\",\"turnId\":\"11111111-1111-4111-8111-11111\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"stopReason\":\"completed\",\"usage\":{\"inputTokens\":12,\"outputTokens\":4,\"totalTokens\":16},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-11-01T00:00:01.000Z\",\"finalMessage\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"first answer\"}],\"metadata\":{\"model\":\"deterministic\"}},\"sessionId\":\"s-corrupt\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"completedAt\":\"2026-11-01T00:00:07.000Z\"},\"sessionId\":\"s-corrupt\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":7,\"createdAt\":\"2026-11-01T00:00:07.000Z\",\"entryId\":\"s-corrupt-e-7\",\"parentEntryId\":\"s-corrupt-e-6\"}\n{\"type\":\"turn_started\",\"sessionId\":\"s-corrupt\",\"turnId\":\"22222222-2222-4222-8222-222222222222\",\"sequence\":8,\"createdAt\":\"2026-11-01T00:00:08.000Z\",\"entryId\":\"s-corrupt-e-8\",\"parentEntryId\":\"s-corrupt-e-7\"}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second question\"}]}],\"metadata\":{\"permissionMode\":\"default\",\"runMode\":\"agent\",\"basePermissionMode\":\"default\",\"allowPlanModeTools\":false},\"sessionId\":\"s-corrupt\",\"turnId\":\"22222222-2222-4222-8222-222222222222\",\"sequence\":9,\"createdAt\":\"2026-11-01T00:00:09.000Z\",\"entryId\":\"s-corrupt-e-9\",\"parentEntryId\":\"s-corrupt-e-8\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s-corrupt\",\"turnId\":\"22222222-2222-4222-8222-222222222222\",\"sequence\":10,\"createdAt\":\"2026-11-01T00:00:10.000Z\",\"entryId\":\"s-corrupt-e-10\",\"parentEntryId\":\"s-corrupt-e-9\"}\n{\"type\":\"assistant_message\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"second answer that was cut off\"}],\"metadata\":{\"model\":\"deterministic\"}},\"sessionId\":\"s-corrupt\",\"turnId\":\"22222222-2222-4222-8222-222222222222\",\"sequence\":11,\"createdAt\":\"2026-11-01T00:00:11.000Z\",\"entryId\":\"s-corrupt-e-11\",\"parentEntryId\":\"s-corrupt-e-10\"}\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-garbage.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s-garbage\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":1,\"createdAt\":\"2026-11-01T00:00:01.000Z\",\"entryId\":\"s-garbage-e-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"first question\"}]}],\"metadata\":{\"permissionMode\":\"default\",\"runMode\":\"agent\",\"basePermissionMode\":\"default\",\"allowPlanModeTools\":false},\"sessionId\":\"s-garbage\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":2,\"createdAt\":\"2026-11-01T00:00:02.000Z\",\"entryId\":\"s-garbage-e-2\",\"parentEntryId\":\"s-garbage-e-1\"}\n{\"type\":\"session_metadata\",\"metadata\":{\"firstPrompt\":\"first question\",\"lastPrompt\":\"first question\",\"title\":\"Fixture title\",\"updatedAt\":\"2026-11-01T00:00:03.000Z\"},\"sessionId\":\"s-garbage\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":3,\"createdAt\":\"2026-11-01T00:00:03.000Z\",\"entryId\":\"s-garbage-e-3\",\"parentEntryId\":\"s-garbage-e-2\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s-garbage\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":4,\"createdAt\":\"2026-11-01T00:00:04.000Z\",\"entryId\":\"s-garbage-e-4\",\"parentEntryId\":\"s-garbage-e-3\"}\n{\"type\":\"assistant_message\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"first answer\"}],\"metadata\":{\"model\":\"deterministic\"}},\"sessionId\":\"s-garbage\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":5,\"createdAt\":\"2026-11-01T00:00:05.000Z\",\"entryId\":\"s-garbage-e-5\",\"parentEntryId\":\"s-garbage-e-4\"}\n{this is not json\n\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s-garbage\",\"turnId\":\"11111111-1111-4111-8111-11111\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s-garbage\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":6,\"createdAt\":\"2026-11-01T00:00:06.000Z\",\"entryId\":\"s-garbage-e-6\",\"parentEntryId\":\"s-garbage-e-5\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"stopReason\":\"completed\",\"usage\":{\"inputTokens\":12,\"outputTokens\":4,\"totalTokens\":16},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-11-01T00:00:01.000Z\",\"finalMessage\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"first answer\"}],\"metadata\":{\"model\":\"deterministic\"}},\"sessionId\":\"s-garbage\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"completedAt\":\"2026-11-01T00:00:07.000Z\"},\"sessionId\":\"s-garbage\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":7,\"createdAt\":\"2026-11-01T00:00:07.000Z\",\"entryId\":\"s-garbage-e-7\",\"parentEntryId\":\"s-garbage-e-6\"}\n{\"type\":\"turn_started\",\"sessionId\":\"s-garbage\",\"turnId\":\"22222222-2222-4222-8222-222222222222\",\"sequence\":8,\"createdAt\":\"2026-11-01T00:00:08.000Z\",\"entryId\":\"s-garbage-e-8\",\"parentEntryId\":\"s-garbage-e-7\"}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second question\"}]}],\"metadata\":{\"permissionMode\":\"default\",\"runMode\":\"agent\",\"basePermissionMode\":\"default\",\"allowPlanModeTools\":false},\"sessionId\":\"s-garbage\",\"turnId\":\"22222222-2222-4222-8222-222222222222\",\"sequence\":9,\"createdAt\":\"2026-11-01T00:00:09.000Z\",\"entryId\":\"s-garbage-e-9\",\"parentEntryId\":\"s-garbage-e-8\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s-garbage\",\"turnId\":\"22222222-2222-4222-8222-222222222222\",\"sequence\":10,\"createdAt\":\"2026-11-01T00:00:10.000Z\",\"entryId\":\"s-garbage-e-10\",\"parentEntryId\":\"s-garbage-e-9\"}\n{\"type\":\"assistant_message\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"second answer that was cut off\"}],\"metadata\":{\"model\":\"deterministic\"}},\"sessionId\":\"s-garbage\",\"turnId\":\"22222222-2222-4222-8222-222222222222\",\"sequence\":11,\"createdAt\":\"2026-11-01T00:00:11.000Z\",\"entryId\":\"s-garbage-e-11\",\"parentEntryId\":\"s-garbage-e-10\"}\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Robust run\"}"
+      }
+    },
+    {
+      "name": "turn-3",
+      "when": [
+        "turn-3:"
+      ],
+      "reply": {
+        "text": "Done 3."
+      }
+    },
+    {
+      "name": "turn-2",
+      "when": [
+        "turn-2:"
+      ],
+      "reply": {
+        "text": "Done 2."
+      }
+    },
+    {
+      "name": "turn-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "list_sessions",
+      "params": {}
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-trunc"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-corrupt"
+      }
+    },
+    {
+      "ws": "active_turn_snapshot",
+      "params": {
+        "sessionKey": "s-trunc",
+        "includeEvents": false
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-trunc",
+        "channelKey": "test",
+        "message": "turn-1: continue after truncation",
+        "runId": "run-bbx-1"
+      },
+      "timeout": 15000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-trunc"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-corrupt",
+        "channelKey": "test",
+        "message": "turn-2: continue after corruption",
+        "runId": "run-bbx-2"
+      },
+      "timeout": 15000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-corrupt"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-garbage",
+        "channelKey": "test",
+        "message": "turn-3: continue after garbage",
+        "runId": "run-bbx-3"
+      },
+      "timeout": 15000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-garbage"
+      }
+    },
+    {
+      "ws": "list_sessions",
+      "params": {}
+    }
+  ]
+}
