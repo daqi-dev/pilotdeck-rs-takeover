@@ -1,0 +1,90 @@
+{
+  "name": "t1-file-parse-pdf",
+  "about": "正式公共HTTP file_parse成功返回固定PDF全文和准确metadata；损坏PDF明确422。",
+  "env": {
+    "PILOTDECK_PDF_TOOL": "{PDF_TOOL}"
+  },
+  "steps": [
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "file_parse",
+        "input": {
+          "filename": "normal.pdf",
+          "content_base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAyNDAgMTIwXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA0IDAgUiA+PiA+PiAvQ29udGVudHMgNSAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL1R5cGUgL0ZvbnQgL1N1YnR5cGUgL1R5cGUxIC9CYXNlRm9udCAvSGVsdmV0aWNhID4+CmVuZG9iago1IDAgb2JqCjw8IC9MZW5ndGggNTEgPj4Kc3RyZWFtCkJUIC9GMSAxOCBUZiA0MCA3MCBUZCAoUGlsb3REZWNrIG5hdGl2ZSBQREYpIFRqIEVUCmVuZHN0cmVhbQplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAowMDAwMDAwMjQxIDAwMDAwIG4gCjAwMDAwMDAzMTEgMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo0MTEKJSVFT0YK"
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "file_parse",
+        "input": {
+          "filename": "bad.pdf",
+          "content_base64": "bm90IGEgcGRm"
+        }
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "id": "pdf-status",
+      "path": "/steps/0/http/status",
+      "equals": 200
+    },
+    {
+      "id": "pdf-response",
+      "path": "/steps/0/http/body",
+      "equals": {
+        "filename": "normal.pdf",
+        "text": "PilotDeck native PDF\n\n",
+        "mediaType": "application/pdf",
+        "metadata": {
+          "fileType": "pdf",
+          "bytes": 594
+        }
+      }
+    },
+    {
+      "id": "bad-pdf-status",
+      "path": "/steps/1/http/status",
+      "equals": 422
+    },
+    {
+      "id": "bad-pdf-code",
+      "path": "/steps/1/http/body/code",
+      "equals": "PUBLIC_FILE_PARSE_FAILED"
+    },
+    {
+      "id": "http-date-0",
+      "path": "/steps/0/http/headers/date",
+      "matches": "^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [0-9]{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} GMT$"
+    },
+    {
+      "id": "http-date-1",
+      "path": "/steps/1/http/headers/date",
+      "matches": "^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [0-9]{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} GMT$"
+    }
+  ],
+  "volatile": [
+    "\\.http\\.headers\\.date$"
+  ]
+}

@@ -1,0 +1,186 @@
+{
+  "name": "t1-diagnostics-edit-js",
+  "about": "正式edit_file 对 js 坏/好文件分别执行；坏文件实际落盘并提供非空语法诊断，好文件成功且无诊断。",
+  "files": {
+    "proj/bad.js": "const value = 1;\n",
+    "proj/good.js": "const value = 1;\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Diagnostic test\"}"
+      }
+    },
+    {
+      "name": "verified-bad",
+      "when": [
+        "t1-edit-js-bad",
+        "\"tool_call_id\":\"call_bad\"",
+        "Updated bad.js",
+        "Syntax issues detected:",
+        "- L"
+      ],
+      "reply": {
+        "text": "bad verified."
+      }
+    },
+    {
+      "name": "read-bad",
+      "when": [
+        "t1-edit-js-bad",
+        "\"tool_call_id\":\"read_bad\""
+      ],
+      "unless": [
+        "\"tool_call_id\":\"call_bad\""
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bad",
+          "name": "edit_file",
+          "arguments": {
+            "file_path": "bad.js",
+            "old_string": "const value = 1;\n",
+            "new_string": "const value = ;\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "request-bad",
+      "when": [
+        "t1-edit-js-bad"
+      ],
+      "unless": [
+        "\"tool_call_id\":\"call_bad\"",
+        "\"tool_call_id\":\"read_bad\""
+      ],
+      "reply": {
+        "tool": {
+          "id": "read_bad",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "bad.js"
+          }
+        }
+      }
+    },
+    {
+      "name": "verified-good",
+      "when": [
+        "t1-edit-js-good",
+        "\"tool_call_id\":\"call_good\"",
+        "Updated good.js"
+      ],
+      "unless": [
+        "Syntax issues detected:"
+      ],
+      "reply": {
+        "text": "good verified."
+      }
+    },
+    {
+      "name": "read-good",
+      "when": [
+        "t1-edit-js-good",
+        "\"tool_call_id\":\"read_good\""
+      ],
+      "unless": [
+        "\"tool_call_id\":\"call_good\""
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_good",
+          "name": "edit_file",
+          "arguments": {
+            "file_path": "good.js",
+            "old_string": "const value = 1;\n",
+            "new_string": "const value = 2;\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "request-good",
+      "when": [
+        "t1-edit-js-good"
+      ],
+      "unless": [
+        "\"tool_call_id\":\"call_good\"",
+        "\"tool_call_id\":\"read_good\""
+      ],
+      "reply": {
+        "tool": {
+          "id": "read_good",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "good.js"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-t1-bad",
+        "projectKey": "{PROJECT}",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-t1-bad",
+        "projectKey": "{PROJECT}",
+        "channelKey": "test",
+        "message": "t1-edit-js-bad"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-t1-good",
+        "projectKey": "{PROJECT}",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-t1-good",
+        "projectKey": "{PROJECT}",
+        "channelKey": "test",
+        "message": "t1-edit-js-good"
+      },
+      "timeout": 30000
+    }
+  ],
+  "assertions": [
+    {
+      "id": "bad-observable-result",
+      "path": "/provider/verified-bad/0",
+      "exists": true
+    },
+    {
+      "id": "bad-persisted-content",
+      "path": "/tree/~1proj~1bad.js/text",
+      "equals": "const value = ;\n"
+    },
+    {
+      "id": "good-observable-result",
+      "path": "/provider/verified-good/0",
+      "exists": true
+    },
+    {
+      "id": "good-persisted-content",
+      "path": "/tree/~1proj~1good.js/text",
+      "equals": "const value = 2;\n"
+    }
+  ]
+}

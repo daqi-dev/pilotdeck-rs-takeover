@@ -80,3 +80,22 @@ test('side-specific positive assertions are explicit, not silently omitted', () 
   assert.deepEqual(assertionResults(assertions, { value: 2 }, 'ts'), [{ id: 'rust-value', skipped: true }]);
   assert.deepEqual(assertionResults(assertions, { value: 2 }, 'rust'), [{ id: 'rust-value', passed: false }]);
 });
+test('component replacement or absence changes the recorded run identity', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bbx-component-'));
+  const keys = ['BBX_BASELINE', 'BBX_TARGET', 'BBX_SRC', 'BBX_PDF_TOOL'];
+  const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  try {
+    Object.assign(process.env, { BBX_BASELINE: dir, BBX_TARGET: dir, BBX_SRC: dir, BBX_PDF_TOOL: path.join(dir, 'pdf-component') });
+    const missing = inputIdentity();
+    fs.writeFileSync(process.env.BBX_PDF_TOOL, 'component-version-one');
+    const first = inputIdentity();
+    fs.writeFileSync(process.env.BBX_PDF_TOOL, 'component-version-two');
+    const replaced = inputIdentity();
+    assert.equal(missing.components.pdf.sha256, null);
+    assert.notDeepEqual(first.components, missing.components);
+    assert.notDeepEqual(first.components, replaced.components);
+  } finally {
+    for (const key of keys) if (previous[key] === undefined) delete process.env[key]; else process.env[key] = previous[key];
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

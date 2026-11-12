@@ -1,0 +1,91 @@
+{
+  "name": "t1-pdf-attached",
+  "about": "固定合法单页PDF从正式WS submit_turn调用read_file；命中verified-tool须同时观察预期工具结果，再继续模型回合。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/vision\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        vision:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n          multimodal:\n            input: [text, image, pdf]\ntelemetry:\n  enabled: false\n",
+  "env": {
+    "PILOTDECK_PDF_TOOL": "{PDF_TOOL}"
+  },
+  "files": {
+    "proj/doc.pdf": "%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 240 120] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n5 0 obj\n<< /Length 51 >>\nstream\nBT /F1 18 Tf 40 70 Td (PilotDeck native PDF) Tj ET\nendstream\nendobj\nxref\n0 6\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n0000000241 00000 n \n0000000311 00000 n \ntrailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n411\n%%EOF\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"PDF test\"}"
+      }
+    },
+    {
+      "name": "verified-tool",
+      "when": [
+        "t1-pdf-read",
+        "\"tool_call_id\":\"call_t1_pdf\"",
+        "PDF file read: doc.pdf",
+        "application/pdf"
+      ],
+      "reply": {
+        "text": "PDF verified."
+      }
+    },
+    {
+      "name": "request-tool",
+      "when": [
+        "t1-pdf-read"
+      ],
+      "unless": [
+        "\"tool_call_id\":\"call_t1_pdf\""
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_t1_pdf",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "doc.pdf"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-t1-pdf",
+        "projectKey": "{PROJECT}",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-t1-pdf",
+        "projectKey": "{PROJECT}",
+        "channelKey": "test",
+        "message": "t1-pdf-read"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-t1-pdf",
+        "projectKey": "{PROJECT}"
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "id": "verified-tool-result",
+      "path": "/provider/verified-tool/0",
+      "exists": true
+    },
+    {
+      "id": "pdf-unchanged",
+      "path": "/tree/~1proj~1doc.pdf/text",
+      "equals": "%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 240 120] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n5 0 obj\n<< /Length 51 >>\nstream\nBT /F1 18 Tf 40 70 Td (PilotDeck native PDF) Tj ET\nendstream\nendobj\nxref\n0 6\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n0000000241 00000 n \n0000000311 00000 n \ntrailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n411\n%%EOF\n"
+    }
+  ]
+}

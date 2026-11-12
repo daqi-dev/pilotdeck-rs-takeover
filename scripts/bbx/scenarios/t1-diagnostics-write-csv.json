@@ -1,0 +1,141 @@
+{
+  "name": "t1-diagnostics-write-csv",
+  "about": "正式write_file 对 csv 坏/好文件分别执行；坏文件实际落盘并提供非空语法诊断，好文件成功且无诊断。",
+  "files": {},
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Diagnostic test\"}"
+      }
+    },
+    {
+      "name": "verified-bad",
+      "when": [
+        "t1-write-csv-bad",
+        "\"tool_call_id\":\"call_bad\"",
+        "Created bad.csv",
+        "Syntax issues detected:",
+        "- L"
+      ],
+      "reply": {
+        "text": "bad verified."
+      }
+    },
+    {
+      "name": "request-bad",
+      "when": [
+        "t1-write-csv-bad"
+      ],
+      "unless": [
+        "\"tool_call_id\":\"call_bad\""
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bad",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "bad.csv",
+            "content": "a,b\n\"unterminated,1\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "verified-good",
+      "when": [
+        "t1-write-csv-good",
+        "\"tool_call_id\":\"call_good\"",
+        "Created good.csv"
+      ],
+      "unless": [
+        "Syntax issues detected:"
+      ],
+      "reply": {
+        "text": "good verified."
+      }
+    },
+    {
+      "name": "request-good",
+      "when": [
+        "t1-write-csv-good"
+      ],
+      "unless": [
+        "\"tool_call_id\":\"call_good\""
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_good",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "good.csv",
+            "content": "a,b\n3,4\n"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-t1-bad",
+        "projectKey": "{PROJECT}",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-t1-bad",
+        "projectKey": "{PROJECT}",
+        "channelKey": "test",
+        "message": "t1-write-csv-bad"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-t1-good",
+        "projectKey": "{PROJECT}",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-t1-good",
+        "projectKey": "{PROJECT}",
+        "channelKey": "test",
+        "message": "t1-write-csv-good"
+      },
+      "timeout": 30000
+    }
+  ],
+  "assertions": [
+    {
+      "id": "bad-observable-result",
+      "path": "/provider/verified-bad/0",
+      "exists": true
+    },
+    {
+      "id": "bad-persisted-content",
+      "path": "/tree/~1proj~1bad.csv/text",
+      "equals": "a,b\n\"unterminated,1\n"
+    },
+    {
+      "id": "good-observable-result",
+      "path": "/provider/verified-good/0",
+      "exists": true
+    },
+    {
+      "id": "good-persisted-content",
+      "path": "/tree/~1proj~1good.csv/text",
+      "equals": "a,b\n3,4\n"
+    }
+  ]
+}

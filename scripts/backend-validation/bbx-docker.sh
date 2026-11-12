@@ -3,6 +3,8 @@
 set -euo pipefail
 if (( $# < 2 )); then echo 'usage: bbx-docker.sh TASK_ROOT NEW_OUTPUT_DIRECTORY [check.mjs arguments ...]' >&2; exit 2; fi
 task_root=$(cd "$1" && pwd)
+harness_root="${PDRS_BBX_HARNESS_ROOT:-$task_root/checkout}"
+[[ "$harness_root" == "$task_root/"* && -f "$harness_root/scripts/bbx/check.mjs" ]] || { echo 'harness must be inside task root' >&2; exit 2; }
 output=$2
 shift 2
 [[ "$output" == "$task_root/"* ]] || { echo 'output must be inside task root' >&2; exit 2; }
@@ -11,6 +13,11 @@ shift 2
 mkdir -p "$(dirname "$output")"
 container_name="pdrs-bbx-$$-$(date +%s)"
 printf '%s\n' "$container_name" > "$output.container-name"
+if [[ -f "$harness_root/source-commit.txt" ]]; then
+  cp "$harness_root/source-commit.txt" "$output.harness-commit.txt"
+else
+  git -C "$harness_root" rev-parse HEAD > "$output.harness-commit.txt"
+fi
 arch=$(uname -m)
 libs="/lib/$arch-linux-gnu"
 [[ -d "$libs" ]]
@@ -33,6 +40,6 @@ exec docker run --rm --name "$container_name" --network none --user "$(id -u):$(
   --env "BBX_SRC=$task_root/checkout/src" \
   --env BBX_TMP_ROOT=/tmp \
   --env "BBX_PDF_TOOL=$task_root/tools/mupdf/bin/pilotdeck-pdf" \
-  --workdir "$task_root/checkout" \
+  --workdir "$harness_root" \
   "${PDRS_TEST_IMAGE:-debian:bookworm-slim}" \
   node scripts/bbx/check.mjs --out "$output" "$@"

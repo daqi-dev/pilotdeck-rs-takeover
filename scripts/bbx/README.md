@@ -127,3 +127,5 @@ node scripts/bbx/selftest.mjs
 `BBX_TMP_ROOT` 只指定临时目录的父目录，实际清理由采集器自身的槽位目录承担；Linux 无需创建 `/private/tmp`。`BBX_COLLECT_TIMEOUT_MS` 为单次采集/比较进程的最长等待时间，默认 600000 ms；超过后终止该进程并按失败记录。CLI 子进程使用独立进程组，超时和收尾只清理本次创建的进程。
 
 固定 18789 场景必须在 Docker 私有网络内运行，采集器的占用保护保持启用。容器不映射宿主端口、不挂载真实用户 home，使用非特权 UID；该结果不能替代 Seatbelt 等宿主专项测试。
+
+原生 PDF 场景以 `BBX_PDF_TOOL` 指定已从固定源码构建的组件，场景的 `env.PILOTDECK_PDF_TOOL` 可引用 `{PDF_TOOL}`。运行身份记录该路径及组件 SHA-256；缺失也明确记为 null，运行期间替换组件使证据失效。未指定时占位符解析为明确不存在的测试路径，不借用宿主其他安装。HTTP `Date` 的时间波动由各场景显式声明 `volatile`，相应正向断言仍验证响应头存在且格式正确，不全局忽略任意 Date 字段。
