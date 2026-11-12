@@ -1,0 +1,17 @@
+{
+  "name": "slash-plan-command",
+  "about": "gateway 拦截的 /plan 命令：不带任务或只有空白时回用法文本、不发起轮次；/plan <任务> 去掉前缀后以计划模式（runMode plan、计划模式工具）跑一轮；/planner 这类只是前缀相同的消息不算命令，原样当文本。",
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Plan command\"}" } },
+    { "name": "main", "reply": { "text": "Plan noted." } }
+  ],
+  "steps": [
+    { "ws": "submit_turn", "params": { "sessionKey": "s-plan", "channelKey": "test", "message": "/plan" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-plan", "channelKey": "test", "message": "  /plan   \n " } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-plan", "channelKey": "test", "message": "/plan  design a tiny feature\n with two lines " } },
+    { "sleep": 300 },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-plan", "channelKey": "test", "message": "/planner is not a command" } },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-plan" } }
+  ]
+}
