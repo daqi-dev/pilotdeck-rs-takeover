@@ -1258,15 +1258,10 @@ const SUBSET_CHANNEL_KEYS: [&str; 7] = [
 ];
 
 /// The loader keys a connecting config refuses: the four credential channels
-/// with their credentials present, and `matrix` with a homeserver its
-/// baseline constructor cannot `.replace`.
-const REFUSED_LOADER_KEYS: [&str; 5] = [
-    "mattermost",
-    "signal",
-    "whatsapp",
-    "matrix",
-    "homeassistant",
-];
+/// with their credentials present. (`matrix` never connects: its SDK is
+/// missing, and a homeserver its constructor cannot `.replace` is a logged
+/// load failure, see `wrong_option_types_log_the_baseline_line`.)
+const REFUSED_LOADER_KEYS: [&str; 4] = ["mattermost", "signal", "whatsapp", "homeassistant"];
 /// The SDK-missing loader keys and the line each one's start logs.
 const SDK_MISSING_KEYS: [(&str, &str); 6] = [
     (
@@ -1307,7 +1302,6 @@ fn connecting_cfg(key: &str, enabled: &str) -> String {
         "signal" => r#","extra":{"account":"+15550000000"}"#,
         "whatsapp" => r#","extra":{"bridgePath":"/bridge"}"#,
         "homeassistant" => r#","token":"t""#,
-        "matrix" => r#","token":"t","extra":{"homeserver":5}"#,
         "telegram" | "discord" | "slack" => r#","token":"t""#,
         _ => "",
     };
@@ -1357,10 +1351,6 @@ fn assert_rejects_unmigrated(key: &str) {
 }
 
 #[test]
-fn rejects_unmigrated_matrix() {
-    assert_rejects_unmigrated("matrix");
-}
-#[test]
 fn rejects_unmigrated_mattermost() {
     assert_rejects_unmigrated("mattermost");
 }
@@ -1392,6 +1382,106 @@ fn sdk_missing_loader_channels_are_not_refused() {
     crate::negative_assert!(
         reject_unmigrated_channels_with_env(Some(&matrix), &no_env).is_ok(),
         "matrix with a string homeserver is not refused"
+    );
+}
+
+// An option of the wrong type makes the baseline's constructor throw (the
+// loader logs `Failed to load channel` and moves on) or its start reject
+// before any connection (the server logs `start failed`): never a refusal.
+#[tokio::test]
+async fn wrong_option_types_log_the_baseline_line() {
+    let constructor = [
+        (
+            r#"{"matrix":{"enabled":true,"token":"t","extra":{"homeserver":5}}}"#,
+            "matrix",
+            "TypeError: (options.homeserver ?? process.env.MATRIX_HOMESERVER ?? \"\").replace is not a function",
+        ),
+        (
+            r#"{"signal":{"enabled":true,"extra":{"restUrl":[1],"account":"+1"}}}"#,
+            "signal",
+            "TypeError: url.replace is not a function",
+        ),
+        (
+            r#"{"whatsapp":{"enabled":true,"extra":{"bridgePath":5,"bridgeUrl":5}}}"#,
+            "whatsapp",
+            "TypeError: (options.bridgePath ?? process.env.WHATSAPP_BRIDGE_PATH ?? \"\").trim is not a function",
+        ),
+        (
+            r#"{"whatsapp":{"enabled":true,"extra":{"bridgePath":"/b","bridgeUrl":true}}}"#,
+            "whatsapp",
+            "TypeError: url.replace is not a function",
+        ),
+    ];
+    let mut mounts = ChannelLoaderMounts::default();
+    super::unavailable::register_with_env(&mut mounts, Arc::new(no_env));
+    for (config, key, error) in constructor {
+        let adapters = adapters_config(config);
+        crate::negative_assert!(
+            reject_unmigrated_channels_with_env(Some(&adapters), &no_env).is_ok(),
+            "a constructor TypeError is not a refusal"
+        );
+        let mut errors = Vec::new();
+        let channels = load_enabled_channels(
+            Some(&adapters),
+            &LoadEnabledChannelsOptions { pilot_home: None },
+            &mounts,
+            &mut |message| errors.push(message),
+        );
+        crate::negative_assert!(channels.is_empty(), "the channel is not constructed");
+        crate::negative_assert_eq!(
+            errors,
+            vec![format!(
+                "[adapters] Failed to load channel \"{key}\": {error}"
+            )],
+            "the loader logs the baseline line"
+        );
+    }
+    let start = [
+        (
+            r#"{"enabled":true,"token":"t","extra":{"serverUrl":5}}"#,
+            "mattermost",
+            "this.serverUrl.replace is not a function",
+        ),
+        (
+            r#"{"enabled":true,"token":"t","extra":{"url":5}}"#,
+            "homeassistant",
+            "base.startsWith is not a function",
+        ),
+    ];
+    for (cfg, key, error) in start {
+        let adapters = adapters_config(&format!("{{\"{key}\":{cfg}}}"));
+        crate::negative_assert!(
+            reject_unmigrated_channels_with_env(Some(&adapters), &no_env).is_ok(),
+            "a start TypeError is not a refusal"
+        );
+        let mut errors = Vec::new();
+        let channels = load_enabled_channels(
+            Some(&adapters),
+            &LoadEnabledChannelsOptions { pilot_home: None },
+            &mounts,
+            &mut |message| errors.push(message),
+        );
+        crate::negative_assert!(errors.is_empty(), "loader errors: {errors:?}");
+        let rejected = channels[0]
+            .start(ChannelStartDeps {
+                config: None,
+                report_status: None,
+                log: None,
+                turn_gateway: None,
+            })
+            .await;
+        let Err(rejected) = rejected else {
+            panic!("{key} start must reject");
+        };
+        crate::negative_assert_eq!(rejected.message(), error, "the start rejection message");
+    }
+    // A string URL with a token goes on to connect: still refused.
+    let connecting = adapters_config(
+        r#"{"homeassistant":{"enabled":true,"token":"t","extra":{"url":"http://127.0.0.1:9"}}}"#,
+    );
+    crate::negative_assert!(
+        reject_unmigrated_channels_with_env(Some(&connecting), &no_env).is_err(),
+        "a connecting homeassistant config is refused"
     );
 }
 

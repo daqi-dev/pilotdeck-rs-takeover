@@ -129,7 +129,12 @@ pub fn reject_unmigrated_channels_with_env(
         }
         if CHANNEL_LOADER_KEYS.contains(key) {
             let options = build_options(key, cfg, &LoadEnabledChannelsOptions { pilot_home: None });
-            if let Some(UnavailableStart::Line(_)) = unavailable_start(key, &options, env) {
+            if let Some(
+                UnavailableStart::Line(_)
+                | UnavailableStart::ConstructorTypeError(_)
+                | UnavailableStart::StartTypeError(_),
+            ) = unavailable_start(key, &options, env)
+            {
                 continue;
             }
         }
@@ -153,8 +158,16 @@ pub enum UnavailableStart {
     /// The baseline's start logs this line through `logger.error` and returns
     /// a no-op handle; the process keeps running.
     Line(&'static str),
-    /// The baseline would go further (a real connection, or a constructor
-    /// input shape whose failure Rust does not reproduce): startup is
+    /// The constructor throws a `TypeError` with this message on an option
+    /// of the wrong type: `loadEnabledChannels` logs `[adapters] Failed to
+    /// load channel "<key>": TypeError: <message>` and moves on
+    /// (loadEnabledChannels.ts:132-136).
+    ConstructorTypeError(&'static str),
+    /// `start` rejects with a `TypeError` with this message before any
+    /// connection is made: the server logs `[adapters] channel <key> start
+    /// failed: <message>` and keeps running (pilotdeckServer.ts:275-285).
+    StartTypeError(&'static str),
+    /// The baseline would go further (a real connection): startup is
     /// refused instead.
     Unsupported,
 }
@@ -201,8 +214,9 @@ pub fn unavailable_start(
     options: &JsObject,
     env: &EnvLookupFn,
 ) -> Option<UnavailableStart> {
-    use UnavailableStart::{Line, Unsupported};
+    use UnavailableStart::{ConstructorTypeError, Line, StartTypeError, Unsupported};
     let undefined = JsValue::Undefined;
+    let is_string = |value: &JsValue| matches!(value, JsValue::String(_));
     let option = |name: &str| options.get(name).unwrap_or(&undefined).clone();
     // `options.x ?? process.env.X ?? fallback`.
     let either = |name: &str, var: &str, fallback: JsValue| {
@@ -215,19 +229,19 @@ pub fn unavailable_start(
     let truthy = |value: &JsValue| js_truthy(Some(value));
     if let Some((_, line)) = SDK_MISSING_LINES.iter().find(|(name, _)| *name == key) {
         // MatrixChannel's constructor calls `.replace` on the homeserver
-        // (MatrixChannel.ts constructor) before `start` is ever reached.
-        if key == "matrix"
-            && !matches!(
-                either("homeserver", "MATRIX_HOMESERVER", "".into()),
-                JsValue::String(_)
-            )
-        {
-            return Some(Unsupported);
+        // (MatrixChannel.ts:49) before `start` is ever reached; V8 names the
+        // compiled call expression in its message.
+        if key == "matrix" && !is_string(&either("homeserver", "MATRIX_HOMESERVER", "".into())) {
+            return Some(ConstructorTypeError(
+                "(options.homeserver ?? process.env.MATRIX_HOMESERVER ?? \"\").replace is not a function",
+            ));
         }
         return Some(Line(line));
     }
     match key {
-        // MattermostChannel.ts:48-49 constructor, :57-60 start.
+        // MattermostChannel.ts:48-49 constructor, :57-60 start; the first
+        // thing start does with the URL is `this.serverUrl.replace(...)`
+        // (:66), before any request.
         "mattermost" => {
             let token = either("token", "MATTERMOST_TOKEN", "".into());
             let server_url = either("serverUrl", "MATTERMOST_URL", "".into());
@@ -235,45 +249,56 @@ pub fn unavailable_start(
                 Line(
                     "mattermost: serverUrl and token are required (MATTERMOST_URL, MATTERMOST_TOKEN)",
                 )
+            } else if !is_string(&server_url) {
+                StartTypeError("this.serverUrl.replace is not a function")
             } else {
                 Unsupported
             })
         }
         // SignalChannel.ts:83-87 constructor (`normalizeBaseUrl` calls
-        // `.replace`), :93-96 start.
+        // `url.replace`, :27-29), :93-96 start.
         "signal" => {
             let rest_url = either("restUrl", "SIGNAL_HTTP_URL", "http://127.0.0.1:8080".into());
             let account = either("account", "SIGNAL_ACCOUNT", "".into());
-            Some(
-                if matches!(rest_url, JsValue::String(_)) && !truthy(&account) {
-                    Line("signal: SIGNAL_ACCOUNT / account not set")
-                } else {
-                    Unsupported
-                },
-            )
+            Some(if !is_string(&rest_url) {
+                ConstructorTypeError("url.replace is not a function")
+            } else if !truthy(&account) {
+                Line("signal: SIGNAL_ACCOUNT / account not set")
+            } else {
+                Unsupported
+            })
         }
-        // WhatsAppChannel.ts:51-54 constructor (`.trim()`,
-        // `normalizeBaseUrl`), :61-64 start.
+        // WhatsAppChannel.ts:51-54 constructor (`.trim()`, then
+        // `normalizeBaseUrl`'s `url.replace`, :27-29), :61-64 start.
         "whatsapp" => {
             let bridge_path = either("bridgePath", "WHATSAPP_BRIDGE_PATH", "".into());
             let bridge_url = either("bridgeUrl", "WHATSAPP_BRIDGE_URL", "".into());
-            Some(match (&bridge_path, &bridge_url) {
-                (JsValue::String(path), JsValue::String(_))
-                    if crate::metadata::js_trim(&String::from_utf16_lossy(path.units()))
-                        .is_empty() =>
-                {
-                    Line("whatsapp: bridgePath / WHATSAPP_BRIDGE_PATH is required")
-                }
-                _ => Unsupported,
+            let JsValue::String(path) = &bridge_path else {
+                return Some(ConstructorTypeError(
+                    "(options.bridgePath ?? process.env.WHATSAPP_BRIDGE_PATH ?? \"\").trim is not a function",
+                ));
+            };
+            Some(if !is_string(&bridge_url) {
+                ConstructorTypeError("url.replace is not a function")
+            } else if crate::metadata::js_trim(&String::from_utf16_lossy(path.units())).is_empty() {
+                Line("whatsapp: bridgePath / WHATSAPP_BRIDGE_PATH is required")
+            } else {
+                Unsupported
             })
         }
-        // HomeAssistantChannel.ts:67 constructor, :76-79 start.
+        // HomeAssistantChannel.ts:67 constructor, :76-79 start; with a token,
+        // start's `openSocket` first calls `httpToWs(this.url)` (:35-36),
+        // whose `base.startsWith` throws on a non-string URL before any
+        // connection.
         "homeassistant" => {
             let token = either("token", "HASS_TOKEN", JsValue::Undefined);
-            Some(if truthy(&token) {
-                Unsupported
-            } else {
+            let url = either("url", "HASS_URL", "http://127.0.0.1:8123".into());
+            Some(if !truthy(&token) {
                 Line("homeassistant: HASS_TOKEN not set")
+            } else if !is_string(&url) {
+                StartTypeError("base.startsWith is not a function")
+            } else {
+                Unsupported
             })
         }
         _ => None,
