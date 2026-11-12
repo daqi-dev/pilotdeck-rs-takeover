@@ -1,0 +1,43 @@
+{
+  "name": "loop-finish-reasons",
+  "about": "各种结束原因下循环的走向（agent/loop/AgentLoop.ts）。f1：文本 + 未知 finish_reason（openai stream 归一化为 unknown）→ 保留文本、注入提示重试（1105，buildUnknownFinishRecoveryPrompt 3149），再正常结束；f2：一直未知 → 2 次后 model_error（1129）；f3：工具调用 + 未知 finish_reason → 不执行调用，带工具的提示；f4：文本 + content_filter → agent_status content_filter_stop（3807）后 completed；f5：只有推理没有可见文本 → 「previous response was empty」提示重试（1349）；f6：一直只有推理 → model_empty_response_exhausted；f7：会话第二轮 provider 报缺 reasoning_content（DeepSeek 思考模式的 400 文案）→ 给历史助手消息补空 reasoning_content 再试一次（1389）。",
+  "files": { "home/.pilotdeck/a.txt": "alpha\n" },
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\":\"Fin\"}" } },
+    { "name": "f1-retry", "when": ["f1:", "without a recognized finish reason"], "reply": { "text": "rest." } },
+    { "name": "f1", "when": ["f1:"], "reply": { "text": "Start ", "finish": "weird_reason" } },
+    { "name": "f2", "when": ["f2:"], "reply": { "text": "Again ", "finish": "weird_reason" } },
+    { "name": "f3-done", "when": ["f3:", "\"tool_call_id\":\"call_f3\""], "reply": { "text": "f3 done." } },
+    { "name": "f3-retry", "when": ["f3:", "No tool call was executed"], "reply": { "tool": { "id": "call_f3", "name": "read_file", "arguments": { "file_path": "a.txt" } } } },
+    { "name": "f3", "when": ["f3:"], "reply": { "tool": { "id": "call_f3x", "name": "read_file", "arguments": { "file_path": "a.txt" } }, "finish": "weird_reason" } },
+    { "name": "f4", "when": ["f4:"], "reply": { "text": "Filtered part", "finish": "content_filter" } },
+    { "name": "f5-retry", "when": ["f5:", "previous response was empty"], "reply": { "text": "f5 visible." } },
+    { "name": "f5", "when": ["f5:"], "reply": { "reasoning": "silent thought", "text": "" } },
+    { "name": "f6", "when": ["f6:"], "reply": { "reasoning": "still silent", "text": "" } },
+    { "name": "f7-fixed", "when": ["f7 second", "\"reasoning_content\":\"\""], "reply": { "text": "f7 fixed." } },
+    { "name": "f7-missing", "when": ["f7 second"], "reply": { "status": 400, "body": { "error": { "message": "The `reasoning_content` in the thinking mode must be passed back to the API.", "type": "invalid_request_error", "code": "invalid_request_error" } } } },
+    { "name": "f7-first", "when": ["f7:"], "reply": { "text": "f7 first answer." } }
+  ],
+  "steps": [
+    { "ws": "submit_turn", "params": { "sessionKey": "s-f1", "channelKey": "test", "message": "f1: go" }, "timeout": 20000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-f1" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-f2", "channelKey": "test", "message": "f2: go" }, "timeout": 20000 },
+    { "sleep": 300 },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-f3", "channelKey": "test", "message": "f3: go" }, "timeout": 20000 },
+    { "sleep": 300 },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-f4", "channelKey": "test", "message": "f4: go" }, "timeout": 20000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-f4" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-f5", "channelKey": "test", "message": "f5: go" }, "timeout": 20000 },
+    { "sleep": 300 },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-f6", "channelKey": "test", "message": "f6: go" }, "timeout": 20000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-f6" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-f7", "channelKey": "test", "message": "f7: go" }, "timeout": 20000 },
+    { "sleep": 300 },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-f7", "channelKey": "test", "message": "f7 second" }, "timeout": 20000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-f7" } }
+  ]
+}

@@ -367,6 +367,13 @@ impl TurnRunner {
                 "empty_response",
                 "content_filter",
                 "unknown_finish_reason",
+                // The baseline gateway runs AgentLoop in process, where the
+                // durable status keeps its own kind: createContentFilterStopStatus
+                // (AgentLoop.ts:3807-3811) is kind "error" with severity
+                // "warning". It is the only loop status whose kind the
+                // sidecar-side inference above (agentLoopSidecarClient.ts:1760)
+                // would get wrong.
+                "content_filter_stop",
             ]
             .iter()
             .any(|v| name == (*v).into());
