@@ -1058,7 +1058,12 @@ async fn start_assembly(
                 &context.session_key,
             )
         })),
-        diagnostic: Arc::new(|d| eprintln!("native session: {d:?}")),
+        // TS returns the transcript read diagnostics from `resumeAgentSession`
+        // (resumeAgentSession.ts:118) and `ProjectSessionFactory.createSession`
+        // drops them with the rest of the result: nothing reaches the server's
+        // output, not even the `transcript_missing` warning every new session
+        // has.
+        diagnostic: Arc::new(|_| {}),
     }));
     let built = (|| -> Result<_, ProxyError> {
         // TS parity: an unconfigured runRegistry is simply absent, so the file

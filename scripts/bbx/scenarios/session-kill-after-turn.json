@@ -1,0 +1,47 @@
+{
+  "name": "session-kill-after-turn",
+  "about": "一轮对话结束后直接 SIGKILL gateway（不走停机流程），比较会话目录的落盘：不得有基线没有的文件（如 Rust 的会话锁文件），投影检查点 .jsonl.projections.json 停在基线保存时的位置。",
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Say hello\"}"
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "Hello from the mock."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "serve": [
+        "server"
+      ],
+      "signal": "SIGKILL",
+      "then": [
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-kill",
+            "channelKey": "test",
+            "message": "hello"
+          }
+        },
+        {
+          "sleep": 1500
+        }
+      ]
+    }
+  ]
+}

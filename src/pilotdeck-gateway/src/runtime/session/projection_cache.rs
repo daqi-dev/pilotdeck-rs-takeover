@@ -77,6 +77,9 @@ struct PendingWrites {
     active: bool,
     submitted: u64,
     completed: u64,
+    /// One entry per admitted ticket, in ticket order: the last sequence an
+    /// automatic save may include (`None` for a flush, which takes all).
+    bounds: std::collections::VecDeque<Option<f64>>,
 }
 impl ProjectionCache {
     pub(super) fn new(
@@ -97,6 +100,7 @@ impl ProjectionCache {
                 active: true,
                 submitted: 0,
                 completed: 0,
+                bounds: std::collections::VecDeque::new(),
             }),
             done: std::sync::Condvar::new(),
             diagnostic: Mutex::new(None),
@@ -220,20 +224,23 @@ impl ProjectionCache {
             pending = self.done.wait(pending).unwrap_or_else(|e| e.into_inner());
         }
     }
-    fn request(self: &Arc<Self>) -> Option<u64> {
+    fn request(self: &Arc<Self>, bound: Option<f64>) -> Option<u64> {
         let mut pending = lock(&self.pending);
         if !pending.active {
             return None;
         }
         let start_worker = pending.completed == pending.submitted;
         pending.submitted += 1;
+        pending.bounds.push_back(bound);
         let ticket = pending.submitted;
         if start_worker {
             let cache = self.clone();
             std::thread::spawn(move || {
                 loop {
-                    let outcome =
-                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cache.capture()));
+                    let bound = lock(&cache.pending).bounds.pop_front().flatten();
+                    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        cache.capture(bound)
+                    }));
                     if outcome.is_err() {
                         *lock(&cache.diagnostic) =
                             Some("Projection checkpoint store panicked.".into());
@@ -249,17 +256,36 @@ impl ProjectionCache {
         }
         Some(ticket)
     }
-    pub(super) fn schedule(self: &Arc<Self>) {
-        let _ = self.request();
+    /// The automatic save after a committed `turn_result` (TS
+    /// SessionProjectionCheckpointBinding.ts:23-25). TS captures it by reading
+    /// the session runtime, whose `read()` waits only for the commits already
+    /// queued when the save starts (SessionRuntime.ts:131-141); appends the
+    /// turn makes after its result commits (the metadata tail re-append,
+    /// TurnRunner.ts `finalizeSessionMetadata`) queue behind that read. So the
+    /// checkpoint stops at the `turn_result`: `through` is its sequence, and
+    /// later rows wait for the next save or the closing flush. A row without
+    /// a numeric sequence cannot bound anything and saves the whole log.
+    pub(super) fn schedule(self: &Arc<Self>, through: Option<f64>) {
+        let _ = self.request(through);
     }
     /// The flush ticket follows every previously admitted automatic save.
     pub(super) fn flush(self: &Arc<Self>) {
-        if let Some(ticket) = self.request() {
+        if let Some(ticket) = self.request(None) {
             self.wait_for(ticket);
         }
     }
-    fn capture(&self) {
+    fn capture(&self, through: Option<f64>) {
         let _write = lock(&self.writes);
+        let upto = |entries: &[JsValue]| -> Vec<JsValue> {
+            match through {
+                Some(limit) => entries
+                    .iter()
+                    .filter(|entry| sequence(entry) <= limit)
+                    .cloned()
+                    .collect(),
+                None => entries.to_vec(),
+            }
+        };
         let capture = || -> RuntimeResult {
             for _ in 0..3 {
                 let read = self
@@ -268,13 +294,12 @@ impl ProjectionCache {
                     .map_err(|e| RuntimeError::new(e.to_string()))?;
                 read.ensure_writable()
                     .map_err(|e| RuntimeError::new(e.to_string()))?;
-                let entries = lock(&self.projection.entries);
-                if last_sequence(&entries) != last_sequence(&read.entries) {
+                let entries = upto(&lock(&self.projection.entries));
+                if last_sequence(&entries) != last_sequence(&upto(&read.entries)) {
                     continue;
                 }
                 let state = project(&entries)?;
                 let envelope = envelope(&self.key.session_id, &entries, &state);
-                drop(entries);
                 self.store.save(&envelope)?;
                 return Ok(());
             }
