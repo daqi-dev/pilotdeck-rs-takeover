@@ -716,6 +716,7 @@ async fn start_assembly(
                     &mut config,
                     session_overrides.sdk_config(&context.session_key).as_ref(),
                 );
+                super::sdk_config::apply_model_fields(&mut config, sdk_config.as_ref());
                 apply_session_overrides(
                     &mut config,
                     stored_permission_mode.as_ref(),
@@ -1309,6 +1310,7 @@ async fn start_assembly(
                 sdk_config: Some(Arc::new(super::sdk_config::NativeSdkSessionConfig {
                     options: options.clone(),
                     overrides: session_overrides.clone(),
+                    project: build_project.clone(),
                 })),
                 model_assertion: Some(project_admission.clone()),
                 dialog_recovery: Some(project_admission),

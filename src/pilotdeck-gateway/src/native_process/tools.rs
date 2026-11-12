@@ -840,6 +840,15 @@ impl SessionTools {
                 agent_max_context_tokens: self.config.get("maxContextTokens").cloned(),
                 // `isMainAgent: !config.isSubagent`.
                 is_main_agent: self.config.get("isSubagent") != Some(&JsValue::Bool(true)),
+                // `fallbackModels: config.fallbackModels`
+                // (AgentSessionRuntimeBundle.ts:189).
+                fallback_models: match self.config.get("fallbackModels") {
+                    Some(JsValue::Array(models)) => models
+                        .iter()
+                        .filter_map(crate::runtime::model::router::RouterModelRef::from_value)
+                        .collect(),
+                    _ => Vec::new(),
+                },
                 ..RouterModelPortOptions::main_agent()
             },
             recorder: None,

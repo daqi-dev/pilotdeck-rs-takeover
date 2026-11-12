@@ -29,6 +29,7 @@ pub(super) const WIRED_FIELDS: &[&str] = &[
     "permissionMode",
     "additionalWorkingDirectories",
     "managedPermissions",
+    "fallbackModel",
 ];
 
 const INVALID: &str = "INVALID_SDK_SESSION_CONFIG";
@@ -679,6 +680,119 @@ pub(super) fn apply_prompt_fields(agent: &mut JsObject, config: Option<&JsValue>
 pub(super) struct NativeSdkSessionConfig {
     pub options: super::Options,
     pub overrides: Arc<SessionOverrides>,
+    /// The project runtimes whose model catalog the server-side checks
+    /// resolve against (`this.resolve(projectKey).snapshot`).
+    pub project: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
+}
+
+/// `runtime.snapshot.config.model` of the project the config is set for.
+fn project_model_config(
+    registry: &crate::runtime::project::ProjectRuntimeRegistry,
+    root: &std::path::Path,
+) -> Result<JsValue, SubmitError> {
+    let lease = registry
+        .acquire(Some(root))
+        .map_err(|error| err("gateway_request_failed", error.to_string()))?;
+    let resources = lease
+        .runtime()
+        .resources()
+        .get::<crate::runtime::project::ProjectResources>()
+        .ok_or_else(|| {
+            err(
+                "gateway_request_failed",
+                "Native project resources are missing.",
+            )
+        })?;
+    Ok(resources
+        .context()
+        .snapshot()
+        .get("config")
+        .and_then(|config| config.get("model"))
+        .cloned()
+        .unwrap_or(JsValue::Undefined))
+}
+
+/// `resolveSdkConfiguredModel` (ProjectRuntimeRegistry.ts:1891-1924): the one
+/// catalog entry whose id, `provider/model` or bare model key equals the
+/// request.
+fn resolve_configured_model(
+    model_config: &JsValue,
+    requested: &JsString,
+    code: &str,
+    label: &str,
+) -> Result<(JsString, JsString), SubmitError> {
+    let mut candidates = Vec::new();
+    if let Some(providers) = model_config.get("providers").and_then(JsValue::as_object) {
+        for (provider, config) in providers.own_entries() {
+            let Some(models) = config.get("models").and_then(JsValue::as_object) else {
+                continue;
+            };
+            for (model, definition) in models.own_entries() {
+                let mut qualified = provider.units().to_vec();
+                qualified.push(u16::from(b'/'));
+                qualified.extend_from_slice(model.units());
+                if definition.get("id").and_then(JsValue::as_string) == Some(requested)
+                    || requested.units() == qualified.as_slice()
+                    || requested == model
+                {
+                    candidates.push((provider.clone(), model.clone()));
+                }
+            }
+        }
+    }
+    if candidates.len() != 1 {
+        return Err(err(
+            code,
+            format!(
+                "{label} is not uniquely resolvable from the Gateway catalog: {}",
+                text(requested)
+            ),
+        ));
+    }
+    Ok(candidates.remove(0))
+}
+
+/// `resolveSdkModel` (SessionAgentConfigBundle.ts:242-250): split at the first
+/// slash; an empty side or no slash keeps the parent model.
+fn resolve_sdk_model(requested: &JsString, parent: (JsValue, JsValue)) -> (JsValue, JsValue) {
+    let units = requested.units();
+    match units.iter().position(|unit| *unit == u16::from(b'/')) {
+        Some(slash) if slash > 0 && slash != units.len() - 1 => (
+            JsValue::String(JsString::from_utf16(units[..slash].to_vec())),
+            JsValue::String(JsString::from_utf16(units[slash + 1..].to_vec())),
+        ),
+        _ => parent,
+    }
+}
+
+/// The model-routing fields of `SessionAgentConfigBundle.compose`
+/// (SessionAgentConfigBundle.ts:127-130): `fallbackModel` becomes the one
+/// session fallback the router tries after a pre-content retryable failure.
+pub(super) fn apply_model_fields(agent: &mut JsObject, config: Option<&JsValue>) {
+    let Some(config) = config.and_then(JsValue::as_object) else {
+        return;
+    };
+    // `sdk?.fallbackModel ?? sdk?.settings?.agent?.fallbackModel`; `settings`
+    // is not accepted by this host, so only the top-level field applies.
+    let requested = match present(config, "fallbackModel") {
+        None | Some(JsValue::Null) => return,
+        Some(value) => value,
+    };
+    let parent = (
+        agent.get("provider").cloned().unwrap_or(JsValue::Undefined),
+        agent.get("model").cloned().unwrap_or(JsValue::Undefined),
+    );
+    let (provider, model) = match requested.as_string() {
+        Some(requested) if !requested.is_empty() => resolve_sdk_model(requested, parent),
+        _ => parent,
+    };
+    let mut fallback = JsObject::new();
+    fallback.insert("provider".into(), provider);
+    fallback.insert("model".into(), model);
+    agent.insert(
+        "fallbackModels".into(),
+        JsValue::Array(vec![JsValue::Object(fallback)]),
+    );
 }
 
 impl SubmitSdkSessionConfig for NativeSdkSessionConfig {
@@ -717,6 +831,21 @@ impl SubmitSdkSessionConfig for NativeSdkSessionConfig {
             let previous = self.overrides.sdk_config(session);
             if previous.as_ref().map(serialize) == Some(serialize(config)) {
                 return Ok(false);
+            }
+            // `if (next.fallbackModel)`: resolvable from this project's
+            // catalog (ProjectRuntimeRegistry.ts:1014-1018).
+            if let Some(requested) = config
+                .get("fallbackModel")
+                .and_then(JsValue::as_string)
+                .filter(|requested| !requested.is_empty())
+            {
+                let model_config = project_model_config(&self.project, &root)?;
+                resolve_configured_model(
+                    &model_config,
+                    requested,
+                    "INVALID_SDK_FALLBACK_MODEL",
+                    "fallbackModel",
+                )?;
             }
             self.overrides.set_sdk_config(session, config.clone());
             self.overrides.mark_sdk_config(session, root);

@@ -1,0 +1,94 @@
+{
+  "name": "sdk-config-fallback-model",
+  "about": "sdkSessionConfig.fallbackModel（SessionAgentConfigBundle.ts:127 resolveFallbackModel → 路由的 fallbackModels）：主模型 bbx/broken 回 500 后切到 SDK 指定的回退模型；路由未开启时也生效。服务端校验（ProjectRuntimeRegistry.ts:1009 resolveSdkConfiguredModel）：未知模型、有歧义的裸模型名回 INVALID_SDK_FALLBACK_MODEL；唯一的裸模型名通过校验但 resolveSdkModel 无斜杠时退回主模型（即不回退）。比较事件、发给 provider 的请求、会话落盘。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/broken\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        broken:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    alt:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Fallback run\"}"
+      }
+    },
+    {
+      "name": "broken",
+      "when": [
+        "\"model\":\"broken\""
+      ],
+      "reply": {
+        "status": 500,
+        "body": {
+          "error": {
+            "message": "upstream exploded",
+            "type": "server_error"
+          }
+        }
+      }
+    },
+    {
+      "name": "fallback",
+      "when": [
+        "\"model\":\"deterministic\""
+      ],
+      "reply": {
+        "text": "Hello from fallback."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-fb",
+        "channelKey": "test",
+        "runId": "run-s-fb",
+        "message": "hello",
+        "sdkSessionConfig": {
+          "fallbackModel": "bbx/deterministic"
+        }
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bad",
+        "channelKey": "test",
+        "runId": "run-s-bad",
+        "message": "hello",
+        "sdkSessionConfig": {
+          "fallbackModel": "bbx/nope"
+        }
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-amb",
+        "channelKey": "test",
+        "runId": "run-s-amb",
+        "message": "hello",
+        "sdkSessionConfig": {
+          "fallbackModel": "deterministic"
+        }
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bare",
+        "channelKey": "test",
+        "runId": "run-s-bare",
+        "message": "hello",
+        "sdkSessionConfig": {
+          "fallbackModel": "broken"
+        }
+      },
+      "timeout": 30000
+    }
+  ]
+}
