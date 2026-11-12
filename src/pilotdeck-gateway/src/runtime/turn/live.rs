@@ -2713,7 +2713,7 @@ fn mark_module_message(message: &mut JsValue, module: &JsString) -> Result<(), R
 /// the native mapping.
 fn external_host_error(error: HostError) -> RuntimeError {
     use crate::host::SidecarExit;
-    let message = match (&error.exit, error.kind) {
+    let message = match (error.exit.as_deref(), error.kind) {
         (Some(SidecarExit::StartFailed(_)), _) => "Failed to write to sidecar stdin.".to_owned(),
         (Some(exit), HostErrorKind::Disconnected) => {
             let exit = match exit {

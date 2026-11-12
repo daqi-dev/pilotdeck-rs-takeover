@@ -1461,6 +1461,16 @@ fn preview_metadata(content: &[JsValue], max: Option<f64>) -> Result<Option<JsOb
     ])))
 }
 
+/// A string field of the run context (`context.cwd`), empty when absent.
+fn string_field_value(context: &ToolRunContext, key: &str) -> JsString {
+    context
+        .fields
+        .get(key)
+        .and_then(JsValue::as_string)
+        .cloned()
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod preview_tests {
     use super::*;
@@ -1502,14 +1512,4 @@ mod preview_tests {
             r#"{"originalBytes":4}"#
         );
     }
-}
-
-/// A string field of the run context (`context.cwd`), empty when absent.
-fn string_field_value(context: &ToolRunContext, key: &str) -> JsString {
-    context
-        .fields
-        .get(key)
-        .and_then(JsValue::as_string)
-        .cloned()
-        .unwrap_or_default()
 }

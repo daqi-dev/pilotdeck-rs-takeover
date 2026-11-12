@@ -947,6 +947,22 @@ impl HostExchange for BoundExchange {
     }
 }
 
+/// A random lowercase base-36 token, the shape of the baseline sidecar's
+/// `Math.random().toString(36).slice(2)`: the 52 random bits of a double
+/// written as base-36 digits.
+pub fn random_token() -> String {
+    let mut bits = (uuid::Uuid::new_v4().as_u128() as u64) & ((1 << 52) - 1);
+    let mut digits = Vec::new();
+    while bits > 0 {
+        digits.push(char::from_digit((bits % 36) as u32, 36).expect("base-36 digit"));
+        bits /= 36;
+    }
+    if digits.is_empty() {
+        digits.push('0');
+    }
+    digits.iter().rev().collect()
+}
+
 #[cfg(test)]
 mod reconciliation_tests {
     use super::*;
@@ -2118,20 +2134,4 @@ mod reconciliation_tests {
             "cleanup replay or foreign close escaped"
         );
     }
-}
-
-/// A random lowercase base-36 token, the shape of the baseline sidecar's
-/// `Math.random().toString(36).slice(2)`: the 52 random bits of a double
-/// written as base-36 digits.
-pub fn random_token() -> String {
-    let mut bits = (uuid::Uuid::new_v4().as_u128() as u64) & ((1 << 52) - 1);
-    let mut digits = Vec::new();
-    while bits > 0 {
-        digits.push(char::from_digit((bits % 36) as u32, 36).expect("base-36 digit"));
-        bits /= 36;
-    }
-    if digits.is_empty() {
-        digits.push('0');
-    }
-    digits.iter().rev().collect()
 }

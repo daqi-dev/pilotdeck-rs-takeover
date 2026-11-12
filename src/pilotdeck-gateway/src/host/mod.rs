@@ -243,7 +243,7 @@ pub struct HostError {
     /// Bounded child stderr retained for diagnostics, never projected as protocol text.
     pub diagnostic: String,
     /// How the sidecar process ended, when the failure closed it.
-    pub exit: Option<SidecarExit>,
+    pub exit: Option<Box<SidecarExit>>,
 }
 
 /// How a sidecar child process ended (TS `ExitStatus`,
@@ -566,7 +566,7 @@ impl HostClient {
     ) -> Result<Self, HostError> {
         limits.validate()?;
         let mut connection = Connection::spawn(command, limits).map_err(|mut error| {
-            error.exit = Some(SidecarExit::StartFailed(error.message.clone()));
+            error.exit = Some(Box::new(SidecarExit::StartFailed(error.message.clone())));
             error
         })?;
         let handshake = bounded(
@@ -714,7 +714,7 @@ async fn bounded<F: Future>(
 }
 fn append_diagnostic(error: &mut HostError, connection: &Connection) {
     if error.exit.is_none() {
-        error.exit = connection.exit();
+        error.exit = connection.exit().map(Box::new);
     }
     let stderr = connection.diagnostic();
     if !stderr.is_empty() {
