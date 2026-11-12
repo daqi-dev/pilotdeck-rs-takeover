@@ -1,0 +1,38 @@
+{
+  "name": "cfg-speed-mapping-edges",
+  "about": "speed 偏好的边界与校验（cfg-provider-capabilities 已覆盖 speed=1 / 0.2 与不支持的模型）。gateway/dialog/modelCatalog.ts:68-84 validateExplicitModelSelection：speed 不是有限数或不在 [0,1] → UNSUPPORTED_MODEL_PARAMETER「speed must be between 0 and 1.」；model/request/speedMapping.ts:7-15 阈值 speed>=0.5 才映射成 priority / fast；providers/openai/request.ts:87-89、anthropic/request.ts:117-119、streamModel.ts:831 fast 的 beta 头。e1–e4：submit_turn 的 modelOverride 带 speed 0.5、0.49、0、1.5；e5：负数；e6：字符串 \"1\"；e7：session_model_set 带 speed 0.5，下一轮不带 override 时请求是否带 service_tier，session_model_get 回显；e8：session_model_set speed=2；e9：Anthropic speed=0.5 → speed fast 与 anthropic-beta 头。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    oaism:\n      protocol: openai\n      url: {MOCK}/oaism/v1\n      apiKey: bbx-mock-only\n      speedMapping: openai_service_tier\n      models:\n        fast:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n            supportsSpeed: true\n    anth:\n      protocol: anthropic\n      url: {MOCK}/anth\n      apiKey: bbx-mock-only\n      speedMapping: anthropic_speed\n      models:\n        fast:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n            supportsSpeed: true\ntelemetry:\n  enabled: false\n",
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\":\"Speed\"}" } },
+    { "name": "e1", "when": ["sp-e1"], "reply": { "text": "e1 ok" } },
+    { "name": "e2", "when": ["sp-e2"], "reply": { "text": "e2 ok" } },
+    { "name": "e3", "when": ["sp-e3"], "reply": { "text": "e3 ok" } },
+    { "name": "e4", "when": ["sp-e4"], "reply": { "text": "e4 ok" } },
+    { "name": "e5", "when": ["sp-e5"], "reply": { "text": "e5 ok" } },
+    { "name": "e6", "when": ["sp-e6"], "reply": { "text": "e6 ok" } },
+    { "name": "e7", "when": ["sp-e7"], "reply": { "text": "e7 ok" } },
+    { "name": "e9", "when": ["sp-e9"], "reply": { "text": "e9 ok" } }
+  ],
+  "steps": [
+    { "ws": "submit_turn", "params": { "sessionKey": "s-e1", "channelKey": "test", "message": "sp-e1", "modelOverride": { "mode": "model", "provider": "oaism", "model": "fast", "speed": 0.5 } }, "timeout": 15000 },
+    { "sleep": 300 },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-e2", "channelKey": "test", "message": "sp-e2", "modelOverride": { "mode": "model", "provider": "oaism", "model": "fast", "speed": 0.49 } }, "timeout": 15000 },
+    { "sleep": 300 },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-e3", "channelKey": "test", "message": "sp-e3", "modelOverride": { "mode": "model", "provider": "oaism", "model": "fast", "speed": 0 } }, "timeout": 15000 },
+    { "sleep": 300 },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-e4", "channelKey": "test", "message": "sp-e4", "modelOverride": { "mode": "model", "provider": "oaism", "model": "fast", "speed": 1.5 } }, "timeout": 15000 },
+    { "sleep": 300 },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-e5", "channelKey": "test", "message": "sp-e5", "modelOverride": { "mode": "model", "provider": "oaism", "model": "fast", "speed": -0.1 } }, "timeout": 15000 },
+    { "sleep": 300 },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-e6", "channelKey": "test", "message": "sp-e6", "modelOverride": { "mode": "model", "provider": "oaism", "model": "fast", "speed": "1" } }, "timeout": 15000 },
+    { "sleep": 300 },
+    { "ws": "session_model_set", "params": { "sessionKey": "s-e7", "projectKey": "{PILOT_HOME}", "selection": { "mode": "model", "provider": "oaism", "model": "fast", "speed": 0.5 } } },
+    { "ws": "session_model_get", "params": { "sessionKey": "s-e7", "projectKey": "{PILOT_HOME}" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-e7", "channelKey": "test", "message": "sp-e7" }, "timeout": 15000 },
+    { "sleep": 300 },
+    { "ws": "session_model_set", "params": { "sessionKey": "s-e8", "projectKey": "{PILOT_HOME}", "selection": { "mode": "model", "provider": "oaism", "model": "fast", "speed": 2 } } },
+    { "ws": "session_model_get", "params": { "sessionKey": "s-e8", "projectKey": "{PILOT_HOME}" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-e9", "channelKey": "test", "message": "sp-e9", "modelOverride": { "mode": "model", "provider": "anth", "model": "fast", "speed": 0.5 } }, "timeout": 15000 },
+    { "sleep": 300 }
+  ]
+}
