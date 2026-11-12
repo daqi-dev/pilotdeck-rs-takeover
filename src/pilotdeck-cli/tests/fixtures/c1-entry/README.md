@@ -90,8 +90,8 @@ Linux Docker、仅 loopback 网卡和四个域名只解析到 127.0.0.1；任何
 八例包括飞书校验成功、Lark 拒绝后取消、飞书拒绝后仍保存、WeCom 扫码成功、
 Weixin 扫码成功、非默认 PILOT_HOME 不存在、写 YAML 失败后凭据保留、扫码 HTTP
 失败。请求方法/域名/路径/次数及飞书请求体都有断言；原始请求头、输出和落盘保存。
-非默认 PILOT_HOME 的 TS 失败/Rust 成功是已提出的明确 bug 修复期望，仍需协调者
-登记差异；此脚本尚未实际执行网络场景，不能将其写成通过。
+非默认 PILOT_HOME 的 TS 失败/Rust 成功仅按已登记的
+`D1-SETUP-WEIXIN-HOME-001` 精确单格复核；本机尚未实际执行网络场景，不能将其写成通过。
 
 E0 可在现有隔离容器参数上增加以下参数，并将最终 Node 命令换为本脚本。不得
 映射宿主端口，基线与源码任务目录按 E0 的既定路径挂载；OpenSSL 使用已安装源码
@@ -109,9 +109,34 @@ E0 可在现有隔离容器参数上增加以下参数，并将最终 Node 命�
 容器内命令（每次输出目录必须不存在）：
 
 ```sh
-node src/pilotdeck-cli/tests/fixtures/c1-entry/setup-https-capture.mjs ts /home/clawbox-08/ws/pilotdeck-rs-cc2c/baseline/PilotDeck NEW_TS_OUTPUT
-node src/pilotdeck-cli/tests/fixtures/c1-entry/setup-https-capture.mjs rust /home/clawbox-08/ws/pilotdeck-rs-cc2c/checkout/src/target/debug/pilotdeck NEW_RUST_OUTPUT
+node src/pilotdeck-cli/tests/fixtures/c1-entry/setup-https-capture.mjs \
+  ts /home/clawbox-08/ws/pilotdeck-rs-cc2c/baseline/PilotDeck NEW_TS_OUTPUT --complete
+node src/pilotdeck-cli/tests/fixtures/c1-entry/setup-https-capture.mjs \
+  rust /home/clawbox-08/ws/pilotdeck-rs-cc2c/checkout/src/target/debug/pilotdeck NEW_RUST_OUTPUT \
+  --complete --rust-root /home/clawbox-08/ws/pilotdeck-rs-cc2c/checkout \
+  --rust-sha FULL_40_CHARACTER_CANDIDATE_SHA
 ```
 
 产物路径中的单次输出根由采集参数明确给出。做自比时只把这个根替换为固定标记、
 归一 Node 警告 PID；不忽略 YAML、凭据内容、错误信息或请求。首次失败保留并归因。
+
+`--complete` 是完整证据模式：强制 Node 22.22.0、固定 TS 完整 SHA、干净 tracked
+源码，记录 Node 可执行文件哈希、TS package/lock 与入口/setup 的 source/dist 哈希、
+driver/helper 哈希；Rust 必须显式提供源码根与完整 SHA，并记录实际二进制哈希。
+二进制由该提交构建的关系仍由 E0 同次构建记录证明。旧三位置参数调用仍可用，但明确
+标记 legacy；即使采到字节也不自动提升成完整身份的产品验收。
+
+每格保存 `input.json`、`command.json`、原始 `stdout.bin`/`stderr.bin` 及哈希，逐请求
+`request-N.body.bin`、`rawHeaders`（保留大小写、顺序及重复项）、HTTP 版本与解析后 body。
+这是精确 HTTP 应用头/请求体证据，不声称捕获了 TLS 记录、HTTP chunk framing 或原始
+请求行。`files-before.json` / `files-after.json` 记录 home/config/project 的每个目录、
+文件大小与哈希；`case-evidence.json` 把这些产物绑定到 `identity.json` 的哈希，
+`summary.json` 再绑定完整八格清单。比较器重新读取实际文件树和原始字节核验，漂移
+一律失败。缺身份的旧产物仍只能提供语义结论，不倒填来源。
+
+用 [compare-README.md](compare-README.md) 的三个只读比较入口完成自比/对拍。
+HTTPS 专用证据 helper 的负控无需 Docker 或产品：
+
+```sh
+node --test src/pilotdeck-cli/tests/fixtures/c1-entry/https-evidence.test.mjs
+```

@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { CASES, compareHttps, applyMissingHomeDifference, verifyRequests } from './compare-https.mjs';
+import { BASELINE, SOURCE_FILES, treeSnapshot, sha, json } from './https-evidence.mjs';
+const here = path.dirname(fileURLToPath(import.meta.url));
 const initial = 'schemaVersion: 1\ntelemetry:\n  enabled: false\n';
 const creds = JSON.stringify({ baseUrl: 'https://ilinkai.weixin.qq.com', botToken: 'c1-bot-token', accountId: 'c1-account' }, null, 2);
 const successTail = '\n✅ 微信登录成功！\n   账号 ID: c1-account\n   凭据已保存到: <C1_FIXTURE>/home/.pilotdeck/weixin-credentials.json\n   重启 PilotDeck 服务后生效\n\n';
@@ -79,5 +82,93 @@ test('complete HTTPS parity accepts only the documented missing-parent cell and 
     assert.equal(report.status, 'SAME_WITH_ACCEPTED_DIFFERENCE'); assert.equal(report.acceptedDifferences.length, 1);
     assert.equal(report.semanticPassed, true); assert.equal(report.provenanceComplete, false); assert.equal(report.productPassed, false);
     assert.equal(report.acceptedDifferences[0].case, 'weixin-missing-pilot-home'); assert.match(report.acceptedDifferences[0].ledgerSha256, /^[a-f0-9]{64}$/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+function completeSynthetic(root, side) {
+  const specs = CASES.map(id => ({ id, platform: id.split('-')[0], ...(id === 'weixin-missing-pilot-home' ? { missingPilot: true } : {}), ...(id === 'weixin-config-write-failure' ? { configDirectory: true } : {}) }));
+  fs.writeFileSync(path.join(root, 'cases.json'), JSON.stringify(specs)); fs.writeFileSync(path.join(root, 'test-tls/cert.pem'), 'synthetic certificate');
+  const entry = side === 'ts' ? '/synthetic-baseline/dist/src/cli/pilotdeck.js' : '/synthetic-rust-bin';
+  const identity = { schemaVersion: 2, captureMode: 'complete', provenanceComplete: true, side, node: 'v22.22.0', platform: 'linux-synthetic',
+    nodeExecutable: '/synthetic-node', nodeSha256: '2'.repeat(64), entry, executableSha256: '1'.repeat(64),
+    source: { root: side === 'ts' ? '/synthetic-baseline' : '/synthetic-source', sourceCommit: side === 'ts' ? BASELINE : 'a'.repeat(40), trackedClean: true,
+      files: side === 'ts' ? Object.fromEntries(SOURCE_FILES.map(file => [file, '1'.repeat(64)])) : {} },
+    driverFiles: Object.fromEntries(['setup-https-capture.mjs', 'https-evidence.mjs'].map(file => [file, sha(fs.readFileSync(path.join(here, file)))])),
+    captureRoot: root, casesSha256: sha(fs.readFileSync(path.join(root, 'cases.json'))), certificateSha256: sha('synthetic certificate'), port: 443,
+    isolation: { docker: true, addresses: [{ internal: true, address: '127.0.0.1' }], resolvedHosts: Object.fromEntries(['open.feishu.cn', 'open.larksuite.com', 'work.weixin.qq.com', 'ilinkai.weixin.qq.com'].map(host => [host, [{ address: '127.0.0.1', family: 4 }]])) } };
+  fs.writeFileSync(path.join(root, 'identity.json'), json(identity)); const identitySha256 = sha(fs.readFileSync(path.join(root, 'identity.json'))), rows = [];
+  for (const spec of specs) {
+    const dir = path.join(root, spec.id), file = path.join(dir, 'result.json'), result = JSON.parse(fs.readFileSync(file));
+    for (const stream of ['stdout', 'stderr']) { fs.writeFileSync(path.join(dir, `${stream}.bin`), result[stream]); result[`${stream}Sha256`] = sha(result[stream]); }
+    result.requests = result.requests.map((request, index) => {
+      const bytes = Buffer.from(request.body ? JSON.stringify(request.body) : ''), bodyFile = `request-${index}.body.bin`;
+      fs.writeFileSync(path.join(dir, bodyFile), bytes);
+      return { ...request, bodyFile, bodySize: bytes.length, bodySha256: sha(bytes), httpVersion: '1.1', rawHeaders: Object.entries(request.headers).flat() };
+    });
+    fs.writeFileSync(file, json(result)); fs.writeFileSync(path.join(dir, 'input.json'), json(spec));
+    const command = { command: side === 'ts' ? identity.nodeExecutable : entry, args: [...(side === 'ts' ? [entry] : []), 'gateway', 'setup', spec.platform], cwd: path.join(dir, 'project'), env: {
+      PATH: '/synthetic/tools/node/bin:/usr/bin:/bin', HOME: path.join(dir, 'home'), USERPROFILE: path.join(dir, 'home'), CFFIXED_USER_HOME: path.join(dir, 'home'),
+      PILOT_HOME: path.join(dir, 'home', spec.missingPilot ? 'custom-pilot' : '.pilotdeck'), PILOTDECK_CONFIG_PATH: path.join(dir, 'config/pilotdeck.yaml'), NODE_EXTRA_CA_CERTS: path.join(root, 'test-tls/cert.pem'),
+      TMPDIR: dir, LANG: 'C', LC_ALL: 'C', TZ: 'UTC', TERM: 'dumb', NO_COLOR: '1', DOCKER_CONTAINER: '1', COMMIT_HASH: 'c1-fixture' } };
+    fs.writeFileSync(path.join(dir, 'command.json'), json(command));
+    const before = [{ path: 'home', directory: true }, ...(!spec.missingPilot ? [{ path: 'home/.pilotdeck', directory: true }] : []), { path: 'config', directory: true },
+      spec.configDirectory ? { path: 'config/pilotdeck.yaml', directory: true } : { path: 'config/pilotdeck.yaml', size: Buffer.byteLength(initial), sha256: sha(initial) }, { path: 'project', directory: true }];
+    fs.writeFileSync(path.join(dir, 'files-before.json'), json(before)); fs.writeFileSync(path.join(dir, 'files-after.json'), json(treeSnapshot(dir)));
+    const files = ['input.json', 'command.json', 'result.json', 'stdout.bin', 'stderr.bin', 'files-before.json', 'files-after.json', ...result.requests.map(request => request.bodyFile)];
+    fs.writeFileSync(path.join(dir, 'case-evidence.json'), json({ id: spec.id, identitySha256, files: Object.fromEntries(files.map(name => [name, sha(fs.readFileSync(path.join(dir, name)))])) }));
+    rows.push({ id: spec.id, assertionPassed: true, caseEvidenceSha256: sha(fs.readFileSync(path.join(dir, 'case-evidence.json'))) });
+  }
+  fs.writeFileSync(path.join(root, 'summary.json'), json({ identitySha256, expectedCases: 8, observedCases: 8, collectionPassed: true, rows }));
+}
+function withComplete(mutate, expected) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'c1-https-complete-synthetic-')));
+  try {
+    const left = path.join(root, 'ts'), right = path.join(root, 'rust'), out = path.join(root, 'comparison');
+    synthetic(left, 123); synthetic(right, 456, 'rust'); completeSynthetic(left, 'ts'); completeSynthetic(right, 'rust'); mutate?.(left, right);
+    const code = compareHttps({ mode: 'parity', left, right, out, 'rust-sha': 'a'.repeat(40), 'rust-binary-sha256': '1'.repeat(64) });
+    const report = JSON.parse(fs.readFileSync(path.join(out, 'comparison.json')));
+    assert.equal(report.status, expected, report.error ?? JSON.stringify(report.rows.filter(row => row.status !== 'SAME')));
+    assert.equal(code, expected === 'SAME_WITH_ACCEPTED_DIFFERENCE' ? 0 : 1); return report;
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+}
+test('complete identity and bound raw evidence can produce a positive product verdict', () => {
+  const report = withComplete(null, 'SAME_WITH_ACCEPTED_DIFFERENCE');
+  assert.equal(report.provenanceComplete, true); assert.equal(report.semanticPassed, true); assert.equal(report.productPassed, true);
+});
+test('complete comparison rejects wrong SHA/binary and drift in raw output/request/files', () => {
+  for (const field of ['source', 'binary']) withComplete((_left, right) => {
+    const file = path.join(right, 'identity.json'), value = JSON.parse(fs.readFileSync(file));
+    if (field === 'source') value.source.sourceCommit = 'b'.repeat(40); else value.executableSha256 = '0'.repeat(64);
+    fs.writeFileSync(file, json(value));
+  }, 'INVALID');
+  for (const file of ['stdout.bin', 'request-0.body.bin', 'config/pilotdeck.yaml']) {
+    const report = withComplete((_left, right) => fs.appendFileSync(path.join(right, 'feishu-success', file), 'deliberate change'), 'INVALID');
+    assert.equal(report.productPassed, false); assert.equal(report.provenanceComplete, false);
+  }
+});
+test('complete TS self uses real-driver command environment and rejects rebound setup dist drift', () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'c1-https-ts-self-synthetic-')));
+  try {
+    const left = path.join(root, 'a'), right = path.join(root, 'b'); synthetic(left, 123); synthetic(right, 456); completeSynthetic(left, 'ts'); completeSynthetic(right, 'ts');
+    const command = JSON.parse(fs.readFileSync(path.join(right, 'weixin-success/command.json')));
+    assert.deepEqual(Object.keys(command.env).sort(), ['PATH', 'HOME', 'USERPROFILE', 'CFFIXED_USER_HOME', 'PILOT_HOME', 'PILOTDECK_CONFIG_PATH', 'NODE_EXTRA_CA_CERTS', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ', 'TERM', 'NO_COLOR', 'DOCKER_CONTAINER', 'COMMIT_HASH'].sort());
+    assert.equal(command.env.TMPDIR, path.join(right, 'weixin-success'));
+    const out = path.join(root, 'positive'); assert.equal(compareHttps({ mode: 'self', left, right, out }), 0);
+    const positive = JSON.parse(fs.readFileSync(path.join(out, 'comparison.json'))); assert.equal(positive.productPassed, true);
+
+    const identityFile = path.join(right, 'identity.json'), identity = JSON.parse(fs.readFileSync(identityFile));
+    const originalEntry = identity.executableSha256, originalSource = identity.source.sourceCommit;
+    identity.source.files['dist/src/cli/commands/gatewaySetup.js'] = 'b'.repeat(64);
+    fs.writeFileSync(identityFile, json(identity)); const identitySha256 = sha(fs.readFileSync(identityFile));
+    const summaryFile = path.join(right, 'summary.json'), summary = JSON.parse(fs.readFileSync(summaryFile)); summary.identitySha256 = identitySha256;
+    for (const row of summary.rows) {
+      const bindingFile = path.join(right, row.id, 'case-evidence.json'), binding = JSON.parse(fs.readFileSync(bindingFile));
+      binding.identitySha256 = identitySha256; fs.writeFileSync(bindingFile, json(binding)); row.caseEvidenceSha256 = sha(fs.readFileSync(bindingFile));
+    }
+    fs.writeFileSync(summaryFile, json(summary));
+    assert.equal(identity.executableSha256, originalEntry); assert.equal(identity.source.sourceCommit, originalSource);
+    const failureOut = path.join(root, 'negative'); assert.equal(compareHttps({ mode: 'self', left, right, out: failureOut }), 1);
+    const negative = JSON.parse(fs.readFileSync(path.join(failureOut, 'comparison.json')));
+    assert.equal(negative.status, 'INVALID'); assert.equal(negative.productPassed, false); assert.match(negative.error, /same complete TS source\/dist\/dependency hashes/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

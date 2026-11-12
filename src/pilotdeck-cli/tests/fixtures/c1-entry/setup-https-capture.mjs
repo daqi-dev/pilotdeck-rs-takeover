@@ -7,29 +7,34 @@ import os from 'node:os';
 import path from 'node:path';
 import https from 'node:https';
 import { lookup } from 'node:dns/promises';
-import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { drive } from './capture.mjs';
+import { fileURLToPath } from 'node:url';
+import { parseCaptureArgs, captureIdentity, driveRaw, rawRequest, treeSnapshot, sha, json } from './https-evidence.mjs';
 
-const [side, executableArg, outputArg] = process.argv.slice(2);
-assert.ok((side === 'ts' || side === 'rust') && executableArg && outputArg,
-  'usage: setup-https-capture.mjs <ts BASELINE|rust BINARY> NEW_OUTPUT_DIR');
+const options = parseCaptureArgs(process.argv.slice(2));
+const { side, executable: executableArg, output: outputArg } = options;
 assert.equal(os.platform(), 'linux', 'HTTPS fixture requires Linux Docker');
 assert.ok(fs.existsSync('/.dockerenv'), 'HTTPS fixture requires Docker');
 assert.ok(Object.values(os.networkInterfaces()).flat().every(address => address.internal),
   'HTTPS fixture requires --network none (only loopback)');
 const hosts = ['open.feishu.cn', 'open.larksuite.com', 'work.weixin.qq.com', 'ilinkai.weixin.qq.com'];
+const resolvedHosts = {};
 for (const host of hosts) {
   const addresses = await lookup(host, { all: true });
   assert.ok(addresses.length && addresses.every(item => item.address === '127.0.0.1'),
     `${host} must map exclusively to 127.0.0.1 inside the container`);
+  resolvedHosts[host] = addresses;
 }
 const executable = fs.realpathSync(executableArg);
 const entry = side === 'ts' ? path.join(executable, 'dist/src/cli/pilotdeck.js') : executable;
 const command = side === 'ts' ? process.execPath : executable;
 const prefix = side === 'ts' ? [entry] : [];
-if (side === 'ts') assert.equal(spawnSync('git', ['-C', executable, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim(),
-  'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85', 'fixed TS source');
+const identityRuntime = {
+  version: process.version, executable: process.execPath, platform: `${os.platform()}-${os.arch()}`,
+  driverFiles: [fileURLToPath(import.meta.url), fileURLToPath(new URL('./https-evidence.mjs', import.meta.url))],
+};
+const initialProvenance = captureIdentity(options, identityRuntime);
+const identity = { ...initialProvenance };
 const output = path.resolve(outputArg); fs.mkdirSync(output);
 const tls = path.join(output, 'test-tls'); fs.mkdirSync(tls, { mode: 0o700 });
 const key = path.join(tls, 'key.pem'); const certificate = path.join(tls, 'cert.pem');
@@ -90,13 +95,17 @@ for (const spec of specs) for (const route of spec.routes) {
   } else if (route.host === hosts[2]) route.headers = { 'user-agent': 'PilotDeck/1.0' };
   else if (route.path === statusPath) route.headers = { 'ilink-app-clientversion': '1' };
 }
-fs.writeFileSync(path.join(output, 'identity.json'), JSON.stringify({
-  side, node: process.version, platform: `${os.platform()}-${os.arch()}`, entry,
-  executableSha256: createHash('sha256').update(fs.readFileSync(entry)).digest('hex'),
-  casesSha256: createHash('sha256').update(JSON.stringify(specs)).digest('hex'),
-  note: 'missing PILOT_HOME is a recorded baseline failure and an explicit Rust bug-fix expectation; requires coordinator difference registration',
-}, null, 2) + '\n');
-let failed = false;
+fs.writeFileSync(path.join(output, 'cases.json'), JSON.stringify(specs));
+Object.assign(identity, {
+  captureRoot: output,
+  casesSha256: sha(fs.readFileSync(path.join(output, 'cases.json'))), certificateSha256: sha(fs.readFileSync(certificate)),
+  networkNamespace: fs.readlinkSync('/proc/self/ns/net'), port: 443,
+  isolation: { docker: true, addresses: Object.values(os.networkInterfaces()).flat(), resolvedHosts },
+  note: 'D1-SETUP-WEIXIN-HOME-001 applies only to the missing actual credentials parent. Complete mode records source/runtime/driver identity and raw application data; TLS wire framing is not captured.',
+});
+fs.writeFileSync(path.join(output, 'identity.json'), json(identity));
+const identitySha256 = sha(fs.readFileSync(path.join(output, 'identity.json')));
+let failed = false; const rows = [];
 for (const spec of specs) {
   const root = path.join(output, spec.id); const home = path.join(root, 'home');
   const pilot = path.join(home, spec.missingPilot ? 'custom-pilot' : '.pilotdeck');
@@ -106,14 +115,19 @@ for (const spec of specs) {
   if (!spec.missingPilot) fs.mkdirSync(pilot);
   const initial = 'schemaVersion: 1\ntelemetry:\n  enabled: false\n';
   if (spec.configDirectory) fs.mkdirSync(config); else fs.writeFileSync(config, initial);
+  fs.writeFileSync(path.join(root, 'input.json'), json(spec));
+  fs.writeFileSync(path.join(root, 'files-before.json'), json(treeSnapshot(root)));
   const requests = []; let mockFailure;
   const server = https.createServer({ key: fs.readFileSync(key), cert: fs.readFileSync(certificate) }, async (req, res) => {
     try {
       const chunks = []; for await (const chunk of req) chunks.push(chunk);
-      const raw = Buffer.concat(chunks).toString();
-      const body = raw ? JSON.parse(raw) : undefined;
+      const bytes = Buffer.concat(chunks);
       const route = spec.routes[requests.length];
-      requests.push({ method: req.method, path: req.url, headers: req.headers, ...(body ? { body } : {}) });
+      const bodyFile = `request-${requests.length}.body.bin`;
+      fs.writeFileSync(path.join(root, bodyFile), bytes);
+      const request = rawRequest(req, bytes, bodyFile); requests.push(request);
+      assert.equal(request.bodyParseError, undefined, 'request body must be JSON');
+      const body = request.body;
       assert.ok(route, 'no unexpected extra request');
       assert.equal(req.headers.host, route.host); assert.equal(req.url, route.path); assert.equal(req.method, route.method);
       if (route.body) assert.deepEqual(body, route.body);
@@ -122,12 +136,17 @@ for (const spec of specs) {
     } catch (error) { mockFailure = error.message; res.writeHead(500); res.end('{}'); }
   });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(443, '127.0.0.1', resolve); });
-  const result = await drive(command, [...prefix, 'gateway', 'setup', spec.platform], {
+  const env = {
     PATH: process.env.PATH, HOME: home, USERPROFILE: home, CFFIXED_USER_HOME: home,
     PILOT_HOME: pilot, PILOTDECK_CONFIG_PATH: config, NODE_EXTRA_CA_CERTS: certificate,
     TMPDIR: root, LANG: 'C', LC_ALL: 'C', TZ: 'UTC', TERM: 'dumb', NO_COLOR: '1',
     DOCKER_CONTAINER: '1', COMMIT_HASH: 'c1-fixture',
-  }, project, spec.answers, 15000);
+  };
+  const args = [...prefix, 'gateway', 'setup', spec.platform];
+  fs.writeFileSync(path.join(root, 'command.json'), json({ command, args, env, cwd: project }));
+  const captured = await driveRaw(command, args, env, project, spec.answers, 15000);
+  const { stdoutBytes, stderrBytes, ...result } = captured;
+  fs.writeFileSync(path.join(root, 'stdout.bin'), stdoutBytes); fs.writeFileSync(path.join(root, 'stderr.bin'), stderrBytes);
   server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   const yaml = spec.configDirectory ? null : fs.readFileSync(config, 'utf8');
   const credsPath = path.join(pilot, 'weixin-credentials.json');
@@ -147,9 +166,17 @@ for (const spec of specs) {
     if (spec.configDirectory) assert.ok(fs.statSync(config).isDirectory(), 'failed destination unchanged');
   } catch (error) { assertionFailure = error.message; failed = true; }
   fs.writeFileSync(path.join(root, 'result.json'), JSON.stringify({ id: spec.id, ...result, requests,
+    stdoutSha256: sha(stdoutBytes), stderrSha256: sha(stderrBytes),
     yaml, credentials, ...(mockFailure ? { mockFailure } : {}), ...(assertionFailure ? { assertionFailure } : {}),
   }, null, 2) + '\n');
+  fs.writeFileSync(path.join(root, 'files-after.json'), json(treeSnapshot(root)));
+  const boundFiles = ['input.json', 'command.json', 'result.json', 'stdout.bin', 'stderr.bin', 'files-before.json', 'files-after.json', ...requests.map(request => request.bodyFile)];
+  const binding = { id: spec.id, identitySha256, files: Object.fromEntries(boundFiles.map(file => [file, sha(fs.readFileSync(path.join(root, file)))])) };
+  fs.writeFileSync(path.join(root, 'case-evidence.json'), json(binding));
+  rows.push({ id: spec.id, assertionPassed: !assertionFailure, caseEvidenceSha256: sha(fs.readFileSync(path.join(root, 'case-evidence.json'))) });
   console.log(`${spec.id}: ${assertionFailure ? `FAIL ${assertionFailure}` : 'PASS'}`);
 }
 fs.rmSync(key); // Ephemeral test key is not a delivery artifact.
+assert.deepEqual(captureIdentity(options, identityRuntime), initialProvenance, 'source/runtime/driver identity must remain unchanged during capture');
+fs.writeFileSync(path.join(output, 'summary.json'), json({ identitySha256, expectedCases: 8, observedCases: rows.length, collectionPassed: !failed, rows }));
 process.exitCode = failed ? 1 : 0;

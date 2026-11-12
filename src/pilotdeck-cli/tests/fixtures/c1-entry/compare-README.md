@@ -56,11 +56,15 @@ HTTPS 会核对真实目录中的 YAML/凭据与 result 副本，比较 `home`�
 仅父目录换到 custom-pilot。错误消息、额外文件、账号或配置不符均不接受；前置提示、
 请求、stderr、退出和回答数仍比较。账本 hash 写入比较报告。
 
-现有 HTTPS 采集器未记录源码 SHA、Node 可执行哈希、driver hash，也未独立保存原始
-stdout/stderr 字节和请求 JSON 原文。比较器会显式报告这项证据限制，不能补造缺失数据；
-因此 HTTPS 即使语义 `SAME`，也只给 `semanticPassed=true`，恒保留
-`provenanceComplete=false`、`productPassed=false`；exit 0 仅是语义比较完成。
-E0 必须保留采集命令、固定输入和构建身份记录并另行验证。比较器也不会凭预期给 cron/online 的
+旧 HTTPS 产物未记录完整身份和原始字节，不能补造；旧格式及未指定 `--complete` 的
+legacy 采集即使语义 `SAME`，也只给 `semanticPassed=true`，保留
+`provenanceComplete=false`、`productPassed=false`。新增完整采集模式见本目录 README：
+固定 TS SHA/source/dist/package/lock、Node 22.22.0/exec hash、driver/helper hash 和
+Rust 显式源码 SHA/binary hash全部验证，并核对原始 stdout/stderr、逐请求 rawHeaders/
+body、实际文件树及 identity→每格→summary 哈希关联后，才可能同时给
+`provenanceComplete=true` 与 `productPassed=true`。语义不同或任一绑定失败仍不通过。
+TLS 记录、HTTP chunk framing 和原始请求行尚未捕获；不把 rawHeaders/body 声称为完整
+网络线包。E0 必须保留采集命令、固定输入和二进制构建身份记录。比较器也不会凭预期给 cron/online 的
 挂起登记差异，目前不含这种豁免。正式 E0 首次运行、两轮自比与 Rust 对照仍须执行。
 
 装置自测只构造带明显 synthetic 身份的临时证据，不启动产品或网络：
@@ -68,6 +72,7 @@ E0 必须保留采集命令、固定输入和构建身份记录并另行验证�
 ```sh
 node --test src/pilotdeck-cli/tests/fixtures/c1-entry/compare-common.test.mjs \
   src/pilotdeck-cli/tests/fixtures/c1-entry/compare-https.test.mjs \
+  src/pilotdeck-cli/tests/fixtures/c1-entry/https-evidence.test.mjs \
   src/pilotdeck-cli/tests/fixtures/c1-cron/compare.test.mjs
 ```
 
@@ -81,3 +86,7 @@ node --test src/pilotdeck-cli/tests/fixtures/c1-entry/compare-common.test.mjs \
 的软链接可以指回输入树；现先 realpath 已存在父目录再检查，公开 CLI 负控验证输入
 目录没有新增报告。先前合成通过不构成这两个边界正确的证据，均属装置错误而非产品
 失败；正式采集仍待 E0。
+
+online 原采集器目前仍要求 fallback 的模型请求数为 1；虽然比较器会保留全部主调用和
+辅助标题调用，实际额外调用会先使采集 INVALID。须由 E0 首次正式基线证据确认其真实
+请求数，保留首败后再决定修哪一层，不能用 H1 的别处调用推测改写 C1 契约。
