@@ -1,0 +1,275 @@
+{
+  "name": "loop-reasoning-roundtrip",
+  "about": "推理内容在真实轮次里的解析与回传。OpenAI：流里 delta.reasoning_content（model/providers/openai/stream.ts:79-95）成为 thinking 块，下一次请求里同一条助手消息带回 reasoning_content（providers/openai/request.ts:154-178、toOpenAIReasoningContent 324-336：只有工具调用没有文本时 content 为空串）。r1：推理 + 工具调用 → 工具结果后的请求带回推理，最终回复也带推理；同一会话第二轮再看历史里两条推理；r2：会话第一轮没有推理、第二轮 provider 一直报缺 reasoning_content → 只补一次空 reasoning_content（AgentLoop.ts:1389-1401、3160-3189），第二次照常 model_error；r3：历史里一条有推理、一条带工具调用没有推理时报缺 reasoning_content → 只给没有推理的助手消息补空串；r4：Anthropic 形状 thinking + signature + 工具调用 → 同一轮下一次请求回传 thinking 块。 已知不稳：Anthropic 会话里同一轮第二次请求的 cachePlan.fingerprint 基线自比就不同（与 proto-anthropic-basic 相同），声明为 volatile。",
+  "volatile": [
+    "/chats/s-r4\\.jsonl\\.jsonl\\[\\d+\\]\\.request\\.cachePlan\\.fingerprint$"
+  ],
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      retry:\n        baseDelayMs: 1\n        maxDelayMs: 1\n        jitter: 0\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    anth:\n      protocol: anthropic\n      url: {MOCK}\n      apiKey: bbx-anthropic-key\n      models:\n        claude-bbx:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "files": {
+    "home/.pilotdeck/a.txt": "alpha\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Reason\"}"
+      }
+    },
+    {
+      "name": "r1-second",
+      "when": [
+        "r1 second"
+      ],
+      "reply": {
+        "reasoning": "third thought",
+        "text": "r1 second answer."
+      }
+    },
+    {
+      "name": "r1-done",
+      "when": [
+        "r1:",
+        "\"tool_call_id\":\"call_r1\""
+      ],
+      "reply": {
+        "reasoning": "second thought",
+        "text": "r1 done."
+      }
+    },
+    {
+      "name": "r1",
+      "when": [
+        "r1:"
+      ],
+      "reply": {
+        "reasoning": "first thought",
+        "tool": {
+          "id": "call_r1",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "a.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "r2-missing",
+      "when": [
+        "r2 second"
+      ],
+      "reply": {
+        "status": 400,
+        "body": {
+          "error": {
+            "message": "The `reasoning_content` in the thinking mode must be passed back to the API.",
+            "type": "invalid_request_error"
+          }
+        }
+      }
+    },
+    {
+      "name": "r2-first",
+      "when": [
+        "r2:"
+      ],
+      "reply": {
+        "text": "r2 first answer."
+      }
+    },
+    {
+      "name": "r3-fixed",
+      "when": [
+        "r3 second",
+        "\"reasoning_content\":\"\""
+      ],
+      "reply": {
+        "text": "r3 fixed."
+      }
+    },
+    {
+      "name": "r3-missing",
+      "when": [
+        "r3 second"
+      ],
+      "reply": {
+        "status": 400,
+        "body": {
+          "error": {
+            "message": "The `reasoning_content` in the thinking mode must be passed back to the API.",
+            "type": "invalid_request_error"
+          }
+        }
+      }
+    },
+    {
+      "name": "r3-done",
+      "when": [
+        "r3:",
+        "\"tool_call_id\":\"call_r3\""
+      ],
+      "reply": {
+        "reasoning": "r3 thought",
+        "text": "r3 done."
+      }
+    },
+    {
+      "name": "r3",
+      "when": [
+        "r3:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_r3",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "a.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "r4-done",
+      "when": [
+        "r4:",
+        "\"tool_use_id\":\"toolu_r4\""
+      ],
+      "reply": {
+        "text": "r4 done."
+      }
+    },
+    {
+      "name": "r4",
+      "when": [
+        "r4:"
+      ],
+      "reply": {
+        "reasoning": "anthropic thought",
+        "tool": {
+          "id": "toolu_r4",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "a.txt"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-r1",
+        "channelKey": "test",
+        "message": "r1: read"
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-r1",
+        "channelKey": "test",
+        "message": "r1 second"
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-r1"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-r2",
+        "channelKey": "test",
+        "message": "r2: hi"
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-r2",
+        "channelKey": "test",
+        "message": "r2 second"
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-r2"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-r3",
+        "channelKey": "test",
+        "message": "r3: read"
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-r3",
+        "channelKey": "test",
+        "message": "r3 second"
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-r3"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-r4",
+        "channelKey": "test",
+        "message": "r4: read",
+        "modelOverride": {
+          "mode": "model",
+          "provider": "anth",
+          "model": "claude-bbx"
+        }
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-r4"
+      }
+    }
+  ]
+}
