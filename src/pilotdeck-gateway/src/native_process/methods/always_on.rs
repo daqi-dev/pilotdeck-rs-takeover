@@ -537,6 +537,7 @@ mod tests {
                 logger: None,
                 session_overrides: None,
                 on_turn_event: None,
+                on_worktree_created: None,
             },
         )
         .expect("#2294 manager constructs");

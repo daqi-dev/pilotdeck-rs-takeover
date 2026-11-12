@@ -153,7 +153,10 @@ impl WorkspaceRegistry {
         plan_title: &str,
     ) -> Result<WorkspaceHandle, AlwaysOnError> {
         match strategy {
-            Strategy::GitWorktree => self.prepare_worktree(project_root, run_id, plan_title).await,
+            Strategy::GitWorktree => {
+                self.prepare_worktree(project_root, run_id, plan_title)
+                    .await
+            }
             Strategy::SnapshotCopy => self.prepare_snapshot(project_root, run_id).await,
         }
     }
@@ -169,7 +172,11 @@ impl WorkspaceRegistry {
         expect_ok(&top, "git rev-parse --show-toplevel")?;
         let repo_root = top.stdout.trim().to_string();
         checkpoint_dirty_worktree(&repo_root, plan_title).await?;
-        let branch = run("git", &["-C", &repo_root, "rev-parse", "--abbrev-ref", "HEAD"]).await;
+        let branch = run(
+            "git",
+            &["-C", &repo_root, "rev-parse", "--abbrev-ref", "HEAD"],
+        )
+        .await;
         expect_ok(&branch, "git rev-parse --abbrev-ref HEAD")?;
         let base_branch = branch.stdout.trim().to_string();
         let commit = run("git", &["-C", &repo_root, "rev-parse", "HEAD"]).await;

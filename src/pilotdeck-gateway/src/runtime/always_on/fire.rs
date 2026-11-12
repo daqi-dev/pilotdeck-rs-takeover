@@ -502,7 +502,9 @@ impl DiscoveryFirePort for DiscoveryFire {
             let record = plan_store
                 .get_record(input.plan_id)?
                 .ok_or_else(|| io::Error::other("plan vanished"))?;
-            let markdown = plan_store.read_plan_markdown(input.plan_id)?.unwrap_or_default();
+            let markdown = plan_store
+                .read_plan_markdown(input.plan_id)?
+                .unwrap_or_default();
             let state = self.deps.state_store.read(input.started_at_ms)?;
             let tail = self
                 .plan_tail(
@@ -704,10 +706,10 @@ mod tests {
         negative_assert_eq!(
             as_error_json(seam.error),
             serde_json::json!({
-                "code": "internal",
-                "message": "not implemented in this embedding"
+                "code": "workspace_unavailable",
+                "message": "no workspace provider applicable for /proj/a."
             }),
-            "#2294 the deep pipeline fail-closes"
+            "#2294 past the checks the workspace phase runs (no project dir: no provider)"
         );
         let index = std::fs::read_to_string(&paths.plan_index_file).expect("#2294 index");
         negative_assert_eq!(
@@ -765,6 +767,14 @@ mod tests {
         DiscoveryFire::new(FireDeps {
             language: None,
             plan_store: Arc::new(DiscoveryPlanStore::new(paths.clone())),
+            cycle_store: Arc::new(WorkCycleStore::new(paths.clone())),
+            state_store: Arc::new(DiscoveryStateStore::new(paths.clone())),
+            run_contexts: Arc::new(AlwaysOnRunContextRegistry::new()),
+            workspace_registry: WorkspaceRegistry {
+                worktrees_dir: paths.worktrees_dir.clone(),
+                snapshots_dir: paths.snapshots_dir.clone(),
+                on_worktree_created: None,
+            },
             paths,
             project_key: "/proj/a".into(),
             gateway,
@@ -913,24 +923,34 @@ mod tests {
         );
     }
 
-    // `run` is the pure fail-closed surface: an internal AlwaysOnError whose
-    // code the scheduler preserves on rethrow (golden `t11` shape).
+    // `run` (DiscoveryFire.ts:644-664): a discovery turn that saves no
+    // plan is `no_plan` — the state goes dormant and the history records it.
     #[tokio::test]
-    async fn run_seam_fail_closes() {
-        let home = scratch("run-seam");
-        let fire = fire(paths(&home));
-        let error = fire
+    async fn run_without_a_plan_goes_dormant() {
+        let home = scratch("run-no-plan");
+        let mut paths = paths(&home);
+        paths.events_file = home.join("events.jsonl");
+        paths.run_history_file = home.join("run-history.jsonl");
+        let fire = fire(paths.clone());
+        let outcome = fire
             .run(FireRunInput {
                 run_id: "run-1",
                 started_at_ms: 0.0,
             })
             .await
-            .expect_err("#2294 the deep pipeline is not implemented");
-        negative_assert_eq!(error.code(), "internal", "#2294 code");
+            .expect("#2294 run");
+        negative_assert_eq!(outcome.outcome, "no_plan".to_string(), "#2294 outcome");
+        let state: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&paths.state_file).expect("#2294 state"),
+        )
+        .expect("#2294 state json");
+        negative_assert_eq!(state["lastFireOutcome"], "no_plan", "#2294 state outcome");
+        assert!(state["dormant"].is_object());
+        let history = std::fs::read_to_string(&paths.run_history_file).expect("#2294 history");
         negative_assert_eq!(
-            error.message().to_utf8().expect("#2294 UTF-8"),
-            "not implemented in this embedding",
-            "#2294 message"
+            serde_json::from_str::<serde_json::Value>(history.trim()).expect("json")["outcome"],
+            "no_plan",
+            "#2294 history outcome"
         );
     }
 }

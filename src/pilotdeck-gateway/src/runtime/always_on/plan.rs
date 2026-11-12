@@ -12,7 +12,8 @@ const PLAN_REQUIRED_SECTIONS: [&str; 6] = [
     "Verification",
 ];
 
-const PLAN_METADATA_KEYS: [&str; 5] = ["id", "sourceRunId", "createdAt", "projectRoot", "dedupeKey"];
+const PLAN_METADATA_KEYS: [&str; 5] =
+    ["id", "sourceRunId", "createdAt", "projectRoot", "dedupeKey"];
 
 /// `PlanParseResult` — the parts the plan tool reads.
 pub(crate) struct ParsedPlan {
@@ -72,7 +73,10 @@ pub(crate) fn parse_plan_markdown(content: &str) -> Result<ParsedPlan, PlanError
     let mut metadata_lines: Vec<&str> = Vec::new();
     while cursor < lines.len() && lines[cursor].starts_with('>') {
         let line = &lines[cursor][1..];
-        metadata_lines.push(line.strip_prefix(|ch: char| ch.is_whitespace()).unwrap_or(line));
+        metadata_lines.push(
+            line.strip_prefix(|ch: char| ch.is_whitespace())
+                .unwrap_or(line),
+        );
         cursor += 1;
     }
     if metadata_lines.is_empty() {
@@ -93,7 +97,9 @@ pub(crate) fn parse_plan_markdown(content: &str) -> Result<ParsedPlan, PlanError
             continue;
         }
         let Some(colon) = trimmed.find(':') else {
-            return Err(format!("plan metadata line \"{line}\" is not in \"key: value\" form."));
+            return Err(format!(
+                "plan metadata line \"{line}\" is not in \"key: value\" form."
+            ));
         };
         let key = js_trim(&trimmed[..colon]);
         let value = js_trim(&trimmed[colon + 1..]);
@@ -181,7 +187,11 @@ pub(crate) fn parse_plan_markdown(content: &str) -> Result<ParsedPlan, PlanError
     // DEFAULT_FUZZY_TODOS: /^\s*TODO\b/i and /^\s*待补充\b/ (no `m` flag:
     // the start of the whole text).
     let head = proposed.trim_start_matches(|ch: char| ch.is_whitespace());
-    if head.get(..4).is_some_and(|word| word.eq_ignore_ascii_case("todo")) && !word_char_at(head, 4) {
+    if head
+        .get(..4)
+        .is_some_and(|word| word.eq_ignore_ascii_case("todo"))
+        && !word_char_at(head, 4)
+    {
         return Err("plan Proposed Change must not be fuzzy (\"^\\s*TODO\\b\").".into());
     }
     if let Some(rest) = head.strip_prefix("待补充")
@@ -208,8 +218,7 @@ pub(crate) fn parse_plan_markdown(content: &str) -> Result<ParsedPlan, PlanError
             ordered += 1;
             continue;
         }
-        if line.starts_with(['-', '*', '+'])
-            && line[1..].starts_with(|ch: char| ch.is_whitespace())
+        if line.starts_with(['-', '*', '+']) && line[1..].starts_with(|ch: char| ch.is_whitespace())
         {
             return Err(
                 "plan Execution Steps must use an ordered list (no unordered items).".into(),

@@ -70,7 +70,11 @@ impl std::fmt::Debug for PhaseContext {
 }
 
 impl PhaseContext {
-    pub(crate) fn new(kind: PhaseKind, paths: AlwaysOnPaths, plan_store: Arc<DiscoveryPlanStore>) -> Self {
+    pub(crate) fn new(
+        kind: PhaseKind,
+        paths: AlwaysOnPaths,
+        plan_store: Arc<DiscoveryPlanStore>,
+    ) -> Self {
         Self {
             kind,
             paths,
@@ -112,10 +116,18 @@ impl Kind {
     }
     fn description(self) -> &'static str {
         match self {
-            Kind::Plan => "Save the single discovery plan for this Always-On fire. Returns plan_quota_exhausted if called more than once per fire. Plan content must follow the PilotDeck Always-On plan markdown contract.",
-            Kind::Report => "Persist the work-report markdown for the current Always-On execution turn. Missing required sections are filled by the runtime fallback; do not fight the contract.",
-            Kind::Workspace => "Prepare an isolated workspace for the current Always-On plan execution. Use `auto` to let the runtime pick the best strategy, or specify `git-worktree` / `snapshot-copy` explicitly.",
-            Kind::ChatHistory => "Read the full conversation from a user chat session. Use the sessionId from the chat digest in the discovery prompt to expand a session of interest. Only available during Always-On discovery (Phase 1).",
+            Kind::Plan => {
+                "Save the single discovery plan for this Always-On fire. Returns plan_quota_exhausted if called more than once per fire. Plan content must follow the PilotDeck Always-On plan markdown contract."
+            }
+            Kind::Report => {
+                "Persist the work-report markdown for the current Always-On execution turn. Missing required sections are filled by the runtime fallback; do not fight the contract."
+            }
+            Kind::Workspace => {
+                "Prepare an isolated workspace for the current Always-On plan execution. Use `auto` to let the runtime pick the best strategy, or specify `git-worktree` / `snapshot-copy` explicitly."
+            }
+            Kind::ChatHistory => {
+                "Read the full conversation from a user chat session. Use the sessionId from the chat digest in the discovery prompt to expand a session of interest. Only available during Always-On discovery (Phase 1)."
+            }
         }
     }
     fn schema(self) -> &'static str {
@@ -429,7 +441,11 @@ fn execute_report(
 }
 
 /// `DiscoveryReportStore.writeReport` (DiscoveryReportStore.ts:9-14).
-pub(crate) fn write_report(paths: &AlwaysOnPaths, run_id: &str, markdown: &str) -> std::io::Result<String> {
+pub(crate) fn write_report(
+    paths: &AlwaysOnPaths,
+    run_id: &str,
+    markdown: &str,
+) -> std::io::Result<String> {
     let path = report_markdown_path(paths, &JsString::from(run_id));
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -457,7 +473,9 @@ async fn execute_workspace(
     };
     let requested = text_field(input, "strategy");
     let prepared = if requested == "auto" {
-        registry.prepare(project_key, run_id, &phase.plan_title).await
+        registry
+            .prepare(project_key, run_id, &phase.plan_title)
+            .await
     } else {
         let Some(strategy) = Strategy::from_id(&requested) else {
             return Err(ToolError::failed(format!(

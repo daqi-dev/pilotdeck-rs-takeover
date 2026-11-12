@@ -701,9 +701,11 @@ async fn start_assembly(
                 // `[...alwaysOn.getTools(), ...cron.getTools()]`
                 // (ProjectAutomationBundle.ts:393-398); the always-on names
                 // only survive in an always-on session.
-                let mut extra_tools = if context.session_key.units().starts_with(
-                    &"always-on/".encode_utf16().collect::<Vec<u16>>(),
-                ) {
+                let mut extra_tools = if context
+                    .session_key
+                    .units()
+                    .starts_with(&"always-on/".encode_utf16().collect::<Vec<u16>>())
+                {
                     always_on_tools_slot
                         .get()
                         .map(|manager| manager.tools())
@@ -783,8 +785,8 @@ async fn start_assembly(
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .permission_rules(&context.session_key);
-                let permission_lease = permission_rule_sets
-                    .acquire(&context.session_key, configured_rules.as_ref());
+                let permission_lease =
+                    permission_rule_sets.acquire(&context.session_key, configured_rules.as_ref());
                 let session_rules = permission_lease.rules();
                 // `LocalGatewayBootConfig.permissionTimeoutMs`.
                 let permission_timeout = super::permission_prompt::interaction_timeout(

@@ -24,7 +24,10 @@ fn js_trim(value: &str) -> &str {
 fn clip(text: &str) -> String {
     let units: Vec<u16> = text.encode_utf16().collect();
     if units.len() > MAX_PROMPT_LENGTH {
-        format!("{}...", String::from_utf16_lossy(&units[..MAX_PROMPT_LENGTH]))
+        format!(
+            "{}...",
+            String::from_utf16_lossy(&units[..MAX_PROMPT_LENGTH])
+        )
     } else {
         text.to_string()
     }
@@ -126,7 +129,7 @@ pub(crate) fn build_chat_digest(
         let last_modified = info
             .get("lastModified")
             .and_then(JsValue::as_number)
-            .map(|ms| crate::runtime::cron::iso_from_epoch_ms(ms))
+            .map(crate::runtime::cron::iso_from_epoch_ms)
             .unwrap_or_default();
         digest.push(DigestSession {
             alias,

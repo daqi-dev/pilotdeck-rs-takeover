@@ -358,10 +358,7 @@ impl WorkCycleStore {
         let mut workspace = JsObject::new();
         workspace.insert("strategy".into(), JsValue::from(handle.strategy));
         workspace.insert("cwd".into(), JsValue::from(handle.cwd));
-        workspace.insert(
-            "metadata".into(),
-            JsValue::Object(handle.metadata.clone()),
-        );
+        workspace.insert("metadata".into(), JsValue::Object(handle.metadata.clone()));
         let mut record = JsObject::new();
         record.insert("id".into(), JsValue::from(cycle_id));
         record.insert("projectKey".into(), JsValue::from(handle.project_key));

@@ -7,10 +7,7 @@ use std::{io, sync::Arc};
 
 use pilotdeck_protocol::{JsObject, JsValue};
 
-use crate::{
-    config::session_value::SessionValue,
-    runtime::cron::iso_from_epoch_ms,
-};
+use crate::{config::session_value::SessionValue, runtime::cron::iso_from_epoch_ms};
 
 use super::{
     AlwaysOnError, DiscoveryPlanRecord, WorkCycleRecord,
@@ -71,7 +68,10 @@ fn history_head(base: &HistoryBase, plan_id: &str) -> JsObject {
 
 fn workspace_ref(workspace: &WorkspaceHandle) -> JsValue {
     let mut out = JsObject::new();
-    out.insert("strategy".into(), JsValue::from(workspace.strategy.as_str()));
+    out.insert(
+        "strategy".into(),
+        JsValue::from(workspace.strategy.as_str()),
+    );
     out.insert("handle".into(), JsValue::from(workspace.cwd.as_str()));
     JsValue::Object(out)
 }
@@ -198,9 +198,12 @@ impl DiscoveryFire {
                 .entries()
                 .iter()
                 .filter_map(|(key, value)| {
-                    value
-                        .as_string()
-                        .map(|text| (String::from_utf16_lossy(key.units()), String::from_utf16_lossy(text.units())))
+                    value.as_string().map(|text| {
+                        (
+                            String::from_utf16_lossy(key.units()),
+                            String::from_utf16_lossy(text.units()),
+                        )
+                    })
                 })
                 .collect(),
         })
@@ -290,13 +293,13 @@ impl DiscoveryFire {
                 &session_key,
                 WORKSPACE_CHANNEL,
                 &format!("{run_id}.workspace"),
-                build_workspace_prompt(&self.deps.project_key, plan_title, self.language())
-                    .into(),
+                build_workspace_prompt(&self.deps.project_key, plan_title, self.language()).into(),
                 false,
             )
             .await;
         self.release_phase(&session_key).await;
-        drained.map_err(|error| AlwaysOnError::new("workspace_prepare_failed", error.to_string()))?;
+        drained
+            .map_err(|error| AlwaysOnError::new("workspace_prepare_failed", error.to_string()))?;
         let cycle_id = (self.deps.uuid)();
         let prepared = phase.state().handle.clone();
         if let Some(handle) = prepared {
@@ -375,7 +378,11 @@ impl DiscoveryFire {
         };
 
         // ── Phase 2: Workspace ──
-        self.emit_event(run_id, "workspace_started", vec![("planId", JsValue::from(plan_id))]);
+        self.emit_event(
+            run_id,
+            "workspace_started",
+            vec![("planId", JsValue::from(plan_id))],
+        );
         let prepared = match self.workspace_phase(run_id, state, &title_text).await {
             Ok((handle, cycle, reused)) => {
                 let safe = if reused {
@@ -419,13 +426,15 @@ impl DiscoveryFire {
                 });
             }
         };
-        workspace
-            .metadata
-            .retain(|(key, _)| key != "startedAt");
+        workspace.metadata.retain(|(key, _)| key != "startedAt");
         workspace
             .metadata
             .push(("startedAt".into(), started_at.clone()));
-        self.emit_event(run_id, "workspace_ready", vec![("planId", JsValue::from(plan_id))]);
+        self.emit_event(
+            run_id,
+            "workspace_ready",
+            vec![("planId", JsValue::from(plan_id))],
+        );
 
         // ── Phase 3: Execution ──
         let execution_key = derive_execution_session_key(&self.deps.project_key, run_id);
@@ -477,8 +486,13 @@ impl DiscoveryFire {
                 &execution_key,
                 EXECUTION_CHANNEL,
                 &format!("{run_id}.execute"),
-                build_execution_prompt(&plan.markdown, &workspace.cwd, &workspace.strategy, self.language())
-                    .into(),
+                build_execution_prompt(
+                    &plan.markdown,
+                    &workspace.cwd,
+                    &workspace.strategy,
+                    self.language(),
+                )
+                .into(),
                 true,
             )
             .await;
@@ -553,8 +567,13 @@ impl DiscoveryFire {
                 &report_key,
                 REPORT_CHANNEL,
                 &format!("{run_id}.report"),
-                build_report_prompt(&plan.markdown, &workspace.cwd, &workspace.strategy, self.language())
-                    .into(),
+                build_report_prompt(
+                    &plan.markdown,
+                    &workspace.cwd,
+                    &workspace.strategy,
+                    self.language(),
+                )
+                .into(),
                 true,
             )
             .await;
@@ -625,7 +644,11 @@ impl DiscoveryFire {
         io_to_plan(self.deps.plan_store.update(
             plan_id,
             &PlanUpdate {
-                status: Some(if degraded { "completed_no_report" } else { "completed" }),
+                status: Some(if degraded {
+                    "completed_no_report"
+                } else {
+                    "completed"
+                }),
                 report_file_path: Some(&report_path),
                 work_cycle_id: Some(&cycle.id),
             },
@@ -646,7 +669,6 @@ impl DiscoveryFire {
         })
     }
 }
-
 
 const DISCOVERY_CHANNEL: &str = "always-on/discovery";
 
@@ -679,8 +701,7 @@ impl DiscoveryFire {
 
         // ── Phase 1: Discovery ──
         self.emit_event(run_id, "discovery_started", Vec::new());
-        let session_key =
-            super::fire::derive_discovery_session_key(&self.deps.project_key, run_id);
+        let session_key = super::fire::derive_discovery_session_key(&self.deps.project_key, run_id);
         let existing = match self.live_active_cycle(&state)? {
             Some((handle, _)) => Some((handle.cwd, handle.strategy)),
             None => match state.get("currentWorkspace") {
