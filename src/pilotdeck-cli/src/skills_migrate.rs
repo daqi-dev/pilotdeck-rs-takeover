@@ -116,12 +116,8 @@ fn includes(raw: Option<&str>) -> Result<Vec<&'static str>, Failure> {
     }
     Ok(result)
 }
-fn sources(argv: &[String], env: &Env, cwd: &Path) -> Result<Vec<Source>, Failure> {
+fn sources(argv: &[String], home: &Path, cwd: &Path) -> Result<Vec<Source>, Failure> {
     let include = includes(flag(argv, "--from"))?;
-    let home = PathBuf::from(
-        env.get("HOME")
-            .ok_or(Failure::Todo("home directory lookup without $HOME"))?,
-    );
     let project = paths::resolve(cwd, Path::new(flag(argv, "--project").unwrap_or("")));
     let mut sources = Vec::new();
     for kind in include {
@@ -169,7 +165,7 @@ fn sources(argv: &[String], env: &Env, cwd: &Path) -> Result<Vec<Source>, Failur
     }
     for pair in argv.windows(2) {
         if pair[0] == "--source" && !pair[1].is_empty() && !pair[1].starts_with("--") {
-            let path = expand_home(&pair[1], &home);
+            let path = expand_home(&pair[1], home);
             sources.push(Source {
                 kind: "custom",
                 label: "Custom skills",
@@ -511,8 +507,10 @@ fn report(argv: &[String], env: &Env, cwd: &Path) -> Result<JsValue, Failure> {
     } else {
         "skip"
     };
-    let sources = sources(argv, env, cwd)?;
-    let home = PathBuf::from(env.get("HOME").expect("checked by sources"));
+    // The baseline uses os.homedir(), including its OS fallback when HOME is
+    // absent. Resolve it once for both source expansion and SkillManager.
+    let home = paths::homedir(env)?;
+    let sources = sources(argv, &home, cwd)?;
     let mut options = SkillManagerOptions::new(pilot_home.to_string_lossy());
     options.home_dir = Some(home.to_string_lossy().into_owned());
     options.env = Some(env.strings());

@@ -2,8 +2,8 @@
 //! One-time cleanup of unmodified bootstrap copies, without starting a gateway.
 use crate::Failure;
 use crate::paths::{self, Env};
-use icu_collator::{Collator, CollatorBorrowed, CollatorPreferences};
-use icu_locale_core::Locale;
+use icu_collator::CollatorBorrowed;
+use pilotdeck_agent::collation::{build_node_collator, node_locale};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -26,16 +26,17 @@ pub fn builtin_skills_root(
     {
         return Ok(paths::resolve(cwd, Path::new(dir)));
     }
-    let exe_dir = exe_dir.ok_or(Failure::Todo(
-        "locating bundled skills without a known executable path",
-    ))?;
     let fallback = paths::resolve(cwd, Path::new("skills"));
-    let candidates = [
-        paths::resolve(cwd, &exe_dir.join("../skills")),
-        paths::resolve(cwd, &exe_dir.join("../../skills")),
-    ];
+    // Node always knows import.meta.url. If the OS cannot locate this native
+    // executable, no relative release candidates can be probed; retain the
+    // same final cwd/skills fallback used when those candidates are absent.
+    let mut candidates = exe_dir.into_iter().flat_map(|exe_dir| {
+        [
+            paths::resolve(cwd, &exe_dir.join("../skills")),
+            paths::resolve(cwd, &exe_dir.join("../../skills")),
+        ]
+    });
     Ok(candidates
-        .into_iter()
         .find(|candidate| candidate.exists())
         .unwrap_or(fallback))
 }
@@ -186,74 +187,12 @@ pub(super) fn read_entries(path: &Path) -> Result<Vec<fs::DirEntry>, Failure> {
 }
 
 pub(super) fn collator(env: &Env) -> Result<CollatorBorrowed<'static>, Failure> {
-    // Same Node/ICU locale selection already measured for gateway project_files.
-    // D2's independent C-locale probe is scripts/cli-parity/skills_probe.mjs.
-    //
-    // Known divergence from `gateway/src/node_locale.rs` (#132 P2, follow-up
-    // #2140): this CLI parser is deliberately simpler. It drops the whole
-    // POSIX suffix at the first `.` or `@` (so `fr_CA@collation=eor` becomes
-    // `fr-CA`), and a malformed tag falls back to `en-US` wholesale instead of
-    // keeping ICU's valid prefix. Both only matter for exotic LANG values; the
-    // collations compared here (skill directory basenames) come from the same
-    // process locale either way.
-    let locale = ["LC_ALL", "LC_MESSAGES", "LANG"]
-        .iter()
-        .find_map(|key| env.string(key))
-        .unwrap_or_else(|| "en-US".into());
-    let language = locale
-        .split(['.', '@'])
-        .next()
-        .unwrap_or("")
-        .replace('_', "-");
-    let locale: Locale = match language.as_str() {
-        "C" | "POSIX" => "en-US".parse().expect("locale literal"),
-        "" => Locale::UNKNOWN,
-        _ => language
-            .parse()
-            .unwrap_or_else(|_| "en-US".parse().expect("locale literal")),
-    };
-    let mut preferences: CollatorPreferences = locale.clone().into();
-    let create = |preferences: CollatorPreferences| {
-        Collator::try_new(preferences, Default::default()).map(|collator| {
-            // Same measured Node/ICU 78.2 gap as gateway `node_collator`: the
-            // baked metadata omits fr-CA's backward-secondary bit. This path
-            // mirrors Node's *default* locale, i.e. `localeCompare` with no
-            // locale argument, which is what `migrateSkills.ts` uses — the same
-            // spelling gateway `node_collator` models, so the two agree on
-            // `fr-Latn-CA` (gateway `node_explicit_collator` is the one that
-            // opts out). Measured on v22.22.0 / ICU 78.2: under
-            // `LANG=fr_Latn_CA.UTF-8` the default collator reports
-            // `resolvedOptions().locale == "fr-Latn-CA"` yet orders like `fr-CA`
-            // (`coté > côte`), while an explicit `new Intl.Collator("fr-Latn-CA")`
-            // orders like generic `fr`. So the script tag on CA does not opt out
-            // here, while a non-Latin script tag does: measured row
-            // `fr_Cyrl_CA.UTF-8` in `../tests/fixtures/skills-fr-ca-probe.json`
-            // resolves `fr-Cyrl-CA` and orders `coté < côte` (no repair). An
-            // explicit collation keeps its own metadata.
-            if locale.id.language.as_str() == "fr"
-                && locale
-                    .id
-                    .script
-                    .is_none_or(|script| script.to_string() == "Latn")
-                && locale
-                    .id
-                    .region
-                    .is_some_and(|region| region.as_str() == "CA")
-                && preferences.collation_type.is_none()
-            {
-                collator.with_backward_second_level(true)
-            } else {
-                collator
-            }
-        })
-    };
-    create(preferences)
-        .or_else(|_| {
-            preferences.collation_type = None;
-            create(preferences)
-        })
-        .or_else(|_| Collator::try_new(Default::default(), Default::default()))
-        .map_err(|_| Failure::Todo("loading skill filename collation data"))
+    // Skills use localeCompare without an explicit locale. Share the same
+    // Node/ICU POSIX locale parsing and process-default tailoring as the
+    // gateway and agent, including valid prefixes of malformed locale tags.
+    let locale = node_locale(|key| env.string(key));
+    build_node_collator(&locale, true)
+        .ok_or_else(|| Failure::Error("Skill filename collation data is unavailable.".into()))
 }
 
 /// Hash only files and symlinks; empty dirs and entry type are not serialized.
@@ -979,6 +918,22 @@ mod tests {
         let env = Env::from_pairs(&[("PILOTDECK_BUNDLED_SKILLS_DIR", "")]);
         assert_eq!(root_of(&env, &cwd, &exe_dir), base.join("stage/skills"));
         fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn unknown_executable_uses_existing_fallback_and_honors_override() {
+        let cwd = Path::new("/c1-isolated-project");
+        assert_eq!(
+            builtin_skills_root(&Env::from_pairs(&[]), cwd, None)
+                .ok()
+                .unwrap(),
+            cwd.join("skills")
+        );
+        let env = Env::from_pairs(&[("PILOTDECK_BUNDLED_SKILLS_DIR", "bundled")]);
+        assert_eq!(
+            builtin_skills_root(&env, cwd, None).ok().unwrap(),
+            cwd.join("bundled")
+        );
     }
 
     #[test]

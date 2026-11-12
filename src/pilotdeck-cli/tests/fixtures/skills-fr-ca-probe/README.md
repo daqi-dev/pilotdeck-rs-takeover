@@ -1,10 +1,15 @@
 # skills-fr-ca-probe 负控（#2140）
 
-`negative_controls.py` 是 `src/pilotdeck-cli/src/skills.rs` 里 `collator()` 的
-HEAD-only 变异负控，绑定唯一被点名测试
+`negative_controls.py` 是 CLI 技能排序的 HEAD-only 变异负控，绑定唯一被点名测试
 `skills::tests::fr_ca_secondary_matches_recorded_node_probe`
 （回放 `../skills-fr-ca-probe.json` 记录的 Node v22.22.0 / ICU 78.2 原始输出）。
 `pilotdeck-cli` 是 binary-only 包，单元测试跑在 `--bin pilotdeck` 目标下。
+
+2026-11-13：CLI 的 `skills.rs::collator()` 已复用
+`src/pilotdeck-agent/src/collation.rs` 的 Node/ICU 实现，原来指向 CLI 重复实现的
+四个源码变异锚点随实现迁到该共享模块。原有修复丢失、区域扩大、脚本丢失和脚本
+扩大四种保护继续由同一个 CLI 消费测试检出；七项分母、夹具自审变异和精确失败
+标记保持不变。实现及调用方仍受 `mutating_sources` 的全 `src/` HEAD 守卫检查。
 
 七条变异各绑一条专属断言消息（测试内失败点均已去裸 unwrap）：
 

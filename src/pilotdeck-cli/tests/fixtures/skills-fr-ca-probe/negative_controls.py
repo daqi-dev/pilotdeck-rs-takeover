@@ -27,7 +27,9 @@ from negative_selection import (claim_dir, missing_target, refuse,
                                  verdict_exit)
 from negative_suite import Case, classify, invalidate_completed, passed, publish_summary
 
-SKILLS = root / 'src/pilotdeck-cli/src/skills.rs'
+# The CLI delegates to the shared Node/ICU implementation. Mutate that
+# implementation while retaining the CLI consumer test and its exact markers.
+COLLATION = root / 'src/pilotdeck-agent/src/collation.rs'
 PROBE_JSON = root / 'src/pilotdeck-cli/tests/fixtures/skills-fr-ca-probe.json'
 # pilotdeck-cli is a binary-only package, so the unit tests in
 # `src/skills.rs` run under the `pilotdeck` bin target, not `--lib`.
@@ -36,12 +38,12 @@ mutations = [
     # Dropping the fr-CA backward-secondary repair makes the default collator
     # order accents at the secondary level (generic fr), against the recorded
     # fr_CA.UTF-8 row's sign 1 for `coté` vs `côte`.
-    ('fr-ca-repair-dropped', SKILLS,
+    ('fr-ca-repair-dropped', COLLATION,
      'collator.with_backward_second_level(true)', 'collator',
      TEST, '#2140 fr_CA.UTF-8: "coté" vs "côte"'),
     # Widening the repair to every `fr` language (no CA region) reorders the
     # fr_FR.UTF-8 row, which Node orders like generic fr (sign -1).
-    ('fr-ca-region-widened', SKILLS,
+    ('fr-ca-region-widened', COLLATION,
      '                && locale\n                    .id\n                    .region\n'
      '                    .is_some_and(|region| region.as_str() == "CA")\n',
      '',
@@ -55,14 +57,14 @@ mutations = [
     # unused, and a host that compiles with `-D warnings` would fail the
     # mutant build and read the whole suite as INVALID (grep-etxtbsy README
     # precedent), so the anchor covers the whole closure instead.
-    ('fr-ca-script-lost', SKILLS,
+    ('fr-ca-script-lost', COLLATION,
      '.is_none_or(|script| script.to_string() == "Latn")',
      '.is_none_or(|_| false)',
      TEST, '#2140 fr_Latn_CA.UTF-8: "coté" vs "côte"'),
     # Widening the Latn gate to every script repairs the fr_Cyrl_CA.UTF-8 row
     # (sign -1, no repair), the direction the #2170 gateway test pins
     # (gateway twin: native-collation's french-script-widened).
-    ('fr-ca-script-widened', SKILLS,
+    ('fr-ca-script-widened', COLLATION,
      '.is_none_or(|script| script.to_string() == "Latn")',
      '.is_none_or(|_| true)',
      TEST, '#2140 fr_Cyrl_CA.UTF-8: "coté" vs "côte"'),
