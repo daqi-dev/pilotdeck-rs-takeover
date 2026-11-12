@@ -1,0 +1,178 @@
+{
+  "env": {
+    "PILOTDECK_TOKEN": "{TOKEN}"
+  },
+  "name": "c1-sdk-roundtrip",
+  "about": "正式 run --project --model --json 创建会话后，以 resume --stream-json 续写，并用 sessions messages 读取持久历史；followup provider规则同时要求两轮输入，避免空历史也假通过。另含provider 400错误返回。当前新场景待E0固定候选TS自比与Rust对拍。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"C1 CLI roundtrip\"}"
+      }
+    },
+    {
+      "name": "failure",
+      "when": [
+        "C1-FAIL"
+      ],
+      "reply": {
+        "status": 400,
+        "body": {
+          "error": {
+            "message": "C1 mock provider rejected",
+            "type": "invalid_request_error"
+          }
+        }
+      }
+    },
+    {
+      "name": "followup",
+      "when": [
+        "C1-FIRST",
+        "C1-SECOND"
+      ],
+      "reply": {
+        "text": "C1 history retained."
+      }
+    },
+    {
+      "name": "first",
+      "when": [
+        "C1-FIRST"
+      ],
+      "reply": {
+        "text": "C1 first reply."
+      }
+    },
+    {
+      "name": "unexpected",
+      "reply": {
+        "text": "C1 unexpected request."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "cli": [
+        "run",
+        "--project",
+        "{PROJECT}",
+        "--channel",
+        "c1-roundtrip",
+        "--model",
+        "bbx/deterministic",
+        "--json",
+        "C1-FIRST"
+      ],
+      "save": {
+        "session": "sessionId\\\\\":\\\\\"([^\"\\\\]+)"
+      }
+    },
+    {
+      "cli": [
+        "resume",
+        "{saved.session}",
+        "--project",
+        "{PROJECT}",
+        "--stream-json",
+        "C1-SECOND"
+      ]
+    },
+    {
+      "cli": [
+        "sessions",
+        "messages",
+        "{saved.session}",
+        "--project",
+        "{PROJECT}"
+      ]
+    },
+    {
+      "cli": [
+        "run",
+        "--project",
+        "{PROJECT}",
+        "--channel",
+        "c1-failure",
+        "--json",
+        "C1-FAIL"
+      ]
+    }
+  ],
+  "assertions": [
+    {
+      "id": "run-completed",
+      "path": "/steps/0/cli/exitCode",
+      "equals": 0
+    },
+    {
+      "id": "run-real-output",
+      "path": "/steps/0/cli/stdout",
+      "includes": "C1 first reply."
+    },
+    {
+      "id": "run-completion-status",
+      "path": "/steps/0/cli/stdout",
+      "includes": "\"status\":\"completed\""
+    },
+    {
+      "id": "resume-completed",
+      "path": "/steps/1/cli/exitCode",
+      "equals": 0
+    },
+    {
+      "id": "resume-history-output",
+      "path": "/steps/1/cli/stdout",
+      "includes": "C1 history retained."
+    },
+    {
+      "id": "history-command-completed",
+      "path": "/steps/2/cli/exitCode",
+      "equals": 0
+    },
+    {
+      "id": "history-has-first",
+      "path": "/steps/2/cli/stdout",
+      "includes": "C1-FIRST"
+    },
+    {
+      "id": "history-has-second",
+      "path": "/steps/2/cli/stdout",
+      "includes": "C1-SECOND"
+    },
+    {
+      "id": "history-has-assistant",
+      "path": "/steps/2/cli/stdout",
+      "includes": "C1 history retained."
+    },
+    {
+      "id": "failure-exit",
+      "path": "/steps/3/cli/exitCode",
+      "equals": 1
+    },
+    {
+      "id": "failure-status",
+      "path": "/steps/3/cli/stdout",
+      "includes": "\"status\":\"failed\""
+    },
+    {
+      "id": "explicit-model-sent",
+      "path": "/provider/first/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "history-reached-model",
+      "path": "/provider/followup/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "failure-reached-model",
+      "path": "/provider/failure/0/body/model",
+      "equals": "deterministic"
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+[
+  {
+    "id": "wecom-existing",
+    "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  企业微信 WeCom AI Bot 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n已有企业微信配置 (Bot ID: fixt…t-id)\n重新配置？ [y/N]: 企业微信已启用（使用现有凭据）。\n\n",
+    "tree": {
+      "pilotdeck.yaml": "schemaVersion: 1\ntelemetry:\n  enabled: false\nadapters:\n  wecom:\n    enabled: true\n    token: fixture-bot-id\n    extra:\n      secret: fixture-bot-secret\n      websocket_url: wss://fixture.invalid/ws\n      dm_policy: allowlist\n      group_policy: allowlist\n      allow_from:\n        - user-a\n        - user-b\n      group_allow_from:\n        - group-a\n        - group-b\n      groups:\n        group-a:\n          requireMention: false\n  weixin:\n    enabled: false\n    obsolete: keep-until-setup\n"
+    }
+  },
+  {
+    "id": "wecom-manual-abandoned",
+    "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  企业微信 WeCom AI Bot 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n企业微信 AI Bot 通过官方 WebSocket 网关连接，无需公网回调地址。\n请确保你有企业微信组织管理员权限，或已在管理后台拿到 Bot ID 和 Secret。\n\n是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: 手动配置步骤：\n  1. 登录企业微信管理后台\n  2. 进入应用管理，创建 AI Bot / 智能机器人\n  3. 选择 API 模式\n  4. 复制 Bot ID 和 Secret\n\nBot ID: Secret: ",
+    "tree": {
+      "pilotdeck.yaml": "schemaVersion: 1\n"
+    }
+  },
+  {
+    "id": "wecom-manual-allowlists",
+    "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  企业微信 WeCom AI Bot 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n企业微信 AI Bot 通过官方 WebSocket 网关连接，无需公网回调地址。\n请确保你有企业微信组织管理员权限，或已在管理后台拿到 Bot ID 和 Secret。\n\n是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: 手动配置步骤：\n  1. 登录企业微信管理后台\n  2. 进入应用管理，创建 AI Bot / 智能机器人\n  3. 选择 API 模式\n  4. 复制 Bot ID 和 Secret\n\nBot ID: Secret: WebSocket URL (默认: wss://openws.work.weixin.qq.com): 私聊访问策略 [1=open 推荐, 2=allowlist, 3=disabled] (默认 1): 允许私聊的企业微信用户 ID（逗号分隔，留空则暂时禁用私聊）: 群聊访问策略 [1=disabled 推荐, 2=open, 3=allowlist] (默认 1): 允许响应的群聊 chat_id（逗号分隔）: \n企业微信配置已写入 pilotdeck.yaml\n连接模式: AI Bot WebSocket (无需公网 IP)\n重启 PilotDeck 服务后生效。\n\n",
+    "tree": {
+      "pilotdeck.yaml": "schemaVersion: 1\ntelemetry:\n  enabled: false\nadapters:\n  wecom:\n    enabled: true\n    token: fixture-bot-id\n    extra:\n      secret: fixture-bot-secret\n      websocket_url: wss://fixture.invalid/ws\n      dm_policy: allowlist\n      group_policy: allowlist\n      allow_from:\n        - user-a\n        - user-b\n      group_allow_from:\n        - group-a\n        - group-b\n"
+    }
+  },
+  {
+    "id": "wecom-manual-empty-allowlist",
+    "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  企业微信 WeCom AI Bot 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n企业微信 AI Bot 通过官方 WebSocket 网关连接，无需公网回调地址。\n请确保你有企业微信组织管理员权限，或已在管理后台拿到 Bot ID 和 Secret。\n\n是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: 手动配置步骤：\n  1. 登录企业微信管理后台\n  2. 进入应用管理，创建 AI Bot / 智能机器人\n  3. 选择 API 模式\n  4. 复制 Bot ID 和 Secret\n\nBot ID: Secret: WebSocket URL (默认: wss://openws.work.weixin.qq.com): 私聊访问策略 [1=open 推荐, 2=allowlist, 3=disabled] (默认 1): 允许私聊的企业微信用户 ID（逗号分隔，留空则暂时禁用私聊）: 群聊访问策略 [1=disabled 推荐, 2=open, 3=allowlist] (默认 1): \n企业微信配置已写入 pilotdeck.yaml\n连接模式: AI Bot WebSocket (无需公网 IP)\n重启 PilotDeck 服务后生效。\n\n",
+    "tree": {
+      "pilotdeck.yaml": "schemaVersion: 1\nadapters:\n  wecom:\n    enabled: true\n    token: fixture-empty-bot\n    extra:\n      secret: fixture-empty-secret\n      websocket_url: wss://openws.work.weixin.qq.com\n      dm_policy: disabled\n      group_policy: disabled\n"
+    }
+  },
+  {
+    "id": "weixin-existing",
+    "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  微信 iLink 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n已有凭据 (accountId: fixture-account)\n重新登录？ [y/N]: ✅ 微信已启用（使用现有凭据）\n\n",
+    "tree": {
+      "pilotdeck.yaml": "schemaVersion: 1\nadapters:\n  weixin:\n    enabled: true\n",
+      "weixin-credentials.json": "{\n  \"baseUrl\": \"https://fixture.invalid\",\n  \"botToken\": \"fixture-weixin-token\",\n  \"accountId\": \"fixture-account\"\n}"
+    }
+  }
+]

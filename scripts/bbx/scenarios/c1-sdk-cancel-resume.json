@@ -1,0 +1,162 @@
+{
+  "env": {
+    "PILOTDECK_TOKEN": "{TOKEN}"
+  },
+  "name": "c1-sdk-cancel-resume",
+  "about": "正式CLI恢复同一会话，模型发出首段后挂住；serve只向该CLI进程发送SIGINT，要求处理信号后自行结束，再resume同一会话并查询历史。无宿主18789；provider只用bbx本地mock。当前新场景待TS自比确认完整取消退出形状。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"C1 cancel resume\"}"
+      }
+    },
+    {
+      "name": "recovered",
+      "when": [
+        "C1-RECOVER"
+      ],
+      "reply": {
+        "text": "C1 recovered reply."
+      }
+    },
+    {
+      "name": "cancel",
+      "when": [
+        "C1-CANCEL"
+      ],
+      "reply": {
+        "chunks": [
+          "C1 partial"
+        ],
+        "hangAfter": 1,
+        "hangMs": 15000
+      }
+    },
+    {
+      "name": "initial",
+      "when": [
+        "C1-INITIAL"
+      ],
+      "reply": {
+        "text": "C1 initial reply."
+      }
+    },
+    {
+      "name": "unexpected",
+      "reply": {
+        "text": "C1 unexpected request."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "cli": [
+        "run",
+        "--project",
+        "{PROJECT}",
+        "--channel",
+        "c1-cancel",
+        "--json",
+        "C1-INITIAL"
+      ],
+      "save": {
+        "session": "sessionId\\\\\":\\\\\"([^\"\\\\]+)"
+      }
+    },
+    {
+      "serve": [
+        "resume",
+        "{saved.session}",
+        "--project",
+        "{PROJECT}",
+        "--stream-json",
+        "C1-CANCEL"
+      ],
+      "until": "\"text\":\"C1 partial\"",
+      "signal": "SIGINT",
+      "timeout": 12000,
+      "settleMs": 100
+    },
+    {
+      "cli": [
+        "resume",
+        "{saved.session}",
+        "--project",
+        "{PROJECT}",
+        "--json",
+        "C1-RECOVER"
+      ],
+      "timeout": 20000
+    },
+    {
+      "cli": [
+        "sessions",
+        "messages",
+        "{saved.session}",
+        "--project",
+        "{PROJECT}"
+      ]
+    }
+  ],
+  "assertions": [
+    {
+      "id": "initial-completed",
+      "path": "/steps/0/cli/exitCode",
+      "equals": 0
+    },
+    {
+      "id": "partial-reached",
+      "path": "/steps/1/serve/reached",
+      "equals": true
+    },
+    {
+      "id": "signal-handled",
+      "path": "/steps/1/serve/signal",
+      "equals": null
+    },
+    {
+      "id": "cancel-exit",
+      "path": "/steps/1/serve/exitCode",
+      "equals": 1
+    },
+    {
+      "id": "recovery-completed",
+      "path": "/steps/2/cli/exitCode",
+      "equals": 0
+    },
+    {
+      "id": "recovery-real-output",
+      "path": "/steps/2/cli/stdout",
+      "includes": "C1 recovered reply."
+    },
+    {
+      "id": "recovery-status",
+      "path": "/steps/2/cli/stdout",
+      "includes": "\"status\":\"completed\""
+    },
+    {
+      "id": "history-read",
+      "path": "/steps/3/cli/exitCode",
+      "equals": 0
+    },
+    {
+      "id": "history-after-recovery",
+      "path": "/steps/3/cli/stdout",
+      "includes": "C1-RECOVER"
+    },
+    {
+      "id": "cancel-model-request",
+      "path": "/provider/cancel/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "recovery-model-request",
+      "path": "/provider/recovered/0/body/model",
+      "equals": "deterministic"
+    }
+  ]
+}

@@ -1,0 +1,177 @@
+[
+  {
+    "id": "wecom-manual-allowlists",
+    "argv": [
+      "gateway",
+      "setup",
+      "wecom"
+    ],
+    "config": "schemaVersion: 1\ntelemetry:\n  enabled: false\n",
+    "answers": [
+      [
+        "是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: ",
+        "n"
+      ],
+      [
+        "Bot ID: ",
+        "fixture-bot-id"
+      ],
+      [
+        "Secret: ",
+        "fixture-bot-secret"
+      ],
+      [
+        "WebSocket URL (默认: wss://openws.work.weixin.qq.com): ",
+        "wss://fixture.invalid/ws"
+      ],
+      [
+        "私聊访问策略 [1=open 推荐, 2=allowlist, 3=disabled] (默认 1): ",
+        "2"
+      ],
+      [
+        "允许私聊的企业微信用户 ID（逗号分隔，留空则暂时禁用私聊）: ",
+        " user-a, , user-b "
+      ],
+      [
+        "群聊访问策略 [1=disabled 推荐, 2=open, 3=allowlist] (默认 1): ",
+        "3"
+      ],
+      [
+        "允许响应的群聊 chat_id（逗号分隔）: ",
+        " group-a,group-b, "
+      ]
+    ],
+    "stdoutIncludes": "企业微信配置已写入 pilotdeck.yaml",
+    "yamlIncludes": [
+      "enabled: true",
+      "dm_policy: allowlist",
+      "group_policy: allowlist",
+      "- user-a",
+      "- group-b"
+    ]
+  },
+  {
+    "id": "wecom-manual-empty-allowlist",
+    "argv": [
+      "gateway",
+      "setup",
+      "wecom"
+    ],
+    "config": "schemaVersion: 1\n",
+    "answers": [
+      [
+        "是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: ",
+        "no"
+      ],
+      [
+        "Bot ID: ",
+        "fixture-empty-bot"
+      ],
+      [
+        "Secret: ",
+        "fixture-empty-secret"
+      ],
+      [
+        "WebSocket URL (默认: wss://openws.work.weixin.qq.com): ",
+        ""
+      ],
+      [
+        "私聊访问策略 [1=open 推荐, 2=allowlist, 3=disabled] (默认 1): ",
+        "2"
+      ],
+      [
+        "允许私聊的企业微信用户 ID（逗号分隔，留空则暂时禁用私聊）: ",
+        " , , "
+      ],
+      [
+        "群聊访问策略 [1=disabled 推荐, 2=open, 3=allowlist] (默认 1): ",
+        ""
+      ]
+    ],
+    "stdoutIncludes": "企业微信配置已写入 pilotdeck.yaml",
+    "yamlIncludes": [
+      "dm_policy: disabled",
+      "group_policy: disabled",
+      "websocket_url: wss://openws.work.weixin.qq.com"
+    ],
+    "yamlExcludes": [
+      "allow_from:"
+    ]
+  },
+  {
+    "id": "wecom-existing",
+    "argv": [
+      "gateway",
+      "setup",
+      "wecom"
+    ],
+    "config": "schemaVersion: 1\ntelemetry:\n  enabled: false\nadapters:\n  wecom:\n    enabled: false\n    token: fixture-bot-id\n    extra:\n      secret: fixture-bot-secret\n      websocket_url: wss://fixture.invalid/ws\n      dm_policy: allowlist\n      allow_from: \" user-a, user-b \"\n      group_policy: allowlist\n      group_allow_from: [group-a, group-b]\n      groups:\n        group-a:\n          requireMention: false\n  weixin:\n    enabled: false\n    obsolete: keep-until-setup\n",
+    "answers": [
+      [
+        "重新配置？ [y/N]: ",
+        "n"
+      ]
+    ],
+    "stdoutIncludes": "企业微信已启用（使用现有凭据）。",
+    "yamlIncludes": [
+      "wecom:\n    enabled: true",
+      "requireMention: false",
+      "- user-a",
+      "- group-b"
+    ]
+  },
+  {
+    "id": "weixin-existing",
+    "argv": [
+      "gateway",
+      "setup",
+      "weixin"
+    ],
+    "config": "schemaVersion: 1\nadapters:\n  weixin:\n    enabled: false\n    obsolete: value\n",
+    "files": {
+      "weixin-credentials.json": {
+        "baseUrl": "https://fixture.invalid",
+        "botToken": "fixture-weixin-token",
+        "accountId": "fixture-account"
+      }
+    },
+    "answers": [
+      [
+        "重新登录？ [y/N]: ",
+        "n"
+      ]
+    ],
+    "stdoutIncludes": "微信已启用（使用现有凭据）",
+    "yamlIncludes": [
+      "weixin:\n    enabled: true"
+    ],
+    "yamlExcludes": [
+      "obsolete:"
+    ]
+  },
+  {
+    "id": "wecom-manual-abandoned",
+    "argv": [
+      "gateway",
+      "setup",
+      "wecom"
+    ],
+    "config": "schemaVersion: 1\n",
+    "answers": [
+      [
+        "是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: ",
+        "n"
+      ],
+      [
+        "Bot ID: ",
+        "fixture-bot"
+      ],
+      [
+        "Secret: ",
+        null
+      ]
+    ],
+    "stdoutIncludes": "Secret: ",
+    "yamlEquals": "schemaVersion: 1\n"
+  }
+]

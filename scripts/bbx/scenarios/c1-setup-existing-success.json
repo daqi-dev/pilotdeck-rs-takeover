@@ -1,0 +1,74 @@
+{
+  "name": "c1-setup-existing-success",
+  "about": "正式 gateway setup 使用现有 WeCom/Weixin 凭据：只回复一次 n 即真实写配置并退出；断言成功输出、退出码和两渠道落盘启用。无网络调用。固定基线 gatewaySetup.ts:285-300、534-542。",
+  "server": false,
+  "config": "schemaVersion: 1\ntelemetry:\n  enabled: false\nadapters:\n  wecom:\n    enabled: false\n    token: fixture-bot-id\n    extra:\n      secret: fixture-bot-secret\n      websocket_url: wss://fixture.invalid/ws\n      dm_policy: allowlist\n      allow_from: \" user-a, user-b \"\n      group_policy: allowlist\n      group_allow_from: [group-a, group-b]\n      groups:\n        group-a:\n          requireMention: false\n  weixin:\n    enabled: false\n    obsolete: keep-until-setup\n",
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "files": {
+    "home/.pilotdeck/weixin-credentials.json": {
+      "baseUrl": "https://fixture.invalid",
+      "botToken": "fixture-weixin-token",
+      "accountId": "fixture-account"
+    }
+  },
+  "steps": [
+    {
+      "cli": [
+        "gateway",
+        "setup",
+        "wecom"
+      ],
+      "stdin": "n\n",
+      "timeout": 10000
+    },
+    {
+      "cli": [
+        "gateway",
+        "setup",
+        "weixin"
+      ],
+      "stdin": "n\n",
+      "timeout": 10000
+    }
+  ],
+  "assertions": [
+    {
+      "id": "wecom-exit",
+      "path": "/steps/0/cli/exitCode",
+      "equals": 0
+    },
+    {
+      "id": "wecom-saved",
+      "path": "/steps/0/cli/stdout",
+      "includes": "企业微信已启用（使用现有凭据）。"
+    },
+    {
+      "id": "weixin-exit",
+      "path": "/steps/1/cli/exitCode",
+      "equals": 0
+    },
+    {
+      "id": "weixin-saved",
+      "path": "/steps/1/cli/stdout",
+      "includes": "微信已启用（使用现有凭据）"
+    },
+    {
+      "id": "wecom-enabled",
+      "path": "/tree/~1home~1.pilotdeck~1pilotdeck.yaml/text",
+      "includes": "wecom:\n    enabled: true"
+    },
+    {
+      "id": "weixin-enabled",
+      "path": "/tree/~1home~1.pilotdeck~1pilotdeck.yaml/text",
+      "includes": "weixin:\n    enabled: true"
+    },
+    {
+      "id": "weixin-creds-preserved",
+      "path": "/tree/~1home~1.pilotdeck~1weixin-credentials.json/json/accountId",
+      "equals": "fixture-account"
+    }
+  ]
+}

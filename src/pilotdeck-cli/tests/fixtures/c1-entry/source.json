@@ -1,0 +1,17 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "nodeVersion": "v22.22.0",
+  "platform": "darwin-arm64",
+  "entry": "node dist/src/cli/pilotdeck.js gateway setup <platform>",
+  "normalization": "stdout and file contents unchanged; Node ExperimentalWarning retained in raw capture, Rust expects empty stderr",
+  "selfComparison": "Two runs identical after Node warning PID normalization only",
+  "sourceSha256": {
+    "src/cli/pilotdeck.ts": "88c672b94f32c53d7bf5f188c62ef82965291aa55156e9032a43ae44198c8182",
+    "src/cli/commands/gatewaySetup.ts": "88485d2d6cbbfe16245edb5baa7152f7e773fce5e64257e7ec25f7f01233c205",
+    "dist/src/cli/pilotdeck.js": "4489ef95805baa7ae2c278aec9bd4683ee6a8b4d838271a984142303f8bd4483",
+    "dist/src/cli/commands/gatewaySetup.js": "b18908b165345b1df2441eae49c001e91b4a2af5edfed6476abbc136720bd1cc"
+  },
+  "casesSha256": "64ac3a955cf8dd05406283b26a14ceaf119b55dce11b4eecf52b2e967fa0b380",
+  "captureSha256": "5101d36315f6f639817a34923fe39ee8f9d258426248eb08f850acdcba2e707c",
+  "oracleSha256": "9f5f7870795007c808d44af553de4573358f17a6ac757e48504e15cf033f196a"
+}
