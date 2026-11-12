@@ -35,6 +35,9 @@ pub struct ToolRuntime {
     events: Option<crate::host::modules::tool_context::EventSink>,
     /// `ToolRuntimeOptions.lifecycle`: the session's hooks around each call.
     lifecycle: Option<Arc<dyn super::ToolLifecycle>>,
+    /// `context.fileUpdateNotifier`: the integration's own save notifier,
+    /// which the runtime's `FileChanged` dispatch follows.
+    file_update: Option<super::FileUpdateNotifier>,
 }
 impl ToolRuntime {
     pub fn new(
@@ -48,7 +51,12 @@ impl ToolRuntime {
             mode,
             events: None,
             lifecycle: None,
+            file_update: None,
         }
+    }
+    pub fn with_file_update_notifier(mut self, notifier: super::FileUpdateNotifier) -> Self {
+        self.file_update = Some(notifier);
+        self
     }
     pub fn with_lifecycle(mut self, lifecycle: Arc<dyn super::ToolLifecycle>) -> Self {
         self.lifecycle = Some(lifecycle);
@@ -590,13 +598,20 @@ impl ToolRuntime {
             execution
                 .fields
                 .insert("currentPermissionDecision".into(), decision);
-            if let Some(lifecycle) = &self.lifecycle {
-                execution.file_saved = Some(file_changed_notifier(
+            execution.file_saved = match &self.lifecycle {
+                Some(lifecycle) => Some(file_changed_notifier(
                     lifecycle.clone(),
+                    self.file_update.clone(),
                     self.events.clone(),
                     context.clone(),
-                ));
-            }
+                )),
+                // Without a lifecycle the integration's notifier is used as is.
+                None => self.file_update.clone().map(|notifier| {
+                    let cwd = string_field_value(&context, "cwd");
+                    Arc::new(move |update: super::FileUpdate| notifier(update, cwd.clone()))
+                        as super::FileSavedNotifier
+                }),
+            };
             let execute_input = input.clone();
             match tool.execute(input, execution).await {
                 Err(error) => {
@@ -750,12 +765,22 @@ impl ToolExecution for ToolRuntime {
 /// `warning` agent events, and the tool result is unchanged.
 fn file_changed_notifier(
     lifecycle: Arc<dyn super::ToolLifecycle>,
+    upstream: Option<super::FileUpdateNotifier>,
     events: Option<crate::host::modules::tool_context::EventSink>,
     context: ToolRunContext,
 ) -> super::FileSavedNotifier {
     Arc::new(move |update: super::FileUpdate| {
-        let (lifecycle, events, context) = (lifecycle.clone(), events.clone(), context.clone());
+        let (lifecycle, upstream, events, context) = (
+            lifecycle.clone(),
+            upstream.clone(),
+            events.clone(),
+            context.clone(),
+        );
         Box::pin(async move {
+            // `await upstream?.didSave?.(update)` first.
+            if let Some(upstream) = &upstream {
+                upstream(update.clone(), string_field_value(&context, "cwd")).await?;
+            }
             let change_kind = if update.created { "create" } else { "update" };
             let report = |code: &str, message: JsString, hook_name: Option<JsString>| {
                 let Some(emit) = &events else {
@@ -1434,6 +1459,16 @@ fn preview_metadata(content: &[JsValue], max: Option<f64>) -> Result<Option<JsOb
         ("originalBytes", JsValue::Number(original as f64)),
         ("returnedBytes", JsValue::Number(returned as f64)),
     ])))
+}
+
+/// A string field of the run context (`context.cwd`), empty when absent.
+fn string_field_value(context: &ToolRunContext, key: &str) -> JsString {
+    context
+        .fields
+        .get(key)
+        .and_then(JsValue::as_string)
+        .cloned()
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

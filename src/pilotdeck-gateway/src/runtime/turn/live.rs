@@ -103,6 +103,8 @@ pub struct LiveSessionAdapter {
     pub(super) state: Arc<Mutex<SessionState>>,
     /// See [`Self::with_maintenance`].
     maintenance: Option<Arc<MaintenanceFactory>>,
+    /// See [`Self::with_operation_ledger`].
+    operations: Option<Arc<super::operation::SessionOperations>>,
 }
 
 /// Composes the session's context runtime outside a turn.
@@ -167,6 +169,7 @@ impl LiveSessionAdapter {
             }),
             state: Arc::default(),
             maintenance: None,
+            operations: None,
         }
     }
 
@@ -297,6 +300,17 @@ impl LiveSessionAdapter {
     /// wire keep using the bound module id; only the stamp is left out.
     pub fn as_in_process_loop(mut self) -> Self {
         self.in_process_loop = true;
+        self
+    }
+
+    /// The loop runs in an explicitly deployed sidecar
+    /// (`PILOTDECK_AGENT_LOOP_TRANSPORT=stdio`): every turn's transport
+    /// attempt is recorded in the session's operation ledger.
+    pub fn with_operation_ledger(
+        mut self,
+        operations: Arc<super::operation::SessionOperations>,
+    ) -> Self {
+        self.operations = Some(operations);
         self
     }
 
@@ -442,6 +456,7 @@ impl LiveSessionAdapter {
             }),
             state: Arc::default(),
             maintenance: None,
+            operations: None,
         }
     }
 }
@@ -575,6 +590,13 @@ impl LiveSession for LiveSessionAdapter {
         integrity
             .marks_module
             .store(!self.in_process_loop, std::sync::atomic::Ordering::SeqCst);
+        if let Some(operations) = &self.operations {
+            *integrity.operation.lock().unwrap() = Some(operations.begin_turn(
+                request.identity.clone(),
+                request.idempotency_key.clone(),
+                &options,
+            ));
+        }
         let hook_integrity = integrity.clone();
         // #1220: one coordinate allocator per turn, shared by the wire/host
         // event projection and the terminal block positioning.
@@ -1374,10 +1396,23 @@ impl LiveTurnStream {
                         .filter(|state| !state.is_undefined())
                         .cloned();
                 }
-                Ok(Some(self.completed_event(
+                let completed = self.completed_event(
                     terminal.get("payload").unwrap_or(&JsValue::Undefined),
                     true,
-                )?))
+                )?;
+                // `recordKnownTerminal` (agentLoopSidecarClient.ts:1053-1072)
+                // before the turn's completion is published.
+                let operation = self.integrity.operation.lock().unwrap().clone();
+                if let Some(operation) = operation
+                    && let Some(outcome) = super::operation::final_outcome(&terminal)
+                {
+                    let sequence = terminal
+                        .get("sequence")
+                        .and_then(JsValue::as_number)
+                        .unwrap_or(-1.0);
+                    operation.terminal(outcome, sequence, &completed)?;
+                }
+                Ok(Some(completed))
             }
             Ok(ExecuteResult::Aborted { terminal }) => {
                 self.integrity.observe_aborted()?;
@@ -1413,6 +1448,28 @@ impl LiveTurnStream {
             // message, so `Host execution failed:` must not wrap it (#885).
             Err(error) if error.kind == HostErrorKind::Session => {
                 Err(RuntimeError::new(error.message))
+            }
+            Err(error) if self.integrity.operation.lock().unwrap().is_some() => {
+                let operation = self.integrity.operation.lock().unwrap().clone();
+                let accepted = error
+                    .stream_id
+                    .clone()
+                    .filter(|_| error.accepted && error.kind != HostErrorKind::ResultUnknown);
+                let last_applied = error.last_applied_sequence;
+                let failure = external_host_error(error);
+                // `reconcileTransportInterruption` (agentLoopSidecarClient.ts:
+                // 693-713, 999-1031): an accepted stream that ends without a
+                // terminal is recorded as result_unknown; nothing reconciles
+                // it here, so the turn fails with the original error. A failed
+                // ledger write never replaces that error.
+                if let (Some(operation), Some(stream)) = (operation, accepted) {
+                    operation.result_unknown(
+                        &stream,
+                        last_applied.unwrap_or(-1.0),
+                        &failure.message,
+                    );
+                }
+                Err(failure)
             }
             Err(error) => Err(map_host_error(error)),
         }
@@ -2372,6 +2429,25 @@ impl HostHandler for StreamHandler {
     fn observe_transport(&self, observation: ReconnectObservation) {
         self.inner.observe_transport(observation);
     }
+
+    fn operation_started(
+        &self,
+        binding: &pilotdeck_protocol::admission::SidecarBinding,
+    ) -> Result<(), HostError> {
+        let operation = self.integrity.operation.lock().unwrap().clone();
+        match operation {
+            Some(operation) => operation.started(binding),
+            None => Ok(()),
+        }
+    }
+
+    fn operation_accepted(&self, stream_id: &JsString) -> Result<(), HostError> {
+        let operation = self.integrity.operation.lock().unwrap().clone();
+        match operation {
+            Some(operation) => operation.accepted(stream_id),
+            None => Ok(()),
+        }
+    }
 }
 
 /// AgentLoop prefix/terminal validation, independently on receipt and delivery.
@@ -2386,6 +2462,10 @@ struct StreamIntegrity {
     /// Whether module-owned messages are stamped with `metadata.moduleId`;
     /// see [`LiveSessionAdapter::as_in_process_loop`].
     marks_module: std::sync::atomic::AtomicBool,
+    /// The turn's entry in the session operation ledger, shared by the
+    /// handler (start / accept) and the stream (terminal); see
+    /// [`LiveSessionAdapter::with_operation_ledger`].
+    operation: Mutex<Option<Arc<super::operation::TurnOperation>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2405,6 +2485,7 @@ impl StreamIntegrity {
             loop_completed: Mutex::new(false),
             module_id: Mutex::default(),
             marks_module: std::sync::atomic::AtomicBool::new(true),
+            operation: Mutex::default(),
         }
     }
 
@@ -2545,7 +2626,11 @@ fn parse_execute_request(
     let execution = options.get("execution").unwrap_or(options);
     let run_id = extract_string(execution, "runId").unwrap_or_else(|_| turn_id.clone());
     let operation_id = extract_string(execution, "operationId").unwrap_or_else(|_| turn_id.clone());
-    let request_id = extract_string(options, "requestId").unwrap_or_else(|_| "default".into());
+    // `requestId = request-${uuid()}` (agentLoopSidecarClient.ts:524): every
+    // transport attempt has its own request id, which the operation ledger
+    // persists.
+    let request_id = extract_string(options, "requestId")
+        .unwrap_or_else(|_| format!("request-{}", uuid::Uuid::new_v4()).into());
 
     let synthetic = match options.get("syntheticMessages") {
         None | Some(JsValue::Null | JsValue::Undefined) => vec![],
@@ -2618,6 +2703,34 @@ fn mark_module_message(message: &mut JsValue, module: &JsString) -> Result<(), R
         message.insert("metadata".into(), JsValue::Object(metadata));
     }
     Ok(())
+}
+
+/// The failure of an explicitly deployed stdio sidecar's transport: the
+/// baseline's client rethrows the connection's own error
+/// (stdioAgentLoopSidecarConnection.ts:96-106, 116-121, 129-142), which
+/// carries the child's trimmed stderr. A start failure surfaces at the first
+/// write (the spawn error arrives asynchronously). Other host failures keep
+/// the native mapping.
+fn external_host_error(error: HostError) -> RuntimeError {
+    use crate::host::SidecarExit;
+    let message = match (error.exit.as_deref(), error.kind) {
+        (Some(SidecarExit::StartFailed(_)), _) => "Failed to write to sidecar stdin.".to_owned(),
+        (Some(exit), HostErrorKind::Disconnected) => {
+            let exit = match exit {
+                SidecarExit::Code(Some(code)) => format!("exited with code {code}"),
+                SidecarExit::Code(None) => "exited with code unknown".to_owned(),
+                SidecarExit::Signal(signal) => format!("exited from signal {signal}"),
+                SidecarExit::StartFailed(_) => unreachable!("matched above"),
+            };
+            format!("Sidecar {exit} before execute reached a terminal event.")
+        }
+        _ => return map_host_error(error),
+    };
+    RuntimeError::new(if error.diagnostic.is_empty() {
+        message
+    } else {
+        format!("{message} stderr: {}", error.diagnostic)
+    })
 }
 
 fn map_host_error(error: HostError) -> RuntimeError {

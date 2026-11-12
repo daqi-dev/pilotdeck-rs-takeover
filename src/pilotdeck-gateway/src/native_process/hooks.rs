@@ -32,8 +32,36 @@ use std::sync::{Arc, Mutex};
 /// their own runtimes and are left out here. SDK matchers follow the plugin
 /// matchers of the same event.
 pub(super) fn session_hook_settings(
+    settings: HooksSettings,
+    sdk_config: Option<&JsValue>,
+) -> HooksSettings {
+    sdk_hook_settings(settings, sdk_config, |event| {
+        !event.equals_str("ConfigChange") && !event.equals_str("FileChanged")
+    })
+}
+
+/// The SDK matchers of `ConfigChange` alone: the separate runtime of
+/// SessionInteractionBundle.ts:170-180.
+pub(super) fn sdk_config_change_settings(sdk_config: Option<&JsValue>) -> HooksSettings {
+    sdk_hook_settings(Vec::new(), sdk_config, |event| {
+        event.equals_str("ConfigChange")
+    })
+}
+
+/// The SDK matchers of `FileChanged` alone: the separate runtime of
+/// SessionInteractionBundle.ts:181-192.
+pub(super) fn sdk_file_changed_settings(sdk_config: Option<&JsValue>) -> HooksSettings {
+    sdk_hook_settings(Vec::new(), sdk_config, |event| {
+        event.equals_str("FileChanged")
+    })
+}
+
+/// `createSdkHookSettings` for the events `include` selects, appended to
+/// `settings`.
+fn sdk_hook_settings(
     mut settings: HooksSettings,
     sdk_config: Option<&JsValue>,
+    include: impl Fn(&JsString) -> bool,
 ) -> HooksSettings {
     let Some(hooks) = sdk_config
         .and_then(|config| config.get("hooks"))
@@ -59,10 +87,7 @@ pub(super) fn session_hook_settings(
         return settings;
     };
     for (event, matchers) in events.own_entries() {
-        if !is_hook_event(event)
-            || event.equals_str("ConfigChange")
-            || event.equals_str("FileChanged")
-        {
+        if !is_hook_event(event) || !include(event) {
             continue;
         }
         let JsValue::Array(matchers) = matchers else {
@@ -244,8 +269,141 @@ pub(super) struct ToolHooks {
     /// baseline's session `HookRuntime`, which a turn's end neither cancels
     /// nor waits for.
     session: Mutex<Option<crate::runtime::hooks::LifecycleRuntime>>,
+    /// `configChangeLifecycle` (SessionInteractionBundle.ts:170-180): the
+    /// SDK `ConfigChange` hooks in a runtime of their own, sharing the
+    /// session's execution projection, without async registration.
+    config_change: Mutex<Option<crate::runtime::hooks::LifecycleRuntime>>,
+    /// `fileChangedLifecycle` (SessionInteractionBundle.ts:181-192): the SDK
+    /// `FileChanged` hooks, which also hand async outputs to the gateway.
+    file_changed: Mutex<Option<crate::runtime::hooks::LifecycleRuntime>>,
 }
 impl ToolHooks {
+    /// Compose the SDK `FileChanged` runtime over `settings`.
+    pub(super) fn configure_file_changed(
+        &self,
+        settings: &HooksSettings,
+        observers: &crate::runtime::hooks::runtime::HookObservers,
+    ) {
+        let runtime = crate::runtime::hooks::HookRuntime::with_options(
+            settings.clone(),
+            crate::runtime::hooks::HookRuntimeOptions {
+                shell: observers.shell.clone(),
+                on_async_registered: observers.async_registered.clone(),
+                observer: observers.execution.clone(),
+                ..Default::default()
+            },
+        );
+        *self.file_changed.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some(crate::runtime::hooks::LifecycleRuntime::new(runtime));
+    }
+    /// `fileUpdateNotifier.didSave` (SessionInteractionBundle.ts:193-213): a
+    /// committed save dispatches `FileChanged` on the SDK runtime, matched on
+    /// the workspace-relative path, and waits for it; failures and results
+    /// are dropped. `None` when the session has no SDK `FileChanged` hooks.
+    pub(super) fn sdk_file_saved(
+        &self,
+        session: JsString,
+        cwd: JsString,
+    ) -> Option<crate::runtime::tools::FileUpdateNotifier> {
+        let lifecycle = self
+            .file_changed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()?;
+        Some(Arc::new(
+            move |update: crate::runtime::tools::FileUpdate, tool_cwd: JsString| {
+                let (lifecycle, session, cwd) = (lifecycle.clone(), session.clone(), cwd.clone());
+                Box::pin(async move {
+                    let root = workspace_root(&update, &tool_cwd);
+                    let mut base = JsObject::new();
+                    base.insert("sessionId".into(), JsValue::String(session));
+                    base.insert("transcriptPath".into(), "".into());
+                    base.insert("cwd".into(), JsValue::String(cwd.clone()));
+                    let mut payload = JsObject::new();
+                    payload.insert(
+                        "filePath".into(),
+                        JsValue::String(update.relative_path.clone()),
+                    );
+                    payload.insert(
+                        "absolutePath".into(),
+                        JsValue::String(update.absolute_path.clone()),
+                    );
+                    payload.insert("root".into(), JsValue::String(root));
+                    payload.insert(
+                        "changeType".into(),
+                        if update.created { "created" } else { "updated" }.into(),
+                    );
+                    let input = LifecycleDispatchInput {
+                        event: "FileChanged".into(),
+                        base_input: base,
+                        payload: Some(payload),
+                        match_query: Some(update.relative_path.clone()),
+                        cwd,
+                        env: None,
+                        signal: None,
+                    };
+                    let _ = lifecycle.dispatch(input).await;
+                    Ok(())
+                })
+            },
+        ))
+    }
+    /// Compose the SDK `ConfigChange` runtime over `settings`.
+    pub(super) fn configure_config_change(
+        &self,
+        settings: &HooksSettings,
+        observers: &crate::runtime::hooks::runtime::HookObservers,
+    ) {
+        let runtime = crate::runtime::hooks::HookRuntime::with_options(
+            settings.clone(),
+            crate::runtime::hooks::HookRuntimeOptions {
+                shell: observers.shell.clone(),
+                observer: observers.execution.clone(),
+                ..Default::default()
+            },
+        );
+        *self.config_change.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some(crate::runtime::hooks::LifecycleRuntime::new(runtime));
+    }
+    /// `void this.configChangeLifecycle.dispatch({ event: "ConfigChange",
+    /// baseInput: { sessionId: sessionKey, transcriptPath: "", cwd:
+    /// projectRoot }, payload, matchQuery: "ConfigChange" }).catch(() => {})`
+    /// (SessionInteractionBundle.ts:286-299): nobody waits for the hooks and
+    /// their result has no effect.
+    pub(super) fn dispatch_config_change(
+        &self,
+        session: &JsString,
+        cwd: &JsString,
+        payload: &JsValue,
+    ) {
+        let lifecycle = self
+            .config_change
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let (Some(lifecycle), Some(payload)) = (lifecycle, payload.as_object()) else {
+            return;
+        };
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let mut base = JsObject::new();
+        base.insert("sessionId".into(), JsValue::String(session.clone()));
+        base.insert("transcriptPath".into(), "".into());
+        base.insert("cwd".into(), JsValue::String(cwd.clone()));
+        let input = LifecycleDispatchInput {
+            event: "ConfigChange".into(),
+            base_input: base,
+            payload: Some(payload.clone()),
+            match_query: Some("ConfigChange".into()),
+            cwd: cwd.clone(),
+            env: None,
+            signal: None,
+        };
+        runtime.spawn(async move {
+            let _ = lifecycle.dispatch(input).await;
+        });
+    }
     /// The session's own runtime over `settings`, with the session's
     /// observers (execution projection, async registration, shell).
     pub(super) fn configure_session(
@@ -423,5 +581,28 @@ impl ToolLifecycle for ToolHooks {
         };
         let future = port.dispatch(input);
         Box::pin(async move { future.await.map(Some) })
+    }
+}
+
+/// The save's workspace root (`PilotDeckPathSafetyResult.root`,
+/// pathSafety.ts:26-104): the root the relative path was taken against. A
+/// path inside one of the roots ends with its relative path; every other
+/// branch takes the path relative to the tool's working directory.
+fn workspace_root(update: &crate::runtime::tools::FileUpdate, tool_cwd: &JsString) -> JsString {
+    let absolute = String::from_utf16_lossy(update.absolute_path.units());
+    let relative = String::from_utf16_lossy(update.relative_path.units());
+    if relative == "." {
+        return update.absolute_path.clone();
+    }
+    if relative.starts_with("..") || std::path::Path::new(&relative).is_absolute() {
+        return tool_cwd.clone();
+    }
+    match absolute
+        .strip_suffix(&relative)
+        .and_then(|root| root.strip_suffix('/'))
+    {
+        Some(root) if !root.is_empty() => root.into(),
+        Some(_) => "/".into(),
+        None => tool_cwd.clone(),
     }
 }

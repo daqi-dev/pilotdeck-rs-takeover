@@ -92,6 +92,12 @@ impl ConnectionOwner {
     pub fn binding(&self) -> &SidecarBinding {
         &self.0.binding
     }
+    /// `${prefix}-${uuid()}` with the baseline sidecar's default id source,
+    /// `Math.random().toString(36).slice(2)` (agentLoopSidecarServer.ts:96,
+    /// 255): a stream id the host may persist (its operation ledger).
+    pub fn random_id(&self, prefix: &str) -> JsString {
+        format!("{prefix}-{}", random_token()).into()
+    }
     pub fn next_id(&self, prefix: &str) -> JsString {
         let sequence = self.0.next_id.fetch_add(1, Ordering::Relaxed);
         // Instance/generation are already owner-issued strings. They stay exact.
@@ -939,6 +945,22 @@ impl HostExchange for BoundExchange {
         self.start(control, module, operation, effect, payload)?
             .wait(control)
     }
+}
+
+/// A random lowercase base-36 token, the shape of the baseline sidecar's
+/// `Math.random().toString(36).slice(2)`: the 52 random bits of a double
+/// written as base-36 digits.
+pub fn random_token() -> String {
+    let mut bits = (uuid::Uuid::new_v4().as_u128() as u64) & ((1 << 52) - 1);
+    let mut digits = Vec::new();
+    while bits > 0 {
+        digits.push(char::from_digit((bits % 36) as u32, 36).expect("base-36 digit"));
+        bits /= 36;
+    }
+    if digits.is_empty() {
+        digits.push('0');
+    }
+    digits.iter().rev().collect()
 }
 
 #[cfg(test)]

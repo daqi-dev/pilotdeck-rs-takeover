@@ -42,6 +42,8 @@ pub(super) struct Connection {
     pub(super) budget: Arc<Budget>,
     limits: Limits,
     closed: bool,
+    /// How the child ended, once `close` reaped it.
+    exit: Option<super::SidecarExit>,
     #[cfg(test)]
     term_sent: Arc<AtomicUsize>,
     // #542: unit tests keep EOF/TERM grace short on purpose, but the wait after
@@ -213,6 +215,7 @@ impl Connection {
             budget,
             limits,
             closed: false,
+            exit: None,
             #[cfg(test)]
             term_sent: Arc::new(AtomicUsize::new(0)),
             #[cfg(test)]
@@ -383,13 +386,18 @@ impl Connection {
             }
             let _ = self.child.start_kill();
         }
-        timeout(self.reap_deadline(), self.child.wait())
+        let status = timeout(self.reap_deadline(), self.child.wait())
             .await
             .map_err(|_| {
                 HostError::new(HostErrorKind::Timeout, "Sidecar did not exit after kill.")
             })?
-            .map(|_| ())
-            .map_err(HostError::io)
+            .map_err(HostError::io)?;
+        self.exit = Some(super::SidecarExit::from_status(status));
+        Ok(())
+    }
+    /// How the child ended; `None` until `close` reaped it.
+    pub(super) fn exit(&self) -> Option<super::SidecarExit> {
+        self.exit.clone()
     }
     pub(super) async fn close(&mut self) -> Result<(), HostError> {
         if self.closed {

@@ -269,29 +269,7 @@ impl WebHistory {
         } else if is(kind, "turn_result") && is(field(field(entry, "result"), "type"), "error") {
             self.turn_errors.push(entry.clone());
         }
-        // tokenUsageProjection (:197-212)
-        if let Some(budget) = context_budget(entry, index) {
-            self.token_usage
-                .insert("latestContextBudget".into(), budget);
-        } else if let Some(budget) = compact_budget(entry, index) {
-            self.token_usage
-                .insert("latestCompactBudget".into(), budget);
-        } else if is(kind, "turn_result") {
-            let usage = field(field(entry, "result"), "usage");
-            if [
-                "inputTokens",
-                "outputTokens",
-                "cacheReadTokens",
-                "cacheWriteTokens",
-                "totalTokens",
-            ]
-            .iter()
-            .any(|key| positive_number(field(usage, key)).is_some())
-            {
-                self.token_usage
-                    .insert("latestTurnUsage".into(), usage.clone());
-            }
-        }
+        reduce_token_usage(&mut self.token_usage, entry, index);
         // incompleteTurnProjection (:223-237)
         if is(kind, "turn_result") {
             add_unique(&mut self.completed_turns, turn);
@@ -770,12 +748,27 @@ pub(crate) const METADATA: &str = "agent-transcript.metadata";
 /// The checkpoint rows as `(name, version, state)` in the baseline's
 /// registration order (BuiltinSessionProjections.ts:8-16). `turn_summary` and
 /// `metadata` are the caller's live states for those two rows.
+#[cfg(test)]
 pub(crate) fn checkpoint_rows(
     entries: &[JsValue],
     turn_summary: JsValue,
     metadata: JsValue,
 ) -> Vec<(&'static str, f64, JsValue)> {
-    let web = WebHistory::project(entries);
+    checkpoint_rows_restored(entries, turn_summary, metadata, None)
+}
+
+/// [`checkpoint_rows`] for a session that restored its token-usage row from
+/// a checkpoint (see [`restored_token_usage`]).
+pub(crate) fn checkpoint_rows_restored(
+    entries: &[JsValue],
+    turn_summary: JsValue,
+    metadata: JsValue,
+    token_usage: Option<&RestoredTokenUsage>,
+) -> Vec<(&'static str, f64, JsValue)> {
+    let mut web = WebHistory::project(entries);
+    if let Some(restored) = token_usage {
+        web.token_usage = continue_token_usage(restored, entries);
+    }
     let mut rows = vec![
         ("agent-transcript.conversation", 3.0, conversation(entries)),
         (TURN_SUMMARY, 1.0, turn_summary),
@@ -818,6 +811,137 @@ pub(crate) fn checkpoint_rows(
         rows.push(("goal.state", 1.0, goal));
     }
     rows
+}
+
+/// tokenUsageProjection's reducer (WebHistoryProjections.ts:197-212): an
+/// assignment to a key the state already has keeps its place, like the
+/// reducer's object spread.
+fn reduce_token_usage(state: &mut JsObject, entry: &JsValue, index: usize) {
+    if let Some(budget) = context_budget(entry, index) {
+        state.insert("latestContextBudget".into(), budget);
+    } else if let Some(budget) = compact_budget(entry, index) {
+        state.insert("latestCompactBudget".into(), budget);
+    } else if is(field(entry, "type"), "turn_result") {
+        let usage = field(field(entry, "result"), "usage");
+        if [
+            "inputTokens",
+            "outputTokens",
+            "cacheReadTokens",
+            "cacheWriteTokens",
+            "totalTokens",
+        ]
+        .iter()
+        .any(|key| positive_number(field(usage, key)).is_some())
+        {
+            state.insert("latestTurnUsage".into(), usage.clone());
+        }
+    }
+}
+
+/// A token-usage checkpoint row as the session restored it:
+/// `decodeWebTokenUsage` (WebHistoryProjections.ts:412-447) rebuilds the
+/// state in a fixed shape — `latestContextBudget`, `latestCompactBudget`,
+/// `latestTurnUsage`, the compact budget as `index, preTokens?, postTokens,
+/// messagesSummarized?` — and the reducer then continues from the entries
+/// after the row's `asOfSequence`. `None` when the row is missing, of another
+/// version, ahead of the log, or does not decode (the projection then
+/// replays the whole log, SessionProjectionDriver.ts:192-211).
+#[derive(Clone, Debug)]
+pub(crate) struct RestoredTokenUsage {
+    pub(crate) as_of_sequence: f64,
+    pub(crate) state: JsObject,
+}
+
+pub(crate) fn restored_token_usage(
+    rows: &JsValue,
+    last_sequence: f64,
+) -> Option<RestoredTokenUsage> {
+    let row = field(rows, "web-history.token-usage");
+    if field(row, "version").as_number() != Some(1.0) {
+        return None;
+    }
+    let as_of_sequence = field(row, "asOfSequence").as_number()?;
+    if as_of_sequence > last_sequence {
+        return None;
+    }
+    let record = field(row, "state").as_object()?;
+    let integer = |value: &JsValue| {
+        value
+            .as_number()
+            .filter(|n| n.is_finite() && n.fract() == 0.0 && *n >= 0.0)
+            .map(JsValue::Number)
+    };
+    let optional = |value: Option<&JsValue>| -> Result<Option<JsValue>, ()> {
+        match value {
+            None | Some(JsValue::Undefined) => Ok(None),
+            Some(JsValue::Number(n)) if n.is_finite() && *n >= 0.0 => Ok(Some(JsValue::Number(*n))),
+            Some(_) => Err(()),
+        }
+    };
+    let mut state = JsObject::new();
+    if let Some(context) = record
+        .get("latestContextBudget")
+        .filter(|v| !v.is_undefined())
+    {
+        let context = context.as_object()?;
+        let usage = context.get("usage").and_then(JsValue::as_object)?;
+        let mut budget = JsObject::new();
+        budget.insert("index".into(), integer(context.get("index")?)?);
+        budget.insert("usage".into(), JsValue::Object(usage.clone()));
+        state.insert("latestContextBudget".into(), JsValue::Object(budget));
+    }
+    if let Some(compact) = record
+        .get("latestCompactBudget")
+        .filter(|v| !v.is_undefined())
+    {
+        let compact = compact.as_object()?;
+        let pre = optional(compact.get("preTokens")).ok()?;
+        let summarized = optional(compact.get("messagesSummarized")).ok()?;
+        let post = optional(compact.get("postTokens")).ok()??;
+        let mut budget = JsObject::new();
+        budget.insert("index".into(), integer(compact.get("index")?)?);
+        if let Some(pre) = pre {
+            budget.insert("preTokens".into(), pre);
+        }
+        budget.insert("postTokens".into(), post);
+        if let Some(summarized) = summarized {
+            budget.insert("messagesSummarized".into(), summarized);
+        }
+        state.insert("latestCompactBudget".into(), JsValue::Object(budget));
+    }
+    if let Some(usage) = record.get("latestTurnUsage").filter(|v| !v.is_undefined()) {
+        // `checkpointCanonicalUsage`: validated, then cloned as is.
+        let usage = usage.as_object()?;
+        for key in [
+            "inputTokens",
+            "outputTokens",
+            "cacheReadTokens",
+            "cacheWriteTokens",
+            "totalTokens",
+            "nativeCost",
+        ] {
+            optional(usage.get(key)).ok()?;
+        }
+        state.insert("latestTurnUsage".into(), JsValue::Object(usage.clone()));
+    }
+    Some(RestoredTokenUsage {
+        as_of_sequence,
+        state,
+    })
+}
+
+/// The token-usage state continued from a restored row.
+fn continue_token_usage(restored: &RestoredTokenUsage, entries: &[JsValue]) -> JsObject {
+    let mut state = restored.state.clone();
+    for (index, entry) in entries.iter().enumerate() {
+        if field(entry, "sequence")
+            .as_number()
+            .is_some_and(|sequence| sequence > restored.as_of_sequence)
+        {
+            reduce_token_usage(&mut state, entry, index);
+        }
+    }
+    state
 }
 
 /// `projectSubagentReferences` as the web reader consumes it: the started

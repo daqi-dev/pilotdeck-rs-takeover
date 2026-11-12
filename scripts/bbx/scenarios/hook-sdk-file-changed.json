@@ -1,0 +1,157 @@
+{
+  "name": "hook-sdk-file-changed",
+  "about": "sdkSessionConfig.hooks 里的 FileChanged（SessionInteractionBundle.ts:181-216 单独的 hook 运行时，经 fileUpdateNotifier.didSave 派发；ToolRuntime.ts:516-537 先等它再派发会话自己的 FileChanged）：write_file 新建、read_file 后 edit_file 修改各一次。比较发给 hook URL 的请求（event / matcher 序号、请求体 filePath / absolutePath / root / changeType，matcher 按相对路径匹配）、hook 回 block / 500 时没有效果（工具结果与后续照常，不出 warning）、includeHookEvents 时的帧。",
+  "files": {
+    "proj/existing.txt": "old line\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"File hook\"}",
+        "delayMs": 1500
+      }
+    },
+    {
+      "name": "hook-created",
+      "when": [
+        "\"hookEventName\":\"FileChanged\"",
+        "\"changeType\":\"created\""
+      ],
+      "reply": {
+        "status": 200,
+        "body": {
+          "decision": "block",
+          "reason": "file hook says no"
+        }
+      }
+    },
+    {
+      "name": "hook-updated",
+      "when": [
+        "\"hookEventName\":\"FileChanged\"",
+        "\"changeType\":\"updated\""
+      ],
+      "reply": {
+        "status": 500,
+        "body": {
+          "error": "down"
+        }
+      }
+    },
+    {
+      "name": "hook-other",
+      "when": [
+        "\"hookEventName\""
+      ],
+      "reply": {
+        "status": 200,
+        "body": {}
+      }
+    },
+    {
+      "name": "after-edit",
+      "when": [
+        "fc-one:",
+        "\"tool_call_id\":\"call_fc_edit\""
+      ],
+      "reply": {
+        "text": "Files done."
+      }
+    },
+    {
+      "name": "after-read",
+      "when": [
+        "fc-one:",
+        "\"tool_call_id\":\"call_fc_read\""
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_fc_edit",
+          "name": "edit_file",
+          "arguments": {
+            "file_path": "{PROJECT}/existing.txt",
+            "old_string": "old line",
+            "new_string": "new line"
+          }
+        }
+      }
+    },
+    {
+      "name": "after-write",
+      "when": [
+        "fc-one:",
+        "\"tool_call_id\":\"call_fc_write\""
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_fc_read",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "{PROJECT}/existing.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "first",
+      "when": [
+        "fc-one:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_fc_write",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "{PROJECT}/created.txt",
+            "content": "fresh\n"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-fc",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-fc",
+        "channelKey": "test",
+        "message": "fc-one: write then edit",
+        "sdkSessionConfig": {
+          "hooks": {
+            "url": "{MOCK}/hooks",
+            "headers": {
+              "x-bbx-hook": "file"
+            },
+            "events": {
+              "FileChanged": [
+                {},
+                {
+                  "matcher": "created"
+                },
+                {
+                  "matcher": "^nomatch$"
+                }
+              ]
+            }
+          },
+          "includeHookEvents": true
+        }
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 2500
+    }
+  ]
+}

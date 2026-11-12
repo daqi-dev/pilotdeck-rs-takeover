@@ -181,6 +181,10 @@ pub struct FileUpdate {
     pub relative_path: JsString,
     pub created: bool,
 }
+/// `context.fileUpdateNotifier.didSave`: an integration's own notifier, given
+/// the save and the tool's working directory.
+pub type FileUpdateNotifier =
+    Arc<dyn Fn(FileUpdate, JsString) -> crate::host::HostFuture<()> + Send + Sync>;
 /// See [`ToolRunContext::file_saved`].
 pub type FileSavedNotifier = Arc<dyn Fn(FileUpdate) -> crate::host::HostFuture<()> + Send + Sync>;
 /// See [`ToolRunContext::execute_tool`]. The result is the nested call's

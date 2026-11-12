@@ -242,6 +242,55 @@ pub struct HostError {
     pub module_error: Option<Box<ModuleError>>,
     /// Bounded child stderr retained for diagnostics, never projected as protocol text.
     pub diagnostic: String,
+    /// How the sidecar process ended, when the failure closed it.
+    pub exit: Option<Box<SidecarExit>>,
+}
+
+/// How a sidecar child process ended (TS `ExitStatus`,
+/// stdioAgentLoopSidecarConnection.ts:63-67).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SidecarExit {
+    /// The command could not be started.
+    StartFailed(String),
+    Code(Option<i32>),
+    Signal(String),
+}
+impl SidecarExit {
+    fn from_status(status: std::process::ExitStatus) -> Self {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            if let Some(signal) = status.signal() {
+                return Self::Signal(signal_name(signal));
+            }
+        }
+        Self::Code(status.code())
+    }
+}
+/// Node's `NodeJS.Signals` name for a signal number.
+#[cfg(unix)]
+fn signal_name(signal: i32) -> String {
+    use rustix::process::Signal;
+    [
+        (Signal::HUP, "SIGHUP"),
+        (Signal::INT, "SIGINT"),
+        (Signal::QUIT, "SIGQUIT"),
+        (Signal::ILL, "SIGILL"),
+        (Signal::TRAP, "SIGTRAP"),
+        (Signal::ABORT, "SIGABRT"),
+        (Signal::BUS, "SIGBUS"),
+        (Signal::FPE, "SIGFPE"),
+        (Signal::KILL, "SIGKILL"),
+        (Signal::USR1, "SIGUSR1"),
+        (Signal::SEGV, "SIGSEGV"),
+        (Signal::USR2, "SIGUSR2"),
+        (Signal::PIPE, "SIGPIPE"),
+        (Signal::ALARM, "SIGALRM"),
+        (Signal::TERM, "SIGTERM"),
+    ]
+    .into_iter()
+    .find(|(known, _)| known.as_raw() == signal)
+    .map_or_else(|| signal.to_string(), |(_, name)| name.to_owned())
 }
 impl HostError {
     pub fn new(kind: HostErrorKind, message: impl Into<String>) -> Self {
@@ -253,6 +302,7 @@ impl HostError {
             last_applied_sequence: None,
             module_error: None,
             diagnostic: String::new(),
+            exit: None,
         }
     }
     fn protocol(message: impl Into<String>) -> Self {
@@ -390,6 +440,18 @@ pub trait HostHandler: Send + Sync + 'static {
     /// Passive, synchronous telemetry. Must not block; panics are isolated from
     /// execution, like TS client:1135-1140's best-effort transport observer.
     fn observe_transport(&self, _observation: ReconnectObservation) {}
+
+    /// The handshake completed and execute is about to be sent (TS
+    /// client:631 `operationLedger.start` before `send(executeRequest)`).
+    /// An error fails the execution before execute is written.
+    fn operation_started(&self, _binding: &SidecarBinding) -> Result<(), HostError> {
+        Ok(())
+    }
+    /// The sidecar accepted execute with this stream (TS client:796
+    /// `operationLedger.accept`), before any of its events is applied.
+    fn operation_accepted(&self, _stream_id: &JsString) -> Result<(), HostError> {
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -503,7 +565,10 @@ impl HostClient {
         limits: Limits,
     ) -> Result<Self, HostError> {
         limits.validate()?;
-        let mut connection = Connection::spawn(command, limits)?;
+        let mut connection = Connection::spawn(command, limits).map_err(|mut error| {
+            error.exit = Some(Box::new(SidecarExit::StartFailed(error.message.clone())));
+            error
+        })?;
         let handshake = bounded(
             limits.handshake_timeout,
             handshake(&mut connection, expected_module_id, None),
@@ -648,6 +713,9 @@ async fn bounded<F: Future>(
     }
 }
 fn append_diagnostic(error: &mut HostError, connection: &Connection) {
+    if error.exit.is_none() {
+        error.exit = connection.exit().map(Box::new);
+    }
     let stderr = connection.diagnostic();
     if !stderr.is_empty() {
         if crate::mutants::on("live-diagnostic-message") {

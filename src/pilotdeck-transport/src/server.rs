@@ -485,7 +485,7 @@ impl ExecutionServer {
             drop(state);
             return self.reject(request, "EXECUTION_QUEUE_FULL", false);
         }
-        let stream_id = self.owner.next_id("stream");
+        let stream_id = self.owner.random_id("stream");
         let sequence = Arc::new(Mutex::new(0.0));
         let cancellation = Cancellation::default();
         let mut accepted = self.response(request, true);

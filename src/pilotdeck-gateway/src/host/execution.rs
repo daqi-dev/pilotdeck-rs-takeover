@@ -186,6 +186,7 @@ pub(super) async fn run(
     }
     let outgoing = JsValue::Object(outgoing);
     decode(&outgoing)?;
+    handler.operation_started(&client.binding)?;
     client.connection.send(&outgoing)?;
     drop(outgoing);
     let mut next_sequence = 0.0;
@@ -433,6 +434,7 @@ pub(super) async fn run(
                         // streamId without resetting sequence or re-sending cancel.
                         progress.stream_id = Some(response.fields.get("streamId").and_then(JsValue::as_string)
                             .filter(|id| !id.is_empty()).ok_or_else(|| HostError::protocol("Sidecar execute response did not provide streamId."))?.clone());
+                        handler.operation_accepted(progress.stream_id.as_ref().expect("accepted stream"))?;
                     }
                     MessageRef::Event(event) => {
                         // TS client:879-893: all four IDs, strictly 0,1,..., replay

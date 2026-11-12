@@ -622,6 +622,52 @@ impl SessionTools {
         self
     }
 
+    /// `configChangeLifecycle` + `registerConfigChangeHandler`
+    /// (SessionInteractionBundle.ts:170-180, 286-299): a session whose SDK
+    /// hooks name `ConfigChange` registers a handler the gateway's config
+    /// change dispatch calls. The handler holds the session's hooks weakly,
+    /// so a dropped session runs nothing. Call after [`Self::with_hooks`],
+    /// whose execution projection the runtime shares.
+    pub(super) fn with_sdk_config_change(
+        self,
+        sdk_config: Option<&JsValue>,
+        registry: &super::SessionOverrides,
+    ) -> Self {
+        // `fileChangedLifecycle` (SessionInteractionBundle.ts:181-192): the
+        // same session-scoped composition for the SDK `FileChanged` hooks.
+        let file_changed = super::hooks::sdk_file_changed_settings(sdk_config);
+        if file_changed
+            .iter()
+            .any(|(_, matchers)| !matchers.is_empty())
+        {
+            self.tool_hooks
+                .configure_file_changed(&file_changed, &self.hook_observers);
+        }
+        let settings = super::hooks::sdk_config_change_settings(sdk_config);
+        if settings.iter().all(|(_, matchers)| matchers.is_empty()) {
+            return self;
+        }
+        let observers = crate::runtime::hooks::runtime::HookObservers {
+            execution: self.hook_observers.execution.clone(),
+            async_registered: None,
+            shell: self.hook_observers.shell.clone(),
+        };
+        self.tool_hooks
+            .configure_config_change(&settings, &observers);
+        let hooks = Arc::downgrade(&self.tool_hooks);
+        let cwd: JsString = self.project.to_string_lossy().as_ref().into();
+        let owner = self.binding.context.session_key.clone();
+        registry.register_config_change(
+            &owner.clone(),
+            Arc::new(move |payload| {
+                if let Some(hooks) = hooks.upgrade() {
+                    hooks.dispatch_config_change(&owner, &cwd, payload);
+                }
+            }),
+        );
+        self
+    }
+
     /// The project's `executionWorld.backgroundTasks`, behind the `task_*`
     /// tools: every session of the project shares one runtime, which the
     /// gateway's `background_tasks` / `background_task_stop` also read.
@@ -925,6 +971,15 @@ impl SessionTools {
         // events around the scheduler's execution.
         let runtime = ToolRuntime::new(tools, self.permission.clone(), SchedulerMode::Concurrent)
             .with_lifecycle(self.tool_hooks.clone());
+        // `context.fileUpdateNotifier`: the session's SDK `FileChanged`
+        // hooks, ahead of the runtime's own `FileChanged` dispatch.
+        let runtime = match self.tool_hooks.sdk_file_saved(
+            self.binding.context.session_key.clone(),
+            self.project.to_string_lossy().as_ref().into(),
+        ) {
+            Some(notifier) => runtime.with_file_update_notifier(notifier),
+            None => runtime,
+        };
         let runtime = match self.events.clone() {
             // A refused event (the run was superseded or closed) is dropped,
             // like an emitter whose buffer is gone.
@@ -960,6 +1015,13 @@ impl SessionTools {
             session: identity.session_id.clone(),
             turn: identity.turn_id.clone(),
             signal: signal.clone(),
+            external_loop: crate::runtime::turn::operation::explicit_stdio(
+                self.env
+                    .get("PILOTDECK_AGENT_LOOP_TRANSPORT")
+                    .and_then(JsValue::as_string)
+                    .map(|value| String::from_utf16_lossy(value.units()))
+                    .as_deref(),
+            ),
         });
         let binding = TurnBinding {
             config: config.clone(),
@@ -1238,6 +1300,11 @@ struct DurableTools {
     session: JsString,
     turn: JsString,
     signal: Cancellation,
+    /// The loop is an explicitly deployed sidecar
+    /// (`PILOTDECK_AGENT_LOOP_TRANSPORT=stdio`). The baseline's durable tool
+    /// port then sees only what the capability wire carries, so its
+    /// `tool_call` entries hold the bare call, without a timeline position.
+    external_loop: bool,
 }
 impl DurableTools {
     /// The call as the capability wire carries it, for a batch whose
@@ -1305,6 +1372,7 @@ impl capability::ToolExecution for DurableTools {
         let recorder = self.recorder.clone();
         let (session, turn) = (self.session.clone(), self.turn.clone());
         let projection = self.projection.clone();
+        let external_loop = self.external_loop;
         Box::pin(async move {
             // The loop records the assistant message before it runs the
             // message's tool calls (in the baseline both happen in one
@@ -1318,7 +1386,9 @@ impl capability::ToolExecution for DurableTools {
             let durable_calls: Vec<JsValue> = calls
                 .iter()
                 .map(|call| {
-                    DurableTools::durable_call_in(&projection, &turn, call)
+                    (!external_loop)
+                        .then(|| DurableTools::durable_call_in(&projection, &turn, call))
+                        .flatten()
                         .unwrap_or_else(|| DurableTools::bare_call(call))
                 })
                 .collect();

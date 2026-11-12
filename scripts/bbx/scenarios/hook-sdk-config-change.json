@@ -1,0 +1,25 @@
+{
+  "name": "hook-sdk-config-change",
+  "about": "sdkSessionConfig.hooks 里的 ConfigChange（SessionInteractionBundle.ts:129-180、286-299 单独的 hook 运行时，只有 HTTP hook）：会话建立后 update_settings 改 pilotdeck.yaml，GatewayRuntimeRefreshBundle.onConfigChange → ProjectRuntimeRegistry.dispatchSdkConfigChange（ProjectRuntimeRegistry.ts:824-828）对每个登记了 ConfigChange 的会话派发一次：发给 hook URL 的请求（event / matcher 序号、请求头、请求体 sessionId / transcriptPath / cwd / changedPaths / changeClasses）、matcher 选择、hook 回 block / 500 时没有效果（下一轮照常）、includeHookEvents 时有没有帧；没有 ConfigChange 的会话不发。",
+  "provider": [
+    {"name": "title", "when": ["Generate a concise title"], "reply": {"text": "{\"title\": \"Config hook\"}"}},
+    {"name": "hook-block", "when": ["\"hookEventName\":\"ConfigChange\"", "s-cc-a"], "reply": {"status": 200, "body": {"decision": "block", "reason": "config hook says no", "hookSpecificOutput": {"hookEventName": "ConfigChange", "additionalContext": "config context"}}}},
+    {"name": "hook-500", "when": ["\"hookEventName\":\"ConfigChange\"", "s-cc-b"], "reply": {"status": 500, "body": {"error": "down"}}},
+    {"name": "hook-other", "when": ["\"hookEventName\""], "reply": {"status": 200, "body": {}}},
+    {"name": "main", "reply": {"text": "Turn done."}}
+  ],
+  "steps": [
+    {"ws": "submit_turn", "params": {"sessionKey": "s-cc-a", "channelKey": "test", "message": "cc-a: hello", "sdkSessionConfig": {"hooks": {"url": "{MOCK}/hooks?keep=1&event=stale", "headers": {"x-bbx-hook": "header-value"}, "events": {"ConfigChange": [{}, {"matcher": "ConfigChange"}, {"matcher": "Other"}], "Stop": [{}]}}, "includeHookEvents": true}}, "timeout": 20000},
+    {"sleep": 2000},
+    {"ws": "submit_turn", "params": {"sessionKey": "s-cc-b", "channelKey": "test", "message": "cc-b: hello", "sdkSessionConfig": {"hooks": {"url": "{MOCK}/hooks", "events": {"ConfigChange": [{}]}}}}, "timeout": 20000},
+    {"sleep": 2000},
+    {"ws": "submit_turn", "params": {"sessionKey": "s-cc-c", "channelKey": "test", "message": "cc-c: hello", "sdkSessionConfig": {"hooks": {"url": "{MOCK}/hooks", "events": {"Stop": [{}]}}}}, "timeout": 20000},
+    {"sleep": 2000},
+    {"ws": "update_settings", "params": {"source": "localSettings", "settings": {"agent": {"maxOutputTokens": 4096}}}},
+    {"sleep": 1500},
+    {"ws": "submit_turn", "params": {"sessionKey": "s-cc-a", "channelKey": "test", "message": "cc-a: again"}, "timeout": 20000},
+    {"sleep": 500},
+    {"ws": "update_settings", "params": {"source": "localSettings", "settings": {"agent": {"maxOutputTokens": null}}}},
+    {"sleep": 1500}
+  ]
+}
