@@ -1,0 +1,68 @@
+{
+ "name": "gap-web-search-get-query-key",
+ "about": "tools.webSearch 自定义 provider 用 GET + queryApiKey 鉴权（webSearch.ts:730-760）：查询词与 api key 放在 URL 参数里（apiKeyParam 自定义），结果无 resultsPath 时整份响应当结果。另配 PILOTDECK 的 web_search 权限：缺省模式下需要询问（webSearch.ts checkPermissions），这里用 bypassPermissions。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ntools:\n  webSearch:\n    enabled: true\n    provider: custom\n    endpoint: {MOCK}/get-search?fixed=1\n    apiKey: k-123\n    customProvider:\n      method: GET\n      auth: queryApiKey\n      apiKeyParam: token\n",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Gap\"}"
+   }
+  },
+  {
+   "name": "t01-after",
+   "when": [
+    "g01:",
+    "\"tool_call_id\":\"call_g01\""
+   ],
+   "reply": {
+    "text": "Done 01."
+   }
+  },
+  {
+   "name": "t01",
+   "when": [
+    "g01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g01",
+     "name": "web_search",
+     "arguments": {
+      "query": "a b&c"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-gap",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g01: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-gap"
+   }
+  }
+ ]
+}
