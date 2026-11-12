@@ -268,7 +268,7 @@ fn copy_tree(src: &Path, dst: &Path) -> io::Result<()> {
         }
         copy_permissions(dst, metadata.permissions())?;
     } else {
-        fs::copy(src, dst).map_err(|e| pair_error(e, "copyfile", src, dst))?;
+        crate::node_io::copy_file(src, dst).map_err(|e| pair_error(e, "copyfile", src, dst))?;
     }
     Ok(())
 }

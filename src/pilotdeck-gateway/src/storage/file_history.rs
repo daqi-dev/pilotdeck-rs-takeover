@@ -939,7 +939,7 @@ fn restore_backup(
         .unwrap_or_else(|| "file".into());
     let temporary = target_dir.join(format!(".{base}.pilotdeck-rewind-{}", uuid::Uuid::new_v4()));
     let result = (|| -> FileHistoryResult<()> {
-        fs::copy(&backup_path, &temporary)
+        crate::node_io::copy_file(&backup_path, &temporary)
             .map_err(|error| node_two_path_error(error, "copyfile", &backup_path, &temporary))?;
         #[cfg(unix)]
         {

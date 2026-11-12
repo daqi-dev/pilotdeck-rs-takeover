@@ -348,7 +348,7 @@ fn write_task_file_atomic(path: &Path, payload: &str) -> Result<(), CronStoreErr
         match fs::rename(&temp, path) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
-                fs::copy(&temp, path)?;
+                crate::node_io::copy_file(&temp, path)?;
             }
             Err(error) => return Err(error.into()),
         }

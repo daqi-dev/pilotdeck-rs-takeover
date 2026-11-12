@@ -413,7 +413,8 @@ fn copy_non_directory(
         if dest_stat.is_some() {
             fs::remove_file(dest).map_err(|e| SkillError::io(&e, "unlink", Some(dest)))?;
         }
-        fs::copy(src, dest).map_err(|e| SkillError::io_pair(&e, "copyfile", src, dest))?;
+        crate::node_io::copy_file(src, dest)
+            .map_err(|e| SkillError::io_pair(&e, "copyfile", src, dest))?;
         return set_mode(dest, src_stat);
     }
     if kind.is_symlink() {

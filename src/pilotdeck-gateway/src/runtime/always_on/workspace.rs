@@ -369,7 +369,7 @@ fn copy_filtered(source: &Path, target: &Path, top: bool) -> std::io::Result<()>
             #[cfg(not(unix))]
             let _ = link;
         } else {
-            std::fs::copy(&from, &to)?;
+            crate::node_io::copy_file(&from, &to)?;
         }
     }
     Ok(())

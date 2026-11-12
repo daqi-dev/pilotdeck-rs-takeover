@@ -511,7 +511,7 @@ fn copy_tree(source: &Path, target: &Path) -> std::io::Result<()> {
         let _ = std::fs::remove_file(target);
         std::os::unix::fs::symlink(link, target)
     } else {
-        std::fs::copy(source, target).map(|_| ())
+        crate::node_io::copy_file(source, target).map(|_| ())
     }
 }
 

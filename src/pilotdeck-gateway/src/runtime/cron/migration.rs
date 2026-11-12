@@ -690,7 +690,7 @@ fn atomic_write(path: &Path, content: &str, now_ms: f64) -> Result<(), CronStore
     match fs::rename(&temp, path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
-            fs::copy(&temp, path)?;
+            crate::node_io::copy_file(&temp, path)?;
             let _ = fs::remove_file(&temp);
             Ok(())
         }

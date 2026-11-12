@@ -181,7 +181,7 @@ fn copy_dir_all(source: &Path, destination: &Path) -> std::io::Result<()> {
         if entry.file_type()?.is_dir() {
             copy_dir_all(&path, &destination.join(entry.file_name()))?;
         } else {
-            fs::copy(&path, destination.join(entry.file_name()))?;
+            crate::node_io::copy_file(&path, destination.join(entry.file_name()))?;
         }
     }
     Ok(())

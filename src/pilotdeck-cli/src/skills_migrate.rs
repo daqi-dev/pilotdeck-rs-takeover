@@ -470,11 +470,13 @@ fn copy_tree(source: &Path, target: &Path) -> Result<(), Failure> {
         if destination.is_some() {
             fs::remove_file(target).map_err(|e| fs_failure(e, "unlink", target))?;
         }
-        fs::copy(source, target).map_err(|e| match fs_failure(e, "copyfile", source) {
-            Failure::Error(message) => {
-                Failure::Error(format!("{message} -> '{}'", target.display()))
+        pilotdeck_gateway::node_io::copy_file(source, target).map_err(|e| {
+            match fs_failure(e, "copyfile", source) {
+                Failure::Error(message) => {
+                    Failure::Error(format!("{message} -> '{}'", target.display()))
+                }
+                other => other,
             }
-            other => other,
         })?;
     } else {
         let kind = if metadata.file_type().is_fifo() {

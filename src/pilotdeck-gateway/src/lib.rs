@@ -32,7 +32,7 @@ extern crate self as pilotdeck_gateway;
 // The same integration driver includes its own common helpers in this test-only module.
 #[allow(clippy::duplicate_mod)]
 mod mutant_facade;
-mod node_io;
+pub mod node_io;
 mod pairing;
 mod process_group;
 #[cfg(all(test, unix))]
