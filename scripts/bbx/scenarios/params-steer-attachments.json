@@ -1,0 +1,394 @@
+{
+  "name": "params-steer-attachments",
+  "about": "steer_turn 的 attachments / projectKey / uploadedAttachments（InProcessGateway.ts:1859-1884 → prepareAttachmentTurn → GatewayAttachmentTurnComposer）：轮次进行中插话带文本与音频附件，projectKey 取音频所在项目（路径说明里给出项目内路径）、另一个项目（不给路径）、数字（path.resolve 失败）；attachments 是字符串 / 对象；带 channelKey 登记的音频附件不带 projectKey；只带 uploadedAttachments（steerTurn 不读这个字段）。比较插话的应答、发给 provider 的下一次请求与会话记录。",
+  "files": {
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-beta/.cwd": "{HOME}/work/beta\n",
+    "home/work/alpha/notes.md": "# notes in workspace\n",
+    "home/work/alpha/voice.wav": "RIFF fake wave bytes",
+    "home/work/beta/README.md": "beta\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Steer params\"}"
+      }
+    },
+    {
+      "name": "after-tool",
+      "when": [
+        "\"tool_call_id\":\"call_st\""
+      ],
+      "reply": {
+        "text": "Done."
+      }
+    },
+    {
+      "name": "turn",
+      "when": [
+        "st-"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_st",
+          "name": "bash",
+          "arguments": {
+            "command": "sleep 2; echo slept"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-st1",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-st1",
+        "channelKey": "test",
+        "projectKey": "{HOME}/work/alpha",
+        "runId": "run-st1",
+        "message": "st-1: go"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started"
+          },
+          "ws": "steer_turn",
+          "params": {
+            "sessionKey": "s-st1",
+            "runId": "run-st1",
+            "itemId": "i-1",
+            "message": "steer with files",
+            "projectKey": "{HOME}/work/alpha",
+            "attachments": [
+              {
+                "type": "file",
+                "name": "notes.md",
+                "path": "{HOME}/work/alpha/notes.md",
+                "mimeType": "text/markdown"
+              },
+              {
+                "type": "file",
+                "name": "voice.wav",
+                "path": "{HOME}/work/alpha/voice.wav",
+                "mimeType": "audio/wav",
+                "metadata": {
+                  "channelKey": "test"
+                }
+              }
+            ]
+          },
+          "count": 1
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-st2",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-st2",
+        "channelKey": "test",
+        "projectKey": "{HOME}/work/alpha",
+        "runId": "run-st2",
+        "message": "st-2: go"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started"
+          },
+          "ws": "steer_turn",
+          "params": {
+            "sessionKey": "s-st2",
+            "runId": "run-st2",
+            "itemId": "i-2",
+            "message": "steer other project",
+            "projectKey": "{HOME}/work/beta",
+            "attachments": [
+              {
+                "type": "file",
+                "name": "voice.wav",
+                "path": "{HOME}/work/alpha/voice.wav",
+                "mimeType": "audio/wav",
+                "metadata": {
+                  "channelKey": "test"
+                }
+              }
+            ]
+          },
+          "count": 1
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-st3",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-st3",
+        "channelKey": "test",
+        "projectKey": "{HOME}/work/alpha",
+        "runId": "run-st3",
+        "message": "st-3: go"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started"
+          },
+          "ws": "steer_turn",
+          "params": {
+            "sessionKey": "s-st3",
+            "runId": "run-st3",
+            "itemId": "i-3",
+            "message": "steer numeric project",
+            "projectKey": 123,
+            "attachments": [
+              {
+                "type": "file",
+                "name": "voice.wav",
+                "path": "{HOME}/work/alpha/voice.wav",
+                "mimeType": "audio/wav",
+                "metadata": {
+                  "channelKey": "test"
+                }
+              }
+            ]
+          },
+          "count": 1
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-st4",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-st4",
+        "channelKey": "test",
+        "projectKey": "{HOME}/work/alpha",
+        "runId": "run-st4",
+        "message": "st-4: go"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started"
+          },
+          "ws": "steer_turn",
+          "params": {
+            "sessionKey": "s-st4",
+            "runId": "run-st4",
+            "itemId": "i-4",
+            "message": "steer bad attachments",
+            "attachments": "notes.md"
+          },
+          "count": 1
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-st5",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-st5",
+        "channelKey": "test",
+        "projectKey": "{HOME}/work/alpha",
+        "runId": "run-st5",
+        "message": "st-5: go"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started"
+          },
+          "ws": "steer_turn",
+          "params": {
+            "sessionKey": "s-st5",
+            "runId": "run-st5",
+            "itemId": "i-5",
+            "message": "steer with upload refs only",
+            "uploadedAttachments": [
+              {
+                "uploadId": "no-such-upload"
+              },
+              "junk"
+            ]
+          },
+          "count": 1
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-st6",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-st6",
+        "channelKey": "test",
+        "projectKey": "{HOME}/work/alpha",
+        "runId": "run-st6",
+        "message": "st-6: go"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started"
+          },
+          "ws": "steer_turn",
+          "params": {
+            "sessionKey": "s-st6",
+            "runId": "run-st6",
+            "itemId": "i-6",
+            "message": "steer empty project",
+            "projectKey": "",
+            "attachments": [
+              {
+                "type": "file",
+                "name": "voice.wav",
+                "path": "{HOME}/work/alpha/voice.wav",
+                "mimeType": "audio/wav",
+                "metadata": {
+                  "channelKey": "test"
+                }
+              }
+            ]
+          },
+          "count": 1
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-st7",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-st7",
+        "channelKey": "test",
+        "projectKey": "{HOME}/work/alpha",
+        "runId": "run-st7",
+        "message": "st-7: go"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started"
+          },
+          "ws": "steer_turn",
+          "params": {
+            "sessionKey": "s-st7",
+            "runId": "run-st7",
+            "itemId": "i-7",
+            "message": "steer object attachments",
+            "attachments": {
+              "path": "{HOME}/work/alpha/notes.md"
+            }
+          },
+          "count": 1
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-st8",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-st8",
+        "channelKey": "test",
+        "projectKey": "{HOME}/work/alpha",
+        "runId": "run-st8",
+        "message": "st-8: go"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started"
+          },
+          "ws": "steer_turn",
+          "params": {
+            "sessionKey": "s-st8",
+            "runId": "run-st8",
+            "itemId": "i-8",
+            "message": "steer audio without project",
+            "attachments": [
+              {
+                "type": "file",
+                "name": "voice.wav",
+                "path": "{HOME}/work/alpha/voice.wav",
+                "mimeType": "audio/wav",
+                "metadata": {
+                  "channelKey": "test"
+                }
+              }
+            ]
+          },
+          "count": 1
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-st1",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    }
+  ]
+}

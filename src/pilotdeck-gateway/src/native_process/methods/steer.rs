@@ -65,33 +65,85 @@ fn item_id_string(value: &JsValue) -> Result<JsString, RequestError> {
         .map_err(|_| RequestError::new(js_value::StackOverflow::MESSAGE))
 }
 
-/// An attachments field carries nothing when it is absent, null/undefined,
-/// or an empty array.
-fn attachments_empty(value: &JsValue) -> bool {
-    matches!(value, JsValue::Undefined | JsValue::Null)
-        || matches!(value, JsValue::Array(items) if items.is_empty())
-}
-
-/// TS `steerTurn` merges non-empty `attachments` into the content array via
-/// `prepareAttachmentTurn` and never reads `uploadedAttachments` (only
-/// `submitTurn` consumes uploads; InProcessGateway.ts:1864-1870). This native
-/// slice cannot steer with attachments yet: a non-empty `attachments` payload
-/// is rejected explicitly — at the TS attachment-preparation position, right
-/// after the admission branches and before the resource gates — instead of
-/// being silently dropped (ledger A7.2-STEER-ATTACH-001, corrected by
-/// A7.2-STEER-ATTACH-001-R1); `uploadedAttachments` is accepted and ignored,
-/// matching the TS baseline.
-fn attachments_unsupported(field: &str) -> RequestError {
-    RequestError {
-        code: "STEER_ATTACHMENTS_UNSUPPORTED".into(),
-        message: format!(
-            "steer_turn does not support attachments in this native slice: `{field}` \
-             must be absent, null, or an empty array."
+/// `prepareAttachmentTurn(input.message, input.attachments ?? [],
+/// input.projectKey, sessionKey)` (InProcessGateway.ts:1864-1876) through the
+/// same composer `submit_turn` uses, then the steer message's content
+/// (`agentInput.type === "text" ? [{type:"text", text}] : agentInput.content`)
+/// and its read grants. `projectKey` only feeds the funasr audio hint, as sent.
+async fn compose_steer_input(
+    params: &JsValue,
+    message: &JsValue,
+    install_command: String,
+) -> Result<(JsValue, Vec<JsString>), RequestError> {
+    let attachments = match params.get("attachments") {
+        // `!attachments || attachments.length === 0` (composer :177, :199);
+        // a string iterates as characters, none of which carries a path or
+        // content, so it composes like an empty list.
+        Some(JsValue::Array(items)) => items.clone(),
+        None | Some(JsValue::String(_)) => Vec::new(),
+        Some(value) if !crate::metadata::js_truthy(value) => Vec::new(),
+        // `for (const attachment of attachments)` over a non-iterable.
+        Some(_) => return Err(RequestError::new("attachments is not iterable")),
+    };
+    let text_turn = |message: &JsValue| {
+        JsValue::Array(vec![object([
+            ("type", "text".into()),
+            ("text", message.clone()),
+        ])])
+    };
+    if attachments.is_empty() {
+        return Ok((text_turn(message), Vec::new()));
+    }
+    let project = params.get("projectKey").cloned();
+    let message = message.clone();
+    let composed = tokio::task::spawn_blocking(move || {
+        use super::super::services::AudioProject;
+        let root = match &project {
+            Some(JsValue::String(key)) if !key.is_empty() => Some(std::path::PathBuf::from(
+                String::from_utf16_lossy(key.units()),
+            )),
+            _ => None,
+        };
+        let project = match (&root, &project) {
+            (Some(root), _) => AudioProject::Root(root),
+            (None, Some(value)) if crate::metadata::js_truthy(value) => {
+                AudioProject::Invalid(value)
+            }
+            (None, _) => AudioProject::Absent,
+        };
+        super::super::services::compose_attachment_turn_for(
+            project,
+            &install_command,
+            &message,
+            &attachments,
         )
-        .into(),
+        .map(|composed| (composed, message))
+    })
+    .await
+    .map_err(|error| RequestError::new(error.to_string()))?
+    .map_err(|error| RequestError {
+        code: error.code,
+        message: error.message.into(),
         details: None,
         validation: None,
-    }
+    })?;
+    let (composed, message) = composed;
+    let allowed = match composed.get("allowedReadFiles") {
+        Some(JsValue::Array(paths)) => paths
+            .iter()
+            .filter_map(|path| path.as_string().cloned())
+            .collect(),
+        _ => Vec::new(),
+    };
+    let content = match composed.get("content") {
+        Some(content)
+            if composed.get("type").and_then(JsValue::as_string) == Some(&"blocks".into()) =>
+        {
+            content.clone()
+        }
+        _ => text_turn(&message),
+    };
+    Ok((content, allowed))
 }
 
 impl Requests {
@@ -142,12 +194,11 @@ impl Requests {
         // (SessionRouter.ts:307-314, AgentSession.ts:290-297). The caller
         // still learns no_active_turn / turn_mismatch before the slice's
         // explicit attachments error.
-        if params
-            .get("attachments")
-            .is_some_and(|value| !attachments_empty(value))
-        {
-            return Err(attachments_unsupported("attachments"));
-        }
+        let message_text = input_property(&params, "message")?.unwrap_or(JsValue::Undefined);
+        let install_command =
+            super::super::services::funasr_install_command(&self.options, &self.env);
+        let (content, allowed_read_files) =
+            compose_steer_input(&params, &message_text, install_command).await?;
         // `uploadedAttachments` is never read by TS `steerTurn` (only
         // `submitTurn` consumes uploads): a non-empty payload is accepted
         // and ignored here, matching the baseline.
@@ -178,16 +229,9 @@ impl Requests {
         // item id's coerced form (see `item_id_string`).
         let item_id =
             item_id_string(&input_property(&params, "itemId")?.unwrap_or(JsValue::Undefined))?;
-        let message_text = input_property(&params, "message")?.unwrap_or(JsValue::Undefined);
         let message = crate::metadata::object([
             ("role", "user".into()),
-            (
-                "content",
-                JsValue::Array(vec![object([
-                    ("type", "text".into()),
-                    ("text", message_text),
-                ])]),
-            ),
+            ("content", content),
             (
                 "metadata",
                 object([
@@ -201,7 +245,7 @@ impl Requests {
             .enqueue(SteerMessage {
                 item_id,
                 message,
-                allowed_read_files: Some(Vec::new()),
+                allowed_read_files: Some(allowed_read_files),
             })
             .await
             .map_err(|e| RequestError::new(e.message.clone()))?;

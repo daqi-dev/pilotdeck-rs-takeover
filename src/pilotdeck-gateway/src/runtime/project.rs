@@ -478,6 +478,17 @@ impl ProjectRuntimeRegistry {
         let mut state = self.state.lock().unwrap();
         self.resolve_locked(project_key, &mut state)?.acquire()
     }
+    /// Every staged runtime generation still alive, whatever project it
+    /// serves: a running turn keeps its generation through its lease even
+    /// after a reload or invalidation retired it.
+    pub fn live_generations(&self) -> Vec<Arc<ProjectRuntime>> {
+        let state = self.state.lock().unwrap();
+        state
+            .generations
+            .iter()
+            .filter_map(std::sync::Weak::upgrade)
+            .collect()
+    }
     /// TS invalidate uses an exact cache key, unlike resolve. None or an empty
     /// path invalidates all projects; a relative key is not normalized here.
     pub fn invalidate(&self, project_root: Option<&Path>) {
