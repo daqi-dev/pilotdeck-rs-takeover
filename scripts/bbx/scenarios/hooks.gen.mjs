@@ -398,8 +398,8 @@ hooks:
 // ── 子代理：SubagentStart / SubagentStop，子代理自己的工具调用 ──
 {
   const hooks = {
-    // SubagentStart / SubagentStop 的执行事件投影在父会话的流上，与子代理状态事件的先后在基线里不稳定，
-    // 所以这里不配；它们由手工对比验证（见报告）。子代理自己的 hook 事件带子会话 id，不投影。
+    // SubagentStart / SubagentStop 在 hook-subagent-lifecycle 里单独配（那里把 hook 时长摆开，让帧的先后确定）。
+    // 子代理自己的 hook 事件带子会话 id，不投影。
     SessionStart: [{ hooks: [cmd('session', {})] }],
     Setup: [{ hooks: [cmd('session', {})] }],
     SessionEnd: [{ hooks: [cmd('session', {})] }],
@@ -421,6 +421,29 @@ hooks:
     steps: [submit('s-sub', 'turn-1: delegate'), { sleep: 300 }],
     volatile: ['\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages|resultBytes|content-length)$'],
     volatileWhy: '子代理结果文本里带位数不定的耗时，token 估算随之变；基线自比已证明',
+  };
+  // SubagentStart / SubagentStop 的执行帧直接发到父会话流上，子代理自己的事件（subagent_started、
+  // subagent_tool_*、subagent_text_delta ……）进宿主事件缓冲，sidecar 来帧或 500ms 无帧时才冲刷
+  // （基线 agentLoopSidecarClient.ts:379-395；进程内循环是 AgentLoop.ts:2908-2919 的同一种泵）。
+  // 帧的先后因此取决于 hook 时长：SubagentStart 不睡、SubagentStop 睡 1000ms，子代理运行期间攒下的事件
+  // 确定地在 SubagentStop 的 started 与 completed 之间冲刷，subagent_completed 在 completed 之后。
+  scenarios['hook-subagent-lifecycle'] = {
+    about: 'SubagentStart / SubagentStop hook（一次性子代理）：hook 收到的输入与环境、matcher 按事件名匹配（按子代理类型写的 matcher 不跑），以及父会话 WS 流上 hook_execution 帧与子代理事件的先后。基线的子代理事件进宿主事件缓冲，只在 sidecar 来帧或 500ms 无帧时冲刷（agentLoopSidecarClient.ts:379-395），hook 执行帧直接发；SubagentStop hook 睡 1000ms，让子代理运行期间攒下的事件确定地落在 SubagentStop 的 started 与 completed 之间，subagent_completed 落在 completed 之后。',
+    files: plugin('bbx-sub', {
+      SubagentStart: [
+        { hooks: [cmd('substart', {})] },
+        { matcher: 'explore', hooks: [cmd('never', {})] },
+        { matcher: 'SubagentStart', hooks: [cmd('substart-matched', {})] },
+      ],
+      SubagentStop: [
+        { hooks: [cmd('substop', { sleep: 1000 })] },
+        { matcher: 'explore', hooks: [cmd('never', {})] },
+      ],
+    }),
+    provider: scenarios['hook-subagent'].provider,
+    steps: [submit('s-sub', 'turn-1: delegate'), { sleep: 300 }],
+    volatile: scenarios['hook-subagent'].volatile,
+    volatileWhy: scenarios['hook-subagent'].volatileWhy,
   };
 }
 
@@ -551,6 +574,16 @@ hooks:
       { sleep: 3500 },
       read('s-cancel'),
     ],
+    accepted: [{
+      id: 'aborted-hook-does-not-run-tool',
+      why: '基线把被中止杀掉的 PreToolUse hook（outcome cancelled）当作非阻断，用户中止这一轮之后仍然走权限并真的执行了工具（落盘里有 ran.txt，会话记录多出 permission_started / permission_completed）；Rust 中止后不执行工具',
+      paths: [
+        '^\\$\\.tree\\./home/\\.pilotdeck/ran\\.txt$',
+        '/chats/s-cancel\\.jsonl\\.jsonl(\\.length|\\[2\\d\\].*)$',
+        '/chats/s-cancel\\.jsonl\\.(raw|projections\\.json)\\.',
+        '^\\$\\.steps\\[3\\]\\.frames\\[0\\]\\.result\\.session\\.fileSize$',
+      ],
+    }],
   };
 }
 
