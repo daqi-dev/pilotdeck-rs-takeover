@@ -1,6 +1,6 @@
 # 后端交付交接
 
-更新：2026-11-13（Asia/Shanghai）。本文件是本轮唯一进度入口；范围见 `docs/plan/backend-completion.md`。当前尚未完成交付，继续执行，不以阶段进展代替最终成果。
+更新：2026-11-13（Asia/Shanghai）。本文件是本轮唯一进度入口；范围见 `docs/plan/backend-completion.md`。当前尚未完成交付，继续执行，不以阶段进展代替最终成果。**用户最新决定：StaffDeck本期暂不实现；所有B1专属实现与验收延期，不再阻塞本期。**
 
 ## 身份和约束
 
@@ -18,12 +18,12 @@
 | E0/V0 | 进行中 | env_validation；8fa固定Linux验证、组件源码构建、harness负控与身份 |
 | A0/X1 | 进行中 | root；总装配、公开扩展/注册与最终独立消费者回归 |
 | R1/R2 | 进行中 | native_runtime；SOP取消drain补丁、TCP重复请求审计及正式对拍 |
-| B1 | 进行中 | staffdeck；知识、SOP失败/取消/多会话隔离，随后外部skills |
+| B1 | 本期排除（延期） | WIP已归档独立分支95ef92d8，不继续实现/验收 |
 | C1/H1 | 进行中 | 独立C1根；非TUI CLI、全部渠道；root保留Weixin fetch与总装配 |
 | T1 | 进行中 | root；native组件生命周期、PDF预算/字段顺序、libvips图像、诊断与history |
 | S1/M1 | 进行中 | C1复用作者；原子restore/锁，Google complete及后续上下文审计 |
 | O1 | 进行中 | root；遥测仍为真实缺口，已请求C1空闲作者做新模块，root保留接线；cron/always-on需最终回归 |
-| D1 | 进行中 | root/E0；默认native已接，完整/最小发行、无Node与资源/性能仍待验 |
+| D1 | 进行中 | 原staffdeck作者转为发行负责人，独占scripts/backend-release/**、D1.md；root/E0配合，完整/最小发行、无Node与资源/性能仍待验 |
 
 主线assembly/main/Cargo/lib由root唯一写入；C1公共文件例外已明确授权（channel mod/loader/protocol、native_process/channels、turn submit/handle/completion、permission_prompt/elicitation/request_user精确取消RAII、session_archive/storage transcript与factory structured writer lease、model Google complete/http）。不要并发改这些文件。C1提供assembly patch后root应用。
 
@@ -41,15 +41,15 @@
 - 14351的17正式BBX原始5SAME/12DIFF保留：PDF键序3（第四已改待正式）、诊断8（严格窄策略cbe99b49与T1账本R1，负控32全拒绝）、身份1。V0扩展56项、比较器61项通过；loaded Sharp/MuPDF/tokenizer/共享库完整身份已补。
 - C1已合：YAML JS数字键排序a4da54f1，SDK cancel fixture6104de64，严格capture comparators a5e78c34，HTTPS完整身份bf56b970。Linux Docker HTTPS fixture使用network none无hostport，E0实际双TS采集中。
 
-## 当前运行与下一步
+## 当前运行与下一步（最新，优先于历史批次描述）
 
-1. **本地重型槽已交C1**：冻结manifest后只做一次jobs4 `cargo check -p pilotdeck-gateway --all-targets`；主线不得同时cargo build/check/test。完成回报后root取回槽，集中编译SOP取消补丁。两正式轻量槽已空；B1等新CLI，R2可跑现有TS oracle。
-2. B1/R1稳定补丁：Factory wait_owned信号取消后drain已准入工作、不启动下节点；NodeFactory保留真实aborted终态；provider用户取消仍forward已持久partial，parentclose/waiterdrop只drain。root需审查及重建后让B1复跑cancel_model，再cancel_prepare/owner_error/isolation；不放宽失败标准。
-3. E0持cb8构建槽跑8fa focused nextest（报告会话21841，需向E0确认）；然后独立a903 helper重编+37场景。HTTPS Docker两轮TS可轻量并行，不在Rust test重链接期间捕获Rust。
-4. 第四未提交包括knowledge/SOP、native_component/image/PDF/read_file、TCP；完成定向修复与正式验证后冻结第四候选交E0。同一场景中不得覆盖二进制。
-5. C1 Signal/Mattermost/HomeAssistant、共享网络/精确取消、S1原子restore、M1 Google complete冻结待check。WS压缩20格oracle确认8位窗口；root依赖提交936271b3(flate2) +4db0e19c(zlib-rs safe API)，已要求作者同步。WhatsApp独立新源码待集成，其他渠道尚未完成。
-6. O1已有placeholder证据：CLI server固定零snapshot，assembly telemetry None；读TS collector/sender/context和observer后实现真实队列，所有测试绑定loopback。已请求C1复用空闲作者做新gateway telemetry模块；若未确认不要双方重复写。root保留CLI/native server/assembly接线。
-7. 更新本文件和包报告；最终仍需同一集成SHA全量fmt/clippy/nextest/doc、适用BBX、native/外部模块和StaffDeck组合重启路径、最小/完整发行包、无Node、性能和跨平台报告。GitHubCI尚未实际运行；真实外部服务保持明确待验。
+1. **C1持唯一本地重型槽**：第四次gateway all-targets check已通过12.38秒，前三首败保留（类型/trait/import/集成测试）；现获准仅运行S1 10+既有restore、M1 complete/旧stream、shared25+首3渠道的限定实际测试，jobs4隔离HOME。root不同时cargo，等待退槽。
+2. StaffDeck第四批所有未集成改动（含未编译receipt）已逐blob验证归档：`codex/deferred-staffdeck-20261113@95ef92d86d1f4936a7f2c76249f6edf270423627`，本机 `_tmp/20261113-staffdeck-deferred/manifest.json`。20 tracked恢复本批之前HEAD、4 new files移出当前树但保留完整Git对象和副本。当前B1取消/顺序差异不再是本期门禁；不继续运行专属harness。之前已集成基础保留，不能宣称完整StaffDeck交付。
+3. 第四候选收窄为T1原生组件/image/PDF与R2 TCP。root采纳E0预算复核建议，image实际解码bytes再检查MAX_OUTPUT/budget。通用native扩展碰撞修复从B1改动中单独保留；native_runtime作者仅为它补公开consumer回归，然后冻结，无新TCP矩阵。
+4. E0执行已固定78dd2e19图像3场景TS双自比及真实负控；cb8当前无Cargo重型任务，收到第四产品候选后验证。8fa已有fmt/clippy/build+552/552定向通过；a903独立image helper37/37通过，均不是最终全量。
+5. 原staffdeck作者已转D1：实现独立最小核心/完整包的可复现打包、依赖许可证manifest与无Node/mock smoke，独占scripts/backend-release/**、D1.md；不自行Cargo、push、发布或改共享入口。
+6. C1 SDK cancel两轮同失败实际是装置等待被SDK过滤的stdout partial，未触发SIGINT，只是watchdog SIGKILL，不能再称产品abort挂起。C1 scenarios作者用独立持久run事件观测精确触发信号；不改timeout、不放宽业务断言。
+7. 核心C1/H1/S1/M1/O1继续现有任务。O1新gateway telemetry模块由C1复用作者，root保留CLI/native server/assembly接线；先不混入第四候选。最终同集成SHA全量fmt/clippy/nextest/doc、适用BBX、native/外部模块组合重启、最小/完整发行、性能及跨平台仍须完成，StaffDeck专属组合不在本期。
 
 ## 全局收口调整（用户询问进度后已执行）
 
@@ -58,3 +58,5 @@
 - 本地clippy-5通过46.52秒/build-3通过54.36秒；clippy-4测试模块位置首败保留且修复。新CLI 7d3ddddb60e35aa5eeb23c9b989c0ecbac0cd2dfa9c706c29f4e1e93b0b8254f：B1 cancel_model-2首轮取消已完全修复，整体仍失败于恢复轮父wire最终回复超前于已排队的节点事件。B1/R1正在统一审查事件顺序屏障，暂不扩新变体。
 - 唯一本地重型槽又交C1一次定点修正后的all-targets check（首失败10lib/39test含重复，未运行测试）；主线暂不cargo。C1返回槽后root跑最新SOP/TCP相关单测。E0无重型任务，正在独立审T1组件管理并准备既有3条正式image TS自比。
 - C1 SDK cancel存在两轮同TS挂起，未标通过，已要求复用空闲作者定位实际读流/abort归属，不靠延长timeout。全量四门、适用BBX、性能与完整发行仍必须执行。
+
+最新范围变更覆盖上面全局审计中的StaffDeck待办：两作者已停止，未编译receipt不在当前树。用户原始plan.md保留未改；docs/plan已写明本期排除。
