@@ -75,6 +75,9 @@
    "timeout": 40000,
    "then": [
     {
+     "connect": true
+    },
+    {
      "ws": "set_permission_mode",
      "params": {
       "sessionKey": "s-env1",
@@ -107,6 +110,9 @@
    },
    "timeout": 40000,
    "then": [
+    {
+     "connect": true
+    },
     {
      "ws": "set_permission_mode",
      "params": {

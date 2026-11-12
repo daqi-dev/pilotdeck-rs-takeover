@@ -23,6 +23,9 @@
    "timeout": 20000,
    "then": [
     {
+     "connect": true
+    },
+    {
      "ws": "resolve_settings",
      "params": {}
     },
@@ -40,6 +43,9 @@
    },
    "timeout": 20000,
    "then": [
+    {
+     "connect": true
+    },
     {
      "ws": "resolve_settings",
      "params": {}
