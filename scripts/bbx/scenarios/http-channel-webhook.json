@@ -1,0 +1,12 @@
+{
+  "name": "http-channel-webhook",
+  "about": "webhook 渠道（src/adapters/channel/webhook/WebhookChannel.ts:117-150；loadEnabledChannels.ts:108-114 只传 extra.port 与 extra.secret，路由表恒为空）。gateway 用 serve 起在 38413，webhook 的 extra.port 设成 38411。比 GET /health、POST /webhooks/<名字> 恒为 unknown_route 404、GET /webhooks/<名字> 与其它路径的纯文本 404。date 头声明为 volatile（同其余 http 场景）。",
+  "server": false,
+  "volatile": [
+    "\\.http\\.headers\\.date$"
+  ],
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  webhook:\n    enabled: true\n    extra:\n      port: 38411\n      secret: bbx-secret\n",
+  "steps": [
+    {"serve": ["server", "--port", "38413"], "then": [{"http": "GET /health"}, {"http": "POST /health"}, {"http": "POST /webhooks/github", "headers": {"content-type": "application/json"}, "body": {"text": "hi"}}, {"http": "POST /webhooks/a%20b"}, {"http": "GET /webhooks/github"}, {"http": "POST /webhooks/github/extra"}, {"http": "GET /nope"}]}
+  ]
+}

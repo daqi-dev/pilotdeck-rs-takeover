@@ -1,0 +1,12 @@
+{
+  "name": "http-channel-api-server",
+  "about": "apiServer 渠道（src/adapters/channel/api-server/ApiServerChannel.ts:140-290；loadEnabledChannels.ts:101-107 只传 extra.port 与 apiKey）。采集器的 http 步骤只连固定端口 38411，所以 gateway 用 serve 起在 38413，apiServer 的 extra.port 设成 38411。比 GET /health、OPTIONS（没配 CORS 来源时不带 CORS 头）、POST /v1/chat/completions 的鉴权失败（无头 / 错 key）、坏 JSON、messages 缺失或为空、最后一条内容为空、GET /v1/chat/completions 与未知路径的 404。/v1/models 与真正跑一轮的应答带秒级 created，另见 http-channel-api-server-turn。date 头逐次不同，同其余 http 场景声明为 volatile。",
+  "server": false,
+  "volatile": [
+    "\\.http\\.headers\\.date$"
+  ],
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  apiServer:\n    enabled: true\n    apiKey: bbx-api-key\n    extra:\n      port: 38411\n",
+  "steps": [
+    {"serve": ["server", "--port", "38413"], "then": [{"http": "GET /health"}, {"http": "OPTIONS /v1/chat/completions", "headers": {"origin": "http://example.test"}}, {"http": "POST /v1/chat/completions", "headers": {"content-type": "application/json"}, "body": {"messages": [{"role": "user", "content": "hi"}]}}, {"http": "POST /v1/chat/completions", "headers": {"authorization": "Bearer wrong", "content-type": "application/json"}, "body": {"messages": [{"role": "user", "content": "hi"}]}}, {"http": "POST /v1/chat/completions", "headers": {"authorization": "Bearer bbx-api-key", "content-type": "application/json"}, "body": "{bad json"}, {"http": "POST /v1/chat/completions", "headers": {"authorization": "Bearer bbx-api-key", "content-type": "application/json"}, "body": {"model": "x"}}, {"http": "POST /v1/chat/completions", "headers": {"authorization": "Bearer bbx-api-key", "content-type": "application/json"}, "body": {"messages": []}}, {"http": "POST /v1/chat/completions", "headers": {"authorization": "Bearer bbx-api-key", "content-type": "application/json"}, "body": {"messages": [{"role": "user", "content": [{"type": "image_url"}]}]}}, {"http": "GET /v1/chat/completions", "headers": {"authorization": "Bearer bbx-api-key", "content-type": "application/json"}}, {"http": "GET /nope"}]}
+  ]
+}

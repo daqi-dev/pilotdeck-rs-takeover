@@ -1,0 +1,16 @@
+{
+  "name": "http-channel-api-server-turn",
+  "about": "apiServer 渠道的正常路径：GET /v1/models、非流式与流式 POST /v1/chat/completions 跑一轮（ApiServerChannel.ts:155-168、290-420），以及 /new 指令的确认。应答里的 created 是秒级时间戳（Math.floor(Date.now()/1000)），比较器不归一化，基线自比在这些字段上必然不同。",
+  "server": false,
+  "volatile": [
+    "\\.http\\.headers\\.date$"
+  ],
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  apiServer:\n    enabled: true\n    apiKey: bbx-api-key\n    extra:\n      port: 38411\n",
+  "provider": [
+    {"name": "title", "when": ["Generate a concise title"], "reply": {"text": "{\"title\": \"Api server\"}"}},
+    {"name": "main", "reply": {"text": "Hello from the mock."}}
+  ],
+  "steps": [
+    {"serve": ["server", "--port", "38413"], "then": [{"http": "GET /v1/models"}, {"http": "POST /v1/chat/completions", "headers": {"authorization": "Bearer bbx-api-key", "content-type": "application/json", "x-hermes-session-id": "chat-a"}, "body": {"messages": [{"role": "user", "content": "hello buffered"}]}}, {"http": "POST /v1/chat/completions", "headers": {"authorization": "Bearer bbx-api-key", "content-type": "application/json", "x-hermes-session-id": "chat-b"}, "body": {"stream": true, "messages": [{"role": "user", "content": "hello stream"}]}}, {"http": "POST /v1/chat/completions", "headers": {"authorization": "Bearer bbx-api-key", "content-type": "application/json", "x-hermes-session-id": "chat-a"}, "body": {"messages": [{"role": "user", "content": "/new"}]}}]}
+  ]
+}
