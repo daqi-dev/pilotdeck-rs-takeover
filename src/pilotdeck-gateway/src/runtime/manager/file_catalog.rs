@@ -57,15 +57,15 @@ pub(crate) fn recorded_read_paths() -> Vec<std::path::PathBuf> {
 /// `isInternalSession` (`SessionList.ts:13`), shared with the metadata reader.
 pub(crate) use crate::metadata::is_internal_session;
 
-struct SessionLite {
+pub(crate) struct SessionLite {
     mtime: f64,
     size: u64,
-    head: String,
-    tail: String,
+    pub(crate) head: String,
+    pub(crate) tail: String,
 }
 
 /// `readSessionLite`: any stat/read failure or an empty file yields `None`.
-fn read_session_lite(path: &Path) -> Option<SessionLite> {
+pub(crate) fn read_session_lite(path: &Path) -> Option<SessionLite> {
     #[cfg(test)]
     READ_PATHS.with(|paths| paths.borrow_mut().push(path.to_path_buf()));
     let metadata = fs::metadata(path).ok()?;

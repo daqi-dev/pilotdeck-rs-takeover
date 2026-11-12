@@ -647,3 +647,194 @@ impl DiscoveryFire {
     }
 }
 
+
+const DISCOVERY_CHANNEL: &str = "always-on/discovery";
+
+impl DiscoveryFire {
+    /// `DiscoveryFire.run` (DiscoveryFire.ts:535-941): the discovery turn,
+    /// then the shared tail when it produced a plan.
+    pub(crate) async fn discovery_run(
+        &self,
+        run_id: &str,
+        started_at_ms: f64,
+    ) -> Result<&'static str, AlwaysOnError> {
+        let state = self
+            .deps
+            .state_store
+            .read(started_at_ms)
+            .map_err(io_error)?;
+        let started_at = iso_from_epoch_ms(started_at_ms);
+        let base_head = |finished_ms: f64, outcome: &str| {
+            let mut out = JsObject::new();
+            out.insert("schemaVersion".into(), JsValue::Number(1.0));
+            out.insert("runId".into(), JsValue::from(run_id));
+            out.insert("startedAt".into(), JsValue::from(started_at.as_str()));
+            out.insert("outcome".into(), JsValue::from(outcome));
+            out.insert(
+                "finishedAt".into(),
+                JsValue::from(iso_from_epoch_ms(finished_ms).as_str()),
+            );
+            out
+        };
+
+        // ── Phase 1: Discovery ──
+        self.emit_event(run_id, "discovery_started", Vec::new());
+        let session_key =
+            super::fire::derive_discovery_session_key(&self.deps.project_key, run_id);
+        let existing = match self.live_active_cycle(&state)? {
+            Some((handle, _)) => Some((handle.cwd, handle.strategy)),
+            None => match state.get("currentWorkspace") {
+                Some(JsValue::Object(legacy)) => {
+                    let text = |key: &str| match legacy.get(key) {
+                        Some(JsValue::String(value)) => String::from_utf16_lossy(value.units()),
+                        _ => String::new(),
+                    };
+                    let cwd = text("cwd");
+                    std::path::Path::new(&cwd)
+                        .exists()
+                        .then(|| (cwd, text("strategy")))
+                }
+                _ => None,
+            },
+        };
+        let phase = PhaseContext::new(
+            PhaseKind::Discovery,
+            self.deps.paths.clone(),
+            self.deps.plan_store.clone(),
+        );
+        let phase = self.register(&session_key, run_id, phase);
+        self.set_override(
+            &session_key,
+            &unattended_override(
+                existing
+                    .as_ref()
+                    .map_or(self.deps.project_key.as_str(), |(cwd, _)| cwd.as_str()),
+            ),
+        );
+        // `getPilotProjectChatDir(projectKey, pilotHome)`: the same storage
+        // id the always-on project directory is keyed by.
+        let project_id = self
+            .deps
+            .paths
+            .project_dir
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let chat_dir = crate::metadata::resolve(
+            &crate::metadata::resolve(
+                &crate::metadata::resolve(&self.deps.paths.pilot_home, "projects"),
+                &project_id,
+            ),
+            "chats",
+        );
+        let (digest, aliases) = super::digest::build_chat_digest(
+            &chat_dir,
+            std::path::Path::new(&self.deps.project_key),
+        );
+        phase.state().chat_aliases = aliases;
+        let existing_plans: Vec<super::prompts::ExistingPlan> = self
+            .deps
+            .plan_store
+            .list_records()
+            .map_err(io_error)?
+            .iter()
+            .map(|plan| {
+                let field = |key: &str| {
+                    super::fire::js_display(plan.raw.get(key).unwrap_or(&JsValue::Undefined))
+                };
+                super::prompts::ExistingPlan {
+                    title: field("title"),
+                    dedupe_key: field("dedupeKey"),
+                    status: field("status"),
+                }
+            })
+            .collect();
+        let message =
+            super::prompts::build_discovery_prompt(&super::prompts::DiscoveryPromptInput {
+                project_root: &self.deps.project_key,
+                run_id,
+                created_at: &started_at,
+                workspace: existing
+                    .as_ref()
+                    .map(|(cwd, strategy)| (cwd.as_str(), strategy.as_str())),
+                digest: &digest,
+                existing_plans: &existing_plans,
+                language: self.language(),
+            });
+        let drained = self
+            .drain_turn(
+                &session_key,
+                DISCOVERY_CHANNEL,
+                &format!("{run_id}.discovery"),
+                message.into(),
+                false,
+            )
+            .await;
+        self.release_phase(&session_key).await;
+        let events = drained.map_err(io_error)?;
+        let produced = phase.state().plan.clone();
+        let discovery_error = pick_first_error(&events);
+        if let (Some(error), None) = (&discovery_error, &produced) {
+            let control = super::fire::control_error(error, "discovery_failed");
+            let finished_ms = (self.deps.now)();
+            self.emit_event(
+                run_id,
+                "run_failed",
+                vec![
+                    ("error", error_value(&control)),
+                    ("outcome", JsValue::from("failed")),
+                ],
+            );
+            self.deps
+                .state_store
+                .mark_fire_completed("failed", run_id, None, finished_ms)
+                .map_err(io_error)?;
+            let mut entry = base_head(finished_ms, "failed");
+            entry.insert("error".into(), error_value(&control));
+            self.append_history(entry);
+            return Ok("failed");
+        }
+        let Some((record, markdown)) = produced else {
+            self.emit_event(
+                run_id,
+                "no_plan",
+                vec![("outcome", JsValue::from("no_plan"))],
+            );
+            let finished_ms = (self.deps.now)();
+            self.deps
+                .state_store
+                .mark_fire_completed("no_plan", run_id, None, finished_ms)
+                .map_err(io_error)?;
+            self.deps
+                .state_store
+                .set_dormant(finished_ms)
+                .map_err(io_error)?;
+            self.append_history(base_head(finished_ms, "no_plan"));
+            return Ok("no_plan");
+        };
+        let record = super::cycles::plan_record_from(&record);
+        self.emit_event(
+            run_id,
+            "plan_produced",
+            vec![
+                ("title", Self::plan_title(&record)),
+                ("planId", JsValue::from(record.id.as_str())),
+            ],
+        );
+        let tail = self
+            .plan_tail(
+                run_id,
+                started_at_ms,
+                &state,
+                &TailPlan { record, markdown },
+                &HistoryBase {
+                    run_id: run_id.into(),
+                    started_at: started_at.clone(),
+                    plan_first: false,
+                },
+            )
+            .await
+            .map_err(io_error)?;
+        Ok(tail.outcome)
+    }
+}

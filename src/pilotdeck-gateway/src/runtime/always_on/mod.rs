@@ -24,6 +24,7 @@
 #![allow(dead_code)]
 mod apply;
 mod cycles;
+mod digest;
 mod fire;
 mod gates;
 mod leases;

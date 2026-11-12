@@ -168,6 +168,11 @@ fn cycle_record(entry: &JsObject) -> WorkCycleRecord {
     }
 }
 
+/// A typed view of a stored plan entry.
+pub(crate) fn plan_record_from(entry: &JsObject) -> DiscoveryPlanRecord {
+    plan_record(entry)
+}
+
 fn plan_record(entry: &JsObject) -> DiscoveryPlanRecord {
     DiscoveryPlanRecord {
         id: js_string(entry.get("id")).unwrap_or_default(),

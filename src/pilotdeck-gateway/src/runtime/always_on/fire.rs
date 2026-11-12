@@ -121,9 +121,6 @@ pub(crate) struct FireOutcome {
 /// `run` input — the scheduler's `{ runId, startedAt }` pair.
 pub(crate) struct FireRunInput<'a> {
     pub run_id: &'a str,
-    /// The timestamp the fire half's records stamp; the read side lands
-    /// with the unported discovery pipeline.
-    #[allow(dead_code)]
     pub started_at_ms: f64,
 }
 
@@ -462,13 +459,15 @@ impl DiscoveryFire {
 impl DiscoveryFirePort for DiscoveryFire {
     fn run<'a>(
         &'a self,
-        _input: FireRunInput<'a>,
+        input: FireRunInput<'a>,
     ) -> Pin<Box<dyn Future<Output = Result<FireOutcome, AlwaysOnError>> + Send + 'a>> {
-        Box::pin(async {
-            Err(AlwaysOnError::new(
-                "internal",
-                "not implemented in this embedding",
-            ))
+        Box::pin(async move {
+            let outcome = self
+                .discovery_run(input.run_id, input.started_at_ms)
+                .await?;
+            Ok(FireOutcome {
+                outcome: outcome.into(),
+            })
         })
     }
 

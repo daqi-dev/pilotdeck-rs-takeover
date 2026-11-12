@@ -1,0 +1,137 @@
+{
+  "name": "always-on-fire",
+  "about": "启用项目、tickIntervalMinutes 调到 0.05（3 秒一跳）后调度器自己触发一轮完整的 always-on：discovery 轮次（无聊天摘要、调用 always_on_discovery_plan 存计划）→ workspace 轮次（auto 选 snapshot-copy 建快照）→ execute 轮次（在工作区里 write_file）→ report 轮次（always_on_report）；第二跳被 cooldown 挡住。比较全部通知、发给 provider 的请求（discovery 提示词、always_on_* 工具声明）、events / runs / run-history / plans / cycles / reports / state 与快照内容。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nalwaysOn:\n  trigger:\n    tickIntervalMinutes: 0.05\n  projects:\n    {HOME}/work/alpha:\n      enabled: true\n",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"AO\"}"
+      }
+    },
+    {
+      "name": "discovery-done",
+      "when": [
+        "autonomous Always-On discovery",
+        "call_bbx_plan"
+      ],
+      "reply": {
+        "text": "Plan saved."
+      }
+    },
+    {
+      "name": "discovery",
+      "when": [
+        "autonomous Always-On discovery"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_plan",
+          "name": "always_on_discovery_plan",
+          "arguments": {
+            "title": " Add more docs ",
+            "summary": "Add a second line to README.",
+            "rationale": "The README is too short.",
+            "dedupeKey": "",
+            "content": "# Add more docs\n\n> Always-On Discovery Plan\n> id: plan_fixed\n> sourceRunId: run-fixed\n> createdAt: 2026-01-01T00:00:00.000Z\n> projectRoot: {HOME}/work/alpha\n> dedupeKey: docs\n\n## Summary\nAdd a second line to README.\n\n## Rationale\nThe README is too short.\n\n## Context Signals\n- README has one line\n\n## Proposed Change\nAppend a line to README.md.\n\n## Execution Steps\n1. Append \"more docs\" to README.md.\n\n## Verification\n- README.md contains \"more docs\"\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "workspace-done",
+      "when": [
+        "preparing an isolated workspace",
+        "call_bbx_ws"
+      ],
+      "reply": {
+        "text": "workspace ready"
+      }
+    },
+    {
+      "name": "workspace",
+      "when": [
+        "preparing an isolated workspace"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_ws",
+          "name": "always_on_prepare_workspace",
+          "arguments": {
+            "strategy": "auto"
+          }
+        }
+      }
+    },
+    {
+      "name": "execute-done",
+      "when": [
+        "executing an Always-On discovery plan",
+        "call_bbx_exec"
+      ],
+      "reply": {
+        "text": "Executed the plan."
+      }
+    },
+    {
+      "name": "execute",
+      "when": [
+        "executing an Always-On discovery plan"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_exec",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "NOTES.md",
+            "content": "more docs\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "report-done",
+      "when": [
+        "writing a work report",
+        "call_bbx_report"
+      ],
+      "reply": {
+        "text": "Report saved."
+      }
+    },
+    {
+      "name": "report",
+      "when": [
+        "writing a work report"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_report",
+          "name": "always_on_report",
+          "arguments": {
+            "content": "# Docs report\n\n## Plan Reference\nplan_fixed\n\n## Steps Performed\n1. Appended a line.\n\n## Notes\n- ok\n"
+          }
+        }
+      }
+    }
+  ],
+  "files": {
+    "home/work/alpha/README.md": "alpha\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n"
+  },
+  "steps": [
+    {
+      "ws": "always_on_abort",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "sessionKey": "always-on/discovery:project=x:run=y"
+      }
+    },
+    {
+      "sleep": 14000
+    }
+  ]
+}
