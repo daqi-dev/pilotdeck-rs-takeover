@@ -299,6 +299,13 @@ pub(crate) struct Utf8Stream {
 }
 
 impl Utf8Stream {
+    /// Node's `setEncoding("utf8")` (a `StringDecoder`): no BOM stripping.
+    pub(crate) fn keeping_bom() -> Self {
+        Self {
+            pending: Vec::new(),
+            started: true,
+        }
+    }
     pub(crate) fn decode(&mut self, chunk: &[u8]) -> String {
         let mut bytes = std::mem::take(&mut self.pending);
         bytes.extend_from_slice(chunk);
@@ -450,6 +457,28 @@ pub(crate) fn prepare_spawn(
     })
 }
 
+/// An exact argv a sandbox provider prepared (`createNodeDetachedExecutableStarter`
+/// / `executeFile`): no shell is resolved, the executable is spawned as given.
+pub(crate) fn prepare_exec(
+    executable: &str,
+    args: Vec<String>,
+    cwd: &JsString,
+    env: Option<&[(JsString, JsString)]>,
+) -> PreparedSpawn {
+    PreparedSpawn {
+        shell: CommandShell {
+            shell: JsString::from(executable),
+            kind: CommandShellKind::Custom,
+        },
+        args: args
+            .iter()
+            .map(|arg| JsString::from(arg.as_str()))
+            .collect(),
+        cwd: cwd.clone(),
+        env: env.map(<[_]>::to_vec),
+    }
+}
+
 /// A failed `Command::spawn` in Node's terms.
 pub(crate) enum SpawnError {
     /// `spawn <file> <code>`, delivered by Node as an `error` event after
@@ -523,6 +552,14 @@ async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult
     };
     let prepared = prepare_spawn(&command, &options.cwd, options.env.as_deref(), env)
         .map_err(ToolError::failed)?;
+    // Deliberate deviation from the baseline (commandRunner.ts:94 spawns
+    // first and listens for `abort` afterwards; a listener added to an
+    // already-aborted signal never fires, so the command runs to completion):
+    // once the turn is aborted — `abort_turn`, or the user closing / deleting
+    // the session — a command that has not started yet must not start.
+    if options.signal.as_ref().is_some_and(AbortSignal::aborted) {
+        return Err(ToolError::aborted());
+    }
     let mut process = prepared.command(Stdio::piped());
     process.kill_on_drop(true);
     let mut child = match process.spawn() {
@@ -552,11 +589,9 @@ async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult
     drop(child.stdin.take());
     let mut stdout = child.stdout.take();
     let mut stderr = child.stderr.take();
-    // `addEventListener("abort")` on an already-aborted signal never fires.
-    let mut abort_armed = options
-        .signal
-        .as_ref()
-        .is_some_and(|signal| !signal.aborted());
+    // Armed even if the signal fired between the check above and the spawn
+    // (same deviation): the group is terminated at once instead of running.
+    let mut abort_armed = options.signal.is_some();
     let timeout_at = tokio::time::Instant::now() + timer_delay(options.timeout_ms);
 
     let limit = options

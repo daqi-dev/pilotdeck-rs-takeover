@@ -176,6 +176,7 @@ impl InteractionHooks {
             HookRuntimeOptions {
                 observer: observers.execution,
                 on_async_registered: observers.async_registered,
+                shell: observers.shell,
                 ..Default::default()
             },
         )

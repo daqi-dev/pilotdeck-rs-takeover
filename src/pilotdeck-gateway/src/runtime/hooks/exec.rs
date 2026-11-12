@@ -504,11 +504,16 @@ pub trait ShellPort: Send + Sync {
 #[derive(Clone, Copy)]
 pub struct LocalShellPort {
     output_limit: usize,
+    /// The execution world's `agent.sandboxMode`: command hooks run through
+    /// `executionWorld.shell` (ProjectSessionRuntimeBundle.ts SessionInteraction
+    /// `shell`), which a constrained mode confines as `/bin/sh -c <command>`.
+    sandbox: crate::runtime::tools::sandbox::Sandbox,
 }
 impl Default for LocalShellPort {
     fn default() -> Self {
         Self {
             output_limit: crate::fetch_redirect::MAX_STRING_LENGTH,
+            sandbox: Default::default(),
         }
     }
 }
@@ -519,13 +524,22 @@ impl LocalShellPort {
     pub fn with_output_limit(limit: usize) -> Self {
         Self {
             output_limit: limit,
+            sandbox: Default::default(),
+        }
+    }
+    /// The shell port of an execution world under `sandbox`.
+    pub fn sandboxed(sandbox: crate::runtime::tools::sandbox::Sandbox) -> Self {
+        Self {
+            sandbox,
+            ..Self::default()
         }
     }
 }
 impl ShellPort for LocalShellPort {
     fn execute(&self, request: ShellRequest) -> ShellFuture {
         let output_limit = self.output_limit;
-        Box::pin(async move { run_shell(request, output_limit).await })
+        let sandbox = self.sandbox;
+        Box::pin(async move { run_shell(request, output_limit, sandbox).await })
     }
 }
 
@@ -696,13 +710,40 @@ async fn observe_leader_exit(group: rustix::process::Pid) {
     }
 }
 
-async fn run_shell(request: ShellRequest, output_limit: usize) -> Result<ShellResult, JsString> {
+async fn run_shell(
+    request: ShellRequest,
+    output_limit: usize,
+    sandbox: crate::runtime::tools::sandbox::Sandbox,
+) -> Result<ShellResult, JsString> {
     let env = env_object(request.env.as_ref());
-    let shell = resolve_shell(&env)?;
+    // `createNodeSandboxedShellPort`: a constrained mode runs the exact
+    // `/bin/sh -c <command>` argv through the sandbox provider (the command's
+    // cwd is the workspace root); a provider that cannot enforce it rejects.
+    let (shell, args) = if sandbox.confines() {
+        let prepared = sandbox
+            .prepare(
+                "/bin/sh",
+                vec![
+                    "-c".into(),
+                    String::from_utf16_lossy(request.command.units()),
+                ],
+                std::path::Path::new(&String::from_utf16_lossy(request.cwd.units())),
+                None,
+            )
+            .map_err(|message| JsString::from(message.as_str()))?;
+        (prepared.executable, prepared.args)
+    } else {
+        (
+            resolve_shell(&env)?,
+            vec![
+                "-c".into(),
+                String::from_utf16_lossy(request.command.units()),
+            ],
+        )
+    };
     let mut command = Command::new(&shell);
     command
-        .arg("-c")
-        .arg(String::from_utf16_lossy(request.command.units()))
+        .args(&args)
         .current_dir(String::from_utf16_lossy(request.cwd.units()))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

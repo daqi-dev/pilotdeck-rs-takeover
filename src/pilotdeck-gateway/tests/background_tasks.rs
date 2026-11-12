@@ -614,6 +614,7 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
             })
         }),
         completion_preview_bytes: field(options, "completionPreviewBytes").as_number(),
+        sandbox: Default::default(),
     });
     let subagents = BackgroundSubagentRuntime::new(Some(Arc::new(|| FIXED_MS)));
     let resources = BackgroundResources {

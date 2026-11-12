@@ -11026,31 +11026,11 @@
         "HOME": "<root>"
       },
       "preAborted": true,
+      "deviation": "Intentional deviation from the baseline (commandRunner.ts:94 spawns before listening for abort, so the command ran): an already-aborted turn never starts the command (abort_turn / close_session / delete_session must not run it).",
       "expected": {
-        "ok": {
-          "content": [
-            {
-              "type": "text",
-              "text": "BASH_RESULT[success][stdout_data]\nAssertions:\n- exit_code: 0\n- stdout_visible: true\n- stderr_visible: false\n- retrieved_data_available: true\n- stdout_bytes: 3\n- stderr_bytes: 0\nInterpretation: Command succeeded and stdout contains visible data; use stdout as the primary evidence for the next step.\n\nstdout:\nhi"
-            }
-          ],
-          "data": {
-            "command": "echo hi",
-            "exitCode": 0,
-            "stdout": "hi\n",
-            "stderr": "",
-            "timedOut": false,
-            "durationMs": "<duration>",
-            "outputState": "stdout_data",
-            "assertions": {
-              "commandSucceeded": true,
-              "stdoutVisible": true,
-              "stderrVisible": false,
-              "retrievedDataAvailable": true,
-              "stdoutBytes": 3,
-              "stderrBytes": 0
-            }
-          }
+        "error": {
+          "code": "tool_aborted",
+          "message": "Tool execution was aborted."
         }
       }
     },
@@ -11066,10 +11046,11 @@
       },
       "preAborted": true,
       "cwd": "<root>/missing",
+      "deviation": "Intentional deviation from the baseline (commandRunner.ts:94 spawns before listening for abort, so the command ran): an already-aborted turn never starts the command (abort_turn / close_session / delete_session must not run it).",
       "expected": {
         "error": {
-          "code": "tool_timeout",
-          "message": "Command timed out after 30000ms."
+          "code": "tool_aborted",
+          "message": "Tool execution was aborted."
         }
       }
     },

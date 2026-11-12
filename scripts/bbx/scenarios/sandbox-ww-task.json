@@ -1,0 +1,144 @@
+{
+ "name": "sandbox-ww-task",
+ "about": "agent.sandboxMode=workspace-write 下的后台任务（SandboxedDetachedShellPort.ts，ExecutionWorldBundle.ts:148-153）：task_create 写工作区内外，task_wait 等结束；另一个会话里列出落点（任务 id 进了上下文，后续 token 估算随 UUID 抖，所以列出放在另一个会话）。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\n  sandboxMode: workspace-write\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+ "files": {
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+  "home/work/alpha/README.md": "alpha\n",
+  "home/work/alpha/nb.ipynb": "{\n \"cells\": [\n  {\n   \"cell_type\": \"code\",\n   \"id\": \"c1\",\n   \"metadata\": {},\n   \"source\": \"print(1)\",\n   \"outputs\": [],\n   \"execution_count\": null\n  }\n ],\n \"metadata\": {},\n \"nbformat\": 4,\n \"nbformat_minor\": 5\n}\n",
+  "outside/o.txt": "outside\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Sbx\"}"
+   }
+  },
+  {
+   "name": "list-after",
+   "when": [
+    "b99:",
+    "\"tool_call_id\":\"call_b99\""
+   ],
+   "reply": {
+    "text": "Listed."
+   }
+  },
+  {
+   "name": "list",
+   "when": [
+    "b99:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_b99",
+     "name": "bash",
+     "arguments": {
+      "command": "ls -la {ROOT}/outside | awk '{print $1, $NF}'; ls ../; ls -R $TMPDIR/sbx 2>&1 | sort; ls -la . | awk '{print $1, $NF}'"
+     }
+    }
+   }
+  },
+  {
+   "name": "k01-done",
+   "when": [
+    "k01:",
+    "\"tool_call_id\":\"call_k01w\""
+   ],
+   "reply": {
+    "text": "Done k01."
+   }
+  },
+  {
+   "name": "k01-wait",
+   "when": [
+    "k01:",
+    "\"tool_call_id\":\"call_k01\""
+   ],
+   "save": {
+    "tid": "task_create taskId=([0-9a-f-]{36})"
+   },
+   "reply": {
+    "delayMs": 1500,
+    "tool": {
+     "id": "call_k01w",
+     "name": "task_output",
+     "arguments": {
+      "taskId": "{saved.tid}",
+      "offset": 0
+     }
+    }
+   }
+  },
+  {
+   "name": "k01-after",
+   "when": [
+    "k01:",
+    "\"tool_call_id\":\"call_k01\""
+   ],
+   "reply": {
+    "text": "Done k01."
+   }
+  },
+  {
+   "name": "k01",
+   "when": [
+    "k01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_k01",
+     "name": "task_create",
+     "arguments": {
+      "command": "exec 2>&1; sleep 0.3; echo bg > bg.txt; echo rc=$?; echo bgout > {ROOT}/outside/bg.txt; echo rc=$?"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-sbx",
+    "mode": "bypassPermissions",
+    "projectKey": "{HOME}/work/alpha"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "k01: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-list",
+    "mode": "bypassPermissions",
+    "projectKey": "{HOME}/work/alpha"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-list",
+    "channelKey": "test",
+    "message": "b99: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  }
+ ]
+}

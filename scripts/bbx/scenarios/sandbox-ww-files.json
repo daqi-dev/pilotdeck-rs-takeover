@@ -1,0 +1,537 @@
+{
+ "name": "sandbox-ww-files",
+ "about": "agent.sandboxMode=workspace-write 下的写工具（SandboxedFsPort.ts:30-129，write_file/edit_file/edit_notebook 以解析出的根作 workspaceRoot，按字面判断不解析符号链接）：bypassPermissions 下写工作区内、工作区外绝对路径、..、TMPDIR、sub/..、以 .. 开头的文件名、经工作区内指向外部的符号链接写。最后一轮列出落点。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\n  sandboxMode: workspace-write\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+ "files": {
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+  "home/work/alpha/README.md": "alpha\n",
+  "home/work/alpha/nb.ipynb": "{\n \"cells\": [\n  {\n   \"cell_type\": \"code\",\n   \"id\": \"c1\",\n   \"metadata\": {},\n   \"source\": \"print(1)\",\n   \"outputs\": [],\n   \"execution_count\": null\n  }\n ],\n \"metadata\": {},\n \"nbformat\": 4,\n \"nbformat_minor\": 5\n}\n",
+  "outside/o.txt": "outside\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Sbx\"}"
+   }
+  },
+  {
+   "name": "b99-after",
+   "when": [
+    "b99:",
+    "\"tool_call_id\":\"call_b99\""
+   ],
+   "reply": {
+    "text": "Done b99."
+   }
+  },
+  {
+   "name": "b99",
+   "when": [
+    "b99:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_b99",
+     "name": "bash",
+     "arguments": {
+      "command": "ls -la {ROOT}/outside | awk '{print $1, $NF}'; ls ../; ls -R $TMPDIR/sbx 2>&1 | sort; ls -la . | awk '{print $1, $NF}'"
+     }
+    }
+   }
+  },
+  {
+   "name": "w07-after",
+   "when": [
+    "w07:",
+    "\"tool_call_id\":\"call_w07\""
+   ],
+   "reply": {
+    "text": "Done w07."
+   }
+  },
+  {
+   "name": "w07",
+   "when": [
+    "w07:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_w07",
+     "name": "write_file",
+     "arguments": {
+      "file_path": "wlink/w-via-link.txt",
+      "content": "w\n"
+     }
+    }
+   }
+  },
+  {
+   "name": "l01-after",
+   "when": [
+    "l01:",
+    "\"tool_call_id\":\"call_l01\""
+   ],
+   "reply": {
+    "text": "Done l01."
+   }
+  },
+  {
+   "name": "l01",
+   "when": [
+    "l01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_l01",
+     "name": "bash",
+     "arguments": {
+      "command": "ln -s {ROOT}/outside wlink; echo rc=$?"
+     }
+    }
+   }
+  },
+  {
+   "name": "n01-after",
+   "when": [
+    "n01:",
+    "\"tool_call_id\":\"call_n01\""
+   ],
+   "reply": {
+    "text": "Done n01."
+   }
+  },
+  {
+   "name": "n01",
+   "when": [
+    "n01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_n01",
+     "name": "edit_notebook",
+     "arguments": {
+      "notebook_path": "nb.ipynb",
+      "cell_id": "c1",
+      "new_source": "print(2)"
+     }
+    }
+   }
+  },
+  {
+   "name": "n00-after",
+   "when": [
+    "n00:",
+    "\"tool_call_id\":\"call_n00\""
+   ],
+   "reply": {
+    "text": "Done n00."
+   }
+  },
+  {
+   "name": "n00",
+   "when": [
+    "n00:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_n00",
+     "name": "read_file",
+     "arguments": {
+      "file_path": "nb.ipynb"
+     }
+    }
+   }
+  },
+  {
+   "name": "e01-after",
+   "when": [
+    "e01:",
+    "\"tool_call_id\":\"call_e01\""
+   ],
+   "reply": {
+    "text": "Done e01."
+   }
+  },
+  {
+   "name": "e01",
+   "when": [
+    "e01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_e01",
+     "name": "edit_file",
+     "arguments": {
+      "file_path": "README.md",
+      "old_string": "alpha",
+      "new_string": "beta"
+     }
+    }
+   }
+  },
+  {
+   "name": "r01-after",
+   "when": [
+    "r01:",
+    "\"tool_call_id\":\"call_r01\""
+   ],
+   "reply": {
+    "text": "Done r01."
+   }
+  },
+  {
+   "name": "r01",
+   "when": [
+    "r01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_r01",
+     "name": "read_file",
+     "arguments": {
+      "file_path": "README.md"
+     }
+    }
+   }
+  },
+  {
+   "name": "w06-after",
+   "when": [
+    "w06:",
+    "\"tool_call_id\":\"call_w06\""
+   ],
+   "reply": {
+    "text": "Done w06."
+   }
+  },
+  {
+   "name": "w06",
+   "when": [
+    "w06:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_w06",
+     "name": "write_file",
+     "arguments": {
+      "file_path": "..w-dots.txt",
+      "content": "w\n"
+     }
+    }
+   }
+  },
+  {
+   "name": "w05-after",
+   "when": [
+    "w05:",
+    "\"tool_call_id\":\"call_w05\""
+   ],
+   "reply": {
+    "text": "Done w05."
+   }
+  },
+  {
+   "name": "w05",
+   "when": [
+    "w05:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_w05",
+     "name": "write_file",
+     "arguments": {
+      "file_path": "sub/../w-norm.txt",
+      "content": "w\n"
+     }
+    }
+   }
+  },
+  {
+   "name": "w04-after",
+   "when": [
+    "w04:",
+    "\"tool_call_id\":\"call_w04\""
+   ],
+   "reply": {
+    "text": "Done w04."
+   }
+  },
+  {
+   "name": "w04",
+   "when": [
+    "w04:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_w04",
+     "name": "write_file",
+     "arguments": {
+      "file_path": "{ROOT}/tmp/w-tmp.txt",
+      "content": "w\n"
+     }
+    }
+   }
+  },
+  {
+   "name": "w03-after",
+   "when": [
+    "w03:",
+    "\"tool_call_id\":\"call_w03\""
+   ],
+   "reply": {
+    "text": "Done w03."
+   }
+  },
+  {
+   "name": "w03",
+   "when": [
+    "w03:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_w03",
+     "name": "write_file",
+     "arguments": {
+      "file_path": "../w-escape.txt",
+      "content": "w\n"
+     }
+    }
+   }
+  },
+  {
+   "name": "w02-after",
+   "when": [
+    "w02:",
+    "\"tool_call_id\":\"call_w02\""
+   ],
+   "reply": {
+    "text": "Done w02."
+   }
+  },
+  {
+   "name": "w02",
+   "when": [
+    "w02:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_w02",
+     "name": "write_file",
+     "arguments": {
+      "file_path": "{ROOT}/outside/w-out.txt",
+      "content": "w\n"
+     }
+    }
+   }
+  },
+  {
+   "name": "w01-after",
+   "when": [
+    "w01:",
+    "\"tool_call_id\":\"call_w01\""
+   ],
+   "reply": {
+    "text": "Done w01."
+   }
+  },
+  {
+   "name": "w01",
+   "when": [
+    "w01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_w01",
+     "name": "write_file",
+     "arguments": {
+      "file_path": "w-in.txt",
+      "content": "w\n"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-sbx",
+    "mode": "bypassPermissions",
+    "projectKey": "{HOME}/work/alpha"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "w01: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "w02: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "w03: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "w04: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "w05: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "w06: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "r01: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "e01: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "n00: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "n01: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "l01: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "w07: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "b99: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  }
+ ]
+}

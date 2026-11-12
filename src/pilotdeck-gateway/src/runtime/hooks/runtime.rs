@@ -310,6 +310,8 @@ pub struct HookObservers {
     /// `onAsyncHookRegistered`: an async output that names an invocation id
     /// is handed to the gateway's deferred-result registry.
     pub async_registered: Option<Arc<dyn AsyncHookRegistrationHandler>>,
+    /// The execution world's shell for command hooks (`None`: the local one).
+    pub shell: Option<Arc<dyn ShellPort>>,
 }
 
 pub struct HookRuntimeOptions {

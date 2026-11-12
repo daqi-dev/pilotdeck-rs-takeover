@@ -88,6 +88,68 @@ pub(super) struct PermissionPrompt {
     /// a remembered approval is pushed here.
     pub rules: RuleSetHandle,
     pub timeout: Duration,
+    /// The project generation's interaction profile and the session's
+    /// prompt admission (`override?.canPrompt ?? profile.canPrompt`,
+    /// ProjectSessionFactory.ts:268-271).
+    pub interaction: SessionInteraction,
+}
+
+/// `SessionInteractionBundleOptions.profile` / `.canPrompt`.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct SessionInteraction {
+    pub profile: crate::runtime::project::InteractionProfile,
+    pub can_prompt: bool,
+}
+
+impl SessionInteraction {
+    /// `hasGatewayPermissionAnswerer` (SessionInteractionBundle.ts:117-121):
+    /// the gateway is always present in this host.
+    pub(super) fn has_permission_answerer(&self) -> bool {
+        self.profile.permission_provider == "gateway" && self.can_prompt
+    }
+
+    /// `createDefaultInteractionPolicy().decide(...)` (InteractionPolicy.ts:
+    /// 33-49): `None` admits the request, `Some` is the refusal reason.
+    pub(super) fn refusal(&self, has_answerer: bool) -> Option<&'static str> {
+        if self.profile.policy_mode == "disabled" {
+            Some("Interaction is disabled for this profile.")
+        } else if !self.can_prompt {
+            Some("Prompts are disabled for this session.")
+        } else if !has_answerer {
+            Some("No interaction answerer is available.")
+        } else {
+            None
+        }
+    }
+
+    /// `createProfiledPermissionDecisionPort` (ProfiledPermissionDecisionPort
+    /// .ts:23-49): an `ask` the profile cannot answer becomes a runtime deny
+    /// before any `PermissionRequest` hook or prompt runs.
+    pub(super) fn admit_permission_ask(&self) -> Option<JsValue> {
+        let reason = self.refusal(self.has_permission_answerer())?;
+        Some(object([
+            ("type", "deny".into()),
+            (
+                "reason",
+                object([("type", "runtime".into()), ("message", reason.into())]),
+            ),
+            ("message", reason.into()),
+        ]))
+    }
+}
+
+impl Default for SessionInteraction {
+    fn default() -> Self {
+        let profile = crate::runtime::project::RuntimeProfile::resolve(
+            &JsValue::Undefined,
+            &Default::default(),
+        )
+        .interaction;
+        Self {
+            profile,
+            can_prompt: profile.can_prompt,
+        }
+    }
 }
 
 impl PermissionPrompt {

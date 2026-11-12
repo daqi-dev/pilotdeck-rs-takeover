@@ -2251,14 +2251,27 @@ pub fn run_admitted_turn(
                 },
             );
         }
-        emit_event(
-            events,
-            &mut state.timeline,
-            input,
-            TurnEvent::Continued {
-                reason: TurnContinueReason::ToolResults,
-            },
-        )?;
+        // Source AgentLoop emits `turn_continued{tool_results}` whether or not
+        // the run was aborted meanwhile, then reaches the loop-top abort check
+        // and settles `aborted_streaming`. A host abort during the tool batch
+        // (`abort_turn`, the failure guard, a closed session) has already
+        // cancelled this execution, so the event goes out on the accepted
+        // channel; the loop top then builds the aborted result instead of the
+        // execution failing without one.
+        let continued = TurnEvent::Continued {
+            reason: TurnContinueReason::ToolResults,
+        };
+        if matches!(
+            control.check(),
+            Err(PortError::Cancelled {
+                cause: CancelCause::Requested(_) | CancelCause::Deadline,
+            })
+        ) && control.cancellation.hard_stop_cause().is_none()
+        {
+            emit_accepted_event(events, &mut state.timeline, input, continued)?;
+        } else {
+            emit_event(events, &mut state.timeline, input, continued)?;
+        }
     }
 }
 #[allow(clippy::too_many_arguments)]

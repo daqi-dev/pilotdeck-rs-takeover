@@ -8,6 +8,7 @@
 //! through from the input (`command`) are built on UTF-16 units, so lone
 //! surrogates and split surrogate pairs come out exactly as in TS.
 #![cfg(unix)]
+pub mod executable;
 pub mod permissions;
 pub mod runner;
 
