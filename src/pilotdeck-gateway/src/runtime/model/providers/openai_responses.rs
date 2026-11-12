@@ -672,4 +672,34 @@ mod tests {
         );
         assert!(feed(&mut state, r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","name":"n"}}"#).unwrap().is_empty());
     }
+
+    /// `buildOpenAIResponsesRequest` run by the baseline's own dist
+    /// (tests/fixtures/responses-request/README.md): field-absent branches,
+    /// every tool_choice, history blocks, reasoning effort, service tier and
+    /// structured output. Compared as `JSON.stringify` text, key order included.
+    #[test]
+    fn build_request_matches_baseline_oracle() {
+        let oracle = pilotdeck_protocol::parse_json(include_str!(
+            "../../../../tests/fixtures/responses-request/oracle.json"
+        ))
+        .unwrap();
+        let JsValue::Array(cases) = field(&oracle, "cases") else {
+            panic!("oracle cases");
+        };
+        assert_eq!(cases.len(), 9);
+        for case in cases {
+            let name = field(case, "name").as_string().unwrap().to_utf8().unwrap();
+            let body = build_request(
+                field(case, "request"),
+                field(case, "model"),
+                field(case, "provider"),
+            )
+            .unwrap_or_else(|_| panic!("{name}: Rust rejected the request"));
+            assert_eq!(
+                pilotdeck_protocol::stringify_json(&body).unwrap(),
+                pilotdeck_protocol::stringify_json(field(case, "body")).unwrap(),
+                "{name}"
+            );
+        }
+    }
 }
