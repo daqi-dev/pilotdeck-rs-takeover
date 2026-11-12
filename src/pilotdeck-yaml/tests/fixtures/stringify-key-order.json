@@ -1,0 +1,134 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "yaml": "2.9.0",
+  "cases": [
+    {
+      "name": "descending-top/default",
+      "raw_json": "{\"10\":\"ten\",\"2\":\"two\",\"1\":\"one\",\"tail\":\"tail\"}",
+      "src": "",
+      "path": [],
+      "options": {},
+      "output": "\"1\": one\n\"2\": two\n\"10\": ten\ntail: tail\n"
+    },
+    {
+      "name": "descending-top/setup",
+      "raw_json": "{\"10\":\"ten\",\"2\":\"two\",\"1\":\"one\",\"tail\":\"tail\"}",
+      "src": "",
+      "path": [],
+      "options": {
+        "lineWidth": 0,
+        "singleQuote": false
+      },
+      "output": "\"1\": one\n\"2\": two\n\"10\": ten\ntail: tail\n"
+    },
+    {
+      "name": "nested-and-arrays/default",
+      "raw_json": "{\"outer\":{\"10\":\"ten\",\"2\":\"two\",\"1\":\"one\"},\"array\":[{\"3\":\"three\",\"1\":\"one\"},{\"9\":{\"4\":\"four\",\"0\":\"zero\"},\"2\":\"two\"}]}",
+      "src": "",
+      "path": [],
+      "options": {},
+      "output": "outer:\n  \"1\": one\n  \"2\": two\n  \"10\": ten\narray:\n  - \"1\": one\n    \"3\": three\n  - \"2\": two\n    \"9\":\n      \"0\": zero\n      \"4\": four\n"
+    },
+    {
+      "name": "nested-and-arrays/setup",
+      "raw_json": "{\"outer\":{\"10\":\"ten\",\"2\":\"two\",\"1\":\"one\"},\"array\":[{\"3\":\"three\",\"1\":\"one\"},{\"9\":{\"4\":\"four\",\"0\":\"zero\"},\"2\":\"two\"}]}",
+      "src": "",
+      "path": [],
+      "options": {
+        "lineWidth": 0,
+        "singleQuote": false
+      },
+      "output": "outer:\n  \"1\": one\n  \"2\": two\n  \"10\": ten\narray:\n  - \"1\": one\n    \"3\": three\n  - \"2\": two\n    \"9\":\n      \"0\": zero\n      \"4\": four\n"
+    },
+    {
+      "name": "index-boundaries/default",
+      "raw_json": "{\"4294967295\":\"ordinary-max\",\"4294967294\":\"largest-index\",\"01\":\"leading-zero\",\"1\":\"one\",\"0\":\"zero\",\"4294967296\":\"ordinary-overflow\",\"-0\":\"negative-zero\",\"+1\":\"plus-one\",\"1.0\":\"decimal\",\"1e0\":\"exponent\",\"tail\":\"tail\"}",
+      "src": "",
+      "path": [],
+      "options": {},
+      "output": "\"0\": zero\n\"1\": one\n\"4294967294\": largest-index\n\"4294967295\": ordinary-max\n\"01\": leading-zero\n\"4294967296\": ordinary-overflow\n\"-0\": negative-zero\n\"+1\": plus-one\n\"1.0\": decimal\n\"1e0\": exponent\ntail: tail\n"
+    },
+    {
+      "name": "index-boundaries/setup",
+      "raw_json": "{\"4294967295\":\"ordinary-max\",\"4294967294\":\"largest-index\",\"01\":\"leading-zero\",\"1\":\"one\",\"0\":\"zero\",\"4294967296\":\"ordinary-overflow\",\"-0\":\"negative-zero\",\"+1\":\"plus-one\",\"1.0\":\"decimal\",\"1e0\":\"exponent\",\"tail\":\"tail\"}",
+      "src": "",
+      "path": [],
+      "options": {
+        "lineWidth": 0,
+        "singleQuote": false
+      },
+      "output": "\"0\": zero\n\"1\": one\n\"4294967294\": largest-index\n\"4294967295\": ordinary-max\n\"01\": leading-zero\n\"4294967296\": ordinary-overflow\n\"-0\": negative-zero\n\"+1\": plus-one\n\"1.0\": decimal\n\"1e0\": exponent\ntail: tail\n"
+    },
+    {
+      "name": "duplicate-properties/default",
+      "raw_json": "{\"2\":\"old-two\",\"1\":\"one\",\"2\":\"new-two\",\"x\":\"old-x\",\"00\":\"zeroes\",\"x\":\"new-x\"}",
+      "src": "",
+      "path": [],
+      "options": {},
+      "output": "\"1\": one\n\"2\": new-two\nx: new-x\n\"00\": zeroes\n"
+    },
+    {
+      "name": "duplicate-properties/setup",
+      "raw_json": "{\"2\":\"old-two\",\"1\":\"one\",\"2\":\"new-two\",\"x\":\"old-x\",\"00\":\"zeroes\",\"x\":\"new-x\"}",
+      "src": "",
+      "path": [],
+      "options": {
+        "lineWidth": 0,
+        "singleQuote": false
+      },
+      "output": "\"1\": one\n\"2\": new-two\nx: new-x\n\"00\": zeroes\n"
+    },
+    {
+      "name": "unicode-ordinary/default",
+      "raw_json": "{\"中文\":\"first\",\"2\":\"two\",\"１\":\"fullwidth\",\"1\":\"one\",\"é\":\"last\"}",
+      "src": "",
+      "path": [],
+      "options": {},
+      "output": "\"1\": one\n\"2\": two\n中文: first\n１: fullwidth\né: last\n"
+    },
+    {
+      "name": "unicode-ordinary/setup",
+      "raw_json": "{\"中文\":\"first\",\"2\":\"two\",\"１\":\"fullwidth\",\"1\":\"one\",\"é\":\"last\"}",
+      "src": "",
+      "path": [],
+      "options": {
+        "lineWidth": 0,
+        "singleQuote": false
+      },
+      "output": "\"1\": one\n\"2\": two\n中文: first\n１: fullwidth\né: last\n"
+    },
+    {
+      "name": "setup-groups/default",
+      "raw_json": "{\"model\":{\"providers\":{\"2\":{\"models\":{\"10\":{},\"2\":{},\"01\":{}}},\"1\":{\"models\":{\"3\":{},\"0\":{}}},\"01\":{\"models\":{}}}},\"adapters\":{\"wecom\":{\"groups\":{\"10\":{},\"2\":{},\"01\":{}}}}}",
+      "src": "",
+      "path": [],
+      "options": {},
+      "output": "model:\n  providers:\n    \"1\":\n      models:\n        \"0\": {}\n        \"3\": {}\n    \"2\":\n      models:\n        \"2\": {}\n        \"10\": {}\n        \"01\": {}\n    \"01\":\n      models: {}\nadapters:\n  wecom:\n    groups:\n      \"2\": {}\n      \"10\": {}\n      \"01\": {}\n"
+    },
+    {
+      "name": "setup-groups/setup",
+      "raw_json": "{\"model\":{\"providers\":{\"2\":{\"models\":{\"10\":{},\"2\":{},\"01\":{}}},\"1\":{\"models\":{\"3\":{},\"0\":{}}},\"01\":{\"models\":{}}}},\"adapters\":{\"wecom\":{\"groups\":{\"10\":{},\"2\":{},\"01\":{}}}}}",
+      "src": "",
+      "path": [],
+      "options": {
+        "lineWidth": 0,
+        "singleQuote": false
+      },
+      "output": "model:\n  providers:\n    \"1\":\n      models:\n        \"0\": {}\n        \"3\": {}\n    \"2\":\n      models:\n        \"2\": {}\n        \"10\": {}\n        \"01\": {}\n    \"01\":\n      models: {}\nadapters:\n  wecom:\n    groups:\n      \"2\": {}\n      \"10\": {}\n      \"01\": {}\n"
+    },
+    {
+      "name": "preserve-parsed-map/setup",
+      "raw_json": "{\"3\":\"three\",\"1\":\"one\",\"01\":\"ordinary\"}",
+      "src": "existing: keep\n\"2\": two\n\"1\": one\n",
+      "path": [
+        "added"
+      ],
+      "options": {
+        "lineWidth": 0,
+        "singleQuote": false
+      },
+      "output": "existing: keep\n\"2\": two\n\"1\": one\nadded:\n  \"1\": one\n  \"3\": three\n  \"01\": ordinary\n"
+    }
+  ]
+}

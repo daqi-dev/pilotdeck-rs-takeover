@@ -109,7 +109,10 @@ impl EditableDocument {
             }
             JsValue::Object(object) => {
                 let mut pairs = Vec::new();
-                for (key, item) in object.entries() {
+                // yaml.createNode enumerates JS objects with Object.keys:
+                // canonical index keys first, then other own insertion keys.
+                // Parsed YAML maps keep their existing node order.
+                for (key, item) in object.own_entries() {
                     if item.is_undefined() {
                         continue;
                     }
