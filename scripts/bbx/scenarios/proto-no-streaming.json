@@ -1,0 +1,14 @@
+{
+  "name": "proto-no-streaming",
+  "about": "模型能力 supportsStreaming: false 时：循环总是流式请求，基线在发请求前就以 does not support streaming 拒绝（model/request/validateModelRequest.ts:37，unsupported_streaming），一轮以 model_error 结束，provider 收不到主请求。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/nostream\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        nostream:\n          capabilities:\n            supportsToolUse: true\n            supportsStreaming: false\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\":\"NoStream\"}" } },
+    { "name": "main", "reply": { "text": "should not stream" } }
+  ],
+  "steps": [
+    { "ws": "submit_turn", "params": { "sessionKey": "s-ns", "channelKey": "test", "message": "ns: hi" }, "timeout": 20000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-ns" } }
+  ]
+}
