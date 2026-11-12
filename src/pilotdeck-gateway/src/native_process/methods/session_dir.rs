@@ -1031,12 +1031,13 @@ mod tests {
         );
     }
 
-    /// #1874: a recorder whose writer already closed must surface the close
-    /// as an error, not answer `updated: true` with nothing on disk. The live
-    /// closure's checked append is what makes the closed writer visible; the
-    /// unchecked form the cold path uses would silently no-op.
+    /// #1874: a recorder whose writer already closed must not answer
+    /// `updated: true` with nothing on disk. A closed writer is no longer the
+    /// session's writer (the baseline router forgets a closed session), so
+    /// the lookup skips it and the cold path appends the entry; a close that
+    /// races the append itself still fails the live closure's checked append.
     #[tokio::test]
-    async fn rename_reports_a_closed_writer_as_an_error() {
+    async fn rename_skips_a_closed_writer_for_the_cold_path() {
         let (_scratch, requests) = crate::native_process::management_tests::setup();
         let home = requests.options.home.clone();
         let project = requests.options.project.clone();
@@ -1063,7 +1064,7 @@ mod tests {
         // A close that raced the request — the exact window fix-r2's checked
         // append exists for.
         recorder.writer().close();
-        let error = crate::runtime::turn::gateway::GatewayRequests::request(
+        let updated = crate::runtime::turn::gateway::GatewayRequests::request(
             &requests,
             "rename_session".into(),
             crate::metadata::object([
@@ -1072,18 +1073,24 @@ mod tests {
             ]),
         )
         .await
-        .expect_err("#1874 a closed session writer is an error, not a silent rename");
+        .expect("#1874 a closed writer is not the live writer: the rename takes the cold path");
+        negative_assert_eq!(
+            updated.get("updated"),
+            Some(&pilotdeck_protocol::JsValue::Bool(true)),
+            "#1874 the cold rename reports the write"
+        );
+        let text = std::fs::read_to_string(recorder.writer().path())
+            .expect("#1874 the cold rename wrote the transcript");
         negative_assert!(
-            String::from_utf16_lossy(error.message.units()).contains("the session writer closed"),
-            "#1874 the rename error names the closed session writer, got {}",
-            String::from_utf16_lossy(error.message.units())
+            text.contains("must-not-vanish"),
+            "#1874 the rename is on disk, not dropped by the closed writer"
         );
     }
 
-    /// #1874: the status twin of the closed-writer gate — a closed writer
-    /// must be an error, not a `recorded: true` with nothing on disk.
+    /// #1874: the status twin — a writer closed before the request is skipped
+    /// and the cold path records the status on disk.
     #[tokio::test]
-    async fn status_reports_a_closed_writer_as_an_error() {
+    async fn status_skips_a_closed_writer_for_the_cold_path() {
         let (_scratch, requests) = crate::native_process::management_tests::setup();
         let home = requests.options.home.clone();
         let project = requests.options.project.clone();
@@ -1110,7 +1117,7 @@ mod tests {
         // A close that raced the request — the exact window fix-r2's checked
         // append exists for.
         recorder.writer().close();
-        let error = crate::runtime::turn::gateway::GatewayRequests::request(
+        let recorded = crate::runtime::turn::gateway::GatewayRequests::request(
             &requests,
             "record_agent_status_message".into(),
             crate::metadata::object([
@@ -1123,11 +1130,17 @@ mod tests {
             ]),
         )
         .await
-        .expect_err("#1874 a closed session writer is an error, not a recorded status");
+        .expect("#1874 a closed writer is not the live writer: the status takes the cold path");
+        negative_assert_eq!(
+            recorded.get("recorded"),
+            Some(&pilotdeck_protocol::JsValue::Bool(true)),
+            "#1874 the cold status reports the write"
+        );
+        let text = std::fs::read_to_string(recorder.writer().path())
+            .expect("#1874 the cold status wrote the transcript");
         negative_assert!(
-            String::from_utf16_lossy(error.message.units()).contains("the session writer closed"),
-            "#1874 the status error names the closed session writer, got {}",
-            String::from_utf16_lossy(error.message.units())
+            text.contains("must-not-vanish"),
+            "#1874 the status is on disk, not dropped by the closed writer"
         );
     }
 

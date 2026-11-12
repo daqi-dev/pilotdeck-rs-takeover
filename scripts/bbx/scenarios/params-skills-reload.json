@@ -231,6 +231,26 @@
         "projectKey": "{HOME}/work/alpha",
         "limit": 50
       }
+    },
+    {
+      "ws": "skill_list",
+      "params": {
+        "projectKey": {
+          "constructor": 5
+        }
+      }
+    },
+    {
+      "ws": "skill_list",
+      "params": {
+        "projectKey": {}
+      }
+    },
+    {
+      "ws": "skill_list",
+      "params": {
+        "projectKey": ""
+      }
     }
   ]
 }

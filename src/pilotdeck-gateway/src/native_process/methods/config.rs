@@ -2130,31 +2130,30 @@ mod tests {
         teardown(&r).await;
     }
 
-    /// #1874: a recorder whose writer already closed must surface the close
-    /// as an error, not answer with a saved selection and nothing on disk.
-    /// The live closure's checked append is what makes the closed writer
-    /// visible; the unchecked form the cold path uses would silently no-op.
+    /// #1874: a recorder whose writer already closed must not answer with a
+    /// saved selection and nothing on disk: the lookup skips the closed
+    /// writer and the cold path appends the selection.
     #[tokio::test]
-    async fn model_set_reports_a_closed_writer_as_an_error() {
+    async fn model_set_skips_a_closed_writer_for_the_cold_path() {
         let (_scratch, r) = setup_fixture();
         let recorder = register_recorder(&r, "cw/session");
         // A close that raced the request — the exact window fix-r2's checked
         // append exists for.
         recorder.writer().close();
-        let error = r
-            .session_model_request_keyed(
-                "session_model_set".into(),
-                object([
-                    ("sessionKey", "cw-session".into()),
-                    ("selection", selection("model", "test", "test")),
-                ]),
-            )
-            .await
-            .expect_err("#1874 a closed session writer is an error, not a silent save");
+        r.session_model_request_keyed(
+            "session_model_set".into(),
+            object([
+                ("sessionKey", "cw-session".into()),
+                ("selection", selection("model", "test", "test")),
+            ]),
+        )
+        .await
+        .expect("#1874 a closed writer is not the live writer: the save takes the cold path");
+        let text = std::fs::read_to_string(recorder.writer().path())
+            .expect("#1874 the cold save wrote the transcript");
         negative_assert!(
-            String::from_utf16_lossy(error.message.units()).contains("the session writer closed"),
-            "#1874 the closed-writer error names the session writer, got {}",
-            String::from_utf16_lossy(error.message.units())
+            text.contains("model-selection"),
+            "#1874 the selection is on disk, not dropped by the closed writer"
         );
         teardown(&r).await;
     }

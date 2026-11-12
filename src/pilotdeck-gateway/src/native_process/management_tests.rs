@@ -765,12 +765,19 @@ async fn admission_and_unwired_families_stay_closed() {
                 .expect("#1231 host boundary params"),
         )
         .await;
+    // `resolveSkillManager(input.projectKey)` resolves the key first
+    // (createLocalGateway.ts:853-854); Node's ERR_INVALID_ARG_TYPE formatting
+    // throws on `'name' in 5` (bbx params-skills-reload).
+    let error = result.expect_err("#1231 a non-path projectKey must fail");
     negative_assert_eq!(
-        result
-            .expect_err("#1231 host-dependent skill must fail")
-            .code,
-        "CAPABILITY_UNAVAILABLE",
-        "#1231 host-dependent skill rejected"
+        error.code,
+        "gateway_request_failed",
+        "#1231 skill projectKey resolution failure"
+    );
+    negative_assert_eq!(
+        String::from_utf16_lossy(error.message.units()),
+        "Cannot use 'in' operator to search for 'name' in 5",
+        "#1231 skill projectKey resolution message"
     );
     let entries = std::fs::read_dir(&target)
         .expect("#1231 target entries")
