@@ -1,0 +1,123 @@
+{
+  "name": "params-permission-decide-binding-malformed",
+  "about": "差异证明（未修，留给主会话决定）：sdk 客户端的控制连接上 permission_decide 带非对象的 interactionBinding（\"junk\"）。基线 isCurrent → sameBinding 读 \"junk\".connectionId / .generation 都是 undefined，与断开后被清空的连接绑定和请求绑定（undefined）相等，于是送达（InteractionReconnect.ts:85-87,182-187；GatewayPermissionBus.ts:97-102）；Rust 把畸形绑定当作永不匹配，不送达。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Binding run\"}"
+      }
+    },
+    {
+      "name": "after-tool",
+      "when": [
+        "\"tool_call_id\":\"call_ib\""
+      ],
+      "reply": {
+        "text": "Done."
+      }
+    },
+    {
+      "name": "turn",
+      "when": [
+        "ib-"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_ib",
+          "name": "bash",
+          "arguments": {
+            "command": "echo bound > bound.txt"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "connect": {
+        "type": "hello",
+        "protocolVersion": "1.2",
+        "clientName": "sdk",
+        "clientVersion": "0.0.0",
+        "token": "{TOKEN}"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ib-b",
+        "channelKey": "test",
+        "runId": "run-ib-b",
+        "message": "ib-b: write"
+      },
+      "timeout": 3000,
+      "expectTimeout": true
+    },
+    {
+      "disconnect": true
+    },
+    {
+      "connect": {
+        "type": "hello",
+        "protocolVersion": "1.2",
+        "clientName": "sdk",
+        "clientVersion": "0.0.0",
+        "token": "{TOKEN}"
+      }
+    },
+    {
+      "ws": "permission_list",
+      "params": {
+        "sessionKey": "s-ib-b"
+      },
+      "save": {
+        "req": "\"requestId\":\"([^\"]+)\""
+      }
+    },
+    {
+      "ws": "permission_decide",
+      "params": {
+        "sessionKey": "s-ib-b",
+        "requestId": "{saved.req}",
+        "decision": "allow",
+        "interactionBinding": "junk"
+      }
+    },
+    {
+      "ws": "permission_list",
+      "params": {
+        "sessionKey": "s-ib-b"
+      }
+    },
+    {
+      "ws": "permission_decide",
+      "params": {
+        "sessionKey": "s-ib-b",
+        "requestId": "{saved.req}",
+        "decision": "allow"
+      }
+    },
+    {
+      "sleep": 1500
+    },
+    {
+      "ws": "permission_list",
+      "params": {
+        "sessionKey": "s-ib-b"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-ib-b"
+      }
+    },
+    {
+      "disconnect": true
+    }
+  ]
+}
