@@ -1828,6 +1828,18 @@ fn reset_pump_starts_for_test() {
 }
 
 impl StreamHandler {
+    /// Another handle on the same stream, for a forward issued after a
+    /// callback settles.
+    fn share(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            events: self.events.clone(),
+            integrity: self.integrity.clone(),
+            forwarding: self.forwarding.clone(),
+            callback_cancel: self.callback_cancel.clone(),
+        }
+    }
+
     async fn with_pump(
         &self,
         execution: impl std::future::Future<Output = Result<ExecuteResult, HostError>>,
@@ -2055,19 +2067,24 @@ impl StreamHandler {
     }
 }
 
-/// `turn.persist_compaction` (the sidecar's `onCompactPersisted`).
-fn is_persist_compaction(call: &JsValue) -> bool {
+/// A module call to `module`'s `operation`.
+fn is_module_operation(call: &JsValue, module: &str, operation: &str) -> bool {
     let text = |value: Option<&JsValue>, expected: &str| {
         value
             .and_then(JsValue::as_string)
             .is_some_and(|text| text.equals_str(expected))
     };
-    text(call.get("module"), "turn")
+    text(call.get("module"), module)
         && text(
             call.get("payload")
                 .and_then(|payload| payload.get("operation")),
-            "persist_compaction",
+            operation,
         )
+}
+
+/// `turn.persist_compaction` (the sidecar's `onCompactPersisted`).
+fn is_persist_compaction(call: &JsValue) -> bool {
+    is_module_operation(call, "turn", "persist_compaction")
 }
 
 /// Replace `boundary.compactMetadata.timeline` of a compact boundary with
@@ -2137,15 +2154,29 @@ impl HostHandler for StreamHandler {
                 true,
             );
         }
+        let compaction = is_module_operation(&call, "context", "try_auto_compact");
         let applied = self.inner.module_call(call);
-        self.forward(
+        let forwarded = self.forward(
             Box::pin(PRIOR_WIRE_EVENTS.scope(barrier, applied)),
             None,
             None,
             true,
             false,
             false,
-        )
+        );
+        if !compaction {
+            return forwarded;
+        }
+        // `awaitCompactionWithEvents` (AgentLoop.ts:2860-2874): the events the
+        // compaction buffered (compact_started / compact_completed) are drained
+        // when it settles, before the loop yields anything after it.
+        let this = self.share();
+        Box::pin(async move {
+            let result = forwarded.await?;
+            this.forward(Box::pin(async { Ok(()) }), None, None, true, false, true)
+                .await?;
+            Ok(result)
+        })
     }
 
     fn observe_loop_completion(&self, payload: &JsValue) {

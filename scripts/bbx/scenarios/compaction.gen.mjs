@@ -92,6 +92,125 @@ const scenarios = {};
   };
 }
 
+// 五轮普通长度、一轮很长的消息：摘要后保留的尾部（第五、六轮）仍超过目标的 60%，
+// 摘要之后再按 snip 裁掉中间的轮次（请求里出现 <snip-boundary>）。
+{
+  const steps = [];
+  for (let i = 1; i <= 5; i += 1) {
+    steps.push(turn('s-snip', `note ${i}\n${filler(`n${i}`, 140)}`), { sleep: 300 });
+  }
+  steps.push(turn('s-snip', `note 6\n${filler('n6', 500)}`), { sleep: 300 });
+  steps.push(turn('s-snip', 'note 7: short follow-up'), { sleep: 300 });
+  steps.push({ ws: 'read_session_messages', params: { sessionKey: 's-snip' } });
+  scenarios['compact-snip'] = {
+    about: '全量摘要之后的 snip：最后一轮消息很长，摘要后保留的尾部仍高于目标（有效窗口的 60%），按基线再裁掉中间轮次；看摘要请求、压缩后的模型请求（snip-boundary）、会话记录与读会话。本文件由同目录的 compaction.gen.mjs 生成，不手改。',
+    config: config({ context: 20000 }),
+    provider: [TITLE, SUMMARY, MAIN],
+    steps,
+  };
+}
+
+// 窗口小到系统提示词加工具定义就占了大半：第一轮就越过阈值，摘要无可摘，
+// 应急压缩（reactive）也降不下来，轮次以 context_overflow_after_emergency_compaction 失败；
+// 第二轮再来一次，摘要失败冷却等状态在会话里延续。
+{
+  scenarios['compact-overflow'] = {
+    about: '应急压缩后仍超窗：上下文窗口只有 14000，第一轮就越过 0.9；摘要无可摘（no_content）、reactive 摘要、工具结果投影、截头都做完仍超出，轮次以 agent_context_recovery_failed / context_overflow_after_emergency_compaction 结束；第二轮同样。本文件由同目录的 compaction.gen.mjs 生成，不手改。',
+    config: config({ context: 14000 }),
+    provider: [TITLE, SUMMARY, MAIN],
+    steps: [
+      turn('s-over', `note 1\n${filler('n1', 100)}`), { sleep: 300 },
+      turn('s-over', `note 2\n${filler('n2', 100)}`), { sleep: 300 },
+      { ws: 'read_session_messages', params: { sessionKey: 's-over' } },
+    ],
+  };
+}
+
+// 摘要请求失败：假 provider 对摘要请求回 500。第六轮的自动压缩摘要失败（compact_completed 为 failed），
+// 应急路径里的 reactive 摘要命中失败冷却，不再发请求；第七轮仍在冷却内。
+{
+  const steps = [];
+  for (let i = 1; i <= 6; i += 1) {
+    steps.push(turn('s-fail', `note ${i}\n${filler(`n${i}`, 140)}`, { timeout: 60000 }), { sleep: 300 });
+  }
+  steps.push(turn('s-fail', 'note 7: short follow-up', { timeout: 60000 }), { sleep: 300 });
+  steps.push({ ws: 'read_session_messages', params: { sessionKey: 's-fail' } });
+  scenarios['compact-summary-fail'] = {
+    about: '摘要请求失败：摘要请求回 500，自动压缩的摘要失败（compact_summary_failed、compact_completed status failed），随后的 reactive 摘要命中 60 秒失败冷却、不发请求，再走应急投影与截头；下一轮仍在冷却内。本文件由同目录的 compaction.gen.mjs 生成，不手改。',
+    config: config({ context: 20000 }),
+    provider: [
+      TITLE,
+      { name: 'summary', when: ['internal-compaction-control'], reply: { status: 500, body: { error: { message: 'summary backend exploded', type: 'server_error' } } } },
+      MAIN,
+    ],
+    steps,
+  };
+}
+
+// micro 单独触发：一轮里模型连续读五个文件，每个结果约 3000 token；第六次请求前用量越过 0.8，
+// micro 把最老的一个读文件结果改写成预览（保留最新四个），用量回到 0.9 以下，不发摘要请求。
+{
+  const files = {};
+  const provider = [TITLE];
+  for (let i = 1; i <= 5; i += 1) files[`home/.pilotdeck/notes/f${i}.txt`] = filler(`f${i}`, 110) + '\n';
+  provider.push({ name: 'done', when: ['micro run:', '"tool_call_id":"call_f5"'], reply: { text: 'All five notes read.' } });
+  for (let i = 4; i >= 1; i -= 1) {
+    provider.push({
+      name: `read-f${i + 1}`,
+      when: ['micro run:', `"tool_call_id":"call_f${i}"`],
+      reply: { tool: { id: `call_f${i + 1}`, name: 'read_file', arguments: { file_path: `{PILOT_HOME}/notes/f${i + 1}.txt` } } },
+    });
+  }
+  provider.push({ name: 'read-f1', when: ['micro run:'], reply: { tool: { id: 'call_f1', name: 'read_file', arguments: { file_path: '{PILOT_HOME}/notes/f1.txt' } } } });
+  provider.push(SUMMARY, MAIN);
+  scenarios['compact-micro'] = {
+    about: 'micro 单独触发：一轮里连续五次 read_file，结果累积到用量越过 0.8 时，micro 把最老的读文件结果改写成截断预览（保留最新四个），用量回落到 0.9 以下即止，不发摘要请求；看之后模型请求里的改写结果与会话记录。本文件由同目录的 compaction.gen.mjs 生成，不手改。',
+    config: config({ context: 16000 }),
+    files,
+    provider,
+    steps: [
+      turn('s-micro', 'micro run: read the five notes'), { sleep: 300 },
+      { ws: 'read_session_messages', params: { sessionKey: 's-micro' } },
+    ],
+  };
+}
+
+// PreCompact / PostCompact 插件 hook：自动压缩时各跑一次，hook 收到的 stdin 记到 hooklog。
+{
+  const HOOK = `import fs from 'node:fs';
+const [log] = process.argv.slice(2);
+let input = '';
+process.stdin.on('data', (d) => { input += d; });
+process.stdin.on('end', () => {
+  let parsed; try { parsed = JSON.parse(input); } catch { parsed = { raw: input }; }
+  const dir = process.env.HOME + '/hooklog';
+  fs.mkdirSync(dir, { recursive: true });
+  fs.appendFileSync(dir + '/' + log + '.jsonl', JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), input: parsed }) + '\\n');
+});
+`;
+  const hook = (log) => [{ hooks: [{ type: 'command', command: `node hook.mjs ${log}` }] }];
+  const steps = [];
+  for (let i = 1; i <= 6; i += 1) {
+    steps.push(turn('s-hook', `note ${i}\n${filler(`n${i}`, 140)}`), { sleep: 300 });
+  }
+  steps.push({ ws: 'read_session_messages', params: { sessionKey: 's-hook' } });
+  scenarios['compact-hooks'] = {
+    about: 'PreCompact / PostCompact 插件 hook：自动全量压缩时摘要前后各派发一次（matcher 为事件名，cwd 为项目根，permissionMode default），hook 收到的输入写进 hooklog；hook 执行过程投影成 agent_status。本文件由同目录的 compaction.gen.mjs 生成，不手改。',
+    config: config({ context: 20000 }),
+    files: {
+      'home/.pilotdeck/plugins/cmp-hooks/plugin.json': {
+        name: 'cmp-hooks',
+        version: '0.1.0',
+        description: 'bbx cmp-hooks',
+        hooks: { PreCompact: hook('pre-compact'), PostCompact: hook('post-compact') },
+      },
+      'home/.pilotdeck/plugins/cmp-hooks/hook.mjs': HOOK,
+    },
+    provider: [TITLE, SUMMARY, MAIN],
+    steps,
+  };
+}
+
 const outDir = here;
 for (const [name, body] of Object.entries(scenarios)) {
   fs.writeFileSync(path.join(outDir, `${name}.json`), JSON.stringify({ name, ...body }, null, 2) + '\n');
