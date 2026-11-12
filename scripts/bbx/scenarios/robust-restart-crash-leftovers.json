@@ -1,0 +1,257 @@
+{
+  "name": "robust-restart-crash-leftovers",
+  "about": "模拟上一个 gateway 进程在轮次中途被杀后留下的落盘：runs/registry.json 里一条 running（ownerPid 已死）和一条 accepted（ownerPid=1，活着但无权探测）、会话末尾一轮停在工具调用上、未答的用户对话框日志 .dialogs.json、后台任务快照里一个 running（pid 已死）的任务。新进程启动后：run_get / run_events / run_reattach / active_turn_snapshot、user_dialog_list 与对旧对话框作答、同会话下一轮（task_list 看任务状态）、之后的 user_dialog_list 与 run_get，以及最终落盘。",
+  "files": {
+    "home/.pilotdeck/runs/registry.json": {
+      "schemaVersion": 1,
+      "records": [
+        {
+          "sessionKey": "s-bbx-1",
+          "runId": "run-bbx-1",
+          "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"first question\",\"sessionKey\":\"s-bbx-1\"}",
+          "ownerPid": 99999999,
+          "state": "completed",
+          "revision": 5,
+          "lastSeq": 4,
+          "acceptedAt": "2026-11-01T00:00:08.000Z",
+          "updatedAt": "2026-11-01T00:00:09.000Z",
+          "result": {
+            "type": "turn_completed",
+            "usage": {
+              "inputTokens": 12,
+              "outputTokens": 4,
+              "totalTokens": 16
+            },
+            "finishReason": "completed",
+            "runId": "run-bbx-1"
+          }
+        },
+        {
+          "sessionKey": "s-bbx-1",
+          "runId": "run-bbx-2",
+          "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"second question\",\"sessionKey\":\"s-bbx-1\"}",
+          "ownerPid": 99999999,
+          "state": "running",
+          "revision": 3,
+          "lastSeq": 2,
+          "acceptedAt": "2026-11-01T00:00:08.000Z",
+          "updatedAt": "2026-11-01T00:00:09.000Z"
+        },
+        {
+          "sessionKey": "s-bbx-2",
+          "runId": "run-bbx-5",
+          "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"never started\",\"sessionKey\":\"s-bbx-2\"}",
+          "ownerPid": 1,
+          "state": "accepted",
+          "revision": 1,
+          "lastSeq": 0,
+          "acceptedAt": "2026-11-01T00:00:08.000Z",
+          "updatedAt": "2026-11-01T00:00:09.000Z"
+        }
+      ],
+      "events": {
+        "\u0000s-bbx-1\u0000run-bbx-2": [
+          {
+            "seq": 1,
+            "event": {
+              "type": "turn_started",
+              "runId": "run-bbx-2"
+            }
+          },
+          {
+            "seq": 2,
+            "event": {
+              "type": "input_accepted",
+              "runId": "run-bbx-2"
+            }
+          }
+        ],
+        "\u0000s-bbx-2\u0000run-bbx-5": []
+      }
+    },
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s-bbx-1\",\"turnId\":\"run-bbx-1\",\"sequence\":1,\"createdAt\":\"2026-11-01T00:00:01.000Z\",\"entryId\":\"s-bbx-1-e-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"first question\"}]}],\"metadata\":{\"permissionMode\":\"default\",\"runMode\":\"agent\",\"basePermissionMode\":\"default\",\"allowPlanModeTools\":false},\"sessionId\":\"s-bbx-1\",\"turnId\":\"run-bbx-1\",\"sequence\":2,\"createdAt\":\"2026-11-01T00:00:02.000Z\",\"entryId\":\"s-bbx-1-e-2\",\"parentEntryId\":\"s-bbx-1-e-1\"}\n{\"type\":\"session_metadata\",\"metadata\":{\"firstPrompt\":\"first question\",\"lastPrompt\":\"first question\",\"title\":\"Fixture title\",\"updatedAt\":\"2026-11-01T00:00:03.000Z\"},\"sessionId\":\"s-bbx-1\",\"turnId\":\"run-bbx-1\",\"sequence\":3,\"createdAt\":\"2026-11-01T00:00:03.000Z\",\"entryId\":\"s-bbx-1-e-3\",\"parentEntryId\":\"s-bbx-1-e-2\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s-bbx-1\",\"turnId\":\"run-bbx-1\",\"sequence\":4,\"createdAt\":\"2026-11-01T00:00:04.000Z\",\"entryId\":\"s-bbx-1-e-4\",\"parentEntryId\":\"s-bbx-1-e-3\"}\n{\"type\":\"assistant_message\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"first answer\"}],\"metadata\":{\"model\":\"deterministic\"}},\"sessionId\":\"s-bbx-1\",\"turnId\":\"run-bbx-1\",\"sequence\":5,\"createdAt\":\"2026-11-01T00:00:05.000Z\",\"entryId\":\"s-bbx-1-e-5\",\"parentEntryId\":\"s-bbx-1-e-4\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s-bbx-1\",\"turnId\":\"run-bbx-1\",\"sequence\":6,\"createdAt\":\"2026-11-01T00:00:06.000Z\",\"entryId\":\"s-bbx-1-e-6\",\"parentEntryId\":\"s-bbx-1-e-5\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"stopReason\":\"completed\",\"usage\":{\"inputTokens\":12,\"outputTokens\":4,\"totalTokens\":16},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-11-01T00:00:01.000Z\",\"finalMessage\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"first answer\"}],\"metadata\":{\"model\":\"deterministic\"}},\"sessionId\":\"s-bbx-1\",\"turnId\":\"run-bbx-1\",\"completedAt\":\"2026-11-01T00:00:07.000Z\"},\"sessionId\":\"s-bbx-1\",\"turnId\":\"run-bbx-1\",\"sequence\":7,\"createdAt\":\"2026-11-01T00:00:07.000Z\",\"entryId\":\"s-bbx-1-e-7\",\"parentEntryId\":\"s-bbx-1-e-6\"}\n{\"type\":\"turn_started\",\"sessionId\":\"s-bbx-1\",\"turnId\":\"run-bbx-2\",\"sequence\":8,\"createdAt\":\"2026-11-01T00:00:08.000Z\",\"entryId\":\"s-bbx-1-e-8\",\"parentEntryId\":\"s-bbx-1-e-7\"}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second question\"}]}],\"metadata\":{\"permissionMode\":\"default\",\"runMode\":\"agent\",\"basePermissionMode\":\"default\",\"allowPlanModeTools\":false},\"sessionId\":\"s-bbx-1\",\"turnId\":\"run-bbx-2\",\"sequence\":9,\"createdAt\":\"2026-11-01T00:00:09.000Z\",\"entryId\":\"s-bbx-1-e-9\",\"parentEntryId\":\"s-bbx-1-e-8\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s-bbx-1\",\"turnId\":\"run-bbx-2\",\"sequence\":10,\"createdAt\":\"2026-11-01T00:00:10.000Z\",\"entryId\":\"s-bbx-1-e-10\",\"parentEntryId\":\"s-bbx-1-e-9\"}\n{\"type\":\"assistant_message\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_call\",\"id\":\"call_bbx_2\",\"name\":\"request_user_confirmation\",\"input\":{\"prompt\":\"Proceed?\"}}],\"metadata\":{\"model\":\"deterministic\"}},\"sessionId\":\"s-bbx-1\",\"turnId\":\"run-bbx-2\",\"sequence\":11,\"createdAt\":\"2026-11-01T00:00:11.000Z\",\"entryId\":\"s-bbx-1-e-11\",\"parentEntryId\":\"s-bbx-1-e-10\"}\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.dialogs.json": {
+      "version": 1,
+      "dialogs": [
+        {
+          "type": "user_dialog_request",
+          "requestId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+          "dialogKind": "confirm",
+          "toolCallId": "call_bbx_2",
+          "toolName": "request_user_confirmation",
+          "prompt": "Proceed?"
+        }
+      ]
+    },
+    "home/.pilotdeck/.pilotdeck/background-tasks/state.json": {
+      "version": 1,
+      "tasks": [
+        {
+          "task": {
+            "taskId": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+            "type": "local_bash",
+            "sessionId": "s-bbx-1",
+            "kind": "bash",
+            "command": "sleep 100",
+            "cwd": "{PILOT_HOME}",
+            "status": "running",
+            "completionStatusSentInAttachment": false,
+            "lastReportedTotalLines": 0,
+            "isBackgrounded": true,
+            "interrupted": false,
+            "outputBytes": 0,
+            "pid": 99999999,
+            "startedAt": "2026-11-01T00:00:08.000Z"
+          },
+          "output": {
+            "totalBytes": 0,
+            "persisted": true
+          }
+        }
+      ]
+    }
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Robust run\"}"
+      }
+    },
+    {
+      "name": "turn-3-after-tool",
+      "when": [
+        "turn-3:",
+        "\"tool_call_id\":\"call_bbx_3\""
+      ],
+      "reply": {
+        "text": "Done 3."
+      }
+    },
+    {
+      "name": "turn-3",
+      "when": [
+        "turn-3:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_3",
+          "name": "task_list",
+          "arguments": {}
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "run_get",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "runId": "run-bbx-2"
+      }
+    },
+    {
+      "ws": "run_get",
+      "params": {
+        "sessionKey": "s-bbx-2",
+        "runId": "run-bbx-5"
+      }
+    },
+    {
+      "ws": "run_events",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "runId": "run-bbx-2"
+      }
+    },
+    {
+      "ws": "run_reattach",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "runId": "run-bbx-2"
+      }
+    },
+    {
+      "ws": "active_turn_snapshot",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "includeEvents": false
+      }
+    },
+    {
+      "ws": "user_dialog_list",
+      "params": {
+        "sessionKey": "s-bbx-1"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-bbx-1"
+      }
+    },
+    {
+      "ws": "user_dialog_respond",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "requestId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        "result": {
+          "behavior": "answered",
+          "value": true
+        }
+      }
+    },
+    {
+      "ws": "user_dialog_list",
+      "params": {
+        "sessionKey": "s-bbx-1"
+      }
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "channelKey": "test",
+        "message": "turn-3: list tasks",
+        "runId": "run-bbx-3"
+      },
+      "timeout": 15000
+    },
+    {
+      "ws": "user_dialog_list",
+      "params": {
+        "sessionKey": "s-bbx-1"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-bbx-1"
+      }
+    },
+    {
+      "ws": "run_get",
+      "params": {
+        "sessionKey": "s-bbx-1",
+        "runId": "run-bbx-2"
+      }
+    },
+    {
+      "ws": "run_get",
+      "params": {
+        "sessionKey": "s-bbx-2",
+        "runId": "run-bbx-5"
+      }
+    }
+  ]
+}
