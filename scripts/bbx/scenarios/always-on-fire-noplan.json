@@ -1,0 +1,69 @@
+{
+  "name": "always-on-fire-noplan",
+  "about": "调度器触发的 discovery 轮次只回文本、不调用 always_on_discovery_plan：no_plan 事件、state 里 dormant 与 lastFireOutcome、run-history 的 no_plan 记录；已有计划出现在 discovery 提示词的「Existing Always-On plans」段，已有的用户会话进入聊天摘要段（别名 chat_1）。之后休眠闸门挡住后续跳。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nalwaysOn:\n  trigger:\n    tickIntervalMinutes: 0.05\n  projects:\n    {HOME}/work/alpha:\n      enabled: true\n",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"AO\"}"
+      }
+    },
+    {
+      "name": "discovery",
+      "when": [
+        "autonomous Always-On discovery"
+      ],
+      "reply": {
+        "text": "Nothing to do."
+      }
+    },
+    {
+      "name": "user",
+      "when": [
+        "hello from the user"
+      ],
+      "reply": {
+        "text": "hi"
+      }
+    }
+  ],
+  "files": {
+    "home/work/alpha/README.md": "alpha\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+    "home/.pilotdeck/always-on/projects/private-tmp-pdrs-bbx-root-home-work-alpha/plans/index.json": {
+      "schemaVersion": 1,
+      "plans": [
+        {
+          "id": "plan_old",
+          "title": "Old plan",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "status": "completed",
+          "summary": "s",
+          "rationale": "r",
+          "dedupeKey": "old",
+          "sourceRunId": "run-old",
+          "planFilePath": "plans/plan_old.md"
+        }
+      ]
+    }
+  },
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "user-chat",
+        "channelKey": "web",
+        "message": "hello from the user\nsecond line",
+        "projectKey": "{HOME}/work/alpha"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 12000
+    }
+  ]
+}

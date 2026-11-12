@@ -261,9 +261,7 @@ impl DiscoveryStateStore {
         )
     }
 
-    /// `markFireCompleted` (DiscoveryStateStore.ts:55-70). `lastPlanId` rides
-    /// only when the fire produced a plan — a `undefined` slot is
-    /// JSON-invisible, like the TS literal's absent value.
+    /// `markFireCompleted` (DiscoveryStateStore.ts:55-70).
     pub(crate) fn mark_fire_completed(
         &self,
         outcome: &str,
@@ -284,9 +282,14 @@ impl DiscoveryStateStore {
             ("lastFireOutcome", JsValue::String(JsString::from(outcome))),
             ("lastRunId", JsValue::String(JsString::from(run_id))),
         ];
-        if let Some(plan_id) = plan_id {
-            values.push(("lastPlanId", JsValue::String(JsString::from(plan_id))));
-        }
+        // `lastPlanId: input.planId` — an absent plan id overwrites the
+        // previous one with `undefined`, which JSON drops.
+        values.push((
+            "lastPlanId",
+            plan_id.map_or(JsValue::Undefined, |plan_id| {
+                JsValue::String(JsString::from(plan_id))
+            }),
+        ));
         values.push((
             "consecutiveFailures",
             JsValue::Number(if outcome == "failed" {
@@ -409,6 +412,7 @@ mod tests {
             cycle_index_file: project_dir.join("cycles").join("index.json"),
             reports_dir: project_dir.join("reports"),
             discovery_lock_file: project_dir.join("locks").join("discovery.lock"),
+            ..Default::default()
         };
         (home, DiscoveryStateStore::new(paths))
     }

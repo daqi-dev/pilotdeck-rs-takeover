@@ -1,0 +1,153 @@
+{
+  "name": "always-on-apply-git",
+  "about": "alwaysOn 段只有 language: zh-CN、没有启用的项目（仍是独立 control）时 always_on_apply 应用 git-worktree 形态的 work cycle：隔离工作区放在不采集的 {ROOT}/tmp 下，由一轮 bash 先 git init / commit 再改文件；比较 git diff --cached HEAD 算出的差异与文件数、中文 apply 提示词（含工作区分支行）、provider 回 400 时 apply 轮次的 error 事件让 apply 回 error 并写 run_failed 事件；调用不带 projectName（提示词里是 \"undefined\"）。一个场景只 apply 一次：两次 apply 的会话文件名里各带一个随机 runId，两者排序随机，基线自比不稳。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Apply\"}"
+      }
+    },
+    {
+      "name": "setup-done",
+      "when": [
+        "setup-git",
+        "call_bbx_git"
+      ],
+      "reply": {
+        "text": "ready"
+      }
+    },
+    {
+      "name": "setup",
+      "when": [
+        "setup-git"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_git",
+          "name": "bash",
+          "arguments": {
+            "command": "mkdir -p {ROOT}/tmp/ws-git && cd {ROOT}/tmp/ws-git && printf 'alpha\\n' > README.md && printf 'keep\\n' > keep.txt && git -c init.defaultBranch=main init -q && git add -A && git -c user.name=b -c user.email=b@b.c commit -qm init && printf 'alpha\\nmore\\n' > README.md && printf 'new\\n' > new.txt && rm keep.txt && echo ok"
+          }
+        }
+      }
+    },
+    {
+      "name": "apply",
+      "when": [
+        "Always-On 应用变更到项目"
+      ],
+      "reply": {
+        "status": 400,
+        "body": {
+          "error": {
+            "message": "bad apply request",
+            "type": "invalid_request_error"
+          }
+        }
+      }
+    }
+  ],
+  "files": {
+    "home/work/alpha/README.md": "alpha\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+    "home/.pilotdeck/always-on/projects/private-tmp-pdrs-bbx-root-home-work-alpha/cycles/index.json": {
+      "schemaVersion": 1,
+      "cycles": [
+        {
+          "id": "cycle-1",
+          "projectKey": "{HOME}/work/alpha",
+          "status": "active",
+          "workspace": {
+            "strategy": "git-worktree",
+            "cwd": "{ROOT}/tmp/ws-git",
+            "metadata": {
+              "branchName": "always-on/run-fixed",
+              "baseCommit": "abc"
+            }
+          },
+          "planIds": [
+            "plan_fixed"
+          ],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "createdByRunId": "run-fixed"
+        }
+      ]
+    },
+    "home/.pilotdeck/always-on/projects/private-tmp-pdrs-bbx-root-home-work-alpha/plans/index.json": {
+      "schemaVersion": 1,
+      "plans": [
+        {
+          "id": "plan_fixed",
+          "title": "Add more docs",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "status": "completed",
+          "summary": "s",
+          "rationale": "r",
+          "dedupeKey": "docs",
+          "sourceRunId": "run-fixed",
+          "planFilePath": "plans/plan_fixed.md",
+          "workCycleId": "cycle-1"
+        },
+        {
+          "id": "plan_unrelated",
+          "title": "Unrelated",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "status": "ready",
+          "summary": "s",
+          "rationale": "r",
+          "dedupeKey": "x",
+          "sourceRunId": "run-x",
+          "planFilePath": "plans/plan_unrelated.md"
+        },
+        {
+          "id": "plan_other",
+          "title": "Drop notes",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "status": "completed",
+          "summary": "s",
+          "rationale": "r",
+          "dedupeKey": "notes",
+          "sourceRunId": "run-fixed",
+          "planFilePath": "plans/plan_other.md",
+          "workCycleId": "cycle-1"
+        }
+      ]
+    }
+  },
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "setup",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "setup",
+        "channelKey": "test",
+        "message": "setup-git",
+        "projectKey": "{HOME}/work/alpha"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "always_on_apply",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "workCycleId": "cycle-1"
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 500
+    }
+  ],
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nalwaysOn:\n  language: zh-CN\n"
+}

@@ -1,0 +1,129 @@
+{
+  "name": "always-on-rerun-reuse",
+  "about": "启用项目后 always_on_rerun_plan 复用 state.json 里的活动 cycle（工作区仍在）：不起 workspace 轮次；execute 轮次回文本、report 轮次不调用 always_on_report 只回文本——报告由 assistant 文本经报告契约补齐写出（completed，report_produced）。另跑一次不存在的计划（plan_not_found）。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nalwaysOn:\n  projects:\n    {HOME}/work/alpha:\n      enabled: true\n",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"AO\"}"
+      }
+    },
+    {
+      "name": "workspace-done",
+      "when": [
+        "preparing an isolated workspace",
+        "call_bbx_ws"
+      ],
+      "reply": {
+        "text": "workspace ready"
+      }
+    },
+    {
+      "name": "workspace",
+      "when": [
+        "preparing an isolated workspace"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_ws",
+          "name": "always_on_prepare_workspace",
+          "arguments": {
+            "strategy": "snapshot-copy"
+          }
+        }
+      }
+    },
+    {
+      "name": "execute",
+      "when": [
+        "executing an Always-On discovery plan"
+      ],
+      "reply": {
+        "text": "Executed in place."
+      }
+    },
+    {
+      "name": "report",
+      "when": [
+        "writing a work report"
+      ],
+      "reply": {
+        "text": "# Inline report\n\n## Steps Performed\n1. Nothing changed.\n"
+      }
+    }
+  ],
+  "files": {
+    "home/work/alpha/README.md": "alpha\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+    "home/.pilotdeck/always-on/projects/private-tmp-pdrs-bbx-root-home-work-alpha/plans/plan_fixed.md": "# Add more docs\n\n> Always-On Discovery Plan\n> id: plan_fixed\n> sourceRunId: run-fixed\n> createdAt: 2026-01-01T00:00:00.000Z\n> projectRoot: {HOME}/work/alpha\n> dedupeKey: docs\n\n## Summary\nAdd a second line to README.\n\n## Rationale\nThe README is too short.\n\n## Context Signals\n- README has one line\n\n## Proposed Change\nAppend a line to README.md.\n\n## Execution Steps\n1. Append \"more docs\" to README.md.\n\n## Verification\n- README.md contains \"more docs\"\n",
+    "home/.pilotdeck/always-on/projects/private-tmp-pdrs-bbx-root-home-work-alpha/plans/index.json": {
+      "schemaVersion": 1,
+      "plans": [
+        {
+          "id": "plan_fixed",
+          "title": "Add more docs",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "status": "failed",
+          "summary": "Add a second line to README.",
+          "rationale": "The README is too short.",
+          "dedupeKey": "docs",
+          "sourceRunId": "run-fixed",
+          "planFilePath": "plans/plan_fixed.md"
+        }
+      ]
+    },
+    "home/.pilotdeck/always-on/snapshots/private-tmp-pdrs-bbx-root-home-work-alpha/run-fixed/README.md": "alpha\n",
+    "home/.pilotdeck/always-on/projects/private-tmp-pdrs-bbx-root-home-work-alpha/state.json": {
+      "schemaVersion": 1,
+      "todayKey": "2026-01-01",
+      "todayRunCount": 1,
+      "consecutiveFailures": 0,
+      "activeWorkCycleId": "cycle-1"
+    },
+    "home/.pilotdeck/always-on/projects/private-tmp-pdrs-bbx-root-home-work-alpha/cycles/index.json": {
+      "schemaVersion": 1,
+      "cycles": [
+        {
+          "id": "cycle-1",
+          "projectKey": "{HOME}/work/alpha",
+          "status": "active",
+          "workspace": {
+            "strategy": "snapshot-copy",
+            "cwd": "{HOME}/.pilotdeck/always-on/snapshots/private-tmp-pdrs-bbx-root-home-work-alpha/run-fixed",
+            "metadata": {
+              "copyStrategy": "clonefile",
+              "baseSize": "8192"
+            }
+          },
+          "planIds": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "createdByRunId": "run-fixed"
+        }
+      ]
+    }
+  },
+  "steps": [
+    {
+      "ws": "always_on_rerun_plan",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "planId": "plan_missing"
+      }
+    },
+    {
+      "ws": "always_on_rerun_plan",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "planId": "plan_fixed"
+      },
+      "timeout": 60000
+    },
+    {
+      "sleep": 500
+    }
+  ]
+}

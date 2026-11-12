@@ -1,0 +1,169 @@
+{
+  "name": "always-on-gates",
+  "about": "调度器闸门的端到端效果（3 秒一跳，跑约 8 秒）：项目 alpha 的 locks/discovery.lock 已存在（lock_busy）；项目 beta 的活动 cycle 已有 3 个计划（cycle_full，在锁之前判定）；两者都不起任何轮次、不改任何落盘文件。各闸门的判定次序与原因码另由 runtime/always_on/gates.rs、scheduler.rs 的单元测试对照基线探针产出的 oracle.json 覆盖。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nalwaysOn:\n  trigger:\n    tickIntervalMinutes: 0.05\n  projects:\n    {HOME}/work/alpha:\n      enabled: true\n    {HOME}/work/beta:\n      enabled: true\n",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"AO\"}"
+      }
+    },
+    {
+      "name": "discovery-done",
+      "when": [
+        "autonomous Always-On discovery",
+        "call_bbx_plan"
+      ],
+      "reply": {
+        "text": "Plan saved."
+      }
+    },
+    {
+      "name": "discovery",
+      "when": [
+        "autonomous Always-On discovery"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_plan",
+          "name": "always_on_discovery_plan",
+          "arguments": {
+            "title": " Add more docs ",
+            "summary": "Add a second line to README.",
+            "rationale": "The README is too short.",
+            "dedupeKey": "",
+            "content": "# Add more docs\n\n> Always-On Discovery Plan\n> id: plan_fixed\n> sourceRunId: run-fixed\n> createdAt: 2026-01-01T00:00:00.000Z\n> projectRoot: {HOME}/work/alpha\n> dedupeKey: docs\n\n## Summary\nAdd a second line to README.\n\n## Rationale\nThe README is too short.\n\n## Context Signals\n- README has one line\n\n## Proposed Change\nAppend a line to README.md.\n\n## Execution Steps\n1. Append \"more docs\" to README.md.\n\n## Verification\n- README.md contains \"more docs\"\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "workspace-done",
+      "when": [
+        "preparing an isolated workspace",
+        "call_bbx_ws"
+      ],
+      "reply": {
+        "text": "workspace ready"
+      }
+    },
+    {
+      "name": "workspace",
+      "when": [
+        "preparing an isolated workspace"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_ws",
+          "name": "always_on_prepare_workspace",
+          "arguments": {
+            "strategy": "auto"
+          }
+        }
+      }
+    },
+    {
+      "name": "execute-done",
+      "when": [
+        "executing an Always-On discovery plan",
+        "call_bbx_exec"
+      ],
+      "reply": {
+        "text": "Executed the plan."
+      }
+    },
+    {
+      "name": "execute",
+      "when": [
+        "executing an Always-On discovery plan"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_exec",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "NOTES.md",
+            "content": "more docs\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "report-done",
+      "when": [
+        "writing a work report",
+        "call_bbx_report"
+      ],
+      "reply": {
+        "text": "Report saved."
+      }
+    },
+    {
+      "name": "report",
+      "when": [
+        "writing a work report"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_report",
+          "name": "always_on_report",
+          "arguments": {
+            "content": "# Docs report\n\n## Plan Reference\nplan_fixed\n\n## Steps Performed\n1. Appended a line.\n\n## Notes\n- ok\n"
+          }
+        }
+      }
+    }
+  ],
+  "files": {
+    "home/work/alpha/README.md": "alpha\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+    "home/work/beta/README.md": "beta\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-beta/.cwd": "{HOME}/work/beta\n",
+    "home/.pilotdeck/always-on/projects/private-tmp-pdrs-bbx-root-home-work-alpha/locks/discovery.lock": "{\n  \"pid\": 1,\n  \"runId\": \"held\",\n  \"startedAt\": \"2026-01-01T00:00:00.000Z\"\n}",
+    "home/.pilotdeck/always-on/projects/private-tmp-pdrs-bbx-root-home-work-beta/state.json": {
+      "schemaVersion": 1,
+      "todayKey": "2026-01-01",
+      "todayRunCount": 0,
+      "consecutiveFailures": 0,
+      "activeWorkCycleId": "cycle-full"
+    },
+    "home/.pilotdeck/always-on/projects/private-tmp-pdrs-bbx-root-home-work-beta/cycles/index.json": {
+      "schemaVersion": 1,
+      "cycles": [
+        {
+          "id": "cycle-full",
+          "projectKey": "{HOME}/work/beta",
+          "status": "active",
+          "workspace": {
+            "strategy": "snapshot-copy",
+            "cwd": "{ROOT}/tmp/none",
+            "metadata": {}
+          },
+          "planIds": [
+            "p1",
+            "p2",
+            "p3"
+          ],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "createdByRunId": "r"
+        }
+      ]
+    }
+  },
+  "steps": [
+    {
+      "ws": "always_on_abort",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "sessionKey": "always-on/discovery:project=x:run=y"
+      }
+    },
+    {
+      "sleep": 8000
+    }
+  ]
+}

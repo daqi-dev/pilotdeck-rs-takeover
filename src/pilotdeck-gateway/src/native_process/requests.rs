@@ -61,6 +61,12 @@ pub struct Requests {
     /// capabilities and every call answers the #1313 `not_configured`
     /// envelopes byte for byte (InProcessGateway.ts:2992-3016).
     pub always_on: Option<Arc<crate::runtime::always_on::AlwaysOnManager>>,
+    /// `createStandaloneAlwaysOnControl` (createApplyHandler.ts:142-173):
+    /// what the standalone `always_on_apply` drives its apply turn through —
+    /// the live turn facade plus the bundle's override registry and
+    /// turn-event broadcast. Published once the gateway's submitter exists.
+    pub always_on_standalone:
+        std::sync::OnceLock<Arc<crate::runtime::always_on::StandaloneAlwaysOn>>,
     /// U7 global settings gateway (#1320): the six settings methods route
     /// here through the #1305 registry. Production binds
     /// [`crate::native_process::services::native_settings`].

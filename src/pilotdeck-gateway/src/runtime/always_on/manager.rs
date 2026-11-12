@@ -45,9 +45,11 @@ use super::{
     DiscoveryPlanStore, DiscoveryScheduler, DiscoveryStateStore, IsProjectBusy, SchedulerDeps,
     WorkCycleStore,
     fire::{
-        ApplyPhaseInput, DiscoveryFire, DiscoveryFirePort, RerunFireInput, derive_apply_session_key,
+        ApplyPhaseInput, DiscoveryFire, DiscoveryFirePort, FireDeps, RerunFireInput,
+        TurnEventHandler, derive_apply_session_key,
     },
 };
+use crate::config::session_overrides::SessionConfigOverrides;
 
 /// The `error` field of every control result
 /// (`src/always-on/protocol/AlwaysOnControlPort.ts`): a machine `code` plus
@@ -79,6 +81,42 @@ pub(crate) trait AlwaysOnAgentGateway: Send + Sync {
         &'a self,
         input: GatewayAbortInput<'a>,
     ) -> Pin<Box<dyn Future<Output = Result<(), JsString>> + Send + 'a>>;
+
+    /// `submitTurn` (AlwaysOnAgentGatewayPort.ts): the turn's event stream.
+    /// The default is a facade without a turn path (test fakes of the
+    /// control half): the stream fails on its first read, which is the TS
+    /// iterator throwing.
+    fn submit_turn(&self, _input: JsValue) -> Box<dyn AlwaysOnTurnStream> {
+        Box::new(FailedTurn("submitTurn is not available on this gateway."))
+    }
+
+    /// `closeSession({ sessionKey, reason })`; every always-on call site
+    /// swallows its rejection, so the port has no error channel.
+    fn close_session<'a>(
+        &'a self,
+        _session_key: &'a str,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+        Box::pin(async {})
+    }
+}
+
+/// One submitted turn as the always-on phases drain it: `Ok(None)` is the end
+/// of the stream, `Err` the iterator throwing (a transport failure, never an
+/// `error` event).
+pub(crate) trait AlwaysOnTurnStream: Send {
+    fn next_event(
+        &mut self,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<JsValue>, String>> + Send + '_>>;
+}
+
+struct FailedTurn(&'static str);
+impl AlwaysOnTurnStream for FailedTurn {
+    fn next_event(
+        &mut self,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<JsValue>, String>> + Send + '_>> {
+        let message = self.0.to_string();
+        Box::pin(async move { Err(message) })
+    }
 }
 
 /// One `AlwaysOnRunContext` as the ported halves read it: `abortRun` claims
@@ -91,6 +129,10 @@ pub(crate) struct AlwaysOnRunContext {
     pub session_key: String,
     pub run_id: String,
     pub project_key: String,
+    /// The phase-specific half the always-on tools read and fill
+    /// (`DiscoveryRunContext` / `WorkspaceRunContext` / … ,
+    /// AlwaysOnRunContextRegistry.ts:11-70).
+    pub phase: Option<Arc<super::tools::PhaseContext>>,
 }
 
 /// `AlwaysOnRunContextRegistry` (AlwaysOnRunContextRegistry.ts:78-119):
@@ -119,9 +161,7 @@ impl AlwaysOnRunContextRegistry {
         Ok(())
     }
 
-    /// The run-end unregister the TS registry performs; the caller lands
-    /// with the explicitly unported fire pipeline.
-    #[allow(dead_code)]
+    /// The run-end unregister (AlwaysOnRunContextRegistry.ts:88-90).
     pub(crate) fn unregister(&self, session_key: &str) {
         self.contexts
             .lock()
@@ -263,6 +303,9 @@ pub(crate) struct AlwaysOnRuntime {
     now: Arc<dyn Fn() -> f64 + Send + Sync>,
     uuid: Arc<dyn Fn() -> String + Send + Sync>,
     is_session_in_flight: Arc<dyn Fn() -> bool + Send + Sync>,
+    session_overrides: Arc<Mutex<SessionConfigOverrides>>,
+    on_turn_event: Option<TurnEventHandler>,
+    on_worktree_created: Option<super::WorktreeCreatedHook>,
     shared: Arc<RuntimeShared>,
 }
 
@@ -282,6 +325,8 @@ impl AlwaysOnRuntime {
         uuid: Option<Arc<dyn Fn() -> String + Send + Sync>>,
         logger: Option<Arc<dyn AlwaysOnLogger>>,
         is_session_in_flight: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+        session_overrides: Option<Arc<Mutex<SessionConfigOverrides>>>,
+        on_turn_event: Option<TurnEventHandler>,
     ) -> io::Result<Self> {
         let metadata = crate::metadata::Metadata {
             home: pilot_home.to_path_buf(),
@@ -309,6 +354,9 @@ impl AlwaysOnRuntime {
             now,
             uuid: uuid.unwrap_or_else(|| Arc::new(|| uuid::Uuid::new_v4().to_string())),
             is_session_in_flight: is_session_in_flight.unwrap_or_else(|| Arc::new(|| false)),
+            session_overrides: session_overrides.unwrap_or_default(),
+            on_turn_event,
+            on_worktree_created: None,
             shared: Arc::new(RuntimeShared {
                 agent_gateway: Mutex::new(None),
                 fire: Mutex::new(None),
@@ -351,9 +399,26 @@ impl AlwaysOnRuntime {
                 "AlwaysOnRuntime.bindAgentGateway already called.",
             ));
         }
-        *bound = Some(gateway);
-        let fire: Arc<dyn DiscoveryFirePort> =
-            Arc::new(DiscoveryFire::new(self.plan_store.clone()));
+        *bound = Some(gateway.clone());
+        let fire: Arc<dyn DiscoveryFirePort> = Arc::new(DiscoveryFire::new(FireDeps {
+            language: self.config.language.clone(),
+            paths: self.paths.clone(),
+            project_key: self.project_key.clone(),
+            gateway,
+            session_overrides: self.session_overrides.clone(),
+            plan_store: self.plan_store.clone(),
+            cycle_store: self.cycle_store.clone(),
+            state_store: self.state_store.clone(),
+            run_contexts: self.run_contexts.clone(),
+            workspace_registry: super::workspace::WorkspaceRegistry {
+                worktrees_dir: self.paths.worktrees_dir.clone(),
+                snapshots_dir: self.paths.snapshots_dir.clone(),
+                on_worktree_created: self.on_worktree_created.clone(),
+            },
+            uuid: self.uuid.clone(),
+            now: self.now.clone(),
+            on_turn_event: self.on_turn_event.clone(),
+        }));
         let in_flight = is_session_in_flight.unwrap_or_else(|| self.is_session_in_flight.clone());
         let scheduler = Arc::new(DiscoveryScheduler::new(SchedulerDeps {
             config: self.config.clone(),
@@ -683,6 +748,13 @@ pub(crate) struct AlwaysOnManagerOptions {
     pub now: Option<Arc<dyn Fn() -> f64 + Send + Sync>>,
     pub uuid: Option<Arc<dyn Fn() -> String + Send + Sync>>,
     pub logger: Option<Arc<dyn AlwaysOnLogger>>,
+    /// `ProjectAutomationBundle.sessionOverrides`: the registry the session
+    /// factory reads when it composes a phase session.
+    pub session_overrides: Option<Arc<Mutex<SessionConfigOverrides>>>,
+    /// `onTurnEvent` (src/cli/pilotdeck.ts:85-87).
+    pub on_turn_event: Option<TurnEventHandler>,
+    /// `onWorktreeCreated` (src/cli/pilotdeck.ts:76-78).
+    pub on_worktree_created: Option<super::WorktreeCreatedHook>,
 }
 
 /// `AlwaysOnManager` (AlwaysOnManager.ts:72-227): one runtime per enabled
@@ -691,6 +763,7 @@ pub(crate) struct AlwaysOnManagerOptions {
 pub struct AlwaysOnManager {
     runtimes: Vec<Arc<AlwaysOnRuntime>>,
     logger: Arc<dyn AlwaysOnLogger>,
+    tools: Vec<Arc<dyn crate::runtime::tools::ExecutableTool>>,
 }
 
 impl AlwaysOnManager {
@@ -704,7 +777,7 @@ impl AlwaysOnManager {
             if !*enabled {
                 continue;
             }
-            runtimes.push(Arc::new(AlwaysOnRuntime::new(
+            let mut runtime = AlwaysOnRuntime::new(
                 options.config.clone(),
                 &options.pilot_home,
                 project_key,
@@ -713,9 +786,20 @@ impl AlwaysOnManager {
                 options.uuid.clone(),
                 options.logger.clone(),
                 None,
-            )?));
+                options.session_overrides.clone(),
+                options.on_turn_event.clone(),
+            )?;
+            runtime.on_worktree_created = options.on_worktree_created.clone();
+            runtimes.push(Arc::new(runtime));
         }
+        let now: Arc<dyn Fn() -> f64 + Send + Sync> =
+            options.now.clone().unwrap_or_else(|| Arc::new(now_millis));
+        let uuid: Arc<dyn Fn() -> String + Send + Sync> = options
+            .uuid
+            .clone()
+            .unwrap_or_else(|| Arc::new(|| uuid::Uuid::new_v4().to_string()));
         Ok(Self {
+            tools: super::tools::always_on_tools(run_contexts.clone(), now, uuid),
             runtimes,
             logger: options
                 .logger
@@ -742,6 +826,11 @@ impl AlwaysOnManager {
             runtime.bind_agent_gateway(gateway.clone(), in_flight)?;
         }
         Ok(())
+    }
+
+    /// `getTools` (AlwaysOnManager.ts:135-137).
+    pub(crate) fn tools(&self) -> Vec<Arc<dyn crate::runtime::tools::ExecutableTool>> {
+        self.tools.clone()
     }
 
     /// `start` (AlwaysOnManager.ts:170-177).
@@ -1016,6 +1105,8 @@ mod tests {
                 Some(uuid),
                 None,
                 None,
+                None,
+                None,
             )
             .expect("#2294 runtime"),
         );
@@ -1153,6 +1244,7 @@ mod tests {
                 session_key: owned_key.into(),
                 run_id: "owned-run".into(),
                 project_key: project_key.clone(),
+                phase: None,
             })
             .expect("#2294 register");
         let abort_owned = runtime
@@ -1220,6 +1312,9 @@ mod tests {
             now: Some(Arc::new(|| NOW_MS)),
             uuid: Some(uuid),
             logger: None,
+            session_overrides: None,
+            on_turn_event: None,
+            on_worktree_created: None,
         })
         .expect("#2294 manager");
         let results = serde_json::json!({
@@ -1274,6 +1369,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         )
         .expect("#2294 runtime");
         let gateway: Arc<dyn AlwaysOnAgentGateway> = Arc::new(RecordingGateway {
@@ -1303,6 +1400,8 @@ mod tests {
             config(&project_key),
             &home,
             &project_key,
+            None,
+            None,
             None,
             None,
             None,
@@ -1395,6 +1494,8 @@ mod tests {
                 None,
                 Some(Arc::new(|| NOW_MS)),
                 Some(uuid),
+                None,
+                None,
                 None,
                 None,
             )

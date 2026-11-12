@@ -65,6 +65,8 @@ pub(crate) struct WorkCycleRecord {
 pub(crate) struct DiscoveryPlanRecord {
     pub id: String,
     pub title: Option<String>,
+    /// The stored entry as read.
+    pub raw: JsObject,
 }
 
 fn js_string(value: Option<&JsValue>) -> Option<String> {
@@ -166,10 +168,16 @@ fn cycle_record(entry: &JsObject) -> WorkCycleRecord {
     }
 }
 
+/// A typed view of a stored plan entry.
+pub(crate) fn plan_record_from(entry: &JsObject) -> DiscoveryPlanRecord {
+    plan_record(entry)
+}
+
 fn plan_record(entry: &JsObject) -> DiscoveryPlanRecord {
     DiscoveryPlanRecord {
         id: js_string(entry.get("id")).unwrap_or_default(),
         title: js_string(entry.get("title")),
+        raw: entry.clone(),
     }
 }
 
@@ -303,6 +311,219 @@ impl DiscoveryPlanStore {
     }
 }
 
+/// A copy of `object` without `key` (the JS `delete`), order preserved.
+fn without(object: &JsObject, key: &str) -> JsObject {
+    let mut out = JsObject::new();
+    for (name, value) in object.entries() {
+        if !name.equals_str(key) {
+            out.insert(name.clone(), value.clone());
+        }
+    }
+    out
+}
+
+/// `relativeIfInsideRoot` (DiscoveryPlanStore.ts:118-124): a path inside the
+/// project directory is stored relative to it; anything else (or the root
+/// itself) stays as given.
+pub(crate) fn relative_if_inside_root(file: &str, root: &Path) -> String {
+    let file_path = Path::new(file);
+    match file_path.strip_prefix(root) {
+        Ok(rel) if !rel.as_os_str().is_empty() => rel.to_string_lossy().into_owned(),
+        _ => file.to_string(),
+    }
+}
+
+/// The workspace half of a `WorkspaceHandle` a new cycle records.
+pub(crate) struct NewCycleWorkspace<'a> {
+    pub project_key: &'a str,
+    pub strategy: &'a str,
+    pub cwd: &'a str,
+    pub metadata: &'a JsObject,
+}
+
+impl WorkCycleStore {
+    fn write_index(&self, index: &JsObject) -> io::Result<()> {
+        write_index_object(&self.paths.cycle_index_file, index)
+    }
+
+    /// `create` (WorkCycleStore.ts:65-88).
+    pub(crate) fn create(
+        &self,
+        handle: &NewCycleWorkspace<'_>,
+        run_id: &str,
+        cycle_id: &str,
+        created_at: &str,
+    ) -> io::Result<WorkCycleRecord> {
+        let mut index = self.read_index()?;
+        let mut workspace = JsObject::new();
+        workspace.insert("strategy".into(), JsValue::from(handle.strategy));
+        workspace.insert("cwd".into(), JsValue::from(handle.cwd));
+        workspace.insert("metadata".into(), JsValue::Object(handle.metadata.clone()));
+        let mut record = JsObject::new();
+        record.insert("id".into(), JsValue::from(cycle_id));
+        record.insert("projectKey".into(), JsValue::from(handle.project_key));
+        record.insert("status".into(), JsValue::from("active"));
+        record.insert("workspace".into(), JsValue::Object(workspace));
+        record.insert("planIds".into(), JsValue::Array(Vec::new()));
+        record.insert("createdAt".into(), JsValue::from(created_at));
+        record.insert("createdByRunId".into(), JsValue::from(run_id));
+        let mut items = match index.get("cycles") {
+            Some(JsValue::Array(items)) => items.clone(),
+            _ => Vec::new(),
+        };
+        items.push(JsValue::Object(record.clone()));
+        index.insert("cycles".into(), JsValue::Array(items));
+        self.write_index(&index)?;
+        Ok(cycle_record(&record))
+    }
+
+    /// `addPlan` (WorkCycleStore.ts:90-98): append once, write only on change.
+    pub(crate) fn add_plan(&self, cycle_id: &str, plan_id: &str) -> io::Result<()> {
+        let mut index = self.read_index()?;
+        let mut items = match index.get("cycles") {
+            Some(JsValue::Array(items)) => items.clone(),
+            _ => return Ok(()),
+        };
+        let Some(entry) = items.iter_mut().find_map(|item| match item {
+            JsValue::Object(entry) if js_string(entry.get("id")).as_deref() == Some(cycle_id) => {
+                Some(entry)
+            }
+            _ => None,
+        }) else {
+            return Ok(());
+        };
+        let mut plan_ids = match entry.get("planIds") {
+            Some(JsValue::Array(ids)) => ids.clone(),
+            _ => Vec::new(),
+        };
+        if plan_ids
+            .iter()
+            .any(|id| id.as_string().is_some_and(|id| id.equals_str(plan_id)))
+        {
+            return Ok(());
+        }
+        plan_ids.push(JsValue::from(plan_id));
+        entry.insert("planIds".into(), JsValue::Array(plan_ids));
+        index.insert("cycles".into(), JsValue::Array(items));
+        self.write_index(&index)
+    }
+}
+
+/// The `updateStatus` patch (DiscoveryPlanStore.ts:69-96).
+#[derive(Default)]
+pub(crate) struct PlanUpdate<'a> {
+    pub status: Option<&'a str>,
+    pub report_file_path: Option<&'a str>,
+    pub work_cycle_id: Option<&'a str>,
+}
+
+impl DiscoveryPlanStore {
+    /// `updateStatus` with the full patch: status (mirrored into an existing
+    /// `executionStatus` for terminal statuses), the report path relative to
+    /// the project directory, and the cycle id (which drops the legacy
+    /// `workspace` ref).
+    pub(crate) fn update(
+        &self,
+        plan_id: &str,
+        update: &PlanUpdate<'_>,
+    ) -> io::Result<Option<DiscoveryPlanRecord>> {
+        let mut index = self.read_index()?;
+        let mut items = match index.get("plans") {
+            Some(JsValue::Array(items)) => items.clone(),
+            _ => Vec::new(),
+        };
+        let mut updated = None;
+        for item in items.iter_mut() {
+            let JsValue::Object(entry) = item else {
+                continue;
+            };
+            if js_string(entry.get("id")).as_deref() != Some(plan_id) {
+                continue;
+            }
+            if let Some(status) = update.status {
+                entry.insert("status".into(), JsValue::from(status));
+                if entry.get("executionStatus").is_some()
+                    && matches!(status, "completed" | "completed_no_report" | "failed")
+                {
+                    entry.insert("executionStatus".into(), JsValue::from(status));
+                }
+            }
+            if let Some(report) = update.report_file_path {
+                entry.insert(
+                    "reportFilePath".into(),
+                    JsValue::from(
+                        relative_if_inside_root(report, &self.paths.project_dir).as_str(),
+                    ),
+                );
+            }
+            if let Some(cycle_id) = update.work_cycle_id {
+                entry.insert("workCycleId".into(), JsValue::from(cycle_id));
+                *entry = without(entry, "workspace");
+            }
+            updated = Some(plan_record(entry));
+            break;
+        }
+        if updated.is_none() {
+            return Ok(None);
+        }
+        index.insert("plans".into(), JsValue::Array(items));
+        write_index_object(&self.paths.plan_index_file, &index)?;
+        Ok(updated)
+    }
+
+    /// `writePlanMarkdown` (DiscoveryPlanStore.ts:37-42).
+    pub(crate) fn write_plan_markdown(&self, plan_id: &str, markdown: &str) -> io::Result<String> {
+        let path = plan_markdown_path(&self.paths, &JsString::from(plan_id));
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&path, markdown)?;
+        Ok(path.to_string_lossy().into_owned())
+    }
+
+    /// `upsert` (DiscoveryPlanStore.ts:56-67): the record's paths are stored
+    /// relative to the project directory; replace in place or append.
+    pub(crate) fn upsert(&self, record: &JsObject) -> io::Result<JsObject> {
+        let mut index = self.read_index()?;
+        let mut stored = JsObject::new();
+        for (key, value) in record.entries() {
+            let value = if key.equals_str("planFilePath") || key.equals_str("reportFilePath") {
+                match value {
+                    JsValue::String(path) if !path.is_empty() => JsValue::from(
+                        relative_if_inside_root(
+                            &String::from_utf16_lossy(path.units()),
+                            &self.paths.project_dir,
+                        )
+                        .as_str(),
+                    ),
+                    _ => JsValue::Undefined,
+                }
+            } else {
+                value.clone()
+            };
+            stored.insert(key.clone(), value);
+        }
+        if !stored.contains_key("reportFilePath") {
+            stored.insert("reportFilePath".into(), JsValue::Undefined);
+        }
+        let mut items = match index.get("plans") {
+            Some(JsValue::Array(items)) => items.clone(),
+            _ => Vec::new(),
+        };
+        let id = js_string(stored.get("id"));
+        match items.iter().position(|item| {
+            item.as_object()
+                .is_some_and(|entry| js_string(entry.get("id")) == id)
+        }) {
+            Some(position) => items[position] = JsValue::Object(stored.clone()),
+            None => items.push(JsValue::Object(stored.clone())),
+        }
+        index.insert("plans".into(), JsValue::Array(items));
+        write_index_object(&self.paths.plan_index_file, &index)?;
+        Ok(stored)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -324,6 +545,7 @@ mod tests {
             cycle_index_file: home.join("cycles").join("index.json"),
             reports_dir: home.join("reports"),
             discovery_lock_file: home.join("locks").join("discovery.lock"),
+            ..Default::default()
         }
     }
 

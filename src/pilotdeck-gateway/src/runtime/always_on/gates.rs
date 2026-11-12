@@ -581,6 +581,7 @@ mod tests {
             cycle_index_file: home.join("cycles").join("index.json"),
             reports_dir: home.join("reports"),
             discovery_lock_file: home.join("locks").join("discovery.lock"),
+            ..Default::default()
         };
         let store = super::super::state::DiscoveryStateStore::new(paths);
         let state = store.read(NOW_MS).expect("#2294 read");

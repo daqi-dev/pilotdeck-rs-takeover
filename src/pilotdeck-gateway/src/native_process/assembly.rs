@@ -527,6 +527,12 @@ async fn start_assembly(
     let cron_manager_slot: Arc<std::sync::OnceLock<Arc<crate::runtime::cron::CronManager>>> =
         Arc::default();
     let prepare_cron_manager = cron_manager_slot.clone();
+    // The automation bundle's always-on manager: its tools join every
+    // `always-on/…` session (SessionToolCompositionBundle.ts:71-79).
+    let always_on_manager_slot: Arc<
+        std::sync::OnceLock<Arc<crate::runtime::always_on::AlwaysOnManager>>,
+    > = Arc::default();
+    let prepare_always_on_manager = always_on_manager_slot.clone();
     let storage_project = project.clone();
     let storage_options = options.clone();
     // #897: the composition-time budget preflight resolves the same directory
@@ -550,6 +556,7 @@ async fn start_assembly(
             let session_overrides = prepare_overrides.clone();
             let continuations = prepare_continuations.clone();
             let cron_tools_slot = prepare_cron_manager.clone();
+            let always_on_tools_slot = prepare_always_on_manager.clone();
             let user_dialog_bus = prepare_user_dialog_bus.clone();
             Box::pin(async move {
                 // `registry.resolve(projectKey ?? fallbackProjectRoot)`
@@ -683,12 +690,19 @@ async fn start_assembly(
                     .unwrap_or(JsValue::Undefined);
                 // `sessionOverride?.cwd ?? runtime.projectRoot`
                 // (SessionAgentConfigBundle.ts:57): a `workspaceCwd` or an
-                // unattended runtime's workspace, as stored.
+                // unattended runtime's workspace (an always-on phase runs in
+                // its isolated workspace), as stored.
                 let session_cwd = match unattended.get("cwd") {
                     None | Some(JsValue::Undefined | JsValue::Null) => {
                         JsValue::String(project_root.to_string_lossy().into_owned().into())
                     }
                     Some(cwd) => cwd.clone(),
+                };
+                let session_cwd_path = match &session_cwd {
+                    JsValue::String(cwd) => {
+                        std::path::PathBuf::from(String::from_utf16_lossy(cwd.units()))
+                    }
+                    _ => std::path::PathBuf::from(project_root.to_string_lossy().into_owned()),
                 };
                 config.insert("cwd".into(), session_cwd);
                 let override_mode = unattended
@@ -708,11 +722,28 @@ async fn start_assembly(
                         .collect(),
                     _ => Vec::new(),
                 };
-                let extra_tools = cron_tools_slot
-                    .get()
-                    .filter(|manager| manager.enabled())
-                    .map(crate::runtime::cron::cron_tools)
-                    .unwrap_or_default();
+                // `[...alwaysOn.getTools(), ...cron.getTools()]`
+                // (ProjectAutomationBundle.ts:393-398); the always-on names
+                // only survive in an always-on session.
+                let mut extra_tools = if context
+                    .session_key
+                    .units()
+                    .starts_with(&"always-on/".encode_utf16().collect::<Vec<u16>>())
+                {
+                    always_on_tools_slot
+                        .get()
+                        .map(|manager| manager.tools())
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                extra_tools.extend(
+                    cron_tools_slot
+                        .get()
+                        .filter(|manager| manager.enabled())
+                        .map(crate::runtime::cron::cron_tools)
+                        .unwrap_or_default(),
+                );
                 // `sessionOverride?.permissionMode ?? options.permissionMode`
                 // (SessionAgentConfigBundle.ts:52-56).
                 let stored_permission_mode = override_mode
@@ -771,7 +802,16 @@ async fn start_assembly(
                 );
                 let mut retained = PreparedResources::default();
                 retained.retain_lease(lease);
-                let permission_lease = permission_rule_sets.acquire(&context.session_key, None);
+                // `acquirePermissionRuleSet({ permissionRules:
+                // override?.permissionRules })` (ProjectSessionFactory.ts:
+                // 262-265): the always-on execute phase's deny rules.
+                let configured_rules = session_overrides
+                    .config_overrides()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .permission_rules(&context.session_key);
+                let permission_lease =
+                    permission_rule_sets.acquire(&context.session_key, configured_rules.as_ref());
                 let session_rules = permission_lease.rules();
                 // `LocalGatewayBootConfig.permissionTimeoutMs`.
                 let permission_timeout = super::permission_prompt::interaction_timeout(
@@ -873,7 +913,7 @@ async fn start_assembly(
                 };
                 retained.push(move || Box::pin(async move { session_mcp_release.release().await }));
                 let tail = TailConfig {
-                    cwd: Some(project_root.clone()),
+                    cwd: Some(session_cwd_path.clone()),
                     // `shouldCollectFileArtifacts` (ProjectRuntimeRegistry.ts:365):
                     // a session whose project root is the pilot home reports
                     // no file artifacts.
@@ -1408,6 +1448,22 @@ async fn start_assembly(
                     build_connection_broadcast.clone(),
                 )),
             };
+            // `onAlwaysOnTurnEvent` (src/cli/pilotdeck.ts:82-84): the same
+            // `always-on:turn-event` broadcast as cron's.
+            let worktree_broadcast = build_connection_broadcast.clone();
+            let always_on_hooks = always_on::NativeAlwaysOnHooks {
+                session_overrides: session_overrides.config_overrides(),
+                on_turn_event: Some(cron::broadcast_turn_events(
+                    build_connection_broadcast.clone(),
+                )),
+                // `onWorktreeCreated` (src/cli/pilotdeck.ts:76-78).
+                on_worktree_created: Some(Arc::new(move |run_id: &str, cwd: &str| {
+                    let mut payload = pilotdeck_protocol::JsObject::new();
+                    payload.insert("runId".into(), JsValue::from(run_id));
+                    payload.insert("cwd".into(), JsValue::from(cwd));
+                    worktree_broadcast.broadcast("worktree_created", &JsValue::Object(payload));
+                })),
+            };
             settings.bundle.bind_server(build_connection_broadcast);
             // `configStore.startWatching()` (createLocalGateway.ts:801): a
             // config file change reloads the store, which the refresh bundle
@@ -1458,12 +1514,15 @@ async fn start_assembly(
                         cron: cron_section.clone(),
                     },
                     pilot_home: options.home.clone(),
-                    make_always_on: always_on::native_factory(),
+                    make_always_on: always_on::native_factory(always_on_hooks.clone()),
                     make_cron: cron::native_factory(cron_hooks),
                 },
             )?);
             if let Some(manager) = automation.cron_manager() {
                 let _ = cron_manager_slot.set(manager);
+            }
+            if let Some(manager) = automation.always_on_manager() {
+                let _ = always_on_manager_slot.set(manager);
             }
             // #1326: the cron port's own volatile fence. It must NOT be the
             // owner's `SessionAdmission`: `SessionAdmissionCronGateway` holds
@@ -1504,6 +1563,7 @@ async fn start_assembly(
                 // bundle's, so the `#1313` not_configured envelopes stay the
                 // answer exactly when no always-on provider was staged.
                 always_on: automation.always_on_manager(),
+                always_on_standalone: Default::default(),
                 settings: settings.gateway,
                 session_overrides,
             });
@@ -1554,11 +1614,27 @@ async fn start_assembly(
                         )),
                     ),
                 )));
+                let always_on_gateway: Arc<dyn crate::runtime::always_on::AlwaysOnAgentGateway> =
+                    Arc::new(always_on::NativeAlwaysOnGatewayBody::new(
+                        cron_owner.clone(),
+                        submitter.clone(),
+                    ));
+                // The standalone control's turn facade (createApplyHandler.ts:
+                // 142-150) — the same gateway the bundle's providers bind.
+                let _ = requests.always_on_standalone.set(Arc::new(
+                    crate::runtime::always_on::StandaloneAlwaysOn {
+                        gateway: always_on_gateway.clone(),
+                        session_overrides: always_on_hooks.session_overrides.clone(),
+                        on_turn_event: always_on_hooks.on_turn_event.clone(),
+                        language: always_on_section
+                            .as_ref()
+                            .map(crate::runtime::always_on::AlwaysOnConfig::from_section)
+                            .and_then(|config| config.language),
+                    },
+                ));
                 automation.attach(automation::ProjectAutomationAttachment {
                     agent_gateway: automation::ProjectAutomationAgentGateway {
-                        always_on: Arc::new(always_on::NativeAlwaysOnGatewayBody::new(
-                            cron_owner.clone(),
-                        )),
+                        always_on: always_on_gateway,
                         cron: cron_gateway.clone(),
                     },
                     is_project_busy: Some(is_project_busy),
