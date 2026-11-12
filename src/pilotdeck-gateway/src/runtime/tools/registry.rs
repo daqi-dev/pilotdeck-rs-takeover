@@ -55,6 +55,15 @@ struct Inner {
 /// Cloning this handle shares the live registry. `snapshot` implements TS clone().
 #[derive(Clone)]
 pub struct ToolRegistry(Arc<Inner>);
+/// A non-owning handle, for a tool that must reach the registry it lives in
+/// without keeping it alive.
+#[derive(Clone)]
+pub struct WeakToolRegistry(std::sync::Weak<Inner>);
+impl WeakToolRegistry {
+    pub fn upgrade(&self) -> Option<ToolRegistry> {
+        self.0.upgrade().map(ToolRegistry)
+    }
+}
 impl Default for ToolRegistry {
     fn default() -> Self {
         Self::new(None, None)
@@ -67,6 +76,9 @@ impl ToolRegistry {
             parent,
             policy,
         }))
+    }
+    pub fn downgrade(&self) -> WeakToolRegistry {
+        WeakToolRegistry(Arc::downgrade(&self.0))
     }
     pub fn is_disposed(&self) -> bool {
         self.0.state.lock().unwrap().disposed

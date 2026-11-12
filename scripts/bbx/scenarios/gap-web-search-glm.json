@@ -1,0 +1,294 @@
+{
+ "name": "gap-web-search-glm",
+ "about": "tools.webSearch provider=glm（webSearch.ts:592-695）：endpoint 覆盖到假 provider；POST + Bearer，search_engine/search_query/count 体；search_result 结果解析（title/link/content/media/publish_date）；200 带 code≠0 的代理错误；非 2xx 错误文案；error 字段；空 query。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ntools:\n  webSearch:\n    enabled: true\n    provider: glm\n    endpoint: {MOCK}/glm-search\n    apiKey: key-glm\n",
+ "provider": [
+  {
+   "name": "search-01",
+   "unless": [
+    "\"model\":"
+   ],
+   "reply": {
+    "status": 200,
+    "body": {
+     "search_result": [
+      {
+       "title": "T1",
+       "link": "https://a.example/1",
+       "content": "C1",
+       "media": "M1",
+       "publish_date": "2026-01-01"
+      },
+      {
+       "name": "N2",
+       "url": "https://a.example/2",
+       "summary": "S2"
+      },
+      {}
+     ]
+    }
+   },
+   "when": [
+    "glm ok"
+   ]
+  },
+  {
+   "name": "search-02",
+   "unless": [
+    "\"model\":"
+   ],
+   "reply": {
+    "status": 200,
+    "body": {
+     "code": 1001,
+     "msg": "quota"
+    }
+   },
+   "when": [
+    "glm code"
+   ]
+  },
+  {
+   "name": "search-03",
+   "unless": [
+    "\"model\":"
+   ],
+   "reply": {
+    "status": 401,
+    "body": {
+     "error": {
+      "message": "bad key"
+     }
+    }
+   },
+   "when": [
+    "glm status"
+   ]
+  },
+  {
+   "name": "search-04",
+   "unless": [
+    "\"model\":"
+   ],
+   "reply": {
+    "status": 200,
+    "body": {
+     "error": "boom"
+    }
+   },
+   "when": [
+    "glm errstr"
+   ]
+  },
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Gap\"}"
+   }
+  },
+  {
+   "name": "t05-after",
+   "when": [
+    "g05:",
+    "\"tool_call_id\":\"call_g05\""
+   ],
+   "reply": {
+    "text": "Done 05."
+   }
+  },
+  {
+   "name": "t05",
+   "when": [
+    "g05:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g05",
+     "name": "web_search",
+     "arguments": {
+      "query": "  "
+     }
+    }
+   }
+  },
+  {
+   "name": "t04-after",
+   "when": [
+    "g04:",
+    "\"tool_call_id\":\"call_g04\""
+   ],
+   "reply": {
+    "text": "Done 04."
+   }
+  },
+  {
+   "name": "t04",
+   "when": [
+    "g04:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g04",
+     "name": "web_search",
+     "arguments": {
+      "query": "glm errstr"
+     }
+    }
+   }
+  },
+  {
+   "name": "t03-after",
+   "when": [
+    "g03:",
+    "\"tool_call_id\":\"call_g03\""
+   ],
+   "reply": {
+    "text": "Done 03."
+   }
+  },
+  {
+   "name": "t03",
+   "when": [
+    "g03:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g03",
+     "name": "web_search",
+     "arguments": {
+      "query": "glm status"
+     }
+    }
+   }
+  },
+  {
+   "name": "t02-after",
+   "when": [
+    "g02:",
+    "\"tool_call_id\":\"call_g02\""
+   ],
+   "reply": {
+    "text": "Done 02."
+   }
+  },
+  {
+   "name": "t02",
+   "when": [
+    "g02:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g02",
+     "name": "web_search",
+     "arguments": {
+      "query": "glm code"
+     }
+    }
+   }
+  },
+  {
+   "name": "t01-after",
+   "when": [
+    "g01:",
+    "\"tool_call_id\":\"call_g01\""
+   ],
+   "reply": {
+    "text": "Done 01."
+   }
+  },
+  {
+   "name": "t01",
+   "when": [
+    "g01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g01",
+     "name": "web_search",
+     "arguments": {
+      "query": "glm ok",
+      "gl": "cn"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-gap",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g01: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g02: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g03: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g04: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g05: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-gap"
+   }
+  }
+ ]
+}

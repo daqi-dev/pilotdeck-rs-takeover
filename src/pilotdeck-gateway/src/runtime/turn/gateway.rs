@@ -145,7 +145,7 @@ impl SubmissionDrains {
         };
         *identity = Some(run.clone());
         // begin overwrites the one session slot; obsolete drains never refill it.
-        self.current.insert(run.session_key.clone(), id);
+        self.current.insert(run.session().clone(), id);
     }
 }
 struct SubmissionDrain {
@@ -164,9 +164,9 @@ impl Drop for SubmissionDrain {
         let mut drains = self.drains.lock().unwrap();
         if let Some((run, done)) = drains.active.remove(&self.id) {
             if let Some(run) = run
-                && drains.current.get(&run.session_key) == Some(&self.id)
+                && drains.current.get(run.session()) == Some(&self.id)
             {
-                drains.current.remove(&run.session_key);
+                drains.current.remove(run.session());
             }
             done.send_replace(true);
         }

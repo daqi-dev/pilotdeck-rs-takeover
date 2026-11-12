@@ -349,7 +349,7 @@ pub fn request(id: &str, session: &str, run: &str) -> String {
 }
 pub fn run(session: &str, id: &str) -> RunRef {
     RunRef {
-        session_key: session.into(),
+        session_key: Some(session.into()),
         run_id: id.into(),
         project_key: None,
     }

@@ -36,6 +36,9 @@ pub(super) const WIRED_FIELDS: &[&str] = &[
     "agents",
     "skills",
     "managedTools",
+    "deferredTools",
+    "persistSession",
+    "promptSuggestions",
 ];
 
 /// The `agents.<id>` keys whose effect the native subagent composes. A

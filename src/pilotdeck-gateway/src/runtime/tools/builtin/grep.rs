@@ -431,7 +431,9 @@ fn bundled_ripgrep(roots: &[PathBuf]) -> Result<Option<PathBuf>, String> {
 
 fn platform_binary(modules: &Path, package: &str, binary: &str) -> Option<PathBuf> {
     let candidate = modules.join(package).join("bin").join(binary);
-    is_executable(&candidate).then_some(candidate)
+    // `require.resolve` answers with the real path (pnpm's sibling package
+    // link resolved), which is the spelling a spawn error carries.
+    is_executable(&candidate).then(|| candidate.canonicalize().unwrap_or(candidate))
 }
 
 fn platform_arch() -> (&'static str, &'static str) {
@@ -476,6 +478,28 @@ fn ripgrep_unavailable(cause: &str) -> ToolError {
         )),
         details: Some(object([("cause", string(cause))])),
     }
+}
+
+/// `runRipgrep({ toolName })` for another ripgrep-backed tool (`glob`): the
+/// same engine and error mapping, labelled with that tool's name.
+pub(super) async fn run_ripgrep_for(
+    tool: &str,
+    args: &[String],
+    cwd: &JsString,
+    context: &ToolRunContext,
+) -> Result<String, ToolError> {
+    run_ripgrep(args, cwd, context).await.map_err(|mut error| {
+        let message = text(&error.message);
+        let relabelled = if let Some(rest) = message.strip_prefix("ripgrep grep ") {
+            format!("ripgrep {tool} {rest}")
+        } else if let Some(rest) = message.strip_prefix("grep ") {
+            format!("{tool} {rest}")
+        } else {
+            message
+        };
+        error.message = JsString::from(relabelled);
+        error
+    })
 }
 
 async fn run_ripgrep(
@@ -617,13 +641,19 @@ async fn run_ripgrep_with_timeout(
             // Node's async spawn error text: `spawn <path> ENOENT`.
             ripgrep_unavailable(&format!("spawn {} ENOENT", executable.display()))
         } else if let Some((code, _)) = crate::node_io::lookup(&error) {
-            tool_error(
-                "tool_execution_failed",
+            // Node's `ChildProcess#spawn`: EACCES / EAGAIN / EMFILE / ENFILE
+            // (and ENOENT above) are emitted as `spawn <file> CODE`; every
+            // other errno (a cwd that is a file: ENOTDIR) is thrown as
+            // `spawn CODE`.
+            let message = if matches!(code, "EACCES" | "EAGAIN" | "EMFILE" | "ENFILE") {
                 format!(
                     "ripgrep grep search failed: spawn {} {code}",
                     executable.display()
-                ),
-            )
+                )
+            } else {
+                format!("ripgrep grep search failed: spawn {code}")
+            };
+            tool_error("tool_execution_failed", message)
         } else {
             tool_error(
                 "tool_execution_failed",
@@ -1152,7 +1182,7 @@ fn metadata_modified_ms(metadata: &std::fs::Metadata) -> f64 {
 // parsing / formatting
 // ---------------------------------------------------------------------------
 
-fn split_ripgrep_lines(stdout: &str) -> Vec<String> {
+pub(super) fn split_ripgrep_lines(stdout: &str) -> Vec<String> {
     stdout
         .split('\n')
         .map(|line| line.strip_suffix('\r').unwrap_or(line))
@@ -1279,7 +1309,7 @@ fn format_content_line(
     }
 }
 
-fn normalize_relative_path(file: &str) -> String {
+pub(super) fn normalize_relative_path(file: &str) -> String {
     let without_dot = file.strip_prefix("./").unwrap_or(file);
     text(&normalize(&JsString::from(without_dot)))
 }
@@ -1295,7 +1325,7 @@ fn to_workspace_file(file: &str, workspace_base_dir: &str) -> String {
     ))
 }
 
-fn is_ignored_path(file: &str) -> bool {
+pub(super) fn is_ignored_path(file: &str) -> bool {
     file.split('/')
         .any(|segment| matches!(segment, ".git" | "node_modules" | "dist"))
 }
@@ -1416,7 +1446,7 @@ fn js_compare(left: &str, right: &str) -> std::cmp::Ordering {
 /// Node's `String#localeCompare` with the process default locale
 /// (`LC_ALL`/`LC_MESSAGES`/`LANG`, the same `node_locale`/`node_collator`
 /// calibration used by `project_files`).
-fn locale_compare(left: &str, right: &str) -> std::cmp::Ordering {
+pub(super) fn locale_compare(left: &str, right: &str) -> std::cmp::Ordering {
     static COLLATOR: OnceLock<Option<icu_collator::CollatorBorrowed<'static>>> = OnceLock::new();
     let collator = COLLATOR.get_or_init(|| {
         let locale = node_locale(|key| std::env::var(key).ok());

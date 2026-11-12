@@ -135,13 +135,22 @@ impl RunState {
 
 /// `{ sessionKey, runId, projectKey? }`. An absent and an empty project key
 /// address the same run, as TS `projectKey ?? ""` does (RunRegistry.ts:70).
+/// An absent session key (a `submit_turn` without one) stays absent: the
+/// record has no `sessionKey` and the key reads `undefined`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunRef {
     pub project_key: Option<JsString>,
-    pub session_key: JsString,
+    pub session_key: Option<JsString>,
     pub run_id: JsString,
 }
 impl RunRef {
+    /// The session key for in-process bookkeeping; an absent key is the
+    /// empty string there (only the persisted record and its key tell the
+    /// two apart).
+    pub fn session(&self) -> &JsString {
+        static EMPTY: std::sync::LazyLock<JsString> = std::sync::LazyLock::new(JsString::default);
+        self.session_key.as_ref().unwrap_or(&EMPTY)
+    }
     fn key(&self) -> JsString {
         let project = self
             .project_key
@@ -150,7 +159,11 @@ impl RunRef {
             .unwrap_or(JsValue::Undefined);
         run_key(
             &project,
-            &JsValue::String(self.session_key.clone()),
+            &self
+                .session_key
+                .clone()
+                .map(JsValue::String)
+                .unwrap_or(JsValue::Undefined),
             &JsValue::String(self.run_id.clone()),
         )
         .expect("string parts never nest")
@@ -305,10 +318,9 @@ impl FileRunRegistry {
                 let now = now()?;
                 // InProcessGateway.ts:906-911 key order, then RunRegistry.ts:221-229.
                 let mut record = JsObject::new();
-                record.insert(
-                    "sessionKey".into(),
-                    JsValue::String(input.run.session_key.clone()),
-                );
+                if let Some(session) = &input.run.session_key {
+                    record.insert("sessionKey".into(), JsValue::String(session.clone()));
+                }
                 if let Some(project) = &input.run.project_key {
                     record.insert("projectKey".into(), JsValue::String(project.clone()));
                 }

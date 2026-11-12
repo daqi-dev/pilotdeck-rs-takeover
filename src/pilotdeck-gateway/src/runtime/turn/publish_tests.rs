@@ -17,7 +17,7 @@ fn json(value: &JsValue) -> Value {
 }
 fn run_ref() -> RunRef {
     RunRef {
-        session_key: "s".into(),
+        session_key: Some("s".into()),
         run_id: "r".into(),
         project_key: Some("p".into()),
     }

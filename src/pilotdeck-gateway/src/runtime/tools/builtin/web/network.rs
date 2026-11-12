@@ -7,9 +7,9 @@
 //! Request construction follows undici's `fetch` as far as the web tools can
 //! reach it: the fragment is dropped, URLs with credentials, non-HTTP(S)
 //! schemes and Fetch's blocked ports fail before any exchange, and repeated
-//! header names are joined with `, `. undici's implicit `user-agent: node`,
-//! `accept-language` and `accept-encoding` headers are not sent (see the
-//! fixture README).
+//! header names are joined with `, `. The wire block carries undici's
+//! implicit defaults (`accept`, `accept-language`, `sec-fetch-mode`,
+//! `user-agent: node`, `accept-encoding`) like the baseline's `fetch`.
 use crate::runtime::{
     model::http::{ModelBody, ModelHttpTransport, NetworkFetchError, TransportFailure},
     tools::ToolRunContext,
@@ -230,6 +230,10 @@ fn build(request: &HttpRequest) -> Result<hyper::Request<Full<Bytes>>, NetworkFe
             .map_err(|_| fetch_failed("Invalid header value"))?;
         map.insert(name, value);
     }
+    // The session network's `fetch` (Node's global one): undici's wire block
+    // with its defaults, `user-agent: node`.
+    let wire = crate::fetch_redirect::node_fetch_wire_headers(built.uri(), built.headers());
+    *built.headers_mut() = wire;
     Ok(built)
 }
 

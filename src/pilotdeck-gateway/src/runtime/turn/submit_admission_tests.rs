@@ -315,7 +315,7 @@ async fn drive(case: &Value) -> (Driven, Vec<JsValue>, Option<String>, JsValue) 
         js(&value)
     };
     let run = RunRef {
-        session_key: "s".into(),
+        session_key: Some("s".into()),
         project_key: Some("p".into()),
         run_id: "r".into(),
     };
@@ -851,7 +851,7 @@ async fn replay_full_turn(case: &Value) {
     // rather than a second in-memory FileRunRegistry cache.
     let reopened = FileRunRegistry::open(root.join("registry.json")).unwrap();
     let run = RunRef {
-        session_key: "s".into(),
+        session_key: Some("s".into()),
         project_key: Some("p".into()),
         run_id: JsString::from(run_id.as_str()),
     };
@@ -904,7 +904,7 @@ async fn absent_ports_reproduce_unwired_option_behavior() {
         "sdkSessionConfig": {"taskBudget": {"total": 1}}
     }));
     let run = RunRef {
-        session_key: "s".into(),
+        session_key: Some("s".into()),
         project_key: Some("p".into()),
         run_id: "r".into(),
     };

@@ -1,0 +1,94 @@
+{
+ "name": "gap-web-search-brave",
+ "about": "tools.webSearch provider=brave（webSearch.ts:390-471）：GET + X-Subscription-Token，查询参数 q/count/country（endpoint 自带的参数保留）；web.results 解析。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ntools:\n  webSearch:\n    enabled: true\n    provider: brave\n    endpoint: {MOCK}/brave?fixed=1\n    apiKey: key-brave\n",
+ "provider": [
+  {
+   "name": "search-01",
+   "unless": [
+    "\"model\":"
+   ],
+   "reply": {
+    "status": 200,
+    "body": {
+     "web": {
+      "results": [
+       {
+        "title": "T1",
+        "url": "https://b.example/1",
+        "description": "D1",
+        "age": "1d"
+       },
+       {
+        "title": "T2",
+        "url": "https://b.example/2"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Gap\"}"
+   }
+  },
+  {
+   "name": "t01-after",
+   "when": [
+    "g01:",
+    "\"tool_call_id\":\"call_g01\""
+   ],
+   "reply": {
+    "text": "Done 01."
+   }
+  },
+  {
+   "name": "t01",
+   "when": [
+    "g01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g01",
+     "name": "web_search",
+     "arguments": {
+      "query": "brave a&b",
+      "gl": "de"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-gap",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g01: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-gap"
+   }
+  }
+ ]
+}

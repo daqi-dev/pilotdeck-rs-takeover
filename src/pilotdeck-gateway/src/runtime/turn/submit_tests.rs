@@ -954,7 +954,7 @@ async fn replay_case(case: &Value) {
         assert!(submitter.workspace_admissions.reserve(
             &workspace,
             &RunRef {
-                session_key: "other".into(),
+                session_key: Some("other".into()),
                 project_key: None,
                 run_id: "other".into()
             }
@@ -1371,7 +1371,7 @@ async fn replay_case(case: &Value) {
     let reopened = FileRunRegistry::open(root.join("registry.json"))
         .expect("#748 submit fixture prerequisite");
     let run = RunRef {
-        session_key: "s".into(),
+        session_key: Some("s".into()),
         project_key: Some("p".into()),
         run_id: "r".into(),
     };

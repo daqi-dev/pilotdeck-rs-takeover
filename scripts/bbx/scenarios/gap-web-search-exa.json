@@ -1,0 +1,154 @@
+{
+ "name": "gap-web-search-exa",
+ "about": "tools.webSearch provider=exa（additionalWebSearch.ts）：POST + x-api-key，query/numResults/type/contents 体；results 的 highlights 拼成 snippet，publishedDate；error 对象报错。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ntools:\n  webSearch:\n    enabled: true\n    provider: exa\n    endpoint: {MOCK}/exa\n    apiKey: key-exa\n",
+ "provider": [
+  {
+   "name": "search-01",
+   "unless": [
+    "\"model\":"
+   ],
+   "reply": {
+    "status": 200,
+    "body": {
+     "results": [
+      {
+       "title": "T1",
+       "url": "https://e.example/1",
+       "highlights": [
+        "h1",
+        2,
+        "h2"
+       ],
+       "publishedDate": "2026-04-04"
+      },
+      {
+       "title": "T2",
+       "url": "https://e.example/2",
+       "highlights": [],
+       "text": "full text"
+      }
+     ]
+    }
+   },
+   "when": [
+    "exa ok"
+   ]
+  },
+  {
+   "name": "search-02",
+   "unless": [
+    "\"model\":"
+   ],
+   "reply": {
+    "status": 200,
+    "body": {
+     "error": {
+      "tag": "bad"
+     }
+    }
+   },
+   "when": [
+    "exa err"
+   ]
+  },
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Gap\"}"
+   }
+  },
+  {
+   "name": "t02-after",
+   "when": [
+    "g02:",
+    "\"tool_call_id\":\"call_g02\""
+   ],
+   "reply": {
+    "text": "Done 02."
+   }
+  },
+  {
+   "name": "t02",
+   "when": [
+    "g02:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g02",
+     "name": "web_search",
+     "arguments": {
+      "query": "exa err"
+     }
+    }
+   }
+  },
+  {
+   "name": "t01-after",
+   "when": [
+    "g01:",
+    "\"tool_call_id\":\"call_g01\""
+   ],
+   "reply": {
+    "text": "Done 01."
+   }
+  },
+  {
+   "name": "t01",
+   "when": [
+    "g01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g01",
+     "name": "web_search",
+     "arguments": {
+      "query": "exa ok"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-gap",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g01: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g02: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-gap"
+   }
+  }
+ ]
+}

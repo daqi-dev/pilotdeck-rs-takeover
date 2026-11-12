@@ -143,6 +143,51 @@ impl WebSearchOptions {
     }
 }
 
+/// `resolveWebSearchOptions(snapshot)` (cli/ProjectExecutionWorldBundle.ts:
+/// 120-133): the snapshot's `tools.webSearch`, `None` when the block is
+/// absent or `enabled: false` (`isOptionalFeatureEnabled`). Only `provider`,
+/// `apiKey`, `endpoint` and `customProvider` reach the tool; the baseline
+/// does not forward `searchEngine`, so SerpAPI always searches `google`.
+pub fn options_from_config(
+    web: &JsValue,
+    transport: Arc<dyn ModelHttpTransport>,
+) -> Option<WebSearchOptions> {
+    let web = web.as_object()?;
+    if web.get("enabled") == Some(&JsValue::Bool(false)) {
+        return None;
+    }
+    let text = |value: Option<&JsValue>| {
+        value
+            .and_then(JsValue::as_string)
+            .filter(|value| !value.is_empty())
+            .map(|value| String::from_utf16_lossy(value.units()))
+    };
+    let mut options = WebSearchOptions::new(transport);
+    options.provider = text(web.get("provider"));
+    options.api_key = text(web.get("apiKey"));
+    options.endpoint = text(web.get("endpoint"));
+    options.custom_provider =
+        web.get("customProvider")
+            .and_then(JsValue::as_object)
+            .map(|custom| {
+                let field = |key: &str| text(custom.get(key));
+                CustomProviderConfig {
+                    name: field("name"),
+                    auth: field("auth"),
+                    method: field("method"),
+                    query_param: field("queryParam"),
+                    api_key_param: field("apiKeyParam"),
+                    results_path: field("resultsPath"),
+                    title_field: field("titleField"),
+                    url_field: field("urlField"),
+                    snippet_field: field("snippetField"),
+                    source_field: field("sourceField"),
+                    published_at_field: field("publishedAtField"),
+                }
+            });
+    Some(options)
+}
+
 pub struct WebSearchTool {
     fields: JsObject,
     name: JsString,

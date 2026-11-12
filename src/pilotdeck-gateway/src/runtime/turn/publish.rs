@@ -428,7 +428,7 @@ impl TurnPublisher {
             predecessor_waiting: Notify::new(),
         });
         let weak = Arc::downgrade(&publication);
-        let registration = coordinator.start(&run.session_key, &run.run_id, move |event| {
+        let registration = coordinator.start(run.session(), &run.run_id, move |event| {
             if let Some(publication) = weak.upgrade() {
                 publication.enqueue(event.clone());
             }
@@ -445,8 +445,7 @@ impl TurnPublisher {
     /// underlying coordinator's emit directly during an active publication.
     pub fn emit(&self, event: &JsValue) -> bool {
         let _pump = lock(&self.pump);
-        self.coordinator
-            .emit(&self.publication.run.session_key, event)
+        self.coordinator.emit(self.publication.run.session(), event)
     }
     /// Already-derived pump events, serialized with external emits and finish.
     pub fn gateway_event(&self, event: JsValue) -> bool {
@@ -464,7 +463,7 @@ impl TurnPublisher {
         }
         drop(state);
         self.coordinator
-            .record(&self.publication.run.session_key, &event);
+            .record(self.publication.run.session(), &event);
         self.publication.enqueue(event);
         true
     }
@@ -514,7 +513,7 @@ impl TurnPublisher {
             };
             for event in deferred {
                 self.coordinator
-                    .record(&self.publication.run.session_key, &event);
+                    .record(self.publication.run.session(), &event);
                 self.publication.enqueue(event);
             }
             lock(&self.publication.state).pending.clone()
@@ -552,10 +551,8 @@ impl TurnPublisher {
                 // close and are still drained first, like TS's `queue.close`.
                 self.publication.wait_for_trailing_writes(&writes).await;
                 let _pump = lock(&self.pump);
-                self.coordinator.retain_terminal(
-                    &self.publication.run.session_key,
-                    &self.publication.run.run_id,
-                );
+                self.coordinator
+                    .retain_terminal(self.publication.run.session(), &self.publication.run.run_id);
                 return None;
             }
             notified.await;
