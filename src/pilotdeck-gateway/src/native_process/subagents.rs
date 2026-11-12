@@ -57,6 +57,9 @@ pub(super) struct SubagentRuntime {
     home: PathBuf,
     /// The process's continuable children (`subagent` / `send_message`).
     pub(super) continuations: Arc<super::continuations::Continuations>,
+    /// `runtime.backgroundSubagents`: the launcher behind `background: true`
+    /// definitions.
+    background: Option<crate::runtime::background::BackgroundSubagentRuntime>,
 }
 
 impl SubagentRuntime {
@@ -73,7 +76,16 @@ impl SubagentRuntime {
             limits,
             home,
             continuations,
+            background: None,
         }
+    }
+
+    pub(super) fn with_background(
+        mut self,
+        background: Option<crate::runtime::background::BackgroundSubagentRuntime>,
+    ) -> Self {
+        self.background = background;
+        self
     }
 
     /// `NativeSubagentContinuationHost.createChild`: a continuable child
@@ -187,6 +199,38 @@ impl SubagentRuntime {
             seed,
             parent,
         })
+    }
+}
+
+/// The calling tool's context with the background task's own abort signal
+/// in place of the parent turn's (`api.fork({ ..., abortSignal })`).
+fn detached_context(
+    context: &ToolRunContext,
+    signal: crate::runtime::tools::ToolCancellation,
+) -> ToolRunContext {
+    let host = &context.host;
+    let host = crate::host::modules::tool_context::ToolRuntimeContext {
+        fields: host.fields.clone(),
+        files: host.files.clone(),
+        abort_signal: Some(Arc::new(signal)),
+        model: host.model.clone(),
+        elicitation: host.elicitation.clone(),
+        user_dialog: host.user_dialog.clone(),
+        audit_recorder: host.audit_recorder.clone(),
+        file_history: host.file_history.clone(),
+        file_update_notifier: host.file_update_notifier.clone(),
+        now: host.now.clone(),
+        progress: host.progress.clone(),
+        subagent: host.subagent.clone(),
+        plan_todo: host.plan_todo.clone(),
+        goal: host.goal.clone(),
+        plan_directory: host.plan_directory.clone(),
+    };
+    ToolRunContext {
+        host: Arc::new(host),
+        fields: context.fields.clone(),
+        execute_tool: context.execute_tool.clone(),
+        file_saved: context.file_saved.clone(),
     }
 }
 
@@ -1191,6 +1235,50 @@ impl SubagentFork for Fork {
     }
     fn fork(&self, request: ForkRequest, context: ToolRunContext) -> ForkFuture {
         Box::pin(self.clone().run(request, context))
+    }
+    fn is_background_definition(&self, id: &JsString) -> bool {
+        definitions_from_config(&self.parent.config)
+            .iter()
+            .any(|definition| definition.id == text(id) && definition.background)
+    }
+    /// `launchBackground` (OneShotSubagentPort.ts:77-93): the fork runs in
+    /// the background-subagent runtime under that task's own abort signal.
+    fn launch_background(
+        &self,
+        request: ForkRequest,
+        context: ToolRunContext,
+    ) -> Option<
+        std::pin::Pin<Box<dyn std::future::Future<Output = Result<JsString, JsString>> + Send>>,
+    > {
+        let background = self.runtime.background.clone()?;
+        let fork = self.clone();
+        Some(Box::pin(async move {
+            let definition = definitions_from_config(&fork.parent.config)
+                .into_iter()
+                .find(|definition| definition.id == text(&request.definition_id))
+                .filter(|definition| definition.background)
+                .ok_or_else(|| {
+                    JsString::from(format!(
+                        "Subagent type {} is not configured for background execution.",
+                        text(&request.definition_id)
+                    ))
+                })?;
+            let task = background.start(crate::runtime::background::StartBackgroundSubagentInput {
+                kind: Some(crate::runtime::background::SubagentKind::Background),
+                session_id: fork.session.clone(),
+                parent_turn_id: fork.turn.clone(),
+                subagent_id: request.subagent_id.clone(),
+                subagent_type: definition.id.as_str().into(),
+                observed_subagent_id: None,
+                run: Box::new(move |signal| {
+                    Box::pin(async move {
+                        let context = detached_context(&context, signal);
+                        fork.run(request, context).await.map(|_| ())
+                    })
+                }),
+            });
+            Ok(task.task_id)
+        }))
     }
     fn subagent_id(&self) -> JsString {
         uuid::Uuid::new_v4().to_string().into()

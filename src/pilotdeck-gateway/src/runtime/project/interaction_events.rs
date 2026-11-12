@@ -132,14 +132,19 @@ impl InteractionEvents {
     /// buffer. Only the buffer is chosen by `parent_session`; the event is
     /// kept as raised. Without a current run for the parent it is refused.
     pub fn emit_forked(&self, parent_session: &JsString, event: JsObject) -> Result<(), HostError> {
-        let generation = lock(&self.state);
+        let mut generation = lock(&self.state);
         if generation.closed {
             return Err(closed());
         }
         let Some(turn) = generation.turns.get(parent_session).cloned() else {
-            return Err(
-                ModuleError::new("Sidecar host event does not match the active turn.").into(),
-            );
+            // A background child outlives the parent turn: its events wait
+            // in the session buffer for the parent's next run.
+            generation
+                .carried
+                .entry(parent_session.clone())
+                .or_default()
+                .push(event);
+            return Ok(());
         };
         let mut turn = lock(&turn);
         check(&generation, &turn)?;

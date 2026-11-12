@@ -1,0 +1,53 @@
+{
+  "name": "sdk-config-agents-background",
+  "about": "sdkSessionConfig.agents 的 background: true（OneShotSubagentPort.ts launchBackground → BackgroundSubagentRuntime）：父轮用 agent 工具派出后台子代理，工具结果是 Background subagent started as task <id>，父轮不等子代理；子代理在后台跑完自己的模型请求与侧链记录；之后 background_tasks 列表与下一轮。",
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Background agents\"}" } },
+    { "name": "parent-after", "when": ["turn-1:", "\"tool_call_id\":\"call_b1\""], "reply": { "text": "Launched." } },
+    { "name": "parent", "when": ["turn-1:"], "reply": { "tool": { "id": "call_b1", "name": "agent", "arguments": { "description": "Watch it", "prompt": "CHILD-DIRECTIVE-B: watch.", "subagent_type": "watcher" } } } },
+    { "name": "child", "when": ["CHILD-DIRECTIVE-B"], "reply": { "text": "Scope: watched.\nResult: quiet.\nKey files: none\nFiles changed: none\nIssues: none" } },
+    { "name": "main", "reply": { "text": "ok" } }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bg",
+        "channelKey": "test",
+        "message": "turn-1: launch a watcher",
+        "sdkSessionConfig": {
+          "agents": {
+            "watcher": {
+              "description": "Watches in the background.",
+              "prompt": "WATCHER-SUFFIX: watch quietly.",
+              "tools": ["read_file"],
+              "background": true
+            }
+          }
+        }
+      }
+    },
+    { "sleep": 1500 },
+    { "ws": "background_tasks", "params": { "sessionKey": "s-bg" } },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bg",
+        "channelKey": "test",
+        "message": "turn-2: after the watcher",
+        "sdkSessionConfig": {
+          "agents": {
+            "watcher": {
+              "description": "Watches in the background.",
+              "prompt": "WATCHER-SUFFIX: watch quietly.",
+              "tools": ["read_file"],
+              "background": true
+            }
+          }
+        }
+      }
+    },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-bg" } }
+  ]
+}

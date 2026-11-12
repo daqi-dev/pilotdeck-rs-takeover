@@ -325,6 +325,19 @@ pub trait SubagentFork: Send + Sync {
     }
     /// The context is the calling tool's: the fork watches its abort signal.
     fn fork(&self, request: ForkRequest, context: ToolRunContext) -> ForkFuture;
+    /// `isBackgroundDefinition(id)`: the definition is `background: true`.
+    fn is_background_definition(&self, _id: &JsString) -> bool {
+        false
+    }
+    /// `launchBackground`, when the host has a background-subagent launcher:
+    /// starts the fork detached and settles with its task id.
+    fn launch_background(
+        &self,
+        _request: ForkRequest,
+        _context: ToolRunContext,
+    ) -> Option<Pin<Box<dyn Future<Output = Result<JsString, JsString>> + Send>>> {
+        None
+    }
     /// `uuid()`: the new subagent's id.
     fn subagent_id(&self) -> JsString;
 }
@@ -500,6 +513,9 @@ impl ExecutableTool for AgentTool {
                 error.details = Some(object([("errorCode", string("subagent_depth_exceeded"))]));
                 return Err(error);
             }
+            if fork.is_background_definition(&requested_id) {
+                return run_background_fork(&input, &context, &requested, &fork).await;
+            }
             let aborted =
                 || ToolError::new("tool_aborted", "agent subagent aborted before completion.");
             let subagent_id = fork.subagent_id();
@@ -585,6 +601,86 @@ impl ExecutableTool for AgentTool {
             })
         })
     }
+}
+
+/// `runBackgroundFork` (tool/builtin/agent.ts:458-513).
+async fn run_background_fork(
+    input: &JsValue,
+    context: &ToolRunContext,
+    requested: &str,
+    fork: &Arc<dyn SubagentFork>,
+) -> Result<ToolOutput, ToolError> {
+    let request = |subagent_id: JsString| ForkRequest {
+        definition_id: requested.into(),
+        directive: field(input, "prompt")
+            .as_string()
+            .cloned()
+            .unwrap_or_default(),
+        subagent_id,
+        tool_call_id: context
+            .fields
+            .get("currentToolCallId")
+            .and_then(JsValue::as_string)
+            .cloned(),
+        timeout_ms: number_field(context, "subagentTimeoutMs")
+            .unwrap_or(DEFAULT_SUBAGENT_TIMEOUT_MS),
+    };
+    // `fork.launchBackground` is absent without a launcher; probe with a
+    // throwaway request only after the abort check, as the baseline orders
+    // `!fork.launchBackground` first.
+    if context.is_aborted() {
+        return Err(ToolError::new(
+            "tool_aborted",
+            "agent subagent aborted before launch.",
+        ));
+    }
+    let subagent_id = fork.subagent_id();
+    let Some(launch) = fork.launch_background(request(subagent_id.clone()), context.clone()) else {
+        return Err(ToolError::new(
+            "unsupported_tool",
+            format!(
+                "Background subagent {requested} requires a Gateway background-subagent launcher."
+            ),
+        ));
+    };
+    let task_id = launch.await.map_err(|message| {
+        let mut error = ToolError::failed(format!(
+            "background agent subagent failed to launch: {}",
+            text(&message)
+        ));
+        error.details = Some(object([("errorCode", string("subagent_launch_failed"))]));
+        error
+    })?;
+    let description = field(input, "description").clone();
+    let message = format!("Background subagent started as task {}.", text(&task_id));
+    let output = object([
+        ("subagentType", string(requested)),
+        ("description", description.clone()),
+        ("text", string(message.as_str())),
+        ("backgroundTaskId", string(task_id.clone())),
+    ]);
+    let metadata = object([
+        ("subagent", string(requested)),
+        ("subagentId", string(subagent_id)),
+        ("backgroundTaskId", string(task_id)),
+        ("forkMode", string("background")),
+    ]);
+    let label = format!(
+        "[{requested}] {}\n\n{message}",
+        description.as_string().map(text).unwrap_or_default()
+    );
+    Ok(ToolOutput {
+        content: vec![
+            JsValue::Object(object([("type", string("text")), ("text", string(label))])),
+            JsValue::Object(object([
+                ("type", string("json")),
+                ("value", JsValue::Object(output.clone())),
+            ])),
+        ],
+        supplemental_messages: None,
+        data: Some(JsValue::Object(output)),
+        metadata: Some(metadata),
+    })
 }
 
 #[cfg(test)]

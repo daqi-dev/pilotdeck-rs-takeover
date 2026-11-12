@@ -609,6 +609,14 @@ async fn start_assembly(
                         .downcast_ref::<crate::runtime::project::tools_mcp::ExecutionWorldResource>()
                         .map(|world| world.background().tasks.clone())
                 });
+                let background_subagents = staged
+                    .resource(Resource::ExecutionWorld)
+                    .and_then(|world| {
+                        world
+                            .as_any()
+                            .downcast_ref::<crate::runtime::project::tools_mcp::ExecutionWorldResource>()
+                            .map(|world| world.background().subagents.clone())
+                    });
                 let interaction_events = staged
                     .resource(Resource::InteractionEvents)
                     .and_then(|resource| {
@@ -1054,13 +1062,16 @@ async fn start_assembly(
                         };
                         // A forked subagent runs the same loop deployment
                         // against the same project registry.
-                        let ports = ports.with_subagents(super::subagents::SubagentRuntime::new(
-                            project.clone(),
-                            deployment.clone(),
-                            limits,
-                            options.home.clone(),
-                            continuations.clone(),
-                        ));
+                        let ports = ports.with_subagents(
+                            super::subagents::SubagentRuntime::new(
+                                project.clone(),
+                                deployment.clone(),
+                                limits,
+                                options.home.clone(),
+                                continuations.clone(),
+                            )
+                            .with_background(background_subagents.clone()),
+                        );
                         let turn_override_sink = ports.turn_override();
                         Ok(TurnHostFactory::new_with_signal(
                             project,

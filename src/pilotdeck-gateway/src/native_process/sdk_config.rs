@@ -40,7 +40,7 @@ pub(super) const WIRED_FIELDS: &[&str] = &[
 
 /// The `agents.<id>` keys whose effect the native subagent composes. A
 /// definition naming any other key (`mcpServers`, `skills`, `memory`,
-/// `initialPrompt`, `background`, `observer`, `observerMessage`) keeps the
+/// `initialPrompt`, `observer`, `observerMessage`) keeps the
 /// whole config unavailable.
 const WIRED_AGENT_FIELDS: &[&str] = &[
     "description",
@@ -50,6 +50,7 @@ const WIRED_AGENT_FIELDS: &[&str] = &[
     "model",
     "maxTurns",
     "permissionMode",
+    "background",
     // Carried on the definition; the baseline's subagent runtime reads it
     // nowhere.
     "effort",
@@ -1081,6 +1082,9 @@ pub(super) fn apply_agent_fields(agent: &mut JsObject, config: Option<&JsValue>)
             if let Some(value) = field(source) {
                 definition.insert(key.into(), value.clone());
             }
+        }
+        if field("background") == Some(&JsValue::Bool(true)) {
+            definition.insert("background".into(), JsValue::Bool(true));
         }
         definitions.insert(id.clone(), JsValue::Object(definition));
     }
