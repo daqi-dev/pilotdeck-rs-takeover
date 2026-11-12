@@ -1373,6 +1373,26 @@ impl SubmitHostServices for Services {
         // its preparation failed — a cold storage for the session, which
         // creates the transcript (GatewaySessionHistoryBundle.ts:205-245).
         // Its project is `projectKey ? projectKey : fallbackProjectRoot`.
+        // The live writer is used directly: the cold path's fence resolves
+        // (and creates) the session's chat directory under the pilot home,
+        // which a live ephemeral session (persistSession: false) never has.
+        if let Some((_, recorder)) = super::assembly::live_recorder(&self.recorders, run.session())
+        {
+            let run = run.clone();
+            let status = status.clone();
+            return Box::pin(async move {
+                tokio::task::spawn_blocking(move || {
+                    recorder.writer().record_agent_status_message(
+                        run.session(),
+                        &run.run_id,
+                        &status,
+                    )
+                })
+                .await
+                .map_err(|e| failure(e.to_string()))?
+                .map_err(|e| failure(e.to_string()))
+            });
+        }
         let project_root = self.options.project_root_for(
             run.project_key
                 .as_ref()
