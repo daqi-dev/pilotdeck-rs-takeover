@@ -5295,12 +5295,12 @@ async fn run_family_reads_the_registry_key_like_the_ts_template() {
     for run in [
         RunRef {
             project_key: None,
-            session_key: "undefined".into(),
+            session_key: Some("undefined".into()),
             run_id: "undefined".into(),
         },
         RunRef {
             project_key: None,
-            session_key: "s".into(),
+            session_key: Some("s".into()),
             run_id: "r".into(),
         },
     ] {

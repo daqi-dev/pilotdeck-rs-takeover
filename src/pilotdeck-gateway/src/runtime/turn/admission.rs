@@ -613,7 +613,7 @@ impl super::submit_host::SubmitAdmission for GatewaySubmitAdmission {
         run: &'a RunRef,
     ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>> {
         Box::pin(async move {
-            let session = &run.session_key;
+            let session = run.session();
             if self
                 .options
                 .replacement
@@ -667,14 +667,14 @@ impl super::submit_host::SubmitAdmission for GatewaySubmitAdmission {
                 };
                 let explicit = matches!(explicit, JsValue::Object(_)).then_some(explicit);
                 if let Err(error) =
-                    assertion.assert(&run.session_key, explicit, run.project_key.as_ref())
+                    assertion.assert(&run.session(), explicit, run.project_key.as_ref())
                 {
                     return Ok(vec![error_event(run, &error.code, &error.message, true)]);
                 }
             }
             if let Some(budget) = self.options.task_budget.as_ref() {
                 let budget = budget
-                    .snapshot(&run.session_key, run.project_key.as_ref())
+                    .snapshot(&run.session(), run.project_key.as_ref())
                     .await?;
                 if completion.is_cancelled() {
                     return Ok(vec![aborted(run)]);
@@ -735,7 +735,7 @@ impl super::submit_host::SubmitAdmission for GatewaySubmitAdmission {
                     )]);
                 }
                 if let Err(error) = recovery
-                    .clear_recovered(&run.session_key, run.project_key.as_ref())
+                    .clear_recovered(&run.session(), run.project_key.as_ref())
                     .await
                 {
                     return Ok(vec![with_hint(

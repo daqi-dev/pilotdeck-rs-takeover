@@ -326,7 +326,7 @@ impl SubmitHostServices for Services {
         Box::pin(async move {
             tokio::task::spawn_blocking(move || {
                 recorder.writer().record_agent_status_message(
-                    &run.session_key,
+                    run.session(),
                     &run.run_id,
                     &status,
                 )
@@ -1363,7 +1363,7 @@ async fn run_case_transport(scenario: &str, websocket: bool) {
         abort.await.expect("#748 cancellation task");
     }
     let run = RunRef {
-        session_key: SESSION.into(),
+        session_key: Some(SESSION.into()),
         project_key: None,
         run_id: run_id.into(),
     };

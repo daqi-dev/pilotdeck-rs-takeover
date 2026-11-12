@@ -65,7 +65,7 @@ fn text<'a>(value: &'a JsValue, key: &str) -> Option<&'a JsString> {
 }
 fn run_ref(input: &JsValue) -> RunRef {
     RunRef {
-        session_key: text(input, "sessionKey").cloned().unwrap_or_default(),
+        session_key: Some(text(input, "sessionKey").cloned().unwrap_or_default()),
         run_id: text(input, "runId").cloned().unwrap_or_default(),
         project_key: text(input, "projectKey").cloned(),
     }
@@ -805,7 +805,7 @@ async fn run_events_pathological_depth_last_seq_child() {
     };
     let input = RunEventsInput {
         run: RunRef {
-            session_key: "s".into(),
+            session_key: Some("s".into()),
             run_id: "r1".into(),
             project_key: Some("p".into()),
         },
@@ -860,7 +860,7 @@ async fn read_session_messages_does_not_block_concurrent_publish_while_history_i
     let coordinator = Arc::new(TurnEventCoordinator::new());
     let stream = Arc::new(TurnPublisher::start(
         RunRef {
-            session_key: "s".into(),
+            session_key: Some("s".into()),
             run_id: "r".into(),
             project_key: None,
         },
@@ -963,7 +963,7 @@ async fn read_session_messages_settles_when_concurrent_publish_finishes_the_turn
     std::fs::create_dir(&root).unwrap();
     let file = FileRunRegistry::open(root.join("registry.json")).unwrap();
     let run = RunRef {
-        session_key: "s".into(),
+        session_key: Some("s".into()),
         run_id: "r".into(),
         project_key: None,
     };

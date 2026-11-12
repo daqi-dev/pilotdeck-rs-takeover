@@ -264,7 +264,7 @@ impl SubmitHost for GatewaySubmitHost {
                 self.leases
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .insert((run.session_key.clone(), run.run_id.clone()), lease.release);
+                    .insert((run.session().clone(), run.run_id.clone()), lease.release);
             }
             let agent_input = self
                 .services
@@ -287,7 +287,7 @@ impl SubmitHost for GatewaySubmitHost {
                 })
             };
             let requested = mode_of("mode").cloned();
-            let live = self.services.live_permission_mode(&run.session_key);
+            let live = self.services.live_permission_mode(&run.session());
             // `inputMode = requestedInputMode ?? permissionModes.get(sessionKey)`.
             let plan = requested
                 .as_ref()
@@ -300,7 +300,7 @@ impl SubmitHost for GatewaySubmitHost {
             let permission_mode = requested.clone().or(live).or_else(|| default_mode.clone());
             let base_permission_mode = mode_of("basePermissionMode")
                 .cloned()
-                .or_else(|| self.services.live_base_permission_mode(&run.session_key))
+                .or_else(|| self.services.live_base_permission_mode(&run.session()))
                 .or_else(|| requested.filter(|mode| !mode.equals_str("plan")))
                 .or(default_mode);
             let mut options = crate::metadata::object([
@@ -432,7 +432,7 @@ impl SubmitHost for GatewaySubmitHost {
         run: &'a RunRef,
     ) -> SubmitFuture<'a, Result<(), SubmitError>> {
         self.replacement
-            .commit_accepted_input(&run.session_key, &run.run_id)
+            .commit_accepted_input(&run.session(), &run.run_id)
     }
     fn release_claim(&self, session: &JsString, run: &JsString) {
         self.replacement.release_claim(session, run)
@@ -453,7 +453,7 @@ impl SubmitHost for GatewaySubmitHost {
             .leases
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(&(run.session_key.clone(), run.run_id.clone()));
+            .remove(&(run.session().clone(), run.run_id.clone()));
         Box::pin(async move {
             match release {
                 Some(release) => release().await,

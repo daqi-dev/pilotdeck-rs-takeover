@@ -263,7 +263,7 @@ fn agent_status_event(event: &str) -> JsValue {
 fn run() -> RunRef {
     RunRef {
         project_key: Some("project".into()),
-        session_key: "session".into(),
+        session_key: Some("session".into()),
         run_id: "r".into(),
     }
 }

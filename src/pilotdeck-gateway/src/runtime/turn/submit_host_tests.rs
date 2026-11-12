@@ -273,7 +273,7 @@ fn make_host(fake: &Arc<Fake>) -> Arc<GatewaySubmitHost> {
 }
 fn run() -> RunRef {
     RunRef {
-        session_key: "s".into(),
+        session_key: Some("s".into()),
         project_key: None,
         run_id: "r".into(),
     }

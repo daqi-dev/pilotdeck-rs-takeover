@@ -539,7 +539,7 @@ async fn replay_case(case: &Value) {
         close.await.unwrap();
     }
     let run = RunRef {
-        session_key: "s".into(),
+        session_key: Some("s".into()),
         project_key: Some("p".into()),
         run_id: actual_run.as_str().into(),
     };
@@ -1173,7 +1173,7 @@ async fn replay_abort_fences(only: Option<&str>) {
                         );
                         let drain = gateway.track();
                         drain.observer()(&RunRef {
-                            session_key: key.clone(),
+                            session_key: Some(key.clone()),
                             project_key: None,
                             run_id: run.clone(),
                         });

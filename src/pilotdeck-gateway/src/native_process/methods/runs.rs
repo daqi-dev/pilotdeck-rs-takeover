@@ -50,9 +50,9 @@ fn run_ref(params: &JsValue) -> Result<RunRef, RequestError> {
     };
     Ok(RunRef {
         project_key,
-        session_key: template_text(
+        session_key: Some(template_text(
             &input_property(params, "sessionKey")?.unwrap_or(JsValue::Undefined),
-        )?,
+        )?),
         run_id: template_text(&input_property(params, "runId")?.unwrap_or(JsValue::Undefined))?,
     })
 }

@@ -58,7 +58,7 @@ fn string(v: &JsValue) -> String {
 fn run(project: Option<&str>, session: &str, run_id: &str) -> RunRef {
     RunRef {
         project_key: project.map(JsString::from),
-        session_key: session.into(),
+        session_key: Some(session.into()),
         run_id: run_id.into(),
     }
 }
@@ -79,7 +79,7 @@ fn ref_of(input: &JsValue) -> RunRef {
         project_key: input
             .get("projectKey")
             .map(|v| v.as_string().unwrap().clone()),
-        session_key: field(input, "sessionKey").as_string().unwrap().clone(),
+        session_key: Some(field(input, "sessionKey").as_string().unwrap().clone()),
         run_id: field(input, "runId").as_string().unwrap().clone(),
     }
 }
