@@ -1,0 +1,84 @@
+{
+ "name": "modules-tools-unreachable",
+ "about": "modules.tools 的 endpoint 连不上（127.0.0.1:1 没有监听者）：清单 GET 失败，工具结果是 tool_execution_failed，details 为 MODULE_TRANSPORT_UNAVAILABLE / result_unknown / unsafe（hostToolPort.ts:291-305）；清单失败不缓存，同一会话下一次调用再试一次。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  tools:\n    enabled: true\n    implementationId: bbx.tools\n    contract: pilotdeck.tools/v1\n    transport: module-http-v2\n    endpoint: http://127.0.0.1:1/tools\n    timeoutMs: 1500\n    methods:\n      - execute\n    catalog:\n      - name: bbx_echo\n        description: Echo text through the external capability module.\n        inputSchema:\n          type: object\n          properties:\n            text:\n              type: string\n          required:\n            - text\n",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Tool run\"}"
+   }
+  },
+  {
+   "name": "u01-after",
+   "when": [
+    "u01:",
+    "\"tool_call_id\":\"call_u01_1\""
+   ],
+   "reply": {
+    "text": "Done u01."
+   }
+  },
+  {
+   "name": "u01",
+   "when": [
+    "u01:"
+   ],
+   "reply": {
+    "tools": [
+     {
+      "id": "call_u01_0",
+      "name": "bbx_echo",
+      "arguments": {
+       "text": "a"
+      }
+     },
+     {
+      "id": "call_u01_1",
+      "name": "bbx_echo",
+      "arguments": {
+       "text": "b"
+      }
+     }
+    ]
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-u01",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-u01",
+    "channelKey": "test",
+    "message": "u01: go"
+   },
+   "timeout": 20000,
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-u01",
+      "requestId": "{event.requestId}",
+      "decision": "deny"
+     }
+    }
+   ]
+  },
+  {
+   "sleep": 300
+  }
+ ]
+}

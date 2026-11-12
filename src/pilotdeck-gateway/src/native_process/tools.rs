@@ -732,6 +732,56 @@ impl SessionTools {
             .map_err(RuntimeError::new)
     }
 
+    /// `composeToolPorts(external, native)` refuses a host tool that shares
+    /// a name with the external catalog (runtimePorts.ts:34-40). The
+    /// baseline composes when the session runtime is built, so the submit
+    /// fails before a turn starts.
+    pub fn check_module_tools(&self) -> Result<(), RuntimeError> {
+        let Some(external) = &self.world.module_tools else {
+            return Ok(());
+        };
+        let names: Vec<JsString> = external
+            .tools()
+            .iter()
+            .filter_map(|tool| {
+                use crate::host::modules::capability::ToolDefinition as _;
+                tool.fields()
+                    .get("name")
+                    .and_then(JsValue::as_string)
+                    .cloned()
+            })
+            .collect();
+        let registry = self.session_registry(&self.config);
+        let host = registry
+            .list()
+            .map_err(|error| RuntimeError::new(error.to_string()))?;
+        let late = self.late_host_tools();
+        if let Some(name) = host
+            .iter()
+            .filter_map(|tool| tool.fields().get("name").and_then(JsValue::as_string))
+            .filter(|name| !late.contains(name))
+            .find(|name| names.contains(name))
+        {
+            let mut message: Vec<u16> = "External tool binding conflicts with host tool '"
+                .encode_utf16()
+                .collect();
+            message.extend_from_slice(name.units());
+            message.extend("'.".encode_utf16());
+            return Err(RuntimeError::new(String::from_utf16_lossy(&message)));
+        }
+        Ok(())
+    }
+
+    /// Host tools attached after the session runtime composed its tool port
+    /// (`SessionSubagentContinuationBundle.attach`): the continuation tools.
+    fn late_host_tools(&self) -> Vec<JsString> {
+        if self.subagents.is_some() && self.continuation.is_some() {
+            vec!["subagent".into(), "send_message".into()]
+        } else {
+            Vec::new()
+        }
+    }
+
     /// The project's plugin runtime, behind `read_skill`
     /// (`createBuiltinRegistry({ readSkill })`). Without it the tool is not
     /// registered, as in the baseline.
@@ -1008,8 +1058,38 @@ impl SessionTools {
             .fork
             .as_ref()
             .map_or_else(|| recorder.clone(), |scope| scope.root_recorder.clone());
+        // `composeToolPorts(externalPorts.tools, nativeToolPort)`
+        // (AgentSessionRuntimeBundle.ts:156-206): an external `modules.tools`
+        // binding is listed and routed ahead of the session's own tools.
+        let inner: Arc<dyn capability::ToolExecution> = match &self.world.module_tools {
+            Some(external) if self.fork.is_none() => Arc::new(super::module_tools::ComposedTools {
+                external: external.clone(),
+                native: Arc::new(runtime),
+                // `createDefaultPermissionContext({ acceptEdits: sdk?.permissionMode
+                // === "acceptEdits", bypassAvailable: sessionOverride?.bypassAvailable
+                // ?? true })` (SessionAgentConfigBundle.ts:182-183): what the
+                // baseline's in-process tool context carries.
+                host_permission: Some(value([
+                    (
+                        "bypassAvailable",
+                        JsValue::Bool(self.world.bypass_override.unwrap_or(true)),
+                    ),
+                    (
+                        "acceptEdits",
+                        JsValue::Bool(
+                            config
+                                .get("permissionContext")
+                                .and_then(|context| context.get("acceptEdits"))
+                                == Some(&JsValue::Bool(true)),
+                        ),
+                    ),
+                ])),
+                late: self.late_host_tools(),
+            }),
+            _ => Arc::new(runtime),
+        };
         let execution = Arc::new(DurableTools {
-            inner: Arc::new(runtime),
+            inner,
             recorder: recorder.clone(),
             projection: self.binding.projection.clone(),
             session: identity.session_id.clone(),
@@ -1294,7 +1374,7 @@ impl SessionTools {
 /// `tool_call` entries before the batch runs and `tool_result` entries (which
 /// close the step) after it, unless the turn was aborted meanwhile.
 struct DurableTools {
-    inner: Arc<ToolRuntime>,
+    inner: Arc<dyn capability::ToolExecution>,
     recorder: Arc<Recorder>,
     projection: Arc<crate::runtime::session::factory::SessionProjection>,
     session: JsString,
@@ -1909,6 +1989,11 @@ pub(super) struct ExecutionWorld {
     /// `knowledge_query` over the external `modules.knowledge` binding
     /// (ProjectSessionRuntimeBundle.ts:316-326).
     knowledge: Option<Arc<builtin::knowledge_query::KnowledgeQueryTool>>,
+    /// The external `modules.tools` capability port
+    /// (`createRuntimeModulePorts(...).tools`, one per session).
+    module_tools: Option<Arc<super::module_tools::ExternalToolPort>>,
+    /// The session override's `bypassAvailable`, when it gives one.
+    bypass_override: Option<bool>,
     /// `sdkSessionConfig.skills`: the session's skills restricted to these
     /// names (`filterSessionSkills`), for `read_skill` and the prompt.
     skills_filter: Option<Vec<String>>,
@@ -1943,6 +2028,8 @@ impl ExecutionWorld {
             deferred: None,
             skills: None,
             knowledge: None,
+            module_tools: None,
+            bypass_override: None,
             skills_filter: None,
             managed_tools: None,
             extra_tools: Vec::new(),
@@ -2005,6 +2092,15 @@ impl SessionTools {
         self
     }
 
+    /// An external `modules.tools` binding: its catalog is composed ahead
+    /// of the session's tools, one module client per session.
+    pub(super) fn with_module_tools(mut self, binding: Option<&JsValue>) -> Self {
+        self.world.module_tools = binding
+            .and_then(super::module_tools::ExternalToolPort::from_binding)
+            .map(Arc::new);
+        self
+    }
+
     /// The SDK config's `skills` scope and `managedTools` policy.
     pub(super) fn with_sdk_tool_scope(
         mut self,
@@ -2039,7 +2135,9 @@ impl SessionTools {
                 state.0.bypass_available = bypass_available;
             }
         }
-        self
+        let mut this = self;
+        this.world.bypass_override = bypass_available;
+        this
     }
 }
 

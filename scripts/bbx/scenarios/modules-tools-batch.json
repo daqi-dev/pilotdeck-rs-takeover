@@ -1,0 +1,695 @@
+{
+ "name": "modules-tools-batch",
+ "about": "modules.tools 声明 execute_batch（hostToolPort.ts:173-212）：一轮里的外部工具调用合成一个 operation=execute_batch 的 module_call；并发安全的 bbx_lookup 与非并发安全的 bbx_echo 分成两批各发一次（runtimePorts.ts:46-77）。模块回结构化失败时该批每个调用各得一份失败结果；结果数不符或 toolCallId 不符时工具端口抛错，整轮失败。外部工具与宿主工具（glob）同轮调用时按名字分派（runtimePorts.ts:33-79）：宿主那一份照常走宿主执行。另有 kind / readOnly / concurrencySafe 声明的只读工具 bbx_lookup。",
+ "volatile": ["^\\$\\.provider\\.m-[a-z0-9-]+\\[\\d+\\]\\.(body\\.requestId|headers\\.content-length)$"],
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  tools:\n    enabled: true\n    implementationId: bbx.tools\n    contract: pilotdeck.tools/v1\n    transport: module-http-v2\n    endpoint: {MOCK}/tools\n    timeoutMs: 1500\n    methods:\n      - execute\n      - execute_batch\n    catalog:\n      - name: bbx_echo\n        description: Echo text through the external capability module.\n        inputSchema:\n          type: object\n          properties:\n            text:\n              type: string\n          required:\n            - text\n      - name: bbx_lookup\n        description: Look a key up in the external capability module.\n        kind: search\n        readOnly: true\n        concurrencySafe: true\n        inputSchema:\n          type: object\n          properties:\n            key:\n              type: string\n",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Tool run\"}"
+   }
+  },
+  {
+   "name": "manifest",
+   "unless": [
+    "\""
+   ],
+   "reply": {
+    "status": 200,
+    "body": {
+     "protocolVersion": "2.0",
+     "implementationId": "bbx.tools",
+     "contract": "pilotdeck.tools/v1",
+     "transport": "module-http-v2",
+     "methods": [
+      "execute",
+      "execute_batch",
+      "list_tools"
+     ]
+    }
+   }
+  },
+  {
+   "name": "m-b01-0",
+   "when": [
+    "\"method\":\"module_call\"",
+    "execute_batch",
+    "call_b01_0"
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "r",
+     "inReplyTo": "{saved.mid}",
+     "requestId": "{saved.rid}",
+     "ok": true,
+     "payload": {
+      "results": [
+       {
+        "type": "success",
+        "toolCallId": "call_b01_0",
+        "toolName": "bbx_echo",
+        "content": [
+         {
+          "type": "text",
+          "text": "bbx_echo b01"
+         }
+        ],
+        "startedAt": "2026-01-01T00:00:00.000Z",
+        "completedAt": "2026-01-01T00:00:00.000Z"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "m-b01-1",
+   "when": [
+    "\"method\":\"module_call\"",
+    "execute_batch",
+    "call_b01_1"
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "r",
+     "inReplyTo": "{saved.mid}",
+     "requestId": "{saved.rid}",
+     "ok": true,
+     "payload": {
+      "results": [
+       {
+        "type": "success",
+        "toolCallId": "call_b01_1",
+        "toolName": "bbx_lookup",
+        "content": [
+         {
+          "type": "text",
+          "text": "bbx_lookup b01"
+         }
+        ],
+        "startedAt": "2026-01-01T00:00:00.000Z",
+        "completedAt": "2026-01-01T00:00:00.000Z"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "m-b02-0",
+   "when": [
+    "\"method\":\"module_call\"",
+    "execute_batch",
+    "call_b02_0"
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "r",
+     "inReplyTo": "{saved.mid}",
+     "requestId": "{saved.rid}",
+     "ok": false,
+     "code": "BATCH_DOWN",
+     "error": {
+      "code": "BATCH_DOWN",
+      "message": "Batch refused.",
+      "retryability": "safe"
+     }
+    }
+   }
+  },
+  {
+   "name": "m-b02-1",
+   "when": [
+    "\"method\":\"module_call\"",
+    "execute_batch",
+    "call_b02_1"
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "r",
+     "inReplyTo": "{saved.mid}",
+     "requestId": "{saved.rid}",
+     "ok": true,
+     "payload": {
+      "results": [
+       {
+        "type": "success",
+        "toolCallId": "call_b02_1",
+        "toolName": "bbx_lookup",
+        "content": [
+         {
+          "type": "text",
+          "text": "bbx_lookup b02"
+         }
+        ],
+        "startedAt": "2026-01-01T00:00:00.000Z",
+        "completedAt": "2026-01-01T00:00:00.000Z"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "m-b03-0",
+   "when": [
+    "\"method\":\"module_call\"",
+    "execute_batch",
+    "call_b03_0"
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "r",
+     "inReplyTo": "{saved.mid}",
+     "requestId": "{saved.rid}",
+     "ok": true,
+     "payload": {
+      "results": []
+     }
+    }
+   }
+  },
+  {
+   "name": "m-b03-1",
+   "when": [
+    "\"method\":\"module_call\"",
+    "execute_batch",
+    "call_b03_1"
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "r",
+     "inReplyTo": "{saved.mid}",
+     "requestId": "{saved.rid}",
+     "ok": true,
+     "payload": {
+      "results": [
+       {
+        "type": "success",
+        "toolCallId": "call_b03_1",
+        "toolName": "bbx_lookup",
+        "content": [
+         {
+          "type": "text",
+          "text": "bbx_lookup b03"
+         }
+        ],
+        "startedAt": "2026-01-01T00:00:00.000Z",
+        "completedAt": "2026-01-01T00:00:00.000Z"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "m-b04-0",
+   "when": [
+    "\"method\":\"module_call\"",
+    "execute_batch",
+    "call_b04_0"
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "r",
+     "inReplyTo": "{saved.mid}",
+     "requestId": "{saved.rid}",
+     "ok": true,
+     "payload": {
+      "results": [
+       {
+        "type": "success",
+        "toolCallId": "call_b04_9",
+        "toolName": "bbx_echo",
+        "content": [
+         {
+          "type": "text",
+          "text": "bbx_echo b04"
+         }
+        ],
+        "startedAt": "2026-01-01T00:00:00.000Z",
+        "completedAt": "2026-01-01T00:00:00.000Z"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "m-b04-1",
+   "when": [
+    "\"method\":\"module_call\"",
+    "execute_batch",
+    "call_b04_1"
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "r",
+     "inReplyTo": "{saved.mid}",
+     "requestId": "{saved.rid}",
+     "ok": true,
+     "payload": {
+      "results": [
+       {
+        "type": "success",
+        "toolCallId": "call_b04_1",
+        "toolName": "bbx_lookup",
+        "content": [
+         {
+          "type": "text",
+          "text": "bbx_lookup b04"
+         }
+        ],
+        "startedAt": "2026-01-01T00:00:00.000Z",
+        "completedAt": "2026-01-01T00:00:00.000Z"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "m-b05-0",
+   "when": [
+    "\"method\":\"module_call\"",
+    "execute_batch",
+    "call_b05_0"
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "r",
+     "inReplyTo": "{saved.mid}",
+     "requestId": "{saved.rid}",
+     "ok": true,
+     "payload": {
+      "results": [
+       {
+        "type": "success",
+        "toolCallId": "call_b05_0",
+        "toolName": "bbx_echo",
+        "content": [
+         {
+          "type": "text",
+          "text": "bbx_echo b05"
+         }
+        ],
+        "startedAt": "2026-01-01T00:00:00.000Z",
+        "completedAt": "2026-01-01T00:00:00.000Z"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "b01-after",
+   "when": [
+    "b01:",
+    "\"tool_call_id\":\"call_b01_1\""
+   ],
+   "reply": {
+    "text": "Done b01."
+   }
+  },
+  {
+   "name": "b02-after",
+   "when": [
+    "b02:",
+    "\"tool_call_id\":\"call_b02_1\""
+   ],
+   "reply": {
+    "text": "Done b02."
+   }
+  },
+  {
+   "name": "b03-after",
+   "when": [
+    "b03:",
+    "\"tool_call_id\":\"call_b03_1\""
+   ],
+   "reply": {
+    "text": "Done b03."
+   }
+  },
+  {
+   "name": "b04-after",
+   "when": [
+    "b04:",
+    "\"tool_call_id\":\"call_b04_1\""
+   ],
+   "reply": {
+    "text": "Done b04."
+   }
+  },
+  {
+   "name": "b05-after",
+   "when": [
+    "b05:",
+    "\"tool_call_id\":\"call_b05_1\""
+   ],
+   "reply": {
+    "text": "Done b05."
+   }
+  },
+  {
+   "name": "b05",
+   "when": [
+    "b05:"
+   ],
+   "reply": {
+    "tools": [
+     {
+      "id": "call_b05_0",
+      "name": "bbx_echo",
+      "arguments": {
+       "text": "x"
+      }
+     },
+     {
+      "id": "call_b05_1",
+      "name": "glob",
+      "arguments": {
+       "pattern": "*.nothing"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "name": "b04",
+   "when": [
+    "b04:"
+   ],
+   "reply": {
+    "tools": [
+     {
+      "id": "call_b04_0",
+      "name": "bbx_echo",
+      "arguments": {
+       "text": "x"
+      }
+     },
+     {
+      "id": "call_b04_1",
+      "name": "bbx_lookup",
+      "arguments": {
+       "key": "k"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "name": "b03",
+   "when": [
+    "b03:"
+   ],
+   "reply": {
+    "tools": [
+     {
+      "id": "call_b03_0",
+      "name": "bbx_echo",
+      "arguments": {
+       "text": "x"
+      }
+     },
+     {
+      "id": "call_b03_1",
+      "name": "bbx_lookup",
+      "arguments": {
+       "key": "k"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "name": "b02",
+   "when": [
+    "b02:"
+   ],
+   "reply": {
+    "tools": [
+     {
+      "id": "call_b02_0",
+      "name": "bbx_echo",
+      "arguments": {
+       "text": "x"
+      }
+     },
+     {
+      "id": "call_b02_1",
+      "name": "bbx_lookup",
+      "arguments": {
+       "key": "k"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "name": "b01",
+   "when": [
+    "b01:"
+   ],
+   "reply": {
+    "tools": [
+     {
+      "id": "call_b01_0",
+      "name": "bbx_echo",
+      "arguments": {
+       "text": "x"
+      }
+     },
+     {
+      "id": "call_b01_1",
+      "name": "bbx_lookup",
+      "arguments": {
+       "key": "k"
+      }
+     }
+    ]
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-b01",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-b01",
+    "channelKey": "test",
+    "message": "b01: go"
+   },
+   "timeout": 20000,
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-b01",
+      "requestId": "{event.requestId}",
+      "decision": "deny"
+     }
+    }
+   ]
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-b02",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-b02",
+    "channelKey": "test",
+    "message": "b02: go"
+   },
+   "timeout": 20000,
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-b02",
+      "requestId": "{event.requestId}",
+      "decision": "deny"
+     }
+    }
+   ]
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-b03",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-b03",
+    "channelKey": "test",
+    "message": "b03: go"
+   },
+   "timeout": 20000,
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-b03",
+      "requestId": "{event.requestId}",
+      "decision": "deny"
+     }
+    }
+   ]
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-b04",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-b04",
+    "channelKey": "test",
+    "message": "b04: go"
+   },
+   "timeout": 20000,
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-b04",
+      "requestId": "{event.requestId}",
+      "decision": "deny"
+     }
+    }
+   ]
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-b05",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-b05",
+    "channelKey": "test",
+    "message": "b05: go"
+   },
+   "timeout": 20000,
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-b05",
+      "requestId": "{event.requestId}",
+      "decision": "deny"
+     }
+    }
+   ]
+  },
+  {
+   "sleep": 300
+  }
+ ]
+}

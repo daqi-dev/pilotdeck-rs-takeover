@@ -25,7 +25,7 @@ pub use binding::{
 };
 pub use error::SkillError;
 pub use external::{
-    ExternalSkillBinding, ExternalSkillsPort, HyperModuleTransport, ModuleEnvironment,
+    ExternalSkillBinding, ExternalSkillsPort, HyperModuleTransport, ModuleCall, ModuleEnvironment,
     ModuleHttpFuture, ModuleHttpRequest, ModuleHttpResponse, ModuleHttpTransport,
     ModuleTransportError, ProcessEnvironment,
 };
