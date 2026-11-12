@@ -2,7 +2,7 @@
 // 黑盒对拍 · 覆盖清单。从场景文件和最近一次 check.mjs 的结果算出：
 // 基线的每个 gateway method 有没有被「非普查」场景调用过，这些场景现在是不是 SAME。
 // 进度以它的输出为准，不手写。
-// 用法：node scripts/bbx/coverage.mjs [--out DIR] [--list]
+// 用法：node scripts/bbx/coverage.mjs [--out DIR] [--list] [--surface [维度]]
 //   --out DIR  check.mjs 的产物目录，默认 _build/bbx
 //   --list     逐个 method 列出覆盖它的场景
 // 一个 method 的状态：
@@ -56,6 +56,34 @@ const status = (list) => !list.length ? '未覆盖'
 const groups = { SAME: [], DIFF: [], 未跑: [], 未覆盖: [] };
 for (const m of methods) groups[status(by[m])].push(m);
 
+// ── 基线对外表面清单（surface.json）的覆盖 ──
+// --surface：按维度统计清单里每一项是否被场景碰到（probe 在场景文件原文里出现，或 observe 在基线采集产物里出现），
+// 以及碰到它的场景里有没有 SAME 的。--surface <维度> 逐项列出该维度没被 SAME 场景碰到的项。
+// 「被 SAME 场景碰到」只说明它出现在一个两侧一致的场景里，不说明它的每种取值都比过。
+if (args.includes('--surface')) {
+  const want = args[args.indexOf('--surface') + 1];
+  const surface = JSON.parse(fs.readFileSync(path.join(here, 'surface.json'), 'utf8'));
+  const matcher = (p) => { const m = /^\/(.+)\/([gimsuy]*)$/.exec(p); if (m) { const re = new RegExp(m[1], m[2].replace('g', '')); return (t) => re.test(t); } return (t) => t.includes(p); };
+  const texts = scenarios.map((name) => {
+    const art = path.join(outDir, `${name}.ts.json`);
+    return { name, verdict: verdictOf(name), scenario: fs.readFileSync(path.join(here, 'scenarios', `${name}.json`), 'utf8'), artifact: fs.existsSync(art) ? fs.readFileSync(art, 'utf8') : '' };
+  });
+  console.log(`基线对外表面：${Object.keys(surface.dimensions).length} 个维度（场景 ${same}/${scenarios.length} SAME）`);
+  console.log('维度\t项数\t被SAME场景碰到\t只被有差异的场景碰到\t没碰到');
+  for (const [dim, { items }] of Object.entries(surface.dimensions)) {
+    let ok = 0, diff = 0; const missing = [];
+    for (const item of items) {
+      const probes = (item.probe ?? []).map(matcher);
+      const observe = item.observe ? new RegExp(item.observe) : null;
+      const hits = texts.filter((t) => probes.some((f) => f(t.scenario)) || (observe && observe.test(t.artifact)));
+      if (hits.some((t) => t.verdict === 'SAME')) ok++;
+      else { if (hits.length) diff++; missing.push(`${hits.length ? 'DIFF  ' : '未覆盖'}\t${item.id}\t${item.where}\t${item.note}`); }
+    }
+    console.log(`${dim}\t${items.length}\t${ok}\t${diff}\t${items.length - ok - diff}`);
+    if (want === dim) for (const line of missing) console.log('  ' + line);
+  }
+  process.exit(0);
+}
 console.log(`场景：${same}/${scenarios.length} SAME（产物目录 ${path.relative(process.cwd(), outDir) || '.'}）`);
 console.log(`gateway method：${methods.length} 个；有场景且全部 SAME ${groups.SAME.length}，有场景但有差异 ${groups.DIFF.length}，有场景未跑 ${groups['未跑'].length}，未覆盖 ${groups['未覆盖'].length}`);
 for (const k of ['DIFF', '未跑', '未覆盖']) if (groups[k].length) console.log(`\n${k}（${groups[k].length}）：${groups[k].join(' ')}`);
