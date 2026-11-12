@@ -532,7 +532,7 @@ impl Requests {
         // A truthy non-string key fails in the bundle's `path.resolve`, which
         // only runs when the router has no live session
         // (InProcessGateway.ts:2068-2077); a live one records first.
-        let project_root = match super::super::projects::history_project_key(&params) {
+        let project_root = match super::super::projects::history_project_key(params) {
             Ok(key) => self.options.project_root_for(key),
             Err(error) => {
                 if let Some((_, recorder)) =
