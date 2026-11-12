@@ -72,12 +72,12 @@ function normalizer() {
   const ids = new Map();
   const snaps = new Map();
   const snap = (id) => { if (!snaps.has(id)) snaps.set(id, snaps.size + 1); return `<snap:${snaps.get(id)}>`; };
-  const text = (s) => s.replace(UUID, (u) => {
+  // turn-timing 行先删再给 UUID 编号：行里的 UUID 参与编号的话，一侧多打一行就会让后面所有序号错位。
+  const text = (s) => s.replace(/^\[gateway:turn-timing\] \{.*\}\n/gm, '').replace(UUID, (u) => {
     const k = u.toLowerCase();
     if (!ids.has(k)) ids.set(k, ids.size + 1);
     return `<uuid:${ids.get(k)}>`;
   }).replace(ISO, '<iso>').replace(/\(node:\d+\)/g, '(node:<pid>)')
-    .replace(/^\[gateway:turn-timing\] \{.*\}\n/gm, '')
     .replace(/(?<![\da-fA-F.])1[6-9]\d{11}(?![\da-fA-F.])/g, '<ms>')
     .replace(/pilotdeck_execute_code_[A-Za-z0-9]{6}/g, 'pilotdeck_execute_code_<tmp>')
     .replace(/\.pilotdeck-restore-[A-Za-z0-9]{6}/g, '.pilotdeck-restore-<tmp>')

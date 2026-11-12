@@ -73,6 +73,7 @@ const cases = [
   ['别处的 64 位哈希不抹', frame({ sha256: H1 }), frame({ sha256: H2 }), 'DIFF'],
   ['快照恢复目录后缀', frame({ s: '/w/.pilotdeck-restore-AbC123' }), frame({ s: '/w/.pilotdeck-restore-Zz9Yx8' }), 'SAME'],
   ['Node 运行时警告', frame({ stderr: '(node:1) ExperimentalWarning: SQLite is an experimental feature\n(Use `node --trace-warnings ...` to show where the warning was created)\nreal\n' }), frame({ stderr: 'real\n' }), 'SAME'],
+  ['一侧多一行 turn-timing（带 UUID）', frame({ stdout: `[gateway:turn-timing] {"runId":"${U3}","ms":301}\nrun ${U1} then ${U2}\n` }), frame({ stdout: `run ${U2} then ${U1}\n` }), 'SAME'],
   ['秒级时间戳 created', frame({ created: 1794495673, body: 'data: {"created":1794495673,"x":1}' }), frame({ created: 1794495675, body: 'data: {"created":1794495675,"x":1}' }), 'SAME'],
   ['created 之外的 10 位整数', frame({ startedAt: 1794495673 }), frame({ startedAt: 1794495675 }), 'DIFF'],
   ['created 一侧不是时间戳', frame({ created: 1794495673 }), frame({ created: 12 }), 'DIFF'],
