@@ -167,6 +167,62 @@ fn cache_tools(prepared: &JsValue) -> PortResult<Vec<JsValue>> {
         _ => Err(source_error("input.tools is not iterable", prepared)),
     }
 }
+/// Primary order of printable ASCII under ICU root collation (CLDR, alternate
+/// non-ignorable), the `String.prototype.localeCompare` default for the en-US
+/// locale; letters share a primary weight across case.
+const ROOT_ASCII_PRIMARY: &[u8] =
+    b" _-,;:!?.'\"()[]{}@*/\\&#%`^+<=>|~$0123456789abcdefghijklmnopqrstuvwxyz";
+
+/// `a.localeCompare(b)` for printable-ASCII strings: primary weights first
+/// (shorter prefix first), then case at the tertiary level (lower < upper).
+/// `None` when either side has another character.
+fn root_ascii_compare(a: &str, b: &str) -> Option<std::cmp::Ordering> {
+    let primary = |c: u8| {
+        ROOT_ASCII_PRIMARY
+            .iter()
+            .position(|p| *p == c.to_ascii_lowercase())
+    };
+    let weights = |s: &str| s.bytes().map(primary).collect::<Option<Vec<_>>>();
+    let (pa, pb) = (weights(a)?, weights(b)?);
+    Some(pa.cmp(&pb).then_with(|| {
+        let case = |s: &str| {
+            s.bytes()
+                .map(|c| c.is_ascii_uppercase())
+                .collect::<Vec<_>>()
+        };
+        case(a).cmp(&case(b))
+    }))
+}
+
+/// CachePlan.ts:44-47 tool order; `None` if a compared key is outside the
+/// verified printable-ASCII collation.
+fn sort_cache_tools(tools: Vec<JsValue>) -> Option<Vec<JsValue>> {
+    let mut keyed = vec![];
+    for tool in tools {
+        let name = tool
+            .get("name")
+            .and_then(JsValue::as_string)?
+            .to_utf8()
+            .ok()?;
+        keyed.push((name, tool));
+    }
+    let mut verified = true;
+    keyed.sort_by(|(na, ta), (nb, tb)| {
+        let order = root_ascii_compare(na, nb).and_then(|order| match order {
+            std::cmp::Ordering::Equal => {
+                let a = stable_serialize(ta).ok().flatten()?;
+                let b = stable_serialize(tb).ok().flatten()?;
+                root_ascii_compare(&a, &b)
+            }
+            order => Some(order),
+        });
+        order.unwrap_or_else(|| {
+            verified = false;
+            std::cmp::Ordering::Equal
+        })
+    });
+    verified.then(|| keyed.into_iter().map(|(_, tool)| tool).collect())
+}
 fn build_cache_plan(
     prepared: &JsValue,
     messages: &[JsValue],
@@ -181,13 +237,15 @@ fn build_cache_plan(
     if selected.len() > 3 {
         selected.drain(..selected.len() - 3);
     }
-    let tools = cache_tools(prepared)?;
+    let mut tools = cache_tools(prepared)?;
     if tools.len() > 1 {
-        return Err(gap(
-            "REQUEST_CACHE_LOCALE_COLLATION_PROFILE",
-            "Original tool ordering uses name.localeCompare followed by stableSerialize.localeCompare; multiple tools require an independently verified Node locale/ICU profile and a pure Rust collation implementation. No ASCII or UTF16 substitute was applied.",
-            prepared,
-        ));
+        tools = sort_cache_tools(tools).ok_or_else(|| {
+            gap(
+                "REQUEST_CACHE_LOCALE_COLLATION_PROFILE",
+                "Original tool ordering uses name.localeCompare followed by stableSerialize.localeCompare; only printable-ASCII keys have a verified collation here. No UTF16 substitute was applied.",
+                prepared,
+            )
+        })?;
     }
     let system = prepared.get("systemPrompt");
     let fingerprint_value = JsValue::Object(object([
@@ -1100,4 +1158,45 @@ pub fn assemble_with_options(
         diagnostics: vec![],
         has_system_prompt,
     })
+}
+
+#[cfg(test)]
+mod collation_tests {
+    use super::root_ascii_compare;
+
+    /// Expected order printed by Node 22 (en-US ICU) for
+    /// `xs.sort((a, b) => a.localeCompare(b))`.
+    #[test]
+    fn printable_ascii_matches_node_locale_compare() {
+        let expected = [
+            "a b",
+            "a.b",
+            "a1",
+            "ab",
+            "aB",
+            "Ab",
+            "agent",
+            "glob",
+            "Glob",
+            "mcp__x__y",
+            "mcp__X__y",
+            "read_file",
+            "Read_file",
+            "read_file2",
+            "read-file",
+            "readFile",
+            "task_create",
+            "todo_write",
+            "web_fetch",
+        ];
+        let mut shuffled = expected.to_vec();
+        shuffled.reverse();
+        shuffled.sort_by(|a, b| root_ascii_compare(a, b).unwrap());
+        assert_eq!(shuffled, expected);
+        assert_eq!(
+            root_ascii_compare("x", "x"),
+            Some(std::cmp::Ordering::Equal)
+        );
+        assert_eq!(root_ascii_compare("caf\u{e9}", "cafe"), None);
+    }
 }

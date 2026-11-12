@@ -1853,7 +1853,10 @@ fn cache_invalid_iterable_and_multi_tool_collation_have_distinct_failures_after_
         ("messages", arr([])),
         (
             "tools",
-            arr([obj([("name", "z".into())]), obj([("name", "a".into())])]),
+            arr([
+                obj([("name", "z".into())]),
+                obj([("name", "\u{e9}".into())]),
+            ]),
         ),
         ("cachePlan", b(true)),
     ]));
