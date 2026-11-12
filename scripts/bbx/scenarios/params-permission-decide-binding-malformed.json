@@ -119,5 +119,16 @@
     {
       "disconnect": true
     }
+  ],
+  "accepted": [
+    {
+      "id": "malformed-binding-never-matches",
+      "why": "基线比较绑定时读非对象（如字符串 \"junk\"）的 connectionId / generation 都是 undefined，原连接断开后与被清空的绑定相等，于是把这次权限决定当作绑定匹配送达——畸形绑定绕过了绑定校验；Rust 把畸形绑定当作永不匹配，不送达",
+      "paths": [
+        "^\\$\\.steps\\[5\\]\\.frames\\[0\\]\\.result\\.delivered$",
+        "^\\$\\.steps\\[6\\]\\.frames\\[0\\]\\.result\\.requests(\\.length|\\[0\\])$",
+        "^\\$\\.steps\\[7\\]\\.frames\\[0\\]\\.result\\.delivered$"
+      ]
+    }
   ]
 }

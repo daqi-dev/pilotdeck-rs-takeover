@@ -68,14 +68,13 @@ Rust 已有实现和场景的：`pilotdeck server` 启停；对话主干与全�
 |---|---|
 | `gap-tool-read-file-vision`、`tool-write-file-diagnostics` | 已定不移植，保持可见 |
 | `cfg-adapters-unmigrated` | 渠道启动表现；人已定照基线对齐（只打一行「not installed」然后照常启动），待做 |
-| `params-permission-decide-binding-malformed` | 基线的畸形绑定绕过绑定校验，Rust 不照做。`accepted`（`malformed-binding-never-matches`）已写进场景文件但**还没重跑确认、没提交** |
+| `params-permission-decide-binding-malformed` | 基线的畸形绑定绕过绑定校验，Rust 不照做。已登记 `accepted`（`malformed-binding-never-matches`），登记后重跑一致，所以现在算 SAME |
 | `params-reload-extensions-diffs`、`params-seed-read-state-cwd-type`、`params-user-dialog-notify-project` | WS 参数分支留下的真实差异，待修 |
 | `gap-sdk-submit-failed-status`、`hook-post-tool-use` | 偶发：单独重跑 5 次全部一致。四个槽位并行时才出现，对拍工具并行下还有不稳的地方，要查 |
 
-**换对话时正在跑、要去取结果的两件事：**
+本机全量四条命令（2026-11-12 下午，合并三个分支之后，没有子代理在跑）：fmt、clippy、文档测试通过；`nextest` 7751 个里 7748 个通过，失败的只有本机已知的 3 个（590 秒）。
 
-1. 本机全量四条命令：结果写在 `_tmp/20261112-session/four-commands.txt`（fmt 与 clippy 已通过；`nextest` 与文档测试跑完后追加在文件末尾）。它是上一个对话的后台进程，上一个对话关掉它就会被杀；文件里没有 `Summary` 行就重跑。
-2. cb8 上的首次构建与试跑：`ssh cb8`，日志 `~/ws/pdrs-takeover/logs/first-run.log`，脚本 `~/ws/pdrs-takeover/run-first.sh`（构建 → 比较器自测 → `turn-text` 自比 → `turn-text` 基线 vs Rust）。它跑的是较早的提交 `e8702d36`，目的是看对拍工具在 Linux 上哪里要适配（路径前缀 `/private/tmp`、Seatbelt 相关场景的预期等）。
+cb8 上的首次试跑（提交 `e8702d36`，日志 `~/ws/pdrs-takeover/logs/first-run.log`）：构建 58 秒；比较器自测 61/61；对拍一启动就 `RUN FAILED`，因为 `scripts/bbx/run.mjs:30` 把工作目录写死成 `/private/tmp/pdrs-bbx/root`。下一步是把对拍工具适配到 Linux，然后全量对拍和四条命令挪到 cb8 跑。
 
 cb8 的情况（2026-11-12）：Ubuntu 24.04、aarch64、20 核、119 GB；Rust 1.99.1 在 `~/.cargo/bin`，Node v22.22.1 在 `~/.local/bin`；没有 `gitleaks`、`rg`、`nsjail`。我们的目录是 `~/ws/pdrs-takeover/`（仓库克隆在其中的 `pilotdeck-rs`，基线从 `~/ws/pdrs-runner/resources/PilotDeck` 复制，已核对是 `cc7c4e6`）。机器上有别的流程在用（`~/ws/pilotdeck-rs-cc2c/` 的 backend-validation 等），只在我们自己的目录里工作，不碰别人的目录和进程。人同意同时使用、同意在磁盘上操作。占 90 GB 的 vLLM 容器 `vllm-jev`（autotrust 的模型）经人确认后已 `docker stop`，没有删，`docker start vllm-jev` 可恢复。
 
