@@ -142,7 +142,7 @@
     }
   ],
   "volatile": [
-    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages|resultBytes|content-length)$"
+    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.system|breakdown\\.total|breakdown\\.messages|resultBytes|content-length)$"
   ],
   "volatileWhy": "随机的运行 id 进了提示词（快照路径、计划 id），token 估算随之变；基线自比已证明"
 }
