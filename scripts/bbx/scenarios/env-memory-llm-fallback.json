@@ -1,6 +1,6 @@
 {
   "name": "env-memory-llm-fallback",
-  "about": "记忆模型请求里由环境变量兜底的部分（context/memory/createEdgeClawMemoryProviderFromConfig.ts:78-103 resolveMemoryLlm 只从配置传 provider / model / url / apiKey / apiType；edgeclaw-memory-core/src/service.ts:262-300 buildLlmConfig 在配置没给时依次取 EDGECLAW_MEMORY_BASE_URL > OPENAI_BASE_URL、EDGECLAW_MEMORY_API_KEY > OPENAI_API_KEY、EDGECLAW_MEMORY_API_TYPE > 缺省 openai-responses；core/skills/llm-extraction.ts:2231-2245 resolveApiKey 在配置的 apiKey 形如环境变量名且该变量非空时改用变量值）。memory.model 指向配置里没有的 provider ghost（只是 warning，pilot/config/parseMemoryConfig.ts:164-172），url 与 apiKey 因此都落到环境变量。四次 serve：EDGECLAW_* 全给（OPENAI_* 同时给、应被忽略）走 chat completions；只给 OPENAI_BASE_URL / OPENAI_API_KEY 走缺省的 Responses；都不给时没有 baseUrl；第四次换配置（PILOTDECK_CONFIG_PATH）让 memory.model 用已配置的 provider，其 apiKey 写成变量名 BBX_MEMORY_KEY。比发给 provider 的请求（路径、头、体）与 serve 输出。 已知不稳（--self 证明，与 cfg-memory-capture 同一原因）：记忆库 l0_sessions 的 l0_index_id（<session>_<时间散列>_raw）与 pipeline_state 里 recentCaseTraces 的整段 JSON（caseId / traceId 随机），声明为 volatile。",
+  "about": "记忆模型请求里由环境变量兜底的部分（context/memory/createEdgeClawMemoryProviderFromConfig.ts:78-103 resolveMemoryLlm 只从配置传 provider / model / url / apiKey / apiType；edgeclaw-memory-core/src/service.ts:262-300 buildLlmConfig 在配置没给时依次取 EDGECLAW_MEMORY_BASE_URL > OPENAI_BASE_URL、EDGECLAW_MEMORY_API_KEY > OPENAI_API_KEY、EDGECLAW_MEMORY_API_TYPE > 缺省 openai-responses；core/skills/llm-extraction.ts:2231-2245 resolveApiKey 在配置的 apiKey 形如环境变量名且该变量非空时改用变量值）。memory.model 指向配置里没有的 provider ghost（只是 warning，pilot/config/parseMemoryConfig.ts:164-172），url 与 apiKey 因此都落到环境变量。四次 serve：EDGECLAW_* 全给（OPENAI_* 同时给、应被忽略）走 chat completions；只给 OPENAI_BASE_URL / OPENAI_API_KEY 走缺省的 Responses；都不给时没有 baseUrl；第四次换配置（PILOTDECK_CONFIG_PATH）让 memory.model 用已配置的 provider，其 apiKey 写成变量名 BBX_MEMORY_KEY。比发给 provider 的请求（路径、头、体）与 serve 输出。 已知不稳（--self 证明，与 cfg-memory-capture 同一原因）：记忆库 l0_sessions 的 l0_index_id（<session>_<时间散列>_raw）与 pipeline_state 里 recentCaseTraces 的整段 JSON（caseId / traceId 随机），声明为 volatile。 EDGECLAW_MEMORY_MODEL / EDGECLAW_MEMORY_PROVIDER / OPENAI_MODEL 只在配置没给出 provider/model 时才用（service.ts:263-274），而 PilotDeck 的 agent.model 必须是 provider/model（pilot/config/loadPilotConfig.ts:395），resolveMemoryLlm 因此总会给出 provider 与 model：第一次 serve 同时设了这三个变量，证明它们不改变请求。",
   "volatile": [
     "control\\.sqlite\\.sqlite\\.tables\\.l0_sessions\\[\\d+\\]\\.l0_index_id$",
     "control\\.sqlite\\.sqlite\\.tables\\.pipeline_state\\[0\\]\\.state_json$"
@@ -70,7 +70,10 @@
         "EDGECLAW_MEMORY_API_KEY": "edge-key",
         "EDGECLAW_MEMORY_API_TYPE": "openai-completions",
         "OPENAI_BASE_URL": "http://127.0.0.1:9/ignored",
-        "OPENAI_API_KEY": "openai-key-ignored"
+        "OPENAI_API_KEY": "openai-key-ignored",
+        "EDGECLAW_MEMORY_MODEL": "other/env-model",
+        "EDGECLAW_MEMORY_PROVIDER": "env-provider",
+        "OPENAI_MODEL": "openai-env-model"
       },
       "timeout": 40000,
       "then": [
