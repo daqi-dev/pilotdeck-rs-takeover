@@ -161,11 +161,16 @@ telemetry:
 if (scenario.config !== null) {
   fs.writeFileSync(path.join(pilotHome, 'pilotdeck.yaml'), subst(scenario.config ?? DEFAULT_CONFIG));
 }
-for (const [rel, content] of Object.entries(scenario.files ?? {})) {
+// 种子文件的 mtime 按书写顺序每个相隔 1 秒、全部落在过去：几个文件在同一毫秒内写完时，
+// 基线按 mtime 排序的结果（例如 list_sessions）取决于写入恰好跨没跨毫秒，自比都不稳。
+const seedFiles = Object.entries(scenario.files ?? {});
+const seedBase = Math.floor(Date.now() / 1000) - seedFiles.length;
+for (const [index, [rel, content]] of seedFiles.entries()) {
   const target = path.join(ROOT, rel);
   if (!target.startsWith(ROOT + '/')) throw new Error(`file escapes root: ${rel}`);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, typeof content === 'string' ? subst(content) : JSON.stringify(substDeep(content), null, 2) + '\n');
+  fs.utimesSync(target, seedBase + index, seedBase + index);
 }
 
 // ── 假 provider（OpenAI chat completions 形状）──
