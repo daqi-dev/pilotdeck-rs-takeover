@@ -211,6 +211,28 @@ process.stdin.on('end', () => {
   };
 }
 
+// 手动压缩：/compact 带参数只回用法；会话还没在内存里时回 session_busy；
+// 两轮长文本之后 /compact 强制摘要（不看阈值），之后一轮的请求带摘要；读会话看维护轮次的记录。
+{
+  const steps = [
+    turn('s-man', '/compact now please'),
+    turn('s-man', '/compact'),
+  ];
+  for (let i = 1; i <= 3; i += 1) {
+    steps.push(turn('s-man', `note ${i}\n${filler(`n${i}`, 60)}`), { sleep: 300 });
+  }
+  steps.push(turn('s-man', '/compact'), { sleep: 300 });
+  steps.push(turn('s-man', 'note 4: after manual compaction'), { sleep: 300 });
+  steps.push(turn('s-man', '/compact'), { sleep: 300 });
+  steps.push({ ws: 'read_session_messages', params: { sessionKey: 's-man' } });
+  scenarios['compact-manual'] = {
+    about: '手动压缩 /compact：带参数回用法文本；会话尚未载入时回 session_busy；三轮之后 /compact 不看阈值强制摘要（维护轮次：turn_started、compaction_* 记录、替换边界、turn_result），回 manual_compaction 状态与「Compacted N history items」；之后一轮的请求带摘要；再 /compact 一次（滚动摘要合并上一份摘要）。本文件由同目录的 compaction.gen.mjs 生成，不手改。',
+    config: config({ context: 65536, output: 8192 }),
+    provider: [TITLE, SUMMARY, MAIN],
+    steps,
+  };
+}
+
 const outDir = here;
 for (const [name, body] of Object.entries(scenarios)) {
   fs.writeFileSync(path.join(outDir, `${name}.json`), JSON.stringify({ name, ...body }, null, 2) + '\n');
