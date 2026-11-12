@@ -102,6 +102,18 @@ impl ProjectionCache {
             diagnostic: Mutex::new(None),
         }
     }
+    /// What disposing a storage whose restore failed leaves behind: the log
+    /// was never installed and the projection never hydrated, so both
+    /// watermarks are -1 and `SessionProjectionCheckpointBinding.flush`
+    /// saves the empty checkpoint (SessionProjectionCheckpointBinding.ts:56-72).
+    /// A failed save is swallowed like the binding's `onError`.
+    pub(super) fn save_unrestored(&self) {
+        let _ = self.store.save(&envelope(
+            &self.key.session_id,
+            &[],
+            &DurableSessionState::default(),
+        ));
+    }
     pub(super) fn restore(&self, mut entries: Vec<JsValue>) -> RuntimeResult {
         // Validate envelope and turn/step invariants without rewinding the
         // published recorder (whose revision may have advanced after read).

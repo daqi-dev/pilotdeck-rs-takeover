@@ -1070,8 +1070,25 @@ async fn start_assembly(
                                     "Native persistence has the wrong type.".into(),
                                 )
                             })?;
-                        persistence
-                            .create_session(context.session_key.clone(), Some(open_path.clone()))
+                        let opened = persistence
+                            .create_session(context.session_key.clone(), Some(open_path.clone()));
+                        // A log that fails restore validation: the baseline
+                        // disposes that storage, and its dispose flushes an
+                        // empty projection checkpoint next to the transcript
+                        // (robust-restart-truncated-session).
+                        if let Err(
+                            crate::storage::recorder::RecorderError::Domain { .. }
+                            | crate::storage::recorder::RecorderError::Envelope { .. },
+                        ) = &opened
+                        {
+                            let mut checkpoint = open_path.clone().into_os_string();
+                            checkpoint.push(".projections.json");
+                            let _ = crate::runtime::session::factory::save_empty_projection_checkpoint(
+                                std::path::Path::new(&checkpoint),
+                                &context.session_key,
+                            );
+                        }
+                        opened
                     }),
                 }))
             })
