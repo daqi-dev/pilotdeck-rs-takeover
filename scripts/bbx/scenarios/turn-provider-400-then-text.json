@@ -1,0 +1,16 @@
+{
+  "name": "turn-provider-400-then-text",
+  "about": "同一会话：第一轮假 provider 回 400（轮次失败），第二轮正常文本。比较失败那轮之后的会话历史（基线留一条 content 为空的 assistant 消息）、下一轮 compaction_started.messageCount、发给 provider 的请求、会话读取、导出与落盘。",
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"x\"}" } },
+    { "name": "after", "when": ["case-after:"], "reply": { "text": "after" } },
+    { "name": "e400", "when": ["case-400:"], "reply": { "status": 400, "body": { "error": { "message": "bad request from mock", "type": "invalid_request_error" } } } },
+    { "name": "main", "reply": { "text": "hi" } }
+  ],
+  "steps": [
+    { "ws": "submit_turn", "params": { "sessionKey": "s", "channelKey": "test", "message": "case-400: go" }, "timeout": 30000 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s", "channelKey": "test", "message": "case-after: go" }, "timeout": 30000 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s" } }
+  ]
+}

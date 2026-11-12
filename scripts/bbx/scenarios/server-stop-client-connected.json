@@ -1,0 +1,19 @@
+{
+  "name": "server-stop-client-connected",
+  "about": "`pilotdeck server` 收到 SIGTERM 时还有 WS 客户端连着：基线的 server.close() 一直等到所有连接结束，客户端不断开就不退出（采集器 15 秒后 SIGKILL）。比停机前后的输出与退出方式。采集器目前不能在发信号之后再执行步骤，所以「等待期间新连接 / 新请求」「客户端随后断开」「第二次信号」不在这里覆盖。",
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "steps": [
+    {
+      "serve": ["server"],
+      "then": [
+        { "connect": true },
+        { "ws": "list_sessions" }
+      ],
+      "expectTimeout": true
+    }
+  ]
+}

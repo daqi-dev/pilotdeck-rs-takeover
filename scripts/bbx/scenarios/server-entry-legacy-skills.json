@@ -1,0 +1,36 @@
+{
+  "name": "server-entry-legacy-skills",
+  "about": "启动时的旧版内置技能副本迁移（src/extension/skills/migrateLegacyBundledSkills.ts，createLocalGateway.ts:671-683）：内置技能目录为空时打警告、不写完成标记、不动用户副本；正常时把与当前内置技能逐字节相同的副本移到 skill-backups/legacy-bundled-v1/、改过的和未知的不动、写完成标记、stdout 打一行；有完成标记后再启动什么都不做。",
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "files": {
+    "home/.pilotdeck/skills/apple-notes/SKILL.md": "---\nname: apple-notes\ndescription: \"Create, view, edit, delete, search, move, or export Apple Notes via the memo CLI on macOS.\"\nhomepage: https://github.com/antoniorodr/memo\n---\n\n# Apple Notes CLI\n\nUse `memo notes` to manage Apple Notes directly from the terminal. Create, view, edit, delete, search, move notes between folders, and export to HTML/Markdown.\n\nSetup\n\n- Install (Homebrew): `brew tap antoniorodr/memo && brew install antoniorodr/memo/memo`\n- Manual (pip): `pip install .` (after cloning the repo)\n- macOS-only; if prompted, grant Automation access to Notes.app.\n\nView Notes\n\n- List all notes: `memo notes`\n- Filter by folder: `memo notes -f \"Folder Name\"`\n- Search notes (fuzzy): `memo notes -s \"query\"`\n\nCreate Notes\n\n- Add a new note: `memo notes -a`\n  - Opens an interactive editor to compose the note.\n- Quick add with title: `memo notes -a \"Note Title\"`\n\nEdit Notes\n\n- Edit existing note: `memo notes -e`\n  - Interactive selection of note to edit.\n\nDelete Notes\n\n- Delete a note: `memo notes -d`\n  - Interactive selection of note to delete.\n\nMove Notes\n\n- Move note to folder: `memo notes -m`\n  - Interactive selection of note and destination folder.\n\nExport Notes\n\n- Export to HTML/Markdown: `memo notes -ex`\n  - Exports selected note; uses Mistune for markdown processing.\n\nLimitations\n\n- Cannot edit notes containing images or attachments.\n- Interactive prompts may require terminal access.\n\nNotes\n\n- macOS-only.\n- Requires Apple Notes.app to be accessible.\n- For automation, grant permissions in System Settings > Privacy & Security > Automation.\n\n## PilotDeck Migration Note\n\n- Source: /var/folders/27/xyyzc_n172l3jjmnxgqmhhzh0000gn/T/tmp.AyWDWGKoS4/openclaw/skills/apple-notes\n- Review status: candidate for PilotDeck native skills pack.\n- Platform-specific OpenClaw/Hermes metadata was removed or should be ignored during review.\n",
+    "home/.pilotdeck/skills/apple-reminders/SKILL.md": "---\nname: apple-reminders\ndescription: edited by the user\n---\nmine\n",
+    "home/.pilotdeck/skills/my-own/SKILL.md": "---\nname: my-own\ndescription: user skill\n---\nbody\n",
+    "home/.pilotdeck/skills/not-a-skill/notes.txt": "no SKILL.md here\n",
+    "empty-bundled/.keep": ""
+  },
+  "steps": [
+    {
+      "serve": [
+        "server"
+      ],
+      "env": {
+        "PILOTDECK_BUNDLED_SKILLS_DIR": "{ROOT}/empty-bundled"
+      }
+    },
+    {
+      "serve": [
+        "server"
+      ]
+    },
+    {
+      "serve": [
+        "server"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "name": "server-entry-proxy",
+  "about": "全局代理的启动输出（src/cli/proxy.ts）：环境变量的优先级（PILOTDECK_PROXY > https_proxy > HTTPS_PROXY > http_proxy > HTTP_PROXY）、no_proxy / NO_PROXY 与固定追加的 127.0.0.1,localhost、配置里的 proxy.url 只在没有环境变量代理时生效、空字符串当作未设置、不合法的 URL；以及不起服务的 CLI 子命令（help）同样在入口安装代理。请求是否真的经过代理：bbx 假 provider 在回环地址上，基线对回环固定直连，这里看不到。",
+  "server": false,
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic: {}\ntelemetry:\n  enabled: false\nproxy:\n  url: http://cfg-proxy.invalid:8080\n  noProxy: cfg-skip.invalid\n",
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "steps": [
+    { "serve": ["server"] },
+    { "serve": ["server"], "env": { "HTTPS_PROXY": "http://env-proxy.invalid:3128", "NO_PROXY": "skip.invalid, .corp.invalid" } },
+    { "serve": ["server"], "env": { "PILOTDECK_PROXY": "http://pd-proxy.invalid:1", "https_proxy": "http://lower.invalid:2", "HTTP_PROXY": "http://upper.invalid:3", "no_proxy": "a.invalid", "NO_PROXY": "b.invalid" } },
+    { "serve": ["server"], "env": { "PILOTDECK_PROXY": "", "http_proxy": "http://http-lower.invalid:4" } },
+    { "serve": ["server"], "env": { "HTTPS_PROXY": "not a url" } },
+    { "cli": ["help"], "env": { "HTTP_PROXY": "http://%zz@bad-user.invalid:6" } },
+    { "cli": ["help"], "env": { "HTTP_PROXY": "ftp://ftp-proxy.invalid:7" } },
+    { "cli": ["help"], "env": { "HTTP_PROXY": "http://path-proxy.invalid:8/sub?q=1" } },
+    { "cli": ["help"], "env": { "HTTP_PROXY": "http://cli-proxy.invalid:5" } }
+  ]
+}

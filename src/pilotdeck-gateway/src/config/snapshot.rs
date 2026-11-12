@@ -1481,7 +1481,7 @@ fn qq(raw: Option<&JsValue>) -> Option<JsValue> {
     Some(JsValue::Object(o))
 }
 
-fn proxy(raw: &JsValue) -> Option<JsValue> {
+pub(crate) fn proxy(raw: &JsValue) -> Option<JsValue> {
     let legacy = field(field(field(raw, "webui"), "runtime"), "httpsProxy");
     let mut value = field(raw, "proxy").clone();
     if value.is_undefined()

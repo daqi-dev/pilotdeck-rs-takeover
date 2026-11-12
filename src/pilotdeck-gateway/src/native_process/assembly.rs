@@ -1082,14 +1082,12 @@ async fn start_assembly(
                 &context.session_key,
             )
         })),
-        // The baseline prints no transcript-restore diagnostic. On the CLI
-        // channel stderr is the user's terminal (and compared output), so
-        // nothing is written there.
-        diagnostic: if in_process_cli {
-            Arc::new(|_| ())
-        } else {
-            Arc::new(|d| eprintln!("native session: {d:?}"))
-        },
+        // TS returns the transcript read diagnostics from `resumeAgentSession`
+        // (resumeAgentSession.ts:118) and `ProjectSessionFactory.createSession`
+        // drops them with the rest of the result: nothing reaches the server's
+        // output, not even the `transcript_missing` warning every new session
+        // has.
+        diagnostic: Arc::new(|_| {}),
     }));
     let built = (|| -> Result<_, ProxyError> {
         // TS parity: an unconfigured runRegistry is simply absent, so the file

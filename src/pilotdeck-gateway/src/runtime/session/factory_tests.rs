@@ -7805,10 +7805,11 @@ fn try_writer_lease_separates_contention_from_storage_failure() {
     drop(held);
     let broken = dir.join("broken.jsonl");
     std::fs::write(&broken, b"").expect("#1873 the second transcript file opens");
-    let mut lock_path = broken.as_os_str().to_os_string();
-    lock_path.push(".lock");
-    std::fs::create_dir(std::path::PathBuf::from(&lock_path))
-        .expect("#1873 the broken ledger lock is in place");
+    let lock_path = crate::storage::ledger_lock_path(
+        &crate::storage::canonical_transcript_path(&broken).expect("#1873 canonical path"),
+    )
+    .expect("#1873 the ledger lock directory");
+    std::fs::create_dir(&lock_path).expect("#1873 the broken ledger lock is in place");
     let error = match try_writer_lease(&broken) {
         Err(error) => error,
         Ok(None) => panic!("#1873 a lock file that cannot open must not read as busy"),
@@ -7823,6 +7824,7 @@ fn try_writer_lease_separates_contention_from_storage_failure() {
         "#1873 the error names the ledger lock, got {}",
         error.message
     );
+    std::fs::remove_dir(&lock_path).expect("#1873 the broken ledger lock cleans up");
     std::fs::remove_dir_all(&dir).expect("#1873 the scratch directory cleans up");
 }
 

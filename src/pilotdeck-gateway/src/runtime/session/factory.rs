@@ -537,7 +537,7 @@ impl TranscriptStore for ProjectedStore {
         }
         drop(entries);
         if is(field(entry, "type"), "turn_result") {
-            self.cache.schedule();
+            self.cache.schedule(field(entry, "sequence").as_number());
         }
         Ok(())
     }

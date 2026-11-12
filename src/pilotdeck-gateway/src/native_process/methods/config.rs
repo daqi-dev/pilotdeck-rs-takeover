@@ -2139,10 +2139,15 @@ mod tests {
             &r.options.project,
             &"bl/session".into(),
         );
-        let mut lock = std::ffi::OsString::from(transcript_path.as_os_str());
-        lock.push(".lock");
-        std::fs::create_dir(std::path::PathBuf::from(&lock))
-            .expect("#1873 the broken ledger lock is in place");
+        // The fence inode lives outside the session directory
+        // (`storage::ledger_lock_path`); a directory there cannot be opened.
+        let lock = crate::storage::ledger_lock_path(
+            &crate::storage::canonical_transcript_path(&transcript_path)
+                .expect("#1873 canonical path"),
+        )
+        .expect("#1873 the ledger lock directory");
+        std::fs::create_dir(&lock).expect("#1873 the broken ledger lock is in place");
+        let _remove_lock = RemoveDir(lock.clone());
         let error = r
             .session_model_request_keyed(
                 "session_model_set".into(),
@@ -3452,5 +3457,13 @@ mod tests {
             .restore()
             .expect("#1457 the concurrently written transcript still loads");
         teardown(&r).await;
+    }
+
+    /// Removes a broken ledger lock planted outside the scratch directory.
+    struct RemoveDir(std::path::PathBuf);
+    impl Drop for RemoveDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir(&self.0);
+        }
     }
 }

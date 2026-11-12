@@ -35,6 +35,9 @@ pub struct Config {
     pub(crate) router_enabled: bool,
     pub diagnostics: Vec<JsValue>,
     pub(crate) snapshot: Option<JsValue>,
+    /// `config.proxy.url` as `parseProxyConfig` reads it (the snapshot's
+    /// `proxy` section), which `pilotdeck server` installs at startup.
+    pub proxy_url: Option<String>,
 }
 #[derive(Debug)]
 pub struct Error {
@@ -373,12 +376,16 @@ fn load_project_with_files_inner<F: Files>(
             metadata, env, &raw, &providers, &selection, sources, version, &loaded_at, &d.0,
         )
     });
+    let proxy_url = snapshot::proxy(&raw)
+        .and_then(|proxy| proxy.get("url").and_then(JsValue::as_string).cloned())
+        .map(|url| String::from_utf16_lossy(url.units()));
     Ok(Config {
         providers,
         selection,
         router_enabled,
         diagnostics: d.0,
         snapshot,
+        proxy_url,
     })
 }
 #[allow(clippy::too_many_arguments)]

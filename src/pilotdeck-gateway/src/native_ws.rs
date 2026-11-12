@@ -217,7 +217,7 @@ impl NativeWsServer {
         stop: impl Future<Output = ()> + Send + 'static,
         drain_budget: Duration,
     ) -> impl Future<Output = Result<(), ProxyError>> {
-        let phased = self.phased_run(stop, drain_budget, false);
+        let phased = self.phased_run(stop, drain_budget, false, Some(drain_budget));
         async move {
             phased.drained().await;
             phased.finish().await
@@ -242,7 +242,21 @@ impl NativeWsServer {
         stop: impl Future<Output = ()> + Send + 'static,
         drain_budget: Duration,
     ) -> PhasedRun {
-        self.phased_run(stop, drain_budget, true)
+        self.phased_run(stop, drain_budget, true, Some(drain_budget))
+    }
+
+    /// [`Self::run_phased`] for `pilotdeck server`: after `stop` the listener
+    /// closes and the run waits for the connected clients to go away with no
+    /// deadline, like the baseline's `server.close()` (GatewayServer.ts:184),
+    /// which resolves only once every open connection — a WebSocket client
+    /// included — has ended. Existing connections keep being served while it
+    /// waits. `drain_budget` still bounds the host shutdown afterwards.
+    pub fn run_phased_until_clients_leave(
+        self,
+        stop: impl Future<Output = ()> + Send + 'static,
+        drain_budget: Duration,
+    ) -> PhasedRun {
+        self.phased_run(stop, drain_budget, true, None)
     }
 
     /// The shared construction behind [`Self::run`] and [`Self::run_phased`]:
@@ -253,6 +267,7 @@ impl NativeWsServer {
         stop: impl Future<Output = ()> + Send + 'static,
         drain_budget: Duration,
         switch_close: bool,
+        client_drain: Option<Duration>,
     ) -> PhasedRun {
         let cleanup = StopHost(
             self.host.clone(),
@@ -283,6 +298,7 @@ impl NativeWsServer {
             close_notice_rx,
             switch_close,
             drain_budget,
+            client_drain,
             accept_error: None,
             drained: None,
             finished: None,
@@ -339,6 +355,10 @@ struct PhasedInner {
     /// difference is switch-scoped).
     switch_close: bool,
     drain_budget: Duration,
+    /// How long the drain waits for connected clients after the listener
+    /// closed: `None` waits until every one has gone
+    /// ([`NativeWsServer::run_phased_until_clients_leave`]).
+    client_drain: Option<Duration>,
     accept_error: Option<std::io::Error>,
     /// `None` until the accept loop and drain ran; `Some(false)` is the
     /// expired-budget shape `finish()` must report.
@@ -446,12 +466,17 @@ impl PhasedInner {
             self.finished = Some(Ok(()));
             return;
         }
+        let Some(client_drain) = self.client_drain else {
+            while self.connections.join_next().await.is_some() {}
+            self.drained = Some(true);
+            return;
+        };
         let budget = if crate::mutants::on("native-ws-drain-no-deadline")
             || crate::mutants::on("native-ws-handshake-no-deadline")
         {
             Duration::from_secs(3600)
         } else {
-            self.drain_budget
+            client_drain
         };
         let drained = tokio::time::timeout(budget, async {
             while self.connections.join_next().await.is_some() {}

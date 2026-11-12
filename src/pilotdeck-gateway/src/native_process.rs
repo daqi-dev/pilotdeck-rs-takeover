@@ -108,6 +108,7 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
         host,
         server,
         switch_handles,
+        false,
         |address| eprintln!("native listening {address}"),
         || eprintln!("native stopping"),
     )
@@ -124,6 +125,7 @@ async fn serve_until_signal(
     host: crate::runtime::turn::gateway::TurnGateway,
     server: crate::native_ws::NativeWsServer,
     switch_handles: switch_wiring::AssemblySwitchHandles,
+    until_clients_leave: bool,
     listening: impl FnOnce(SocketAddr),
     stopping: impl FnOnce(),
 ) -> Result<(), ProxyError> {
@@ -162,17 +164,23 @@ async fn serve_until_signal(
     // steady state is served exactly like the awaited `run()` future was —
     // the signal only triggers the switch (`native_ws.rs::run_phased`).
     let (trigger, trigger_rx) = tokio::sync::watch::channel(false);
-    let phased = Arc::new(server.run_phased(switch_wiring::trigger_stop(trigger_rx), drain_budget));
+    // `pilotdeck server` stops like the baseline's `server.close()`: no
+    // deadline for connected clients (see `run_phased_until_clients_leave`).
+    let stop = switch_wiring::trigger_stop(trigger_rx);
+    let phased = Arc::new(if until_clients_leave {
+        server.run_phased_until_clients_leave(stop, drain_budget)
+    } else {
+        server.run_phased(stop, drain_budget)
+    });
     let faces = switch_wiring::ProductionFaces::new(
         switch_handles.cron,
         switch_wiring::AdmissionGate::new(switch_handles.channels, trigger),
         phased,
     )
     .with_release_interactions(switch_handles.release_interactions);
-    let machine = crate::switch::SwitchMachine::new(
-        faces.clone(),
-        crate::switch::SwitchTimeouts::production(drain_budget),
-    );
+    let mut timeouts = crate::switch::SwitchTimeouts::production(drain_budget);
+    timeouts.entries_unbounded = until_clients_leave;
+    let machine = crate::switch::SwitchMachine::new(faces.clone(), timeouts);
     listening(address);
     #[cfg(unix)]
     tokio::select! { _ = terminate.recv() => {}, _ = interrupt.recv() => {} }

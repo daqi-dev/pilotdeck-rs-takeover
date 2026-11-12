@@ -241,6 +241,9 @@ pub trait SwitchFaces: Send + Sync {
 pub struct SwitchTimeouts {
     pub automation: BoundedTimeout,
     pub entries: BoundedTimeout,
+    /// `pilotdeck server` waits for its connected clients with no deadline
+    /// (the baseline's `server.close()`); `entries` is then not applied.
+    pub entries_unbounded: bool,
     pub flush: BoundedTimeout,
     pub owner: BoundedTimeout,
     pub handshake: BoundedTimeout,
@@ -252,6 +255,7 @@ impl SwitchTimeouts {
         Self {
             automation: bound,
             entries: bound,
+            entries_unbounded: false,
             flush: bound,
             owner: bound,
             handshake: bound,
@@ -277,6 +281,7 @@ impl SwitchTimeouts {
         Self {
             automation: budget,
             entries: backstop(BACKSTOP_SLACK_MS as f64),
+            entries_unbounded: false,
             flush: budget,
             owner: backstop(BACKSTOP_SLACK_MS as f64),
             handshake: budget,
@@ -361,8 +366,15 @@ impl<F: SwitchFaces> SwitchMachine<F> {
         self.bounded(self.timeouts.automation, self.faces.stop_automation())
             .await?;
         self.enter(Phase::StopAccepting);
-        self.bounded(self.timeouts.entries, self.faces.stop_accepting())
-            .await?;
+        if self.timeouts.entries_unbounded {
+            if let Err(failure) = self.faces.stop_accepting().await {
+                self.enter(Phase::Halted);
+                return Err(SwitchError::Drain(failure));
+            }
+        } else {
+            self.bounded(self.timeouts.entries, self.faces.stop_accepting())
+                .await?;
+        }
         // `switch-gate-early-open` (negative control, A8): the release pulled
         // ahead of the owner stop — the gate opens while flush and stop-owner
         // still have to run.

@@ -740,7 +740,13 @@ async fn persistence_writer_lock_spans_generations_aliases_and_writer_clones() {
         .unwrap();
     assert_eq!(reopened.read().unwrap().entries.len(), 3);
     assert!(fs::read(&path).unwrap().starts_with(&original));
-    assert!(scratch.0.join("owned.jsonl.lock").is_file());
+    let canonical = crate::storage::canonical_transcript_path(&path).unwrap();
+    assert!(
+        crate::storage::ledger_lock_path(&canonical)
+            .unwrap()
+            .is_file()
+    );
+    assert!(!scratch.0.join("owned.jsonl.lock").exists());
     drop((reopened, next, next_lease, handle, lease));
     bounded(registry.dispose()).await.unwrap();
 }
@@ -854,6 +860,12 @@ async fn persistence_dangling_symlink_cannot_acquire_a_separate_writer_lock() {
     assert!(matches!(JsonlLedgerStore::open(&alias, "s"),
         Err(LedgerError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound));
     assert!(!scratch.0.join("alias.jsonl.lock").exists());
+    let canonical_alias = scratch.0.canonicalize().unwrap().join("alias.jsonl");
+    assert!(
+        !crate::storage::ledger_lock_path(&canonical_alias)
+            .unwrap()
+            .exists()
+    );
     assert!(!target.exists());
     // A plain missing path is valid; once created, the symlink must contend.
     let session = native(&handle)
