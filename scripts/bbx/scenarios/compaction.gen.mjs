@@ -233,6 +233,122 @@ process.stdin.on('end', () => {
   };
 }
 
+// 手动压缩之后：续聊一轮，读会话、导出会话，从续聊那条用户消息分叉，在分叉上再聊一轮。
+{
+  const steps = [];
+  for (let i = 1; i <= 3; i += 1) {
+    steps.push(turn('s-mfork', `note ${i}\n${filler(`n${i}`, 60)}`), { sleep: 300 });
+  }
+  steps.push(turn('s-mfork', '/compact'), { sleep: 300 });
+  steps.push(turn('s-mfork', 'note 4: after manual compaction'), { sleep: 300 });
+  steps.push(
+    {
+      ws: 'read_session_messages',
+      params: { sessionKey: 's-mfork' },
+      save: { note4: '"text":"note 4: after manual compaction","entryId":"([0-9a-f-]{36})"' },
+    },
+    { ws: 'export_session_transcript', params: { sessionKey: 's-mfork' } },
+    {
+      ws: 'fork_session',
+      params: { sessionKey: 's-mfork', fromEntryId: '{saved.note4}' },
+      save: { forked: '"newSessionKey":"([^"]+)"' },
+    },
+    turn('{saved.forked}', 'note 5: on the fork'),
+    { sleep: 300 },
+    { ws: 'read_session_messages', params: { sessionKey: '{saved.forked}' } },
+  );
+  scenarios['compact-manual-fork'] = {
+    about: '手动压缩之后：续聊的请求带摘要；读会话、导出会话看到维护轮次与替换边界；从续聊的用户消息分叉，分叉上的请求带着压缩后的历史。本文件由同目录的 compaction.gen.mjs 生成，不手改。',
+    config: config({ context: 65536, output: 8192 }),
+    provider: [TITLE, SUMMARY, MAIN],
+    steps,
+  };
+}
+
+// 手动压缩时的 PreCompact / PostCompact 插件 hook：hook 收到的输入（trigger 等）写进 hooklog。
+{
+  const HOOK = `import fs from 'node:fs';
+const [log] = process.argv.slice(2);
+let input = '';
+process.stdin.on('data', (d) => { input += d; });
+process.stdin.on('end', () => {
+  let parsed; try { parsed = JSON.parse(input); } catch { parsed = { raw: input }; }
+  const dir = process.env.HOME + '/hooklog';
+  fs.mkdirSync(dir, { recursive: true });
+  fs.appendFileSync(dir + '/' + log + '.jsonl', JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), input: parsed }) + '\\n');
+});
+`;
+  const hook = (log) => [{ hooks: [{ type: 'command', command: `node hook.mjs ${log}` }] }];
+  const steps = [];
+  for (let i = 1; i <= 3; i += 1) {
+    steps.push(turn('s-mhook', `note ${i}\n${filler(`n${i}`, 60)}`), { sleep: 300 });
+  }
+  steps.push(turn('s-mhook', '/compact'), { sleep: 500 });
+  steps.push(turn('s-mhook', 'note 4: after manual compaction'), { sleep: 300 });
+  steps.push({ ws: 'read_session_messages', params: { sessionKey: 's-mhook' } });
+  scenarios['compact-manual-hooks'] = {
+    about: '手动压缩 /compact 时的 PreCompact / PostCompact 插件 hook：摘要前后各派发一次（trigger 为 manual），hook 收到的输入写进 hooklog；之后一轮照常。本文件由同目录的 compaction.gen.mjs 生成，不手改。',
+    config: config({ context: 65536, output: 8192 }),
+    files: {
+      'home/.pilotdeck/plugins/cmp-hooks/plugin.json': {
+        name: 'cmp-hooks',
+        version: '0.1.0',
+        description: 'bbx cmp-hooks',
+        hooks: { PreCompact: hook('pre-compact'), PostCompact: hook('post-compact') },
+      },
+      'home/.pilotdeck/plugins/cmp-hooks/hook.mjs': HOOK,
+    },
+    provider: [TITLE, SUMMARY, MAIN],
+    steps,
+  };
+}
+
+// 手动压缩的摘要请求失败：基线回 No compactable history yet（编排把失败的摘要当作 skipped）；
+// 再 /compact 一次命中摘要失败冷却；之后的普通一轮照常。
+{
+  const steps = [];
+  for (let i = 1; i <= 3; i += 1) {
+    steps.push(turn('s-mfail', `note ${i}\n${filler(`n${i}`, 60)}`, { timeout: 60000 }), { sleep: 300 });
+  }
+  steps.push(turn('s-mfail', '/compact', { timeout: 60000 }), { sleep: 300 });
+  steps.push(turn('s-mfail', '/compact', { timeout: 60000 }), { sleep: 300 });
+  steps.push(turn('s-mfail', 'note 4: after failed compaction', { timeout: 60000 }), { sleep: 300 });
+  steps.push({ ws: 'read_session_messages', params: { sessionKey: 's-mfail' } });
+  scenarios['compact-manual-fail'] = {
+    about: '手动压缩的摘要请求回 500：基线的编排把失败的摘要当作没压缩（compaction_completed skipped），维护轮次照常结束，回 No compactable history yet；紧接着再 /compact 一次（摘要失败冷却内）；之后的普通一轮照常。本文件由同目录的 compaction.gen.mjs 生成，不手改。',
+    config: config({ context: 65536, output: 8192 }),
+    provider: [
+      TITLE,
+      { name: 'summary', when: ['internal-compaction-control'], reply: { status: 500, body: { error: { message: 'summary backend exploded', type: 'server_error' } } } },
+      MAIN,
+    ],
+    steps,
+  };
+}
+
+// 会话不在内存里：close_session 之后 /compact 回 session_busy；再聊一轮（会话重新载入）后 /compact 正常压缩。
+// 另一个会话只有一轮短对话：/compact 回 No compactable history yet。
+{
+  const steps = [];
+  for (let i = 1; i <= 2; i += 1) {
+    steps.push(turn('s-mclose', `note ${i}\n${filler(`n${i}`, 60)}`), { sleep: 300 });
+  }
+  steps.push({ ws: 'close_session', params: { sessionKey: 's-mclose' } }, { sleep: 300 });
+  steps.push(turn('s-mclose', '/compact'), { sleep: 300 });
+  steps.push(turn('s-mclose', 'note 3: reloaded'), { sleep: 300 });
+  steps.push(turn('s-mclose', '/compact'), { sleep: 300 });
+  steps.push(turn('s-mshort', 'hello'), { sleep: 300 });
+  steps.push(turn('s-mshort', '/compact'), { sleep: 300 });
+  steps.push({ ws: 'read_session_messages', params: { sessionKey: 's-mclose' } });
+  steps.push({ ws: 'read_session_messages', params: { sessionKey: 's-mshort' } });
+  scenarios['compact-manual-unloaded'] = {
+    about: '会话不在内存里时 /compact：close_session 之后回 session_busy（不新建会话）；再聊一轮把会话载入后 /compact 正常；只有一轮短对话的会话 /compact 的结果。本文件由同目录的 compaction.gen.mjs 生成，不手改。',
+    config: config({ context: 65536, output: 8192 }),
+    provider: [TITLE, SUMMARY, MAIN],
+    steps,
+  };
+}
+
 const outDir = here;
 for (const [name, body] of Object.entries(scenarios)) {
   fs.writeFileSync(path.join(outDir, `${name}.json`), JSON.stringify({ name, ...body }, null, 2) + '\n');

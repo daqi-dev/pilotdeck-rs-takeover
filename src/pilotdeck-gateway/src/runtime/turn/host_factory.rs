@@ -653,7 +653,23 @@ async fn session_context_runtime(
 /// runtime composed from one generation lease, kept alive with it.
 pub struct MaintenanceContext {
     pub runtime: Arc<dyn context::ContextRuntime>,
+    /// The session's hooks bound for the maintenance run (PreCompact /
+    /// PostCompact dispatch through them); released with the context.
+    hooks: Option<(
+        crate::runtime::project::interaction_hooks::TurnHooks,
+        Option<super::interaction::TurnHooksSink>,
+    )>,
     pub lease: RuntimeLease,
+}
+impl Drop for MaintenanceContext {
+    fn drop(&mut self) {
+        if let Some((hooks, sink)) = self.hooks.take() {
+            if let Some(sink) = sink {
+                sink(None);
+            }
+            hooks.close();
+        }
+    }
 }
 
 impl TurnHostFactory {
@@ -703,8 +719,51 @@ impl TurnHostFactory {
                 });
         }
         if let Some(runtime) = ports.context_runtime {
-            return Ok(MaintenanceContext { runtime, lease });
+            return Ok(MaintenanceContext {
+                runtime,
+                hooks: None,
+                lease,
+            });
         }
+        // The session lifecycle the compaction engine dispatches PreCompact /
+        // PostCompact through: bound for this maintenance run, as a turn
+        // binds it (`InteractionTurn::bind_owned`).
+        let hooks = match context
+            .resource(Resource::InteractionHooks)
+            .and_then(|resource| {
+                resource
+                    .as_any()
+                    .downcast_ref::<crate::runtime::project::interaction_hooks::InteractionHooks>()
+                    .cloned()
+            }) {
+            Some(resource) => {
+                let interaction = &mut ports.interaction;
+                let hooks = resource.bind_turn_observed(
+                    crate::host::modules::lifecycle::Binding {
+                        session_id: identity.session_id.clone(),
+                        turn_id: identity.turn_id.clone(),
+                        cwd: interaction.permission.context.cwd.clone(),
+                        permission_mode: Some(
+                            interaction.permission.context.mode.as_js_string().clone(),
+                        ),
+                        base_env: interaction.base_env.take(),
+                        signal: Some(interaction.signal.clone()),
+                    },
+                    identity.run_id.clone(),
+                    std::mem::take(&mut interaction.hooks),
+                    None,
+                    &mut crate::host::modules::ModuleRouter::default(),
+                    interaction.hook_wiring.observers.clone(),
+                )?;
+                hooks.wait_ready().await?;
+                let sink = interaction.hook_wiring.turn_sink.clone();
+                if let Some(sink) = &sink {
+                    sink(Some(Arc::new(hooks.clone())));
+                }
+                Some((hooks, sink))
+            }
+            None => None,
+        };
         let router = context.resource(Resource::Router).ok_or_else(|| {
             HostError::new(
                 HostErrorKind::Protocol,
@@ -733,7 +792,11 @@ impl TurnHostFactory {
             compaction_model,
         )
         .await?;
-        Ok(MaintenanceContext { runtime, lease })
+        Ok(MaintenanceContext {
+            runtime,
+            hooks,
+            lease,
+        })
     }
 }
 
