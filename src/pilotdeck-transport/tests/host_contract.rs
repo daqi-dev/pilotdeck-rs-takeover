@@ -744,7 +744,10 @@ fn unknown_outcome_uses_bound_owner_identity_and_never_retries() {
         "results",
         JsValue::Array(vec![value]),
     ))]);
-    assert!(matches!(
+    // A result's own `error.details.outcome` is not an envelope outcome: the
+    // baseline loop receives it as an ordinary error result
+    // (agentLoopSidecarServer.ts:465-470 reads the envelope only).
+    assert!(!matches!(
         h.call(
             &control(),
             HostCall::ExecuteBatch {
