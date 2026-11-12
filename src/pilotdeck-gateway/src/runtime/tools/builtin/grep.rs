@@ -1446,7 +1446,7 @@ fn js_compare(left: &str, right: &str) -> std::cmp::Ordering {
 /// Node's `String#localeCompare` with the process default locale
 /// (`LC_ALL`/`LC_MESSAGES`/`LANG`, the same `node_locale`/`node_collator`
 /// calibration used by `project_files`).
-fn locale_compare(left: &str, right: &str) -> std::cmp::Ordering {
+pub(super) fn locale_compare(left: &str, right: &str) -> std::cmp::Ordering {
     static COLLATOR: OnceLock<Option<icu_collator::CollatorBorrowed<'static>>> = OnceLock::new();
     let collator = COLLATOR.get_or_init(|| {
         let locale = node_locale(|key| std::env::var(key).ok());

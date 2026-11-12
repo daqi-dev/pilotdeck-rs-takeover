@@ -33,6 +33,7 @@ pub(super) const WIRED_FIELDS: &[&str] = &[
     "includeHookEvents",
     "fallbackModel",
     "managedModels",
+    "deferredTools",
 ];
 
 const INVALID: &str = "INVALID_SDK_SESSION_CONFIG";

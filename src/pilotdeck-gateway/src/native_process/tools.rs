@@ -572,6 +572,42 @@ impl SessionTools {
         self
     }
 
+    /// `sdkSessionConfig.deferredTools`: hidden from the schema behind
+    /// `search_tools`. A name this session does not have fails the session
+    /// (`SDK deferred tool <name> is not available in this session.`).
+    pub fn with_deferred_tools(mut self, config: Option<&JsValue>) -> Result<Self, RuntimeError> {
+        let Some(JsValue::Array(entries)) = config.and_then(|config| config.get("deferredTools"))
+        else {
+            return Ok(self);
+        };
+        let requested: Vec<(JsString, Option<JsString>)> = entries
+            .iter()
+            .filter_map(|entry| {
+                let name = entry.get("name").and_then(JsValue::as_string)?.clone();
+                let hint = entry
+                    .get("searchHint")
+                    .and_then(JsValue::as_string)
+                    .cloned();
+                Some((name, hint))
+            })
+            .collect();
+        if requested.is_empty() {
+            return Ok(self);
+        }
+        self.world.deferred = Some((requested, Default::default()));
+        Ok(self)
+    }
+
+    /// The deferred-tool check against the session's composed registry.
+    pub fn check_deferred_tools(&self) -> Result<(), RuntimeError> {
+        let Some((requested, _)) = &self.world.deferred else {
+            return Ok(());
+        };
+        let registry = self.session_registry(&self.config);
+        builtin::search_tools::apply_deferred_tools(&registry, requested, &Default::default())
+            .map_err(RuntimeError::new)
+    }
+
     /// The project's plugin runtime, behind `read_skill`
     /// (`createBuiltinRegistry({ readSkill })`). Without it the tool is not
     /// registered, as in the baseline.
@@ -645,6 +681,62 @@ impl SessionTools {
     ) -> Self {
         self.permission_mode_source = Some(source);
         self
+    }
+
+    /// The session's tool registry before the fork scope: the builtins and
+    /// MCP tools, the user-dialog tools, `agent` and the continuation tools.
+    fn session_registry(&self, config: &JsObject) -> ToolRegistry {
+        let tools = native_tools(
+            self.binding.context.allowed_tools.clone(),
+            self.binding.context.disallowed_tools.clone(),
+            self.lsp.clone(),
+            &self.mcp,
+            &self.world,
+        );
+        if let Some((kinds, channel)) = &self.user_dialog {
+            for tool in builtin::request_user::user_dialog_tools(kinds, channel) {
+                tools
+                    .register(tool)
+                    .expect("native user-dialog tool names are unique");
+            }
+        }
+        // `createAgentTool({ maxSubagentDepth, subagentDepth })`: the tool
+        // exists wherever the host can fork; its description names what the
+        // next child may do under the depth cap.
+        let (subagent_depth, max_subagent_depth) = super::subagents::depths(&self.config);
+        if self.subagents.is_some() {
+            tools
+                .register(Arc::new(builtin::agent::AgentTool::new(
+                    max_subagent_depth,
+                    subagent_depth,
+                )))
+                .expect("native agent tool name is unique");
+        }
+        // `SessionSubagentContinuationBundle.attach`: the two continuation
+        // tools, bound to the agent this session acts for. Like `agent`, they
+        // need the `subagent_fork` capability, so a child under the depth cap
+        // does not see them.
+        if let (Some(subagents), Some(parent)) = (&self.subagents, &self.continuation) {
+            let port: Arc<dyn builtin::subagent_continuation::ContinuationPort> =
+                Arc::new(super::continuations::SessionContinuationPort {
+                    manager: subagents.continuations.clone(),
+                    parent: parent.clone(),
+                    runtime: subagents.clone(),
+                    seed: self.fork_seed(),
+                    config: config.clone(),
+                });
+            for tool in [
+                Arc::new(builtin::subagent_continuation::SubagentTool::new(
+                    port.clone(),
+                )) as Arc<dyn crate::runtime::tools::ExecutableTool>,
+                Arc::new(builtin::subagent_continuation::SendMessageTool::new(port)),
+            ] {
+                tools
+                    .register(tool)
+                    .expect("native continuation tool names are unique");
+            }
+        }
+        tools
     }
 
     pub fn turn(
@@ -725,55 +817,12 @@ impl SessionTools {
         {
             config.insert("runMode".into(), JsValue::String(run_mode));
         }
-        let tools = native_tools(
-            self.binding.context.allowed_tools.clone(),
-            self.binding.context.disallowed_tools.clone(),
-            self.lsp.clone(),
-            &self.mcp,
-            &self.world,
-        );
-        if let Some((kinds, channel)) = &self.user_dialog {
-            for tool in builtin::request_user::user_dialog_tools(kinds, channel) {
-                tools
-                    .register(tool)
-                    .expect("native user-dialog tool names are unique");
-            }
-        }
-        // `createAgentTool({ maxSubagentDepth, subagentDepth })`: the tool
-        // exists wherever the host can fork; its description names what the
-        // next child may do under the depth cap.
         let (subagent_depth, max_subagent_depth) = super::subagents::depths(&self.config);
-        if self.subagents.is_some() {
-            tools
-                .register(Arc::new(builtin::agent::AgentTool::new(
-                    max_subagent_depth,
-                    subagent_depth,
-                )))
-                .expect("native agent tool name is unique");
-        }
-        // `SessionSubagentContinuationBundle.attach`: the two continuation
-        // tools, bound to the agent this session acts for. Like `agent`, they
-        // need the `subagent_fork` capability, so a child under the depth cap
-        // does not see them.
-        if let (Some(subagents), Some(parent)) = (&self.subagents, &self.continuation) {
-            let port: Arc<dyn builtin::subagent_continuation::ContinuationPort> =
-                Arc::new(super::continuations::SessionContinuationPort {
-                    manager: subagents.continuations.clone(),
-                    parent: parent.clone(),
-                    runtime: subagents.clone(),
-                    seed: self.fork_seed(),
-                    config: config.clone(),
-                });
-            for tool in [
-                Arc::new(builtin::subagent_continuation::SubagentTool::new(
-                    port.clone(),
-                )) as Arc<dyn crate::runtime::tools::ExecutableTool>,
-                Arc::new(builtin::subagent_continuation::SendMessageTool::new(port)),
-            ] {
-                tools
-                    .register(tool)
-                    .expect("native continuation tool names are unique");
-            }
+        let tools = self.session_registry(&config);
+        // `collectDeferredTools` (ProjectSessionRuntimeBundle.ts:348-370):
+        // checked when the session is prepared, so it cannot fail here.
+        if let Some((requested, revealed)) = &self.world.deferred {
+            let _ = builtin::search_tools::apply_deferred_tools(&tools, requested, revealed);
         }
         // A forked child sees a scoped view of that registry.
         let tools = match &self.fork {
@@ -1652,6 +1701,12 @@ pub(super) struct ExecutionWorld {
         builtin::web::search::WebSearchOptions,
         Option<(&'static str, &'static str)>,
     )>,
+    /// `sdkSessionConfig.deferredTools` (name, searchHint) and the names this
+    /// session's `search_tools` calls revealed.
+    deferred: Option<(
+        Vec<(JsString, Option<JsString>)>,
+        builtin::search_tools::RevealedTools,
+    )>,
     /// `readSkill: { loader, lister }`: the project's plugin runtime.
     skills: Option<Arc<crate::runtime::plugins::PluginRuntime>>,
     /// The gateway's `extraTools` (the automation providers' tools,
@@ -1675,6 +1730,7 @@ impl ExecutionWorld {
                 crate::runtime::model::http::HyperModelTransport::new(),
             )),
             web_search: None,
+            deferred: None,
             skills: None,
             extra_tools: Vec::new(),
             excluded_tools: Vec::new(),

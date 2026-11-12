@@ -1008,6 +1008,7 @@ async fn start_assembly(
                         )?
                         .with_extra_tools(extra_tools, excluded_tools)
                         .with_web_search(&web_search_config)
+                        .with_deferred_tools(sdk_config.as_ref())?
                         .with_prompt_policy(can_prompt_override, bypass_available_override)
                         .with_sdk_permissions(sdk_config.as_ref())
                         .with_permission_mode_source(permission_source.clone())
@@ -1063,6 +1064,7 @@ async fn start_assembly(
                             options.home.clone(),
                             continuations.clone(),
                         ));
+                        ports.check_deferred_tools()?;
                         let turn_override_sink = ports.turn_override();
                         Ok(TurnHostFactory::new_with_signal(
                             project,

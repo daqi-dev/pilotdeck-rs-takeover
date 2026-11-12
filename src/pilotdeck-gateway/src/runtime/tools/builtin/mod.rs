@@ -19,6 +19,7 @@ pub mod plan_mode;
 pub mod read_file;
 pub mod read_skill;
 pub mod request_user;
+pub mod search_tools;
 pub mod send_attachment;
 pub mod structured_output;
 pub mod subagent_continuation;
