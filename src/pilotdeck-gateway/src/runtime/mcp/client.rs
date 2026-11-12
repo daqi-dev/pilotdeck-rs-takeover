@@ -581,6 +581,9 @@ struct State {
     reconnect_in_flight: bool,
     per_session_dir: Option<PerSessionDirectory>,
     cleanups: Vec<Cleanup>,
+    /// Set by `dispose`: a handshake that already timed out stops waiting
+    /// for a server that may never answer and closes its transport instead.
+    abandon: watch::Sender<bool>,
 }
 
 impl State {
@@ -782,6 +785,7 @@ impl McpClient {
                     reconnect_in_flight: false,
                     per_session_dir: None,
                     cleanups: Vec::new(),
+                    abandon: watch::channel(false).0,
                 }),
             }),
             tls_config: None,
@@ -899,6 +903,7 @@ impl McpClient {
         // status stays `connecting`.
         let mut dir = None;
         let wire = self.build_transport(&mut dir)?;
+        let late_wire = wire.as_ref().ok().cloned();
         let (close_finished, failed_close) = oneshot::channel();
         let mut dir = dir.map(|path| PerSessionDirectory { path, failed_close });
         let handshake_ms = self
@@ -919,10 +924,28 @@ impl McpClient {
                 // already failed, so a connection that still lands is owned
                 // by nobody: close it so its child process is reaped.
                 let late_dir = dir.take();
-                self.state().spawn_cleanup(
+                let mut state = self.state();
+                let mut abandon = state.abandon.subscribe();
+                state.spawn_cleanup(
                     async move {
-                        if let Ok(Ok(late)) = handshake.await {
-                            late.close().await;
+                        // Disposal does not wait for a server that never
+                        // answers: the baseline's session close returns at
+                        // once (robust-timeout-mcp-handshake). The transport
+                        // is closed in the background so the child is reaped.
+                        tokio::select! {
+                            joined = &mut handshake => {
+                                if let Ok(Ok(late)) = joined {
+                                    late.close().await;
+                                }
+                            }
+                            () = async {
+                                let _ = abandon.wait_for(|abandoned| *abandoned).await;
+                            } => {
+                                handshake.abort();
+                                if let Some(wire) = late_wire {
+                                    tokio::spawn(async move { wire.close().await });
+                                }
+                            }
                         }
                         if let Some(dir) = late_dir {
                             dir.remove().await;
@@ -1276,12 +1299,15 @@ impl McpClient {
     /// Keep the tasks in State while awaiting cloned completion tickets.
     pub(crate) async fn dispose(&self) {
         self.close().await;
-        let cleanups = self
-            .state()
-            .cleanups
-            .iter()
-            .map(|cleanup| cleanup.done.clone())
-            .collect::<Vec<_>>();
+        let cleanups = {
+            let state = self.state();
+            state.abandon.send_replace(true);
+            state
+                .cleanups
+                .iter()
+                .map(|cleanup| cleanup.done.clone())
+                .collect::<Vec<_>>()
+        };
         for done in cleanups {
             await_cleanup(done).await;
         }
