@@ -1,6 +1,7 @@
 {
   "name": "ctx-cache-generation-compact",
   "about": "压缩之后的提示缓存代际（DefaultContextRuntime.ts:497-505：自动压缩成功后 promptCacheCoordinator.reset，下一次提交的计划强制换代；手动 /compact 不调 reset）。两种压缩都不让代际回到 1，压缩后的请求在同一会话的计数上继续加一。s-man：三轮失败后 /compact，再三轮；s-auto：上下文窗口配小（20000），长文本失败轮次累积到阈值后自动压缩，再三轮短消息。模型主请求一律回 400。注意：压缩后前两次请求的最近三条消息里带有压缩快照 id（metadata.compactSnapshotId，随机 UUID），这两次的 cachePlan.fingerprint 基线自己两次运行也不同。",
+  "volatile": ["/chats/s-(man|auto)\\.jsonl\\.jsonl\\[\\d+\\]\\.request\\.cachePlan\\.fingerprint$"],
   "config": "schemaVersion: 1\nagent:\n  model: anth/claude-bbx\n  maxContextTokens: 20000\n  maxOutputTokens: 1000\nmodel:\n  providers:\n    anth:\n      protocol: anthropic\n      url: {MOCK}\n      apiKey: bbx-anthropic-key\n      retry:\n        baseDelayMs: 1\n        maxDelayMs: 1\n        jitter: 0\n      models:\n        claude-bbx:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 20000\n            maxOutputTokens: 1000\ntelemetry:\n  enabled: false\n",
   "provider": [
     {

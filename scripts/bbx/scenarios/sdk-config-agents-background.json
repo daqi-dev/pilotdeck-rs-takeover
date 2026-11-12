@@ -1,6 +1,7 @@
 {
   "name": "sdk-config-agents-background",
   "about": "sdkSessionConfig.agents 的 background: true（OneShotSubagentPort.ts launchBackground → BackgroundSubagentRuntime）：父轮用 agent 工具派出后台子代理，工具结果是 Background subagent started as task <id>，父轮不等子代理；子代理在后台跑完自己的模型请求与侧链记录；之后 background_tasks 列表与下一轮。 时序固定：父轮第一次回复同时调 agent 和 bash sleep 1，子代理的模型请求落在父轮下一次请求之前（父轮要等 bash 跑完）；子代理回复再晚 800ms，在父轮结束后才完成，完成事件在第二轮开头投递。",
+  "volatile": ["\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages)$"],
   "provider": [
     {
       "name": "title",

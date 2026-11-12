@@ -1,6 +1,7 @@
 {
   "name": "proto-anthropic-basic",
   "about": "Anthropic messages 协议（model/providerEndpoint.ts:99 POST <url>/v1/messages；streaming/streamModel.ts:819-833 头 x-api-key、anthropic-version；providers/anthropic/request.ts 请求体、stream.ts SSE 解析）。protocol: anthropic 的 provider 指向假 provider。a1 纯文本；a2 工具调用后回文本（历史里的 tool_use / tool_result 形状）；a3 文本加两个工具调用；a4 带 thinking 块的回复（下一轮历史里回传 thinking + signature）；a5 400 invalid_request_error；a6 529 overloaded_error（重试）；a7 429 rate_limit_error。比较请求的方法、路径、头、体和后续事件、落盘。",
+  "volatile": ["/chats/s-a[234]\\.jsonl\\.jsonl\\[\\d+\\]\\.request\\.cachePlan\\.fingerprint$"],
   "config": "schemaVersion: 1\nagent:\n  model: anth/claude-bbx\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    anth:\n      protocol: anthropic\n      url: {MOCK}\n      apiKey: bbx-anthropic-key\n      retry:\n        baseDelayMs: 1\n        maxDelayMs: 1\n        jitter: 0\n      models:\n        claude-bbx:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
   "files": { "home/.pilotdeck/a.txt": "alpha\n", "home/.pilotdeck/b.txt": "beta\n" },
   "provider": [
