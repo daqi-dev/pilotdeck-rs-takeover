@@ -139,6 +139,7 @@ async fn serve_on_runtime(
         host,
         server,
         switch_handles,
+        true,
         |address| {
             // `http://${host}:${port}` with the host as given and the port
             // the listener actually got (GatewayServer.ts:69-72).
