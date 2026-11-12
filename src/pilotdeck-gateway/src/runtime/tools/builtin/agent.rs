@@ -312,6 +312,8 @@ pub struct ForkReport {
 }
 
 pub type ForkFuture = Pin<Box<dyn Future<Output = Result<ForkReport, JsString>> + Send>>;
+/// A background launch settling with the task id.
+pub type LaunchFuture = Pin<Box<dyn Future<Output = Result<JsString, JsString>> + Send>>;
 
 /// The host's fork port (`PilotDeckSubagentForkApi`), bound to one parent
 /// turn. `fork` settles with the child's report or the failure message.
@@ -335,7 +337,7 @@ pub trait SubagentFork: Send + Sync {
         &self,
         _request: ForkRequest,
         _context: ToolRunContext,
-    ) -> Option<Pin<Box<dyn Future<Output = Result<JsString, JsString>> + Send>>> {
+    ) -> Option<LaunchFuture> {
         None
     }
     /// `uuid()`: the new subagent's id.

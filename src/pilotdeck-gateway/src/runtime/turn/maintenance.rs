@@ -37,15 +37,17 @@ fn recorder_message(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
 
+struct Compacted {
+    compaction_id: JsValue,
+    pre_tokens: JsValue,
+    post_tokens: JsValue,
+    messages_summarized: JsValue,
+    usage: JsValue,
+}
+
 enum Outcome {
     Skipped,
-    Compacted {
-        compaction_id: JsValue,
-        pre_tokens: JsValue,
-        post_tokens: JsValue,
-        messages_summarized: JsValue,
-        usage: JsValue,
-    },
+    Compacted(Box<Compacted>),
 }
 
 /// `ManualCompactionController.compact`. `Err` only when the maintenance
@@ -89,24 +91,27 @@ pub(super) async fn compact(
                 ("usage", JsValue::Object(JsObject::new())),
             ]),
         ),
-        Ok(Outcome::Compacted {
-            compaction_id,
-            pre_tokens,
-            post_tokens,
-            messages_summarized,
-            usage,
-        }) => (
-            terminal("success", "completed", usage.clone()),
-            object([
-                ("type", "compacted".into()),
-                ("turnId", JsValue::String(turn.clone())),
-                ("compactionId", compaction_id),
-                ("preTokens", pre_tokens),
-                ("postTokens", post_tokens),
-                ("messagesSummarized", messages_summarized),
-                ("usage", usage),
-            ]),
-        ),
+        Ok(Outcome::Compacted(compacted)) => {
+            let Compacted {
+                compaction_id,
+                pre_tokens,
+                post_tokens,
+                messages_summarized,
+                usage,
+            } = *compacted;
+            (
+                terminal("success", "completed", usage.clone()),
+                object([
+                    ("type", "compacted".into()),
+                    ("turnId", JsValue::String(turn.clone())),
+                    ("compactionId", compaction_id),
+                    ("preTokens", pre_tokens),
+                    ("postTokens", post_tokens),
+                    ("messagesSummarized", messages_summarized),
+                    ("usage", usage),
+                ]),
+            )
+        }
         Err(message) => {
             // `failDeferredCompaction(...).catch(() => {})`: closes a
             // compaction bracket left open by a late cancellation.
@@ -214,13 +219,13 @@ async fn run(
         JsValue::Undefined | JsValue::Null => JsValue::Object(JsObject::new()),
         usage => usage.clone(),
     };
-    Ok(Outcome::Compacted {
+    Ok(Outcome::Compacted(Box::new(Compacted {
         compaction_id: id,
         pre_tokens: field(result, "preTokens").clone(),
         post_tokens: field(field(&compact, "snapshot"), "tokens").clone(),
         messages_summarized: field(result, "messagesSummarized").clone(),
         usage,
-    })
+    })))
 }
 
 /// `compactBoundary` (ManualCompactionController.ts:168-201).
