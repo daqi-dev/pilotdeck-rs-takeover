@@ -299,6 +299,13 @@ pub(crate) struct Utf8Stream {
 }
 
 impl Utf8Stream {
+    /// Node's `setEncoding("utf8")` (a `StringDecoder`): no BOM stripping.
+    pub(crate) fn keeping_bom() -> Self {
+        Self {
+            pending: Vec::new(),
+            started: true,
+        }
+    }
     pub(crate) fn decode(&mut self, chunk: &[u8]) -> String {
         let mut bytes = std::mem::take(&mut self.pending);
         bytes.extend_from_slice(chunk);
@@ -448,6 +455,28 @@ pub(crate) fn prepare_spawn(
         cwd: cwd.clone(),
         env: env.map(<[_]>::to_vec),
     })
+}
+
+/// An exact argv a sandbox provider prepared (`createNodeDetachedExecutableStarter`
+/// / `executeFile`): no shell is resolved, the executable is spawned as given.
+pub(crate) fn prepare_exec(
+    executable: &str,
+    args: Vec<String>,
+    cwd: &JsString,
+    env: Option<&[(JsString, JsString)]>,
+) -> PreparedSpawn {
+    PreparedSpawn {
+        shell: CommandShell {
+            shell: JsString::from(executable),
+            kind: CommandShellKind::Custom,
+        },
+        args: args
+            .iter()
+            .map(|arg| JsString::from(arg.as_str()))
+            .collect(),
+        cwd: cwd.clone(),
+        env: env.map(<[_]>::to_vec),
+    }
 }
 
 /// A failed `Command::spawn` in Node's terms.

@@ -15,13 +15,20 @@ use std::{fs, io};
 
 pub struct EditNotebookTool {
     fields: JsObject,
+    sandbox: crate::runtime::tools::sandbox::Sandbox,
 }
 
 impl EditNotebookTool {
     pub fn new() -> Self {
         Self {
             fields: definition(),
+            sandbox: Default::default(),
         }
+    }
+    /// The execution world's `fs` provider under `agent.sandboxMode`.
+    pub fn with_sandbox(mut self, sandbox: crate::runtime::tools::sandbox::Sandbox) -> Self {
+        self.sandbox = sandbox;
+        self
     }
 }
 
@@ -53,8 +60,9 @@ impl ExecutableTool for EditNotebookTool {
     }
 
     fn execute(&self, input: JsValue, context: ToolRunContext) -> ToolFuture<ToolOutput> {
+        let sandbox = self.sandbox;
         Box::pin(async move {
-            let (output, update) = execute(&input, &context)?;
+            let (output, update) = execute(&input, &context, sandbox)?;
             context
                 .notify_file_saved(update)
                 .await
@@ -199,6 +207,7 @@ fn validate(input: &JsValue, context: &ToolRunContext) -> Result<Option<Vec<JsOb
 fn execute(
     input: &JsValue,
     context: &ToolRunContext,
+    sandbox: crate::runtime::tools::sandbox::Sandbox,
 ) -> Result<(ToolOutput, crate::runtime::tools::FileUpdate), ToolError> {
     let path = input_string(input, "notebook_path").unwrap_or_else(|| JsString::from(""));
     let cell_id = input_string(input, "cell_id").filter(|value| !value.is_empty());
@@ -304,6 +313,12 @@ fn execute(
 
     notebook.insert("cells".into(), JsValue::Array(cells.clone()));
     let updated_content = format!("{}\n", pretty_json(&JsValue::Object(notebook.clone())));
+    // `fs.writeText(path, content, { workspaceRoot: resolved.root })`
+    // through the sandboxed fs provider.
+    sandbox.check_write(
+        &resolved.absolute,
+        &super::write_root(context, &resolved.absolute),
+    )?;
     let write = write_text_file(&resolved.absolute, &updated_content)?;
     if let Some(history) = file_history(context) {
         history

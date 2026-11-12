@@ -129,6 +129,8 @@ pub struct SessionTools {
     tool_hooks: Arc<super::hooks::ToolHooks>,
     /// The session's `CompactionEngine` failure cooldown.
     compaction_cooldown: crate::runtime::context::compaction::engine::SummaryCooldown,
+    /// The pilot home whose `permissions.json` each turn reads.
+    pilot_home: Option<PathBuf>,
 }
 
 /// `SessionFileHistoryBundle.compose`: backups under the session's
@@ -280,6 +282,10 @@ impl ForkSeed {
             hook_observers: self.hook_observers,
             tool_hooks,
             compaction_cooldown: Arc::default(),
+            // The child's permission context is a copy of the parent's,
+            // user rules included; only the root session's turns re-read the
+            // settings file.
+            pilot_home: None,
         }
     }
 }
@@ -348,6 +354,7 @@ impl SessionTools {
             hook_observers: Default::default(),
             tool_hooks: Arc::default(),
             compaction_cooldown: Arc::default(),
+            pilot_home: Some(options.home.clone()),
             elicitation_timeout: super::permission_prompt::interaction_timeout(
                 env.get("PILOTDECK_ELICITATION_TIMEOUT_MS")
                     .map(|value| value.as_str()),
@@ -677,6 +684,13 @@ impl SessionTools {
                 })
             {
                 state.0.mode = crate::config::permission::PermissionMode::from(mode);
+            }
+            // `permissionRules: permissionSettingsToRuleSet(readPermissionSettings())`
+            // (InProcessGateway.ts:1441,1457,1566-1569), applied with
+            // `replaceUserRules` before the loop starts.
+            if let Some(home) = &self.pilot_home {
+                let user = super::permission_settings::read_user_rules(home);
+                super::permission_settings::replace_user_rules(&mut state.0.rules, &user);
             }
             (state.0.to_value(), state.0.mode.as_js_string().clone())
         };
@@ -1426,9 +1440,13 @@ impl PermissionDecision for Permissions {
                     .collect::<Vec<_>>()
             };
             let (deny, ask) = (policy(&context.rules.deny), policy(&context.rules.ask));
+            // The turn's `permissions.json` rules (`source: "user"`) follow
+            // the live set, as `replaceUserRules` left them.
+            let user = context.rules.clone();
             context.rules = prompt.rules.snapshot();
             context.rules.deny.splice(0..0, deny);
             context.rules.ask.splice(0..0, ask);
+            super::permission_settings::replace_user_rules(&mut context.rules, &user);
         }
         Box::pin(async move {
             let decision = permission::decide(
@@ -1642,6 +1660,10 @@ pub(super) struct ExecutionWorld {
     /// (`invocationLogSink` + `workspaceId`), when `PILOTDECK_STORAGE_ROOT`
     /// is set. A fork inherits it (`OneShotSubagentPort.ts:167-169`).
     invocation: Option<crate::host::modules::model_port::InvocationPortAudit>,
+    /// The project generation's `agent.sandboxMode` (the runtime profile's
+    /// `sandboxMode`, `ProjectExecutionWorldBundle.ts:61-65`): the fs, shell
+    /// and code-runtime providers behind the builtin tools.
+    sandbox: crate::runtime::tools::sandbox::Sandbox,
 }
 impl ExecutionWorld {
     pub(super) fn new() -> Self {
@@ -1655,6 +1677,7 @@ impl ExecutionWorld {
             extra_tools: Vec::new(),
             excluded_tools: Vec::new(),
             invocation: None,
+            sandbox: Default::default(),
         }
     }
 }
@@ -1694,6 +1717,13 @@ impl SessionTools {
     ) -> Self {
         self.world.extra_tools = extra;
         self.world.excluded_tools = excluded;
+        self
+    }
+
+    /// The project generation's sandbox mode for every tool this session
+    /// (and its forks) builds.
+    pub(super) fn with_sandbox(mut self, mode: crate::runtime::project::SandboxMode) -> Self {
+        self.world.sandbox = crate::runtime::tools::sandbox::Sandbox::new(mode);
         self
     }
 
@@ -1738,14 +1768,17 @@ pub(super) fn native_tools(
     // the catalog builtins. `agent`, `subagent` and `send_message` join per
     // turn in `SessionTools::turn`, bound to the session's subagent ports.
     let mut builtins = builtin::read_only_tools();
-    builtins.extend(builtin::write_tools());
+    builtins.extend(builtin::write_tools_with(world.sandbox));
     #[cfg(unix)]
     {
-        builtins.extend(builtin::shell_tools());
+        builtins.extend(builtin::shell_tools_with(world.sandbox));
         // `createExecuteCodeTool({ webSearch })`: `web_search` is not
         // registered by this process, so its helper is not offered either.
         builtins.push(Arc::new(builtin::execute_code::ExecuteCodeTool::new(
-            builtin::execute_code::ExecuteCodeToolOptions { web_search: false },
+            builtin::execute_code::ExecuteCodeToolOptions {
+                web_search: false,
+                sandbox: world.sandbox,
+            },
         )));
         builtins.extend(builtin::task::task_tools(Some(world.tasks.clone())));
     }

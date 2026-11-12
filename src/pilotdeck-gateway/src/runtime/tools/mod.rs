@@ -4,6 +4,7 @@ pub mod builtin;
 mod mode_constraints;
 mod recovery;
 pub mod registry;
+pub mod sandbox;
 pub mod scheduler;
 
 use crate::host::{

@@ -576,6 +576,9 @@ async fn start_assembly(
                     .get::<ProjectResources>()
                     .ok_or_else(|| RuntimeError::new("Native project resources are missing."))?;
                 let staged = resources.context();
+                // The generation's `PilotDeckRuntimeProfile`
+                // (`resolvePilotDeckRuntimeProfile(snapshot.config.agent)`).
+                let profile = staged.profile();
                 let title = staged
                     .owner(Family::SessionTitleProvider)
                     .ok_or_else(|| RuntimeError::new("Native title provider is missing."))?;
@@ -1000,6 +1003,7 @@ async fn start_assembly(
                             session_mcp,
                         )?
                         .with_extra_tools(extra_tools, excluded_tools)
+                        .with_sandbox(profile.sandbox_mode)
                         .with_prompt_policy(can_prompt_override, bypass_available_override)
                         .with_sdk_permissions(sdk_config.as_ref())
                         .with_permission_mode_source(permission_source.clone())

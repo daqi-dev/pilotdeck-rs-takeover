@@ -64,10 +64,17 @@ pub fn read_only_tools() -> Vec<Arc<dyn ExecutableTool>> {
 /// A6.5-pr5 write family. Registered separately from the read-only catalog so
 /// A6.5-pr3's permission layer can group mutations.
 pub fn write_tools() -> Vec<Arc<dyn ExecutableTool>> {
+    write_tools_with(Default::default())
+}
+
+/// [`write_tools`] over the execution world's sandboxed fs provider.
+pub fn write_tools_with(
+    sandbox: crate::runtime::tools::sandbox::Sandbox,
+) -> Vec<Arc<dyn ExecutableTool>> {
     vec![
-        Arc::new(write_file::WriteFileTool::new()),
-        Arc::new(edit_file::EditFileTool::new()),
-        Arc::new(edit_notebook::EditNotebookTool::new()),
+        Arc::new(write_file::WriteFileTool::new().with_sandbox(sandbox)),
+        Arc::new(edit_file::EditFileTool::new().with_sandbox(sandbox)),
+        Arc::new(edit_notebook::EditNotebookTool::new().with_sandbox(sandbox)),
     ]
 }
 
@@ -82,7 +89,24 @@ pub fn register_write_tools(registry: &ToolRegistry) -> Result<Vec<ToolRegistrat
 /// wiring PR decides where shell tools join the session catalog.
 #[cfg(unix)]
 pub fn shell_tools() -> Vec<Arc<dyn ExecutableTool>> {
-    vec![Arc::new(bash::BashTool::new())]
+    shell_tools_with(Default::default())
+}
+
+/// [`shell_tools`] over the execution world's shell provider: a constrained
+/// `agent.sandboxMode` runs `bash` through the sandboxed shell port.
+#[cfg(unix)]
+pub fn shell_tools_with(
+    sandbox: crate::runtime::tools::sandbox::Sandbox,
+) -> Vec<Arc<dyn ExecutableTool>> {
+    if !sandbox.confines() {
+        return vec![Arc::new(bash::BashTool::new())];
+    }
+    vec![Arc::new(bash::BashTool::with_options(
+        bash::BashToolOptions {
+            runner: Some(Arc::new(bash::executable::SandboxedShellRunner { sandbox })),
+            ..Default::default()
+        },
+    ))]
 }
 
 #[cfg(unix)]
@@ -1094,6 +1118,30 @@ pub(super) fn resolve_write_path(
         absolute,
         relative: relative_path,
     })
+}
+
+/// The `root` `resolvePilotDeckWorkspacePath` returns for a write it
+/// accepted (pathSafety.ts:28-106): the first workspace root containing the
+/// path, else (bypass mode, or an approved write outside every root) the
+/// session cwd. The write tools hand it to the fs provider as `workspaceRoot`.
+pub(super) fn write_root(
+    context: &crate::runtime::tools::ToolRunContext,
+    absolute: &JsString,
+) -> JsString {
+    let cwd = resolved_cwd(context);
+    if permission_mode(context).equals_str("bypassPermissions") {
+        return cwd;
+    }
+    let mut roots = vec![normalize(&cwd)];
+    roots.extend(
+        additional_working_directories(context)
+            .iter()
+            .map(normalize),
+    );
+    roots
+        .into_iter()
+        .find(|root| within_root(absolute, root))
+        .unwrap_or(cwd)
 }
 
 /// `context.messageId ?? context.turnId`, already a host-set string.

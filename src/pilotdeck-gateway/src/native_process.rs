@@ -39,6 +39,7 @@ mod dialog_recovery;
 mod elicitation;
 mod hooks;
 mod permission_prompt;
+mod permission_settings;
 mod projects;
 mod requests;
 // The product entry (`pilotdeck server`): the baseline's startGatewayServer

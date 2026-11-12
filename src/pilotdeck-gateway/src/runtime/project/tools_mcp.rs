@@ -130,6 +130,7 @@ impl ExecutionWorldResource {
     fn new(
         project_root: &std::path::Path,
         on_completion: Option<crate::runtime::background::CompletionHandler>,
+        sandbox: crate::runtime::tools::sandbox::Sandbox,
     ) -> std::io::Result<Self> {
         use crate::runtime::background::{
             BackgroundResources, BackgroundTaskRuntime, BackgroundTaskRuntimeOptions,
@@ -146,6 +147,7 @@ impl ExecutionWorldResource {
                     disk_spill_dir: Some(state_dir.clone()),
                     snapshot_store: Some(Arc::new(snapshot_store)),
                     on_completion,
+                    sandbox,
                     ..BackgroundTaskRuntimeOptions::default()
                 }),
                 subagents: Default::default(),
@@ -180,8 +182,13 @@ impl ResourceFamilySource for ExecutionWorldFamilySource {
 
     fn stage(&self, context: &StageContext, sink: &mut StageSink<'_>) -> RuntimeResult {
         let resource = Arc::new(
-            ExecutionWorldResource::new(&context.project_root(), self.on_completion.clone())
-                .map_err(|error| RuntimeError::new(error.to_string()))?,
+            ExecutionWorldResource::new(
+                &context.project_root(),
+                self.on_completion.clone(),
+                // `createNodeExecutionWorldBundle({ sandboxMode: profile.sandboxMode })`.
+                crate::runtime::tools::sandbox::Sandbox::new(context.profile().sandbox_mode),
+            )
+            .map_err(|error| RuntimeError::new(error.to_string()))?,
         );
         sink.register_owner(self.family(), resource.clone());
         sink.register_resource(Resource::ExecutionWorld, resource);

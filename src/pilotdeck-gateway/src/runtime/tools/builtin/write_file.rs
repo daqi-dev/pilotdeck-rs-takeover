@@ -14,13 +14,20 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue};
 
 pub struct WriteFileTool {
     fields: JsObject,
+    sandbox: crate::runtime::tools::sandbox::Sandbox,
 }
 
 impl WriteFileTool {
     pub fn new() -> Self {
         Self {
             fields: definition(),
+            sandbox: Default::default(),
         }
+    }
+    /// The execution world's `fs` provider under `agent.sandboxMode`.
+    pub fn with_sandbox(mut self, sandbox: crate::runtime::tools::sandbox::Sandbox) -> Self {
+        self.sandbox = sandbox;
+        self
     }
 }
 
@@ -52,9 +59,10 @@ impl ExecutableTool for WriteFileTool {
     }
 
     fn execute(&self, input: JsValue, context: ToolRunContext) -> ToolFuture<ToolOutput> {
+        let sandbox = self.sandbox;
         Box::pin(async move {
             #[cfg_attr(not(unix), allow(unused_mut, unused_variables))]
-            let (mut output, relative, content, update) = execute(&input, &context)?;
+            let (mut output, relative, content, update) = execute(&input, &context, sandbox)?;
             context
                 .notify_file_saved(update)
                 .await
@@ -145,6 +153,7 @@ fn validate(input: &JsValue, context: &ToolRunContext) -> Result<Option<Vec<JsOb
 fn execute(
     input: &JsValue,
     context: &ToolRunContext,
+    sandbox: crate::runtime::tools::sandbox::Sandbox,
 ) -> Result<
     (
         ToolOutput,
@@ -173,6 +182,12 @@ fn execute(
             .map_err(|error| tool_error("tool_execution_failed", error.to_string()))?;
     }
 
+    // `fs.writeText(path, content, { workspaceRoot: resolved.root })`
+    // through the sandboxed fs provider.
+    sandbox.check_write(
+        &resolved.absolute,
+        &super::write_root(context, &resolved.absolute),
+    )?;
     let write = write_text_file(&resolved.absolute, &content)?;
     if let Some(history) = file_history(context) {
         history

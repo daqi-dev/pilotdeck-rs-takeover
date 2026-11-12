@@ -60,8 +60,8 @@ use crate::{
         tools::{
             ToolCancellation,
             builtin::bash::runner::{
-                AbortSignal, SpawnError, classify_spawn_error, inherited_env, prepare_spawn,
-                timer_delay,
+                AbortSignal, SpawnError, classify_spawn_error, inherited_env, prepare_exec,
+                prepare_spawn, timer_delay,
             },
         },
     },
@@ -289,6 +289,10 @@ pub struct BackgroundTaskRuntimeOptions {
     pub max_tasks: Option<usize>,
     pub on_completion: Option<CompletionHandler>,
     pub completion_preview_bytes: Option<f64>,
+    /// The execution world's `agent.sandboxMode`: a constrained mode starts
+    /// each task as the confined `/bin/sh -c <command>`
+    /// (`createNodeSandboxedDetachedShellPort`).
+    pub sandbox: crate::runtime::tools::sandbox::Sandbox,
 }
 
 struct Inner {
@@ -304,6 +308,7 @@ struct Inner {
     disk_spill_dir: Option<std::path::PathBuf>,
     snapshot_store:
         Option<Arc<dyn crate::runtime::background_snapshot::BackgroundTaskSnapshotStore>>,
+    sandbox: crate::runtime::tools::sandbox::Sandbox,
 }
 
 /// Own both counters before calling any injectable port. Publication consumes
@@ -461,6 +466,7 @@ impl BackgroundTaskRuntime {
                 on_completion: options.on_completion,
                 disk_spill_dir: options.disk_spill_dir,
                 snapshot_store: options.snapshot_store,
+                sandbox: options.sandbox,
                 completion_preview_bytes: options
                     .completion_preview_bytes
                     .unwrap_or(DEFAULT_COMPLETION_PREVIEW_BYTES),
@@ -744,21 +750,44 @@ impl BackgroundTaskRuntime {
                 .map(JsString::from_utf16)
                 .map_err(|_| JsString::from(js_value::StackOverflow::MESSAGE)),
         };
-        let spawned =
-            command
-                .and_then(|command| {
-                    prepare_spawn(&command, &spec.cwd, spec.env.as_deref(), resolve_env)
-                })
-                .map_err(|message| (false, message))
-                .and_then(|prepared| {
-                    // PreparedSpawn installs the shared child-only signal reset.
-                    prepared.command(Stdio::null()).spawn().map_err(|error| {
-                        match classify_spawn_error(&error, &prepared.shell) {
+        let spawned = command
+            .and_then(|command| {
+                let sandbox = self.inner.sandbox;
+                if !sandbox.confines() {
+                    return prepare_spawn(&command, &spec.cwd, spec.env.as_deref(), resolve_env);
+                }
+                // `resolvePolicy({ workspaceRoot: request.cwd })` and
+                // `sandbox.prepare` over the exact `/bin/sh -c` argv; a
+                // provider that cannot enforce it rejects the start.
+                let cwd = std::path::PathBuf::from(String::from_utf16_lossy(spec.cwd.units()));
+                let prepared = sandbox
+                    .prepare(
+                        "/bin/sh",
+                        vec!["-c".into(), String::from_utf16_lossy(command.units())],
+                        &cwd,
+                        None,
+                    )
+                    .map_err(|message| JsString::from(message.as_str()))?;
+                Ok(prepare_exec(
+                    &prepared.executable,
+                    prepared.args,
+                    &spec.cwd,
+                    Some(spec.env.as_deref().unwrap_or(resolve_env)),
+                ))
+            })
+            .map_err(|message| (false, message))
+            .and_then(|prepared| {
+                // PreparedSpawn installs the shared child-only signal reset.
+                prepared
+                    .command(Stdio::null())
+                    .spawn()
+                    .map_err(
+                        |error| match classify_spawn_error(&error, &prepared.shell) {
                             SpawnError::Async(message) => (true, message),
                             SpawnError::Sync(message) => (false, message),
-                        }
-                    })
-                });
+                        },
+                    )
+            });
         match spawned {
             Err((true, message)) => {
                 let mut task = task;

@@ -261,17 +261,23 @@ fn pilotdeck_tools_module(allowed: &[&str]) -> String {
 
 /// `CreateExecuteCodeToolOptions`, reduced to what this host selects. The
 /// provider seams (workspace, code runtime, transport) are this module's own
-/// implementations; the sandbox adapter is not ported, so the tool always
-/// runs as the baseline does under `danger-full-access` (its default).
+/// implementations.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ExecuteCodeToolOptions {
     /// `webSearch !== false`: adds the `web_search` helper and RPC capability.
     pub web_search: bool,
+    /// `sandbox` (the execution world's `executeCodeSandbox` / sandboxed code
+    /// runtime): a constrained mode confines the interpreter and its probe,
+    /// and drops the host-side mutation helpers from the RPC surface.
+    pub sandbox: crate::runtime::tools::sandbox::Sandbox,
 }
 
 pub struct ExecuteCodeTool {
     fields: JsObject,
     allowed: Arc<Vec<&'static str>>,
+    /// `restrictSandboxedRpcTools(allowedTools, policy)`.
+    rpc_allowed: Arc<Vec<&'static str>>,
+    sandbox: crate::runtime::tools::sandbox::Sandbox,
 }
 
 impl ExecuteCodeTool {
@@ -282,21 +288,36 @@ impl ExecuteCodeTool {
             helpers.push("web_search");
         }
         helpers.extend(BASE_ALLOWED_TOOLS);
+        // These run in the host, outside the confined interpreter, so a
+        // constrained policy must not let RPC become an escape hatch
+        // (executeCode.ts:506-518).
+        let rpc_allowed: Vec<&'static str> = helpers
+            .iter()
+            .copied()
+            .filter(|name| {
+                !options.sandbox.confines() || !matches!(*name, "bash" | "write_file" | "edit_file")
+            })
+            .collect();
         Self {
             fields: object([
                 ("name", string("execute_code")),
-                ("description", string(description(&helpers))),
+                (
+                    "description",
+                    string(description(&helpers, options.sandbox.mode())),
+                ),
                 ("kind", string("custom")),
                 ("inputSchema", JsValue::Object(schema(INPUT_SCHEMA))),
             ]),
             allowed: Arc::new(helpers),
+            rpc_allowed: Arc::new(rpc_allowed),
+            sandbox: options.sandbox,
         }
     }
 }
 
 /// The description `createExecuteCodeTool` assembles (executeCode.ts:160-191)
-/// for the default helper set and no constrained sandbox.
-fn description(helpers: &[&str]) -> String {
+/// for the given helper set and sandbox mode.
+fn description(helpers: &[&str], mode: crate::runtime::project::SandboxMode) -> String {
     let has = |name: &str| helpers.contains(&name);
     let helper_example = if has("edit_file") {
         "grep -> read_file -> edit_file"
@@ -323,8 +344,11 @@ fn description(helpers: &[&str]) -> String {
             ),
         )
     };
-    // `describeExecutionEnvironment(sandbox)` for `danger-full-access`.
-    let execution_environment = "The script runs from the workspace cwd and inherits the same runtime environment as normal tools such as bash, including configured API, proxy, PATH, virtualenv, and conda variables; do not print secrets or dump the full environment. ";
+    // `describeExecutionEnvironment(sandbox)` (executeCode.ts:255-265).
+    let execution_environment = match mode {
+        crate::runtime::project::SandboxMode::DangerFullAccess => "The script runs from the workspace cwd and inherits the same runtime environment as normal tools such as bash, including configured API, proxy, PATH, virtualenv, and conda variables; do not print secrets or dump the full environment. ".to_owned(),
+        mode => format!("The script runs from the workspace cwd with the host {} file-effect policy. It inherits the same runtime environment as normal tools such as bash, including configured API, proxy, PATH, virtualenv, and conda variables; do not print secrets or dump the full environment. ", mode.as_str()),
+    };
     format!(
         "Run a local Python 3 script that can call a small allow-list of PilotDeck tools via `import pilotdeck_tools`. {execution_environment}Only the script's final stdout/stderr summary is returned to the model; intermediate tool results stay inside the script. {helper_surface}{helper_guidance}{file_write_guidance}Notebook edits, agent, task tools, MCP tools, and execute_code itself are not available."
     )
@@ -560,9 +584,12 @@ impl ExecutableTool for ExecuteCodeTool {
 
     fn execute(&self, input: JsValue, context: ToolRunContext) -> ToolFuture<ToolOutput> {
         let allowed = self.allowed.clone();
+        let rpc_allowed = self.rpc_allowed.clone();
+        let sandbox = self.sandbox;
         Box::pin(async move {
             let started = now_ms();
-            let result = run_execute_code(&input, &context, started, allowed).await?;
+            let result =
+                run_execute_code(&input, &context, started, allowed, rpc_allowed, sandbox).await?;
             let mut metadata = object([
                 ("status", string(result.status)),
                 ("tool_calls_made", JsValue::Number(result.tool_calls_made)),
@@ -739,18 +766,35 @@ fn lossy(value: &JsString) -> String {
 }
 
 /// `resolveExecutable(["python3", "python"], context.env, signal)`: the first
-/// candidate whose `--version` exits 0.
+/// candidate whose `--version` exits 0. Under a constrained sandbox the probe
+/// runs confined too (`createNodeSandboxedCodeRuntimePort.resolveExecutable`):
+/// a provider that cannot prepare it skips the candidate, and a probe that
+/// does not finish within 5 s does not count.
 async fn resolve_python(
     env: Option<&[(JsString, JsString)]>,
     context: &ToolRunContext,
+    sandbox: crate::runtime::tools::sandbox::Sandbox,
 ) -> Result<Option<&'static str>, ToolError> {
     for candidate in ["python3", "python"] {
         if context.is_aborted() {
             return Err(ToolError::aborted());
         }
-        let mut command = Command::new(candidate);
+        let mut command = if sandbox.confines() {
+            let probe_cwd = super::os_path(&cwd(context));
+            let Ok(prepared) =
+                sandbox.prepare(candidate, vec!["--version".into()], &probe_cwd, None)
+            else {
+                continue;
+            };
+            let mut command = Command::new(prepared.executable);
+            command.args(prepared.args).current_dir(probe_cwd);
+            command
+        } else {
+            let mut command = Command::new(candidate);
+            command.arg("--version");
+            command
+        };
         command
-            .arg("--version")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -760,8 +804,14 @@ async fn resolve_python(
         let Ok(mut child) = command.spawn() else {
             continue;
         };
+        let limit = if sandbox.confines() {
+            Duration::from_secs(5)
+        } else {
+            Duration::from_secs(u64::from(u32::MAX))
+        };
         let available = tokio::select! {
             status = child.wait() => status.is_ok_and(|status| status.code() == Some(0)),
+            _ = tokio::time::sleep(limit) => false,
             _ = context.cancelled() => false,
         };
         if available {
@@ -831,6 +881,8 @@ async fn run_execute_code(
     context: &ToolRunContext,
     started: f64,
     allowed: Arc<Vec<&'static str>>,
+    rpc_allowed: Arc<Vec<&'static str>>,
+    sandbox: crate::runtime::tools::sandbox::Sandbox,
 ) -> Result<Outcome, ToolError> {
     let timeout_seconds = field(input, "timeout_seconds")
         .as_number()
@@ -852,7 +904,7 @@ async fn run_execute_code(
         ));
     };
     let env = spawn_env(context)?;
-    let Some(python) = resolve_python(env.as_deref(), context).await? else {
+    let Some(python) = resolve_python(env.as_deref(), context, sandbox).await? else {
         return Ok(Outcome::build(
             "unsupported",
             String::new(),
@@ -870,7 +922,7 @@ async fn run_execute_code(
     };
     let rpc = Arc::new(Rpc {
         execute_tool,
-        allowed: allowed.clone(),
+        allowed: rpc_allowed,
         max_tool_calls,
         outer_id: context
             .fields
@@ -897,7 +949,7 @@ async fn run_execute_code(
         let workspace_cwd = cwd(context);
         let env = child_env(env, &workspace, &workspace_cwd);
         tokio::select! {
-            execution = run_python(python, &script, &workspace_cwd, &env, timeout_seconds, context) => execution,
+            execution = run_python(python, &script, &workspace_cwd, &env, timeout_seconds, context, sandbox) => execution,
             error = serve(listener, rpc.clone()) => Err(error.message.clone()),
         }
     };
@@ -1066,11 +1118,22 @@ async fn run_python(
     env: &[(JsString, JsString)],
     timeout_seconds: f64,
     context: &ToolRunContext,
+    sandbox: crate::runtime::tools::sandbox::Sandbox,
 ) -> Result<Execution, String> {
-    let mut command = Command::new(python);
+    // `sandbox.prepare({ executable: python, args: [script], cwd, env,
+    // policy: { mode, workspaceRoot: cwd } })`; the provider error is the
+    // tool's `catch` branch.
+    let workspace = super::os_path(workspace_cwd);
+    let prepared = sandbox.prepare(
+        python,
+        vec![script.to_string_lossy().into_owned()],
+        &workspace,
+        None,
+    )?;
+    let mut command = Command::new(&prepared.executable);
     command
-        .arg(script)
-        .current_dir(super::os_path(workspace_cwd))
+        .args(&prepared.args)
+        .current_dir(workspace)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1080,7 +1143,7 @@ async fn run_python(
     pilotdeck_child_signals::install_child_signal_reset(command.as_std_mut());
     let mut child = command
         .spawn()
-        .map_err(|error| spawn_error(&error, python))?;
+        .map_err(|error| spawn_error(&error, &prepared.executable))?;
     let mut guard = GroupGuard(
         child
             .id()
