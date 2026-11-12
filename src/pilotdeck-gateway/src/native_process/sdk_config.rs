@@ -33,7 +33,41 @@ pub(super) const WIRED_FIELDS: &[&str] = &[
     "includeHookEvents",
     "fallbackModel",
     "managedModels",
+    "agents",
 ];
+
+/// The `agents.<id>` keys whose effect the native subagent composes. A
+/// definition naming any other key (`mcpServers`, `skills`, `memory`,
+/// `initialPrompt`, `background`, `observer`, `observerMessage`) keeps the
+/// whole config unavailable.
+const WIRED_AGENT_FIELDS: &[&str] = &[
+    "description",
+    "prompt",
+    "tools",
+    "disallowedTools",
+    "model",
+    "maxTurns",
+    "permissionMode",
+    // Carried on the definition; the baseline's subagent runtime reads it
+    // nowhere.
+    "effort",
+    "criticalSystemReminder_EXPERIMENTAL",
+];
+
+fn agents_wired(config: &JsObject) -> bool {
+    let Some(JsValue::Object(agents)) = config.get("agents") else {
+        return true;
+    };
+    agents.own_entries().iter().all(|(_, agent)| {
+        agent.as_object().is_some_and(|agent| {
+            agent
+                .own_entries()
+                .iter()
+                .filter(|(_, value)| !value.is_undefined())
+                .all(|(key, _)| WIRED_AGENT_FIELDS.iter().any(|name| key.equals_str(name)))
+        })
+    })
+}
 
 const INVALID: &str = "INVALID_SDK_SESSION_CONFIG";
 
@@ -852,6 +886,75 @@ fn resolve_sdk_model(requested: &JsString, parent: (JsValue, JsValue)) -> (JsVal
     }
 }
 
+/// `subagentDefinitions: toSdkSubagentDefinitions(sdk.agents)`
+/// (SessionAgentConfigBundle.ts:141,206-239): the SDK's agents replace the
+/// session's subagent table. No organization `maxTurns` cap exists here.
+pub(super) fn apply_agent_fields(agent: &mut JsObject, config: Option<&JsValue>) {
+    let Some(JsValue::Object(agents)) = config.and_then(|config| config.get("agents")) else {
+        return;
+    };
+    let mut definitions = JsObject::new();
+    for (id, sdk) in agents.own_entries() {
+        let field = |key: &str| sdk.get(key).filter(|value| !value.is_undefined());
+        let mut definition = JsObject::new();
+        definition.insert("id".into(), JsValue::String(id.clone()));
+        definition.insert(
+            "description".into(),
+            field("description").cloned().unwrap_or(JsValue::Undefined),
+        );
+        definition.insert(
+            "systemPromptSuffix".into(),
+            field("prompt").cloned().unwrap_or(JsValue::Undefined),
+        );
+        definition.insert(
+            "allowedTools".into(),
+            match field("tools") {
+                Some(tools) if truthy(tools) => tools.clone(),
+                _ => JsValue::Array(vec!["*".into()]),
+            },
+        );
+        if let Some(JsValue::Array(denied)) = field("disallowedTools")
+            && !denied.is_empty()
+        {
+            definition.insert("disallowedTools".into(), JsValue::Array(denied.clone()));
+        }
+        definition.insert("omitProjectInstructions".into(), JsValue::Bool(false));
+        definition.insert("omitGitStatus".into(), JsValue::Bool(false));
+        definition.insert(
+            "isReadOnly".into(),
+            JsValue::Bool(field("permissionMode") == Some(&"plan".into())),
+        );
+        if let Some(model) = field("model")
+            .and_then(JsValue::as_string)
+            .filter(|model| !model.is_empty())
+            && let resolved = resolve_sdk_model(model, ("".into(), "".into()))
+            && let (JsValue::String(provider), JsValue::String(name)) = (&resolved.0, &resolved.1)
+            && !provider.is_empty()
+            && !name.is_empty()
+        {
+            let mut model = JsObject::new();
+            model.insert("provider".into(), JsValue::String(provider.clone()));
+            model.insert("model".into(), JsValue::String(name.clone()));
+            definition.insert("modelOverride".into(), JsValue::Object(model));
+        }
+        for (key, source) in [
+            ("maxTurns", "maxTurns"),
+            ("effort", "effort"),
+            ("permissionMode", "permissionMode"),
+            (
+                "criticalSystemReminder",
+                "criticalSystemReminder_EXPERIMENTAL",
+            ),
+        ] {
+            if let Some(value) = field(source) {
+                definition.insert(key.into(), value.clone());
+            }
+        }
+        definitions.insert(id.clone(), JsValue::Object(definition));
+    }
+    agent.insert("subagentDefinitions".into(), JsValue::Object(definitions));
+}
+
 /// The model-routing fields of `SessionAgentConfigBundle.compose`
 /// (SessionAgentConfigBundle.ts:127-131): `fallbackModel` becomes the one
 /// session fallback the router tries after a pre-content retryable failure,
@@ -909,6 +1012,7 @@ impl SubmitSdkSessionConfig for NativeSdkSessionConfig {
                     event.equals_str("ConfigChange") || event.equals_str("FileChanged")
                 })
             });
+        let wired = wired && config.as_object().is_none_or(agents_wired);
         if wired && !separate_runtime_hooks {
             Ok(())
         } else {

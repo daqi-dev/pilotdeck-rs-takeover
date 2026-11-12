@@ -223,6 +223,12 @@ impl ForkSeed {
             .unwrap_or_else(|e| e.into_inner())
             .0
             .clone();
+        // `mode: definition.permissionMode ?? parent.permissionContext.mode`
+        // (SubagentRuntimeComposition.ts:199-202).
+        let mut permission = permission;
+        if let Some(mode) = &scope.definition.permission_mode {
+            permission.mode = mode.as_str().into();
+        }
         let run_mode = Arc::new(Mutex::new(config_run_mode(&config)));
         // The child runs its loop without an AgentSession or TurnRunner
         // (SubAgentSession.runNative): the session events and

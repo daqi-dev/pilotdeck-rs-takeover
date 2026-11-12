@@ -29,9 +29,8 @@ use crate::{
         tools::{
             ToolRunContext,
             builtin::agent::{
-                ForkApi, ForkFuture, ForkReport, ForkRequest, SUBAGENT_DEFINITIONS,
-                SubagentDefinition, SubagentFork, parse_summary, subagent_definition,
-                subagent_system_prompt,
+                ForkApi, ForkFuture, ForkReport, ForkRequest, SubagentDefinition, SubagentFork,
+                definitions_from_config, parse_summary, subagent_system_prompt,
             },
             js_space,
             registry::ToolPolicy,
@@ -88,7 +87,7 @@ impl SubagentRuntime {
         seed: ForkSeed,
         parent_config: &JsObject,
         config: JsObject,
-        definition: &'static SubagentDefinition,
+        definition: Arc<SubagentDefinition>,
         child: &JsString,
         transcript_path: PathBuf,
         resume: bool,
@@ -278,7 +277,7 @@ pub(super) fn compose_subagents_section(
 /// parent registry's scoped view).
 #[derive(Clone)]
 pub(super) struct ForkScope {
-    pub(super) definition: &'static SubagentDefinition,
+    pub(super) definition: Arc<SubagentDefinition>,
     /// The root session's recorder: where a nested fork's parent-side
     /// references and sidechain go.
     pub(super) root_recorder: Arc<Recorder>,
@@ -290,13 +289,22 @@ impl ForkScope {
     /// depth cap permits another descendant, user interaction and the plan
     /// workflow never.
     pub(super) fn policy(&self, can_fork: bool) -> ToolPolicy {
-        let allowed = self.definition.allowed_tools;
+        let definition = self.definition.clone();
         Arc::new(move |tool| {
             let fields = tool.fields();
             let Some(name) = fields.get("name").and_then(JsValue::as_string) else {
                 return false;
             };
-            if allowed.first() != Some(&"*") && !allowed.iter().any(|entry| name.equals_str(entry))
+            if definition
+                .disallowed_tools
+                .iter()
+                .any(|entry| name.equals_str(entry))
+            {
+                return false;
+            }
+            let allowed = &definition.allowed_tools;
+            if !allowed.iter().any(|entry| entry == "*")
+                && !allowed.iter().any(|entry| name.equals_str(entry))
             {
                 return false;
             }
@@ -505,6 +513,13 @@ fn build_child_config(
     depth_increment: f64,
 ) -> JsObject {
     let configured = parent.get("subagentModel").and_then(JsValue::as_object);
+    // `options.resolvedModel ?? options.definition.modelOverride`.
+    let resolved = resolved.or_else(|| {
+        definition
+            .model_override
+            .as_ref()
+            .map(|(provider, model)| (provider.as_str().into(), model.as_str().into()))
+    });
     // An explicit model keeps the configured subagent model's other fields
     // only when it names that same provider and model.
     let selected = match resolved {
@@ -550,8 +565,24 @@ fn build_child_config(
     if read_only {
         config.insert("runMode".into(), "ask".into());
     }
+    if let Some(mode) = &definition.permission_mode {
+        config.insert("permissionMode".into(), mode.as_str().into());
+    }
+    if let Some(turns) = definition.max_turns {
+        config.insert("maxTurns".into(), JsValue::Number(turns));
+    }
     config.insert("isSubagent".into(), JsValue::Bool(true));
-    let subagent_system = subagent_system_prompt(definition);
+    // `[buildSubagentSystemPrompt(definition), definition.criticalSystemReminder]`
+    // without blank parts, joined by a blank line.
+    let subagent_system = [
+        Some(subagent_system_prompt(definition)),
+        definition.critical_system_reminder.clone(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|part| !part.trim_matches(js_space).is_empty())
+    .collect::<Vec<_>>()
+    .join("\n\n");
     let parent_system = parent
         .get("systemPrompt")
         .and_then(JsValue::as_string)
@@ -579,7 +610,7 @@ fn build_child_config(
         .cloned()
         .unwrap_or_default();
     metadata.insert("subagentId".into(), JsValue::String(subagent_id.clone()));
-    metadata.insert("subagentType".into(), definition.id.into());
+    metadata.insert("subagentType".into(), definition.id.as_str().into());
     config.insert("metadata".into(), JsValue::Object(metadata));
     config
 }
@@ -635,7 +666,7 @@ impl Fork {
             ("sessionId", JsValue::String(self.session.clone())),
             ("turnId", JsValue::String(self.turn.clone())),
             ("subagentId", JsValue::String(subagent_id.clone())),
-            ("subagentType", definition.id.into()),
+            ("subagentType", definition.id.as_str().into()),
         ])
     }
 
@@ -749,7 +780,7 @@ impl Fork {
         let mut draft = object([
             ("type", "subagent_completed".into()),
             ("subagentId", JsValue::String(subagent_id.clone())),
-            ("subagentType", definition.id.into()),
+            ("subagentType", definition.id.as_str().into()),
             ("summaryPreview", JsValue::String(preview)),
             ("summaryTruncated", JsValue::Bool(truncated)),
         ]);
@@ -775,7 +806,7 @@ impl Fork {
     async fn run_child(
         &self,
         request: &ForkRequest,
-        definition: &'static SubagentDefinition,
+        definition: Arc<SubagentDefinition>,
         storage: &FactoryStorage,
         child_session: &JsString,
         context: &ToolRunContext,
@@ -791,7 +822,7 @@ impl Fork {
             &[],
         )
         .map_err(|error: HostError| fail(&error.message))?;
-        let config = child_config(&self.parent.config, definition, &request.subagent_id);
+        let config = child_config(&self.parent.config, &definition, &request.subagent_id);
         let tools: SessionTools = self.seed.clone().child(
             SessionBinding {
                 context: self.seed.context.clone(),
@@ -801,7 +832,7 @@ impl Fork {
             },
             config.clone(),
             ForkScope {
-                definition,
+                definition: definition.clone(),
                 root_recorder: self.parent.recorder.clone(),
             },
         );
@@ -877,7 +908,7 @@ impl Fork {
                                 ("version", JsValue::Number(1.0)),
                                 ("mode", "one-shot".into()),
                                 ("provider", "pilotdeck-native".into()),
-                                ("definitionId", definition.id.into()),
+                                ("definitionId", definition.id.as_str().into()),
                             ])),
                         ),
                     ]);
@@ -907,7 +938,7 @@ impl Fork {
                 Some("turn_completed") => result = event.get("result").cloned(),
                 _ => {}
             }
-            self.forward(&event, &request.subagent_id, definition);
+            self.forward(&event, &request.subagent_id, &definition);
         };
         drop(turn);
         let _ = session.dispose().await;
@@ -995,12 +1026,15 @@ impl Fork {
         request: ForkRequest,
         context: ToolRunContext,
     ) -> Result<ForkReport, JsString> {
-        let definition = subagent_definition(&text(&request.definition_id)).ok_or_else(|| {
-            JsString::from(format!(
-                "Unknown subagent type: {}",
-                text(&request.definition_id)
-            ))
-        })?;
+        let definition = definitions_from_config(&self.parent.config)
+            .into_iter()
+            .find(|definition| definition.id == text(&request.definition_id))
+            .ok_or_else(|| {
+                JsString::from(format!(
+                    "Unknown subagent type: {}",
+                    text(&request.definition_id)
+                ))
+            })?;
         let cwd = self
             .parent
             .config
@@ -1027,7 +1061,7 @@ impl Fork {
         self.record_parent(object([
             ("type", "subagent_started".into()),
             ("subagentId", JsValue::String(request.subagent_id.clone())),
-            ("subagentType", definition.id.into()),
+            ("subagentType", definition.id.as_str().into()),
             ("promptPreview", JsValue::String(preview)),
             ("promptTruncated", JsValue::Bool(truncated)),
             ("transcriptRelativePath", JsValue::String(relative.clone())),
@@ -1041,17 +1075,17 @@ impl Fork {
             &context,
             object([
                 ("subagentId", JsValue::String(request.subagent_id.clone())),
-                ("subagentType", definition.id.into()),
+                ("subagentType", definition.id.as_str().into()),
             ]),
         )
         .await?;
-        let mut started = self.base("subagent_started", &request.subagent_id, definition);
+        let mut started = self.base("subagent_started", &request.subagent_id, &definition);
         if let Some(call) = &request.tool_call_id {
             started.insert("toolCallId".into(), JsValue::String(call.clone()));
         }
         self.emit(started);
         let completed = |success: bool, aborted: Option<bool>, duration_ms: f64| {
-            let mut event = self.base("subagent_completed", &request.subagent_id, definition);
+            let mut event = self.base("subagent_completed", &request.subagent_id, &definition);
             event.insert("success".into(), JsValue::Bool(success));
             if let Some(aborted) = aborted {
                 event.insert("aborted".into(), JsValue::Bool(aborted));
@@ -1060,7 +1094,13 @@ impl Fork {
             event
         };
         let outcome = self
-            .run_child(&request, definition, &storage, &child_session, &context)
+            .run_child(
+                &request,
+                definition.clone(),
+                &storage,
+                &child_session,
+                &context,
+            )
             .await;
         // A parent completion never advertises a child whose storage has not
         // finished its durable teardown.
@@ -1076,14 +1116,14 @@ impl Fork {
         match outcome {
             Ok(outcome) => {
                 let markdown = JsString::from(outcome.markdown.as_str());
-                self.record_completed(&request.subagent_id, definition, &markdown, Some(&outcome))
+                self.record_completed(&request.subagent_id, &definition, &markdown, Some(&outcome))
                     .await?;
                 self.lifecycle(
                     "SubagentStop",
                     &context,
                     object([
                         ("subagentId", JsValue::String(request.subagent_id.clone())),
-                        ("subagentType", definition.id.into()),
+                        ("subagentType", definition.id.as_str().into()),
                         ("success", JsValue::Bool(true)),
                     ]),
                 )
@@ -1103,7 +1143,7 @@ impl Fork {
                 let timed_out = text(&failure).starts_with("Subagent timed out after ");
                 let aborted = context.is_aborted() && !timed_out;
                 let failure = match self
-                    .record_completed(&request.subagent_id, definition, &failure, None)
+                    .record_completed(&request.subagent_id, &definition, &failure, None)
                     .await
                 {
                     Ok(()) => failure,
@@ -1117,7 +1157,7 @@ impl Fork {
                         &context,
                         object([
                             ("subagentId", JsValue::String(request.subagent_id.clone())),
-                            ("subagentType", definition.id.into()),
+                            ("subagentType", definition.id.as_str().into()),
                             ("success", JsValue::Bool(false)),
                         ]),
                     )
@@ -1144,9 +1184,9 @@ impl SubagentFork for Fork {
         depths(&self.parent.config).1
     }
     fn definition_ids(&self) -> Vec<JsString> {
-        SUBAGENT_DEFINITIONS
+        definitions_from_config(&self.parent.config)
             .iter()
-            .map(|definition| definition.id.into())
+            .map(|definition| definition.id.as_str().into())
             .collect()
     }
     fn fork(&self, request: ForkRequest, context: ToolRunContext) -> ForkFuture {
@@ -1160,6 +1200,7 @@ impl SubagentFork for Fork {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::tools::builtin::agent::subagent_definition;
 
     #[test]
     fn preview_cuts_between_code_points_at_the_byte_cap() {
@@ -1174,11 +1215,11 @@ mod tests {
         let explore = subagent_definition("explore").expect("explore");
         let general = subagent_definition("general-purpose").expect("general");
         let prompt = "Intro\n  <project-instructions>\nrules\n</project-instructions>\n\nMiddle\n<git-status a=\"1\">x</git-status>\nEnd  \n";
-        assert_eq!(filter_parent_system(prompt, explore), "Intro\nMiddle\nEnd");
-        assert_eq!(filter_parent_system(prompt, general), prompt.trim_end());
+        assert_eq!(filter_parent_system(prompt, &explore), "Intro\nMiddle\nEnd");
+        assert_eq!(filter_parent_system(prompt, &general), prompt.trim_end());
         // A tag in the middle of a line is not a block.
         assert_eq!(
-            filter_parent_system("see <git-status>x</git-status> here", explore),
+            filter_parent_system("see <git-status>x</git-status> here", &explore),
             "see <git-status>x</git-status> here"
         );
     }
@@ -1193,7 +1234,7 @@ mod tests {
             ("permissionContext", JsValue::Object(JsObject::new())),
         ]);
         let explore = subagent_definition("explore").expect("explore");
-        let child = child_config(&parent, explore, &"id-1".into());
+        let child = child_config(&parent, &explore, &"id-1".into());
         assert_eq!(child.get("runMode"), Some(&"ask".into()));
         assert_eq!(child.get("isSubagent"), Some(&JsValue::Bool(true)));
         assert_eq!(child.get("subagentDepth"), Some(&JsValue::Number(2.0)));
@@ -1209,7 +1250,7 @@ mod tests {
             "subagentModel".into(),
             JsValue::Object(object([("provider", "q".into()), ("model", "n".into())])),
         );
-        let child = child_config(&with_model, general, &"id-2".into());
+        let child = child_config(&with_model, &general, &"id-2".into());
         assert_eq!(child.get("runMode"), None);
         assert_eq!(child.get("provider"), Some(&"q".into()));
         assert_eq!(child.get("model"), Some(&"n".into()));

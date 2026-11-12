@@ -794,6 +794,7 @@ async fn start_assembly(
                     session_overrides.sdk_config(&context.session_key).as_ref(),
                 );
                 super::sdk_config::apply_model_fields(&mut config, sdk_config.as_ref());
+                super::sdk_config::apply_agent_fields(&mut config, sdk_config.as_ref());
                 apply_session_overrides(
                     &mut config,
                     stored_permission_mode.as_ref(),

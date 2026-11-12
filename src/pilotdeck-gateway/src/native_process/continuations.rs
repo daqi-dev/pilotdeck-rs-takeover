@@ -694,12 +694,12 @@ impl SessionContinuationPort {
         &self,
         parent: &Arc<dyn ContinuationParent>,
         child: &JsString,
-        definition: &'static SubagentDefinition,
+        definition: Arc<SubagentDefinition>,
         model: (JsString, JsString),
         resume: bool,
     ) -> Result<Arc<Activation>, JsString> {
         let chat_dir = parent.chat_dir();
-        let config = continuable_child_config(&self.config, definition, child, model);
+        let config = continuable_child_config(&self.config, &definition, child, model);
         let slot = ParentRef::default();
         let (session, storage) = self
             .runtime
@@ -829,7 +829,7 @@ impl SessionContinuationPort {
             ("version", JsValue::Number(DESCRIPTOR_VERSION)),
             ("mode", "continuable".into()),
             ("provider", PROVIDER.into()),
-            ("definitionId", definition.id.into()),
+            ("definitionId", definition.id.as_str().into()),
             ("parentSessionId", JsValue::String(parent_id)),
             ("label", JsValue::String(label)),
             ("agentProvider", JsValue::String(agent_provider.clone())),
