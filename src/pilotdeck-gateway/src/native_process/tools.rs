@@ -127,6 +127,7 @@ pub struct SessionTools {
     hook_observers: crate::runtime::hooks::runtime::HookObservers,
     /// The tool runtime's lifecycle: the current turn's bound hooks.
     tool_hooks: Arc<super::hooks::ToolHooks>,
+    hook_delegate: Option<Arc<dyn crate::host::modules::lifecycle::LifecyclePort>>,
     /// The session's `CompactionEngine` failure cooldown.
     compaction_cooldown: crate::runtime::context::compaction::engine::SummaryCooldown,
     /// The session's context-runtime state (prompt-cache generations and
@@ -257,6 +258,7 @@ impl ForkSeed {
             .collect();
         let tool_hooks: Arc<super::hooks::ToolHooks> = Arc::default();
         tool_hooks.configure(&hooks);
+        tool_hooks.configure_session(&hooks, &self.hook_observers);
         let child_permission_hooks = std::sync::OnceLock::new();
         if !hooks.is_empty() {
             let _ = child_permission_hooks.set(tool_hooks.clone());
@@ -296,6 +298,7 @@ impl ForkSeed {
             hooks,
             hook_observers: self.hook_observers,
             tool_hooks,
+            hook_delegate: None,
             compaction_cooldown: Arc::default(),
             // A one-shot subagent without its own context definition runs on
             // the parent's context runtime (`createContext` returns
@@ -310,6 +313,68 @@ impl ForkSeed {
     }
 }
 impl SessionTools {
+    /// A SOP node shares this generation's services and tool definitions, but
+    /// owns its recorder, context and permission transitions. Its hooks and
+    /// prompt answerer are rebound by the node's ordinary session assembly.
+    pub(super) fn for_sop_node(&self, binding: SessionBinding) -> Self {
+        let permission = self
+            .permission
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .0
+            .clone();
+        let file_history = Arc::new(session_file_history(&binding));
+        Self {
+            project: self.project.clone(),
+            env: self.env.clone(),
+            binding,
+            config: self.config.clone(),
+            interactions: self.interactions.clone(),
+            permission: Arc::new(Permissions(
+                Mutex::new((permission, None)),
+                // The node has no public Gateway submit stream. Permission and
+                // elicitation replies remain addressed to its parent session;
+                // the node's durable tool audit still uses its own recorder.
+                self.permission.1.clone(),
+                Default::default(),
+                Default::default(),
+            )),
+            lsp: self.lsp.clone(),
+            mcp: self.mcp.clone(),
+            permission_mode_source: None,
+            run_mode: Arc::new(Mutex::new(
+                self.run_mode
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone(),
+            )),
+            turn_permission: Arc::default(),
+            world: self.world.clone(),
+            goal: Arc::default(),
+            plan_files: self.plan_files.clone(),
+            events: self.events.clone(),
+            subagents: self.subagents.clone(),
+            fork: None,
+            continuation: self.continuation.clone(),
+            elicitation_timeout: self.elicitation_timeout,
+            file_history,
+            user_dialog: self.user_dialog.clone(),
+            hooks: Vec::new(),
+            hook_observers: Default::default(),
+            tool_hooks: Arc::default(),
+            hook_delegate: Some(Arc::new(super::hooks::SopNodeLifecycle::new(
+                self.tool_hooks.clone(),
+                self.binding.context.session_key.clone(),
+                self.project.to_string_lossy().as_ref().into(),
+            ))),
+            compaction_cooldown: Arc::default(),
+            context_state: Arc::default(),
+            pilot_home: self.pilot_home.clone(),
+            interaction: self.interaction,
+        }
+    }
+
     pub fn new(
         options: &Options,
         env: &crate::config::Env,
@@ -373,6 +438,7 @@ impl SessionTools {
             hooks: Vec::new(),
             hook_observers: Default::default(),
             tool_hooks: Arc::default(),
+            hook_delegate: None,
             compaction_cooldown: Arc::default(),
             context_state: Arc::default(),
             pilot_home: Some(options.home.clone()),
@@ -1235,6 +1301,7 @@ impl SessionTools {
                 },
                 turn_ports: Default::default(),
                 hook_wiring: crate::runtime::turn::interaction::HookWiring {
+                    delegate: self.hook_delegate.clone(),
                     observers: self.hook_observers.clone(),
                     turn_sink: Some({
                         let tool_hooks = self.tool_hooks.clone();

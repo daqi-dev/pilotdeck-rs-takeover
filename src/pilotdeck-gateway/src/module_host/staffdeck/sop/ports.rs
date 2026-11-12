@@ -41,8 +41,7 @@ impl context::ContextRuntime for Context {
             };
             if let Some(prepared) = prepared {
                 let current = runtime.store.read().await.map_err(ModuleError::from)?;
-                let mut instruction =
-                    prompt::instruction(&prepared, current.as_ref().and_then(|v| v.get("state")));
+                let mut instruction = prompt::instruction(&prepared, current.as_ref());
                 if runtime
                     .turn
                     .lock()
@@ -133,18 +132,16 @@ fn apply_model_tools(request: &mut JsValue, step: Option<&JsValue>) {
             ])
         },
     );
-    if !required {
-        if let Some(JsValue::Array(tools)) = request.get("tools") {
-            let tools = tools
-                .iter()
-                .filter(|v| {
-                    is(v, "name", "submit_step_result")
-                        || (knowledge && is(v, "name", "knowledge_query"))
-                })
-                .cloned()
-                .collect();
-            set(request, "tools", JsValue::Array(tools));
-        }
+    if !required && let Some(JsValue::Array(tools)) = request.get("tools") {
+        let tools = tools
+            .iter()
+            .filter(|v| {
+                is(v, "name", "submit_step_result")
+                    || (knowledge && is(v, "name", "knowledge_query"))
+            })
+            .cloned()
+            .collect();
+        set(request, "tools", JsValue::Array(tools));
     }
 }
 pub(super) struct Tools {
@@ -186,13 +183,13 @@ impl capability::ToolCatalog for Tools {
                 )
                 .map_err(ModuleError::from)?;
             }
-            if selected.is_some() {
-                if let Some(step) = runtime.step() {
-                    if strings(&step, "requiredToolNames").is_empty() {
-                        tools.clear();
-                    }
-                    tools.push(Arc::new(ControlDefinition::new()));
+            if selected.is_some()
+                && let Some(step) = runtime.step()
+            {
+                if strings(&step, "requiredToolNames").is_empty() {
+                    tools.clear();
                 }
+                tools.push(Arc::new(ControlDefinition::new()));
             }
             Ok(tools)
         })
@@ -468,10 +465,14 @@ fn control_error(call: &capability::ToolCall, error: SopError) -> JsObject {
     let mut failure = object([("code", code.into()), ("message", message.as_str().into())]);
     if direct {
         if let Some(details) = error.details {
-            set(&mut failure, "details", details);
+            set(&mut failure, "details", *details);
         }
     } else {
-        let mut details = error.details.clone().unwrap_or_else(|| object([]));
+        let mut details = error
+            .details
+            .as_deref()
+            .cloned()
+            .unwrap_or_else(|| object([]));
         set(
             &mut details,
             "sopRuntime",
@@ -482,7 +483,13 @@ fn control_error(call: &capability::ToolCall, error: SopError) -> JsObject {
                     "retryability",
                     error.retryability.as_deref().unwrap_or("unsafe").into(),
                 ),
-                ("details", error.details.unwrap_or_else(|| object([]))),
+                (
+                    "details",
+                    error
+                        .details
+                        .map(|value| *value)
+                        .unwrap_or_else(|| object([])),
+                ),
             ]),
         );
         set(&mut failure, "details", details);

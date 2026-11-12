@@ -337,6 +337,24 @@ impl RuntimeLease {
     pub fn runtime(&self) -> &Arc<ProjectRuntime> {
         &self.runtime
     }
+    /// Extend an already admitted owner's generation to a turn or internal
+    /// session. Retirement prevents new registry admission, but cannot switch
+    /// the dependencies of an owner that still holds this live lease.
+    pub fn fork(&self) -> Result<Self, RuntimeError> {
+        if self.released {
+            return Err(RuntimeError::new("Project runtime lease is released."));
+        }
+        let mut state = self.runtime.state.lock().unwrap();
+        if state.cleanup_started || state.phase == RuntimeState::Disposed {
+            return Err(RuntimeError::new("Project runtime is disposed."));
+        }
+        debug_assert!(state.leases > 0);
+        state.leases += 1;
+        Ok(Self {
+            runtime: self.runtime.clone(),
+            released: false,
+        })
+    }
     pub async fn release(&mut self) -> RuntimeResult {
         if self.released {
             return Ok(());

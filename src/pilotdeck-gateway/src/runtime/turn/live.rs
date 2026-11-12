@@ -14,8 +14,8 @@
 use super::runner::{Recording, RecordingAction, TurnInput, TurnRunner};
 use crate::{
     host::{
-        Cancellation, EventGuard, ExecuteRequest, ExecuteResult, HostClient, HostError,
-        HostErrorKind, HostFuture, HostHandler, ReconnectObservation,
+        BufferedHostEvent, Cancellation, EventGuard, ExecuteRequest, ExecuteResult, HostClient,
+        HostError, HostErrorKind, HostFuture, HostHandler, ReconnectObservation,
     },
     runtime::{
         project::{DisposeFuture, RuntimeError, RuntimeLease, RuntimeResult},
@@ -32,7 +32,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Duration, Instant, sleep_until};
 
 type StatusReceipt = Option<oneshot::Sender<()>>;
-type ForwardedEvent = (JsValue, bool, StatusReceipt);
+type ForwardedEvent = (JsValue, bool, StatusReceipt, bool);
 
 pub type DurableMessagePredicate = Arc<dyn Fn(&ExecutionIdentity, &JsValue) -> bool + Send + Sync>;
 pub type DurableMessageCallback =
@@ -1039,11 +1039,18 @@ impl LiveTurn for LiveTurnStream {
                 if delivered.is_none() {
                     delivered = self.events.try_recv().ok();
                 }
-                if let Some((event, wire, receipt)) = delivered {
+                if let Some((event, wire, receipt, nested_prompt)) = delivered {
                     // TurnRunner ignores loop artifact snapshots; its collector owns final artifacts.
                     if event.get("type") == Some(&"file_artifacts".into()) {
                         self.delivered.observe_source(&event, wire)?;
                         continue;
+                    }
+                    if nested_prompt {
+                        self.delivered.observe_nested_prompt(&event)?;
+                        if let Some(receipt) = receipt {
+                            let _ = receipt.send(());
+                        }
+                        return Ok(Some(event));
                     }
                     if let Some(event) = self.record_event(event, false, wire, receipt).await? {
                         return Ok(Some(event));
@@ -1861,18 +1868,19 @@ impl Forwarding {
     // #1220: with an assembled timeline every drained event — and every
     // derived subagent status — is projected through the coordinate
     // allocator before publication, exactly like TS drain().
-    fn project_host(
+    fn project_buffered_host(
         &mut self,
-        events: Vec<JsObject>,
+        events: Vec<BufferedHostEvent>,
         heartbeat: bool,
         module: Option<&JsString>,
-    ) -> Vec<JsObject> {
+    ) -> Vec<BufferedHostEvent> {
         let now = Instant::now();
         let mut projected = Vec::new();
         let Some(parent) = &self.parent else {
             return events;
         };
-        for event in events {
+        for buffered in events {
+            let event = buffered.event;
             let kind = event.get("type").and_then(JsValue::as_string);
             let lifecycle = kind.is_some_and(|k| {
                 k.equals_str("subagent_started") || k.equals_str("subagent_completed")
@@ -1958,12 +1966,15 @@ impl Forwarding {
             }
             let mut event = event;
             self.project_event(&mut event, module);
-            projected.push(event);
+            projected.push(BufferedHostEvent {
+                event,
+                nested_prompt: buffered.nested_prompt,
+            });
             if let Some(mut status) = derived {
                 if !crate::mutants::on("timeline-derived-unprojected") {
                     self.project_event(&mut status, module);
                 }
-                projected.push(status);
+                projected.push(BufferedHostEvent::host(status));
             }
         }
         if heartbeat {
@@ -1975,12 +1986,12 @@ impl Forwarding {
                 let running = state.name.as_ref().is_some_and(super::submit::truthy);
                 // TS heartbeats bypass project(): no module stamp, no child
                 // stripping, and timeline.event is the identity for them.
-                projected.push(state.status(
+                projected.push(BufferedHostEvent::host(state.status(
                     parent,
                     if running { "running" } else { "waiting_model" },
                     now,
                     None,
-                ));
+                )));
             }
         }
         projected
@@ -2131,13 +2142,17 @@ impl StreamHandler {
         let buffered = if payload.is_some() && !crate::mutants::on("wire-drains-host") {
             Ok(Vec::new())
         } else {
-            self.inner.drain_events()
+            self.inner.drain_sourced_events()
         }
         .and_then(|events| {
             for event in &events {
-                self.integrity
-                    .observe_source(&JsValue::Object(event.clone()), false)
-                    .map_err(|e| HostError::new(HostErrorKind::Protocol, e.message))?;
+                let value = JsValue::Object(event.event.clone());
+                (if event.nested_prompt {
+                    self.integrity.observe_nested_prompt(&value)
+                } else {
+                    self.integrity.observe_source(&value, false)
+                })
+                .map_err(|e| HostError::new(HostErrorKind::Protocol, e.message))?;
             }
             Ok(events)
         })
@@ -2172,7 +2187,8 @@ impl StreamHandler {
                 let bound_module = integrity.marking_module();
                 let (buffered, timeline) = {
                     let mut state = forwarding.lock().unwrap();
-                    let buffered = state.project_host(buffered, heartbeat, bound_module.as_ref());
+                    let buffered =
+                        state.project_buffered_host(buffered, heartbeat, bound_module.as_ref());
                     (buffered, state.timeline.clone())
                 };
                 let mut payload = payload;
@@ -2185,10 +2201,10 @@ impl StreamHandler {
                         bound_module.as_ref(),
                     );
                 }
-                for (event, wire) in buffered
+                for (event, wire, nested_prompt) in buffered
                     .into_iter()
-                    .map(|e| (JsValue::Object(e), false))
-                    .chain(payload.map(|e| (e, true)))
+                    .map(|e| (JsValue::Object(e.event), false, e.nested_prompt))
+                    .chain(payload.map(|e| (e, true, false)))
                 {
                     let permit = events.reserve().await.map_err(|_| {
                         HostError::new(HostErrorKind::Callback, "LiveTurn event receiver closed.")
@@ -2220,7 +2236,7 @@ impl StreamHandler {
                         if let Some(error) = error.as_ref() {
                             return Err(HostError::new(HostErrorKind::Protocol, error));
                         }
-                        permit.send((event, wire, receipt));
+                        permit.send((event, wire, receipt, nested_prompt));
                     }
                     if let Some(recorded) = recorded {
                         recorded.await.map_err(|_| {
@@ -2515,6 +2531,26 @@ impl StreamIntegrity {
 
     fn observe_event(&self, event: &JsValue) -> Result<(), RuntimeError> {
         self.observe_source(event, true)
+    }
+
+    /// A nested ordinary Session owns this admission event. It is observable,
+    /// but cannot admit the parent input or provide evidence for its terminal.
+    /// Only the typed host buffer can reach this method; no payload field can.
+    fn observe_nested_prompt(&self, event: &JsValue) -> Result<(), RuntimeError> {
+        if event.get("type") != Some(&JsValue::from("user_prompt_submitted")) {
+            return Err(RuntimeError::new(
+                "Invalid nested session prompt provenance.",
+            ));
+        }
+        if let Some(error) = self.host_error.lock().unwrap().as_ref() {
+            return Err(RuntimeError::new(error));
+        }
+        if *self.state.lock().unwrap() == IntegrityState::Completed {
+            return Err(RuntimeError::new(
+                "Stream integrity violation: event after the terminal (premature final).",
+            ));
+        }
+        Ok(())
     }
 
     fn observe_source(&self, event: &JsValue, wire: bool) -> Result<(), RuntimeError> {

@@ -9,6 +9,7 @@
 //! events. A `hooks` section in `pilotdeck.yaml` is not a source: the config
 //! loader reports it as an unknown top-level field (loadPilotConfig.ts:343-375).
 mod session;
+mod sop;
 use super::permission_prompt::GatewayEmitSlot;
 use crate::{
     hooks::protocol::{HookCommand, HookCommon, HookMatcher, HooksSettings, is_hook_event},
@@ -25,6 +26,7 @@ use crate::{
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 pub(super) use session::SessionHookCleanup;
+pub(super) use sop::SopNodeLifecycle;
 use std::sync::{Arc, Mutex};
 
 /// `createSdkHookSettings` + `mergeHookSettings`

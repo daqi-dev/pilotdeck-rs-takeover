@@ -490,7 +490,7 @@ async fn event_queued_in_the_completing_poll_precedes_execution_error() {
     let sent = event.clone();
     let mut turn = stream(
         Box::pin(async move {
-            tx.send((sent, true, None)).await.unwrap();
+            tx.send((sent, true, None, false)).await.unwrap();
             Err(HostError::new(HostErrorKind::Disconnected, "lost peer"))
         }),
         rx,
@@ -4976,6 +4976,97 @@ async fn wire_durable_messages_match_ts_yield_before_callback() {
             std::fs::remove_dir_all(root).expect("#748 durable fixture cleanup");
         }
     }
+}
+
+#[tokio::test]
+async fn nested_session_prompt_keeps_provenance_without_parent_durable_message() {
+    use crate::runtime::project::interaction_events::{InteractionEvents, TurnEvents};
+    struct Nested(TurnEvents);
+    impl HostHandler for Nested {
+        fn module_call(&self, _: JsValue) -> HostFuture<JsObject> {
+            Box::pin(async { Ok(JsObject::new()) })
+        }
+        fn drain_sourced_events(&self) -> Result<Vec<BufferedHostEvent>, HostError> {
+            self.0.drain_sourced()
+        }
+    }
+    let events = InteractionEvents::default();
+    let mut router = crate::host::modules::ModuleRouter::default();
+    let turn_events = events
+        .bind_turn(
+            crate::host::modules::event::TurnIdentity::new("session", "turn"),
+            "run".into(),
+            &mut router,
+        )
+        .unwrap();
+    let prompt = parse_json(r#"{"type":"user_prompt_submitted","sessionId":"session","turnId":"turn","prompt":"nested"}"#).unwrap();
+    let assistant = parse_json(r#"{"type":"assistant_message","sessionId":"session","turnId":"turn","message":{"role":"assistant","content":[{"type":"text","text":"already recorded by child"}]}}"#).unwrap();
+    for value in [&prompt, &assistant] {
+        events
+            .emit_nested_session(value.as_object().unwrap().clone())
+            .unwrap();
+    }
+    let (sender, receiver) = mpsc::channel(4);
+    let integrity = Arc::new(StreamIntegrity::new());
+    *integrity.module_id.lock().unwrap() = Some("native".into());
+    let handler = StreamHandler {
+        inner: Arc::new(Nested(turn_events)),
+        events: sender,
+        integrity: integrity.clone(),
+        forwarding: Arc::default(),
+        callback_cancel: None,
+    };
+    handler
+        .forward(Box::pin(async { Ok(()) }), None, None, false, false, false)
+        .await
+        .unwrap();
+    let recorder = test_recorder();
+    let mut turn = stream(Box::pin(std::future::pending()), receiver, integrity);
+    let runner = TurnRunner::new(
+        recorder.clone(),
+        test_lease(),
+        "session".into(),
+        "turn".into(),
+    );
+    let (runner, _) = runner.start().await.unwrap();
+    let (runner, _) = runner.accept(turn.input.clone()).await.unwrap();
+    turn.recording = Some(Recording::new(runner, Arc::new(())));
+    turn.accepted = true;
+    let before = std::fs::read(recorder.writer().path()).unwrap();
+    assert_eq!(turn.next().await.unwrap(), Some(prompt.clone()));
+    assert_eq!(
+        turn.next().await.unwrap().unwrap().get("type"),
+        Some(&"assistant_message".into())
+    );
+    assert_eq!(
+        std::fs::read(recorder.writer().path()).unwrap(),
+        before,
+        "child messages must never be recorded again in the parent"
+    );
+    assert!(
+        turn.delivered
+            .observe_terminal(Some(&"success".into()))
+            .is_err(),
+        "nested lifecycle cannot justify the parent terminal"
+    );
+    for wire in [false, true] {
+        assert!(
+            StreamIntegrity::new()
+                .observe_source(&prompt, wire)
+                .is_err(),
+            "ordinary host and wire sources must still reject nested lifecycle claims"
+        );
+    }
+    events
+        .emit_current(prompt.as_object().unwrap().clone())
+        .unwrap();
+    assert!(
+        handler
+            .forward(Box::pin(async { Ok(()) }), None, None, false, false, false)
+            .await
+            .is_err(),
+        "a normal emitter cannot copy the trusted event shape to gain authority"
+    );
 }
 
 #[tokio::test]

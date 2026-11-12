@@ -42,6 +42,10 @@ use crate::{
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{path::PathBuf, sync::Arc, time::Instant};
 
+#[path = "subagent_generation.rs"]
+mod generation;
+use generation::{ChildSession, Generation};
+
 /// `SUBAGENT_PROMPT_PREVIEW_BYTES` / `SUBAGENT_SUMMARY_PREVIEW_BYTES`
 /// (`session/transcript/TranscriptEntry.ts:457-458`).
 const PROMPT_PREVIEW_BYTES: usize = 1024;
@@ -51,6 +55,7 @@ const SUMMARY_PREVIEW_BYTES: usize = 4 * 1024;
 #[derive(Clone)]
 pub(super) struct SubagentRuntime {
     registry: Arc<ProjectRuntimeRegistry>,
+    lease_supplier: Option<crate::runtime::turn::host_factory::GenerationLeaseSupplier>,
     selection: LoopSelection,
     native_factory: Option<Arc<dyn pilotdeck_transport::server::ExecutionFactory>>,
     extension_scope: Option<(
@@ -77,6 +82,7 @@ impl SubagentRuntime {
     ) -> Self {
         Self {
             registry,
+            lease_supplier: None,
             selection,
             native_factory: None,
             extension_scope: None,
@@ -85,6 +91,25 @@ impl SubagentRuntime {
             continuations,
             background: None,
         }
+    }
+
+    pub(super) fn with_lease_supplier(
+        mut self,
+        supplier: crate::runtime::turn::host_factory::GenerationLeaseSupplier,
+    ) -> Self {
+        self.lease_supplier = Some(supplier);
+        self
+    }
+
+    fn acquire_generation(
+        &self,
+        project: &std::path::Path,
+    ) -> Result<Generation, crate::runtime::project::RuntimeError> {
+        let lease = match &self.lease_supplier {
+            Some(supplier) => supplier()?,
+            None => self.registry.acquire(Some(project))?,
+        };
+        Ok(Generation::new(lease))
     }
 
     pub(super) fn with_native_factory(
@@ -154,7 +179,7 @@ impl SubagentRuntime {
         parent: super::continuations::ParentRef,
     ) -> Result<
         (
-            Arc<crate::runtime::turn::live::LiveSessionAdapter>,
+            Arc<dyn crate::runtime::session::LiveSession>,
             Arc<FactoryStorage>,
         ),
         JsString,
@@ -167,6 +192,10 @@ impl SubagentRuntime {
                 .map(text)
                 .unwrap_or_default(),
         );
+        let generation = self
+            .acquire_generation(&cwd)
+            .map_err(|error| fail(&error))?;
+        let hooks = super::hooks::SessionHookCleanup::default();
         let storage = Arc::new(FactoryStorage::new(
             Arc::new(JsonlTranscriptStore::new()),
             TranscriptKey {
@@ -216,7 +245,9 @@ impl SubagentRuntime {
                     root_recorder: storage.recorder.clone(),
                 },
             )
-            .with_continuation_parent(parent);
+            .with_continuation_parent(parent)
+            .with_subagents(self.clone().with_lease_supplier(generation.supplier()))
+            .with_hook_cleanup(&hooks);
         let projection = storage.projection.clone();
         let child_extensions = self
             .bind_extensions(&cwd, child)
@@ -228,12 +259,10 @@ impl SubagentRuntime {
                     self.selection.deployment.clone(),
                     self.limits,
                     self.selection.expected_module_id.clone(),
-                    move |identity, recorder, signal| {
-                        let _retained_extensions = &child_extensions;
-                        tools.turn(identity, recorder, signal)
-                    },
+                    move |identity, recorder, signal| tools.turn(identity, recorder, signal),
                 )
                 .with_agent_config(config)
+                .with_lease_supplier(generation.supplier())
                 .for_project(cwd),
             )
             .into_live_session(storage.recorder.clone(), move || {
@@ -245,7 +274,15 @@ impl SubagentRuntime {
             // A full session, not a one-shot sidechain: its TurnRunner records
             // the loop's status messages like any session's.
             .with_tail(tail);
-        Ok((Arc::new(session), storage))
+        Ok((
+            Arc::new(ChildSession::new(
+                Arc::new(session),
+                generation,
+                child_extensions,
+                hooks,
+            )),
+            storage,
+        ))
     }
 
     /// `createNativeOneShotSubagentPort({ config, dependencies })` for one
@@ -924,6 +961,11 @@ impl Fork {
         )
         .map_err(|error: HostError| fail(&error.message))?;
         let config = child_config(&self.parent.config, &definition, &request.subagent_id);
+        let generation = self
+            .runtime
+            .acquire_generation(&storage.cwd)
+            .map_err(|error| fail(&error))?;
+        let hooks = super::hooks::SessionHookCleanup::default();
         let tools: SessionTools = self.seed.clone().child(
             SessionBinding {
                 context: self.seed.context.clone(),
@@ -937,6 +979,13 @@ impl Fork {
                 root_recorder: self.parent.recorder.clone(),
             },
         );
+        let tools = tools
+            .with_subagents(
+                self.runtime
+                    .clone()
+                    .with_lease_supplier(generation.supplier()),
+            )
+            .with_hook_cleanup(&hooks);
         let project = PathBuf::from(
             self.parent
                 .config
@@ -957,16 +1006,15 @@ impl Fork {
                     self.runtime.selection.deployment.clone(),
                     self.runtime.limits,
                     self.runtime.selection.expected_module_id.clone(),
-                    move |identity, recorder, signal| {
-                        let _retained_extensions = &child_extensions;
-                        tools.turn(identity, recorder, signal)
-                    },
+                    move |identity, recorder, signal| tools.turn(identity, recorder, signal),
                 )
                 .with_agent_config(config)
+                .with_lease_supplier(generation.supplier())
                 .for_project(project),
             )
             .into_live_session(storage.recorder.clone(), Vec::new)
             .as_sidechain();
+        let session = ChildSession::new(Arc::new(session), generation, child_extensions, hooks);
         let turn_id = JsString::from(format!("{}-t0", text(&request.subagent_id)));
         let mut turn = session
             .submit(
@@ -1341,7 +1389,7 @@ impl SubagentFork for Fork {
         std::pin::Pin<Box<dyn std::future::Future<Output = Result<JsString, JsString>> + Send>>,
     > {
         let background = self.runtime.background.clone()?;
-        let fork = self.clone();
+        let mut fork = self.clone();
         Some(Box::pin(async move {
             let definition = definitions_from_config(&fork.parent.config)
                 .into_iter()
@@ -1361,6 +1409,19 @@ impl SubagentFork for Fork {
             // lands ahead of the `agent` call's `tool_result`. The task id
             // is therefore returned only once that record is durable (or the
             // fork failed before writing it).
+            let project = PathBuf::from(
+                fork.parent
+                    .config
+                    .get("cwd")
+                    .and_then(JsValue::as_string)
+                    .map(text)
+                    .unwrap_or_default(),
+            );
+            let generation = fork
+                .runtime
+                .acquire_generation(&project)
+                .map_err(|error| JsString::from(error.to_string()))?;
+            fork.runtime = fork.runtime.with_lease_supplier(generation.supplier());
             let (started, recorded) = tokio::sync::oneshot::channel();
             let task = background.start(crate::runtime::background::StartBackgroundSubagentInput {
                 kind: Some(crate::runtime::background::SubagentKind::Background),
@@ -1372,9 +1433,15 @@ impl SubagentFork for Fork {
                 run: Box::new(move |signal| {
                     Box::pin(async move {
                         let context = detached_context(&context, signal);
-                        fork.run_reporting_start(request, context, Some(started))
+                        let outcome = fork
+                            .run_reporting_start(request, context, Some(started))
                             .await
-                            .map(|_| ())
+                            .map(|_| ());
+                        let released = generation
+                            .close()
+                            .await
+                            .map_err(|error| JsString::from(error.to_string()));
+                        outcome.and(released)
                     })
                 }),
             });

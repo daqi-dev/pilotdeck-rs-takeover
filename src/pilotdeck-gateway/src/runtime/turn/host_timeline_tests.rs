@@ -232,7 +232,7 @@ async fn replay_case(case: &JsValue, name: &str) {
         }
     }
     let mut collected = Vec::new();
-    while let Ok((event, _, _)) = rx.try_recv() {
+    while let Ok((event, _, _, _)) = rx.try_recv() {
         collected.push(event);
     }
     let final_payload = final_payload.expect("#1220 timeline: case must end in a final step");

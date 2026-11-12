@@ -923,7 +923,7 @@ async fn status_receipt(success: bool) {
         loop {
             tokio::select! { biased;
                 result = &mut run => panic!("#741h status awaits durable receipt: {result:?}"),
-                Some((event, _, done)) = rx.recv() => {
+                Some((event, _, done, _)) = rx.recv() => {
                     if event.get("type") == Some(&"agent_status".into()) { receipt = Some(done); }
                 },
                 _ = tokio::task::yield_now() => {},

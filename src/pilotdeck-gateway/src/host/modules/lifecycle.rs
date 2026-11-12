@@ -71,6 +71,13 @@ impl Handler {
             advisory_signal: None,
         }
     }
+    /// A source-level internal runner may delegate lifecycle dispatch while
+    /// keeping its own wire binding and the owner's cleanup responsibility.
+    pub(crate) fn set_port(&mut self, runtime: Arc<dyn LifecyclePort>) {
+        if let Some(ports) = &mut self.ports {
+            ports.runtime = runtime;
+        }
+    }
     /// Route the advisory events to `port`, answered without waiting.
     pub fn set_advisory(&mut self, port: Arc<dyn LifecyclePort>) {
         self.advisory = Some(port);

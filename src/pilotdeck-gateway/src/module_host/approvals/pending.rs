@@ -480,6 +480,31 @@ fn to_status_snapshot(value: &PendingState) -> JsValue {
     JsValue::Object(snapshot)
 }
 
+/// Model context may use only the current pinned handoff or an authenticated
+/// persisted approval receipt, never names from user or knowledge content.
+pub(crate) fn model_assignee(raw: &JsValue) -> Option<JsValue> {
+    let session = raw.get("sessionId").and_then(JsValue::as_string)?;
+    let current = migrate_persisted_state(session, raw);
+    if let Ok(approval) = pinned_approval(&current)
+        && let Some(assignee) = approval.get("assigneeUserId").filter(|v| js_truthy(v))
+    {
+        return Some(assignee.clone());
+    }
+    current
+        .resume_requests
+        .own_entries()
+        .into_iter()
+        .rev()
+        .find_map(|(_, receipt)| {
+            receipt
+                .get("authorization")
+                .and_then(|v| v.get("approval"))
+                .and_then(|v| v.get("assigneeUserId"))
+                .filter(|v| js_truthy(v))
+                .cloned()
+        })
+}
+
 /// `pinnedApproval` (`SopStateStore.ts`): the handoff wait pinned against the
 /// bundle's SOP node and its assignee. Every failure here carries the code
 /// the snapshot's `approvalError` (and resume's 502) answers with.

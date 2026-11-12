@@ -138,8 +138,8 @@ fn main() -> ExitCode {
     proxy::install_from_env(&env);
     let code = match std::env::current_dir() {
         Ok(cwd) => run(&argv, &env, &cwd),
-        Err(_) => Err(Failure::Todo(
-            "startup without a readable working directory",
+        Err(error) => Err(Failure::Error(
+            pilotdeck_gateway::node_fs_message_or_unknown(&error, "uv_cwd", None),
         )),
     };
     ExitCode::from(match code {

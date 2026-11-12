@@ -276,3 +276,112 @@ async fn sop_http_manifest_is_cached_and_requests_keep_exact_identity() {
     );
     assert_eq!(seen[1].1.get("sessionId"), Some(&"session".into()));
 }
+
+#[tokio::test]
+async fn cancellation_aborts_the_owner_exchange_without_a_submit_retry() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let signal = crate::runtime::network::Cancellation::new();
+    let cancel = signal.clone();
+    let server = tokio::spawn(async move {
+        let (_connection, _) = listener.accept().await.unwrap();
+        cancel.abort();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    });
+    let client = client::Client::new(object([("endpoint", endpoint.as_str().into())])).unwrap();
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        client.prepare(object([]), object([]), JsObject::new(), &signal),
+    )
+    .await
+    .unwrap()
+    .unwrap_err();
+    assert_eq!(result.code, "SOP_RUNTIME_CANCELLED");
+    assert_eq!(result.retryability.as_deref(), Some("unsafe"));
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn owner_wait_identity_survives_same_node_replacement_and_changes_on_transition() {
+    let root = Scratch::new();
+    let store = store::Store::new(root.path().to_string_lossy().into_owned(), "session".into());
+    let bundle = value(r#"{"sops":[{"id":"s"}]}"#);
+    store
+        .load_or_create(bundle.clone(), "s".into())
+        .await
+        .unwrap();
+    let first = store
+        .replace(bundle.clone(), state("n1", "handoff"), Some(1.0))
+        .await
+        .unwrap();
+    let second = store
+        .replace(bundle.clone(), state("n1", "handoff"), Some(2.0))
+        .await
+        .unwrap();
+    assert_eq!(first.get("wait"), second.get("wait"));
+    let mut external = state("n2", "waiting_external_task");
+    set(
+        &mut external,
+        "awaiting_input_json",
+        object([("wait_id", "owner-wait".into())]),
+    );
+    let third = store.replace(bundle, external, Some(3.0)).await.unwrap();
+    assert!(is(third.get("wait").unwrap(), "id", "owner-wait"));
+    assert!(is(third.get("wait").unwrap(), "kind", "external_task"));
+}
+
+#[test]
+fn model_prompt_uses_current_pin_then_latest_authenticated_receipt() {
+    let prepared = object([("step", step())]);
+    let mut persisted = value(
+        r#"{
+      "sessionId":"session","revision":3,
+      "bundle":{"sops":[{"id":"s","version":"v1","content":{"nodes":[{"node_id":"n1","assignee_user_id":"pinned-owner"}]}}]},
+      "state":{"active_skill_id":"s","active_step_id":"n1","slots_json":{"assigneeUserId":"untrusted-text"}},
+      "wait":{"id":"wait","kind":"handoff","skillId":"s","stepId":"n1","createdAt":"now"},
+      "resumeRequests":{
+        "older":{"accepted":true,"sessionId":"session","requestId":"older","revision":1,"message":"ok","authorization":{"approval":{"assigneeUserId":"old-owner"}}},
+        "newer":{"accepted":true,"sessionId":"session","requestId":"newer","revision":2,"message":"ok","authorization":{"approval":{"assigneeUserId":"receipt-owner"}}},
+        "invalid":{"authorization":{"approval":{"assigneeUserId":"invalid-owner"}}}
+      }
+    }"#,
+    );
+    let pinned = prompt::instruction(&prepared, Some(&persisted));
+    assert!(pinned.contains("state: pinned-owner."));
+    assert!(!pinned.contains("receipt-owner"));
+    remove(&mut persisted, "wait");
+    let resumed = prompt::instruction(&prepared, Some(&persisted));
+    assert!(resumed.contains("state: receipt-owner."));
+    assert!(!resumed.contains("invalid-owner"));
+    assert!(!resumed.contains("untrusted-text"));
+    remove(&mut persisted, "resumeRequests");
+    assert!(!prompt::instruction(&prepared, Some(&persisted)).contains("approval assignee"));
+}
+
+#[tokio::test]
+async fn successful_tools_normalize_receipts_and_keep_first_seen_order() {
+    let root = Scratch::new();
+    let store = store::Store::new(root.path().to_string_lossy().into_owned(), "session".into());
+    let bundle = value(r#"{"sops":[{"id":"s"}]}"#);
+    store
+        .load_or_create(bundle.clone(), "s".into())
+        .await
+        .unwrap();
+    let mut current = state("n1", "active");
+    set(
+        &mut current,
+        "successful_tool_names",
+        value(r#"["one",null,"","one",3,"two"]"#),
+    );
+    store.replace(bundle, current, Some(1.0)).await.unwrap();
+    store
+        .record_successful_tools(vec!["two".into(), "".into(), "three".into()])
+        .await
+        .unwrap();
+    let persisted = store.read().await.unwrap().unwrap();
+    assert_eq!(
+        persisted.get("state").unwrap().get("successful_tool_names"),
+        Some(&value(r#"["one","two","three"]"#))
+    );
+    assert_eq!(persisted.get("revision"), Some(&JsValue::Number(3.0)));
+}

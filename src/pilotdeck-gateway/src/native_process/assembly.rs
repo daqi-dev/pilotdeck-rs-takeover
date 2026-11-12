@@ -897,7 +897,30 @@ async fn start_assembly(
                         Ok(())
                     })
                 });
-                retained.retain_lease(lease);
+                // Session services and every turn use one admitted generation.
+                // The supplier holds only Weak authority: closing the prepared
+                // owner revokes new turns before releasing its one root lease.
+                let generation = Arc::new(Mutex::new(Some(lease)));
+                let generation_ref = Arc::downgrade(&generation);
+                let turn_lease_supplier: crate::runtime::turn::host_factory::GenerationLeaseSupplier =
+                    Arc::new(move || {
+                        let owner = generation_ref.upgrade().ok_or_else(|| {
+                            RuntimeError::new("Session project generation is closed.")
+                        })?;
+                        let generation = owner.lock().unwrap_or_else(|e| e.into_inner());
+                        generation.as_ref().ok_or_else(|| {
+                            RuntimeError::new("Session project generation is closed.")
+                        })?.fork()
+                    });
+                retained.push(move || {
+                    let lease = generation.lock().unwrap_or_else(|e| e.into_inner()).take();
+                    Box::pin(async move {
+                        match lease {
+                            Some(mut lease) => lease.release().await,
+                            None => Ok(()),
+                        }
+                    })
+                });
                 // `acquirePermissionRuleSet({ permissionRules:
                 // override?.permissionRules })` (ProjectSessionFactory.ts:
                 // 262-265): the always-on execute phase's deny rules.
@@ -1043,6 +1066,24 @@ async fn start_assembly(
                     ..Default::default()
                 };
                 let session = context.session_key;
+                let sop_release = Arc::new(Mutex::new(
+                    None::<Arc<crate::module_host::staffdeck::sop::SopRuntime>>,
+                ));
+                let sop_release_slot = sop_release.clone();
+                retained.push(move || {
+                    Box::pin(async move {
+                        let sop = sop_release_slot
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .take();
+                        if let Some(sop) = sop {
+                            sop.close_nodes()
+                                .await
+                                .map_err(|error| RuntimeError::new(error.to_string()))?;
+                        }
+                        Ok(())
+                    })
+                });
                 Ok(PreparedSession {
                     resources: retained,
                     tail,
@@ -1106,6 +1147,14 @@ async fn start_assembly(
                             })
                             .transpose()
                             .map_err(|error| RuntimeError::new(error.message))?;
+                        *sop_release.lock().unwrap_or_else(|e| e.into_inner()) = sop.clone();
+                        let sop_parent = binding.context.clone();
+                        let sop_key = crate::storage::TranscriptKey {
+                            project_root: project_root.clone(),
+                            pilot_home: options.home.clone(),
+                            session_id: session.clone(),
+                            transcript_path: binding.recorder.writer().path().to_owned(),
+                        };
                         continuation_parent.bind_recorder(binding.recorder.clone());
                         // `GatewayUserDialogChannel` (ProjectSessionRuntimeBundle.ts:
                         // 638-650): only for a session that enabled a dialog kind,
@@ -1153,7 +1202,11 @@ async fn start_assembly(
                             sdk_hooks.then(|| async_hooks.clone()),
                         )
                         .with_hook_cleanup(&hook_cleanup)
-                        .with_permission_prompt(gateway_emit, session_rules, permission_timeout)
+                        .with_permission_prompt(
+                            gateway_emit.clone(),
+                            session_rules.clone(),
+                            permission_timeout,
+                        )
                         .with_permission_mode_transition({
                             let session_overrides = session_overrides.clone();
                             let session = session.clone();
@@ -1176,7 +1229,7 @@ async fn start_assembly(
                             Some(_) => ports,
                             None => ports,
                         };
-                        let ports = match interaction_events {
+                        let ports = match interaction_events.clone() {
                             Some(events) => ports.with_events(events),
                             None => ports,
                         };
@@ -1199,7 +1252,8 @@ async fn start_assembly(
                             continuations.clone(),
                         )
                         .with_background(background_subagents.clone())
-                        .with_extension_scope(extensions.clone(), child_extensions);
+                        .with_lease_supplier(turn_lease_supplier.clone())
+                        .with_extension_scope(extensions.clone(), child_extensions.clone());
                         let subagents = match &native_factory {
                             Some(factory) => subagents.with_native_factory(factory.clone()),
                             None => subagents,
@@ -1208,6 +1262,117 @@ async fn start_assembly(
                             .with_subagents(subagents)
                             .with_native_tools(extension_tools)?;
                         ports.check_deferred_tools()?;
+                        let ports = Arc::new(ports);
+                        if let Some(sop) = &sop {
+                            let events = interaction_events.ok_or_else(|| RuntimeError::new(
+                                "StaffDeck SOP requires the project's interaction event buffer.",
+                            ))?;
+                            let node_ports = ports.clone();
+                            let node_project = project.clone();
+                            let node_root = turn_project_root.clone();
+                            let node_config = config.clone();
+                            let node_extensions = extensions.clone();
+                            let node_continuations = continuations.clone();
+                            let node_lease_supplier = turn_lease_supplier.clone();
+                            let node_prepare: crate::runtime::session::factory::Prepare = Arc::new(
+                                move |context, _mcp| {
+                                    let node_ports = node_ports.clone();
+                                    let node_project = node_project.clone();
+                                    let node_root = node_root.clone();
+                                    let node_config = node_config.clone();
+                                    let node_lease_supplier = node_lease_supplier.clone();
+                                    // The outer SOP owns session admission hooks.
+                                    let hooks = hook_settings
+                                        .iter()
+                                        .filter(|(event, _)| {
+                                            ![
+                                                "SessionStart",
+                                                "Setup",
+                                                "UserPromptSubmit",
+                                                "SessionEnd",
+                                            ]
+                                            .iter()
+                                            .any(|name| event.equals_str(name))
+                                        })
+                                        .cloned()
+                                        .collect();
+                                    let emit = gateway_emit.clone();
+                                    let async_registry = sdk_hooks.then(|| async_hooks.clone());
+                                    let extension_lease = node_extensions.bind_inherited(
+                                        &node_root,
+                                        &context.session_key,
+                                        &child_extensions,
+                                    );
+                                    let continuation = node_continuations
+                                        .bind_session(context.session_key.clone());
+                                    Box::pin(async move {
+                                        let extension_lease = extension_lease.map_err(|error| {
+                                            RuntimeError::new(error.to_string())
+                                        })?;
+                                        let mut resources = PreparedResources::default();
+                                        resources.push(move || {
+                                            Box::pin(async move {
+                                                drop(extension_lease);
+                                                Ok(())
+                                            })
+                                        });
+                                        let continuation_release = continuation.clone();
+                                        resources.push(move || {
+                                            Box::pin(async move {
+                                                continuation_release.release().await;
+                                                Ok(())
+                                            })
+                                        });
+                                        let cleanup = super::hooks::SessionHookCleanup::default();
+                                        let cleanup_release = cleanup.clone();
+                                        resources.push(move || {
+                                            Box::pin(async move { cleanup_release.release().await })
+                                        });
+                                        Ok(PreparedSession {
+                                            resources,
+                                            tail: TailConfig::default(),
+                                            host: Box::new(move |binding| {
+                                                continuation
+                                                    .bind_recorder(binding.recorder.clone());
+                                                let node = node_ports
+                                                    .for_sop_node(binding)
+                                                    .with_continuation_parent(
+                                                        continuation.parent_ref(),
+                                                    )
+                                                    .with_hooks(
+                                                        hooks,
+                                                        emit.clone(),
+                                                        include_hook_events,
+                                                        async_registry,
+                                                    )
+                                                    .with_hook_cleanup(&cleanup);
+                                                let turn_override_sink = node.turn_override();
+                                                Ok(TurnHostFactory::new_with_signal(
+                                                node_project,
+                                                crate::runtime::turn::host_factory::Deployment::Native,
+                                                limits,
+                                                None,
+                                                move |identity, recorder, signal| turn_ports(&node, identity, recorder, signal),
+                                            )
+                                            .with_agent_config(node_config)
+                                            .with_lease_supplier(node_lease_supplier)
+                                            .with_turn_override_sink(turn_override_sink)
+                                            .for_project(node_root))
+                                            }),
+                                        })
+                                    })
+                                },
+                            );
+                            sop.install_node_provider(Arc::new(
+                                super::sop_nodes::NodeSessions::new(
+                                    sop_parent,
+                                    sop_key,
+                                    events,
+                                    node_prepare,
+                                    options.drain_budget,
+                                ),
+                            ));
+                        }
                         let turn_override_sink = ports.turn_override();
                         let sop_signal = sop.clone();
                         let sop_cwd = turn_project_root.clone();
@@ -1224,6 +1389,7 @@ async fn start_assembly(
                             },
                         )
                         .with_agent_config(config)
+                        .with_lease_supplier(turn_lease_supplier)
                         .with_turn_override_sink(turn_override_sink)
                         .for_project(turn_project_root)
                         // #1864 (b): TS re-reads the permission-mode override

@@ -3,6 +3,8 @@
 mod client;
 mod definitions;
 mod factory;
+mod node_factory;
+pub(crate) mod nodes;
 mod ports;
 mod prompt;
 mod proposal;
@@ -18,7 +20,7 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue};
 pub(crate) struct SopError {
     pub code: String,
     pub message: String,
-    pub details: Option<JsValue>,
+    pub details: Option<Box<JsValue>>,
     pub retryability: Option<String>,
 }
 impl SopError {

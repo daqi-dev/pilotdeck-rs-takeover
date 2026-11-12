@@ -2188,3 +2188,47 @@ async fn session_hooks_wrap_real_turn_and_retain_lease_through_end() {
             .expect("#743 production dispose");
     }
 }
+
+#[tokio::test]
+async fn supplied_generation_stays_with_session_services_after_registry_reload() {
+    let root = std::env::temp_dir().join(format!("pdrs-host-generation-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let registry = Arc::new(ProjectRuntimeRegistry::new(
+        &root,
+        Arc::new(|_: &Path, _: &mut crate::runtime::project::ResourceBundle| Ok(())),
+    ));
+    let admitted = registry.acquire(None).unwrap();
+    let old = admitted.runtime().clone();
+    let owner = Arc::new(std::sync::Mutex::new(Some(admitted)));
+    let authority = Arc::downgrade(&owner);
+    let factory = TurnHostFactory::new(
+        registry.clone(),
+        Deployment::Native,
+        Limits::default(),
+        None,
+        |_, _| panic!("generation acquisition does not compose ports"),
+    )
+    .with_lease_supplier(Arc::new(move || {
+        let owner = authority
+            .upgrade()
+            .ok_or_else(|| crate::runtime::project::RuntimeError::new("closed"))?;
+        let lease = owner.lock().unwrap();
+        lease
+            .as_ref()
+            .ok_or_else(|| crate::runtime::project::RuntimeError::new("closed"))?
+            .fork()
+    }));
+    registry.invalidate(None);
+    let current = registry.acquire(None).unwrap();
+    assert!(!Arc::ptr_eq(&old, current.runtime()));
+    let retained = factory.acquire_lease().unwrap();
+    assert!(Arc::ptr_eq(&old, retained.runtime()));
+    drop(owner.lock().unwrap().take());
+    assert!(factory.acquire_lease().is_err());
+    assert_eq!(old.lease_count(), 1);
+    drop(retained);
+    old.wait_disposed().await.unwrap();
+    drop(current);
+    registry.dispose().await.unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}

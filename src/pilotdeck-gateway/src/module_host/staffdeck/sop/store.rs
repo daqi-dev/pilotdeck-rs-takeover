@@ -173,12 +173,18 @@ impl Store {
                     return Ok((None, ()));
                 };
                 let mut state = current.get("state").unwrap().clone();
-                let mut tools = match state.get("successful_tool_names") {
-                    Some(JsValue::Array(values)) => values.clone(),
-                    _ => vec![],
+                let existing = match state.get("successful_tool_names") {
+                    Some(JsValue::Array(values)) => values.as_slice(),
+                    _ => &[],
                 };
-                for name in names {
-                    let value = JsValue::String(name);
+                let mut tools = Vec::new();
+                for name in existing
+                    .iter()
+                    .filter_map(JsValue::as_string)
+                    .chain(names.iter())
+                    .filter(|name| name.len_utf16() > 0)
+                {
+                    let value = JsValue::String(name.clone());
                     if !tools.contains(&value) {
                         tools.push(value);
                     }

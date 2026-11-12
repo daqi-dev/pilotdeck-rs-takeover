@@ -115,7 +115,7 @@ impl Client {
         Err(SopError {
             code: text(error, "code").unwrap(),
             message: text(error, "message").unwrap(),
-            details: error.get("details").cloned(),
+            details: error.get("details").cloned().map(Box::new),
             retryability: text(error, "retryability"),
         })
     }

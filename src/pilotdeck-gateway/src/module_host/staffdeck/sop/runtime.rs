@@ -17,6 +17,7 @@ pub(super) struct TurnState {
     pub correction: bool,
     pub collect_checked: bool,
     pub user_input: String,
+    pub user_message: Option<JsValue>,
     pub submission: Option<JsValue>,
 }
 pub(crate) struct SopRuntime {
@@ -27,8 +28,51 @@ pub(crate) struct SopRuntime {
     pub(super) store: store::Store,
     pub(super) turn: Mutex<TurnState>,
     pub(super) signal: Mutex<Cancellation>,
+    pub(super) nodes: Mutex<Option<Arc<dyn nodes::NodeSessionProvider>>>,
+    pub(super) checkpoints: Mutex<JsObject>,
 }
 impl SopRuntime {
+    pub(super) fn seed_checkpoints(&self, payload: &JsValue) {
+        let mut state = JsObject::new();
+        for key in ["seedState", "modelState"] {
+            if let Some(value) = payload.get(key) {
+                state.insert(key.into(), value.clone());
+            }
+        }
+        *self.checkpoints.lock().unwrap_or_else(|e| e.into_inner()) = state;
+    }
+    pub(super) fn apply_checkpoints(&self, payload: &mut JsValue) {
+        for (key, value) in self
+            .checkpoints
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entries()
+        {
+            set(
+                payload,
+                &String::from_utf16_lossy(key.units()),
+                value.clone(),
+            );
+        }
+    }
+    pub(super) fn observe_checkpoints(&self, payload: &JsObject) {
+        let mut state = self.checkpoints.lock().unwrap_or_else(|e| e.into_inner());
+        for key in ["seedState", "modelState"] {
+            if let Some(value) = payload.get(key) {
+                state.insert(key.into(), value.clone());
+            }
+        }
+    }
+    pub(super) fn finish_checkpoints(&self, payload: &mut JsObject) {
+        for (key, value) in self
+            .checkpoints
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entries()
+        {
+            payload.insert(key.clone(), value.clone());
+        }
+    }
     pub(crate) fn new(profile: JsValue, session: JsString) -> Result<Arc<Self>, SopError> {
         let path = text(&profile, "definitionsPath").ok_or_else(|| {
             SopError::new(
@@ -61,7 +105,19 @@ impl SopRuntime {
                 ..Default::default()
             }),
             signal: Mutex::default(),
+            nodes: Mutex::default(),
+            checkpoints: Mutex::default(),
         }))
+    }
+    pub(crate) fn install_node_provider(&self, provider: Arc<dyn nodes::NodeSessionProvider>) {
+        *self.nodes.lock().unwrap_or_else(|e| e.into_inner()) = Some(provider);
+    }
+    pub(crate) async fn close_nodes(&self) -> Result<(), crate::host::HostError> {
+        let provider = self.nodes.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(provider) = provider {
+            provider.close().await?;
+        }
+        Ok(())
     }
     pub(crate) fn bind_signal(&self, signal: Cancellation) {
         *self.signal.lock().unwrap_or_else(|e| e.into_inner()) = signal;
@@ -125,19 +181,20 @@ impl SopRuntime {
         } else {
             text(&self.profile, "defaultSopId")
         };
-        if let Some(selected) = &selected {
-            if !contains_sop(&self.bundle, selected) {
-                return Err(SopError::new(
-                    "SOP_DISCOVERY_DEFINITION_MISSING",
-                    format!(
-                        "StaffDeck SOP discovery selected '{selected}', but the PilotDeck definition bundle does not contain it."
-                    ),
-                ));
-            }
+        if let Some(selected) = &selected
+            && !contains_sop(&self.bundle, selected)
+        {
+            return Err(SopError::new(
+                "SOP_DISCOVERY_SELECTION_UNAVAILABLE",
+                format!(
+                    "StaffDeck SOP discovery selected '{selected}', but it is not present in the PilotDeck bundle."
+                ),
+            ));
         }
         *self.turn.lock().unwrap_or_else(|e| e.into_inner()) = TurnState {
             selected,
             user_input,
+            user_message: latest_user_message(messages),
             ..Default::default()
         };
         Ok(())
@@ -185,17 +242,16 @@ impl SopRuntime {
             ));
         }
         let selected = text(&value, "selected_sop_id").filter(|v| !v.is_empty());
-        if let Some(selected) = &selected {
-            if matches!(value.get("candidate_sop_ids"), Some(JsValue::Array(_)))
-                && !strings(&value, "candidate_sop_ids").contains(selected)
-            {
-                return Err(SopError::new(
-                    "SOP_DISCOVERY_SELECTION_NOT_VISIBLE",
-                    format!(
-                        "StaffDeck SOP discovery selected '{selected}', but StaffDeck did not expose it as a candidate."
-                    ),
-                ));
-            }
+        if let Some(selected) = &selected
+            && matches!(value.get("candidate_sop_ids"), Some(JsValue::Array(_)))
+            && !strings(&value, "candidate_sop_ids").contains(selected)
+        {
+            return Err(SopError::new(
+                "SOP_DISCOVERY_SELECTION_NOT_VISIBLE",
+                format!(
+                    "StaffDeck SOP discovery selected '{selected}', but StaffDeck did not expose it as a candidate."
+                ),
+            ));
         }
         Ok(selected)
     }
@@ -312,4 +368,10 @@ fn latest_user(messages: &JsValue) -> String {
             _ => String::new(),
         })
         .unwrap_or_default()
+}
+fn latest_user_message(messages: &JsValue) -> Option<JsValue> {
+    let JsValue::Array(rows) = messages else {
+        return None;
+    };
+    rows.iter().rev().find(|v| is(v, "role", "user") && matches!(v.get("content"), Some(JsValue::Array(parts)) if parts.iter().any(|v| !is(v, "type", "tool_result")))).cloned()
 }

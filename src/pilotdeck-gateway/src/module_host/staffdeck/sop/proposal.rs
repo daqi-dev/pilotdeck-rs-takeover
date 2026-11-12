@@ -59,12 +59,13 @@ pub(super) fn validate(
     let prior = state.get("slots_json");
     let updates = proposal.get("slotUpdates");
     for field in &fields {
-        if let Some(update) = updates.and_then(|v| v.get(field)) {
-            if filled(prior.and_then(|v| v.get(field))) && !filled(Some(update)) {
-                return Err(invalid(format!(
-                    "REQUIRED_SLOT_ERASURE: {field} is already filled; an empty update cannot erase it."
-                )));
-            }
+        if let Some(update) = updates.and_then(|v| v.get(field))
+            && filled(prior.and_then(|v| v.get(field)))
+            && !filled(Some(update))
+        {
+            return Err(invalid(format!(
+                "REQUIRED_SLOT_ERASURE: {field} is already filled; an empty update cannot erase it."
+            )));
         }
     }
     if is(proposal, "status", "handoff")
@@ -82,27 +83,27 @@ pub(super) fn validate(
         ));
     }
     let allowed = strings(step, "allowedNextStepIds");
-    if let Some(next) = text(proposal, "nextStepId") {
-        if !allowed.contains(&next) {
-            let node = text(step, "nodeId").unwrap_or_default();
-            let targets = if allowed.is_empty() {
-                "none (this node is terminal or must remain active)".into()
-            } else {
-                allowed.join(", ")
-            };
-            let mut error = invalid(format!(
-                "SOP_INVALID_TRANSITION: nextStepId '{next}' is not declared from '{node}'. Allowed nextStepId values: {targets}. Do not invent a transition; preserve the current state and submit the declared result or ask for the missing information."
-            ));
-            error.details = Some(object([
-                ("activeStepId", node.as_str().into()),
-                ("requestedNextStepId", next.as_str().into()),
-                (
-                    "allowedNextStepIds",
-                    step.get("allowedNextStepIds").unwrap().clone(),
-                ),
-            ]));
-            return Err(error);
-        }
+    if let Some(next) = text(proposal, "nextStepId")
+        && !allowed.contains(&next)
+    {
+        let node = text(step, "nodeId").unwrap_or_default();
+        let targets = if allowed.is_empty() {
+            "none (this node is terminal or must remain active)".into()
+        } else {
+            allowed.join(", ")
+        };
+        let mut error = invalid(format!(
+            "SOP_INVALID_TRANSITION: nextStepId '{next}' is not declared from '{node}'. Allowed nextStepId values: {targets}. Do not invent a transition; preserve the current state and submit the declared result or ask for the missing information."
+        ));
+        error.details = Some(Box::new(object([
+            ("activeStepId", node.as_str().into()),
+            ("requestedNextStepId", next.as_str().into()),
+            (
+                "allowedNextStepIds",
+                step.get("allowedNextStepIds").unwrap().clone(),
+            ),
+        ])));
+        return Err(error);
     }
     let asks = strings(step, "allowedActions")
         .iter()

@@ -5,7 +5,7 @@ use super::factory::FamilyResource;
 use super::interaction_notice::DiscardNotice;
 use super::{DisposeFuture, RuntimeError, RuntimeResult};
 use crate::host::modules::{ModuleRouter, event};
-use crate::host::{HostError, ModuleError};
+use crate::host::{BufferedHostEvent, HostError, ModuleError};
 use crate::runtime::cleanup_task::lock;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::collections::HashMap;
@@ -25,7 +25,7 @@ struct TurnState {
     identity: event::TurnIdentity,
     run_id: JsString,
     closed: bool,
-    events: Vec<JsObject>,
+    events: Vec<BufferedHostEvent>,
     // #686: notices from the discarded predecessor are injected only after
     // this turn's `turn_started`, so the stream integrity gate stays valid.
     notices: Vec<DiscardNotice>,
@@ -59,7 +59,7 @@ impl InteractionEvents {
             identity: identity.clone(),
             run_id,
             closed: false,
-            events: carried,
+            events: carried.into_iter().map(BufferedHostEvent::host).collect(),
             notices: Vec::new(),
         }));
         if let Some(previous) = state
@@ -84,6 +84,16 @@ impl InteractionEvents {
     /// [`TurnEvents::emit`]; without a current run for the event's session it
     /// is refused.
     pub fn emit_current(&self, event: JsObject) -> Result<(), HostError> {
+        self.emit_current_source(event, false)
+    }
+
+    /// The caller owns a real nested session's stream and has already drained
+    /// its recorder. This narrow authority is unavailable to `event.emit`.
+    pub(crate) fn emit_nested_session(&self, event: JsObject) -> Result<(), HostError> {
+        self.emit_current_source(event, true)
+    }
+
+    fn emit_current_source(&self, event: JsObject, nested: bool) -> Result<(), HostError> {
         let turn = {
             let state = lock(&self.state);
             if state.closed {
@@ -99,13 +109,11 @@ impl InteractionEvents {
                 ModuleError::new("Sidecar host event does not match the active turn.").into(),
             );
         };
-        event::EventSink::emit(
-            &TurnEvents {
-                generation: self.state.clone(),
-                turn,
-            },
-            event,
-        )
+        TurnEvents {
+            generation: self.state.clone(),
+            turn,
+        }
+        .emit_source(event, nested)
     }
 
     /// A session event raised outside any run: held for the session's next
@@ -148,7 +156,7 @@ impl InteractionEvents {
         };
         let mut turn = lock(&turn);
         check(&generation, &turn)?;
-        turn.events.push(event);
+        turn.events.push(BufferedHostEvent::host(event));
         Ok(())
     }
 
@@ -201,13 +209,22 @@ impl TurnEvents {
         if crate::mutants::on("notices-stale") || crate::mutants::on("notices-closed") {
             Ok(take_notices(&mut turn))
         } else if crate::mutants::on("notices-buffer-isolation") {
-            check(&generation, &turn).map(|()| std::mem::take(&mut turn.events))
+            check(&generation, &turn).map(|()| {
+                std::mem::take(&mut turn.events)
+                    .into_iter()
+                    .map(|event| event.event)
+                    .collect()
+            })
         } else {
             check(&generation, &turn).map(|()| take_notices(&mut turn))
         }
     }
     /// Checked counterpart of the transport's legacy infallible drain hook.
     pub fn drain(&self) -> Result<Vec<JsObject>, HostError> {
+        self.drain_sourced()
+            .map(|events| events.into_iter().map(|event| event.event).collect())
+    }
+    pub(crate) fn drain_sourced(&self) -> Result<Vec<BufferedHostEvent>, HostError> {
         let generation = lock(&self.generation);
         let mut turn = lock(&self.turn);
         check(&generation, &turn)?;
@@ -249,6 +266,17 @@ impl TurnEvents {
 }
 impl event::EventSink for TurnEvents {
     fn emit(&self, event: JsObject) -> Result<(), HostError> {
+        self.emit_source(event, false)
+    }
+    fn drain_checked(&self) -> Result<Vec<JsObject>, HostError> {
+        self.drain()
+    }
+    fn drain(&self) -> Vec<JsObject> {
+        self.drain().unwrap_or_default()
+    }
+}
+impl TurnEvents {
+    fn emit_source(&self, event: JsObject, nested: bool) -> Result<(), HostError> {
         let generation = lock(&self.generation);
         let mut turn = lock(&self.turn);
         check(&generation, &turn)?;
@@ -268,20 +296,17 @@ impl event::EventSink for TurnEvents {
             .get("type")
             .and_then(JsValue::as_string)
             .is_some_and(|value| value.equals_str("turn_started"));
-        turn.events.push(event);
+        turn.events.push(if nested {
+            BufferedHostEvent::nested_session(event)
+        } else {
+            BufferedHostEvent::host(event)
+        });
         if started {
             let notices = take_notices(&mut turn);
-            turn.events.extend(notices);
+            turn.events
+                .extend(notices.into_iter().map(BufferedHostEvent::host));
         }
         Ok(())
-    }
-    fn drain_checked(&self) -> Result<Vec<JsObject>, HostError> {
-        self.drain()
-    }
-    fn drain(&self) -> Vec<JsObject> {
-        // Existing EventSink::drain cannot carry an error. Host composition
-        // must use TurnEvents::drain to observe closed/stale state explicitly.
-        self.drain().unwrap_or_default()
     }
 }
 fn take_notices(turn: &mut TurnState) -> Vec<JsObject> {

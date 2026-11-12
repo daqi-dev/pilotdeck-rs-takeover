@@ -117,6 +117,119 @@ fn conversation(messages: &[JsValue]) -> Vec<JsValue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn registered_discovery_tool_reads_real_transcript_alias_and_rejects_other_phases() {
+        let root = std::env::temp_dir().join(format!("pilotdeck-history-{}", uuid::Uuid::new_v4()));
+        struct Scratch(std::path::PathBuf);
+        impl Drop for Scratch {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _scratch = Scratch(root.clone());
+        let project = root.join("project");
+        let home = root.join("home/.pilotdeck");
+        std::fs::create_dir_all(&project).unwrap();
+        let paths = AlwaysOnPaths {
+            project_key: project.to_string_lossy().into_owned(),
+            pilot_home: home.clone(),
+            ..Default::default()
+        };
+        let phase = Arc::new(PhaseContext::new(
+            PhaseKind::Discovery,
+            paths.clone(),
+            Arc::new(DiscoveryPlanStore::new(paths.clone())),
+        ));
+        phase
+            .state()
+            .chat_aliases
+            .push(("C1".into(), "web:gateway-parity-text".into()));
+        let chats = crate::session_chat_dir(&home, &project, &paths.project_key);
+        std::fs::create_dir_all(&chats).unwrap();
+        std::fs::write(
+            chats.join("web:gateway-parity-text.jsonl"),
+            include_str!("../../../../tests/fixtures/metadata/transcript.jsonl"),
+        )
+        .unwrap();
+        let contexts = Arc::new(AlwaysOnRunContextRegistry::new());
+        contexts
+            .register(super::super::super::manager::AlwaysOnRunContext {
+                session_key: "discovery".into(),
+                run_id: "history-run".into(),
+                project_key: paths.project_key.clone(),
+                phase: Some(phase),
+            })
+            .unwrap();
+        let tools = always_on_tools(contexts, Arc::new(|| 0.0), Arc::new(|| "unused".into()));
+        let tool = &tools[3];
+        assert_eq!(
+            tool.fields().get("aliases"),
+            Some(&JsValue::Array(vec!["AlwaysOnReadChatHistory".into()]))
+        );
+        let mut context = ToolRunContext::new(Arc::new(
+            crate::host::modules::tool_context::ToolRuntimeContext {
+                fields: JsObject::new(),
+                files: crate::host::modules::tool_context::HostToolCheckpoint::default()
+                    .tool_context_state(),
+                abort_signal: None,
+                model: None,
+                elicitation: None,
+                user_dialog: None,
+                audit_recorder: None,
+                file_history: None,
+                file_update_notifier: None,
+                now: None,
+                progress: None,
+                subagent: None,
+                plan_todo: None,
+                goal: None,
+                plan_directory: None,
+            },
+        ));
+        context
+            .fields
+            .insert("sessionId".into(), "discovery".into());
+        let input =
+            |session: &str| JsValue::Object(fields(vec![("sessionId".into(), session.into())]));
+        let result = tool.execute(input("C1"), context.clone()).await.unwrap();
+        let direct = tool
+            .execute(input("web:gateway-parity-text"), context.clone())
+            .await
+            .unwrap();
+        let expected = parse_json(r#"{"sessionId":"web:gateway-parity-text","title":"GP_TEXT","messageCount":2,"conversation":[{"role":"user","text":"GP_TEXT","createdAt":""},{"role":"assistant","text":"GP_MOCK_OK","createdAt":""}]}"#).unwrap();
+        assert_eq!(result.data, Some(expected));
+        assert_eq!(result.data, direct.data);
+        assert_eq!(
+            result.content[0].get("text"),
+            Some(&"Session \"GP_TEXT\" — 2 messages.".into())
+        );
+        assert_eq!(
+            result.metadata.unwrap().get("runId"),
+            Some(&"history-run".into())
+        );
+        let missing = tool
+            .execute(input("missing"), context.clone())
+            .await
+            .unwrap_err();
+        assert_eq!(
+            missing.message,
+            format!(
+                "Could not read session missing: Transcript {} does not exist.",
+                chats.join("missing.jsonl").display()
+            )
+            .into()
+        );
+        context
+            .fields
+            .insert("sessionId".into(), "execution".into());
+        let wrong = tool.execute(input("C1"), context).await.unwrap_err();
+        assert_eq!(
+            wrong.message,
+            "always_on_read_chat_history is only available during Always-On discovery (Phase 1)."
+                .into()
+        );
+    }
+
     #[test]
     fn conversation_preserves_user_text_and_clips_assistant_utf16() {
         let user = "中😀".repeat(200);

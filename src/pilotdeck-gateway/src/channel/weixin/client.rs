@@ -10,11 +10,13 @@
 //! Content-Length on `/ilink/bot/` posts) is transport framing, not part of
 //! the recorded protocol, and belongs to the real-account follow-up.
 use crate::channel::protocol::BoxFuture;
-use http_body_util::{BodyExt, Full};
+use http_body_util::Full;
 use hyper::{Method, Request, body::Bytes};
-use hyper_util::client::legacy::Client;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use std::{sync::Arc, sync::Mutex, time::Duration};
+mod network;
+#[cfg(test)]
+mod tests;
 
 const DEFAULT_CHANNEL_VERSION: &str = "weixin-ilink/0.1.0";
 const DEFAULT_BASE_URL: &str = "https://ilinkai.weixin.qq.com";
@@ -42,13 +44,6 @@ const MESSAGE_TYPE_BOT: f64 = 2.0;
 const MESSAGE_STATE_FINISH: f64 = 2.0;
 /// TypingStatus.TYPING.
 const TYPING_STATUS_TYPING: f64 = 1.0;
-
-type WeixinConnector = hyper_rustls::HttpsConnector<crate::runtime::model::http::ProxyConnect>;
-
-fn weixin_connector() -> WeixinConnector {
-    use crate::runtime::model::http::{ProxyConfig, proxy_https_connector, webpki_client_config};
-    proxy_https_connector(webpki_client_config(), ProxyConfig::from_settings(None))
-}
 
 /// TS errors reaching `formatWeixinError` keep their `name`; the formatted
 /// text is what `isRecoverablePollError` matches against.
@@ -136,6 +131,19 @@ fn string_field(value: &JsValue, name: &str) -> Option<JsString> {
     value.get(name).and_then(JsValue::as_string).cloned()
 }
 
+fn parse_response(text: &str) -> Result<JsValue, WeixinClientError> {
+    if let Some(message) = pilotdeck_protocol::json_syntax::parse_error(text) {
+        return Err(WeixinClientError {
+            name: "SyntaxError".into(),
+            message,
+        });
+    }
+    parse_json(text).map_err(|error| WeixinClientError {
+        name: "SyntaxError".into(),
+        message: error.to_string(),
+    })
+}
+
 /// URL join: TS `new URL(endpoint, base.endsWith("/") ? base : base + "/")`.
 fn endpoint_url(base_url: &str, endpoint: &str) -> String {
     if base_url.ends_with('/') {
@@ -204,7 +212,7 @@ pub struct IlinkHttpClient {
     long_poll_timeout: Duration,
     api_timeout: Duration,
     cursor: Arc<Mutex<String>>,
-    http: Client<WeixinConnector, Full<Bytes>>,
+    http: network::Network,
 }
 
 impl IlinkHttpClient {
@@ -216,7 +224,7 @@ impl IlinkHttpClient {
             long_poll_timeout: Duration::from_secs(35),
             api_timeout: Duration::from_secs(15),
             cursor: Arc::new(Mutex::new(String::new())),
-            http: Client::builder(hyper_util::rt::TokioExecutor::new()).build(weixin_connector()),
+            http: network::Network::default(),
         }
     }
 
@@ -249,47 +257,18 @@ impl IlinkHttpClient {
             .body(Full::new(Bytes::from(body)))
             .map_err(|error| WeixinClientError::error(error.to_string()))?;
 
-        let (status, bytes) = self.exchange(request, timeout).await?;
-        let text = String::from_utf8_lossy(&bytes).into_owned();
+        let response = self.http.send(request, Some(timeout)).await?;
+        let status = response.status();
+        let bytes = network::read_body(response).await?;
+        let decoded = String::from_utf8_lossy(&bytes);
+        let text = decoded.strip_prefix('\u{feff}').unwrap_or(&decoded);
         if !status.is_success() {
             return Err(WeixinClientError::error(format!(
                 "{endpoint} {code}: {text}",
                 code = status.as_u16()
             )));
         }
-        parse_json(&text).map_err(|error| WeixinClientError {
-            name: "SyntaxError".into(),
-            message: error.to_string(),
-        })
-    }
-
-    /// One bounded request/response exchange. Transport failures and timeouts
-    /// carry the Node fetch error shapes the channel's recovery matches on.
-    async fn exchange(
-        &self,
-        request: Request<Full<Bytes>>,
-        timeout: Duration,
-    ) -> Result<(hyper::StatusCode, Bytes), WeixinClientError> {
-        match tokio::time::timeout(timeout, async {
-            let response = self
-                .http
-                .request(request)
-                .await
-                .map_err(|_| WeixinClientError::fetch_failed())?;
-            let status = response.status();
-            let bytes = response
-                .into_body()
-                .collect()
-                .await
-                .map_err(|_| WeixinClientError::fetch_failed())?
-                .to_bytes();
-            Ok::<_, WeixinClientError>((status, bytes))
-        })
-        .await
-        {
-            Ok(result) => result,
-            Err(_) => Err(WeixinClientError::abort()),
-        }
+        parse_response(text)
     }
 
     /// auth.js `pollStatus` / `fetchQRCode` GET helper.
@@ -297,7 +276,8 @@ impl IlinkHttpClient {
         &self,
         url: &str,
         headers: &[(&str, &str)],
-        timeout: Duration,
+        timeout: Option<Duration>,
+        error_prefix: &str,
     ) -> Result<JsValue, WeixinClientError> {
         let mut builder = Request::builder().method(Method::GET).uri(url);
         for (name, value) in headers {
@@ -306,18 +286,17 @@ impl IlinkHttpClient {
         let request = builder
             .body(Full::new(Bytes::new()))
             .map_err(|error| WeixinClientError::error(error.to_string()))?;
-        let (status, bytes) = self.exchange(request, timeout).await?;
-        let text = String::from_utf8_lossy(&bytes).into_owned();
+        let response = self.http.send(request, timeout).await?;
+        let status = response.status();
         if !status.is_success() {
             return Err(WeixinClientError::error(format!(
-                "Failed to fetch QR code: {code}",
+                "{error_prefix}: {code}",
                 code = status.as_u16()
             )));
         }
-        parse_json(&text).map_err(|error| WeixinClientError {
-            name: "SyntaxError".into(),
-            message: error.to_string(),
-        })
+        let bytes = network::read_body(response).await?;
+        let text = String::from_utf8_lossy(&bytes);
+        parse_response(text.strip_prefix('\u{feff}').unwrap_or(&text))
     }
 
     /// client.js `sendText` message envelope.
@@ -397,7 +376,8 @@ impl IlinkHttpClient {
         self.get_json(
             &format!("{root}/ilink/bot/get_bot_qrcode?bot_type=3"),
             &[],
-            QR_POLL_TIMEOUT,
+            None,
+            "Failed to fetch QR code",
         )
         .await
     }
@@ -562,7 +542,8 @@ pub async fn login_with_qr(
             .get_json(
                 &format!("{root}/ilink/bot/get_qrcode_status?qrcode={encoded}"),
                 &[("iLink-App-ClientVersion", "1")],
-                QR_POLL_TIMEOUT,
+                Some(QR_POLL_TIMEOUT),
+                "QR status poll failed",
             )
             .await
         {

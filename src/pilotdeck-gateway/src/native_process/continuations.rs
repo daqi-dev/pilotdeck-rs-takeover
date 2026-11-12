@@ -28,7 +28,6 @@ use crate::{
             agent::{SubagentDefinition, subagent_definition},
             subagent_continuation::{AdmissionFuture, ContinuationAdmission, ContinuationPort},
         },
-        turn::live::LiveSessionAdapter,
     },
     storage::{JsonlTranscriptStore, TranscriptKey, TranscriptStore, recorder::Recorder},
 };
@@ -403,7 +402,7 @@ pub(super) struct Activation {
     id: JsString,
     parent: Arc<dyn ContinuationParent>,
     manager: Weak<Continuations>,
-    session: Arc<LiveSessionAdapter>,
+    session: Arc<dyn LiveSession>,
     storage: Arc<FactoryStorage>,
     chat_dir: PathBuf,
     state: Mutex<ActivationState>,

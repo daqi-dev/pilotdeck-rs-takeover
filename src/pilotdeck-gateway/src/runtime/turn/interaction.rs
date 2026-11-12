@@ -61,6 +61,9 @@ pub type TurnHooksSink = Arc<dyn Fn(Option<Arc<dyn lifecycle::LifecyclePort>>) +
 /// the sidecar payload.
 #[derive(Clone, Default)]
 pub struct HookWiring {
+    /// Internal SOP nodes delegate to the parent's native lifecycle; their
+    /// own bound runtime still owns revocation, and cannot dispose the parent.
+    pub delegate: Option<Arc<dyn lifecycle::LifecyclePort>>,
     /// Receives every hook execution transition of this session's runtimes
     /// (`subscribeHookExecutionEvents`, ProjectSessionRuntimeBundle.ts:668-676)
     /// and their deferred async registrations.
@@ -214,8 +217,19 @@ impl InteractionTurn {
                     .lifecycle
                     .set_advisory_with_signal(advisory.clone(), input.signal.clone());
             }
+            if let Some(delegate) = &hook_wiring.delegate {
+                router.lifecycle.set_port(delegate.clone());
+                router
+                    .lifecycle
+                    .set_advisory_with_signal(delegate.clone(), input.signal.clone());
+            }
             if let Some(sink) = &hook_wiring.turn_sink {
-                sink(Some(Arc::new(hooks.clone())));
+                sink(Some(
+                    hook_wiring
+                        .delegate
+                        .clone()
+                        .unwrap_or_else(|| Arc::new(hooks.clone())),
+                ));
             }
             turn.ports.hooks = Some(hooks);
         }
@@ -432,6 +446,13 @@ impl InteractionTurn {
     }
 }
 impl HostHandler for InteractionTurn {
+    fn drain_sourced_events(&self) -> Result<Vec<crate::host::BufferedHostEvent>, HostError> {
+        self.ports
+            .events
+            .as_ref()
+            .map(TurnEvents::drain_sourced)
+            .unwrap_or_else(|| Ok(Vec::new()))
+    }
     fn drain_events(&self) -> Result<Vec<JsObject>, HostError> {
         self.ports
             .events

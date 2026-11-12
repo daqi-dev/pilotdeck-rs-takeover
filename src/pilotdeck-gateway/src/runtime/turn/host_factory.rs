@@ -214,8 +214,12 @@ type PortsFactory = dyn Fn(&ExecutionIdentity, Arc<Recorder>, crate::runtime::ho
     + Send
     + Sync;
 
+pub type GenerationLeaseSupplier =
+    Arc<dyn Fn() -> Result<RuntimeLease, crate::runtime::project::RuntimeError> + Send + Sync>;
+
 pub struct TurnHostFactory {
     registry: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
+    lease_supplier: Option<GenerationLeaseSupplier>,
     deployment: Deployment,
     native_factory: Option<Arc<dyn pilotdeck_transport::server::ExecutionFactory>>,
     port_decorators: Option<HostPortDecorators>,
@@ -266,6 +270,7 @@ impl TurnHostFactory {
     ) -> Self {
         Self {
             registry,
+            lease_supplier: None,
             in_process_loop: matches!(deployment, Deployment::Native),
             deployment,
             native_factory: None,
@@ -279,6 +284,22 @@ impl TurnHostFactory {
             turn_override_sink: None,
             project_root: None,
         }
+    }
+
+    /// Keep turn/maintenance dependencies on the generation used to compose
+    /// the session's tools and services. The supplier must stop issuing leases
+    /// when its session owner closes; factories need not retain that owner.
+    pub fn with_lease_supplier(mut self, supplier: GenerationLeaseSupplier) -> Self {
+        self.lease_supplier = Some(supplier);
+        self
+    }
+
+    fn acquire_lease(&self) -> Result<RuntimeLease, HostError> {
+        match &self.lease_supplier {
+            Some(supplier) => supplier(),
+            None => self.registry.acquire(self.project_root.as_deref()),
+        }
+        .map_err(|error| HostError::new(HostErrorKind::Protocol, error.message))
     }
 
     /// Install a source-level Rust extension for native deployments only.
@@ -440,10 +461,7 @@ impl TurnHostFactory {
         recorder: Arc<Recorder>,
         signal: crate::runtime::hooks::Cancellation,
     ) -> Result<InteractionHost, HostError> {
-        let lease = self
-            .registry
-            .acquire(self.project_root.as_deref())
-            .map_err(|error| HostError::new(HostErrorKind::Protocol, error.message))?;
+        let lease = self.acquire_lease()?;
         let ports = (self.ports)(identity, recorder, signal);
         let assembled = match &self.port_decorators {
             Some(decorators) => Self::assemble_decorated(lease, identity, ports, decorators).await,
@@ -789,10 +807,7 @@ impl TurnHostFactory {
         recorder: Arc<Recorder>,
         signal: crate::runtime::hooks::Cancellation,
     ) -> Result<MaintenanceContext, HostError> {
-        let lease = self
-            .registry
-            .acquire(self.project_root.as_deref())
-            .map_err(|error| HostError::new(HostErrorKind::Protocol, error.message))?;
+        let lease = self.acquire_lease()?;
         let mut ports = (self.ports)(identity, recorder, signal);
         let context = lease
             .runtime()

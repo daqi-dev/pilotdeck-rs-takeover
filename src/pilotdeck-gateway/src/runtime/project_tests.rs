@@ -7,6 +7,93 @@ use std::{
 };
 use tokio::sync::Semaphore;
 
+#[tokio::test]
+async fn lease_fork_keeps_retired_generation_and_rejects_released_authority() {
+    let root = Scratch::new();
+    let probe = Arc::new(Probe::default());
+    let registry = probe.registry(&root.0);
+    let mut parent = registry.acquire(None).unwrap();
+    let generation = parent.runtime().clone();
+    registry.invalidate(None);
+    assert!(
+        generation.acquire().is_err(),
+        "retired generation rejects new admission"
+    );
+    let mut child = parent.fork().unwrap();
+    assert_eq!(generation.lease_count(), 2);
+    parent.release().await.unwrap();
+    assert!(parent.fork().is_err());
+    parent.release().await.unwrap();
+    assert_eq!(generation.lease_count(), 1);
+    let grandchild = child.fork().unwrap();
+    child.release().await.unwrap();
+    assert_eq!(generation.lease_count(), 1);
+    assert!(!probe.events().iter().any(|event| event == "dispose:1"));
+    drop(grandchild);
+    generation.wait_disposed().await.unwrap();
+    assert_eq!(
+        probe
+            .events()
+            .iter()
+            .filter(|event| *event == "dispose:1")
+            .count(),
+        1
+    );
+    registry.dispose().await.unwrap();
+}
+
+#[tokio::test]
+async fn closing_session_authority_serializes_with_generation_fork() {
+    let root = Scratch::new();
+    let probe = Arc::new(Probe::default());
+    let registry = probe.registry(&root.0);
+    let lease = registry.acquire(None).unwrap();
+    let generation = lease.runtime().clone();
+    let authority = Arc::new(Mutex::new(Some(lease)));
+    registry.invalidate(None);
+    let ready = Arc::new(std::sync::Barrier::new(3));
+    let fork = std::thread::spawn({
+        let authority = authority.clone();
+        let ready = ready.clone();
+        move || {
+            ready.wait();
+            authority
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(RuntimeLease::fork)
+                .transpose()
+                .unwrap()
+        }
+    });
+    let close = std::thread::spawn({
+        let authority = authority.clone();
+        let ready = ready.clone();
+        move || {
+            ready.wait();
+            let lease = authority.lock().unwrap().take();
+            drop(lease);
+        }
+    });
+    ready.wait();
+    let child = fork.join().unwrap();
+    close.join().unwrap();
+    assert!(authority.lock().unwrap().is_none());
+    assert_eq!(generation.lease_count(), usize::from(child.is_some()));
+    drop(child);
+    generation.wait_disposed().await.unwrap();
+    assert_eq!(generation.lease_count(), 0);
+    assert_eq!(
+        probe
+            .events()
+            .iter()
+            .filter(|event| *event == "dispose:1")
+            .count(),
+        1
+    );
+    registry.dispose().await.unwrap();
+}
+
 struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {

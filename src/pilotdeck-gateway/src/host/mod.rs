@@ -345,6 +345,27 @@ impl Drop for EventGuard {
         }
     }
 }
+/// A host buffer value with non-serializable admission provenance.
+#[derive(Clone)]
+pub struct BufferedHostEvent {
+    pub event: JsObject,
+    pub(crate) nested_prompt: bool,
+}
+impl BufferedHostEvent {
+    pub fn host(event: JsObject) -> Self {
+        Self {
+            event,
+            nested_prompt: false,
+        }
+    }
+    pub(crate) fn nested_session(event: JsObject) -> Self {
+        let nested_prompt = event.get("type") == Some(&JsValue::from("user_prompt_submitted"));
+        Self {
+            event,
+            nested_prompt,
+        }
+    }
+}
 /// Returned module payload is wrapped with the callback's own correlation IDs.
 /// Events arrive in sequence and are ACKed only after `event` succeeds. A pending
 /// module callback never prevents an event callback or input validation progressing.
@@ -352,6 +373,12 @@ pub trait HostHandler: Send + Sync + 'static {
     /// Host-generated events buffered by module callbacks, in emission order.
     fn drain_events(&self) -> Result<Vec<JsObject>, HostError> {
         Ok(Vec::new())
+    }
+    /// Source-only provenance survives the host buffer without adding a wire
+    /// field. Ordinary module sinks never grant nested-session lifecycle authority.
+    fn drain_sourced_events(&self) -> Result<Vec<BufferedHostEvent>, HostError> {
+        self.drain_events()
+            .map(|events| events.into_iter().map(BufferedHostEvent::host).collect())
     }
     /// Called on the driver task in the sidecar's arrival order; work done
     /// before returning the future is ordered, the future itself runs

@@ -43,25 +43,25 @@ pub(super) fn load(path: &Path) -> Result<JsValue, SopError> {
 fn normalize(mut value: JsValue, path: &Path) -> Result<JsValue, SopError> {
     if matches!(value, JsValue::Array(_)) {
         value = object([("sops", value)]);
-    } else if !matches!(value.get("sops"), Some(JsValue::Array(_))) {
-        if let (Some(id), Some(version), Some(content)) = (
+    } else if !matches!(value.get("sops"), Some(JsValue::Array(_)))
+        && let (Some(id), Some(version), Some(content)) = (
             nonempty(&value, "skill_id").or_else(|| nonempty(&value, "id")),
             nonempty(&value, "version"),
             value.get("content").filter(|v| v.as_object().is_some()),
-        ) {
-            let mut published = object([
-                ("id", id.as_str().into()),
-                ("skill_id", id.as_str().into()),
-                ("version", version.as_str().into()),
-                ("content", content.clone()),
-            ]);
-            for key in ["name", "business_domain", "description"] {
-                if let Some(text) = nonempty(&value, key) {
-                    set(&mut published, key, text.as_str().into());
-                }
+        )
+    {
+        let mut published = object([
+            ("id", id.as_str().into()),
+            ("skill_id", id.as_str().into()),
+            ("version", version.as_str().into()),
+            ("content", content.clone()),
+        ]);
+        for key in ["name", "business_domain", "description"] {
+            if let Some(text) = nonempty(&value, key) {
+                set(&mut published, key, text.as_str().into());
             }
-            value = object([("sops", JsValue::Array(vec![published]))]);
         }
+        value = object([("sops", JsValue::Array(vec![published]))]);
     }
     let Some(JsValue::Array(rows)) = value
         .get("sops")
@@ -127,7 +127,7 @@ fn invalid(message: impl Into<String>) -> SopError {
 }
 pub(super) fn model(value: &JsValue) -> Option<(String, String)> {
     let text = value.as_string()?.to_utf8().ok()?;
-    if text.chars().any(char::is_whitespace) {
+    if text.chars().any(crate::metadata::js_space) {
         return None;
     }
     let (provider, name) = text.split_once('/')?;
@@ -140,7 +140,7 @@ pub(super) fn node<'a>(bundle: &'a JsValue, sop_id: &str, node_id: &str) -> Opti
     };
     let definition = rows
         .iter()
-        .find(|v| text(v, "skill_id").or_else(|| text(v, "id")).as_deref() == Some(sop_id))?;
+        .find(|v| text(v, "id").or_else(|| text(v, "skill_id")).as_deref() == Some(sop_id))?;
     let content = definition
         .get("content")
         .filter(|v| v.as_object().is_some())
@@ -176,7 +176,7 @@ pub(super) fn required_tools(
     };
     let Some(definition) = rows
         .iter()
-        .find(|v| text(v, "skill_id").or_else(|| text(v, "id")).as_deref() == Some(selected))
+        .find(|v| text(v, "id").or_else(|| text(v, "skill_id")).as_deref() == Some(selected))
     else {
         return Ok(());
     };
@@ -214,10 +214,10 @@ pub(super) fn required_tools(
             "StaffDeck SOP '{selected}' requires unavailable PilotDeck tools: {}.",
             required.join(", ")
         ),
-        details: Some(object([(
+        details: Some(Box::new(object([(
             "missingToolNames",
             JsValue::Array(required.iter().map(|v| v.as_str().into()).collect()),
-        )])),
+        )]))),
         retryability: None,
     })
 }

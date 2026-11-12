@@ -108,6 +108,14 @@ const WORKSPACE_SCHEMA: &str = r#"{"type":"object","required":["strategy"],"addi
 const CHAT_SCHEMA: &str = r#"{"type":"object","required":["sessionId"],"additionalProperties":false,"properties":{"sessionId":{"type":"string","description":"The sessionId of the chat session to read (from the chat digest)."}}}"#;
 
 impl Kind {
+    fn alias(self) -> &'static str {
+        match self {
+            Kind::Plan => "AlwaysOnDiscoveryPlan",
+            Kind::Report => "AlwaysOnReport",
+            Kind::Workspace => "AlwaysOnPrepareWorkspace",
+            Kind::ChatHistory => "AlwaysOnReadChatHistory",
+        }
+    }
     fn name(self) -> &'static str {
         match self {
             Kind::Plan => "always_on_discovery_plan",
@@ -163,6 +171,14 @@ pub(crate) fn always_on_tools(
         .map(|kind| {
             let mut fields = JsObject::new();
             fields.insert("name".into(), JsValue::from(kind.name()));
+            fields.insert(
+                "aliases".into(),
+                JsValue::Array(vec![JsValue::from(kind.alias())]),
+            );
+            fields.insert(
+                "requiredRuntimeCapabilities".into(),
+                JsValue::Array(vec!["always_on_run_context".into()]),
+            );
             fields.insert("description".into(), JsValue::from(kind.description()));
             fields.insert("kind".into(), JsValue::from("session"));
             fields.insert(

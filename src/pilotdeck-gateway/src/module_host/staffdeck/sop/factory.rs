@@ -72,6 +72,154 @@ struct Factory {
     executor: tokio::runtime::Handle,
 }
 impl Factory {
+    fn run_node(
+        &self,
+        control: &CallControl,
+        identity: &ExecutionIdentity,
+        step: &JsValue,
+        payload: &JsValue,
+    ) -> PortResult<ExecutionTerminal> {
+        let provider = self
+            .runtime
+            .nodes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .ok_or_else(|| {
+                port_error(SopError::new(
+                    "SOP_NODE_SESSION_UNAVAILABLE",
+                    "StaffDeck SOP node session provider is unavailable in this host.",
+                ))
+            })?;
+        let skill = text(step, "skillId").unwrap();
+        let node = text(step, "nodeId").unwrap();
+        let encode = crate::channel::http_client::encode_uri_component;
+        let parent = String::from_utf16_lossy(identity.session_id.units());
+        let sidechain = format!(
+            "sop-node-{}",
+            encode(&json(&JsValue::Array(vec![
+                skill.as_str().into(),
+                node.as_str().into()
+            ])))
+        );
+        let spec = nodes::NodeSessionSpec {
+            parent_session_id: identity.session_id.clone(),
+            session_id: format!("{parent}:sop-node:{}:{}", encode(&skill), encode(&node)).into(),
+            sidechain_id: sidechain.into(),
+            skill_id: skill.clone().into(),
+            node_id: node.clone().into(),
+        };
+        let content = self
+            .runtime
+            .turn
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .user_message
+            .as_ref()
+            .and_then(|v| v.get("content"))
+            .cloned()
+            .unwrap_or_else(|| JsValue::Array(vec![]));
+        let mut options = object([
+            ("turnId", JsValue::String(identity.turn_id.clone())),
+            (
+                "execution",
+                object([
+                    ("runId", JsValue::String(identity.run_id.clone())),
+                    (
+                        "operationId",
+                        format!(
+                            "{}:sop-node:{}:{}",
+                            String::from_utf16_lossy(identity.operation_id.units()),
+                            encode(&skill),
+                            encode(&node)
+                        )
+                        .as_str()
+                        .into(),
+                    ),
+                    ("requestId", JsValue::String(identity.request_id.clone())),
+                ]),
+            ),
+            (
+                "metadata",
+                object([(
+                    "parentSessionId",
+                    JsValue::String(identity.session_id.clone()),
+                )]),
+            ),
+        ]);
+        for key in [
+            "modelOverride",
+            "maxBudgetUsd",
+            "taskBudgetUsd",
+            "initialTaskBudgetSpentUsd",
+            "basePermissionMode",
+            "canElicit",
+            "allowPlanModeTools",
+        ] {
+            if let Some(value) = payload.get(key) {
+                set(&mut options, key, value.clone());
+            }
+        }
+        for key in ["permissionMode", "runMode", "additionalWorkingDirectories"] {
+            if let Some(value) = payload
+                .get("agent")
+                .and_then(|v| v.get(key))
+                .or_else(|| payload.get(key))
+            {
+                set(&mut options, key, value.clone());
+            }
+        }
+        if let Some(permission) = payload.get("permissionContext") {
+            if let Some(mode) = permission.get("mode") {
+                set(&mut options, "permissionMode", mode.clone());
+            }
+            if let Some(can_prompt) = permission.get("canPrompt") {
+                set(&mut options, "canPrompt", can_prompt.clone());
+            }
+        }
+        if let Some(max) = payload
+            .get("agent")
+            .and_then(|v| v.get("maxTurns"))
+            .or_else(|| payload.get("maxTurns"))
+        {
+            set(&mut options, "maxTurns", max.clone());
+        }
+        let input = nodes::NodeTurnInput {
+            spec,
+            content,
+            options,
+            decorators: self.runtime.decorators(),
+            factory: Arc::new(node_factory::NodeFactory {
+                runtime: self.runtime.clone(),
+                inner: self.inner.clone(),
+            }),
+            signal: self.runtime.signal(),
+        };
+        let mut output = self.wait(control, async {
+            provider
+                .run(input)
+                .await
+                .map_err(|error| SopError::new("SOP_NODE_SESSION_FAILED", error.to_string()))
+        })?;
+        set(
+            &mut output.result,
+            "sessionId",
+            JsValue::String(identity.session_id.clone()),
+        );
+        let kind = text(&output.result, "type");
+        Ok(ExecutionTerminal {
+            outcome: match kind.as_deref() {
+                Some("success") => ModuleOutcome::Completed,
+                Some("aborted") => ModuleOutcome::Cancelled,
+                _ => ModuleOutcome::Failed,
+            },
+            payload: object([("result", output.result), ("messages", output.messages)])
+                .as_object()
+                .unwrap()
+                .clone(),
+            error: None,
+        })
+    }
     fn wait<T>(
         &self,
         control: &CallControl,
@@ -206,8 +354,14 @@ impl ExecutionFactory for Factory {
             ))
         })?;
         let mut agent = payload.get("agent").cloned().unwrap_or_else(|| object([]));
+        self.runtime.seed_checkpoints(&payload);
         set(&mut agent, "stopOnStructuredOutput", JsValue::Bool(true));
         set(&mut payload, "agent", agent);
+        let original_model_override = payload
+            .get("agent")
+            .and_then(|v| v.get("modelOverride"))
+            .or_else(|| payload.get("modelOverride"))
+            .cloned();
         let mut messages = payload
             .get("contextOverride")
             .and_then(|v| v.get("messages"))
@@ -248,32 +402,38 @@ impl ExecutionFactory for Factory {
                     ("structuredOutput", object([("sop", result.clone())])),
                 ]);
                 emit_completion(context, &identity, &outcome)?;
-                return Ok(ExecutionTerminal {
+                let mut terminal = ExecutionTerminal {
                     outcome: ModuleOutcome::Completed,
                     payload: object([("result", outcome), ("messages", messages)])
                         .as_object()
                         .unwrap()
                         .clone(),
                     error: None,
-                });
+                };
+                self.runtime.finish_checkpoints(&mut terminal.payload);
+                return Ok(terminal);
             }
         }
         self.wait(&context.control, self.runtime.start(&messages))?;
         let captured = Arc::new(Mutex::new(None::<JsObject>));
         let saw_error = Arc::new(Mutex::new(false));
+        let visible_messages = Arc::new(Mutex::new(messages.clone()));
+        let mut ran_node = false;
         let mut total: Option<JsValue> = None;
         let mut corrections = std::collections::HashSet::new();
         let mut terminal;
         loop {
             let prepared = self.wait(&context.control, self.runtime.prepare(&identity, None))?;
-            if let Some(prepared) = prepared {
+            let mut agent = payload.get("agent").cloned().unwrap_or_else(|| object([]));
+            if let Some(value) = &original_model_override {
+                set(&mut agent, "modelOverride", value.clone());
+                set(&mut payload, "modelOverride", value.clone());
+            } else {
+                remove(&mut agent, "modelOverride");
+                remove(&mut payload, "modelOverride");
+            }
+            if let Some(prepared) = &prepared {
                 let step = prepared.get("step").unwrap();
-                if is(step, "contextMode", "new_session") {
-                    return Err(port_error(SopError::new(
-                        "SOP_NODE_SESSION_UNAVAILABLE",
-                        "StaffDeck SOP node session isolation is not yet available in this host.",
-                    )));
-                }
                 self.runtime
                     .turn
                     .lock()
@@ -283,50 +443,69 @@ impl ExecutionFactory for Factory {
                     &self.runtime.bundle,
                     &text(step, "skillId").unwrap_or_default(),
                     &text(step, "nodeId").unwrap_or_default(),
-                ) {
-                    if let Some((provider, model)) = node.get("model").and_then(definitions::model)
-                    {
-                        set(
-                            &mut payload,
-                            "modelOverride",
-                            object([
-                                ("provider", provider.as_str().into()),
-                                ("model", model.as_str().into()),
-                            ]),
-                        );
-                    }
+                ) && let Some((provider, model)) = node.get("model").and_then(definitions::model)
+                {
+                    let mut selection = original_model_override
+                        .clone()
+                        .unwrap_or_else(|| object([]));
+                    set(&mut selection, "provider", provider.as_str().into());
+                    set(&mut selection, "model", model.as_str().into());
+                    set(&mut agent, "modelOverride", selection.clone());
+                    set(&mut payload, "modelOverride", selection);
                 }
             }
+            set(&mut payload, "agent", agent);
             let mut override_context = payload
                 .get("contextOverride")
                 .cloned()
                 .unwrap_or_else(|| object([]));
             set(&mut override_context, "messages", messages.clone());
             set(&mut payload, "contextOverride", override_context);
+            self.runtime.apply_checkpoints(&mut payload);
             set(&mut current.boundary, "payload", payload.clone());
             let event_capture = captured.clone();
             let error_capture = saw_error.clone();
-            terminal = context.with_event_filter(
-                Arc::new(move |_, event| {
-                    if event.get("type") == Some(&"turn_completed".into()) {
-                        *event_capture.lock().unwrap_or_else(|e| e.into_inner()) =
-                            Some(event.clone());
-                        return false;
-                    }
-                    if event.get("type") == Some(&"tool_result".into())
-                        && event.get("result").is_some_and(|v| {
-                            is(v, "type", "error")
-                                && !v
-                                    .get("error")
-                                    .is_some_and(|v| is(v, "code", "invalid_tool_input"))
-                        })
-                    {
-                        *error_capture.lock().unwrap_or_else(|e| e.into_inner()) = true;
-                    }
-                    true
-                }),
-                |context| self.inner.execute(&current, context),
-            )?;
+            let message_capture = visible_messages.clone();
+            let node_step = prepared
+                .as_ref()
+                .and_then(|v| v.get("step"))
+                .filter(|v| is(v, "contextMode", "new_session"));
+            terminal = if let Some(step) = node_step {
+                ran_node = true;
+                self.run_node(&context.control, &identity, step, &payload)?
+            } else {
+                context.with_event_filter(
+                    Arc::new(move |_, event| {
+                        if event.get("type") == Some(&"turn_completed".into()) {
+                            *event_capture.lock().unwrap_or_else(|e| e.into_inner()) =
+                                Some(event.clone());
+                            return false;
+                        }
+                        if event.get("type") == Some(&"tool_result".into())
+                            && event.get("result").is_some_and(|v| {
+                                is(v, "type", "error")
+                                    && !v
+                                        .get("error")
+                                        .is_some_and(|v| is(v, "code", "invalid_tool_input"))
+                            })
+                        {
+                            *error_capture.lock().unwrap_or_else(|e| e.into_inner()) = true;
+                        }
+                        if ["assistant_message", "tool_results_projected"]
+                            .iter()
+                            .any(|name| event.get("type") == Some(&(*name).into()))
+                            && let Some(message) = event.get("message")
+                            && let JsValue::Array(messages) =
+                                &mut *message_capture.lock().unwrap_or_else(|e| e.into_inner())
+                        {
+                            messages.push(message.clone());
+                        }
+                        true
+                    }),
+                    |context| self.inner.execute(&current, context),
+                )?
+            };
+            self.runtime.observe_checkpoints(&terminal.payload);
             let result = terminal.payload.get("result").cloned().ok_or_else(|| {
                 port_error(SopError::new(
                     "SOP_NODE_SESSION_FAILED",
@@ -334,6 +513,11 @@ impl ExecutionFactory for Factory {
                 ))
             })?;
             total = Some(merge(total.as_ref(), &result));
+            // The outer SOP result uses the last node's timestamps. Only the
+            // single-node correction wrapper keeps the first attempt's start.
+            if let Some(started) = result.get("startedAt") {
+                set(total.as_mut().unwrap(), "startedAt", started.clone());
+            }
             messages = terminal
                 .payload
                 .get("messages")
@@ -366,7 +550,8 @@ impl ExecutionFactory for Factory {
             let submitted = result
                 .get("structuredOutput")
                 .is_some_and(crate::metadata::js_truthy);
-            let needs_correction = active
+            let needs_correction = node_step.is_none()
+                && active
                 && is(&result, "stopReason", "completed")
                 && !submitted
                 && !*saw_error.lock().unwrap_or_else(|e| e.into_inner())
@@ -402,6 +587,10 @@ impl ExecutionFactory for Factory {
             continue_payload(&mut payload, &terminal, &result);
         }
         let mut result = total.unwrap();
+        let mut visible = visible_messages
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         let submission = self
             .runtime
             .turn
@@ -411,7 +600,7 @@ impl ExecutionFactory for Factory {
             .clone();
         if let Some(submission) = submission {
             let reply = self.reply(context, &identity, request, &submission, false)?;
-            append_once(&mut messages, reply.clone());
+            append_once(&mut visible, reply.clone());
             set(&mut result, "finalMessage", reply);
             set(
                 &mut result,
@@ -423,11 +612,12 @@ impl ExecutionFactory for Factory {
                 &context.control,
                 self.runtime.store.clear_reply(identity.turn_id.clone()),
             )?;
-        } else if captured.lock().unwrap_or_else(|e| e.into_inner()).is_some() {
+        } else if ran_node || captured.lock().unwrap_or_else(|e| e.into_inner()).is_some() {
             emit_completion(context, &identity, &result)?;
         }
         terminal.payload.insert("result".into(), result);
-        terminal.payload.insert("messages".into(), messages);
+        terminal.payload.insert("messages".into(), visible);
+        self.runtime.finish_checkpoints(&mut terminal.payload);
         Ok(terminal)
     }
 }
@@ -495,7 +685,7 @@ fn emit_completion(
         .clone(),
     )
 }
-fn merge(previous: Option<&JsValue>, current: &JsValue) -> JsValue {
+pub(super) fn merge(previous: Option<&JsValue>, current: &JsValue) -> JsValue {
     let Some(previous) = previous else {
         return current.clone();
     };
@@ -551,7 +741,11 @@ fn merge(previous: Option<&JsValue>, current: &JsValue) -> JsValue {
     }
     next
 }
-fn continue_payload(payload: &mut JsValue, terminal: &ExecutionTerminal, result: &JsValue) {
+pub(super) fn continue_payload(
+    payload: &mut JsValue,
+    terminal: &ExecutionTerminal,
+    result: &JsValue,
+) {
     for key in ["seedState", "modelState"] {
         if let Some(value) = terminal.payload.get(key) {
             set(payload, key, value.clone());
