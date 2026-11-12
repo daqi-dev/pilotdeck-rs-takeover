@@ -1,0 +1,18 @@
+{
+  "name": "loop-max-output-text",
+  "about": "纯文本输出被截断（finish_reason=length）：保留截断的助手消息并注入续写提示（agent/loop/AgentLoop.ts:1842 一带，max_output_recovery），模型续写后正常结束；另一会话一直截断，续写 50 次用尽后 agent_status max_output_recovery_exhausted，以已有文本结束。",
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\":\"Cut\"}" } },
+    { "name": "cut1-resumed", "when": ["cut1:", "Pick up mid-sentence"], "reply": { "text": "and part two." } },
+    { "name": "cut1", "when": ["cut1:"], "reply": { "text": "Part one ", "finish": "length" } },
+    { "name": "cut2", "when": ["cut2:"], "reply": { "text": "again ", "finish": "length" } }
+  ],
+  "steps": [
+    { "ws": "submit_turn", "params": { "sessionKey": "s-cut1", "channelKey": "test", "message": "cut1: write" }, "timeout": 20000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-cut1" } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-cut2", "channelKey": "test", "message": "cut2: write" }, "timeout": 60000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-cut2" } }
+  ]
+}
