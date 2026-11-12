@@ -64,6 +64,7 @@ struct State {
 #[derive(Debug)]
 struct Inner {
     binding: SidecarBinding,
+    id_namespace: Option<JsString>,
     state: Mutex<State>,
     wake: Arc<WakeSignal>,
     next_id: AtomicU64,
@@ -81,8 +82,25 @@ pub enum ResponseDisposition {
 }
 impl ConnectionOwner {
     pub fn new(binding: SidecarBinding, queue_capacity: usize) -> Self {
+        Self::with_namespace(binding, queue_capacity, None)
+    }
+    /// Independent logical execution owners can share one physical binding.
+    /// Their opaque callback/stream IDs must still be unique on that socket.
+    pub(crate) fn new_namespaced(
+        binding: SidecarBinding,
+        queue_capacity: usize,
+        namespace: JsString,
+    ) -> Self {
+        Self::with_namespace(binding, queue_capacity, Some(namespace))
+    }
+    fn with_namespace(
+        binding: SidecarBinding,
+        queue_capacity: usize,
+        id_namespace: Option<JsString>,
+    ) -> Self {
         Self(Arc::new(Inner {
             binding,
+            id_namespace,
             state: Mutex::new(State::default()),
             wake: Arc::new(WakeSignal::default()),
             next_id: AtomicU64::new(1),
@@ -98,6 +116,10 @@ impl ConnectionOwner {
         let mut units: Vec<u16> = prefix.encode_utf16().collect();
         units.push(45);
         units.extend_from_slice(self.0.binding.connection_generation.units());
+        if let Some(namespace) = &self.0.id_namespace {
+            units.push(45);
+            units.extend_from_slice(namespace.units());
+        }
         units.push(45);
         units.extend(sequence.to_string().encode_utf16());
         JsString::from_utf16(units)

@@ -290,7 +290,7 @@ async fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput
     }
 
     match kind {
-        ReadKind::Image => image(input, context, &resolved, &context_stat, &read_state_key),
+        ReadKind::Image => image(input, context, &resolved, &context_stat, &read_state_key).await,
         ReadKind::Pdf => pdf::read(input, context, &resolved, &context_stat, &read_state_key).await,
         ReadKind::Notebook => notebook(input, context, &resolved, &context_stat, &read_state_key),
         ReadKind::Text => text_file(input, context, &resolved, &context_stat, &read_state_key),
@@ -467,7 +467,7 @@ fn read_state_set(context: &ToolRunContext, key: JsString, value: JsValue) {
         .insert(key, value);
 }
 
-fn image(
+async fn image(
     input: &JsValue,
     context: &ToolRunContext,
     resolved: &ResolvedPath,
@@ -521,16 +521,28 @@ fn image(
         .and_then(|value| value.get("imageDetail"))
         .and_then(JsValue::as_string)
         .cloned();
-    let bytes = std::fs::read(os_path(&resolved.absolute))
+    if context_stat.size > crate::image::MAX_INPUT as u64 {
+        return Err(tool_error(
+            "result_too_large",
+            "Image exceeds the native component input size limit.",
+        ));
+    }
+    use tokio::io::AsyncReadExt;
+    let file = tokio::fs::File::open(os_path(&resolved.absolute))
+        .await
         .map_err(|error| failed(error, "open", &resolved.absolute))?;
-    let prepared = match prepare_image(bytes.clone(), mime_type) {
-        // `compressImageForBudget` resizes an image over the budget with
-        // sharp; that resize is not ported.
-        Prepared::Image(image, _) if image.len() as f64 > max_image_bytes => Prepared::Unavailable,
-        other => other,
-    };
+    let mut bytes = Vec::new();
+    file.take(crate::image::MAX_INPUT as u64 + 1)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|error| failed(error, "read", &resolved.absolute))?;
+    let prepared =
+        crate::image::prepare(&bytes, mime_type, max_image_bytes.max(0.0) as usize).await;
     match prepared {
-        Prepared::Image(image, image_mime) => {
+        Ok(crate::image::Image {
+            bytes: image,
+            mime: image_mime,
+        }) => {
             read_state_set(
                 context,
                 read_state_key.clone(),
@@ -558,7 +570,7 @@ fn image(
                 metadata: None,
             })
         }
-        Prepared::DecodeFailed(error) => Ok(ToolOutput {
+        Err(error) => Ok(ToolOutput {
             content: vec![JsValue::Object(object([
                 ("type", string("text")),
                 (
@@ -580,94 +592,7 @@ fn image(
             ]))),
             ..ToolOutput::default()
         }),
-        // JPEG/GIF/WebP decoding (to repair or re-encode) and the budget
-        // resize need sharp/libvips, which is not ported; report the
-        // decode-failure notice rather than an image the baseline would not
-        // have sent.
-        Prepared::Unavailable => Ok(ToolOutput {
-            content: vec![JsValue::Object(object([
-                ("type", string("text")),
-                (
-                    "text",
-                    string(format!(
-                        "[Image file: {}, {} bytes, {mime_type}. Image decoding failed, so it was not attached as model-visible image content. Diagnostic: image processing is not available in this runtime.]",
-                        text(&resolved.relative),
-                        context_stat.size
-                    )),
-                ),
-            ]))],
-            data: Some(JsValue::Object(object([
-                ("filePath", string(resolved.relative.clone())),
-                ("kind", string("image")),
-                ("mimeType", string(mime_type)),
-                ("bytes", JsValue::Number(context_stat.size as f64)),
-                ("imageDecodeFailed", JsValue::Bool(true)),
-                (
-                    "error",
-                    string("image processing is not available in this runtime"),
-                ),
-            ]))),
-            ..ToolOutput::default()
-        }),
     }
-}
-
-enum Prepared {
-    Image(Vec<u8>, &'static str),
-    DecodeFailed(String),
-    Unavailable,
-}
-
-const PNG_SIGNATURE: [u8; 8] = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-
-/// `validateAndRepairImage` (readFile.ts:733-769): a complete JPEG over 1000
-/// bytes and any other image over 1000 bytes whose header parses pass
-/// through unchanged; everything else is re-encoded by sharp as a quality-90
-/// JPEG, or reported truncated when it cannot be decoded. The re-encode is
-/// ported for PNG input ([`super::image_codec`]).
-fn prepare_image(bytes: Vec<u8>, mime_type: &'static str) -> Prepared {
-    let is_jpeg = mime_type == "image/jpeg";
-    let has_eoi = is_jpeg && bytes.len() >= 2 && bytes[bytes.len() - 2..] == [0xff, 0xd9];
-    if is_jpeg && has_eoi && bytes.len() > 1000 {
-        return Prepared::Image(bytes, mime_type);
-    }
-    if !is_jpeg && bytes.len() > 1000 && header_parses(&bytes) {
-        return Prepared::Image(bytes, mime_type);
-    }
-    let corrupted = || {
-        Prepared::DecodeFailed(format!(
-            "Image file appears truncated or corrupted ({} bytes). Cannot decode.",
-            bytes.len()
-        ))
-    };
-    if bytes.starts_with(&PNG_SIGNATURE) {
-        return match super::image_codec::decode_png(&bytes) {
-            Ok(raster) => {
-                Prepared::Image(super::image_codec::encode_jpeg_q90(&raster), "image/jpeg")
-            }
-            Err(_) => corrupted(),
-        };
-    }
-    if other_sharp_format(&bytes) {
-        return Prepared::Unavailable;
-    }
-    corrupted()
-}
-
-/// `sharp(buffer).metadata()` for the formats `read_file` accepts.
-fn header_parses(bytes: &[u8]) -> bool {
-    if bytes.starts_with(&PNG_SIGNATURE) {
-        return super::image_codec::png_header_ok(bytes);
-    }
-    other_sharp_format(bytes)
-}
-
-/// JPEG, GIF and WebP magic: formats sharp decodes that this port does not.
-fn other_sharp_format(bytes: &[u8]) -> bool {
-    bytes.starts_with(&[0xff, 0xd8, 0xff])
-        || bytes.starts_with(b"GIF87a")
-        || bytes.starts_with(b"GIF89a")
-        || (bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP")
 }
 
 fn notebook(

@@ -1,14 +1,8 @@
 //! Bounded native MuPDF component. The helper owns no application state;
 //! dropping its future cancels the owned process and releases its input file.
-use std::{
-    path::{Path, PathBuf},
-    process::Stdio,
-    time::Duration,
-};
-use tokio::{
-    io::{AsyncRead, AsyncReadExt},
-    process::Command,
-};
+use crate::native_component::{self, Snapshot};
+use std::time::Duration;
+use tokio::process::Command;
 
 pub(crate) const UNAVAILABLE: &str = "PDF capability unavailable: install the MuPDF component (pilotdeck-pdf) or set PILOTDECK_PDF_TOOL.";
 const TIMEOUT: Duration = Duration::from_secs(30);
@@ -33,68 +27,26 @@ impl std::fmt::Display for Error {
     }
 }
 
-fn tool_path() -> PathBuf {
-    if let Some(path) = std::env::var_os("PILOTDECK_PDF_TOOL").filter(|p| !p.is_empty()) {
-        return path.into();
-    }
-    if let Some(bin) = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(Path::to_path_buf))
-    {
-        for path in [
-            bin.join("pilotdeck-pdf"),
-            bin.join("components/mupdf/bin/pilotdeck-pdf"),
-            bin.join("../components/mupdf/bin/pilotdeck-pdf"),
-        ] {
-            if path.is_file() {
-                return path;
+impl From<native_component::Error> for Error {
+    fn from(error: native_component::Error) -> Self {
+        match error {
+            native_component::Error::Unavailable => Self::Unavailable,
+            native_component::Error::Failed(message) => Self::Failed(message),
+            native_component::Error::Timeout => Self::Timeout,
+            native_component::Error::TooLarge => Self::TooLarge,
+            native_component::Error::Cancelled => {
+                Self::Failed("PDF operation was cancelled.".into())
             }
         }
     }
-    PathBuf::from("pilotdeck-pdf")
 }
 
-pub(crate) struct Document {
-    directory: PathBuf,
-    path: PathBuf,
-}
-impl Drop for Document {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.directory);
-    }
-}
+pub(crate) struct Document(Snapshot);
 impl Document {
     pub(crate) fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
-        if bytes.len() as u64 > MAX_INPUT {
-            return Err(Error::TooLarge);
-        }
-        let directory =
-            std::env::temp_dir().join(format!("pilotdeck-pdf-{}", uuid::Uuid::new_v4()));
-        let mut builder = std::fs::DirBuilder::new();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt;
-            builder.mode(0o700);
-        }
-        builder
-            .create(&directory)
-            .map_err(|e| Error::Failed(e.to_string()))?;
-        let document = Self {
-            path: directory.join("input.pdf"),
-            directory,
-        };
-        let mut options = std::fs::OpenOptions::new();
-        options.create_new(true).write(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options
-            .open(&document.path)
-            .map_err(|e| Error::Failed(e.to_string()))?;
-        std::io::Write::write_all(&mut file, bytes).map_err(|e| Error::Failed(e.to_string()))?;
-        Ok(document)
+        Snapshot::new("pdf", bytes, MAX_INPUT as usize)
+            .map(Self)
+            .map_err(Error::from)
     }
     pub(crate) async fn pages(&self) -> Result<u32, Error> {
         let bytes = self.run("count", None, 1024).await?;
@@ -108,118 +60,35 @@ impl Document {
             .map_err(|_| Error::Failed("MuPDF returned invalid UTF-8 text.".into()))
     }
     pub(crate) async fn render(&self, page: u32, budget: usize) -> Result<Vec<u8>, Error> {
-        self.run("render", Some(page), budget.min(MAX_OUTPUT)).await
+        let bytes = self.run("render", Some(page), MAX_OUTPUT).await?;
+        crate::image::compress(&bytes, "image/jpeg", budget)
+            .await
+            .map(|image| image.bytes)
+            .map_err(Error::Failed)
     }
     async fn run(&self, mode: &str, page: Option<u32>, limit: usize) -> Result<Vec<u8>, Error> {
-        let mut command = Command::new(tool_path());
-        command.arg(mode).arg(&self.path);
+        let mut command = Command::new(native_component::tool_path(
+            "PILOTDECK_PDF_TOOL",
+            "mupdf",
+            "pilotdeck-pdf",
+        ));
+        command.arg(mode).arg(self.0.path());
         if let Some(page) = page {
             command.arg(page.to_string());
         }
-        run(command, limit, TIMEOUT).await
-    }
-}
-
-async fn read_bounded(mut stream: impl AsyncRead + Unpin, limit: usize) -> Result<Vec<u8>, Error> {
-    let mut bytes = Vec::new();
-    let mut chunk = [0u8; 8192];
-    loop {
-        let count = stream
-            .read(&mut chunk)
+        native_component::run(command, Some(self.0.clone()), limit, TIMEOUT)
             .await
-            .map_err(|e| Error::Failed(e.to_string()))?;
-        if count == 0 {
-            return Ok(bytes);
-        }
-        if bytes.len().saturating_add(count) > limit {
-            return Err(Error::TooLarge);
-        }
-        bytes.extend_from_slice(&chunk[..count]);
-    }
-}
-
-async fn run(mut command: Command, limit: usize, timeout: Duration) -> Result<Vec<u8>, Error> {
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    #[cfg(unix)]
-    {
-        pilotdeck_child_signals::install_child_detach_session(command.as_std_mut());
-        pilotdeck_child_signals::install_child_signal_reset(command.as_std_mut());
-    }
-    let mut child = command.spawn().map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
-            Error::Unavailable
-        } else {
-            Error::Failed(e.to_string())
-        }
-    })?;
-    let mut group = crate::process_group::GroupGuard(
-        child
-            .id()
-            .and_then(|id| rustix::process::Pid::from_raw(id as i32)),
-    );
-    let stdout = child.stdout.take().expect("piped stdout");
-    let stderr = child.stderr.take().expect("piped stderr");
-    let result = tokio::time::timeout(timeout, async {
-        tokio::try_join!(
-            read_bounded(stdout, limit),
-            read_bounded(stderr, 16_384),
-            async { child.wait().await.map_err(|e| Error::Failed(e.to_string())) }
-        )
-    })
-    .await;
-    match result {
-        Ok(Ok((stdout, stderr, status))) => {
-            group.disarm();
-            if status.success() {
-                Ok(stdout)
-            } else {
-                Err(Error::Failed(
-                    String::from_utf8_lossy(&stderr).trim().to_owned(),
-                ))
-            }
-        }
-        failed => {
-            group.signal(rustix::process::Signal::KILL);
-            let _ = child.kill().await;
-            let _ = child.wait().await;
-            match failed {
-                Ok(Err(error)) => Err(error),
-                _ => Err(Error::Timeout),
-            }
-        }
+            .map_err(Error::from)
     }
 }
 
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    #[tokio::test]
-    async fn component_failures_are_explicit_and_output_is_bounded() {
-        assert!(matches!(
-            run(Command::new("/missing/pilotdeck-pdf"), 4, TIMEOUT).await,
-            Err(Error::Unavailable)
-        ));
-        let mut command = Command::new("/bin/sh");
-        command.args(["-c", "printf 12345"]);
-        assert!(matches!(
-            run(command, 4, TIMEOUT).await,
-            Err(Error::TooLarge)
-        ));
-        let mut command = Command::new("/bin/sh");
-        command.args(["-c", "sleep 10"]);
-        assert!(matches!(
-            run(command, 4, Duration::from_millis(20)).await,
-            Err(Error::Timeout)
-        ));
-    }
     #[test]
     fn document_snapshot_is_private_and_released() {
         let doc = Document::from_bytes(b"%PDF-fixture").unwrap();
-        let path = doc.path.clone();
+        let path = doc.0.path().to_path_buf();
         assert_eq!(std::fs::read(&path).unwrap(), b"%PDF-fixture");
         use std::os::unix::fs::PermissionsExt;
         assert_eq!(

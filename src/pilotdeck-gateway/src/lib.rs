@@ -15,6 +15,7 @@ mod handle_path;
 pub mod hooks;
 pub mod host;
 pub mod http_proxy;
+mod image;
 mod js_value;
 mod metadata;
 mod model_catalog;
@@ -23,6 +24,7 @@ mod module_host;
 #[doc(hidden)]
 pub mod mutants;
 mod native_archive;
+mod native_component;
 mod native_http;
 pub mod native_process;
 pub mod native_ws;

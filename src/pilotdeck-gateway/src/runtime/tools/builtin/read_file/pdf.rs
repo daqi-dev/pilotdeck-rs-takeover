@@ -1,11 +1,10 @@
 use super::*;
 use crate::pdf::Document;
 
-fn base_data(resolved: &ResolvedPath, count: u32) -> JsObject {
+fn base_data(resolved: &ResolvedPath) -> JsObject {
     object([
         ("filePath", string(resolved.relative.clone())),
         ("kind", string("pdf")),
-        ("pageCount", JsValue::Number(count as f64)),
     ])
 }
 fn output(message: String, data: JsObject) -> ToolOutput {
@@ -108,7 +107,7 @@ pub(super) async fn read(
     }
     let should_render = range.is_some() || !supports_pdf || stat.size > PDF_EXTRACT_SIZE_THRESHOLD;
     if should_render {
-        let mut data = base_data(resolved, count);
+        let mut data = base_data(resolved);
         if !supports_image {
             let reason = if range.is_some() {
                 "Current model does not support image input; cannot render requested pages."
@@ -117,6 +116,7 @@ pub(super) async fn read(
                 "Current model does not support PDF input or image input."
             };
             data.insert("modelSupportsImage".into(), JsValue::Bool(false));
+            data.insert("pageCount".into(), JsValue::Number(count as f64));
             return Ok(output(
                 format!(
                     "[PDF file: {relative}, {} bytes{suffix}. {reason}]",
@@ -160,11 +160,14 @@ pub(super) async fn read(
             render_error = Some(format!("mupdf produced no page images for {relative}"));
         }
         if let Some(error) = render_error {
+            if range.is_none() {
+                data.insert("modelSupportsPdf".into(), JsValue::Bool(supports_pdf));
+            }
+            data.insert("pageCount".into(), JsValue::Number(count as f64));
             data.insert("renderError".into(), string(error.clone()));
             let message = if range.is_some() {
                 format!("[PDF file: {relative}. PDF page rendering failed: {error}]")
             } else {
-                data.insert("modelSupportsPdf".into(), JsValue::Bool(supports_pdf));
                 format!(
                     "[PDF file: {relative}, {} bytes{suffix}. PDF page rendering failed: {error}]",
                     stat.size
@@ -178,6 +181,8 @@ pub(super) async fn read(
             format!(" of {count}")
         };
         let message = if let Some(pages) = pages {
+            data.insert("pdfPagesRendered".into(), JsValue::Bool(true));
+            data.insert("pageCount".into(), JsValue::Number(count as f64));
             data.insert("requestedPages".into(), string(pages));
             format!(
                 "PDF pages extracted: {} page(s) from {relative} (pages {first}-{last}{total}).",
@@ -190,10 +195,11 @@ pub(super) async fn read(
                 "file exceeds 3MB threshold"
             };
             data.insert("modelSupportsPdf".into(), JsValue::Bool(supports_pdf));
+            data.insert("pdfPagesRendered".into(), JsValue::Bool(true));
             data.insert("degradeReason".into(), string(reason));
+            data.insert("pageCount".into(), JsValue::Number(count as f64));
             format!("[PDF pages rendered from {relative}: {first}-{last}{total} ({reason}).]")
         };
-        data.insert("pdfPagesRendered".into(), JsValue::Bool(true));
         data.insert(
             "renderedPages".into(),
             JsValue::Object(object([
@@ -216,8 +222,9 @@ pub(super) async fn read(
         );
         return Ok(result);
     }
-    let mut data = base_data(resolved, count);
+    let mut data = base_data(resolved);
     data.insert("bytes".into(), JsValue::Number(bytes.len() as f64));
+    data.insert("pageCount".into(), JsValue::Number(count as f64));
     let mut result = output(
         format!("PDF file read: {relative} ({} bytes{suffix})", stat.size),
         data,

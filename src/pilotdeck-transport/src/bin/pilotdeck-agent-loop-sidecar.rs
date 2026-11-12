@@ -1,9 +1,10 @@
-//! Native stdio entry point. stdout contains only Module2 NDJSON.
+//! Native stdio/TCP entry point. stdout contains only Module2 NDJSON in stdio.
 use pilotdeck_protocol::admission::SidecarBinding;
 use pilotdeck_transport::default_factory::OriginalAgentFactory;
 use pilotdeck_transport::server::ExecutionServer;
 use pilotdeck_transport::stdio::ConnectionOwner;
 use pilotdeck_transport::system_clock::SystemExecutionClock;
+use pilotdeck_transport::tcp::{TcpExecutionServer, TcpServerOptions};
 use std::io::{self, BufReader};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -23,15 +24,26 @@ fn main() -> ExitCode {
         eprintln!("Usage: pilotdeck-agent-loop-sidecar [--stdio | --version | <sidecar-path>]");
         return ExitCode::from(2);
     }
-    for option in [
-        "PILOTDECK_AGENT_LOOP_FACTORY",
-        "PILOTDECK_AGENT_LOOP_TCP_PORT",
-    ] {
-        if std::env::var_os(option).is_some_and(|value| !value.is_empty()) {
-            eprintln!("Rust candidate does not yet support the {option} deployment profile.");
-            return ExitCode::from(2);
-        }
+    if std::env::var_os("PILOTDECK_AGENT_LOOP_FACTORY").is_some_and(|value| !value.is_empty()) {
+        eprintln!(
+            "Rust candidate does not yet support the PILOTDECK_AGENT_LOOP_FACTORY deployment profile."
+        );
+        return ExitCode::from(2);
     }
+    let tcp_port = match std::env::var("PILOTDECK_AGENT_LOOP_TCP_PORT") {
+        Ok(value) => match optional_tcp_port(&value) {
+            Ok(port) => port,
+            Err(message) => {
+                eprintln!("{message}");
+                return ExitCode::FAILURE;
+            }
+        },
+        Err(std::env::VarError::NotPresent) => None,
+        Err(_) => {
+            eprintln!("PILOTDECK_AGENT_LOOP_TCP_PORT must be an integer between 1 and 65535.");
+            return ExitCode::FAILURE;
+        }
+    };
     // #1371: an armed controlled loop resolves and validates its plan before
     // the server advertises readiness, so an invalid control directory fails
     // closed here exactly like the gateway assembly.
@@ -90,6 +102,39 @@ fn main() -> ExitCode {
         clock: clock.clone(),
         process_cwd,
     });
+    if let Some(port) = tcp_port {
+        let host = std::env::var("PILOTDECK_AGENT_LOOP_TCP_HOST")
+            .ok()
+            .map(|value| value.trim_matches(js_whitespace).to_owned())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "127.0.0.1".into());
+        let server = match TcpExecutionServer::listen(
+            TcpServerOptions {
+                host,
+                port,
+                ..Default::default()
+            },
+            factory,
+            clock,
+        ) {
+            Ok(server) => server,
+            Err(error) => {
+                eprintln!("{error}");
+                return ExitCode::FAILURE;
+            }
+        };
+        return match server.wait() {
+            Ok(report) if report.complete() => ExitCode::SUCCESS,
+            Ok(report) => {
+                eprintln!("Sidecar TCP shutdown incomplete: {report:?}");
+                ExitCode::from(3)
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     let server = ExecutionServer::new(ConnectionOwner::new(binding, 64), factory, clock, 32);
     let report = server.serve(
         BufReader::new(io::stdin()),
@@ -110,7 +155,7 @@ fn main() -> ExitCode {
 }
 
 // A single nonempty path is only a launch placeholder for the TS gateway;
-// it is ignored, and every accepted invocation uses stdio.
+// it is ignored; deployment is selected by the environment like the baseline.
 fn accepts_launch_arguments(arguments: &[String]) -> bool {
     arguments.is_empty()
         || (arguments.len() == 1
@@ -118,9 +163,69 @@ fn accepts_launch_arguments(arguments: &[String]) -> bool {
             && (arguments[0] == "--stdio" || !arguments[0].starts_with("--")))
 }
 
+fn optional_tcp_port(value: &str) -> Result<Option<u16>, &'static str> {
+    let value = value.trim_matches(js_whitespace);
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let number = if let Some((digits, radix)) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+        .map(|digits| (digits, 16))
+        .or_else(|| {
+            value
+                .strip_prefix("0o")
+                .or_else(|| value.strip_prefix("0O"))
+                .map(|digits| (digits, 8))
+        })
+        .or_else(|| {
+            value
+                .strip_prefix("0b")
+                .or_else(|| value.strip_prefix("0B"))
+                .map(|digits| (digits, 2))
+        }) {
+        (!digits.is_empty() && digits.chars().all(|value| value.is_digit(radix)))
+            .then(|| u32::from_str_radix(digits, radix).ok().map(f64::from))
+            .flatten()
+    } else {
+        value.parse::<f64>().ok()
+    };
+    number
+        .filter(|number| {
+            number.is_finite() && number.fract() == 0.0 && (1.0..=65_535.0).contains(number)
+        })
+        .map(|number| Some(number as u16))
+        .ok_or("PILOTDECK_AGENT_LOOP_TCP_PORT must be an integer between 1 and 65535.")
+}
+fn js_whitespace(value: char) -> bool {
+    matches!(value, '\u{0009}'..='\u{000D}' | '\u{0020}' | '\u{00A0}' | '\u{1680}' | '\u{2000}'..='\u{200A}' | '\u{2028}' | '\u{2029}' | '\u{202F}' | '\u{205F}' | '\u{3000}' | '\u{FEFF}')
+}
+
 #[cfg(test)]
 mod tests {
     use super::accepts_launch_arguments;
+
+    #[test]
+    fn tcp_port_matches_javascript_number_and_empty_environment_selection() {
+        for value in ["", " \t\n", "\u{feff}"] {
+            assert_eq!(super::optional_tcp_port(value), Ok(None));
+        }
+        for (value, port) in [
+            (" +123.0 ", 123),
+            ("1e3", 1000),
+            ("0x1a", 26),
+            ("0O77", 63),
+            ("0b101", 5),
+            ("65535", 65535),
+        ] {
+            assert_eq!(super::optional_tcp_port(value), Ok(Some(port)), "{value}");
+        }
+        for value in [
+            "0", "65536", "1.1", "NaN", "Infinity", "-2", "2px", "0x", "-0xff", "0x+1", "0b+1",
+        ] {
+            assert!(super::optional_tcp_port(value).is_err(), "{value}");
+        }
+    }
 
     #[test]
     fn stdio_accepts_one_ignored_path_and_rejects_invalid_arguments() {
