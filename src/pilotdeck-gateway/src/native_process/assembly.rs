@@ -383,6 +383,7 @@ async fn start_assembly(
         acquire_miss_report,
         publish_mcp_config,
     } = seams;
+    let in_process_cli = options.in_process_cli;
     let registry_switch = run_registry_switch(&env)?;
     let stimulus_switch = storage_stimulus_switch(&env)?;
     if let Some(dir) = &stimulus_switch {
@@ -429,7 +430,9 @@ async fn start_assembly(
     // is an ordinary one, and the dialog registry refuses it until something
     // registered it. That entry has no web server to do so, so it registers
     // its own project here.
-    if !options.default_project_is_general() {
+    // The CLI channel's gateway is that same baseline gateway and registers
+    // nothing.
+    if !options.default_project_is_general() && !options.in_process_cli {
         register_project(&options)?;
     }
     // The gateway event sink of the session interaction facade
@@ -652,10 +655,6 @@ async fn start_assembly(
                     max_output_tokens_env,
                 );
                 config.insert("jsonSelfCorrect".into(), JsValue::Bool(true));
-                config.insert(
-                    "cwd".into(),
-                    JsValue::String(project_root.to_string_lossy().into_owned().into()),
-                );
                 // #1864: compose the session selections the three selector
                 // methods stored — the native counterpart of
                 // SessionAgentConfigBundle.compose over the registry maps.
@@ -668,6 +667,16 @@ async fn start_assembly(
                     .config_override(&context.session_key)
                     .map(|value| value.to_value())
                     .unwrap_or(JsValue::Undefined);
+                // `sessionOverride?.cwd ?? runtime.projectRoot`
+                // (SessionAgentConfigBundle.ts:57): a `workspaceCwd` or an
+                // unattended runtime's workspace, as stored.
+                let session_cwd = match unattended.get("cwd") {
+                    None | Some(JsValue::Undefined | JsValue::Null) => {
+                        JsValue::String(project_root.to_string_lossy().into_owned().into())
+                    }
+                    Some(cwd) => cwd.clone(),
+                };
+                config.insert("cwd".into(), session_cwd);
                 let override_mode = unattended
                     .get("permissionMode")
                     .and_then(JsValue::as_string)
@@ -1058,7 +1067,14 @@ async fn start_assembly(
                 &context.session_key,
             )
         })),
-        diagnostic: Arc::new(|d| eprintln!("native session: {d:?}")),
+        // The baseline prints no transcript-restore diagnostic. On the CLI
+        // channel stderr is the user's terminal (and compared output), so
+        // nothing is written there.
+        diagnostic: if in_process_cli {
+            Arc::new(|_| ())
+        } else {
+            Arc::new(|d| eprintln!("native session: {d:?}"))
+        },
     }));
     let built = (|| -> Result<_, ProxyError> {
         // TS parity: an unconfigured runRegistry is simply absent, so the file
@@ -1181,13 +1197,20 @@ async fn start_assembly(
         // channel that will never respond. The second check covers the
         // bundle keys outside `UNMIGRATED_CHANNEL_KEYS` (`weixin` is built,
         // `feishu` is not yet — #1329).
-        let rejected = crate::channel::loader::reject_unmigrated_channels(config.get("adapters"))
-            .and_then(|()| {
-                crate::channel::loader::reject_unimplemented_bundle_channels(
-                    config.get("adapters"),
-                    super::channels::IMPLEMENTED_BUNDLE_CHANNEL_KEYS,
-                )
-            });
+        // Without the server composition no adapter is ever started, so
+        // there is nothing to refuse.
+        let rejected = if options.in_process_cli {
+            Ok(())
+        } else {
+            crate::channel::loader::reject_unmigrated_channels(config.get("adapters")).and_then(
+                |()| {
+                    crate::channel::loader::reject_unimplemented_bundle_channels(
+                        config.get("adapters"),
+                        super::channels::IMPLEMENTED_BUNDLE_CHANNEL_KEYS,
+                    )
+                },
+            )
+        };
         if let Err(error) = rejected {
             // Same teardown order as the failure branch below (#1328): the
             // session factory first, then the project registry.
@@ -1200,11 +1223,18 @@ async fn start_assembly(
         }
         // #1326 A8 U8: the `cron:` section travels to the builder below, which
         // is the only place that constructs `CronManager`.
-        let cron_section = config.get("cron").cloned();
+        // `Options::in_process_cli`: no section reaches the bundle, so it
+        // stages neither manager (and adds none of their tools).
+        let automation_section = |name: &str| {
+            (!options.in_process_cli)
+                .then(|| config.get(name).cloned())
+                .flatten()
+        };
+        let cron_section = automation_section("cron");
         // #2294: the `alwaysOn:` section travels with it — the automation
         // bundle's `createAlwaysOn` gate reads the section itself (absent
         // section, or no project with `enabled: true`, constructs nothing).
-        let always_on_section = config.get("alwaysOn").cloned();
+        let always_on_section = automation_section("alwaysOn");
         let channel_assembly = Arc::new(super::channels::NativeChannels::new(
             super::channels::NativeChannelsOptions {
                 pilot_home: options.home.clone(),
@@ -1658,6 +1688,9 @@ async fn start_assembly(
             // (feishu, weixin, qq, then `channels`;
             // `ChannelAdapterBundle.createStartupAdapters`).
             let mut startup = Vec::new();
+            if in_process_cli {
+                return Ok(host);
+            }
             if let Some(feishu) = channel_assembly.create_startup_feishu().await {
                 startup.push(feishu);
             }

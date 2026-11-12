@@ -361,6 +361,7 @@ mod tests {
             os_home: None,
             builtin_skills_root: None,
             builtin_plugins_root: None,
+            in_process_cli: false,
             sidecar: scratch.0.join("sidecar"),
             sidecar_args: Vec::new(),
             drain_budget: Duration::from_secs(5),

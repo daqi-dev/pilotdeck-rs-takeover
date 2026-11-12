@@ -42,6 +42,8 @@ mod projects;
 mod requests;
 // The product entry (`pilotdeck server`): the baseline's startGatewayServer
 // options over the same assembly and listener the `--native` entry uses.
+mod local;
+pub use local::{LocalGateway, LocalOptions};
 mod server;
 pub use server::{DEFAULT_PORT, Listening, ServerOptions, parse_port, serve};
 mod sdk_config;
@@ -282,6 +284,16 @@ pub struct Options {
     /// The builtin plugins directory (`loadBuiltinPlugins()` scans the one
     /// beside its own module; the Rust host is told). `None` loads none.
     pub builtin_plugins_root: Option<PathBuf>,
+    /// The CLI channel's in-process gateway (`createLocalGateway({
+    /// projectRoot })`, src/cli/pilotdeck.ts:347) rather than a server. It
+    /// stages none of `pilotdeck server`'s composition around the gateway —
+    /// the project automation bundle (`cron:` / `alwaysOn:` sections and the
+    /// tools they add to every turn, `getInitialGatewayOptions`,
+    /// src/cli/ProjectAutomationBundle.ts:154-160) and the config-enabled
+    /// channel adapters (`ChannelAdapterBundle`) — and, like the baseline
+    /// gateway, never registers its default project: a turn from an
+    /// unregistered working directory is refused `Unknown projectKey`.
+    pub in_process_cli: bool,
 }
 
 pub fn native_requested(first: Option<&std::ffi::OsStr>) -> bool {
@@ -429,6 +441,7 @@ impl Options {
             os_home: None,
             builtin_skills_root: None,
             builtin_plugins_root: None,
+            in_process_cli: false,
         })
     }
 

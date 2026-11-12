@@ -257,6 +257,7 @@ mod tests {
             os_home: None,
             builtin_skills_root: None,
             builtin_plugins_root: None,
+            in_process_cli: false,
         }
     }
 

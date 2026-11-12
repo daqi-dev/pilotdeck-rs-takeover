@@ -67,6 +67,18 @@ impl SessionOverrides {
             .get(key)
     }
 
+    /// `registry.setSessionCwd(sessionKey, cwd)` (ProjectRuntimeRegistry.ts:
+    /// 525-529): `{ ...existing, cwd }` in the shared override registry, read
+    /// when the session is next composed (SessionAgentConfigBundle.ts:57).
+    pub fn set_session_cwd(&self, key: &JsString, cwd: &JsString) {
+        let mut config = self.config.lock().unwrap_or_else(|e| e.into_inner());
+        let value = config
+            .get(key)
+            .unwrap_or_else(crate::config::session_value::SessionValue::object);
+        value.set("cwd", JsValue::String(cwd.clone()));
+        config.set(key, &value);
+    }
+
     pub fn set_permission_mode(&self, key: &JsString, mode: JsString) {
         self.inner
             .lock()

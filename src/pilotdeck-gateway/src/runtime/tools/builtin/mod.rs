@@ -300,6 +300,18 @@ pub(super) fn cwd(context: &crate::runtime::tools::ToolRunContext) -> JsString {
         .unwrap_or_else(|| JsString::from("."))
 }
 
+/// The workspace cwd as `pathSafety.ts` uses it: every path it builds goes
+/// through `path.resolve` / `path.relative`, which anchor a relative session
+/// cwd (a relative `workspaceCwd`) at the gateway process's working directory.
+fn resolved_cwd(context: &crate::runtime::tools::ToolRunContext) -> JsString {
+    let cwd = cwd(context);
+    if is_absolute(&cwd) {
+        return cwd;
+    }
+    let process = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
+    crate::metadata::resolve_units(&process.to_string_lossy(), &cwd)
+}
+
 pub(super) fn permission_mode(context: &crate::runtime::tools::ToolRunContext) -> JsString {
     context
         .fields
@@ -421,7 +433,7 @@ pub(super) fn resolve_workspace_path(
             "Path must be a non-empty string without null bytes.",
         ));
     }
-    let cwd = cwd(context);
+    let cwd = resolved_cwd(context);
     let absolute = if is_absolute(input) {
         normalize(input)
     } else {
@@ -999,7 +1011,7 @@ pub(super) fn resolve_write_path(
             "Path must be a non-empty string without null bytes.",
         ));
     }
-    let cwd = cwd(context);
+    let cwd = resolved_cwd(context);
     let absolute = if is_absolute(input) {
         normalize(input)
     } else {

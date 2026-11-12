@@ -2,7 +2,7 @@
 use std::{fs, process::Command};
 
 #[test]
-fn staffdeck_binding_and_valid_local_gateway_still_exit_two() {
+fn staffdeck_binding_and_host_config_still_exit_two() {
     let root = std::env::temp_dir().join(format!("pdrs-d1-config-exit-{}", std::process::id()));
     fs::create_dir_all(root.join("project")).unwrap();
     fs::create_dir_all(root.join("home")).unwrap();
@@ -17,11 +17,6 @@ fn staffdeck_binding_and_valid_local_gateway_still_exit_two() {
             "true",
             "schemaVersion: 1\n",
             "StaffDeck project binding (applyProjectBinding)",
-        ),
-        (
-            "false",
-            "schemaVersion: 1\nagent: {model: test/m}\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: https://model.invalid/v1\n      apiKey: fixture\n      models: {m: {}}\n",
-            "local Gateway and CliChannel for a valid config",
         ),
         (
             "false",

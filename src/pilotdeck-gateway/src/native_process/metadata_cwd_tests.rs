@@ -270,8 +270,8 @@ async fn observe(name: &str) -> (Value, Value) {
                 &"s".into(),
                 &case.join("other").to_string_lossy().as_ref().into()
             )
-            .is_err(),
-        "#1154 isolated project switch remains refused"
+            .is_ok(),
+        "setSessionCwd stores any requested cwd (ProjectRuntimeRegistry.ts:525-529)"
     );
     services
         .project

@@ -588,6 +588,7 @@ fn project_marker_ownership_matches_ts() {
             os_home: None,
             builtin_skills_root: None,
             builtin_plugins_root: None,
+            in_process_cli: false,
             sidecar: scratch.0.join("unused-sidecar"),
             sidecar_args: vec![],
             drain_budget: Duration::from_secs(1),

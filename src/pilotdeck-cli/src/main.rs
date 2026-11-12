@@ -1,5 +1,6 @@
 //! `pilotdeck` entry. Dispatch order follows src/cli/pilotdeck.ts main().
 mod chat_search;
+mod cli_channel;
 mod config;
 mod gateway_setup;
 pub(crate) mod paths;
@@ -174,7 +175,7 @@ pub(crate) fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure>
             }
             Err(Failure::Todo("pilotdeck tui"))
         }
-        _ => run_local_cli_channel(env, cwd),
+        _ => cli_channel::run(argv, env, cwd),
     }
 }
 
@@ -216,29 +217,6 @@ fn run_cron(env: &Env, cwd: &Path) -> Result<u8, Failure> {
     // The probe address is fixed (probeServer.ts:16), so the connected
     // branch cannot be pointed at an isolated gateway and compared.
     Err(Failure::Todo("pilotdeck cron against a running server"))
-}
-
-/// createLocalGateway() up to its first observable effects, then CliChannel.
-fn run_local_cli_channel(env: &Env, cwd: &Path) -> Result<u8, Failure> {
-    let pilot_home = paths::pilot_home(env, cwd)?;
-    // Node's import.meta.url is the realpath of the entry module; match it so a
-    // symlinked launcher still probes beside the real install root.
-    let exe = std::env::current_exe()
-        .ok()
-        .map(|exe| std::fs::canonicalize(&exe).unwrap_or(exe));
-    let exe_dir = exe.as_deref().and_then(Path::parent);
-    let builtin_root = skills::builtin_skills_root(env, cwd, exe_dir)?;
-    let migration = skills::migrate_legacy_bundled_skill_copies(&pilot_home, &builtin_root)?;
-    if let Some(notice) = migration.notice {
-        stdout_line(&notice);
-    }
-    for warning in migration.warnings {
-        stderr_line(&warning);
-    }
-    config::check(env, cwd, &pilot_home)?;
-    Err(Failure::Todo(
-        "local Gateway and CliChannel for a valid config",
-    ))
 }
 
 #[cfg(test)]

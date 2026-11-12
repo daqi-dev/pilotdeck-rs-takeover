@@ -121,6 +121,7 @@ async fn serve_on_runtime(
         ),
         builtin_skills_root: options.builtin_skills_root.clone(),
         builtin_plugins_root: options.builtin_plugins_root.clone(),
+        in_process_cli: false,
     };
     // createLocalGateway precedes startGatewayServer in the baseline, so the
     // host and token checks below run with the gateway already built.
@@ -160,7 +161,7 @@ async fn serve_on_runtime(
 /// start, and a legacy `router-events.jsonl` moves to `router/events.jsonl`.
 /// Both steps are best-effort there too. The events themselves are appended
 /// by the project router's event sink (`assembly::RouterEventLog`).
-fn ensure_router_dir(pilot_home: &Path) {
+pub(super) fn ensure_router_dir(pilot_home: &Path) {
     let directory = pilot_home.join("router");
     let _ = std::fs::create_dir_all(&directory);
     let (events, legacy) = (
