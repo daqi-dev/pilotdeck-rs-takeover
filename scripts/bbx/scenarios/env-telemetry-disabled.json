@@ -1,0 +1,87 @@
+{
+ "name": "env-telemetry-disabled",
+ "about": "遥测环境变量的解析一面（telemetry/collector.ts:38-47,136-156；telemetry/context.ts）：配置 telemetry.enabled 恒为布尔（loadPilotConfig.ts parseTelemetryConfig），createTelemetryCollector 用它覆盖 ANALYTICS_ENABLED，所以配置里关掉时 ANALYTICS_ENABLED=1 不生效；ANALYTICS_* 的数值非法时静默回落缺省、不出任何诊断；队列文件不论开关都会在启动时读回（只认带 event.eventId 的信封行，attempts 按 Number() 取非负数、坏行跳过）、停机快照的 queueDepth 是读回的条数、停机时按信封格式重写，读回为空就删掉文件（ANALYTICS_QUEUE_FILE 指向不带信封的事件行时文件被删，缺省路径 <PilotHome>/telemetry/queue.jsonl，相对路径按工作目录解析）；KUBERNETES_SERVICE_HOST / PILOTDECK_GIT_SHA 非空时分别跳过遥测运行时上下文的两次 git 探测（stderr 少一行 not a git repository），空串不算；KUBERNETES_SERVICE_HOST / PILOTDECK_GIT_SHA / PILOTDECK_VERSION / npm_package_version / npm_config_user_agent 只进遥测事件内容。比启动与停机输出（含 [telemetry] shutdown snapshot）和落盘文件。遥测打开后的上报 Rust 有意不实现，不在场景里。",
+ "server": false,
+ "files": {
+  "home/tq/queue.jsonl": "{\"schemaVersion\": 1, \"eventId\": \"00000000-0000-4000-8000-000000000001\", \"eventName\": \"feature_used\", \"occurredAt\": \"2026-01-01T00:00:00.000Z\"}\n",
+  "home/.pilotdeck/telemetry/queue.jsonl": "{\"event\": {\"eventId\": \"e-1\", \"eventName\": \"feature_used\", \"nested\": {\"b\": 1, \"a\": [1, 2]}}, \"attempts\": \"2\"}\n   \n{not json\n{\"event\": {\"eventId\": \"\", \"eventName\": \"skipped\"}}\n{\"event\": {\"eventId\": \"e-2\"}, \"attempts\": -1, \"extra\": true}\n{\"attempts\": 1}\n  {\"event\": {\"eventId\": 7}, \"attempts\": [3]}  \n{\"event\": {\"eventId\": \"e-4\"}, \"attempts\": 1.5}\n"
+ },
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "ANALYTICS_ENABLED": "1",
+    "ANALYTICS_BASE_URL": "http://127.0.0.1:9/collect",
+    "ANALYTICS_QUEUE_FILE": "{HOME}/tq/queue.jsonl",
+    "ANALYTICS_FLUSH_INTERVAL_MS": "soon",
+    "ANALYTICS_BATCH_SIZE": "-3",
+    "ANALYTICS_TIMEOUT_MS": "0",
+    "ANALYTICS_MAX_RETRIES": "x",
+    "ANALYTICS_MAX_QUEUE_SIZE": "1.5",
+    "KUBERNETES_SERVICE_HOST": "10.0.0.1",
+    "PILOTDECK_GIT_SHA": "abc123",
+    "PILOTDECK_VERSION": "9.9.9",
+    "npm_package_version": "8.8.8",
+    "npm_config_user_agent": "npm/10 node/v22"
+   },
+   "timeout": 30000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "describe_server",
+     "params": {}
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 30000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "ANALYTICS_QUEUE_FILE": "q/queue.jsonl"
+   },
+   "timeout": 30000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "KUBERNETES_SERVICE_HOST": "10.0.0.1"
+   },
+   "timeout": 30000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_GIT_SHA": "abc123"
+   },
+   "timeout": 30000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_GIT_SHA": "",
+    "KUBERNETES_SERVICE_HOST": ""
+   },
+   "timeout": 30000
+  }
+ ]
+}

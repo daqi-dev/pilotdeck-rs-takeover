@@ -10,6 +10,7 @@
 //! tree git's own `fatal: not a git repository ...` lines reach the server's
 //! stderr. They are reproduced here by running the same commands the same way.
 use super::paths::Env;
+use pilotdeck_protocol::{JsObject, JsValue};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -105,4 +106,165 @@ fn run_git(args: &[&str], cwd: &Path) {
             Ok(None) => std::thread::sleep(Duration::from_millis(5)),
         }
     }
+}
+
+/// The local half of `TelemetrySender` (src/telemetry/sender.ts) that runs
+/// whether telemetry is enabled or not: the constructor restores the queue
+/// file (`restoreQueue`, :143-165), the shutdown bundle logs the counters
+/// (`PilotDeckServerShutdownBundle.ts:36`), and `shutdown()` writes the queue
+/// back or removes the file when it is empty (`persistQueue`, :167-183).
+/// Nothing is ever enqueued or uploaded here: the Rust port does not send
+/// telemetry, so with `telemetry.enabled: true` the baseline's counters move
+/// and these do not.
+pub struct TelemetryQueue {
+    path: std::path::PathBuf,
+    items: Vec<JsValue>,
+}
+
+impl TelemetryQueue {
+    /// `resolveTelemetryConfig` (collector.ts:142-144): `ANALYTICS_QUEUE_FILE`
+    /// resolved against the working directory when set (an empty value counts
+    /// as unset), otherwise `<pilotHome>/telemetry/queue.jsonl`.
+    pub fn restore(env: &Env, cwd: &Path, pilot_home: &Path) -> Self {
+        let path = match env.string("ANALYTICS_QUEUE_FILE") {
+            Some(value) if !value.is_empty() => super::paths::resolve(cwd, Path::new(&value)),
+            _ => pilot_home.join("telemetry").join("queue.jsonl"),
+        };
+        let mut items = Vec::new();
+        if let Ok(raw) = std::fs::read_to_string(&path) {
+            for line in raw.split('\n').map(super::paths::js_trim) {
+                if line.is_empty() {
+                    continue;
+                }
+                let Ok(parsed) = pilotdeck_protocol::parse_json(line) else {
+                    continue;
+                };
+                let Some(event) = parsed.get("event") else {
+                    continue;
+                };
+                if !event.get("eventId").is_some_and(js_truthy) {
+                    continue;
+                }
+                // `Math.max(0, Number(parsed.attempts) || 0)`.
+                let attempts = js_number(parsed.get("attempts"));
+                let attempts = if attempts.is_nan() || attempts == 0.0 {
+                    0.0
+                } else {
+                    attempts.max(0.0)
+                };
+                let mut item = JsObject::new();
+                item.insert("event".into(), event.clone());
+                item.insert("attempts".into(), JsValue::Number(attempts));
+                items.push(JsValue::Object(item));
+            }
+        }
+        Self { path, items }
+    }
+
+    /// `JSON.stringify(sender.snapshot())`: nothing was queued, sent or
+    /// dropped in this process; the depth is what the restore brought back.
+    pub fn snapshot(&self) -> String {
+        format!(
+            r#"{{"queued":0,"sent":0,"sendFailures":0,"retries":0,"dropped":0,"queueDepth":{}}}"#,
+            self.items.len()
+        )
+    }
+
+    /// `persistQueue`: every error is swallowed.
+    pub fn persist(&self) {
+        if self.items.is_empty() {
+            let _ = std::fs::remove_file(&self.path);
+            return;
+        }
+        if let Some(parent) = self.path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let lines: Vec<String> = self
+            .items
+            .iter()
+            .filter_map(|item| pilotdeck_protocol::stringify_json(item).ok().flatten())
+            .collect();
+        let _ = std::fs::write(&self.path, format!("{}\n", lines.join("\n")));
+    }
+}
+
+fn js_truthy(value: &JsValue) -> bool {
+    match value {
+        JsValue::Undefined | JsValue::Null => false,
+        JsValue::Bool(value) => *value,
+        JsValue::Number(number) => *number != 0.0 && !number.is_nan(),
+        JsValue::String(text) => !text.is_empty(),
+        JsValue::Array(_) | JsValue::Object(_) => true,
+    }
+}
+
+/// `Number(value)` for the JSON values a queue line can carry. An array goes
+/// through its string form: `[]` is `""` (0), a one-element array is that
+/// element's string, anything longer has a comma (NaN).
+fn js_number(value: Option<&JsValue>) -> f64 {
+    match value {
+        None | Some(JsValue::Undefined) => f64::NAN,
+        Some(JsValue::Null) => 0.0,
+        Some(JsValue::Bool(value)) => f64::from(u8::from(*value)),
+        Some(JsValue::Number(number)) => *number,
+        Some(JsValue::String(text)) => {
+            let text = String::from_utf16_lossy(text.units());
+            string_to_number(super::paths::js_trim(&text))
+        }
+        Some(JsValue::Array(items)) => match items.as_slice() {
+            [] => 0.0,
+            [JsValue::Null] => 0.0,
+            [JsValue::Bool(_)] | [JsValue::Object(_)] => f64::NAN,
+            [single] => js_number(Some(single)),
+            _ => f64::NAN,
+        },
+        Some(JsValue::Object(_)) => f64::NAN,
+    }
+}
+
+/// ECMAScript StringToNumber on an already trimmed string.
+fn string_to_number(text: &str) -> f64 {
+    if text.is_empty() {
+        return 0.0;
+    }
+    for (prefix, radix) in [
+        ("0x", 16),
+        ("0X", 16),
+        ("0o", 8),
+        ("0O", 8),
+        ("0b", 2),
+        ("0B", 2),
+    ] {
+        if let Some(digits) = text.strip_prefix(prefix) {
+            if digits.is_empty() {
+                return f64::NAN;
+            }
+            return digits
+                .chars()
+                .try_fold(0.0_f64, |acc, ch| {
+                    ch.to_digit(radix)
+                        .map(|digit| acc * f64::from(radix) + f64::from(digit))
+                })
+                .unwrap_or(f64::NAN);
+        }
+    }
+    let unsigned = text.strip_prefix(['+', '-']).unwrap_or(text);
+    if unsigned == "Infinity" {
+        return if text.starts_with('-') {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        };
+    }
+    let valid = unsigned
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_digit() || ch == '.')
+        && unsigned
+            .chars()
+            .all(|ch| ch.is_ascii_digit() || matches!(ch, '.' | 'e' | 'E' | '+' | '-'));
+    if !valid {
+        return f64::NAN;
+    }
+    text.parse::<f64>().unwrap_or(f64::NAN)
 }

@@ -9,14 +9,6 @@ use std::path::{Path, PathBuf};
 /// The agent-loop sidecar ships beside this executable.
 pub(crate) const SIDECAR: &str = "pilotdeck-agent-loop-sidecar";
 
-/// TelemetrySender's counters (src/telemetry/sender.ts) as the shutdown bundle
-/// logs them. The Rust port has no telemetry collector yet, so nothing is ever
-/// queued or sent and the snapshot is the baseline's own with telemetry off
-/// (its default). With `telemetry.enabled: true` the baseline's numbers move
-/// and these do not.
-const TELEMETRY_SNAPSHOT: &str =
-    r#"{"queued":0,"sent":0,"sendFailures":0,"retries":0,"dropped":0,"queueDepth":0}"#;
-
 pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
     let pilot_home = paths::pilot_home(env, cwd)?;
     // loadPilotConfig({ projectRoot, env }) comes first: a missing or invalid
@@ -24,6 +16,8 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
     let loaded = config::load(env, cwd, &pilot_home)?;
     // createTelemetryCollector(): its runtime context's git probes.
     super::telemetry::probe_runtime_context(env, cwd);
+    // The sender's constructor restores the local queue file (sender.ts:34).
+    let telemetry_queue = super::telemetry::TelemetryQueue::restore(env, cwd, &pilot_home);
     // `if (snapshot.config.proxy?.url) await installGlobalProxy(url)`.
     if let Some(url) = loaded.proxy_url.as_deref() {
         super::proxy::install_from_config(env, url);
@@ -48,7 +42,7 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
     }
     let options = ServerOptions {
         token_path: paths::gateway_token_path(env, cwd)?,
-        pilot_home,
+        pilot_home: pilot_home.clone(),
         project: cwd.to_path_buf(),
         os_home: env.get("HOME").map(PathBuf::from),
         // readStringFlag(argv, "--host") ?? env.PILOTDECK_GATEWAY_HOST
@@ -83,8 +77,12 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
     // PilotDeckServerShutdownBundle logs this after the listener closed; the
     // SIGINT / SIGTERM handlers then exit 0.
     stdout_line(&format!(
-        "[telemetry] shutdown snapshot {TELEMETRY_SNAPSHOT}"
+        "[telemetry] shutdown snapshot {}",
+        telemetry_queue.snapshot()
     ));
+    // `telemetry.shutdown()` runs last in the bundle: flush (a no-op here, the
+    // port never uploads) and persist the queue file.
+    telemetry_queue.persist();
     Ok(0)
 }
 
