@@ -48,11 +48,19 @@ impl StandaloneAlwaysOn {
             .collect();
         let fire = DiscoveryFire::new(FireDeps {
             language: self.language.clone(),
-            paths,
+            paths: paths.clone(),
             project_key: project_key.to_string(),
             gateway: self.gateway.clone(),
             session_overrides: self.session_overrides.clone(),
             plan_store,
+            cycle_store: Arc::new(super::WorkCycleStore::new(paths.clone())),
+            state_store: Arc::new(super::DiscoveryStateStore::new(paths.clone())),
+            run_contexts: Arc::new(super::manager::AlwaysOnRunContextRegistry::new()),
+            workspace_registry: super::workspace::WorkspaceRegistry {
+                worktrees_dir: paths.worktrees_dir.clone(),
+                snapshots_dir: paths.snapshots_dir.clone(),
+                on_worktree_created: None,
+            },
             uuid: Arc::new(|| uuid::Uuid::new_v4().to_string()),
             now: Arc::new(now_millis),
             on_turn_event: self.on_turn_event.clone(),

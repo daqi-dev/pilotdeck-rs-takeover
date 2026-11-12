@@ -38,6 +38,7 @@ pub(super) fn native_factory(hooks: NativeAlwaysOnHooks) -> AlwaysOnFactory {
             logger: None,
             session_overrides: Some(hooks.session_overrides.clone()),
             on_turn_event: hooks.on_turn_event.clone(),
+            on_worktree_created: hooks.on_worktree_created.clone(),
         })?;
         Ok(Arc::new(NativeAlwaysOnProvider {
             manager: Arc::new(manager),
@@ -53,6 +54,7 @@ pub(crate) struct NativeAlwaysOnHooks {
     pub session_overrides:
         Arc<std::sync::Mutex<crate::config::session_overrides::SessionConfigOverrides>>,
     pub on_turn_event: Option<crate::runtime::always_on::TurnEventHandler>,
+    pub on_worktree_created: Option<crate::runtime::always_on::WorktreeCreatedHook>,
 }
 
 /// The abort face the always-on control half calls
@@ -157,10 +159,8 @@ impl ProjectAutomationProvider for NativeAlwaysOnProvider {
         })
     }
 
-    /// TS composes the manager's tool definitions into `extraTools`
-    /// (`getTools`, AlwaysOnManager.ts:137-139). The port's tool definitions
-    /// are the fire pipeline's deep half, which stays behind the `fire.rs`
-    /// seam, so the publish composes none — recorded in the -R1 ledger.
+    /// The manager's tools reach the sessions through the assembly's
+    /// always-on slot (`always_on_manager_slot`), not this name list.
     fn tools(&self) -> Vec<JsString> {
         Vec::new()
     }

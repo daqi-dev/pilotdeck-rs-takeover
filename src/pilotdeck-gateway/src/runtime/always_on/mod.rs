@@ -29,10 +29,16 @@ mod gates;
 mod leases;
 mod manager;
 mod paths;
+mod phases;
+mod plan;
+mod prompts;
+mod report;
 mod scheduler;
 mod standalone;
 mod state;
+mod tools;
 mod watcher;
+mod workspace;
 
 pub(crate) use cycles::{DiscoveryPlanRecord, DiscoveryPlanStore, WorkCycleRecord, WorkCycleStore};
 pub(crate) use fire::{
@@ -53,6 +59,7 @@ pub use manager::AlwaysOnManager;
 pub(crate) use paths::{AlwaysOnPaths, resolve_always_on_paths};
 pub(crate) use scheduler::{ALWAYS_ON_METHODS, DiscoveryScheduler, SchedulerDeps};
 pub use standalone::StandaloneAlwaysOn;
+pub(crate) use workspace::WorktreeCreatedHook;
 pub(crate) use state::DiscoveryStateStore;
 pub(crate) use watcher::{SignalWatcher, SignalWatcherOptions};
 

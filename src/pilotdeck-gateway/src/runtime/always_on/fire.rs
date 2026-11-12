@@ -30,10 +30,13 @@ use crate::{
 };
 
 use super::{
-    AlwaysOnError, AlwaysOnPaths, DiscoveryPlanRecord, DiscoveryPlanStore, WorkCycleRecord,
+    AlwaysOnError, AlwaysOnPaths, DiscoveryPlanRecord, DiscoveryPlanStore, DiscoveryStateStore,
+    WorkCycleRecord, WorkCycleStore,
     apply::{ApplyPromptInput, build_apply_prompt, generate_workspace_diff},
-    manager::{AlwaysOnAgentGateway, ControlError},
+    manager::{AlwaysOnAgentGateway, AlwaysOnRunContextRegistry, ControlError},
     paths::run_events_path,
+    phases::{HistoryBase, TailPlan},
+    workspace::WorkspaceRegistry,
 };
 
 /// `onTurnEvent(sessionKey, channelKey, event)` (DiscoveryFire.ts:68): the
@@ -128,9 +131,6 @@ pub(crate) struct FireRunInput<'a> {
 pub(crate) struct RerunFireInput<'a> {
     pub plan_id: &'a str,
     pub run_id: &'a str,
-    /// The timestamp the fire half's records stamp; the read side lands
-    /// with the unported rerun phases.
-    #[allow(dead_code)]
     pub started_at_ms: f64,
 }
 
@@ -188,18 +188,22 @@ pub(crate) struct FireDeps {
     pub gateway: Arc<dyn AlwaysOnAgentGateway>,
     pub session_overrides: Arc<Mutex<SessionConfigOverrides>>,
     pub plan_store: Arc<DiscoveryPlanStore>,
+    pub cycle_store: Arc<WorkCycleStore>,
+    pub state_store: Arc<DiscoveryStateStore>,
+    pub run_contexts: Arc<AlwaysOnRunContextRegistry>,
+    pub workspace_registry: WorkspaceRegistry,
     pub uuid: Arc<dyn Fn() -> String + Send + Sync>,
     pub now: Arc<dyn Fn() -> f64 + Send + Sync>,
     pub on_turn_event: Option<TurnEventHandler>,
 }
 
 pub(crate) struct DiscoveryFire {
-    deps: FireDeps,
+    pub(super) deps: FireDeps,
 }
 
 /// `JSON.stringify(value) + "\n"` appended to `file` after `mkdir -p` of its
 /// directory (AlwaysOnEventStore.ts:9-12, DiscoveryReportStore.ts:16-25).
-fn append_json_line(file: &std::path::Path, value: &JsValue) -> io::Result<()> {
+pub(crate) fn append_json_line(file: &std::path::Path, value: &JsValue) -> io::Result<()> {
     use std::io::Write;
     if let Some(parent) = file.parent() {
         std::fs::create_dir_all(parent)?;
@@ -216,7 +220,7 @@ fn append_json_line(file: &std::path::Path, value: &JsValue) -> io::Result<()> {
 
 /// `pickFirstError` (DiscoveryFire.ts:1165-1172): the first `error` event's
 /// `{ code, message }`.
-fn pick_first_error(events: &[JsValue]) -> Option<(Option<JsValue>, JsValue)> {
+pub(crate) fn pick_first_error(events: &[JsValue]) -> Option<(Option<JsValue>, JsValue)> {
     events.iter().find_map(|event| {
         let is_error = event
             .get("type")
@@ -232,12 +236,12 @@ fn pick_first_error(events: &[JsValue]) -> Option<(Option<JsValue>, JsValue)> {
 }
 
 /// JS `String(value)`.
-fn js_display(value: &JsValue) -> String {
+pub(crate) fn js_display(value: &JsValue) -> String {
     String::from_utf16_lossy(&crate::js_value::to_string_units(value).unwrap_or_default())
 }
 
 /// `{ code: error.code ?? fallback, message: error.message }`.
-fn control_error(error: &(Option<JsValue>, JsValue), fallback: &str) -> ControlError {
+pub(crate) fn control_error(error: &(Option<JsValue>, JsValue), fallback: &str) -> ControlError {
     let code = match &error.0 {
         None | Some(JsValue::Undefined) | Some(JsValue::Null) => fallback.to_string(),
         Some(code) => js_display(code),
@@ -248,7 +252,7 @@ fn control_error(error: &(Option<JsValue>, JsValue), fallback: &str) -> ControlE
     }
 }
 
-fn error_value(error: &ControlError) -> JsValue {
+pub(crate) fn error_value(error: &ControlError) -> JsValue {
     let mut out = JsObject::new();
     out.insert("code".into(), JsValue::from(error.code.as_str()));
     out.insert("message".into(), JsValue::from(error.message.as_str()));
@@ -258,7 +262,7 @@ fn error_value(error: &ControlError) -> JsValue {
 /// The per-phase `sessionOverrides.set` (DiscoveryFire.ts:281-287 and its
 /// siblings): the phase's cwd, `bypassPermissions`, no prompting and the
 /// unattended tool exclusions.
-fn unattended_override(cwd: &str) -> SessionValue {
+pub(crate) fn unattended_override(cwd: &str) -> SessionValue {
     let value = SessionValue::object();
     value.set("cwd", JsValue::from(cwd));
     value.set("permissionMode", JsValue::from("bypassPermissions"));
@@ -285,7 +289,7 @@ impl DiscoveryFire {
     /// `events.jsonl`; the extra fields follow the fixed head in the call
     /// site's key order. The append is fire-and-forget in TS — its failure
     /// is swallowed.
-    fn emit_event(&self, run_id: &str, phase: &str, extra: Vec<(&str, JsValue)>) {
+    pub(super) fn emit_event(&self, run_id: &str, phase: &str, extra: Vec<(&str, JsValue)>) {
         let mut event = JsObject::new();
         event.insert("schemaVersion".into(), JsValue::Number(1.0));
         event.insert("eventId".into(), JsValue::from((self.deps.uuid)().as_str()));
@@ -305,7 +309,7 @@ impl DiscoveryFire {
         let _ = append_json_line(&self.deps.paths.events_file, &JsValue::Object(event));
     }
 
-    fn set_override(&self, session_key: &str, value: &SessionValue) {
+    pub(super) fn set_override(&self, session_key: &str, value: &SessionValue) {
         self.deps
             .session_overrides
             .lock()
@@ -315,7 +319,7 @@ impl DiscoveryFire {
 
     /// The `finally` of every phase: drop the override, then
     /// `closeSession({ reason: "always-on/done" }).catch(() => undefined)`.
-    async fn release_session(&self, session_key: &str) {
+    pub(super) async fn release_session(&self, session_key: &str) {
         self.deps
             .session_overrides
             .lock()
@@ -328,7 +332,7 @@ impl DiscoveryFire {
     /// to `onTurnEvent`, and with `persist_events` append it to
     /// `runs/<runId>.events.jsonl` (append failures swallowed). A stream
     /// failure is the iterator's throw.
-    async fn drain_turn(
+    pub(super) async fn drain_turn(
         &self,
         session_key: &str,
         channel_key: &str,
@@ -494,14 +498,29 @@ impl DiscoveryFirePort for DiscoveryFire {
                     }),
                 });
             }
-            // DiscoveryFire.ts:363 — the one pre-seam write.
+            // DiscoveryFire.ts:363.
             plan_store.update_status(input.plan_id, "ready")?;
+            let record = plan_store
+                .get_record(input.plan_id)?
+                .ok_or_else(|| io::Error::other("plan vanished"))?;
+            let markdown = plan_store.read_plan_markdown(input.plan_id)?.unwrap_or_default();
+            let state = self.deps.state_store.read(input.started_at_ms)?;
+            let tail = self
+                .plan_tail(
+                    input.run_id,
+                    input.started_at_ms,
+                    &state,
+                    &TailPlan { record, markdown },
+                    &HistoryBase {
+                        run_id: input.run_id.into(),
+                        started_at: iso_from_epoch_ms(input.started_at_ms),
+                        plan_first: true,
+                    },
+                )
+                .await?;
             Ok(RerunFireResult {
                 run_id: input.run_id.into(),
-                error: Some(ControlError {
-                    code: "internal".into(),
-                    message: "not implemented in this embedding".into(),
-                }),
+                error: tail.error,
             })
         })
     }
