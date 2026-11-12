@@ -340,9 +340,8 @@ fn execute_chat_history(
     }
     let replay = crate::runtime::session::factory::project_transcript(&read.entries)
         .map_err(|error| ToolError::failed(error.message.to_string()))?;
-    let nullish = |value: Option<&JsValue>| {
-        matches!(value, None | Some(JsValue::Undefined | JsValue::Null))
-    };
+    let nullish =
+        |value: Option<&JsValue>| matches!(value, None | Some(JsValue::Undefined | JsValue::Null));
     let summary = || {
         crate::runtime::manager::file_catalog::list_sessions(
             &chat_dir,
@@ -368,9 +367,9 @@ fn execute_chat_history(
     .flatten()
     .or_else(|| summary().filter(|value| !nullish(Some(value))));
     let title = match title_value {
-        Some(value) => String::from_utf16_lossy(
-            &crate::js_value::to_string_units(&value).unwrap_or_default(),
-        ),
+        Some(value) => {
+            String::from_utf16_lossy(&crate::js_value::to_string_units(&value).unwrap_or_default())
+        }
         None => real.clone(),
     };
     let mut conversation = Vec::new();

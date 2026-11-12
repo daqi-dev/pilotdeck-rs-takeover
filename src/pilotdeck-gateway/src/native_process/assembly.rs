@@ -2160,12 +2160,9 @@ pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(),
         .and_then(|v| v.get("modules"))
         .and_then(JsValue::as_object)
         .is_some_and(|modules| {
-            modules
-                .own_entries()
-                .iter()
-                .any(|(slot, binding)| {
-                    slot.equals_str("sop") || (external(binding) && !slot.equals_str("knowledge"))
-                })
+            modules.own_entries().iter().any(|(slot, binding)| {
+                slot.equals_str("sop") || (external(binding) && !slot.equals_str("knowledge"))
+            })
         })
     {
         return Err(
