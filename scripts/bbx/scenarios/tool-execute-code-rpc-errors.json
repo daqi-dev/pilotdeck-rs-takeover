@@ -1,0 +1,190 @@
+{
+ "name": "tool-execute-code-rpc-errors",
+ "about": "execute_code 的 RPC 服务端错误（tool/builtin/executeCode.ts:572-618）：代码绕过生成的 helper，直接连 PILOTDECK_RPC_SOCKET 发原始行：非 JSON 与截断的 JSON（invalid_rpc，带 JSON.parse 的报错原文）、不在白名单的工具（tool_not_allowed，含缺工具名）、args 不是对象（按空对象执行）、空白行被跳过、max_tool_calls 用完之后（tool_call_limit_reached；白名单检查在次数检查之前）；max_tool_calls 为 0 时第一次调用就被拒；max_tool_calls 越界。invalid_rpc_token 只在 TCP 传输（Windows，ExecutionTransportPort.ts:33）上出现，不在本场景。",
+ "files": {
+  "proj/a.txt": "alpha\n",
+  "proj/b.txt": "beta\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Tool run\"}"
+   }
+  },
+  {
+   "name": "e04-after",
+   "when": [
+    "e04:",
+    "\"tool_call_id\":\"call_e04\""
+   ],
+   "reply": {
+    "text": "Done 04."
+   }
+  },
+  {
+   "name": "e04",
+   "when": [
+    "e04:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_e04",
+     "name": "execute_code",
+     "arguments": {
+      "max_tool_calls": -1,
+      "code": "print(1)\n"
+     }
+    }
+   }
+  },
+  {
+   "name": "e03-after",
+   "when": [
+    "e03:",
+    "\"tool_call_id\":\"call_e03\""
+   ],
+   "reply": {
+    "text": "Done 03."
+   }
+  },
+  {
+   "name": "e03",
+   "when": [
+    "e03:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_e03",
+     "name": "execute_code",
+     "arguments": {
+      "max_tool_calls": 51,
+      "code": "print(1)\n"
+     }
+    }
+   }
+  },
+  {
+   "name": "e02-after",
+   "when": [
+    "e02:",
+    "\"tool_call_id\":\"call_e02\""
+   ],
+   "reply": {
+    "text": "Done 02."
+   }
+  },
+  {
+   "name": "e02",
+   "when": [
+    "e02:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_e02",
+     "name": "execute_code",
+     "arguments": {
+      "max_tool_calls": 0,
+      "code": "from pilotdeck_tools import glob\ntry:\n    glob('*.txt')\nexcept RuntimeError as e:\n    print('caught:', e)\n"
+     }
+    }
+   }
+  },
+  {
+   "name": "e01-after",
+   "when": [
+    "e01:",
+    "\"tool_call_id\":\"call_e01\""
+   ],
+   "reply": {
+    "text": "Done 01."
+   }
+  },
+  {
+   "name": "e01",
+   "when": [
+    "e01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_e01",
+     "name": "execute_code",
+     "arguments": {
+      "max_tool_calls": 1,
+      "code": "import os, socket, json\ns = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)\ns.connect(os.environ['PILOTDECK_RPC_SOCKET'])\ndef raw(line):\n    s.sendall(line.encode('utf-8') + b'\\n')\n    data = b''\n    while not data.endswith(b'\\n'):\n        chunk = s.recv(65536)\n        if not chunk:\n            break\n        data += chunk\n    return json.loads(data.decode('utf-8'))\nprint(raw('not json'))\nprint(raw('{\"tool\": \"glob\", \"args\": '))\nprint(raw(json.dumps({'tool': 'todo_write', 'args': {}})))\nprint(raw(json.dumps({'args': {}})))\nprint(raw(json.dumps({'tool': 'glob', 'args': ['*.txt']})))\nprint(raw('   \\n' + json.dumps({'tool': 'glob', 'args': {'pattern': '*.txt'}})))\nprint(raw(json.dumps({'tool': 'todo_write', 'args': {}})))\n"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-ec",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ec",
+    "channelKey": "test",
+    "message": "e01: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ec",
+    "channelKey": "test",
+    "message": "e02: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ec",
+    "channelKey": "test",
+    "message": "e03: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ec",
+    "channelKey": "test",
+    "message": "e04: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-ec"
+   }
+  }
+ ],
+ "volatile": [
+  "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages|resultBytes|content-length)$"
+ ],
+ "volatileWhy": "工具结果文本里带位数不定的耗时，文本长度逐次差几个字符，token 估算和字节数随之变（同 tool-execute-code-rpc-write）"
+}

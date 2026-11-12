@@ -46,8 +46,6 @@
 //! - A request line that parses to JSON `null` crashes the baseline handler
 //!   (`request.tool` on null); here it is answered like any other request
 //!   without a tool name.
-//! - `Invalid RPC request: ...` carries this crate's JSON parser message, not
-//!   V8's.
 #![cfg(unix)]
 use super::{
     bash::{is_read_only_shell_command, spawn_env},
@@ -1420,9 +1418,12 @@ impl Rpc {
     async fn handle(&self, line: &str) -> Result<JsObject, HostError> {
         let request = match parse_json(line) {
             Ok(request) => request,
+            // `JSON.parse(line)`'s V8 SyntaxError message.
             Err(error) => {
+                let message = pilotdeck_protocol::json_syntax::parse_error(line)
+                    .unwrap_or_else(|| error.to_string());
                 return Ok(rpc_error(
-                    format!("Invalid RPC request: {error}"),
+                    format!("Invalid RPC request: {message}"),
                     "invalid_rpc",
                 ));
             }
