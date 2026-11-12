@@ -1,0 +1,108 @@
+{
+ "name": "cfg-env-locale-title",
+ "about": "会话标题生成在输入看不出语言时按 LC_ALL > LC_MESSAGES > LANG 推断系统语言（session/title/SessionTitleGenerator.ts:104-130）：三次起服务分别设 LC_ALL=zh_CN.UTF-8、LC_MESSAGES=ja_JP（LC_ALL 置空）、LANG=C 与 LC_ALL / LC_MESSAGES 置空（C 被跳过，回落到 Intl 的缺省区域），各用纯数字消息跑一轮，比标题请求体。",
+ "server": false,
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Cfg\"}"
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "LC_ALL": "zh_CN.UTF-8"
+   },
+   "then": [
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-loc-0",
+      "channelKey": "test",
+      "message": "12345 67890"
+     },
+     "timeout": 20000
+    },
+    {
+     "sleep": 800
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "LC_ALL": null,
+    "LC_MESSAGES": "ja_JP"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-loc-1",
+      "channelKey": "test",
+      "message": "12345 67890"
+     },
+     "timeout": 20000
+    },
+    {
+     "sleep": 800
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "LC_ALL": null,
+    "LC_MESSAGES": null,
+    "LANG": "C"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-loc-2",
+      "channelKey": "test",
+      "message": "12345 67890"
+     },
+     "timeout": 20000
+    },
+    {
+     "sleep": 800
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  }
+ ]
+}

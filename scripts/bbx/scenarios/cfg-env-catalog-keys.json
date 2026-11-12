@@ -1,0 +1,26 @@
+{
+ "name": "cfg-env-catalog-keys",
+ "about": "模型目录 provider 的缺省 apiKey 环境变量（model/config/providerCredentialScope.ts:40-70、parseModelConfig.ts:112-118、153-171）：anthropic、openai、dashscope、deepseek、google、minimax、moonshot、volc_ark、zhipu 不写 url 与 apiKey，分别从 ANTHROPIC_API_KEY、OPENAI_API_KEY、DASHSCOPE_API_KEY、DEEPSEEK_API_KEY、GEMINI_API_KEY、MINIMAX_API_KEY、MOONSHOT_API_KEY、VOLC_ARK_API_KEY、ZAI_API_KEY 取（值都是假的；MINIMAX 只有空白、MOONSHOT 不设，应报 MODEL_MISSING_API_KEY）；openrouter 把 url 改到假 provider，此时即使设了 OPENROUTER_API_KEY 也不读（协议与地址都要等于目录缺省）。只比 model_catalog_list 的可用性与 resolve_settings 的诊断和脱敏快照，不对这些 provider 发请求（目录缺省地址是真实服务）。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    anthropic:\n      models:\n        m: {}\n    openai:\n      models:\n        m: {}\n    dashscope:\n      models:\n        m: {}\n    deepseek:\n      models:\n        m: {}\n    google:\n      models:\n        m: {}\n    minimax:\n      models:\n        m: {}\n    moonshot:\n      models:\n        m: {}\n    volc_ark:\n      models:\n        m: {}\n    zhipu:\n      models:\n        m: {}\n    openrouter:\n      url: {MOCK}/v1\n      models:\n        m: {}\ntelemetry:\n  enabled: false\n",
+ "env": {
+  "ANTHROPIC_API_KEY": "fake-anthropic",
+  "OPENAI_API_KEY": "fake-openai",
+  "DASHSCOPE_API_KEY": "fake-dashscope",
+  "DEEPSEEK_API_KEY": "fake-deepseek",
+  "GEMINI_API_KEY": "fake-gemini",
+  "MINIMAX_API_KEY": "   ",
+  "VOLC_ARK_API_KEY": "fake-volc",
+  "ZAI_API_KEY": "fake-zai",
+  "OPENROUTER_API_KEY": "fake-openrouter"
+ },
+ "steps": [
+  {
+   "ws": "model_catalog_list",
+   "params": {}
+  },
+  {
+   "ws": "resolve_settings",
+   "params": {}
+  }
+ ]
+}

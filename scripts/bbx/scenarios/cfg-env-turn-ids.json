@@ -1,0 +1,61 @@
+{
+ "name": "cfg-env-turn-ids",
+ "about": "每个 turn 的子进程环境（agent/turn/TurnEnvironment.ts:10-15）：bash 工具里打印 $PILOTDECK_SESSION_ID 与 $PILOTDECK_TURN_ID 的长度和形状（turn id 是随机 UUID，原样打印会让上下文 token 估算随机变化，基线自比不稳），比工具输出与会话记录。",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Cfg\"}"
+   }
+  },
+  {
+   "name": "done",
+   "when": [
+    "env-ids",
+    "\"tool_call_id\":\"call_bbx_env\""
+   ],
+   "reply": {
+    "text": "done"
+   }
+  },
+  {
+   "name": "bash",
+   "when": [
+    "env-ids"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_bbx_env",
+     "name": "bash",
+     "arguments": {
+      "command": "echo \"S=$PILOTDECK_SESSION_ID T=${#PILOTDECK_TURN_ID}\"; case \"$PILOTDECK_TURN_ID\" in *-*-*-*-*) echo uuid-shaped;; esac"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-env",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-env",
+    "channelKey": "test",
+    "message": "env-ids please"
+   },
+   "timeout": 30000
+  },
+  {
+   "sleep": 300
+  }
+ ]
+}

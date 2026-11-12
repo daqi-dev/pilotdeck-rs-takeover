@@ -1,0 +1,105 @@
+{
+ "name": "cfg-env-max-output-tokens",
+ "about": "PILOTDECK_MAX_OUTPUT_TOKENS（cli/SessionAgentConfigBundle.ts:80-84 readPositiveIntegerEnv，优先于 sdk 设置与 agent.maxOutputTokens）：三次起服务分别设 1234、abc（非数字，忽略）、0（非正，忽略），各跑一轮，比请求里的 max_tokens 与 context_budget。",
+ "server": false,
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Cfg\"}"
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_MAX_OUTPUT_TOKENS": "1234"
+   },
+   "then": [
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-max-0",
+      "channelKey": "test",
+      "message": "max 1234"
+     },
+     "timeout": 20000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_MAX_OUTPUT_TOKENS": "abc"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-max-1",
+      "channelKey": "test",
+      "message": "max abc"
+     },
+     "timeout": 20000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_MAX_OUTPUT_TOKENS": "0"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-max-2",
+      "channelKey": "test",
+      "message": "max 0"
+     },
+     "timeout": 20000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  }
+ ]
+}
