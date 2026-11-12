@@ -757,7 +757,7 @@ impl SessionTools {
         if tools.is_empty() {
             return Ok(self);
         }
-        let registry = self.session_registry(&self.config);
+        let registry = self.admission_registry(&self.config);
         for tool in &tools {
             registry.register(tool.clone()).map_err(|error| {
                 RuntimeError::new(format!(
@@ -857,12 +857,24 @@ impl SessionTools {
     /// The session's tool registry before the fork scope: the builtins and
     /// MCP tools, the user-dialog tools, `agent` and the continuation tools.
     fn session_registry(&self, config: &JsObject) -> ToolRegistry {
+        self.session_registry_in_world(config, &self.world)
+    }
+
+    fn admission_registry(&self, config: &JsObject) -> ToolRegistry {
+        // Exclusion is a session policy, not permission to register a second
+        // tool with the same name or alias as an existing capability.
+        let mut world = self.world.clone();
+        world.excluded_tools.clear();
+        self.session_registry_in_world(config, &world)
+    }
+
+    fn session_registry_in_world(&self, config: &JsObject, world: &ExecutionWorld) -> ToolRegistry {
         let tools = native_tools(
             self.binding.context.allowed_tools.clone(),
             self.binding.context.disallowed_tools.clone(),
             self.lsp.clone(),
             &self.mcp,
-            &self.world,
+            world,
         );
         if let Some((kinds, channel)) = &self.user_dialog {
             for tool in builtin::request_user::user_dialog_tools(kinds, channel) {
@@ -3667,6 +3679,124 @@ mod tests {
         crate::negative_assert!(
             is_mcp("read_file"),
             "#1433 a per-session MCP tool replaces the same-name builtin"
+        );
+    }
+
+    #[test]
+    fn excluded_builtin_names_and_aliases_remain_reserved_for_native_admission() {
+        use crate::host::modules::capability::ToolDefinition;
+        use crate::runtime::{
+            session::SessionContext,
+            tools::{ExecutableTool, ToolFuture, ToolOutput, ToolRunContext},
+        };
+        struct Contribution(JsObject);
+        impl ToolDefinition for Contribution {
+            fn fields(&self) -> &JsObject {
+                &self.0
+            }
+        }
+        impl ExecutableTool for Contribution {
+            fn execute(&self, _: JsValue, _: ToolRunContext) -> ToolFuture<ToolOutput> {
+                panic!("registration tests must not execute tools")
+            }
+        }
+        let contribution = |name: &str, aliases: &[&str]| -> Arc<dyn ExecutableTool> {
+            let mut fields = JsObject::new();
+            fields.insert("name".into(), name.into());
+            fields.insert(
+                "aliases".into(),
+                JsValue::Array(aliases.iter().copied().map(JsValue::from).collect()),
+            );
+            Arc::new(Contribution(fields))
+        };
+        let scratch = crate::test_scratch::Scratch::new("excluded-native-admission");
+        let root = scratch.path();
+        let options = Options {
+            home: root.join("pilot"),
+            project: root.to_owned(),
+            project_root: root.to_owned(),
+            listen: "127.0.0.1:0".parse().unwrap(),
+            token_file: root.join("unused-token"),
+            sidecar: root.join("unused-sidecar"),
+            sidecar_args: Vec::new(),
+            drain_budget: Duration::from_secs(5),
+            storage_root: None,
+            os_home: Some(root.join("home")),
+            builtin_skills_root: None,
+            builtin_plugins_root: None,
+            in_process_cli: true,
+        };
+        let create = |excluded: &str| {
+            SessionTools::new(
+                &options,
+                &crate::config::Env::new(),
+                SessionBinding {
+                    context: SessionContext {
+                        session_key: "excluded-session".into(),
+                        project_key: None,
+                        channel_key: "test".into(),
+                        allowed_tools: None,
+                        disallowed_tools: None,
+                    },
+                    recorder: crate::runtime::turn::live::test_recorder(),
+                    checkpoint: HostToolCheckpoint::new(None, &[]).unwrap(),
+                    projection: Arc::default(),
+                },
+                JsObject::new(),
+                Arc::default(),
+                Arc::default(),
+                SessionMcpTools::empty(),
+            )
+            .unwrap()
+            .with_extra_tools(Vec::new(), vec![excluded.into()])
+        };
+        let excluded = "read_file";
+        for (name, aliases, expected) in [
+            ("read_file", vec![], "Tool read_file is already registered."),
+            (
+                "Read",
+                vec![],
+                "Tool Read conflicts with an existing alias.",
+            ),
+            (
+                "native_conflict",
+                vec!["read_file"],
+                "Alias read_file conflicts with an existing tool name.",
+            ),
+            (
+                "native_conflict",
+                vec!["Read"],
+                "Alias Read is already registered.",
+            ),
+        ] {
+            let session = create(excluded);
+            let exposed = session.session_registry(&session.config);
+            assert!(
+                !exposed.has(&"read_file".into()),
+                "the exclusion must actually take effect"
+            );
+            assert!(
+                !exposed.has(&"Read".into()),
+                "the excluded builtin alias must also be unavailable"
+            );
+            let error = session
+                .with_native_tools(vec![contribution(name, &aliases)])
+                .err()
+                .expect("exclusion must not free a registered name or alias");
+            assert_eq!(
+                error.message,
+                format!("Native extension tool registration failed: {expected}")
+            );
+        }
+        let session = create(excluded)
+            .with_native_tools(vec![contribution("native_unique", &["NativeUnique"])])
+            .unwrap();
+        let exposed = session.session_registry(&session.config);
+        assert!(exposed.has(&"native_unique".into()));
+        assert!(exposed.has(&"NativeUnique".into()));
+        assert!(
+            !exposed.has(&"read_file".into()),
+            "successful admission must preserve the session exclusion"
         );
     }
 }

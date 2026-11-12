@@ -1,0 +1,116 @@
+{
+  "schema": 1,
+  "sources": [
+    {
+      "file": "alloc-stdlib.txt",
+      "url": "https://raw.githubusercontent.com/dropbox/rust-alloc-no-stdlib/0a81fd6928ea3b33c8cd484aa4575d50ffb98012/LICENSE",
+      "retrievedVia": "https://api.github.com/repos/dropbox/rust-alloc-no-stdlib/contents/LICENSE?ref=0a81fd6928ea3b33c8cd484aa4575d50ffb98012",
+      "gitBlobSha1": "cd496ba72eb37e83a44958358d1f89a8a28cbc15",
+      "sha256": "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae",
+      "packages": [
+        {
+          "name": "alloc-stdlib",
+          "version": "0.3.0",
+          "sourceCommit": "0a81fd6928ea3b33c8cd484aa4575d50ffb98012"
+        }
+      ]
+    },
+    {
+      "file": "oxc.txt",
+      "url": "https://raw.githubusercontent.com/oxc-project/oxc/3a8c4a4cadb6f994c4f2c35c1886e814171caa10/LICENSE",
+      "retrievedVia": "https://api.github.com/repos/oxc-project/oxc/contents/LICENSE?ref=3a8c4a4cadb6f994c4f2c35c1886e814171caa10",
+      "gitBlobSha1": "444bffc00e5190817c0092e5e6fde787102977d2",
+      "sha256": "95ced5ecf1133fbf41d409b5555c86c344f83f3b019926057ddbc07cfdcc27b3",
+      "packages": [
+        {
+          "name": "oxc_allocator",
+          "version": "0.116.0",
+          "sourceCommit": "3a8c4a4cadb6f994c4f2c35c1886e814171caa10"
+        },
+        {
+          "name": "oxc_ast",
+          "version": "0.116.0",
+          "sourceCommit": "3a8c4a4cadb6f994c4f2c35c1886e814171caa10"
+        },
+        {
+          "name": "oxc_ast_macros",
+          "version": "0.116.0",
+          "sourceCommit": "3a8c4a4cadb6f994c4f2c35c1886e814171caa10"
+        },
+        {
+          "name": "oxc_data_structures",
+          "version": "0.116.0",
+          "sourceCommit": "3a8c4a4cadb6f994c4f2c35c1886e814171caa10"
+        },
+        {
+          "name": "oxc_diagnostics",
+          "version": "0.116.0",
+          "sourceCommit": "3a8c4a4cadb6f994c4f2c35c1886e814171caa10"
+        },
+        {
+          "name": "oxc_ecmascript",
+          "version": "0.116.0",
+          "sourceCommit": "3a8c4a4cadb6f994c4f2c35c1886e814171caa10"
+        },
+        {
+          "name": "oxc_estree",
+          "version": "0.116.0",
+          "sourceCommit": "3a8c4a4cadb6f994c4f2c35c1886e814171caa10"
+        },
+        {
+          "name": "oxc_parser",
+          "version": "0.116.0",
+          "sourceCommit": "3a8c4a4cadb6f994c4f2c35c1886e814171caa10"
+        },
+        {
+          "name": "oxc_regular_expression",
+          "version": "0.116.0",
+          "sourceCommit": "3a8c4a4cadb6f994c4f2c35c1886e814171caa10"
+        },
+        {
+          "name": "oxc_span",
+          "version": "0.116.0",
+          "sourceCommit": "3a8c4a4cadb6f994c4f2c35c1886e814171caa10"
+        },
+        {
+          "name": "oxc_str",
+          "version": "0.116.0",
+          "sourceCommit": "3a8c4a4cadb6f994c4f2c35c1886e814171caa10"
+        },
+        {
+          "name": "oxc_syntax",
+          "version": "0.116.0",
+          "sourceCommit": "3a8c4a4cadb6f994c4f2c35c1886e814171caa10"
+        }
+      ]
+    },
+    {
+      "file": "oxc-index.txt",
+      "url": "https://raw.githubusercontent.com/oxc-project/oxc-index-vec/398e7357fdf40cc9e363b9269ba7e3c0abe6ca77/LICENSE",
+      "retrievedVia": "https://api.github.com/repos/oxc-project/oxc-index-vec/contents/LICENSE?ref=398e7357fdf40cc9e363b9269ba7e3c0abe6ca77",
+      "gitBlobSha1": "444bffc00e5190817c0092e5e6fde787102977d2",
+      "sha256": "95ced5ecf1133fbf41d409b5555c86c344f83f3b019926057ddbc07cfdcc27b3",
+      "packages": [
+        {
+          "name": "oxc_index",
+          "version": "4.1.0",
+          "sourceCommit": "398e7357fdf40cc9e363b9269ba7e3c0abe6ca77"
+        }
+      ]
+    },
+    {
+      "file": "rsqlite-vfs.txt",
+      "url": "https://raw.githubusercontent.com/Spxg/sqlite-wasm-rs/1bb309784f25c401ddf95131dcde4c4cdad7aee7/LICENSE",
+      "retrievedVia": "https://api.github.com/repos/Spxg/sqlite-wasm-rs/contents/LICENSE?ref=1bb309784f25c401ddf95131dcde4c4cdad7aee7",
+      "gitBlobSha1": "8839511c01e91a5d4ac8c9b753c165b52d86f530",
+      "sha256": "e1c1975c3474cce31722836f101a40ffaf1cc784e4d2f38ce3e77b9712934e78",
+      "packages": [
+        {
+          "name": "rsqlite-vfs",
+          "version": "0.1.1",
+          "sourceCommit": "1bb309784f25c401ddf95131dcde4c4cdad7aee7"
+        }
+      ]
+    }
+  ]
+}

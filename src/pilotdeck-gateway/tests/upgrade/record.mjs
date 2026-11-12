@@ -255,7 +255,7 @@ try{
    u.on('data',b=>{try{if(open){c.write(b);return}held.push(Buffer.from(b));if(!captured){headers=Buffer.concat([headers,b]);const p=headers.indexOf('\r\n\r\n');if(p>=0){if(!headers.toString().startsWith('HTTP/1.1 101 ')){open=true;for(const h of held)c.write(h);held=[];return}captured=true;rec({id,event:'real-ts-101-held'});arrived()}}}catch(error){fail(error)}});
   });const relayPort=await listen(relay);
   let port=relayPort,rs=null;
-  if(side==='rust'){const reservation=net.createServer();port=await listen(reservation);await new Promise(r=>reservation.close(r));servers.splice(servers.indexOf(reservation),1);rs=await child(id,[binary],{...env,PILOTDECK_PROXY_LISTEN:'127.0.0.1:'+port,PILOTDECK_PROXY_UPSTREAM:'http://127.0.0.1:'+relayPort});await ready(port,rs)}
+  if(side==='rust'){const reservation=net.createServer();port=await listen(reservation);await new Promise(r=>reservation.close(r));servers.splice(servers.indexOf(reservation),1);rs=await child(id,[binary],{...env,PILOTDECK_GATEWAY_MODE:'proxy',PILOTDECK_PROXY_LISTEN:'127.0.0.1:'+port,PILOTDECK_PROXY_UPSTREAM:'http://127.0.0.1:'+relayPort});await ready(port,rs)}
   const c=await connect(port),r=reader(c);
   const tail=head==='empty'?Buffer.alloc(0):head==='full'?initial:initial.subarray(0,3);
   const nonce=randomBytes(16).toString('base64');
@@ -278,7 +278,7 @@ try{
   let port = tsPort, rs = null;
   if (side === 'rust') {
    port = await availablePort();
-   rs = await child(id, [binary], {...env, PILOTDECK_PROXY_LISTEN: '127.0.0.1:' + port,
+   rs = await child(id, [binary], {...env, PILOTDECK_GATEWAY_MODE:'proxy',PILOTDECK_PROXY_LISTEN: '127.0.0.1:' + port,
     PILOTDECK_PROXY_UPSTREAM: 'http://127.0.0.1:' + tsPort});
    await ready(port, rs);
   }
@@ -312,7 +312,7 @@ try{
   let port = portTS, rs = null;
   if (side === 'rust') {
    port = await availablePort();
-   rs = await child(id, [binary], {...isolatedEnv, PILOTDECK_PROXY_LISTEN: '127.0.0.1:' + port,
+   rs = await child(id, [binary], {...isolatedEnv, PILOTDECK_GATEWAY_MODE:'proxy',PILOTDECK_PROXY_LISTEN: '127.0.0.1:' + port,
     PILOTDECK_PROXY_UPSTREAM: 'http://127.0.0.1:' + portTS}, join(isolated, 'project'));
    await ready(port, rs);
   }

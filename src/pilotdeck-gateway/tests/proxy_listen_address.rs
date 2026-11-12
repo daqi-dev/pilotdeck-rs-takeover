@@ -30,6 +30,7 @@ impl Gateway {
             .env_clear()
             .env("HOME", &home)
             .env("PILOT_HOME", home.join("pilot"))
+            .env("PILOTDECK_GATEWAY_MODE", "proxy")
             .env("PILOTDECK_PROXY_LISTEN", listen.to_string())
             .env("PILOTDECK_PROXY_UPSTREAM", "http://127.0.0.1:1")
             .current_dir(&home)

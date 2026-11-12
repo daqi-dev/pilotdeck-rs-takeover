@@ -60,7 +60,7 @@ async function launch(name:string,extra:string[]=[],native=true){
   const token=join(home,'token');await writeFile(token,'native-process-fixture\n',{flag:'wx'});
   const args=native?['--native','--home',home,'--project',project,'--listen','127.0.0.1:0','--token-file',token,'--sidecar',sidecar,'--drain-ms','1500',...extra]:extra;
   const start=()=>{
-    const child=spawn(binary,args,{cwd:project,env:{PATH:process.env.PATH,HOME:home,PILOT_HOME:home,LANG:'en_US.UTF-8',PILOTDECK_CONFIG_PATH:join(out,'must-not-read.yaml'),PILOTDECK_PROXY_LISTEN:'127.0.0.1:0',PILOTDECK_PROXY_UPSTREAM:`http://127.0.0.1:${port}`},stdio:['ignore','pipe','pipe']});children.push(child);
+    const child=spawn(binary,args,{cwd:project,env:{PATH:process.env.PATH,HOME:home,PILOT_HOME:home,LANG:'en_US.UTF-8',PILOTDECK_CONFIG_PATH:join(out,'must-not-read.yaml'),...(native?{}:{PILOTDECK_GATEWAY_MODE:'proxy'}),PILOTDECK_PROXY_LISTEN:'127.0.0.1:0',PILOTDECK_PROXY_UPSTREAM:`http://127.0.0.1:${port}`},stdio:['ignore','pipe','pipe']});children.push(child);
     let stderr='';let stdout=''; const exit=once(child,'exit');child.stderr.on('data',(b:any)=>stderr+=b.toString());child.stdout.on('data',(b:any)=>stdout+=b.toString());
     // The native process reports "native listening host:port" on stderr;
     // the A4 proxy reports its actual address on stdout (#1131). A child's

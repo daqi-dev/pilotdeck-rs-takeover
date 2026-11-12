@@ -6,8 +6,8 @@
 //!
 //! | routing | entry | observation |
 //! |---|---|---|
-//! | proxy (default) | nothing set | the two A4 address lines, TCP reachable |
-//! | proxy (explicit) | `PILOTDECK_GATEWAY_MODE=proxy` | the same |
+//! | native (default) | no mode and no `--native` | `native listening` + WS 101, SIGTERM exits 0 |
+//! | proxy (explicit) | `PILOTDECK_GATEWAY_MODE=proxy` | the two A4 address lines, TCP reachable |
 //! | native (explicit) | `PILOTDECK_GATEWAY_MODE=native` | `native listening` + WS 101, SIGTERM exits 0 |
 //! | native (explicit) | `--native` first argument | the parser selection beats a `proxy` config item |
 //! | rejected | any other value (incl. empty, non-UTF-8) | nonzero exit with the explicit gate |
@@ -79,8 +79,8 @@ fn native_fixtures(root: &std::path::Path) -> (std::path::PathBuf, std::path::Pa
         .expect("#1354 native home config");
     std::fs::write(root.join("token"), "1354-mode-routing-token\n")
         .expect("#1354 native token file");
-    // Never executed: the sidecar is a per-session stdio deployment and this
-    // server never serves a session, but the entry requires the file to exist.
+    // Never executed: cases supplying --sidecar retain its file validation,
+    // while the default loop runs in process.
     std::fs::write(
         root.join("sidecar"),
         "#1354 never executed by an idle server\n",
@@ -100,20 +100,18 @@ struct ProxyChild {
 }
 
 impl ProxyChild {
-    fn start(home: &std::path::Path, mode: Option<&str>) -> Self {
+    fn start(home: &std::path::Path) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_pilotdeck-gateway"));
         command
             .env_clear()
             .env("HOME", home)
+            .env("PILOTDECK_GATEWAY_MODE", "proxy")
             .env("PILOTDECK_PROXY_LISTEN", "127.0.0.1:0")
             .env("PILOTDECK_PROXY_UPSTREAM", "http://127.0.0.1:1")
             .current_dir(home)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        if let Some(mode) = mode {
-            command.env("PILOTDECK_GATEWAY_MODE", mode);
-        }
         let mut child = command.spawn().expect("#1354 proxy child launch");
         let stdout = child.stdout.take().expect("#1354 proxy stdout pipe");
         let (send, lines) = std::sync::mpsc::channel();
@@ -278,28 +276,46 @@ fn collect_exit(mut child: Child) -> (std::process::ExitStatus, String) {
     (status, collected)
 }
 
-// #1303 option A, executable level: without either explicit switch the entry
-// is the A4 proxy — the default this issue must pin — and the explicit
-// `proxy` value selects the same front.
+// The legacy front remains available only through its explicit setting.
 #[test]
-fn default_and_explicit_proxy_route_the_proxy_front() {
-    for mode in [None, Some("proxy")] {
-        let (_cleanup, root) = scratch_root("proxy-front");
-        let home = root.join("home");
-        std::fs::create_dir(&home).expect("#1354 proxy scratch home");
-        let mut proxy = ProxyChild::start(&home, mode);
-        let address = proxy_advertises_address(&mut proxy);
-        assert_ne!(
-            address.port(),
-            0,
-            "#1354 advertised proxy port must be nonzero"
-        );
-        assert_eq!(
-            address.ip(),
-            std::net::Ipv4Addr::LOCALHOST,
-            "#1354 advertised proxy address is loopback"
-        );
-    }
+fn explicit_proxy_routes_the_proxy_front() {
+    let (_cleanup, root) = scratch_root("proxy-front");
+    let home = root.join("home");
+    std::fs::create_dir(&home).expect("#1354 proxy scratch home");
+    let mut proxy = ProxyChild::start(&home);
+    let address = proxy_advertises_address(&mut proxy);
+    assert_ne!(
+        address.port(),
+        0,
+        "#1354 advertised proxy port must be nonzero"
+    );
+    assert_eq!(
+        address.ip(),
+        std::net::Ipv4Addr::LOCALHOST,
+        "#1354 advertised proxy address is loopback"
+    );
+}
+
+#[tokio::test]
+async fn unset_mode_without_native_flag_starts_native_and_drains_on_sigterm() {
+    let (_cleanup, root) = scratch_root("native-default");
+    native_fixtures(&root);
+    let bin = root.join("bin");
+    let empty_path = root.join("empty-path");
+    std::fs::create_dir(&bin).expect("D1 isolated executable directory");
+    std::fs::create_dir(&empty_path).expect("D1 empty PATH directory");
+    let program = bin.join("pilotdeck-gateway");
+    std::fs::copy(env!("CARGO_BIN_EXE_pilotdeck-gateway"), &program)
+        .expect("D1 copy the real gateway executable without its build-tree siblings");
+    assert!(!bin.join("pilotdeck-agent-loop-sidecar").exists());
+    // env_clear in the helper guarantees an absent mode, and it adds no
+    // --native or --sidecar flag. The isolated executable has no sibling
+    // sidecar, and PATH contains no Node or other executable. Its invalid
+    // proxy address is a real routing negative.
+    native_child_serves(&root, Some(&program), false, |command| {
+        command.env("PATH", &empty_path);
+    })
+    .await;
 }
 
 // The config item's native routing: the full command line is the native
@@ -310,7 +326,7 @@ fn default_and_explicit_proxy_route_the_proxy_front() {
 async fn mode_config_routes_the_native_entry() {
     let (_cleanup, root) = scratch_root("native-config");
     native_fixtures(&root);
-    native_child_serves(&root, |command| {
+    native_child_serves(&root, None, true, |command| {
         command.env("PILOTDECK_GATEWAY_MODE", "native");
     })
     .await;
@@ -435,17 +451,16 @@ async fn both_modes_alternate_on_one_isolated_home() {
         .expect("#1354 project storage has a parent")
         .join(".cwd");
 
-    // Phase 1: the default routing — the proxy front (the rollback target)
-    // — serves from the isolated home.
+    // Phase 1: the explicitly selected legacy proxy serves the isolated home.
     {
-        let mut proxy = ProxyChild::start(&home, None);
+        let mut proxy = ProxyChild::start(&home);
         let address = proxy_advertises_address(&mut proxy);
         assert_eq!(address.ip(), std::net::Ipv4Addr::LOCALHOST);
         drop(proxy);
     }
 
     // Phase 2: switch to native over the same home (config item routing).
-    native_child_serves(&root, |command| {
+    native_child_serves(&root, None, true, |command| {
         command.env("PILOTDECK_GATEWAY_MODE", "native");
     })
     .await;
@@ -469,7 +484,7 @@ async fn both_modes_alternate_on_one_isolated_home() {
     // Phase 3: the rollback — the proxy front again over the same home, with
     // the native-written state still in place.
     {
-        let mut proxy = ProxyChild::start(&home, None);
+        let mut proxy = ProxyChild::start(&home);
         let address = proxy_advertises_address(&mut proxy);
         assert_eq!(address.ip(), std::net::Ipv4Addr::LOCALHOST);
         drop(proxy);
@@ -486,7 +501,7 @@ async fn both_modes_alternate_on_one_isolated_home() {
     );
 
     // Phase 4: switch back to native over the same home.
-    native_child_serves(&root, |command| {
+    native_child_serves(&root, None, true, |command| {
         command.env("PILOTDECK_GATEWAY_MODE", "native");
     })
     .await;
@@ -501,13 +516,17 @@ async fn both_modes_alternate_on_one_isolated_home() {
 /// Returns the advertised address.
 async fn native_child_serves(
     root: &std::path::Path,
+    program: Option<&std::path::Path>,
+    explicit_sidecar: bool,
     configure: impl FnOnce(&mut AsyncCommand),
 ) -> std::net::SocketAddr {
     let home = root.join("home");
     let project = root.join("project");
     let token_file = root.join("token");
     let sidecar = root.join("sidecar");
-    let mut command = AsyncCommand::new(env!("CARGO_BIN_EXE_pilotdeck-gateway"));
+    let mut command = AsyncCommand::new(program.unwrap_or(std::path::Path::new(env!(
+        "CARGO_BIN_EXE_pilotdeck-gateway"
+    ))));
     command
         .arg("--home")
         .arg(&home)
@@ -517,8 +536,6 @@ async fn native_child_serves(
         .arg("127.0.0.1:0")
         .arg("--token-file")
         .arg(&token_file)
-        .arg("--sidecar")
-        .arg(&sidecar)
         // Bounded, and the machine's entry/owner face bounds derive from it.
         .arg("--drain-ms")
         .arg("5000")
@@ -533,6 +550,9 @@ async fn native_child_serves(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
+    if explicit_sidecar {
+        command.arg("--sidecar").arg(&sidecar);
+    }
     configure(&mut command);
     let mut child = command.spawn().expect("#1354 native child launch");
     let stderr = child.stderr.take().expect("#1354 native stderr pipe");

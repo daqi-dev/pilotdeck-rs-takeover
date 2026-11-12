@@ -304,34 +304,77 @@ fn public_embedding_runs_updates_and_releases_native_extensions() {
         ]
     );
     assert_eq!(dropped.load(Ordering::SeqCst), 0);
-    let conflicting = extensions.register("conflict", None, NativeExtension {
-        tools: vec![Arc::new(CounterTool {
-            revision: 99, calls: calls.clone(),
-            fields: parse_json(r#"{"name":"read_file","description":"conflicting tool","inputSchema":{"type":"object"}}"#).unwrap().as_object().unwrap().clone(),
-        })],
-        ..Default::default()
-    }).unwrap();
-    let errors = Arc::new(Mutex::new(String::new()));
-    let emitted = errors.clone();
-    let conflict = gateway.submit_turn(
-        parse_json(
-            r#"{"sessionKey":"conflicting-session","channelKey":"test","message":"must fail"}"#,
-        )
-        .unwrap(),
-        Arc::new(move |event| {
-            emitted.lock().unwrap().push_str(
-                &pilotdeck_protocol::stringify_json(&event)
-                    .unwrap()
-                    .unwrap_or_default(),
+    for (index, (name, aliases, expected)) in [
+        ("read_file", vec![], "Tool read_file is already registered."),
+        (
+            "Read",
+            vec![],
+            "Tool Read conflicts with an existing alias.",
+        ),
+        (
+            "native_conflict",
+            vec!["read_file"],
+            "Alias read_file conflicts with an existing tool name.",
+        ),
+        (
+            "native_conflict",
+            vec!["Read"],
+            "Alias Read is already registered.",
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut fields =
+            parse_json(r#"{"description":"conflicting tool","inputSchema":{"type":"object"}}"#)
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .clone();
+        fields.insert("name".into(), name.into());
+        fields.insert(
+            "aliases".into(),
+            JsValue::Array(aliases.into_iter().map(JsValue::from).collect()),
+        );
+        let conflicting = extensions
+            .register(
+                "conflict",
+                None,
+                NativeExtension {
+                    tools: vec![Arc::new(CounterTool {
+                        revision: 99,
+                        calls: calls.clone(),
+                        fields,
+                    })],
+                    ..Default::default()
+                },
             )
-        }),
-    );
-    let failure = format!("{conflict:?} {}", errors.lock().unwrap());
-    assert!(
-        failure.contains("Native extension tool registration failed"),
-        "{failure}"
-    );
-    drop(conflicting);
+            .unwrap();
+        let errors = Arc::new(Mutex::new(String::new()));
+        let emitted = errors.clone();
+        let conflict = gateway.submit_turn(
+            parse_json(&format!(r#"{{"sessionKey":"conflicting-session-{index}","channelKey":"test","message":"must fail"}}"#)).unwrap(),
+            Arc::new(move |event| {
+                emitted.lock().unwrap().push_str(
+                    &pilotdeck_protocol::stringify_json(&event)
+                        .unwrap()
+                        .unwrap_or_default(),
+                )
+            }),
+        );
+        let failure = format!("{conflict:?} {}", errors.lock().unwrap());
+        assert!(
+            failure.contains("Native extension tool registration failed"),
+            "{failure}"
+        );
+        assert!(failure.contains(expected), "{failure}");
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec![1, 1, 2],
+            "a rejected extension must never execute"
+        );
+        assert!(conflicting.unregister());
+    }
     assert!(current.unregister());
     gateway.shutdown(Duration::from_secs(5)).unwrap();
     drop(gateway);

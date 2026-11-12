@@ -126,6 +126,8 @@ async fn explicit_entry_selects_parser() {
             tokio::process::Command::new(env!("CARGO_BIN_EXE_pilotdeck-gateway"))
                 .args(&args)
                 .env_clear()
+                // This tests flag precedence over an explicit legacy choice.
+                .env("PILOTDECK_GATEWAY_MODE", "proxy")
                 .env("PILOTDECK_PROXY_LISTEN", "invalid-a4-address")
                 .kill_on_drop(true)
                 .output(),

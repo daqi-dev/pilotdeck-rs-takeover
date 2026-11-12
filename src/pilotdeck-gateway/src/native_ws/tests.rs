@@ -1539,20 +1539,25 @@ async fn pending_requests_are_bounded_before_enqueue() {
         .expect("#1123 pending host stopped");
 }
 #[test]
-fn default_mode_unchanged() {
+fn legacy_proxy_body_unchanged() {
     use sha2::{Digest, Sha256};
-    // #1071 explicitly adds this opt-in before the existing A4 entry. Keep
-    // hashing every legacy byte; the real executable test checks both paths.
-    // #1131 intentionally replaced the A4 stderr `proxy listening` line with
-    // the TS stdout address lines (actual bound port); re-pinned for that diff.
-    // #1354 grew the opt-in into the entry's routing region: the explicit
-    // `--native` argument plus the `PILOTDECK_GATEWAY_MODE` config item. Both
-    // the region and its argv plumbing helper are removed before hashing, so
-    // the residual hash still pins every byte outside them to the A4
-    // executable; the executable-level routing matrix is tests/mode_routing.rs.
-    const ROUTING: &str = "    let mut args = std::env::args_os().skip(1);\n    let first = args.next();\n    let explicit_native = pilotdeck_gateway::native_process::native_requested(first.as_deref());\n    // #1354 A8.5-pr3: the main entry's routing. The explicit `--native`\n    // argument (#1071) wins over the `PILOTDECK_GATEWAY_MODE` config item —\n    // the per-invocation flag outranks the deployment default, like the TS\n    // baseline's `readStringFlag(argv, \"--host\") ?? env.PILOTDECK_GATEWAY_HOST`\n    // (src/cli/pilotdeck.ts:213). The config item is still judged *before*\n    // the flag short-circuits anything, so an invalid value fails closed at\n    // startup even when `--native` is present (#1369 shape). The config\n    // item's default is proxy mode (#1303 option A), so without either\n    // explicit switch the entry below is the unchanged A4 proxy: the\n    // rollback target stage A keeps.\n    let mode_native = pilotdeck_gateway::native_process::gateway_mode(\n        std::env::var_os(\"PILOTDECK_GATEWAY_MODE\").as_deref(),\n    )?;\n    if explicit_native || mode_native {\n        return pilotdeck_gateway::native_process::run(\n            pilotdeck_gateway::native_process::Options::parse(native_arguments(\n                explicit_native,\n                first,\n                args,\n            ))?,\n        )\n        .await;\n    }\n";
+    // D1 changes the module header and default routing under the user's plan.
+    // Restore only that exact header and remove the exact routing/argv blocks
+    // before applying the unchanged historical A4 digest. Every remaining byte
+    // still guards the explicit legacy proxy. Actual startup, WS and SIGTERM
+    // behavior are tested by tests/mode_routing.rs, not inferred from this hash.
+    const HEADER: &str =
+        "//! Rust gateway entry. The legacy proxy requires an explicit deployment setting.\n";
+    const LEGACY_HEADER: &str =
+        "//! A4 gateway: verified native metadata plus parsed, byte-preserving passthrough.\n";
+    const ROUTING: &str = "    let mut args = std::env::args_os().skip(1);\n    let first = args.next();\n    let explicit_native = pilotdeck_gateway::native_process::native_requested(first.as_deref());\n    // Native is the production default. The explicit --native flag still\n    // outranks a legacy proxy deployment setting; malformed settings are\n    // rejected before either path starts. Proxy mode remains an explicit\n    // diagnostic choice and never supplies an implicit business fallback.\n    let mode_native = pilotdeck_gateway::native_process::gateway_mode(\n        std::env::var_os(\"PILOTDECK_GATEWAY_MODE\").as_deref(),\n    )?;\n    if explicit_native || mode_native {\n        return pilotdeck_gateway::native_process::run(\n            pilotdeck_gateway::native_process::Options::parse(native_arguments(\n                explicit_native,\n                first,\n                args,\n            ))?,\n        )\n        .await;\n    }\n";
     const ARGV_PLUMBING: &str = "/// #1354: `--native` is consumed by the router itself, so only the remaining\n/// arguments reach the native options parser; the config item's routing\n/// leaves every argument — `first` included — to that parser.\nfn native_arguments(\n    explicit: bool,\n    first: Option<std::ffi::OsString>,\n    rest: impl Iterator<Item = std::ffi::OsString>,\n) -> impl Iterator<Item = std::ffi::OsString> {\n    if explicit { None } else { first }.into_iter().chain(rest)\n}\n\n";
     let source = include_str!("../main.rs");
+    negative_assert_eq!(
+        source.matches(HEADER).count(),
+        1,
+        "D1 exact native default module header"
+    );
     negative_assert_eq!(
         source.matches(ROUTING).count(),
         1,
@@ -1568,6 +1573,7 @@ fn default_mode_unchanged() {
             "{:x}",
             Sha256::digest(
                 source
+                    .replacen(HEADER, LEGACY_HEADER, 1)
                     .replacen(ROUTING, "", 1)
                     .replacen(ARGV_PLUMBING, "", 1)
             )

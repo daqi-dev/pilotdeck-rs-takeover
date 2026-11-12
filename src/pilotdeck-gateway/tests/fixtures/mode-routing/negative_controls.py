@@ -53,21 +53,20 @@ ENV_TEST = 'native_process::tests::explicit_options_and_environment'
 LIB_TESTS = (UNIT_TEST, ENV_TEST)
 
 mutations = [
-    # #1303 option A is the pinned default: an unset config item must keep
-    # the proxy routing. Flipping the None arm routes the default entry to
-    # native, so the unit matrix's first assertion dies.
-    ('mode-default-native', NATIVE_PROCESS,
-     '    match mode {\n'
-     '        None => Ok(false),\n'
-     '        Some(value) => match value.to_str() {\n'
-     '            Some("proxy") => Ok(false),\n'
-     '            Some("native") => Ok(true),',
+    # D1 native is the pinned production default. Reverting the None arm
+    # to proxy must be caught by the same unit matrix, with no roster growth.
+    ('mode-default-proxy', NATIVE_PROCESS,
      '    match mode {\n'
      '        None => Ok(true),\n'
      '        Some(value) => match value.to_str() {\n'
      '            Some("proxy") => Ok(false),\n'
      '            Some("native") => Ok(true),',
-     UNIT_TEST, '#1354 unset gateway mode keeps the proxy default (#1303 A)'),
+     '    match mode {\n'
+     '        None => Ok(false),\n'
+     '        Some(value) => match value.to_str() {\n'
+     '            Some("proxy") => Ok(false),\n'
+     '            Some("native") => Ok(true),',
+     UNIT_TEST, 'D1 unset gateway mode selects native'),
     # `native` must route to the native composition; ignoring it turns every
     # config-driven native start into a proxy start (the rollback target
     # only, with no way forward).
@@ -76,7 +75,7 @@ mutations = [
      '            Some("native") => Ok(false),',
      UNIT_TEST, '#1354 explicit native mode'),
     # Fail closed: any other value is rejected at startup. Accepting the
-    # invalid arm silently falls through to the proxy default.
+    # invalid arm silently selects the explicit legacy proxy route.
     ('mode-invalid-accepted', NATIVE_PROCESS,
      '            _ => {\n'
      '                Err("gateway mode (PILOTDECK_GATEWAY_MODE) must be exactly proxy or native.".into())\n'
@@ -162,7 +161,7 @@ mutations = [
 # mutant here is a deliberate edit that must update this tuple too, in the
 # same order as the table.
 EXPECTED_NAMES = (
-    'mode-default-native',
+    'mode-default-proxy',
     'mode-env-ignored',
     'mode-invalid-accepted',
     'mode-empty-accepted',

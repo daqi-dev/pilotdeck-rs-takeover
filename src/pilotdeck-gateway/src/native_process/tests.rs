@@ -67,6 +67,26 @@ impl Drop for Scratch {
 }
 
 #[test]
+fn omitted_sidecar_uses_optional_sibling_and_explicit_path_is_validated() {
+    let scratch = Scratch::new();
+    let mut args = scratch.args();
+    args.truncate(8);
+    let options = Options::parse(args).expect("D1 native entry allows an omitted sidecar");
+    assert_eq!(
+        options.sidecar,
+        std::env::current_exe()
+            .expect("D1 current test executable")
+            .with_file_name("pilotdeck-agent-loop-sidecar"),
+        "D1 omitted sidecar keeps the conventional optional sibling"
+    );
+    std::fs::remove_file(scratch.0.join("sidecar")).expect("D1 remove explicit sidecar fixture");
+    assert!(
+        Options::parse(scratch.args()).is_err(),
+        "D1 explicitly configured nonexistent sidecar is still rejected"
+    );
+}
+
+#[test]
 fn explicit_options_and_environment() {
     #[cfg(unix)]
     {
@@ -98,7 +118,10 @@ fn explicit_options_and_environment() {
         Some(std::ffi::OsStr::new("--native=true")),
         Some(std::ffi::OsStr::new("--help")),
     ] {
-        negative_assert!(!native_requested(first), "#1071 A4 remains default");
+        negative_assert!(
+            !native_requested(first),
+            "D1 only the exact flag requests native explicitly"
+        );
     }
     for (key, bad) in [
         ("--home", "relative"),
@@ -1551,15 +1574,15 @@ fn tool_policy_and_turn_environment() {
 }
 
 // #1354: the main entry's default routing switch as a formal config item.
-// Unset keeps the production default — proxy mode, #1303 option A — `proxy`
-// states it explicitly, `native` is the only other routing, and every other
+// D1 makes native the production default; legacy proxy must be explicit.
+// `native` also selects that route, and every other
 // value — the empty string and non-UTF-8 bytes included — fails closed, the
 // #1369 shape.
 #[test]
 fn gateway_mode_config_matrix() {
     negative_assert!(
-        matches!(gateway_mode(None), Ok(false)),
-        "#1354 unset gateway mode keeps the proxy default (#1303 A)"
+        matches!(gateway_mode(None), Ok(true)),
+        "D1 unset gateway mode selects native"
     );
     negative_assert_eq!(
         gateway_mode(Some(std::ffi::OsStr::new("proxy"))).ok(),

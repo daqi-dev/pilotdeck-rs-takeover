@@ -1,4 +1,4 @@
-//! A4 gateway: verified native metadata plus parsed, byte-preserving passthrough.
+//! Rust gateway entry. The legacy proxy requires an explicit deployment setting.
 use hyper_util::{client::legacy::Client, rt::TokioExecutor};
 use pilotdeck_gateway::{ProxyError, http_proxy::Proxy};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
@@ -15,16 +15,10 @@ async fn main() -> Result<(), ProxyError> {
     let mut args = std::env::args_os().skip(1);
     let first = args.next();
     let explicit_native = pilotdeck_gateway::native_process::native_requested(first.as_deref());
-    // #1354 A8.5-pr3: the main entry's routing. The explicit `--native`
-    // argument (#1071) wins over the `PILOTDECK_GATEWAY_MODE` config item —
-    // the per-invocation flag outranks the deployment default, like the TS
-    // baseline's `readStringFlag(argv, "--host") ?? env.PILOTDECK_GATEWAY_HOST`
-    // (src/cli/pilotdeck.ts:213). The config item is still judged *before*
-    // the flag short-circuits anything, so an invalid value fails closed at
-    // startup even when `--native` is present (#1369 shape). The config
-    // item's default is proxy mode (#1303 option A), so without either
-    // explicit switch the entry below is the unchanged A4 proxy: the
-    // rollback target stage A keeps.
+    // Native is the production default. The explicit --native flag still
+    // outranks a legacy proxy deployment setting; malformed settings are
+    // rejected before either path starts. Proxy mode remains an explicit
+    // diagnostic choice and never supplies an implicit business fallback.
     let mode_native = pilotdeck_gateway::native_process::gateway_mode(
         std::env::var_os("PILOTDECK_GATEWAY_MODE").as_deref(),
     )?;

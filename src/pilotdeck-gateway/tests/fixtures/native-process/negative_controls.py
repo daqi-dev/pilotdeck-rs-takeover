@@ -231,7 +231,7 @@ impl Clone for ReplacementCoordinator {
      'explicit_entry_selects_parser', '#1071 native first argument selects native parser'),
     ('a4-default-bytes', MAIN,
      '"127.0.0.1:28789"', '"127.0.0.1:0"',
-     'native_ws::tests::default_mode_unchanged', '#749 A4 executable remains unchanged'),
+     'native_ws::tests::legacy_proxy_body_unchanged', '#749 A4 executable remains unchanged'),
     # #1131: the A4 proxy now prints its kernel-assigned address on stdout
     # ("PilotDeck server listening: http://host:port"); a readiness regex
     # whose capture excludes the port resolves a port-less address, which

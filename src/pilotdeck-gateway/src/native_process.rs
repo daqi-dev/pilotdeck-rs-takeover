@@ -312,22 +312,12 @@ pub fn native_requested(first: Option<&std::ffi::OsStr>) -> bool {
     first == Some(std::ffi::OsStr::new("--native"))
 }
 
-/// #1354 A8.5-pr3: the main entry's default routing switch, formalized from
-/// #1071's explicit `--native` argument into a config item.
-/// `PILOTDECK_GATEWAY_MODE` names the startup mode: `proxy` (the default,
-/// #1303 option A — the Rust front with the TS upstream stays the rollback
-/// target through stage A) or `native`. Unset keeps the default; every other
-/// value — the empty string and non-UTF-8 bytes included — fails closed at
-/// startup, the same shape as `PILOTDECK_NATIVE_RUN_REGISTRY` (#1369), and
-/// the entry judges the item before the `--native` argument's routing, so the
-/// rejection holds even when that argument is present. The explicit `--native`
-/// argument wins over this config item, like the TS
-/// baseline's own `readStringFlag(argv, "--host") ?? env.PILOTDECK_GATEWAY_HOST`
-/// (src/cli/pilotdeck.ts:213): the per-invocation flag outranks the
-/// deployment default.
+/// Select the standalone gateway deployment. Native Rust execution is the
+/// default; `proxy` is an explicit legacy diagnostic mode. Invalid values
+/// fail closed even when the command line includes `--native`.
 pub fn gateway_mode(mode: Option<&std::ffi::OsStr>) -> Result<bool, ProxyError> {
     match mode {
-        None => Ok(false),
+        None => Ok(true),
         Some(value) => match value.to_str() {
             Some("proxy") => Ok(false),
             Some("native") => Ok(true),
@@ -417,7 +407,13 @@ impl Options {
             return Err("native listen requires 127.0.0.1 and a high port (or 0)".into());
         }
         let token_file = file(Path::new(take("--token-file")?), "token file")?;
-        let sidecar = file(Path::new(take("--sidecar")?), "sidecar")?;
+        // Native execution does not launch a sidecar. Keep validating an
+        // explicitly supplied program, while a selected stdio deployment can
+        // resolve the conventional sibling when no override was supplied.
+        let sidecar = match values.get("--sidecar") {
+            Some(path) => file(Path::new(path), "sidecar")?,
+            None => std::env::current_exe()?.with_file_name("pilotdeck-agent-loop-sidecar"),
+        };
         // #2036: `assembly` builds the child's command line from this path with
         // `to_string_lossy` (assembly.rs:398). Accepting raw bytes would launch
         // a different executable than the canonical path validated above, with

@@ -1,4 +1,4 @@
-//! Parsed WebSocket proxy. TS owns authentication and methods outside the verified local whitelist.
+//! Native Rust gateway, host services and explicit legacy proxy diagnostics.
 mod acceptor;
 mod api_web;
 // Unwired channel component; production assembly is a separate unit.
