@@ -188,7 +188,7 @@ for (const [index, [rel, content]] of seedFiles.entries()) {
   fs.utimesSync(target, seedBase + index, seedBase + index);
 }
 
-// ── 假 provider（OpenAI chat completions 形状）──
+// ── 假 provider（按请求路径分流：OpenAI chat completions、Anthropic messages、OpenAI Responses、Google Gemini）──
 // 规则按顺序匹配请求体的 JSON 文本：when（全部包含）/ unless（全部不包含）。
 // 规则里的字符串（包括工具参数）同样做 {ROOT} 等占位符替换。
 // 请求按命中的规则名分组记录，这样互不相干的两路请求（如标题生成与主对话）
@@ -256,6 +256,103 @@ const mock = http.createServer(async (req, res) => {
     for (const c of calls) block({ type: 'tool_use', id: c.id, name: c.function.name, input: {} }, [{ type: 'input_json_delta', partial_json: c.function.arguments }]);
     blocks.push(ev('message_delta', { delta: { stop_reason: stop, stop_sequence: null }, usage: { output_tokens: usage.completion_tokens } }), ev('message_stop', {}));
     await stream(blocks); return;
+  }
+  // OpenAI Responses 形状（请求路径以 /responses 结尾）。finish 是响应的 status：缺省 completed，
+  // incomplete 表示被 max_output_tokens 截断，failed 表示失败（错误对象取 reply.error）。
+  // 用量从 chat 形状换算：prompt_tokens_details.cached_tokens / completion_tokens_details.reasoning_tokens 进 *_details。
+  if (/\/responses(\?|$)/.test(req.url)) {
+    const status = reply.finish ?? 'completed';
+    const respUsage = {
+      input_tokens: usage.prompt_tokens, input_tokens_details: { cached_tokens: usage.prompt_tokens_details?.cached_tokens ?? 0 },
+      output_tokens: usage.completion_tokens, output_tokens_details: { reasoning_tokens: usage.completion_tokens_details?.reasoning_tokens ?? 0 },
+      total_tokens: usage.total_tokens,
+    };
+    const items = [
+      ...(reply.reasoning ? [{ id: 'rs_bbx', type: 'reasoning', summary: [{ type: 'summary_text', text: reply.reasoning }] }] : []),
+      ...(text !== null ? [{ id: 'msg_bbx', type: 'message', status: 'completed', role: 'assistant', content: [{ type: 'output_text', text, annotations: [] }] }] : []),
+      ...calls.map((c, i) => ({ id: `fc_bbx_${i + 1}`, type: 'function_call', status: 'completed', call_id: c.id, name: c.function.name, arguments: c.function.arguments })),
+    ];
+    const response = (st, output, u) => ({
+      id: 'resp_bbx', object: 'response', created_at: 1700000000, status: st, model: body?.model, output,
+      incomplete_details: st === 'incomplete' ? { reason: 'max_output_tokens' } : null,
+      ...(st === 'failed' ? { error: reply.error ?? { code: 'server_error', message: 'The model failed to generate a response.' } } : { error: null }),
+      usage: u,
+    });
+    if (!body?.stream) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(response(status, items, respUsage)));
+      return;
+    }
+    let seq = 0;
+    const ev = (type, data) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data, sequence_number: seq++ })}\n\n`;
+    const blocks = [ev('response.created', { response: response('in_progress', [], null) }), ev('response.in_progress', { response: response('in_progress', [], null) })];
+    items.forEach((item, output_index) => {
+      const at = { item_id: item.id, output_index };
+      if (item.type === 'reasoning') {
+        const part = item.summary[0];
+        blocks.push(
+          ev('response.output_item.added', { output_index, item: { ...item, summary: [] } }),
+          ev('response.reasoning_summary_part.added', { ...at, summary_index: 0, part: { ...part, text: '' } }),
+          ev('response.reasoning_summary_text.delta', { ...at, summary_index: 0, delta: part.text }),
+          ev('response.reasoning_summary_text.done', { ...at, summary_index: 0, text: part.text }),
+          ev('response.reasoning_summary_part.done', { ...at, summary_index: 0, part }),
+          ev('response.output_item.done', { output_index, item }));
+      } else if (item.type === 'message') {
+        const part = item.content[0];
+        blocks.push(
+          ev('response.output_item.added', { output_index, item: { ...item, status: 'in_progress', content: [] } }),
+          ev('response.content_part.added', { ...at, content_index: 0, part: { ...part, text: '' } }),
+          ...(reply.chunks ?? [text]).map((delta) => ev('response.output_text.delta', { ...at, content_index: 0, delta })),
+          ev('response.output_text.done', { ...at, content_index: 0, text: part.text }),
+          ev('response.content_part.done', { ...at, content_index: 0, part }),
+          ev('response.output_item.done', { output_index, item }));
+      } else {
+        blocks.push(
+          ev('response.output_item.added', { output_index, item: { ...item, status: 'in_progress', arguments: '' } }),
+          ev('response.function_call_arguments.delta', { ...at, delta: item.arguments }),
+          ev('response.function_call_arguments.done', { ...at, arguments: item.arguments }),
+          ev('response.output_item.done', { output_index, item }));
+      }
+    });
+    blocks.push(ev(`response.${status}`, { response: response(status, items, respUsage) }));
+    await stream(blocks); return;
+  }
+  // Google Gemini generateContent 形状（路径 …/models/<模型>:generateContent 或 :streamGenerateContent?alt=sse）。
+  // finish 是 finishReason（缺省 STOP，工具调用也是 STOP）；推理文本是 thought: true 的部分，带 thoughtSignature。
+  // 工具调用只在规则里显式写了 id 时才带 functionCall.id（真实 Gemini API 通常不带）。用量换算成 usageMetadata。
+  const google = req.url.match(/\/models\/([^/:?]+):(generateContent|streamGenerateContent)(\?|$)/);
+  if (google) {
+    const finishReason = reply.finish ?? 'STOP';
+    const given = [...(reply.tool ? [reply.tool] : []), ...(reply.tools ?? [])];
+    const cached = usage.prompt_tokens_details?.cached_tokens;
+    const thoughts = usage.completion_tokens_details?.reasoning_tokens;
+    const usageMetadata = {
+      promptTokenCount: usage.prompt_tokens, candidatesTokenCount: usage.completion_tokens, totalTokenCount: usage.total_tokens,
+      ...(cached !== undefined ? { cachedContentTokenCount: cached } : {}),
+      ...(thoughts !== undefined ? { thoughtsTokenCount: thoughts } : {}),
+    };
+    const thought = reply.reasoning ? [{ text: reply.reasoning, thought: true, thoughtSignature: 'sig_bbx' }] : [];
+    const callParts = calls.map((c, i) => ({ functionCall: {
+      ...(given[i]?.id !== undefined ? { id: given[i].id } : {}),
+      name: c.function.name, args: (() => { try { return JSON.parse(c.function.arguments); } catch { return {}; } })(),
+    } }));
+    const chunk = (parts, last) => ({
+      candidates: [{ content: { role: 'model', parts }, ...(last ? { finishReason } : {}), index: 0 }],
+      ...(last ? { usageMetadata } : {}), modelVersion: decodeURIComponent(google[1]), responseId: 'resp_bbx',
+    });
+    if (google[2] === 'generateContent') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(chunk([...thought, ...(text !== null ? [{ text }] : []), ...callParts], true)));
+      return;
+    }
+    const pieces = [
+      ...thought.map((p) => [p]),
+      ...(text !== null ? (reply.chunks ?? [text]).map((t) => [{ text: t }]) : []),
+      ...(callParts.length ? [callParts] : []),
+    ];
+    if (!pieces.length) pieces.push([{ text: '' }]);
+    await stream(pieces.map((parts, i) => `data: ${JSON.stringify(chunk(parts, i === pieces.length - 1))}\r\n\r\n`));
+    return;
   }
   // OpenAI chat completions 形状。
   const message = {

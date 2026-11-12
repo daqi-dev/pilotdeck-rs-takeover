@@ -67,7 +67,7 @@ node scripts/bbx/diff.mjs /tmp/a.json /tmp/b.json          # 两份基线互比�
 
 `serve` 步骤用来比常驻命令（`pilotdeck server`）自己的 stdout / stderr / 退出码，这些在 `"server"` 起的服务上属于不比较的 `serverLog`。它用 CLI 起一个进程，等 stdout 里出现 `until`（默认 `WebSocket: `），依次执行 `then` 里的步骤，然后发 `signal`（默认 `SIGTERM`）并等进程退出；15 秒不退就 SIGKILL，如实记成 `signal: "SIGKILL"`。进程没等到 `until` 就自己退出（启动失败）时不执行 `then`，照样记输出和退出码。这类场景通常写 `"server": false`；`then` 里的 `http` / `connect` 连的是固定端口 38411，所以被起的进程要监听在那里（采集器默认给了 `PILOTDECK_GATEWAY_PORT=38411`）。发信号前客户端若还连着，基线会一直等到它断开，需要比停机时先 `{disconnect: true}`。
 
-假 provider 的 `reply` 除了 `{text}`、`{tool}`、`{status, body}` 之外还可以组合：`tools`（多个工具调用，可与 `text` 同时给）、工具上的 `rawArguments`（原样当参数字符串，用来回非法 JSON）、`reasoning`（推理文本）、`chunks`（文本分多块流式发出）、`finish`（覆盖结束原因，如 `length`）、`usage`、`delayMs`（先等一会儿再回）、`breakAfter: n`（流里发出 n 块后断开连接）、`hangAfter: n`（发出 n 块后挂住，`hangMs` 后断开）。请求路径以 `/messages` 结尾时按 Anthropic messages 的形状应答，其余按 OpenAI chat completions 的形状。
+假 provider 的 `reply` 除了 `{text}`、`{tool}`、`{status, body}` 之外还可以组合：`tools`（多个工具调用，可与 `text` 同时给）、工具上的 `rawArguments`（原样当参数字符串，用来回非法 JSON）、`reasoning`（推理文本）、`chunks`（文本分多块流式发出）、`finish`（覆盖结束原因，如 `length`）、`usage`、`delayMs`（先等一会儿再回）、`breakAfter: n`（流里发出 n 块后断开连接）、`hangAfter: n`（发出 n 块后挂住，`hangMs` 后断开）。请求路径按协议分流：以 `/messages` 结尾按 Anthropic messages 的形状应答；以 `/responses` 结尾按 OpenAI Responses（`finish` 是响应的 `status`：`completed` / `incomplete` / `failed`，`failed` 的错误对象取 `reply.error`）；`…/models/<模型>:generateContent` 或 `:streamGenerateContent` 按 Google Gemini（`finish` 是 `finishReason`，缺省 `STOP`；推理文本是带 `thoughtSignature` 的 `thought` 部分；工具调用只有显式写了 `id` 才带 `functionCall.id`）；其余按 OpenAI chat completions。`usage` 一律按 chat 形状写（可带 `prompt_tokens_details.cached_tokens`、`completion_tokens_details.reasoning_tokens`），各协议自行换算。
 
 引用前面跑出来的值（服务端随机生成的 id 之类）：步骤或 provider 规则上写 `"save": {"名字": "正则"}`，正则在该步骤结果的 JSON 文本上（provider 规则则是在命中它的那次模型请求的原文上）匹配，第一个捕获组存成这个名字；之后的步骤参数和 provider 应答里用 `{saved.名字}` 引用。存下来的值不进产物，两侧各存各的。
 
@@ -82,7 +82,7 @@ node scripts/bbx/diff.mjs /tmp/a.json /tmp/b.json          # 两份基线互比�
 ## 边界
 
 - 两侧在同一台机器、同一个 Node / 同一份构建上跑，不防本机被人动手脚，只防实现不一致。
-- 假 provider 有 OpenAI chat completions 和 Anthropic messages 两种形状；OpenAI responses、Google 两种协议形状还没有。
+- 假 provider 有 OpenAI chat completions、Anthropic messages、OpenAI Responses、Google Gemini 四种形状（基线 `src/model/providers/` 下的全部协议）。Responses 只发 `response.failed`，不发顶层 `error` 事件；Google 只发 SSE，不发数组形式的流。
 
 落盘的 sqlite 数据库按内容比：每张表的建表语句和全部行（行排序后比），不比文件字节。
 
