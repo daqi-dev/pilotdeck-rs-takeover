@@ -62,18 +62,26 @@ Rust 已有实现和场景的：`pilotdeck server` 启停；对话主干与全�
 
 整体安排（人已同意）：先收住手上的；再建立「基线对外表面」的完整清单并把覆盖统计扩展到各维度；之后按真实使用排优先级（界面用到的约 45 个 method 是地基，已验证）；清理旧代码提前做；最后是发布版本与性能、需要人参与的真实环境验收。
 
-在途的子代理：无。2026-11-12 下午人要重启机器上的所有应用，四个子代理按要求停下并提交了现状，工作区都干净。**下面四个分支还没合并**，worktree 在 `.claude/worktrees/<名字>`，分支名是 `worktree-<名字>`：
+在途的子代理：无。2026-11-12 下午前三个暂停的分支（stdio sidecar、WS 参数、配置键与环境变量）已合并并推送（`a3f27ab15`）。合并后的全量对拍（本机，没有子代理）：390 个场景 381 个 SAME。不一致的 9 个：
 
-| worktree | 基点 | 内容 | 状态 | 接手要做的 |
-|---|---|---|---|---|
-| `agent-addb9c3e7a4076e76` | `ea9230ff7` | stdio 部署的 sidecar 写会话操作账本（`agent_loop_operation_*`、`result_unknown`）；SDK 的 ConfigChange / FileChanged hook；检查点恢复后 token-usage 的键序。5 个提交、9 个新场景 | 代码做完；gateway / transport / cli 的 nextest 7167 个只有已知 3 个失败；全量对拍被中断 | 合并，跑全量。定两件事：① 会话 `.jsonl` 里 `binding.moduleInstanceId` / `binding.connectionGeneration` / `streamId` 是随机串，基线自比不稳，要声明；② `compact-restart` 原样跑 DIFF 186 是比较器的问题：`[gateway:turn-timing]` 那行被去掉之前，行里的 UUID 已经参与了编号，后面的序号全部错位——改 `diff.mjs` 先删行再编号。它为了标题记录与 `agent_loop_operation_started` 的先后改了 `agent-loop-sidecar-stdio` 的时序，另一个办法是把 `agent_loop_operation_*` 加进 `FLOAT_OVER` |
-| `agent-ac31eeed010db2b22` | `24a7546d5` | ws-params 45 项：会话读写类 method 的 projectKey、`steer_turn` 附件、`list_sessions.cursor`、usage 快照按项目、`skill_*` / `user_dialog_*` 的 projectKey、`seed_read_state` 的 sdkSessionConfig 等。12 个提交 | 代码与单元测试做完（按基线改了 4 个旧测试）；全量对拍跑了 143 个被中断 | **先单独重跑 `compact-hooks`**（它的半截全量里报 DIFF 56，没查是回归还是负载）。合并时 `skills/import.rs` 的 mtime 修复会与主干的 `node_io::copy_file` 冲突，取主干的。它留了 4 个差异证明场景待定：`params-permission-decide-binding-malformed`（畸形绑定在原连接断开后基线会送达，Rust 不送达，属于权限）、`params-reload-extensions-diffs`（基线沿用建会话时的技能清单，Rust 每轮重扫；`changedPaths` 非字符串元素基线原样回显）、`params-user-dialog-notify-project`（`user_dialog_changed` 通知少 projectKey）、`params-seed-read-state-cwd-type` |
-| `agent-a6d15e12b4f55aab1` | `ea9230ff7` | 配置键 99 项与环境变量 132 项的分类，A 类 13 个场景；修了 always-on 运行时日志、apiServer 非法端口的报错、CLI 连 gateway 前的地址校验、遥测本地队列文件。15 个提交 | 12 个新场景自比与对 Rust 都一致；全量跑了 267 个被中断；nextest 没跑 | 合并，跑 nextest 与全量。待定：`cfg-adapters-unmigrated`——基线没装 grammy / discord.js / @slack/bolt 等渠道 SDK，这些渠道在基线上只打一行「not installed」然后照常启动；Rust 对其中九个直接拒绝启动，slack 则有真实实现。另：Rust 没有扩展目录监视（基线 skill 落盘后打印 `Extensions changed for project …`）；多渠道同时启用时 Rust 的启动日志顺序不定。分类结论：config 剩下的多为渠道与外部模块（需要外部服务）和只解析不使用的键；env 剩下的多为渠道令牌、StaffDeck、浏览器、遥测内容、Windows / nsjail 专用 |
-| `agent-a47c5420ea6743613` | `34c3e8364` | `modules.tools` 外部能力模块接线，1 个 `wip:` 提交、6 个场景 | 做到一半：3 个场景一致，2 个只差随机的 `requestId`（基线 `Math.random().toString(36)`）及随它变的 `content-length`，`modules-tools-result-unknown` 没对齐（要改 sidecar 的循环）；自比没跑完，clippy / 测试 / 全量 / 注入错误检查都没做 | 派新的 Opus 子代理在原 worktree 接着做。它改了 `pilotdeck-transport/src/host_operations.rs`（删掉按工具结果的 `details.outcome` 判整轮未知的检查）和 `tests/host_contract.rs` 的一条断言，合并前要与第一个分支的 sidecar 改动一起看。基线结论：`modules` 有 agentLoop / skills / modelProvider / tools / context / knowledge 六个核心槽位加 sop；Rust 已接 knowledge、tools（未验证完），其余外部绑定启动即拒绝。**外部工具调用在基线里不走宿主的权限判定和输入校验**（`runtimePorts.ts:33-79`，有场景证明），Rust 与基线一样宽 |
+| 场景 | 性质 |
+|---|---|
+| `gap-tool-read-file-vision`、`tool-write-file-diagnostics` | 已定不移植，保持可见 |
+| `cfg-adapters-unmigrated` | 渠道启动表现；人已定照基线对齐（只打一行「not installed」然后照常启动），待做 |
+| `params-permission-decide-binding-malformed` | 基线的畸形绑定绕过绑定校验，Rust 不照做。`accepted`（`malformed-binding-never-matches`）已写进场景文件但**还没重跑确认、没提交** |
+| `params-reload-extensions-diffs`、`params-seed-read-state-cwd-type`、`params-user-dialog-notify-project` | WS 参数分支留下的真实差异，待修 |
+| `gap-sdk-submit-failed-status`、`hook-post-tool-use` | 偶发：单独重跑 5 次全部一致。四个槽位并行时才出现，对拍工具并行下还有不稳的地方，要查 |
 
-主检出：`34c3e8364`（合并工具参数分支）之后只重跑了相关的 14 个场景，没跑全量，**这之后的提交还没推送**。重启后先跑一次全量再推。
+**换对话时正在跑、要去取结果的两件事：**
 
-已定未做：PDF 按页渲染、写后语法诊断两项登记为已知差异、不移植（人 2026-11-12 交给主会话定）；在 `gap-tool-read-file-vision`、`tool-write-file-diagnostics` 里登记 `accepted` 并写进「需要人过目的决定」。
+1. 本机全量四条命令：结果写在 `_tmp/20261112-session/four-commands.txt`（fmt 与 clippy 已通过；`nextest` 与文档测试跑完后追加在文件末尾）。它是上一个对话的后台进程，上一个对话关掉它就会被杀；文件里没有 `Summary` 行就重跑。
+2. cb8 上的首次构建与试跑：`ssh cb8`，日志 `~/ws/pdrs-takeover/logs/first-run.log`，脚本 `~/ws/pdrs-takeover/run-first.sh`（构建 → 比较器自测 → `turn-text` 自比 → `turn-text` 基线 vs Rust）。它跑的是较早的提交 `e8702d36`，目的是看对拍工具在 Linux 上哪里要适配（路径前缀 `/private/tmp`、Seatbelt 相关场景的预期等）。
+
+cb8 的情况（2026-11-12）：Ubuntu 24.04、aarch64、20 核、119 GB；Rust 1.99.1 在 `~/.cargo/bin`，Node v22.22.1 在 `~/.local/bin`；没有 `gitleaks`、`rg`、`nsjail`。我们的目录是 `~/ws/pdrs-takeover/`（仓库克隆在其中的 `pilotdeck-rs`，基线从 `~/ws/pdrs-runner/resources/PilotDeck` 复制，已核对是 `cc7c4e6`）。机器上有别的流程在用（`~/ws/pilotdeck-rs-cc2c/` 的 backend-validation 等），只在我们自己的目录里工作，不碰别人的目录和进程。人同意同时使用、同意在磁盘上操作。占 90 GB 的 vLLM 容器 `vllm-jev`（autotrust 的模型）经人确认后已 `docker stop`，没有删，`docker start vllm-jev` 可恢复。
+
+**还没合并的一个分支**：`worktree-agent-a47c5420ea6743613`（worktree `.claude/worktrees/agent-a47c5420ea6743613`，基点 `34c3e8364`）：`modules.tools` 外部能力模块接线，1 个 `wip:` 提交、6 个场景，做到一半——3 个场景一致，2 个只差随机的 `requestId`（基线 `Math.random().toString(36)`）及随它变的 `content-length`，`modules-tools-result-unknown` 没对齐（要改 sidecar 的循环）；自比没跑完，clippy / 测试 / 全量 / 注入错误检查都没做。派新的 Opus 子代理在原 worktree 接着做。它改了 `pilotdeck-transport/src/host_operations.rs`（删掉按工具结果的 `details.outcome` 判整轮未知的检查）和 `tests/host_contract.rs` 的一条断言，合并前对着已合并的 stdio sidecar 改动再看一遍。基线结论：`modules` 有 agentLoop / skills / modelProvider / tools / context / knowledge 六个核心槽位加 sop；Rust 已接 knowledge、tools（未验证完），其余外部绑定启动即拒绝。外部工具调用在基线里不走宿主的权限判定和输入校验（`runtimePorts.ts:33-79`，有场景证明），Rust 与基线一样宽。
+
+范围定下来后的剩余工作（2026-11-12）：bbx 的两处漏洞（两侧都失败也判一致；非 UTF-8 文件只比长度）；sidecar 的 TCP 部署与断线恢复；CLI 的 `cron` 与在线默认会话（在 cb8 上占 18789 端口对拍）；OpenAI Responses 与 Google 协议的端到端场景（先给假 provider 加这两种形状）；外部能力模块；渠道启动表现照基线对齐；上表里 WS 参数的 3 个差异；Rust 没有扩展目录监视（基线 skill 落盘后打印 `Extensions changed for project …`）；清理（透明代理、未接线代码、旧测试装置）、sidecar 改进程内、发布构建与性能、TS 退役证据。不做：阶段 B、前端、StaffDeck、各渠道的生产实现、Rust 原生扩展接口、PDF 按页渲染、写后语法诊断。
 
 主会话自己要做的：
 
