@@ -1410,8 +1410,13 @@ impl HttpHookExecutor {
             wire_headers,
             bytes::Bytes::from(body),
             || JsString::from("fetch failed"),
-            |request| {
+            |mut request| {
                 let deadline = tokio::time::Instant::now() + self.timeout;
+                let wire = crate::fetch_redirect::node_fetch_wire_headers(
+                    request.uri(),
+                    request.headers(),
+                );
+                *request.headers_mut() = wire;
                 let sent = send(request);
                 let signal = options.signal.as_ref();
                 async move {

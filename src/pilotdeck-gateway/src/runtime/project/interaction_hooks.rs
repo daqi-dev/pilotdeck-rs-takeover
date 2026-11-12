@@ -19,6 +19,7 @@ use crate::{
             CallbackFuture, CallbackHookHandler, CallbackInput, CallbackRegistration,
             CallbackResult,
         },
+        runtime::HookObservers,
     },
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
@@ -147,13 +148,36 @@ impl InteractionHooks {
         permission: Option<TurnPermission>,
         router: &mut ModuleRouter,
     ) -> Result<TurnHooks, HostError> {
+        self.bind_turn_observed(
+            binding,
+            run_id,
+            settings,
+            permission,
+            router,
+            HookObservers::default(),
+        )
+    }
+    /// [`Self::bind_turn`] with a host observer on the run's execution events.
+    pub fn bind_turn_observed(
+        &self,
+        binding: lifecycle::Binding,
+        run_id: JsString,
+        settings: HooksSettings,
+        permission: Option<TurnPermission>,
+        router: &mut ModuleRouter,
+        observers: HookObservers,
+    ) -> Result<TurnHooks, HostError> {
         self.bind_with_options(
             binding,
             run_id,
             settings,
             permission,
             router,
-            HookRuntimeOptions::default(),
+            HookRuntimeOptions {
+                observer: observers.execution,
+                on_async_registered: observers.async_registered,
+                ..Default::default()
+            },
         )
     }
     fn bind_with_options(

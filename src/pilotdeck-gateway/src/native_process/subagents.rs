@@ -322,6 +322,9 @@ pub(super) struct ParentTurn {
     pub(super) config: JsObject,
     /// The parent's `eventEmitter`, when it has one.
     pub(super) emit: Option<EventSink>,
+    /// The parent's `dependencies.lifecycle`: `SubagentStart` /
+    /// `SubagentStop` are the parent session's hook events.
+    pub(super) lifecycle: Option<Arc<dyn crate::runtime::tools::ToolLifecycle>>,
 }
 
 struct OneShotPort {
@@ -968,6 +971,24 @@ impl Fork {
         })
     }
 
+    /// `dispatchSubagentLifecycle` (OneShotSubagentPort.ts:494-518): the
+    /// parent's session, cwd, permission mode and turn environment.
+    async fn lifecycle(
+        &self,
+        event: &'static str,
+        context: &ToolRunContext,
+        payload: JsObject,
+    ) -> Result<(), JsString> {
+        let Some(lifecycle) = &self.parent.lifecycle else {
+            return Ok(());
+        };
+        lifecycle
+            .dispatch(event, &event.into(), payload, context)
+            .await
+            .map(|_| ())
+            .map_err(|error| JsString::from(error.message))
+    }
+
     /// `api.fork`: the parent-side bookkeeping around one child run.
     async fn run(
         self,
@@ -1013,6 +1034,17 @@ impl Fork {
             ("subagentSessionId", JsValue::String(child_session.clone())),
         ]))
         .await?;
+        // `dispatchSubagentLifecycle("SubagentStart")` between the durable
+        // start and the start event (OneShotSubagentPort.ts:129-147).
+        self.lifecycle(
+            "SubagentStart",
+            &context,
+            object([
+                ("subagentId", JsValue::String(request.subagent_id.clone())),
+                ("subagentType", definition.id.into()),
+            ]),
+        )
+        .await?;
         let mut started = self.base("subagent_started", &request.subagent_id, definition);
         if let Some(call) = &request.tool_call_id {
             started.insert("toolCallId".into(), JsValue::String(call.clone()));
@@ -1046,6 +1078,16 @@ impl Fork {
                 let markdown = JsString::from(outcome.markdown.as_str());
                 self.record_completed(&request.subagent_id, definition, &markdown, Some(&outcome))
                     .await?;
+                self.lifecycle(
+                    "SubagentStop",
+                    &context,
+                    object([
+                        ("subagentId", JsValue::String(request.subagent_id.clone())),
+                        ("subagentType", definition.id.into()),
+                        ("success", JsValue::Bool(true)),
+                    ]),
+                )
+                .await?;
                 self.emit(completed(true, None, outcome.duration_ms));
                 Ok(ForkReport {
                     parsed: parse_summary(&outcome.markdown),
@@ -1067,6 +1109,24 @@ impl Fork {
                     Ok(()) => failure,
                     Err(_) => {
                         "Subagent failed and its parent completion could not be recorded.".into()
+                    }
+                };
+                let failure = match self
+                    .lifecycle(
+                        "SubagentStop",
+                        &context,
+                        object([
+                            ("subagentId", JsValue::String(request.subagent_id.clone())),
+                            ("subagentType", definition.id.into()),
+                            ("success", JsValue::Bool(false)),
+                        ]),
+                    )
+                    .await
+                {
+                    Ok(()) => failure,
+                    Err(_) => {
+                        "Subagent failed and its stop lifecycle hook could not be dispatched."
+                            .into()
                     }
                 };
                 self.emit(completed(false, Some(aborted), 0.0));

@@ -440,6 +440,9 @@ async fn start_assembly(
     // `router.activeTurnRunId(sessionKey)`, published once the session owner
     // exists, for the router's retry-progress projection.
     let active_run: ActiveRunSlot = Arc::default();
+    // The deferred async-hook registry, likewise built with the host.
+    let async_hooks: super::hooks::AsyncRegistrySlot = Arc::default();
+    let prepare_async_hooks = async_hooks.clone();
     let project = project_registry_with(
         &options,
         &env,
@@ -521,6 +524,7 @@ async fn start_assembly(
             let recorders = prepare_recorders.clone();
             let interactions = prepare_interactions.clone();
             let gateway_emit = prepare_gateway_emit.clone();
+            let async_hooks = prepare_async_hooks.clone();
             let permission_rule_sets = prepare_permission_rule_sets.clone();
             let mcp_config_handle = prepare_mcp_config.clone();
             let acquire_miss_report = prepare_acquire_miss_report.clone();
@@ -590,6 +594,9 @@ async fn start_assembly(
                             .cloned()
                     });
                 let snapshot = staged.snapshot();
+                // `modules.skills.enabled: false` (ProjectSessionRuntimeBundle.ts:250-300):
+                // no `read_skill`, and the session contributes no skills.
+                let skills_disabled = crate::runtime::project::skills_module_disabled(&snapshot);
                 let agent = snapshot
                     .get("config")
                     .and_then(|v| v.get("agent"))
@@ -693,6 +700,36 @@ async fn start_assembly(
                 // before this session was created.
                 let sdk_config = session_overrides.sdk_config(&context.session_key);
                 let user_dialog_kinds = super::sdk_config::user_dialog_kinds(sdk_config.as_ref());
+                // `await runtime.pluginRuntime.refresh()` (ProjectSessionRuntimeBundle
+                // .ts:247-264): the session's plugin contributions are taken
+                // once, when it is created. Their hooks come first, then the
+                // SDK session config's (SessionInteractionBundle.ts:126-140).
+                let plugin_runtime_resource = staged.resource(Resource::PluginRuntime);
+                let session_plugins = plugin_runtime_resource
+                    .as_ref()
+                    .and_then(|resource| resource.as_any().downcast_ref::<PluginResources>());
+                let plugin_hooks = match session_plugins {
+                    Some(plugins) => crate::runtime::plugins::collect_plugin_hooks(
+                        &plugins
+                            .runtime
+                            .refresh()
+                            .await
+                            .map_err(|error| RuntimeError::new(error.to_string()))?,
+                    ),
+                    None => Vec::new(),
+                };
+                let hook_settings =
+                    super::hooks::session_hook_settings(plugin_hooks, sdk_config.as_ref());
+                let include_hook_events = sdk_config
+                    .as_ref()
+                    .and_then(|config| config.get("includeHookEvents"))
+                    == Some(&JsValue::Bool(true));
+                // `options.sdkHooks`: only an SDK hook configuration routes
+                // async invocations to the gateway registry.
+                let sdk_hooks = sdk_config
+                    .as_ref()
+                    .and_then(|config| config.get("hooks"))
+                    .is_some_and(|hooks| !hooks.is_undefined());
                 let stored_style_content =
                     match session_overrides.output_style(&context.session_key) {
                         Some(name) => output_style_content(&staged, &name).await,
@@ -759,67 +796,57 @@ async fn start_assembly(
                 // factory's per-session registry. An unpublished config keeps
                 // the empty composition: the ask-rule sync above already
                 // reported that wiring miss for this assembly (#1429).
-                let (session_mcp, session_mcp_release) =
-                    match mcp_config_handle.get() {
-                        Some(mcp_config) => {
-                            let provider = staged.owner(Family::McpProvider).ok_or_else(|| {
-                                RuntimeError::new("Native MCP provider is missing.")
-                            })?;
-                            let provider = provider
-                                .as_any()
-                                .downcast_ref::<McpProviderResource>()
-                                .ok_or_else(|| {
-                                    RuntimeError::new("Native MCP provider has the wrong type.")
-                                })?
-                                .provider()
-                                .clone();
-                            // #1433 fix-r1 (review P2#4): read the snapshot's
-                            // already-normalized key — `config/snapshot.rs`
-                            // normalizes it to a finite number with a floor of 1
-                            // (the TS `numberField(..., 5)` + `Math.max(1, …)`),
-                            // so re-clamping here would be a second
-                            // normalization, and the old `as usize` cast
-                            // truncated a fractional cap (TS `size >= 2.5` still
-                            // admits the third registration).
-                            let max_per_session_instances = snapshot
-                                .get("config")
-                                .and_then(|config| config.get("gateway"))
-                                .and_then(|gateway| gateway.get("maxPerSessionMcpInstances"))
-                                .and_then(JsValue::as_number)
-                                .unwrap_or(5.0);
-                            // `await runtime.pluginRuntime.refresh()` then the
-                            // generation's `contributions.mcpServers`
-                            // (ProjectSessionRuntimeBundle.ts:247-279): plugin
-                            // servers — the builtin ones included — are composed
-                            // when the session is created.
-                            let plugin_servers =
-                                match staged.resource(Resource::PluginRuntime).as_ref().and_then(
-                                    |resource| resource.as_any().downcast_ref::<PluginResources>(),
-                                ) {
-                                    Some(plugins) => {
-                                        plugins.runtime.refresh().await.map_err(|error| {
-                                            RuntimeError::new(error.to_string())
-                                        })?;
-                                        plugins.runtime.mcp_servers().await
-                                    }
-                                    None => JsObject::new(),
-                                };
-                            super::tools::session_mcp_tools(super::tools::SessionMcpToolsOptions {
-                                mcp_config,
-                                plugin_servers,
-                                provider: &provider,
-                                per_session_runtimes: &session_mcp_runtimes,
-                                session_key: &context.session_key,
-                                max_per_session_instances,
-                                on_diagnostic: mcp_diagnostic.clone(),
-                            })
-                            .await?
-                        }
-                        None => (
-                            super::tools::SessionMcpTools::empty(),
-                            super::tools::SessionMcpRelease::default(),
-                        ),
-                    };
+                let (session_mcp, session_mcp_release) = match mcp_config_handle.get() {
+                    Some(mcp_config) => {
+                        let provider = staged
+                            .owner(Family::McpProvider)
+                            .ok_or_else(|| RuntimeError::new("Native MCP provider is missing."))?;
+                        let provider = provider
+                            .as_any()
+                            .downcast_ref::<McpProviderResource>()
+                            .ok_or_else(|| {
+                                RuntimeError::new("Native MCP provider has the wrong type.")
+                            })?
+                            .provider()
+                            .clone();
+                        // #1433 fix-r1 (review P2#4): read the snapshot's
+                        // already-normalized key — `config/snapshot.rs`
+                        // normalizes it to a finite number with a floor of 1
+                        // (the TS `numberField(..., 5)` + `Math.max(1, …)`),
+                        // so re-clamping here would be a second
+                        // normalization, and the old `as usize` cast
+                        // truncated a fractional cap (TS `size >= 2.5` still
+                        // admits the third registration).
+                        let max_per_session_instances = snapshot
+                            .get("config")
+                            .and_then(|config| config.get("gateway"))
+                            .and_then(|gateway| gateway.get("maxPerSessionMcpInstances"))
+                            .and_then(JsValue::as_number)
+                            .unwrap_or(5.0);
+                        // The refreshed generation's `contributions.mcpServers`
+                        // (ProjectSessionRuntimeBundle.ts:247-279): plugin
+                        // servers — the builtin ones included — are composed
+                        // when the session is created.
+                        let plugin_servers = match session_plugins {
+                            Some(plugins) => plugins.runtime.mcp_servers().await,
+                            None => JsObject::new(),
+                        };
+                        super::tools::session_mcp_tools(super::tools::SessionMcpToolsOptions {
+                            mcp_config,
+                            plugin_servers,
+                            provider: &provider,
+                            per_session_runtimes: &session_mcp_runtimes,
+                            session_key: &context.session_key,
+                            max_per_session_instances,
+                            on_diagnostic: mcp_diagnostic.clone(),
+                        })
+                        .await?
+                    }
+                    None => (
+                        super::tools::SessionMcpTools::empty(),
+                        super::tools::SessionMcpRelease::default(),
+                    ),
+                };
                 retained.push(move || Box::pin(async move { session_mcp_release.release().await }));
                 let tail = TailConfig {
                     cwd: Some(project_root.clone()),
@@ -908,6 +935,12 @@ async fn start_assembly(
                         .with_sdk_permissions(sdk_config.as_ref())
                         .with_permission_mode_source(permission_source.clone())
                         .with_continuation_parent(continuation_parent.parent_ref())
+                        .with_hooks(
+                            hook_settings.clone(),
+                            gateway_emit.clone(),
+                            include_hook_events,
+                            sdk_hooks.then(|| async_hooks.clone()),
+                        )
                         .with_permission_prompt(gateway_emit, session_rules, permission_timeout)
                         .with_permission_mode_transition({
                             let session_overrides = session_overrides.clone();
@@ -927,7 +960,8 @@ async fn start_assembly(
                             None => ports,
                         };
                         let ports = match plugin_runtime {
-                            Some(plugins) => ports.with_skills(plugins),
+                            Some(plugins) if !skills_disabled => ports.with_skills(plugins),
+                            Some(_) => ports,
                             None => ports,
                         };
                         let ports = match interaction_events {
@@ -1361,6 +1395,9 @@ async fn start_assembly(
             );
             let async_hook_registry =
                 steer::build_async_hook_registry(&build_project, &owner, &coordinator);
+            if let Some(registry) = &async_hook_registry {
+                let _ = async_hooks.set(registry.clone());
+            }
             // #2294 A7.8: the one automation bundle of the native process —
             // the port of `ProjectAutomationBundle`, which now constructs the
             // one `CronManager` (the #1326 lane's manager behind the bundle's
@@ -1791,28 +1828,6 @@ pub(super) fn register_project_at(
 /// `subagents::compose_subagents_section` — and are no longer refused.
 /// Plugins that contribute hooks stay refused with the config-level hooks.
 pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(), ProxyError> {
-    use crate::runtime::plugins::{PilotExtensionPaths, PluginSource, loader};
-    let paths = PilotExtensionPaths::resolve(&options.project, &options.home);
-    let mut plugin_paths: Vec<_> = loader::discover_plugin_paths(&[
-        (paths.global_plugins_dir, PluginSource::Global),
-        (paths.project_plugins_dir, PluginSource::Project),
-    ])
-    .into_iter()
-    .map(|found| (found.path, found.source))
-    .collect();
-    if let Some(root) = &options.builtin_plugins_root {
-        plugin_paths.extend(
-            loader::load_builtin_plugins(root)
-                .iter()
-                .map(|plugin| (plugin.path.clone(), PluginSource::Builtin)),
-        );
-    }
-    if plugin_paths.iter().any(|(path, source)| {
-        loader::load_plugin_from_path(path, *source)
-            .is_ok_and(|plugin| plugin.hooks_config.is_some_and(|hooks| !hooks.is_empty()))
-    }) {
-        return Err("Native isolated profile does not yet support configured hooks.".into());
-    }
     use crate::runtime::project::ConfigSource;
     let snapshot = crate::runtime::project::NativeConfigSource::new(
         options.project.clone(),
@@ -1821,27 +1836,29 @@ pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(),
         None,
     )
     .load(&options.project)?;
-    // The fixed config loader drops unknown top-level fields from config,
-    // so inspecting config.hooks alone silently misses the supplied YAML.
-    // Plugin hooks are refused above; SDK hooks are refused by workspace_id.
-    if snapshot
-        .get("diagnostics")
-        .and_then(|value| match value {
-            JsValue::Array(rows) => Some(rows),
-            _ => None,
-        })
-        .is_some_and(|rows| {
-            rows.iter()
-                .any(|row| row.get("path") == Some(&"hooks".into()))
-        })
-    {
-        return Err("Native isolated profile does not yet support configured hooks.".into());
-    }
+    // A top-level `hooks` section is no hook source: the baseline's loader
+    // reports it as an unknown field and starts without it
+    // (loadPilotConfig.ts:343-375). Plugin and SDK session hooks are served
+    // (`native_process/hooks.rs`).
+    // `modules`: a built-in binding (`provider: pilotdeck`) and a disabled
+    // `skills` / `knowledge` slot need no outside service and are served.
+    // A protocol binding (an external module process or endpoint) and the
+    // StaffDeck `sop` module are not served yet.
+    let external = |binding: &JsValue| {
+        binding
+            .as_object()
+            .is_some_and(|binding| binding.contains_key("implementationId"))
+    };
     if snapshot
         .get("config")
         .and_then(|v| v.get("modules"))
         .and_then(JsValue::as_object)
-        .is_some_and(|modules| !modules.own_entries().is_empty())
+        .is_some_and(|modules| {
+            modules
+                .own_entries()
+                .iter()
+                .any(|(slot, binding)| slot.equals_str("sop") || external(binding))
+        })
     {
         return Err(
             "Native isolated profile does not yet support configured module bindings.".into(),

@@ -1,0 +1,506 @@
+{
+  "name": "hook-sdk-http",
+  "about": "sdkSessionConfig.hooks（HTTP hook）：URL 上的 event / matcher 序号覆盖原有同名参数、请求头与请求体、matcher 选择；includeHookEvents 时投影为 hook_started / hook_response（带 stdout / 退出码 / async 字段），否则为 agent_status；HTTP 500 是 non_blocking_error；HTTP 回 deny 阻止工具；additionalContext 进模型请求。异步：返回 async + asyncHookId 的登记到网关，hook_async_result 在轮次进行中交结果 → delivered（作为 steer 进下一次模型请求）、重复 → duplicate、超时 → expired（事件与结果）、轮次结束后才交（Stop 登记的）→ expired、别的会话交 → unknown、未知 id → unknown；不带 asyncHookId 的只挂在会话自己的运行时里，下一轮不受影响。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Hook run\"}"
+      }
+    },
+    {
+      "name": "hook-deny",
+      "when": [
+        "\"transcriptPath\"",
+        "\"hookEventName\":\"PreToolUse\"",
+        "sdk-deny"
+      ],
+      "reply": {
+        "status": 200,
+        "body": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "sdk hook denied"
+          }
+        }
+      }
+    },
+    {
+      "name": "hook-500",
+      "when": [
+        "\"transcriptPath\"",
+        "\"hookEventName\":\"PostToolUse\"",
+        "sdk-plain"
+      ],
+      "reply": {
+        "status": 500,
+        "body": {
+          "error": "down"
+        }
+      }
+    },
+    {
+      "name": "hook-context",
+      "when": [
+        "\"transcriptPath\"",
+        "\"hookEventName\":\"UserPromptSubmit\"",
+        "sdk-plain"
+      ],
+      "reply": {
+        "status": 200,
+        "body": {
+          "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": "context over http"
+          }
+        }
+      }
+    },
+    {
+      "name": "hook-async-pre",
+      "when": [
+        "\"transcriptPath\"",
+        "\"hookEventName\":\"PreToolUse\"",
+        "sdk-async"
+      ],
+      "reply": {
+        "status": 200,
+        "body": {
+          "async": true,
+          "asyncHookId": "inv-pre",
+          "asyncTimeout": 60
+        }
+      }
+    },
+    {
+      "name": "hook-async-prompt",
+      "when": [
+        "\"transcriptPath\"",
+        "\"hookEventName\":\"UserPromptSubmit\"",
+        "sdk-async"
+      ],
+      "reply": {
+        "status": 200,
+        "body": {
+          "async": true,
+          "asyncHookId": "inv-prompt",
+          "asyncTimeout": 1
+        }
+      }
+    },
+    {
+      "name": "hook-async-stop",
+      "when": [
+        "\"transcriptPath\"",
+        "\"hookEventName\":\"Stop\"",
+        "done sdk-async"
+      ],
+      "reply": {
+        "status": 200,
+        "body": {
+          "async": true,
+          "asyncHookId": "inv-stop",
+          "asyncTimeout": 60
+        }
+      }
+    },
+    {
+      "name": "hook-async-noid",
+      "when": [
+        "\"transcriptPath\"",
+        "\"hookEventName\":\"PostToolUse\"",
+        "sdk-async"
+      ],
+      "reply": {
+        "status": 200,
+        "body": {
+          "async": true
+        }
+      }
+    },
+    {
+      "name": "hook-other",
+      "when": [
+        "\"transcriptPath\""
+      ],
+      "reply": {
+        "status": 200,
+        "body": {}
+      }
+    },
+    {
+      "name": "sdk-second",
+      "when": [
+        "sdk-second:"
+      ],
+      "reply": {
+        "text": "second answer"
+      }
+    },
+    {
+      "name": "sdk-plain-after",
+      "when": [
+        "sdk-plain:",
+        "\"tool_call_id\":\"call_sdk_plain\""
+      ],
+      "reply": {
+        "text": "done sdk-plain"
+      }
+    },
+    {
+      "name": "sdk-plain",
+      "when": [
+        "sdk-plain:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_sdk_plain",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "sdk-plain.txt",
+            "content": "sdk-plain\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "sdk-deny-after",
+      "when": [
+        "sdk-deny:",
+        "\"tool_call_id\":\"call_sdk_deny\""
+      ],
+      "reply": {
+        "text": "done sdk-deny"
+      }
+    },
+    {
+      "name": "sdk-deny",
+      "when": [
+        "sdk-deny:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_sdk_deny",
+          "name": "bash",
+          "arguments": {
+            "command": "printf sdk-deny > denied.txt",
+            "description": "deny"
+          }
+        }
+      }
+    },
+    {
+      "name": "sdk-async-after",
+      "when": [
+        "sdk-async:",
+        "\"tool_call_id\":\"call_sdk_async\""
+      ],
+      "reply": {
+        "text": "done sdk-async"
+      }
+    },
+    {
+      "name": "sdk-async",
+      "when": [
+        "sdk-async:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_sdk_async",
+          "name": "bash",
+          "arguments": {
+            "command": "sleep 2; printf sdk-async",
+            "description": "async"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-plain",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-plain",
+        "channelKey": "test",
+        "message": "sdk-plain: run",
+        "sdkSessionConfig": {
+          "hooks": {
+            "url": "{MOCK}/hooks?keep=1&event=stale",
+            "headers": {
+              "x-bbx-hook": "header-value",
+              "Authorization": "Bearer sdk"
+            },
+            "events": {
+              "UserPromptSubmit": [
+                {}
+              ],
+              "PreToolUse": [
+                {
+                  "matcher": "write_file"
+                },
+                {
+                  "matcher": "bash",
+                  "timeout": 5
+                }
+              ],
+              "PostToolUse": [
+                {
+                  "matcher": ""
+                }
+              ],
+              "Stop": [
+                {}
+              ]
+            }
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-deny",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-deny",
+        "channelKey": "test",
+        "message": "sdk-deny: run",
+        "sdkSessionConfig": {
+          "hooks": {
+            "url": "{MOCK}/hooks?keep=1&event=stale",
+            "headers": {
+              "x-bbx-hook": "header-value",
+              "Authorization": "Bearer sdk"
+            },
+            "events": {
+              "UserPromptSubmit": [
+                {}
+              ],
+              "PreToolUse": [
+                {
+                  "matcher": "write_file"
+                },
+                {
+                  "matcher": "bash",
+                  "timeout": 5
+                }
+              ],
+              "PostToolUse": [
+                {
+                  "matcher": ""
+                }
+              ],
+              "Stop": [
+                {}
+              ]
+            }
+          },
+          "includeHookEvents": true
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-async",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-async",
+        "channelKey": "test",
+        "message": "sdk-async: run",
+        "sdkSessionConfig": {
+          "hooks": {
+            "url": "{MOCK}/hooks?keep=1&event=stale",
+            "headers": {
+              "x-bbx-hook": "header-value",
+              "Authorization": "Bearer sdk"
+            },
+            "events": {
+              "UserPromptSubmit": [
+                {}
+              ],
+              "PreToolUse": [
+                {
+                  "matcher": "write_file"
+                },
+                {
+                  "matcher": "bash",
+                  "timeout": 5
+                }
+              ],
+              "PostToolUse": [
+                {
+                  "matcher": ""
+                }
+              ],
+              "Stop": [
+                {}
+              ]
+            }
+          },
+          "includeHookEvents": true
+        }
+      },
+      "timeout": 30000,
+      "answer": [
+        {
+          "on": {
+            "type": "hook_response",
+            "hookEvent": "PreToolUse"
+          },
+          "ws": "hook_async_result",
+          "count": 1,
+          "params": {
+            "sessionKey": "s-async",
+            "invocationId": "{event.asyncInvocationId}",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "late context from async hook"
+              }
+            }
+          }
+        },
+        {
+          "on": {
+            "type": "hook_started",
+            "hookEvent": "PostToolUse"
+          },
+          "ws": "hook_async_result",
+          "count": 1,
+          "params": {
+            "sessionKey": "s-async",
+            "invocationId": "inv-pre",
+            "output": {
+              "additionalContext": "again"
+            }
+          }
+        },
+        {
+          "on": {
+            "type": "hook_async_result",
+            "status": "expired"
+          },
+          "ws": "hook_async_result",
+          "count": 1,
+          "params": {
+            "sessionKey": "s-async",
+            "invocationId": "{event.invocationId}",
+            "output": {
+              "additionalContext": "too late"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "hook_async_result",
+      "params": {
+        "sessionKey": "s-async",
+        "invocationId": "inv-stop",
+        "output": {}
+      }
+    },
+    {
+      "ws": "hook_async_result",
+      "params": {
+        "sessionKey": "s-async",
+        "invocationId": "inv-pre"
+      }
+    },
+    {
+      "ws": "hook_async_result",
+      "params": {
+        "sessionKey": "s-other",
+        "invocationId": "inv-pre"
+      }
+    },
+    {
+      "ws": "hook_async_result",
+      "params": {
+        "sessionKey": "s-async",
+        "invocationId": "inv-never"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-async",
+        "channelKey": "test",
+        "message": "sdk-second: hi",
+        "sdkSessionConfig": {
+          "hooks": {
+            "url": "{MOCK}/hooks?keep=1&event=stale",
+            "headers": {
+              "x-bbx-hook": "header-value",
+              "Authorization": "Bearer sdk"
+            },
+            "events": {
+              "UserPromptSubmit": [
+                {}
+              ],
+              "PreToolUse": [
+                {
+                  "matcher": "write_file"
+                },
+                {
+                  "matcher": "bash",
+                  "timeout": 5
+                }
+              ],
+              "PostToolUse": [
+                {
+                  "matcher": ""
+                }
+              ],
+              "Stop": [
+                {}
+              ]
+            }
+          },
+          "includeHookEvents": true
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-async"
+      }
+    }
+  ]
+}

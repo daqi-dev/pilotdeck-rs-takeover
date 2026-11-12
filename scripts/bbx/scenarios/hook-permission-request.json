@@ -1,0 +1,478 @@
+{
+  "name": "hook-permission-request",
+  "about": "插件的 PermissionRequest / PermissionDenied / FileChanged hook（默认权限模式，write_file 需要询问）：配置的 hook 先于网关的权限回调执行，第一个 decision 生效——hook allow 而用户拒绝时照样写、hook deny（带 / 不带 message）而用户批准时照样拒、allow 带 updatedInput 时写的是改过的文件；hook 不表态时用户的回答生效；退出码 2 不是决定；两条 hook 先 deny 后 allow 取 deny。被拒时 PermissionDenied 收到 reason。写成功后 FileChanged 按绝对路径匹配，失败与阻止只变成 warning 事件，不影响工具结果。",
+  "files": {
+    "home/.pilotdeck/plugins/bbx-perm/plugin.json": {
+      "name": "bbx-perm",
+      "version": "0.1.0",
+      "description": "bbx bbx-perm",
+      "hooks": {
+        "PermissionRequest": [
+          {
+            "matcher": "write_file",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs perm 0 '{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}\n' '' 0",
+                "if": "write_file(perm-allow)"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs perm 0 '{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"hook says no\"}}}\n' '' 0",
+                "if": "write_file(perm-deny)"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs perm 0 '{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\"}}}\n' '' 0",
+                "if": "write_file(perm-bare)"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs perm 0 '{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\",\"updatedInput\":{\"file_path\":\"updated-by-hook.txt\",\"content\":\"updated by hook\\n\"}}}}\n' '' 0",
+                "if": "write_file(perm-update)"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs perm 0 '' '' 0",
+                "if": "write_file(perm-pass)"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs perm 2 '' 'blocking is not a decision\n' 0",
+                "if": "write_file(perm-exit2)"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs perm 0 '{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"first decision wins\"}}}\n' '' 0",
+                "if": "write_file(perm-twice)"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs perm 0 '{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}\n' '' 0",
+                "if": "write_file(perm-twice)"
+              }
+            ]
+          }
+        ],
+        "PermissionDenied": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs denied 0 '' '' 0"
+              }
+            ]
+          }
+        ],
+        "FileChanged": [
+          {
+            "matcher": "/perm-[a-z0-9]+\\.txt$/",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs changed 0 '' '' 0"
+              }
+            ]
+          },
+          {
+            "matcher": "/updated-by-hook/",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs changed 1 '' 'changed hook failed\n' 0"
+              },
+              {
+                "type": "command",
+                "command": "node hook.mjs changed 2 '' 'changed hook blocked\n' 0"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "home/.pilotdeck/plugins/bbx-perm/hook.mjs": "// bbx hook fixture: node hook.mjs <log> <exit> [stdout] [stderr] [sleepMs]\nimport fs from 'node:fs';\nconst [log, exit = '0', out = '', err = '', sleep = '0'] = process.argv.slice(2);\nconst dir = process.env.HOME + '/hooklog';\nconst append = (row) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(dir + '/' + log + '.jsonl', JSON.stringify(row) + '\\n'); };\nlet input = '';\nprocess.stdin.on('data', (d) => { input += d; });\nprocess.stdin.on('end', () => {\n  let parsed; try { parsed = JSON.parse(input); } catch { parsed = { raw: input }; }\n  const env = {};\n  for (const k of Object.keys(process.env).sort()) env[k] = /^PILOT/.test(k) && !/BUNDLED/.test(k) ? process.env[k] : true;\n  append({ argv: process.argv.slice(2), cwd: process.cwd(), input: parsed, env });\n  // exit \"@\": the behaviour is the JSON between HOOK<< and >> in the prompt (or the last assistant message).\n  let spec = { exit, out, err, sleep };\n  if (exit === '@') {\n    const m = /HOOK<<(.*?)>>/s.exec(String(parsed.prompt ?? parsed.lastAssistantMessage ?? ''));\n    spec = { exit: 0, out: '', err: '', sleep: 0, ...(m ? JSON.parse(m[1]) : {}) };\n  }\n  setTimeout(() => {\n    append({ argv: process.argv.slice(2), done: true });\n    if (spec.out) process.stdout.write(spec.out);\n    if (spec.err) process.stderr.write(spec.err);\n    process.exit(Number(spec.exit));\n  }, Number(spec.sleep));\n});\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Hook run\"}"
+      }
+    },
+    {
+      "name": "perm-allow-after",
+      "when": [
+        "perm-allow:",
+        "\"tool_call_id\":\"call_perm_allow\""
+      ],
+      "reply": {
+        "text": "done perm-allow"
+      }
+    },
+    {
+      "name": "perm-allow",
+      "when": [
+        "perm-allow:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_perm_allow",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "perm-allow.txt",
+            "content": "perm-allow\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "perm-deny-after",
+      "when": [
+        "perm-deny:",
+        "\"tool_call_id\":\"call_perm_deny\""
+      ],
+      "reply": {
+        "text": "done perm-deny"
+      }
+    },
+    {
+      "name": "perm-deny",
+      "when": [
+        "perm-deny:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_perm_deny",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "perm-deny.txt",
+            "content": "perm-deny\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "perm-bare-after",
+      "when": [
+        "perm-bare:",
+        "\"tool_call_id\":\"call_perm_bare\""
+      ],
+      "reply": {
+        "text": "done perm-bare"
+      }
+    },
+    {
+      "name": "perm-bare",
+      "when": [
+        "perm-bare:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_perm_bare",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "perm-bare.txt",
+            "content": "perm-bare\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "perm-update-after",
+      "when": [
+        "perm-update:",
+        "\"tool_call_id\":\"call_perm_update\""
+      ],
+      "reply": {
+        "text": "done perm-update"
+      }
+    },
+    {
+      "name": "perm-update",
+      "when": [
+        "perm-update:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_perm_update",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "perm-update.txt",
+            "content": "perm-update\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "perm-pass-after",
+      "when": [
+        "perm-pass:",
+        "\"tool_call_id\":\"call_perm_pass\""
+      ],
+      "reply": {
+        "text": "done perm-pass"
+      }
+    },
+    {
+      "name": "perm-pass",
+      "when": [
+        "perm-pass:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_perm_pass",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "perm-pass.txt",
+            "content": "perm-pass\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "perm-exit2-after",
+      "when": [
+        "perm-exit2:",
+        "\"tool_call_id\":\"call_perm_exit2\""
+      ],
+      "reply": {
+        "text": "done perm-exit2"
+      }
+    },
+    {
+      "name": "perm-exit2",
+      "when": [
+        "perm-exit2:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_perm_exit2",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "perm-exit2.txt",
+            "content": "perm-exit2\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "perm-twice-after",
+      "when": [
+        "perm-twice:",
+        "\"tool_call_id\":\"call_perm_twice\""
+      ],
+      "reply": {
+        "text": "done perm-twice"
+      }
+    },
+    {
+      "name": "perm-twice",
+      "when": [
+        "perm-twice:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_perm_twice",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "perm-twice.txt",
+            "content": "perm-twice\n"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-allow",
+        "channelKey": "test",
+        "message": "perm-allow: write the file"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-allow",
+            "requestId": "{event.requestId}",
+            "decision": "deny"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-deny",
+        "channelKey": "test",
+        "message": "perm-deny: write the file"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-deny",
+            "requestId": "{event.requestId}",
+            "decision": "allow"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bare",
+        "channelKey": "test",
+        "message": "perm-bare: write the file"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-bare",
+            "requestId": "{event.requestId}",
+            "decision": "allow"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-update",
+        "channelKey": "test",
+        "message": "perm-update: write the file"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-update",
+            "requestId": "{event.requestId}",
+            "decision": "deny"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-pass",
+        "channelKey": "test",
+        "message": "perm-pass: write the file"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-pass",
+            "requestId": "{event.requestId}",
+            "decision": "deny"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-exit2",
+        "channelKey": "test",
+        "message": "perm-exit2: write the file"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-exit2",
+            "requestId": "{event.requestId}",
+            "decision": "allow"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-twice",
+        "channelKey": "test",
+        "message": "perm-twice: write the file"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-twice",
+            "requestId": "{event.requestId}",
+            "decision": "allow"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-update"
+      }
+    }
+  ]
+}

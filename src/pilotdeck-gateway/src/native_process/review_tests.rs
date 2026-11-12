@@ -394,7 +394,7 @@ async fn production_cleanup_matrix() {
 }
 
 #[tokio::test]
-async fn configured_hooks_are_refused() {
+async fn configured_hooks_section_is_not_refused() {
     let scratch = Scratch::new();
     let options = Options::parse(scratch.args()).expect("#1071 hooks options");
     let env = options.environment(Env::new());
@@ -410,14 +410,11 @@ async fn configured_hooks_are_refused() {
         let path = base.join("pilotdeck.yaml");
         std::fs::write(&path, format!("{CONFIG}hooks:\n  PreToolUse:\n    - hooks: [{{type: command, command: must-not-run}}]\n"))
             .expect("#1071 configured hook fixture");
-        let error = crate::test_negative_receipt::expect_err(
-            assembly::validate_profile(&options, &env).await,
-            "#1071 configured hooks refused before readiness",
-        );
-        negative_assert!(
-            error.to_string().contains("configured hooks"),
-            "#1071 configured hooks refusal is explicit"
-        );
+        // The baseline's loader reports a top-level `hooks` section as an
+        // unknown field and starts without it (loadPilotConfig.ts:343-375).
+        assembly::validate_profile(&options, &env)
+            .await
+            .expect("a config-file hooks section does not refuse startup");
         std::fs::remove_file(path).expect("#1071 remove hook config fixture");
     }
 }

@@ -11,7 +11,7 @@ use crate::{
         },
     },
     runtime::{
-        hooks::Cancellation,
+        hooks::{Cancellation, runtime::HookObservers},
         plugins::PluginSessionContributionLease,
         project::{
             ProjectResources, Resource, RuntimeLease, StageContext,
@@ -50,6 +50,27 @@ pub struct InteractionTurnInput {
     /// durable compaction). The binder installs these after revoking any stale
     /// turn authorizations; it never reuses callbacks from a previous turn.
     pub turn_ports: crate::host::modules::turn::Ports,
+    /// How the host observes and reuses this session's hook runtimes.
+    pub hook_wiring: HookWiring,
+}
+
+/// Receives the turn's bound lifecycle (or `None`).
+pub type TurnHooksSink = Arc<dyn Fn(Option<Arc<dyn lifecycle::LifecyclePort>>) + Send + Sync>;
+
+/// Host-side consumers of the bound hook runtimes. None of this is read from
+/// the sidecar payload.
+#[derive(Clone, Default)]
+pub struct HookWiring {
+    /// Receives every hook execution transition of this session's runtimes
+    /// (`subscribeHookExecutionEvents`, ProjectSessionRuntimeBundle.ts:668-676)
+    /// and their deferred async registrations.
+    pub observers: HookObservers,
+    /// Receives the turn's bound lifecycle so host-side tool execution
+    /// dispatches through the same runtime (`ToolRuntime.lifecycle`).
+    pub turn_sink: Option<TurnHooksSink>,
+    /// The host answers `PermissionRequest` with its own gateway prompt, so
+    /// the hook binding must not append a second permission callback.
+    pub host_permission_prompt: bool,
 }
 #[derive(Clone, Default)]
 pub struct InteractionPorts {
@@ -112,6 +133,7 @@ impl InteractionTurn {
         input.permission.profile = context.profile().interaction;
         input.permission.context.rules = input.permission.rules.snapshot();
         let turn_ports = std::mem::take(&mut input.turn_ports);
+        let hook_wiring = std::mem::take(&mut input.hook_wiring);
         let permission_context = input.permission.context.clone();
         let catalog = router
             .capability
@@ -164,7 +186,12 @@ impl InteractionTurn {
         }
         if let Some(resource) = resource::<InteractionHooks>(&context, Resource::InteractionHooks)?
         {
-            turn.ports.hooks = Some(resource.bind_turn(
+            let permission = if hook_wiring.host_permission_prompt {
+                None
+            } else {
+                turn.ports.permission.clone()
+            };
+            let hooks = resource.bind_turn_observed(
                 lifecycle::Binding {
                     session_id: identity.session_id.clone(),
                     turn_id: identity.turn_id.clone(),
@@ -175,9 +202,14 @@ impl InteractionTurn {
                 },
                 identity.run_id.clone(),
                 input.hooks,
-                turn.ports.permission.clone(),
+                permission,
                 router,
-            )?);
+                hook_wiring.observers.clone(),
+            )?;
+            if let Some(sink) = &hook_wiring.turn_sink {
+                sink(Some(Arc::new(hooks.clone())));
+            }
+            turn.ports.hooks = Some(hooks);
         }
         if let Some(hooks) = &turn.ports.hooks {
             // A dropped stream releases the submit slot before detached hook
@@ -251,7 +283,11 @@ impl InteractionTurn {
                 notices.extend(permission.take_discard_notices());
             }
             if let Some(hooks) = &turn.ports.hooks {
-                notices.extend(hooks.take_discard_notices());
+                // The baseline's session hook runtime keeps a local async
+                // hook pending across turns and reports nothing when a turn
+                // ends (AsyncHookRegistry.ts); taking the notices only
+                // releases them.
+                let _ = hooks.take_discard_notices();
             }
             if let Some(steer) = &turn.ports.steer {
                 notices.extend(steer.take_discard_notices());

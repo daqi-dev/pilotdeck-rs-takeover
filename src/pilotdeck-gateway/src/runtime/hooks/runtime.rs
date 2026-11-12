@@ -187,7 +187,8 @@ pub struct AsyncHookRegistration {
     pub timeout_ms: Option<f64>,
 }
 pub trait AsyncHookRegistrationHandler: Send + Sync {
-    fn handle(&self, registration: AsyncHookRegistration);
+    /// An error (an invocation id owned by another turn) rejects the dispatch.
+    fn handle(&self, registration: AsyncHookRegistration) -> Result<(), HostError>;
 }
 
 // ------------------------------------------------------------------ event bus
@@ -301,11 +302,23 @@ impl RuntimeState {
     }
 }
 
+/// Host consumers attached to a session's hook runtimes.
+#[derive(Clone, Default)]
+pub struct HookObservers {
+    /// Every execution transition (`subscribeExecutionEvents`).
+    pub execution: Option<Arc<dyn HookExecutionEventHandler>>,
+    /// `onAsyncHookRegistered`: an async output that names an invocation id
+    /// is handed to the gateway's deferred-result registry.
+    pub async_registered: Option<Arc<dyn AsyncHookRegistrationHandler>>,
+}
+
 pub struct HookRuntimeOptions {
     /// `Date#toISOString()` for `pendingAsyncHooks[].startedAt`.
     pub clock: Arc<dyn Fn() -> JsString + Send + Sync>,
     pub shell: Option<Arc<dyn ShellPort>>,
     pub on_async_registered: Option<Arc<dyn AsyncHookRegistrationHandler>>,
+    /// Subscribed to the execution event bus before the runtime is handed out.
+    pub observer: Option<Arc<dyn HookExecutionEventHandler>>,
 }
 impl Default for HookRuntimeOptions {
     fn default() -> Self {
@@ -313,6 +326,7 @@ impl Default for HookRuntimeOptions {
             clock: Arc::new(default_clock),
             shell: None,
             on_async_registered: None,
+            observer: None,
         }
     }
 }
@@ -357,6 +371,11 @@ impl HookRuntime {
             Some(shell) => CommandHookExecutor::new(shell),
             None => CommandHookExecutor::default(),
         };
+        let bus = EventBus::default();
+        if let Some(observer) = options.observer {
+            // A fresh bus is never disposed, so this cannot fail.
+            let _ = bus.subscribe(observer);
+        }
         Self(Arc::new(Inner {
             settings,
             command,
@@ -365,7 +384,7 @@ impl HookRuntime {
             agent: AgentHookExecutor::default(),
             callback: CallbackHookExecutor::default(),
             pending: PendingAsyncHooks::default(),
-            bus: EventBus::default(),
+            bus,
             state: Mutex::new(RuntimeState::Active),
             in_flight: Mutex::new(0),
             drained: watch::channel(0).0,
@@ -460,7 +479,7 @@ impl HookRuntime {
                                 hook_event: input.event.clone(),
                                 invocation_id: invocation_id.clone(),
                                 timeout_ms: r#async.timeout_ms,
-                            });
+                            })?;
                         }
                         _ => {
                             let id = {

@@ -54,7 +54,11 @@ impl ExecutableTool for EditFileTool {
     fn execute(&self, input: JsValue, context: ToolRunContext) -> ToolFuture<ToolOutput> {
         Box::pin(async move {
             #[cfg_attr(not(unix), allow(unused_mut, unused_variables))]
-            let (mut output, relative, content) = execute(&input, &context)?;
+            let (mut output, relative, content, update) = execute(&input, &context)?;
+            context
+                .notify_file_saved(update)
+                .await
+                .map_err(|error| ToolError::failed(error.message))?;
             #[cfg(unix)]
             super::syntax_diagnostics::append_to_success_text(&mut output, &relative, &content)
                 .await;
@@ -165,7 +169,15 @@ fn is_read_state_error(error: &ToolError) -> bool {
 fn execute(
     input: &JsValue,
     context: &ToolRunContext,
-) -> Result<(ToolOutput, String, String), ToolError> {
+) -> Result<
+    (
+        ToolOutput,
+        String,
+        String,
+        crate::runtime::tools::FileUpdate,
+    ),
+    ToolError,
+> {
     let path = input_string(input, "file_path");
     let old = input_string(input, "old_string");
     let new = input_string(input, "new_string");
@@ -290,7 +302,12 @@ fn execute(
         ])),
         supplemental_messages: None,
     };
-    Ok((output, text(&resolved.relative), next_content))
+    let update = crate::runtime::tools::FileUpdate {
+        absolute_path: resolved.absolute.clone(),
+        relative_path: resolved.relative.clone(),
+        created: freshness.previous_content.is_none(),
+    };
+    Ok((output, text(&resolved.relative), next_content, update))
 }
 
 fn normalize_quotes(value: &str) -> String {

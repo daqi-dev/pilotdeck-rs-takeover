@@ -36,6 +36,7 @@ mod mcp_status_tests;
 // Project routing shared by every request family: the baseline's
 // `projectKey ?? fallbackProjectRoot` read and its dialog registration rule.
 mod elicitation;
+mod hooks;
 mod permission_prompt;
 mod projects;
 mod requests;

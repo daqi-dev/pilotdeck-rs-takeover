@@ -1,0 +1,64 @@
+{
+  "name": "modules-skills-disabled",
+  "about": "`modules.skills.enabled: false`（与 `modules.knowledge.enabled: false`）：skill 管理方法全部回 SKILL_MODULE_DISABLED，会话的 skills 贡献清空（系统提示词里没有 skills 段，发给模型的请求随之变化）；knowledge 关掉不注册任何工具。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  skills:\n    enabled: false\n  knowledge:\n    enabled: false\n",
+  "files": {
+    "home/.pilotdeck/skills/bbx-user-skill/SKILL.md": "---\nname: bbx-user-skill\ndescription: A user-level skill for the modules scenario.\n---\n\nSay USER-SKILL.\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Hook run\"}"
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "answer"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "skill_list",
+      "params": {}
+    },
+    {
+      "ws": "skill_read",
+      "params": {
+        "scope": "user",
+        "slug": "bbx-user-skill"
+      }
+    },
+    {
+      "ws": "skill_create",
+      "params": {
+        "scope": "user",
+        "slug": "made",
+        "name": "Made",
+        "description": "Created while the module is selected.",
+        "body": "x"
+      }
+    },
+    {
+      "ws": "skill_validate",
+      "params": {}
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mod",
+        "channelKey": "test",
+        "message": "modules: hello"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    }
+  ]
+}

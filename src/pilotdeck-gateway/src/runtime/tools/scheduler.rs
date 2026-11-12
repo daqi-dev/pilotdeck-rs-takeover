@@ -33,6 +33,8 @@ pub struct ToolRuntime {
     /// `ToolRuntimeOptions.eventEmitter`: agent events the runtime itself
     /// raises (`permission_denied`).
     events: Option<crate::host::modules::tool_context::EventSink>,
+    /// `ToolRuntimeOptions.lifecycle`: the session's hooks around each call.
+    lifecycle: Option<Arc<dyn super::ToolLifecycle>>,
 }
 impl ToolRuntime {
     pub fn new(
@@ -45,7 +47,36 @@ impl ToolRuntime {
             permission,
             mode,
             events: None,
+            lifecycle: None,
         }
+    }
+    pub fn with_lifecycle(mut self, lifecycle: Arc<dyn super::ToolLifecycle>) -> Self {
+        self.lifecycle = Some(lifecycle);
+        self
+    }
+    /// `dispatchLifecycle`: an absent lifecycle is an empty result.
+    async fn dispatch_lifecycle(
+        &self,
+        event: &'static str,
+        name: &JsString,
+        id: &JsString,
+        input: &JsValue,
+        context: &ToolRunContext,
+        extra: JsObject,
+    ) -> Result<Vec<crate::runtime::hooks::HookEffect>, HostError> {
+        let Some(lifecycle) = &self.lifecycle else {
+            return Ok(Vec::new());
+        };
+        Ok(lifecycle
+            .dispatch(
+                event,
+                name,
+                super::tool_event_payload(name, id, input, extra),
+                context,
+            )
+            .await?
+            .map(|result| result.effects)
+            .unwrap_or_default())
     }
     pub fn with_event_emitter(
         mut self,
@@ -312,9 +343,65 @@ impl ToolRuntime {
                     emit(event);
                 }
             };
+            // `PreToolUse` (ToolRuntime.ts:187-221): a block or a `deny`
+            // permission decision refuses the call, an updated input replaces
+            // it and is validated again. An `allow` does not skip the
+            // permission decision.
+            let mut execute_input = call.input.clone();
+            let pre = self
+                .dispatch_lifecycle(
+                    "PreToolUse",
+                    &name,
+                    &call.id,
+                    &execute_input,
+                    &context,
+                    JsObject::new(),
+                )
+                .await?;
             lifecycle("pre_tool_execute", None);
+            {
+                use crate::runtime::hooks::HookEffect;
+                let block = pre.iter().find_map(|effect| match effect {
+                    HookEffect::Block { reason, .. } => Some(reason.clone()),
+                    _ => None,
+                });
+                let decision = pre.iter().find_map(|effect| match effect {
+                    HookEffect::PermissionDecision { behavior, reason } => {
+                        Some((behavior.clone(), reason.clone()))
+                    }
+                    _ => None,
+                });
+                let deny = decision.filter(|(behavior, _)| behavior.equals_str("deny"));
+                if block.is_some() || deny.is_some() {
+                    let reason = block
+                        .or_else(|| deny.and_then(|(_, reason)| reason))
+                        .unwrap_or_else(|| named("PreToolUse hook denied ", &name, "."));
+                    return fail(&name, ToolError::new("permission_denied", reason));
+                }
+                if let Some(updated) = pre.iter().find_map(|effect| match effect {
+                    HookEffect::UpdatedToolInput { input } => Some(input.clone()),
+                    _ => None,
+                }) {
+                    execute_input = JsValue::Object(updated);
+                    let issues = validate_input(
+                        &execute_input,
+                        tool.fields()
+                            .get("inputSchema")
+                            .unwrap_or(&JsValue::Undefined),
+                    )?;
+                    if !issues.is_empty() {
+                        let mut error = validation_error(&name, issues, &context)?;
+                        error.message = named(
+                            "PreToolUse hook produced invalid input for ",
+                            &name,
+                            &format!(".\n\n{}", text(&error.message)),
+                        );
+                        return fail(&name, error);
+                    }
+                }
+            }
             match tool
-                .validate_input(call.input.clone(), context.clone())
+                .validate_input(execute_input.clone(), context.clone())
                 .await
             {
                 Err(error) => return fail(&name, error),
@@ -330,7 +417,7 @@ impl ToolRuntime {
                     .downcast::<crate::runtime::plan_todo::PlanTodoRuntime>()
                     .ok()
             }) {
-                let read_only = tool.is_read_only(&call.input).is_ok_and(|v| truthy(&v));
+                let read_only = tool.is_read_only(&execute_input).is_ok_and(|v| truthy(&v));
                 if let Some(message) = plan_todo.blocking_message_for(&name, read_only) {
                     return fail(&name, ToolError::failed(message));
                 }
@@ -369,7 +456,7 @@ impl ToolRuntime {
                 .permission
                 .decide(
                     definition,
-                    call.input.clone(),
+                    execute_input.clone(),
                     Arc::new(context.clone()),
                     call.id.clone(),
                 )
@@ -418,6 +505,15 @@ impl ToolRuntime {
                 .unwrap_or_default();
             match kind.map(text).as_deref() {
                 Some("deny") => {
+                    self.dispatch_lifecycle(
+                        "PermissionDenied",
+                        &name,
+                        &call.id,
+                        &execute_input,
+                        &context,
+                        object([("reason", string(message.clone()))]),
+                    )
+                    .await?;
                     if let Some(emit) = &self.events {
                         emit(object([
                             ("type", "permission_denied".into()),
@@ -487,7 +583,7 @@ impl ToolRuntime {
                 .get("updatedInput")
                 .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))
                 .cloned()
-                .unwrap_or_else(|| call.input.clone());
+                .unwrap_or_else(|| execute_input.clone());
             let mut execution = context.clone();
             execution
                 .fields
@@ -495,13 +591,48 @@ impl ToolRuntime {
             execution
                 .fields
                 .insert("currentPermissionDecision".into(), decision);
+            if let Some(lifecycle) = &self.lifecycle {
+                execution.file_saved = Some(file_changed_notifier(
+                    lifecycle.clone(),
+                    self.events.clone(),
+                    context.clone(),
+                ));
+            }
             let execute_input = input.clone();
             match tool.execute(input, execution).await {
                 Err(error) => {
+                    self.dispatch_lifecycle(
+                        "PostToolUseFailure",
+                        &name,
+                        &call.id,
+                        &execute_input,
+                        &context,
+                        object([
+                            ("error", string(error.message.clone())),
+                            ("isInterrupt", JsValue::Bool(error.code == "tool_aborted")),
+                        ]),
+                    )
+                    .await?;
                     lifecycle("post_tool_execute", Some(false));
                     fail(&name, error)
                 }
                 Ok(output) => {
+                    let post = self
+                        .dispatch_lifecycle(
+                            "PostToolUse",
+                            &name,
+                            &call.id,
+                            &execute_input,
+                            &context,
+                            object([(
+                                "toolResponse",
+                                output
+                                    .data
+                                    .clone()
+                                    .unwrap_or_else(|| JsValue::Array(output.content.clone())),
+                            )]),
+                        )
+                        .await?;
                     lifecycle("post_tool_execute", Some(true));
                     let mut metadata = output.metadata;
                     let max_bytes = tool
@@ -520,6 +651,11 @@ impl ToolRuntime {
                         metadata
                             .get_or_insert_with(JsObject::new)
                             .insert("previewLimit".into(), JsValue::Object(limit));
+                    }
+                    if let Some(lifecycle) = lifecycle_metadata(&post) {
+                        metadata
+                            .get_or_insert_with(JsObject::new)
+                            .insert("lifecycle".into(), lifecycle);
                     }
                     let completed = context.now_iso()?;
                     // `context.planTodo?.markToolProgressChanged(name)` after a
@@ -607,6 +743,134 @@ impl ToolExecution for ToolRuntime {
             runtime.execute_batch(calls, context).await
         })
     }
+}
+
+/// `createFileUpdateNotifier` / `dispatchFileChanged` (ToolRuntime.ts:513-604):
+/// a committed save dispatches `FileChanged`, matched on the absolute path.
+/// Its effects are observations only: a block and every hook error become
+/// `warning` agent events, and the tool result is unchanged.
+fn file_changed_notifier(
+    lifecycle: Arc<dyn super::ToolLifecycle>,
+    events: Option<crate::host::modules::tool_context::EventSink>,
+    context: ToolRunContext,
+) -> super::FileSavedNotifier {
+    Arc::new(move |update: super::FileUpdate| {
+        let (lifecycle, events, context) = (lifecycle.clone(), events.clone(), context.clone());
+        Box::pin(async move {
+            let change_kind = if update.created { "create" } else { "update" };
+            let report = |code: &str, message: JsString, hook_name: Option<JsString>| {
+                let Some(emit) = &events else {
+                    return;
+                };
+                let mut metadata = object([
+                    ("absolutePath", string(update.absolute_path.clone())),
+                    ("relativePath", string(update.relative_path.clone())),
+                    ("changeKind", change_kind.into()),
+                ]);
+                if let Some(name) = hook_name {
+                    metadata.insert("hookName".into(), string(name));
+                }
+                let identity = |key: &str| {
+                    context
+                        .fields
+                        .get(key)
+                        .cloned()
+                        .unwrap_or(JsValue::Undefined)
+                };
+                emit(object([
+                    ("type", "warning".into()),
+                    ("sessionId", identity("sessionId")),
+                    ("turnId", identity("turnId")),
+                    ("code", code.into()),
+                    ("message", string(message)),
+                    ("metadata", JsValue::Object(metadata)),
+                ]));
+            };
+            let payload = object([
+                ("absolutePath", string(update.absolute_path.clone())),
+                ("relativePath", string(update.relative_path.clone())),
+                ("changeKind", change_kind.into()),
+            ]);
+            match lifecycle
+                .dispatch("FileChanged", &update.absolute_path, payload, &context)
+                .await
+            {
+                Ok(Some(result)) => {
+                    if let Some(reason) = result.effects.iter().find_map(|effect| match effect {
+                        crate::runtime::hooks::HookEffect::Block { reason, .. } => {
+                            Some(reason.clone())
+                        }
+                        _ => None,
+                    }) {
+                        report("file_changed_hook_blocked", reason, None);
+                    }
+                    for error in result
+                        .blocking_errors
+                        .iter()
+                        .chain(result.non_blocking_errors.iter())
+                    {
+                        report(
+                            "file_changed_hook_error",
+                            error.message.clone(),
+                            error.hook_name.clone(),
+                        );
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => report(
+                    "file_changed_hook_error",
+                    error.message.as_str().into(),
+                    None,
+                ),
+            }
+            Ok(())
+        })
+    })
+}
+
+/// `lifecycleMetadata` (ToolRuntime.ts:773-787): what a `PostToolUse` hook
+/// tells the loop through the result's metadata.
+fn lifecycle_metadata(effects: &[crate::runtime::hooks::HookEffect]) -> Option<JsValue> {
+    use crate::runtime::hooks::HookEffect;
+    let blocking = effects.iter().find_map(|effect| match effect {
+        HookEffect::Block {
+            reason,
+            stop_reason,
+        } => Some((reason.clone(), stop_reason.clone())),
+        _ => None,
+    });
+    let additional: Vec<JsValue> = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            HookEffect::AdditionalContext { content, .. } => Some(JsValue::String(content.clone())),
+            _ => None,
+        })
+        .collect();
+    let updated = effects.iter().find_map(|effect| match effect {
+        HookEffect::UpdatedMcpToolOutput { output } => Some(output.clone()),
+        _ => None,
+    });
+    if blocking.is_none() && additional.is_empty() && updated.is_none() {
+        return None;
+    }
+    let blocked = match blocking {
+        Some((reason, stop_reason)) => JsValue::Object(object([
+            ("reason", JsValue::String(reason)),
+            (
+                "stopReason",
+                stop_reason.map_or(JsValue::Undefined, JsValue::String),
+            ),
+        ])),
+        None => JsValue::Undefined,
+    };
+    Some(JsValue::Object(object([
+        ("blocked", blocked),
+        ("additionalContext", JsValue::Array(additional)),
+        (
+            "updatedMcpToolOutput",
+            updated.unwrap_or(JsValue::Undefined),
+        ),
+    ])))
 }
 
 /// repairToolName.ts: a falsy `toolAliases` is ignored; otherwise it is read

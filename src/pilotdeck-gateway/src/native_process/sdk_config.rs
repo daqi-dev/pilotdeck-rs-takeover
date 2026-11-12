@@ -29,6 +29,8 @@ pub(super) const WIRED_FIELDS: &[&str] = &[
     "permissionMode",
     "additionalWorkingDirectories",
     "managedPermissions",
+    "hooks",
+    "includeHookEvents",
 ];
 
 const INVALID: &str = "INVALID_SDK_SESSION_CONFIG";
@@ -692,7 +694,19 @@ impl SubmitSdkSessionConfig for NativeSdkSessionConfig {
                     .filter(|(_, value)| !value.is_undefined())
                     .all(|(key, _)| WIRED_FIELDS.iter().any(|name| key.equals_str(name)))
             });
-        if wired {
+        // The SDK `ConfigChange` / `FileChanged` hooks run in runtimes of
+        // their own (SessionInteractionBundle.ts:130-134,170-216) that this
+        // host does not compose yet.
+        let separate_runtime_hooks = config
+            .get("hooks")
+            .and_then(|hooks| hooks.get("events"))
+            .and_then(JsValue::as_object)
+            .is_some_and(|events| {
+                events.own_entries().iter().any(|(event, _)| {
+                    event.equals_str("ConfigChange") || event.equals_str("FileChanged")
+                })
+            });
+        if wired && !separate_runtime_hooks {
             Ok(())
         } else {
             Err(err(
