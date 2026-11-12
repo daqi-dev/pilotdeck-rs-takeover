@@ -1,0 +1,604 @@
+{
+  "sourcePath": "src/cli/pilotdeck.ts",
+  "sourceSha256": "88c672b94f32c53d7bf5f188c62ef82965291aa55156e9032a43ae44198c8182",
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "note": "实际 TS 文件经 Node stripTypeScriptTypes 在隔离 VM 执行，仅连接端替换为 mock；非正式网络入口证据。",
+  "rows": [
+    {
+      "argv": [
+        "list"
+      ],
+      "available": true,
+      "rpcError": false,
+      "calls": [
+        {
+          "method": "cronList",
+          "params": {
+            "includeHistory": false
+          },
+          "json": "{\"includeHistory\":false}"
+        }
+      ],
+      "stdout": [
+        "{\n  \"z\": 1,\n  \"a\": [\n    \"中\",\n    null\n  ]\n}"
+      ],
+      "stderr": [],
+      "exitCode": 0
+    },
+    {
+      "argv": [
+        "list",
+        "--history",
+        "--limit",
+        "12tail"
+      ],
+      "available": true,
+      "rpcError": false,
+      "calls": [
+        {
+          "method": "cronList",
+          "params": {
+            "includeHistory": true,
+            "limit": 12
+          },
+          "json": "{\"includeHistory\":true,\"limit\":12}"
+        }
+      ],
+      "stdout": [
+        "{\n  \"z\": 1,\n  \"a\": [\n    \"中\",\n    null\n  ]\n}"
+      ],
+      "stderr": [],
+      "exitCode": 0
+    },
+    {
+      "argv": [
+        "list",
+        "--limit",
+        "0x10"
+      ],
+      "available": true,
+      "rpcError": false,
+      "calls": [
+        {
+          "method": "cronList",
+          "params": {
+            "includeHistory": false,
+            "limit": 0
+          },
+          "json": "{\"includeHistory\":false,\"limit\":0}"
+        }
+      ],
+      "stdout": [
+        "{\n  \"z\": 1,\n  \"a\": [\n    \"中\",\n    null\n  ]\n}"
+      ],
+      "stderr": [],
+      "exitCode": 0
+    },
+    {
+      "argv": [
+        "list",
+        "--limit",
+        "1e3"
+      ],
+      "available": true,
+      "rpcError": false,
+      "calls": [
+        {
+          "method": "cronList",
+          "params": {
+            "includeHistory": false,
+            "limit": 1
+          },
+          "json": "{\"includeHistory\":false,\"limit\":1}"
+        }
+      ],
+      "stdout": [
+        "{\n  \"z\": 1,\n  \"a\": [\n    \"中\",\n    null\n  ]\n}"
+      ],
+      "stderr": [],
+      "exitCode": 0
+    },
+    {
+      "argv": [
+        "list",
+        "--limit",
+        "-0"
+      ],
+      "available": true,
+      "rpcError": false,
+      "calls": [
+        {
+          "method": "cronList",
+          "params": {
+            "includeHistory": false,
+            "limit": 0
+          },
+          "json": "{\"includeHistory\":false,\"limit\":0}"
+        }
+      ],
+      "stdout": [
+        "{\n  \"z\": 1,\n  \"a\": [\n    \"中\",\n    null\n  ]\n}"
+      ],
+      "stderr": [],
+      "exitCode": 0
+    },
+    {
+      "argv": [
+        "list",
+        "--limit",
+        "  +42.5"
+      ],
+      "available": true,
+      "rpcError": false,
+      "calls": [
+        {
+          "method": "cronList",
+          "params": {
+            "includeHistory": false,
+            "limit": 42
+          },
+          "json": "{\"includeHistory\":false,\"limit\":42}"
+        }
+      ],
+      "stdout": [
+        "{\n  \"z\": 1,\n  \"a\": [\n    \"中\",\n    null\n  ]\n}"
+      ],
+      "stderr": [],
+      "exitCode": 0
+    },
+    {
+      "argv": [
+        "list",
+        "--limit",
+        "9007199254740993"
+      ],
+      "available": true,
+      "rpcError": false,
+      "calls": [
+        {
+          "method": "cronList",
+          "params": {
+            "includeHistory": false,
+            "limit": 9007199254740992
+          },
+          "json": "{\"includeHistory\":false,\"limit\":9007199254740992}"
+        }
+      ],
+      "stdout": [
+        "{\n  \"z\": 1,\n  \"a\": [\n    \"中\",\n    null\n  ]\n}"
+      ],
+      "stderr": [],
+      "exitCode": 0
+    },
+    {
+      "argv": [
+        "list",
+        "--limit",
+        "9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999"
+      ],
+      "available": true,
+      "rpcError": false,
+      "calls": [
+        {
+          "method": "cronList",
+          "params": {
+            "includeHistory": false
+          },
+          "json": "{\"includeHistory\":false}"
+        }
+      ],
+      "stdout": [
+        "{\n  \"z\": 1,\n  \"a\": [\n    \"中\",\n    null\n  ]\n}"
+      ],
+      "stderr": [],
+      "exitCode": 0
+    },
+    {
+      "argv": [
+        "list",
+        "--limit",
+        "bad"
+      ],
+      "available": true,
+      "rpcError": false,
+      "calls": [
+        {
+          "method": "cronList",
+          "params": {
+            "includeHistory": false
+          },
+          "json": "{\"includeHistory\":false}"
+        }
+      ],
+      "stdout": [
+        "{\n  \"z\": 1,\n  \"a\": [\n    \"中\",\n    null\n  ]\n}"
+      ],
+      "stderr": [],
+      "exitCode": 0
+    },
+    {
+      "argv": [
+        "list",
+        "--limit",
+        "--history"
+      ],
+      "available": true,
+      "rpcError": false,
+      "calls": [
+        {
+          "method": "cronList",
+          "params": {
+            "includeHistory": true
+          },
+          "json": "{\"includeHistory\":true}"
+        }
+      ],
+      "stdout": [
+        "{\n  \"z\": 1,\n  \"a\": [\n    \"中\",\n    null\n  ]\n}"
+      ],
+      "stderr": [],
+      "exitCode": 0
+    },
+    {
+      "argv": [
+        "create",
+        "--session",
+        "feishu:s",
+        "--message",
+        "hello",
+        "--once",
+        "tomorrow"
+      ],
+      "available": true,
+      "rpcError": false,
+      "calls": [
+        {
+          "method": "cronCreate",
+          "params": {
+            "message": "hello",
+            "sessionKey": "feishu:s",
+            "channelKey": "feishu",
+            "projectKey": "/fixture/project",
+            "schedule": {
+              "type": "once",
+              "runAt": "tomorrow"
+            }
+          },
+          "json": "{\"message\":\"hello\",\"sessionKey\":\"feishu:s\",\"channelKey\":\"feishu\",\"projectKey\":\"/fixture/project\",\"schedule\":{\"type\":\"once\",\"runAt\":\"tomorrow\"}}"
+        }
+      ],
+      "stdout": [
+        "{\n  \"z\": 1,\n  \"a\": [\n    \"中\",\n    null\n  ]\n}"
+      ],
+      "stderr": [],
+      "exitCode": 0
+    },
+    {
+      "argv": [
+        "create",
+        "--session",
+        ":s",
+        "--message",
+        "hello",
+        "--cron",
+        "* * * * *"
+      ],
+      "available": true,
+      "rpcError": false,
+      "calls": [
+        {
+          "method": "cronCreate",
+          "params": {
+            "message": "hello",
+            "sessionKey": ":s",
+            "channelKey": "cli",
+            "projectKey": "/fixture/project",
+            "schedule": {
+              "type": "cron",
+              "expression": "* * * * *"
+            }
+          },
+          "json": "{\"message\":\"hello\",\"sessionKey\":\":s\",\"channelKey\":\"cli\",\"projectKey\":\"/fixture/project\",\"schedule\":{\"type\":\"cron\",\"expression\":\"* * * * *\"}}"
+        }
+      ],
+      "stdout": [
+        "{\n  \"z\": 1,\n  \"a\": [\n    \"中\",\n    null\n  ]\n}"
+      ],
+      "stderr": [],
+      "exitCode": 0
+    },
+    {
+      "argv": [
+        "create",
+        "--session",
+        "s",
+        "--message",
+        "hello",
+        "--once",
+        "tomorrow",
+        "--cron",
+        "* * * * *",
+        "--channel",
+        "custom",
+        "--project",
+        "relative",
+        "--timezone",
+        "Asia/Shanghai"
+      ],
+      "available": true,
+      "rpcError": false,
+      "calls": [
+        {
+          "method": "cronCreate",
+          "params": {
+            "message": "hello",
+            "sessionKey": "s",
+            "channelKey": "custom",
+            "projectKey": "relative",
+            "schedule": {
+              "type": "once",
+              "runAt": "tomorrow"
+            },
+            "timezone": "Asia/Shanghai"
+          },
+          "json": "{\"message\":\"hello\",\"sessionKey\":\"s\",\"channelKey\":\"custom\",\"projectKey\":\"relative\",\"schedule\":{\"type\":\"once\",\"runAt\":\"tomorrow\"},\"timezone\":\"Asia/Shanghai\"}"
+        }
+      ],
+      "stdout": [
+        "{\n  \"z\": 1,\n  \"a\": [\n    \"中\",\n    null\n  ]\n}"
+      ],
+      "stderr": [],
+      "exitCode": 0
+    },
+    {
+      "argv": [
+        "create",
+        "--session",
+        "s",
+        "--message",
+        "--oops",
+        "--once",
+        "tomorrow"
+      ],
+      "available": true,
+      "rpcError": false,
+      "calls": [],
+      "stdout": [],
+      "stderr": [
+        "Usage: pilotdeck cron create --session <sessionKey> --message <text> (--once <iso> | --cron <expr>)"
+      ],
+      "exitCode": 1
+    },
+    {
+      "argv": [
+        "delete",
+        "task",
+        "--stop-running"
+      ],
+      "available": true,
+      "rpcError": false,
+      "calls": [
+        {
+          "method": "cronDelete",
+          "params": {
+            "taskId": "task",
+            "stopRunning": true
+          },
+          "json": "{\"taskId\":\"task\",\"stopRunning\":true}"
+        }
+      ],
+      "stdout": [
+        "{\n  \"z\": 1,\n  \"a\": [\n    \"中\",\n    null\n  ]\n}"
+      ],
+      "stderr": [],
+      "exitCode": 0
+    },
+    {
+      "argv": [
+        "delete",
+        "--task",
+        "task"
+      ],
+      "available": true,
+      "rpcError": false,
+      "calls": [
+        {
+          "method": "cronDelete",
+          "params": {
+            "taskId": "--task",
+            "stopRunning": false
+          },
+          "json": "{\"taskId\":\"--task\",\"stopRunning\":false}"
+        }
+      ],
+      "stdout": [
+        "{\n  \"z\": 1,\n  \"a\": [\n    \"中\",\n    null\n  ]\n}"
+      ],
+      "stderr": [],
+      "exitCode": 0
+    },
+    {
+      "argv": [
+        "delete",
+        ""
+      ],
+      "available": true,
+      "rpcError": false,
+      "calls": [],
+      "stdout": [],
+      "stderr": [
+        "Usage: pilotdeck cron delete <taskId> [--stop-running]"
+      ],
+      "exitCode": 1
+    },
+    {
+      "argv": [
+        "delete"
+      ],
+      "available": true,
+      "rpcError": false,
+      "calls": [],
+      "stdout": [],
+      "stderr": [
+        "Usage: pilotdeck cron delete <taskId> [--stop-running]"
+      ],
+      "exitCode": 1
+    },
+    {
+      "argv": [
+        "stop",
+        "task"
+      ],
+      "available": true,
+      "rpcError": false,
+      "calls": [
+        {
+          "method": "cronStop",
+          "params": {
+            "taskId": "task"
+          },
+          "json": "{\"taskId\":\"task\"}"
+        }
+      ],
+      "stdout": [
+        "{\n  \"z\": 1,\n  \"a\": [\n    \"中\",\n    null\n  ]\n}"
+      ],
+      "stderr": [],
+      "exitCode": 0
+    },
+    {
+      "argv": [
+        "stop",
+        "--run",
+        "run"
+      ],
+      "available": true,
+      "rpcError": false,
+      "calls": [
+        {
+          "method": "cronStop",
+          "params": {
+            "taskId": "--run",
+            "runId": "run"
+          },
+          "json": "{\"taskId\":\"--run\",\"runId\":\"run\"}"
+        }
+      ],
+      "stdout": [
+        "{\n  \"z\": 1,\n  \"a\": [\n    \"中\",\n    null\n  ]\n}"
+      ],
+      "stderr": [],
+      "exitCode": 0
+    },
+    {
+      "argv": [
+        "stop",
+        "",
+        "--run",
+        "run"
+      ],
+      "available": true,
+      "rpcError": false,
+      "calls": [
+        {
+          "method": "cronStop",
+          "params": {
+            "taskId": "",
+            "runId": "run"
+          },
+          "json": "{\"taskId\":\"\",\"runId\":\"run\"}"
+        }
+      ],
+      "stdout": [
+        "{\n  \"z\": 1,\n  \"a\": [\n    \"中\",\n    null\n  ]\n}"
+      ],
+      "stderr": [],
+      "exitCode": 0
+    },
+    {
+      "argv": [
+        "stop"
+      ],
+      "available": true,
+      "rpcError": false,
+      "calls": [],
+      "stdout": [],
+      "stderr": [
+        "Usage: pilotdeck cron stop <taskId> or pilotdeck cron stop --run <runId>"
+      ],
+      "exitCode": 1
+    },
+    {
+      "argv": [],
+      "available": true,
+      "rpcError": false,
+      "calls": [],
+      "stdout": [],
+      "stderr": [
+        "Usage: pilotdeck cron <list|create|delete|stop>"
+      ],
+      "exitCode": 1
+    },
+    {
+      "argv": [
+        "nonsense"
+      ],
+      "available": true,
+      "rpcError": false,
+      "calls": [],
+      "stdout": [],
+      "stderr": [
+        "Usage: pilotdeck cron <list|create|delete|stop>"
+      ],
+      "exitCode": 1
+    },
+    {
+      "argv": [
+        "list"
+      ],
+      "available": false,
+      "rpcError": false,
+      "calls": [],
+      "stdout": [],
+      "stderr": [
+        "pilotdeck cron requires a running pilotdeck server."
+      ],
+      "exitCode": 1
+    },
+    {
+      "argv": [
+        "nonsense"
+      ],
+      "available": false,
+      "rpcError": false,
+      "calls": [],
+      "stdout": [],
+      "stderr": [
+        "pilotdeck cron requires a running pilotdeck server."
+      ],
+      "exitCode": 1
+    },
+    {
+      "argv": [
+        "list"
+      ],
+      "available": true,
+      "rpcError": true,
+      "calls": [
+        {
+          "method": "cronList",
+          "params": {
+            "includeHistory": false
+          },
+          "json": "{\"includeHistory\":false}"
+        }
+      ],
+      "stdout": [],
+      "stderr": [
+        "Error: fixture failure"
+      ],
+      "exitCode": 1
+    }
+  ]
+}

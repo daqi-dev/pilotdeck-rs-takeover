@@ -2,6 +2,8 @@
 //! then `new CliChannel({ argv }).start(...)` (src/cli/pilotdeck.ts:346-348,
 //! src/adapters/channel/cli/CliChannel.ts). The gateway runs in this process;
 //! each prompt is one `submitTurn`, rendered to stdout as it streams.
+pub(crate) mod remote;
+
 use super::paths::{self, Env};
 use super::{Failure, config, probe, server, skills, stderr_line, stdout_line};
 use pilotdeck_gateway::channel::cli;
@@ -10,6 +12,9 @@ use pilotdeck_protocol::{JsObject, JsValue};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
+
+const DRAIN_BUDGET: Duration = Duration::from_secs(5);
 
 pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
     let pilot_home = paths::pilot_home(env, cwd)?;
@@ -39,18 +44,16 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
         builtin_plugins_root: server::builtin_plugins_root(env, cwd, exe_dir),
     })
     .map_err(|error| Failure::Error(error.to_string()))?;
-    // resolveGateway: the fixed-address probe comes after the local gateway
-    // exists. A reachable server would take every turn over WebSocket; its
-    // address cannot be pointed at an isolated server, so that branch is not
-    // ported.
-    if probe::probe_gateway_server(env, cwd).is_some() {
-        return Err(Failure::Todo(
-            "the default CliChannel against a running server",
-        ));
+    // The baseline constructs its fallback before probing. A health response
+    // alone is insufficient: a refused WebSocket/hello also selects fallback.
+    let remote = probe::probe_gateway_server(env, cwd)
+        .and_then(|token| Remote::connect("ws://127.0.0.1:18789/ws", &token).ok());
+    if remote.is_none() {
+        write_stderr("[pilotdeck] gateway server unavailable; using in-process mode.\n");
     }
-    write_stderr("[pilotdeck] gateway server unavailable; using in-process mode.\n");
-    let channel = Channel {
-        gateway,
+    let mut channel = Channel {
+        gateway: &gateway,
+        remote,
         session_key: cli::default_session_key(&cwd.to_string_lossy()),
     };
     let prompt = paths::js_trim(&argv.join(" ")).to_owned();
@@ -59,57 +62,63 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
     } else {
         channel.submit_and_render(&prompt)
     };
-    // main().catch: the thrown message, then the process lives on.
-    if let Err(message) = outcome {
-        stderr_line(&message);
+    // The fixed baseline leaves both clients alive after completion. The
+    // authorized CLI hang fix releases them on success, input EOF and error.
+    if let Some(remote) = &mut channel.remote {
+        remote.runtime.block_on(remote.gateway.close());
     }
-    // The baseline's in-process gateway keeps its event loop alive, so the
-    // command never exits on its own once the input is done: it waits until
-    // it is killed. Keep the gateway (and its sessions) up the same way.
-    loop {
-        std::thread::park();
+    let shutdown = gateway.shutdown(DRAIN_BUDGET);
+    outcome.and(shutdown).map_err(Failure::Error)?;
+    Ok(0)
+}
+
+struct Remote {
+    runtime: tokio::runtime::Runtime,
+    gateway: remote::RemoteGateway,
+}
+
+impl Remote {
+    fn connect(url: &str, token: &str) -> Result<Self, String> {
+        // The socket reader must keep servicing ping/close while the main
+        // thread is blocked waiting for the next interactive input line.
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .map_err(|error| error.to_string())?;
+        let gateway = runtime.block_on(remote::RemoteGateway::connect(url, token))?;
+        Ok(Self { runtime, gateway })
     }
 }
 
-struct Channel {
-    gateway: LocalGateway,
+struct Channel<'a> {
+    gateway: &'a LocalGateway,
+    remote: Option<Remote>,
     session_key: String,
 }
 
-impl Channel {
+impl Channel<'_> {
     /// `runInteractive`: one turn per non-blank input line, each followed by
     /// a newline, until the input ends.
-    fn run_interactive(&self) -> Result<(), String> {
+    fn run_interactive(&mut self) -> Result<(), String> {
         let mut stdin = std::io::stdin().lock();
         let mut raw = Vec::new();
-        loop {
-            raw.clear();
-            let read = stdin.read_until(b'\n', &mut raw).unwrap_or(0);
-            if read == 0 {
-                return Ok(());
-            }
-            if raw.last() == Some(&b'\n') {
-                raw.pop();
-                if raw.last() == Some(&b'\r') {
-                    raw.pop();
-                }
-            }
-            // readline also ends a line at a lone `\r`.
-            for line in String::from_utf8_lossy(&raw).split('\r') {
-                let text = paths::js_trim(line);
-                if text.is_empty() {
-                    continue;
-                }
+        let mut skip_lf = false;
+        while read_line(&mut stdin, &mut raw, &mut skip_lf).map_err(|error| error.to_string())? {
+            let line = String::from_utf8_lossy(&raw);
+            let text = paths::js_trim(&line);
+            if !text.is_empty() {
                 self.submit_and_render(text)?;
                 write_stdout("\n");
             }
         }
+        Ok(())
     }
 
     /// `submitAndRender`: `{ sessionKey, channelKey: "cli", projectKey:
     /// undefined, message, canPrompt: false }`, each rendered event written
     /// as it arrives.
-    fn submit_and_render(&self, message: &str) -> Result<(), String> {
+    fn submit_and_render(&mut self, message: &str) -> Result<(), String> {
         let mut input = JsObject::new();
         input.insert(
             "sessionKey".into(),
@@ -121,14 +130,54 @@ impl Channel {
         );
         input.insert("message".into(), JsValue::String(message.into()));
         input.insert("canPrompt".into(), JsValue::Bool(false));
-        self.gateway.submit_turn(
-            JsValue::Object(input),
-            Arc::new(|event| {
-                if let Some(text) = cli::render_event(&event) {
-                    write_stdout(&text);
-                }
-            }),
-        )
+        let render = |event| {
+            if let Some(text) = cli::render_event(&event) {
+                write_stdout(&text);
+            }
+        };
+        match &mut self.remote {
+            Some(remote) => remote
+                .runtime
+                .block_on(remote.gateway.submit_turn(JsValue::Object(input), render)),
+            None => self
+                .gateway
+                .submit_turn(JsValue::Object(input), Arc::new(render)),
+        }
+    }
+}
+
+/// readline emits on CR immediately, even when no LF or EOF has arrived yet.
+/// Suppress a following LF so CRLF represents one line across buffer reads.
+fn read_line(
+    input: &mut impl BufRead,
+    line: &mut Vec<u8>,
+    skip_lf: &mut bool,
+) -> std::io::Result<bool> {
+    line.clear();
+    loop {
+        let available = input.fill_buf()?;
+        if available.is_empty() {
+            return Ok(!line.is_empty());
+        }
+        if *skip_lf {
+            *skip_lf = false;
+            if available[0] == b'\n' {
+                input.consume(1);
+                continue;
+            }
+        }
+        if let Some(end) = available
+            .iter()
+            .position(|byte| matches!(byte, b'\r' | b'\n'))
+        {
+            line.extend_from_slice(&available[..end]);
+            *skip_lf = available[end] == b'\r';
+            input.consume(end + 1);
+            return Ok(true);
+        }
+        let count = available.len();
+        line.extend_from_slice(available);
+        input.consume(count);
     }
 }
 
@@ -187,4 +236,46 @@ fn write_stderr(text: &str) {
     let mut out = std::io::stderr().lock();
     let _ = out.write_all(text.as_bytes());
     let _ = out.flush();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_line;
+    use std::io::{BufReader, Cursor};
+
+    #[test]
+    fn readline_accepts_cr_lf_crlf_and_unterminated_tail() {
+        // A one-byte buffer forces CRLF and UTF-8 across fill_buf boundaries.
+        let mut input = BufReader::with_capacity(1, Cursor::new("first\r\n\n中文\rthird\ntail"));
+        let mut raw = Vec::new();
+        let mut skip_lf = false;
+        let mut lines = Vec::new();
+        while read_line(&mut input, &mut raw, &mut skip_lf).unwrap() {
+            lines.push(String::from_utf8(raw.clone()).unwrap());
+        }
+        assert_eq!(lines, ["first", "", "中文", "third", "tail"]);
+    }
+
+    #[test]
+    fn readline_returns_after_cr_without_reading_the_next_chunk() {
+        struct FirstChunk;
+        impl std::io::Read for FirstChunk {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                panic!("read_line uses buffered input");
+            }
+        }
+        impl std::io::BufRead for FirstChunk {
+            fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+                Ok(b"first\r")
+            }
+            fn consume(&mut self, amount: usize) {
+                assert_eq!(amount, 6);
+            }
+        }
+        let mut raw = Vec::new();
+        let mut skip_lf = false;
+        assert!(read_line(&mut FirstChunk, &mut raw, &mut skip_lf).unwrap());
+        assert_eq!(raw, b"first");
+        assert!(skip_lf);
+    }
 }
