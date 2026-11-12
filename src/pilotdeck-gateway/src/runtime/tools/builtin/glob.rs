@@ -1,11 +1,9 @@
 //! `glob` (baseline `tool/builtin/glob.ts` + `filesystem/ripgrepFiles.ts`).
 //! The TS tool shells out to the bundled ripgrep with
 //! `--files --hidden --no-ignore --glob <pattern> --sort=modified`; this port
-//! walks the same tree directly (hidden files included, ignore files disabled,
-//! `.git`/`node_modules`/`dist` filtered, symlinks not followed) and applies
-//! ripgrep's gitignore-style glob semantics. Ordering is modification time
-//! ascending, the direction observed from ripgrep 15; exact-mtime ties fall
-//! back to the path so the result stays stable.
+//! runs the same bundled engine through the `grep` tool's ripgrep runner, so
+//! matching, ordering (equal modification times included) and spawn errors
+//! are ripgrep's own.
 use super::{
     basename, dirname, is_absolute, object, resolve_workspace_path, schema, string, text,
     tool_error,
@@ -15,11 +13,9 @@ use crate::{
     runtime::tools::{ExecutableTool, ToolError, ToolFuture, ToolOutput, ToolRunContext},
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
-use regex::Regex;
-use std::{path::Path, time::UNIX_EPOCH};
+use std::path::Path;
 
 const DEFAULT_LIMIT: usize = 1_000;
-const IGNORED_DIRECTORIES: &[&str] = &[".git", "node_modules", "dist"];
 
 pub struct GlobTool {
     fields: JsObject,
@@ -53,7 +49,7 @@ impl ToolDefinition for GlobTool {
 
 impl ExecutableTool for GlobTool {
     fn execute(&self, input: JsValue, context: ToolRunContext) -> ToolFuture<ToolOutput> {
-        Box::pin(async move { execute(&input, &context) })
+        Box::pin(async move { execute(&input, &context).await })
     }
 }
 
@@ -78,7 +74,7 @@ fn definition() -> JsObject {
     ])
 }
 
-fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, ToolError> {
+async fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, ToolError> {
     let pattern = input
         .get("pattern")
         .and_then(JsValue::as_string)
@@ -103,7 +99,7 @@ fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, Tool
     } else {
         format!("{}/", text(&resolved.relative))
     };
-    let files = walk(&super::os_path(&resolved.absolute), &search_pattern)?;
+    let files = ripgrep_files(&resolved.absolute, &search_pattern, context).await?;
     let limit = input
         .get("limit")
         .and_then(JsValue::as_number)
@@ -185,292 +181,92 @@ fn slice_limit(files: &[String], limit: f64) -> Vec<String> {
     files[start..end as usize].to_vec()
 }
 
-fn walk(root: &Path, pattern: &JsString) -> Result<Vec<String>, ToolError> {
-    let matcher = GlobMatcher::new(pattern)?;
-    let mut files: Vec<(String, i64)> = Vec::new();
-    walk_directory(root, "", &matcher, &mut files)?;
-    files.sort_by(|left, right| {
-        left.1
-            .cmp(&right.1)
-            .then_with(|| left.0.as_bytes().cmp(right.0.as_bytes()))
-    });
-    Ok(files.into_iter().map(|(path, _)| path).collect())
+/// `ripgrepFiles` (filesystem/ripgrepFiles.ts:52-85): the bundled ripgrep
+/// lists the files (`--files --hidden --no-ignore --glob <pattern>
+/// --sort=modified .`) and its output order is kept, so equal modification
+/// times stay in ripgrep's walk order. Spawn failures map as `runRipgrep`
+/// does: a missing `cwd` is the spawn's ENOENT, reported like a missing
+/// binary; a `cwd` that is a file is `spawn ENOTDIR`.
+async fn ripgrep_files(
+    cwd: &JsString,
+    pattern: &JsString,
+    context: &ToolRunContext,
+) -> Result<Vec<String>, ToolError> {
+    let glob = normalize_ripgrep_glob_pattern(&text(pattern), &super::os_path(cwd));
+    let args: Vec<String> = [
+        "--files",
+        "--hidden",
+        "--no-ignore",
+        "--glob",
+        glob.as_str(),
+        "--sort=modified",
+        ".",
+    ]
+    .iter()
+    .map(|arg| (*arg).to_owned())
+    .collect();
+    let stdout = super::grep::run_ripgrep_for("glob", &args, cwd, context).await?;
+    Ok(super::grep::split_ripgrep_lines(&stdout)
+        .iter()
+        .map(|line| super::grep::normalize_relative_path(line))
+        .filter(|line| !super::grep::is_ignored_path(line))
+        .collect())
 }
 
-fn walk_directory(
-    directory: &Path,
-    relative: &str,
-    matcher: &GlobMatcher,
-    files: &mut Vec<(String, i64)>,
-) -> Result<(), ToolError> {
-    let entries = std::fs::read_dir(directory).map_err(|error| {
-        tool_error(
-            "tool_execution_failed",
-            format!("ripgrep glob search failed: {error}"),
-        )
-    })?;
-    for entry in entries {
-        let entry = entry.map_err(|error| {
-            tool_error(
-                "tool_execution_failed",
-                format!("ripgrep glob search failed: {error}"),
-            )
-        })?;
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        let path = if relative.is_empty() {
-            name.to_string()
-        } else {
-            format!("{relative}/{name}")
-        };
-        if path
-            .split('/')
-            .any(|segment| IGNORED_DIRECTORIES.contains(&segment))
-        {
+const GLOB_ESCAPE_CHARS: [char; 7] = ['*', '?', '[', ']', '{', '}', '\\'];
+
+/// `normalizeRipgrepGlobPattern`: a backslash is a path separator unless it
+/// escapes a glob metacharacter of a literal segment.
+fn normalize_ripgrep_glob_pattern(pattern: &str, cwd: &Path) -> String {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut normalized = String::new();
+    for (index, &character) in chars.iter().enumerate() {
+        if character != '\\' {
+            normalized.push(character);
             continue;
         }
-        let file_type = entry.file_type().map_err(|error| {
-            tool_error(
-                "tool_execution_failed",
-                format!("ripgrep glob search failed: {error}"),
-            )
-        })?;
-        if file_type.is_dir() {
-            if IGNORED_DIRECTORIES.contains(&name.as_ref()) {
-                continue;
-            }
-            walk_directory(&entry.path(), &path, matcher, files)?;
-        } else if file_type.is_file() && matcher.matches(&path) {
-            let Ok(metadata) = entry.metadata() else {
-                continue;
-            };
-            let modified = metadata.modified().unwrap_or(UNIX_EPOCH);
-            let milliseconds = match modified.duration_since(UNIX_EPOCH) {
-                Ok(duration) => duration.as_millis() as i64,
-                Err(error) => -(error.duration().as_millis() as i64),
-            };
-            files.push((path, milliseconds));
-        }
+        let separator = backslash_is_separator(&chars, index, &normalized, cwd);
+        normalized.push(if separator { '/' } else { '\\' });
     }
-    Ok(())
+    normalized
 }
 
-struct GlobMatcher {
-    positive: Option<Regex>,
-    negative: bool,
-    basename_only: bool,
+fn backslash_is_separator(chars: &[char], index: usize, prefix: &str, cwd: &Path) -> bool {
+    let Some(&next) = chars.get(index + 1) else {
+        return false;
+    };
+    if !GLOB_ESCAPE_CHARS.contains(&next) {
+        return true;
+    }
+    // `startsGlobstarPathSegment(pattern, index + 1)`.
+    if next == '*'
+        && chars.get(index + 2) == Some(&'*')
+        && matches!(chars.get(index + 3), None | Some('\\') | Some('/'))
+    {
+        return true;
+    }
+    let last_segment = prefix.rsplit('/').next().unwrap_or(prefix);
+    if has_unescaped_glob_special_chars(last_segment) {
+        return true;
+    }
+    // `staticPrefixIsDirectory(prefix, cwd)`.
+    !prefix.is_empty()
+        && !has_unescaped_glob_special_chars(prefix)
+        && std::fs::metadata(cwd.join(prefix)).is_ok_and(|metadata| metadata.is_dir())
 }
 
-impl GlobMatcher {
-    fn new(pattern: &JsString) -> Result<Self, ToolError> {
-        let mut value = pattern.units().to_vec();
-        let negative = value.first() == Some(&(b'!' as u16));
-        if negative {
-            value.remove(0);
-        }
-        let mut anchored = false;
-        if value.first() == Some(&(b'/' as u16)) {
-            value.remove(0);
-            anchored = true;
-        }
-        let basename_only = !anchored && !value.contains(&(b'/' as u16));
-        let text = String::from_utf16_lossy(&value);
-        if text.is_empty() || text.ends_with('/') {
-            return Ok(Self {
-                positive: None,
-                negative,
-                basename_only,
-            });
-        }
-        let branches = expand_braces(&text);
-        let mut sources = Vec::new();
-        for branch in branches {
-            sources.push(glob_to_regex(&branch));
-        }
-        let source = if sources.len() == 1 {
-            sources.pop().unwrap()
-        } else {
-            format!("(?:{})", sources.join("|"))
-        };
-        let regex = Regex::new(&source).map_err(|error| {
-            tool_error(
-                "tool_execution_failed",
-                format!("ripgrep glob search failed: invalid glob pattern: {error}"),
-            )
-        })?;
-        Ok(Self {
-            positive: Some(regex),
-            negative,
-            basename_only,
-        })
-    }
-
-    fn matches(&self, path: &str) -> bool {
-        let Some(regex) = &self.positive else {
-            return false;
-        };
-        let subject = if self.basename_only {
-            path.rsplit('/').next().unwrap_or(path)
-        } else {
-            path
-        };
-        let matched = regex.is_match(subject);
-        matched != self.negative
-    }
-}
-
-fn glob_to_regex(pattern: &str) -> String {
-    let chars: Vec<char> = pattern.chars().collect();
-    let mut source = String::from("^");
-    let mut index = 0;
-    while index < chars.len() {
-        match chars[index] {
-            '*' => {
-                if chars.get(index + 1) == Some(&'*') {
-                    if chars.get(index + 2) == Some(&'/') {
-                        source.push_str("(?:[^/]+/)*");
-                        index += 3;
-                    } else {
-                        source.push_str(".*");
-                        index += 2;
-                    }
-                } else {
-                    source.push_str("[^/]*");
-                    index += 1;
-                }
-            }
-            '?' => {
-                source.push_str("[^/]");
-                index += 1;
-            }
-            '[' => {
-                let mut end = index + 1;
-                if chars.get(end) == Some(&'!') || chars.get(end) == Some(&'^') {
-                    end += 1;
-                }
-                if chars.get(end) == Some(&']') {
-                    end += 1;
-                }
-                while end < chars.len() && chars[end] != ']' {
-                    end += 1;
-                }
-                if end >= chars.len() {
-                    source.push_str("\\[");
-                    index += 1;
-                } else {
-                    let mut class = String::from("[");
-                    let mut cursor = index + 1;
-                    if chars.get(cursor) == Some(&'!') || chars.get(cursor) == Some(&'^') {
-                        class.push('^');
-                        cursor += 1;
-                    }
-                    while cursor < end {
-                        let character = chars[cursor];
-                        if character == '\\' {
-                            class.push_str("\\\\");
-                        } else if character == ']' || character == '[' || character == '^' {
-                            class.push('\\');
-                            class.push(character);
-                        } else {
-                            class.push(character);
-                        }
-                        cursor += 1;
-                    }
-                    class.push(']');
-                    source.push_str(&class);
-                    index = end + 1;
-                }
-            }
-            '\\' => {
-                if let Some(character) = chars.get(index + 1) {
-                    push_regex_literal(&mut source, *character);
-                    index += 2;
-                } else {
-                    push_regex_literal(&mut source, '\\');
-                    index += 1;
-                }
-            }
-            character => {
-                push_regex_literal(&mut source, character);
-                index += 1;
-            }
-        }
-    }
-    source.push('$');
-    source
-}
-
-fn push_regex_literal(source: &mut String, character: char) {
-    if "\\.^$+()|{}[]?".contains(character) {
-        source.push('\\');
-    }
-    source.push(character);
-}
-
-fn expand_braces(pattern: &str) -> Vec<String> {
-    let chars: Vec<char> = pattern.chars().collect();
-    let mut depth = 0;
-    let mut open = None;
-    for (index, character) in chars.iter().enumerate() {
+fn has_unescaped_glob_special_chars(value: &str) -> bool {
+    let mut chars = value.chars();
+    while let Some(character) = chars.next() {
         match character {
-            '\\' => {}
-            '{' => {
-                if depth == 0 {
-                    open = Some(index);
-                }
-                depth += 1;
+            '\\' => {
+                chars.next();
             }
-            '}' if depth > 0 => {
-                depth -= 1;
-                if depth == 0 {
-                    let start = open.take().unwrap();
-                    let inner: String = chars[start + 1..index].iter().collect();
-                    let mut pieces = Vec::new();
-                    let mut piece = String::new();
-                    let mut nested = 0;
-                    let mut escaped = false;
-                    for character in inner.chars() {
-                        if escaped {
-                            piece.push(character);
-                            escaped = false;
-                            continue;
-                        }
-                        match character {
-                            '\\' => {
-                                piece.push(character);
-                                escaped = true;
-                            }
-                            '{' => {
-                                nested += 1;
-                                piece.push(character);
-                            }
-                            '}' => {
-                                nested -= 1;
-                                piece.push(character);
-                            }
-                            ',' if nested == 0 => {
-                                pieces.push(std::mem::take(&mut piece));
-                            }
-                            _ => piece.push(character),
-                        }
-                    }
-                    pieces.push(piece);
-                    if pieces.len() <= 1 {
-                        return vec![pattern.to_owned()];
-                    }
-                    let prefix: String = chars[..start].iter().collect();
-                    let suffix: String = chars[index + 1..].iter().collect();
-                    let mut result = Vec::new();
-                    for piece in pieces {
-                        result.extend(expand_braces(&format!("{prefix}{piece}{suffix}")));
-                    }
-                    return result;
-                }
-            }
+            '*' | '?' | '[' | '{' => return true,
             _ => {}
         }
     }
-    vec![pattern.to_owned()]
+    false
 }
 
 fn extract_glob_base_directory(pattern: &JsString) -> (JsString, JsString) {
