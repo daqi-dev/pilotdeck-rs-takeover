@@ -308,11 +308,28 @@ impl Requests {
         // the MCP clear, because the MCP clear drops the shared projects
         // entry its budget step reads. When that half is wired (#1839), it
         // belongs above this line, never below it.
+        // `if (projectRoot) this.clearTaskBudgetLedger(projectRoot,
+        // sessionKey)`: the session's SDK project (from its config or its
+        // MCP servers) gets a `cleared` ledger record. The store is
+        // append-only and this clear does not load it.
+        let sdk_project = self
+            .session_overrides
+            .sdk_config_project(&key)
+            .map(|root| JsString::from(root.to_string_lossy().as_ref()))
+            .or_else(|| {
+                self.mcp
+                    .config()
+                    .session_project(&JsValue::String(key.clone()))
+            });
+        if let Some(root) = sdk_project {
+            let _ = crate::storage::TaskBudgetStore::new(&self.options.home, None)
+                .clear_session(&root, &key);
+        }
         self.mcp
             .config()
             .clear_sdk_session_state(&JsValue::String(key.clone()));
         self.session_overrides.clear_thinking(&key);
-        self.session_overrides.clear_output_style(&key);
+        self.session_overrides.clear_sdk_config(&key);
         // GatewayWsConnection.ts:342: `.then(() => ({ ok: true }))`.
         Ok(object([("ok", JsValue::Bool(true))]))
     }

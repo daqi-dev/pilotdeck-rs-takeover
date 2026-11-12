@@ -1,0 +1,220 @@
+{
+  "name": "sdk-config-agents",
+  "about": "sdkSessionConfig.agents（SessionAgentConfigBundle.ts toSdkSubagentDefinitions → config.subagentDefinitions）：自定义子代理 reviewer（描述、提示词后缀、tools 允许列表、disallowedTools、model 指向另一个 provider、maxTurns），父轮用 agent 工具指定 subagent_type reviewer，比较子代理的模型请求（系统提示词、工具集、模型）与会话落盘；同一会话再要内置的 explore（SDK 定义替换了内置表）看 agent 工具的结果；另一个会话 s-ag3 用另一份配置：planner（permissionMode plan → 只读、criticalSystemReminder_EXPERIMENTAL、effort、不给 tools 即全部父工具），看子代理的系统提示词与工具集。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    alt:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        reviewer-model:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 32768\n            maxOutputTokens: 4096\ntelemetry:\n  enabled: false\n",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Agents run\"}"
+      }
+    },
+    {
+      "name": "parent-after-3",
+      "when": [
+        "turn-3:",
+        "\"tool_call_id\":\"call_r3\""
+      ],
+      "reply": {
+        "text": "Done 3."
+      }
+    },
+    {
+      "name": "parent-3",
+      "when": [
+        "turn-3:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_r3",
+          "name": "agent",
+          "arguments": {
+            "description": "Plan it",
+            "prompt": "CHILD-DIRECTIVE-P: plan.",
+            "subagent_type": "planner"
+          }
+        }
+      }
+    },
+    {
+      "name": "parent-after-2",
+      "when": [
+        "turn-2:",
+        "\"tool_call_id\":\"call_r2\""
+      ],
+      "reply": {
+        "text": "Done 2."
+      }
+    },
+    {
+      "name": "parent-2",
+      "when": [
+        "turn-2:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_r2",
+          "name": "agent",
+          "arguments": {
+            "description": "Explore it",
+            "prompt": "CHILD-DIRECTIVE-E: explore.",
+            "subagent_type": "explore"
+          }
+        }
+      }
+    },
+    {
+      "name": "parent-after-1",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_r1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "parent-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_r1",
+          "name": "agent",
+          "arguments": {
+            "description": "Review it",
+            "prompt": "CHILD-DIRECTIVE-R: review the notes.",
+            "subagent_type": "reviewer"
+          }
+        }
+      }
+    },
+    {
+      "name": "child",
+      "when": [
+        "CHILD-DIRECTIVE-R"
+      ],
+      "reply": {
+        "text": "Scope: reviewed.\nResult: looks fine.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "child-explore",
+      "when": [
+        "CHILD-DIRECTIVE-E"
+      ],
+      "reply": {
+        "text": "Scope: explored.\nResult: nothing.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "child-planner",
+      "when": [
+        "CHILD-DIRECTIVE-P"
+      ],
+      "reply": {
+        "text": "Scope: planned.\nResult: 1. do it\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "ok"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ag",
+        "channelKey": "test",
+        "message": "turn-1: delegate a review",
+        "sdkSessionConfig": {
+          "agents": {
+            "reviewer": {
+              "description": "Reviews notes for problems.",
+              "prompt": "REVIEWER-SUFFIX: you are a careful reviewer.",
+              "tools": [
+                "read_file",
+                "grep",
+                "glob",
+                "agent"
+              ],
+              "disallowedTools": [
+                "glob"
+              ],
+              "model": "alt/reviewer-model",
+              "maxTurns": 3
+            }
+          }
+        }
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ag",
+        "channelKey": "test",
+        "message": "turn-2: delegate to explore",
+        "sdkSessionConfig": {
+          "agents": {
+            "reviewer": {
+              "description": "Reviews notes for problems.",
+              "prompt": "REVIEWER-SUFFIX: you are a careful reviewer.",
+              "tools": [
+                "read_file",
+                "grep",
+                "glob",
+                "agent"
+              ],
+              "disallowedTools": [
+                "glob"
+              ],
+              "model": "alt/reviewer-model",
+              "maxTurns": 3
+            }
+          }
+        }
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ag3",
+        "channelKey": "test",
+        "message": "turn-3: delegate a plan",
+        "sdkSessionConfig": {
+          "agents": {
+            "planner": {
+              "description": "Plans the work.",
+              "prompt": "PLANNER-SUFFIX: plan carefully.",
+              "permissionMode": "plan",
+              "effort": "high",
+              "criticalSystemReminder_EXPERIMENTAL": "CRITICAL-REMINDER: never write files."
+            }
+          }
+        }
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-ag"
+      }
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "name": "sdk-config-agents-model",
+  "about": "sdkSessionConfig.agents 的 model 在设置时按目录解析（ProjectRuntimeRegistry.ts resolveSdkSubagentScopes）：目录里没有的回 INVALID_SDK_AGENT_MODEL；被 managedModels 挡住的回对应错误；裸模型名唯一时解析成 provider/model，子代理的请求用这个模型。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    alt:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        reviewer-model:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 32768\n            maxOutputTokens: 4096\ntelemetry:\n  enabled: false\n",
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Agent models\"}" } },
+    { "name": "parent-after", "when": ["turn-1:", "\"tool_call_id\":\"call_am\""], "reply": { "text": "Done." } },
+    { "name": "parent", "when": ["turn-1:"], "reply": { "tool": { "id": "call_am", "name": "agent", "arguments": { "description": "Check it", "prompt": "CHILD-DIRECTIVE-AM: check.", "subagent_type": "checker" } } } },
+    { "name": "child", "when": ["CHILD-DIRECTIVE-AM"], "reply": { "text": "Scope: checked.\nResult: ok.\nKey files: none\nFiles changed: none\nIssues: none" } },
+    { "name": "main", "reply": { "text": "ok" } }
+  ],
+  "steps": [
+    { "ws": "submit_turn", "params": { "sessionKey": "s-am-bad", "channelKey": "test", "message": "turn-0: unknown model", "sdkSessionConfig": { "agents": { "checker": { "description": "Checks.", "prompt": "CHECKER", "model": "nope/none" } } } } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-am-policy", "channelKey": "test", "message": "turn-0: blocked model", "sdkSessionConfig": { "managedModels": { "allow": ["bbx/*"], "deny": [] }, "agents": { "checker": { "description": "Checks.", "prompt": "CHECKER", "model": "alt/reviewer-model" } } } } },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-am", "channelKey": "test", "message": "turn-1: bare model name", "sdkSessionConfig": { "agents": { "checker": { "description": "Checks.", "prompt": "CHECKER", "model": "reviewer-model" } } } } },
+    { "sleep": 300 }
+  ]
+}

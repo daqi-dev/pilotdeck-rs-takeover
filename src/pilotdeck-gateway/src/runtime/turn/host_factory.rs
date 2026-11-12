@@ -196,6 +196,8 @@ pub struct SessionPorts {
     pub interaction: InteractionTurnInput,
     /// Session-owned inputs of the context's `CompactionEngine`.
     pub compaction: CompactionPorts,
+    /// `sdkSessionConfig.skills`: the prompt lists only these skills.
+    pub skills: Option<Vec<String>>,
 }
 
 /// The session's side of `CompactionEngine`'s composition: its lifecycle
@@ -336,6 +338,16 @@ impl TurnHostFactory {
         let turn_override_sink = self.turn_override_sink.take();
         let in_process_loop = self.in_process_loop;
         let factory = Arc::new(self);
+        let maintenance_factory = factory.clone();
+        let maintenance: Arc<super::live::MaintenanceFactory> =
+            Arc::new(move |identity, recorder, signal| {
+                let factory = maintenance_factory.clone();
+                Box::pin(async move {
+                    factory
+                        .maintenance_context(&identity, recorder, signal)
+                        .await
+                })
+            });
         let session = LiveSessionAdapter::with_interaction_signal(
             recorder,
             history,
@@ -352,7 +364,8 @@ impl TurnHostFactory {
             Limits::default().close_timeout
         } else {
             close_timeout
-        });
+        })
+        .with_maintenance(maintenance);
         let session = match agent_config {
             Some(config) => session.with_agent_config(config),
             None => session,
@@ -458,6 +471,7 @@ impl TurnHostFactory {
             turn,
             mut interaction,
             compaction,
+            skills,
         } = ports;
         let context = lease
             .runtime()
@@ -535,62 +549,16 @@ impl TurnHostFactory {
         }
         let context_runtime = match context_runtime {
             Some(runtime) => Some(runtime),
-            None => {
-                let storage = context
-                    .resource(Resource::InstructionStorage)
-                    .ok_or_else(|| {
-                        HostError::new(
-                            HostErrorKind::Protocol,
-                            "Leased context storage resource is missing.",
-                        )
-                    })?;
-                let storage = storage
-                    .as_any()
-                    .downcast_ref::<ContextStorageResources>()
-                    .ok_or_else(|| {
-                        HostError::new(
-                            HostErrorKind::Protocol,
-                            "Leased context storage resource is not native.",
-                        )
-                    })?;
-                // A session-composition failure is not a host execution
-                // failure: TS's factory rethrows the constructor error from
-                // session creation unchanged (`ProjectSessionFactory.ts:160-163`),
-                // so this boundary keeps the original message and kind.
-                let session_error = |message: String| {
-                    HostError::new(
-                        if crate::mutants::on("budget-session-kind") {
-                            HostErrorKind::Protocol
-                        } else {
-                            HostErrorKind::Session
-                        },
-                        message,
-                    )
-                };
-                let extension = session_extension(&context)
-                    .await
-                    .map_err(|error| session_error(error.to_string()))?;
-                Some(Arc::new(
-                    storage
-                        .create_session_with_options(
-                            tool_results_dir,
-                            crate::runtime::project::context_storage::SessionContextOptions {
-                                extension,
-                                compaction: Some(
-                                    crate::runtime::project::context_storage::SessionCompaction {
-                                        model: compaction_model,
-                                        lifecycle: compaction.lifecycle,
-                                        events: compaction.events,
-                                        cooldown: compaction.cooldown,
-                                    },
-                                ),
-                                ..Default::default()
-                            },
-                        )
-                        .map_err(|error| session_error(error.message))?
-                        .context_runtime,
-                ) as Arc<dyn context::ContextRuntime>)
-            }
+            None => Some(
+                session_context_runtime(
+                    &context,
+                    tool_results_dir,
+                    compaction,
+                    compaction_model,
+                    skills.as_deref(),
+                )
+                .await?,
+            ),
         };
         if let Some(runtime) = context_runtime {
             let handler = context::Handler::new(
@@ -625,6 +593,224 @@ impl TurnHostFactory {
 
 use crate::runtime::context as context_runtime;
 
+/// The session's context runtime composed from the leased generation's
+/// context storage (`SessionContextRuntimeBundle.compose`), with the
+/// session's compaction ports.
+async fn session_context_runtime(
+    context: &crate::runtime::project::StageContext,
+    tool_results_dir: PathBuf,
+    compaction: CompactionPorts,
+    compaction_model: Arc<dyn crate::host::modules::model::ModelExecution>,
+    skills: Option<&[String]>,
+) -> Result<Arc<dyn context::ContextRuntime>, HostError> {
+    let storage = context
+        .resource(Resource::InstructionStorage)
+        .ok_or_else(|| {
+            HostError::new(
+                HostErrorKind::Protocol,
+                "Leased context storage resource is missing.",
+            )
+        })?;
+    let storage = storage
+        .as_any()
+        .downcast_ref::<ContextStorageResources>()
+        .ok_or_else(|| {
+            HostError::new(
+                HostErrorKind::Protocol,
+                "Leased context storage resource is not native.",
+            )
+        })?;
+    // A session-composition failure is not a host execution
+    // failure: TS's factory rethrows the constructor error from
+    // session creation unchanged (`ProjectSessionFactory.ts:160-163`),
+    // so this boundary keeps the original message and kind.
+    let session_error = |message: String| {
+        HostError::new(
+            if crate::mutants::on("budget-session-kind") {
+                HostErrorKind::Protocol
+            } else {
+                HostErrorKind::Session
+            },
+            message,
+        )
+    };
+    let extension = session_extension(context, skills)
+        .await
+        .map_err(|error| session_error(error.to_string()))?;
+    Ok(Arc::new(
+        storage
+            .create_session_with_options(
+                tool_results_dir,
+                crate::runtime::project::context_storage::SessionContextOptions {
+                    extension,
+                    compaction: Some(
+                        crate::runtime::project::context_storage::SessionCompaction {
+                            model: compaction_model,
+                            lifecycle: compaction.lifecycle,
+                            events: compaction.events,
+                            cooldown: compaction.cooldown,
+                        },
+                    ),
+                    ..Default::default()
+                },
+            )
+            .map_err(|error| session_error(error.message))?
+            .context_runtime,
+    ) as Arc<dyn context::ContextRuntime>)
+}
+
+/// What a maintenance operation outside a turn holds: the session's context
+/// runtime composed from one generation lease, kept alive with it.
+pub struct MaintenanceContext {
+    pub runtime: Arc<dyn context::ContextRuntime>,
+    /// The session's hooks bound for the maintenance run (PreCompact /
+    /// PostCompact dispatch through them); released with the context.
+    hooks: Option<(
+        crate::runtime::project::interaction_hooks::TurnHooks,
+        Option<super::interaction::TurnHooksSink>,
+    )>,
+    pub lease: RuntimeLease,
+}
+impl Drop for MaintenanceContext {
+    fn drop(&mut self) {
+        if let Some((hooks, sink)) = self.hooks.take() {
+            if let Some(sink) = sink {
+                sink(None);
+            }
+            hooks.close();
+        }
+    }
+}
+
+impl TurnHostFactory {
+    /// `ManualCompactionController`'s context (createAgentSession.ts:169-177):
+    /// the same session context runtime a turn composes — compaction engine,
+    /// lifecycle hooks, event emitter and summary cooldown — from the
+    /// current generation, without a sidecar or a module router.
+    pub async fn maintenance_context(
+        &self,
+        identity: &ExecutionIdentity,
+        recorder: Arc<Recorder>,
+        signal: crate::runtime::hooks::Cancellation,
+    ) -> Result<MaintenanceContext, HostError> {
+        let lease = self
+            .registry
+            .acquire(self.project_root.as_deref())
+            .map_err(|error| HostError::new(HostErrorKind::Protocol, error.message))?;
+        let mut ports = (self.ports)(identity, recorder, signal);
+        let context = lease
+            .runtime()
+            .resources()
+            .get::<ProjectResources>()
+            .ok_or_else(|| {
+                HostError::new(
+                    HostErrorKind::Protocol,
+                    "Leased project resources are missing.",
+                )
+            })?
+            .context();
+        // The session's event buffer outlives the maintenance turn: the
+        // compaction's events wait there for the next turn to drain them.
+        if ports.compaction.events.is_some() {
+            ports.compaction.events = context
+                .resource(Resource::InteractionEvents)
+                .and_then(|resource| {
+                    resource
+                        .as_any()
+                        .downcast_ref::<crate::runtime::project::interaction_events::InteractionEvents>()
+                        .cloned()
+                })
+                .map(|events| {
+                    Arc::new(move |event: JsValue| {
+                        if let Some(event) = event.as_object() {
+                            let _ = events.carry(event.clone());
+                        }
+                    }) as crate::runtime::context::compaction::engine::EventEmitter
+                });
+        }
+        if let Some(runtime) = ports.context_runtime {
+            return Ok(MaintenanceContext {
+                runtime,
+                hooks: None,
+                lease,
+            });
+        }
+        // The session lifecycle the compaction engine dispatches PreCompact /
+        // PostCompact through: bound for this maintenance run, as a turn
+        // binds it (`InteractionTurn::bind_owned`).
+        let hooks = match context
+            .resource(Resource::InteractionHooks)
+            .and_then(|resource| {
+                resource
+                    .as_any()
+                    .downcast_ref::<crate::runtime::project::interaction_hooks::InteractionHooks>()
+                    .cloned()
+            }) {
+            Some(resource) => {
+                let interaction = &mut ports.interaction;
+                let hooks = resource.bind_turn_observed(
+                    crate::host::modules::lifecycle::Binding {
+                        session_id: identity.session_id.clone(),
+                        turn_id: identity.turn_id.clone(),
+                        cwd: interaction.permission.context.cwd.clone(),
+                        permission_mode: Some(
+                            interaction.permission.context.mode.as_js_string().clone(),
+                        ),
+                        base_env: interaction.base_env.take(),
+                        signal: Some(interaction.signal.clone()),
+                    },
+                    identity.run_id.clone(),
+                    std::mem::take(&mut interaction.hooks),
+                    None,
+                    &mut crate::host::modules::ModuleRouter::default(),
+                    interaction.hook_wiring.observers.clone(),
+                )?;
+                hooks.wait_ready().await?;
+                let sink = interaction.hook_wiring.turn_sink.clone();
+                if let Some(sink) = &sink {
+                    sink(Some(Arc::new(hooks.clone())));
+                }
+                Some((hooks, sink))
+            }
+            None => None,
+        };
+        let router = context.resource(Resource::Router).ok_or_else(|| {
+            HostError::new(
+                HostErrorKind::Protocol,
+                "Leased project router resource is missing.",
+            )
+        })?;
+        let router = router
+            .as_any()
+            .downcast_ref::<RouterResources>()
+            .ok_or_else(|| {
+                HostError::new(
+                    HostErrorKind::Protocol,
+                    "Leased project router resource is not a native router family.",
+                )
+            })?;
+        let compaction_model = model_port::compaction_execution(
+            router.router.clone(),
+            router.model_config.clone(),
+            ports.model.project_path.clone(),
+            identity.session_id.clone(),
+        );
+        let runtime = session_context_runtime(
+            &context,
+            ports.tool_results_dir,
+            ports.compaction,
+            compaction_model,
+            ports.skills.as_deref(),
+        )
+        .await?;
+        Ok(MaintenanceContext {
+            runtime,
+            hooks,
+            lease,
+        })
+    }
+}
+
 /// `await runtime.pluginRuntime.refresh()` followed by
 /// `new PluginRuntimeExtensionResolver(contributions)`
 /// (`ProjectSessionRuntimeBundle.ts:247-264`): the generation's plugin
@@ -632,6 +818,7 @@ use crate::runtime::context as context_runtime;
 /// plugin runtime contributes nothing.
 async fn session_extension(
     context: &crate::runtime::project::StageContext,
+    selected: Option<&[String]>,
 ) -> Result<
     Option<Arc<dyn context_runtime::ExtensionResolver>>,
     crate::runtime::plugins::PluginRuntimeError,
@@ -668,6 +855,8 @@ async fn session_extension(
             .await
             .into_iter()
             .filter(|_| !skills_disabled)
+            // `filterSessionSkills(contributions, sdkSessionConfig.skills)`.
+            .filter(|skill| selected.is_none_or(|names| names.contains(&skill.name)))
             .map(|skill| context_runtime::ContributedSkill {
                 name: skill.name,
                 description: skill.description,

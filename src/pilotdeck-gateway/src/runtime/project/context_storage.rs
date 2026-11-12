@@ -354,7 +354,7 @@ fn native_compaction_port(
     };
     let budget: Arc<dyn CompactionBudgetPort> =
         Arc::new(crate::runtime::model::token_accounting::TokenBudgetManager::default());
-    CompactionPort {
+    let port = CompactionPort {
         budget: Some(budget.clone()),
         policy: Some(Arc::new(AutoCompactionPolicy::new(budget))),
         micro: Some(Arc::new(MicroCompactionEngine::new(
@@ -367,5 +367,18 @@ fn native_compaction_port(
                 as Arc<dyn crate::runtime::context::compaction::engine::port::CompactionSummaryPort>
         }),
         ..CompactionPort::default()
+    };
+    // `createCompactionOrchestrator(port, { maxContextTokens:
+    // options.maxContextTokens ?? 8192 })` (NativeCompactionPort.ts:56-60):
+    // the session bundle passes no maxContextTokens, so an input without one
+    // (the manual `/compact` command's) budgets against 8192.
+    let orchestrator =
+        crate::runtime::context::compaction::orchestrator::CompactionOrchestrator::new(
+            port.clone(),
+            8192.0,
+        );
+    CompactionPort {
+        auto_compact: Some(Arc::new(orchestrator)),
+        ..port
     }
 }

@@ -458,6 +458,7 @@ fn ports_with_tool_results_dir(
 ) -> SessionPorts {
     let signal = Cancellation::new();
     SessionPorts {
+        skills: None,
         compaction: Default::default(),
         model: RouterModelPortOptions::main_agent(),
         recorder: None,

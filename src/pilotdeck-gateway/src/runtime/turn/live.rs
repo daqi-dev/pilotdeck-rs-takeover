@@ -101,7 +101,18 @@ pub struct LiveSessionAdapter {
     recorder: Arc<Recorder>,
     history: Arc<dyn Fn() -> Vec<JsValue> + Send + Sync>,
     pub(super) state: Arc<Mutex<SessionState>>,
+    /// See [`Self::with_maintenance`].
+    maintenance: Option<Arc<MaintenanceFactory>>,
 }
+
+/// Composes the session's context runtime outside a turn.
+pub(super) type MaintenanceFactory = dyn Fn(
+        ExecutionIdentity,
+        Arc<Recorder>,
+        crate::runtime::hooks::Cancellation,
+    ) -> HostFuture<super::host_factory::MaintenanceContext>
+    + Send
+    + Sync;
 
 #[derive(Default)]
 pub(super) struct SessionState {
@@ -155,7 +166,84 @@ impl LiveSessionAdapter {
                 })
             }),
             state: Arc::default(),
+            maintenance: None,
         }
+    }
+
+    /// Install the maintenance composer behind manual compaction.
+    pub(super) fn with_maintenance(mut self, factory: Arc<MaintenanceFactory>) -> Self {
+        self.maintenance = Some(factory);
+        self
+    }
+
+    /// `AgentSession.compact` + `ManualCompactionController.compact`: the
+    /// session must be idle; the maintenance turn owns the session status
+    /// and its abort until it settles.
+    pub fn compact(
+        &self,
+        session: JsString,
+        turn: JsString,
+        cancel: Cancellation,
+    ) -> crate::runtime::session::CompactFuture {
+        let Some(maintenance) = self.maintenance.clone() else {
+            return Box::pin(async {
+                Err(RuntimeError::new(
+                    "Manual compaction is unavailable for this agent session.",
+                ))
+            });
+        };
+        let signal = crate::runtime::hooks::Cancellation::new();
+        {
+            let mut state = self.state.lock().unwrap();
+            if state.disposed {
+                return Box::pin(async { Err(RuntimeError::new("Agent session disposed.")) });
+            }
+            if state.status == super::live_session::SessionStatus::Running
+                || state.current_turn_id.is_some()
+                || state.active.is_some()
+            {
+                return Box::pin(async {
+                    Err(RuntimeError::new(
+                        "Agent session is not idle for manual compaction.",
+                    ))
+                });
+            }
+            state.status = super::live_session::SessionStatus::Running;
+            state.current_turn_id = Some(turn.clone());
+            state.active = Some(cancel.clone());
+            state.signal = signal.clone();
+        }
+        let history = self.history.clone();
+        let reload = self.state.lock().unwrap().reload.clone();
+        let recorder = self.recorder.clone();
+        let state = self.state.clone();
+        Box::pin(async move {
+            let result = async {
+                let messages = match reload {
+                    Some(source) => source.projection.snapshot()?.messages,
+                    None => history(),
+                };
+                let identity = ExecutionIdentity {
+                    run_id: turn.clone(),
+                    operation_id: turn.clone(),
+                    request_id: turn.clone(),
+                    session_id: session.clone(),
+                    turn_id: turn.clone(),
+                };
+                let context = maintenance(identity, recorder.clone(), signal)
+                    .await
+                    .map_err(|error| RuntimeError::new(error.message))?;
+                super::maintenance::compact(recorder, session, turn, messages, context, cancel)
+                    .await
+            }
+            .await;
+            let mut state = state.lock().unwrap();
+            state.current_turn_id = None;
+            state.active = None;
+            // A failed/aborted command leaves the agent reusable for a retry.
+            state.status = super::live_session::SessionStatus::Idle;
+            result
+        })
     }
 
     /// Install session-owned tail dependencies. With no installation, auxiliary
@@ -353,6 +441,7 @@ impl LiveSessionAdapter {
                 })
             }),
             state: Arc::default(),
+            maintenance: None,
         }
     }
 }

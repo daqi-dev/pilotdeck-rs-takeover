@@ -676,6 +676,12 @@ impl SdkMcpConfig {
     /// concurrent set commit land in the gap and leave the session's servers
     /// repopulated with its shared project entry deleted (#347 fix-r1). The
     /// function has no callbacks, so no lock is ever held across one.
+    /// `sdkSessionProjects.get(sessionKey)`: the shared session -> project
+    /// entry.
+    pub fn session_project(&self, session_key: &JsValue) -> Option<JsString> {
+        self.options.projects.project(session_key)
+    }
+
     pub fn clear_sdk_session_state(&self, session_key: &JsValue) {
         #[cfg(test)]
         let mut servers = self.lock_servers_for_test("clear");

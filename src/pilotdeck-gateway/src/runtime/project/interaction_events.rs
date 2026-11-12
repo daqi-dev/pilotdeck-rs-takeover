@@ -16,6 +16,10 @@ struct State {
     closed: bool,
     releases: usize,
     turns: HashMap<JsString, Arc<Mutex<TurnState>>>,
+    /// Session events raised while the session has no current run (a manual
+    /// compaction's maintenance turn). The baseline's session event buffer
+    /// keeps them until the next turn drains it, under that turn's run.
+    carried: HashMap<JsString, Vec<JsObject>>,
 }
 struct TurnState {
     identity: event::TurnIdentity,
@@ -47,11 +51,15 @@ impl InteractionEvents {
         if state.closed {
             return Err(closed());
         }
+        let carried = state
+            .carried
+            .remove(&identity.session_id)
+            .unwrap_or_default();
         let turn = Arc::new(Mutex::new(TurnState {
             identity: identity.clone(),
             run_id,
             closed: false,
-            events: Vec::new(),
+            events: carried,
             notices: Vec::new(),
         }));
         if let Some(previous) = state
@@ -100,6 +108,22 @@ impl InteractionEvents {
         )
     }
 
+    /// A session event raised outside any run: held for the session's next
+    /// run (see `State::carried`).
+    pub fn carry(&self, event: JsObject) -> Result<(), HostError> {
+        let mut state = lock(&self.state);
+        if state.closed {
+            return Err(closed());
+        }
+        let Some(session) = event.get("sessionId").and_then(JsValue::as_string).cloned() else {
+            return Err(
+                ModuleError::new("Sidecar host event does not match the active turn.").into(),
+            );
+        };
+        state.carried.entry(session).or_default().push(event);
+        Ok(())
+    }
+
     /// An event raised on behalf of a subagent, for the current run of the
     /// session that forked it. The baseline hands a child's loop and tool
     /// runtime the parent's own `eventEmitter` (`SubagentRuntimeComposition`,
@@ -108,14 +132,19 @@ impl InteractionEvents {
     /// buffer. Only the buffer is chosen by `parent_session`; the event is
     /// kept as raised. Without a current run for the parent it is refused.
     pub fn emit_forked(&self, parent_session: &JsString, event: JsObject) -> Result<(), HostError> {
-        let generation = lock(&self.state);
+        let mut generation = lock(&self.state);
         if generation.closed {
             return Err(closed());
         }
         let Some(turn) = generation.turns.get(parent_session).cloned() else {
-            return Err(
-                ModuleError::new("Sidecar host event does not match the active turn.").into(),
-            );
+            // A background child outlives the parent turn: its events wait
+            // in the session buffer for the parent's next run.
+            generation
+                .carried
+                .entry(parent_session.clone())
+                .or_default()
+                .push(event);
+            return Ok(());
         };
         let mut turn = lock(&turn);
         check(&generation, &turn)?;

@@ -696,6 +696,45 @@ impl SessionOwner {
             }))
     }
 
+    /// `SessionRouter.compact` (SessionRouter.ts:280-304): an idle-only
+    /// maintenance command routed to the live session owner. It never
+    /// creates a session: `/compact` works on existing history only.
+    pub async fn compact(
+        &self,
+        key: &JsString,
+        turn: JsString,
+        cancel: crate::host::Cancellation,
+    ) -> Result<JsValue, RuntimeError> {
+        let (handle, _reservation) = {
+            let state = self.0.state.lock().unwrap();
+            if state.stopped {
+                return Err(RuntimeError::new("Session router is shut down."));
+            }
+            if self.0.turns.admission.has_active_turn(key)
+                || self.0.turns.admission.has_maintenance(key)
+            {
+                return Err(RuntimeError::new("Session has an active turn."));
+            }
+            let Some(record) = state.records.get(key) else {
+                return Err(RuntimeError::new(
+                    "Session is not available for manual compaction.",
+                ));
+            };
+            let handle = record.handle.clone();
+            if !self.0.turns.admission.begin_maintenance(key) {
+                return Err(RuntimeError::new("Session has an active turn."));
+            }
+            (
+                handle,
+                MaintenanceReservation {
+                    owner: self.clone(),
+                    key: key.clone(),
+                },
+            )
+        };
+        handle.compact(turn, cancel).await
+    }
+
     /// This is the pr1 live abort sink: the requested run is revalidated while
     /// selecting the exact handle under the publication/admission lock. Calling
     /// out after unlock can only affect that handle, never a replacement.

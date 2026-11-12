@@ -1,0 +1,117 @@
+{
+  "name": "compact-manual-fail",
+  "about": "手动压缩的摘要请求回 500：基线的编排把失败的摘要当作没压缩（compaction_completed skipped），维护轮次照常结束，回 No compactable history yet；紧接着再 /compact 一次（摘要失败冷却内）；之后的普通一轮照常。本文件由同目录的 compaction.gen.mjs 生成，不手改。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Compaction run\"}"
+      }
+    },
+    {
+      "name": "summary",
+      "when": [
+        "internal-compaction-control"
+      ],
+      "reply": {
+        "status": 500,
+        "body": {
+          "error": {
+            "message": "summary backend exploded",
+            "type": "server_error"
+          }
+        }
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "Noted."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mfail",
+        "channelKey": "test",
+        "message": "note 1\nn1 line 1: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 2: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 3: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 4: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 5: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 6: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 7: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 8: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 9: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 10: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 11: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 12: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 13: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 14: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 15: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 16: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 17: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 18: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 19: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 20: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 21: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 22: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 23: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 24: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 25: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 26: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 27: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 28: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 29: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 30: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 31: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 32: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 33: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 34: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 35: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 36: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 37: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 38: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 39: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 40: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 41: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 42: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 43: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 44: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 45: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 46: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 47: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 48: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 49: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 50: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 51: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 52: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 53: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 54: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 55: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 56: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 57: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 58: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 59: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn1 line 60: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa."
+      },
+      "timeout": 60000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mfail",
+        "channelKey": "test",
+        "message": "note 2\nn2 line 1: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 2: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 3: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 4: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 5: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 6: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 7: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 8: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 9: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 10: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 11: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 12: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 13: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 14: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 15: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 16: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 17: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 18: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 19: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 20: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 21: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 22: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 23: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 24: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 25: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 26: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 27: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 28: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 29: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 30: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 31: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 32: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 33: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 34: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 35: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 36: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 37: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 38: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 39: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 40: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 41: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 42: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 43: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 44: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 45: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 46: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 47: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 48: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 49: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 50: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 51: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 52: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 53: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 54: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 55: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 56: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 57: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 58: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 59: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn2 line 60: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa."
+      },
+      "timeout": 60000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mfail",
+        "channelKey": "test",
+        "message": "note 3\nn3 line 1: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 2: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 3: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 4: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 5: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 6: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 7: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 8: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 9: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 10: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 11: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 12: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 13: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 14: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 15: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 16: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 17: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 18: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 19: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 20: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 21: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 22: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 23: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 24: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 25: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 26: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 27: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 28: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 29: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 30: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 31: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 32: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 33: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 34: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 35: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 36: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 37: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 38: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 39: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 40: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 41: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 42: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 43: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 44: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 45: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 46: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 47: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 48: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 49: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 50: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 51: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 52: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 53: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 54: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 55: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 56: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 57: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 58: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 59: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa.\nn3 line 60: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa."
+      },
+      "timeout": 60000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mfail",
+        "channelKey": "test",
+        "message": "/compact"
+      },
+      "timeout": 60000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mfail",
+        "channelKey": "test",
+        "message": "/compact"
+      },
+      "timeout": 60000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mfail",
+        "channelKey": "test",
+        "message": "note 4: after failed compaction"
+      },
+      "timeout": 60000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-mfail"
+      }
+    }
+  ]
+}

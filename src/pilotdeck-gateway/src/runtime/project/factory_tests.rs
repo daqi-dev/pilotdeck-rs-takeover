@@ -2287,11 +2287,17 @@ mod context_storage_tests {
     #[tokio::test]
     async fn context_storage_uses_selected_catalog_cap_and_nullish_override() {
         let scratch = Scratch::new();
+        // The session bundle's compaction port is built without a
+        // maxContextTokens (`createNativeCompactionPort`,
+        // NativeCompactionPort.ts:56-60), so a compaction input that names
+        // none — the manual `/compact` one — budgets against 8192 whatever the
+        // selected catalog cap is (bbx `compact-manual`: targetTokens 4915).
+        // The cap still has to resolve for the session to compose.
         for (override_value, expected) in [
-            (None, 128000.0),
-            (Some(Value::Null), 128000.0),
-            (Some(json!(64000)), 64000.0),
-            (Some(json!(0)), 0.0),
+            (None, 8192.0),
+            (Some(Value::Null), 8192.0),
+            (Some(json!(64000)), 8192.0),
+            (Some(json!(0)), 8192.0),
         ] {
             let mut config = snapshot();
             if let Some(value) = override_value {
@@ -2865,7 +2871,9 @@ mod context_storage_tests {
             .downcast_ref::<ContextStorageResources>()
             .unwrap();
         // `models: {mock: {}}` has no explicit maxContextTokens; the normalized
-        // protocol default (openai: 128000) is the production value.
+        // protocol default (openai: 128000) must resolve for the session to
+        // compose. An input without maxContextTokens compacts against the
+        // port's own 8192 default (NativeCompactionPort.ts:58).
         let session = storage
             .create_session(scratch.0.join("normalized-spill"))
             .expect("protocol capabilities must supply maxContextTokens");
@@ -2881,7 +2889,7 @@ mod context_storage_tests {
                 .get("maxContextTokens")
                 .unwrap()
                 .as_number(),
-            Some(128000.0)
+            Some(8192.0)
         );
         drop(lease);
         bounded(registry.dispose()).await.unwrap();

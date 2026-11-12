@@ -614,6 +614,14 @@ async fn start_assembly(
                         .downcast_ref::<crate::runtime::project::tools_mcp::ExecutionWorldResource>()
                         .map(|world| world.background().tasks.clone())
                 });
+                let background_subagents = staged
+                    .resource(Resource::ExecutionWorld)
+                    .and_then(|world| {
+                        world
+                            .as_any()
+                            .downcast_ref::<crate::runtime::project::tools_mcp::ExecutionWorldResource>()
+                            .map(|world| world.background().subagents.clone())
+                    });
                 let interaction_events = staged
                     .resource(Resource::InteractionEvents)
                     .and_then(|resource| {
@@ -799,6 +807,7 @@ async fn start_assembly(
                     session_overrides.sdk_config(&context.session_key).as_ref(),
                 );
                 super::sdk_config::apply_model_fields(&mut config, sdk_config.as_ref());
+                super::sdk_config::apply_agent_fields(&mut config, sdk_config.as_ref());
                 apply_session_overrides(
                     &mut config,
                     stored_permission_mode.as_ref(),
@@ -1002,6 +1011,16 @@ async fn start_assembly(
                         .with_extra_tools(extra_tools, excluded_tools)
                         .with_prompt_policy(can_prompt_override, bypass_available_override)
                         .with_sdk_permissions(sdk_config.as_ref())
+                        .with_sdk_tool_scope(
+                            super::sdk_config::session_skills(sdk_config.as_ref()),
+                            sdk_config
+                                .as_ref()
+                                .and_then(|config| config.get("managedTools"))
+                                .filter(|policy| {
+                                    !matches!(policy, JsValue::Undefined | JsValue::Null)
+                                })
+                                .cloned(),
+                        )
                         .with_permission_mode_source(permission_source.clone())
                         .with_continuation_parent(continuation_parent.parent_ref())
                         .with_hooks(
@@ -1048,13 +1067,16 @@ async fn start_assembly(
                         };
                         // A forked subagent runs the same loop deployment
                         // against the same project registry.
-                        let ports = ports.with_subagents(super::subagents::SubagentRuntime::new(
-                            project.clone(),
-                            deployment.clone(),
-                            limits,
-                            options.home.clone(),
-                            continuations.clone(),
-                        ));
+                        let ports = ports.with_subagents(
+                            super::subagents::SubagentRuntime::new(
+                                project.clone(),
+                                deployment.clone(),
+                                limits,
+                                options.home.clone(),
+                                continuations.clone(),
+                            )
+                            .with_background(background_subagents.clone()),
+                        );
                         let turn_override_sink = ports.turn_override();
                         Ok(TurnHostFactory::new_with_signal(
                             project,
@@ -1448,6 +1470,9 @@ async fn start_assembly(
                     options: options.clone(),
                     overrides: session_overrides.clone(),
                     project: build_project.clone(),
+                })),
+                compaction: Some(Arc::new(super::manual_compaction::OwnerCompaction {
+                    owner: owner.clone(),
                 })),
                 model_assertion: Some(project_admission.clone()),
                 dialog_recovery: Some(project_admission),

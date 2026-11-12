@@ -1308,6 +1308,14 @@ impl LiveSession for OwnedSession {
             finished: false,
         }))
     }
+    fn compact(
+        &self,
+        turn: JsString,
+        cancel: crate::host::Cancellation,
+    ) -> super::handle::CompactFuture {
+        self.adapter
+            .compact(self.reload_source.session_id.clone(), turn, cancel)
+    }
     fn snapshot(&self) -> JsValue {
         // The TS AgentSession snapshot carries the session's cwd, and the
         // submit-side workspace snapshot wiring reads it back for the

@@ -33,7 +33,44 @@ pub(super) const WIRED_FIELDS: &[&str] = &[
     "includeHookEvents",
     "fallbackModel",
     "managedModels",
+    "agents",
+    "skills",
+    "managedTools",
 ];
+
+/// The `agents.<id>` keys whose effect the native subagent composes. A
+/// definition naming any other key (`mcpServers`, `skills`, `memory`,
+/// `initialPrompt`, `observer`, `observerMessage`) keeps the
+/// whole config unavailable.
+const WIRED_AGENT_FIELDS: &[&str] = &[
+    "description",
+    "prompt",
+    "tools",
+    "disallowedTools",
+    "model",
+    "maxTurns",
+    "permissionMode",
+    "background",
+    // Carried on the definition; the baseline's subagent runtime reads it
+    // nowhere.
+    "effort",
+    "criticalSystemReminder_EXPERIMENTAL",
+];
+
+fn agents_wired(config: &JsObject) -> bool {
+    let Some(JsValue::Object(agents)) = config.get("agents") else {
+        return true;
+    };
+    agents.own_entries().iter().all(|(_, agent)| {
+        agent.as_object().is_some_and(|agent| {
+            agent
+                .own_entries()
+                .iter()
+                .filter(|(_, value)| !value.is_undefined())
+                .all(|(key, _)| WIRED_AGENT_FIELDS.iter().any(|name| key.equals_str(name)))
+        })
+    })
+}
 
 const INVALID: &str = "INVALID_SDK_SESSION_CONFIG";
 
@@ -679,6 +716,112 @@ pub(super) fn apply_prompt_fields(agent: &mut JsObject, config: Option<&JsValue>
     }
 }
 
+/// `extensionView.getAllSkills()` of the project the config is set for, after
+/// `runtime.pluginRuntime.refresh()`.
+async fn project_skill_names(
+    registry: &crate::runtime::project::ProjectRuntimeRegistry,
+    root: &std::path::Path,
+) -> Result<Vec<String>, SubmitError> {
+    let lease = registry
+        .acquire(Some(root))
+        .map_err(|error| err("gateway_request_failed", error.to_string()))?;
+    let resources = lease
+        .runtime()
+        .resources()
+        .get::<crate::runtime::project::ProjectResources>()
+        .ok_or_else(|| {
+            err(
+                "gateway_request_failed",
+                "Native project resources are missing.",
+            )
+        })?;
+    let Some(resource) = resources
+        .context()
+        .resource(crate::runtime::project::Resource::PluginRuntime)
+    else {
+        return Ok(Vec::new());
+    };
+    let Some(plugins) = resource
+        .as_any()
+        .downcast_ref::<crate::runtime::project::plugins::PluginResources>()
+    else {
+        return Ok(Vec::new());
+    };
+    plugins
+        .runtime
+        .refresh()
+        .await
+        .map_err(|error| err("gateway_request_failed", error.to_string()))?;
+    Ok(plugins
+        .runtime
+        .all_skills()
+        .await
+        .into_iter()
+        .map(|skill| skill.name)
+        .collect())
+}
+
+/// `resolveSdkSessionSkills` (ProjectRuntimeRegistry.ts:1850-1869): each
+/// requested name is an exact skill name or the unique `:<name>` suffix of
+/// one; duplicates collapse.
+fn resolve_session_skills(
+    requested: &[JsValue],
+    available: &[String],
+) -> Result<Vec<String>, SubmitError> {
+    let mut resolved: Vec<String> = Vec::new();
+    for requested in requested {
+        let requested = requested.as_string().map(text).unwrap_or_default();
+        let exact: Vec<&String> = available
+            .iter()
+            .filter(|name| **name == requested)
+            .collect();
+        let suffix = format!(":{requested}");
+        let candidates = if exact.is_empty() {
+            available
+                .iter()
+                .filter(|name| name.ends_with(&suffix))
+                .collect()
+        } else {
+            exact
+        };
+        match candidates.as_slice() {
+            [] => {
+                return Err(err(
+                    "SDK_SKILL_NOT_FOUND",
+                    format!("SDK session skill is not available in this project: {requested}"),
+                ));
+            }
+            [name] => {
+                if !resolved.contains(name) {
+                    resolved.push((*name).clone());
+                }
+            }
+            _ => {
+                return Err(err(
+                    "SDK_SKILL_AMBIGUOUS",
+                    format!(
+                        "SDK session skill is ambiguous; use its fully-qualified name: {requested}"
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(resolved)
+}
+
+/// `sdkSessionConfig.skills` as the stored (resolved) name list.
+pub(super) fn session_skills(config: Option<&JsValue>) -> Option<Vec<String>> {
+    match config.and_then(|config| config.get("skills")) {
+        Some(JsValue::Array(names)) => Some(
+            names
+                .iter()
+                .filter_map(|name| name.as_string().map(text))
+                .collect(),
+        ),
+        _ => None,
+    }
+}
+
 /// `options.setSdkSessionConfig` for the native host.
 pub(super) struct NativeSdkSessionConfig {
     pub options: super::Options,
@@ -755,19 +898,41 @@ fn resolve_configured_model(
     Ok(candidates.remove(0))
 }
 
-/// `validateSdkSelectorPolicy(next.managedModels, "models")`
+#[derive(Clone, Copy, PartialEq)]
+enum SelectorKind {
+    Tools,
+    Models,
+}
+
+/// `/^[A-Za-z0-9][A-Za-z0-9_.:-]*\*?$/`: a tool selector.
+fn valid_tool_selector(selector: &str) -> bool {
+    let body = selector.strip_suffix('*').unwrap_or(selector);
+    let mut chars = body.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | ':' | '-'))
+}
+
+/// `validateSdkSelectorPolicy(next.managedTools | next.managedModels, kind)`
 /// (ProjectRuntimeRegistry.ts:1958-1975), the registry's second pass after
 /// the gateway's shape check: each list's trimmed selectors are valid and
 /// distinct.
-fn validate_selector_policy(policy: Option<&JsValue>) -> Result<(), SubmitError> {
+fn validate_selector_policy(
+    policy: Option<&JsValue>,
+    kind: SelectorKind,
+) -> Result<(), SubmitError> {
     let Some(policy) = policy.and_then(JsValue::as_object) else {
         return Ok(());
+    };
+    let field = if kind == SelectorKind::Tools {
+        "managedTools"
+    } else {
+        "managedModels"
     };
     for label in ["allow", "deny"] {
         let invalid = || {
             err(
                 "INVALID_SDK_MANAGED_SETTINGS",
-                format!("managedModels.{label} contains an invalid selector."),
+                format!("{field}.{label} contains an invalid selector."),
             )
         };
         let Some(JsValue::Array(entries)) = policy.get(label) else {
@@ -780,15 +945,17 @@ fn validate_selector_policy(policy: Option<&JsValue>) -> Result<(), SubmitError>
             };
             let trimmed = crate::metadata::js_trim(&text(entry)).to_owned();
             let valid = trimmed == "*"
-                || trimmed.split_once('/').is_some_and(|(provider, model)| {
-                    let plain = |part: &str| {
-                        !part.is_empty()
-                            && part
-                                .chars()
-                                .all(|c| c != '/' && !crate::runtime::tools::js_space(c))
-                    };
-                    plain(provider) && (model == "*" || plain(model))
-                });
+                || (kind == SelectorKind::Tools && valid_tool_selector(&trimmed))
+                || kind == SelectorKind::Models
+                    && trimmed.split_once('/').is_some_and(|(provider, model)| {
+                        let plain = |part: &str| {
+                            !part.is_empty()
+                                && part
+                                    .chars()
+                                    .all(|c| c != '/' && !crate::runtime::tools::js_space(c))
+                        };
+                        plain(provider) && (model == "*" || plain(model))
+                    });
             if !valid {
                 return Err(invalid());
             }
@@ -800,7 +967,7 @@ fn validate_selector_policy(policy: Option<&JsValue>) -> Result<(), SubmitError>
         if distinct.len() != seen.len() {
             return Err(err(
                 "INVALID_SDK_MANAGED_SETTINGS",
-                format!("managedModels.{label} cannot contain duplicates."),
+                format!("{field}.{label} cannot contain duplicates."),
             ));
         }
     }
@@ -850,6 +1017,78 @@ fn resolve_sdk_model(requested: &JsString, parent: (JsValue, JsValue)) -> (JsVal
         ),
         _ => parent,
     }
+}
+
+/// `subagentDefinitions: toSdkSubagentDefinitions(sdk.agents)`
+/// (SessionAgentConfigBundle.ts:141,206-239): the SDK's agents replace the
+/// session's subagent table. No organization `maxTurns` cap exists here.
+pub(super) fn apply_agent_fields(agent: &mut JsObject, config: Option<&JsValue>) {
+    let Some(JsValue::Object(agents)) = config.and_then(|config| config.get("agents")) else {
+        return;
+    };
+    let mut definitions = JsObject::new();
+    for (id, sdk) in agents.own_entries() {
+        let field = |key: &str| sdk.get(key).filter(|value| !value.is_undefined());
+        let mut definition = JsObject::new();
+        definition.insert("id".into(), JsValue::String(id.clone()));
+        definition.insert(
+            "description".into(),
+            field("description").cloned().unwrap_or(JsValue::Undefined),
+        );
+        definition.insert(
+            "systemPromptSuffix".into(),
+            field("prompt").cloned().unwrap_or(JsValue::Undefined),
+        );
+        definition.insert(
+            "allowedTools".into(),
+            match field("tools") {
+                Some(tools) if truthy(tools) => tools.clone(),
+                _ => JsValue::Array(vec!["*".into()]),
+            },
+        );
+        if let Some(JsValue::Array(denied)) = field("disallowedTools")
+            && !denied.is_empty()
+        {
+            definition.insert("disallowedTools".into(), JsValue::Array(denied.clone()));
+        }
+        definition.insert("omitProjectInstructions".into(), JsValue::Bool(false));
+        definition.insert("omitGitStatus".into(), JsValue::Bool(false));
+        definition.insert(
+            "isReadOnly".into(),
+            JsValue::Bool(field("permissionMode") == Some(&"plan".into())),
+        );
+        if let Some(model) = field("model")
+            .and_then(JsValue::as_string)
+            .filter(|model| !model.is_empty())
+            && let resolved = resolve_sdk_model(model, ("".into(), "".into()))
+            && let (JsValue::String(provider), JsValue::String(name)) = (&resolved.0, &resolved.1)
+            && !provider.is_empty()
+            && !name.is_empty()
+        {
+            let mut model = JsObject::new();
+            model.insert("provider".into(), JsValue::String(provider.clone()));
+            model.insert("model".into(), JsValue::String(name.clone()));
+            definition.insert("modelOverride".into(), JsValue::Object(model));
+        }
+        for (key, source) in [
+            ("maxTurns", "maxTurns"),
+            ("effort", "effort"),
+            ("permissionMode", "permissionMode"),
+            (
+                "criticalSystemReminder",
+                "criticalSystemReminder_EXPERIMENTAL",
+            ),
+        ] {
+            if let Some(value) = field(source) {
+                definition.insert(key.into(), value.clone());
+            }
+        }
+        if field("background") == Some(&JsValue::Bool(true)) {
+            definition.insert("background".into(), JsValue::Bool(true));
+        }
+        definitions.insert(id.clone(), JsValue::Object(definition));
+    }
+    agent.insert("subagentDefinitions".into(), JsValue::Object(definitions));
 }
 
 /// The model-routing fields of `SessionAgentConfigBundle.compose`
@@ -909,6 +1148,14 @@ impl SubmitSdkSessionConfig for NativeSdkSessionConfig {
                     event.equals_str("ConfigChange") || event.equals_str("FileChanged")
                 })
             });
+        // With a session skill list, `resolveSdkSubagentScopes` gives every
+        // agent that list as its own `skills` scope, which the native child
+        // context does not compose.
+        let scoped_agents = matches!(config.get("skills"), Some(JsValue::Array(_)))
+            && config
+                .get("agents")
+                .is_some_and(|agents| !agents.is_undefined());
+        let wired = wired && !scoped_agents && config.as_object().is_none_or(agents_wired);
         if wired && !separate_runtime_hooks {
             Ok(())
         } else {
@@ -929,13 +1176,71 @@ impl SubmitSdkSessionConfig for NativeSdkSessionConfig {
         Box::pin(async move {
             // `this.resolve(projectKey)` and `sdkSessionProjects.set`.
             let root = self.options.project_root_for(project);
-            validate_selector_policy(config.get("managedModels"))?;
+            validate_selector_policy(config.get("managedTools"), SelectorKind::Tools)?;
+            validate_selector_policy(config.get("managedModels"), SelectorKind::Models)?;
             // `JSON.stringify(previous) === JSON.stringify(next)`.
             let serialize = |value: &JsValue| stringify_json(value).ok().flatten();
             let previous = self.overrides.sdk_config(session);
             if previous.as_ref().map(serialize) == Some(serialize(config)) {
                 return Ok(false);
             }
+            let mut next = config.clone();
+            // `next.skills = resolveSdkSessionSkills(next.skills,
+            // extensionView.getAllSkills())` after a plugin refresh.
+            if let Some(JsValue::Array(requested)) = config.get("skills") {
+                let available = project_skill_names(&self.project, &root).await?;
+                let resolved = resolve_session_skills(requested, &available)?;
+                if let JsValue::Object(fields) = &mut next {
+                    fields.insert(
+                        "skills".into(),
+                        JsValue::Array(resolved.iter().map(|name| name.as_str().into()).collect()),
+                    );
+                }
+            }
+            // `resolveSdkSubagentScopes`: an agent's model resolves against
+            // the catalog and the session's model policy, stored qualified.
+            if let Some(JsValue::Object(agents)) = config.get("agents") {
+                let mut resolved_agents = agents.clone();
+                for (id, agent) in agents.own_entries() {
+                    let Some(model) = agent
+                        .get("model")
+                        .and_then(JsValue::as_string)
+                        .filter(|model| !model.is_empty())
+                    else {
+                        continue;
+                    };
+                    let model_config = project_model_config(&self.project, &root)?;
+                    let (provider, name) = resolve_configured_model(
+                        &model_config,
+                        model,
+                        "INVALID_SDK_AGENT_MODEL",
+                        "model",
+                    )
+                    .map_err(|_| {
+                        err(
+                            "INVALID_SDK_AGENT_MODEL",
+                            format!(
+                                "Agent {} model is not uniquely resolvable from the Gateway catalog: {}",
+                                text(id),
+                                text(model)
+                            ),
+                        )
+                    })?;
+                    assert_managed_model_allowed(config.get("managedModels"), &provider, &name)?;
+                    if let Some(JsValue::Object(agent)) = resolved_agents.get_key(id) {
+                        let mut agent = agent.clone();
+                        agent.insert(
+                            "model".into(),
+                            JsValue::String(format!("{}/{}", text(&provider), text(&name)).into()),
+                        );
+                        resolved_agents.insert(id.clone(), JsValue::Object(agent));
+                    }
+                }
+                if let JsValue::Object(fields) = &mut next {
+                    fields.insert("agents".into(), JsValue::Object(resolved_agents));
+                }
+            }
+            let config = &next;
             // `if (next.fallbackModel)`: resolvable from this project's
             // catalog and allowed by the session's model policy
             // (ProjectRuntimeRegistry.ts:1014-1018).

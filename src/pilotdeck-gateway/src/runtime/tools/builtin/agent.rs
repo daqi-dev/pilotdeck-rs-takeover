@@ -27,9 +27,9 @@ use std::{future::Future, pin::Pin, sync::Arc};
 /// `DEFAULT_SUBAGENT_TIMEOUT_MS` (`tool/protocol/subagentTimeout.ts`).
 pub const DEFAULT_SUBAGENT_TIMEOUT_MS: f64 = 3_600_000.0;
 
-/// `SubagentDefinition`: the fields the built-in presets set.
-#[derive(Clone, Debug, PartialEq)]
-pub struct SubagentDefinition {
+/// One built-in preset (`builtinSubagentTypes.ts`), as static data.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BuiltinSubagent {
     pub id: &'static str,
     pub description: &'static str,
     /// Canonical tool names; `["*"]` is every parent tool.
@@ -38,6 +38,48 @@ pub struct SubagentDefinition {
     pub omit_git_status: bool,
     pub is_read_only: bool,
     pub system_prompt_suffix: &'static str,
+}
+
+/// `SubagentDefinition` (`agent/sub/builtinSubagentTypes.ts`): a built-in
+/// preset, or one the session's SDK config defines
+/// (`toSdkSubagentDefinitions`, SessionAgentConfigBundle.ts:206-239).
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct SubagentDefinition {
+    pub id: String,
+    pub description: String,
+    /// Canonical tool names; `["*"]` is every parent tool.
+    pub allowed_tools: Vec<String>,
+    pub disallowed_tools: Vec<String>,
+    pub omit_project_instructions: bool,
+    pub omit_git_status: bool,
+    pub is_read_only: bool,
+    pub system_prompt_suffix: String,
+    /// `modelOverride`: `{ provider, model }`.
+    pub model_override: Option<(String, String)>,
+    pub max_turns: Option<f64>,
+    pub permission_mode: Option<String>,
+    pub initial_prompt: Option<String>,
+    pub critical_system_reminder: Option<String>,
+    pub background: bool,
+}
+
+impl From<&BuiltinSubagent> for SubagentDefinition {
+    fn from(builtin: &BuiltinSubagent) -> Self {
+        Self {
+            id: builtin.id.into(),
+            description: builtin.description.into(),
+            allowed_tools: builtin
+                .allowed_tools
+                .iter()
+                .map(|tool| (*tool).into())
+                .collect(),
+            omit_project_instructions: builtin.omit_project_instructions,
+            omit_git_status: builtin.omit_git_status,
+            is_read_only: builtin.is_read_only,
+            system_prompt_suffix: builtin.system_prompt_suffix.into(),
+            ..Default::default()
+        }
+    }
 }
 
 const SHARED_PREFIX: &str = "You are a subagent of PilotDeck — a focused agent dispatched by the parent agent to handle a bounded research, planning, or verification task.
@@ -70,8 +112,8 @@ Files changed: <list with rationale, or \"none\">
 Issues: <list of caveats / blockers, or \"none\">";
 
 /// `SUBAGENT_DEFINITIONS`, in the baseline's key order.
-pub const SUBAGENT_DEFINITIONS: [SubagentDefinition; 4] = [
-    SubagentDefinition {
+pub const SUBAGENT_DEFINITIONS: [BuiltinSubagent; 4] = [
+    BuiltinSubagent {
         id: "general-purpose",
         description: "General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access; nested delegation follows the configured depth cap.",
         allowed_tools: &["*"],
@@ -80,7 +122,7 @@ pub const SUBAGENT_DEFINITIONS: [SubagentDefinition; 4] = [
         is_read_only: false,
         system_prompt_suffix: "You have full access to the parent's tool registry. Use any tool the parent has permission to use, but stay within your directive.",
     },
-    SubagentDefinition {
+    BuiltinSubagent {
         id: "explore",
         description: "Read-only exploration subagent. Inspects files, runs grep/glob, and may run safe shell commands. Cannot edit files.",
         allowed_tools: &["read_file", "grep", "glob", "bash"],
@@ -89,7 +131,7 @@ pub const SUBAGENT_DEFINITIONS: [SubagentDefinition; 4] = [
         is_read_only: true,
         system_prompt_suffix: "Read-only mode: you may inspect files (`read_file`), search (`grep` / `glob`), and run safe shell commands (`bash`), but never write or delete. Prefer `grep` for content search and `glob` for file discovery; do not fall back to `bash` `grep` / `rg` unless the dedicated tools cannot express the task. Do not propose `edit_file` / `write_file` / network calls — those will be rejected.",
     },
-    SubagentDefinition {
+    BuiltinSubagent {
         id: "plan",
         description: "Read-only planning subagent. Inspects code via read/grep/glob and produces a step-by-step plan.",
         allowed_tools: &["read_file", "grep", "glob"],
@@ -98,7 +140,7 @@ pub const SUBAGENT_DEFINITIONS: [SubagentDefinition; 4] = [
         is_read_only: true,
         system_prompt_suffix: "Planning mode: produce a numbered, actionable plan. You may inspect code (`read_file` / `grep` / `glob`) but you may NOT execute shell commands or modify files. Prefer `grep` for content search and `glob` for file discovery instead of describing shell-based search workarounds.",
     },
-    SubagentDefinition {
+    BuiltinSubagent {
         id: "verify",
         description: "Verification subagent. Inspects generated artifacts (images, HTML, PDFs) for correctness. Can read files, run shell commands, and search code, but cannot modify files.",
         allowed_tools: &["read_file", "grep", "glob", "bash"],
@@ -124,10 +166,69 @@ Be rigorous. A silent pass when issues exist is worse than a false alarm.",
 ];
 
 /// `getSubagentDefinition`.
-pub fn subagent_definition(id: &str) -> Option<&'static SubagentDefinition> {
-    SUBAGENT_DEFINITIONS
+pub fn subagent_definition(id: &str) -> Option<Arc<SubagentDefinition>> {
+    builtin_definitions()
         .iter()
         .find(|definition| definition.id == id)
+        .cloned()
+}
+
+fn builtin_definitions() -> &'static [Arc<SubagentDefinition>] {
+    static BUILTINS: std::sync::LazyLock<Vec<Arc<SubagentDefinition>>> =
+        std::sync::LazyLock::new(|| {
+            SUBAGENT_DEFINITIONS
+                .iter()
+                .map(|builtin| Arc::new(SubagentDefinition::from(builtin)))
+                .collect()
+        });
+    &BUILTINS
+}
+
+/// `config.subagentDefinitions ?? SUBAGENT_DEFINITIONS`
+/// (OneShotSubagentPort.ts:67): the session's own definitions replace the
+/// built-in table, in their key order.
+pub fn definitions_from_config(config: &JsObject) -> Vec<Arc<SubagentDefinition>> {
+    let Some(JsValue::Object(configured)) = config.get("subagentDefinitions") else {
+        return builtin_definitions().to_vec();
+    };
+    let text_of = |value: Option<&JsValue>| value.and_then(JsValue::as_string).map(text);
+    let names = |value: Option<&JsValue>| match value {
+        Some(JsValue::Array(items)) => items
+            .iter()
+            .filter_map(|item| item.as_string().map(text))
+            .collect(),
+        _ => Vec::new(),
+    };
+    configured
+        .entries()
+        .iter()
+        .filter_map(|(_, definition)| {
+            let definition = definition.as_object()?;
+            let flag = |key: &str| definition.get(key) == Some(&JsValue::Bool(true));
+            Some(Arc::new(SubagentDefinition {
+                id: text_of(definition.get("id")).unwrap_or_default(),
+                description: text_of(definition.get("description")).unwrap_or_default(),
+                allowed_tools: names(definition.get("allowedTools")),
+                disallowed_tools: names(definition.get("disallowedTools")),
+                omit_project_instructions: flag("omitProjectInstructions"),
+                omit_git_status: flag("omitGitStatus"),
+                is_read_only: flag("isReadOnly"),
+                system_prompt_suffix: text_of(definition.get("systemPromptSuffix"))
+                    .unwrap_or_default(),
+                model_override: definition.get("modelOverride").and_then(|model| {
+                    Some((
+                        text_of(model.get("provider"))?,
+                        text_of(model.get("model"))?,
+                    ))
+                }),
+                max_turns: definition.get("maxTurns").and_then(JsValue::as_number),
+                permission_mode: text_of(definition.get("permissionMode")),
+                initial_prompt: text_of(definition.get("initialPrompt")),
+                critical_system_reminder: text_of(definition.get("criticalSystemReminder")),
+                background: flag("background"),
+            }))
+        })
+        .collect()
 }
 
 /// `buildSubagentSystemPrompt`.
@@ -142,7 +243,10 @@ pub fn agent_tool_description(max_subagent_depth: f64, subagent_depth: f64) -> S
     let types = ["general-purpose", "explore", "plan"]
         .iter()
         .map(|id| {
-            let definition = subagent_definition(id).expect("public preset");
+            let definition = SUBAGENT_DEFINITIONS
+                .iter()
+                .find(|definition| definition.id == *id)
+                .expect("public preset");
             let summary = if *id == "general-purpose" && !child_can_delegate {
                 "General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access except nested subagent launch."
             } else {
@@ -208,6 +312,8 @@ pub struct ForkReport {
 }
 
 pub type ForkFuture = Pin<Box<dyn Future<Output = Result<ForkReport, JsString>> + Send>>;
+/// A background launch settling with the task id.
+pub type LaunchFuture = Pin<Box<dyn Future<Output = Result<JsString, JsString>> + Send>>;
 
 /// The host's fork port (`PilotDeckSubagentForkApi`), bound to one parent
 /// turn. `fork` settles with the child's report or the failure message.
@@ -221,6 +327,19 @@ pub trait SubagentFork: Send + Sync {
     }
     /// The context is the calling tool's: the fork watches its abort signal.
     fn fork(&self, request: ForkRequest, context: ToolRunContext) -> ForkFuture;
+    /// `isBackgroundDefinition(id)`: the definition is `background: true`.
+    fn is_background_definition(&self, _id: &JsString) -> bool {
+        false
+    }
+    /// `launchBackground`, when the host has a background-subagent launcher:
+    /// starts the fork detached and settles with its task id.
+    fn launch_background(
+        &self,
+        _request: ForkRequest,
+        _context: ToolRunContext,
+    ) -> Option<LaunchFuture> {
+        None
+    }
     /// `uuid()`: the new subagent's id.
     fn subagent_id(&self) -> JsString;
 }
@@ -396,6 +515,9 @@ impl ExecutableTool for AgentTool {
                 error.details = Some(object([("errorCode", string("subagent_depth_exceeded"))]));
                 return Err(error);
             }
+            if fork.is_background_definition(&requested_id) {
+                return run_background_fork(&input, &context, &requested, &fork).await;
+            }
             let aborted =
                 || ToolError::new("tool_aborted", "agent subagent aborted before completion.");
             let subagent_id = fork.subagent_id();
@@ -481,6 +603,86 @@ impl ExecutableTool for AgentTool {
             })
         })
     }
+}
+
+/// `runBackgroundFork` (tool/builtin/agent.ts:458-513).
+async fn run_background_fork(
+    input: &JsValue,
+    context: &ToolRunContext,
+    requested: &str,
+    fork: &Arc<dyn SubagentFork>,
+) -> Result<ToolOutput, ToolError> {
+    let request = |subagent_id: JsString| ForkRequest {
+        definition_id: requested.into(),
+        directive: field(input, "prompt")
+            .as_string()
+            .cloned()
+            .unwrap_or_default(),
+        subagent_id,
+        tool_call_id: context
+            .fields
+            .get("currentToolCallId")
+            .and_then(JsValue::as_string)
+            .cloned(),
+        timeout_ms: number_field(context, "subagentTimeoutMs")
+            .unwrap_or(DEFAULT_SUBAGENT_TIMEOUT_MS),
+    };
+    // `fork.launchBackground` is absent without a launcher; probe with a
+    // throwaway request only after the abort check, as the baseline orders
+    // `!fork.launchBackground` first.
+    if context.is_aborted() {
+        return Err(ToolError::new(
+            "tool_aborted",
+            "agent subagent aborted before launch.",
+        ));
+    }
+    let subagent_id = fork.subagent_id();
+    let Some(launch) = fork.launch_background(request(subagent_id.clone()), context.clone()) else {
+        return Err(ToolError::new(
+            "unsupported_tool",
+            format!(
+                "Background subagent {requested} requires a Gateway background-subagent launcher."
+            ),
+        ));
+    };
+    let task_id = launch.await.map_err(|message| {
+        let mut error = ToolError::failed(format!(
+            "background agent subagent failed to launch: {}",
+            text(&message)
+        ));
+        error.details = Some(object([("errorCode", string("subagent_launch_failed"))]));
+        error
+    })?;
+    let description = field(input, "description").clone();
+    let message = format!("Background subagent started as task {}.", text(&task_id));
+    let output = object([
+        ("subagentType", string(requested)),
+        ("description", description.clone()),
+        ("text", string(message.as_str())),
+        ("backgroundTaskId", string(task_id.clone())),
+    ]);
+    let metadata = object([
+        ("subagent", string(requested)),
+        ("subagentId", string(subagent_id)),
+        ("backgroundTaskId", string(task_id)),
+        ("forkMode", string("background")),
+    ]);
+    let label = format!(
+        "[{requested}] {}\n\n{message}",
+        description.as_string().map(text).unwrap_or_default()
+    );
+    Ok(ToolOutput {
+        content: vec![
+            JsValue::Object(object([("type", string("text")), ("text", string(label))])),
+            JsValue::Object(object([
+                ("type", string("json")),
+                ("value", JsValue::Object(output.clone())),
+            ])),
+        ],
+        supplemental_messages: None,
+        data: Some(JsValue::Object(output)),
+        metadata: Some(metadata),
+    })
 }
 
 #[cfg(test)]

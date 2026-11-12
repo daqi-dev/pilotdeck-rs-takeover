@@ -1,0 +1,144 @@
+{
+  "name": "sdk-config-managed-tools",
+  "about": "sdkSessionConfig.managedTools（ProjectSessionRuntimeBundle.ts blockedToolNames 的 managed 一层，ProjectRuntimeRegistry.ts validateSdkSelectorPolicy(tools)）：allow 用前缀通配和精确名、deny 精确名，看模型请求的工具声明；模型直接点名调用被挡的 bash 时的工具结果；agent 派出的 explore 子代理的工具集；非法选择器回 INVALID_SDK_MANAGED_SETTINGS。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Managed tools\"}"
+      }
+    },
+    {
+      "name": "after-agent",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_m2\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "call-agent",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_m1\""
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_m2",
+          "name": "agent",
+          "arguments": {
+            "description": "Look around",
+            "prompt": "CHILD-DIRECTIVE-M: look.",
+            "subagent_type": "explore"
+          }
+        }
+      }
+    },
+    {
+      "name": "call-bash",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_m1",
+          "name": "bash",
+          "arguments": {
+            "command": "echo hi"
+          }
+        }
+      }
+    },
+    {
+      "name": "child",
+      "when": [
+        "CHILD-DIRECTIVE-M"
+      ],
+      "reply": {
+        "text": "Scope: explored.\nResult: fine.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "ok"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mt",
+        "channelKey": "test",
+        "message": "turn-1: use the tools",
+        "sdkSessionConfig": {
+          "managedTools": {
+            "allow": [
+              "read_*",
+              "grep",
+              "glob",
+              "agent",
+              "bash",
+              "web_*"
+            ],
+            "deny": [
+              "bash",
+              "web_fetch"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mt-bad",
+        "channelKey": "test",
+        "message": "turn-2: bad selector",
+        "sdkSessionConfig": {
+          "managedTools": {
+            "allow": [
+              "-bad"
+            ],
+            "deny": []
+          }
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mt-dup",
+        "channelKey": "test",
+        "message": "turn-3: duplicate selector",
+        "sdkSessionConfig": {
+          "managedTools": {
+            "allow": [],
+            "deny": [
+              "grep",
+              " grep "
+            ]
+          }
+        }
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-mt"
+      }
+    }
+  ]
+}

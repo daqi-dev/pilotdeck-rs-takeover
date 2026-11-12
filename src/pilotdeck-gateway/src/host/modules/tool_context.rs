@@ -297,6 +297,7 @@ pub struct TurnBinding {
     pub environment: Arc<dyn TurnEnvironment>,
 }
 
+#[derive(Clone)]
 pub struct PlanDirectory {
     pub path: JsString,
     cwd: JsString,
