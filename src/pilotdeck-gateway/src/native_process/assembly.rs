@@ -1719,6 +1719,9 @@ async fn start_assembly(
                     store: settings.store.clone(),
                     _watch: config_watch,
                 }),
+                memory_maintenance: Some(super::services::native_memory_maintenance(
+                    build_project.clone(),
+                )),
             });
             let mcp_gateway = mcp::build_mcp_gateway(
                 &owner,

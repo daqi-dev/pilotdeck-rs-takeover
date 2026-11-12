@@ -352,6 +352,13 @@ impl LlmMemoryExtractor {
                                 }),
                             );
                         }
+                        // Node's fetch writes host and connection first on the
+                        // wire, then the request headers in insertion order.
+                        let wire = crate::fetch_redirect::node_fetch_wire_headers(
+                            request.uri(),
+                            request.headers(),
+                        );
+                        *request.headers_mut() = wire;
                         match exchange_with_prearmed_parent(
                             self.transport.send(request),
                             wait_deadline(deadline),

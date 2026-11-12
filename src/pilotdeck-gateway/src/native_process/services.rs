@@ -38,6 +38,38 @@ pub struct Services {
     /// createLocalGateway's `configStore` and its `startWatching()` handle:
     /// `refreshConfigBeforeTurn` reloads it at every turn start.
     pub config_store: Option<NativeConfigStore>,
+    /// `memoryMaintenance` (createLocalGateway.ts:808): what
+    /// `afterTurnCompleted` schedules after every turn. `None` schedules
+    /// nothing.
+    pub memory_maintenance: Option<Arc<dyn crate::runtime::refresh::MemoryMaintenance>>,
+}
+
+/// `new ProjectMemoryMaintenanceController({ resolveRuntime: (projectKey) =>
+/// registry.resolve(projectKey), telemetry, ... })` (createLocalGateway.ts:808).
+/// The native process uploads no telemetry, so its two tracking calls are
+/// no-ops; the failure diagnostic keeps the controller's console default.
+/// Must be called inside the Tokio runtime that owns background work.
+pub fn native_memory_maintenance(
+    project: Arc<ProjectRuntimeRegistry>,
+) -> Arc<dyn crate::runtime::refresh::MemoryMaintenance> {
+    use crate::runtime::memory::maintenance::{
+        MaintenanceTelemetry, ProjectMemoryMaintenanceController, ResolveRuntime,
+    };
+    struct NoTelemetry;
+    impl MaintenanceTelemetry for NoTelemetry {
+        fn track_feature_loop_stage(&self, _: JsValue) {}
+        fn track_error(&self, _: &crate::runtime::memory::MemoryProviderError, _: JsValue) {}
+    }
+    let resolve: ResolveRuntime<crate::runtime::project::ProjectRuntime> =
+        Arc::new(move |key: Option<&JsString>| {
+            let key = key.map(|key| PathBuf::from(String::from_utf16_lossy(key.units())));
+            project.resolve(key.as_deref())
+        });
+    Arc::new(ProjectMemoryMaintenanceController::new(
+        resolve,
+        Arc::new(NoTelemetry),
+        None,
+    ))
 }
 
 /// The process config store with its file watcher kept alive.
@@ -1498,11 +1530,26 @@ impl SubmitHostServices for Services {
                 .map_err(|e| failure(String::from_utf16_lossy(e.message.units())))
         })
     }
-    fn after_turn(&self, _: &RunRef) -> Result<(), SubmitError> {
+    fn after_turn(&self, run: &RunRef) -> Result<(), SubmitError> {
         self.recorders
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .retain(|_, recorder| recorder.strong_count() > 0);
+        // `afterTurnCompleted` (GatewayRuntimeRefreshBundle.ts:113-132):
+        // `memoryMaintenance.schedule(input.projectKey ?? projectRoot)`. The
+        // TS call is not awaited (InProcessGateway.ts:1850), so a resolve
+        // failure never fails the finished turn.
+        if let Some(maintenance) = &self.memory_maintenance {
+            let key = run.project_key.clone().unwrap_or_else(|| {
+                JsString::from(self.options.project_root.to_string_lossy().into_owned())
+            });
+            if let Err(error) = maintenance.schedule(&key) {
+                eprintln!(
+                    "[pilotdeck] memory maintenance schedule failed: {}",
+                    error.message
+                );
+            }
+        }
         Ok(())
     }
     fn now_ms(&self) -> f64 {

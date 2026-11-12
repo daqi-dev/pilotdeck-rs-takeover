@@ -192,6 +192,7 @@ async fn observe(name: &str) -> (Value, Value) {
     };
     let services = services::Services {
         config_store: None,
+        memory_maintenance: None,
         options: options.clone(),
         env: options.environment(Env::new()),
         project: Arc::new(ProjectRuntimeRegistry::new(
