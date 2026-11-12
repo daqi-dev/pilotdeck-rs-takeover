@@ -1,7 +1,7 @@
 //! The default command: `createLocalGateway({ projectRoot: process.cwd() })`
 //! then `new CliChannel({ argv }).start(...)` (src/cli/pilotdeck.ts:346-348,
-//! src/adapters/channel/cli/CliChannel.ts). The gateway runs in this process;
-//! each prompt is one `submitTurn`, rendered to stdout as it streams.
+//! src/adapters/channel/cli/CliChannel.ts). Each prompt is one `submitTurn`,
+//! using the probed server or local fallback and rendering events as they arrive.
 pub(crate) mod remote;
 
 use super::paths::{self, Env};

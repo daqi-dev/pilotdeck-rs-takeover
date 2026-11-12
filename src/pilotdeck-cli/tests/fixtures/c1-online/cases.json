@@ -1,0 +1,89 @@
+[
+  {
+    "id": "argv",
+    "argv": [
+      "  hello",
+      "world  "
+    ],
+    "prompts": [
+      "hello world"
+    ],
+    "stdout": "reply:hello world",
+    "exitCode": 0
+  },
+  {
+    "id": "stdin-lines",
+    "argv": [],
+    "input": "  first  \r\n\nsecond\rthird\n",
+    "prompts": [
+      "first",
+      "second",
+      "third"
+    ],
+    "stdout": "reply:first\nreply:second\nreply:third\n",
+    "exitCode": 0
+  },
+  {
+    "id": "idle-heartbeat",
+    "argv": [],
+    "input": "first\n",
+    "afterPong": "second\n",
+    "prompts": [
+      "first",
+      "second"
+    ],
+    "stdout": "reply:first\nreply:second\n",
+    "exitCode": 0
+  },
+  {
+    "id": "hello-fallback",
+    "argv": [
+      "fallback"
+    ],
+    "prompts": [],
+    "stdout": "local-fallback",
+    "stderr": "[pilotdeck] gateway server unavailable; using in-process mode.\n",
+    "exitCode": 0
+  },
+  {
+    "id": "disconnect",
+    "argv": [
+      "disconnect"
+    ],
+    "prompts": [
+      "disconnect"
+    ],
+    "stdout": "partial",
+    "stderr": "Gateway WebSocket closed.\n",
+    "exitCode": 1
+  },
+  {
+    "id": "stdin-eof",
+    "argv": [],
+    "input": "",
+    "prompts": [],
+    "stdout": "",
+    "exitCode": 0
+  },
+  {
+    "id": "sigint",
+    "argv": [
+      "wait"
+    ],
+    "prompts": [
+      "wait"
+    ],
+    "stdout": "pending",
+    "signal": "SIGINT"
+  },
+  {
+    "id": "local-sigint",
+    "argv": [
+      "wait-local"
+    ],
+    "prompts": [],
+    "stdout": "local-pending",
+    "stderr": "[pilotdeck] gateway server unavailable; using in-process mode.\n",
+    "signal": "SIGINT"
+  }
+]
