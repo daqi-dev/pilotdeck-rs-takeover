@@ -1450,7 +1450,26 @@ impl LiveTurnStream {
                 Err(RuntimeError::new(error.message))
             }
             Err(error) if self.integrity.operation.lock().unwrap().is_some() => {
-                Err(external_host_error(error))
+                let operation = self.integrity.operation.lock().unwrap().clone();
+                let accepted = error
+                    .stream_id
+                    .clone()
+                    .filter(|_| error.accepted && error.kind != HostErrorKind::ResultUnknown);
+                let last_applied = error.last_applied_sequence;
+                let failure = external_host_error(error);
+                // `reconcileTransportInterruption` (agentLoopSidecarClient.ts:
+                // 693-713, 999-1031): an accepted stream that ends without a
+                // terminal is recorded as result_unknown; nothing reconciles
+                // it here, so the turn fails with the original error. A failed
+                // ledger write never replaces that error.
+                if let (Some(operation), Some(stream)) = (operation, accepted) {
+                    operation.result_unknown(
+                        &stream,
+                        last_applied.unwrap_or(-1.0),
+                        &failure.message,
+                    );
+                }
+                Err(failure)
             }
             Err(error) => Err(map_host_error(error)),
         }

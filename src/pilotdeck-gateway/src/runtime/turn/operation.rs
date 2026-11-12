@@ -18,7 +18,7 @@ use crate::{
     runtime::project::RuntimeError,
     storage::{
         KnownTerminal, LedgerError, OperationIdentity, OperationResolution, SessionOperationLedger,
-        TranscriptSink, TranscriptWriter,
+        TranscriptSink, TranscriptWriter, UnknownTerminal,
     },
 };
 use pilotdeck_protocol::{
@@ -213,6 +213,36 @@ impl TurnOperation {
             .unwrap()
             .terminal(&terminal)
             .map_err(|error| RuntimeError::new(error.to_string()))
+    }
+}
+
+impl TurnOperation {
+    /// `operationLedger.resultUnknown` for a transport interruption: the
+    /// accepted stream, the last event cursor, `TRANSPORT_INTERRUPTED` and
+    /// `serializeTransportError(error)` (agentLoopSidecarClient.ts:1003-1013,
+    /// 1775-1784). A write failure is dropped.
+    pub(super) fn result_unknown(
+        &self,
+        stream_id: &JsString,
+        last_applied_sequence: f64,
+        message: &str,
+    ) {
+        let Some(identity) = self.operation_identity() else {
+            return;
+        };
+        let terminal = UnknownTerminal {
+            identity,
+            stream_id: stream_id.clone(),
+            last_applied_sequence: Some(last_applied_sequence),
+            code: Some("TRANSPORT_INTERRUPTED".into()),
+            error: Some(crate::metadata::object([("message", message.into())])),
+        };
+        let _ = self
+            .session
+            .ledger
+            .lock()
+            .unwrap()
+            .result_unknown(&terminal);
     }
 }
 
