@@ -210,9 +210,9 @@ fn load(path: &Path, diagnostic_path: &Path, max_bytes: u64) -> Result<(Vec<u8>,
     Ok((bytes, read))
 }
 
-/// A single-owner JSONL adapter, using `<canonical path>.lock` advisory locking.
-/// The lock file is kept so contenders always lock the same inode; Drop releases
-/// the OS lock, including after crashes. TS does not honor this Rust lock:
+/// A single-owner JSONL adapter, using advisory locking on a fence inode kept
+/// outside the session directory ([`ledger_lock_path`]); Drop releases the OS
+/// lock, and the OS releases it after crashes. TS does not honor this Rust lock:
 /// TS/Rust cutover must stop the previous writer before opening this store.
 /// Ledger: specs/gateway-parity/accepted-diffs.md A6.2-TRANSCRIPT-LOCK-001 (unapproved).
 /// Hard-link aliases are unsupported: each name has its own lock, and replacing
@@ -468,16 +468,16 @@ impl LedgerLock {
     /// The retained canonical path lets a transfer verify the fence really
     /// guards the path the holder resolved (#1019).
     ///
-    /// The baseline has no lock file next to a transcript, so the sibling
+    /// The baseline keeps no lock file anywhere in the session directory,
+    /// and a process killed while holding a lock cannot unlink anything, so
+    /// the fence inode lives outside it (see [`ledger_lock_path`]). It still
     /// exists only while a writer holds it: the holder unlinks it on release
     /// (see `Drop`). A contender may therefore lock an inode that was just
     /// unlinked; it detects that by comparing the inode it locked with the one
     /// the path names now, and starts over on a fresh inode.
     pub(crate) fn acquire(supplied: &Path) -> Result<(PathBuf, Self)> {
         let path = canonical_transcript_path(supplied)?;
-        let mut lock_path = path.as_os_str().to_os_string();
-        lock_path.push(".lock");
-        let lock_path = PathBuf::from(lock_path);
+        let lock_path = ledger_lock_path(&path)?;
         loop {
             let lock = private_open()
                 .read(true)
@@ -526,6 +526,55 @@ impl LedgerLock {
     pub(crate) fn path(&self) -> &Path {
         &self.path
     }
+}
+/// Where the fence inode for one canonical transcript path lives.
+///
+/// The fence guards against a second writer of the same transcript, in this
+/// process or another one on the same machine; the baseline has no such fence
+/// and no file for it. Keeping it beside the transcript left
+/// `<session>.jsonl.lock` in the session directory whenever the process was
+/// killed while writing (the baseline's default chat only ends that way), so it
+/// lives in a per-user directory under the temporary directory instead, named
+/// by the SHA-256 of the canonical transcript path. Processes that should
+/// exclude each other must agree on `TMPDIR`, as they agree on the pilot home.
+pub(crate) fn ledger_lock_path(canonical: &Path) -> io::Result<PathBuf> {
+    use sha2::{Digest, Sha256};
+    let dir = ledger_lock_dir()?;
+    let digest = Sha256::digest(canonical.as_os_str().as_encoded_bytes());
+    let name: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+    Ok(dir.join(format!("{name}.lock")))
+}
+fn ledger_lock_dir() -> io::Result<PathBuf> {
+    #[cfg(unix)]
+    let uid = rustix::process::geteuid().as_raw();
+    #[cfg(not(unix))]
+    let uid = 0;
+    let dir = std::env::temp_dir().join(format!("pilotdeck-ledger-locks-{uid}"));
+    let fail = |detail: String| {
+        io::Error::other(format!(
+            "Could not prepare session ledger lock directory {}: {detail}",
+            dir.display()
+        ))
+    };
+    match private_dirs(&dir) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(fail(error.to_string())),
+    }
+    // The directory may be shared (`/tmp`): only one we own, that is not a
+    // symlink and that nobody else can write, may hold our fences.
+    let meta = fs::symlink_metadata(&dir).map_err(|e| fail(e.to_string()))?;
+    if !meta.is_dir() {
+        return Err(fail("not a directory".into()));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if meta.uid() != uid || meta.mode() & 0o022 != 0 {
+            return Err(fail("not a private directory owned by this user".into()));
+        }
+    }
+    Ok(dir)
 }
 /// Whether `path` still names the inode `file` has open.
 #[cfg(unix)]

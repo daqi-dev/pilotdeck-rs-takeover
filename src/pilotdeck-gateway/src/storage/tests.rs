@@ -834,17 +834,26 @@ fn lock_contention_and_drop_release_cover_canonical_path_aliases() {
     drop(l);
     let _l = JsonlLedgerStore::open(scratch.path(), "session-1").unwrap();
     drop(inherited_descriptor);
-    assert!(scratch.0.join("session.jsonl.lock").is_file());
+    let canonical = super::canonical_transcript_path(&scratch.path()).unwrap();
+    assert!(super::ledger_lock_path(&canonical).unwrap().is_file());
 }
 /// The baseline keeps no lock file next to a transcript (bbx `turn-text`:
 /// `chats/` holds the `.jsonl` and its projections only), so the Rust-only
-/// fence inode exists exactly while a writer holds it.
+/// fence inode lives outside the session directory — even a writer killed
+/// while holding it leaves nothing there — and exists only while held.
 #[test]
 fn ledger_lock_file_exists_only_while_held() {
     let scratch = Scratch::new();
-    let lock_file = scratch.0.join("session.jsonl.lock");
+    let canonical = super::canonical_transcript_path(&scratch.path()).unwrap();
+    let lock_file = super::ledger_lock_path(&canonical).unwrap();
+    assert!(!lock_file.starts_with(&scratch.0));
     let (_, held) = super::LedgerLock::acquire(&scratch.path()).unwrap();
     assert!(lock_file.is_file(), "the fence inode exists while held");
+    let siblings: Vec<_> = fs::read_dir(&scratch.0)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert!(siblings.is_empty(), "nothing beside the transcript while held: {siblings:?}");
     assert!(
         matches!(super::LedgerLock::acquire(&scratch.path()), Err(LedgerError::Io(e)) if e.kind() == io::ErrorKind::WouldBlock),
         "a second holder is refused while the first is alive"

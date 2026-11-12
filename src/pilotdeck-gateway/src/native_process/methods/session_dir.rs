@@ -881,10 +881,14 @@ mod tests {
                 now: None,
             })
             .expect("#1873 the transcript storage opens");
-        let mut lock = std::ffi::OsString::from(storage.transcript_path.as_os_str());
-        lock.push(".lock");
-        std::fs::create_dir(std::path::PathBuf::from(&lock))
-            .expect("#1873 the broken ledger lock is in place");
+        // The fence inode lives outside the session directory
+        // (`storage::ledger_lock_path`); a directory there cannot be opened.
+        let lock = crate::storage::ledger_lock_path(
+            &crate::storage::canonical_transcript_path(&storage.transcript_path).expect("#1873 canonical path"),
+        )
+        .expect("#1873 the ledger lock directory");
+        std::fs::create_dir(&lock).expect("#1873 the broken ledger lock is in place");
+        let _remove_lock = RemoveDir(lock.clone());
         let error = crate::runtime::turn::gateway::GatewayRequests::request(
             &requests,
             "record_agent_status_message".into(),
@@ -932,10 +936,13 @@ mod tests {
                 now: None,
             })
             .expect("#1873 the rename transcript storage opens");
-        let mut lock = std::ffi::OsString::from(storage.transcript_path.as_os_str());
-        lock.push(".lock");
-        std::fs::create_dir(std::path::PathBuf::from(&lock))
-            .expect("#1873 the rename broken ledger lock is in place");
+        let lock = crate::storage::ledger_lock_path(
+            &crate::storage::canonical_transcript_path(&storage.transcript_path)
+                .expect("#1873 canonical path"),
+        )
+        .expect("#1873 the ledger lock directory");
+        std::fs::create_dir(&lock).expect("#1873 the rename broken ledger lock is in place");
+        let _remove_lock = RemoveDir(lock.clone());
         let error = crate::runtime::turn::gateway::GatewayRequests::request(
             &requests,
             "rename_session".into(),
@@ -1679,5 +1686,14 @@ mod tests {
         );
         r.owner.shutdown().await.expect("#1310 shutdown");
         r.project.dispose().await.expect("#1310 dispose");
+    }
+}
+
+#[cfg(test)]
+struct RemoveDir(std::path::PathBuf);
+#[cfg(test)]
+impl Drop for RemoveDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir(&self.0);
     }
 }
