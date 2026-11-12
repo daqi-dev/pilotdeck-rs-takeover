@@ -1041,13 +1041,17 @@ dependencies = [
 name = "pilotdeck-cli"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "chrono",
  "fancy-regex",
  "futures-util",
+ "http-body-util",
+ "hyper",
  "icu_casemap",
  "icu_collator",
  "icu_locale_core",
  "libc",
+ "pilotdeck-agent",
  "pilotdeck-gateway",
  "pilotdeck-protocol",
  "pilotdeck-transport",

@@ -60,9 +60,25 @@ pub fn resolve(cwd: &Path, path: &Path) -> PathBuf {
 
 /// os.homedir(): libuv returns $HOME whenever it is set, even if empty.
 pub(crate) fn homedir(env: &Env) -> Result<PathBuf, Failure> {
+    homedir_with_fallback(env, std::env::home_dir)
+}
+
+fn homedir_with_fallback(
+    env: &Env,
+    fallback: impl FnOnce() -> Option<PathBuf>,
+) -> Result<PathBuf, Failure> {
+    // On Unix the standard library falls back to the passwd database when
+    // HOME is absent, as Node's libuv homedir lookup does. Do not require the
+    // directory to exist or read anything beneath it.
     env.get("HOME")
         .map(PathBuf::from)
-        .ok_or(Failure::Todo("home directory lookup without $HOME"))
+        .or_else(fallback)
+        .ok_or_else(|| {
+            Failure::Error(
+                "A system error occurred: uv_os_homedir returned ENOENT (no such file or directory)"
+                    .into(),
+            )
+        })
 }
 
 /// resolvePilotHome(env) from src/pilot/paths.ts.
@@ -184,6 +200,25 @@ mod tests {
         assert!(
             matches!(gateway_token_path(&env, cwd), Ok(p) if p == Path::new("/h/server-token"))
         );
+    }
+
+    #[test]
+    fn homedir_uses_os_fallback_only_when_home_is_absent() {
+        for home in ["", "/isolated/home", "relative/home"] {
+            let env = Env::from_pairs(&[("HOME", home)]);
+            let actual = homedir_with_fallback(&env, || panic!("HOME must win"));
+            assert!(matches!(actual, Ok(path) if path == Path::new(home)));
+        }
+        let env = Env::from_pairs(&[]);
+        assert!(matches!(
+            homedir_with_fallback(&env, || Some(PathBuf::from("/isolated/passwd-home"))),
+            Ok(path) if path == Path::new("/isolated/passwd-home")
+        ));
+        assert!(matches!(
+            homedir_with_fallback(&env, || None),
+            Err(Failure::Error(message))
+                if message == "A system error occurred: uv_os_homedir returned ENOENT (no such file or directory)"
+        ));
     }
 
     #[test]

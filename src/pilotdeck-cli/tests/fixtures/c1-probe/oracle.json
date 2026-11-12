@@ -1,0 +1,51 @@
+{
+  "node": "v22.22.0",
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "cases": [
+    {
+      "mode": "complete",
+      "ok": true,
+      "requests": 1
+    },
+    {
+      "mode": "head-only",
+      "ok": false,
+      "requests": 1
+    },
+    {
+      "mode": "body-pending",
+      "ok": true,
+      "requests": 1
+    },
+    {
+      "mode": "bad-header",
+      "ok": false,
+      "requests": 1
+    },
+    {
+      "mode": "redirect",
+      "ok": true,
+      "requests": 2
+    },
+    {
+      "mode": "redirect-loop",
+      "ok": false,
+      "requests": 21
+    },
+    {
+      "mode": "redirect-credentials",
+      "ok": false,
+      "requests": 1
+    },
+    {
+      "mode": "redirect-port",
+      "ok": false,
+      "requests": 1
+    },
+    {
+      "mode": "status-error",
+      "ok": false,
+      "requests": 1
+    }
+  ]
+}
