@@ -684,7 +684,12 @@ fn blocks(values: &[JsValue]) -> Vec<JsValue> {
                             .position(|(key, _)| key.equals_str(name))
                             .unwrap_or(usize::MAX)
                     };
-                    let error_first = position("isError") < position("content");
+                    // An explicitly deployed sidecar is the baseline's
+                    // external loop, whose default factory rebuilds every
+                    // history block (`toCanonicalContentBlocks`,
+                    // pilotdeck-agent-loop-default-factory.ts:528-541).
+                    let error_first =
+                        !external_deployment() && position("isError") < position("content");
                     let is_error = boolean(o.get("isError")) == Some(true);
                     let mut out = object([
                         ("type", "tool_result".into()),
@@ -1002,5 +1007,17 @@ pub fn decode(
         )) == Some(true),
         seed_state: get(payload, "seedState").map(BoundarySnapshot::capture),
         model_state: get(payload, "modelState").map(BoundarySnapshot::capture),
+    })
+}
+
+/// The process runs as an explicitly deployed sidecar: the gateway selected
+/// `PILOTDECK_AGENT_LOOP_TRANSPORT=stdio` and its environment reaches this
+/// child unchanged (`AgentLoopDeploymentProfile.ts:66-73`). Without it this
+/// process is the gateway's own in-process loop.
+fn external_deployment() -> bool {
+    static EXTERNAL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *EXTERNAL.get_or_init(|| {
+        std::env::var("PILOTDECK_AGENT_LOOP_TRANSPORT")
+            .is_ok_and(|value| value.trim().eq_ignore_ascii_case("stdio"))
     })
 }

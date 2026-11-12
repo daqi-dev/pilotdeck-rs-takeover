@@ -1,0 +1,141 @@
+{
+  "name": "agent-loop-sidecar-stdio-abort",
+  "about": "PILOTDECK_AGENT_LOOP_TRANSPORT=stdio 下中止一轮：a 模型流式输出中 abort_turn（假 provider hangAfter）；b bash 工具执行中 abort_turn；随后 a 的会话再提交一轮。宿主向 sidecar 发 cancel，sidecar 以 cancelled 收尾，会话 .jsonl 里 agent_loop_operation_terminal 的 outcome 与 result（src/agent/modules/transport/agentLoopSidecarClient.ts:676-692、931-958）。标题请求延迟 4 秒、首轮后等 5 秒，让标题记录稳定落在首轮之后（sidecar 起动快慢不同，标题与 agent_loop_operation_started 的先后在两侧会不同）。",
+  "env": {
+    "PILOTDECK_AGENT_LOOP_TRANSPORT": "stdio"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Sidecar abort\"}",
+        "delayMs": 4000
+      }
+    },
+    {
+      "name": "next",
+      "when": [
+        "sa-next:"
+      ],
+      "reply": {
+        "text": "Next ok."
+      }
+    },
+    {
+      "name": "a",
+      "when": [
+        "sa-a:"
+      ],
+      "reply": {
+        "chunks": [
+          "partial ",
+          "never"
+        ],
+        "hangAfter": 1,
+        "hangMs": 4000
+      }
+    },
+    {
+      "name": "b-after",
+      "when": [
+        "sa-b:",
+        "\"tool_call_id\":\"call_sa_b\""
+      ],
+      "reply": {
+        "text": "Never reached b."
+      }
+    },
+    {
+      "name": "b",
+      "when": [
+        "sa-b:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_sa_b",
+          "name": "bash",
+          "arguments": {
+            "command": "trap '' TERM; sleep 1; echo survived"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-sa-a",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-sa-a",
+        "channelKey": "test",
+        "message": "sa-a: go"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "assistant_text_delta"
+          },
+          "ws": "abort_turn",
+          "params": {
+            "sessionKey": "s-sa-a"
+          },
+          "count": 1
+        }
+      ],
+      "timeout": 30000
+    },
+    {
+      "sleep": 5000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-sa-a",
+        "channelKey": "test",
+        "message": "sa-next: again"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-sa-b",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-sa-b",
+        "channelKey": "test",
+        "message": "sa-b: go"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started"
+          },
+          "ws": "abort_turn",
+          "params": {
+            "sessionKey": "s-sa-b"
+          },
+          "count": 1
+        }
+      ],
+      "timeout": 30000
+    },
+    {
+      "sleep": 5000
+    }
+  ],
+  "settleMs": 1000
+}

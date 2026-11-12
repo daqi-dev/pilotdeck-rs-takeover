@@ -233,6 +233,11 @@ pub struct TurnHostFactory {
     in_process_loop: bool,
     /// The session's project root; `None` is the registry's default project.
     project_root: Option<PathBuf>,
+    /// See [`Self::with_operation_ledger`].
+    operation_ledger: Option<(
+        JsString,
+        crate::host::modules::tool_context::HostToolCheckpoint,
+    )>,
 }
 
 impl TurnHostFactory {
@@ -278,6 +283,7 @@ impl TurnHostFactory {
             turn_override_sink: None,
             in_process_loop: false,
             project_root: None,
+            operation_ledger: None,
         }
     }
 
@@ -318,6 +324,18 @@ impl TurnHostFactory {
         self
     }
 
+    /// The deployment is an explicit external loop: the session with this id
+    /// records its transport attempts in its operation ledger; see
+    /// [`LiveSessionAdapter::with_operation_ledger`].
+    pub fn with_operation_ledger(
+        mut self,
+        session_id: JsString,
+        checkpoint: crate::host::modules::tool_context::HostToolCheckpoint,
+    ) -> Self {
+        self.operation_ledger = Some((session_id, checkpoint));
+        self
+    }
+
     /// Build the production `LiveSession` over this factory. The registry must
     /// outlive the session and be disposed by its owner after the session.
     /// The ports factory receives the same recorder on every turn; use it for
@@ -341,6 +359,18 @@ impl TurnHostFactory {
         let permission_mode_source = self.permission_mode_source.take();
         let turn_override_sink = self.turn_override_sink.take();
         let in_process_loop = self.in_process_loop;
+        let operations = self
+            .operation_ledger
+            .take()
+            .and_then(|(session_id, checkpoint)| {
+                super::operation::SessionOperations::new(
+                    session_id,
+                    recorder.writer().clone(),
+                    checkpoint,
+                )
+                .ok()
+                .map(Arc::new)
+            });
         let factory = Arc::new(self);
         let maintenance_factory = factory.clone();
         let maintenance: Arc<super::live::MaintenanceFactory> =
@@ -380,6 +410,10 @@ impl TurnHostFactory {
         };
         let session = match turn_override_sink {
             Some(sink) => session.with_turn_override_sink(sink),
+            None => session,
+        };
+        let session = match operations {
+            Some(operations) => session.with_operation_ledger(operations),
             None => session,
         };
         if in_process_loop {

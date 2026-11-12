@@ -1038,13 +1038,20 @@ async fn start_assembly(
                             })
                         };
                         let turn_project_root = project_root.clone();
-                        let deployment = Deployment::Stdio {
+                        // An explicit `PILOTDECK_AGENT_LOOP_TRANSPORT=stdio`
+                        // runs the loop as the baseline's external module;
+                        // otherwise this child is the gateway's own loop,
+                        // which the baseline runs in process.
+                        let explicit =
+                            explicit_stdio_deployment(&env, &options.sidecar, &project_root);
+                        let deployment = explicit.clone().unwrap_or_else(|| Deployment::Stdio {
                             command: options.sidecar.to_string_lossy().into_owned(),
                             args: options.sidecar_args.clone(),
                             cwd: project_root.clone(),
                             env: env.clone(),
-                        };
+                        });
                         continuation_parent.bind_recorder(binding.recorder.clone());
+                        let tool_checkpoint = binding.checkpoint.clone();
                         // `GatewayUserDialogChannel` (ProjectSessionRuntimeBundle.ts:
                         // 638-650): only for a session that enabled a dialog kind,
                         // journaled next to its transcript.
@@ -1140,11 +1147,16 @@ async fn start_assembly(
                         );
                         ports.check_deferred_tools()?;
                         let turn_override_sink = ports.turn_override();
-                        Ok(TurnHostFactory::new_with_signal(
+                        // The baseline's env deployment names no expected
+                        // module (`createAgentLoopDeploymentFactory(profile,
+                        // { transportObserver })`, createLocalGateway.ts:624).
+                        let expected_module =
+                            explicit.is_none().then(|| "pilotdeck-agent-loop".into());
+                        let factory = TurnHostFactory::new_with_signal(
                             project,
                             deployment,
                             limits,
-                            Some("pilotdeck-agent-loop".into()),
+                            expected_module,
                             move |identity, recorder, signal| {
                                 turn_ports(&ports, identity, recorder, signal)
                             },
@@ -1157,11 +1169,18 @@ async fn start_assembly(
                         // already-live session picks the change up without a
                         // close. The source reads the same store the selector
                         // method writes.
-                        .with_permission_mode_source(permission_source)
-                        // The sidecar is this gateway's own loop, which the
-                        // baseline runs in-process: no module stamp on its
-                        // messages.
-                        .as_in_process_loop())
+                        .with_permission_mode_source(permission_source);
+                        Ok(if explicit.is_some() {
+                            // An external loop's transport attempts go to the
+                            // session operation ledger, and its messages carry
+                            // the module stamp.
+                            factory.with_operation_ledger(session.clone(), tool_checkpoint)
+                        } else {
+                            // The sidecar is this gateway's own loop, which the
+                            // baseline runs in-process: no module stamp on its
+                            // messages.
+                            factory.as_in_process_loop()
+                        })
                     }),
                 })
             })
@@ -2444,4 +2463,37 @@ fn dispose_ephemeral_sessions(
             let _ = ledger.clear_session(&project, &session);
         }
     }
+}
+
+/// `resolveAgentLoopDeploymentProfile` when it selects stdio
+/// (`AgentLoopDeploymentProfile.ts:62-80`): the configured command (by
+/// default this gateway's sidecar binary, which stands in for `node` running
+/// the bundled sidecar script) with the sidecar path as its one argument, the
+/// gateway's environment without the TCP deployment variables, started in the
+/// gateway's working directory (the baseline passes no `cwd` to `spawn`). A
+/// relative sidecar path resolves against the project root
+/// (createLocalGateway.ts:623). `None` for the default deployment; the server
+/// rejected invalid values at startup.
+fn explicit_stdio_deployment(
+    env: &crate::config::Env,
+    sidecar: &std::path::Path,
+    project_root: &std::path::Path,
+) -> Option<Deployment> {
+    let cwd = std::env::current_dir().ok()?;
+    let Ok(Deployment::Stdio {
+        args, env: child, ..
+    }) = crate::runtime::turn::host_factory::resolve_deployment(env, project_root)
+    else {
+        return None;
+    };
+    let command = env
+        .get("PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND")
+        .map(|command| command.trim().to_owned())
+        .unwrap_or_else(|| sidecar.to_string_lossy().into_owned());
+    Some(Deployment::Stdio {
+        command,
+        args,
+        cwd,
+        env: child,
+    })
 }

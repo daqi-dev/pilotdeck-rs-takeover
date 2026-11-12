@@ -78,11 +78,15 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let module_instance = format!("pilotdeck-agent-loop-instance-{}", uuid::Uuid::new_v4());
+    // agentLoopSidecarServer.ts:101-102, 621: the instance, the server's
+    // generation, and the per-connection generation each add one random
+    // base-36 token.
+    let token = pilotdeck_transport::stdio::random_token;
+    let module_instance = format!("pilotdeck-agent-loop-instance-{}", token());
     let binding = SidecarBinding {
         module_id: "pilotdeck-agent-loop".into(),
         module_instance_id: module_instance.clone().into(),
-        connection_generation: format!("{module_instance}-{}", uuid::Uuid::new_v4()).into(),
+        connection_generation: format!("{module_instance}-{}-{}", token(), token()).into(),
         capabilities_version: "1".into(),
     };
     let clock = Arc::new(SystemExecutionClock);

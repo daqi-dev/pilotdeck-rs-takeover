@@ -1,0 +1,52 @@
+{
+  "name": "agent-loop-sidecar-stdio-spawn-fail",
+  "about": "PILOTDECK_AGENT_LOOP_TRANSPORT=stdio 且 PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND 指向不存在的命令：服务照常启动（AgentLoopDeploymentProfile.ts:62-80 只校验非空），每轮在握手时失败（stdioAgentLoopSidecarConnection.ts:96-106 写 stdin 失败），比较 submit_turn 的帧、会话记录与 provider 请求；同一会话失败后再提交一次。标题请求延迟 1.5 秒，让标题记录稳定落在失败记录之后。",
+  "env": {
+    "PILOTDECK_AGENT_LOOP_TRANSPORT": "stdio",
+    "PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND": "{ROOT}/no-such-sidecar-command"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Sidecar fail\"}",
+        "delayMs": 1500
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "Should not be reached."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-sf-missing",
+        "channelKey": "test",
+        "message": "sf-missing: hello"
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 2500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-sf-missing",
+        "channelKey": "test",
+        "message": "sf-missing: again"
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 2500
+    }
+  ]
+}

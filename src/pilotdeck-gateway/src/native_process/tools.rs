@@ -955,6 +955,13 @@ impl SessionTools {
             session: identity.session_id.clone(),
             turn: identity.turn_id.clone(),
             signal: signal.clone(),
+            external_loop: crate::runtime::turn::operation::explicit_stdio(
+                self.env
+                    .get("PILOTDECK_AGENT_LOOP_TRANSPORT")
+                    .and_then(JsValue::as_string)
+                    .map(|value| String::from_utf16_lossy(value.units()))
+                    .as_deref(),
+            ),
         });
         let binding = TurnBinding {
             config: config.clone(),
@@ -1233,6 +1240,11 @@ struct DurableTools {
     session: JsString,
     turn: JsString,
     signal: Cancellation,
+    /// The loop is an explicitly deployed sidecar
+    /// (`PILOTDECK_AGENT_LOOP_TRANSPORT=stdio`). The baseline's durable tool
+    /// port then sees only what the capability wire carries, so its
+    /// `tool_call` entries hold the bare call, without a timeline position.
+    external_loop: bool,
 }
 impl DurableTools {
     /// The call as the capability wire carries it, for a batch whose
@@ -1300,6 +1312,7 @@ impl capability::ToolExecution for DurableTools {
         let recorder = self.recorder.clone();
         let (session, turn) = (self.session.clone(), self.turn.clone());
         let projection = self.projection.clone();
+        let external_loop = self.external_loop;
         Box::pin(async move {
             // The loop records the assistant message before it runs the
             // message's tool calls (in the baseline both happen in one
@@ -1313,7 +1326,9 @@ impl capability::ToolExecution for DurableTools {
             let durable_calls: Vec<JsValue> = calls
                 .iter()
                 .map(|call| {
-                    DurableTools::durable_call_in(&projection, &turn, call)
+                    (!external_loop)
+                        .then(|| DurableTools::durable_call_in(&projection, &turn, call))
+                        .flatten()
                         .unwrap_or_else(|| DurableTools::bare_call(call))
                 })
                 .collect();
