@@ -33,7 +33,6 @@ extern crate self as pilotdeck_gateway;
 #[allow(clippy::duplicate_mod)]
 mod mutant_facade;
 mod node_io;
-mod node_locale;
 mod pairing;
 mod process_group;
 #[cfg(all(test, unix))]

@@ -4,8 +4,8 @@
 //! from the oracle. See fixtures/plugin-runtime/README.md for scope.
 #[path = "common/baseline.rs"]
 mod baseline;
-#[path = "../src/node_locale.rs"]
-mod node_locale;
+// node_locale now lives in pilotdeck-agent (shared with the agent loop).
+use pilotdeck_agent::collation as node_locale;
 #[path = "common/oracle_locale.rs"]
 mod oracle_locale;
 use pilotdeck_gateway::{hooks::protocol::HooksSettings, runtime::plugins::*};

@@ -5,7 +5,7 @@ use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
 use icu_casemap::CaseMapper;
-use icu_collator::{Collator, CollatorBorrowed, CollatorPreferences};
+use icu_collator::CollatorBorrowed;
 use icu_locale_core::{LanguageIdentifier, Locale};
 use pilotdeck_protocol::{JsValue, parse_json, stringify_json};
 use sha2::{Digest, Sha256};
@@ -638,7 +638,7 @@ pub(crate) fn native_stat(root: &Path, path: &Path) -> io::Result<(Stat, bool)> 
     ))
 }
 
-pub(crate) use crate::node_locale::node_locale;
+pub(crate) use pilotdeck_agent::collation::node_locale;
 
 fn lowercase(value: &str, locale: &LanguageIdentifier, substring: bool) -> String {
     // Node v22.22.0 / V8 12.4: Latin-1 fast casing ignores the locale only
@@ -671,32 +671,14 @@ fn node_dirent_name(name: &std::ffi::CStr) -> String {
     name.to_string_lossy().into_owned()
 }
 
-// Generated ICU 78.2 / CLDR 48 collation data uses the pinned Node oracle's
-// Unihan root, with matching tailorings. Unsupported collation extensions
-// retain Node's fallback to the language default, then root.
-//
-// Two spellings of the same locale do not collate alike in Node, and the
-// difference is measured, not stylistic (v22.22.0 / ICU 78.2,
-// `src/pilotdeck-cli/tests/fixtures/skills-fr-ca-probe.json`):
-//
-// * the **process default** (`localeCompare` with no locale argument, plain
-//   `Intl.Collator()`) reports `resolvedOptions().locale == "fr-Latn-CA"`
-//   under `LANG=fr_Latn_CA.UTF-8` yet still orders like `fr-CA`
-//   (`coté > côte`), so a Latin script tag does **not** opt out;
-// * an **explicit** `new Intl.Collator("fr-Latn-CA")` orders like generic
-//   `fr` (`coté < côte`), the value recorded in
-//   `tests/fixtures/native-collation/oracle.json`.
-//
-// `node_collator` follows the default spelling: the call sites that resolve a
-// locale at runtime take it from `node_locale` (or a config default), which is
-// the situation `localeCompare` with no argument models. Literal-locale call
-// sites (`runner_artifacts.rs` pins `en-US`) are unaffected — the two
-// spellings only differ for a script-tagged fr-CA. `node_explicit_collator`
-// keeps the oracle's spelling for harnesses that feed literal locale tags.
+/// `localeCompare` with no locale argument (process-default spelling); see
+/// [`pilotdeck_agent::collation::build_node_collator`].
 pub(crate) fn node_collator(locale: &Locale) -> Result<CollatorBorrowed<'static>> {
     build_node_collator(locale, true)
 }
 
+/// An explicit `new Intl.Collator(locale)` spelling, for harnesses that feed
+/// literal locale tags.
 #[cfg(test)]
 pub(crate) fn node_explicit_collator(locale: &Locale) -> Result<CollatorBorrowed<'static>> {
     build_node_collator(locale, false)
@@ -706,42 +688,12 @@ fn build_node_collator(
     locale: &Locale,
     process_default: bool,
 ) -> Result<CollatorBorrowed<'static>> {
-    let mut preferences: CollatorPreferences = locale.clone().into();
-    let create = |preferences: CollatorPreferences| {
-        Collator::try_new(preferences, Default::default()).map(|collator| {
-            // The pinned baked metadata omits fr-CA's backward-secondary bit.
-            // Restore the Node/ICU78 default; explicit collations (e.g. emoji)
-            // retain their own metadata. See native-collation/oracle.json.
-            let latin_or_none = |script: Option<icu_locale_core::subtags::Script>| {
-                script.is_none_or(|script| script.to_string() == "Latn")
-            };
-            if locale.id.language.as_str() == "fr"
-                && (process_default && latin_or_none(locale.id.script)
-                    || !process_default && locale.id.script.is_none())
-                && locale
-                    .id
-                    .region
-                    .is_some_and(|region| region.as_str() == "CA")
-                && preferences.collation_type.is_none()
-            {
-                collator.with_backward_second_level(true)
-            } else {
-                collator
-            }
-        })
-    };
-    create(preferences)
-        .or_else(|_| {
-            preferences.collation_type = None;
-            create(preferences)
-        })
-        .or_else(|_| Collator::try_new(Default::default(), Default::default()))
-        .map_err(|_| {
-            (
-                "gateway_request_failed",
-                "Collation data unavailable.".into(),
-            )
-        })
+    pilotdeck_agent::collation::build_node_collator(locale, process_default).ok_or_else(|| {
+        (
+            "gateway_request_failed",
+            "Collation data unavailable.".into(),
+        )
+    })
 }
 
 #[cfg(unix)]

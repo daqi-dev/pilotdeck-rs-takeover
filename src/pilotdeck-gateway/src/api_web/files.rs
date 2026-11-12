@@ -880,7 +880,7 @@ fn sort_tree_rows(rows: &mut [(bool, String, JsObject)]) -> Result<(), FilesErro
         > = std::cell::RefCell::new(std::collections::HashMap::new());
     }
     COLLATORS.with_borrow_mut(|cache| {
-        let locale = crate::node_locale::node_locale(|key| std::env::var(key).ok());
+        let locale = pilotdeck_agent::collation::node_locale(|key| std::env::var(key).ok());
         if !cache.contains_key(&locale) {
             let collator = crate::project_files::node_collator(&locale)
                 .map_err(|_| FilesError::Message("Collation data unavailable.".to_owned()))?;

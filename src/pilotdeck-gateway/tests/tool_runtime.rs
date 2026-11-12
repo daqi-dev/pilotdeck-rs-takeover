@@ -534,15 +534,12 @@ async fn real_ts_runtime_schedules_results_errors_and_deadline_budgets() {
     let oracle = baseline::oracle(ORACLE);
     let scenarios = array(field(&oracle, "scenarios"));
     assert_eq!(scenarios.len(), 78);
-    for (spec, signal) in scenarios
-        .iter()
-        .flat_map(|spec| {
-            [
-                (spec, Signal::Tool(ToolCancellation::default())),
-                (spec, Signal::Host(Cancellation::default())),
-            ]
-        })
-    {
+    for (spec, signal) in scenarios.iter().flat_map(|spec| {
+        [
+            (spec, Signal::Tool(ToolCancellation::default())),
+            (spec, Signal::Host(Cancellation::default())),
+        ]
+    }) {
         let label = format!(
             "{} ({})",
             text(field(spec, "name")),

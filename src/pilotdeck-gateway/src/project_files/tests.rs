@@ -3,6 +3,7 @@ use crate::{
     dispatch::{Route, parse, route_with_metadata},
     metadata::{NativeFiles, Stat},
 };
+use icu_collator::Collator;
 use pilotdeck_protocol::JsString;
 use serde_json::Value;
 use std::{

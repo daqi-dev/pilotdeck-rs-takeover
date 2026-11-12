@@ -1,6 +1,8 @@
 //! Controlled source-derived request-policy tests. These are not formal host,
 //! original Node differential, media/FS or live AgentLoop acceptance.
-use pilotdeck_agent::{MessageProjection, ProjectedMessage, ProjectionGap, ports, request, turn};
+use pilotdeck_agent::{
+    MessageProjection, ProjectedMessage, ProjectionGap, collation, ports, request, turn,
+};
 use pilotdeck_protocol::model::{
     BoundarySnapshot, ModelProtocol, ThinkingConfig, ThinkingMode, ToolChoice,
 };
@@ -1849,16 +1851,27 @@ fn cache_invalid_iterable_and_multi_tool_collation_have_distinct_failures_after_
         );
         assert_eq!(observer.notices, vec![false]);
     }
-    let mut h = context_host(obj([
-        ("messages", arr([])),
-        (
-            "tools",
-            arr([obj([("name", "z".into())]), obj([("name", "a".into())])]),
-        ),
-        ("cachePlan", b(true)),
-    ]));
-    assert!(
-        matches!(assemble(&mut state(),&mut h,&config(),&input(),&[]),Err(PortError::HostFailure{code,..})if code.equals_str("REQUEST_CACHE_LOCALE_COLLATION_PROFILE"))
+    // CachePlan.ts sorts tools with `localeCompare` before fingerprinting, so
+    // the fingerprint does not depend on the prepared tool order.
+    let fingerprint = |tools: JsValue| {
+        cached_request(b(true), vec![], tools)
+            .request
+            .value()
+            .get("cachePlan")
+            .unwrap()
+            .get("fingerprint")
+            .cloned()
+    };
+    let named = |name: &str| obj([("name", name.into())]);
+    assert_eq!(
+        fingerprint(arr([named("z"), named("B"), named("a")])),
+        fingerprint(arr([named("a"), named("B"), named("z")]))
+    );
+    // Equal names fall back to comparing the stable serializations.
+    let with = |name: &str, d: &str| obj([("name", name.into()), ("description", d.into())]);
+    assert_eq!(
+        fingerprint(arr([with("x", "2"), with("x", "1")])),
+        fingerprint(arr([with("x", "1"), with("x", "2")]))
     );
 }
 
