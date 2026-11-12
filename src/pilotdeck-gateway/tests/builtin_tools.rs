@@ -225,6 +225,7 @@ fn multimodal_success_branches_emit_model_visible_payloads() {
     assert_eq!(text(field(content, "mimeType")), "application/pdf");
     assert_eq!(text(field(content, "data")), BASE64.encode(b"not a pdf"));
     assert_eq!(field(content, "bytes"), &JsValue::Number(9.0));
+    assert!(matches!(field(content, "pages"), JsValue::Undefined));
 
     let jpeg = [vec![b'A'; 1024], vec![0xff, 0xd9]].concat();
     fs::write(scratch.root.join("pic.jpg"), &jpeg).unwrap();
@@ -244,6 +245,75 @@ fn multimodal_success_branches_emit_model_visible_payloads() {
     assert_eq!(field(content, "bytes"), &JsValue::Number(jpeg.len() as f64));
     assert_eq!(text(field(content, "detail")), "low");
     assert!(output.supplemental_messages.is_none());
+}
+
+#[test]
+fn corrupt_pdf_render_reports_the_real_render_failure() {
+    let scratch = Scratch::new();
+    let mut replay = ReplayContext::new(&scratch, &scratch.root);
+    fs::write(scratch.root.join("bad.pdf"), b"not a pdf").unwrap();
+    replay
+        .context
+        .fields
+        .insert("modelMultimodal".into(), multimodal(&["image"], None));
+    let output = futures_block(ReadFileTool::new().execute(
+        JsValue::Object(object([("file_path", JsValue::from("bad.pdf"))])),
+        replay.context.clone(),
+    ))
+    .unwrap();
+    let data = output.data.as_ref().unwrap();
+    assert!(matches!(field(data, "pageCount"), JsValue::Undefined));
+    assert!(!text(field(data, "renderError")).is_empty());
+    assert!(output.supplemental_messages.is_none());
+}
+
+// Build a minimal, one-page PDF with correct cross-reference offsets.
+fn one_page_pdf() -> Vec<u8> {
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>",
+    ];
+    let mut pdf = String::from("%PDF-1.4\n");
+    let mut offsets = Vec::new();
+    for (index, object) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.push_str(&format!("{} 0 obj\n{object}\nendobj\n", index + 1));
+    }
+    let xref = pdf.len();
+    pdf.push_str("xref\n0 4\n0000000000 65535 f \n");
+    for offset in offsets {
+        pdf.push_str(&format!("{offset:010} 00000 n \n"));
+    }
+    pdf.push_str(&format!(
+        "trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n"
+    ));
+    pdf.into_bytes()
+}
+
+#[test]
+fn valid_pdf_preserves_page_count_and_model_payload() {
+    let scratch = Scratch::new();
+    let mut replay = ReplayContext::new(&scratch, &scratch.root);
+    let pdf = one_page_pdf();
+    fs::write(scratch.root.join("valid.pdf"), &pdf).unwrap();
+    replay
+        .context
+        .fields
+        .insert("modelMultimodal".into(), multimodal(&["pdf"], None));
+    let output = futures_block(ReadFileTool::new().execute(
+        JsValue::Object(object([("file_path", JsValue::from("valid.pdf"))])),
+        replay.context.clone(),
+    ))
+    .unwrap();
+    assert_eq!(
+        field(output.data.as_ref().unwrap(), "pageCount"),
+        &JsValue::Number(1.0)
+    );
+    let supplemental = output.supplemental_messages.expect("PDF supplemental");
+    let content = &array(field(&supplemental[0], "content"))[0];
+    assert_eq!(text(field(content, "data")), BASE64.encode(&pdf));
+    assert_eq!(field(content, "pages"), &JsValue::Number(1.0));
 }
 
 #[test]

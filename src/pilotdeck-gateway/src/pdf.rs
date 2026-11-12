@@ -13,6 +13,7 @@ pub(crate) const MAX_INPUT: u64 = 128 * 1024 * 1024;
 pub(crate) enum Error {
     Unavailable,
     Failed(String),
+    ParseFailed(String),
     Timeout,
     TooLarge,
 }
@@ -20,7 +21,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Unavailable => UNAVAILABLE,
-            Self::Failed(message) => message,
+            Self::Failed(message) | Self::ParseFailed(message) => message,
             Self::Timeout => "PDF operation exceeded its 30 second time limit.",
             Self::TooLarge => "PDF operation exceeded its output size limit.",
         })
@@ -31,7 +32,8 @@ impl From<native_component::Error> for Error {
     fn from(error: native_component::Error) -> Self {
         match error {
             native_component::Error::Unavailable => Self::Unavailable,
-            native_component::Error::Failed(message) => Self::Failed(message),
+            native_component::Error::Failed(message)
+            | native_component::Error::Exited { message, .. } => Self::Failed(message),
             native_component::Error::Timeout => Self::Timeout,
             native_component::Error::TooLarge => Self::TooLarge,
             native_component::Error::Cancelled => {
@@ -78,13 +80,54 @@ impl Document {
         }
         native_component::run(command, Some(self.0.clone()), limit, TIMEOUT)
             .await
-            .map_err(Error::from)
+            .map_err(|error| component_error(mode, error))
+    }
+}
+
+fn component_error(mode: &str, error: native_component::Error) -> Error {
+    match error {
+        native_component::Error::Exited {
+            code: Some(1),
+            message,
+        } if mode == "count" => Error::ParseFailed(message),
+        error => Error::from(error),
     }
 }
 
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    #[test]
+    fn only_count_exit_one_is_a_parse_failure() {
+        for (mode, code, parse) in [
+            ("count", Some(1), true),
+            ("render", Some(1), false),
+            ("count", Some(2), false),
+            ("count", Some(127), false),
+            ("count", None, false),
+        ] {
+            let error = component_error(
+                mode,
+                native_component::Error::Exited {
+                    code,
+                    message: "original error".into(),
+                },
+            );
+            assert_eq!(matches!(error, Error::ParseFailed(_)), parse);
+            assert_eq!(error.to_string(), "original error");
+        }
+        assert!(matches!(
+            component_error("count", native_component::Error::Cancelled),
+            Error::Failed(_)
+        ));
+        assert!(matches!(
+            component_error(
+                "count",
+                native_component::Error::Failed("permission denied".into())
+            ),
+            Error::Failed(_)
+        ));
+    }
     #[test]
     fn document_snapshot_is_private_and_released() {
         let doc = Document::from_bytes(b"%PDF-fixture").unwrap();

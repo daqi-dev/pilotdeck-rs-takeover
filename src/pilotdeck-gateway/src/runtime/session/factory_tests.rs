@@ -246,13 +246,24 @@ impl Harness {
                 }
                 let host: HostBuilder = Box::new(move |binding| {
                     lock(&obs.bindings).push(binding);
-                    Ok(TurnHostFactory::new(
+                    let dispatch_observed = obs.clone();
+                    let host = TurnHostFactory::new(
                         registry,
                         Deployment::Native,
                         crate::host::Limits::default(),
                         None,
-                        |_, _| panic!("#745 native transport cannot request ports"),
-                    ))
+                        |_, _| panic!("#745 failed lease must not request ports"),
+                    );
+                    Ok(if name == "host-execution" {
+                        // Fail at the first host-owned boundary, before this
+                        // lifecycle harness needs real model/tool ports.
+                        host.with_lease_supplier(Arc::new(move || {
+                            dispatch_observed.event("host.acquire");
+                            Err(RuntimeError::new("HOST_DISPATCH_LEASE_BOOM"))
+                        }))
+                    } else {
+                        host
+                    })
                 });
                 Ok(PreparedSession {
                     resources,
@@ -1240,8 +1251,16 @@ async fn production_adapter_dispatches_to_host() {
     };
     assert_eq!(
         failure.message,
-        "Host execution failed: Agent loop transport 'native' has no sidecar host factory.",
+        "Host execution failed: HOST_DISPATCH_LEASE_BOOM",
         "#745 host factory execution conclusion"
+    );
+    assert_eq!(
+        lock(&h.observed.events)
+            .iter()
+            .filter(|event| event.as_str() == "host.acquire")
+            .count(),
+        1,
+        "#745 production adapter dispatches once to the host lease boundary"
     );
     h.finish("host-execution").await;
 }

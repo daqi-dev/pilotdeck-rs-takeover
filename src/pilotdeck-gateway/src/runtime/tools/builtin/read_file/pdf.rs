@@ -28,6 +28,20 @@ fn failure(error: crate::pdf::Error) -> ToolError {
     )
 }
 
+// The baseline treats a failed parse or zero pages as an unknown count.
+// Missing components and resource limits remain explicit capability failures.
+fn optional_page_count(result: Result<u32, crate::pdf::Error>) -> Result<Option<u32>, ToolError> {
+    match result {
+        Ok(0) | Err(crate::pdf::Error::ParseFailed(_)) => Ok(None),
+        Ok(count) => Ok(Some(count)),
+        Err(error) => Err(failure(error)),
+    }
+}
+
+fn page_count_value(count: Option<u32>) -> JsValue {
+    count.map_or(JsValue::Undefined, |count| JsValue::Number(count as f64))
+}
+
 pub(super) async fn read(
     input: &JsValue,
     context: &ToolRunContext,
@@ -79,29 +93,27 @@ pub(super) async fn read(
         .await
         .map_err(|error| failed(error, "read", &resolved.absolute))?;
     let document = Document::from_bytes(&bytes).map_err(failure)?;
-    let count = document.pages().await.map_err(failure)?;
+    let count = optional_page_count(document.pages().await)?;
     let relative = text(&resolved.relative);
-    let suffix = if count == 0 {
-        String::new()
-    } else {
-        format!(", {count} pages")
-    };
+    let suffix = count.map_or_else(String::new, |count| format!(", {count} pages"));
     if let Some((_, last)) = range
-        && last > count as f64
+        && count.is_some_and(|count| last > count as f64)
     {
         return Err(tool_error(
             "invalid_tool_input",
             format!(
-                "PDF page range {} exceeds the detected page count ({count}).",
-                pages.as_deref().unwrap_or("")
+                "PDF page range {} exceeds the detected page count ({}).",
+                pages.as_deref().unwrap_or(""),
+                count.expect("range checked against known page count")
             ),
         ));
     }
-    if range.is_none() && count > 10 {
+    if range.is_none() && count.is_some_and(|count| count > 10) {
         return Err(tool_error(
             "invalid_tool_input",
             format!(
-                "This PDF has {count} pages, which is too many to read at once. Use the pages parameter to read specific page ranges (e.g., pages: \"1-5\"). Maximum {MAX_PDF_PAGES_PER_REQUEST} pages per request."
+                "This PDF has {} pages, which is too many to read at once. Use the pages parameter to read specific page ranges (e.g., pages: \"1-5\"). Maximum {MAX_PDF_PAGES_PER_REQUEST} pages per request.",
+                count.expect("threshold checked against known page count")
             ),
         ));
     }
@@ -116,7 +128,7 @@ pub(super) async fn read(
                 "Current model does not support PDF input or image input."
             };
             data.insert("modelSupportsImage".into(), JsValue::Bool(false));
-            data.insert("pageCount".into(), JsValue::Number(count as f64));
+            data.insert("pageCount".into(), page_count_value(count));
             return Ok(output(
                 format!(
                     "[PDF file: {relative}, {} bytes{suffix}. {reason}]",
@@ -125,7 +137,7 @@ pub(super) async fn read(
                 data,
             ));
         }
-        let (first, last) = range.map_or((1, count.min(20)), |(first, last)| {
+        let (first, last) = range.map_or((1, count.unwrap_or(20).min(20)), |(first, last)| {
             (first as u32, last as u32)
         });
         let budget = multimodal
@@ -163,7 +175,7 @@ pub(super) async fn read(
             if range.is_none() {
                 data.insert("modelSupportsPdf".into(), JsValue::Bool(supports_pdf));
             }
-            data.insert("pageCount".into(), JsValue::Number(count as f64));
+            data.insert("pageCount".into(), page_count_value(count));
             data.insert("renderError".into(), string(error.clone()));
             let message = if range.is_some() {
                 format!("[PDF file: {relative}. PDF page rendering failed: {error}]")
@@ -175,14 +187,10 @@ pub(super) async fn read(
             };
             return Ok(output(message, data));
         }
-        let total = if count == 0 {
-            String::new()
-        } else {
-            format!(" of {count}")
-        };
+        let total = count.map_or_else(String::new, |count| format!(" of {count}"));
         let message = if let Some(pages) = pages {
             data.insert("pdfPagesRendered".into(), JsValue::Bool(true));
-            data.insert("pageCount".into(), JsValue::Number(count as f64));
+            data.insert("pageCount".into(), page_count_value(count));
             data.insert("requestedPages".into(), string(pages));
             format!(
                 "PDF pages extracted: {} page(s) from {relative} (pages {first}-{last}{total}).",
@@ -197,7 +205,7 @@ pub(super) async fn read(
             data.insert("modelSupportsPdf".into(), JsValue::Bool(supports_pdf));
             data.insert("pdfPagesRendered".into(), JsValue::Bool(true));
             data.insert("degradeReason".into(), string(reason));
-            data.insert("pageCount".into(), JsValue::Number(count as f64));
+            data.insert("pageCount".into(), page_count_value(count));
             format!("[PDF pages rendered from {relative}: {first}-{last}{total} ({reason}).]")
         };
         data.insert(
@@ -224,7 +232,7 @@ pub(super) async fn read(
     }
     let mut data = base_data(resolved);
     data.insert("bytes".into(), JsValue::Number(bytes.len() as f64));
-    data.insert("pageCount".into(), JsValue::Number(count as f64));
+    data.insert("pageCount".into(), page_count_value(count));
     let mut result = output(
         format!("PDF file read: {relative} ({} bytes{suffix})", stat.size),
         data,
@@ -238,7 +246,7 @@ pub(super) async fn read(
                 ("mimeType", string("application/pdf")),
                 ("data", string(BASE64.encode(&bytes))),
                 ("bytes", JsValue::Number(bytes.len() as f64)),
-                ("pages", JsValue::Number(count as f64)),
+                ("pages", page_count_value(count)),
             ]))]),
         ),
         ("isMeta", JsValue::Bool(true)),
@@ -249,4 +257,28 @@ pub(super) async fn read(
         read_state_value(stat.mtime_ms, ReadKind::Pdf, input),
     );
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn page_count_distinguishes_unknown_and_component_failures() {
+        assert_eq!(optional_page_count(Ok(1)).unwrap(), Some(1));
+        assert_eq!(optional_page_count(Ok(0)).unwrap(), None);
+        assert_eq!(
+            optional_page_count(Err(crate::pdf::Error::ParseFailed("bad PDF".into()))).unwrap(),
+            None
+        );
+        assert!(matches!(page_count_value(None), JsValue::Undefined));
+        for error in [
+            crate::pdf::Error::Failed("component failure".into()),
+            crate::pdf::Error::Unavailable,
+            crate::pdf::Error::Timeout,
+            crate::pdf::Error::TooLarge,
+        ] {
+            assert!(optional_page_count(Err(error)).is_err());
+        }
+    }
 }

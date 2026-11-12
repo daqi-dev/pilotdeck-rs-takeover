@@ -15,6 +15,7 @@ use tokio::{
 pub(crate) enum Error {
     Unavailable,
     Failed(String),
+    Exited { code: Option<i32>, message: String },
     Timeout,
     TooLarge,
     Cancelled,
@@ -180,11 +181,14 @@ async fn run_owned(
         Ok(stdout)
     } else {
         let message = String::from_utf8_lossy(&stderr).trim().to_owned();
-        Err(Error::Failed(if message.is_empty() {
-            format!("Native component exited with {status}.")
-        } else {
-            message
-        }))
+        Err(Error::Exited {
+            code: status.code(),
+            message: if message.is_empty() {
+                format!("Native component exited with {status}.")
+            } else {
+                message
+            },
+        })
     }
 }
 
@@ -219,8 +223,30 @@ mod tests {
         let mut command = Command::new("/bin/sh");
         command.args(["-c", "exit 7"]);
         assert!(
-            matches!(run(command, None, 4, TIMEOUT).await, Err(Error::Failed(message)) if message.contains('7'))
+            matches!(run(command, None, 4, TIMEOUT).await, Err(Error::Exited { code: Some(7), message }) if message.contains('7'))
         );
+    }
+    #[tokio::test]
+    async fn spawn_and_signal_failures_are_distinct_from_exit_one() {
+        use std::os::unix::fs::PermissionsExt;
+        let input = Snapshot::new("component-noexec", b"#!/bin/sh\nexit 1\n", 64).unwrap();
+        std::fs::set_permissions(input.path(), std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(matches!(
+            run(Command::new(input.path()), None, 1024, TIMEOUT).await,
+            Err(Error::Failed(_))
+        ));
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "kill -TERM $$"]);
+        assert!(matches!(
+            run(command, None, 1024, TIMEOUT).await,
+            Err(Error::Exited { code: None, .. })
+        ));
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "exit 1"]);
+        assert!(matches!(
+            run(command, None, 1024, TIMEOUT).await,
+            Err(Error::Exited { code: Some(1), .. })
+        ));
     }
     #[tokio::test]
     async fn dropped_waiter_cancels_owned_process_and_retains_snapshot_until_reaped() {

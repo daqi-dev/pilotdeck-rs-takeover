@@ -3785,7 +3785,9 @@ mod tests {
                 .expect("exclusion must not free a registered name or alias");
             assert_eq!(
                 error.message,
-                format!("Native extension tool registration failed: {expected}")
+                format!(
+                    "Native extension tool registration failed: Callback (accepted=false, stream_id=None, last_applied_sequence=None): {expected}"
+                )
             );
         }
         let session = create(excluded)

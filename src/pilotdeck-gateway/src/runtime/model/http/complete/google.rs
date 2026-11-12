@@ -162,10 +162,10 @@ fn parse_response(raw: JsValue, provider: &JsValue) -> JsValue {
                     ("type", "thinking".into()),
                     ("text", JsValue::String(text.clone())),
                 ]);
-                if let Some(signature) = non_empty_string(field(part, "thoughtSignature")) {
-                    if let JsValue::Object(thinking) = &mut thinking {
-                        thinking.insert("signature".into(), JsValue::String(signature.clone()));
-                    }
+                if let Some(signature) = non_empty_string(field(part, "thoughtSignature"))
+                    && let JsValue::Object(thinking) = &mut thinking
+                {
+                    thinking.insert("signature".into(), JsValue::String(signature.clone()));
                 }
                 content.push(thinking);
             } else if !text.units().is_empty() {

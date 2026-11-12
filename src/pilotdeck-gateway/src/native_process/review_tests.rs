@@ -412,9 +412,10 @@ async fn configured_hooks_section_is_not_refused() {
             .expect("#1071 configured hook fixture");
         // The baseline's loader reports a top-level `hooks` section as an
         // unknown field and starts without it (loadPilotConfig.ts:343-375).
-        assembly::validate_profile(&options, &env)
-            .await
-            .expect("a config-file hooks section does not refuse startup");
+        negative_assert!(
+            assembly::validate_profile(&options, &env).await.is_ok(),
+            "#1071 config-file hooks section permits startup"
+        );
         std::fs::remove_file(path).expect("#1071 remove hook config fixture");
     }
 }

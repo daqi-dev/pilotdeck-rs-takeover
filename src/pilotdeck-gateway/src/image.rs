@@ -14,7 +14,7 @@ pub(crate) struct Image {
 fn error(error: Error) -> String {
     match error {
         Error::Unavailable => UNAVAILABLE.into(),
-        Error::Failed(message) => message,
+        Error::Failed(message) | Error::Exited { message, .. } => message,
         Error::Timeout => "Image operation exceeded its 30 second time limit.".into(),
         Error::TooLarge => "Image operation exceeded its output size limit.".into(),
         Error::Cancelled => "Image operation was cancelled.".into(),

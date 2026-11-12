@@ -1001,9 +1001,10 @@ async fn production_profile_and_registration() {
     .load(&options.project)
     .expect("#1071 module fixture parses successfully");
     // A disabled skill module needs no outside service and is served.
-    assembly::validate_profile(&options, &env)
-        .await
-        .expect("a disabled skill module is accepted");
+    negative_assert!(
+        assembly::validate_profile(&options, &env).await.is_ok(),
+        "#1071 disabled skill module permits startup"
+    );
 }
 
 /// #2354: the production assembly's `/api/web` mount, held up end to end. `run`
