@@ -348,7 +348,7 @@ impl Recorder {
         };
         self.complete_step(&mut inner, session_id, turn_id, outcome)?;
         let mut draft = draft("turn_result");
-        draft.insert("result".into(), clone_stream_guard_errors(result));
+        draft.insert("result".into(), clone_error_instance_raws(result));
         self.append(session_id, turn_id, draft)?;
         inner.turns.remove(turn_id);
         inner.completed_turn_id = Some(turn_id.clone());
@@ -1140,26 +1140,29 @@ pub(super) fn validate_compaction_failed(entry: &JsValue) -> RecorderResult<()> 
     }
     Ok(())
 }
-/// The turn result's `errors[].details.raw` is the thrown Error in TS; the
-/// transcript writer's `structuredClone` drops the stream-guard errors' own
-/// `name`, so it lands as `{}` (see `is_stream_guard_raw`).
-fn clone_stream_guard_errors(mut result: JsValue) -> JsValue {
+/// The turn result's `errors[].details.raw` is the thrown Error object in
+/// TS; the transcript writer's `structuredClone` turns every Error instance
+/// into a plain Error whose JSON is `{}` (see `is_error_instance_raw`), while
+/// a provider's parsed error body survives the clone unchanged.
+fn clone_error_instance_raws(mut result: JsValue) -> JsValue {
+    use crate::runtime::model::http::is_error_instance_raw;
     let JsValue::Object(fields) = &mut result else {
         return result;
     };
     let Some(JsValue::Array(errors)) = fields.get("errors") else {
         return result;
     };
-    if !errors.iter().any(|error| {
-        crate::runtime::model::http::is_stream_guard_raw(field(field(error, "details"), "raw"))
-    }) {
+    if !errors
+        .iter()
+        .any(|error| is_error_instance_raw(field(field(error, "details"), "raw")))
+    {
         return result;
     }
     let errors = errors
         .iter()
         .map(|error| {
             let raw = field(field(error, "details"), "raw");
-            if !crate::runtime::model::http::is_stream_guard_raw(raw) {
+            if !is_error_instance_raw(raw) {
                 return error.clone();
             }
             let mut error = error.clone();

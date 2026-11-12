@@ -1,0 +1,203 @@
+{
+  "name": "ctx-cache-generation",
+  "about": "提示缓存代际 cachePlan.generation 的生命周期（context/cache/PromptCacheCoordinator.ts、DefaultContextRuntime.ts:395-398,491-505）。协调器挂在会话的上下文运行时上，运行时随 SessionRouter 里的活会话组装一次、跨轮复用（cli/SessionContextRuntimeBundle.ts:164、ProjectSessionRuntimeBundle.ts:515），所以代际跨轮递增，只在会话被关闭或重建时回到 1：close_session（InProcessGateway.ts:2050）、session_model_set（GatewaySessionModelBundle.ts:65）、set_session_thinking（InProcessGateway.ts:2370）、sdkSessionConfig 变化（InProcessGateway.ts:1098 markSessionDirty）；sdkSessionConfig 不变的下一轮不重建。另一个会话 s-other 自己从 1 开始。模型一律回 400：失败轮次留下的空助手消息留在下一轮循环的历史里（compaction_started.messageCount 计入，模型请求里滤掉），历史里没有带随机 id 的块，指纹两次运行稳定。压缩之后见 ctx-cache-generation-compact，重启之后见 ctx-cache-generation-restart。",
+  "config": "schemaVersion: 1\nagent:\n  model: anth/claude-bbx\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    anth:\n      protocol: anthropic\n      url: {MOCK}\n      apiKey: bbx-anthropic-key\n      retry:\n        baseDelayMs: 1\n        maxDelayMs: 1\n        jitter: 0\n      models:\n        claude-bbx:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Gen\"}"
+      }
+    },
+    {
+      "name": "fail",
+      "reply": {
+        "status": 400,
+        "body": {
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "bbx: rejected"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-gen",
+        "channelKey": "test",
+        "message": "g1: first"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-gen",
+        "channelKey": "test",
+        "message": "g2: second"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-other",
+        "channelKey": "test",
+        "message": "o1: other session"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-gen",
+        "channelKey": "test",
+        "message": "g3: third"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-gen",
+        "channelKey": "test",
+        "message": "g4: fourth"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "close_session",
+      "params": {
+        "sessionKey": "s-gen"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-gen",
+        "channelKey": "test",
+        "message": "g5: after close"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-gen",
+        "channelKey": "test",
+        "message": "g6: still open"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "session_model_set",
+      "params": {
+        "sessionKey": "s-gen",
+        "projectKey": "{PILOT_HOME}",
+        "selection": {
+          "mode": "model",
+          "provider": "anth",
+          "model": "claude-bbx"
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-gen",
+        "channelKey": "test",
+        "message": "g7: after model set"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_session_thinking",
+      "params": {
+        "sessionKey": "s-gen",
+        "thinking": {
+          "enabled": true,
+          "mode": "low"
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-gen",
+        "channelKey": "test",
+        "message": "g8: after thinking"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-gen",
+        "channelKey": "test",
+        "message": "g9: new sdk config",
+        "sdkSessionConfig": {
+          "appendSystemPrompt": "GEN-APPEND"
+        }
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-gen",
+        "channelKey": "test",
+        "message": "g10: same sdk config",
+        "sdkSessionConfig": {
+          "appendSystemPrompt": "GEN-APPEND"
+        }
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-other",
+        "channelKey": "test",
+        "message": "o2: other again"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-gen"
+      }
+    }
+  ]
+}

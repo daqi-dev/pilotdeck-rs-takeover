@@ -281,7 +281,14 @@ pub(crate) fn normalize_model_error(
         }
         ErrorInput::Error(error) => (
             None,
-            error.raw.clone(),
+            {
+                debug_assert!(
+                    super::is_error_instance_raw(&error.raw),
+                    "an Error projection the transcript clone does not recognize: {:?}",
+                    error.raw
+                );
+                error.raw.clone()
+            },
             Some(&error.message),
             error.network_code,
         ),

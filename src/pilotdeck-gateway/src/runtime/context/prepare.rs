@@ -71,6 +71,12 @@ pub struct Options {
     pub project_root: Option<String>,
     pub memory_retrieval_timeout_ms: f64,
     pub prompt_cache_coordinator: Option<Arc<super::cache::PromptCacheCoordinator>>,
+    /// The session-lifetime state of the TS `DefaultContextRuntime` (cache
+    /// generations, prompt-time anchors). The baseline composes one context
+    /// runtime per live `AgentSession` and reuses it for every turn; the Rust
+    /// host composes per turn, so the session owner supplies this and keeps
+    /// it across turns. `None` gives the runtime its own fresh state.
+    pub session_state: Option<Arc<SessionContextState>>,
     pub now: Option<Arc<dyn Fn() -> f64 + Send + Sync>>,
     /// Host identity rendered in the user-context block. TS reads
     /// `process.platform` / `process.version`; the Rust host has no Node, so
@@ -95,6 +101,7 @@ impl Default for Options {
             project_root: None,
             memory_retrieval_timeout_ms: 30_000.0,
             prompt_cache_coordinator: None,
+            session_state: None,
             now: None,
             platform: None,
             node_version: None,
@@ -116,19 +123,43 @@ struct Inner {
     memory_resolver: Option<Arc<dyn super::memory::MemoryResolver>>,
     project_root: Option<String>,
     memory_retrieval_timeout_ms: f64,
-    prompt_cache_coordinator: Arc<super::cache::PromptCacheCoordinator>,
     now: Arc<dyn Fn() -> f64 + Send + Sync>,
-    state: Mutex<HashMap<Option<JsString>, TimeState>>,
+    session: Arc<SessionContextState>,
+}
+
+/// The per-session fields of TS `DefaultContextRuntime`
+/// (`DefaultContextRuntime.ts:117-123`): the prompt-cache coordinator with
+/// its `promptCacheSessions`, and `promptTimeState`. In the baseline they live
+/// as long as the session's context runtime, which is composed once per live
+/// `AgentSession` (`SessionContextRuntimeBundle.compose`, reached from
+/// `ProjectSessionRuntimeBundle.ts:515`) and disposed with it — so they
+/// survive across turns and are reset only when the session itself is
+/// recreated (close, dirty recreate, idle eviction) or the process restarts.
+pub struct SessionContextState {
+    prompt_cache_coordinator: Arc<super::cache::PromptCacheCoordinator>,
+    time: Mutex<HashMap<Option<JsString>, TimeState>>,
     cache_sessions: Mutex<HashSet<JsString>>,
 }
-impl Inner {
+impl Default for SessionContextState {
+    fn default() -> Self {
+        Self::with_coordinator(Arc::new(super::cache::PromptCacheCoordinator::default()))
+    }
+}
+impl SessionContextState {
+    pub fn with_coordinator(coordinator: Arc<super::cache::PromptCacheCoordinator>) -> Self {
+        Self {
+            prompt_cache_coordinator: coordinator,
+            time: Mutex::new(HashMap::new()),
+            cache_sessions: Mutex::new(HashSet::new()),
+        }
+    }
     fn release_caches(&self) {
         for session_id in self.cache_sessions.lock().unwrap().drain() {
             self.prompt_cache_coordinator.release(&session_id);
         }
     }
 }
-impl Drop for Inner {
+impl Drop for SessionContextState {
     fn drop(&mut self) {
         self.release_caches();
     }
@@ -175,21 +206,24 @@ impl DefaultContextRuntime {
                 memory_resolver: options.memory_resolver,
                 project_root: options.project_root,
                 memory_retrieval_timeout_ms: options.memory_retrieval_timeout_ms,
-                prompt_cache_coordinator: options
-                    .prompt_cache_coordinator
-                    .unwrap_or_else(|| Arc::new(super::cache::PromptCacheCoordinator::new(locale))),
                 now: options.now.unwrap_or_else(|| Arc::new(system_now)),
-                state: Mutex::new(HashMap::new()),
-                cache_sessions: Mutex::new(HashSet::new()),
+                session: options.session_state.unwrap_or_else(|| {
+                    Arc::new(SessionContextState::with_coordinator(
+                        options.prompt_cache_coordinator.unwrap_or_else(|| {
+                            Arc::new(super::cache::PromptCacheCoordinator::new(locale))
+                        }),
+                    ))
+                }),
             }),
         }
     }
     /// Prompt-time state is session scoped; release it when a session ends.
     pub fn release_session(&self, session_id: &JsString) {
-        self.inner.cache_sessions.lock().unwrap().remove(session_id);
-        self.inner.prompt_cache_coordinator.release(session_id);
-        self.inner
-            .state
+        let session = &self.inner.session;
+        session.cache_sessions.lock().unwrap().remove(session_id);
+        session.prompt_cache_coordinator.release(session_id);
+        session
+            .time
             .lock()
             .unwrap()
             .remove(&Some(session_id.clone()));
@@ -197,7 +231,7 @@ impl DefaultContextRuntime {
 
     /// Release cache generations owned by this runtime (TS `dispose`).
     pub fn dispose(&self) {
-        self.inner.release_caches();
+        self.inner.session.release_caches();
     }
 
     /// `DefaultContextRuntime.ts:474-488` `captureTurn`: an absent resolver and
@@ -354,7 +388,7 @@ impl DefaultContextRuntime {
             .map(fingerprint)
             .collect::<Result<Vec<_>, _>>()?;
         let previous = {
-            let state = self.inner.state.lock().unwrap();
+            let state = self.inner.session.time.lock().unwrap();
             state.get(&input.session_id).cloned()
         };
         let mut unchanged_prefix_length = 0;
@@ -525,12 +559,13 @@ impl DefaultContextRuntime {
                 && !session_id.is_empty()
             {
                 self.inner
+                    .session
                     .cache_sessions
                     .lock()
                     .unwrap()
                     .insert(session_id.clone());
             }
-            self.inner.prompt_cache_coordinator.create_plan(
+            self.inner.session.prompt_cache_coordinator.create_plan(
                 input.session_id.clone(),
                 super::cache::CachePlanInput {
                     provider: fields.get("provider").unwrap_or(&UNDEFINED),
@@ -549,7 +584,7 @@ impl DefaultContextRuntime {
             )?
         };
         if !memory_aborted && !input.preview_only {
-            self.inner.state.lock().unwrap().insert(
+            self.inner.session.time.lock().unwrap().insert(
                 input.session_id,
                 TimeState {
                     timestamp: prompt_timestamp,
@@ -773,12 +808,17 @@ impl ContextRuntime for DefaultContextRuntime {
                         if !session_id.is_empty() {
                             runtime
                                 .inner
+                                .session
                                 .cache_sessions
                                 .lock()
                                 .unwrap()
                                 .insert(session_id.clone());
                         }
-                        runtime.inner.prompt_cache_coordinator.reset(&session_id);
+                        runtime
+                            .inner
+                            .session
+                            .prompt_cache_coordinator
+                            .reset(&session_id);
                     }
                     Ok(result)
                 })
@@ -1549,6 +1589,81 @@ fn system_now() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cache_input(text: &str) -> ContextInput {
+        let message = |text: &str| {
+            let mut block = JsObject::new();
+            block.insert("type".into(), "text".into());
+            block.insert("text".into(), JsValue::String(text.into()));
+            message_with_content(JsValue::Array(vec![JsValue::Object(block)]))
+        };
+        let mut tool = JsObject::new();
+        tool.insert("name".into(), "base".into());
+        let mut fields = JsObject::new();
+        for (key, value) in [
+            ("sessionId", "session"),
+            ("turnId", "turn"),
+            ("cwd", "/pdrs-cache-unit"),
+            ("provider", "provider"),
+            ("model", "model"),
+            ("permissionMode", "default"),
+            ("customSystemPrompt", "cache system"),
+            ("protocol", "anthropic"),
+        ] {
+            fields.insert(key.into(), JsValue::String(value.into()));
+        }
+        fields.insert("supportsPromptCache".into(), JsValue::Bool(true));
+        fields.insert(
+            "additionalWorkingDirectories".into(),
+            JsValue::Array(vec![]),
+        );
+        fields.insert("tools".into(), JsValue::Array(vec![JsValue::Object(tool)]));
+        fields.insert("messages".into(), JsValue::Array(vec![message(text)]));
+        ContextInput {
+            fields,
+            abort_signal: None,
+            budget_evaluator: None,
+        }
+    }
+
+    async fn generation(runtime: &DefaultContextRuntime, text: &str) -> f64 {
+        let prepared = runtime.prepare_for_model(cache_input(text)).await.unwrap();
+        prepared
+            .get("cachePlan")
+            .and_then(|plan| plan.get("generation"))
+            .and_then(JsValue::as_number)
+            .expect("anthropic cache plan")
+    }
+
+    fn unit_runtime(state: Option<Arc<SessionContextState>>) -> DefaultContextRuntime {
+        DefaultContextRuntime::new(Options {
+            session_state: state,
+            now: Some(Arc::new(|| 0.0)),
+            locale: Some("en-US".into()),
+            ..Options::default()
+        })
+    }
+
+    /// The baseline composes one context runtime per live session and keeps
+    /// it across turns, so generations keep counting; the Rust host composes
+    /// one per turn over the session's `SessionContextState`.
+    #[tokio::test]
+    async fn generations_follow_the_session_state_not_the_turn_runtime() {
+        let state = Arc::new(SessionContextState::default());
+        let first = unit_runtime(Some(state.clone()));
+        assert_eq!(generation(&first, "one").await, 1.0);
+        drop(first);
+        let second = unit_runtime(Some(state.clone()));
+        assert_eq!(generation(&second, "two").await, 2.0);
+        // An unchanged plan keeps its generation.
+        assert_eq!(generation(&second, "two").await, 2.0);
+        drop(second);
+        // A recreated session starts over.
+        let fresh = unit_runtime(Some(Arc::new(SessionContextState::default())));
+        assert_eq!(generation(&fresh, "three").await, 1.0);
+        // Without a session state each runtime owns fresh state.
+        assert_eq!(generation(&unit_runtime(None), "four").await, 1.0);
+    }
 
     fn nested_arrays(depth: usize) -> JsValue {
         let mut value = JsValue::String("x".into());

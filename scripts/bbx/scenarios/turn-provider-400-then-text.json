@@ -73,14 +73,5 @@
         "sessionKey": "s"
       }
     }
-  ],
-  "accepted": [
-    {
-      "id": "sidecar-drops-empty-assistant",
-      "why": "模型请求失败的那一轮在会话历史里留下一条 content 为空的助手消息。基线默认在进程内跑循环，下一轮的历史里带着它；Rust 的循环在 sidecar 里跑，解析初始历史时丢掉空消息（基线自己的 sidecar 工厂也这样丢）。只影响 compaction 记录里的 messageCount，发给模型的请求、读会话、投影都一致",
-      "paths": [
-        "^\\$\\.tree\\..*/chats/s\\.jsonl\\.jsonl\\[\\d+\\]\\.messageCount$"
-      ]
-    }
   ]
 }

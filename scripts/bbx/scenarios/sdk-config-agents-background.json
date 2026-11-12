@@ -1,12 +1,68 @@
 {
   "name": "sdk-config-agents-background",
-  "about": "sdkSessionConfig.agents 的 background: true（OneShotSubagentPort.ts launchBackground → BackgroundSubagentRuntime）：父轮用 agent 工具派出后台子代理，工具结果是 Background subagent started as task <id>，父轮不等子代理；子代理在后台跑完自己的模型请求与侧链记录；之后 background_tasks 列表与下一轮。",
+  "about": "sdkSessionConfig.agents 的 background: true（OneShotSubagentPort.ts launchBackground → BackgroundSubagentRuntime）：父轮用 agent 工具派出后台子代理，工具结果是 Background subagent started as task <id>，父轮不等子代理；子代理在后台跑完自己的模型请求与侧链记录；之后 background_tasks 列表与下一轮。 时序固定：父轮第一次回复同时调 agent 和 bash sleep 1，子代理的模型请求落在父轮下一次请求之前（父轮要等 bash 跑完）；子代理回复再晚 800ms，在父轮结束后才完成，完成事件在第二轮开头投递。",
   "provider": [
-    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\": \"Background agents\"}" } },
-    { "name": "parent-after", "when": ["turn-1:", "\"tool_call_id\":\"call_b1\""], "reply": { "text": "Launched." } },
-    { "name": "parent", "when": ["turn-1:"], "reply": { "tool": { "id": "call_b1", "name": "agent", "arguments": { "description": "Watch it", "prompt": "CHILD-DIRECTIVE-B: watch.", "subagent_type": "watcher" } } } },
-    { "name": "child", "when": ["CHILD-DIRECTIVE-B"], "reply": { "text": "Scope: watched.\nResult: quiet.\nKey files: none\nFiles changed: none\nIssues: none" } },
-    { "name": "main", "reply": { "text": "ok" } }
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Background agents\"}"
+      }
+    },
+    {
+      "name": "parent-after",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_b2\""
+      ],
+      "reply": {
+        "text": "Launched."
+      }
+    },
+    {
+      "name": "parent",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tools": [
+          {
+            "id": "call_b1",
+            "name": "agent",
+            "arguments": {
+              "description": "Watch it",
+              "prompt": "CHILD-DIRECTIVE-B: watch.",
+              "subagent_type": "watcher"
+            }
+          },
+          {
+            "id": "call_b2",
+            "name": "bash",
+            "arguments": {
+              "command": "sleep 1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "child",
+      "when": [
+        "CHILD-DIRECTIVE-B"
+      ],
+      "reply": {
+        "text": "Scope: watched.\nResult: quiet.\nKey files: none\nFiles changed: none\nIssues: none",
+        "delayMs": 800
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "ok"
+      }
+    }
   ],
   "steps": [
     {
@@ -20,15 +76,38 @@
             "watcher": {
               "description": "Watches in the background.",
               "prompt": "WATCHER-SUFFIX: watch quietly.",
-              "tools": ["read_file"],
+              "tools": [
+                "read_file"
+              ],
               "background": true
             }
           }
         }
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-bg",
+            "requestId": "{event.requestId}",
+            "decision": "allow"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 1500
+    },
+    {
+      "ws": "background_tasks",
+      "params": {
+        "sessionKey": "s-bg"
       }
     },
-    { "sleep": 1500 },
-    { "ws": "background_tasks", "params": { "sessionKey": "s-bg" } },
     {
       "ws": "submit_turn",
       "params": {
@@ -40,14 +119,23 @@
             "watcher": {
               "description": "Watches in the background.",
               "prompt": "WATCHER-SUFFIX: watch quietly.",
-              "tools": ["read_file"],
+              "tools": [
+                "read_file"
+              ],
               "background": true
             }
           }
         }
       }
     },
-    { "sleep": 300 },
-    { "ws": "read_session_messages", "params": { "sessionKey": "s-bg" } }
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-bg"
+      }
+    }
   ]
 }
