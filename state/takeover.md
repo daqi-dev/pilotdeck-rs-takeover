@@ -6,6 +6,18 @@
 
 ## 现在在哪
 
+**2026-11-12 晚的最新状态（下面的旧数字以此为准）**：`9c11345cf` 已推送，含五个合并：OpenAI Responses / Google 协议（假 provider 加两种形状，Google 修 4 处）、WS 参数 3 处差异与渠道启动表现、循环行为缺口（12 个场景，修记忆维护调度与记忆请求头顺序）、时区名改用内置数据（`jiff-tzdb`，推翻旧决策卡「不内嵌 tzdata」，账本 `A8.3-CRON-TZ-ALIAS-001` 已过时、待追加说明）、`modules.tools` 接线。
+
+验收挪到 cb8（Linux）：`~/ws/pdrs-takeover/verify.sh <标签> [场景…]` 一条龙（构建、单独重跑、全量对拍、四条命令），先 `git push ssh://cb8/~/ws/pdrs-takeover/pilotdeck-rs HEAD:refs/heads/from-mac`。环境在 `~/ws/pdrs-takeover/env.sh`：Node 必须是 `~/opt` 下的 v22.22.0（默认的 v22.22.1 会让每个带模型请求的场景不一致）、`LANG=en_US.UTF-8`、`umask 022`、不设 `CARGO_BUILD_JOBS`；`cargo-nextest` 0.9.150 从源码装。bbx 根目录按平台取（Linux 是 `/tmp/pdrs-bbN`）。
+
+cb8 上 `9c11345cf` 的结果：fmt、clippy、文档测试通过；`nextest` 7840 个里 7837 个通过，失败的 3 个单独重跑 3 次都通过（固定端口与并发，当时另有子代理在同机跑同一套测试）；全量对拍 414 个场景 401 个一致。不一致的：已定不移植的 2 个；Linux 上稳定不一致的 5 个（`always-on-fire`、`always-on-fire-execfail`、`hook-sdk-file-changed`、`http-api-web`、`robust-restart-crash-leftovers`）；并行负载下偶发、单独重跑一致的若干（每轮不同，如 `gap-tool-glob`、`gap-tool-grep`、`gap-permissions-json-rules`、`hook-cancelled`、`robust-large-message`、`loop-parallel-tools`）。Linux 差异由 cb8 上的子代理在 `~/ws/pdrs-takeover/wt-linux`（分支 `linux-diffs`）处理。
+
+本机磁盘：主检出的 `src/target` 涨到过 183 GB，已删；全量 `nextest` 以后在 cb8 跑，本机只做子代理各自的构建。人许可并行 4、6 个或更多子代理（硬件和我管得过来为限）。
+
+在途的子代理（都基于 `7388b0131`）：零散差异与扩展目录监视；hooks 帧次序 / 中止取消、缓存代际、子代理里的权限询问；CLI 与环境变量缺口审查；cb8 上的 Linux 差异。
+
+合并后记下的待办：显式 stdio 部署下外部工具失败时的结果形状；fork 子代理会话不挂外部工具是否与基线一致；批次被拒路径不写 `tool_result` 账本记录；进程本地时区仍读系统 tzdata；时间工具默认时区回显（基线回 ICU 规范名）；Slack Socket Mode 实现已从生产流程摘掉、代码待删；记忆维护的实际抽取没有场景。
+
 以命令输出为准，不手写进度。2026-11-12 下午合并四个分支后的全量对拍（四个子代理同时在构建，不是安静机器；四条命令这次没有全量跑，只跑了改动模块的子集）：
 
 - `node scripts/bbx/check.mjs --slots 5,6,7,8`：339 个场景 336 个 SAME。
