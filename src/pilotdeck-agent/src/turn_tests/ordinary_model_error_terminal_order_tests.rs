@@ -284,9 +284,11 @@ fn budget_status_projection_preserves_failure_diagnostics_for_both_limits() {
         assert_eq!(values[0].get("error"), Some(&diagnostic));
         assert_eq!(values[1].get("event"), Some(&JsValue::from(event_name)));
         assert_eq!(values[1].get("detail"), Some(detail.value()));
-        // TS sidecarStatusMessage falls back to event.event when these
-        // fields are absent. Numeric budget detail must remain intact.
-        assert!(values[1].get("text").is_none());
+        // The baseline gateway runs AgentLoop in process: the durable status
+        // text is the error message (AgentLoop.ts:1014-1019; bbx
+        // loop-budget). The wire carries it for the host, which strips it
+        // from the public event. Numeric budget detail must remain intact.
+        assert_eq!(values[1].get("text"), Some(&diagnostic));
         assert!(detail.value().get("message").is_none());
         assert_eq!(values[2].get("error"), Some(error.value()));
         assert_eq!(
