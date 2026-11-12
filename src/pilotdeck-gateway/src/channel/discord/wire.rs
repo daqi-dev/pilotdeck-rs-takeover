@@ -58,3 +58,24 @@ pub(super) fn chunk_text(text: &JsString) -> Vec<JsString> {
     }
     chunks
 }
+
+/// Canonicalize the authority-only gateway URL before adding a query. An HTTP
+/// request target must start with `/`; concatenating `?v=...` onto a bare
+/// authority otherwise makes tungstenite emit an invalid request target.
+pub(super) fn gateway_url(base: &str) -> Result<String, String> {
+    let mut url = url::Url::parse(base).map_err(|error| error.to_string())?;
+    if !matches!(url.scheme(), "ws" | "wss") || url.host_str().is_none() {
+        return Err("invalid Discord Gateway URL".into());
+    }
+    let retained: Vec<(String, String)> = url
+        .query_pairs()
+        .filter(|(key, _)| key != "v" && key != "encoding")
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect();
+    url.set_query(None);
+    url.query_pairs_mut()
+        .extend_pairs(retained)
+        .append_pair("v", "10")
+        .append_pair("encoding", "json");
+    Ok(url.into())
+}

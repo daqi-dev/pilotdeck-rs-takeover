@@ -21,3 +21,11 @@ ES2022 + ESNext 模块选项下 TypeScript 5.9.3 分别转译 registry、`ChatSe
 补充 `/status` 实际模块探针：`status.mjs` 以隔离 PATH 下可控 fake git 调用固定 TS handler，success 回复包含 mock 分支/提交、真实该 Node 进程 uptime/version/platform；git exit3 的失败回复保留命令和 stderr。证据 `_tmp/20261113-h1-commands-oracle/status-{ok,fail}.json`。这是每项一轮模块探针，不是正式渠道验收；没有执行真实 git。
 
 `status` success/failure 第二轮与首轮各自逐字节相同。额外有效 `/update` 四格以 Node 官方 `syncBuiltinESMExports` 替换 `child_process.spawn` 为内存 mock，实际运行固定 TS registry→`runUpdateProcess`，未执行 update 脚本：成功0、已最新2、失败1、spawn error 两轮一致，核对 `--restart`/`--check`、两条回复和退出码对应输出；产物 `update-{first,second}.json`。`runtime/updateCommand.ts` 与对应 dist 的正确 ESM 转译一致。此仍是 mock 子进程模块证据，真实 Rust 进程生命周期待测。
+
+## 原生宿主候选与共享搜索迁移
+
+已新增 `commands/host.rs`、`update.rs`、`search/`：真实 gateway Metadata 枚举，CLI 原有 JSONL 搜索 matcher/title 核心移入 gateway 并让 CLI 保留原 argv/英文格式、转调用同一核心；原 CLI 私有 matcher/title 文件随迁移删除。host 在阻塞池执行真实 metadata/历史扫描，支持 search flags 和中文输出，UTF-16 查询与会话 ID 保留；无 Node 的 native status 保留 `Node: not used (native Rust)`，详 `H1-STATUS-NATIVE-RUNTIME-001`。可选 Git Web updater 仅在找到安装的 `scripts/update-web.mjs` 时使用 Node 启动真实进程；缺脚本按固定基线明确报错，不发明 Rust 自更新。O1 正在接线 `set_command_host`；尚未实际编译或产品入口验证。
+
+新增6项 commands 测试包括隔离真实 JSONL、role/regex错误、孤立代理项/BOM、fake git/node 状态与 updater 成功、exit2、失败和缺脚本；`rustfmt` 与 `git diff --check` 已执行，**未运行 Cargo**。CLI 搬迁必须对照既有39格正式测试、原 matcher/title 回归、中文搜索格式及 Node 真实 fixture。TS 的 status `process.uptime` 从进程起点计算，O1 当前传 assembly Instant，需改成产品入口起点或明确接受/验证差异；目前不声称精确一致。已知 project path 含孤立 UTF-16 仍报错、非法 regex 错误文案转换有损，尚未闭合。updater 新 host 实现目前与 CLI 现有 updater 进程代码独立，尚未完成共享抽取；不能据此报告最终去重或交付。正式 WeCom/其他适用渠道、失败/取消及真实 mock 集成均待固定源码集中验证。
+
+第5批候选窄修：状态真实入口在 CLI main 第一行、gateway 同步 main 构造 Tokio runtime 前登记 `Instant`；embedding 未登记时报错，不把装配时间冒称进程起点。gateway 原 `#[tokio::main]` 展开为相同 multi-thread/enable-all runtime；O1 的装配使用 `process_start()`。status 的 git child 设置 kill-on-drop；新增隔离子进程中 fake git 阻塞后取消 status、确认该明确 PID 已退出的测试。fake git/node 另记录并核对完整 argv、工作目录，缺 updater 测试改用无脚本的 sibling root，避免误命中原夹具脚本。非法 createdAt 现在保留原始 UTF-16；孤立项目路径经隔离 Node filesystem/sha1 实测按 U+FFFD 编码，并在 native 历史查询中加真实文件正向测试。所有测试待集中执行；缺省 Node 字段差异已单独登记并通过冻结检查。进程 earliest-main 仍可能与 OS 实际启动相差装载时间，时间边界需正式对拍。CLI 与 host updater 进程代码仍待抽取为唯一实现；正则语法错误包含孤立代理项的文案仍有损，不能宣称该边界 parity。

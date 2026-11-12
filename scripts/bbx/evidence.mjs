@@ -8,6 +8,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { syntaxContract } from './syntax-policy.mjs';
 import { nativeDependencyIdentity } from './native-identity.mjs';
+import { validatePersistedRunTriggers } from './serve-persisted-event.mjs';
 
 export const here = path.dirname(fileURLToPath(import.meta.url));
 export const repo = path.resolve(here, '../..');
@@ -51,7 +52,7 @@ export function inputIdentity() {
     baselineDist: treeHash(path.join(baseline, 'dist')),
     baselineLock: fs.existsSync(path.join(baseline, 'pnpm-lock.yaml')) ? fileHash(path.join(baseline, 'pnpm-lock.yaml')) : null,
     baselineEntry: fs.existsSync(path.join(baseline, 'dist/src/cli/pilotdeck.js')) ? fileHash(path.join(baseline, 'dist/src/cli/pilotdeck.js')) : null,
-    harness: Object.fromEntries(['check.mjs', 'run.mjs', 'diff.mjs', 'evidence.mjs', 'mock-support.mjs', 'syntax-policy.mjs', 'native-identity.mjs'].map((name) => [name, fileHash(path.join(here, name))])),
+    harness: Object.fromEntries(['check.mjs', 'run.mjs', 'diff.mjs', 'evidence.mjs', 'mock-support.mjs', 'syntax-policy.mjs', 'native-identity.mjs', 'serve-persisted-event.mjs'].map((name) => [name, fileHash(path.join(here, name))])),
     tools: { node: process.version, executable: fileHash(process.execPath), rust: command('rustc', ['--version'], repo), pnpm: command('pnpm', ['--version'], baseline) },
     platform: { os: process.platform, arch: process.arch, release: os.release() },
   };
@@ -124,6 +125,7 @@ export function validateArtifact(artifact, scenario, expected) {
   else errors.push(...artifact.failures.filter((f) => !f.expected).map((f) => `${f.at}:${f.kind}`));
   if (!Array.isArray(artifact.steps) || (!artifact.startFailure && artifact.steps.length !== scenario.steps.length)) errors.push('missing or duplicate steps');
   if (artifact.startFailure && scenario.expectStartFailure !== true) errors.push('unexpected start failure');
+  if (scenario.steps.some(step => step.untilPersistedRunEvent)) errors.push(...validatePersistedRunTriggers(artifact, scenario));
   const assertions = assertionResults(scenario.assertions, artifact, expected.side);
   if (!isDeepStrictEqual(evidence?.assertions, assertions)) errors.push('required assertions were not executed');
   if (assertions.some((a) => !a.skipped && !a.passed)) errors.push('required assertion failed');

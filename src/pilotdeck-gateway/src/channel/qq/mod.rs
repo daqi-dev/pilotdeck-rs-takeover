@@ -1180,36 +1180,55 @@ fn register_transport(
     mounts.register(
         CHANNEL_KEY,
         Arc::new(move |options: &JsObject| {
+            let mut options = QQChannelOptions::from_config(options);
+            if let Some(network) = &network {
+                options = options.with_network(network.clone());
+            }
             Ok(Arc::new(QQChannel::new(
-                QQChannelOptions {
-                    app_id: options.get("appId").and_then(JsValue::as_string).cloned(),
-                    client_secret: options
-                        .get("clientSecret")
-                        .and_then(JsValue::as_string)
-                        .cloned(),
-                    allow_groups: options.get("allowGroups").and_then(|v| {
-                        if let JsValue::Array(v) = v {
-                            Some(v.iter().filter_map(JsValue::as_string).cloned().collect())
-                        } else {
-                            None
-                        }
-                    }),
-                    trigger_prefixes: options.get("triggerPrefixes").and_then(|v| {
-                        if let JsValue::Array(v) = v {
-                            Some(v.iter().filter_map(JsValue::as_string).cloned().collect())
-                        } else {
-                            None
-                        }
-                    }),
-                    max_message_length: configured_message_limit(options.get("maxMessageLength")),
-                    network: network.clone(),
-                    transport: network.clone().map(|v| v as Arc<dyn ModelHttpTransport>),
-                    ..Default::default()
-                },
+                options,
                 js_helper_interaction(responder.clone()),
             )) as Arc<dyn ChannelAdapter>)
         }),
     );
+}
+
+impl QQChannelOptions {
+    pub(crate) fn from_config(options: &JsObject) -> Self {
+        let strings = |key: &str| {
+            options.get(key).and_then(|value| {
+                if let JsValue::Array(values) = value {
+                    Some(
+                        values
+                            .iter()
+                            .filter_map(JsValue::as_string)
+                            .cloned()
+                            .collect(),
+                    )
+                } else {
+                    None
+                }
+            })
+        };
+        Self {
+            app_id: options.get("appId").and_then(JsValue::as_string).cloned(),
+            client_secret: options
+                .get("clientSecret")
+                .and_then(JsValue::as_string)
+                .cloned(),
+            allow_groups: strings("allowGroups"),
+            trigger_prefixes: strings("triggerPrefixes"),
+            max_message_length: configured_message_limit(options.get("maxMessageLength")),
+            ..Default::default()
+        }
+    }
+    pub(crate) fn with_network(
+        mut self,
+        network: Arc<crate::channel::network::ChannelNetwork>,
+    ) -> Self {
+        self.transport = Some(network.clone());
+        self.network = Some(network);
+        self
+    }
 }
 
 fn object(fields: &[(&str, JsValue)]) -> JsValue {

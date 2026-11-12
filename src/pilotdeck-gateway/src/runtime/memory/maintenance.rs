@@ -41,6 +41,12 @@ pub trait MaintenanceTelemetry: Send + Sync {
 }
 pub type ResolveRuntime<R> =
     Arc<dyn Fn(Option<&JsString>) -> Result<Arc<R>, RuntimeError> + Send + Sync>;
+pub type MaintenanceLease = Arc<dyn std::any::Any + Send + Sync>;
+pub type ResolveLeasedRuntime<R> = Arc<
+    dyn Fn(Option<&JsString>) -> Result<(Arc<R>, Option<MaintenanceLease>), RuntimeError>
+        + Send
+        + Sync,
+>;
 pub type Diagnostic = Arc<dyn Fn(&JsString, &MemoryProviderError) + Send + Sync>;
 #[derive(Default)]
 struct State {
@@ -49,7 +55,7 @@ struct State {
 }
 type States<R> = Mutex<Vec<(Weak<R>, Arc<Mutex<State>>)>>;
 struct Inner<R> {
-    resolve: ResolveRuntime<R>,
+    resolve: ResolveLeasedRuntime<R>,
     telemetry: Arc<dyn MaintenanceTelemetry>,
     diagnostic: Diagnostic,
     states: States<R>,
@@ -76,6 +82,19 @@ impl<R: MaintenanceRuntime> ProjectMemoryMaintenanceController<R> {
         telemetry: Arc<dyn MaintenanceTelemetry>,
         diagnostic: Option<Diagnostic>,
     ) -> Self {
+        Self::new_leased(
+            Arc::new(move |key| resolve(key).map(|runtime| (runtime, None))),
+            telemetry,
+            diagnostic,
+        )
+    }
+    /// A production resolver atomically acquires the exact published generation.
+    /// The lease stays owned through every queued repetition and child task.
+    pub fn new_leased(
+        resolve: ResolveLeasedRuntime<R>,
+        telemetry: Arc<dyn MaintenanceTelemetry>,
+        diagnostic: Option<Diagnostic>,
+    ) -> Self {
         Self(Arc::new(Inner {
             resolve,
             telemetry,
@@ -97,7 +116,7 @@ impl<R: MaintenanceRuntime> ProjectMemoryMaintenanceController<R> {
         }))
     }
     pub fn schedule(&self, key: Option<&JsString>) -> RuntimeResult {
-        let runtime = (self.0.resolve)(key)?;
+        let (runtime, lease) = (self.0.resolve)(key)?;
         let Some(service) = runtime.memory_service() else {
             return Ok(());
         };
@@ -134,13 +153,18 @@ impl<R: MaintenanceRuntime> ProjectMemoryMaintenanceController<R> {
         }
         let inner = self.0.clone();
         self.0.executor.spawn(async move {
+            let lease = lease;
             let mut flight = flight;
             let mut next = first;
             loop {
                 // Each invocation is supervised separately: a panic must report
                 // the failure and still consume any request queued during it.
                 // Both tasks belong to the same executor; shutdown drops Flight.
-                let task = inner.executor.spawn(next);
+                let invocation_lease = lease.clone();
+                let task = inner.executor.spawn(async move {
+                    let _lease = invocation_lease;
+                    next.await
+                });
                 #[cfg(test)]
                 if inner.cancel_next.swap(false, std::sync::atomic::Ordering::SeqCst) {
                     task.abort();

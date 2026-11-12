@@ -177,6 +177,8 @@ pub(crate) trait ProjectAutomationProvider: Send + Sync {
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct SubsystemUpdate {
     pub extra_tools: Vec<JsString>,
+    pub always_on_config: Option<AlwaysOnConfig>,
+    pub published: bool,
     pub cron: Option<Arc<dyn ProjectAutomationProvider>>,
     pub always_on_control: Option<Arc<dyn ProjectAutomationProvider>>,
 }
@@ -505,6 +507,8 @@ impl ProjectAutomationBundle {
         }
         (attachment.update_subsystems)(SubsystemUpdate {
             extra_tools,
+            always_on_config: generation.config.always_on.clone(),
+            published: true,
             cron: generation.cron.clone(),
             always_on_control: generation.always_on.clone(),
         });
@@ -514,6 +518,8 @@ impl ProjectAutomationBundle {
     fn unpublish(attachment: &ProjectAutomationAttachment) {
         (attachment.update_subsystems)(SubsystemUpdate {
             extra_tools: Vec::new(),
+            always_on_config: None,
+            published: false,
             cron: None,
             always_on_control: None,
         });

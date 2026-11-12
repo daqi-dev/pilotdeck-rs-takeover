@@ -88,3 +88,37 @@ TZ只读取证：cb8 `/usr/share/zoneinfo/tzdata.zi` version2025b，4577行 `L A
 - hooks存活因果由native_regression只读定位：config snapshot白名单不保留hooks，因此mutant检查config.hooks的条件恒false；未知字段在diagnostics path hooks。根待固定后续修正注入与正控因果，不放宽judge。所有首次survival日志保留。
 
 同批正向检查均通过，不代替里程碑全workspace/跨平台或发行验收。队列现空闲，等待根新固定SHA后仅重跑hooks必要验证。
+
+## Core v3 hooks 最小修正验证
+
+固定 SHA `cf143ff81c2277745ccd6870e5e1151de811561e`（parent824），ref `codex/backend-resume-core-candidate-v3`。仅2个测试/负控文件改变，Git bundle传送到clean checkout；未自行合主线。远端 `logs/cf143ff8-hooks-v3/`，完整本地副本 `_tmp/20261113-e0-resume/cf143ff8-hooks-v3/`。
+
+- fmt exit0，gateway+transport all-targets clippy exit0，66 anchors/static绑定 exit0。
+- 仅重跑 configured-hooks，实际正控（包含diagnostics hooks存在及normalized config.hooks已消失因果）通过，变异编译成功，nonce绑定断言命中为KILLED，恢复正控通过。summary compiled=true/restoredPass=true，1KILLED/0SURVIVED/0INVALID，mutations exit0。
+- 最终restored-status为空，源码clean，父PID1285278退出。没有重复824已KILLED的另外三项；824首次hooks SURVIVED记录未覆盖。
+
+本次窄链的正向回归与四项实际负控缺口已闭合：正向回归属于824，hooks最小测试修正的fmt/clippy与实际负控属于cf143；不同SHA证据按各自边界引用。尚未完成同一最终集成SHA全workspace四门、正式BBX及发行验收，不能称后端整体交付。构建队列当前空闲。
+
+## Root 集成 WIP 81bc Linux 首轮
+
+固定 `81bc7e5d5db040247a362e1e9c723af5d5a0853e`，Git bundle后clean checkout。check gateway+CLI all-targets exit0，gateway lib --no-run exit0；未跑clippy或全workspace。首批 `logs/81bc7e5d-linux-first/` 保存编译与telemetry21/21；宏列表来自root sealed mac identity而不是手写省略失败。
+
+H1执行前名单guard拒绝124对123：唯一缺少whatsapp bridge macOS进程budget测试，源码明确cfg(target_os=macos)，故单列Linux不适用，而非跳过失败。新目录 `logs/81bc7e5d-linux-tests-r2/` 使用明确Linux123名单继续；不重复已通过的telemetry。完整本地同名目录均在 `_tmp/20261113-e0-resume/`。
+
+Linux共252次执行、247唯一适用测试：241通过、6失败；另外1 macOS-only不适用。分组：telemetry21/21、owned25/25、S1-hooks13/13、shared26/26、loader39/39、restore-regression5/5；H1为117/123通过。失败保留：DingTalk disconnect与WeCom reconnect为mock端ConnectionReset；Discord两项在accept_hdr处InvalidUri（并导致auth超时/expected bot缺失）；QQ与Telegram分块期望不符。完整错误含巨大字节数组，原始日志未裁剪；精简索引 `81bc-linux-h1-first-failures.json` 仅供查找不代替原始证据。mac已知7首败中HA rejected_reconnect Linux本次通过，其余6失败，未抹除mac首败。各组binary SHA与精确测试集合见identity.json。队列结束源码clean。
+
+## SDK cancel harness TS self Docker 首败
+
+固定harness `5046398b15861f3e7702534b5a6c826efde5c566`（独立parent cf143），run/scenario哈希与C1 E0-queue相符。只跑TS双轮自比；没有RustCLI重放。使用既有Docker image `sha256:eb58eb269804b8a9b2bb9ceeb9a175cac9b79612d4c8dafe0a987b277bd55683`，无pull，network none、非root、无宿主端口映射，保留18789 guard与隔离HOME。
+
+结果exit1：0/1 SAME、DIFF2（不是INVALID/端口拒绝）。差异在serve.stdout与stderr；第二次基线SDK取消发生 `PilotDeckError: Gateway client closed.`（sdk/dist/transport.js:160），第一次正常输出CLI interrupted。两侧persisted seq6 assistant_text_delta触发与provider open/flushed1证据均存在。首败完整保存远端 `logs/5046398b-sdk-ts-self/` 与identity sibling，本地 `_tmp/20261113-e0-resume/` 下同名目录；已交C1validator与sdk_harness_review只读归因，不自动重跑。runner1445541退出，容器自动rm，源码clean。新RustCLI未出，禁止用旧CLI冒充当前root重放。
+
+## SDK 双序因果诊断（非正式自比）
+
+根派H1 matrix作者准备driver，E0核SHA `5ea3f159af414e09f05c2819ec51490ec76ecd15c9ba7224d8a06a8afb8c48c7` 后在既有Docker digest中执行；固定TS baseline另加只读mount、network none/非root/无映射，容器内临时端口，不使用18789，不改harness或TS。driver在真实CLI输出partial后发送真实SIGINT，以受控mock Gateway分别门控abort response和submit final。
+
+执行driver exit0，两序均signaled/abortObserved/submitObserved=true、CLI code1/signal=null；abort-first `unhandledClosed=false`，final-first `unhandledClosed=true`。原帧与纳秒时间线、stdout/stderr、源码哈希已同步 `_tmp/20261113-e0-resume/5046398b-sdk-order-diagnostic/` 及identity sibling，并交H1matrix、SDK reviewer和根核因果。hostrunner1557522退出，容器自动rm。该诊断支持竞态归因，但不是正式TSself通过，不能覆盖504正式DIFF2。
+
+SDK诊断措辞纠正：abort-first的unhandledClosed=false只表示没有未处理堆栈；其stderr仍有main.catch捕获的单行Gateway client closed，且没有正式self首轮的aborted JSON。首轮mock不能证明正式self当次的实际帧序。
+
+SDK诊断r2：新driver SHA `92cf45cedcf979c37e6c9b601b9267f97971f9a0c5c96a9517f89c5c51e114d7`，首driver/首证据保留。三种门控driver exit0，均真实SIGINT/submit/abort观测、CLIcode1：final+abort同TCP批次输出aborted JSON、无未处理堆栈（stderr166B）；setImmediate下一eventloop与直到client close两种分离交付均出现未处理Gateway client closed栈（stderr1511B）。完整原帧/时间线在本地 `_tmp/20261113-e0-resume/5046398b-sdk-order-diagnostic-r2/` 与identity sibling，已交作者和review。该受控mock的因果支持不能证明正式self当次帧序或代替最终真实Gateway验收。

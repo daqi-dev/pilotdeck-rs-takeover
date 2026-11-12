@@ -12,12 +12,17 @@ struct Admission {
     interactions: Arc<crate::runtime::interaction::GatewayInteractionCoordinator>,
     phase: &'static str,
     entered: Arc<Notify>,
+    inputs: Arc<Mutex<Vec<JsValue>>>,
 }
 impl SubmitAdmission for Admission {
     fn normalize<'a>(
         &'a self,
         input: &'a mut JsValue,
     ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>> {
+        self.inputs.lock().unwrap().push(input.clone());
+        if self.phase == "record" {
+            self.entered.notify_one();
+        }
         if self.phase == "normalize" {
             Box::pin(async move {
                 self.entered.notify_one();
@@ -169,6 +174,7 @@ struct Fixture {
     session: Arc<Session>,
     log: Arc<Log>,
     entered: Arc<Notify>,
+    inputs: Arc<Mutex<Vec<JsValue>>>,
     accept_gate: Gate,
     tail_gate: Gate,
     tail_entered: Arc<Notify>,
@@ -213,6 +219,7 @@ impl Fixture {
         let entered = Arc::new(Notify::new());
         let interactions =
             Arc::new(crate::runtime::interaction::GatewayInteractionCoordinator::default());
+        let inputs = Arc::new(Mutex::new(Vec::new()));
         let admission = Arc::new(Admission {
             interactions: interactions.clone(),
             base: Host {
@@ -222,6 +229,7 @@ impl Fixture {
             },
             phase,
             entered: entered.clone(),
+            inputs: inputs.clone(),
         });
         let services = Arc::new(Services {
             session: session.clone(),
@@ -265,6 +273,7 @@ impl Fixture {
             session,
             log,
             entered,
+            inputs,
             accept_gate,
             tail_gate,
             tail_entered,
@@ -424,15 +433,128 @@ async fn h1_owned_cancel_drains_live_activity_and_does_not_abort_successor() {
 #[tokio::test]
 async fn h1_unpolled_channel_submit_never_starts_a_turn() {
     let fixture = Fixture::new("live", json!({}));
-    let gateway = SubmitterTurnGateway::new(fixture.submitter.clone());
+    let gateway = SubmitterTurnGateway::new_owned(fixture.submitter.clone());
     drop(gateway.submit(TurnRequest {
         session_key: "s".into(),
         channel_key: ChannelKey::new("signal"),
         message: "hello".into(),
         ..Default::default()
     }));
+    tokio::task::yield_now().await;
+    assert!(fixture.inputs.lock().unwrap().is_empty());
     assert!(fixture.log.registry.lock().unwrap().is_empty());
     assert_eq!(fixture.session.submits.load(Ordering::SeqCst), 0);
+    fixture.clean().await;
+}
+
+#[tokio::test]
+async fn channel_bridge_preserves_optional_fields_for_both_submission_modes() {
+    for owned in [false, true] {
+        for case in 0..3 {
+            let present = case != 0;
+            let attachments = if case == 2 {
+                vec![js(&json!({"type":"image", "path":"/fixture.png"}))]
+            } else {
+                vec![]
+            };
+            let fixture = Fixture::new("record", json!({}));
+            let gateway = if owned {
+                SubmitterTurnGateway::new_owned(fixture.submitter.clone())
+            } else {
+                SubmitterTurnGateway::new(fixture.submitter.clone())
+            };
+            let request = TurnRequest {
+                session_key: "s".into(),
+                channel_key: ChannelKey::new("wecom"),
+                message: "hello".into(),
+                attachments: present.then(|| attachments.clone()),
+                allow_plan_mode_tools: present.then_some(false),
+                synthetic_messages: present
+                    .then(|| vec![js(&json!({"text":"hint", "purpose":"fixture"}))]),
+                project_key: present.then(|| "project-fixture".into()),
+            };
+            let mut stream = bounded(gateway.submit(request)).await.unwrap();
+            bounded(fixture.entered.notified()).await;
+            let input = fixture.inputs.lock().unwrap()[0].clone();
+            assert_eq!(field(&input, "sessionKey"), &JsValue::from("s"));
+            assert_eq!(field(&input, "channelKey"), &JsValue::from("wecom"));
+            assert_eq!(field(&input, "message"), &JsValue::from("hello"));
+            let fields = input.as_object().unwrap();
+            if present {
+                assert_eq!(
+                    fields.get("attachments"),
+                    Some(&JsValue::Array(attachments))
+                );
+                assert_eq!(
+                    fields.get("allowPlanModeTools"),
+                    Some(&JsValue::Bool(false))
+                );
+                assert_eq!(
+                    fields.get("syntheticMessages"),
+                    Some(&JsValue::Array(vec![js(
+                        &json!({"text":"hint", "purpose":"fixture"})
+                    )]))
+                );
+                assert_eq!(
+                    fields.get("projectKey"),
+                    Some(&JsValue::from("project-fixture"))
+                );
+            } else {
+                for key in [
+                    "attachments",
+                    "allowPlanModeTools",
+                    "syntheticMessages",
+                    "projectKey",
+                ] {
+                    assert!(fields.get(key).is_none(), "unexpected {key}");
+                }
+            }
+            // Exhaust the real submission even if a later validation rejects
+            // the synthetic fixture; the bridge assertion is at admission.
+            while matches!(bounded(stream.next()).await, Ok(Some(_))) {}
+            drop(stream);
+            fixture.clean().await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn legacy_channel_submit_starts_before_its_future_is_polled() {
+    let fixture = Fixture::new("record", json!({}));
+    let gateway = SubmitterTurnGateway::new(fixture.submitter.clone());
+    let future = gateway.submit(TurnRequest {
+        session_key: "s".into(),
+        channel_key: ChannelKey::new("signal"),
+        message: "hello".into(),
+        ..Default::default()
+    });
+    bounded(fixture.entered.notified()).await;
+    assert_eq!(fixture.inputs.lock().unwrap().len(), 1);
+    let mut stream = bounded(future).await.unwrap();
+    while matches!(bounded(stream.next()).await, Ok(Some(_))) {}
+    drop(stream);
+    fixture.clean().await;
+}
+
+#[tokio::test]
+async fn owned_channel_cancel_drains_the_real_admission() {
+    let fixture = Fixture::new("normalize", json!({}));
+    let gateway = SubmitterTurnGateway::new_owned(fixture.submitter.clone());
+    let mut stream = bounded(gateway.submit(TurnRequest {
+        session_key: "s".into(),
+        channel_key: ChannelKey::new("signal"),
+        message: "hello".into(),
+        ..Default::default()
+    }))
+    .await
+    .unwrap();
+    bounded(fixture.entered.notified()).await;
+    bounded(stream.cancel_and_drain("channel stop".into()))
+        .await
+        .unwrap();
+    assert_eq!(fixture.session.submits.load(Ordering::SeqCst), 0);
+    assert!(!fixture.submitter.owner.has_active_turn(&"s".into()));
+    drop(stream);
     fixture.clean().await;
 }
 

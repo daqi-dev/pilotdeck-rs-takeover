@@ -792,3 +792,100 @@ fn h1_owned_wrapper_supplies_its_gateway_without_changing_channel_key() {
     assert_eq!(wrapper.channel_key(), &ChannelKey::new("custom-name"));
     drop(future);
 }
+
+#[tokio::test]
+async fn qq_wecom_bundle_constructs_only_for_strict_true() {
+    for key in ["qq", "wecom"] {
+        for (enabled, expected) in [
+            ("true", true),
+            ("1", false),
+            ("-1", false),
+            ("\"true\"", false),
+            ("[]", false),
+            ("{}", false),
+            ("false", false),
+            ("0", false),
+            ("null", false),
+            ("\"\"", false),
+        ] {
+            let harness = Harness::new(&format!(
+                "{{\"adapters\":{{\"{key}\":{{\"enabled\":{enabled}}}}}}}"
+            ));
+            let built = if key == "qq" {
+                harness.channels.create_startup_qq().await
+            } else {
+                harness.channels.create_startup_wecom().await
+            };
+            crate::negative_assert_eq!(
+                built.is_some(),
+                expected,
+                "#H1 bundle production constructor uses strict true"
+            );
+            if let Some(channel) = built {
+                assert_eq!(channel.channel_key().to_string(), key);
+            }
+        }
+        let harness = Harness::new(&format!("{{\"adapters\":{{\"{key}\":{{}}}}}}"));
+        assert!(
+            if key == "qq" {
+                harness.channels.create_startup_qq().await
+            } else {
+                harness.channels.create_startup_wecom().await
+            }
+            .is_none()
+        );
+    }
+}
+
+#[tokio::test]
+async fn qq_wecom_bundle_loads_mapper_and_saves_exact_state() {
+    use crate::channel::{qq::QQSessionMapperState, wecom::WeComSessionMapperState};
+    let harness = Harness::new(
+        r#"{"adapters":{"qq":{"enabled":true,"appId":"app","clientSecret":"secret","allowGroups":["group"],"triggerPrefixes":["!"],"maxMessageLength":99},"wecom":{"enabled":true,"token":"bot","extra":{"groupSessionsPerUser":false}}}}"#,
+    );
+    let qq_saved = json(r#"{"activeByChatKey":{"g:u":"qq:saved"}}"#);
+    let wc_saved = json(
+        r#"{"activeByChatId":{"wecom:dm=c":"wecom:saved"},"projectByScopeKey":{"wecom:dm=c":"project"}}"#,
+    );
+    harness.channels.state.save(&"qq".into(), qq_saved.clone());
+    harness
+        .channels
+        .state
+        .save(&"wecom".into(), wc_saved.clone());
+    harness.channels.state.flush().await.unwrap();
+    let mut qq = harness
+        .channels
+        .configured_qq_options(&harness.channels.config)
+        .await;
+    assert_eq!(qq.app_id, Some("app".into()));
+    assert_eq!(qq.client_secret, Some("secret".into()));
+    assert_eq!(qq.allow_groups, Some(vec!["group".into()]));
+    assert_eq!(qq.trigger_prefixes, Some(vec!["!".into()]));
+    assert_eq!(qq.max_message_length, Some(99));
+    assert_eq!(qq.mapper.take().unwrap().snapshot().to_js(), qq_saved);
+    let wc = harness
+        .channels
+        .configured_wecom_options(&harness.channels.config)
+        .await;
+    assert_eq!(wc.bot_key, Some("bot".into()));
+    assert_eq!(wc.mapper.unwrap().snapshot().to_js(), wc_saved);
+    assert_eq!(
+        wc.extra.unwrap().get("groupSessionsPerUser"),
+        Some(&JsValue::Bool(false))
+    );
+    let qq_next = json(r#"{"activeByChatKey":{"second":"s2","first":"s1"}}"#);
+    let wc_next = json(
+        r#"{"activeByChatId":{"second":"s2","first":"s1"},"projectByScopeKey":{"second":"p2","first":"p1"}}"#,
+    );
+    qq.on_state_change.unwrap()(QQSessionMapperState::from_js(&qq_next));
+    wc.on_state_change.unwrap()(WeComSessionMapperState::from_js(&wc_next));
+    harness.channels.state.flush().await.unwrap();
+    assert_eq!(
+        harness.channels.state.load(&"qq".into()).await,
+        Some(qq_next)
+    );
+    assert_eq!(
+        harness.channels.state.load(&"wecom".into()).await,
+        Some(wc_next)
+    );
+}

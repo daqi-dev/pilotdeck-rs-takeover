@@ -149,6 +149,7 @@ async fn observe(name: &str) -> (Value, Value) {
     owner_options.idle_sweep_interval_ms = 0;
     let owner = SessionOwner::new(owner_options);
     let requests = requests::Requests {
+        subsystems: None,
         project: Arc::new(ProjectRuntimeRegistry::new(
             options.project.clone(),
             Arc::new(NoResources),
@@ -490,6 +491,7 @@ async fn observe_archive(name: &str) {
     let mut owner_options_2 = SessionOwnerOptions::new(Arc::new(NoResources));
     owner_options_2.idle_sweep_interval_ms = 0;
     let requests = requests::Requests {
+        subsystems: None,
         project: Arc::new(ProjectRuntimeRegistry::new(
             options.project.clone(),
             Arc::new(NoResources),

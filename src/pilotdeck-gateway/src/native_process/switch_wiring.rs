@@ -42,6 +42,7 @@ use super::channels::NativeChannels;
 /// configured) and the channel assembly.
 pub(crate) struct AssemblySwitchHandles {
     pub(crate) cron: Option<Arc<CronStopHandle>>,
+    pub(crate) automation_stop: Option<AutomationStop>,
     pub(crate) channels: Arc<NativeChannels>,
     pub(crate) release_interactions: Option<ReleaseInteractions>,
     /// The public host capability provider over the project runtimes
@@ -54,6 +55,7 @@ pub(crate) struct AssemblySwitchHandles {
 /// `local_gateway_disposed` and its router shutdown aborts the turn, so a
 /// prompt nobody will answer never holds the stop. The assembly supplies it
 /// (it owns the interaction coordinator and the session owner).
+pub(crate) type AutomationStop = Arc<dyn Fn() -> FaceFuture + Send + Sync>;
 pub(crate) type ReleaseInteractions = Arc<dyn Fn() + Send + Sync>;
 
 /// The out-of-band slots that carry those handles out of `start_assembly`:
@@ -63,6 +65,7 @@ pub(crate) type ReleaseInteractions = Arc<dyn Fn() + Send + Sync>;
 #[derive(Clone, Default)]
 pub(crate) struct AssemblySwitchSlots {
     pub(crate) cron: Arc<std::sync::OnceLock<Arc<CronStopHandle>>>,
+    pub(crate) automation_stop: Arc<std::sync::OnceLock<AutomationStop>>,
     pub(crate) channels: Arc<std::sync::OnceLock<Arc<NativeChannels>>>,
     pub(crate) release_interactions: Arc<std::sync::OnceLock<ReleaseInteractions>>,
     pub(crate) module_host: Arc<std::sync::OnceLock<Arc<crate::module_host::runtime::RuntimeHost>>>,
@@ -108,6 +111,7 @@ impl AdmissionGate {
 #[derive(Clone)]
 pub(crate) struct ProductionFaces {
     cron: Option<Arc<CronStopHandle>>,
+    automation_stop: Option<AutomationStop>,
     admission: AdmissionGate,
     phased: Arc<PhasedRun>,
     /// A10's precondition latch: set by the S2 face to the WS drain's own
@@ -118,6 +122,10 @@ pub(crate) struct ProductionFaces {
 }
 
 impl ProductionFaces {
+    pub(crate) fn with_automation_stop(mut self, stop: Option<AutomationStop>) -> Self {
+        self.automation_stop = stop;
+        self
+    }
     pub(crate) fn with_telemetry_snapshot(
         mut self,
         snapshot: Option<Arc<dyn Fn() + Send + Sync>>,
@@ -141,6 +149,7 @@ impl ProductionFaces {
     ) -> Self {
         Self {
             cron,
+            automation_stop: None,
             admission,
             phased,
             entries_drained: Arc::new(AtomicBool::new(false)),
@@ -263,6 +272,9 @@ impl ProductionFaces {
 
 impl SwitchFaces for ProductionFaces {
     fn stop_automation(&self) -> FaceFuture {
+        if let Some(stop) = &self.automation_stop {
+            return stop();
+        }
         match &self.cron {
             // S1: close the management face (A6) before the stop, stop the
             // manager exactly once, report the swallowed abort rejections

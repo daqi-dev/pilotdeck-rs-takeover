@@ -1946,6 +1946,7 @@ async fn requests_registry_switch_gates_run_reads() {
     );
     for (runs, on) in [(Some(runs), true), (None, false)] {
         let requests = requests::Requests {
+            subsystems: None,
             options: options.clone(),
             env: options.environment(Env::new()),
             memory: Arc::new(crate::runtime::memory::gateway::MemoryGateway::disabled()),

@@ -1,0 +1,30 @@
+{
+  "boundary": "actual TS start/poll/stop + real loopback HTTP; scripted held Gateway generator, not formal server/provider SSE",
+  "submits": [
+    {
+      "sessionKey": "bluebubbles:chat=chat:general",
+      "channelKey": "bluebubbles",
+      "message": "held message"
+    }
+  ],
+  "afterStop": {
+    "entered": true,
+    "exited": false,
+    "running": false,
+    "posts": 0
+  },
+  "afterRelease": {
+    "exited": true,
+    "posts": 0
+  },
+  "logs": [
+    [
+      "info",
+      "bluebubbles: polling http://127.0.0.1:<port>/api/v1/message"
+    ],
+    [
+      "info",
+      "bluebubbles: stopping (disable)"
+    ]
+  ]
+}

@@ -1227,15 +1227,15 @@ async fn stop_prefix_can_reenter_close() {
         .expect("#1327 prefix reentry memoized close");
 }
 
-// #1386 A8.3 (#1302 B), narrowed by H1: the two remaining unmigrated
-// channels refuse native startup
+// #1386 A8.3 (#1302 B), narrowed by H1: the now-empty unmigrated table
+// retains the migration rejection seam
 // through `reject_unmigrated_channels`, the seam production assembly calls
 // from `native_process/assembly.rs` (before `NativeChannels` is constructed,
 // #1763). The seam takes no mounts and no console callback, so a rejection can
 // never come after an adapter construction or a `console.error` line — there
 // is nothing to construct or log through.
 const UNMIGRATED_REJECTION_PHRASE: &str = crate::channel::loader::UNMIGRATED_REASON;
-/// The seventeen implemented keys outside `UNMIGRATED_CHANNEL_KEYS`;
+/// The nineteen implemented keys outside `UNMIGRATED_CHANNEL_KEYS`;
 /// `reject_unmigrated_channels` must leave them alone. #2301 closed the
 /// transition; H1 adds nine loader-table keys, so fifteen construct through
 /// `native_process::channels::production_loader_mounts`
@@ -1244,7 +1244,7 @@ const UNMIGRATED_REJECTION_PHRASE: &str = crate::channel::loader::UNMIGRATED_REA
 /// not merely tolerated. The name stays `unmigrated_subset_channels_stay_loadable`
 /// (the 13 `A8.3-CHANNEL-*-001` entries cite it by name); the terminal
 /// reading is "an implemented key must not be rejected".
-const SUBSET_CHANNEL_KEYS: [&str; 17] = [
+const SUBSET_CHANNEL_KEYS: [&str; 19] = [
     "weixin",
     "feishu",
     "apiServer",
@@ -1262,6 +1262,8 @@ const SUBSET_CHANNEL_KEYS: [&str; 17] = [
     "matrix",
     "telegram",
     "whatsapp",
+    "qq",
+    "wecom",
 ];
 
 fn adapters_config(entries: &str) -> JsValue {
@@ -1343,12 +1345,18 @@ fn production_loader_mount_builds_homeassistant_with_js_truthiness() {
     assert_production_loader_builds_with_js_truthiness("homeassistant");
 }
 #[test]
-fn rejects_unmigrated_qq() {
-    assert_rejects_unmigrated("qq");
+fn migrated_bundle_qq_is_not_rejected() {
+    crate::negative_assert!(
+        reject_unmigrated_channels(Some(&enabled_adapters(&["qq"]))).is_ok(),
+        "#H1 migrated bundle key is not rejected"
+    );
 }
 #[test]
-fn rejects_unmigrated_wecom() {
-    assert_rejects_unmigrated("wecom");
+fn migrated_bundle_wecom_is_not_rejected() {
+    crate::negative_assert!(
+        reject_unmigrated_channels(Some(&enabled_adapters(&["wecom"]))).is_ok(),
+        "#H1 migrated bundle key is not rejected"
+    );
 }
 
 // H1 replaces the nine historical rejection cells with real production
@@ -1426,7 +1434,10 @@ fn unmigrated_bundle_channels_require_strict_boolean_true() {
                 "#1386 bundle channel requires strict enabled === true"
             );
         }
-        assert_rejects_unmigrated(key);
+        crate::negative_assert!(
+            reject_unmigrated_channels(Some(&enabled_adapters(&[key]))).is_ok(),
+            "#H1 migrated bundle key is not rejected"
+        );
     }
 }
 
@@ -1567,22 +1578,13 @@ fn unmigrated_falsy_or_absent_enabled_does_not_reject() {
 
 #[test]
 fn unmigrated_rejection_order_is_deterministic() {
-    // Only strict bundle keys remain rejected; configuration insertion order
-    // cannot change the deterministic qq-before-wecom rejection.
-    for keys in [UNMIGRATED_CHANNEL_KEYS, &["wecom", "qq"]] {
-        let message = rejection_of(&enabled_adapters(keys), "#1386 unmigrated rejection order");
-        crate::negative_assert!(
-            message.contains("channel \"qq\""),
-            "#1386 unmigrated rejection order"
-        );
-    }
-    let message = rejection_of(
-        &enabled_adapters(&["wecom"]),
-        "#1386 unmigrated rejection order",
+    crate::negative_assert!(
+        UNMIGRATED_CHANNEL_KEYS.is_empty(),
+        "#H1 all backend channels have production implementations"
     );
     crate::negative_assert!(
-        message.contains("channel \"wecom\""),
-        "#1386 unmigrated rejection order"
+        reject_unmigrated_channels(Some(&enabled_adapters(BUNDLE_CHANNEL_KEYS))).is_ok(),
+        "#H1 all bundle keys are migrated"
     );
 }
 
@@ -1604,7 +1606,7 @@ fn unmigrated_rejection_order_is_deterministic() {
 // this test green.
 #[test]
 fn loader_keys_partition_rejected_and_implemented() {
-    // #2301's six production mounts plus the three H1 loader channels.
+    // The fifteen fixed loader keys now all have production mounts.
     const IMPLEMENTED_LOADER_KEYS: [&str; 15] = [
         "slack",
         "bluebubbles",
@@ -1802,7 +1804,7 @@ fn bundle_gate_accepts_an_implemented_key() {
 fn implemented_bundle_keys_are_exactly_the_assembled_bundle_keys() {
     crate::negative_assert_eq!(
         crate::native_process::channels::IMPLEMENTED_BUNDLE_CHANNEL_KEYS,
-        &["feishu", "weixin"],
+        &["feishu", "weixin", "qq", "wecom"],
         "#1763 assembly declares exactly the bundle keys it constructs"
     );
     // The table equality (every `BUNDLE_CHANNEL_KEYS` entry has a constructor

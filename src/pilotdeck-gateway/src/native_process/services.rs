@@ -44,7 +44,8 @@ pub struct Services {
 pub struct NativeConfigStore {
     pub store: ConfigStore,
     /// Held for its `Drop`, which stops the watcher.
-    pub _watch: Option<crate::config::store::WatchHandle>,
+    pub _watch: Arc<std::sync::Mutex<Option<crate::config::store::WatchHandle>>>,
+    pub refresh: Option<Arc<crate::runtime::refresh::RefreshBundle>>,
 }
 fn base64_encode(bytes: &[u8]) -> String {
     BASE64_STANDARD.encode(bytes)
@@ -1415,11 +1416,24 @@ impl SubmitHostServices for Services {
                 .map_err(|e| failure(String::from_utf16_lossy(e.message.units())))
         })
     }
-    fn after_turn(&self, _: &RunRef) -> Result<(), SubmitError> {
+    fn after_turn(&self, run: &RunRef) -> Result<(), SubmitError> {
         self.recorders
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .retain(|_, recorder| recorder.strong_count() > 0);
+        if let Some(refresh) = self
+            .config_store
+            .as_ref()
+            .and_then(|config| config.refresh.as_ref())
+        {
+            refresh
+                .after_turn_completed(crate::runtime::refresh::TurnCompleted {
+                    session_key: run.session().clone(),
+                    project_key: run.project_key.clone(),
+                    run_id: Some(run.run_id.clone()),
+                })
+                .map_err(|error| failure(error.to_string()))?;
+        }
         Ok(())
     }
     fn now_ms(&self) -> f64 {

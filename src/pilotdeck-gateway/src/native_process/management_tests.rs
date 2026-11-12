@@ -222,6 +222,7 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
     (Scratch(root), {
         let replacement_owner = owner.clone();
         requests::Requests {
+            subsystems: None,
             options,
             env,
             memory: Arc::new(crate::runtime::memory::gateway::MemoryGateway::disabled()),

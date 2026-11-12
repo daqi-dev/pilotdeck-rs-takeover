@@ -59,29 +59,30 @@ pub(super) fn decrypt(data: &[u8], key: &str) -> Result<Vec<u8>, String> {
     Ok(decrypted[..decrypted.len() - pad].to_vec())
 }
 pub(super) fn safe_name(name: &str) -> String {
-    let name = std::path::Path::new(name)
-        .file_name()
-        .and_then(|v| v.to_str())
-        .unwrap_or("wecom_media");
-    let name: String = name
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric()
-                || matches!(c, '_' | '.' | '-' | '(' | ')')
-                || ('\u{4e00}'..='\u{9fff}').contains(&c)
-            {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    if name.is_empty() {
+    // Node path.basename on the supported POSIX hosts is lexical, including
+    // dot names; replace each *run* outside the TS allowed class once.
+    let name = name.trim_end_matches('/').rsplit('/').next().unwrap_or("");
+    let mut result = String::new();
+    let mut replacing = false;
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric()
+            || matches!(c, '_' | '.' | '-' | '(' | ')')
+            || ('\u{4e00}'..='\u{9fff}').contains(&c)
+        {
+            result.push(c);
+            replacing = false;
+        } else if !replacing {
+            result.push('_');
+            replacing = true;
+        }
+    }
+    if result.is_empty() {
         "wecom_media".into()
     } else {
-        name
+        result
     }
 }
+
 pub(super) fn mime(filename: &str, content: &str) -> String {
     let normalized = content
         .split(';')
@@ -163,7 +164,10 @@ pub(super) fn media_refs(body: &JsValue) -> Vec<(&'static str, JsValue)> {
     refs
 }
 impl Shared {
-    pub(super) async fn download(&self, url: &str) -> Result<(Vec<u8>, String), String> {
+    pub(super) async fn download(
+        &self,
+        url: &str,
+    ) -> Result<(Vec<u8>, String, Option<String>), String> {
         let url = url::Url::parse(url).map_err(|e| e.to_string())?;
         if url.scheme() != "http" && url.scheme() != "https" {
             return Err(format!("unsupported media URL protocol: {}:", url.scheme()));
@@ -195,6 +199,11 @@ impl Shared {
                     ));
                 }
             }
+            let disposition = response
+                .headers()
+                .get("content-disposition")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned);
             let content = response
                 .headers()
                 .get("content-type")
@@ -215,7 +224,7 @@ impl Shared {
                     data.extend_from_slice(bytes);
                 }
             }
-            Ok((data, content))
+            Ok((data, content, disposition))
         };
         tokio::select! {biased;_=self.stopped()=>Err("WeCom adapter stopped".into()),result=tokio::time::timeout(Duration::from_secs(30),future)=>result.map_err(|_|"The operation was aborted due to timeout".to_owned())?}
     }
@@ -269,7 +278,7 @@ impl Shared {
             .map(|v| String::from_utf16_lossy(v.units()))
             .unwrap_or(fallback);
         let name = safe_name(&name);
-        let dir = std::env::temp_dir().join("pilotdeck-wecom-media");
+        let dir = self.media_cache_dir.clone();
         tokio::fs::create_dir_all(&dir)
             .await
             .map_err(|e| e.to_string())?;
@@ -366,7 +375,7 @@ pub(super) fn prepare(data: Vec<u8>, content: &str, name: &str) -> Prepared {
     Prepared {
         data,
         kind,
-        name: name.into(),
+        name: safe_name(name),
         reject,
         downgrade,
     }
@@ -628,5 +637,214 @@ impl Shared {
                 false
             }
         }
+    }
+}
+
+fn disposition_name(value: Option<&str>) -> Result<Option<String>, String> {
+    use std::sync::LazyLock;
+    static UTF8: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new("(?i)filename\\*=UTF-8''([^;]+)").unwrap());
+    static PLAIN: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new("(?i)filename=\"?([^\";]+)\"?").unwrap());
+    let value = value.unwrap_or("");
+    if let Some(caps) = UTF8.captures(value) {
+        let value = caps.get(1).unwrap().as_str().as_bytes();
+        let mut result = Vec::new();
+        let mut i = 0;
+        while i < value.len() {
+            if value[i] == b'%' {
+                if i + 2 >= value.len() {
+                    return Err("URI malformed".into());
+                }
+                let pair =
+                    std::str::from_utf8(&value[i + 1..i + 3]).map_err(|_| "URI malformed")?;
+                result.push(u8::from_str_radix(pair, 16).map_err(|_| "URI malformed")?);
+                i += 3;
+            } else {
+                result.push(value[i]);
+                i += 1;
+            }
+        }
+        return String::from_utf8(result)
+            .map(Some)
+            .map_err(|_| "URI malformed".into());
+    }
+    Ok(PLAIN
+        .captures(value)
+        .map(|caps| caps.get(1).unwrap().as_str().to_owned()))
+}
+impl Shared {
+    async fn load_source(
+        &self,
+        source: &JsString,
+        file_name: Option<&JsString>,
+    ) -> Result<Prepared, String> {
+        let source = trim(source.clone());
+        if source.is_empty() {
+            return Err("media source is required".into());
+        }
+        let source = String::from_utf16_lossy(source.units());
+        let parsed = url::Url::parse(&source).ok();
+        let (data, content, name) = match parsed {
+            Some(url) if url.scheme() == "http" || url.scheme() == "https" => {
+                let (data, content, disposition) = self.download(&source).await?;
+                let name = disposition_name(disposition.as_deref())?.unwrap_or_else(|| {
+                    url.path()
+                        .rsplit('/')
+                        .next()
+                        .filter(|v| !v.is_empty())
+                        .unwrap_or("wecom_media")
+                        .to_owned()
+                });
+                (data, content, name)
+            }
+            parsed => {
+                let path = if let Some(url) = parsed.filter(|url| url.scheme() == "file") {
+                    url.to_file_path()
+                        .map_err(|_| "Invalid file URL".to_owned())?
+                } else {
+                    let path = std::path::PathBuf::from(&source);
+                    let path = if path.is_absolute() {
+                        path
+                    } else {
+                        std::env::current_dir()
+                            .map_err(|e| e.to_string())?
+                            .join(path)
+                    };
+                    let info = tokio::fs::metadata(&path)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    if !info.is_file() {
+                        return Err(format!("media source is not a file: {}", path.display()));
+                    }
+                    path
+                };
+                let name = path
+                    .file_name()
+                    .and_then(|v| v.to_str())
+                    .unwrap_or("wecom_media")
+                    .to_owned();
+                let data = tokio::fs::read(&path).await.map_err(|e| e.to_string())?;
+                (data, String::new(), name)
+            }
+        };
+        let name = file_name
+            .map(|v| String::from_utf16_lossy(v.units()))
+            .unwrap_or(name);
+        Ok(prepare(data, &content, &name))
+    }
+    pub(super) async fn send_media_source(
+        &self,
+        chat: JsString,
+        source: JsString,
+        caption: Option<JsString>,
+        file_name: Option<JsString>,
+        reply_to: Option<JsString>,
+        force_file: bool,
+    ) -> bool {
+        if chat.is_empty() {
+            return false;
+        }
+        let mut prepared = match tokio::select! {biased;_=self.stopped()=>return false,result=self.load_source(&source,file_name.as_ref())=>result}
+        {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.log(
+                    "error",
+                    &format!("wecom: send media source failed: {error}"),
+                );
+                return false;
+            }
+        };
+        if force_file {
+            prepared.kind = "file";
+        }
+        let input = Inbound {
+            chat: chat.clone(),
+            user: "".into(),
+            group: false,
+            interaction: chat,
+            text: "".into(),
+            message_id: reply_to.unwrap_or_else(|| "".into()),
+            attachments: None,
+        };
+        let sent = self.send_prepared(&input, prepared).await;
+        if sent {
+            if let Some(caption) = caption.filter(|text| !text.is_empty()) {
+                self.send_reply(&input.chat, &caption, Some(&input.message_id), false)
+                    .await;
+            }
+        }
+        sent
+    }
+}
+impl WeComChannel {
+    fn media_operation(
+        &self,
+        chat: JsString,
+        source: JsString,
+        caption: Option<JsString>,
+        file_name: Option<JsString>,
+        reply_to: Option<JsString>,
+        force_file: bool,
+    ) -> BoxFuture<bool> {
+        if *self.0.stopping.borrow() {
+            return Box::pin(async { false });
+        }
+        let shared = self.0.clone();
+        let (sender, result) = oneshot::channel();
+        self.0.spawn_handler(async move {
+            let sent = shared
+                .send_media_source(chat, source, caption, file_name, reply_to, force_file)
+                .await;
+            let _ = sender.send(sent);
+        });
+        Box::pin(async move { result.await.unwrap_or(false) })
+    }
+    pub fn send_image(
+        &self,
+        chat: JsString,
+        source: JsString,
+        caption: Option<JsString>,
+        reply_to: Option<JsString>,
+    ) -> BoxFuture<bool> {
+        self.media_operation(chat, source, caption, None, reply_to, false)
+    }
+    pub fn send_image_file(
+        &self,
+        chat: JsString,
+        path: JsString,
+        caption: Option<JsString>,
+        reply_to: Option<JsString>,
+    ) -> BoxFuture<bool> {
+        self.send_image(chat, path, caption, reply_to)
+    }
+    pub fn send_document(
+        &self,
+        chat: JsString,
+        path: JsString,
+        caption: Option<JsString>,
+        file_name: Option<JsString>,
+        reply_to: Option<JsString>,
+    ) -> BoxFuture<bool> {
+        self.media_operation(chat, path, caption, file_name, reply_to, true)
+    }
+    pub fn send_voice(
+        &self,
+        chat: JsString,
+        path: JsString,
+        caption: Option<JsString>,
+        reply_to: Option<JsString>,
+    ) -> BoxFuture<bool> {
+        self.media_operation(chat, path, caption, None, reply_to, false)
+    }
+    pub fn send_video(
+        &self,
+        chat: JsString,
+        path: JsString,
+        caption: Option<JsString>,
+        reply_to: Option<JsString>,
+    ) -> BoxFuture<bool> {
+        self.media_operation(chat, path, caption, None, reply_to, false)
     }
 }

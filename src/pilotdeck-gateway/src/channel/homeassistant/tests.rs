@@ -729,6 +729,10 @@ async fn rejected_reconnect_emits_no_close_or_further_attempt() {
     }
     tokio::time::pause();
     tokio::time::advance(RECONNECT_DELAY).await;
+    // The reconnect delay is virtual; the TCP connect and WebSocket upgrade
+    // are real. Restore the clock before waiting for I/O so Tokio cannot
+    // auto-advance the connector's timeout while the kernel readies the peer.
+    tokio::time::resume();
     reject_upgrade(&listener).await;
     while !logs
         .lock()
@@ -738,7 +742,6 @@ async fn rejected_reconnect_emits_no_close_or_further_attempt() {
     {
         tokio::task::yield_now().await;
     }
-    tokio::time::resume();
     // Observe real loopback acceptance for longer than the retry interval. An
     // incorrectly synthesized close would establish the third connection.
     assert!(

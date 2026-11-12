@@ -271,7 +271,9 @@ impl Shared {
             tokio::select! { biased; _ = stop.changed() => break, _ = self.poll_once(&mut imap) => {} }
         }
         if imap.usable() {
-            let _ = imap.logout().await;
+            // Stop owns the socket and releases it even if the peer refuses
+            // to acknowledge LOGOUT; polling once attempts a graceful close.
+            let _ = imap.logout().now_or_never();
         }
     }
 
@@ -712,7 +714,7 @@ impl ChannelAdapter for EmailChannel {
                     }
                 }
                 if let Err(error) = wire::verify(config).await {
-                    let _ = imap.logout().await;
+                    let _ = imap.logout().now_or_never();
                     return Err(error);
                 }
                 Ok::<_, std::io::Error>(imap)

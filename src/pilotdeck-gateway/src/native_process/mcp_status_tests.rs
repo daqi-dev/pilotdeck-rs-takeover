@@ -263,6 +263,7 @@ fn harness() -> Harness {
     }));
 
     let requests = Requests {
+        subsystems: None,
         env: options.environment(Env::new()),
         options: options.clone(),
         memory: Arc::new(MemoryGateway::disabled()),

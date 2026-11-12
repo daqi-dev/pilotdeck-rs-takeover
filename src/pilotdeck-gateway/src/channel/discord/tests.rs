@@ -232,3 +232,24 @@ async fn discord_fatal_auth_fails_start_and_releases_receiver() {
     handle.stop("noop").await.unwrap();
     peer.await.unwrap();
 }
+
+#[test]
+fn discord_gateway_query_is_an_origin_form_request_target() {
+    for base in ["ws://127.0.0.1:12345", "ws://127.0.0.1:12345/"] {
+        let url = wire::gateway_url(base).unwrap();
+        assert_eq!(url, "ws://127.0.0.1:12345/?v=10&encoding=json");
+        let request =
+            tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(
+                url.as_str(),
+            )
+            .unwrap();
+        assert_eq!(
+            request.uri().path_and_query().unwrap().as_str(),
+            "/?v=10&encoding=json"
+        );
+    }
+    assert_eq!(
+        wire::gateway_url("wss://gateway.discord.gg/?encoding=etf&v=9&fixture=yes").unwrap(),
+        "wss://gateway.discord.gg/?fixture=yes&v=10&encoding=json"
+    );
+}

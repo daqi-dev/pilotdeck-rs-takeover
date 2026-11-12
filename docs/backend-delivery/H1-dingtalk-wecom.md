@@ -60,3 +60,23 @@ Rust 已写：DingTalk native Stream 控制 HTTP/WS、callback/system ack、重�
 媒体 TS 取证追加：根授权轻量槽后，`_tmp/20261113-h1-dingtalk-wecom/media-oracle.mjs` 在独立 TMPDIR/HOME/PILOT_HOME 运行两次，`media-{first,second}.json` 完全相同。真实固定 WeCom adapter 完成 AES-256-CBC 解密 base64 入站图片（hello，5 字节，image/metadata/安全文件名），工具图片 `x` 的 init MD5/总大小/分片数/文件名、chunk `eA==`、finish 及复用入站 req_id 的图片 respond 均有正向断言。故意将工具图片改成 `y` 后 MD5 断言失败，`media-negative.stderr/.exit` 保留 exit1。此项仍是固定 adapter+内存 WS 的协议特征，并非 Rust 媒体或真实企业账号验收。正向生成的缓存文件已由驱动按精确路径删除，故意失败的隔离临时缓存仍保留作为现场。
 
 持久化补充审查：公共接线作者实读 `protocol/ChannelStatePersistence.ts:28-36`，基线只 JSON.parse，无 shape 验证；`WeComSessionMapper` constructor 只补缺失的 projectByScopeKey。现私有 HashMap 状态不能保证对象插入序，因此在本轮冻结解除后改为 JsObject 并提供 from_js/to_js；不把排序或删除非字符串属性当“兼容”处理。畸形 saved-state 的运行行为尚未取证，必须另测，不能声称通过 shape 验证。
+
+## 81bc 首轮组件结果与后续候选
+
+根封存的 `81bc7e5d5` 二进制已实际运行本包原 17 项：**DingTalk 6/7、WeCom 9/10，通过15、失败2**；不是全绿。原始输出 `_build/20261113-060046-root-81bc-h1-corrected/output.log` 保留。两项失败均在重连 mock 第二个 socket 的 stop Close 断言，实际得到 ConnectionReset；mock 仅观察 server handshake/写出 subscribe ACK 就通知 main stop，早于客户端 connect promise 完成。后续候选将同步点改为 DingTalk SYSTEM ping/精确 ack、WeCom 完整 callback→gateway→respond→ack，确认 adapter 已接管第二连接后才 stop，仍严格要求 Close，未放宽任意错误。
+
+后续候选新增有序 WeCom state（JsObject，from_js/to_js）、公开 send_image/send_image_file/send_document/send_voice/send_video API、adapter 所有的媒体任务及 caller-drop 追踪；send_event_media 已接入 turn 非交互事件路径。新增真实 WS 对照固定 TS 媒体 fixture（AES hello/附件属性/0600、inline 图片上传四步/MD5/req_id）、public document 强制 file/文件名/字幕/主动发送、调用方丢 receipt 后仍等待任务、upload init 拒绝不再发送 chunk。
+
+后续候选测试分母 **DingTalk 7 + WeCom 14 =21**，尚未编译/运行；源文件 rustfmt 语法检查通过，不能继承 81bc 的15项通过。当前私有源码已再次冻结交根统一编译。正式 config bundle、shared command host 和发行验收仍未闭合。DingTalk api-only webhook origin 行为继续保持；官方示例的 oapi 域名与当前白名单不符，但固定基线自身无 oapi fixture/测试/文档合同，根决定作为真实账号待验限制，不据当前官方协议自行扩接受差异。
+
+## 独审缺口与后续所有权修批（未编译）
+
+S1 独审指出：首 poll 后才登记 handler 的窗口可让 stop 先取空 registry 返回；DingTalk cron 原先直接暴露 HTTP future，未由 adapter 持有；WeCom prepare 未统一安全上传名，safe_name 逐字符替换也不等于基线连续非法字符只替换一次。三点均接受为实际缺口，未以已有通过结果抵消。
+
+后续源码改为 reservation-before-poll：共同 admission 锁串行 worker 登记与 stop 置位；在首次业务 poll 前先将等待 future 交接的 worker 入册，再在锁外首 poll，保证即时准入顺序与 shutdown 资源所有权同时成立。首 poll 中止或 panic 的交接丢失会保持 fatal cleanup 错误。DingTalk cron 持有发送任务，调用方丢 receipt 不丢 HTTP owner。WeCom outbound prepare 统一 POSIX basename 和非法连续字符单个 `_`。
+
+新增严格因果回归：每渠道用多线程屏障卡在 first effect，检查 owner 已入册且 stop 等屏障释放；DingTalk held HTTP 在 receipt 丢弃后仍存活，stop 完成前实际释放；public document 的 upload init 验证 `../x ??.pdf` → `x_.pdf`。当前候选 **DingTalk 9 + WeCom 16 =25**，rustfmt 语法检查通过；未 Cargo、未将这些项写成通过，待根统一新 snapshot 验证与S1复审。
+
+后续窄策略修正：exact/case-folded/wildcard group 配置只接受 record，防止非 record exact 项跳过 wildcard sender 限制；group_sessions_per_user 两个 alias 按 bool 类型选择；allowlist 归一化、逗号名单和 group identity 比较保留孤立 UTF-16 单元，避免 lossy 转换将两个不同 ID 折叠为同一个替换字符。增加 wildcard 拒绝和孤立 UTF-16 身份隔离断言。当前候选分母 **DingTalk 9 + WeCom 18 =27**，尚未编译运行。
+
+`h1_protocol` 对 S1 三项修复作独立只读复核：确认 handoff worker 先入册、锁外首 poll，stop 共用 admission barrier；屏障测试能因果捕获旧 gap；cron HeldExchange 证明 future owner（不冒充真实 TCP wire）；safe filename 与固定 TS `WeComChannel.ts:1649-1651` 的 basename+连续非法字符替换一致。未发现这三项新增局部阻断，仍需集中编译和运行；不把只读审查当测试通过。

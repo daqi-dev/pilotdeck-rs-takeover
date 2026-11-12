@@ -49,6 +49,7 @@ struct State {
     logger: Option<ChannelLog>,
 }
 struct Shared {
+    admission: Mutex<()>,
     fatal_cleanup: std::sync::atomic::AtomicBool,
     key: ChannelKey,
     client_id: JsString,
@@ -101,6 +102,7 @@ impl DingTalkChannel {
             .unwrap_or_else(|| Arc::new(|key| std::env::var(key).ok().map(JsString::from)));
         let trim = |s: JsString| JsString::from_utf16(sms::trim_units(s.units()).to_vec());
         Self(Arc::new(Shared {
+            admission: Mutex::new(()),
             fatal_cleanup: std::sync::atomic::AtomicBool::new(false),
             key: ChannelKey::new(CHANNEL_KEY),
             client_id: trim(
@@ -141,29 +143,63 @@ impl DingTalkChannel {
     }
 }
 impl Shared {
-    fn spawn_handler(&self, future: impl std::future::Future<Output = ()> + Send + 'static) {
-        let mut future = Box::pin(future);
+    fn spawn_handler(
+        self: &Arc<Self>,
+        future: impl std::future::Future<Output = ()> + Send + 'static,
+    ) {
+        // Reserve an owned worker before the first synchronous poll. Stop
+        // serializes its admission barrier with this reservation, and thus
+        // cannot observe an empty registry between effects and registration.
+        let handoff = {
+            let _admission = self.admission.lock().expect("channel admission");
+            if *self.stopping.borrow() {
+                return;
+            }
+            let mut handlers = self.handlers.lock().expect("channel handlers");
+            let mut index = 0;
+            while index < handlers.len() {
+                if !handlers[index].is_finished() {
+                    index += 1;
+                    continue;
+                }
+                let mut task = handlers.swap_remove(index);
+                if let Some(Err(error)) = (&mut task).now_or_never() {
+                    self.fatal_cleanup
+                        .store(true, std::sync::atomic::Ordering::Release);
+                    self.errors
+                        .lock()
+                        .expect("channel errors")
+                        .push(ChannelError::error(error.to_string()));
+                }
+            }
+            let (sender, receiver) = tokio::sync::oneshot::channel::<Option<BoxFuture<()>>>();
+            let shared = self.clone();
+            handlers.push(tokio::spawn(async move {
+                match receiver.await {
+                    Ok(Some(future)) => future.await,
+                    Ok(None) => {}
+                    Err(_) => {
+                        shared
+                            .fatal_cleanup
+                            .store(true, std::sync::atomic::Ordering::Release);
+                        shared
+                            .errors
+                            .lock()
+                            .expect("channel errors")
+                            .push(ChannelError::error(
+                                "Channel handler admission terminated before handing off its owner",
+                            ));
+                    }
+                }
+            }));
+            sender
+        };
+        let mut future: BoxFuture<()> = Box::pin(future);
         if future.as_mut().now_or_never().is_some() {
-            return;
+            let _ = handoff.send(None);
+        } else {
+            let _ = handoff.send(Some(future));
         }
-        let mut handlers = self.handlers.lock().expect("channel handlers");
-        let mut index = 0;
-        while index < handlers.len() {
-            if !handlers[index].is_finished() {
-                index += 1;
-                continue;
-            }
-            let mut task = handlers.swap_remove(index);
-            if let Some(Err(error)) = (&mut task).now_or_never() {
-                self.fatal_cleanup
-                    .store(true, std::sync::atomic::Ordering::Release);
-                self.errors
-                    .lock()
-                    .expect("channel errors")
-                    .push(ChannelError::error(error.to_string()));
-            }
-        }
-        handlers.push(tokio::spawn(future));
     }
 
     fn log(&self, level: &str, text: &str) {
@@ -636,7 +672,9 @@ impl Shared {
         self: &Arc<Self>,
         reason: String,
     ) -> watch::Receiver<Option<Result<(), ChannelError>>> {
+        let admission = self.admission.lock().expect("channel admission");
         self.stopping.send_replace(true);
+        drop(admission);
         let mut cleanup = self.cleanup.lock().expect("channel cleanup");
         if let Some(attempt) = cleanup.as_ref() {
             let current = attempt.result.borrow().clone();
@@ -725,7 +763,13 @@ impl ChannelAdapter for DingTalkChannel {
     fn deliver_cron_result(&self, delivery: &CronResultDelivery) -> BoxFuture<bool> {
         let shared = self.0.clone();
         deliver_chat_cron_result(delivery, &self.0.key, move |chat, text| {
-            Box::pin(async move { shared.send_reply(&chat, &text).await })
+            let (sender, result) = tokio::sync::oneshot::channel();
+            let owner = shared.clone();
+            shared.spawn_handler(async move {
+                let delivered = owner.send_reply(&chat, &text).await;
+                let _ = sender.send(delivered);
+            });
+            Box::pin(async move { result.await.unwrap_or(false) })
         })
     }
 }

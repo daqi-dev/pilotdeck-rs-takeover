@@ -265,7 +265,10 @@ fn chunks_use_utf16_and_consume_all_boundary_newlines() {
     let chunks = wire::chunk_text(&JsString::from(format!("{}\n\nrest", "x".repeat(4095))));
     assert_eq!(
         chunks,
-        vec![JsString::from("x".repeat(4095)), JsString::from("rest")]
+        vec![
+            JsString::from(format!("{}\n", "x".repeat(4095))),
+            JsString::from("rest")
+        ]
     );
     let chunks = wire::chunk_text(&JsString::from(format!("{}😀", "x".repeat(4095))));
     assert_eq!(chunks[0].units().len(), 4096);

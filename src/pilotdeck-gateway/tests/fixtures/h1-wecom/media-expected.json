@@ -1,0 +1,98 @@
+{
+  "sent": [
+    {
+      "cmd": "aibot_subscribe",
+      "headers": {
+        "req_id": "subscribe-media2"
+      },
+      "body": {
+        "bot_id": "bot",
+        "secret": "secret",
+        "device_id": "media1"
+      }
+    },
+    {
+      "cmd": "aibot_upload_media_init",
+      "headers": {
+        "req_id": "aibot_upload_media_init-media4"
+      },
+      "body": {
+        "type": "image",
+        "filename": "tool-tool-1.png",
+        "total_size": 1,
+        "total_chunks": 1,
+        "md5": "9dd4e461268c8034f5c8564e155c67a6"
+      }
+    },
+    {
+      "cmd": "aibot_upload_media_chunk",
+      "headers": {
+        "req_id": "aibot_upload_media_chunk-media5"
+      },
+      "body": {
+        "upload_id": "upload",
+        "chunk_index": 0,
+        "base64_data": "eA=="
+      }
+    },
+    {
+      "cmd": "aibot_upload_media_finish",
+      "headers": {
+        "req_id": "aibot_upload_media_finish-media6"
+      },
+      "body": {
+        "upload_id": "upload"
+      }
+    },
+    {
+      "cmd": "aibot_respond_msg",
+      "headers": {
+        "req_id": "incoming-media"
+      },
+      "body": {
+        "msgtype": "image",
+        "image": {
+          "media_id": "media"
+        }
+      }
+    }
+  ],
+  "turns": [
+    {
+      "sessionKey": "wecom:dm=user:general",
+      "channelKey": "wecom",
+      "message": "用户发送了企业微信附件。",
+      "attachments": [
+        {
+          "type": "image",
+          "name": "a_b.png",
+          "path": "<TMPDIR>/wecom-media",
+          "mimeType": "image/png",
+          "bytes": 5,
+          "metadata": {
+            "channelKey": "wecom",
+            "source": "wecom",
+            "mediaType": "image"
+          }
+        }
+      ],
+      "allowPlanModeTools": false,
+      "syntheticMessages": [
+        {
+          "text": "[WeCom attachment hint: If the user explicitly asks you to send a generated file to this WeCom chat, save it to an absolute local path and include MEDIA:/absolute/path in your final answer. Do not use MEDIA for files that were only read or analyzed internally.]",
+          "purpose": "wecom_deliverable_hint"
+        }
+      ]
+    }
+  ],
+  "logs": [
+    [
+      "info",
+      "wecom: connected to wss://openws.work.weixin.qq.com as bot bot"
+    ],
+    [
+      "info",
+      "wecom: stopping (fixture)"
+    ]
+  ]
+}

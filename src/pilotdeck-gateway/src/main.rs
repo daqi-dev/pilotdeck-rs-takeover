@@ -3,8 +3,14 @@ use hyper_util::{client::legacy::Client, rt::TokioExecutor};
 use pilotdeck_gateway::{ProxyError, http_proxy::Proxy};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::net::TcpListener;
-#[tokio::main]
-async fn main() -> Result<(), ProxyError> {
+fn main() -> Result<(), ProxyError> {
+    pilotdeck_gateway::channel::commands::host::record_process_start();
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(async_main())
+}
+async fn async_main() -> Result<(), ProxyError> {
     // Node's process-wide SIGXFSZ ignore (a write past RLIMIT_FSIZE reports
     // EFBIG instead of killing the process); register the same disposition
     // at startup through tokio's safe signal API so every fs write in this

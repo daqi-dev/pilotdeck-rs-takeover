@@ -128,6 +128,7 @@ pub fn stderr_line(text: &str) {
 }
 
 fn main() -> ExitCode {
+    pilotdeck_gateway::channel::commands::host::record_process_start();
     let argv: Vec<String> = std::env::args_os()
         .skip(1)
         .map(|arg| arg.to_string_lossy().into_owned())

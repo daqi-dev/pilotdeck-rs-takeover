@@ -1,10 +1,41 @@
 use crate::channel::sms::{concat_units, trim_units};
-use pilotdeck_protocol::JsString;
-use std::{collections::HashMap, sync::Arc};
+use pilotdeck_protocol::{JsObject, JsString, JsValue};
+use std::sync::Arc;
 #[derive(Clone, Default)]
 pub struct WeComSessionMapperState {
-    pub active_by_chat_id: HashMap<JsString, JsString>,
-    pub project_by_scope_key: HashMap<JsString, JsString>,
+    pub active_by_chat_id: JsObject,
+    pub project_by_scope_key: JsObject,
+}
+impl WeComSessionMapperState {
+    /// State persistence has no schema validation in the fixed baseline.
+    /// Keep every property of present records, including values not read as
+    /// session/project strings, so a snapshot never silently deletes data.
+    pub fn from_js(value: &JsValue) -> Self {
+        Self {
+            active_by_chat_id: value
+                .get("activeByChatId")
+                .and_then(JsValue::as_object)
+                .cloned()
+                .unwrap_or_default(),
+            project_by_scope_key: value
+                .get("projectByScopeKey")
+                .and_then(JsValue::as_object)
+                .cloned()
+                .unwrap_or_default(),
+        }
+    }
+    pub fn to_js(&self) -> JsValue {
+        let mut value = JsObject::new();
+        value.insert(
+            "activeByChatId".into(),
+            JsValue::Object(self.active_by_chat_id.clone()),
+        );
+        value.insert(
+            "projectByScopeKey".into(),
+            JsValue::Object(self.project_by_scope_key.clone()),
+        );
+        JsValue::Object(value)
+    }
 }
 #[derive(Clone)]
 pub struct WeComSessionMapper {
@@ -66,10 +97,17 @@ impl WeComSessionMapper {
         let scope = Self::scope_key(input);
         let text = trim_units(text.units());
         let command_new = text == [47, 110, 101, 119] || text.starts_with(&[47, 110, 101, 119, 32]);
-        let project_key = self.state.project_by_scope_key.get(&scope).cloned();
+        let project_key = self
+            .state
+            .project_by_scope_key
+            .get_key(&scope)
+            .and_then(JsValue::as_string)
+            .cloned();
         if command_new {
             let key = concat_units(&[scope.units(), &[58, 115, 95], (self.uuid)().units()]);
-            self.state.active_by_chat_id.insert(scope, key.clone());
+            self.state
+                .active_by_chat_id
+                .insert(scope, JsValue::String(key.clone()));
             return MappedSession {
                 session_key: key,
                 message: JsString::from_utf16(trim_units(&text[4..]).to_vec()),
@@ -81,7 +119,8 @@ impl WeComSessionMapper {
             session_key: self
                 .state
                 .active_by_chat_id
-                .get(&scope)
+                .get_key(&scope)
+                .and_then(JsValue::as_string)
                 .cloned()
                 .unwrap_or_else(|| {
                     concat_units(&[
@@ -97,12 +136,13 @@ impl WeComSessionMapper {
     pub fn bind_project(&mut self, input: &Scope<'_>, project: JsString) {
         self.state
             .project_by_scope_key
-            .insert(Self::scope_key(input), project);
+            .insert(Self::scope_key(input), JsValue::String(project));
     }
     pub fn get_project(&self, input: &Scope<'_>) -> Option<JsString> {
         self.state
             .project_by_scope_key
-            .get(&Self::scope_key(input))
+            .get_key(&Self::scope_key(input))
+            .and_then(JsValue::as_string)
             .cloned()
     }
     pub fn snapshot(&self) -> WeComSessionMapperState {

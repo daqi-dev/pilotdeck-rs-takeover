@@ -1,6 +1,9 @@
 //! Shared IM slash commands. Host operations are injected; this module never
 //! invokes a shell, contacts a provider, or creates a second gateway.
 use pilotdeck_protocol::JsString;
+pub mod host;
+pub mod search;
+mod update;
 use std::{future::Future, pin::Pin};
 
 pub type CommandFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, CommandError>> + Send + 'a>>;
@@ -45,6 +48,7 @@ pub trait CommandContext: Send + Sync {
     fn current_project(&self) -> Option<JsString>;
     fn bind_project(&self, project: &JsString) -> Result<(), CommandError>;
     fn reset_session(&self) -> Result<(), CommandError>;
+    fn log_error(&self, _message: &JsString) {}
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -324,6 +328,22 @@ pub async fn execute(
         return Ok(false);
     }
     if let Err(error) = handle(resolved.name, &resolved.arg, host, ctx).await {
+        let name = match resolved.name {
+            Name::Projects => "projects",
+            Name::SwitchProject => "switch-project",
+            Name::Update => "update",
+            Name::Status => "status",
+            Name::Search => "search",
+            Name::Help => "help",
+            Name::New => "new",
+            Name::Plan => "plan",
+        };
+        ctx.log_error(&concat(&[
+            &text("command /"),
+            &text(name),
+            &text(" failed: Error: "),
+            &error.0,
+        ]));
         ctx.reply(&concat(&[&text("命令执行失败: "), &error.0]))
             .await?;
     }

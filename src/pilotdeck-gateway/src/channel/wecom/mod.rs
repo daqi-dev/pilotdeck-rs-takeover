@@ -32,6 +32,8 @@ pub const CHANNEL_KEY: &str = "wecom";
 pub type Env = Arc<dyn Fn(&str) -> Option<JsString> + Send + Sync>;
 #[derive(Default)]
 pub struct WeComChannelOptions {
+    /// Test seam; production retains os.tmpdir()/pilotdeck-wecom-media.
+    pub media_cache_dir: Option<std::path::PathBuf>,
     pub command_host: Option<Arc<dyn crate::channel::commands::CommandHost>>,
     pub bot_key: Option<JsString>,
     pub extra: Option<JsObject>,
@@ -73,6 +75,8 @@ struct Inbound {
     attachments: Option<Vec<JsValue>>,
 }
 struct Shared {
+    admission: Mutex<()>,
+    media_cache_dir: std::path::PathBuf,
     fatal_cleanup: std::sync::atomic::AtomicBool,
     command_host: Arc<dyn crate::channel::commands::CommandHost>,
     key: ChannelKey,
@@ -185,7 +189,12 @@ impl WeComChannel {
         );
         let per_user = extra
             .get("group_sessions_per_user")
-            .or_else(|| extra.get("groupSessionsPerUser"))
+            .filter(|v| matches!(v, JsValue::Bool(_)))
+            .or_else(|| {
+                extra
+                    .get("groupSessionsPerUser")
+                    .filter(|v| matches!(v, JsValue::Bool(_)))
+            })
             .and_then(|v| {
                 if let JsValue::Bool(v) = v {
                     Some(*v)
@@ -200,6 +209,10 @@ impl WeComChannel {
             .cloned()
             .unwrap_or_default();
         Self(Arc::new(Shared {
+            admission: Mutex::new(()),
+            media_cache_dir: options
+                .media_cache_dir
+                .unwrap_or_else(|| std::env::temp_dir().join("pilotdeck-wecom-media")),
             fatal_cleanup: std::sync::atomic::AtomicBool::new(false),
             command_host: options
                 .command_host
@@ -276,29 +289,63 @@ fn remember(map: &mut VecDeque<(JsString, JsString)>, key: JsString, value: JsSt
     }
 }
 impl Shared {
-    fn spawn_handler(&self, future: impl std::future::Future<Output = ()> + Send + 'static) {
-        let mut future = Box::pin(future);
+    fn spawn_handler(
+        self: &Arc<Self>,
+        future: impl std::future::Future<Output = ()> + Send + 'static,
+    ) {
+        // Reserve an owned worker before the first synchronous poll. Stop
+        // serializes its admission barrier with this reservation, and thus
+        // cannot observe an empty registry between effects and registration.
+        let handoff = {
+            let _admission = self.admission.lock().expect("channel admission");
+            if *self.stopping.borrow() {
+                return;
+            }
+            let mut handlers = self.handlers.lock().expect("channel handlers");
+            let mut index = 0;
+            while index < handlers.len() {
+                if !handlers[index].is_finished() {
+                    index += 1;
+                    continue;
+                }
+                let mut task = handlers.swap_remove(index);
+                if let Some(Err(error)) = (&mut task).now_or_never() {
+                    self.fatal_cleanup
+                        .store(true, std::sync::atomic::Ordering::Release);
+                    self.errors
+                        .lock()
+                        .expect("channel errors")
+                        .push(ChannelError::error(error.to_string()));
+                }
+            }
+            let (sender, receiver) = tokio::sync::oneshot::channel::<Option<BoxFuture<()>>>();
+            let shared = self.clone();
+            handlers.push(tokio::spawn(async move {
+                match receiver.await {
+                    Ok(Some(future)) => future.await,
+                    Ok(None) => {}
+                    Err(_) => {
+                        shared
+                            .fatal_cleanup
+                            .store(true, std::sync::atomic::Ordering::Release);
+                        shared
+                            .errors
+                            .lock()
+                            .expect("channel errors")
+                            .push(ChannelError::error(
+                                "Channel handler admission terminated before handing off its owner",
+                            ));
+                    }
+                }
+            }));
+            sender
+        };
+        let mut future: BoxFuture<()> = Box::pin(future);
         if future.as_mut().now_or_never().is_some() {
-            return;
+            let _ = handoff.send(None);
+        } else {
+            let _ = handoff.send(Some(future));
         }
-        let mut handlers = self.handlers.lock().expect("channel handlers");
-        let mut index = 0;
-        while index < handlers.len() {
-            if !handlers[index].is_finished() {
-                index += 1;
-                continue;
-            }
-            let mut task = handlers.swap_remove(index);
-            if let Some(Err(error)) = (&mut task).now_or_never() {
-                self.fatal_cleanup
-                    .store(true, std::sync::atomic::Ordering::Release);
-                self.errors
-                    .lock()
-                    .expect("channel errors")
-                    .push(ChannelError::error(error.to_string()));
-            }
-        }
-        handlers.push(tokio::spawn(future));
     }
 
     fn log(&self, level: &str, text: &str) {
@@ -453,16 +500,29 @@ impl Shared {
             let exact = self
                 .groups
                 .get_key(chat)
+                .filter(|value| matches!(value, JsValue::Object(_)))
                 .or_else(|| {
                     self.groups
                         .entries()
                         .iter()
-                        .find(|(k, _)| lower(k) == lower(chat))
+                        .find(|(k, value)| {
+                            wire::equal_folded(k, chat) && matches!(value, JsValue::Object(_))
+                        })
                         .map(|(_, v)| v)
                 })
-                .or_else(|| self.groups.get("*"));
+                .or_else(|| {
+                    self.groups
+                        .get("*")
+                        .filter(|value| matches!(value, JsValue::Object(_)))
+                });
             let allow = exact
-                .map(|v| wire::list(v.get("allow_from").or_else(|| v.get("allowFrom"))))
+                .map(|v| {
+                    wire::list(
+                        v.get("allow_from")
+                            .filter(|v| !sms::nullish(v))
+                            .or_else(|| v.get("allowFrom")),
+                    )
+                })
                 .unwrap_or_default();
             allow.is_empty() || wire::entry_matches(&allow, user)
         } else {
@@ -749,7 +809,7 @@ impl Shared {
             loop {let event=tokio::select!{biased;_=self.stopped()=>{if let Err(error)=stream.cancel_and_drain("wecom channel stopped".into()).await{self.failed_streams.lock().unwrap().push(stream);return Err(error);}break;},result=stream.next()=>result?};let Some(event)=event else{break;};let kind=string(&event,"type");
                 if kind.equals_str("elicitation_request"){let prompt=self.interaction.elicitation_capture(&input.interaction,&mapped.session_key,&event);self.send_reply(&input.chat,&prompt,Some(&input.message_id),input.group).await;}
                 else if kind.equals_str("permission_request"){if let Some(prompt)=self.interaction.permission_capture(&input.interaction,&mapped.session_key,&event){let delivered=self.send_reply(&input.chat,&prompt,Some(&input.message_id),input.group).await;self.interaction.permission_confirm_initial(&input.interaction,delivered,event.get("requestId").and_then(JsValue::as_string));}}
-                else if let Some(fragment)=wire::render(&event){reply.extend_from_slice(fragment.units());}
+                else {self.send_event_media(&input,&event).await;if let Some(fragment)=wire::render(&event){reply.extend_from_slice(fragment.units());}}
             }Ok::<_,ChannelError>(())
         }.await;
         if let Err(error) = result {
@@ -909,8 +969,10 @@ impl Shared {
         self: &Arc<Self>,
         reason: String,
     ) -> watch::Receiver<Option<Result<(), ChannelError>>> {
+        let admission = self.admission.lock().expect("channel admission");
         self.stopping.send_replace(true);
         self.fail_pending("WeCom adapter stopped");
+        drop(admission);
         let mut cleanup = self.cleanup.lock().expect("channel cleanup");
         if let Some(attempt) = cleanup.as_ref() {
             let current = attempt.result.borrow().clone();

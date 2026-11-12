@@ -87,7 +87,7 @@ impl Requests {
             // `options.alwaysOnControl` (InProcessGateway.ts:2992-3016). A
             // staged manager delegates to the control port verbatim; no
             // manager answers the #1313 envelopes.
-            let Some(manager) = self.always_on.clone() else {
+            let Some(manager) = self.current_always_on() else {
                 return self.standalone(&method, &params).await;
             };
             match method.as_str() {
@@ -262,7 +262,7 @@ impl Requests {
         // `fire.runApplyPhase` (createApplyHandler.ts:97-134). A process
         // that never published the standalone facade (unit fixtures without
         // a turn path) keeps the unconfigured answer.
-        let Some(standalone) = self.always_on_standalone.get() else {
+        let Some(standalone) = self.current_standalone() else {
             return not_configured("always_on_apply", params);
         };
         let project_name = wire_option(params, "projectName");

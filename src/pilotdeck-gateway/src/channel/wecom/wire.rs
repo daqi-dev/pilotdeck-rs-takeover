@@ -30,28 +30,53 @@ pub fn list(value: Option<&JsValue>) -> Vec<JsString> {
             .map(trim)
             .filter(|v| !v.is_empty())
             .collect(),
-        Some(JsValue::String(s)) => String::from_utf16_lossy(s.units())
-            .split(',')
-            .map(|s| trim(s.into()))
+        Some(JsValue::String(s)) => s
+            .units()
+            .split(|unit| *unit == 44)
+            .map(|units| trim(JsString::from_utf16(units.to_vec())))
             .filter(|v| !v.is_empty())
             .collect(),
         _ => vec![],
     }
 }
+fn lower_units(value: &JsString) -> JsString {
+    let mut output = Vec::new();
+    let mut run = String::new();
+    for decoded in std::char::decode_utf16(value.units().iter().copied()) {
+        match decoded {
+            Ok(c) => run.push(c),
+            Err(error) => {
+                output.extend(run.to_lowercase().encode_utf16());
+                run.clear();
+                output.push(error.unpaired_surrogate());
+            }
+        }
+    }
+    output.extend(run.to_lowercase().encode_utf16());
+    JsString::from_utf16(output)
+}
+pub fn equal_folded(left: &JsString, right: &JsString) -> bool {
+    lower_units(left) == lower_units(right)
+}
 pub fn entry_matches(entries: &[JsString], value: &JsString) -> bool {
-    let normalized = |v: &JsString| {
-        let v = lower(&trim(v.clone()));
-        v.strip_prefix("wecom:user:")
-            .or_else(|| v.strip_prefix("wecom:group:"))
-            .unwrap_or(&v)
-            .to_owned()
+    let normalized = |value: &JsString| {
+        let value = lower_units(&trim(value.clone()));
+        let units = value.units();
+        for prefix in ["wecom:user:", "wecom:group:"] {
+            let prefix = prefix.encode_utf16().collect::<Vec<_>>();
+            if units.starts_with(&prefix) {
+                return JsString::from_utf16(units[prefix.len()..].to_vec());
+            }
+        }
+        value
     };
     let value = normalized(value);
-    entries.iter().any(|item| {
-        let item = normalized(item);
-        item == "*" || item == value
+    entries.iter().any(|entry| {
+        let entry = normalized(entry);
+        entry.equals_str("*") || entry == value
     })
 }
+
 pub fn message_text(body: &JsValue) -> JsString {
     let kind = lower(&string(body, "msgtype"));
     let mut parts = Vec::new();

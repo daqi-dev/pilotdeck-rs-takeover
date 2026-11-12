@@ -9,14 +9,16 @@
 //! ported; this channel drives it through [`InteractionPort`] with
 //! [`interaction::HelperInteraction`] as the real implementation.
 //!
-//! Not carried over from TS (registered diffs, see
-//! `specs/gateway-parity/diffs/`): production assembly installs
-//! [`no_interaction`] (A8.3-CH-BLUEBUBBLES-002), `stop` does not await
-//! in-flight turns (A8.3-CH-BLUEBUBBLES-003, #1353 owns the drain entry), and
-//! a same-guid row arriving after a restart re-dispatches channel-side
-//! (A8.3-CH-BLUEBUBBLES-004 — upstream admission owns no-re-execution).
+//! Production `register_with_network` installs a real per-instance helper,
+//! the host network dispatcher, and owned stop/drain. The legacy `register`
+//! and standalone constructor retain their historical component-test seams.
+//! Same-guid rows after restart retain the frozen mapper/admission contract.
+mod http;
 mod interaction;
+mod lifecycle;
 mod mapper;
+#[cfg(test)]
+mod owned_tests;
 #[cfg(test)]
 mod tests;
 
@@ -33,7 +35,6 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json
 use tokio::sync::watch;
 
 use crate::channel::ActiveChat;
-use crate::channel::http_client::HttpClient;
 use crate::channel::im_interaction::{InteractionPort, NoInteraction};
 use crate::channel::protocol::{
     BoxFuture, ChannelAdapter, ChannelError, ChannelHandle, ChannelKey, ChannelLog,
@@ -42,6 +43,8 @@ use crate::channel::protocol::{
 use crate::channel::sms::{self, render::render_sms_event};
 use crate::js_value::{number_string, string_to_number};
 use crate::metadata::js_trim;
+use crate::runtime::model::http::ModelHttpTransport;
+use http::Client as HttpClient;
 
 /// `BlueBubblesChannel.channelKey`.
 pub const CHANNEL_KEY: &str = "bluebubbles";
@@ -222,10 +225,17 @@ struct Runtime {
     /// exactly where TS runs run-to-completion code.
     state: StdMutex<RuntimeState>,
     active_chats: Arc<StdMutex<HashSet<JsString>>>,
+    known_chats: StdMutex<HashSet<JsString>>,
+    fatal_cleanup: std::sync::atomic::AtomicBool,
     running: std::sync::atomic::AtomicBool,
     /// `pollAbort`: recreated by every `start`, aborted by `stop`.
     poll_abort: StdMutex<watch::Sender<bool>>,
+    owned: bool,
     client: HttpClient,
+    tasks: StdMutex<Vec<tokio::task::JoinHandle<()>>>,
+    cleanup: StdMutex<Option<watch::Receiver<Option<Result<(), ChannelError>>>>>,
+    failed_streams: StdMutex<Vec<Box<dyn crate::channel::protocol::TurnEventStream>>>,
+    cleanup_errors: StdMutex<Vec<ChannelError>>,
 }
 
 impl Runtime {
@@ -242,6 +252,7 @@ impl Runtime {
         self: &Arc<Self>,
         deps: ChannelStartDeps,
     ) -> Result<Arc<dyn ChannelHandle>, ChannelError> {
+        self.prepare_start()?;
         *self.gateway.lock().expect("#1343 gateway mutex") = deps.turn_gateway;
         self.logger.install(deps.log);
 
@@ -280,7 +291,7 @@ impl Runtime {
         // interval's first tick (tokio's `interval` fires at t=0, `setInterval`
         // does not, so the first tick is discarded).
         let runtime = self.clone();
-        tokio::spawn(async move {
+        self.spawn_task(async move {
             runtime.poll_messages().await;
         });
         let runtime = self.clone();
@@ -289,7 +300,7 @@ impl Runtime {
             .lock()
             .expect("#1343 abort mutex")
             .subscribe();
-        tokio::spawn(async move {
+        self.spawn_task(async move {
             let mut timer = tokio::time::interval(POLL_MS);
             timer.tick().await;
             loop {
@@ -302,7 +313,8 @@ impl Runtime {
                     }
                     _ = timer.tick() => {
                         let runtime = runtime.clone();
-                        tokio::spawn(async move {
+                        let owner = runtime.clone();
+                        owner.spawn_task(async move {
                             runtime.poll_messages().await;
                         });
                     }
@@ -433,6 +445,9 @@ impl Runtime {
     /// `guid`/`text` own properties), so it falls out at the empty
     /// `chatGuid`/`text` gate — `object` being `None` models that.
     async fn dispatch_payload(self: &Arc<Self>, row: &JsValue) {
+        if self.owned && !self.running.load(std::sync::atomic::Ordering::Acquire) {
+            return;
+        }
         let object = row.as_object();
         let from_me = object
             .and_then(|object| {
@@ -472,6 +487,10 @@ impl Runtime {
         if chat_guid.is_empty() || text.is_empty() {
             return;
         }
+        self.known_chats
+            .lock()
+            .expect("bluebubbles known chats")
+            .insert(chat_guid.clone());
         let chat_id = String::from_utf16_lossy(chat_guid.units());
         let text_scalar = String::from_utf16_lossy(text.units());
 
@@ -612,29 +631,65 @@ impl Runtime {
         let Some(gateway) = self.gateway() else {
             return;
         };
+        self.known_chats
+            .lock()
+            .expect("bluebubbles known chats")
+            .insert(chat_guid.clone());
         let chat_id = String::from_utf16_lossy(chat_guid.units());
         let session_id = String::from_utf16_lossy(session_key.units());
 
         let mut reply_units: Vec<u16> = Vec::new();
         let mut error_text: Option<String> = None;
-        let mut stream = match gateway
-            .submit(TurnRequest {
-                session_key: session_key.clone(),
-                channel_key: self.key.clone(),
-                message: message.clone(),
-                ..Default::default()
-            })
-            .await
-        {
+        let mut stopped = self
+            .poll_abort
+            .lock()
+            .expect("bluebubbles stop signal")
+            .subscribe();
+        let submission = gateway.submit(TurnRequest {
+            session_key: session_key.clone(),
+            channel_key: self.key.clone(),
+            message: message.clone(),
+            ..Default::default()
+        });
+        let submitted = if self.owned {
+            // The native owned submitter transfers creation and stream in one
+            // poll; abandoning a pending submit cannot hide an accepted turn.
+            tokio::select! {
+                biased;
+                _ = async {if !*stopped.borrow(){let _=stopped.changed().await;}} => return,
+                submitted=submission=>submitted,
+            }
+        } else {
+            submission.await
+        };
+        let mut stream = match submitted {
             Err(error) => {
                 error_text = Some(error.to_js_string());
                 None
             }
             Ok(stream) => Some(stream),
         };
+        let mut cancelled = false;
+        let mut cancellation_failed = false;
         if let Some(stream) = stream.as_mut() {
             loop {
-                let event = match stream.next().await {
+                let event = if self.owned {
+                    tokio::select! {
+                        biased;
+                        _ = async { if !*stopped.borrow() { let _ = stopped.changed().await; } } => {
+                            cancelled = true;
+                            if let Err(error) = stream.cancel_and_drain("bluebubbles channel stopped".into()).await {
+                                cancellation_failed = true;
+                                self.cleanup_errors.lock().expect("bluebubbles cleanup errors").push(error);
+                            }
+                            break;
+                        }
+                        event = stream.next() => event,
+                    }
+                } else {
+                    stream.next().await
+                };
+                let event = match event {
                     Ok(Some(event)) => event,
                     Ok(None) => break,
                     Err(error) => {
@@ -673,6 +728,17 @@ impl Runtime {
                 }
             }
         }
+        if cancelled {
+            if cancellation_failed {
+                if let Some(stream) = stream.take() {
+                    self.failed_streams
+                        .lock()
+                        .expect("bluebubbles failed stream")
+                        .push(stream);
+                }
+            }
+            return;
+        }
         if let Some(error) = error_text {
             self.log("error", &format!("bluebubbles: submitTurn error: {error}"));
             reply_units = "处理消息时发生错误，请重试。".encode_utf16().collect();
@@ -690,6 +756,31 @@ impl Runtime {
 
     /// `sendReply(chatGuid, text)` — the POST, with its `!running` gate.
     async fn send_reply(self: &Arc<Self>, chat_guid: &JsString, text: &JsString) -> bool {
+        if !self.owned {
+            return self.send_reply_direct(chat_guid, text).await;
+        }
+        let (sender, receipt) = tokio::sync::oneshot::channel();
+        let shared = self.clone();
+        let chat = chat_guid.clone();
+        let text = text.clone();
+        if !self.spawn_task(async move {
+            let mut stopped = shared
+                .poll_abort
+                .lock()
+                .expect("bluebubbles stop signal")
+                .subscribe();
+            let delivered = tokio::select! {
+                biased;
+                _=async {if !*stopped.borrow() {let _=stopped.changed().await;}}=>false,
+                delivered=shared.send_reply_direct(&chat,&text)=>delivered,
+            };
+            let _ = sender.send(delivered);
+        }) {
+            return false;
+        }
+        receipt.await.unwrap_or(false)
+    }
+    async fn send_reply_direct(self: &Arc<Self>, chat_guid: &JsString, text: &JsString) -> bool {
         if !self.running.load(std::sync::atomic::Ordering::SeqCst) {
             return false;
         }
@@ -766,6 +857,13 @@ pub struct BlueBubblesChannel {
 
 impl BlueBubblesChannel {
     pub fn new(options: BlueBubblesOptions, interaction: Arc<dyn InteractionPort>) -> Self {
+        Self::new_with_transport(options, interaction, None)
+    }
+    fn new_with_transport(
+        options: BlueBubblesOptions,
+        interaction: Arc<dyn InteractionPort>,
+        transport: Option<Arc<dyn ModelHttpTransport>>,
+    ) -> Self {
         let server_url = options
             .server_url
             .clone()
@@ -791,9 +889,16 @@ impl BlueBubblesChannel {
                 last_timestamp: 0.0,
             }),
             active_chats: Arc::new(StdMutex::new(HashSet::new())),
+            known_chats: StdMutex::new(HashSet::new()),
+            fatal_cleanup: std::sync::atomic::AtomicBool::new(false),
             running: std::sync::atomic::AtomicBool::new(false),
             poll_abort: StdMutex::new(watch::channel(false).0),
-            client: HttpClient::new(),
+            owned: transport.is_some(),
+            client: HttpClient::new(transport),
+            tasks: StdMutex::new(Vec::new()),
+            cleanup: StdMutex::new(None),
+            failed_streams: StdMutex::new(Vec::new()),
+            cleanup_errors: StdMutex::new(Vec::new()),
         });
         Self {
             key: ChannelKey::new(CHANNEL_KEY),
@@ -836,6 +941,9 @@ struct BlueBubblesHandle {
 
 impl ChannelHandle for BlueBubblesHandle {
     fn stop(&self, reason: &str) -> BoxFuture<Result<(), ChannelError>> {
+        if self.runtime.owned {
+            return self.runtime.stop_owned(reason);
+        }
         let shown = if reason.is_empty() {
             "no reason"
         } else {
@@ -874,9 +982,23 @@ impl ChannelHandle for BlueBubblesHandle {
 /// `String()` coercion: it applies the same check at construction and
 /// surfaces the same TypeError through the same loader catch.
 pub fn register(mounts: &mut crate::channel::loader::ChannelLoaderMounts) {
+    register_transport(mounts, None, None);
+}
+pub(crate) fn register_with_network(
+    mounts: &mut crate::channel::loader::ChannelLoaderMounts,
+    responder: ResponderRef,
+    network: Arc<crate::channel::network::ChannelNetwork>,
+) {
+    register_transport(mounts, Some(responder), Some(network));
+}
+fn register_transport(
+    mounts: &mut crate::channel::loader::ChannelLoaderMounts,
+    responder: Option<ResponderRef>,
+    transport: Option<Arc<dyn ModelHttpTransport>>,
+) {
     mounts.register(
         "bluebubbles",
-        Arc::new(|options: &JsObject| {
+        Arc::new(move |options: &JsObject| {
             if let Some(value) = options
                 .get("serverUrl")
                 .filter(|value| !sms::nullish(value))
@@ -886,14 +1008,20 @@ pub fn register(mounts: &mut crate::channel::loader::ChannelLoaderMounts) {
                     "TypeError: url.replace is not a function".to_owned(),
                 ));
             }
-            Ok(Arc::new(BlueBubblesChannel::new(
+            Ok(Arc::new(BlueBubblesChannel::new_with_transport(
                 BlueBubblesOptions {
                     env: Some(Arc::new(|name| {
                         std::env::var(name).ok().map(JsString::from)
                     })),
                     ..BlueBubblesOptions::from_object(options)
                 },
-                no_interaction(),
+                responder
+                    .as_ref()
+                    .map(|responder| {
+                        crate::channel::im_interaction::helper_interaction(responder.clone())
+                    })
+                    .unwrap_or_else(no_interaction),
+                transport.clone(),
             )) as Arc<dyn ChannelAdapter>)
         }),
     );

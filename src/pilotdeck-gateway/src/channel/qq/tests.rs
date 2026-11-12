@@ -262,7 +262,10 @@ fn identify_and_chunking_preserve_qq_wire_shape() {
     );
     assert_eq!(
         chunks,
-        vec![JsString::from("x".repeat(1999)), JsString::from("\nrest")]
+        vec![
+            JsString::from(format!("{}\n", "x".repeat(1999))),
+            JsString::from("rest")
+        ]
     );
 }
 

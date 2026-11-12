@@ -19,7 +19,9 @@ root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/channel'
 # Migration preserves all 23 fault classes; per-adapter production mount
 # and reinserted-rejection controls live in channel-loader-startup.
-MUTATIONS = [('qq-dropped',
+# Preserved historical rows, retired because the rejection table is empty.
+# README records their replacement by real bundle/loader construction controls.
+RETIRED_MUTATIONS = [('qq-dropped',
   source / 'loader.rs',
   'pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[\n    "qq",',
   'pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[',
@@ -38,36 +40,12 @@ MUTATIONS = [('qq-dropped',
   '"[adapters] 未迁移到 Rust，需继续使用 TS gateway"',
   'rejects_unmigrated_qq',
   '#1386 rejection names the channel key'),
- ('subset-sms-rejected',
-  source / 'loader.rs',
-  '    "qq",\n    "wecom",\n];',
-  '    "qq",\n    "wecom",\n    "sms",\n];',
-  'unmigrated_subset_channels_stay_loadable',
-  '#1386 subset channel must not be rejected'),
- ('reject-table-reinserts-slack',
-  source / 'loader.rs',
-  'pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[\n    "qq",',
-  'pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[\n    "slack",\n    "qq",',
-  'unmigrated_subset_channels_stay_loadable',
-  '#1386 subset channel must not be rejected'),
  ('qq-wecom-gate-loosened',
   source / 'loader.rs',
   'matches!(cfg.get("enabled"), Some(JsValue::Bool(true)))',
   'js_truthy(cfg.get("enabled"))',
   'unmigrated_bundle_channels_require_strict_boolean_true',
   '#1386 bundle channel requires strict enabled === true'),
- ('strict-key-dropped',
-  source / 'loader.rs',
-  'const STRICT_TRUE_CHANNEL_KEYS: &[&str] = &["qq", "wecom"];',
-  'const STRICT_TRUE_CHANNEL_KEYS: &[&str] = &["wecom"];',
-  'strict_true_channel_keys_are_exactly_qq_and_wecom',
-  '#1386 strict-true channel key set must be exactly qq and wecom'),
- ('loader-key-made-strict',
-  source / 'loader.rs',
-  'const STRICT_TRUE_CHANNEL_KEYS: &[&str] = &["qq", "wecom"];',
-  'const STRICT_TRUE_CHANNEL_KEYS: &[&str] = &["qq", "wecom", "telegram"];',
-  'strict_true_channel_keys_are_exactly_qq_and_wecom',
-  '#1386 strict-true channel key set must be exactly qq and wecom'),
  ('strict-gate-always-true',
   source / 'loader.rs',
   'matches!(cfg.get("enabled"), Some(JsValue::Bool(true)))',
@@ -80,6 +58,25 @@ MUTATIONS = [('qq-dropped',
   'for key in CHANNEL_LOADER_KEYS {',
   [('rejects_unmigrated_qq', '#1386 unmigrated channel must reject startup'),
    ('rejects_unmigrated_wecom', '#1386 unmigrated channel must reject startup')]),
+ ('implemented-gains-rejected-qq',
+  source / 'tests.rs',
+  'const IMPLEMENTED_LOADER_KEYS: [&str; 15] = [\n        "slack",',
+  'const IMPLEMENTED_LOADER_KEYS: [&str; 16] = [\n        "qq",\n        "slack",',
+  'loader_keys_partition_rejected_and_implemented',
+  '#2301 every implemented loader key is outside the rejection table')]
+
+MUTATIONS = [('strict-key-dropped',
+  source / 'loader.rs',
+  'const STRICT_TRUE_CHANNEL_KEYS: &[&str] = &["qq", "wecom"];',
+  'const STRICT_TRUE_CHANNEL_KEYS: &[&str] = &["wecom"];',
+  'strict_true_channel_keys_are_exactly_qq_and_wecom',
+  '#1386 strict-true channel key set must be exactly qq and wecom'),
+ ('loader-key-made-strict',
+  source / 'loader.rs',
+  'const STRICT_TRUE_CHANNEL_KEYS: &[&str] = &["qq", "wecom"];',
+  'const STRICT_TRUE_CHANNEL_KEYS: &[&str] = &["qq", "wecom", "telegram"];',
+  'strict_true_channel_keys_are_exactly_qq_and_wecom',
+  '#1386 strict-true channel key set must be exactly qq and wecom'),
  ('loader-table-gains-ungrouped-key',
   source / 'loader.rs',
   'pub const CHANNEL_LOADER_KEYS: [&str; 15] = [\n    "telegram",',
@@ -115,16 +112,10 @@ MUTATIONS = [('qq-dropped',
   '    "email",',
   'loader_keys_partition_rejected_and_implemented',
   '#2301 every implemented loader key is a loader-table key'),
- ('rejection-table-gains-foreign-key',
-  source / 'loader.rs',
-  '    "qq",\n    "wecom",\n];',
-  '    "probe1853",\n    "qq",\n    "wecom",\n];',
-  'loader_keys_partition_rejected_and_implemented',
-  '#1853 every rejection-table key is a loader key or a strict bundle key'),
  ('bundle-gains-silent-sms',
   source / 'loader.rs',
-  'pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin", "feishu"];',
-  'pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin", "feishu", "sms"];',
+  'pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin", "feishu", "qq", "wecom"];',
+  'pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin", "feishu", "qq", "wecom", "sms"];',
   'loader_keys_partition_rejected_and_implemented',
   '#1853 bundle keys stay outside the loader table'),
  ('native-mount-loses-loader-key',
@@ -133,15 +124,9 @@ MUTATIONS = [('qq-dropped',
   'pub const CHANNEL_LOADER_KEYS: [&str; 14] = [\n    "telegram",\n    "discord",',
   'loader_keys_partition_rejected_and_implemented',
   '#2301 every implemented loader key is a loader-table key'),
- ('implemented-gains-rejected-qq',
-  source / 'tests.rs',
-  'const IMPLEMENTED_LOADER_KEYS: [&str; 15] = [\n        "slack",',
-  'const IMPLEMENTED_LOADER_KEYS: [&str; 16] = [\n        "qq",\n        "slack",',
-  'loader_keys_partition_rejected_and_implemented',
-  '#2301 every implemented loader key is outside the rejection table'),
  ('subset-whitelist-loses-silent-sms',
   source / 'tests.rs',
-  'const SUBSET_CHANNEL_KEYS: [&str; 17] = [\n'
+  'const SUBSET_CHANNEL_KEYS: [&str; 19] = [\n'
   '    "weixin",\n'
   '    "feishu",\n'
   '    "apiServer",\n'
@@ -159,8 +144,10 @@ MUTATIONS = [('qq-dropped',
   '    "matrix",\n'
   '    "telegram",\n'
   '    "whatsapp",\n'
+  '    "qq",\n'
+  '    "wecom",\n'
   '];',
-  'const SUBSET_CHANNEL_KEYS: [&str; 16] = [\n'
+  'const SUBSET_CHANNEL_KEYS: [&str; 18] = [\n'
   '    "weixin",\n'
   '    "feishu",\n'
   '    "apiServer",\n'
@@ -177,12 +164,14 @@ MUTATIONS = [('qq-dropped',
   '    "matrix",\n'
   '    "telegram",\n'
   '    "whatsapp",\n'
+  '    "qq",\n'
+  '    "wecom",\n'
   '];',
   'loader_keys_partition_rejected_and_implemented',
   '#2301 every implemented loader key is in the module subset whitelist'),
  ('subset-whitelist-gains-foreign-key',
   source / 'tests.rs',
-  'const SUBSET_CHANNEL_KEYS: [&str; 17] = [\n'
+  'const SUBSET_CHANNEL_KEYS: [&str; 19] = [\n'
   '    "weixin",\n'
   '    "feishu",\n'
   '    "apiServer",\n'
@@ -200,8 +189,10 @@ MUTATIONS = [('qq-dropped',
   '    "matrix",\n'
   '    "telegram",\n'
   '    "whatsapp",\n'
+  '    "qq",\n'
+  '    "wecom",\n'
   '];',
-  'const SUBSET_CHANNEL_KEYS: [&str; 18] = [\n'
+  'const SUBSET_CHANNEL_KEYS: [&str; 20] = [\n'
   '    "probe1853",\n'
   '    "weixin",\n'
   '    "feishu",\n'
@@ -220,12 +211,14 @@ MUTATIONS = [('qq-dropped',
   '    "matrix",\n'
   '    "telegram",\n'
   '    "whatsapp",\n'
+  '    "qq",\n'
+  '    "wecom",\n'
   '];',
   'loader_keys_partition_rejected_and_implemented',
   '#2301 every module subset key is implemented or a bundle key'),
  ('subset-whitelist-loses-slack',
   source / 'tests.rs',
-  'const SUBSET_CHANNEL_KEYS: [&str; 17] = [\n'
+  'const SUBSET_CHANNEL_KEYS: [&str; 19] = [\n'
   '    "weixin",\n'
   '    "feishu",\n'
   '    "apiServer",\n'
@@ -243,8 +236,10 @@ MUTATIONS = [('qq-dropped',
   '    "matrix",\n'
   '    "telegram",\n'
   '    "whatsapp",\n'
+  '    "qq",\n'
+  '    "wecom",\n'
   '];',
-  'const SUBSET_CHANNEL_KEYS: [&str; 16] = [\n'
+  'const SUBSET_CHANNEL_KEYS: [&str; 18] = [\n'
   '    "weixin",\n'
   '    "feishu",\n'
   '    "apiServer",\n'
@@ -261,12 +256,14 @@ MUTATIONS = [('qq-dropped',
   '    "matrix",\n'
   '    "telegram",\n'
   '    "whatsapp",\n'
+  '    "qq",\n'
+  '    "wecom",\n'
   '];',
   'loader_keys_partition_rejected_and_implemented',
   '#2301 every implemented loader key is in the module subset whitelist'),
  ('subset-whitelist-loses-bundle-weixin',
   source / 'tests.rs',
-  'const SUBSET_CHANNEL_KEYS: [&str; 17] = [\n'
+  'const SUBSET_CHANNEL_KEYS: [&str; 19] = [\n'
   '    "weixin",\n'
   '    "feishu",\n'
   '    "apiServer",\n'
@@ -284,8 +281,10 @@ MUTATIONS = [('qq-dropped',
   '    "matrix",\n'
   '    "telegram",\n'
   '    "whatsapp",\n'
+  '    "qq",\n'
+  '    "wecom",\n'
   '];',
-  'const SUBSET_CHANNEL_KEYS: [&str; 16] = [\n'
+  'const SUBSET_CHANNEL_KEYS: [&str; 18] = [\n'
   '    "feishu",\n'
   '    "apiServer",\n'
   '    "webhook",\n'
@@ -302,12 +301,14 @@ MUTATIONS = [('qq-dropped',
   '    "matrix",\n'
   '    "telegram",\n'
   '    "whatsapp",\n'
+  '    "qq",\n'
+  '    "wecom",\n'
   '];',
   'loader_keys_partition_rejected_and_implemented',
   '#2367 every bundle key is in the module subset whitelist'),
  ('subset-whitelist-loses-bundle-feishu',
   source / 'tests.rs',
-  'const SUBSET_CHANNEL_KEYS: [&str; 17] = [\n'
+  'const SUBSET_CHANNEL_KEYS: [&str; 19] = [\n'
   '    "weixin",\n'
   '    "feishu",\n'
   '    "apiServer",\n'
@@ -325,8 +326,10 @@ MUTATIONS = [('qq-dropped',
   '    "matrix",\n'
   '    "telegram",\n'
   '    "whatsapp",\n'
+  '    "qq",\n'
+  '    "wecom",\n'
   '];',
-  'const SUBSET_CHANNEL_KEYS: [&str; 16] = [\n'
+  'const SUBSET_CHANNEL_KEYS: [&str; 18] = [\n'
   '    "weixin",\n'
   '    "apiServer",\n'
   '    "webhook",\n'
@@ -343,9 +346,29 @@ MUTATIONS = [('qq-dropped',
   '    "matrix",\n'
   '    "telegram",\n'
   '    "whatsapp",\n'
+  '    "qq",\n'
+  '    "wecom",\n'
   '];',
   'loader_keys_partition_rejected_and_implemented',
-  '#2367 every bundle key is in the module subset whitelist')]
+  '#2367 every bundle key is in the module subset whitelist'),
+ ('subset-sms-rejected',
+  source / 'loader.rs',
+  'pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[];',
+  'pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &["sms"];',
+  'unmigrated_subset_channels_stay_loadable',
+  '#1386 subset channel must not be rejected'),
+ ('reject-table-reinserts-slack',
+  source / 'loader.rs',
+  'pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[];',
+  'pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &["slack"];',
+  'unmigrated_subset_channels_stay_loadable',
+  '#1386 subset channel must not be rejected'),
+ ('rejection-table-gains-foreign-key',
+  source / 'loader.rs',
+  'pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[];',
+  'pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &["probe1853"];',
+  'unmigrated_rejection_order_is_deterministic',
+  '#H1 all backend channels have production implementations')]
 
 
 def main():
@@ -354,7 +377,7 @@ def main():
     return matrix_main(root, __file__, 'channel::tests::', MUTATIONS,
                        passed_count=1, child_count=0, paths=guarded,
                        exact=True, args=args,
-                       any_cell=('rejection-silenced', 'loader-table-iteration'))
+                       any_cell=())
 
 
 if __name__ == '__main__':

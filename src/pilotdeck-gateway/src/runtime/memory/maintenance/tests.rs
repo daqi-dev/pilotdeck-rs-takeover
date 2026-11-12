@@ -474,3 +474,126 @@ async fn cancelled_invocation_releases_flight_and_retries() {
         ]
     );
 }
+
+#[tokio::test]
+async fn acquired_generation_lease_survives_invalidation_and_every_queued_repeat() {
+    use crate::runtime::project::{
+        DisposeFuture, ProjectRuntimeFactory, ProjectRuntimeRegistry, ResourceBundle,
+        RuntimeResources,
+    };
+    use std::path::Path;
+    struct Resources {
+        service: Arc<Service>,
+        disposed: Arc<AtomicBool>,
+    }
+    impl RuntimeResources for Resources {
+        fn dispose(&self) -> DisposeFuture<'_> {
+            Box::pin(async move {
+                self.disposed.store(true, Ordering::SeqCst);
+                Ok(())
+            })
+        }
+    }
+    struct Factory(Mutex<VecDeque<(Arc<Service>, Arc<AtomicBool>)>>);
+    impl ProjectRuntimeFactory for Factory {
+        fn stage(&self, _: &Path, resources: &mut ResourceBundle) -> RuntimeResult {
+            let (service, disposed) = self.0.lock().unwrap().pop_front().unwrap();
+            resources.add(Resources { service, disposed });
+            Ok(())
+        }
+    }
+    struct Published(Arc<ProjectRuntime>);
+    impl MaintenanceRuntime for Published {
+        fn project_root(&self) -> JsString {
+            self.0.project_root().to_string_lossy().as_ref().into()
+        }
+        fn memory_service(&self) -> Option<Arc<dyn MemoryMaintenanceService>> {
+            self.0
+                .resources()
+                .get::<Resources>()
+                .map(|resource| resource.service.clone() as _)
+        }
+    }
+    async fn until(mut condition: impl FnMut() -> bool) {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !condition() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+    let events = Events::default();
+    let make = |id| {
+        Arc::new(Service {
+            id,
+            events: events.clone(),
+            pending: Mutex::default(),
+            panic_after: AtomicBool::new(false),
+            panic_kind: "unused",
+            panic_first: AtomicBool::new(false),
+            immediate: false,
+        })
+    };
+    let old = make("old");
+    let new = make("new");
+    let old_disposed = Arc::new(AtomicBool::new(false));
+    let new_disposed = Arc::new(AtomicBool::new(false));
+    let registry = Arc::new(ProjectRuntimeRegistry::new(
+        "/isolated-maintenance",
+        Arc::new(Factory(Mutex::new(VecDeque::from([
+            (old.clone(), old_disposed.clone()),
+            (new.clone(), new_disposed.clone()),
+        ])))),
+    ));
+    let resolver_registry = registry.clone();
+    let published: Arc<Mutex<Vec<Arc<Published>>>> = Arc::default();
+    let controller = ProjectMemoryMaintenanceController::new_leased(
+        Arc::new(move |key| {
+            let path =
+                key.map(|key| std::path::PathBuf::from(String::from_utf16_lossy(key.units())));
+            let lease = resolver_registry.acquire(path.as_deref())?;
+            let runtime = lease.runtime().clone();
+            let mut published = published.lock().unwrap();
+            let wrapper = match published
+                .iter()
+                .find(|value| Arc::ptr_eq(&value.0, &runtime))
+            {
+                Some(value) => value.clone(),
+                None => {
+                    let value = Arc::new(Published(runtime));
+                    published.push(value.clone());
+                    value
+                }
+            };
+            Ok((wrapper, Some(Arc::new(lease) as MaintenanceLease)))
+        }),
+        Arc::new(Telemetry(events.clone())),
+        None,
+    );
+    controller.schedule(None).unwrap();
+    controller.schedule(None).unwrap(); // same exact generation queues a repeat
+    registry.invalidate(None);
+    assert!(!old_disposed.load(Ordering::SeqCst));
+    controller.schedule(None).unwrap(); // the new generation runs independently
+    assert!(!new.pending.lock().unwrap().is_empty());
+    old.settle(Ok(()));
+    until(|| !old.pending.lock().unwrap().is_empty()).await;
+    assert!(!old_disposed.load(Ordering::SeqCst));
+    old.settle(Ok(()));
+    until(|| old_disposed.load(Ordering::SeqCst)).await;
+    assert!(!new_disposed.load(Ordering::SeqCst));
+    new.settle(Ok(()));
+    until(|| {
+        events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| event[0] == "success")
+            .count()
+            == 3
+    })
+    .await;
+    registry.dispose().await.unwrap();
+    assert!(new_disposed.load(Ordering::SeqCst));
+}

@@ -23,6 +23,9 @@ use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
 pub struct Requests {
+    /// Some is the production generation authority; it never falls back to
+    /// the legacy fixture fields, including while a family is unpublished.
+    pub subsystems: Option<Arc<super::assembly::publication::SubsystemPublication>>,
     pub options: Options,
     pub env: crate::config::Env,
     pub memory: Arc<MemoryGateway>,
@@ -78,11 +81,37 @@ pub struct Requests {
     pub session_overrides: Arc<SessionOverrides>,
 }
 
+impl Requests {
+    pub(super) fn current_cron(&self) -> Option<Arc<crate::runtime::cron::CronManager>> {
+        match &self.subsystems {
+            Some(publication) => publication.snapshot().and_then(|snapshot| snapshot.cron),
+            None => self.cron.clone(),
+        }
+    }
+    pub(super) fn current_always_on(
+        &self,
+    ) -> Option<Arc<crate::runtime::always_on::AlwaysOnManager>> {
+        match &self.subsystems {
+            Some(publication) => publication
+                .snapshot()
+                .and_then(|snapshot| snapshot.always_on),
+            None => self.always_on.clone(),
+        }
+    }
+    pub(super) fn current_standalone(
+        &self,
+    ) -> Option<Arc<crate::runtime::always_on::StandaloneAlwaysOn>> {
+        match &self.subsystems {
+            Some(publication) => publication
+                .snapshot()
+                .and_then(|snapshot| snapshot.standalone),
+            None => self.always_on_standalone.get().cloned(),
+        }
+    }
+}
 #[cfg(test)]
 impl Requests {
-    /// A stub `McpGateway` for test helpers that do not exercise MCP methods.
-    /// The stub's `SdkMcpConfig` is wired with the supplied `owner` so it
-    /// shares the same session close port as the surrounding test.
+    /// A stub `McpGateway` sharing the test helper's session owner.
     pub fn stub_mcp(owner: &SessionOwner) -> Arc<McpGateway> {
         use crate::{
             config::permission::GatewaySessionPermissionRuleSetRegistry,

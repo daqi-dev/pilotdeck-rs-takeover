@@ -1,17 +1,15 @@
-//! A8.3 sms channel: port of `src/adapters/channel/sms/SmsChannel.ts` on the
-//! #1327 lifecycle. All external services are loopback mocks; the Twilio REST
-//! boundary is an injected [`sender::TwilioFactory`].
-//!
-//! TS `start(deps)` reads `deps.gateway`; when this unit was written #1327's
-//! `ChannelStartDeps` had no gateway field, so the A7 boundary is a constructor
-//! option ([`SmsChannelOptions::gateway`]). #1333's api-server port later added
-//! `turn_gateway` to the deps; the sms adapter still does not read it — the
-//! difference is recorded in the #1339 diffs ledger (A8.3-CH-SMS-004).
+//! Native SMS webhook and provider adapter. HTTP/JS compatibility tests can
+//! still inject their historical ports. The production network mount supplies
+//! a Rust REST sender, binds ChannelStartDeps.turn_gateway and the host
+//! responder, and owns accepted turns and all spawned work through stop.
 pub mod elicitation;
 pub mod gateway;
 #[cfg(test)]
 mod head_timeout_tests;
 pub mod mapper;
+mod native;
+#[cfg(test)]
+mod native_tests;
 pub mod permission;
 pub mod render;
 pub mod sender;
@@ -255,6 +253,7 @@ struct Boundaries {
 
 struct SmsShared {
     boundaries: StdMutex<Boundaries>,
+    native: StdMutex<Option<Arc<native::NativeRuntime>>>,
     runtime: Mutex<SmsRuntime>,
     /// #1790: the permission state machine lives behind its own `std` mutex so
     /// the cross-`await` guards can release it on panic/cancel without the
@@ -357,6 +356,10 @@ impl ChannelHandle for SmsHandle {
         let shared = self.shared.clone();
         let reason = reason.to_owned();
         let server = self.server.lock().expect("#1339 stop mutex").take();
+        let native = shared.native.lock().unwrap().clone();
+        if let Some(native) = native {
+            return native.stop_owned(shared, server, reason);
+        }
         Box::pin(async move {
             // The TS default `reason ?? "no reason"` cannot be expressed over
             // the #1327 `&str` port; the harness passes "no reason" for an
@@ -424,6 +427,7 @@ impl SmsChannel {
         Self {
             key: ChannelKey::new("sms"),
             shared: Arc::new(SmsShared {
+                native: StdMutex::new(None),
                 boundaries: StdMutex::new(Boundaries {
                     logger: None,
                     gateway,
@@ -455,6 +459,14 @@ impl SmsChannel {
                 factory: twilio_factory,
             }),
         }
+    }
+
+    pub(crate) fn with_native(
+        self,
+        responder: crate::channel::im_interaction::ResponderRef,
+    ) -> Self {
+        *self.shared.native.lock().unwrap() = Some(native::NativeRuntime::new(responder));
+        self
     }
 
     /// `deliverCronResult` (`ImCronDelivery.ts`): the origin session key must
@@ -502,6 +514,11 @@ impl ChannelAdapter for SmsChannel {
             )
         };
         Box::pin(async move {
+            let native = shared.native.lock().unwrap().clone();
+            if let Some(native) = native {
+                native.bind(deps.turn_gateway)?;
+                shared.boundaries.lock().unwrap().gateway = Some(Arc::new(native));
+            }
             if let Some(logger) = deps.log {
                 shared
                     .boundaries
@@ -515,7 +532,7 @@ impl ChannelAdapter for SmsChannel {
                     "error",
                     "sms: twilio not installed; run `npm install twilio`".to_owned(),
                 );
-                return Ok(Arc::new(NoopHandle) as Arc<dyn ChannelHandle>);
+                return Ok(start_failure_handle(&shared));
             };
             let field = |name: &str| {
                 extra
@@ -572,7 +589,7 @@ impl ChannelAdapter for SmsChannel {
                     "error",
                     "sms: missing config; need TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER".to_owned(),
                 );
-                return Ok(Arc::new(NoopHandle) as Arc<dyn ChannelHandle>);
+                return Ok(start_failure_handle(&shared));
             }
             let client = match factory(&account_sid, &auth_token) {
                 Ok(client) => client,
@@ -581,7 +598,7 @@ impl ChannelAdapter for SmsChannel {
                         "error",
                         format!("sms: twilio init failed: {}", error.to_js_string()),
                     );
-                    return Ok(Arc::new(NoopHandle) as Arc<dyn ChannelHandle>);
+                    return Ok(start_failure_handle(&shared));
                 }
             };
             // The TS fields are already assigned here; a failed listen below
@@ -613,7 +630,7 @@ impl ChannelAdapter for SmsChannel {
                                 listen_error(&error, &host_text, port)
                             ),
                         );
-                        return Ok(Arc::new(NoopHandle) as Arc<dyn ChannelHandle>);
+                        return Ok(start_failure_handle(&shared));
                     }
                 }
             };
@@ -625,7 +642,7 @@ impl ChannelAdapter for SmsChannel {
                         crate::js_value::number_string(port)
                     ),
                 );
-                return Ok(Arc::new(NoopHandle) as Arc<dyn ChannelHandle>);
+                return Ok(start_failure_handle(&shared));
             }
             let listener = listener.expect("#1339 listener bound when the port is valid");
             let path_text = String::from_utf16_lossy(path.units());
@@ -805,6 +822,26 @@ impl ChannelAdapter for SmsChannel {
                 server: StdMutex::new(Some(ServerEntry { shutdown, task })),
             }) as Arc<dyn ChannelHandle>)
         })
+    }
+    fn deliver_cron_result(
+        &self,
+        delivery: &super::im_cron::CronResultDelivery,
+    ) -> BoxFuture<bool> {
+        let shared = self.shared.clone();
+        super::im_cron::deliver_chat_cron_result(delivery, &self.key, move |chat, text| {
+            Box::pin(async move { send_reply(&shared, &chat, text).await })
+        })
+    }
+}
+
+fn start_failure_handle(shared: &Arc<SmsShared>) -> Arc<dyn ChannelHandle> {
+    if shared.native.lock().unwrap().is_some() {
+        Arc::new(SmsHandle {
+            shared: shared.clone(),
+            server: StdMutex::new(None),
+        })
+    } else {
+        Arc::new(NoopHandle)
     }
 }
 
@@ -1244,7 +1281,8 @@ async fn route_request(
 
     let chat_id = js_string_of(&from_value);
     let spawned = shared.clone();
-    tokio::spawn(async move {
+    let native = shared.native.lock().unwrap().clone();
+    let handler = async move {
         // `void this.handleIncoming(...).catch(e => log)`
         if let Err(error) = handle_incoming(&spawned, chat_id, text).await {
             spawned.log(
@@ -1252,7 +1290,12 @@ async fn route_request(
                 format!("sms: handleIncoming error: {}", error.to_js_string()),
             );
         }
-    });
+    };
+    if let Some(native) = native {
+        native.spawn(handler);
+    } else {
+        tokio::spawn(handler);
+    }
     Ok(response)
 }
 
@@ -1405,8 +1448,14 @@ async fn send_reply(shared: &SmsShared, chat_id: &JsString, text: JsString) -> b
         from,
         to: chat_id.clone(),
     };
-    match client.send(message).await {
-        Ok(()) => true,
+    let native = shared.native.lock().unwrap().clone();
+    let result = if let Some(native) = native {
+        native.send(client, message).await
+    } else {
+        client.send(message).await.map(|()| true)
+    };
+    match result {
+        Ok(delivered) => delivered,
         Err(error) => {
             shared.log(
                 "error",
@@ -1851,6 +1900,10 @@ async fn process_message(
             }
         }
     }
+    let native = shared.native.lock().unwrap().clone();
+    if native.is_some_and(|native| native.is_stopping()) {
+        return Ok(());
+    }
     if let Some(error) = turn_error {
         shared.log("error", format!("sms: submitTurn error: {error}"));
         reply_units = if crate::mutants::on("sms-error-reply-text") {
@@ -1935,6 +1988,34 @@ pub fn register(mounts: &mut super::loader::ChannelLoaderMounts) {
                 record_unhandled: None,
                 request_timeout: None,
             })) as Arc<dyn ChannelAdapter>)
+        }),
+    );
+}
+
+/// Native production mount: HTTP, host turn ownership and interaction replies
+/// all use this adapter's injected host boundaries.
+pub(crate) fn register_with_network(
+    mounts: &mut super::loader::ChannelLoaderMounts,
+    responder: crate::channel::im_interaction::ResponderRef,
+    network: Arc<super::network::ChannelNetwork>,
+) {
+    mounts.register(
+        "sms",
+        Arc::new(move |options: &JsObject| {
+            Ok(Arc::new(
+                SmsChannel::new(SmsChannelOptions {
+                    extra: options.get("extra").and_then(JsValue::as_object).cloned(),
+                    mapper: None,
+                    gateway: None,
+                    env: Some(Arc::new(|name| {
+                        std::env::var(name).ok().map(JsString::from)
+                    })),
+                    twilio_factory: Some(sender::native_factory(network.clone())),
+                    record_unhandled: None,
+                    request_timeout: None,
+                })
+                .with_native(responder.clone()),
+            ) as Arc<dyn ChannelAdapter>)
         }),
     );
 }

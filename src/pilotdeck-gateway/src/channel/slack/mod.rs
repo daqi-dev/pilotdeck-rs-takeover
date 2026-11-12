@@ -15,6 +15,10 @@
 //! (the module is always present — a product enhancement, registered in the
 //! parity ledger as A8.3-CH-SLACK-001, 范围 item 3).
 pub mod mapper;
+mod native;
+
+/// Production mount: shared network, native turn gateway, responder and owned stop.
+pub(crate) use native::register_with_network;
 pub mod render;
 #[cfg(test)]
 mod tests;

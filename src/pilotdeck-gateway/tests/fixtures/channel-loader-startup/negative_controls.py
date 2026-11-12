@@ -162,8 +162,10 @@ MUTATIONS = [
 H1_KEYS = ("email", "dingtalk", "discord", "matrix", "telegram", "whatsapp")
 for key in H1_KEYS:
     network_arg = "network.clone()"
-    mount = (f"    crate::channel::{key}::register_with_network("
-             f"&mut mounts, responder.clone(), {network_arg});\n")
+    mount = (f"    crate::channel::{key}::register_with_network(\n"
+             "        &mut mounts,\n        responder.clone(),\n        network.clone(),\n    );\n") if key in ("dingtalk", "telegram", "whatsapp") else (
+                 f"    crate::channel::{key}::register_with_network("
+                 f"&mut mounts, responder.clone(), {network_arg});\n")
     cell = f"channel::tests::production_loader_mount_builds_{key}_with_js_truthiness"
     MUTATIONS.extend([
         (f"h1-{key}-mount-dropped", channels, mount,
@@ -173,8 +175,8 @@ for key in H1_KEYS:
          f'    mounts.register("{key}", Arc::new(|_| Err(ChannelError::error("H1 negative constructor failure"))));\n',
          [(cell, "#H1 production loader construction succeeds")]),
         (f"h1-{key}-reinserted-rejection", loader,
-         'pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[\n    "qq",',
-         f'pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[\n    "{key}",\n    "qq",',
+         'pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[];',
+         f'pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &["{key}"];',
          [(cell, "#H1 migrated loader channel is not rejected")]),
     ])
 H1_CELLS = [(f"channel::tests::production_loader_mount_builds_{key}_with_js_truthiness",
@@ -186,6 +188,35 @@ MUTATIONS.extend([
     ("h1-loader-disabled-constructed", loader,
      '        if !js_truthy(cfg.get("enabled")) {',
      '        if false {', H1_CELLS),
+])
+
+
+# QQ/WeCom are actual bundle constructors, with strict enabled === true.
+MUTATIONS.append((
+    "h1-bundle-strict-gate-loosened", channels,
+    '        Some(JsValue::Bool(true))\n    )\n}\n',
+    '        Some(JsValue::Bool(true) | JsValue::Number(_))\n    )\n}\n',
+    [("native_process::channels::h1_tests::qq_wecom_bundle_constructs_only_for_strict_true",
+      "#H1 bundle production constructor uses strict true")],
+))
+
+
+for key in ("qq", "wecom"):
+    MUTATIONS.append((f"h1-{key}-bundle-constructor-skipped", channels,
+        f"            Some(self.make_{key}_with(&self.config).await)", "            None",
+        [("native_process::channels::h1_tests::qq_wecom_bundle_constructs_only_for_strict_true",
+          "#H1 bundle production constructor uses strict true")]))
+
+
+BUNDLE_REJECTION = '        return Err(ChannelError::error(format!(\n            "[adapters] channel \\"{key}\\" {UNMIGRATED_REASON}"\n        )));\n'
+MUTATIONS.extend([
+    ("h1-unsupported-bundle-silenced", loader, BUNDLE_REJECTION, "        continue;\n",
+     [("channel::tests::bundle_gate_rejects_an_enabled_key_with_no_implementation",
+       "#1763 enabled bundle key without an implementation must reject")]),
+    ("h1-unsupported-bundle-loses-key", loader, BUNDLE_REJECTION,
+     BUNDLE_REJECTION.replace('channel ' + chr(92) + '"{key}' + chr(92) + '" ', ''),
+     [("channel::tests::bundle_gate_rejects_an_enabled_key_with_no_implementation",
+       "#1763 bundle rejection message shape")]),
 ])
 
 

@@ -183,6 +183,7 @@ async fn serve_until_signal(
         switch_wiring::AdmissionGate::new(switch_handles.channels, trigger),
         phased,
     )
+    .with_automation_stop(switch_handles.automation_stop)
     .with_release_interactions(switch_handles.release_interactions)
     .with_telemetry_snapshot(telemetry_snapshot);
     let mut timeouts = crate::switch::SwitchTimeouts::production(drain_budget);

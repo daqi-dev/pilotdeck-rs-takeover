@@ -44,7 +44,7 @@ fn runs(requests: &Requests) -> bool {
 
 /// `options.cron`: the six control names need the configured cron runtime.
 fn cron(requests: &Requests) -> bool {
-    requests.cron.is_some()
+    requests.current_cron().is_some()
 }
 
 /// Advertised names, in the order the TS baseline emits them

@@ -310,11 +310,16 @@ impl Shared {
                 return;
             }
             let base = resume_url.as_deref().unwrap_or(&initial_url);
-            let url = format!(
-                "{}{}v=10&encoding=json",
-                base,
-                if base.contains('?') { "&" } else { "?" }
-            );
+            let url = match wire::gateway_url(base) {
+                Ok(url) => url,
+                Err(error) => {
+                    self.log("error", &format!("discord: client error: {error}"));
+                    if let Some(ready) = ready.take() {
+                        let _ = ready.send(Err(error));
+                    }
+                    return;
+                }
+            };
             let connected = tokio::select! { biased; _ = stop.changed() => return, connected = self.network.connect_ws(url.as_str()) => connected };
             match connected {
                 Ok((mut socket, _)) => {
@@ -787,6 +792,20 @@ impl Shared {
 }
 
 struct Handle(Arc<Shared>);
+// A cancelled startup must release its already-open receiver independently
+// of the caller that dropped `start()` while waiting for authentication.
+struct StartupOwner {
+    shared: Arc<Shared>,
+    committed: bool,
+}
+impl Drop for StartupOwner {
+    fn drop(&mut self) {
+        if !self.committed {
+            drop(Handle(self.shared.clone()).stop("startup cancelled"));
+        }
+    }
+}
+
 struct NoopHandle;
 impl ChannelHandle for NoopHandle {
     fn stop(&self, _reason: &str) -> BoxFuture<Result<(), ChannelError>> {
@@ -1000,9 +1019,16 @@ impl ChannelAdapter for DiscordChannel {
             let (ready, receipt) = oneshot::channel();
             let task = tokio::spawn(shared.clone().receive(url, ready, rx));
             *shared.receiver.lock().expect("discord receiver") = Some(ReceiveTask { stop, task });
+            let mut startup = StartupOwner {
+                shared: shared.clone(),
+                committed: false,
+            };
             let started = tokio::time::timeout(Duration::from_secs(30), receipt).await;
             match started {
-                Ok(Ok(Ok(()))) => Ok(Arc::new(Handle(shared)) as Arc<dyn ChannelHandle>),
+                Ok(Ok(Ok(()))) => {
+                    startup.committed = true;
+                    Ok(Arc::new(Handle(shared)) as Arc<dyn ChannelHandle>)
+                }
                 outcome => {
                     let error = match outcome {
                         Ok(Ok(Err(error))) => error,
@@ -1011,6 +1037,7 @@ impl ChannelAdapter for DiscordChannel {
                         _ => unreachable!(),
                     };
                     shared.log("error", &format!("discord: start failed: {error}"));
+                    startup.committed = true;
                     Handle(shared).stop("start failed").await?;
                     Ok(Arc::new(NoopHandle) as Arc<dyn ChannelHandle>)
                 }

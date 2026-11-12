@@ -1,6 +1,6 @@
 //! Search matching and JS diagnostic spelling for invalid patterns.
+use super::Failure;
 use super::Text;
-use crate::Failure;
 use fancy_regex::{Error, ParseError, Regex, RegexBuilder};
 
 pub(super) enum Matcher {
@@ -15,12 +15,21 @@ pub(super) enum Matcher {
     },
 }
 impl Matcher {
+    #[cfg(test)]
     pub(super) fn new(query: &str, regex: bool, sensitive: bool) -> Result<Self, Failure> {
+        Self::new_js(&query.into(), regex, sensitive)
+    }
+    pub(super) fn new_js(
+        query: &pilotdeck_protocol::JsString,
+        regex: bool,
+        sensitive: bool,
+    ) -> Result<Self, Failure> {
+        let units = query.units();
         if !regex {
             let needle = if sensitive {
-                query.encode_utf16().collect()
+                units.to_vec()
             } else {
-                lower(&query.encode_utf16().collect::<Vec<_>>())
+                lower(units)
             };
             // KMP's failure links bound repeated-prefix literal searches by
             // O(query + text), including large pasted keywords.
@@ -42,13 +51,14 @@ impl Matcher {
             });
         }
 
+        let query = String::from_utf16_lossy(units);
         let invalid = |detail: &str| {
             Failure::Error(format!(
                 "Invalid regular expression: /{query}/{}: {detail}",
                 if sensitive { "" } else { "i" }
             ))
         };
-        let translated = translate(query, sensitive).map_err(invalid)?;
+        let translated = translate(units, sensitive).map_err(invalid)?;
         let pattern = RegexBuilder::new(&translated).build().map_err(|error| {
             let detail = match &error {
                 Error::ParseError(
@@ -490,8 +500,7 @@ fn quantifier_out_of_order(units: &[u16]) -> bool {
     };
     bound(&units[1..comma]) > bound(upper)
 }
-fn translate(pattern: &str, sensitive: bool) -> Result<String, &'static str> {
-    let units: Vec<_> = pattern.encode_utf16().collect();
+fn translate(units: &[u16], sensitive: bool) -> Result<String, &'static str> {
     // Count captures before resolving decimal escapes, including forward refs.
     let (mut captures, mut at, mut in_class) = (0, 0, false);
     let mut names = std::collections::HashSet::new();
@@ -536,7 +545,7 @@ fn translate(pattern: &str, sensitive: bool) -> Result<String, &'static str> {
             92 => {
                 assertion =
                     matches!(units.get(index), Some(98 | 66)).then_some("Nothing to repeat");
-                match escape(&units, &mut index, false, captures, !names.is_empty())? {
+                match escape(units, &mut index, false, captures, !names.is_empty())? {
                     Atom::Unit(u) => out.push_str(&escaped_unit(u, sensitive)),
                     Atom::Dash => unreachable!(),
                     Atom::Set(set) => out.push_str(&emit_set(set, sensitive, false)),
@@ -546,7 +555,7 @@ fn translate(pattern: &str, sensitive: bool) -> Result<String, &'static str> {
             }
             91 => {
                 assertion = None;
-                out.push_str(&character_class(&units, &mut index, sensitive)?);
+                out.push_str(&character_class(units, &mut index, sensitive)?);
                 repeated = false;
             }
             40 => {
@@ -591,14 +600,14 @@ fn translate(pattern: &str, sensitive: bool) -> Result<String, &'static str> {
                 }
                 repeated = false;
             }
-            123 if quantifier(&units, index - 1).is_some() => {
+            123 if quantifier(units, index - 1).is_some() => {
                 if repeated {
                     return Err("Nothing to repeat");
                 }
                 if let Some(detail) = assertion {
                     return Err(detail);
                 }
-                let end = quantifier(&units, index - 1).unwrap();
+                let end = quantifier(units, index - 1).unwrap();
                 if quantifier_out_of_order(&units[index - 1..end]) {
                     return Err("numbers out of order in {} quantifier");
                 }

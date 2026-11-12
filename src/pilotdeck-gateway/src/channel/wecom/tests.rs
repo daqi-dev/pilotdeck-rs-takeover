@@ -416,6 +416,20 @@ async fn reconnect_resubscribes_with_same_device_and_new_request_id() {
             if attempt == 0 {
                 socket.close(None).await.unwrap();
             } else {
+                // Auth ACK arrival at the server is earlier than completion
+                // of the adapter's connect promise. Confirm a real turn/reply
+                // on the reconnected socket before asserting graceful stop.
+                socket.send(Message::Text(r#"{"cmd":"aibot_msg_callback","headers":{"req_id":"reconnected-turn"},"body":{"msgid":"reconnected-turn","from":{"userid":"user"},"msgtype":"text","text":{"content":"hello"}}}"#.into())).await.unwrap();
+                let reply = socket.next().await.unwrap().unwrap();
+                let reply = parse_json(reply.to_text().unwrap()).unwrap();
+                assert_eq!(string(&reply, "cmd"), JsString::from("aibot_respond_msg"));
+                assert_eq!(payload_id(&reply), JsString::from("reconnected-turn"));
+                socket
+                    .send(Message::Text(
+                        r#"{"headers":{"req_id":"reconnected-turn"},"body":{"errcode":0}}"#.into(),
+                    ))
+                    .await
+                    .unwrap();
                 ready_tx.send(()).unwrap();
                 assert!(matches!(
                     socket.next().await.unwrap().unwrap(),
@@ -426,11 +440,395 @@ async fn reconnect_resubscribes_with_same_device_and_new_request_id() {
         }
     });
     let channel = WeComChannel::new(options(url), js_helper_interaction(Arc::new(Responder)));
-    let handle = channel.start(Default::default()).await.unwrap();
+    let handle = channel
+        .start(ChannelStartDeps {
+            turn_gateway: Some(Arc::new(Gateway(Arc::default()))),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
     tokio::time::timeout(Duration::from_secs(5), ready_rx)
         .await
         .unwrap()
         .unwrap();
     handle.stop("reconnected").await.unwrap();
     peer.await.unwrap();
+}
+#[test]
+fn mapper_state_roundtrip_keeps_property_order_unknown_values_and_utf16() {
+    let state=parse_json(r#"{"activeByChatId":{"z":"last","a":"first","bad":7,"\ud800":"lone"},"projectByScopeKey":{"b":"two","a":"one"}}"#).unwrap();
+    let mapper = WeComSessionMapper::new(
+        WeComSessionMapperState::from_js(&state),
+        Arc::new(|| "fixed".into()),
+    );
+    assert_eq!(mapper.snapshot().to_js(), state);
+    assert_eq!(
+        stringify_json(&mapper.snapshot().to_js()).unwrap(),
+        stringify_json(&state).unwrap()
+    );
+}
+struct MediaGateway(Arc<Mutex<Vec<TurnRequest>>>);
+impl TurnGateway for MediaGateway {
+    fn submit(
+        &self,
+        request: TurnRequest,
+    ) -> BoxFuture<Result<Box<dyn TurnEventStream>, ChannelError>> {
+        self.0.lock().unwrap().push(request);
+        Box::pin(async {
+            Ok(Box::new(Events(VecDeque::from([parse_json(r#"{"type":"tool_call_finished","ok":true,"toolCallId":"tool","images":[{"data":"eA==","mimeType":"image/png"}]}"#).unwrap()])))as Box<dyn TurnEventStream>)
+        })
+    }
+}
+struct Scratch(std::path::PathBuf);
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+#[tokio::test]
+async fn inbound_aes_and_tool_image_upload_wire_match_fixed_ts_oracle() {
+    use base64::Engine as _;
+    use cbc::cipher::{BlockEncryptMut, KeyIvInit, block_padding::NoPadding};
+    let scratch =
+        Scratch(std::env::temp_dir().join(format!("pilotdeck-h1-wecom-{}", uuid::Uuid::new_v4())));
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let url = format!("ws://{}", listener.local_addr().unwrap());
+    let (ready_tx, ready_rx) = oneshot::channel();
+    let (release_tx, release_rx) = oneshot::channel();
+    let key = [7u8; 32];
+    let mut bytes = b"hello".to_vec();
+    bytes.extend([27u8; 27]);
+    let len = bytes.len();
+    let encrypted = cbc::Encryptor::<aes::Aes256>::new_from_slices(&key, &key[..16])
+        .unwrap()
+        .encrypt_padded_mut::<NoPadding>(&mut bytes, len)
+        .unwrap();
+    let incoming=serde_json::json!({"cmd":"aibot_msg_callback","headers":{"req_id":"incoming-media"},"body":{"msgid":"media-in","from":{"userid":"user"},"msgtype":"image","image":{"base64":base64::engine::general_purpose::STANDARD.encode(encrypted),"aeskey":base64::engine::general_purpose::STANDARD_NO_PAD.encode(key),"filename":"a b.png","content_type":"image/png"}}}).to_string();
+    let peer = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+        let subscribe = socket.next().await.unwrap().unwrap();
+        let subscribe = parse_json(subscribe.to_text().unwrap()).unwrap();
+        socket
+            .send(Message::Text(
+                encode(&object([
+                    ("headers", subscribe.get("headers").unwrap().clone()),
+                    ("body", object([("errcode", JsValue::Number(0.0))])),
+                ]))
+                .into(),
+            ))
+            .await
+            .unwrap();
+        socket.send(Message::Text(incoming.into())).await.unwrap();
+        let oracle = parse_json(include_str!(
+            "../../../tests/fixtures/h1-wecom/media-expected.json"
+        ))
+        .unwrap();
+        let expected = if let Some(JsValue::Array(items)) = oracle.get("sent") {
+            items
+        } else {
+            panic!()
+        };
+        for (index, expected) in expected.iter().enumerate().skip(1) {
+            let message = socket.next().await.unwrap().unwrap();
+            let message = parse_json(message.to_text().unwrap()).unwrap();
+            assert_eq!(string(&message, "cmd"), string(expected, "cmd"));
+            assert_eq!(message.get("body"), expected.get("body"));
+            if index == 4 {
+                assert_eq!(payload_id(&message), JsString::from("incoming-media"));
+            }
+            let body = match index {
+                1 => object([
+                    ("errcode", JsValue::Number(0.0)),
+                    ("upload_id", JsValue::from("upload")),
+                ]),
+                3 => object([
+                    ("errcode", JsValue::Number(0.0)),
+                    ("media_id", JsValue::from("media")),
+                ]),
+                _ => object([("errcode", JsValue::Number(0.0))]),
+            };
+            socket
+                .send(Message::Text(
+                    encode(&object([
+                        ("headers", message.get("headers").unwrap().clone()),
+                        ("body", body),
+                    ]))
+                    .into(),
+                ))
+                .await
+                .unwrap();
+        }
+        ready_tx.send(()).unwrap();
+        let _ = release_rx.await;
+        assert!(matches!(
+            socket.next().await.unwrap().unwrap(),
+            Message::Close(_)
+        ));
+    });
+    let turns = Arc::new(Mutex::new(Vec::new()));
+    let mut config = options(url);
+    config.media_cache_dir = Some(scratch.0.clone());
+    let channel = WeComChannel::new(config, js_helper_interaction(Arc::new(Responder)));
+    let handle = channel
+        .start(ChannelStartDeps {
+            turn_gateway: Some(Arc::new(MediaGateway(turns.clone()))),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(4), ready_rx)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut attachment = {
+        let turns = turns.lock().unwrap();
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].message, JsString::from("用户发送了企业微信附件。"));
+        turns[0].attachments.as_ref().unwrap()[0].clone()
+    };
+    let path = String::from_utf16_lossy(string(&attachment, "path").units());
+    assert_eq!(tokio::fs::read(&path).await.unwrap(), b"hello");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+    if let JsValue::Object(object) = &mut attachment {
+        object.insert("path".into(), JsValue::from("<TMPDIR>/wecom-media"));
+    }
+    let oracle = parse_json(include_str!(
+        "../../../tests/fixtures/h1-wecom/media-expected.json"
+    ))
+    .unwrap();
+    let expected = if let Some(JsValue::Array(turns)) = oracle.get("turns") {
+        if let Some(JsValue::Array(items)) = turns[0].get("attachments") {
+            &items[0]
+        } else {
+            panic!()
+        }
+    } else {
+        panic!()
+    };
+    assert_eq!(&attachment, expected);
+    release_tx.send(()).unwrap();
+    handle.stop("media").await.unwrap();
+    peer.await.unwrap();
+}
+#[tokio::test]
+async fn public_document_send_keeps_work_owned_when_the_caller_drops_its_receipt() {
+    let scratch = Scratch(
+        std::env::temp_dir().join(format!("pilotdeck-h1-wecom-api-{}", uuid::Uuid::new_v4())),
+    );
+    tokio::fs::create_dir_all(&scratch.0).await.unwrap();
+    let path = scratch.0.join("source.png");
+    tokio::fs::write(&path, b"x").await.unwrap();
+    let channel = WeComChannel::new(
+        options("ws://unused.invalid".into()),
+        js_helper_interaction(Arc::new(Responder)),
+    );
+    let (sender, mut frames) = mpsc::unbounded_channel();
+    *channel.0.writer.lock().unwrap() = Some(sender);
+    let shared = channel.0.clone();
+    let (completed_tx, completed_rx) = oneshot::channel();
+    let peer = tokio::spawn(async move {
+        for index in 0..5 {
+            let frame = frames.recv().await.unwrap();
+            let cmd = string(&frame, "cmd");
+            let body = frame.get("body").unwrap();
+            let response = match index {
+                0 => {
+                    assert!(cmd.equals_str("aibot_upload_media_init"));
+                    assert_eq!(string(body, "type"), JsString::from("file"));
+                    assert_eq!(string(body, "filename"), JsString::from("x_.pdf"));
+                    object([
+                        ("errcode", JsValue::Number(0.0)),
+                        ("upload_id", JsValue::from("upload")),
+                    ])
+                }
+                1 => {
+                    assert!(cmd.equals_str("aibot_upload_media_chunk"));
+                    assert_eq!(string(body, "base64_data"), JsString::from("eA=="));
+                    object([("errcode", JsValue::Number(0.0))])
+                }
+                2 => {
+                    assert!(cmd.equals_str("aibot_upload_media_finish"));
+                    object([
+                        ("errcode", JsValue::Number(0.0)),
+                        ("media_id", JsValue::from("media")),
+                    ])
+                }
+                3 => {
+                    assert!(cmd.equals_str("aibot_send_msg"));
+                    assert_eq!(string(body, "chatid"), JsString::from("room"));
+                    assert_eq!(string(body, "msgtype"), JsString::from("file"));
+                    object([("errcode", JsValue::Number(0.0))])
+                }
+                _ => {
+                    assert!(cmd.equals_str("aibot_send_msg"));
+                    assert_eq!(
+                        body.get("markdown").map(|v| string(v, "content")),
+                        Some("caption".into())
+                    );
+                    object([("errcode", JsValue::Number(0.0))])
+                }
+            };
+            shared
+                .pending
+                .lock()
+                .unwrap()
+                .remove(&payload_id(&frame))
+                .unwrap()
+                .send(Ok(object([("body", response)])))
+                .unwrap();
+        }
+        completed_tx.send(()).unwrap();
+    });
+    let receipt = channel.send_document(
+        "room".into(),
+        path.to_string_lossy().as_ref().into(),
+        Some("caption".into()),
+        Some("../x ??.pdf".into()),
+        None,
+    );
+    drop(receipt);
+    tokio::time::timeout(Duration::from_secs(3), completed_rx)
+        .await
+        .unwrap()
+        .unwrap();
+    Handle(channel.0.clone()).stop("api").await.unwrap();
+    peer.await.unwrap();
+}
+#[tokio::test]
+async fn upload_rejection_returns_false_and_does_not_send_later_chunks() {
+    let scratch = Scratch(std::env::temp_dir().join(format!(
+        "pilotdeck-h1-wecom-reject-{}",
+        uuid::Uuid::new_v4()
+    )));
+    tokio::fs::create_dir_all(&scratch.0).await.unwrap();
+    let path = scratch.0.join("source.amr");
+    tokio::fs::write(&path, b"x").await.unwrap();
+    let channel = WeComChannel::new(
+        options("ws://unused.invalid".into()),
+        js_helper_interaction(Arc::new(Responder)),
+    );
+    let (sender, mut frames) = mpsc::unbounded_channel();
+    *channel.0.writer.lock().unwrap() = Some(sender);
+    let shared = channel.0.clone();
+    let peer = tokio::spawn(async move {
+        let frame = frames.recv().await.unwrap();
+        assert!(string(&frame, "cmd").equals_str("aibot_upload_media_init"));
+        shared
+            .pending
+            .lock()
+            .unwrap()
+            .remove(&payload_id(&frame))
+            .unwrap()
+            .send(Ok(parse_json(
+                r#"{"body":{"errcode":400,"errmsg":"rejected"}}"#,
+            )
+            .unwrap()))
+            .unwrap();
+        frames
+    });
+    assert!(
+        !channel
+            .send_voice(
+                "room".into(),
+                path.to_string_lossy().as_ref().into(),
+                None,
+                None
+            )
+            .await
+    );
+    let mut frames = peer.await.unwrap();
+    assert!(frames.try_recv().is_err());
+    Handle(channel.0.clone()).stop("rejected").await.unwrap();
+}
+
+#[test]
+fn safe_upload_names_match_basename_and_collapsed_invalid_runs() {
+    assert_eq!(media::safe_name("../x ??.pdf"), "x_.pdf");
+    assert_eq!(media::safe_name("a???   b.png"), "a_b.png");
+    assert_eq!(media::safe_name(""), "wecom_media");
+    assert_eq!(media::safe_name("/tmp/"), "tmp");
+    assert_eq!(media::safe_name(".."), "..");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stop_cannot_finish_between_a_handlers_first_effect_and_registration() {
+    let channel = WeComChannel::new(
+        options("ws://unused.invalid".into()),
+        js_helper_interaction(Arc::new(Responder)),
+    );
+    let (entered, entered_rx) = tokio::sync::oneshot::channel();
+    let (release, release_rx) = std::sync::mpsc::channel();
+    let completed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let shared = channel.0.clone();
+    let owner = shared.clone();
+    let done = completed.clone();
+    let producer = tokio::task::spawn_blocking(move || {
+        shared.spawn_handler(async move {
+            entered.send(()).unwrap();
+            release_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            owner.stopped().await;
+            done.store(true, std::sync::atomic::Ordering::Release);
+        })
+    });
+    entered_rx.await.unwrap();
+    let registered = channel.0.handlers.lock().unwrap().len();
+    let handle = Handle(channel.0.clone());
+    let mut stop = tokio::spawn(handle.stop("admission barrier"));
+    let premature = tokio::time::timeout(Duration::from_millis(25), &mut stop)
+        .await
+        .is_ok();
+    release.send(()).unwrap();
+    producer.await.unwrap();
+    if !premature {
+        stop.await.unwrap().unwrap();
+    }
+    assert_eq!(
+        registered, 1,
+        "the owner must be reserved before running handler effects"
+    );
+    assert!(!premature, "stop must wait for the reserved owner");
+    assert!(completed.load(std::sync::atomic::Ordering::Acquire));
+}
+#[test]
+fn malformed_exact_group_does_not_bypass_wildcard_sender_policy() {
+    let mut config = options("ws://unused.invalid".into());
+    let extra = config.extra.as_mut().unwrap();
+    extra.insert("group_policy".into(), JsValue::from("open"));
+    extra.insert(
+        "groups".into(),
+        parse_json(r#"{"room":false,"*":{"allow_from":["admin"]}}"#).unwrap(),
+    );
+    extra.insert(
+        "group_sessions_per_user".into(),
+        JsValue::from("wrong type"),
+    );
+    extra.insert("groupSessionsPerUser".into(), JsValue::Bool(false));
+    let channel = WeComChannel::new(config, js_helper_interaction(Arc::new(Responder)));
+    assert!(!channel.0.allowed(&"room".into(), &"user".into(), true));
+    assert!(channel.0.allowed(&"room".into(), &"admin".into(), true));
+    assert!(!channel.0.per_user);
+}
+#[test]
+fn access_lists_do_not_collapse_distinct_lone_utf16_identities() {
+    let left = JsString::from_utf16(vec![0xd800]);
+    let right = JsString::from_utf16(vec![0xd801]);
+    assert!(!wire::entry_matches(std::slice::from_ref(&left), &right));
+    assert!(wire::entry_matches(std::slice::from_ref(&left), &left));
+    assert!(!wire::equal_folded(&left, &right));
+    assert_eq!(
+        wire::list(Some(&JsValue::String(JsString::from_utf16(vec![
+            0xd800, 44, 0xd801
+        ])))),
+        vec![left, right]
+    );
 }

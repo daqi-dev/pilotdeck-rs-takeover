@@ -77,3 +77,5 @@ Telegram 四项组件测试包含 sticky/new/final reply、send失败、UTF-16�
 第二候选静态修正：QQ GET /gateway 不发送 Content-Type；消息发送成功不读取响应体；失败按 getAppAccessToken/getGateway/sendGroupMessage/sendC2CMessage 区分；恢复 dispatch/入站日志与 C2C 错误前缀；初次 token/discovery 在 start() 返回前完成，连接提示先于 WS open，保留失败后的可关闭 handle。第一候选源码 hash 存 `_tmp/20261113-h1-qq/first-candidate.sha256`，不将未编译候选当成功。
 
 2026-11-13 root首次检查失败修正：保留root的TurnRequest默认字段；QQ改正String/JsValue构造、UTF-16/UTF-8转换与BodyExt boxed歧义；Telegram以借用数组并逐项clone保留JsValue Drop所有权。非正QQ分块上限真实TS正控2返回，0/-1各100ms未返回后由父终止自建worker；证据及窄挂起修复登记 `specs/gateway-parity/diffs/H1-QQ-CHUNK-LIMIT-001.md`。当前检查状态仍是待复验。
+
+81bc7e5d5定向首轮：Telegram3通过/1失败、QQ7通过/1失败。两个失败都是双LF恰落max-1/max的测试期望错误：真实固定TS再次验证首块保留第一LF、第二块为rest；产品chunk未改，仅修正断言。原始首次失败保留 `_build/20261113-060046-root-81bc-h1-corrected/output.log`，新证据 `_tmp/20261113-h1-qq/double-lf-oracle.json`，驱动 `tests/fixtures/h1-telegram/chunk-oracle.cjs`。本轮QQ builder `from_config(&JsObject)` / `with_network(self,Arc<ChannelNetwork>)` 已供公共bundle复用字段解析及HTTP/WS双接线。修正后的测试尚未复验。

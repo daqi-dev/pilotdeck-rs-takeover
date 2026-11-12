@@ -6,7 +6,7 @@
   "files": {
     "home/.pilotdeck/projects/c1-sdk-cancel-resume-fixture/.cwd": "{PROJECT}\n"
   },
-  "about": "正式CLI恢复同一会话，模型发出首段后挂住；serve只向该CLI进程发送SIGINT，要求处理信号后自行结束，再resume同一会话并查询历史。无宿主18789；provider只用bbx本地mock。当前新场景待TS自比确认完整取消退出形状。",
+  "about": "正式CLI恢复同一会话，模型发出首段后挂住；serve只读registry确认同session/project/request/runId的partial已持久化且provider已flush并仍开放后，只向该CLI PID发送SIGINT。要求自行结束，再resume同一会话并查询历史。SDK默认过滤partial，不能用CLI stdout作为取消触发。无宿主18789；provider只用bbx本地mock；固定harness后待E0 TS自比/Rust对拍。",
   "provider": [
     {
       "name": "title",
@@ -33,10 +33,9 @@
       ],
       "reply": {
         "chunks": [
-          "",
           "C1 partial"
         ],
-        "hangAfter": 2,
+        "hangAfter": 1,
         "hangMs": 15000
       }
     },
@@ -80,10 +79,19 @@
         "--stream-json",
         "C1-CANCEL"
       ],
-      "until": "\"text\":\"C1 partial\"",
       "signal": "SIGINT",
       "timeout": 12000,
-      "settleMs": 100
+      "settleMs": 100,
+      "untilPersistedRunEvent": {
+        "sessionKey": "{saved.session}",
+        "projectKey": "{PROJECT}",
+        "requestText": "C1-CANCEL",
+        "event": {
+          "type": "assistant_text_delta",
+          "text": "C1 partial"
+        },
+        "providerRule": "cancel"
+      }
     },
     {
       "cli": [

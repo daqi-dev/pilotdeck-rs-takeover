@@ -61,7 +61,7 @@ fn feishu_key() -> ChannelKey {
 /// any *other* enabled bundle key instead of letting the native process start
 /// with a channel that would never be built. An A8.3 bundle unit adds its key
 /// here in the same change that adds its construction.
-pub const IMPLEMENTED_BUNDLE_CHANNEL_KEYS: &[&str] = &["feishu", "weixin"];
+pub const IMPLEMENTED_BUNDLE_CHANNEL_KEYS: &[&str] = &["feishu", "weixin", "qq", "wecom"];
 
 /// A satisfied close host: the native embedding drains its WS server before
 /// the host cleanup closes the channel server, so there is no gateway-WS
@@ -135,9 +135,13 @@ fn production_loader_mounts_with(
     network: Arc<ChannelNetwork>,
 ) -> ChannelLoaderMounts {
     let mut mounts = ChannelLoaderMounts::default();
-    crate::channel::sms::register(&mut mounts);
-    crate::channel::bluebubbles::register(&mut mounts);
-    crate::channel::slack::register(&mut mounts);
+    crate::channel::sms::register_with_network(&mut mounts, responder.clone(), network.clone());
+    crate::channel::bluebubbles::register_with_network(
+        &mut mounts,
+        responder.clone(),
+        network.clone(),
+    );
+    crate::channel::slack::register_with_network(&mut mounts, responder.clone(), network.clone());
     crate::channel::api_server::register(&mut mounts);
     crate::channel::webhook::register(&mut mounts);
     crate::channel::signal::register_with_network(&mut mounts, responder.clone(), network.clone());
@@ -243,6 +247,7 @@ pub struct NativeChannels {
     log: Option<ChannelLog>,
     interaction_responder: Arc<DeferredInteractionResponder>,
     network: Arc<ChannelNetwork>,
+    command_host: OnceLock<Arc<dyn crate::channel::commands::CommandHost>>,
 }
 
 #[derive(Default)]
@@ -440,7 +445,16 @@ impl NativeChannels {
             log: options.log,
             interaction_responder,
             network,
+            command_host: OnceLock::new(),
         }
+    }
+
+    pub fn set_command_host(&self, host: Arc<dyn crate::channel::commands::CommandHost>) -> bool {
+        self.command_host.set(host).is_ok()
+    }
+
+    pub(crate) fn apply_proxy_config(&self, config: &JsValue) {
+        self.network.update_proxy(config.get("proxy"));
     }
 
     pub fn server(&self) -> &ChannelServer {
@@ -482,7 +496,7 @@ impl NativeChannels {
         self.reload_active.store(true, Ordering::SeqCst);
     }
 
-    fn reload_log(&self, level: &str, message: &str) {
+    pub(crate) fn reload_log(&self, level: &str, message: &str) {
         if let Some(log) = &self.log {
             log(level, message);
         } else {
@@ -587,6 +601,9 @@ impl NativeChannels {
             .into_iter()
             .map(|channel| {
                 if [
+                    "bluebubbles",
+                    "sms",
+                    "slack",
                     "signal",
                     "mattermost",
                     "homeassistant",
@@ -702,6 +719,12 @@ impl NativeChannels {
         if weixin_enabled(config) {
             channels.push(self.make_weixin().await);
         }
+        if bundle_enabled(config, "qq") {
+            channels.push(self.make_qq_with(config).await);
+        }
+        if bundle_enabled(config, "wecom") {
+            channels.push(self.make_wecom_with(config).await);
+        }
         channels.extend(self.create_configured_with(config));
         let managed_channel_keys = self
             .managed_channel_keys
@@ -714,6 +737,109 @@ impl NativeChannels {
                 managed_channel_keys,
             })
             .await
+    }
+
+    async fn configured_qq_options(
+        &self,
+        config: &JsValue,
+    ) -> crate::channel::qq::QQChannelOptions {
+        use crate::channel::qq::{QQChannelOptions, QQSessionMapper, QQSessionMapperState};
+        let settings = config
+            .get("adapters")
+            .and_then(|v| v.get("qq"))
+            .and_then(JsValue::as_object)
+            .cloned()
+            .unwrap_or_default();
+        let mut options =
+            QQChannelOptions::from_config(&settings).with_network(self.network.clone());
+        if let Some(saved) = self.state.load(&"qq".into()).await {
+            options.mapper = Some(QQSessionMapper::new(
+                QQSessionMapperState::from_js(&saved),
+                Box::new(|| uuid::Uuid::new_v4().to_string().into()),
+            ));
+        }
+        let state = self.state.clone();
+        options.on_state_change = Some(Arc::new(move |value| {
+            state.save(&"qq".into(), value.to_js())
+        }));
+        options
+    }
+
+    async fn configured_wecom_options(
+        &self,
+        config: &JsValue,
+    ) -> crate::channel::wecom::WeComChannelOptions {
+        use crate::channel::wecom::{
+            WeComChannelOptions, WeComSessionMapper, WeComSessionMapperState,
+        };
+        let settings = config.get("adapters").and_then(|v| v.get("wecom"));
+        let saved = self.state.load(&"wecom".into()).await;
+        let mapper = saved.as_ref().map(|value| {
+            WeComSessionMapper::new(
+                WeComSessionMapperState::from_js(value),
+                Arc::new(|| uuid::Uuid::new_v4().to_string().into()),
+            )
+        });
+        let state = self.state.clone();
+        WeComChannelOptions {
+            bot_key: settings
+                .and_then(|v| v.get("token"))
+                .and_then(JsValue::as_string)
+                .cloned(),
+            extra: settings
+                .and_then(|v| v.get("extra"))
+                .and_then(JsValue::as_object)
+                .cloned(),
+            mapper,
+            command_host: self.command_host.get().cloned(),
+            on_state_change: Some(Arc::new(move |value| {
+                state.save(&"wecom".into(), value.to_js())
+            })),
+            ..Default::default()
+        }
+    }
+
+    async fn make_qq_with(&self, config: &JsValue) -> Arc<dyn ChannelAdapter> {
+        let channel = crate::channel::qq::QQChannel::new(
+            self.configured_qq_options(config).await,
+            crate::channel::im_interaction::js_helper_interaction(
+                self.interaction_responder.clone(),
+            ),
+        );
+        Arc::new(OwnedChannel {
+            inner: Arc::new(channel),
+            gateway: self.owned_gateway.clone(),
+        })
+    }
+
+    async fn make_wecom_with(&self, config: &JsValue) -> Arc<dyn ChannelAdapter> {
+        let channel = crate::channel::wecom::WeComChannel::with_network(
+            self.configured_wecom_options(config).await,
+            crate::channel::im_interaction::js_helper_interaction(
+                self.interaction_responder.clone(),
+            ),
+            self.network.clone(),
+        );
+        Arc::new(OwnedChannel {
+            inner: Arc::new(channel),
+            gateway: self.owned_gateway.clone(),
+        })
+    }
+
+    pub async fn create_startup_qq(&self) -> Option<Arc<dyn ChannelAdapter>> {
+        if bundle_enabled(&self.config, "qq") {
+            Some(self.make_qq_with(&self.config).await)
+        } else {
+            None
+        }
+    }
+
+    pub async fn create_startup_wecom(&self) -> Option<Arc<dyn ChannelAdapter>> {
+        if bundle_enabled(&self.config, "wecom") {
+            Some(self.make_wecom_with(&self.config).await)
+        } else {
+            None
+        }
     }
 
     /// ChannelAdapterBundle.flush.
@@ -816,4 +942,14 @@ fn weixin_update(status: &WeixinChannelStatus) -> ChannelRuntimeStatusUpdate {
 fn now_iso() -> JsString {
     use pilotdeck_transport::{server::ExecutionClock, system_clock::SystemExecutionClock};
     SystemExecutionClock.now_iso()
+}
+
+fn bundle_enabled(config: &JsValue, key: &str) -> bool {
+    matches!(
+        config
+            .get("adapters")
+            .and_then(|v| v.get(key))
+            .and_then(|v| v.get("enabled")),
+        Some(JsValue::Bool(true))
+    )
 }

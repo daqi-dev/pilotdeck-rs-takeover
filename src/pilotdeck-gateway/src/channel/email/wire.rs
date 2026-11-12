@@ -1,17 +1,15 @@
-//! Native IMAP and SMTP transport. Every exchange is bounded and owns its socket.
+//! Native IMAP and SMTP transport. Each connection owns its socket.
 use super::Config;
 use base64::{Engine, engine::general_purpose::STANDARD};
-use std::{io, sync::Arc, time::Duration};
+use std::{io, sync::Arc};
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     net::TcpStream,
 };
 
 trait Socket: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> Socket for T {}
 type Io = Box<dyn Socket>;
-const LIMIT: usize = 32 * 1024 * 1024;
-const TIMEOUT: Duration = Duration::from_secs(30);
 fn invalid(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.into())
 }
@@ -20,9 +18,7 @@ struct Connection {
 }
 impl Connection {
     async fn connect(host: &str, port: u16, tls: bool) -> io::Result<Self> {
-        let socket = tokio::time::timeout(TIMEOUT, TcpStream::connect((host, port)))
-            .await
-            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "mail connect timeout"))??;
+        let socket = TcpStream::connect((host, port)).await?;
         let mut connection = Self {
             io: BufReader::new(Box::new(socket)),
         };
@@ -41,41 +37,24 @@ impl Connection {
             .map_err(|_| invalid("invalid mail TLS server name"))?;
         let (placeholder, _other) = tokio::io::duplex(1);
         let old = std::mem::replace(&mut self.io, BufReader::new(Box::new(placeholder)));
-        let tls = tokio::time::timeout(
-            TIMEOUT,
-            tokio_rustls::TlsConnector::from(Arc::new(config)).connect(name, old.into_inner()),
-        )
-        .await
-        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "mail TLS timeout"))??;
+        let tls = tokio_rustls::TlsConnector::from(Arc::new(config))
+            .connect(name, old.into_inner())
+            .await?;
         self.io = BufReader::new(Box::new(tls));
         Ok(())
     }
     async fn write(&mut self, text: &str) -> io::Result<()> {
-        tokio::time::timeout(TIMEOUT, async {
-            self.io.write_all(text.as_bytes()).await?;
-            self.io.flush().await
-        })
-        .await
-        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "mail write timeout"))?
+        self.io.write_all(text.as_bytes()).await?;
+        self.io.flush().await
     }
     async fn line(&mut self) -> io::Result<String> {
         let mut line = Vec::new();
-        // Read a byte at a time from the buffered reader, bounding untrusted lines.
-        tokio::time::timeout(TIMEOUT, async {
-            loop {
-                let byte = self.io.read_u8().await?;
-                line.push(byte);
-                if line.len() > LIMIT {
-                    return Err(invalid("mail line exceeds limit"));
-                }
-                if byte == b'\n' {
-                    break;
-                }
-            }
-            Ok(())
-        })
-        .await
-        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "mail read timeout"))??;
+        if self.io.read_until(b'\n', &mut line).await? == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "mail connection closed",
+            ));
+        }
         Ok(String::from_utf8_lossy(&line).into_owned())
     }
 }
@@ -143,7 +122,6 @@ impl Imap {
             .write(&format!("{tag} {command}\r\n"))
             .await?;
         let mut result = Vec::new();
-        let mut total = 0usize;
         loop {
             let mut line = self.connection.line().await?;
             let done = line.starts_with(&format!("{tag} "));
@@ -169,15 +147,17 @@ impl Imap {
                 let Some(count) = literal else {
                     break;
                 };
-                if count > LIMIT || total.saturating_add(count) > LIMIT {
-                    return Err(invalid("mail message exceeds limit"));
+                // Read in chunks rather than allocating the server-declared
+                // length upfront. No channel-specific message-size policy.
+                let mut bytes = Vec::new();
+                let mut remaining = count;
+                let mut chunk = [0u8; 8192];
+                while remaining > 0 {
+                    let length = remaining.min(chunk.len());
+                    self.connection.io.read_exact(&mut chunk[..length]).await?;
+                    bytes.extend_from_slice(&chunk[..length]);
+                    remaining -= length;
                 }
-                let mut bytes = vec![0; count];
-                tokio::time::timeout(TIMEOUT, self.connection.io.read_exact(&mut bytes))
-                    .await
-                    .map_err(|_| {
-                        io::Error::new(io::ErrorKind::TimedOut, "mail literal timeout")
-                    })??;
                 let decoded = String::from_utf8_lossy(&bytes);
                 // The channel observes Node Buffer.toString("utf8"). If a
                 // damaged UTF-8 literal expands to replacement characters,
@@ -189,10 +169,6 @@ impl Imap {
                 }
                 line.push_str(&decoded);
                 line.push_str(&self.connection.line().await?);
-            }
-            total += line.len();
-            if total > LIMIT {
-                return Err(invalid("mail response exceeds limit"));
             }
             result.push(line);
         }
@@ -415,9 +391,6 @@ async fn smtp_response(connection: &mut Connection, expected: u16) -> io::Result
         if !more {
             return Ok(response);
         }
-        if response.len() > 1000 {
-            return Err(invalid("SMTP multiline response exceeds limit"));
-        }
     }
 }
 async fn smtp_command(
@@ -429,8 +402,13 @@ async fn smtp_command(
     smtp_response(connection, code).await
 }
 async fn smtp_connect(config: &Config) -> io::Result<Connection> {
+    smtp_connect_endpoint(config, config.smtp_port).await
+}
+// The protocol selector remains the configured port. The separate socket
+// endpoint lets loopback tests cover implicit TLS without binding port 465.
+async fn smtp_connect_endpoint(config: &Config, endpoint_port: u16) -> io::Result<Connection> {
     let mut connection =
-        Connection::connect(&config.smtp_host, config.smtp_port, config.smtp_port == 465).await?;
+        Connection::connect(&config.smtp_host, endpoint_port, config.smtp_port == 465).await?;
     smtp_response(&mut connection, 220).await?;
     let mut ehlo = smtp_command(&mut connection, "EHLO localhost", 250).await?;
     let starttls = ehlo
@@ -505,7 +483,8 @@ pub(super) async fn send(config: &Config, to: &str, text: &str) -> io::Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::{io::AsyncBufReadExt, net::TcpListener};
+    use std::time::Duration;
+    use tokio::net::TcpListener;
     fn config(imap_port: u16, smtp_port: u16) -> Config {
         Config {
             address: "agent@example.test".into(),
@@ -519,6 +498,84 @@ mod tests {
             subject: "Message".into(),
             poll_interval: Duration::from_millis(20),
         }
+    }
+    #[tokio::test(start_paused = true)]
+    async fn slow_line_literal_and_write_have_no_invented_thirty_second_deadline() {
+        let (client, mut server) = tokio::io::duplex(1);
+        let mut connection = Connection {
+            io: BufReader::new(Box::new(client)),
+        };
+        let peer = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(31)).await;
+            server.write_all(b"slow line\r\n").await.unwrap();
+            tokio::time::sleep(Duration::from_secs(31)).await;
+            let mut bytes = [0u8; 4];
+            server.read_exact(&mut bytes).await.unwrap();
+            assert_eq!(&bytes, b"slow");
+        });
+        assert_eq!(connection.line().await.unwrap(), "slow line\r\n");
+        connection.write("slow").await.unwrap();
+        peer.await.unwrap();
+        let (client, server) = tokio::io::duplex(1024);
+        let mut imap = Imap {
+            connection: Connection {
+                io: BufReader::new(Box::new(client)),
+            },
+            tag: 0,
+            poisoned: false,
+        };
+        let peer = tokio::spawn(async move {
+            let mut server = BufReader::new(server);
+            let mut command = String::new();
+            server.read_line(&mut command).await.unwrap();
+            server
+                .write_all(b"* 1 FETCH (UID 4 BODY[] {4}\r\n")
+                .await
+                .unwrap();
+            tokio::time::sleep(Duration::from_secs(31)).await;
+            server.write_all(b"slow)\r\nP1 OK done\r\n").await.unwrap();
+        });
+        let response = imap.command("FETCH 1 (UID BODY.PEEK[])").await.unwrap();
+        assert_eq!(
+            field(&fetch_fields(&response[0]).unwrap(), "BODY[]")
+                .unwrap()
+                .text(),
+            Some("slow")
+        );
+        peer.await.unwrap();
+    }
+    #[tokio::test]
+    async fn valid_large_mail_literal_is_not_truncated_at_thirty_two_mebibytes() {
+        let size = 33 * 1024 * 1024;
+        let (client, server) = tokio::io::duplex(16384);
+        let mut imap = Imap {
+            connection: Connection {
+                io: BufReader::new(Box::new(client)),
+            },
+            tag: 0,
+            poisoned: false,
+        };
+        let peer = tokio::spawn(async move {
+            let mut server = BufReader::new(server);
+            let mut command = String::new();
+            server.read_line(&mut command).await.unwrap();
+            server
+                .write_all(format!("* 1 FETCH (UID 4 BODY[] {{{size}}}\r\n").as_bytes())
+                .await
+                .unwrap();
+            let chunk = vec![b'x'; 1024 * 1024];
+            for _ in 0..33 {
+                server.write_all(&chunk).await.unwrap();
+            }
+            server.write_all(b")\r\nP1 OK done\r\n").await.unwrap();
+        });
+        let response = imap.command("FETCH 1 (UID BODY.PEEK[])").await.unwrap();
+        let fields = fetch_fields(&response[0]).unwrap();
+        let source = field(&fields, "BODY[]").unwrap().text().unwrap();
+        assert_eq!(source.len(), size);
+        assert_eq!(source.as_bytes().last(), Some(&b'x'));
+        assert!(imap.usable());
+        peer.await.unwrap();
     }
     #[test]
     fn fetch_attributes_ignore_uid_and_envelope_text_inside_body() {
@@ -699,3 +756,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "tls_tests.rs"]
+mod tls_tests;

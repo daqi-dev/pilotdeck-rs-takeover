@@ -365,6 +365,15 @@ async fn disconnect_reopens_the_control_endpoint_and_socket() {
         drop(first);
         let (stream, _) = listener.accept().await.unwrap();
         let mut second = tokio_tungstenite::accept_async(stream).await.unwrap();
+        // The server-side handshake can finish before the adapter owns the
+        // socket. Observe a real SYSTEM exchange before testing stop.
+        second.send(Message::Text(r#"{"type":"SYSTEM","headers":{"topic":"ping","messageId":"reconnected"},"data":"probe"}"#.into())).await.unwrap();
+        let ack = second.next().await.unwrap().unwrap();
+        let ack = parse_json(ack.to_text().unwrap()).unwrap();
+        assert_eq!(
+            ack.get("headers").and_then(|v| v.get("messageId")),
+            Some(&JsValue::from("reconnected"))
+        );
         ready_tx.send(()).unwrap();
         assert!(matches!(
             second.next().await.unwrap().unwrap(),
@@ -393,4 +402,114 @@ async fn disconnect_reopens_the_control_endpoint_and_socket() {
     assert_eq!(requests.lock().unwrap().len(), 2);
     handle.stop("reconnected").await.unwrap();
     peer.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stop_cannot_finish_between_a_handlers_first_effect_and_registration() {
+    let channel = DingTalkChannel::new(
+        DingTalkChannelOptions {
+            env: Some(Arc::new(|_| None)),
+            ..Default::default()
+        },
+        js_helper_interaction(Arc::new(Responder)),
+    );
+    let (entered, entered_rx) = tokio::sync::oneshot::channel();
+    let (release, release_rx) = std::sync::mpsc::channel();
+    let completed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let shared = channel.0.clone();
+    let owner = shared.clone();
+    let done = completed.clone();
+    let producer = tokio::task::spawn_blocking(move || {
+        shared.spawn_handler(async move {
+            entered.send(()).unwrap();
+            release_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            owner.stopped().await;
+            done.store(true, std::sync::atomic::Ordering::Release);
+        })
+    });
+    entered_rx.await.unwrap();
+    let registered = channel.0.handlers.lock().unwrap().len();
+    let handle = Handle(channel.0.clone());
+    let mut stop = tokio::spawn(handle.stop("admission barrier"));
+    let premature = tokio::time::timeout(Duration::from_millis(25), &mut stop)
+        .await
+        .is_ok();
+    release.send(()).unwrap();
+    producer.await.unwrap();
+    if !premature {
+        stop.await.unwrap().unwrap();
+    }
+    assert_eq!(
+        registered, 1,
+        "the owner must be reserved before running handler effects"
+    );
+    assert!(!premature, "stop must wait for the reserved owner");
+    assert!(completed.load(std::sync::atomic::Ordering::Acquire));
+}
+struct HeldHttp {
+    started: Arc<tokio::sync::Notify>,
+    dropped: Arc<std::sync::atomic::AtomicBool>,
+}
+struct HeldExchange(Arc<std::sync::atomic::AtomicBool>);
+impl Drop for HeldExchange {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::Release);
+    }
+}
+impl ModelHttpTransport for HeldHttp {
+    fn send(
+        &self,
+        _: hyper::Request<http_body_util::Full<Bytes>>,
+    ) -> crate::runtime::model::http::TransportFuture {
+        let started = self.started.clone();
+        let owner = HeldExchange(self.dropped.clone());
+        crate::runtime::model::http::TransportFuture::io(async move {
+            let _owner = owner;
+            started.notify_one();
+            std::future::pending().await
+        })
+    }
+}
+#[tokio::test]
+async fn cron_http_is_owned_after_receipt_drop_and_cancelled_before_stop_finishes() {
+    let started = Arc::new(tokio::sync::Notify::new());
+    let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let channel = DingTalkChannel::new(
+        DingTalkChannelOptions {
+            transport: Some(Arc::new(HeldHttp {
+                started: started.clone(),
+                dropped: dropped.clone(),
+            })),
+            env: Some(Arc::new(|_| None)),
+            ..Default::default()
+        },
+        js_helper_interaction(Arc::new(Responder)),
+    );
+    channel.0.state.lock().unwrap().webhooks.insert(
+        "room".into(),
+        "https://api.dingtalk.com/robot/send?access_token=fixture".into(),
+    );
+    let delivery = CronResultDelivery {
+        task_id: "task".into(),
+        run_id: "run".into(),
+        session_key: "dingtalk:chat=room:general".into(),
+        channel_key: ChannelKey::new("dingtalk"),
+        origin_session_key: None,
+        origin_channel_key: None,
+        text: "cron".into(),
+    };
+    let mut receipt = channel.deliver_cron_result(&delivery);
+    assert!(receipt.as_mut().now_or_never().is_none());
+    started.notified().await;
+    drop(receipt);
+    assert!(!dropped.load(std::sync::atomic::Ordering::Acquire));
+    tokio::time::timeout(
+        Duration::from_secs(3),
+        Handle(channel.0.clone()).stop("cron"),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(dropped.load(std::sync::atomic::Ordering::Acquire));
+    assert!(channel.0.handlers.lock().unwrap().is_empty());
 }

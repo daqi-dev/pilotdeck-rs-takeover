@@ -636,7 +636,6 @@ async fn runtime_status_sink_serves_lifecycle_and_login_reports() {
 // `native_process::run` reaches through `start_with_webhook`), so deleting the
 // call site, downgrading it to a warning, or turning it into a silent skip
 // fails here; the seam-level tests in `channel::tests` alone would stay green.
-const UNMIGRATED_REJECTION_PHRASE: &str = crate::channel::loader::UNMIGRATED_REASON;
 
 /// The base config `management_tests::setup` writes, plus the given
 /// `adapters:` body (`""` leaves the section out entirely). Starts the real
@@ -676,26 +675,43 @@ async fn start_with_adapters(adapters_yaml: &str) -> Result<(), crate::ProxyErro
     }
 }
 
-fn startup_error(result: Result<(), crate::ProxyError>, assertion: &'static str) -> String {
-    crate::test_negative_receipt::expect_err(result, assertion).to_string()
-}
-
+// The historical refusal loop is replaced by actual constructor coverage:
+// a declaration without a production builder must fail, never pass zero cells.
 #[tokio::test]
-async fn startup_refuses_every_unmigrated_channel() {
-    for key in crate::channel::loader::UNMIGRATED_CHANNEL_KEYS {
-        let error = startup_error(
-            start_with_adapters(&format!("  {key}: {{enabled: true}}\n")).await,
-            "#1763 enabled unmigrated channel must refuse native startup",
-        );
-        crate::negative_assert!(
-            error.contains(&format!("channel \"{key}\"")),
-            "#1763 startup error names the enabled channel key"
-        );
-        crate::negative_assert!(
-            error.contains(UNMIGRATED_REJECTION_PHRASE),
-            "#1763 startup error carries the unmigrated phrase"
-        );
-    }
+async fn production_bundle_builders_cover_every_declared_key() {
+    let h = harness(
+        r#"{"adapters":{"feishu":{"enabled":true},"weixin":{"enabled":true},"qq":{"enabled":true,"appId":"fixture-app","clientSecret":"fixture-secret"},"wecom":{"enabled":true,"token":"fixture-bot"}}}"#,
+    );
+    let built = [
+        h.channels.create_startup_feishu().await,
+        h.channels.create_startup_weixin().await,
+        h.channels.create_startup_qq().await,
+        h.channels.create_startup_wecom().await,
+    ];
+    let keys: Vec<String> = built
+        .into_iter()
+        .map(|channel| {
+            channel
+                .expect("#H1 declared bundle has actual production builder")
+                .channel_key()
+                .to_string()
+        })
+        .collect();
+    crate::negative_assert_eq!(
+        keys,
+        vec!["feishu", "weixin", "qq", "wecom"],
+        "#H1 all four declared bundle constructors are called"
+    );
+    let mut expected = crate::channel::loader::BUNDLE_CHANNEL_KEYS.to_vec();
+    expected.sort_unstable();
+    let mut actual: Vec<&str> = keys.iter().map(String::as_str).collect();
+    actual.sort_unstable();
+    crate::negative_assert_eq!(
+        actual,
+        expected,
+        "#H1 bundle constructor coverage has no omissions"
+    );
+    h.channels.flush().await.unwrap();
 }
 
 // #1763 review P1: `main` is `async fn main() -> Result<(), ProxyError>`, and
@@ -707,17 +723,19 @@ async fn startup_refuses_every_unmigrated_channel() {
 // `main` signature above (`main.rs` returns `Result<(), ProxyError>`, which
 // `native_process::run` propagates unchanged). Changing that signature or
 // wrapping the error before returning it would invalidate the pinned text.
-#[tokio::test]
-async fn startup_rejection_reaches_stderr_in_the_debug_form() {
-    let error = crate::test_negative_receipt::expect_err(
-        start_with_adapters("  telegram: {enabled: true}\n").await,
-        "#1763 enabled unmigrated channel must refuse native startup",
-    );
-    let printed = format!("Error: {error:?}");
+#[test]
+fn unsupported_bundle_gate_preserves_debug_error_shape() {
+    // All current bundles are implemented. Exercise the fail-closed public
+    // gate with a missing declaration, rather than pretend production refuses.
+    let config = parse_json(r#"{"qq":{"enabled":true}}"#).unwrap();
+    let channel_error =
+        crate::channel::loader::reject_unimplemented_bundle_channels(Some(&config), &[])
+            .expect_err("unsupported declaration must reject");
+    let error: crate::ProxyError = channel_error.into();
     crate::negative_assert_eq!(
-        printed,
-        "Error: Error(\"[adapters] channel \\\"telegram\\\" 未迁移到 Rust，需继续使用 TS gateway\")",
-        "#1763 the process stderr line is the Debug form of ChannelError"
+        format!("Error: {error:?}"),
+        r#"Error: Error("[adapters] channel \"qq\" 未迁移到 Rust，需继续使用 TS gateway")"#,
+        "#1763 unsupported bundle stderr shape remains explicit"
     );
 }
 
@@ -778,7 +796,10 @@ async fn startup_accepts_configs_without_an_unmigrated_channel() {
         "#1763 a config with no adapters starts",
     );
     let mut disabled = String::new();
-    for key in crate::channel::loader::UNMIGRATED_CHANNEL_KEYS {
+    for key in crate::channel::loader::CHANNEL_LOADER_KEYS
+        .iter()
+        .chain(crate::channel::loader::BUNDLE_CHANNEL_KEYS.iter())
+    {
         disabled.push_str(&format!("  {key}: {{enabled: false}}\n"));
     }
     crate::test_negative_receipt::expect_ok(

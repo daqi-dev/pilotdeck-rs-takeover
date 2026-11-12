@@ -53,3 +53,9 @@ Rust 已写 Matrix 过滤/mapper/chunk 单测与 transport 测试（whoami/auth�
 Discord `oracle.mjs` 双次输出 cmp exit0，产物 `_tmp/20261113-h1-discord-oracle/{first,second}.json`；覆盖 author.bot/self/system 过滤、intents、最终 trim、general→/new→sticky key、2000 UTF16 空格分块及 stop。两渠道 `--negative` 在观测的分块结果中故意插入 `corrupted`，断言均 exit1；`negative.{stdout,stderr,exit}` 保留。
 
 最终脚本 SHA-256：Matrix `5a1fe5c0383a929884e8fb5d8c98b96b2ad076ba5ac35a89a59674532230b062`；Discord `7747d1d642f73f3691047a0501caa089743edc2ecadb11daf457ab081e00c949`。固定参考树 package/lock/scripts/tests 搜索未找到两个 SDK 的版本约束，只找到适配器 optional require 和安装提示；不存在可声称固定的 SDK 流量或存储实测。
+
+## 81bc 首轮 native 定向结果与修正
+
+根集中候选 81bc：Matrix 4/4 通过；Discord 两个真实本地 WS 测试失败，原日志 `_build/20261113-060046-root-81bc-h1-corrected/output.log` 保留。失败因生产 Gateway URL 拼接：给 authority-only `ws://host:port` 直接追加 `?v=...`，产生无前导 `/` 的 HTTP request target，严格服务端拒绝 InvalidUri(InvalidFormat)，随后 startup READY 失败/超时。这是产品 URL 构造缺陷，未放宽原测试。
+
+修正：`wire::gateway_url` 使用 URL parser 规范化 path，再保留其他 query、覆盖 v/encoding，确保 `/?v=10&encoding=json`。新增 IntoClientRequest 精确 path_and_query 断言。另用 StartupOwner 使等待 READY 时被调用方取消的 start 仍释放已注册 receiver。修正尚未集中复验；不能把 Matrix 的 81bc 结果转记到本次源码或宣布 Discord 通过。

@@ -351,6 +351,7 @@ fn base_requests(root: &Path, owner: &SessionOwner) -> Requests {
     ])
     .expect("#1320 the native options must parse");
     Requests {
+        subsystems: None,
         env: options.environment(Env::new()),
         options: options.clone(),
         memory: Arc::new(MemoryGateway::disabled()),

@@ -21,6 +21,7 @@ import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import { inputIdentity, scenarioIdentity, assertionResults } from './evidence.mjs';
 import { matchesProviderRule, writeSeedFile } from './mock-support.mjs';
+import { observePersistedRunEvent, trackProviderResponse, validateTrigger } from './serve-persisted-event.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const BASELINE = process.env.BBX_BASELINE || path.join(REPO, 'resources/PilotDeck');
@@ -191,6 +192,8 @@ for (const [index, [rel, content]] of seedFiles.entries()) {
 // 谁先到不影响比较。没有规则命中时用 default，回一段固定文本。
 const rules = [...substDeep(scenario.provider ?? []), { name: 'default', reply: { text: 'BBX_OK' } }];
 const providerRequests = {};
+// Runtime witnesses are separate from provider request behavior snapshots.
+const providerStreams = [];
 const mock = http.createServer(async (req, res) => {
   const parts = []; for await (const p of req) parts.push(p);
   const raw = Buffer.concat(parts).toString('utf8');
@@ -199,6 +202,8 @@ const mock = http.createServer(async (req, res) => {
   (providerRequests[rule.name] ??= []).push({
     method: req.method, url: req.url, headers: req.headers, body: body ?? { raw },
   });
+  const streamWitness = trackProviderResponse(res, body, rule.name, providerRequests[rule.name].length - 1);
+  providerStreams.push(streamWitness);
   capture(rule.save, raw);
   const reply = withSaved(rule.reply ?? {});
   if (reply.status) { res.writeHead(reply.status, { 'content-type': 'application/json' }); res.end(JSON.stringify(reply.body ?? {})); return; }
@@ -221,7 +226,7 @@ const mock = http.createServer(async (req, res) => {
       // 先等已写出的块真正发到对端，再断开或挂住；直接 destroy 会把还在缓冲里的块一起丢掉。
       if (reply.breakAfter !== undefined && sent >= reply.breakAfter) { await sleep(50); res.destroy(); return; }
       if (reply.hangAfter !== undefined && sent >= reply.hangAfter) { setTimeout(() => res.destroy(), reply.hangMs ?? 60000).unref(); return; }
-      await new Promise((done) => res.write(block, done)); sent++;
+      await new Promise((done) => res.write(block, (error) => { streamWitness.flushed(error); done(); })); sent++;
     }
     res.end();
   };
@@ -412,6 +417,8 @@ const runStep = async (step) => {
   if (step.serve) {
     // 前台起一个会常驻的 CLI 进程（如 `server`）：等 stdout 出现 until，执行 then 里的步骤，
     // 发 signal，记下 stdout / stderr / 退出码。进程自己先退出（启动失败）也照样记。
+    const condition = step.untilPersistedRunEvent === undefined ? undefined : substDeep(step.untilPersistedRunEvent);
+    if (condition !== undefined) { validateTrigger(condition); if (step.until !== undefined) throw Error('serve cannot combine until and untilPersistedRunEvent'); }
     const [cmd, ...prefix] = SIDES[side].cli;
     const child = spawn(cmd, [...prefix, ...substDeep(step.serve)], {
       cwd: step.cwd ? subst(step.cwd) : project, env: stepEnv(step), stdio: ['ignore', 'pipe', 'pipe'], detached: true,
@@ -422,20 +429,38 @@ const runStep = async (step) => {
     const closed = new Promise((r) => child.on('close', (c, s) => r([c, s])));
     const until = subst(step.until ?? 'WebSocket: ');
     const t0 = Date.now();
-    while (!stdout.includes(until) && child.exitCode === null && child.signalCode === null
+    let witness, providerSnapshot;
+    const startedAt = new Date().toISOString();
+    const ready = (withinDeadline = false) => condition
+      ? !(withinDeadline && Date.now() - t0 >= (step.timeout ?? STEP_TIMEOUT_MS))
+        && Boolean(witness = observePersistedRunEvent(pilotHome, condition, providerSnapshot = providerStreams.map(stream => stream.snapshot())))
+      : stdout.includes(until);
+    while (!ready(true) && child.exitCode === null && child.signalCode === null
       && Date.now() - t0 < (step.timeout ?? STEP_TIMEOUT_MS)) await sleep(20);
-    const reached = stdout.includes(until);
-    const timedOut = !reached && child.exitCode === null && child.signalCode === null;
+    let reached = ready(true);
+    let timedOut = !reached && child.exitCode === null && child.signalCode === null;
     const then = [];
     if (reached) {
       await sleep(step.settleMs ?? 100);
       for (const inner of step.then ?? []) then.push({ step: inner, ...(await runStep(inner)) });
-      child.kill(step.signal ?? 'SIGTERM');
+      // Provider completion during settle must not turn into a cancellation
+      // success. Re-read the same owned registry without a new WS subscriber.
+      if (condition) reached = ready() && child.exitCode === null && child.signalCode === null;
+      if (reached) {
+        const signalSentAt = new Date().toISOString();
+        const sent = child.kill(step.signal ?? 'SIGTERM');
+        if (condition) {
+          reached = sent;
+          (evidence.serveTriggers ??= []).push({ stepIndex: out.steps.length, condition, projectKey: project,
+            raw: witness.raw, providers: providerSnapshot.map(({ body: _body, ...provider }) => provider), provider: witness.matched.provider, pid: child.pid, startedAt, signalSentAt, process: { pid: child.pid, startedAt, signalSentAt }, signalSent: sent ? (step.signal ?? 'SIGTERM') : null });
+        }
+      }
+      if (condition && !reached) timedOut = true;
     }
     const killer = setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }, reached ? 15000 : 0);
     const [exitCode, signal] = await closed;
     clearTimeout(killer);
-    return { serve: { reached, exitCode, signal, stdout, stderr }, then, ...(timedOut && { timedOut }) };
+    return { serve: { reached, exitCode, signal, stdout, stderr, ...(condition && { persistedRunEvent: reached ? witness.matched : null }) }, then, ...(timedOut && { timedOut }) };
   }
   if (step.cli) {
     const [cmd, ...prefix] = SIDES[side].cli;

@@ -84,10 +84,16 @@ MUTATIONS = [
     # #1694 §7: `feishu` drops out of the bundle table while the assembly still
     # claims to construct it, so the two declarations disagree.
     ('bundle-feishu-dropped', loader,
-     'pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin", "feishu"];',
-     'pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin"];',
+     'pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin", "feishu", "qq", "wecom"];',
+     'pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin", "qq", "wecom"];',
      [BUNDLE]),
 ]
+
+
+# No unimplemented key remains; deleting the empty rejection gate has no
+# observable effect. Preserve both former rows as history, not fake kills.
+RETIRED_MUTATIONS = MUTATIONS[:2]
+MUTATIONS = MUTATIONS[2:]
 
 
 def main():

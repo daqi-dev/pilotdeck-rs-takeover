@@ -1,0 +1,263 @@
+{
+  "name": "backend-core-channel-recovery",
+  "about": "真实CLI server默认native：配置加载→BlueBubbles实际HTTP轮询→native模型write_file→真实渠道权限提示和用户1答复→PILOT_HOME/notes隔离文件及同session落盘→正常停机→新进程同HOME恢复→同渠道新输入→模型请求含首轮真实tool/assistant历史→恢复回复。provider本地mock同时提供渠道HTTP；仅用现method/path/statusbody/save，无产品import/MockTurnGateway/stdio脚本hook。两个serve按序，不碰18789；本机不运行，交隔离cb8。phase输入转移由首轮after-tool实际模型请求捕获，不根据sleep制造成功；固定等待后全部真实回执/单次模型请求/文件/历史必须断言。需同时运行独立verify.mjs，TS双轮未运行。",
+  "server": false,
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  bluebubbles:\n    enabled: true\n    token: core-channel-password\n    extra:\n      serverUrl: {MOCK}\n",
+  "provider": [
+    {
+      "name": "channel-poll",
+      "method": "GET",
+      "path": "/api/v1/message",
+      "reply": {
+        "status": 200,
+        "body": {
+          "data": [
+            {
+              "guid": "core-message",
+              "chatGuid": "core-chat",
+              "text": "CORE-BEGIN-{saved.channelText}",
+              "dateCreated": 1
+            },
+            {
+              "guid": "{saved.answerGuid}",
+              "chatGuid": "core-chat",
+              "text": "1",
+              "dateCreated": 2
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "channel-send",
+      "method": "POST",
+      "path": "/api/v1/message/text",
+      "reply": {
+        "status": 200,
+        "body": {}
+      }
+    },
+    {
+      "name": "title",
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Core channel recovery\"}"
+      }
+    },
+    {
+      "name": "recovered",
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "when": [
+        "CORE-BEGIN-CORE-RECOVER",
+        "call_core_write",
+        "\"role\":\"tool\""
+      ],
+      "reply": {
+        "text": "CORE-RECOVERED"
+      }
+    },
+    {
+      "name": "after-tool",
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "when": [
+        "CORE-BEGIN-{saved.channelText}",
+        "call_core_write",
+        "\"role\":\"tool\""
+      ],
+      "unless": [
+        "CORE-BEGIN-CORE-RECOVER"
+      ],
+      "save": {
+        "channelText": "(CORE-RECOVER)",
+        "answerGuid": "(core-message)"
+      },
+      "reply": {
+        "text": "CORE-DONE"
+      }
+    },
+    {
+      "name": "initial",
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "when": [
+        "CORE-BEGIN-{saved.channelText}"
+      ],
+      "unless": [
+        "\"role\":\"tool\""
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_core_write",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "{PILOT_HOME}/notes/core-artifact.txt",
+            "content": "CORE-RECOVER core-message\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "unexpected",
+      "reply": {
+        "status": 400,
+        "body": {
+          "error": {
+            "message": "unexpected core combination request"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "serve": [
+        "server",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "38411"
+      ],
+      "timeout": 20000,
+      "until": "bluebubbles: polling ",
+      "then": [
+        {
+          "sleep": 8000
+        },
+        {
+          "ws": "read_session_messages",
+          "params": {
+            "sessionKey": "bluebubbles:chat=core-chat:general"
+          },
+          "timeout": 5000
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    },
+    {
+      "serve": [
+        "server",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "38411"
+      ],
+      "timeout": 20000,
+      "until": "bluebubbles: polling ",
+      "then": [
+        {
+          "sleep": 5000
+        },
+        {
+          "ws": "read_session_messages",
+          "params": {
+            "sessionKey": "bluebubbles:chat=core-chat:general"
+          },
+          "timeout": 5000
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    }
+  ],
+  "assertions": [
+    {
+      "id": "phase-1-ready",
+      "path": "/steps/0/serve/reached",
+      "equals": true
+    },
+    {
+      "id": "phase-1-exit",
+      "path": "/steps/0/serve/exitCode",
+      "equals": 0
+    },
+    {
+      "id": "phase-1-signal",
+      "path": "/steps/0/serve/signal",
+      "equals": null
+    },
+    {
+      "id": "phase-1-disconnect",
+      "path": "/steps/0/then/2/disconnected",
+      "equals": true
+    },
+    {
+      "id": "phase-2-ready",
+      "path": "/steps/1/serve/reached",
+      "equals": true
+    },
+    {
+      "id": "phase-2-exit",
+      "path": "/steps/1/serve/exitCode",
+      "equals": 0
+    },
+    {
+      "id": "phase-2-signal",
+      "path": "/steps/1/serve/signal",
+      "equals": null
+    },
+    {
+      "id": "phase-2-disconnect",
+      "path": "/steps/1/then/2/disconnected",
+      "equals": true
+    },
+    {
+      "id": "initial-model",
+      "path": "/provider/initial/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "initial-no-duplicate",
+      "path": "/provider/initial/1",
+      "exists": false
+    },
+    {
+      "id": "after-tool-model",
+      "path": "/provider/after-tool/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "after-tool-no-duplicate",
+      "path": "/provider/after-tool/1",
+      "exists": false
+    },
+    {
+      "id": "recovered-model",
+      "path": "/provider/recovered/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "recovered-no-duplicate",
+      "path": "/provider/recovered/1",
+      "exists": false
+    },
+    {
+      "id": "channel-polled",
+      "path": "/provider/channel-poll/0/method",
+      "equals": "GET"
+    },
+    {
+      "id": "channel-send-happened",
+      "path": "/provider/channel-send/0/method",
+      "equals": "POST"
+    },
+    {
+      "id": "no-unexpected",
+      "path": "/provider/unexpected/0",
+      "exists": false
+    },
+    {
+      "id": "real-file-bytes",
+      "path": "/tree/~1home~1.pilotdeck~1notes~1core-artifact.txt/text",
+      "equals": "CORE-RECOVER core-message\n"
+    }
+  ]
+}

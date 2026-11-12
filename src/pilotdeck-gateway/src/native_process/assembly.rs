@@ -67,6 +67,8 @@ mod automation;
 mod cron;
 mod mcp;
 mod memory;
+pub(super) mod publication;
+mod reload;
 pub(crate) mod snapshot;
 mod steer;
 mod user_dialog;
@@ -345,6 +347,7 @@ pub(super) async fn start_with_extensions(
         crate::channel::feishu::FeishuWebhookSlot::resolver(&slot),
         super::switch_wiring::AssemblySwitchHandles {
             cron: switch_slots.cron.get().cloned(),
+            automation_stop: switch_slots.automation_stop.get().cloned(),
             channels: switch_slots.channels.get().cloned().ok_or_else(|| {
                 ProxyError::from("channel assembly slot was not constructed during assembly")
             })?,
@@ -595,17 +598,8 @@ async fn start_assembly_resources(
     // session owner is bound once the host has built it.
     let continuations: Arc<super::continuations::Continuations> = Arc::default();
     let prepare_continuations = continuations.clone();
-    // The automation bundle's cron manager, published once the builder has
-    // constructed it: its tools are the gateway's `extraTools`.
-    let cron_manager_slot: Arc<std::sync::OnceLock<Arc<crate::runtime::cron::CronManager>>> =
-        Arc::default();
-    let prepare_cron_manager = cron_manager_slot.clone();
-    // The automation bundle's always-on manager: its tools join every
-    // `always-on/…` session (SessionToolCompositionBundle.ts:71-79).
-    let always_on_manager_slot: Arc<
-        std::sync::OnceLock<Arc<crate::runtime::always_on::AlwaysOnManager>>,
-    > = Arc::default();
-    let prepare_always_on_manager = always_on_manager_slot.clone();
+    let subsystems = Arc::new(publication::SubsystemPublication::default());
+    let prepare_subsystems = subsystems.clone();
     let storage_project = project.clone();
     let storage_options = options.clone();
     let storage_overrides = session_overrides.clone();
@@ -634,8 +628,7 @@ async fn start_assembly_resources(
             let mcp_diagnostic = prepare_mcp_diagnostic.clone();
             let session_overrides = prepare_overrides.clone();
             let continuations = prepare_continuations.clone();
-            let cron_tools_slot = prepare_cron_manager.clone();
-            let always_on_tools_slot = prepare_always_on_manager.clone();
+            let subsystems = prepare_subsystems.clone();
             let user_dialog_bus = prepare_user_dialog_bus.clone();
             Box::pin(async move {
                 // `registry.resolve(projectKey ?? fallbackProjectRoot)`
@@ -852,25 +845,36 @@ async fn start_assembly_resources(
                 // `[...alwaysOn.getTools(), ...cron.getTools()]`
                 // (ProjectAutomationBundle.ts:393-398); the always-on names
                 // only survive in an always-on session.
+                let subsystem_snapshot = subsystems.snapshot().ok_or_else(|| {
+                    RuntimeError::new("Automation generation has not been published.")
+                })?;
                 let mut extra_tools = if context
                     .session_key
                     .units()
                     .starts_with(&"always-on/".encode_utf16().collect::<Vec<u16>>())
                 {
-                    always_on_tools_slot
-                        .get()
+                    subsystem_snapshot
+                        .always_on
+                        .as_ref()
                         .map(|manager| manager.tools())
                         .unwrap_or_default()
                 } else {
                     Vec::new()
                 };
                 extra_tools.extend(
-                    cron_tools_slot
-                        .get()
+                    subsystem_snapshot
+                        .cron
+                        .as_ref()
                         .filter(|manager| manager.enabled())
                         .map(crate::runtime::cron::cron_tools)
                         .unwrap_or_default(),
                 );
+                extra_tools.retain(|tool| {
+                    tool.fields()
+                        .get("name")
+                        .and_then(JsValue::as_string)
+                        .is_some_and(|name| subsystem_snapshot.extra_tools.contains(name))
+                });
                 let extension_tools = extension_lease.tools();
                 // `sessionOverride?.permissionMode ?? options.permissionMode`
                 // (SessionAgentConfigBundle.ts:52-56).
@@ -1790,11 +1794,24 @@ async fn start_assembly_resources(
         let _ = project.dispose().await;
         return Err("channel interaction responder already published".into());
     }
+    if !channel_assembly.set_command_host(Arc::new(
+        crate::channel::commands::host::NativeCommandsHost::new(
+            options.home.clone(),
+            options.project_root.clone(),
+            std::env::current_exe().ok(),
+            crate::channel::commands::host::process_start(),
+        ),
+    )) {
+        let _ = factory.dispose().await;
+        let _ = project.dispose().await;
+        return Err("channel command host already published".into());
+    }
     let build_telemetry = telemetry_bundle.clone();
     let cleanup_telemetry = telemetry_bundle.clone();
-    let telemetry_subscription: Arc<OnceLock<crate::config::store::Subscription>> = Arc::default();
-    let build_telemetry_subscription = telemetry_subscription.clone();
-    let cleanup_telemetry_subscription = telemetry_subscription.clone();
+    let reload_slot: Arc<OnceLock<Arc<reload::ServerReloadDriver>>> = Arc::default();
+    let build_reload_slot = reload_slot.clone();
+    let cleanup_reload_slot = reload_slot.clone();
+    let build_subsystems = subsystems.clone();
     let build_channels = channel_assembly.clone();
     let cleanup_channels = channel_assembly.clone();
     // #2294: the builder constructs and starts the one automation bundle (the
@@ -1819,6 +1836,9 @@ async fn start_assembly_resources(
     let build_release_slot = switch_slots
         .as_ref()
         .map(|slots| slots.release_interactions.clone());
+    let build_automation_stop_slot = switch_slots
+        .as_ref()
+        .map(|slots| slots.automation_stop.clone());
     let budget = options.drain_budget;
     // #1959: the fallback's own read of the per-resource completion flags —
     // the cleanup closure below moves the originals.
@@ -1921,11 +1941,17 @@ async fn start_assembly_resources(
             // fails assembly, like the TS boot.
             let maintenance_project = build_project.clone();
             let memory_maintenance = Arc::new(
-                crate::runtime::memory::maintenance::ProjectMemoryMaintenanceController::new(
+                crate::runtime::memory::maintenance::ProjectMemoryMaintenanceController::new_leased(
                     Arc::new(move |key: Option<&JsString>| {
                         let root =
                             key.map(|key| PathBuf::from(String::from_utf16_lossy(key.units())));
-                        maintenance_project.resolve(root.as_deref())
+                        let lease = maintenance_project.acquire(root.as_deref())?;
+                        let runtime = lease.runtime().clone();
+                        Ok((
+                            runtime,
+                            Some(Arc::new(lease)
+                                as crate::runtime::memory::maintenance::MaintenanceLease),
+                        ))
                     }),
                     Arc::new(crate::telemetry::NativeTelemetry(build_telemetry.client())),
                     None,
@@ -1975,30 +2001,13 @@ async fn start_assembly_resources(
                     worktree_broadcast.broadcast("worktree_created", &JsValue::Object(payload));
                 })),
             };
-            if !options.in_process_cli {
+            if !options.in_process_cli && !options.telemetry_reload {
                 build_channels
                     .attach_config_store(&settings.store)
                     .map_err(|error| std::io::Error::other(error.message().to_string()))?;
             }
-            if options.telemetry_reload {
-                let subscription = crate::telemetry::subscribe_enabled_reload(
-                    &settings.store,
-                    build_telemetry.client(),
-                );
-                build_telemetry_subscription
-                    .set(subscription)
-                    .map_err(|_| {
-                        std::io::Error::other("telemetry config subscription already published")
-                    })?;
-            }
             settings.bundle.bind_server(build_connection_broadcast);
-            // `configStore.startWatching()` (createLocalGateway.ts:801): a
-            // config file change reloads the store, which the refresh bundle
-            // turns into runtime refresh + `config_changed`.
-            let config_watch = settings
-                .store
-                .start_watching(crate::config::store::WatchOptions::default())
-                .ok();
+            let config_watch = Arc::new(Mutex::new(None));
             let services = Arc::new(super::services::Services {
                 options: options.clone(),
                 project: build_project.clone(),
@@ -2010,7 +2019,8 @@ async fn start_assembly_resources(
                 session_overrides: session_overrides.clone(),
                 config_store: Some(super::services::NativeConfigStore {
                     store: settings.store.clone(),
-                    _watch: config_watch,
+                    _watch: config_watch.clone(),
+                    refresh: Some(settings.bundle.clone()),
                 }),
             });
             let mcp_gateway = mcp::build_mcp_gateway(
@@ -2045,12 +2055,6 @@ async fn start_assembly_resources(
                     make_cron: cron::native_factory(cron_hooks),
                 },
             )?);
-            if let Some(manager) = automation.cron_manager() {
-                let _ = cron_manager_slot.set(manager);
-            }
-            if let Some(manager) = automation.always_on_manager() {
-                let _ = always_on_manager_slot.set(manager);
-            }
             // #1326: the cron port's own volatile fence. It must NOT be the
             // owner's `SessionAdmission`: `SessionAdmissionCronGateway` holds
             // its fence for the whole of `run_turn`, and that call ends in
@@ -2064,7 +2068,10 @@ async fn start_assembly_resources(
             // submit path.
             let cron_admission = Arc::new(crate::runtime::session::SessionAdmission::default());
             let cron_owner = owner.clone();
+            let publication_project = build_project.clone();
+            let options_telemetry_reload = options.telemetry_reload;
             let requests = Arc::new(super::requests::Requests {
+                subsystems: Some(build_subsystems.clone()),
                 project: build_project,
                 memory: memory.clone(),
                 options,
@@ -2083,13 +2090,13 @@ async fn start_assembly_resources(
                 // hot-start the weixin channel on request, after the same
                 // durable-state restore as a config-enabled start.
                 prepare_weixin_login: Some(build_channels.prepare_login_callback()),
-                cron: automation.cron_manager(),
+                cron: None,
                 // #2294: TS `getInitialGatewayOptions` reads the generation's
                 // managers the same way (`generation.cron`,
                 // `generation.alwaysOn`); the composition face is the
                 // bundle's, so the `#1313` not_configured envelopes stay the
                 // answer exactly when no always-on provider was staged.
-                always_on: automation.always_on_manager(),
+                always_on: None,
                 always_on_standalone: Default::default(),
                 settings: settings.gateway,
                 session_overrides,
@@ -2117,10 +2124,9 @@ async fn start_assembly_resources(
             // runs inside the host's `block_on`, where `Handle::block_on`
             // would panic. A `None` means some start step unexpectedly
             // yielded; failing assembly is the honest answer, never a
-            // deadlock. `update_subsystems` is the TS hot-reload publication
-            // (`setCronController` / `setAlwaysOnControl`); this embedding has
-            // no hot reload, so the consumer is a documented no-op. The
-            // bundle's own bind gate enforces the attach-before-start order.
+            // deadlock. Generation publication atomically replaces the live
+            // controls/tools and invalidates the project registry; the one
+            // server reload queue serializes future lifecycle changes.
             {
                 use futures_util::FutureExt;
                 let busy_owner = cron_owner.clone();
@@ -2149,26 +2155,52 @@ async fn start_assembly_resources(
                         cron_owner.clone(),
                         submitter.clone(),
                     ));
-                // The standalone control's turn facade (createApplyHandler.ts:
-                // 142-150) — the same gateway the bundle's providers bind.
-                let _ = requests.always_on_standalone.set(Arc::new(
-                    crate::runtime::always_on::StandaloneAlwaysOn {
-                        gateway: always_on_gateway.clone(),
-                        session_overrides: always_on_hooks.session_overrides.clone(),
-                        on_turn_event: always_on_hooks.on_turn_event.clone(),
-                        language: always_on_section
-                            .as_ref()
-                            .map(crate::runtime::always_on::AlwaysOnConfig::from_section)
-                            .and_then(|config| config.language),
-                    },
-                ));
+                let publication = build_subsystems.clone();
+                let publication_project = publication_project.clone();
+                let publication_overrides = always_on_hooks.session_overrides.clone();
+                let publication_events = always_on_hooks.on_turn_event.clone();
+                let publication_gateway = always_on_gateway.clone();
+                let abort_failures = cron_gateway.failures();
                 automation.attach(automation::ProjectAutomationAttachment {
                     agent_gateway: automation::ProjectAutomationAgentGateway {
                         always_on: always_on_gateway,
                         cron: cron_gateway.clone(),
                     },
                     is_project_busy: Some(is_project_busy),
-                    update_subsystems: Arc::new(|_| ()),
+                    update_subsystems: Arc::new(move |update| {
+                        let cron = update
+                            .cron
+                            .as_ref()
+                            .and_then(|provider| provider.cron_manager());
+                        let always_on = update
+                            .always_on_control
+                            .as_ref()
+                            .and_then(|provider| provider.always_on_manager());
+                        let standalone = update.published.then(|| {
+                            Arc::new(crate::runtime::always_on::StandaloneAlwaysOn {
+                                gateway: publication_gateway.clone(),
+                                session_overrides: publication_overrides.clone(),
+                                on_turn_event: publication_events.clone(),
+                                language: update
+                                    .always_on_config
+                                    .and_then(|config| config.language),
+                            })
+                        });
+                        let cron_stop = cron.clone().map(|manager| {
+                            Arc::new(crate::switch::CronStopHandle::new(
+                                manager,
+                                abort_failures.clone(),
+                            ))
+                        });
+                        publication.publish(publication::SubsystemSnapshot {
+                            cron,
+                            always_on,
+                            standalone,
+                            cron_stop,
+                            extra_tools: update.extra_tools,
+                        });
+                        publication_project.invalidate(None);
+                    }),
                 })?;
                 match std::pin::pin!(automation.start()).now_or_never() {
                     Some(result) => {
@@ -2185,19 +2217,64 @@ async fn start_assembly_resources(
                 build_automation_slot.set(automation.clone()).map_err(|_| {
                     std::io::Error::other("automation bundle slot already occupied")
                 })?;
-                // #1353 A8.5-pr2: the machine's S1 face stops the bundle's
-                // cron manager through the shared handle, reading the abort
-                // rejections the recording wrapper above accumulated. Without
-                // a `cron:` section there is no manager and no handle — the
-                // S1 face is a no-op, exactly as before the bundle existed.
-                if let Some(cron) = automation.cron_manager() {
+                let published = build_subsystems.snapshot().ok_or_else(|| {
+                    std::io::Error::other("Automation generation was not published during startup")
+                })?;
+                if !published.matches_managers(
+                    automation.cron_manager().as_ref(),
+                    automation.always_on_manager().as_ref(),
+                ) {
+                    return Err(std::io::Error::other(
+                        "Automation publication does not match the started generation",
+                    ));
+                }
+                if options_telemetry_reload {
+                    let driver = Arc::new(reload::ServerReloadDriver::new(
+                        &settings.store,
+                        build_channels.clone(),
+                        automation.clone(),
+                        build_telemetry.client(),
+                    ));
+                    build_reload_slot.set(driver.clone()).map_err(|_| {
+                        std::io::Error::other("server reload driver already published")
+                    })?;
+                    if let Some(slot) = &build_automation_stop_slot {
+                        let publication = build_subsystems.clone();
+                        let stop: super::switch_wiring::AutomationStop = Arc::new(move || {
+                            let driver = driver.clone();
+                            let publication = publication.clone();
+                            Box::pin(async move {
+                                driver
+                                    .stop()
+                                    .await
+                                    .map_err(crate::switch::StepFailure::step)?;
+                                if let Some(handle) = publication
+                                    .snapshot()
+                                    .and_then(|snapshot| snapshot.cron_stop)
+                                {
+                                    handle.stop_face().await?;
+                                }
+                                Ok(())
+                            })
+                        });
+                        slot.set(stop).map_err(|_| {
+                            std::io::Error::other("automation stop already published")
+                        })?;
+                    }
+                } else if let Some(handle) = build_subsystems
+                    .snapshot()
+                    .and_then(|snapshot| snapshot.cron_stop)
+                {
                     build_cron_slot
-                        .set(Arc::new(crate::switch::CronStopHandle::new(
-                            cron,
-                            cron_gateway.failures(),
-                        )))
+                        .set(handle)
                         .map_err(|_| std::io::Error::other("cron manager slot already occupied"))?;
                 }
+                *config_watch
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = settings
+                    .store
+                    .start_watching(crate::config::store::WatchOptions::default())
+                    .ok();
             }
             // #1328: publish the weixin gateway port (the TS `baseDeps.gateway`
             // every channel start receives) before any channel can construct.
@@ -2242,6 +2319,10 @@ async fn start_assembly_resources(
                 // bundle's own cron stop then repeats benignly (no active
                 // runs remain, the release pairs are idempotent), and
                 // always-on still gets its stop here.
+                let reload_stop = match cleanup_reload_slot.get() {
+                    Some(driver) => driver.stop().await,
+                    None => Ok(()),
+                };
                 let automation_stop = match cleanup_automation_slot.get() {
                     Some(automation) => {
                         let outcome = automation.stop().await.map_err(|error| error.to_string());
@@ -2264,9 +2345,6 @@ async fn start_assembly_resources(
                 )
                 .await;
                 let channel_flush = cleanup_channels.flush().await;
-                if let Some(subscription) = cleanup_telemetry_subscription.get() {
-                    subscription.unsubscribe();
-                }
                 // #1959: the completion flags flip before the observers run, so
                 // an observer that stalls cannot un-complete a finished
                 // resource (and the fallback below will not re-run it).
@@ -2294,6 +2372,7 @@ async fn start_assembly_resources(
                     .map_err(|error| error.to_string());
                 let mut outcome = sessions.and(project).and(telemetry_dispose);
                 for failure in [
+                    reload_stop.err(),
                     automation_stop.err(),
                     channel_stop.err(),
                     channel_flush.err(),
@@ -2330,11 +2409,22 @@ async fn start_assembly_resources(
             if let Some(weixin) = channel_assembly.create_startup_weixin().await {
                 startup.push(weixin);
             }
+            if let Some(qq) = channel_assembly.create_startup_qq().await {
+                startup.push(qq);
+            }
+            let wecom = channel_assembly.create_startup_wecom().await;
             startup.extend(channel_assembly.create_startup_configured());
+            if let Some(wecom) = wecom {
+                startup.push(wecom);
+            }
             if !startup.is_empty() {
                 channel_assembly.server().start_channels(startup);
             }
-            channel_assembly.activate_config_reload();
+            if let Some(driver) = reload_slot.get() {
+                driver.activate();
+            } else {
+                channel_assembly.activate_config_reload();
+            }
             Ok(host)
         }
         Err(error) => {

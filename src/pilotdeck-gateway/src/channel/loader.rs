@@ -33,17 +33,10 @@ pub const CHANNEL_LOADER_KEYS: [&str; 15] = [
     "webhook",
 ];
 
-/// The eight channel config keys not migrated to Rust: enabling
-/// any of them must abort native startup. The set is the six
-/// `CHANNEL_LOADER_KEYS` members plus `qq` and `wecom`, which TS builds
-/// through `ChannelAdapterBundle` instead of the loader table. The order is
-/// deterministic — reverse `CHANNEL_LOADER_KEYS` order, then `qq`, then
-/// `wecom`; the first enabled key in this order is the one reported. Reverse
-/// order on purpose: a table that repeats `CHANNEL_LOADER_KEYS`'s own
-/// adjacent key pairs (e.g. `"telegram",\n    "discord",`) would make the
-/// byte anchors other fixtures pin on that table ambiguous
-/// (`channel-core`'s `config-order` mutation expects exactly one match).
-pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &["qq", "wecom"];
+/// All backend channel implementations now have production construction paths.
+/// Keep the explicit empty table as a fail-closed migration seam: reintroducing
+/// a key must be visible to production construction and coverage tests.
+pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[];
 
 /// The two keys whose TS gate is strict. `qq` and `wecom` are built by
 /// `ChannelAdapterBundle.createQQ` / `createWeCom`, which both start with
@@ -105,14 +98,9 @@ pub fn reject_unmigrated_channels(adapters: Option<&JsValue>) -> Result<(), Chan
     Ok(())
 }
 
-/// The `ChannelAdapterBundle` keys that are not in [`CHANNEL_LOADER_KEYS`].
-/// TS builds `weixin` and `feishu` through `ChannelAdapterBundle.createWeixin`
-/// / `createFeishu` rather than the loader table, and neither is in
-/// [`UNMIGRATED_CHANNEL_KEYS`] — the two bundle keys that are (`qq`, `wecom`)
-/// already refuse through [`reject_unmigrated_channels`]. Without this list
-/// the same silent skip would simply reappear under a different key name
-/// (#1694 §7).
-pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin", "feishu"];
+/// Bundle-built channels live outside the fixed loader table. Their production
+/// constructors load mapper state, use strict enabled === true, and save state.
+pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin", "feishu", "qq", "wecom"];
 
 /// The refusal reason both gates print. [`reject_unmigrated_channels`] keeps
 /// its own literal on purpose: the frozen `channel-unmigrated`
