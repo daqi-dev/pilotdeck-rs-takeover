@@ -33,9 +33,10 @@
       ],
       "reply": {
         "chunks": [
+          "",
           "C1 partial"
         ],
-        "hangAfter": 1,
+        "hangAfter": 2,
         "hangMs": 15000
       }
     },
