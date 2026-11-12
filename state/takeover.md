@@ -6,27 +6,36 @@
 
 ## 现在在哪
 
-以命令输出为准，不手写进度。2026-11-12 上午的阶段验收（没有子代理在跑的安静机器，提交见 git 历史里本次更新）：
+以命令输出为准，不手写进度。2026-11-12 下午合并四个分支后的全量对拍（四个子代理同时在构建，不是安静机器；四条命令这次没有全量跑，只跑了改动模块的子集）：
 
-- `node scripts/bbx/check.mjs --slots 5,6,7,8`：319 个场景 310 个 SAME。
-- 四条命令：fmt、clippy、文档测试通过；`nextest` 7749 个里只有本机已知的 3 个失败（安静机器上 11 分钟）。
-- `node scripts/bbx/coverage.mjs`：101 个 gateway method 里 94 个有场景且全部 SAME，6 个被不一致的场景带上，1 个没有场景。
-- `node scripts/bbx/coverage.mjs --surface`：基线对外表面清单（`scripts/bbx/surface.json`，18 个维度 2008 项）里 1479 项被 SAME 的场景碰到（74%）。各维度还没碰到的：config 99、env 135、ws-params 45、tool-params 35、provider-protocols 30、hooks 30、cli 23、files 22、loop-behaviors 22、events 16、channels 16、records 10、tools 8、http 7、slash-commands 5、sdk-session-config 4。`--surface <维度>` 逐项列出。没碰到的项里有一部分是基线只解析不使用的键、渠道与外部服务、Windows 专用。
-- `node scripts/bbx/selftest.mjs`：比较器自测 58 个例子。
-- `scripts/ui-smoke/`：原版 `ui/server` 接 Rust gateway，协议层零不兼容（2026-11-12 凌晨跑的，之后没重跑）。
+- `node scripts/bbx/check.mjs --slots 5,6,7,8`：339 个场景 336 个 SAME。
+- `node scripts/bbx/coverage.mjs`：101 个 gateway method 里 97 个有场景且全部 SAME，3 个被不一致的场景带上，1 个没有场景（`prepare_weixin_login`）。
+- `node scripts/bbx/coverage.mjs --surface`：2008 项里 1550 项被 SAME 的场景碰到（77%）。各维度还没碰到的：config 95、env 132、ws-params 45、tool-params 35、provider-protocols 30、files 22、loop-behaviors 21、events 16、cli 14、channels 13、tools 8、records 7、hooks 6、slash-commands 5、sdk-session-config 4、http 1、ws-methods 1。
+- `node scripts/bbx/selftest.mjs`：比较器自测 61 个例子。
+- 上一次安静机器上的完整四条命令是 2026-11-12 上午：fmt、clippy、文档测试通过；`nextest` 7749 个里只有本机已知的 3 个失败。
+- `scripts/ui-smoke/`：2026-11-12 凌晨跑过，之后没重跑。
 
-不一致的 9 个场景：
+不一致的 3 个场景：
 
 | 场景 | 原因 |
 |---|---|
-| `cfg-project-sdk-sources`、`-invalid` | `sdkSessionConfig.settingSources` 没接，项目级和本地配置文件里的设置在 Rust 上不起作用 |
-| `gap-sdk-deferred-tools` | 会话准备失败时少写一条 `gateway_submit_failed` 状态记录 |
 | `gap-tool-read-file-vision` | 按页渲染 PDF 没移植（基线用 mupdf） |
 | `tool-write-file-diagnostics` | JS/TS、HTML、CSV 写后语法诊断没移植 |
-| `sdk-config-agents-background` | 后台自定义子代理的时序（Rust 的子代理在父轮中途就跑完）；用假 provider 的 `delayMs` 固定时序后再看 |
-| `loop-stream-idle` | 会话记录里流守卫错误的 `details.raw`（基线落成 `{}`） |
-| `proto-anthropic-basic` | 缓存代际 `generation`：Rust 每轮重建上下文运行时，丢了会话级状态 |
-| `robust-restart-truncated-session` | `list_sessions` 里两个会话的先后偶发对调（mtime 相同） |
+| `agent-loop-sidecar-stdio` | stdio 部署方式下 Rust 不写 `agent_loop_operation_started / accepted / terminal` 三种记录（在修） |
+
+负载高时偶发、单独重跑一致的：`server-stop-pending-turn`（基线停机后留下 `registry.json.lock`）、`sandbox-ro-shell`（基线停机退出码为 1）、`gap-loop-long-tool-chain` 与 `hook-pre-tool-use`（会话文件大小差几个字节，前者基线自比也偶发）。安静机器上还出现再处理。
+
+已知没做的（有线索、没有一致的场景）：
+
+- CLI 的 `cron` 子命令连上 server 之后的分支、`run --model` 不带 `--project`：Rust 里是 `Todo`。基线每个 `cron` 子命令先探测写死的 `127.0.0.1:18789`，bbx 不占这个端口，所以现在没法对拍；方案未定。
+- `SubagentStart` / `SubagentStop` hook：输入与执行结果一致，WS 帧先后不同（基线把代理事件攒一批再发，Rust 立即发）。
+- `PreModelRequest` / `InstructionsLoaded` hook 在 Rust 里不随用户中止取消（基线会）；没有场景。
+- 让缓存代际回到 1 的其他入口（MCP 设置变更、`apply_flag_settings`、配置热重载、空闲回收）没有场景。
+- 模型错误的 `details.raw` 是否落成 `{}` 按形状识别（`is_error_instance_raw`），以后改成按来源标记。
+- 受限沙箱模式下基线把 `grep` / `glob` / `edit_file` 的子进程也包进沙箱，Rust 没包；只在没有 Seatbelt 的平台上可见，本机验证不了。
+- 疑似基线 bug、先照基线：`run --project P --model <不存在>` 时 CLI 与 server 都退不出；SMS 渠道永远起不来（ESM 里用 `require`）。
+
+2026-11-12 主会话对着基线逐段读过并认为一致的：权限判定顺序与 `ask` 收尾、规则匹配、`permissions.json`、`PermissionRequest` hook 与询问的先后、Seatbelt profile 与写入围栏、bash 命令分类与分词。没读的：`read_file` 的路径检查、hook 进程环境变量、`execute_code` 的只读判定。
 
 Rust 已有实现和场景的：`pilotdeck server` 启停；对话主干与全部工具（含 `web_search`、计划模式、`request_user_*`、`cron_*`、always-on 工具）；权限询问、`permissions.json`、沙箱模式、交互配置；一次性与后台子代理；hooks；自动与手动上下文压缩；循环里的截断续写、流中断恢复、并行工具调用；OpenAI chat 与 Anthropic 两种协议；会话读取、分叉、替换、导出恢复、文件回退；插件、skills、MCP；设置读写与热重载；上传、快照、定时任务、always-on；HTTP 路由；CLI 的主要命令与默认对话；provider / router / gateway / cron 等配置键。
 
@@ -87,6 +96,7 @@ Rust 已有实现和场景的：`pilotdeck server` 启停；对话主干与全�
 | 重启后对未答对话框作答 | 之后丢掉全部会话历史 | 保留历史 | `dialog-recovery-keeps-history` |
 | 客户端不发关闭帧就断开后停机 | 不退出 | 正常退出 | 未登记（需要对拍工具支持只断 TCP） |
 | 中止信号先于子进程启动 | 命令仍会执行 | 不启动（修复在途） | 待登记 |
+| PreToolUse hook 执行中用户中止这一轮 | hook 被杀后仍走权限并执行工具 | 不执行工具 | `aborted-hook-does-not-run-tool`（场景 `hook-cancelled`） |
 | sidecar 握手 | 无对应物 | 不设时限 | — |
 | 遥测上报到外部地址 | `telemetry.enabled` 时上报 | 不实现 | 待登记 |
 
@@ -102,7 +112,7 @@ Rust 已有实现和场景的：`pilotdeck server` 启停；对话主干与全�
 
 Rust 明确报错而不假装支持（文案是 Rust 自己的）：`update_settings` 遇到少见的 YAML 特性；Draft 2020-12 的表单 schema；公共 host 的 PDF 解析。
 
-已接受的小差异：模型请求失败后的空助手消息在 sidecar 里被丢（只影响一个内部计数，`sidecar-drops-empty-assistant`）。
+已接受的小差异：无。原先登记的 `sidecar-drops-empty-assistant`（模型请求失败后的空助手消息在 sidecar 里被丢）2026-11-12 已修掉，豁免已从场景 `turn-provider-400-then-text` 删除。
 
 一次越界（2026-11-11）：一个子代理在没有隔离 home 的情况下运行过 `pilotdeck --version`，可能读取了真实的 `~/.pilotdeck`（它报告没有写）。之后通用说明里加了硬规则。
 
@@ -110,7 +120,7 @@ Rust 明确报错而不假装支持（文案是 Rust 自己的）：`update_sett
 
 工作包的历史状态见 git 历史里本文件的旧版本（2026-11-11 的计划表 P1–P16）。P1–P11 已完成或并入上面的清单；P12（always-on）主体完成。之后不再维护工作包编号，以上面「正在做」「还没派的」为准，进度以命令输出为准。
 
-并行规则：同时最多 4–5 个 Opus 子代理，各用一个 bbx 槽位（1–4）；合并由主会话逐个做。给子代理的通用说明在 `scripts/agents/common.md`（2026-11-12 从会话的临时目录搬进仓库）；派活时让子代理先读它，再给出本任务的参数（对齐到哪个提交、bbx 槽位、scratchpad 子目录）和任务本身。每个子代理一个 worktree（Agent 工具的 `isolation: "worktree"`，`model: "opus"`）；合并后删掉它的 `src/target`（每个 25–45 GB）。子代理结束后检查有没有留下还在循环的后台 shell（2026-11-12 清理过 12 个永远等不到条件的等待循环）。模型分工：主会话 Fable，子代理 Opus，验证不用 fork。
+并行规则：同时最多 4 个 Opus 子代理，各用一个 bbx 槽位（1–4）；合并由主会话逐个做。给子代理的通用说明在 `scripts/agents/common.md`（2026-11-12 从会话的临时目录搬进仓库）；派活时让子代理先读它，再给出本任务的参数（对齐到哪个提交、bbx 槽位、scratchpad 子目录）和任务本身。每个子代理一个 worktree（Agent 工具的 `isolation: "worktree"`，`model: "opus"`）；合并后删掉它的 `src/target`（每个 25–45 GB）。子代理结束后检查有没有留下还在循环的后台 shell（2026-11-12 清理过 12 个永远等不到条件的等待循环）。模型分工：主会话 Fable，子代理 Opus，验证不用 fork。
 
 ## 原仓库的新提交与 PR（2026-11-11 查看）
 
@@ -143,6 +153,12 @@ Rust 明确报错而不假装支持（文案是 Rust 自己的）：`update_sett
 | 2026-11-11 | 配置文件监视在被 `update_settings` 改写后继续有效（基线第一次原子替换后就失效） | 基线 bug：之后手工改配置不再热重载。登记在 `settings-update` 的 `accepted` |
 | 2026-11-11 | `update_settings` 遇到少见的 YAML 特性（自定义标签指令、YAML 1.1 特殊类型）时报写入失败；新版规范（Draft 2020-12）的表单 schema 被拒绝 | Rust 没有对应的序列化 / 校验能力，选择明确报错而不是冒险写坏或假装支持。两处文案是 Rust 自己的 |
 | 2026-11-11 | 基线第一层子代理的深度算成 2（配 `maxDepth: 2` 时子代理拿不到 `agent` 工具）照基线做；`managedPermissions.defaultMode: plan` 不生效照基线做 | 与基线文档不符但不属于崩溃或丢数据，改了会改变对外行为 |
+| 2026-11-12 | bbx 采集器给种子文件按书写顺序设置相隔 1 秒的 mtime | 几个种子会话文件在同一毫秒内写完时，基线按 mtime 排序的结果取决于写入是否跨毫秒，`robust-restart-truncated-session` 自比 6 次有 1 次不一致。改后自比 8 次稳定。它还暴露出一处真实差异：Rust 复制文件带着源文件的 mtime（见下一条） |
+| 2026-11-12 | 产品代码里 9 处文件复制改用 `node_io::copy_file`（目标 mtime 是复制时刻） | `std::fs::copy` 在 macOS 上克隆文件，连 mtime 一起带过去；Node 的 copyFile / cp 不带。影响导入技能的 mtime、分叉会话的排序、文件回退后的新鲜度判断。由 `skills-manage` 发现 |
+| 2026-11-12 | 三个场景声明基线自比不稳的路径：`sdk-config-agents-background` 的 token 派生字段（89 处）、`proto-anthropic-basic` 与 `ctx-cache-generation-compact` 的 `cachePlan.fingerprint`（3 处、4 处） | 随机任务 UUID 进了工具结果文本、随机 turnId / blockId / compactSnapshotId 进了指纹覆盖的消息。主会话亲自跑基线自比核对过处数。缓存代际 `generation` 照常比较；指纹在不含随机值的 `ctx-cache-generation` 里照常比较 |
+| 2026-11-12 | bbx 比较器归一化键名为 `created` 的秒级时间戳 | apiServer 渠道的 OpenAI 兼容响应用 `Math.floor(Date.now()/1000)`，基线自比不同。只认这个键名；自测加 3 个例子（61/61） |
+| 2026-11-12 | 基线 bug 不照做：PreToolUse hook 执行中用户中止，基线仍执行工具 | 与「中止信号先于子进程启动」同类：用户已中止，命令仍然执行。登记在场景 `hook-cancelled` 的 `accepted` |
+| 2026-11-12 | 同时运行的子代理上限按 4 个（bbx 槽位 1–4） | 人在会话里主动问能否多派 Opus 子代理并行；这是主会话对那句话的理解，额度吃紧时退回 2 个。四个同时构建时负载均值约 11，全量对拍要 1–1.5 小时，限时步骤偶发假失败 |
 | 2026-11-10 | `scripts/parity`、`scripts/cli-parity` 暂留，用到时先做注入错误检查 | 静态看是真对拍，但我没跑过 |
 
 ## 停用的旧闸门
