@@ -1,0 +1,102 @@
+{
+ "name": "env-mcp-placeholders",
+ "about": "MCP 配置里由环境决定的部分：插件 MCP server 的 ${userHome}（取 HOME，mcp/config/expandPlaceholders.ts:9-19）、${env:NAME}（未设置展开成空串）与 ~/ 前缀，展开在 command / args / env 上（mcp/runtime/parsePluginMcpServers.ts:14-67）；perSession 的 stdio server 由 McpClient 追加 --user-data-dir=<目录>/pilotdeck-mcp-<id>-XXXXXX（mcp/client/McpClient.ts:163-176），目录取 server env 里的 PILOTDECK_SESSION_TMPDIR（缺省系统临时目录），server env 里有 PILOTDECK_SESSION_STORAGE_ROOT 时不追加。fixture server 把自己的 argv（随机后缀抹掉）、相关环境变量和 cwd 写进工具描述，比较发给模型的工具声明与 mcp_server_status。",
+ "env": {
+  "BBX_LABEL": "from-env"
+ },
+ "files": {
+  "home/.pilotdeck/mcp/probe-server.mjs": "// bbx fixture: MCP stdio server whose one tool describes how it was started.\n// --user-data-dir=<dir>/pilotdeck-mcp-<id>-XXXXXX has a random suffix: only the\n// directory and the stable prefix are reported, plus whether the dir exists.\nimport readline from 'node:readline';\nimport fs from 'node:fs';\nimport path from 'node:path';\nconst args = process.argv.slice(2).map((arg) => {\n  if (!arg.startsWith('--user-data-dir=')) return arg;\n  const dir = arg.slice('--user-data-dir='.length);\n  return '--user-data-dir=' + path.dirname(dir) + '/' + path.basename(dir).slice(0, -6) + '<rand> exists=' + fs.existsSync(dir);\n});\nconst env = ['PILOTDECK_SESSION_STORAGE_ROOT', 'PILOTDECK_SESSION_TMPDIR', 'BBX_LABEL'].map((k) => k + '=' + (process.env[k] ?? '-'));\nconst label = JSON.stringify({ args, env, cwd: process.cwd() });\nconst send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');\nconst tool = { name: 'probe', description: 'started with ' + label, inputSchema: { type: 'object', properties: {}, additionalProperties: false } };\nreadline.createInterface({ input: process.stdin }).on('line', (line) => {\n  let request;\n  try { request = JSON.parse(line); } catch { return; }\n  if (request.id === undefined) return;\n  if (request.method === 'initialize') {\n    send({ jsonrpc: '2.0', id: request.id, result: { protocolVersion: request.params?.protocolVersion ?? '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'bbx-probe', version: '1.0.0' } } });\n  } else if (request.method === 'tools/list') {\n    send({ jsonrpc: '2.0', id: request.id, result: { tools: [tool] } });\n  } else if (request.method === 'tools/call') {\n    send({ jsonrpc: '2.0', id: request.id, result: { content: [{ type: 'text', text: label }] } });\n  } else {\n    send({ jsonrpc: '2.0', id: request.id, result: {} });\n  }\n});\n",
+  "home/.pilotdeck/plugins/bbx-env-plugin/plugin.json": {
+   "name": "bbx-env-plugin",
+   "version": "0.1.0",
+   "description": "Plugin whose MCP servers use placeholders.",
+   "mcpServers": {
+    "user-home": {
+     "command": "node",
+     "args": [
+      "${userHome}/.pilotdeck/mcp/probe-server.mjs",
+      "${env:BBX_LABEL}",
+      "[${env:BBX_MISSING}]"
+     ]
+    },
+    "tilde": {
+     "command": "node",
+     "args": [
+      "~/.pilotdeck/mcp/probe-server.mjs",
+      "~"
+     ],
+     "env": {
+      "BBX_LABEL": "${env:BBX_LABEL}-tilde"
+     }
+    }
+   }
+  },
+  "home/.pilotdeck/mcp.json": {
+   "mcpServers": {
+    "per-session-tmp": {
+     "command": "node",
+     "args": [
+      "{PILOT_HOME}/mcp/probe-server.mjs",
+      "tmp"
+     ],
+     "perSession": true,
+     "env": {
+      "PILOTDECK_SESSION_TMPDIR": "{ROOT}/home/session-tmp"
+     }
+    },
+    "per-session-root": {
+     "command": "node",
+     "args": [
+      "{PILOT_HOME}/mcp/probe-server.mjs",
+      "root"
+     ],
+     "perSession": true,
+     "env": {
+      "PILOTDECK_SESSION_STORAGE_ROOT": "{ROOT}/home/session-root"
+     }
+    }
+   }
+  }
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"MCP env\"}"
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "mcp_server_status",
+   "params": {}
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-mcp-env",
+    "channelKey": "test",
+    "message": "list tools"
+   },
+   "timeout": 30000
+  },
+  {
+   "sleep": 500
+  },
+  {
+   "ws": "mcp_server_status",
+   "params": {
+    "sessionKey": "s-mcp-env"
+   }
+  }
+ ]
+}
