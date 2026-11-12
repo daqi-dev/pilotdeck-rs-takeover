@@ -1,0 +1,564 @@
+{
+  "name": "ctx-cache-generation-session-ops",
+  "about": "会话级操作与提示缓存代际（PromptCacheCoordinator 挂在会话的上下文运行时上，会话被关闭或重建后从 1 重新数，见 ctx-cache-generation）。基线里关闭会话的入口：set_mcp_servers / mcp_server_reconnect / mcp_server_toggle / set_mcp_permission_mode_override 成功后（InProcessGateway.ts:2284-2318），出错不关；apply_flag_settings 只在 applied 或 cleared 非空时（InProcessGateway.ts:2337-2347）；set_output_style（ProjectRuntimeRegistry.ts:1107）；reload_output_styles 关有 sdkSessionConfig 的会话（ProjectRuntimeRegistry.ts:1112-1122）；seed_read_state 带变化的 sdkSessionConfig（InProcessGateway.ts:2430-2436）；submit_turn 的 allowedTools / disallowedTools 变化让会话重建（SessionRouter.ts:137-167、561-572），不带过滤器的一轮不重建。模型一律回 400。",
+  "config": "schemaVersion: 1\nagent:\n  model: anth/claude-bbx\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    anth:\n      protocol: anthropic\n      url: {MOCK}\n      apiKey: bbx-anthropic-key\n      retry:\n        baseDelayMs: 1\n        maxDelayMs: 1\n        jitter: 0\n      models:\n        claude-bbx:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "files": {
+    "home/.pilotdeck/mcp/echo-server.mjs": "// bbx fixture: minimal MCP stdio server (newline-delimited JSON-RPC 2.0).\n// argv[2] labels the instance so each configured server answers differently.\nimport readline from 'node:readline';\nconst label = process.argv[2] ?? 'unlabelled';\nconst send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');\nconst tool = {\n  name: 'echo',\n  description: 'Echo the given text back, prefixed with the server label (' + label + ').',\n  inputSchema: {\n    type: 'object',\n    properties: { text: { type: 'string', description: 'Text to echo.' } },\n    required: ['text'],\n    additionalProperties: false,\n  },\n};\nreadline.createInterface({ input: process.stdin }).on('line', (line) => {\n  let request;\n  try { request = JSON.parse(line); } catch { return; }\n  if (request.id === undefined) return; // notification\n  if (request.method === 'initialize') {\n    send({ jsonrpc: '2.0', id: request.id, result: {\n      protocolVersion: request.params?.protocolVersion ?? '2024-11-05',\n      capabilities: { tools: {} },\n      serverInfo: { name: 'bbx-echo-' + label, version: '1.0.0' },\n    } });\n  } else if (request.method === 'tools/list') {\n    send({ jsonrpc: '2.0', id: request.id, result: { tools: [tool] } });\n  } else if (request.method === 'tools/call') {\n    const text = String(request.params?.arguments?.text ?? '');\n    send({ jsonrpc: '2.0', id: request.id, result: { content: [{ type: 'text', text: 'echo[' + label + ']: ' + text }] } });\n  } else if (request.method === 'ping') {\n    send({ jsonrpc: '2.0', id: request.id, result: {} });\n  } else {\n    send({ jsonrpc: '2.0', id: request.id, error: { code: -32601, message: 'Method not found: ' + request.method } });\n  }\n});\n",
+    "home/.pilotdeck/seed.txt": "seeded\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Gen\"}"
+      }
+    },
+    {
+      "name": "fail",
+      "reply": {
+        "status": 400,
+        "body": {
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "bbx: rejected"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-flag",
+        "channelKey": "test",
+        "message": "s-flag t1"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-flag",
+        "channelKey": "test",
+        "message": "s-flag t2"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "apply_flag_settings",
+      "params": {
+        "sessionKey": "s-flag",
+        "settings": {}
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-flag",
+        "channelKey": "test",
+        "message": "s-flag t3"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "apply_flag_settings",
+      "params": {
+        "sessionKey": "s-flag",
+        "settings": {
+          "effortLevel": "low"
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-flag",
+        "channelKey": "test",
+        "message": "s-flag t4"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-flag",
+        "channelKey": "test",
+        "message": "s-flag t5"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "apply_flag_settings",
+      "params": {
+        "sessionKey": "s-flag",
+        "settings": {
+          "effortLevel": null
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-flag",
+        "channelKey": "test",
+        "message": "s-flag t6"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-style",
+        "channelKey": "test",
+        "message": "s-style t7"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-style",
+        "channelKey": "test",
+        "message": "s-style t8"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_output_style",
+      "params": {
+        "sessionKey": "s-style",
+        "name": null
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-style",
+        "channelKey": "test",
+        "message": "s-style t9"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-style",
+        "channelKey": "test",
+        "message": "s-style t10"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "reload_output_styles",
+      "params": {}
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-style",
+        "channelKey": "test",
+        "message": "s-style t11"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-filter",
+        "channelKey": "test",
+        "message": "s-filter t12",
+        "allowedTools": [
+          "read_file",
+          "glob"
+        ]
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-filter",
+        "channelKey": "test",
+        "message": "s-filter t13",
+        "allowedTools": [
+          "read_file",
+          "glob"
+        ]
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-filter",
+        "channelKey": "test",
+        "message": "s-filter t14"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-filter",
+        "channelKey": "test",
+        "message": "s-filter t15",
+        "allowedTools": [
+          "glob"
+        ]
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-filter",
+        "channelKey": "test",
+        "message": "s-filter t16",
+        "disallowedTools": [
+          "glob"
+        ]
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-filter",
+        "channelKey": "test",
+        "message": "s-filter t17"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-seed",
+        "channelKey": "test",
+        "message": "s-seed t18"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-seed",
+        "channelKey": "test",
+        "message": "s-seed t19"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "seed_read_state",
+      "params": {
+        "sessionKey": "s-seed",
+        "path": "missing.txt",
+        "mtime": 0,
+        "sdkSessionConfig": {
+          "appendSystemPrompt": "SEED-APPEND"
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-seed",
+        "channelKey": "test",
+        "message": "s-seed t20"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-seed",
+        "channelKey": "test",
+        "message": "s-seed t21"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "seed_read_state",
+      "params": {
+        "sessionKey": "s-seed",
+        "path": "seed.txt",
+        "mtime": 0,
+        "sdkSessionConfig": {
+          "appendSystemPrompt": "SEED-APPEND"
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-seed",
+        "channelKey": "test",
+        "message": "s-seed t22"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "seed_read_state",
+      "params": {
+        "sessionKey": "s-seed",
+        "path": "seed.txt",
+        "mtime": 0,
+        "sdkSessionConfig": {
+          "appendSystemPrompt": "SEED-OTHER"
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-seed",
+        "channelKey": "test",
+        "message": "s-seed t23"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mcp",
+        "channelKey": "test",
+        "message": "s-mcp t24"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mcp",
+        "channelKey": "test",
+        "message": "s-mcp t25"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "mcp_server_toggle",
+      "params": {
+        "sessionKey": "s-mcp",
+        "serverName": "ghost",
+        "enabled": false
+      }
+    },
+    {
+      "ws": "mcp_server_reconnect",
+      "params": {
+        "sessionKey": "s-mcp",
+        "serverName": "ghost"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mcp",
+        "channelKey": "test",
+        "message": "s-mcp t26"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_mcp_servers",
+      "params": {
+        "sessionKey": "s-mcp",
+        "servers": {
+          "bbx-sdk": {
+            "type": "stdio",
+            "command": "node",
+            "args": [
+              "{PILOT_HOME}/mcp/echo-server.mjs",
+              "sdk"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mcp",
+        "channelKey": "test",
+        "message": "s-mcp t27"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mcp",
+        "channelKey": "test",
+        "message": "s-mcp t28"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "mcp_server_reconnect",
+      "params": {
+        "sessionKey": "s-mcp",
+        "serverName": "bbx-sdk"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mcp",
+        "channelKey": "test",
+        "message": "s-mcp t29"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mcp",
+        "channelKey": "test",
+        "message": "s-mcp t30"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "mcp_server_toggle",
+      "params": {
+        "sessionKey": "s-mcp",
+        "serverName": "bbx-sdk",
+        "enabled": false
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mcp",
+        "channelKey": "test",
+        "message": "s-mcp t31"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mcp",
+        "channelKey": "test",
+        "message": "s-mcp t32"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_mcp_permission_mode_override",
+      "params": {
+        "sessionKey": "s-mcp",
+        "serverName": "bbx-sdk",
+        "mode": "auto"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mcp",
+        "channelKey": "test",
+        "message": "s-mcp t33"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mcp",
+        "channelKey": "test",
+        "message": "s-mcp t34"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_mcp_servers",
+      "params": {
+        "sessionKey": "s-mcp",
+        "servers": {}
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mcp",
+        "channelKey": "test",
+        "message": "s-mcp t35"
+      }
+    },
+    {
+      "sleep": 300
+    }
+  ]
+}
