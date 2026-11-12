@@ -325,11 +325,9 @@ impl SubmitHostServices for Services {
         let status = status.clone();
         Box::pin(async move {
             tokio::task::spawn_blocking(move || {
-                recorder.writer().record_agent_status_message(
-                    run.session(),
-                    &run.run_id,
-                    &status,
-                )
+                recorder
+                    .writer()
+                    .record_agent_status_message(run.session(), &run.run_id, &status)
             })
             .await
             .expect("#748 status writer task")

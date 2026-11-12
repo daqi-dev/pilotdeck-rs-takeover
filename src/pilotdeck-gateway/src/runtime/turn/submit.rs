@@ -983,9 +983,7 @@ impl TurnSubmitter {
                 return;
             };
             input.workspace_stable = Some(stable);
-            let abort = self
-                .owner
-                .aborted_turn_reason(&run.session(), &run.run_id);
+            let abort = self.owner.aborted_turn_reason(&run.session(), &run.run_id);
             input.failure_kind = Some(if timed_out {
                 "timeout".into()
             } else {
@@ -1164,9 +1162,7 @@ impl TurnSubmitter {
             .map_err(|error| SubmitError::new("gateway_submit_failed", error.message))?
         {
             if timed_out.load(Ordering::SeqCst)
-                || !self
-                    .owner
-                    .is_current_completion(&run.session(), completion)
+                || !self.owner.is_current_completion(&run.session(), completion)
             {
                 break;
             }

@@ -1755,15 +1755,20 @@ async fn reload_ticket_releases_after_settlement() {
     release_tx
         .send(())
         .expect("#1320 ticket: the gate must be released");
+    // The settlements run on the runtime's worker threads: the second one's
+    // broadcast follows its markAllDirty on another thread, so wait for both
+    // callbacks of both settlements (yielding this task does not wait for
+    // that thread).
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         let events = probe.events();
-        if events
-            .iter()
-            .filter(|event| *event == "mark-all-dirty:config_changed")
-            .count()
-            == 2
-        {
+        let count = |prefix: &str| {
+            events
+                .iter()
+                .filter(|event| event.starts_with(prefix))
+                .count()
+        };
+        if count("mark-all-dirty:config_changed") == 2 && count("broadcast:config_changed") == 2 {
             break;
         }
         assert!(

@@ -565,8 +565,8 @@ impl SessionTools {
             self.world.fetcher.transport.clone(),
         )
         .map(|options| {
-            let availability =
-                builtin::web::search::WebSearchTool::new(options.clone()).check_availability(Some(&env));
+            let availability = builtin::web::search::WebSearchTool::new(options.clone())
+                .check_availability(Some(&env));
             (options, availability)
         });
         self

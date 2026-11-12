@@ -166,25 +166,25 @@ pub fn options_from_config(
     options.provider = text(web.get("provider"));
     options.api_key = text(web.get("apiKey"));
     options.endpoint = text(web.get("endpoint"));
-    options.custom_provider = web
-        .get("customProvider")
-        .and_then(JsValue::as_object)
-        .map(|custom| {
-            let field = |key: &str| text(custom.get(key));
-            CustomProviderConfig {
-                name: field("name"),
-                auth: field("auth"),
-                method: field("method"),
-                query_param: field("queryParam"),
-                api_key_param: field("apiKeyParam"),
-                results_path: field("resultsPath"),
-                title_field: field("titleField"),
-                url_field: field("urlField"),
-                snippet_field: field("snippetField"),
-                source_field: field("sourceField"),
-                published_at_field: field("publishedAtField"),
-            }
-        });
+    options.custom_provider =
+        web.get("customProvider")
+            .and_then(JsValue::as_object)
+            .map(|custom| {
+                let field = |key: &str| text(custom.get(key));
+                CustomProviderConfig {
+                    name: field("name"),
+                    auth: field("auth"),
+                    method: field("method"),
+                    query_param: field("queryParam"),
+                    api_key_param: field("apiKeyParam"),
+                    results_path: field("resultsPath"),
+                    title_field: field("titleField"),
+                    url_field: field("urlField"),
+                    snippet_field: field("snippetField"),
+                    source_field: field("sourceField"),
+                    published_at_field: field("publishedAtField"),
+                }
+            });
     Some(options)
 }
 
