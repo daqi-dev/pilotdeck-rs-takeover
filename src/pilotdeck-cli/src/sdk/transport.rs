@@ -155,9 +155,8 @@ impl Transport {
         Ok(transport)
     }
 
-    /// The SDK query keeps its socket when initialization rejects. Separate
-    /// opening from hello so the turn owner can preserve that observable
-    /// lifetime, while ordinary `connect` callers retain their usual cleanup.
+    /// Separate opening from hello so the turn owner can close its control
+    /// and query sockets in the SDK cleanup order if initialization fails.
     pub(super) async fn open(
         connection: &Connection,
         settings_order: bool,
@@ -422,23 +421,6 @@ impl Transport {
         // A received close queues an acknowledgement; flushing must not
         // initiate a close on an otherwise still-open exceptional query.
         let _ = timeout(CLOSE_TIMEOUT, self.socket.flush()).await;
-    }
-
-    /// An exceptional SDK query can outlive its CLI catch/finally. Do not turn
-    /// that known lifetime into a successful early exit. The peer closing the
-    /// socket (or the process receiving its default signal) ends this wait.
-    pub(super) async fn wait_peer_closed(&mut self) {
-        while let Some(frame) = self.socket.next().await {
-            match frame {
-                Ok(Message::Close(_)) => {
-                    self.flush_pending().await;
-                    break;
-                }
-                Err(_) => break,
-                Ok(Message::Ping(_)) if self.socket.flush().await.is_err() => break,
-                _ => {}
-            }
-        }
     }
 }
 

@@ -1067,6 +1067,148 @@ async fn capture(expected: &Value, directory: PathBuf, id: &str) -> Value {
     actual
 }
 
+// D1-SDK-QUERY-ERROR-DISPOSE-001: only these six original TS captures
+// observe a query that remains open after its owning CLI has failed.
+const QUERY_DISPOSAL_CASES: [&str; 6] = [
+    "run--query-hello-pending",
+    "resume--query-hello-pending",
+    "run--query-reject-cleanup",
+    "resume--query-reject-cleanup",
+    "run--response-error-cleanup",
+    "resume--response-error-cleanup",
+];
+
+fn query_disposal_baseline(id: &str, expected: &Value) -> bool {
+    let closes = expected["closes"].as_array().map(|rows| {
+        rows.iter()
+            .map(|row| {
+                json!({
+                    "connection":row["connection"],"code":row["code"],
+                    "reason":row["reason"],"cleanup":row["cleanup"]
+                })
+            })
+            .collect::<Vec<_>>()
+    });
+    expected["input"]["id"] == id
+        && expected["status"] == "OBSERVED_TIMEOUT"
+        && expected["naturalExit"].is_null()
+        && expected["cleanupExit"] == json!({"code":null,"signal":"SIGKILL","cleanup":true})
+        && expected["connections"] == 2
+        && expected["aborts"] == 0
+        && expected["activeAfterExit"] == 0
+        && closes
+            == Some(vec![
+                json!({"connection":1,"code":1005,"reason":"","cleanup":false}),
+                json!({"connection":2,"code":1006,"reason":"","cleanup":true}),
+            ])
+}
+
+fn query_disposal_expected(expected: &Value) -> Value {
+    let mut fixed = expected.clone();
+    fixed["status"] = json!("OBSERVED_EXIT");
+    fixed["naturalExit"] = json!({"code":1,"signal":null,"cleanup":false});
+    fixed["cleanupExit"] = Value::Null;
+    fixed["closes"] = json!([
+        {"connection":1,"code":1005,"reason":"","cleanup":false},
+        {"connection":2,"code":1005,"reason":"","cleanup":false},
+    ]);
+    fixed
+}
+
+/// The raw captures remain unchanged. Compare full frames after binding only
+/// generated request/run UUIDs; frame order, connection, method, params, and
+/// response correlation are still exact. No output UUIDs are normalized.
+fn query_disposal_wire_matches(expected: &Value, actual: &Value) -> bool {
+    fn frames(capture: &Value, baseline: bool) -> Option<Vec<(String, Value, Value)>> {
+        let mut frames = Vec::new();
+        for row in capture["wire"].as_array()? {
+            let direction = if baseline {
+                match row["kind"].as_str()? {
+                    "wire-receive" => "receive",
+                    "wire-send" => "send",
+                    "connection" | "socket-close" => continue,
+                    _ => return None,
+                }
+            } else {
+                match row["direction"].as_str()? {
+                    "receive" => "receive",
+                    "send" => "send",
+                    _ => return None,
+                }
+            };
+            if !row["frame"].is_object() {
+                return None;
+            }
+            frames.push((
+                direction.to_owned(),
+                row["connection"].clone(),
+                row["frame"].clone(),
+            ));
+        }
+        Some(frames)
+    }
+    fn uuid_binding(value: &Value) -> Option<&str> {
+        let text = value.as_str()?;
+        let uuid = uuid::Uuid::parse_str(text).ok()?;
+        (uuid.get_version_num() == 4 && uuid.hyphenated().to_string() == text).then_some(text)
+    }
+    let (Some(expected), Some(mut actual)) = (frames(expected, true), frames(actual, false)) else {
+        return false;
+    };
+    if expected.len() != actual.len() {
+        return false;
+    }
+    let mut request_ids = BTreeMap::<String, String>::new();
+    let mut expected_ids = BTreeSet::new();
+    for (
+        (expected_direction, expected_connection, expected_frame),
+        (actual_direction, actual_connection, actual_frame),
+    ) in expected.iter().zip(actual.iter_mut())
+    {
+        if expected_direction != actual_direction || expected_connection != actual_connection {
+            return false;
+        }
+        if expected_frame.get("id").is_some() {
+            if expected_direction == "receive" && expected_frame["type"] == "request" {
+                let (Some(expected_id), Some(actual_id)) = (
+                    uuid_binding(&expected_frame["id"]),
+                    uuid_binding(&actual_frame["id"]),
+                ) else {
+                    return false;
+                };
+                if !expected_ids.insert(expected_id.to_owned())
+                    || request_ids
+                        .insert(actual_id.to_owned(), expected_id.to_owned())
+                        .is_some()
+                {
+                    return false;
+                }
+                actual_frame["id"] = json!(expected_id);
+            } else {
+                let Some(mapped) = actual_frame["id"]
+                    .as_str()
+                    .and_then(|id| request_ids.get(id))
+                else {
+                    return false;
+                };
+                actual_frame["id"] = json!(mapped);
+            }
+        }
+        if expected_frame["method"] == "submit_turn" {
+            if uuid_binding(&expected_frame["params"]["runId"]).is_none()
+                || uuid_binding(&actual_frame["params"]["runId"]).is_none()
+            {
+                return false;
+            }
+            actual_frame["params"]["runId"] = expected_frame["params"]["runId"].clone();
+        }
+        if actual_frame != expected_frame {
+            return false;
+        }
+    }
+    true
+}
+
 fn compare_surfaces(
     id: &str,
     expected: &Value,
@@ -1075,6 +1217,20 @@ fn compare_surfaces(
     stderr: &[u8],
 ) -> Vec<String> {
     let mut differences = Vec::new();
+    let disposed = QUERY_DISPOSAL_CASES.contains(&id);
+    let adjusted;
+    let expected = if disposed {
+        if !query_disposal_baseline(id, expected) {
+            differences.push("query disposal baseline".into());
+        }
+        if !query_disposal_wire_matches(expected, actual) {
+            differences.push("query disposal RPC".into());
+        }
+        adjusted = query_disposal_expected(expected);
+        &adjusted
+    } else {
+        expected
+    };
     for field in [
         "status",
         "naturalExit",
@@ -1224,7 +1380,8 @@ pub(super) fn run(id: &str) {
         "normalization":"TS SQLite prefix and complete business-prefixed Node v22.22.0 tail only; UUID bytes stay literal",
         "acceptedDifferences":["D1-SDK-WS-CLOSE-REASON-001 (four query-hello-reject cells only)",
             "D1-SDK-WS-CLOSE-ORDER-001 (31 measured UNSTABLE cells; order only)",
-            "D1-SDK-SIGNAL-UNHANDLED-REJECTION-001 (eight exact signal cells; stderr only)"]}),
+            "D1-SDK-SIGNAL-UNHANDLED-REJECTION-001 (eight exact signal cells; stderr only)",
+            "D1-SDK-QUERY-ERROR-DISPOSE-001 (six query-error cells; bounded exit1 and explicit query close)"]}),
         id,
     );
     if !differences.is_empty() {
@@ -1261,6 +1418,263 @@ mod comparison_tests {
             .expect("#1145 comparison original case")["stderrRaw"]
             .as_str()
             .expect("#1145 comparison stderr bytes")
+    }
+
+    fn disposal_capture(id: &str) -> &'static Value {
+        captured()["captures"]
+            .as_array()
+            .expect("C1 signal captures")
+            .iter()
+            .find(|row| row["input"]["id"] == id)
+            .expect("C1 original disposal case")
+    }
+
+    fn disposal_actual(expected: &Value) -> Value {
+        // Comparator fixture only; executable behavior is covered by the six
+        // original process replays and c1_sdk_lifecycle's formal CLI tests.
+        let mut actual = query_disposal_expected(expected);
+        actual["hooks"] = json!([{"kind":"listeners-removed"}]);
+        actual["wire"] = json!(expected["wire"].as_array().expect("C1 original wire")
+            .iter().filter_map(|row| {
+                let direction = match row["kind"].as_str()? {
+                    "wire-receive" => "receive",
+                    "wire-send" => "send",
+                    _ => return None,
+                };
+                Some(json!({"direction":direction,"connection":row["connection"],"frame":row["frame"]}))
+            }).collect::<Vec<_>>());
+        actual
+    }
+
+    fn disposal_compare(id: &str, expected: &Value, actual: &Value) -> Vec<String> {
+        compare_surfaces(
+            id,
+            expected,
+            actual,
+            expected["stdout"]
+                .as_str()
+                .expect("C1 expected stdout")
+                .as_bytes(),
+            ts_stderr(expected["stderrRaw"].as_str().expect("C1 expected stderr")).as_bytes(),
+        )
+    }
+
+    #[test]
+    fn query_disposal_scope_is_exactly_six_original_cells() {
+        let required = BTreeSet::from([
+            "run--query-hello-pending",
+            "resume--query-hello-pending",
+            "run--query-reject-cleanup",
+            "resume--query-reject-cleanup",
+            "run--response-error-cleanup",
+            "resume--response-error-cleanup",
+        ]);
+        assert_eq!(QUERY_DISPOSAL_CASES.len(), required.len());
+        assert_eq!(
+            QUERY_DISPOSAL_CASES.into_iter().collect::<BTreeSet<_>>(),
+            required
+        );
+        for id in required {
+            let expected = disposal_capture(id);
+            assert!(
+                query_disposal_baseline(id, expected),
+                "C1 raw baseline contract: {id}"
+            );
+            let actual = disposal_actual(expected);
+            assert!(
+                disposal_compare(id, expected, &actual).is_empty(),
+                "C1 fixed disposal positive: {id}"
+            );
+            for unknown in [
+                format!("{id}-extra"),
+                format!("other-{id}"),
+                "run--control-pending".into(),
+            ] {
+                assert!(
+                    !disposal_compare(&unknown, expected, &actual).is_empty(),
+                    "C1 unknown disposal case stays strict: {unknown}"
+                );
+            }
+            // The original timeout must now fail; the registration is an exact
+            // repaired behavior, not an either-old-or-new waiver.
+            let mut old = actual.clone();
+            for field in ["status", "naturalExit", "cleanupExit"] {
+                old[field] = expected[field].clone();
+            }
+            assert!(disposal_compare(id, expected, &old).contains(&"status".into()));
+        }
+    }
+
+    #[test]
+    fn query_disposal_rejects_exit_close_and_surface_mutations() {
+        for id in QUERY_DISPOSAL_CASES {
+            let expected = disposal_capture(id);
+            let actual = disposal_actual(expected);
+            for (field, value) in [
+                ("status", json!("OBSERVED_TIMEOUT")),
+                (
+                    "naturalExit",
+                    json!({"code":0,"signal":null,"cleanup":false}),
+                ),
+                (
+                    "naturalExit",
+                    json!({"code":2,"signal":null,"cleanup":false}),
+                ),
+                (
+                    "naturalExit",
+                    json!({"code":null,"signal":"SIGKILL","cleanup":false}),
+                ),
+                (
+                    "cleanupExit",
+                    json!({"code":null,"signal":"SIGKILL","cleanup":true}),
+                ),
+                ("connections", json!(1)),
+                ("aborts", json!(1)),
+                ("activeAfterExit", json!(1)),
+                ("initial", json!({})),
+                ("final", json!({})),
+                ("milestones", json!({})),
+                ("closes", json!([])),
+                ("hooks", json!([])),
+            ] {
+                let mut bad = actual.clone();
+                bad[field] = value;
+                assert!(
+                    !disposal_compare(id, expected, &bad).is_empty(),
+                    "C1 disposal rejects {field}: {id}"
+                );
+            }
+            for index in 0..2 {
+                for (field, value) in [
+                    ("code", json!(1006)),
+                    ("cleanup", json!(true)),
+                    ("reason", json!("other")),
+                    ("connection", json!(3)),
+                    ("extra", json!(true)),
+                ] {
+                    let mut bad = actual.clone();
+                    bad["closes"][index][field] = value;
+                    assert!(
+                        disposal_compare(id, expected, &bad)
+                            .contains(&"connection closures".into()),
+                        "C1 disposal exact close: {id} {index} {field}"
+                    );
+                }
+                let mut missing = actual.clone();
+                missing["closes"]
+                    .as_array_mut()
+                    .expect("C1 closes")
+                    .remove(index);
+                assert!(
+                    disposal_compare(id, expected, &missing)
+                        .contains(&"connection closures".into())
+                );
+            }
+            let mut duplicate = actual.clone();
+            duplicate["closes"][1] = duplicate["closes"][0].clone();
+            assert!(
+                disposal_compare(id, expected, &duplicate).contains(&"connection closures".into())
+            );
+            let mut reversed = actual.clone();
+            reversed["closes"]
+                .as_array_mut()
+                .expect("C1 closes")
+                .swap(0, 1);
+            assert!(
+                disposal_compare(id, expected, &reversed).contains(&"connection closures".into())
+            );
+            let stdout = expected["stdout"].as_str().expect("C1 stdout").as_bytes();
+            let stderr = ts_stderr(expected["stderrRaw"].as_str().expect("C1 stderr")).as_bytes();
+            assert!(
+                compare_surfaces(id, expected, &actual, b"extra", stderr)
+                    .contains(&"stdout".into())
+            );
+            assert!(
+                compare_surfaces(id, expected, &actual, stdout, b"wrong error\n")
+                    .contains(&"stderr".into())
+            );
+            let mut changed_original = expected.clone();
+            changed_original["input"]["id"] = json!("other");
+            assert!(
+                disposal_compare(id, &changed_original, &actual)
+                    .contains(&"query disposal baseline".into())
+            );
+        }
+    }
+
+    #[test]
+    fn query_disposal_preserves_rpc_frames_and_uuid_bindings() {
+        for id in QUERY_DISPOSAL_CASES {
+            let expected = disposal_capture(id);
+            let actual = disposal_actual(expected);
+            let requests = actual["wire"]
+                .as_array()
+                .expect("C1 actual wire")
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| row["frame"]["type"] == "request")
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>();
+            let request = requests[0];
+            for (field, value) in [
+                ("method", json!("other")),
+                ("id", json!("not-a-uuid")),
+                ("params", json!({})),
+            ] {
+                let mut bad = actual.clone();
+                bad["wire"][request]["frame"][field] = value;
+                assert!(
+                    disposal_compare(id, expected, &bad).contains(&"query disposal RPC".into()),
+                    "C1 RPC rejects {field}: {id}"
+                );
+            }
+            let mut missing = actual.clone();
+            missing["wire"]
+                .as_array_mut()
+                .expect("C1 wire")
+                .remove(request);
+            assert!(
+                disposal_compare(id, expected, &missing).contains(&"query disposal RPC".into())
+            );
+            let mut duplicate = actual.clone();
+            duplicate["wire"]
+                .as_array_mut()
+                .expect("C1 wire")
+                .push(actual["wire"][request].clone());
+            assert!(
+                disposal_compare(id, expected, &duplicate).contains(&"query disposal RPC".into())
+            );
+            let mut wrong_connection = actual.clone();
+            wrong_connection["wire"][request]["connection"] = json!(2);
+            assert!(
+                disposal_compare(id, expected, &wrong_connection)
+                    .contains(&"query disposal RPC".into())
+            );
+            let mut rebound = actual.clone();
+            let mut mapping = BTreeMap::<String, String>::new();
+            for row in rebound["wire"].as_array_mut().expect("C1 rebind wire") {
+                let frame = &mut row["frame"];
+                if let Some(id) = frame["id"].as_str().map(str::to_owned) {
+                    let binding = mapping
+                        .entry(id)
+                        .or_insert_with(|| uuid::Uuid::new_v4().to_string());
+                    frame["id"] = json!(binding);
+                }
+                if frame["method"] == "submit_turn" {
+                    frame["params"]["runId"] = json!(uuid::Uuid::new_v4().to_string());
+                }
+            }
+            assert!(
+                disposal_compare(id, expected, &rebound).is_empty(),
+                "C1 coherent generated UUID binding: {id}"
+            );
+            // Reply correlation remains exact even though independently generated
+            // request UUID values differ between the two executable runs.
+            rebound["wire"][request + 1]["frame"]["id"] = json!(uuid::Uuid::new_v4().to_string());
+            assert!(
+                disposal_compare(id, expected, &rebound).contains(&"query disposal RPC".into())
+            );
+        }
     }
 
     #[test]

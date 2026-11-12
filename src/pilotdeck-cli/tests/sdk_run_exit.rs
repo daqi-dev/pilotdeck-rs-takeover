@@ -786,26 +786,18 @@ async fn run_duplicate_event_is_not_printed() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn run_unimplemented_options_are_explicit() {
+async fn run_model_without_project_preserves_control_error() {
     let _port = PORT.lock().await;
     let _lease = ParityLock::acquire().await;
-    for (flags, gap) in [(
-        vec!["--model", "fixture/model"],
-        "pilotdeck run model without project (#123 P06/P08)",
-    )] {
-        let mut input = case("run--argv");
-        input["input"]["argv"]
-            .as_array_mut()
-            .expect("#1058 option argv")
-            .extend(flags.into_iter().map(|v| json!(v)));
-        input["stdout"] = json!("");
-        input["stderr"] = json!(format!(
-            "pilotdeck-rs TODO: {gap} is not implemented yet.\n"
-        ));
-        input["exit"] = json!(2);
-        input["connections"] = json!(0);
-        run_case(&input).await;
-    }
+    // The model prerequisite is checked only after the control RPC succeeds.
+    // A preceding new_session rejection must keep its baseline message and
+    // one-connection lifetime, instead of becoming an early local error.
+    let mut input = case("run--gateway-rpc-error");
+    input["input"]["argv"]
+        .as_array_mut()
+        .expect("C1 model argv")
+        .extend([json!("--model"), json!("fixture/model")]);
+    run_case(&input).await;
 }
 
 #[test]

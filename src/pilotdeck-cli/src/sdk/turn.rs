@@ -20,13 +20,6 @@ pub(super) fn run(
     connection: &Connection,
     resume: Option<&str>,
 ) -> Result<u8, Failure> {
-    if read_value(argv, "--model").is_some() && read_value(argv, "--project").is_none() {
-        // The TS query leaks its socket after this validation error. Keep the
-        // exceptional lifecycle explicitly unimplemented until P06/P08.
-        return Err(Failure::Todo(
-            "pilotdeck run model without project (#123 P06/P08)",
-        ));
-    }
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -148,20 +141,16 @@ async fn run_connected(
             Err(error)
         }
         QueryOutcome::Retain(error) => {
-            // The TS iterator's error path does not close its query transport.
-            // The CLI prints its error and closes control, but that query keeps
-            // the process alive. Preserve the observed lifetime until peer
-            // closure/default signal; do not add a new local exit deadline.
+            // cc7c4e6 leaves this query socket open after next() rejects, so
+            // the failed command never exits while the gateway stays alive.
+            // C1 fixes that hang: retain the original error and RPC ordering,
+            // but release both owned connections before main prints it once.
             signals.remove();
             control.close().await;
-            match error {
-                Failure::Error(message) => crate::stderr_line(&message),
-                other => return Err(other),
-            }
             if let Some(query) = &mut query {
-                query.wait_peer_closed().await;
+                query.close().await;
             }
-            Ok(1)
+            Err(error)
         }
         QueryOutcome::RetainAborts {
             error,
@@ -491,6 +480,11 @@ async fn resolve_model(
     project: Option<&str>,
     model: &str,
 ) -> Result<ModelOverride, Failure> {
+    let project = project
+        .filter(|project| !project.is_empty())
+        .ok_or_else(|| {
+            Failure::Error("projectKey is required when options.model is set.".into())
+        })?;
     let catalog = query
         .request("model_catalog_list", json!({"projectKey":project}))
         .await?;
