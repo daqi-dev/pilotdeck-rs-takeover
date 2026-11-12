@@ -1,0 +1,150 @@
+{
+ "name": "gap-web-search-bocha",
+ "about": "tools.webSearch provider=bocha（additionalWebSearch.ts）：POST + Bearer，query/count/freshness/summary 体；code=200 视为成功，data.webPages.value 解析（name/summary/siteName/datePublished）；其他 code 报错。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ntools:\n  webSearch:\n    enabled: true\n    provider: bocha\n    endpoint: {MOCK}/bocha\n    apiKey: key-bocha\n",
+ "provider": [
+  {
+   "name": "search-01",
+   "unless": [
+    "\"model\":"
+   ],
+   "reply": {
+    "status": 200,
+    "body": {
+     "code": 200,
+     "data": {
+      "webPages": {
+       "value": [
+        {
+         "name": "N1",
+         "url": "https://bc.example/1",
+         "summary": "Sum1",
+         "snippet": "Sn1",
+         "siteName": "Site",
+         "datePublished": "2026-03-03"
+        }
+       ]
+      }
+     }
+    }
+   },
+   "when": [
+    "bocha ok"
+   ]
+  },
+  {
+   "name": "search-02",
+   "unless": [
+    "\"model\":"
+   ],
+   "reply": {
+    "status": 200,
+    "body": {
+     "code": 403,
+     "msg": "denied"
+    }
+   },
+   "when": [
+    "bocha code"
+   ]
+  },
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Gap\"}"
+   }
+  },
+  {
+   "name": "t02-after",
+   "when": [
+    "g02:",
+    "\"tool_call_id\":\"call_g02\""
+   ],
+   "reply": {
+    "text": "Done 02."
+   }
+  },
+  {
+   "name": "t02",
+   "when": [
+    "g02:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g02",
+     "name": "web_search",
+     "arguments": {
+      "query": "bocha code"
+     }
+    }
+   }
+  },
+  {
+   "name": "t01-after",
+   "when": [
+    "g01:",
+    "\"tool_call_id\":\"call_g01\""
+   ],
+   "reply": {
+    "text": "Done 01."
+   }
+  },
+  {
+   "name": "t01",
+   "when": [
+    "g01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_g01",
+     "name": "web_search",
+     "arguments": {
+      "query": "bocha ok"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-gap",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g01: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-gap",
+    "channelKey": "test",
+    "message": "g02: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-gap"
+   }
+  }
+ ]
+}

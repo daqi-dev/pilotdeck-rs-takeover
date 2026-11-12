@@ -556,6 +556,22 @@ impl SessionTools {
         self
     }
 
+    /// `resolveWebSearchOptions(snapshot)` (ProjectExecutionWorldBundle.ts:
+    /// 120-133): the project's `tools.webSearch`, over the session network.
+    pub fn with_web_search(mut self, web_search: &JsValue) -> Self {
+        let env = JsValue::Object(self.env.clone());
+        self.world.web_search = builtin::web::search::options_from_config(
+            web_search,
+            self.world.fetcher.transport.clone(),
+        )
+        .map(|options| {
+            let availability =
+                builtin::web::search::WebSearchTool::new(options.clone()).check_availability(Some(&env));
+            (options, availability)
+        });
+        self
+    }
+
     /// The project's plugin runtime, behind `read_skill`
     /// (`createBuiltinRegistry({ readSkill })`). Without it the tool is not
     /// registered, as in the baseline.
@@ -1629,6 +1645,13 @@ pub(super) struct ExecutionWorld {
     tasks: crate::runtime::background::BackgroundTaskRuntime,
     /// `getURLMarkdownContent` over the process network, behind `web_fetch`.
     fetcher: builtin::web::fetcher::UrlFetcher,
+    /// `webSearch` options (`resolveWebSearchOptions`) with the outcome of
+    /// the tool's availability check against the session env; `None` is
+    /// `webSearch: false`.
+    web_search: Option<(
+        builtin::web::search::WebSearchOptions,
+        Option<(&'static str, &'static str)>,
+    )>,
     /// `readSkill: { loader, lister }`: the project's plugin runtime.
     skills: Option<Arc<crate::runtime::plugins::PluginRuntime>>,
     /// The gateway's `extraTools` (the automation providers' tools,
@@ -1651,6 +1674,7 @@ impl ExecutionWorld {
             fetcher: builtin::web::fetcher::UrlFetcher::new(Arc::new(
                 crate::runtime::model::http::HyperModelTransport::new(),
             )),
+            web_search: None,
             skills: None,
             extra_tools: Vec::new(),
             excluded_tools: Vec::new(),
@@ -1742,12 +1766,22 @@ pub(super) fn native_tools(
     #[cfg(unix)]
     {
         builtins.extend(builtin::shell_tools());
-        // `createExecuteCodeTool({ webSearch })`: `web_search` is not
-        // registered by this process, so its helper is not offered either.
+        // `createExecuteCodeTool({ webSearch: options?.webSearch !== false })`.
         builtins.push(Arc::new(builtin::execute_code::ExecuteCodeTool::new(
-            builtin::execute_code::ExecuteCodeToolOptions { web_search: false },
+            builtin::execute_code::ExecuteCodeToolOptions {
+                web_search: world.web_search.is_some(),
+            },
         )));
         builtins.extend(builtin::task::task_tools(Some(world.tasks.clone())));
+    }
+    let web_search = world.web_search.clone().map(|(options, availability)| {
+        (
+            Arc::new(builtin::web::search::WebSearchTool::new(options)),
+            availability,
+        )
+    });
+    if let Some((tool, _)) = &web_search {
+        builtins.push(tool.clone());
     }
     builtins.push(Arc::new(builtin::web::fetch_tool::WebFetchTool::new(
         builtin::web::fetch_tool::WebFetchToolOptions {
@@ -1783,8 +1817,37 @@ pub(super) fn native_tools(
     for tool in &world.extra_tools {
         let _ = tools.register(tool.clone());
     }
+    // `createBuiltinRegistry`: a disabled `web_search` is marked unavailable
+    // under its alias.
+    if web_search.is_none() {
+        let _ = tools.mark_unavailable(
+            crate::runtime::tools::registry::UnavailableTool {
+                name: "web_search".into(),
+                code: "unavailable".into(),
+                reason: "web_search is disabled in this session.".into(),
+            },
+            &["WebSearch".into()],
+        );
+    }
     for name in &world.excluded_tools {
         let _ = tools.unregister(name);
+    }
+    // `filterAvailableTools(working, { cwd, env })`
+    // (SessionToolCompositionBundle.ts:46): after the session's exclusions,
+    // a registered `web_search` whose availability check fails is replaced
+    // by its diagnostic.
+    if let Some((_, Some((code, reason)))) = &web_search
+        && tools.has(&"web_search".into())
+    {
+        let _ = tools.unregister(&"web_search".into());
+        let _ = tools.mark_unavailable(
+            crate::runtime::tools::registry::UnavailableTool {
+                name: "web_search".into(),
+                code: (*code).into(),
+                reason: (*reason).into(),
+            },
+            &["WebSearch".into()],
+        );
     }
     tools
         .register(Arc::new(LspTool::new(lsp)))

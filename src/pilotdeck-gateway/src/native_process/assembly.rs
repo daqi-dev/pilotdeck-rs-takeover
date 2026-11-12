@@ -626,6 +626,13 @@ async fn start_assembly(
                 // `modules.skills.enabled: false` (ProjectSessionRuntimeBundle.ts:250-300):
                 // no `read_skill`, and the session contributes no skills.
                 let skills_disabled = crate::runtime::project::skills_module_disabled(&snapshot);
+                // `snapshot.config.tools?.webSearch` (ProjectExecutionWorldBundle.ts:124).
+                let web_search_config = snapshot
+                    .get("config")
+                    .and_then(|config| config.get("tools"))
+                    .and_then(|tools| tools.get("webSearch"))
+                    .cloned()
+                    .unwrap_or(JsValue::Undefined);
                 let agent = snapshot
                     .get("config")
                     .and_then(|v| v.get("agent"))
@@ -1000,6 +1007,7 @@ async fn start_assembly(
                             session_mcp,
                         )?
                         .with_extra_tools(extra_tools, excluded_tools)
+                        .with_web_search(&web_search_config)
                         .with_prompt_policy(can_prompt_override, bypass_available_override)
                         .with_sdk_permissions(sdk_config.as_ref())
                         .with_permission_mode_source(permission_source.clone())
