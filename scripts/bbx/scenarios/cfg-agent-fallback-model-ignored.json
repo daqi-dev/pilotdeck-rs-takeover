@@ -1,0 +1,16 @@
+{
+  "name": "cfg-agent-fallback-model-ignored",
+  "about": "agent.fallbackModel 在 gateway 轮次里不生效（pilot/config/loadPilotConfig.ts:403-412：出现即警告 CONFIG_AGENT_FALLBACK_MODEL_DEPRECATED、值被丢弃；回退只看 router.fallback.default，router/config/parseRouterConfig.ts）。主模型 bbx/broken 一直回 500（retry 设成不重试），agent.fallbackModel 指向能用的 bbx/deterministic：基线这一轮以模型错误结束，回退模型收不到请求；resolve_settings 里看 agent 段与诊断。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/broken\n  fallbackModel: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      retry:\n        streamMaxRetries: 0\n        requestMaxRetries: 0\n      models:\n        broken:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "provider": [
+    { "name": "title", "when": ["Generate a concise title"], "reply": { "text": "{\"title\":\"Fallback\"}" } },
+    { "name": "broken", "when": ["\"model\":\"broken\""], "reply": { "status": 500, "body": { "error": { "message": "boom", "type": "server_error" } } } },
+    { "name": "fallback", "when": ["\"model\":\"deterministic\""], "reply": { "text": "fallback answered" } }
+  ],
+  "steps": [
+    { "ws": "resolve_settings", "params": {} },
+    { "ws": "submit_turn", "params": { "sessionKey": "s-fb", "channelKey": "test", "message": "fb: hi" }, "timeout": 30000 },
+    { "sleep": 300 },
+    { "ws": "read_session_messages", "params": { "sessionKey": "s-fb" } }
+  ]
+}
