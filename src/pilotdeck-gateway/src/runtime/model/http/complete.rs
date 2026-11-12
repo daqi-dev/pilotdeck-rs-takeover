@@ -651,15 +651,51 @@ pub async fn complete_model(
     put(&mut current, "stream", JsValue::Bool(false));
     let (provider, _) = providers::validate_model_request(&current, config)?;
 
-    // P1-2: Google protocol not supported in complete path
+    let (max_retries, _) = retry_decide_request(&provider, 0.0, 0.0);
+    // `streamModel.ts:94-118`: the Google branch goes through the SDK's
+    // `models.generateContent`; every SDK failure (including an HTTP error
+    // status) is a provider error that retries on its own `retryable` flag.
     if is(field(&provider, "protocol"), "google") {
+        let mut attempt = 0.0;
+        while attempt <= max_retries {
+            throw_if_aborted(options)?;
+            let (provider_now, model_now) = providers::validate_model_request(&current, config)?;
+            // `:95` builds the body outside the attempt's try: a build error is
+            // thrown as is, without retry.
+            providers::google::build_request(&current, &model_now)?;
+            match super::google::google_complete_attempt(
+                transport,
+                &provider_now,
+                &current,
+                &model_now,
+                options,
+            )
+            .await
+            {
+                Ok(raw) => {
+                    return Ok(providers::google::parse_response(
+                        &raw,
+                        field(&provider, "id"),
+                    ));
+                }
+                Err(error) => {
+                    if attempt < max_retries && is_retryable_request_error(&error) {
+                        let (_, delay_ms) =
+                            retry_decide_request(&provider, attempt, (options.random)());
+                        let _ = delay(delay_ms, options).await?;
+                        attempt += 1.0;
+                        continue;
+                    }
+                    return Err(error);
+                }
+            }
+        }
         return Err(ModelStreamError::thrown(
-            "UnsupportedProtocol",
-            "complete(): Google protocol is not supported in non-streaming mode",
+            "Error",
+            "complete() exhausted all retry attempts without a result.",
         ));
     }
 
-    let (max_retries, _) = retry_decide_request(&provider, 0.0, 0.0);
     let mut attempt = 0.0;
     // `streamModel.ts:92`: `for (attempt = 0; attempt <= maxRetries; attempt++)`.
     // A fractional limit such as 1.5 therefore runs attempts 0 and 1 only and

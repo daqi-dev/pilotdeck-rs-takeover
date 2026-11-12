@@ -1172,9 +1172,15 @@ fn resolve_endpoint(raw_url: &str) -> (String, String) {
     (url.to_string(), String::new())
 }
 
-/// `createGoogleClient(...).models.generateContentStream` endpoint, without
-/// the leading model path rewriting performed by `tModel`.
-pub(crate) fn endpoint(provider: &JsValue, model: &JsValue) -> Result<String, ModelStreamError> {
+/// `createGoogleClient(...).models.generateContentStream` endpoint
+/// (`:streamGenerateContent?alt=sse`), or with `stream == false` the
+/// `models.generateContent` one (`:generateContent`), without the leading
+/// model path rewriting performed by `tModel`.
+pub(crate) fn endpoint(
+    provider: &JsValue,
+    model: &JsValue,
+    stream: bool,
+) -> Result<String, ModelStreamError> {
     let (base_url, api_version) = resolve_endpoint(&trim_input(field(provider, "url"), "rawUrl")?);
     let base = base_url.trim_end_matches('/');
     let mut url = String::new();
@@ -1191,38 +1197,56 @@ pub(crate) fn endpoint(provider: &JsValue, model: &JsValue) -> Result<String, Mo
     };
     url.push('/');
     url.push_str(&path);
-    url.push_str(":streamGenerateContent?alt=sse");
+    url.push_str(if stream {
+        ":streamGenerateContent?alt=sse"
+    } else {
+        ":generateContent"
+    });
     Ok(url)
 }
 
-/// SDK request headers. `user-agent` is transport-level (excluded by fixtures);
-/// `x-goog-api-client` is the SDK's own protocol header.
-pub(crate) fn headers(provider: &JsValue) -> Result<Vec<(JsString, JsValue)>, ModelStreamError> {
+/// SDK request headers, in the order `getHeadersInternal` appends them
+/// (`@google/genai` 2.10.0): `getDefaultHeaders()` (`User-Agent`,
+/// `x-goog-api-client`, `Content-Type`), the provider's headers merged over
+/// them with `Object.assign` (an exact key replaces in place, any other key is
+/// appended; `Headers.append` later joins names that differ only in case), an
+/// `X-Server-Timeout` header in whole seconds when the client has a timeout
+/// (the non-streaming path; streaming clears it), then `x-goog-api-key`
+/// unless a header of that name (any case) is already present.
+pub(crate) fn headers(
+    provider: &JsValue,
+    timeout_ms: Option<f64>,
+) -> Result<Vec<(JsString, JsValue)>, ModelStreamError> {
     let mut headers = value_object();
-    headers.insert("content-type".into(), "application/json".into());
+    headers.insert("User-Agent".into(), SDK_HEADER.into());
+    headers.insert("x-goog-api-client".into(), SDK_HEADER.into());
+    headers.insert("Content-Type".into(), "application/json".into());
     if let Some(custom) = field(provider, "headers").as_object() {
         for (name, value) in custom.own_entries() {
             headers.insert(name.clone(), value.clone());
         }
     }
-    let has_client = headers.own_entries().iter().any(|(name, _)| {
-        String::from_utf16_lossy(name.units()).eq_ignore_ascii_case("x-goog-api-client")
-    });
-    if !has_client {
-        headers.insert("x-goog-api-client".into(), SDK_HEADER.into());
+    let mut out: Vec<(JsString, JsValue)> = headers
+        .own_entries()
+        .into_iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    if let Some(ms) = timeout_ms.filter(|ms| *ms > 0.0) {
+        out.push((
+            "X-Server-Timeout".into(),
+            crate::js_value::number_string((ms / 1000.0).ceil())
+                .as_str()
+                .into(),
+        ));
     }
-    let has_key = headers.own_entries().iter().any(|(name, _)| {
+    let has_key = out.iter().any(|(name, _)| {
         String::from_utf16_lossy(name.units()).eq_ignore_ascii_case("x-goog-api-key")
     });
     if !has_key {
         let key = text(field(provider, "apiKey"))?;
-        headers.insert("x-goog-api-key".into(), js_trim(&key).into());
+        out.push(("x-goog-api-key".into(), js_trim(&key).into()));
     }
-    Ok(headers
-        .own_entries()
-        .into_iter()
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect())
+    Ok(out)
 }
 
 /// `sanitizeProviderBody` + the SDK's recursive `extraBody` merge.
@@ -1380,6 +1404,104 @@ pub(crate) fn normalize_usage(raw: &JsValue) -> Option<JsValue> {
     defined.then(|| JsValue::Object(usage))
 }
 
+/// `parseGoogleResponse(raw, provider)` (`providers/google/response.ts`): the
+/// first candidate's parts become text / thinking / tool-call blocks.
+pub(crate) fn parse_response(raw: &JsValue, provider: &JsValue) -> JsValue {
+    static EMPTY: JsValue = JsValue::Undefined;
+    let record = |value: &JsValue| -> bool { matches!(value, JsValue::Object(_)) };
+    let response = if record(raw) { raw } else { &EMPTY };
+    let candidate = match field(response, "candidates") {
+        JsValue::Array(items) => items.first().filter(|item| record(item)).unwrap_or(&EMPTY),
+        _ => &EMPTY,
+    };
+    // `createToolCallIdState`: readString accepts an empty id, which the
+    // sanitizer then turns into its fallback.
+    let base_id = sanitize_tool_call_id(
+        &read_string(field(response, "responseId")).map_or_else(
+            || "google_response".to_string(),
+            |id| String::from_utf16_lossy(id.units()),
+        ),
+        "google",
+    );
+    let mut used: Vec<String> = Vec::new();
+    let mut content = Vec::new();
+    if let JsValue::Array(parts) = field(field(candidate, "content"), "parts") {
+        for (index, part) in parts.iter().enumerate() {
+            let part = if record(part) { part } else { &EMPTY };
+            if let Some(text) = read_string(field(part, "text")) {
+                if field(part, "thought") == &JsValue::Bool(true) {
+                    let mut thinking = value_object();
+                    thinking.insert("type".into(), "thinking".into());
+                    thinking.insert("text".into(), JsValue::String(text.clone()));
+                    if let Some(signature) =
+                        read_string(field(part, "thoughtSignature")).filter(|s| !s.is_empty())
+                    {
+                        thinking.insert("signature".into(), JsValue::String(signature.clone()));
+                    }
+                    content.push(JsValue::Object(thinking));
+                } else if !text.is_empty() {
+                    let mut block = value_object();
+                    block.insert("type".into(), "text".into());
+                    block.insert("text".into(), JsValue::String(text.clone()));
+                    content.push(JsValue::Object(block));
+                }
+                continue;
+            }
+            let function_call = field(part, "functionCall");
+            if !function_call
+                .as_object()
+                .is_some_and(|call| !call.is_empty())
+            {
+                continue;
+            }
+            // `chooseGoogleToolCallId`: a non-empty incoming id is sanitized,
+            // otherwise `call_<responseId>_<part index>`; then made unique.
+            let candidate_id = match read_string(field(function_call, "id")) {
+                Some(id) if !id.is_empty() => {
+                    sanitize_tool_call_id(&String::from_utf16_lossy(id.units()), "google")
+                }
+                _ => format!("call_{base_id}_{index}"),
+            };
+            let id = unique_tool_call_id(&candidate_id, &used);
+            used.push(id.clone());
+            let input = match field(function_call, "args") {
+                args @ JsValue::Object(_) => args.clone(),
+                _ => JsValue::Object(value_object()),
+            };
+            let mut call_raw = value_object();
+            call_raw.insert("provider".into(), provider.clone());
+            call_raw.insert("functionCall".into(), function_call.clone());
+            let mut block = value_object();
+            block.insert("type".into(), "tool_call".into());
+            block.insert("id".into(), id.as_str().into());
+            block.insert(
+                "name".into(),
+                JsValue::String(
+                    read_string(field(function_call, "name"))
+                        .cloned()
+                        .unwrap_or_default(),
+                ),
+            );
+            block.insert("input".into(), input);
+            block.insert("raw".into(), JsValue::Object(call_raw));
+            content.push(JsValue::Object(block));
+        }
+    }
+    let mut out = value_object();
+    out.insert("role".into(), "assistant".into());
+    out.insert("content".into(), JsValue::Array(content));
+    out.insert(
+        "usage".into(),
+        normalize_usage(field(response, "usageMetadata")).unwrap_or(JsValue::Undefined),
+    );
+    out.insert(
+        "finishReason".into(),
+        normalize_finish_reason(field(candidate, "finishReason")).into(),
+    );
+    out.insert("raw".into(), raw.clone());
+    JsValue::Object(out)
+}
+
 // ---------------------------------------------------------------------------
 // stream.ts
 
@@ -1408,8 +1530,20 @@ pub(crate) struct StreamState {
     /// accumulator's V8 limit is observable even though audit staging (pr10)
     /// is not ported yet.
     raw_response: Vec<u16>,
+    /// `{headers}` of the HTTP response, as the SDK attaches it to every chunk
+    /// (`resp['sdkHttpResponse'] = {headers: chunk.headers}` after the field
+    /// mapping, so it is the chunk's last key).
+    sdk_http_response: Option<JsValue>,
 }
 impl StreamState {
+    /// State for one SDK stream whose HTTP response carried `headers` (the
+    /// SDK's `HttpResponse.headers` object).
+    pub(crate) fn with_response_headers(headers: JsValue) -> Self {
+        Self {
+            sdk_http_response: Some(sdk_http_response(headers)),
+            ..Self::default()
+        }
+    }
     pub(crate) fn ended(&self) -> bool {
         self.ended
     }
@@ -1451,6 +1585,27 @@ fn event<const N: usize>(entries: [(&str, JsValue); N]) -> JsValue {
     let mut out = value_object();
     for (key, value) in entries {
         out.insert(key.into(), value);
+    }
+    JsValue::Object(out)
+}
+
+/// `{headers}`: the SDK's `sdkHttpResponse` value.
+fn sdk_http_response(headers: JsValue) -> JsValue {
+    let mut out = value_object();
+    out.insert("headers".into(), headers);
+    JsValue::Object(out)
+}
+
+/// `generateContent` (non-streaming) result: the SDK sets `sdkHttpResponse`
+/// on the parsed JSON before `generateContentResponseFromMldev`, which copies
+/// it first, then the mapped fields.
+pub(crate) fn sdk_complete_response(wire: &JsValue, headers: JsValue) -> JsValue {
+    let mut out = value_object();
+    out.insert("sdkHttpResponse".into(), sdk_http_response(headers));
+    if let JsValue::Object(ref mapped) = sdk_response(wire) {
+        for (key, value) in mapped.own_entries() {
+            out.insert(key.clone(), value.clone());
+        }
     }
     JsValue::Object(out)
 }
@@ -1536,7 +1691,10 @@ pub(crate) fn normalize_stream_event(
     wire: &JsValue,
     state: &mut StreamState,
 ) -> Result<Vec<JsValue>, ModelStreamError> {
-    let raw_value = sdk_response(wire);
+    let mut raw_value = sdk_response(wire);
+    if let (Some(http), JsValue::Object(chunk)) = (&state.sdk_http_response, &mut raw_value) {
+        chunk.insert("sdkHttpResponse".into(), http.clone());
+    }
     let raw = &raw_value;
     let chunk = raw;
     let encoded = crate::js_value::json_stringify(&raw_value)

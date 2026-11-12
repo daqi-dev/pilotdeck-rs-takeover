@@ -53,19 +53,56 @@ pub(super) fn dump_failure_error(provider: &JsValue, failure: &DumpFailure) -> M
 // ---------------------------------------------------------------------------
 // Google protocol (`streamGoogleProviderRequest` in streamModel.ts)
 
+/// The SDK's `HttpResponse.headers`: `Object.fromEntries`-style copy of
+/// `Response.headers.entries()` — names lowercased and sorted, repeated
+/// values joined with `", "`, and `set-cookie` listed once per value (so the
+/// object keeps the last one). Values are byte strings (latin-1).
+pub(super) fn sdk_response_headers(headers: &hyper::HeaderMap) -> JsValue {
+    let mut names: Vec<&hyper::header::HeaderName> = headers.keys().collect();
+    names.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+    let latin1 = |value: &hyper::header::HeaderValue| -> String {
+        value.as_bytes().iter().map(|&b| char::from(b)).collect()
+    };
+    let mut out = JsObject::new();
+    for name in names {
+        let values: Vec<String> = headers.get_all(name).iter().map(latin1).collect();
+        let value = if name == hyper::header::SET_COOKIE {
+            values.last().cloned().unwrap_or_default()
+        } else {
+            values.join(", ")
+        };
+        out.insert(name.as_str().into(), value.as_str().into());
+    }
+    JsValue::Object(out)
+}
+
 /// `sendGoogleCompleteRequest`/`generateContentStream` transport for the SDK:
 /// one URL, SDK headers, SDK `extraBody` deep merge. Transport failures are
 /// plain `TypeError: fetch failed` (the SDK uses bare fetch, not networkFetch).
+/// The SDK calls Node's global `fetch`, so the wire header block is undici's
+/// (`host`, `connection`, the SDK headers, then the Fetch defaults it did not
+/// set). `stream == false` is `models.generateContent`: its endpoint, and the
+/// provider `timeoutMs` as the SDK's `httpOptions.timeout` (an
+/// `X-Server-Timeout` header and an abort of the whole request; no timeout
+/// when unset). Streaming clears the SDK timeout and keeps the idle watchdog.
 pub(super) async fn send_google_request(
     transport: &dyn ModelHttpTransport,
     provider: &JsValue,
     model: &JsValue,
     body: &JsValue,
     options: &StreamOptions,
+    stream: bool,
 ) -> Result<Response<(ModelBody, bool)>, (ModelStreamError, bool)> {
-    let timeout_ms = idle_timeout_ms(provider, options);
+    let sdk_timeout_ms = if stream {
+        None
+    } else {
+        field(provider, "timeoutMs")
+            .as_number()
+            .filter(|ms| *ms > 0.0)
+    };
     let final_body = providers::google::final_body(body, provider);
-    let headers = providers::google::headers(provider).map_err(|error| (error, false))?;
+    let headers =
+        providers::google::headers(provider, sdk_timeout_ms).map_err(|error| (error, false))?;
     let encoded = crate::js_value::json_stringify(&final_body)
         .map_err(|_| {
             (
@@ -78,7 +115,8 @@ pub(super) async fn send_google_request(
     // to a file under the OS temp directory before the SDK send
     // (TS `streamModel.ts:395-401`). Google carries its model in the URL, so
     // the log line's model comes from the canonical request, not the body.
-    if std::env::var("PILOTDECK_DUMP_REQUEST").as_deref() == Ok("1") {
+    // The dump is part of the streaming attempt only (`complete()` never dumps).
+    if stream && std::env::var("PILOTDECK_DUMP_REQUEST").as_deref() == Ok("1") {
         // A failed write surfaces like TS: the throw lands in the Google
         // attempt catch → `toProviderError` → one non-retryable error event,
         // and the SDK send never happens (probe: 0 server hits with a
@@ -87,31 +125,46 @@ pub(super) async fn send_google_request(
             return Err((dump_failure_error(provider, &failure), false));
         }
     }
-    let endpoint = providers::google::endpoint(provider, model).map_err(|error| (error, false))?;
+    let endpoint =
+        providers::google::endpoint(provider, model, stream).map_err(|error| (error, false))?;
     let (url, header_map) = build_http_request(&endpoint, &headers)
         .map_err(|error| (ModelStreamError::thrown("TypeError", error.message), false))?;
-    let deadline = tokio::time::Instant::now() + duration(timeout_ms);
+    let idle_ms = idle_timeout_ms(provider, options);
+    let deadline = if stream {
+        Some(tokio::time::Instant::now() + duration(idle_ms))
+    } else {
+        sdk_timeout_ms.map(|ms| tokio::time::Instant::now() + duration(ms))
+    };
     crate::fetch_redirect::follow(
         url,
         hyper::Method::POST,
         header_map,
         Bytes::from(encoded),
         || (ModelStreamError::thrown("TypeError", "fetch failed"), false),
-        |request| async move {
+        |mut request| async move {
+            let wire =
+                crate::fetch_redirect::node_fetch_wire_headers(request.uri(), request.headers());
+            *request.headers_mut() = wire;
             provider_exchange(
                 transport,
                 request,
                 options,
-                Some(deadline),
+                deadline,
                 |failure| ModelStreamError::thrown("TypeError", failure.message),
                 || {
-                    ModelStreamError::thrown(
-                        "StreamIdleTimeoutError",
-                        format!(
-                            "Stream idle timeout: no data received for {}ms",
-                            crate::js_value::number_string(timeout_ms)
-                        ),
-                    )
+                    if stream {
+                        ModelStreamError::thrown(
+                            "StreamIdleTimeoutError",
+                            format!(
+                                "Stream idle timeout: no data received for {}ms",
+                                crate::js_value::number_string(idle_ms)
+                            ),
+                        )
+                    } else {
+                        // The SDK's own timer aborts its controller: fetch
+                        // rejects with an AbortError.
+                        ModelStreamError::abort()
+                    }
                 },
             )
             .await
@@ -188,7 +241,7 @@ async fn google_attempt(
     let mut body_before_abort = false;
     let sdk_deadline = tokio::time::Instant::now() + duration(idle_timeout_ms(provider, options));
     let outcome = async {
-        let response = send_google_request(transport, provider, model, body, options)
+        let response = send_google_request(transport, provider, model, body, options, true)
             .await
             .map_err(|(error, before_abort)| {
                 body_before_abort = before_abort;
@@ -236,8 +289,9 @@ async fn google_attempt(
                 }
             };
         }
+        let sdk_headers = sdk_response_headers(response.headers());
         let (mut body, _) = response.into_body();
-        let mut state = providers::google::StreamState::default();
+        let mut state = providers::google::StreamState::with_response_headers(sdk_headers);
         let idle_ms = idle_timeout_ms(provider, options);
         let mut guard = StreamGuard::new(provider, (options.clock)());
         let mut buffer = sse::SseBuffer::with_limit(sse_limit());
@@ -294,6 +348,62 @@ async fn google_attempt(
     }
     .await;
     (outcome, body_before_abort)
+}
+
+/// `toProviderError(provider, error)`: provider errors pass through, anything
+/// else is normalized without a status (the SDK's thrown values here carry
+/// none: `TypeError`, `SyntaxError`, ...).
+fn to_provider_error(provider: &JsValue, error: ModelStreamError) -> ModelStreamError {
+    match error {
+        ModelStreamError::Provider(_) => error,
+        other => ModelStreamError::Provider(normalize_model_error(
+            &provider_id(provider),
+            &"google".into(),
+            ErrorInput::Error(&other.as_js_error()),
+            None,
+        )),
+    }
+}
+
+/// One `sendGoogleCompleteRequest` (`streamModel.ts:349-364`): the SDK's
+/// `models.generateContent` — POST `:generateContent`, `throwErrorIfNotOK`,
+/// `response.json()`, `sdkHttpResponse` — then `throwIfGoogleAbort` and
+/// `toProviderError` on any failure. Returns the SDK response object.
+pub(super) async fn google_complete_attempt(
+    transport: &dyn ModelHttpTransport,
+    provider: &JsValue,
+    request: &JsValue,
+    model: &JsValue,
+    options: &StreamOptions,
+) -> Result<JsValue, ModelStreamError> {
+    let mut before_abort = false;
+    let outcome = async {
+        let body = providers::google::build_request(request, model)?;
+        let model_id = field(request, "model").clone();
+        let response = send_google_request(transport, provider, &model_id, &body, options, false)
+            .await
+            .map_err(|(error, early)| {
+                before_abort = early;
+                error
+            })?;
+        before_abort = response.body().1;
+        if !(200..300).contains(&response.status().as_u16()) {
+            return Err(google_response_error(response, options, provider).await?);
+        }
+        let headers = sdk_response_headers(response.headers());
+        let (mut body, early) = response.into_body();
+        let text = response_text(&mut body, options, early).await?;
+        let wire = providers::google::parse_error_body(&text)?;
+        Ok(providers::google::sdk_complete_response(&wire, headers))
+    }
+    .await;
+    match outcome {
+        Ok(raw) => Ok(raw),
+        Err(error) => match throw_if_google_abort(error, options, before_abort) {
+            Ok(error) => Err(to_provider_error(provider, error)),
+            Err(abort) => Err(abort),
+        },
+    }
 }
 
 /// `throwIfGoogleAbort`: preserve abort-like errors, while an observed parent
