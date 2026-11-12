@@ -3,6 +3,9 @@
     "PILOTDECK_TOKEN": "{TOKEN}"
   },
   "name": "c1-sdk-cancel-resume",
+  "files": {
+    "home/.pilotdeck/projects/c1-sdk-cancel-resume-fixture/.cwd": "{PROJECT}\n"
+  },
   "about": "正式CLI恢复同一会话，模型发出首段后挂住；serve只向该CLI进程发送SIGINT，要求处理信号后自行结束，再resume同一会话并查询历史。无宿主18789；provider只用bbx本地mock。当前新场景待TS自比确认完整取消退出形状。",
   "provider": [
     {

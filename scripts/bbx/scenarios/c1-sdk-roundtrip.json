@@ -3,6 +3,9 @@
     "PILOTDECK_TOKEN": "{TOKEN}"
   },
   "name": "c1-sdk-roundtrip",
+  "files": {
+    "home/.pilotdeck/projects/c1-sdk-roundtrip-fixture/.cwd": "{PROJECT}\n"
+  },
   "about": "正式 run --project --model --json 创建会话后，以 resume --stream-json 续写，并用 sessions messages 读取持久历史；followup provider规则同时要求两轮输入，避免空历史也假通过。另含provider 400错误返回。当前新场景待E0固定候选TS自比与Rust对拍。",
   "provider": [
     {
