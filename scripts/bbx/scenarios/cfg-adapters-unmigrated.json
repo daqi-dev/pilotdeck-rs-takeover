@@ -1,0 +1,110 @@
+{
+ "name": "cfg-adapters-unmigrated",
+ "about": "通用平台渠道 enabled 但不给凭据时的启动行为，每个渠道单独起一次（adapters/channel/loadEnabledChannels.ts:8-120 与各渠道 start()）。基线的 package.json 不依赖 grammy / discord.js / @slack/bolt / matrix-bot-sdk / dingtalk-stream / imapflow / nodemailer，这些渠道永远只打一行「not installed」并照常启动；mattermost / signal / whatsapp / homeassistant 只打缺凭据一行并照常启动。全程不联网。已知与 Rust 不一致：Rust 对其中九个渠道拒绝启动（「未迁移到 Rust」，channel/loader.rs:36-118，旧流程登记在 specs/gateway-parity/diffs/A8.3-CHANNEL-*），slack 实现了真实的 Socket Mode（报 SLACK_BOT_TOKEN not set）；是否照基线改由主会话决定。",
+ "server": false,
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+ "files": {
+  "cfgs/ch-telegram.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  telegram:\n    enabled: true\n",
+  "cfgs/ch-discord.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  discord:\n    enabled: true\n",
+  "cfgs/ch-slack.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  slack:\n    enabled: true\n",
+  "cfgs/ch-matrix.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  matrix:\n    enabled: true\n",
+  "cfgs/ch-mattermost.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  mattermost:\n    enabled: true\n",
+  "cfgs/ch-signal.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  signal:\n    enabled: true\n",
+  "cfgs/ch-whatsapp.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  whatsapp:\n    enabled: true\n",
+  "cfgs/ch-dingtalk.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  dingtalk:\n    enabled: true\n",
+  "cfgs/ch-email.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  email:\n    enabled: true\n",
+  "cfgs/ch-homeassistant.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  homeassistant:\n    enabled: true\n"
+ },
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/ch-telegram.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/ch-discord.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/ch-slack.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/ch-matrix.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/ch-mattermost.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/ch-signal.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/ch-whatsapp.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/ch-dingtalk.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/ch-email.yaml"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/ch-homeassistant.yaml"
+   },
+   "timeout": 20000
+  }
+ ]
+}
