@@ -1320,6 +1320,9 @@ impl LiveSession for OwnedSession {
     fn reload_snapshot(&self) -> Result<ReloadSnapshot, RuntimeError> {
         self.adapter.reload_snapshot()
     }
+    fn close_transcript(&self) {
+        self.storage.recorder.writer().close();
+    }
     fn draining_reload_snapshot(&self) -> Result<ReloadSnapshot, RuntimeError> {
         self.reload_source
             .snapshot_consistent_inner(&self.storage.recorder, true)

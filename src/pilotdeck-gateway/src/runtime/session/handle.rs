@@ -75,6 +75,11 @@ pub trait LiveSession: Send + Sync {
     fn disposal_guard(&self) -> Option<Box<dyn Send>> {
         None
     }
+    /// Close the session's transcript writer ahead of disposal: later appends
+    /// resolve without writing, like the TS writer once the gateway closed a
+    /// timed-out session (InProcessGateway.ts:1824-1836). Adapters without a
+    /// factory writer have nothing to close.
+    fn close_transcript(&self) {}
     fn dispose(&self) -> DisposeFuture<'_>;
 }
 
@@ -402,6 +407,11 @@ impl LiveSessionHandle {
             stream,
             _activity: Some(activity),
         })
+    }
+
+    /// See [`LiveSession::close_transcript`].
+    pub fn close_transcript(&self) {
+        self.0.session.close_transcript();
     }
 
     pub fn abort(&self, reason: &JsString) -> RuntimeResult {

@@ -486,6 +486,7 @@ async fn start_assembly(
     // (the prepare closure composing each session's agent config).
     let session_overrides: Arc<super::SessionOverrides> = Arc::default();
     let prepare_overrides = session_overrides.clone();
+    let evict_session_overrides = session_overrides.clone();
     let prepare_user_dialog_bus = user_dialog_bus.clone();
     let prepare_project = project.clone();
     let prepare_options = options.clone();
@@ -1335,7 +1336,18 @@ async fn start_assembly(
                 !emit_disposed.load(std::sync::atomic::Ordering::SeqCst)
                     && emit_coordinator.emit(session, &event)
             }));
-            let owner = SessionOwner::new(SessionOwnerOptions::new(build_factory));
+            let mut owner_options = SessionOwnerOptions::new(build_factory);
+            // `onSessionEvict` (createLocalGateway.ts:846-848): every eviction
+            // except a dirty recreate drops the session's live permission
+            // mode, so the next turn starts from the stored selection or the
+            // server default.
+            let evict_overrides = evict_session_overrides.clone();
+            owner_options.on_evict = Some(Arc::new(move |key, reason| {
+                if reason != crate::runtime::session::EvictionReason::DirtyRecreate {
+                    evict_overrides.clear_live_mode(key);
+                }
+            }));
+            let owner = SessionOwner::new(owner_options);
             let _ = active_run.set({
                 let owner = owner.clone();
                 Arc::new(move |session: &JsString| owner.active_turn_run_id(session))

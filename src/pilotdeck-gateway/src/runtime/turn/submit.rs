@@ -733,6 +733,12 @@ impl TurnSubmitter {
                             publisher.gateway_event(event);
                         })
                         .await;
+                        // The timed-out session is never reused: the baseline
+                        // closes it as soon as the timeout settled, so the
+                        // aborted loop's own terminal records (step_completed,
+                        // turn_result, turn_failed) land on a closed writer and
+                        // are dropped (InProcessGateway.ts:1824-1836).
+                        handle.close_transcript();
                     }
                     // The settlement lets a worker that observed the timeout
                     // drain and finish (which closes delivery itself).
