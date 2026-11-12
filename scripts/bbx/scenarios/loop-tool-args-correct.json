@@ -1,0 +1,461 @@
+{
+  "name": "loop-tool-args-correct",
+  "about": "非法工具参数之后模型自行纠正的各条路径（agent/loop/AgentLoop.ts）。v1：read_file 的 offset 类型不对 → 工具报 invalid_tool_input，模型改正后执行；v2：同一个非法调用连续 3 次 → 熔断宽限提示（AgentLoop.ts:94 CIRCUIT_BREAKER_GRACE_PROMPT、2137-2147）→ 模型改正后正常结束；v3：三次非法调用指纹交替（a、b、a）→ 不触发熔断（2132-2139 指纹变了就重新计数）；v4：bash 缺必填 command → 改正；v5：同一回复里一个未知工具名加一个合法调用 → 只有未知的那个报错；v6：非流式模型（supportsStreaming=false）回非法 JSON 参数 → model/providers/openai/response.ts:88-104 抛 invalid_tool_arguments，实际在到达 provider 之前就被拒绝（循环总是走 streamModel，model/request/validateModelRequest.ts 报 unsupported_streaming），json 自纠分支（AgentLoop.ts:1420-1437）在 gateway 里走不到；v8：Anthropic 形状 input_json_delta 非法（model/providers/anthropic/stream.ts:168-245 延后到 message_delta 报 invalid_tool_arguments）→ 纠正。 已知不稳：Anthropic 会话里续接请求的 cachePlan.fingerprint 基线自比就不同（与 proto-anthropic-basic 相同），声明为 volatile。",
+  "volatile": [
+    "/chats/s-v8\\.jsonl\\.jsonl\\[\\d+\\]\\.request\\.cachePlan\\.fingerprint$"
+  ],
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      retry:\n        baseDelayMs: 1\n        maxDelayMs: 1\n        jitter: 0\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        nostream:\n          capabilities:\n            supportsToolUse: true\n            supportsStreaming: false\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    anth:\n      protocol: anthropic\n      url: {MOCK}\n      apiKey: bbx-anthropic-key\n      retry:\n        baseDelayMs: 1\n        maxDelayMs: 1\n        jitter: 0\n      models:\n        claude-bbx:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "files": {
+    "home/.pilotdeck/a.txt": "alpha\nbeta\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Args\"}"
+      }
+    },
+    {
+      "name": "v1-done",
+      "when": [
+        "v1:",
+        "\"tool_call_id\":\"call_v1b\""
+      ],
+      "reply": {
+        "text": "v1 done."
+      }
+    },
+    {
+      "name": "v1-fixed",
+      "when": [
+        "v1:",
+        "\"tool_call_id\":\"call_v1a\""
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_v1b",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "a.txt",
+            "offset": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "v1",
+      "when": [
+        "v1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_v1a",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "a.txt",
+            "offset": "bad"
+          }
+        }
+      }
+    },
+    {
+      "name": "v2-done",
+      "when": [
+        "v2:",
+        "\"tool_call_id\":\"call_v2ok\""
+      ],
+      "reply": {
+        "text": "v2 done."
+      }
+    },
+    {
+      "name": "v2-fixed",
+      "when": [
+        "v2:",
+        "Your last several tool calls all failed input validation"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_v2ok",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "a.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "v2",
+      "when": [
+        "v2:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_v2",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "a.txt",
+            "limit": "many"
+          }
+        }
+      }
+    },
+    {
+      "name": "v3-done",
+      "when": [
+        "v3:",
+        "\"tool_call_id\":\"call_v3c\""
+      ],
+      "reply": {
+        "text": "v3 done."
+      }
+    },
+    {
+      "name": "v3-c",
+      "when": [
+        "v3:",
+        "\"tool_call_id\":\"call_v3b\""
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_v3c",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "a.txt",
+            "offset": "bad"
+          }
+        }
+      }
+    },
+    {
+      "name": "v3-b",
+      "when": [
+        "v3:",
+        "\"tool_call_id\":\"call_v3a\""
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_v3b",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "a.txt",
+            "limit": "bad"
+          }
+        }
+      }
+    },
+    {
+      "name": "v3",
+      "when": [
+        "v3:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_v3a",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "a.txt",
+            "offset": "bad"
+          }
+        }
+      }
+    },
+    {
+      "name": "v4-done",
+      "when": [
+        "v4:",
+        "\"tool_call_id\":\"call_v4b\""
+      ],
+      "reply": {
+        "text": "v4 done."
+      }
+    },
+    {
+      "name": "v4-fixed",
+      "when": [
+        "v4:",
+        "\"tool_call_id\":\"call_v4a\""
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_v4b",
+          "name": "bash",
+          "arguments": {
+            "command": "echo fixed"
+          }
+        }
+      }
+    },
+    {
+      "name": "v4",
+      "when": [
+        "v4:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_v4a",
+          "name": "bash",
+          "arguments": {
+            "description": "no command"
+          }
+        }
+      }
+    },
+    {
+      "name": "v5-done",
+      "when": [
+        "v5:",
+        "\"tool_call_id\":\"call_v5b\""
+      ],
+      "reply": {
+        "text": "v5 done."
+      }
+    },
+    {
+      "name": "v5",
+      "when": [
+        "v5:"
+      ],
+      "reply": {
+        "text": "Two calls.",
+        "tools": [
+          {
+            "id": "call_v5a",
+            "name": "read_files_plz",
+            "arguments": {
+              "file_path": "a.txt"
+            }
+          },
+          {
+            "id": "call_v5b",
+            "name": "read_file",
+            "arguments": {
+              "file_path": "a.txt"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "v6",
+      "when": [
+        "v6:"
+      ],
+      "reply": {
+        "text": "Trying.",
+        "tool": {
+          "id": "call_v6a",
+          "name": "read_file",
+          "rawArguments": "}{"
+        }
+      }
+    },
+    {
+      "name": "v8-done",
+      "when": [
+        "v8:",
+        "\"tool_use_id\":\"toolu_v8b\""
+      ],
+      "reply": {
+        "text": "v8 done."
+      }
+    },
+    {
+      "name": "v8-fixed",
+      "when": [
+        "v8:",
+        "contained invalid JSON in the arguments"
+      ],
+      "reply": {
+        "tool": {
+          "id": "toolu_v8b",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "a.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "v8-resumed",
+      "when": [
+        "v8:",
+        "No incomplete tool call was executed"
+      ],
+      "reply": {
+        "tool": {
+          "id": "toolu_v8b",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "a.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "v8",
+      "when": [
+        "v8:"
+      ],
+      "reply": {
+        "text": "Trying.",
+        "tool": {
+          "id": "toolu_v8a",
+          "name": "read_file",
+          "rawArguments": "}{"
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-v1",
+        "channelKey": "test",
+        "message": "v1: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-v1"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-v2",
+        "channelKey": "test",
+        "message": "v2: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-v2"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-v3",
+        "channelKey": "test",
+        "message": "v3: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-v3"
+      }
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-v4",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-v4",
+        "channelKey": "test",
+        "message": "v4: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-v4"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-v5",
+        "channelKey": "test",
+        "message": "v5: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-v5"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-v6",
+        "channelKey": "test",
+        "message": "v6: go",
+        "modelOverride": {
+          "mode": "model",
+          "provider": "bbx",
+          "model": "nostream"
+        }
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-v6"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-v8",
+        "channelKey": "test",
+        "message": "v8: go",
+        "modelOverride": {
+          "mode": "model",
+          "provider": "anth",
+          "model": "claude-bbx"
+        }
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-v8"
+      }
+    }
+  ]
+}
