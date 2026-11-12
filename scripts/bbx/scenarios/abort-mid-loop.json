@@ -1,0 +1,277 @@
+{
+ "name": "abort-mid-loop",
+ "about": "宿主在工具循环中途中止（InProcessGateway.ts abort → AgentLoop 循环顶的中止检查 → aborted_streaming 收尾）：a 工具执行中 abort_turn（命令忽略 SIGTERM，结果在中止之后才回来），随后同会话再提交一轮；b 第一次模型流式输出中 abort_turn（假 provider hangAfter）；c 一轮工具之后的第二次模型流式输出中 abort_turn；d 工具执行中 close_session。比较事件序列、会话记录与下一轮请求。",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Abort mid\"}"
+   }
+  },
+  {
+   "name": "a-after",
+   "when": [
+    "am-a:",
+    "\"tool_call_id\":\"call_am_a\""
+   ],
+   "reply": {
+    "text": "Never reached a."
+   }
+  },
+  {
+   "name": "a",
+   "when": [
+    "am-a:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_am_a",
+     "name": "bash",
+     "arguments": {
+      "command": "trap '' TERM; sleep 1; echo survived"
+     }
+    }
+   }
+  },
+  {
+   "name": "b",
+   "when": [
+    "am-b:"
+   ],
+   "reply": {
+    "chunks": [
+     "partial ",
+     "never"
+    ],
+    "hangAfter": 1,
+    "hangMs": 4000
+   }
+  },
+  {
+   "name": "c-after",
+   "when": [
+    "am-c:",
+    "\"tool_call_id\":\"call_am_c\""
+   ],
+   "reply": {
+    "chunks": [
+     "second ",
+     "never"
+    ],
+    "hangAfter": 1,
+    "hangMs": 4000
+   }
+  },
+  {
+   "name": "c",
+   "when": [
+    "am-c:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_am_c",
+     "name": "bash",
+     "arguments": {
+      "command": "echo first-round"
+     }
+    }
+   }
+  },
+  {
+   "name": "d-after",
+   "when": [
+    "am-d:",
+    "\"tool_call_id\":\"call_am_d\""
+   ],
+   "reply": {
+    "text": "Never reached d."
+   }
+  },
+  {
+   "name": "d",
+   "when": [
+    "am-d:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_am_d",
+     "name": "bash",
+     "arguments": {
+      "command": "trap '' TERM; sleep 1; echo survived-d"
+     }
+    }
+   }
+  },
+  {
+   "name": "next",
+   "when": [
+    "am-next:"
+   ],
+   "reply": {
+    "text": "Next ok."
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-am-a",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-am-a",
+    "channelKey": "test",
+    "message": "am-a: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "tool_call_started"
+     },
+     "ws": "abort_turn",
+     "params": {
+      "sessionKey": "s-am-a"
+     },
+     "count": 1
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "sleep": 1500
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-am-a",
+    "channelKey": "test",
+    "message": "am-next: again"
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-am-b",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-am-b",
+    "channelKey": "test",
+    "message": "am-b: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "assistant_text_delta"
+     },
+     "ws": "abort_turn",
+     "params": {
+      "sessionKey": "s-am-b"
+     },
+     "count": 1
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "sleep": 1500
+  },
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-am-c",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-am-c",
+    "channelKey": "test",
+    "message": "am-c: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "assistant_text_delta"
+     },
+     "ws": "abort_turn",
+     "params": {
+      "sessionKey": "s-am-c"
+     },
+     "count": 1
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "sleep": 1500
+  },
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-am-d",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-am-d",
+    "channelKey": "test",
+    "message": "am-d: go"
+   },
+   "answer": [
+    {
+     "on": {
+      "type": "tool_call_started"
+     },
+     "ws": "close_session",
+     "params": {
+      "sessionKey": "s-am-d"
+     },
+     "count": 1
+    }
+   ],
+   "timeout": 20000
+  },
+  {
+   "sleep": 1500
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-am-a"
+   }
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-am-b"
+   }
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-am-c"
+   }
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-am-d"
+   }
+  }
+ ]
+}
