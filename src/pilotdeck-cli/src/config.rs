@@ -4,6 +4,15 @@ use crate::paths::Env;
 use std::path::Path;
 
 pub fn check(env: &Env, cwd: &Path, pilot_home: &Path) -> Result<(), Failure> {
+    load(env, cwd, pilot_home).map(|_| ())
+}
+
+/// [`check`], keeping the loaded configuration.
+pub fn load(
+    env: &Env,
+    cwd: &Path,
+    pilot_home: &Path,
+) -> Result<pilotdeck_gateway::config::Config, Failure> {
     // applyProjectBinding precedes the first fatal check in TS. The gateway's
     // read-only binding support does not implement the CLI's StaffDeck flow.
     if env.get("STAFFDECK_PROJECT_BINDING_ENABLED") == Some(std::ffi::OsStr::new("true")) {
@@ -11,15 +20,15 @@ pub fn check(env: &Env, cwd: &Path, pilot_home: &Path) -> Result<(), Failure> {
             "StaffDeck project binding (applyProjectBinding)",
         ));
     }
-    pilotdeck_gateway::config::load_project(pilot_home, cwd, &env.strings(), Some("."))
-        .map(|_| ())
-        .map_err(|error| {
+    pilotdeck_gateway::config::load_project(pilot_home, cwd, &env.strings(), Some(".")).map_err(
+        |error| {
             if error.requires_host {
                 Failure::Todo("config requiring JavaScript host support")
             } else {
                 Failure::Error(String::from_utf16_lossy(error.message.units()))
             }
-        })
+        },
+    )
 }
 
 #[cfg(test)]

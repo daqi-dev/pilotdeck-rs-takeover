@@ -1,0 +1,70 @@
+{
+  "name": "server-entry-git-probe",
+  "about": "遥测上下文的两次 git 探测（src/telemetry/context.ts:68-151，pilotdeck server 每次启动都跑，与 telemetry.enabled 无关）：不设 DOCKER_CONTAINER / COMMIT_HASH 时在非 git 目录往 stderr 漏两行 git 自己的 fatal；只设其一时只剩一行；在一个没有提交的最小 git 仓库里启动（.git 只有 HEAD、objects、refs）。",
+  "server": false,
+  "files": {
+    "proj/repo/.git/HEAD": "ref: refs/heads/main\n",
+    "proj/repo/.git/objects/.keep": "",
+    "proj/repo/.git/refs/heads/.keep": "",
+    "proj/repo/.git/config": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n"
+  },
+  "steps": [
+    {
+      "serve": [
+        "server"
+      ],
+      "env": {
+        "DOCKER_CONTAINER": null,
+        "COMMIT_HASH": null
+      }
+    },
+    {
+      "serve": [
+        "server"
+      ],
+      "env": {
+        "DOCKER_CONTAINER": null,
+        "COMMIT_HASH": "bbx"
+      }
+    },
+    {
+      "serve": [
+        "server"
+      ],
+      "env": {
+        "DOCKER_CONTAINER": "1",
+        "COMMIT_HASH": null
+      }
+    },
+    {
+      "serve": [
+        "server"
+      ],
+      "env": {
+        "DOCKER_CONTAINER": null,
+        "COMMIT_HASH": "",
+        "GIT_SHA": "ignored-after-empty"
+      }
+    },
+    {
+      "serve": [
+        "server"
+      ],
+      "env": {
+        "DOCKER_CONTAINER": null,
+        "COMMIT_HASH": null,
+        "GIT_COMMIT": "abc"
+      }
+    },
+    {
+      "serve": [
+        "server"
+      ],
+      "env": {
+        "DOCKER_CONTAINER": null,
+        "COMMIT_HASH": null
+      },
+      "cwd": "{PROJECT}/repo"
+    }
+  ]
+}

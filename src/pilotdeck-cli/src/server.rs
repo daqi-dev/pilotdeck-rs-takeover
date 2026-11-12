@@ -21,7 +21,13 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
     let pilot_home = paths::pilot_home(env, cwd)?;
     // loadPilotConfig({ projectRoot, env }) comes first: a missing or invalid
     // config ends the command before anything is created.
-    config::check(env, cwd, &pilot_home)?;
+    let loaded = config::load(env, cwd, &pilot_home)?;
+    // createTelemetryCollector(): its runtime context's git probes.
+    super::telemetry::probe_runtime_context(env, cwd);
+    // `if (snapshot.config.proxy?.url) await installGlobalProxy(url)`.
+    if let Some(url) = loaded.proxy_url.as_deref() {
+        super::proxy::install_from_config(env, url);
+    }
     // createLocalGateway(): the legacy bundled-skill migration and its output.
     let exe = std::env::current_exe()
         .ok()

@@ -4,10 +4,12 @@ mod config;
 mod gateway_setup;
 pub(crate) mod paths;
 mod probe;
+mod proxy;
 pub(crate) mod sdk;
 mod server;
 pub(crate) mod skills;
 mod skills_migrate;
+mod telemetry;
 #[cfg(test)]
 #[path = "../tests/common/negative_receipt.rs"]
 pub(crate) mod test_negative_receipt;
@@ -128,6 +130,9 @@ fn main() -> ExitCode {
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect();
     let env = Env::from_process();
+    // `await installGlobalProxy()` at module load (pilotdeck.ts:28), before
+    // any command runs.
+    proxy::install_from_env(&env);
     let code = match std::env::current_dir() {
         Ok(cwd) => run(&argv, &env, &cwd),
         Err(_) => Err(Failure::Todo(
