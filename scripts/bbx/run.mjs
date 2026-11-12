@@ -198,13 +198,14 @@ const mock = http.createServer(async (req, res) => {
   const usage = reply.usage ?? { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 };
   if (reply.delayMs) await sleep(reply.delayMs);
   // 流式输出的公共部分：按块写，支持中途断开和挂住。
-  const stream = (blocks) => {
+  const stream = async (blocks) => {
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     let sent = 0;
     for (const block of blocks) {
-      if (reply.breakAfter !== undefined && sent >= reply.breakAfter) { res.destroy(); return; }
+      // 先等已写出的块真正发到对端，再断开或挂住；直接 destroy 会把还在缓冲里的块一起丢掉。
+      if (reply.breakAfter !== undefined && sent >= reply.breakAfter) { await sleep(50); res.destroy(); return; }
       if (reply.hangAfter !== undefined && sent >= reply.hangAfter) { setTimeout(() => res.destroy(), reply.hangMs ?? 60000).unref(); return; }
-      res.write(block); sent++;
+      await new Promise((done) => res.write(block, done)); sent++;
     }
     res.end();
   };
@@ -234,7 +235,7 @@ const mock = http.createServer(async (req, res) => {
     if (text !== null) block({ type: 'text', text: '' }, (reply.chunks ?? [text]).map((t) => ({ type: 'text_delta', text: t })));
     for (const c of calls) block({ type: 'tool_use', id: c.id, name: c.function.name, input: {} }, [{ type: 'input_json_delta', partial_json: c.function.arguments }]);
     blocks.push(ev('message_delta', { delta: { stop_reason: stop, stop_sequence: null }, usage: { output_tokens: usage.completion_tokens } }), ev('message_stop', {}));
-    stream(blocks); return;
+    await stream(blocks); return;
   }
   // OpenAI chat completions 形状。
   const message = {
@@ -253,7 +254,7 @@ const mock = http.createServer(async (req, res) => {
     ...(calls.length ? [{ tool_calls: calls.map((t, i) => ({ index: i, ...t })) }] : []),
   ];
   if (deltas.length) deltas[0] = { role: 'assistant', ...deltas[0] };
-  stream([
+  await stream([
     ...deltas.map((delta) => `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`),
     `data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: finish }], usage })}\n\n`,
     'data: [DONE]\n\n',
@@ -387,7 +388,8 @@ const runStep = async (step) => {
       signal: AbortSignal.timeout(step.timeout ?? STEP_TIMEOUT_MS),
     }).catch((error) => ({ error: String(error.cause?.code ?? error.name) }));
     if (response.error) return { http: response };
-    const text = await response.text();
+    let text;
+    try { text = await response.text(); } catch (error) { return { http: { status: response.status, headers: Object.fromEntries(response.headers), bodyError: String(error.cause?.code ?? error.message ?? error) } }; }
     let json; try { json = JSON.parse(text); } catch {}
     return { http: { status: response.status, headers: Object.fromEntries(response.headers), body: json ?? text } };
   }

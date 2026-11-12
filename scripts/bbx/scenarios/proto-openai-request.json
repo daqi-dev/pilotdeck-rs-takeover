@@ -1,941 +1,944 @@
 {
- "name": "proto-openai-request",
- "about": "用公共 host 的 model_stream 直接驱动 OpenAI chat completions 请求组装（model/providers/openai/request.ts）与流解析（stream.ts）。o1 结构化输出→response_format（strict 缺省 true，schema 经 normalizeOpenAISchema）；o2 tool_choice required、metadata 值转字符串；o3 none + strict:false；o4 指定函数；o5 系统提示、max_tokens、用户图片、助手 thinking→reasoning_content、工具调用与结果、结果里的图片另起一条用户消息、只有 thinking 的助手消息；o6–o13 推理字段的各格式（model/thinking/registry.ts：openai reasoning_effort、关闭→none、qwen-cloud enable_thinking、qwen-local chat_template_kwargs、thinking-type、openrouter reasoning、moonshot kimi-k3 只发 reasoning_effort、ollama server-default）；o14/o15 speedMapping openai_service_tier→service_tier priority；o16 流里的 reasoning_content；o17 usage 带缓存命中；o18 finish_reason content_filter；o19 未知 finish_reason。已知不稳：响应头 date（与 module-host-model 相同，需要 volatile \\.http\\.headers\\.date$，本场景未加）。",
- "config": "schemaVersion: 1\nagent:\n  model: oa/gpt-bbx\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    oa:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-oa-key\n      speedMapping: openai_service_tier\n      models:\n        gpt-bbx:\n          multimodal:\n            input: [text, image, pdf]\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        gpt-think:\n          thinking:\n            state: enabled\n            efforts: [low, high]\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        gpt-off:\n          thinking:\n            state: disabled\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        qwen-local:\n          thinking:\n            state: enabled\n            efforts: [high]\n            format: qwen-local\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        gpt-fast:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n            supportsSpeed: true\n    dashscope:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-dashscope-key\n      models:\n        qwen-think:\n          thinking:\n            state: enabled\n            efforts: [low]\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    deepseek:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-deepseek-key\n      models:\n        ds-think:\n          thinking:\n            state: enabled\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    openrouter:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-openrouter-key\n      models:\n        or-think:\n          thinking:\n            state: enabled\n            efforts: [low]\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    moonshot:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-moonshot-key\n      models:\n        kimi-k3-bbx:\n          thinking:\n            state: enabled\n            efforts: [high]\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    ollama:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-ollama-key\n      models:\n        llama-bbx:\n          thinking:\n            state: enabled\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
- "provider": [
-  {
-   "name": "o1",
-   "when": [
-    "o1: structured"
-   ],
-   "reply": {
-    "text": "{\"value\":42,\"tags\":[\"a\"]}"
-   }
-  },
-  {
-   "name": "o16",
-   "when": [
-    "o16: reasoning stream"
-   ],
-   "reply": {
-    "reasoning": "chain of thought",
-    "chunks": [
-     "an",
-     "swer"
-    ]
-   }
-  },
-  {
-   "name": "o17",
-   "when": [
-    "o17: cached usage"
-   ],
-   "reply": {
-    "text": "cached",
-    "usage": {
-     "prompt_tokens": 100,
-     "completion_tokens": 7,
-     "total_tokens": 107,
-     "prompt_tokens_details": {
-      "cached_tokens": 64
-     },
-     "completion_tokens_details": {
-      "reasoning_tokens": 3
-     }
-    }
-   }
-  },
-  {
-   "name": "o18",
-   "when": [
-    "o18: content filter"
-   ],
-   "reply": {
-    "text": "partial",
-    "finish": "content_filter"
-   }
-  },
-  {
-   "name": "o19",
-   "when": [
-    "o19: odd finish"
-   ],
-   "reply": {
-    "text": "odd",
-    "finish": "weird_reason"
-   }
-  },
-  {
-   "name": "other",
-   "reply": {
-    "text": "ok"
-   }
-  }
- ],
- "steps": [
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
-    },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "o1",
-     "modelId": "oa/gpt-bbx",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "o1: structured"
-         }
-        ]
-       }
+  "name": "proto-openai-request",
+  "about": "用公共 host 的 model_stream 直接驱动 OpenAI chat completions 请求组装（model/providers/openai/request.ts）与流解析（stream.ts）。o1 结构化输出→response_format（strict 缺省 true，schema 经 normalizeOpenAISchema）；o2 tool_choice required、metadata 值转字符串；o3 none + strict:false；o4 指定函数；o5 系统提示、max_tokens、用户图片、助手 thinking→reasoning_content、工具调用与结果、结果里的图片另起一条用户消息、只有 thinking 的助手消息；o6–o13 推理字段的各格式（model/thinking/registry.ts：openai reasoning_effort、关闭→none、qwen-cloud enable_thinking、qwen-local chat_template_kwargs、thinking-type、openrouter reasoning、moonshot kimi-k3 只发 reasoning_effort、ollama server-default）；o14/o15 speedMapping openai_service_tier→service_tier priority；o16 流里的 reasoning_content；o17 usage 带缓存命中；o18 finish_reason content_filter；o19 未知 finish_reason。已知不稳：响应头 date（与 module-host-model 相同，需要 volatile \\.http\\.headers\\.date$，本场景未加）。",
+  "config": "schemaVersion: 1\nagent:\n  model: oa/gpt-bbx\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    oa:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-oa-key\n      speedMapping: openai_service_tier\n      models:\n        gpt-bbx:\n          multimodal:\n            input: [text, image, pdf]\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        gpt-think:\n          thinking:\n            state: enabled\n            efforts: [low, high]\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        gpt-off:\n          thinking:\n            state: disabled\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        qwen-local:\n          thinking:\n            state: enabled\n            efforts: [high]\n            format: qwen-local\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        gpt-fast:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n            supportsSpeed: true\n    dashscope:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-dashscope-key\n      models:\n        qwen-think:\n          thinking:\n            state: enabled\n            efforts: [low]\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    deepseek:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-deepseek-key\n      models:\n        ds-think:\n          thinking:\n            state: enabled\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    openrouter:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-openrouter-key\n      models:\n        or-think:\n          thinking:\n            state: enabled\n            efforts: [low]\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    moonshot:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-moonshot-key\n      models:\n        kimi-k3-bbx:\n          thinking:\n            state: enabled\n            efforts: [high]\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    ollama:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-ollama-key\n      models:\n        llama-bbx:\n          thinking:\n            state: enabled\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "provider": [
+    {
+      "name": "o1",
+      "when": [
+        "o1: structured"
       ],
-      "outputSchema": {
-       "name": "answer",
-       "description": "The answer.",
-       "schema": {
-        "type": "object",
-        "properties": {
-         "value": {
-          "type": "number"
-         },
-         "tags": {
-          "type": "array",
-          "items": {
-           "type": "string"
+      "reply": {
+        "text": "{\"value\":42,\"tags\":[\"a\"]}"
+      }
+    },
+    {
+      "name": "o16",
+      "when": [
+        "o16: reasoning stream"
+      ],
+      "reply": {
+        "reasoning": "chain of thought",
+        "chunks": [
+          "an",
+          "swer"
+        ]
+      }
+    },
+    {
+      "name": "o17",
+      "when": [
+        "o17: cached usage"
+      ],
+      "reply": {
+        "text": "cached",
+        "usage": {
+          "prompt_tokens": 100,
+          "completion_tokens": 7,
+          "total_tokens": 107,
+          "prompt_tokens_details": {
+            "cached_tokens": 64
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 3
           }
-         }
+        }
+      }
+    },
+    {
+      "name": "o18",
+      "when": [
+        "o18: content filter"
+      ],
+      "reply": {
+        "text": "partial",
+        "finish": "content_filter"
+      }
+    },
+    {
+      "name": "o19",
+      "when": [
+        "o19: odd finish"
+      ],
+      "reply": {
+        "text": "odd",
+        "finish": "weird_reason"
+      }
+    },
+    {
+      "name": "other",
+      "reply": {
+        "text": "ok"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
         },
-        "required": [
-         "value"
-        ]
-       }
-      }
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
-    },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "o2",
-     "modelId": "oa/gpt-bbx",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "o2: tools"
-         }
-        ]
-       }
-      ],
-      "tools": [
-       {
-        "name": "lookup",
-        "description": "Tool lookup",
-        "inputSchema": {
-         "type": "object",
-         "properties": {
-          "q": {
-           "type": "string"
-          },
-          "n": {
-           "type": "integer"
+        "operation": "model_stream",
+        "input": {
+          "requestId": "o1",
+          "modelId": "oa/gpt-bbx",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "o1: structured"
+                  }
+                ]
+              }
+            ],
+            "outputSchema": {
+              "name": "answer",
+              "description": "The answer.",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "type": "number"
+                  },
+                  "tags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "value"
+                ]
+              }
+            }
           }
-         },
-         "required": [
-          "q"
-         ]
         }
-       },
-       {
-        "name": "fetch",
-        "description": "Tool fetch",
-        "inputSchema": {
-         "type": "object",
-         "properties": {
-          "q": {
-           "type": "string"
-          },
-          "n": {
-           "type": "integer"
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "o2",
+          "modelId": "oa/gpt-bbx",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "o2: tools"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "lookup",
+                "description": "Tool lookup",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "q": {
+                      "type": "string"
+                    },
+                    "n": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "q"
+                  ]
+                }
+              },
+              {
+                "name": "fetch",
+                "description": "Tool fetch",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "q": {
+                      "type": "string"
+                    },
+                    "n": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "q"
+                  ]
+                }
+              }
+            ],
+            "toolChoice": "required",
+            "metadata": {
+              "user_id": "u7",
+              "n": 3,
+              "flag": true
+            }
           }
-         },
-         "required": [
-          "q"
-         ]
         }
-       }
-      ],
-      "toolChoice": "required",
-      "metadata": {
-       "user_id": "u7",
-       "n": 3,
-       "flag": true
       }
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
     },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "o3",
-     "modelId": "oa/gpt-bbx",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "o3: none"
-         }
-        ]
-       }
-      ],
-      "tools": [
-       {
-        "name": "lookup",
-        "description": "Tool lookup",
-        "inputSchema": {
-         "type": "object",
-         "properties": {
-          "q": {
-           "type": "string"
-          },
-          "n": {
-           "type": "integer"
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "o3",
+          "modelId": "oa/gpt-bbx",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "o3: none"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "lookup",
+                "description": "Tool lookup",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "q": {
+                      "type": "string"
+                    },
+                    "n": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "q"
+                  ]
+                }
+              }
+            ],
+            "toolChoice": "none",
+            "outputSchema": {
+              "name": "loose",
+              "strict": false,
+              "schema": {
+                "type": "object"
+              }
+            }
           }
-         },
-         "required": [
-          "q"
-         ]
         }
-       }
-      ],
-      "toolChoice": "none",
-      "outputSchema": {
-       "name": "loose",
-       "strict": false,
-       "schema": {
-        "type": "object"
-       }
       }
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
     },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "o4",
-     "modelId": "oa/gpt-bbx",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "o4: named"
-         }
-        ]
-       }
-      ],
-      "tools": [
-       {
-        "name": "lookup",
-        "description": "Tool lookup",
-        "inputSchema": {
-         "type": "object",
-         "properties": {
-          "q": {
-           "type": "string"
-          },
-          "n": {
-           "type": "integer"
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "o4",
+          "modelId": "oa/gpt-bbx",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "o4: named"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "lookup",
+                "description": "Tool lookup",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "q": {
+                      "type": "string"
+                    },
+                    "n": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "q"
+                  ]
+                }
+              },
+              {
+                "name": "fetch",
+                "description": "Tool fetch",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "q": {
+                      "type": "string"
+                    },
+                    "n": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "q"
+                  ]
+                }
+              }
+            ],
+            "toolChoice": {
+              "type": "tool",
+              "name": "fetch"
+            }
           }
-         },
-         "required": [
-          "q"
-         ]
         }
-       },
-       {
-        "name": "fetch",
-        "description": "Tool fetch",
-        "inputSchema": {
-         "type": "object",
-         "properties": {
-          "q": {
-           "type": "string"
-          },
-          "n": {
-           "type": "integer"
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "o5",
+          "modelId": "oa/gpt-bbx",
+          "request": {
+            "systemPrompt": "be brief",
+            "maxOutputTokens": 123,
+            "tools": [
+              {
+                "name": "lookup",
+                "description": "Tool lookup",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "q": {
+                      "type": "string"
+                    },
+                    "n": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "q"
+                  ]
+                }
+              }
+            ],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "o5: look"
+                  },
+                  {
+                    "type": "image",
+                    "source": "base64",
+                    "mimeType": "image/png",
+                    "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "thinking",
+                    "text": "first thought"
+                  },
+                  {
+                    "type": "thinking",
+                    "text": "second thought"
+                  },
+                  {
+                    "type": "tool_call",
+                    "id": "call_1",
+                    "name": "lookup",
+                    "input": {
+                      "q": "x"
+                    }
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "toolCallId": "call_1",
+                    "isError": false,
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "found"
+                      },
+                      {
+                        "type": "image",
+                        "source": "base64",
+                        "mimeType": "image/png",
+                        "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "thinking",
+                    "text": "only thinking"
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "o5: again"
+                  }
+                ]
+              }
+            ]
           }
-         },
-         "required": [
-          "q"
-         ]
         }
-       }
-      ],
-      "toolChoice": {
-       "type": "tool",
-       "name": "fetch"
       }
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
     },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "o5",
-     "modelId": "oa/gpt-bbx",
-     "request": {
-      "systemPrompt": "be brief",
-      "maxOutputTokens": 123,
-      "tools": [
-       {
-        "name": "lookup",
-        "description": "Tool lookup",
-        "inputSchema": {
-         "type": "object",
-         "properties": {
-          "q": {
-           "type": "string"
-          },
-          "n": {
-           "type": "integer"
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "o6",
+          "modelId": "oa/gpt-think",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "o6: openai high"
+                  }
+                ]
+              }
+            ],
+            "thinking": {
+              "enabled": true,
+              "mode": "high"
+            }
           }
-         },
-         "required": [
-          "q"
-         ]
         }
-       }
-      ],
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "o5: look"
-         },
-         {
-          "type": "image",
-          "source": "base64",
-          "mimeType": "image/png",
-          "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
-         }
-        ]
-       },
-       {
-        "role": "assistant",
-        "content": [
-         {
-          "type": "thinking",
-          "text": "first thought"
-         },
-         {
-          "type": "thinking",
-          "text": "second thought"
-         },
-         {
-          "type": "tool_call",
-          "id": "call_1",
-          "name": "lookup",
-          "input": {
-           "q": "x"
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "o7",
+          "modelId": "oa/gpt-off",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "o7: openai off"
+                  }
+                ]
+              }
+            ],
+            "thinking": {
+              "enabled": true,
+              "mode": "low"
+            }
           }
-         }
-        ]
-       },
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "tool_result",
-          "toolCallId": "call_1",
-          "isError": false,
-          "content": [
-           {
-            "type": "text",
-            "text": "found"
-           },
-           {
-            "type": "image",
-            "source": "base64",
-            "mimeType": "image/png",
-            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
-           }
-          ]
-         }
-        ]
-       },
-       {
-        "role": "assistant",
-        "content": [
-         {
-          "type": "thinking",
-          "text": "only thinking"
-         }
-        ]
-       },
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "o5: again"
-         }
-        ]
-       }
-      ]
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
-    },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "o6",
-     "modelId": "oa/gpt-think",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "o6: openai high"
-         }
-        ]
-       }
-      ],
-      "thinking": {
-       "enabled": true,
-       "mode": "high"
+        }
       }
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
     },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "o7",
-     "modelId": "oa/gpt-off",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "o7: openai off"
-         }
-        ]
-       }
-      ],
-      "thinking": {
-       "enabled": true,
-       "mode": "low"
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "o8",
+          "modelId": "dashscope/qwen-think",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "o8: qwen cloud"
+                  }
+                ]
+              }
+            ],
+            "thinking": {
+              "enabled": true,
+              "mode": "low"
+            }
+          }
+        }
       }
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
     },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "o8",
-     "modelId": "dashscope/qwen-think",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "o8: qwen cloud"
-         }
-        ]
-       }
-      ],
-      "thinking": {
-       "enabled": true,
-       "mode": "low"
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "o9",
+          "modelId": "oa/qwen-local",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "o9: qwen local"
+                  }
+                ]
+              }
+            ],
+            "thinking": {
+              "enabled": true,
+              "mode": "high"
+            }
+          }
+        }
       }
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
     },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "o9",
-     "modelId": "oa/qwen-local",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "o9: qwen local"
-         }
-        ]
-       }
-      ],
-      "thinking": {
-       "enabled": true,
-       "mode": "high"
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "o10",
+          "modelId": "deepseek/ds-think",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "o10: thinking type"
+                  }
+                ]
+              }
+            ],
+            "thinking": {
+              "enabled": true
+            }
+          }
+        }
       }
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
     },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "o10",
-     "modelId": "deepseek/ds-think",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "o10: thinking type"
-         }
-        ]
-       }
-      ],
-      "thinking": {
-       "enabled": true
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "o11",
+          "modelId": "openrouter/or-think",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "o11: openrouter"
+                  }
+                ]
+              }
+            ],
+            "thinking": {
+              "enabled": true,
+              "mode": "low"
+            }
+          }
+        }
       }
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
     },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "o11",
-     "modelId": "openrouter/or-think",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "o11: openrouter"
-         }
-        ]
-       }
-      ],
-      "thinking": {
-       "enabled": true,
-       "mode": "low"
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "o12",
+          "modelId": "moonshot/kimi-k3-bbx",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "o12: always on"
+                  }
+                ]
+              }
+            ],
+            "thinking": {
+              "enabled": true,
+              "mode": "high"
+            }
+          }
+        }
       }
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
     },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "o12",
-     "modelId": "moonshot/kimi-k3-bbx",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "o12: always on"
-         }
-        ]
-       }
-      ],
-      "thinking": {
-       "enabled": true,
-       "mode": "high"
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "o13",
+          "modelId": "ollama/llama-bbx",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "o13: server default"
+                  }
+                ]
+              }
+            ],
+            "thinking": {
+              "enabled": true
+            }
+          }
+        }
       }
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
     },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "o13",
-     "modelId": "ollama/llama-bbx",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "o13: server default"
-         }
-        ]
-       }
-      ],
-      "thinking": {
-       "enabled": true
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "o14",
+          "modelId": "oa/gpt-fast",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "o14: fast"
+                  }
+                ]
+              }
+            ],
+            "speed": 0.8
+          }
+        }
       }
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
     },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "o14",
-     "modelId": "oa/gpt-fast",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "o14: fast"
-         }
-        ]
-       }
-      ],
-      "speed": 0.8
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "o15",
+          "modelId": "oa/gpt-fast",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "o15: slow"
+                  }
+                ]
+              }
+            ],
+            "speed": 0.1
+          }
+        }
+      }
     },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "o15",
-     "modelId": "oa/gpt-fast",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "o15: slow"
-         }
-        ]
-       }
-      ],
-      "speed": 0.1
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "o16",
+          "modelId": "oa/gpt-bbx",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "o16: reasoning stream"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
     },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "o16",
-     "modelId": "oa/gpt-bbx",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "o16: reasoning stream"
-         }
-        ]
-       }
-      ]
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "o17",
+          "modelId": "oa/gpt-bbx",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "o17: cached usage"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
     },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "o17",
-     "modelId": "oa/gpt-bbx",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "o17: cached usage"
-         }
-        ]
-       }
-      ]
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "o18",
+          "modelId": "oa/gpt-bbx",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "o18: content filter"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
     },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "o18",
-     "modelId": "oa/gpt-bbx",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "o18: content filter"
-         }
-        ]
-       }
-      ]
-     }
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "o19",
+          "modelId": "oa/gpt-bbx",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "o19: odd finish"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
     }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
-    },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "o19",
-     "modelId": "oa/gpt-bbx",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "o19: odd finish"
-         }
-        ]
-       }
-      ]
-     }
-    }
-   }
-  }
- ]
+  ],
+  "volatile": [
+    "\\.http\\.headers\\.date$"
+  ]
 }

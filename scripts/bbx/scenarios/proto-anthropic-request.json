@@ -1,675 +1,678 @@
 {
- "name": "proto-anthropic-request",
- "about": "用公共 host 的 model_stream 直接驱动 Anthropic messages 请求组装（model/providers/anthropic/request.ts）与流解析（stream.ts）：r1 结构化输出合成 __output__ 工具并强制 tool_choice；r2 strict:false 时不强制、tool_choice required→any；r3 none；r4 指定工具；r5 系统提示、max_tokens、metadata.user_id、图片（base64 / url）、PDF→document、历史里的 thinking+signature、tool_use / tool_result（is_error）、只有 thinking 的助手消息、cacheBreakpoints 超过 3 个时截取最后 3 个并打 cache_control（不打在 thinking 上）；r6 adaptive 推理 + output_config.effort；r7 adaptive 不带 effort；r8 模型关闭推理→thinking disabled；r10 speedMapping anthropic_speed 且 speed≥0.5→speed fast 与 anthropic-beta 头，r13 speed<0.5 不带；r11 stop_reason max_tokens；r12 回 529（流式重试后以错误事件结束）。已知不稳：响应头 date（与 module-host-model 相同，需要 volatile \\.http\\.headers\\.date$，本场景未加）。",
- "config": "schemaVersion: 1\nagent:\n  model: anth/claude-bbx\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    anth:\n      protocol: anthropic\n      url: {MOCK}\n      apiKey: bbx-anthropic-key\n      speedMapping: anthropic_speed\n      retry:\n        baseDelayMs: 1\n        maxDelayMs: 1\n        jitter: 0\n      models:\n        claude-bbx:\n          multimodal:\n            input: [text, image, pdf]\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        claude-think:\n          thinking:\n            state: enabled\n            efforts: [low, high]\n          capabilities:\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        claude-off:\n          thinking:\n            state: disabled\n          capabilities:\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        claude-sonnet-4-20250514:\n          thinking:\n            state: enabled\n            efforts: [low]\n          capabilities:\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        claude-fast:\n          capabilities:\n            supportsSpeed: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
- "provider": [
-  {
-   "name": "r1",
-   "when": [
-    "r1: structured"
-   ],
-   "reply": {
-    "tool": {
-     "id": "toolu_out",
-     "name": "__output__",
-     "arguments": {
-      "value": 42
-     }
-    }
-   }
-  },
-  {
-   "name": "r11",
-   "when": [
-    "r11: stop reasons"
-   ],
-   "reply": {
-    "text": "cut",
-    "finish": "max_tokens"
-   }
-  },
-  {
-   "name": "r12",
-   "when": [
-    "r12: stream error"
-   ],
-   "reply": {
-    "status": 529,
-    "body": {
-     "type": "error",
-     "error": {
-      "type": "overloaded_error",
-      "message": "Overloaded"
-     }
-    }
-   }
-  },
-  {
-   "name": "r6",
-   "when": [
-    "r6: think high"
-   ],
-   "reply": {
-    "reasoning": "deep thought",
-    "text": "r6 done"
-   }
-  },
-  {
-   "name": "other",
-   "reply": {
-    "text": "ok"
-   }
-  }
- ],
- "steps": [
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
-    },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "r1",
-     "modelId": "anth/claude-bbx",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "r1: structured"
-         }
-        ]
-       }
+  "name": "proto-anthropic-request",
+  "about": "用公共 host 的 model_stream 直接驱动 Anthropic messages 请求组装（model/providers/anthropic/request.ts）与流解析（stream.ts）：r1 结构化输出合成 __output__ 工具并强制 tool_choice；r2 strict:false 时不强制、tool_choice required→any；r3 none；r4 指定工具；r5 系统提示、max_tokens、metadata.user_id、图片（base64 / url）、PDF→document、历史里的 thinking+signature、tool_use / tool_result（is_error）、只有 thinking 的助手消息、cacheBreakpoints 超过 3 个时截取最后 3 个并打 cache_control（不打在 thinking 上）；r6 adaptive 推理 + output_config.effort；r7 adaptive 不带 effort；r8 模型关闭推理→thinking disabled；r10 speedMapping anthropic_speed 且 speed≥0.5→speed fast 与 anthropic-beta 头，r13 speed<0.5 不带；r11 stop_reason max_tokens；r12 回 529（流式重试后以错误事件结束）。已知不稳：响应头 date（与 module-host-model 相同，需要 volatile \\.http\\.headers\\.date$，本场景未加）。",
+  "config": "schemaVersion: 1\nagent:\n  model: anth/claude-bbx\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    anth:\n      protocol: anthropic\n      url: {MOCK}\n      apiKey: bbx-anthropic-key\n      speedMapping: anthropic_speed\n      retry:\n        baseDelayMs: 1\n        maxDelayMs: 1\n        jitter: 0\n      models:\n        claude-bbx:\n          multimodal:\n            input: [text, image, pdf]\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        claude-think:\n          thinking:\n            state: enabled\n            efforts: [low, high]\n          capabilities:\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        claude-off:\n          thinking:\n            state: disabled\n          capabilities:\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        claude-sonnet-4-20250514:\n          thinking:\n            state: enabled\n            efforts: [low]\n          capabilities:\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        claude-fast:\n          capabilities:\n            supportsSpeed: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "provider": [
+    {
+      "name": "r1",
+      "when": [
+        "r1: structured"
       ],
-      "outputSchema": {
-       "name": "answer",
-       "schema": {
-        "type": "object",
-        "properties": {
-         "value": {
-          "type": "number"
-         }
-        },
-        "required": [
-         "value"
-        ]
-       }
+      "reply": {
+        "tool": {
+          "id": "toolu_out",
+          "name": "__output__",
+          "arguments": {
+            "value": 42
+          }
+        }
       }
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
     },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "r2",
-     "modelId": "anth/claude-bbx",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "r2: loose schema"
-         }
-        ]
-       }
+    {
+      "name": "r11",
+      "when": [
+        "r11: stop reasons"
       ],
-      "tools": [
-       {
-        "name": "lookup",
-        "description": "Tool lookup",
-        "inputSchema": {
-         "type": "object",
-         "properties": {
-          "q": {
-           "type": "string"
-          }
-         },
-         "required": [
-          "q"
-         ]
-        }
-       },
-       {
-        "name": "fetch",
-        "description": "Tool fetch",
-        "inputSchema": {
-         "type": "object",
-         "properties": {
-          "q": {
-           "type": "string"
-          }
-         },
-         "required": [
-          "q"
-         ]
-        }
-       }
-      ],
-      "toolChoice": "required",
-      "outputSchema": {
-       "name": "answer",
-       "description": "Give the answer.",
-       "strict": false,
-       "schema": {
-        "type": "object"
-       }
+      "reply": {
+        "text": "cut",
+        "finish": "max_tokens"
       }
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
     },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "r3",
-     "modelId": "anth/claude-bbx",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "r3: none"
-         }
-        ]
-       }
+    {
+      "name": "r12",
+      "when": [
+        "r12: stream error"
       ],
-      "tools": [
-       {
-        "name": "lookup",
-        "description": "Tool lookup",
-        "inputSchema": {
-         "type": "object",
-         "properties": {
-          "q": {
-           "type": "string"
+      "reply": {
+        "status": 529,
+        "body": {
+          "type": "error",
+          "error": {
+            "type": "overloaded_error",
+            "message": "Overloaded"
           }
-         },
-         "required": [
-          "q"
-         ]
         }
-       }
-      ],
-      "toolChoice": "none"
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
-    },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "r4",
-     "modelId": "anth/claude-bbx",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "r4: named"
-         }
-        ]
-       }
-      ],
-      "tools": [
-       {
-        "name": "lookup",
-        "description": "Tool lookup",
-        "inputSchema": {
-         "type": "object",
-         "properties": {
-          "q": {
-           "type": "string"
-          }
-         },
-         "required": [
-          "q"
-         ]
-        }
-       },
-       {
-        "name": "fetch",
-        "description": "Tool fetch",
-        "inputSchema": {
-         "type": "object",
-         "properties": {
-          "q": {
-           "type": "string"
-          }
-         },
-         "required": [
-          "q"
-         ]
-        }
-       }
-      ],
-      "toolChoice": {
-       "type": "tool",
-       "name": "fetch"
       }
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
     },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "r5",
-     "modelId": "anth/claude-bbx",
-     "request": {
-      "systemPrompt": "be brief",
-      "maxOutputTokens": 321,
-      "metadata": {
-       "user_id": "user-7",
-       "other": 1
+    {
+      "name": "r6",
+      "when": [
+        "r6: think high"
+      ],
+      "reply": {
+        "reasoning": "deep thought",
+        "text": "r6 done"
+      }
+    },
+    {
+      "name": "other",
+      "reply": {
+        "text": "ok"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
       },
-      "cacheBreakpoints": [
-       0,
-       1,
-       2,
-       3
-      ],
-      "tools": [
-       {
-        "name": "lookup",
-        "description": "Tool lookup",
-        "inputSchema": {
-         "type": "object",
-         "properties": {
-          "q": {
-           "type": "string"
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "r1",
+          "modelId": "anth/claude-bbx",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "r1: structured"
+                  }
+                ]
+              }
+            ],
+            "outputSchema": {
+              "name": "answer",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "value"
+                ]
+              }
+            }
           }
-         },
-         "required": [
-          "q"
-         ]
         }
-       }
-      ],
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "r5: look"
-         },
-         {
-          "type": "image",
-          "source": "base64",
-          "mimeType": "image/png",
-          "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
-         },
-         {
-          "type": "image",
-          "source": "url",
-          "mimeType": "image/png",
-          "data": "https://example.invalid/a.png"
-         },
-         {
-          "type": "pdf",
-          "source": "base64",
-          "mimeType": "application/pdf",
-          "data": "JVBERi0xLjQKJcOkw7zDtsOfCjEgMCBvYmoKPDw+PgplbmRvYmoKdHJhaWxlcgo8PD4+CiUlRU9GCg=="
-         }
-        ]
-       },
-       {
-        "role": "assistant",
-        "content": [
-         {
-          "type": "thinking",
-          "text": "hmm",
-          "signature": "sig-1"
-         },
-         {
-          "type": "text",
-          "text": "calling"
-         },
-         {
-          "type": "tool_call",
-          "id": "toolu_1",
-          "name": "lookup",
-          "input": {
-           "q": "x"
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "r2",
+          "modelId": "anth/claude-bbx",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "r2: loose schema"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "lookup",
+                "description": "Tool lookup",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "q": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "q"
+                  ]
+                }
+              },
+              {
+                "name": "fetch",
+                "description": "Tool fetch",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "q": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "q"
+                  ]
+                }
+              }
+            ],
+            "toolChoice": "required",
+            "outputSchema": {
+              "name": "answer",
+              "description": "Give the answer.",
+              "strict": false,
+              "schema": {
+                "type": "object"
+              }
+            }
           }
-         }
-        ]
-       },
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "tool_result",
-          "toolCallId": "toolu_1",
-          "isError": true,
-          "content": [
-           {
-            "type": "text",
-            "text": "boom"
-           }
-          ]
-         }
-        ]
-       },
-       {
-        "role": "assistant",
-        "content": [
-         {
-          "type": "thinking",
-          "text": "only thinking"
-         }
-        ]
-       },
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "r5: again"
-         }
-        ]
-       }
-      ]
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
-    },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "r6",
-     "modelId": "anth/claude-think",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "r6: think high"
-         }
-        ]
-       }
-      ],
-      "thinking": {
-       "enabled": true,
-       "mode": "high"
+        }
       }
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
     },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "r7",
-     "modelId": "anth/claude-think",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "r7: think default"
-         }
-        ]
-       }
-      ],
-      "thinking": {
-       "enabled": true
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "r3",
+          "modelId": "anth/claude-bbx",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "r3: none"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "lookup",
+                "description": "Tool lookup",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "q": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "q"
+                  ]
+                }
+              }
+            ],
+            "toolChoice": "none"
+          }
+        }
       }
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
     },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "r8",
-     "modelId": "anth/claude-off",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "r8: think off"
-         }
-        ]
-       }
-      ],
-      "thinking": {
-       "enabled": true,
-       "mode": "low"
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "r4",
+          "modelId": "anth/claude-bbx",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "r4: named"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "lookup",
+                "description": "Tool lookup",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "q": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "q"
+                  ]
+                }
+              },
+              {
+                "name": "fetch",
+                "description": "Tool fetch",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "q": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "q"
+                  ]
+                }
+              }
+            ],
+            "toolChoice": {
+              "type": "tool",
+              "name": "fetch"
+            }
+          }
+        }
       }
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
     },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "r10",
-     "modelId": "anth/claude-fast",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "r10: fast"
-         }
-        ]
-       }
-      ],
-      "speed": 0.9
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "r5",
+          "modelId": "anth/claude-bbx",
+          "request": {
+            "systemPrompt": "be brief",
+            "maxOutputTokens": 321,
+            "metadata": {
+              "user_id": "user-7",
+              "other": 1
+            },
+            "cacheBreakpoints": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "tools": [
+              {
+                "name": "lookup",
+                "description": "Tool lookup",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "q": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "q"
+                  ]
+                }
+              }
+            ],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "r5: look"
+                  },
+                  {
+                    "type": "image",
+                    "source": "base64",
+                    "mimeType": "image/png",
+                    "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+                  },
+                  {
+                    "type": "image",
+                    "source": "url",
+                    "mimeType": "image/png",
+                    "data": "https://example.invalid/a.png"
+                  },
+                  {
+                    "type": "pdf",
+                    "source": "base64",
+                    "mimeType": "application/pdf",
+                    "data": "JVBERi0xLjQKJcOkw7zDtsOfCjEgMCBvYmoKPDw+PgplbmRvYmoKdHJhaWxlcgo8PD4+CiUlRU9GCg=="
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "thinking",
+                    "text": "hmm",
+                    "signature": "sig-1"
+                  },
+                  {
+                    "type": "text",
+                    "text": "calling"
+                  },
+                  {
+                    "type": "tool_call",
+                    "id": "toolu_1",
+                    "name": "lookup",
+                    "input": {
+                      "q": "x"
+                    }
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "toolCallId": "toolu_1",
+                    "isError": true,
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "boom"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "thinking",
+                    "text": "only thinking"
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "r5: again"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
     },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "r13",
-     "modelId": "anth/claude-fast",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "r13: slow"
-         }
-        ]
-       }
-      ],
-      "speed": 0.2
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "r6",
+          "modelId": "anth/claude-think",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "r6: think high"
+                  }
+                ]
+              }
+            ],
+            "thinking": {
+              "enabled": true,
+              "mode": "high"
+            }
+          }
+        }
+      }
     },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "r11",
-     "modelId": "anth/claude-bbx",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "r11: stop reasons"
-         }
-        ]
-       }
-      ]
-     }
-    }
-   }
-  },
-  {
-   "http": "POST /api/module-host/call",
-   "headers": {
-    "authorization": "Bearer {TOKEN}"
-   },
-   "body": {
-    "principal": {
-     "pilotDeckUserId": "u",
-     "tenantId": "t",
-     "actorUserId": "a",
-     "agentId": "g"
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "r7",
+          "modelId": "anth/claude-think",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "r7: think default"
+                  }
+                ]
+              }
+            ],
+            "thinking": {
+              "enabled": true
+            }
+          }
+        }
+      }
     },
-    "operation": "model_stream",
-    "input": {
-     "requestId": "r12",
-     "modelId": "anth/claude-bbx",
-     "request": {
-      "messages": [
-       {
-        "role": "user",
-        "content": [
-         {
-          "type": "text",
-          "text": "r12: stream error"
-         }
-        ]
-       }
-      ]
-     }
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "r8",
+          "modelId": "anth/claude-off",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "r8: think off"
+                  }
+                ]
+              }
+            ],
+            "thinking": {
+              "enabled": true,
+              "mode": "low"
+            }
+          }
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "r10",
+          "modelId": "anth/claude-fast",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "r10: fast"
+                  }
+                ]
+              }
+            ],
+            "speed": 0.9
+          }
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "r13",
+          "modelId": "anth/claude-fast",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "r13: slow"
+                  }
+                ]
+              }
+            ],
+            "speed": 0.2
+          }
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "r11",
+          "modelId": "anth/claude-bbx",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "r11: stop reasons"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "model_stream",
+        "input": {
+          "requestId": "r12",
+          "modelId": "anth/claude-bbx",
+          "request": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "r12: stream error"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
     }
-   }
-  }
- ]
+  ],
+  "volatile": [
+    "\\.http\\.headers\\.date$"
+  ]
 }
