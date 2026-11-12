@@ -34,6 +34,7 @@ pub(super) const WIRED_FIELDS: &[&str] = &[
     "fallbackModel",
     "managedModels",
     "deferredTools",
+    "persistSession",
 ];
 
 const INVALID: &str = "INVALID_SDK_SESSION_CONFIG";

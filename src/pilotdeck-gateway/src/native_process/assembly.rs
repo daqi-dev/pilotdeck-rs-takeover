@@ -540,6 +540,11 @@ async fn start_assembly(
     let prepare_always_on_manager = always_on_manager_slot.clone();
     let storage_project = project.clone();
     let storage_options = options.clone();
+    let storage_overrides = session_overrides.clone();
+    // `ephemeralSessions` (ProjectRuntimeRegistry.ts:255,877-892): one
+    // temporary storage root per `persistSession: false` session.
+    let ephemeral_roots: Arc<Mutex<HashMap<JsString, PathBuf>>> = Arc::default();
+    let storage_ephemeral_roots = ephemeral_roots.clone();
     // #897: the composition-time budget preflight resolves the same directory
     // the per-turn ports use (`SessionTools::turn`), so the two cannot drift.
     let budget_options = options.clone();
@@ -1095,9 +1100,32 @@ async fn start_assembly(
         create_storage: Arc::new(move |context| {
             let project = storage_project.clone();
             let options = storage_options.clone();
+            // `isEphemeralSession(sessionKey)`: `persistSession: false`.
+            let ephemeral = storage_overrides
+                .sdk_config(&context.session_key)
+                .is_some_and(|config| config.get("persistSession") == Some(&JsValue::Bool(false)));
+            let ephemeral_roots = storage_ephemeral_roots.clone();
             Box::pin(async move {
                 let project_root = options.project_root_for(context.project_key.as_ref());
                 let lease = Arc::new(project.acquire(Some(&project_root))?);
+                // `getOrCreateEphemeralStorage`: the session's storage lives
+                // under `mkdtemp(tmpdir()/pilotdeck-sdk-ephemeral-)`, which is
+                // both its project root and its pilot home, so nothing reaches
+                // the gateway's own storage.
+                let ephemeral_root = if ephemeral {
+                    let mut roots = ephemeral_roots.lock().unwrap_or_else(|e| e.into_inner());
+                    match roots.get(&context.session_key) {
+                        Some(root) => Some(root.clone()),
+                        None => {
+                            let root = make_ephemeral_root()
+                                .map_err(|error| RuntimeError::new(error.to_string()))?;
+                            roots.insert(context.session_key.clone(), root.clone());
+                            Some(root)
+                        }
+                    }
+                } else {
+                    None
+                };
                 let resource = lease
                     .runtime()
                     .resources()
@@ -1106,11 +1134,20 @@ async fn start_assembly(
                     .context()
                     .resource(Resource::Persistence)
                     .ok_or_else(|| RuntimeError::new("Native persistence is missing."))?;
-                let path = crate::runtime::session::transcript_locks::session_transcript_path(
-                    &options.home,
-                    &project_root,
-                    &context.session_key,
-                );
+                let path = match &ephemeral_root {
+                    Some(root) => {
+                        crate::runtime::session::transcript_locks::session_transcript_path(
+                            root,
+                            root,
+                            &context.session_key,
+                        )
+                    }
+                    None => crate::runtime::session::transcript_locks::session_transcript_path(
+                        &options.home,
+                        &project_root,
+                        &context.session_key,
+                    ),
+                };
                 let open_path = path.clone();
                 Ok(SessionStorage::Recording(RecordingPlan {
                     transcript_path: path,
@@ -1228,6 +1265,11 @@ async fn start_assembly(
     // `spawn_blocking` is not cancelled by the drop — see `spawn_cleanup`.
     crate::upload::spawn_cleanup(&upload_store, upload_cleanup_interval);
     let cleanup_factory = factory.clone();
+    let cleanup_ephemeral = (
+        ephemeral_roots.clone(),
+        session_overrides.clone(),
+        options.home.clone(),
+    );
     let cleanup_project = project.clone();
     // #1746: exactly one teardown may run. The host polls this cleanup itself
     // when initialization fails — `start_with_cleanup_budget` below hands it
@@ -1794,6 +1836,11 @@ async fn start_assembly(
                 if let Err(error) = &project {
                     cleanup_diagnostic(error);
                 }
+                dispose_ephemeral_sessions(
+                    &cleanup_ephemeral.0,
+                    &cleanup_ephemeral.1,
+                    &cleanup_ephemeral.2,
+                );
                 let mut outcome = sessions.and(project);
                 for failure in [
                     automation_stop.err(),
@@ -2239,4 +2286,53 @@ fn project_registry_with(
             .with_interaction(),
         })),
     ))
+}
+
+/// `mkdtemp(join(tmpdir(), "pilotdeck-sdk-ephemeral-"))`.
+fn make_ephemeral_root() -> std::io::Result<PathBuf> {
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let base = std::env::temp_dir();
+    loop {
+        let suffix: String = uuid::Uuid::new_v4()
+            .as_bytes()
+            .iter()
+            .take(6)
+            .map(|byte| CHARS[usize::from(*byte) % CHARS.len()] as char)
+            .collect();
+        let root = base.join(format!("pilotdeck-sdk-ephemeral-{suffix}"));
+        match std::fs::create_dir(&root) {
+            Ok(()) => return Ok(root),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// `disposeEphemeralSession` for every `persistSession: false` session when
+/// the registry is disposed (ProjectRuntimeRegistry.ts:389-390,894-904): the
+/// temporary storage root is removed and the session's SDK state cleared,
+/// which appends a `cleared` record to the task-budget ledger when the
+/// session's SDK config recorded a project.
+fn dispose_ephemeral_sessions(
+    roots: &Mutex<HashMap<JsString, PathBuf>>,
+    overrides: &super::SessionOverrides,
+    pilot_home: &std::path::Path,
+) {
+    let roots: Vec<(JsString, PathBuf)> = roots
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .drain()
+        .collect();
+    if roots.is_empty() {
+        return;
+    }
+    let projects = overrides.sdk_config_sessions();
+    let mut ledger = crate::storage::TaskBudgetStore::new(pilot_home, None);
+    for (session, root) in roots {
+        let _ = std::fs::remove_dir_all(&root);
+        if let Some((_, project)) = projects.iter().find(|(key, _)| *key == session) {
+            let project: JsString = project.to_string_lossy().as_ref().into();
+            let _ = ledger.clear_session(&project, &session);
+        }
+    }
 }
