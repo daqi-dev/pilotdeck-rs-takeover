@@ -1,0 +1,162 @@
+{
+ "name": "tool-aborted-running",
+ "about": "turn 被中止时正在运行的工具（tool/execution/errorRecovery.ts:176、taskTools.ts:440-447）：task_wait 等一个长任务时 abort_turn，工具以 tool_aborted 收尾；之后同会话再提交一轮，看下一次模型请求里这次工具调用留下什么。",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Tool run\"}"
+   }
+  },
+  {
+   "name": "r03-after",
+   "when": [
+    "r03:",
+    "\"tool_call_id\":\"call_r03\""
+   ],
+   "reply": {
+    "text": "Done 03."
+   }
+  },
+  {
+   "name": "r03",
+   "when": [
+    "r03:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_r03",
+     "name": "task_stop",
+     "arguments": {
+      "taskId": "{saved.tid}",
+      "graceMs": 100
+     }
+    }
+   }
+  },
+  {
+   "name": "r02-after",
+   "when": [
+    "r02:",
+    "\"tool_call_id\":\"call_r02\""
+   ],
+   "reply": {
+    "text": "Done 02."
+   }
+  },
+  {
+   "name": "r02",
+   "when": [
+    "r02:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_r02",
+     "name": "task_wait",
+     "arguments": {
+      "taskId": "{saved.tid}",
+      "timeoutMs": 15000
+     }
+    }
+   }
+  },
+  {
+   "name": "r01-after",
+   "when": [
+    "r01:",
+    "\"tool_call_id\":\"call_r01\""
+   ],
+   "reply": {
+    "text": "Done 01."
+   },
+   "save": {
+    "tid": "[\\s\\S]*task_create taskId=([0-9a-f-]{36})"
+   }
+  },
+  {
+   "name": "r01",
+   "when": [
+    "r01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_r01",
+     "name": "task_create",
+     "arguments": {
+      "command": "sleep 30"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-ab",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ab",
+    "channelKey": "test",
+    "message": "r01: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ab",
+    "channelKey": "test",
+    "message": "r02: go"
+   },
+   "timeout": 20000,
+   "answer": [
+    {
+     "on": {
+      "type": "tool_call_started"
+     },
+     "ws": "abort_turn",
+     "params": {
+      "sessionKey": "s-ab"
+     },
+     "count": 1
+    }
+   ]
+  },
+  {
+   "sleep": 1500
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ab",
+    "channelKey": "test",
+    "message": "r03: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 800
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-ab"
+   }
+  }
+ ],
+ "volatile": [
+  "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages|resultBytes|content-length)$"
+ ],
+ "volatileWhy": "工具结果文本里带位数不定的进程号（同 tool-task）"
+}
