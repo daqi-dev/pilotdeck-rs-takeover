@@ -545,7 +545,14 @@ fn file_lock_steals_only_stale_dead_or_unparsable_owners() {
     let own = std::process::id();
     let stale = Duration::from_secs(120);
     for (contents, age, stolen) in [
-        (format!(r#"{{"pid":{DEAD}}}"#), Duration::ZERO, false),
+        // Accepted deviation (robust-restart-registry-lock-leftover): a fresh
+        // lock whose owner pid is gone is reclaimed at once; the baseline
+        // waits for the 60s staleness line and times out first.
+        (format!(r#"{{"pid":{DEAD}}}"#), Duration::ZERO, true),
+        // A fresh lock of a live owner, or one whose pid is not written yet,
+        // still waits, like the baseline.
+        (format!(r#"{{"pid":{own}}}"#), Duration::ZERO, false),
+        (String::new(), Duration::ZERO, false),
         (format!(r#"{{"pid":{own}}}"#), stale, false),
         (format!(r#"{{"pid":{HUGE}}}"#), stale, false),
         (

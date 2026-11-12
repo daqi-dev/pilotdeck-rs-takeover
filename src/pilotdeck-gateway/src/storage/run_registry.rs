@@ -560,19 +560,25 @@ impl FileRunRegistry {
             }
             match fs::metadata(&self.lock_path) {
                 Ok(meta) => {
-                    let stale = meta
+                    let aged = meta
                         .modified()
                         .ok()
                         .and_then(|m| SystemTime::now().duration_since(m).ok())
                         .is_some_and(|age| age > FILE_LOCK_STALE);
-                    if stale {
-                        let contents = fs::read(&self.lock_path)
-                            .map(|b| String::from_utf8_lossy(&b).into_owned())
-                            .unwrap_or_default();
-                        if !lock_owner_alive(&contents) {
-                            let _ = fs::remove_file(&self.lock_path);
-                            continue;
-                        }
+                    let contents = fs::read(&self.lock_path)
+                        .map(|b| String::from_utf8_lossy(&b).into_owned())
+                        .unwrap_or_default();
+                    let owner = lock_owner_pid(&contents);
+                    // Accepted deviation (robust-restart-registry-lock-leftover):
+                    // the baseline only reclaims a lock older than 60s, so a
+                    // gateway restarted within a minute of a crash waits 30s and
+                    // then fails every registry operation. A lock whose recorded
+                    // owner pid no longer exists is reclaimed at once; a live
+                    // owner, or a lock whose pid is not written yet, still waits.
+                    let owner_dead = owner.is_some_and(|pid| !process_alive(pid));
+                    if owner_dead || (aged && !owner.is_some_and(process_alive)) {
+                        let _ = fs::remove_file(&self.lock_path);
+                        continue;
                     }
                 }
                 Err(e) if e.kind() == io::ErrorKind::NotFound => {}
@@ -780,14 +786,14 @@ fn owner_alive(owner: &JsValue) -> bool {
     owner.as_number().is_some_and(process_alive)
 }
 /// RunRegistry.ts:123-133: `"pid"\s*:\s*(\d+)` then `parseInt`.
-fn lock_owner_alive(contents: &str) -> bool {
+fn lock_owner_pid(contents: &str) -> Option<f64> {
     static PID: LazyLock<Regex> = LazyLock::new(|| {
         let ws = r"[\t\n\x0B\x0C\r \x{a0}\x{1680}\x{2000}-\x{200a}\x{2028}\x{2029}\x{202f}\x{205f}\x{3000}\x{feff}]*";
         Regex::new(&format!(r#""pid"{ws}:{ws}([0-9]+)"#)).unwrap()
     });
     PID.captures(contents)
         .and_then(|c| c[1].parse::<f64>().ok())
-        .is_some_and(process_alive)
+        .filter(|pid| pid.is_finite() && pid.fract() == 0.0 && *pid > 0.0)
 }
 /// `Number.isInteger(pid) && pid > 0`, then `process.kill(pid, 0)`: only ESRCH
 /// means dead. Node rejects `pid != (pid | 0)` with ERR_INVALID_ARG_TYPE, which
