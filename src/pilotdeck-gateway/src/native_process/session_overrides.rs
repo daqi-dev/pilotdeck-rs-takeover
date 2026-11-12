@@ -48,6 +48,9 @@ pub struct SessionOverrides {
     /// handler per session, in registration order; a session registering
     /// again replaces its handler in place, like `Map#set`.
     config_change: std::sync::Mutex<Vec<(JsString, ConfigChangeHandler)>>,
+    /// `dialogProjectKeys` (InProcessGateway.ts:551), shared with the submit
+    /// admission and the `user_dialog_changed` broadcast.
+    dialog_project_keys: crate::runtime::turn::admission::DialogProjectKeys,
 }
 
 /// A session's SDK `ConfigChange` dispatch, given `{ changedPaths,
@@ -55,6 +58,11 @@ pub struct SessionOverrides {
 pub type ConfigChangeHandler = std::sync::Arc<dyn Fn(&JsValue) + Send + Sync>;
 
 impl SessionOverrides {
+    /// The gateway's `dialogProjectKeys` map.
+    pub fn dialog_project_keys(&self) -> &crate::runtime::turn::admission::DialogProjectKeys {
+        &self.dialog_project_keys
+    }
+
     /// `registerSdkConfigChangeHandler(sessionKey, handler)`.
     pub fn register_config_change(&self, key: &JsString, handler: ConfigChangeHandler) {
         let mut handlers = self.config_change.lock().unwrap_or_else(|e| e.into_inner());

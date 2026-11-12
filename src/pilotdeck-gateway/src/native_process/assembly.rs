@@ -518,6 +518,7 @@ async fn start_assembly(
     // both writers (the three selector methods on `Requests`) and the reader
     // (the prepare closure composing each session's agent config).
     let session_overrides: Arc<super::SessionOverrides> = Arc::default();
+    let dialog_project_keys = session_overrides.dialog_project_keys().clone();
     let prepare_overrides = session_overrides.clone();
     let evict_session_overrides = session_overrides.clone();
     let prepare_user_dialog_bus = user_dialog_bus.clone();
@@ -1566,7 +1567,11 @@ async fn start_assembly(
     let build_connection_broadcast = connection_broadcast.clone();
     // `onUserDialogChange` (createLocalGateway.ts:1053-1058): the bus's
     // renderer notifications go to every connection of the server.
-    user_dialog::bind_broadcast(&user_dialog_bus, connection_broadcast.clone());
+    user_dialog::bind_broadcast(
+        &user_dialog_bus,
+        connection_broadcast.clone(),
+        dialog_project_keys.clone(),
+    );
     let host = TurnGateway::start_with_cleanup_budget(
         TurnReplayOptions::new(),
         // #1746: the failure path waits out this embedding's own drain budget
@@ -1765,6 +1770,7 @@ async fn start_assembly(
             // real per-session admission stays where it belongs, inside the
             // submit path.
             let cron_admission = Arc::new(crate::runtime::session::SessionAdmission::default());
+            let admission_dialog_project_keys = session_overrides.dialog_project_keys().clone();
             let cron_owner = owner.clone();
             let requests = Arc::new(super::requests::Requests {
                 project: build_project,
@@ -1804,7 +1810,10 @@ async fn start_assembly(
                 host: Arc::new(GatewaySubmitHost::new(
                     services,
                     Arc::new(NativeSubmitReplacement((*replacement).clone())),
-                    Arc::new(GatewaySubmitAdmission::new(admission)),
+                    Arc::new(GatewaySubmitAdmission::with_dialog_project_keys(
+                        admission,
+                        admission_dialog_project_keys,
+                    )),
                 )),
                 projector,
             });
