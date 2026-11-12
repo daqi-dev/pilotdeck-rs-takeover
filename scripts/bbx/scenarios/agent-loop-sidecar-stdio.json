@@ -1,6 +1,7 @@
 {
   "name": "agent-loop-sidecar-stdio",
   "about": "PILOTDECK_AGENT_LOOP_TRANSPORT=stdio：gateway 每轮起第二个可执行入口 pilotdeck-agent-loop-sidecar（src/cli/AgentLoopDeploymentProfile.ts:62-80、src/cli/pilotdeck-agent-loop-sidecar.ts），经 stdio 协议跑 agent 循环。比一轮纯文本对话的帧、发给 provider 的请求与落盘。会话 .jsonl 里有 agent_loop_operation_started / accepted / terminal 三条记录（src/agent/modules/transport/sessionOperationLedger.ts），助手消息带 metadata.moduleId；其中 binding.moduleInstanceId、binding.connectionGeneration、streamId 是随机串，基线自比在这些路径上不同。标题请求延迟 4 秒、首轮后等 5 秒，让标题记录稳定落在首轮之后（sidecar 起动快慢不同，标题与 agent_loop_operation_started 的先后在两侧会不同）。",
+  "volatile": ["\\.jsonl\\[\\d+\\]\\.binding\\.(moduleInstanceId|connectionGeneration)$", "\\.jsonl\\[\\d+\\]\\.streamId$"],
   "env": {
     "PILOTDECK_AGENT_LOOP_TRANSPORT": "stdio"
   },

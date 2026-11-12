@@ -1,6 +1,7 @@
 {
   "name": "agent-loop-sidecar-stdio-abort",
   "about": "PILOTDECK_AGENT_LOOP_TRANSPORT=stdio 下中止一轮：a 模型流式输出中 abort_turn（假 provider hangAfter）；b bash 工具执行中 abort_turn；随后 a 的会话再提交一轮。宿主向 sidecar 发 cancel，sidecar 以 cancelled 收尾，会话 .jsonl 里 agent_loop_operation_terminal 的 outcome 与 result（src/agent/modules/transport/agentLoopSidecarClient.ts:676-692、931-958）。标题请求延迟 4 秒、首轮后等 5 秒，让标题记录稳定落在首轮之后（sidecar 起动快慢不同，标题与 agent_loop_operation_started 的先后在两侧会不同）。",
+  "volatile": ["\\.jsonl\\[\\d+\\]\\.binding\\.(moduleInstanceId|connectionGeneration)$", "\\.jsonl\\[\\d+\\]\\.streamId$"],
   "env": {
     "PILOTDECK_AGENT_LOOP_TRANSPORT": "stdio"
   },
