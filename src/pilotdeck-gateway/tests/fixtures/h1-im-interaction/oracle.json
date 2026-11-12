@@ -1,0 +1,1313 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "hashes": {
+    "src/adapters/channel/protocol/ImElicitationHelper.ts": "cb743ce32129e33c65cbee9ff5c613b057b65d8a642a0fc11b1e1362fb458cf4",
+    "src/adapters/channel/protocol/ImPermissionHelper.ts": "40a6e25f143e9973d2cef836bb40d47f8e693424ad9aac5f2391be6514193477",
+    "src/gateway/client/GatewayInteractionCoordinator.ts": "899200052fb525033104872f9c3e222321a6926bd4319b5e901cadf09153a297",
+    "src/gateway/permission/GatewayPermissionBus.ts": "b0caf4420156bf71eeaddb03159c80d9bc57c0a678f3d8714878486b96634ba8",
+    "src/gateway/elicitation/GatewayElicitationBus.ts": "f75544dfad91afbdbb37dbfb8e97e418b98ccefc5f1f7d9b0abde0a1ef382904"
+  },
+  "cases": [
+    {
+      "id": "question_utf16",
+      "steps": [
+        {
+          "op": "register",
+          "kind": "question",
+          "id": "q\ud800"
+        },
+        {
+          "op": "capture",
+          "kind": "question",
+          "event": {
+            "type": "elicitation_request",
+            "requestId": "q\ud800",
+            "questions": [
+              {
+                "question": "选择\ud800",
+                "header": "标题\udc00",
+                "options": [
+                  {
+                    "label": "一\ud800",
+                    "description": "说明"
+                  },
+                  {
+                    "label": "二🙂",
+                    "description": ""
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "op": "answer",
+          "kind": "question",
+          "text": "1"
+        }
+      ],
+      "trace": [
+        {
+          "op": "register",
+          "helperQuestion": false,
+          "helperPermission": false,
+          "pendingQuestion": 1,
+          "pendingPermission": 0,
+          "observed": []
+        },
+        {
+          "op": "capture",
+          "result": "**标题\udc00**\n选择\ud800\n1. 一\ud800 — 说明\n2. 二🙂\n\n回复数字选择（多选用逗号分隔），回复 0 取消。",
+          "helperQuestion": true,
+          "helperPermission": false,
+          "pendingQuestion": 1,
+          "pendingPermission": 0,
+          "observed": []
+        },
+        {
+          "op": "answer",
+          "helperQuestion": false,
+          "helperPermission": false,
+          "pendingQuestion": 0,
+          "pendingPermission": 0,
+          "observed": [
+            {
+              "event": "resolve",
+              "session": "session",
+              "id": "q\ud800",
+              "value": {
+                "type": "answered",
+                "answers": {
+                  "选择\ud800": "一\ud800"
+                }
+              }
+            },
+            {
+              "event": "delivered",
+              "session": "session",
+              "id": "q\ud800"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "question_cancel",
+      "steps": [
+        {
+          "op": "register",
+          "kind": "question",
+          "id": "q"
+        },
+        {
+          "op": "capture",
+          "kind": "question",
+          "event": {
+            "type": "elicitation_request",
+            "requestId": "q",
+            "questions": [
+              {
+                "question": "选择\ud800",
+                "header": "标题\udc00",
+                "options": [
+                  {
+                    "label": "一\ud800",
+                    "description": "说明"
+                  },
+                  {
+                    "label": "二🙂",
+                    "description": ""
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "op": "answer",
+          "kind": "question",
+          "text": "0"
+        }
+      ],
+      "trace": [
+        {
+          "op": "register",
+          "helperQuestion": false,
+          "helperPermission": false,
+          "pendingQuestion": 1,
+          "pendingPermission": 0,
+          "observed": []
+        },
+        {
+          "op": "capture",
+          "result": "**标题\udc00**\n选择\ud800\n1. 一\ud800 — 说明\n2. 二🙂\n\n回复数字选择（多选用逗号分隔），回复 0 取消。",
+          "helperQuestion": true,
+          "helperPermission": false,
+          "pendingQuestion": 1,
+          "pendingPermission": 0,
+          "observed": []
+        },
+        {
+          "op": "answer",
+          "result": "已取消。",
+          "helperQuestion": false,
+          "helperPermission": false,
+          "pendingQuestion": 0,
+          "pendingPermission": 0,
+          "observed": [
+            {
+              "event": "resolve",
+              "session": "session",
+              "id": "q",
+              "value": {
+                "type": "cancelled",
+                "reason": "user cancelled"
+              }
+            },
+            {
+              "event": "delivered",
+              "session": "session",
+              "id": "q"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "question_missing_id",
+      "steps": [
+        {
+          "op": "register",
+          "kind": "question",
+          "id": "undefined"
+        },
+        {
+          "op": "capture",
+          "kind": "question",
+          "event": {
+            "type": "elicitation_request",
+            "questions": [
+              {
+                "question": "选择\ud800",
+                "header": "标题\udc00",
+                "options": [
+                  {
+                    "label": "一\ud800",
+                    "description": "说明"
+                  },
+                  {
+                    "label": "二🙂",
+                    "description": ""
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "op": "answer",
+          "kind": "question",
+          "text": "1"
+        }
+      ],
+      "trace": [
+        {
+          "op": "register",
+          "helperQuestion": false,
+          "helperPermission": false,
+          "pendingQuestion": 1,
+          "pendingPermission": 0,
+          "observed": []
+        },
+        {
+          "op": "capture",
+          "result": "**标题\udc00**\n选择\ud800\n1. 一\ud800 — 说明\n2. 二🙂\n\n回复数字选择（多选用逗号分隔），回复 0 取消。",
+          "helperQuestion": true,
+          "helperPermission": false,
+          "pendingQuestion": 1,
+          "pendingPermission": 0,
+          "observed": []
+        },
+        {
+          "op": "answer",
+          "helperQuestion": false,
+          "helperPermission": false,
+          "pendingQuestion": 1,
+          "pendingPermission": 0,
+          "observed": []
+        }
+      ]
+    },
+    {
+      "id": "permission_0",
+      "steps": [
+        {
+          "op": "register",
+          "kind": "permission",
+          "id": "p"
+        },
+        {
+          "op": "capture",
+          "kind": "permission",
+          "event": {
+            "type": "permission_request",
+            "requestId": "p",
+            "toolName": "bash",
+            "payload": {
+              "command": "echo hi"
+            }
+          }
+        },
+        {
+          "op": "confirm",
+          "delivered": true,
+          "id": "p"
+        },
+        {
+          "op": "answer",
+          "kind": "permission",
+          "text": "0"
+        }
+      ],
+      "trace": [
+        {
+          "op": "register",
+          "helperQuestion": false,
+          "helperPermission": false,
+          "pendingQuestion": 0,
+          "pendingPermission": 1,
+          "observed": []
+        },
+        {
+          "op": "capture",
+          "result": "工具 bash 需要权限才能继续执行。\n\n请求内容：\n{\n  \"command\": \"echo hi\"\n}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。",
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 1,
+          "observed": []
+        },
+        {
+          "op": "confirm",
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 1,
+          "observed": []
+        },
+        {
+          "op": "answer",
+          "result": {
+            "text": "已拒绝，继续处理。",
+            "canAdvance": true,
+            "answerToken": 1
+          },
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 0,
+          "observed": [
+            {
+              "event": "resolve",
+              "session": "session",
+              "id": "p",
+              "value": {
+                "requestId": "p",
+                "decision": "deny",
+                "reason": "User denied permission from IM channel."
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "permission_1",
+      "steps": [
+        {
+          "op": "register",
+          "kind": "permission",
+          "id": "p"
+        },
+        {
+          "op": "capture",
+          "kind": "permission",
+          "event": {
+            "type": "permission_request",
+            "requestId": "p",
+            "toolName": "bash",
+            "payload": {
+              "command": "echo hi"
+            }
+          }
+        },
+        {
+          "op": "confirm",
+          "delivered": true,
+          "id": "p"
+        },
+        {
+          "op": "answer",
+          "kind": "permission",
+          "text": "1"
+        }
+      ],
+      "trace": [
+        {
+          "op": "register",
+          "helperQuestion": false,
+          "helperPermission": false,
+          "pendingQuestion": 0,
+          "pendingPermission": 1,
+          "observed": []
+        },
+        {
+          "op": "capture",
+          "result": "工具 bash 需要权限才能继续执行。\n\n请求内容：\n{\n  \"command\": \"echo hi\"\n}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。",
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 1,
+          "observed": []
+        },
+        {
+          "op": "confirm",
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 1,
+          "observed": []
+        },
+        {
+          "op": "answer",
+          "result": {
+            "text": "已允许一次，继续执行。",
+            "canAdvance": true,
+            "answerToken": 1
+          },
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 0,
+          "observed": [
+            {
+              "event": "resolve",
+              "session": "session",
+              "id": "p",
+              "value": {
+                "requestId": "p",
+                "decision": "allow",
+                "remember": false
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "permission_2",
+      "steps": [
+        {
+          "op": "register",
+          "kind": "permission",
+          "id": "p"
+        },
+        {
+          "op": "capture",
+          "kind": "permission",
+          "event": {
+            "type": "permission_request",
+            "requestId": "p",
+            "toolName": "bash",
+            "payload": {
+              "command": "echo hi"
+            }
+          }
+        },
+        {
+          "op": "confirm",
+          "delivered": true,
+          "id": "p"
+        },
+        {
+          "op": "answer",
+          "kind": "permission",
+          "text": "2"
+        }
+      ],
+      "trace": [
+        {
+          "op": "register",
+          "helperQuestion": false,
+          "helperPermission": false,
+          "pendingQuestion": 0,
+          "pendingPermission": 1,
+          "observed": []
+        },
+        {
+          "op": "capture",
+          "result": "工具 bash 需要权限才能继续执行。\n\n请求内容：\n{\n  \"command\": \"echo hi\"\n}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。",
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 1,
+          "observed": []
+        },
+        {
+          "op": "confirm",
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 1,
+          "observed": []
+        },
+        {
+          "op": "answer",
+          "result": {
+            "text": "已允许本会话，继续执行。",
+            "canAdvance": true,
+            "answerToken": 1
+          },
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 0,
+          "observed": [
+            {
+              "event": "resolve",
+              "session": "session",
+              "id": "p",
+              "value": {
+                "requestId": "p",
+                "decision": "allow",
+                "remember": true
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "permission_missing_id",
+      "steps": [
+        {
+          "op": "register",
+          "kind": "permission",
+          "id": "undefined"
+        },
+        {
+          "op": "capture",
+          "kind": "permission",
+          "event": {
+            "type": "permission_request",
+            "toolName": "bash",
+            "payload": {
+              "command": "echo hi"
+            }
+          }
+        },
+        {
+          "op": "confirm",
+          "delivered": true
+        },
+        {
+          "op": "answer",
+          "kind": "permission",
+          "text": "1"
+        }
+      ],
+      "trace": [
+        {
+          "op": "register",
+          "helperQuestion": false,
+          "helperPermission": false,
+          "pendingQuestion": 0,
+          "pendingPermission": 1,
+          "observed": []
+        },
+        {
+          "op": "capture",
+          "result": "工具 bash 需要权限才能继续执行。\n\n请求内容：\n{\n  \"command\": \"echo hi\"\n}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。",
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 1,
+          "observed": []
+        },
+        {
+          "op": "confirm",
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 1,
+          "observed": []
+        },
+        {
+          "op": "answer",
+          "result": {
+            "text": "权限请求已失效，已跳过，继续处理。",
+            "canAdvance": false,
+            "retryPrompt": true,
+            "answerToken": 1
+          },
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 1,
+          "observed": []
+        }
+      ]
+    },
+    {
+      "id": "wrong_owner",
+      "steps": [
+        {
+          "op": "register",
+          "kind": "permission",
+          "id": "p",
+          "session": "other"
+        },
+        {
+          "op": "capture",
+          "kind": "permission",
+          "event": {
+            "type": "permission_request",
+            "requestId": "p",
+            "toolName": "bash",
+            "payload": {
+              "command": "echo hi"
+            }
+          }
+        },
+        {
+          "op": "confirm",
+          "delivered": true,
+          "id": "p"
+        },
+        {
+          "op": "answer",
+          "kind": "permission",
+          "text": "2"
+        }
+      ],
+      "trace": [
+        {
+          "op": "register",
+          "helperQuestion": false,
+          "helperPermission": false,
+          "pendingQuestion": 0,
+          "pendingPermission": 1,
+          "observed": []
+        },
+        {
+          "op": "capture",
+          "result": "工具 bash 需要权限才能继续执行。\n\n请求内容：\n{\n  \"command\": \"echo hi\"\n}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。",
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 0,
+          "observed": []
+        },
+        {
+          "op": "confirm",
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 0,
+          "observed": []
+        },
+        {
+          "op": "answer",
+          "result": {
+            "text": "权限请求已失效，已跳过，继续处理。",
+            "canAdvance": false,
+            "retryPrompt": true,
+            "answerToken": 1
+          },
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 0,
+          "observed": []
+        }
+      ]
+    },
+    {
+      "id": "cancel_pending_turn",
+      "steps": [
+        {
+          "op": "register",
+          "kind": "permission",
+          "id": "p"
+        },
+        {
+          "op": "register",
+          "kind": "question",
+          "id": "q"
+        },
+        {
+          "op": "capture",
+          "kind": "permission",
+          "event": {
+            "type": "permission_request",
+            "requestId": "p",
+            "toolName": "bash",
+            "payload": {
+              "command": "echo hi"
+            }
+          }
+        },
+        {
+          "op": "capture",
+          "kind": "question",
+          "event": {
+            "type": "elicitation_request",
+            "requestId": "q",
+            "questions": [
+              {
+                "question": "选择\ud800",
+                "header": "标题\udc00",
+                "options": [
+                  {
+                    "label": "一\ud800",
+                    "description": "说明"
+                  },
+                  {
+                    "label": "二🙂",
+                    "description": ""
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "op": "confirm",
+          "delivered": true,
+          "id": "p"
+        },
+        {
+          "op": "cancel",
+          "reason": "channel_stopped"
+        },
+        {
+          "op": "answer",
+          "kind": "permission",
+          "text": "1"
+        },
+        {
+          "op": "answer",
+          "kind": "question",
+          "text": "1"
+        }
+      ],
+      "trace": [
+        {
+          "op": "register",
+          "helperQuestion": false,
+          "helperPermission": false,
+          "pendingQuestion": 0,
+          "pendingPermission": 1,
+          "observed": []
+        },
+        {
+          "op": "register",
+          "helperQuestion": false,
+          "helperPermission": false,
+          "pendingQuestion": 1,
+          "pendingPermission": 1,
+          "observed": []
+        },
+        {
+          "op": "capture",
+          "result": "工具 bash 需要权限才能继续执行。\n\n请求内容：\n{\n  \"command\": \"echo hi\"\n}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。",
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 1,
+          "pendingPermission": 1,
+          "observed": []
+        },
+        {
+          "op": "capture",
+          "result": "**标题\udc00**\n选择\ud800\n1. 一\ud800 — 说明\n2. 二🙂\n\n回复数字选择（多选用逗号分隔），回复 0 取消。",
+          "helperQuestion": true,
+          "helperPermission": true,
+          "pendingQuestion": 1,
+          "pendingPermission": 1,
+          "observed": []
+        },
+        {
+          "op": "confirm",
+          "helperQuestion": true,
+          "helperPermission": true,
+          "pendingQuestion": 1,
+          "pendingPermission": 1,
+          "observed": []
+        },
+        {
+          "op": "cancel",
+          "helperQuestion": true,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 0,
+          "observed": [
+            {
+              "event": "reject",
+              "session": "session",
+              "id": "q",
+              "message": "channel_stopped"
+            },
+            {
+              "event": "resolve",
+              "session": "session",
+              "id": "p",
+              "value": {
+                "requestId": "p",
+                "decision": "deny",
+                "reason": "channel_stopped"
+              }
+            }
+          ]
+        },
+        {
+          "op": "answer",
+          "result": {
+            "text": "权限请求已失效，已跳过，继续处理。",
+            "canAdvance": false,
+            "retryPrompt": true,
+            "answerToken": 1
+          },
+          "helperQuestion": true,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 0,
+          "observed": [
+            {
+              "event": "reject",
+              "session": "session",
+              "id": "q",
+              "message": "channel_stopped"
+            },
+            {
+              "event": "resolve",
+              "session": "session",
+              "id": "p",
+              "value": {
+                "requestId": "p",
+                "decision": "deny",
+                "reason": "channel_stopped"
+              }
+            }
+          ]
+        },
+        {
+          "op": "answer",
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 0,
+          "observed": [
+            {
+              "event": "reject",
+              "session": "session",
+              "id": "q",
+              "message": "channel_stopped"
+            },
+            {
+              "event": "resolve",
+              "session": "session",
+              "id": "p",
+              "value": {
+                "requestId": "p",
+                "decision": "deny",
+                "reason": "channel_stopped"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "helper_isolation",
+      "steps": [
+        {
+          "op": "register",
+          "kind": "question",
+          "id": "q1"
+        },
+        {
+          "op": "register",
+          "kind": "question",
+          "id": "q2",
+          "session": "other"
+        },
+        {
+          "op": "capture",
+          "kind": "question",
+          "event": {
+            "type": "elicitation_request",
+            "requestId": "q1",
+            "questions": [
+              {
+                "question": "选择\ud800",
+                "header": "标题\udc00",
+                "options": [
+                  {
+                    "label": "一\ud800",
+                    "description": "说明"
+                  },
+                  {
+                    "label": "二🙂",
+                    "description": ""
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "op": "capture",
+          "kind": "question",
+          "event": {
+            "type": "elicitation_request",
+            "requestId": "q2",
+            "questions": [
+              {
+                "question": "选择\ud800",
+                "header": "标题\udc00",
+                "options": [
+                  {
+                    "label": "一\ud800",
+                    "description": "说明"
+                  },
+                  {
+                    "label": "二🙂",
+                    "description": ""
+                  }
+                ]
+              }
+            ]
+          },
+          "helper": 1,
+          "session": "other"
+        },
+        {
+          "op": "answer",
+          "kind": "question",
+          "text": "1"
+        },
+        {
+          "op": "answer",
+          "kind": "question",
+          "text": "0",
+          "helper": 1
+        }
+      ],
+      "trace": [
+        {
+          "op": "register",
+          "helperQuestion": false,
+          "helperPermission": false,
+          "pendingQuestion": 1,
+          "pendingPermission": 0,
+          "observed": []
+        },
+        {
+          "op": "register",
+          "helperQuestion": false,
+          "helperPermission": false,
+          "pendingQuestion": 1,
+          "pendingPermission": 0,
+          "observed": []
+        },
+        {
+          "op": "capture",
+          "result": "**标题\udc00**\n选择\ud800\n1. 一\ud800 — 说明\n2. 二🙂\n\n回复数字选择（多选用逗号分隔），回复 0 取消。",
+          "helperQuestion": true,
+          "helperPermission": false,
+          "pendingQuestion": 1,
+          "pendingPermission": 0,
+          "observed": []
+        },
+        {
+          "op": "capture",
+          "result": "**标题\udc00**\n选择\ud800\n1. 一\ud800 — 说明\n2. 二🙂\n\n回复数字选择（多选用逗号分隔），回复 0 取消。",
+          "helperQuestion": true,
+          "helperPermission": false,
+          "pendingQuestion": 1,
+          "pendingPermission": 0,
+          "observed": []
+        },
+        {
+          "op": "answer",
+          "helperQuestion": false,
+          "helperPermission": false,
+          "pendingQuestion": 0,
+          "pendingPermission": 0,
+          "observed": [
+            {
+              "event": "resolve",
+              "session": "session",
+              "id": "q1",
+              "value": {
+                "type": "answered",
+                "answers": {
+                  "选择\ud800": "一\ud800"
+                }
+              }
+            },
+            {
+              "event": "delivered",
+              "session": "session",
+              "id": "q1"
+            }
+          ]
+        },
+        {
+          "op": "answer",
+          "result": "已取消。",
+          "helperQuestion": false,
+          "helperPermission": false,
+          "pendingQuestion": 0,
+          "pendingPermission": 0,
+          "observed": [
+            {
+              "event": "resolve",
+              "session": "session",
+              "id": "q1",
+              "value": {
+                "type": "answered",
+                "answers": {
+                  "选择\ud800": "一\ud800"
+                }
+              }
+            },
+            {
+              "event": "delivered",
+              "session": "session",
+              "id": "q1"
+            },
+            {
+              "event": "resolve",
+              "session": "other",
+              "id": "q2",
+              "value": {
+                "type": "cancelled",
+                "reason": "user cancelled"
+              }
+            },
+            {
+              "event": "delivered",
+              "session": "other",
+              "id": "q2"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "permission_queue_retry",
+      "steps": [
+        {
+          "op": "register",
+          "kind": "permission",
+          "id": "p1"
+        },
+        {
+          "op": "register",
+          "kind": "permission",
+          "id": "p2"
+        },
+        {
+          "op": "capture",
+          "kind": "permission",
+          "event": {
+            "type": "permission_request",
+            "requestId": "p1",
+            "toolName": "bash",
+            "payload": {
+              "command": "echo hi"
+            }
+          }
+        },
+        {
+          "op": "capture",
+          "kind": "permission",
+          "event": {
+            "type": "permission_request",
+            "requestId": "p2",
+            "toolName": "shell\ud800",
+            "payload": {
+              "command": "echo hi"
+            }
+          }
+        },
+        {
+          "op": "confirm",
+          "delivered": true,
+          "id": "p1"
+        },
+        {
+          "op": "answer",
+          "kind": "permission",
+          "text": "2"
+        },
+        {
+          "op": "next"
+        },
+        {
+          "op": "confirm_next",
+          "delivered": false
+        },
+        {
+          "op": "release"
+        },
+        {
+          "op": "answer",
+          "kind": "permission",
+          "text": "1"
+        },
+        {
+          "op": "next"
+        },
+        {
+          "op": "confirm_next",
+          "delivered": true
+        },
+        {
+          "op": "answer",
+          "kind": "permission",
+          "text": "0"
+        }
+      ],
+      "trace": [
+        {
+          "op": "register",
+          "helperQuestion": false,
+          "helperPermission": false,
+          "pendingQuestion": 0,
+          "pendingPermission": 1,
+          "observed": []
+        },
+        {
+          "op": "register",
+          "helperQuestion": false,
+          "helperPermission": false,
+          "pendingQuestion": 0,
+          "pendingPermission": 2,
+          "observed": []
+        },
+        {
+          "op": "capture",
+          "result": "工具 bash 需要权限才能继续执行。\n\n请求内容：\n{\n  \"command\": \"echo hi\"\n}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。",
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 2,
+          "observed": []
+        },
+        {
+          "op": "capture",
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 2,
+          "observed": []
+        },
+        {
+          "op": "confirm",
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 2,
+          "observed": []
+        },
+        {
+          "op": "answer",
+          "result": {
+            "text": "已允许本会话，继续执行。",
+            "canAdvance": true,
+            "answerToken": 1
+          },
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 1,
+          "observed": [
+            {
+              "event": "resolve",
+              "session": "session",
+              "id": "p1",
+              "value": {
+                "requestId": "p1",
+                "decision": "allow",
+                "remember": true
+              }
+            }
+          ]
+        },
+        {
+          "op": "next",
+          "result": {
+            "text": "工具 shell\ud800 需要权限才能继续执行。\n\n请求内容：\n{\n  \"command\": \"echo hi\"\n}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。",
+            "id": "p2"
+          },
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 1,
+          "observed": [
+            {
+              "event": "resolve",
+              "session": "session",
+              "id": "p1",
+              "value": {
+                "requestId": "p1",
+                "decision": "allow",
+                "remember": true
+              }
+            }
+          ]
+        },
+        {
+          "op": "confirm_next",
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 1,
+          "observed": [
+            {
+              "event": "resolve",
+              "session": "session",
+              "id": "p1",
+              "value": {
+                "requestId": "p1",
+                "decision": "allow",
+                "remember": true
+              }
+            }
+          ]
+        },
+        {
+          "op": "release",
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 1,
+          "observed": [
+            {
+              "event": "resolve",
+              "session": "session",
+              "id": "p1",
+              "value": {
+                "requestId": "p1",
+                "decision": "allow",
+                "remember": true
+              }
+            }
+          ]
+        },
+        {
+          "op": "answer",
+          "result": {
+            "text": "上一条权限提示发送失败，正在重试。",
+            "canAdvance": false,
+            "retryPrompt": true
+          },
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 1,
+          "observed": [
+            {
+              "event": "resolve",
+              "session": "session",
+              "id": "p1",
+              "value": {
+                "requestId": "p1",
+                "decision": "allow",
+                "remember": true
+              }
+            }
+          ]
+        },
+        {
+          "op": "next",
+          "result": {
+            "text": "工具 shell\ud800 需要权限才能继续执行。\n\n请求内容：\n{\n  \"command\": \"echo hi\"\n}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。",
+            "id": "p2"
+          },
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 1,
+          "observed": [
+            {
+              "event": "resolve",
+              "session": "session",
+              "id": "p1",
+              "value": {
+                "requestId": "p1",
+                "decision": "allow",
+                "remember": true
+              }
+            }
+          ]
+        },
+        {
+          "op": "confirm_next",
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 1,
+          "observed": [
+            {
+              "event": "resolve",
+              "session": "session",
+              "id": "p1",
+              "value": {
+                "requestId": "p1",
+                "decision": "allow",
+                "remember": true
+              }
+            }
+          ]
+        },
+        {
+          "op": "answer",
+          "result": {
+            "text": "已拒绝，继续处理。",
+            "canAdvance": true,
+            "answerToken": 2
+          },
+          "helperQuestion": false,
+          "helperPermission": true,
+          "pendingQuestion": 0,
+          "pendingPermission": 0,
+          "observed": [
+            {
+              "event": "resolve",
+              "session": "session",
+              "id": "p1",
+              "value": {
+                "requestId": "p1",
+                "decision": "allow",
+                "remember": true
+              }
+            },
+            {
+              "event": "resolve",
+              "session": "session",
+              "id": "p2",
+              "value": {
+                "requestId": "p2",
+                "decision": "deny",
+                "reason": "User denied permission from IM channel."
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

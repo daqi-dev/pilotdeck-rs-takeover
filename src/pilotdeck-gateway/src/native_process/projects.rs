@@ -344,6 +344,9 @@ mod tests {
             builtin_skills_root: None,
             builtin_plugins_root: None,
             in_process_cli: false,
+            telemetry: None,
+            telemetry_context: None,
+            telemetry_reload: false,
         }
     }
 

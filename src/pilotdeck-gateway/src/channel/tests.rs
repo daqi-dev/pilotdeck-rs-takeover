@@ -1227,23 +1227,24 @@ async fn stop_prefix_can_reenter_close() {
         .expect("#1327 prefix reentry memoized close");
 }
 
-// #1386 A8.3 (#1302 B): the 11 unmigrated channels refuse native startup
+// #1386 A8.3 (#1302 B), narrowed by H1: the two remaining unmigrated
+// channels refuse native startup
 // through `reject_unmigrated_channels`, the seam production assembly calls
 // from `native_process/assembly.rs` (before `NativeChannels` is constructed,
 // #1763). The seam takes no mounts and no console callback, so a rejection can
 // never come after an adapter construction or a `console.error` line — there
 // is nothing to construct or log through.
 const UNMIGRATED_REJECTION_PHRASE: &str = crate::channel::loader::UNMIGRATED_REASON;
-/// The eight keys #1302 B keeps in Rust (outside `UNMIGRATED_CHANNEL_KEYS`);
+/// The seventeen implemented keys outside `UNMIGRATED_CHANNEL_KEYS`;
 /// `reject_unmigrated_channels` must leave them alone. #2301 closed the
-/// transition: the six loader-table keys construct at startup through
+/// transition; H1 adds nine loader-table keys, so fifteen construct through
 /// `native_process::channels::production_loader_mounts`
 /// (`load_enabled_channels` now has its production caller), `weixin` /
 /// `feishu` through the bundle constructors — so every key here is built,
 /// not merely tolerated. The name stays `unmigrated_subset_channels_stay_loadable`
 /// (the 13 `A8.3-CHANNEL-*-001` entries cite it by name); the terminal
 /// reading is "an implemented key must not be rejected".
-const SUBSET_CHANNEL_KEYS: [&str; 8] = [
+const SUBSET_CHANNEL_KEYS: [&str; 17] = [
     "weixin",
     "feishu",
     "apiServer",
@@ -1252,6 +1253,15 @@ const SUBSET_CHANNEL_KEYS: [&str; 8] = [
     "sms",
     "bluebubbles",
     "slack",
+    "signal",
+    "mattermost",
+    "homeassistant",
+    "email",
+    "dingtalk",
+    "discord",
+    "matrix",
+    "telegram",
+    "whatsapp",
 ];
 
 fn adapters_config(entries: &str) -> JsValue {
@@ -1297,40 +1307,40 @@ fn assert_rejects_unmigrated(key: &str) {
 }
 
 #[test]
-fn rejects_unmigrated_telegram() {
-    assert_rejects_unmigrated("telegram");
+fn production_loader_mount_builds_telegram_with_js_truthiness() {
+    assert_production_loader_builds_with_js_truthiness("telegram");
 }
 #[test]
-fn rejects_unmigrated_discord() {
-    assert_rejects_unmigrated("discord");
+fn production_loader_mount_builds_discord_with_js_truthiness() {
+    assert_production_loader_builds_with_js_truthiness("discord");
 }
 #[test]
-fn rejects_unmigrated_matrix() {
-    assert_rejects_unmigrated("matrix");
+fn production_loader_mount_builds_matrix_with_js_truthiness() {
+    assert_production_loader_builds_with_js_truthiness("matrix");
 }
 #[test]
-fn rejects_unmigrated_mattermost() {
-    assert_rejects_unmigrated("mattermost");
+fn production_loader_mount_builds_mattermost_with_js_truthiness() {
+    assert_production_loader_builds_with_js_truthiness("mattermost");
 }
 #[test]
-fn rejects_unmigrated_signal() {
-    assert_rejects_unmigrated("signal");
+fn production_loader_mount_builds_signal_with_js_truthiness() {
+    assert_production_loader_builds_with_js_truthiness("signal");
 }
 #[test]
-fn rejects_unmigrated_whatsapp() {
-    assert_rejects_unmigrated("whatsapp");
+fn production_loader_mount_builds_whatsapp_with_js_truthiness() {
+    assert_production_loader_builds_with_js_truthiness("whatsapp");
 }
 #[test]
-fn rejects_unmigrated_dingtalk() {
-    assert_rejects_unmigrated("dingtalk");
+fn production_loader_mount_builds_dingtalk_with_js_truthiness() {
+    assert_production_loader_builds_with_js_truthiness("dingtalk");
 }
 #[test]
-fn rejects_unmigrated_email() {
-    assert_rejects_unmigrated("email");
+fn production_loader_mount_builds_email_with_js_truthiness() {
+    assert_production_loader_builds_with_js_truthiness("email");
 }
 #[test]
-fn rejects_unmigrated_homeassistant() {
-    assert_rejects_unmigrated("homeassistant");
+fn production_loader_mount_builds_homeassistant_with_js_truthiness() {
+    assert_production_loader_builds_with_js_truthiness("homeassistant");
 }
 #[test]
 fn rejects_unmigrated_qq() {
@@ -1341,7 +1351,67 @@ fn rejects_unmigrated_wecom() {
     assert_rejects_unmigrated("wecom");
 }
 
-// #1579 P1: the frozen TS baseline gates these 11 keys with two different
+// H1 replaces the nine historical rejection cells with real production
+// constructors. This is a loader-level test: it does not start channels or
+// stand in for the formal server send/receive drivers. Explicit options keep
+// construction independent of channel credential environment fallbacks.
+fn assert_production_loader_builds_with_js_truthiness(key: &str) {
+    let mounts = crate::native_process::channels::production_loader_mounts();
+    let extra = r#"{"restUrl":"http://127.0.0.1:1","account":"fixture-account","serverUrl":"http://127.0.0.1:1","teamId":"fixture-team","url":"http://127.0.0.1:1","homeserver":"http://127.0.0.1:1","userId":"@fixture:localhost","clientId":"fixture-client","clientSecret":"fixture-secret","bridgePath":"/tmp/fixture-whatsapp-bridge","bridgeUrl":"http://127.0.0.1:18081","imapHost":"127.0.0.1","smtpHost":"127.0.0.1","user":"fixture-user","password":"fixture-password"}"#;
+    for (enabled, expected) in [
+        (Some("true"), true),
+        (Some("1"), true),
+        (Some("-1"), true),
+        (Some("\"true\""), true),
+        (Some("\"1\""), true),
+        (Some("[]"), true),
+        (Some("{}"), true),
+        (Some("false"), false),
+        (Some("0"), false),
+        (Some("-0"), false),
+        (Some("\"\""), false),
+        (Some("null"), false),
+        (None, false),
+    ] {
+        let enabled_field = enabled
+            .map(|value| format!("\"enabled\":{value},"))
+            .unwrap_or_default();
+        let adapters = adapters_config(&format!(
+            "{{\"{key}\":{{{enabled_field}\"token\":\"fixture-token\",\"extra\":{extra}}}}}"
+        ));
+        crate::negative_assert!(
+            reject_unmigrated_channels(Some(&adapters)).is_ok(),
+            "#H1 migrated loader channel is not rejected: {key} enabled={enabled:?}"
+        );
+        let mut errors = Vec::new();
+        let channels = load_enabled_channels(
+            Some(&adapters),
+            &LoadEnabledChannelsOptions { pilot_home: None },
+            &mounts,
+            &mut |message| errors.push(message),
+        );
+        crate::negative_assert!(
+            errors.is_empty(),
+            "#H1 production loader construction succeeds: {key} enabled={enabled:?}: {errors:?}"
+        );
+        let actual_keys: Vec<String> = channels
+            .iter()
+            .map(|channel| channel.channel_key().to_string())
+            .collect();
+        let expected_keys = if expected {
+            vec![key.to_owned()]
+        } else {
+            Vec::new()
+        };
+        crate::negative_assert_eq!(
+            actual_keys,
+            expected_keys,
+            "#H1 production loader constructs exactly the JS-truthy channel: {key} enabled={enabled:?}"
+        );
+    }
+}
+
+// #1579 P1: the frozen TS baseline gates these keys with two different
 // expressions. `ChannelAdapterBundle.createQQ` / `createWeCom` open with
 // `if (settings?.enabled !== true) return undefined`, so `enabled: 1` or
 // `"true"` builds nothing and the TS gateway starts — rejecting those configs
@@ -1360,29 +1430,25 @@ fn unmigrated_bundle_channels_require_strict_boolean_true() {
     }
 }
 
-// The other nine keys are consumed by `loadEnabledChannels`'s
+// The other six remaining rejection keys are consumed by `loadEnabledChannels`'s
 // `if (!cfg?.enabled) continue`, i.e. JS truthiness — so a non-boolean truthy
 // `enabled` must still reject.
 #[test]
 fn unmigrated_loader_channels_use_js_truthiness() {
-    for key in UNMIGRATED_CHANNEL_KEYS {
-        if STRICT_TRUE_CHANNEL_KEYS.contains(key) {
-            continue;
-        }
-        for truthy in ["1", "-1", "\"true\"", "\"1\"", "[]", "{}"] {
-            let adapters = adapters_config(&format!("{{\"{key}\":{{\"enabled\":{truthy}}}}}"));
-            crate::negative_assert!(
-                reject_unmigrated_channels(Some(&adapters)).is_err(),
-                "#1386 loader channel uses JS truthiness"
-            );
-        }
-    }
+    // All loader-table channels now construct in production. Their truthiness
+    // is exercised by the per-key production tests, not a vacuous reject loop.
+    crate::negative_assert!(
+        UNMIGRATED_CHANNEL_KEYS
+            .iter()
+            .all(|key| !CHANNEL_LOADER_KEYS.contains(key)),
+        "#H1 every loader channel moved from rejection to production truthiness tests"
+    );
 }
 
 // #1579 r3 P1: both suites above derive their key set from the constant, so a
 // wrong membership flips the TS-parity property with every test still green
 // (drop `qq` and the strict suite simply stops looking at it; add `telegram`
-// and the truthiness suite skips it). Pin the membership and the 2/9 split.
+// and the truthiness suite skips it). Pin the membership and the final 2/0 split.
 #[test]
 fn strict_true_channel_keys_are_exactly_qq_and_wecom() {
     let expected: &[&str] = &["qq", "wecom"];
@@ -1395,8 +1461,8 @@ fn strict_true_channel_keys_are_exactly_qq_and_wecom() {
         .filter(|key| !STRICT_TRUE_CHANNEL_KEYS.contains(key))
         .count();
     crate::negative_assert!(
-        loader_keys == 9,
-        "#1386 nine loader keys keep JS truthiness next to the two strict keys"
+        loader_keys == 0,
+        "#1386 no loader keys remain rejected next to the two strict keys"
     );
 }
 
@@ -1501,44 +1567,21 @@ fn unmigrated_falsy_or_absent_enabled_does_not_reject() {
 
 #[test]
 fn unmigrated_rejection_order_is_deterministic() {
-    // All 11 enabled: the first key in UNMIGRATED_CHANNEL_KEYS order —
-    // reverse CHANNEL_LOADER_KEYS order, then `qq`, then `wecom` — is
-    // reported.
-    let all = enabled_adapters(UNMIGRATED_CHANNEL_KEYS);
-    let message = rejection_of(&all, "#1386 unmigrated rejection order");
-    crate::negative_assert!(
-        message.contains("channel \"homeassistant\""),
-        "#1386 unmigrated rejection order"
+    // Only strict bundle keys remain rejected; configuration insertion order
+    // cannot change the deterministic qq-before-wecom rejection.
+    for keys in [UNMIGRATED_CHANNEL_KEYS, &["wecom", "qq"]] {
+        let message = rejection_of(&enabled_adapters(keys), "#1386 unmigrated rejection order");
+        crate::negative_assert!(
+            message.contains("channel \"qq\""),
+            "#1386 unmigrated rejection order"
+        );
+    }
+    let message = rejection_of(
+        &enabled_adapters(&["wecom"]),
+        "#1386 unmigrated rejection order",
     );
-    // `qq` and `wecom` sit outside CHANNEL_LOADER_KEYS; alone they still
-    // reject, and `qq` is reported before `wecom`.
-    let pair = enabled_adapters(&["qq", "wecom"]);
-    let message = rejection_of(&pair, "#1386 unmigrated rejection order");
     crate::negative_assert!(
-        message.contains("channel \"qq\""),
-        "#1386 unmigrated rejection order"
-    );
-    // An in-table key wins over the out-of-table `wecom`.
-    let mixed = enabled_adapters(&["wecom", "email"]);
-    let message = rejection_of(&mixed, "#1386 unmigrated rejection order");
-    crate::negative_assert!(
-        message.contains("channel \"email\""),
-        "#1386 unmigrated rejection order"
-    );
-    // The reverse of a CHANNEL_LOADER_KEYS adjacency: `mattermost` is
-    // reported before `matrix` even though the loader table lists
-    // `matrix` first.
-    let reversed = enabled_adapters(&["matrix", "mattermost"]);
-    let message = rejection_of(&reversed, "#1386 unmigrated rejection order");
-    crate::negative_assert!(
-        message.contains("channel \"mattermost\""),
-        "#1386 unmigrated rejection order"
-    );
-    // The table's tail: `discord` is reported before `telegram`.
-    let tail = enabled_adapters(&["discord", "telegram"]);
-    let message = rejection_of(&tail, "#1386 unmigrated rejection order");
-    crate::negative_assert!(
-        message.contains("channel \"discord\""),
+        message.contains("channel \"wecom\""),
         "#1386 unmigrated rejection order"
     );
 }
@@ -1561,14 +1604,23 @@ fn unmigrated_rejection_order_is_deterministic() {
 // this test green.
 #[test]
 fn loader_keys_partition_rejected_and_implemented() {
-    // The implemented loader-mount group as of #2301 (terminal wiring).
-    const IMPLEMENTED_LOADER_KEYS: [&str; 6] = [
+    // #2301's six production mounts plus the three H1 loader channels.
+    const IMPLEMENTED_LOADER_KEYS: [&str; 15] = [
         "slack",
         "bluebubbles",
         "wecomCallback",
         "sms",
         "apiServer",
         "webhook",
+        "signal",
+        "mattermost",
+        "homeassistant",
+        "email",
+        "dingtalk",
+        "discord",
+        "matrix",
+        "telegram",
+        "whatsapp",
     ];
     let rejected: Vec<&str> = CHANNEL_LOADER_KEYS
         .iter()
@@ -1577,8 +1629,8 @@ fn loader_keys_partition_rejected_and_implemented() {
         .collect();
     crate::negative_assert_eq!(
         rejected.len(),
-        9,
-        "#1853 nine loader keys sit in the unmigrated rejection table"
+        0,
+        "#1853 no loader keys sit in the unmigrated rejection table"
     );
     // Covering: every loader key belongs to exactly one of the two groups.
     // This is the fail-closed cell — a key added to `CHANNEL_LOADER_KEYS`

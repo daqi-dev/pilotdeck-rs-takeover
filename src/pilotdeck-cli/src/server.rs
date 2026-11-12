@@ -9,21 +9,13 @@ use std::path::{Path, PathBuf};
 /// The agent-loop sidecar ships beside this executable.
 pub(crate) const SIDECAR: &str = "pilotdeck-agent-loop-sidecar";
 
-/// TelemetrySender's counters (src/telemetry/sender.ts) as the shutdown bundle
-/// logs them. The Rust port has no telemetry collector yet, so nothing is ever
-/// queued or sent and the snapshot is the baseline's own with telemetry off
-/// (its default). With `telemetry.enabled: true` the baseline's numbers move
-/// and these do not.
-const TELEMETRY_SNAPSHOT: &str =
-    r#"{"queued":0,"sent":0,"sendFailures":0,"retries":0,"dropped":0,"queueDepth":0}"#;
-
 pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
     let pilot_home = paths::pilot_home(env, cwd)?;
     // loadPilotConfig({ projectRoot, env }) comes first: a missing or invalid
     // config ends the command before anything is created.
     let loaded = config::load(env, cwd, &pilot_home)?;
     // createTelemetryCollector(): its runtime context's git probes.
-    super::telemetry::probe_runtime_context(env, cwd);
+    let telemetry_context = super::telemetry::runtime_context(env, cwd, &pilot_home)?;
     // `if (snapshot.config.proxy?.url) await installGlobalProxy(url)`.
     if let Some(url) = loaded.proxy_url.as_deref() {
         super::proxy::install_from_config(env, url);
@@ -55,7 +47,15 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
     for warning in migration.warnings {
         stderr_line(&warning);
     }
+    let telemetry_enabled = snapshot
+        .get("config")
+        .and_then(|config| config.get("telemetry"))
+        .and_then(|telemetry| telemetry.get("enabled"))
+        .and_then(|enabled| enabled.as_bool())
+        == Some(true);
     let options = ServerOptions {
+        telemetry_context,
+        telemetry_enabled,
         token_path: paths::gateway_token_path(env, cwd)?,
         pilot_home,
         project: cwd.to_path_buf(),
@@ -89,11 +89,6 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
         }
     })
     .map_err(|error| Failure::Error(error.to_string()))?;
-    // PilotDeckServerShutdownBundle logs this after the listener closed; the
-    // SIGINT / SIGTERM handlers then exit 0.
-    stdout_line(&format!(
-        "[telemetry] shutdown snapshot {TELEMETRY_SNAPSHOT}"
-    ));
     Ok(0)
 }
 

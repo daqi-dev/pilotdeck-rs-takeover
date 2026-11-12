@@ -1328,6 +1328,7 @@ async fn process_message(
             session_key: JsString::from(session_key),
             channel_key: ctx.key.clone(),
             message: JsString::from(message),
+            ..Default::default()
         })
         .await
     {

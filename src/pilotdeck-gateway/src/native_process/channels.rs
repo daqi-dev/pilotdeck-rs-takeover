@@ -7,9 +7,20 @@
 //! loader-table ones) land with their own A8.3-ch-* units; the native process
 //! reconciles only the keys it constructs, so `managedChannelKeys` carries
 //! exactly those.
+#[cfg(test)]
+#[path = "channels_h1_tests.rs"]
+mod h1_tests;
+#[cfg(test)]
+#[path = "channels_network_tests.rs"]
+mod network_tests;
+#[path = "channels_reload.rs"]
+mod reload;
+
 use crate::channel::{
-    feishu::{FeishuChannel, FeishuOptions, FeishuWebhookSlot, no_interaction},
+    feishu::{FeishuChannel, FeishuOptions, FeishuWebhookSlot},
+    im_interaction::{InteractionResponder, ResponderRef, helper_interaction},
     loader::{ChannelLoaderMounts, LoadEnabledChannelsOptions, load_enabled_channels},
+    network::ChannelNetwork,
     protocol::{
         ChannelAdapter, ChannelError, ChannelKey, ChannelLog, ChannelStartDeps, ChannelState,
         ChannelStatus, CloseHost, ReconcileInput, ReconcileResult, StatusReporter, TurnGateway,
@@ -28,7 +39,10 @@ use crate::channel::{
 use pilotdeck_protocol::{JsString, JsValue};
 use std::{
     path::PathBuf,
-    sync::{Arc, OnceLock},
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use super::methods::PrepareWeixinLogin;
@@ -101,26 +115,68 @@ pub(crate) fn console_log_line(sink: &mut dyn std::io::Write, message: &str) {
 }
 
 /// The production loader-table mounts (#2301): one per implemented loader
-/// key. Each channel module owns its own mount (the sms precedent);
-/// wecomCallback's constructor takes the shared interaction port here, and
-/// the `NoInteraction` default stays until the A7 boundary grows the respond
-/// calls (the feishu/bluebubbles precedent, `A8.3-CH-FEISHU-008` /
-/// `A8.3-CH-BLUEBUBBLES-002` / `A8.3-WECOM-CALLBACK-INTERACTION-001`).
+/// key. The new IM mounts receive the native responder and one host-owned
+/// network dispatcher. Each construction owns separate interaction state;
+/// changing the dispatcher affects subsequent requests of existing adapters.
+/// The legacy SMS/Slack/BlueBubbles mounts retain their earlier wiring.
 /// `production_mounts_cover_every_non_rejected_loader_key` keeps this closed
 /// against `CHANNEL_LOADER_KEYS`: a key that leaves the rejection table
 /// without a mount here would return to the silent skip #2301 removed.
+#[cfg(test)]
 pub(crate) fn production_loader_mounts() -> ChannelLoaderMounts {
+    production_loader_mounts_with(
+        Arc::new(DeferredInteractionResponder::default()),
+        Arc::new(ChannelNetwork::default()),
+    )
+}
+
+fn production_loader_mounts_with(
+    responder: ResponderRef,
+    network: Arc<ChannelNetwork>,
+) -> ChannelLoaderMounts {
     let mut mounts = ChannelLoaderMounts::default();
     crate::channel::sms::register(&mut mounts);
     crate::channel::bluebubbles::register(&mut mounts);
     crate::channel::slack::register(&mut mounts);
     crate::channel::api_server::register(&mut mounts);
     crate::channel::webhook::register(&mut mounts);
+    crate::channel::signal::register_with_network(&mut mounts, responder.clone(), network.clone());
+    crate::channel::mattermost::register_with_network(
+        &mut mounts,
+        responder.clone(),
+        network.clone(),
+    );
+    crate::channel::homeassistant::register_with_network(
+        &mut mounts,
+        responder.clone(),
+        network.clone(),
+    );
+    crate::channel::email::register_with_network(&mut mounts, responder.clone(), network.clone());
+    crate::channel::dingtalk::register_with_network(
+        &mut mounts,
+        responder.clone(),
+        network.clone(),
+    );
+    crate::channel::discord::register_with_network(&mut mounts, responder.clone(), network.clone());
+    crate::channel::matrix::register_with_network(&mut mounts, responder.clone(), network.clone());
+    crate::channel::telegram::register_with_network(
+        &mut mounts,
+        responder.clone(),
+        network.clone(),
+    );
+    crate::channel::whatsapp::register_with_network(
+        &mut mounts,
+        responder.clone(),
+        network.clone(),
+    );
     mounts.register(
         "wecomCallback",
-        crate::channel::wecom_callback::WeComCallbackChannel::constructor(
-            crate::channel::wecom_callback::no_interaction(),
-        ),
+        // The constructor currently accepts an already-built helper, so this
+        // registry is rebuilt for each load. No pending chat state is shared
+        // between old and replacement adapter instances.
+        crate::channel::wecom_callback::WeComCallbackChannel::constructor(helper_interaction(
+            responder,
+        )),
     );
     mounts
 }
@@ -175,7 +231,45 @@ pub struct NativeChannels {
     /// The submitter only exists after the host builder ran, so the adapter
     /// gets this handle and waits for `set_turn_submitter`.
     feishu_gateway: Arc<FeishuTurnGateway>,
+    owned_gateway: Arc<FeishuTurnGateway>,
     config: Arc<JsValue>,
+    loader_mounts: Option<ChannelLoaderMounts>,
+    /// TS retains every successfully constructed configured key, including
+    /// after it is disabled, so a subsequent reconcile still owns that key.
+    managed_channel_keys: Mutex<Vec<ChannelKey>>,
+    reload_driver: Mutex<Option<Arc<reload::ReloadDriver>>>,
+    closing: AtomicBool,
+    reload_active: AtomicBool,
+    log: Option<ChannelLog>,
+    interaction_responder: Arc<DeferredInteractionResponder>,
+    network: Arc<ChannelNetwork>,
+}
+
+#[derive(Default)]
+struct DeferredInteractionResponder(OnceLock<ResponderRef>);
+
+impl InteractionResponder for DeferredInteractionResponder {
+    fn respond_elicitation(
+        &self,
+        response: crate::channel::sms::ElicitationResponse,
+    ) -> crate::channel::protocol::BoxFuture<Result<(), ChannelError>> {
+        match self.0.get() {
+            Some(responder) => responder.respond_elicitation(response),
+            None => Box::pin(async { Err(ChannelError::error("Gateway not ready")) }),
+        }
+    }
+
+    fn permission_decide(
+        &self,
+        decision: crate::channel::sms::PermissionDecision,
+    ) -> crate::channel::protocol::BoxFuture<
+        Result<crate::channel::sms::PermissionDecisionOutcome, ChannelError>,
+    > {
+        match self.0.get() {
+            Some(responder) => responder.permission_decide(decision),
+            None => Box::pin(async { Err(ChannelError::error("Gateway not ready")) }),
+        }
+    }
 }
 
 /// The `ChannelStartDeps.turn_gateway` the whole channel server is
@@ -187,13 +281,22 @@ pub struct NativeChannels {
 /// and the gateway carries it through (#2301 fix-r1 — it used to overwrite
 /// the requester's key with this handle's construction-time feishu one).
 struct FeishuTurnGateway {
-    submitter: OnceLock<Arc<TurnSubmitter>>,
+    submitter: Arc<OnceLock<Arc<TurnSubmitter>>>,
+    owned: bool,
 }
 
 impl FeishuTurnGateway {
     fn new() -> Self {
         Self {
-            submitter: OnceLock::new(),
+            submitter: Arc::new(OnceLock::new()),
+            owned: false,
+        }
+    }
+
+    fn owned(&self) -> Self {
+        Self {
+            submitter: self.submitter.clone(),
+            owned: true,
         }
     }
 
@@ -202,9 +305,13 @@ impl FeishuTurnGateway {
     }
 
     fn inner(&self) -> Option<SubmitterTurnGateway> {
-        self.submitter
-            .get()
-            .map(|submitter| SubmitterTurnGateway::new(submitter.clone()))
+        self.submitter.get().map(|submitter| {
+            if self.owned {
+                SubmitterTurnGateway::new_owned(submitter.clone())
+            } else {
+                SubmitterTurnGateway::new(submitter.clone())
+            }
+        })
     }
 }
 
@@ -229,8 +336,55 @@ impl TurnGateway for FeishuTurnGateway {
     }
 }
 
+/// Adapter-level capability selection; request channel strings never grant it.
+struct OwnedChannel {
+    inner: Arc<dyn ChannelAdapter>,
+    gateway: Arc<FeishuTurnGateway>,
+}
+impl ChannelAdapter for OwnedChannel {
+    fn channel_key(&self) -> &ChannelKey {
+        self.inner.channel_key()
+    }
+    fn start(
+        &self,
+        mut deps: ChannelStartDeps,
+    ) -> crate::channel::protocol::BoxFuture<
+        Result<Arc<dyn crate::channel::protocol::ChannelHandle>, ChannelError>,
+    > {
+        deps.turn_gateway = Some(self.gateway.clone());
+        self.inner.start(deps)
+    }
+    fn deliver_cron_result(
+        &self,
+        delivery: &crate::channel::im_cron::CronResultDelivery,
+    ) -> crate::channel::protocol::BoxFuture<bool> {
+        self.inner.deliver_cron_result(delivery)
+    }
+}
+
 impl NativeChannels {
     pub fn new(options: NativeChannelsOptions) -> Self {
+        let responder = Arc::new(DeferredInteractionResponder::default());
+        Self::with_loader_mounts(options, None, responder)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_with_loader_mounts(
+        options: NativeChannelsOptions,
+        mounts: ChannelLoaderMounts,
+    ) -> Self {
+        Self::with_loader_mounts(
+            options,
+            Some(mounts),
+            Arc::new(DeferredInteractionResponder::default()),
+        )
+    }
+
+    fn with_loader_mounts(
+        options: NativeChannelsOptions,
+        loader_mounts: Option<ChannelLoaderMounts>,
+        interaction_responder: Arc<DeferredInteractionResponder>,
+    ) -> Self {
         let runtime = options
             .report_status
             .unwrap_or_else(|| create_channel_runtime_status_reporter(options.pilot_home.clone()));
@@ -247,13 +401,15 @@ impl NativeChannels {
         }));
         let state = ChannelStatePersistence::new(options.pilot_home.join("channels"));
         let feishu_gateway = Arc::new(FeishuTurnGateway::new());
+        let owned_gateway = Arc::new(feishu_gateway.owned());
         let turn_gateway: Arc<dyn TurnGateway> = feishu_gateway.clone();
+        let network = Arc::new(ChannelNetwork::new(options.config.get("proxy")));
         Self {
             server: ChannelServer::new(
                 ChannelStartDeps {
                     config: Some(options.config.clone()),
                     report_status: Some(report_status),
-                    log: options.log,
+                    log: options.log.clone(),
                     // weixin submits through its own `WeixinChannelOptions.gateway`
                     // port (`set_gateway_port`); feishu uses the shared
                     // channel-server port, which the `FeishuTurnGateway` handle
@@ -269,12 +425,69 @@ impl NativeChannels {
             feishu: options.feishu,
             feishu_slot: Arc::new(FeishuWebhookSlot::new()),
             feishu_gateway,
+            owned_gateway,
             config: options.config,
+            loader_mounts,
+            managed_channel_keys: Mutex::new(
+                ["feishu", "weixin", "qq", "wecom"]
+                    .into_iter()
+                    .map(ChannelKey::new)
+                    .collect(),
+            ),
+            reload_driver: Mutex::new(None),
+            closing: AtomicBool::new(false),
+            reload_active: AtomicBool::new(false),
+            log: options.log,
+            interaction_responder,
+            network,
         }
     }
 
     pub fn server(&self) -> &ChannelServer {
         &self.server
+    }
+
+    /// Publish the same interaction coordinator used by the native turn host
+    /// before starting channels. A missing publication fails explicitly; it
+    /// never turns permission or elicitation answers into successful no-ops.
+    pub fn set_interaction_responder(&self, responder: ResponderRef) -> bool {
+        self.interaction_responder.0.set(responder).is_ok()
+    }
+
+    /// Subscribe before config watching starts. Proxy updates apply immediately;
+    /// adapter updates are gated until startup has installed the channels. The same store drives settings/RPC/file reloads;
+    /// this subscription owns only the adapter portion of each event.
+    pub fn attach_config_store(
+        self: &Arc<Self>,
+        store: &crate::config::store::ConfigStore,
+    ) -> Result<(), ChannelError> {
+        let mut slot = self
+            .reload_driver
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.closing.load(Ordering::SeqCst) {
+            return Err(ChannelError::error("Channel server is closing"));
+        }
+        if slot.is_some() {
+            return Err(ChannelError::error(
+                "Channel config subscription already installed",
+            ));
+        }
+        *slot = Some(Arc::new(reload::ReloadDriver::new(self, store)?));
+        Ok(())
+    }
+
+    /// Open the adapter reload gate after startup channels have been queued.
+    pub fn activate_config_reload(&self) {
+        self.reload_active.store(true, Ordering::SeqCst);
+    }
+
+    fn reload_log(&self, level: &str, message: &str) {
+        if let Some(log) = &self.log {
+            log(level, message);
+        } else {
+            console_channel_log()(level, message);
+        }
     }
 
     /// The `activeFeishu` slot the native HTTP listener mounts at
@@ -347,12 +560,65 @@ impl NativeChannels {
     /// #2301 fix-r2 review P0 #2) would abort the startup of every already
     /// constructed channel; TS's `console.error` never throws.
     pub fn create_startup_configured(&self) -> Vec<Arc<dyn ChannelAdapter>> {
-        load_enabled_channels(
-            self.config.get("adapters"),
+        self.create_configured_with(&self.config)
+    }
+
+    fn create_configured_with(&self, config: &JsValue) -> Vec<Arc<dyn ChannelAdapter>> {
+        let production_mounts;
+        let mounts = match &self.loader_mounts {
+            Some(mounts) => mounts,
+            None => {
+                production_mounts = production_loader_mounts_with(
+                    self.interaction_responder.clone(),
+                    self.network.clone(),
+                );
+                &production_mounts
+            }
+        };
+        let channels = load_enabled_channels(
+            config.get("adapters"),
             &LoadEnabledChannelsOptions { pilot_home: None },
-            &production_loader_mounts(),
+            mounts,
             &mut |message| console_log_line(&mut std::io::stderr(), &message),
-        )
+        );
+        // Only adapters whose stop contract owns and drains its turns receive
+        // this capability. The default deps remain legacy for every other key.
+        let channels: Vec<Arc<dyn ChannelAdapter>> = channels
+            .into_iter()
+            .map(|channel| {
+                if [
+                    "signal",
+                    "mattermost",
+                    "homeassistant",
+                    "email",
+                    "dingtalk",
+                    "discord",
+                    "matrix",
+                    "telegram",
+                    "whatsapp",
+                ]
+                .iter()
+                .any(|key| channel.channel_key().as_js().equals_str(key))
+                {
+                    Arc::new(OwnedChannel {
+                        inner: channel,
+                        gateway: self.owned_gateway.clone(),
+                    }) as Arc<dyn ChannelAdapter>
+                } else {
+                    channel
+                }
+            })
+            .collect();
+        let mut managed = self
+            .managed_channel_keys
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for channel in &channels {
+            if !managed.contains(channel.channel_key()) {
+                managed.push(channel.channel_key().clone());
+            }
+        }
+        channels
     }
 
     /// ChannelAdapterBundle.makeFeishu: mapper from the persisted state,
@@ -375,7 +641,7 @@ impl NativeChannels {
             Arc::new(move |value: JsValue| state.save(feishu_key().as_js(), value));
         Arc::new(FeishuChannel::for_assembly(
             self.configured_feishu_options(config),
-            no_interaction(),
+            helper_interaction(self.interaction_responder.clone()),
             self.feishu_slot.clone(),
             saved.as_ref(),
             Some(on_state_change),
@@ -423,24 +689,31 @@ impl NativeChannels {
         self.server.hot_start_channel(channel).await
     }
 
-    /// ChannelAdapterBundle.reload: reconcile the desired set against the
-    /// managed keys (an enabled weixin replaces, a disabled one stops with
-    /// `config-disabled`). No caller in the native process yet — the config
-    /// hot-reload event source lands with the pr2 channel cluster — so the
-    /// reconcile semantics are pinned by the assembly tests for now.
+    /// ChannelAdapterBundle.reload: rebuild configured adapters from the new
+    /// snapshot and reconcile against every key this bundle has ever managed.
+    /// The server's base start dependencies remain its initial snapshot, as
+    /// in TS; only constructor options come from this reload's config.
     #[allow(dead_code)]
     pub async fn reload(&self, config: &JsValue) -> Result<ReconcileResult, ChannelError> {
-        let mut input = ReconcileInput {
-            managed_channel_keys: vec![feishu_key(), weixin_key()],
-            channels: Vec::new(),
-        };
+        let mut channels = Vec::new();
         if feishu_enabled(config) {
-            input.channels.push(self.make_feishu_with(config).await);
+            channels.push(self.make_feishu_with(config).await);
         }
         if weixin_enabled(config) {
-            input.channels.push(self.make_weixin().await);
+            channels.push(self.make_weixin().await);
         }
-        self.server.reconcile_channels(input).await
+        channels.extend(self.create_configured_with(config));
+        let managed_channel_keys = self
+            .managed_channel_keys
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        self.server
+            .reconcile_channels(ReconcileInput {
+                channels,
+                managed_channel_keys,
+            })
+            .await
     }
 
     /// ChannelAdapterBundle.flush.
@@ -451,7 +724,24 @@ impl NativeChannels {
     /// pilotdeckServer.closeServer's channel half (stop every running channel
     /// through the lifecycle core, then run the close host).
     pub async fn close(&self) -> Result<(), ChannelError> {
-        self.server.close().await
+        self.closing.store(true, Ordering::SeqCst);
+        let reload = self
+            .reload_driver
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let reload_result = match reload {
+            Some(driver) => driver.drain().await,
+            None => Ok(()),
+        };
+        let stop_result = self.server.close().await;
+        match (reload_result, stop_result) {
+            (Err(reload), Err(stop)) => Err(ChannelError::Aggregate {
+                message: "Channel shutdown failed".to_owned(),
+                errors: vec![reload, stop],
+            }),
+            (reload, stop) => reload.and(stop),
+        }
     }
 
     /// The CLI `prepareWeixinLogin` callback (pilotdeck.ts:240-247):

@@ -310,6 +310,10 @@ impl HyperModelTransport {
     pub fn new() -> Self {
         Self::from_config(webpki_client_config(), ProxyConfig::from_settings(None))
     }
+    /// Host-owned channel clients use the same proxy resolution and CA roots.
+    pub(crate) fn with_proxy_settings(settings: Option<&ProxySettings>) -> Self {
+        Self::from_config(webpki_client_config(), ProxyConfig::from_settings(settings))
+    }
     /// Trust exactly `roots` (tests use a throwaway CA).
     pub fn with_roots(roots: rustls::RootCertStore) -> Self {
         Self::from_config(

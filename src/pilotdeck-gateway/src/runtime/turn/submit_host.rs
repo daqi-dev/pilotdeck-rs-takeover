@@ -190,6 +190,7 @@ pub struct GatewaySubmitHost {
     replacement: Arc<dyn SubmitReplacement>,
     admission: Arc<dyn SubmitAdmission>,
     leases: std::sync::Mutex<SubmitLeases>,
+    telemetry: Option<Arc<dyn crate::telemetry::TelemetryClient>>,
 }
 impl GatewaySubmitHost {
     pub fn new(
@@ -202,10 +203,36 @@ impl GatewaySubmitHost {
             replacement,
             admission,
             leases: std::sync::Mutex::new(HashMap::new()),
+            telemetry: None,
         }
     }
 }
+impl GatewaySubmitHost {
+    pub fn with_telemetry(mut self, telemetry: Arc<dyn crate::telemetry::TelemetryClient>) -> Self {
+        self.telemetry = Some(telemetry);
+        self
+    }
+    fn resolved_permission_mode(&self, input: &JsValue, run: &RunRef) -> Option<JsString> {
+        field(input, "mode")
+            .as_string()
+            .filter(|mode| {
+                ["default", "plan", "bypassPermissions"]
+                    .iter()
+                    .any(|known| mode.equals_str(known))
+            })
+            .cloned()
+            .or_else(|| self.services.live_permission_mode(run.session()))
+            .or_else(|| self.services.default_permission_mode())
+    }
+}
 impl SubmitHost for GatewaySubmitHost {
+    fn telemetry(&self) -> Option<Arc<dyn crate::telemetry::TelemetryClient>> {
+        self.telemetry.clone()
+    }
+    fn telemetry_permission_mode(&self, input: &JsValue, run: &RunRef) -> JsString {
+        self.resolved_permission_mode(input, run)
+            .unwrap_or_else(|| "default".into())
+    }
     fn workspace(&self, input: &JsValue) -> Result<SubmitWorkspace, SubmitError> {
         Ok(SubmitWorkspace {
             id: self.services.workspace_id(input)?,

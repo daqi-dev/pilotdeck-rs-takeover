@@ -253,6 +253,7 @@ fn public_embedding_runs_updates_and_releases_native_extensions() {
         .unwrap();
     let gateway = LocalGateway::start_with_extensions(
         LocalOptions {
+            telemetry_context: None,
             pilot_home: pilot,
             project,
             os_home: Some(home),

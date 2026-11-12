@@ -45,17 +45,20 @@ STARTUP_CALL = (
     '            startup.extend(channel_assembly.create_startup_configured());\n'
 )
 
-# The configured half's body: the loadEnabledChannels port itself. #2301
+# The configured half's construction call: the loadEnabledChannels port
+# itself, now shared by startup and H1 reload through create_configured_with.
+# Keeping the remainder preserves the managed-key bookkeeping while making
+# this mutation silently construct no adapters. #2301
 # fix-r2 (review P0 #2): the loader's console.error closure is the same
 # best-effort console write as the channel log (`eprintln!` panics on a
 # failed write, which `assembly::start` calls before any channel starts).
 CONFIGURED_BODY = (
-    '        load_enabled_channels(\n'
-    '            self.config.get("adapters"),\n'
+    '        let channels = load_enabled_channels(\n'
+    '            config.get("adapters"),\n'
     '            &LoadEnabledChannelsOptions { pilot_home: None },\n'
-    '            &production_loader_mounts(),\n'
+    '            mounts,\n'
     '            &mut |message| console_log_line(&mut std::io::stderr(), &message),\n'
-    '        )\n'
+    '        );\n'
 )
 
 API_SERVER_MOUNT = '    crate::channel::api_server::register(&mut mounts);\n'
@@ -63,9 +66,12 @@ API_SERVER_MOUNT = '    crate::channel::api_server::register(&mut mounts);\n'
 WECOM_MOUNT = (
     '    mounts.register(\n'
     '        "wecomCallback",\n'
-    '        crate::channel::wecom_callback::WeComCallbackChannel::constructor(\n'
-    '            crate::channel::wecom_callback::no_interaction(),\n'
-    '        ),\n'
+    '        // The constructor currently accepts an already-built helper, so this\n'
+    '        // registry is rebuilt for each load. No pending chat state is shared\n'
+    '        // between old and replacement adapter instances.\n'
+    '        crate::channel::wecom_callback::WeComCallbackChannel::constructor(helper_interaction(\n'
+    '            responder,\n'
+    '        )),\n'
     '    );\n'
 )
 
@@ -119,7 +125,7 @@ MUTATIONS = [
     # The call stays but constructs nothing — "load" turns into the silent
     # skip #1853 registered. Same cell must kill.
     ('assembly-loader-silently-skipped', channels, CONFIGURED_BODY,
-     '        Vec::new()\n',
+     '        let channels: Vec<Arc<dyn ChannelAdapter>> = Vec::new();\n',
      [STARTED]),
     # The apiServer mount drops out of the production registry while the
     # loader table still lists the key.
@@ -149,6 +155,38 @@ MUTATIONS = [
      '            insert(&mut built, "apiKey", undefined());\n',
      [API_KEY_CELL]),
 ]
+
+
+# H1: former refusal cells become real constructor cells. Each migrated key
+# retains independent registration/skip, constructor-error and rejection faults.
+H1_KEYS = ("email", "dingtalk", "discord", "matrix", "telegram", "whatsapp")
+for key in H1_KEYS:
+    network_arg = "network.clone()"
+    mount = (f"    crate::channel::{key}::register_with_network("
+             f"&mut mounts, responder.clone(), {network_arg});\n")
+    cell = f"channel::tests::production_loader_mount_builds_{key}_with_js_truthiness"
+    MUTATIONS.extend([
+        (f"h1-{key}-mount-dropped", channels, mount,
+         f"    // H1 negative: {key} production mount omitted\n",
+         [(cell, "#H1 production loader constructs exactly the JS-truthy channel")]),
+        (f"h1-{key}-constructor-errors", channels, mount,
+         f'    mounts.register("{key}", Arc::new(|_| Err(ChannelError::error("H1 negative constructor failure"))));\n',
+         [(cell, "#H1 production loader construction succeeds")]),
+        (f"h1-{key}-reinserted-rejection", loader,
+         'pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[\n    "qq",',
+         f'pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[\n    "{key}",\n    "qq",',
+         [(cell, "#H1 migrated loader channel is not rejected")]),
+    ])
+H1_CELLS = [(f"channel::tests::production_loader_mount_builds_{key}_with_js_truthiness",
+             "#H1 production loader constructs exactly the JS-truthy channel") for key in H1_KEYS]
+MUTATIONS.extend([
+    ("h1-loader-truthiness-tightened", loader,
+     '        if !js_truthy(cfg.get("enabled")) {',
+     '        if !matches!(cfg.get("enabled"), Some(JsValue::Bool(true))) {', H1_CELLS),
+    ("h1-loader-disabled-constructed", loader,
+     '        if !js_truthy(cfg.get("enabled")) {',
+     '        if false {', H1_CELLS),
+])
 
 
 def main():

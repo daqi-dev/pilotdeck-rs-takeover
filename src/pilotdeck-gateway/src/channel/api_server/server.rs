@@ -865,6 +865,7 @@ async fn chat_completions(
             session_key,
             channel_key: super::super::protocol::ChannelKey::new("api_server"),
             message,
+            ..Default::default()
         };
         let driver_chat = chat_id.clone();
         tokio::spawn(async move {
@@ -1105,6 +1106,7 @@ async fn buffered_turn(
             session_key,
             channel_key: super::super::protocol::ChannelKey::new("api_server"),
             message,
+            ..Default::default()
         })
         .await
     {

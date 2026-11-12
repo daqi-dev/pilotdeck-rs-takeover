@@ -25,6 +25,7 @@ publish = false
 serde_json = { version = "=1.0.151", features = ["raw_value"] }
 ryu-js = "=1.0.3"
 sha2 = "=0.10.9"
+md-5 = "=0.10.6"
 tz-rs = { version = "=0.7.3", default-features = false, features = ["alloc"] }
 # #1265 (human decision #1264 选 C): bounded JS RegExp prototype. Pinned to the
 # exact crates.io release; the bundled QuickJS-NG C sources are compiled from

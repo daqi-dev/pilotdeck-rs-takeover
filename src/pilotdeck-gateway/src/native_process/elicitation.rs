@@ -5,7 +5,7 @@
 use super::permission_prompt::GatewayEmitSlot;
 use crate::{
     runtime::{
-        interaction::{GatewayInteractionCoordinator, PendingEntry},
+        interaction::{GatewayInteractionCoordinator, PendingEntry, Registration},
         tools::{ElicitationChannel, ElicitationRequest, ToolError, ToolFuture, ToolRunContext},
     },
     storage::recorder::Recorder,
@@ -16,6 +16,16 @@ use std::{
     time::Duration,
 };
 use tokio::sync::oneshot;
+
+/// Disposal is tied to the exact registration, including future cancellation
+/// before the ordinary answer path reaches its explicit cleanup. A late drop
+/// cannot remove a replacement that reused the same request/session strings.
+struct PendingQuestion(Registration);
+impl Drop for PendingQuestion {
+    fn drop(&mut self) {
+        self.0.dispose();
+    }
+}
 
 fn object<const N: usize>(fields: [(&str, JsValue); N]) -> JsObject {
     let mut object = JsObject::new();
@@ -143,7 +153,7 @@ impl GatewayElicitation {
         if let Some(metadata) = &request.metadata {
             replay.insert("metadata".into(), metadata.clone());
         }
-        let registration = bus.register(
+        let registration = PendingQuestion(bus.register(
             &self.session,
             PendingEntry {
                 request_id: request_id.clone(),
@@ -161,7 +171,7 @@ impl GatewayElicitation {
                 }),
             },
             Some(JsValue::Object(replay)),
-        )?;
+        )?);
         let mut event = object([
             ("type", "elicitation_request".into()),
             ("requestId", JsValue::String(request_id.clone())),
@@ -213,13 +223,17 @@ impl GatewayElicitation {
                 _ = tokio::time::sleep(self.timeout) => cancel("timeout"),
             }
         };
-        registration.dispose();
+        registration.0.dispose();
         match settled {
             Some(answer) => answer,
             None => receiver.await.unwrap_or_else(|_| dropped()),
         }
     }
 }
+
+#[cfg(test)]
+#[path = "elicitation_owned_tests.rs"]
+mod owned_tests;
 
 impl ElicitationChannel for GatewayElicitation {
     fn ask_user(

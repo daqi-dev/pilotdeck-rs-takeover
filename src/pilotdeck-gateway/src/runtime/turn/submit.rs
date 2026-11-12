@@ -40,19 +40,41 @@ use crate::{
     },
 };
 
+#[path = "submit_owned.rs"]
+mod owned;
+use owned::OwnedControl;
+
 pub type SubmitFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SubmitError {
     pub code: String,
     pub message: String,
+    /// Original Error.name, retained before service errors are flattened.
+    pub error_name: Option<JsString>,
 }
 impl SubmitError {
     pub fn new(code: &str, message: impl Into<String>) -> Self {
         Self {
             code: code.into(),
             message: message.into(),
+            error_name: None,
         }
+    }
+}
+impl SubmitError {
+    fn from_runtime(error: crate::runtime::project::RuntimeError) -> Self {
+        let name = error
+            .js_error
+            .as_ref()
+            .map(|error| JsString::from(error.name.clone()));
+        let mut result = Self::new("gateway_submit_failed", error.message);
+        result.error_name = name;
+        result
+    }
+    pub fn with_error_name(mut self, name: impl Into<JsString>) -> Self {
+        self.error_name = Some(name.into());
+        self
     }
 }
 impl std::fmt::Display for SubmitError {
@@ -199,6 +221,7 @@ impl TerminalClaim {
 }
 
 struct PumpContext<'a> {
+    owned: Option<&'a Arc<OwnedControl>>,
     input: &'a JsValue,
     run: &'a RunRef,
     completion: &'a TurnCompletionHandle,
@@ -221,6 +244,13 @@ struct PumpContext<'a> {
 /// (including usage/command short-circuits); empty means admission may proceed.
 /// The production host lives in [`super::submit_host`].
 pub trait SubmitHost: Send + Sync {
+    fn telemetry(&self) -> Option<Arc<dyn crate::telemetry::TelemetryClient>> {
+        None
+    }
+    fn telemetry_permission_mode(&self, _input: &JsValue, _run: &RunRef) -> JsString {
+        "default".into()
+    }
+
     fn workspace(&self, input: &JsValue) -> Result<SubmitWorkspace, SubmitError>;
     /// Normalized runPolicy.failureGuard snapshot, resolved after refresh.
     /// None means no configured policy; enabled=false keeps accounting disabled.
@@ -309,11 +339,34 @@ enum Message {
 /// unpolled submission also retains the TS consumer-finally completion fence.
 /// A7.2-pr5/pr6 must uphold this transport cancellation contract.
 pub struct TurnSubmission {
+    owned: Option<Arc<OwnedControl>>,
     receiver: mpsc::UnboundedReceiver<Message>,
     consumed: Option<oneshot::Sender<()>>,
     result: Option<oneshot::Receiver<Result<(), SubmitError>>>,
 }
 impl TurnSubmission {
+    /// Request cancellation even if admission has not begun, then consume the
+    /// same submission through its completion receipt. Dropping this future
+    /// does not revoke cancellation; a later call can resume the drain.
+    pub async fn cancel_and_drain(&mut self, reason: JsString) -> Result<(), SubmitError> {
+        let Some(control) = self.owned.clone() else {
+            return Err(SubmitError::new(
+                "CAPABILITY_UNAVAILABLE",
+                "Owned turn cancellation is unavailable.",
+            ));
+        };
+        control.cancel(reason);
+        while let Some(event) = self.next().await? {
+            if is(&event, "type", "error") && is(&event, "code", "result_unknown") {
+                control.record_error(SubmitError::new(
+                    "result_unknown",
+                    display(&string(field(&event, "message"))),
+                ));
+            }
+        }
+        control.error().map_or(Ok(()), Err)
+    }
+
     pub async fn next(&mut self) -> Result<Option<JsValue>, SubmitError> {
         match self.receiver.recv().await {
             Some(Message::Event(event)) => Ok(Some(event)),
@@ -321,7 +374,27 @@ impl TurnSubmission {
                 if let Some(consumed) = self.consumed.take() {
                     let _ = consumed.send(());
                 }
-                if let Some(result) = self.result.take() {
+                if self.owned.is_some() {
+                    if let Some(result) = self.result.as_mut() {
+                        // A timed-out stop may resume draining this same
+                        // submission. Retain the receipt until it settles;
+                        // taking it before await would make the retry falsely
+                        // report EOF while post-agent cleanup still runs.
+                        let outcome = result
+                            .await
+                            .map_err(|_| {
+                                SubmitError::new("gateway_submit_failed", "Submit task stopped.")
+                            })
+                            .and_then(|result| result);
+                        if let Err(error) = &outcome
+                            && let Some(control) = &self.owned
+                        {
+                            control.record_error(error.clone());
+                        }
+                        self.result.take();
+                        outcome?;
+                    }
+                } else if let Some(result) = self.result.take() {
                     result.await.map_err(|_| {
                         SubmitError::new("gateway_submit_failed", "Submit task stopped.")
                     })??;
@@ -336,18 +409,41 @@ impl TurnSubmitter {
         self.submit_observed(input, |_| {})
     }
 
+    /// Channel-owned submission. Unlike ordinary consumer drop, its explicit
+    /// cancellation capability follows preparation, admission and the live
+    /// activity without ever resolving reusable session/run IDs.
+    pub fn submit_owned(self: &Arc<Self>, input: JsValue) -> TurnSubmission {
+        self.submit_with_control(input, |_| {}, Some(OwnedControl::new()))
+    }
+
     /// Observe only a real completion begin, never a rejected/preflight run.
     pub(super) fn submit_observed(
         self: &Arc<Self>,
         input: JsValue,
         admitted: impl FnOnce(&RunRef) + Send + 'static,
     ) -> TurnSubmission {
+        self.submit_with_control(input, admitted, None)
+    }
+
+    fn submit_with_control(
+        self: &Arc<Self>,
+        input: JsValue,
+        admitted: impl FnOnce(&RunRef) + Send + 'static,
+        owned: Option<Arc<OwnedControl>>,
+    ) -> TurnSubmission {
         let (send, receiver) = mpsc::unbounded_channel();
         let (consumed, barrier) = oneshot::channel();
         let (result, completion) = oneshot::channel();
         let submitter = self.clone();
+        let run_control = owned.clone();
         tokio::spawn(async move {
-            let outcome = submitter.run(input, &send, barrier, admitted).await;
+            let outcome = submitter
+                .run(input, &send, barrier, admitted, run_control.as_ref())
+                .await;
+            let outcome = match &run_control {
+                Some(control) => control.finish(outcome),
+                None => outcome,
+            };
             let _ = send.send(Message::End);
             let _ = result.send(outcome);
         });
@@ -355,6 +451,7 @@ impl TurnSubmitter {
             receiver,
             consumed: Some(consumed),
             result: Some(completion),
+            owned,
         }
     }
 
@@ -364,9 +461,13 @@ impl TurnSubmitter {
         send: &mpsc::UnboundedSender<Message>,
         barrier: oneshot::Receiver<()>,
         admitted: impl FnOnce(&RunRef) + Send,
+        owned: Option<&Arc<OwnedControl>>,
     ) -> Result<(), SubmitError> {
         // Gateway normalization precedes validation and durable acceptance.
-        let early = self.host.normalize(&mut input).await?;
+        let Some(early) = owned::prepare(owned, self.host.normalize(&mut input)).await else {
+            return Ok(());
+        };
+        let early = early?;
         if !early.is_empty() {
             emit_all(send, early);
             return Ok(());
@@ -375,7 +476,10 @@ impl TurnSubmitter {
             emit_all(send, vec![event]);
             return Ok(());
         }
-        let routed = self.host.route_input(&mut input).await?;
+        let Some(routed) = owned::prepare(owned, self.host.route_input(&mut input)).await else {
+            return Ok(());
+        };
+        let routed = routed?;
         if !routed.is_empty() {
             emit_all(send, routed);
             return Ok(());
@@ -421,6 +525,7 @@ impl TurnSubmitter {
             TurnAcceptance::Accepted => {}
         }
         let mut cleanup = Cleanup {
+            owned: owned.is_some(),
             submitter: self,
             run: &run,
             reservation: None,
@@ -428,7 +533,9 @@ impl TurnSubmitter {
             released: false,
             workspace: None,
         };
-        let preflight = self.host.preflight(&input, &run).await;
+        let Some(preflight) = owned::prepare(owned, self.host.preflight(&input, &run)).await else {
+            return self.cancel_before_admission(send, &run).await;
+        };
         let early = match preflight {
             Ok(events) => events,
             Err(error) => vec![error_event(&run, &error.code, &error.message, true)],
@@ -460,6 +567,9 @@ impl TurnSubmitter {
                 .await;
                 return Ok(());
             }
+        }
+        if owned.is_some_and(|control| control.reason().is_some()) {
+            return self.cancel_before_admission(send, &run).await;
         }
         cleanup.reservation = self.owner.begin_turn(run.session(), &run.run_id);
         if cleanup.reservation.is_none() {
@@ -560,6 +670,9 @@ impl TurnSubmitter {
         }
         let completion = self.owner.begin_completion(run.session(), &run.run_id);
         cleanup.completion = Some(completion.clone());
+        if let Some(control) = owned {
+            control.admitted(completion.clone());
+        }
         admitted(&run);
         if sdk {
             let update = self.host.set_sdk_config(&input, &completion).await;
@@ -583,10 +696,14 @@ impl TurnSubmitter {
                 return Ok(());
             }
         }
-        let admitted = self
-            .host
-            .admitted_preflight(&input, &run, &completion)
-            .await;
+        let Some(admitted) = owned::prepare(
+            owned,
+            self.host.admitted_preflight(&input, &run, &completion),
+        )
+        .await
+        else {
+            return self.cancel_before_admission(send, &run).await;
+        };
         let early = match admitted {
             Ok(events) if events.is_empty() && completion.is_cancelled() => vec![aborted(&run)],
             Ok(events) => events,
@@ -628,6 +745,7 @@ impl TurnSubmitter {
         let worker_run = run.clone();
         let worker_input = input.clone();
         let worker_completion = completion.clone();
+        let worker_owned = owned.cloned();
         let worker_publisher = publisher.clone();
         let worker_progress = progress.clone();
         let worker_timeout = timed_out.clone();
@@ -637,6 +755,7 @@ impl TurnSubmitter {
         let mut worker = tokio::spawn(async move {
             let outcome = submitter
                 .pump(PumpContext {
+                    owned: worker_owned.as_ref(),
                     input: &worker_input,
                     run: &worker_run,
                     completion: &worker_completion,
@@ -650,6 +769,10 @@ impl TurnSubmitter {
                 })
                 .await;
             if let Err(error) = outcome {
+                submitter.telemetry_loop_stage(
+                    &submitter.telemetry_context(&worker_input, &worker_run),
+                    Some(&error),
+                );
                 {
                     let mut progress = worker_progress.lock().unwrap();
                     progress.succeeded = false;
@@ -673,7 +796,12 @@ impl TurnSubmitter {
                         .await;
                 }
             }
-            let _ = submitter.host.finish_pump(&worker_run).await;
+            let finished = submitter.host.finish_pump(&worker_run).await;
+            if let Some(control) = &worker_owned
+                && let Err(error) = finished
+            {
+                control.record_error(error);
+            }
             // After a takeover, finish only once the deadline's terminal write,
             // events and close_live are all complete: `finish` then closes the
             // delivery channel after the winner's queue drains.
@@ -708,6 +836,9 @@ impl TurnSubmitter {
                 biased;
                 result = &mut worker => {
                     if let Err(error) = result {
+                        if let Some(control) = owned {
+                            control.record_error(SubmitError::new("gateway_submit_failed", error.to_string()));
+                        }
                         // A panicked worker never reached its own `finish`;
                         // delivery must still close. Only the failure record is
                         // claim-guarded: a terminal the deadline already owns
@@ -754,8 +885,15 @@ impl TurnSubmitter {
                     let ms = timeout.expect("timer only fires with a timeout");
                     let message = format!("Turn exceeded the {}ms timeout.", crate::js_value::number_string(ms));
                     let hint = "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.";
-                    let _ = self.host.reject_pending(run.session(), "turn_timeout");
-                    let _ = handle.abort(&format!("timeout:{}", display(&run.run_id)).into());
+                    let reason = format!("timeout:{}", display(&run.run_id)).into();
+                    if let Some(control) = owned {
+                        // The owned pump aborts its held activity. A cached
+                        // handle may already be serving a queued successor.
+                        control.cancel(reason);
+                    } else {
+                        let _ = self.host.reject_pending(run.session(), "turn_timeout");
+                        let _ = handle.abort(&reason);
+                    }
                     if owns_terminal {
                         let mut failure = status("turn_timeout", &message, hint, "turn");
                         let mut detail = field(&failure, "detail").clone();
@@ -774,28 +912,43 @@ impl TurnSubmitter {
                         // budget is abandoned to the close below — a record
                         // that settles later never enqueues its frames.
                         let budget = self.abort_budget();
-                        let _ = tokio::time::timeout(budget, async {
-                            if self.host.record_failure(&run, &record).await.is_ok() {
+                        let recording = tokio::time::timeout(budget, async {
+                            let recorded = self.host.record_failure(&run, &record).await;
+                            if recorded.is_ok() {
                                 publisher.gateway_event(with_run(failure, &run));
                             }
                             let mut event = error_event(&run, "turn_timeout", &message, false);
                             set(&mut event, "userHint", hint.into());
                             publisher.gateway_event(event);
+                            recorded
                         })
                         .await;
+                        if let Some(control) = owned {
+                            match recording {
+                                Ok(Ok(())) => {}
+                                Ok(Err(error)) => control.record_error(error),
+                                Err(_) => control.record_error(SubmitError::new(
+                                    "result_unknown", "Timed-out turn persistence did not settle."
+                                )),
+                            }
+                        }
                         // The timed-out session is never reused: the baseline
                         // closes it as soon as the timeout settled, so the
                         // aborted loop's own terminal records (step_completed,
                         // turn_result, turn_failed) land on a closed writer and
                         // are dropped (InProcessGateway.ts:1824-1836).
-                        handle.close_transcript();
+                        if owned.is_none() {
+                            handle.close_transcript();
+                        }
                     }
                     // The settlement lets a worker that observed the timeout
                     // drain and finish (which closes delivery itself).
                     let _ = timeout_settled.send(());
-                    if owns_terminal {
+                    // Owned finish() closes delivery only after terminal
+                    // appends and the original worker's lifecycle tail.
+                    if owned.is_none() && owns_terminal {
                         publisher.close_live();
-                    } else {
+                    } else if owned.is_none() {
                         // The pump owns the terminal this tick, so closing here
                         // would drop the frame it already queued and leave the
                         // client with a silent end. Let its worker finish, but
@@ -824,7 +977,25 @@ impl TurnSubmitter {
             let _ = barrier.await;
         };
         tokio::join!(manage, consume);
-        let rejected = self.host.reject_pending(run.session(), "turn_ended");
+        if owned.is_some() && timed_out.load(Ordering::SeqCst) {
+            // close_live is a delivery cutoff, not an owned cleanup receipt.
+            // Keep admission until the exact worker and its lifecycle tail
+            // have ended. The embedding's drain budget may report a timeout;
+            // this core never turns an unfinished worker into success.
+            if let Err(error) = (&mut worker).await
+                && let Some(control) = owned
+            {
+                control.record_error(SubmitError::new("gateway_submit_failed", error.to_string()));
+            }
+        }
+        // Owned native turns settle their exact hook/permission registrations
+        // as their LiveTurn lifecycle and cancellation monitor finish. A session-wide sweep here could reject a successor
+        // admitted after an external close, even with a different run ID.
+        let rejected = if owned.is_none() {
+            self.host.reject_pending(run.session(), "turn_ended")
+        } else {
+            Ok(())
+        };
         // TS releases admission before post_agent and the timeout close; fence
         // completion remains after both. Keep workspace ownership until then.
         cleanup.end_admission();
@@ -842,7 +1013,7 @@ impl TurnSubmitter {
             }
         }
         let timed_out = timed_out.load(Ordering::SeqCst);
-        let stable = if timed_out && progress.lock().unwrap().committed {
+        let stable = if owned.is_none() && timed_out && progress.lock().unwrap().committed {
             tokio::time::timeout(
                 Duration::from_millis(self.host.abort_turn_timeout_ms()),
                 &mut worker,
@@ -854,7 +1025,7 @@ impl TurnSubmitter {
         };
         self.capture_post(&workspace, &progress, &run, timed_out, stable)
             .await;
-        if timed_out {
+        if timed_out && owned.is_none() {
             let close = self.owner.close(run.session());
             tokio::spawn(async move {
                 let _ = close.await;
@@ -1021,6 +1192,27 @@ impl TurnSubmitter {
         }
     }
 
+    async fn cancel_before_admission(
+        &self,
+        send: &mpsc::UnboundedSender<Message>,
+        run: &RunRef,
+    ) -> Result<(), SubmitError> {
+        let event = aborted(run);
+        // Await the existing registry operation to its definite outcome. A
+        // stopped channel cannot report success while cancellation persistence
+        // failed or is still pending. The embedding owns the drain deadline.
+        if let Some(registry) = self.registry.as_deref() {
+            registry.append(run, &event).await.map_err(|error| {
+                SubmitError::new(
+                    "gateway_submit_failed",
+                    format!("Failed to persist cancelled turn: {error:?}"),
+                )
+            })?;
+        }
+        let _ = send.send(Message::Event(event));
+        Ok(())
+    }
+
     async fn preflight_events(
         &self,
         send: &mpsc::UnboundedSender<Message>,
@@ -1033,8 +1225,90 @@ impl TurnSubmitter {
         }
     }
 
+    fn telemetry_context(
+        &self,
+        input: &JsValue,
+        run: &RunRef,
+    ) -> crate::telemetry::GatewayTelemetryContext {
+        let channel_key = string(field(input, "channelKey"));
+        let attribution =
+            crate::telemetry::resolve_turn_context(&channel_key, field(input, "telemetry"));
+        crate::telemetry::GatewayTelemetryContext {
+            session_id: run.session_key.clone().unwrap_or_default(),
+            run_id: run.run_id.clone(),
+            channel_key,
+            permission_mode: self.host.telemetry_permission_mode(input, run),
+            owner_module: attribution.owner_module,
+            execution_kind: attribution.execution_kind,
+            phase: attribution.phase,
+        }
+    }
+
+    fn telemetry_loop_stage(
+        &self,
+        context: &crate::telemetry::GatewayTelemetryContext,
+        error: Option<&SubmitError>,
+    ) {
+        let Some(client) = self.host.telemetry() else {
+            return;
+        };
+        let mut payload = object([
+            ("module", "session".into()),
+            ("ownerModule", JsValue::String(context.owner_module.clone())),
+            (
+                "executionKind",
+                JsValue::String(context.execution_kind.clone()),
+            ),
+            (
+                "phase",
+                context
+                    .phase
+                    .clone()
+                    .map(JsValue::String)
+                    .unwrap_or(JsValue::Undefined),
+            ),
+            ("sessionId", JsValue::String(context.session_id.clone())),
+            (
+                "loopStage",
+                if error.is_some() {
+                    "loop_end"
+                } else {
+                    "loop_start"
+                }
+                .into(),
+            ),
+            (
+                "metadata",
+                object([
+                    ("runId", JsValue::String(context.run_id.clone())),
+                    ("channelKey", JsValue::String(context.channel_key.clone())),
+                ]),
+            ),
+        ]);
+        if let Some(error) = error {
+            set(&mut payload, "errorCategory", "loop_error".into());
+            client.track_error(
+                &crate::telemetry::TelemetryErrorValue::ErrorName(
+                    error.error_name.clone().unwrap_or_else(|| "Error".into()),
+                ),
+                &payload,
+            );
+        } else {
+            set(&mut payload, "outcome", "success".into());
+            let mut metadata = field(&payload, "metadata").clone();
+            set(
+                &mut metadata,
+                "permissionMode",
+                JsValue::String(context.permission_mode.clone()),
+            );
+            set(&mut payload, "metadata", metadata);
+            client.track_feature_loop_stage(&payload);
+        }
+    }
+
     async fn pump(&self, context: PumpContext<'_>) -> Result<(), SubmitError> {
         let PumpContext {
+            owned,
             input,
             run,
             completion,
@@ -1047,7 +1321,10 @@ impl TurnSubmitter {
             recorder,
         } = context;
         let mut timing = TurnTiming::new();
-        let _ = self.host.refresh().await; // transient config refresh keeps previous snapshot
+        if owned::prepare(owned, self.host.refresh()).await.is_none() {
+            publisher.gateway_event(aborted(run));
+            return Ok(());
+        } // transient config refresh keeps previous snapshot
         if completion.is_cancelled() {
             publisher.gateway_event(aborted(run));
             return Ok(());
@@ -1071,7 +1348,7 @@ impl TurnSubmitter {
                 disallowed_tools: strings(field(input, "disallowedTools")),
             })
             .await
-            .map_err(|error| SubmitError::new("gateway_submit_failed", error.message))?;
+            .map_err(SubmitError::from_runtime)?;
         if completion.is_cancelled() {
             publisher.gateway_event(aborted(run));
             return Ok(());
@@ -1121,7 +1398,13 @@ impl TurnSubmitter {
             })
             .transpose()?;
         let _ = ready.send((tokio::time::Instant::now(), handle.clone()));
-        let mut prepared = self.host.prepare(input, run).await?;
+        let telemetry_context = self.telemetry_context(input, run);
+        self.telemetry_loop_stage(&telemetry_context, None);
+        let Some(prepared) = owned::prepare(owned, self.host.prepare(input, run)).await else {
+            publisher.gateway_event(aborted(run));
+            return Ok(());
+        };
+        let mut prepared = prepared?;
         if completion.is_cancelled() {
             publisher.gateway_event(aborted(run));
             return Ok(());
@@ -1155,17 +1438,53 @@ impl TurnSubmitter {
         let mut actual_model = None;
         let mut stream = handle
             .submit(prepared.input, prepared.options)
-            .map_err(|error| SubmitError::new("gateway_submit_failed", error.message))?;
-        while let Some(event) = stream
-            .next()
-            .await
-            .map_err(|error| SubmitError::new("gateway_submit_failed", error.message))?
-        {
+            .map_err(SubmitError::from_runtime)?;
+        let mut cancellation_sent = false;
+        loop {
+            let next = match owned.filter(|_| !cancellation_sent) {
+                Some(control) => tokio::select! {
+                    biased;
+                    reason = control.cancelled() => {
+                        cancellation_sent = true;
+                        if let Err(error) = stream.abort_owned(&reason) {
+                            control.record_error(SubmitError::from_runtime(error));
+                        }
+                        stream.next().await
+                    }
+                    value = stream.next() => value,
+                },
+                None => stream.next().await,
+            };
+            let Some(event) = next.map_err(SubmitError::from_runtime)? else {
+                break;
+            };
             if timed_out.load(Ordering::SeqCst)
                 || !self.owner.is_current_completion(run.session(), completion)
             {
+                if let Some(control) = owned {
+                    // External close can replace a session while this old
+                    // stream is still draining. Retire only the activity held
+                    // by this stream, consume its lifecycle tail, and never
+                    // publish old events into the successor's projection.
+                    if !cancellation_sent {
+                        let reason = control
+                            .reason()
+                            .unwrap_or_else(|| "owned_turn_replaced".into());
+                        control.cancel(reason.clone());
+                        cancellation_sent = true;
+                        if let Err(error) = stream.abort_owned(&reason) {
+                            control.record_error(SubmitError::new(
+                                "gateway_submit_failed",
+                                error.message,
+                            ));
+                        }
+                    }
+                    continue;
+                }
                 break;
             }
+            crate::telemetry::GatewayAgentEventTelemetryObserver::new(self.host.telemetry())
+                .observe(&event, &telemetry_context);
             self.host.observe_event(input, &event).await?;
             if is(&event, "type", "input_accepted") {
                 self.host.commit_accepted_input(run).await?;
@@ -1358,6 +1677,7 @@ impl TurnSubmitter {
 }
 
 struct Cleanup<'a> {
+    owned: bool,
     submitter: &'a TurnSubmitter,
     run: &'a RunRef,
     reservation: Option<TurnReservation>,
@@ -1387,9 +1707,11 @@ impl Cleanup<'_> {
                 .release(&workspace, self.run);
         }
         if let Some(completion) = self.completion.take() {
-            self.submitter
-                .owner
-                .clear_turn_abort_reason(self.run.session(), &self.run.run_id);
+            if !self.owned {
+                self.submitter
+                    .owner
+                    .clear_turn_abort_reason(self.run.session(), &self.run.run_id);
+            }
             self.submitter
                 .owner
                 .complete_turn(self.run.session(), &completion);

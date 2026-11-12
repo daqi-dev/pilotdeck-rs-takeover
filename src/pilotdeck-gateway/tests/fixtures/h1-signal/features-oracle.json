@@ -1,0 +1,549 @@
+{
+  "layer": "channel-with-scripted-gateway-real-http",
+  "rows": [
+    {
+      "id": "permission-elicitation",
+      "requests": [
+        {
+          "method": "GET",
+          "url": "/v1/receive/%2B10000000000"
+        }
+      ],
+      "sends": [
+        {
+          "message": "工具 write_file 需要权限才能继续执行。\n\n请求内容：\n{\n  \"path\": \"fixture\"\n}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。",
+          "number": "+10000000000",
+          "recipients": [
+            "+10000000001"
+          ]
+        },
+        {
+          "message": "上一条权限提示发送失败，正在重试。",
+          "number": "+10000000000",
+          "recipients": [
+            "+10000000001"
+          ]
+        },
+        {
+          "message": "工具 write_file 需要权限才能继续执行。\n\n请求内容：\n{\n  \"path\": \"fixture\"\n}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。",
+          "number": "+10000000000",
+          "recipients": [
+            "+10000000001"
+          ]
+        },
+        {
+          "message": "已允许本会话，继续执行。",
+          "number": "+10000000000",
+          "recipients": [
+            "+10000000001"
+          ]
+        },
+        {
+          "message": "done",
+          "number": "+10000000000",
+          "recipients": [
+            "+10000000001"
+          ]
+        },
+        {
+          "message": "**选择**\nwhich\ud800\n1. one\udfff — desc\n2. two\n\n回复数字选择（多选用逗号分隔），回复 0 取消。",
+          "number": "+10000000000",
+          "recipients": [
+            "+10000000001"
+          ]
+        },
+        {
+          "message": "done",
+          "number": "+10000000000",
+          "recipients": [
+            "+10000000001"
+          ]
+        }
+      ],
+      "logs": [
+        {
+          "level": "info",
+          "message": "signal: SSE receive at http://127.0.0.1:<port>/v1/receive/%2B10000000000"
+        },
+        {
+          "level": "error",
+          "message": "signal: send HTTP 503: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "level": "error",
+          "message": "signal: permission answer error: Error: fixture decision failed"
+        },
+        {
+          "level": "info",
+          "message": "signal: stopping (fixture-cleanup)"
+        }
+      ],
+      "turns": [
+        {
+          "sessionKey": "signal:chat=dm:+10000000001:general",
+          "channelKey": "signal",
+          "message": "permission"
+        },
+        {
+          "sessionKey": "signal:chat=dm:+10000000001:general",
+          "channelKey": "signal",
+          "message": "question"
+        }
+      ],
+      "decisions": [
+        {
+          "sessionKey": "signal:chat=dm:+10000000001:general",
+          "requestId": "p1",
+          "decision": "allow",
+          "remember": true
+        },
+        {
+          "sessionKey": "signal:chat=dm:+10000000001:general",
+          "requestId": "p1",
+          "decision": "allow",
+          "remember": true
+        }
+      ],
+      "answers": [
+        {
+          "sessionKey": "signal:chat=dm:+10000000001:general",
+          "requestId": "e1",
+          "answer": {
+            "type": "answered",
+            "answers": {
+              "which\ud800": "one\udfff"
+            }
+          }
+        }
+      ],
+      "steps": [
+        {
+          "kind": "turn",
+          "value": {
+            "sessionKey": "signal:chat=dm:+10000000001:general",
+            "channelKey": "signal",
+            "message": "permission"
+          }
+        },
+        {
+          "kind": "send",
+          "value": {
+            "message": "工具 write_file 需要权限才能继续执行。\n\n请求内容：\n{\n  \"path\": \"fixture\"\n}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。",
+            "number": "+10000000000",
+            "recipients": [
+              "+10000000001"
+            ]
+          }
+        },
+        {
+          "kind": "send",
+          "value": {
+            "message": "上一条权限提示发送失败，正在重试。",
+            "number": "+10000000000",
+            "recipients": [
+              "+10000000001"
+            ]
+          }
+        },
+        {
+          "kind": "send",
+          "value": {
+            "message": "工具 write_file 需要权限才能继续执行。\n\n请求内容：\n{\n  \"path\": \"fixture\"\n}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。",
+            "number": "+10000000000",
+            "recipients": [
+              "+10000000001"
+            ]
+          }
+        },
+        {
+          "kind": "decision",
+          "value": {
+            "sessionKey": "signal:chat=dm:+10000000001:general",
+            "requestId": "p1",
+            "decision": "allow",
+            "remember": true
+          }
+        },
+        {
+          "kind": "decision",
+          "value": {
+            "sessionKey": "signal:chat=dm:+10000000001:general",
+            "requestId": "p1",
+            "decision": "allow",
+            "remember": true
+          }
+        },
+        {
+          "kind": "send",
+          "value": {
+            "message": "已允许本会话，继续执行。",
+            "number": "+10000000000",
+            "recipients": [
+              "+10000000001"
+            ]
+          }
+        },
+        {
+          "kind": "send",
+          "value": {
+            "message": "done",
+            "number": "+10000000000",
+            "recipients": [
+              "+10000000001"
+            ]
+          }
+        },
+        {
+          "kind": "turn",
+          "value": {
+            "sessionKey": "signal:chat=dm:+10000000001:general",
+            "channelKey": "signal",
+            "message": "question"
+          }
+        },
+        {
+          "kind": "send",
+          "value": {
+            "message": "**选择**\nwhich\ud800\n1. one\udfff — desc\n2. two\n\n回复数字选择（多选用逗号分隔），回复 0 取消。",
+            "number": "+10000000000",
+            "recipients": [
+              "+10000000001"
+            ]
+          }
+        },
+        {
+          "kind": "answer",
+          "value": {
+            "sessionKey": "signal:chat=dm:+10000000001:general",
+            "requestId": "e1",
+            "answer": {
+              "type": "answered",
+              "answers": {
+                "which\ud800": "one\udfff"
+              }
+            }
+          }
+        },
+        {
+          "kind": "send",
+          "value": {
+            "message": "done",
+            "number": "+10000000000",
+            "recipients": [
+              "+10000000001"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "cron-chunks",
+      "requests": [
+        {
+          "method": "GET",
+          "url": "/v1/receive/%2B10000000000"
+        }
+      ],
+      "sends": [
+        {
+          "message": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "number": "+10000000000",
+          "recipients": [
+            "fixture"
+          ]
+        },
+        {
+          "message": "x",
+          "number": "+10000000000",
+          "recipients": [
+            "fixture"
+          ]
+        }
+      ],
+      "logs": [
+        {
+          "level": "info",
+          "message": "signal: SSE receive at http://127.0.0.1:<port>/v1/receive/%2B10000000000"
+        },
+        {
+          "level": "error",
+          "message": "signal: send HTTP 500: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "level": "info",
+          "message": "signal: stopping (fixture-cleanup)"
+        }
+      ],
+      "turns": [],
+      "decisions": [],
+      "answers": [],
+      "steps": [
+        {
+          "kind": "send",
+          "value": {
+            "message": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "number": "+10000000000",
+            "recipients": [
+              "fixture"
+            ]
+          }
+        },
+        {
+          "kind": "send",
+          "value": {
+            "message": "x",
+            "number": "+10000000000",
+            "recipients": [
+              "fixture"
+            ]
+          }
+        },
+        {
+          "kind": "delivery-result",
+          "value": false
+        }
+      ]
+    },
+    {
+      "id": "receive-backoff-carry",
+      "requests": [
+        {
+          "method": "GET",
+          "url": "/v1/receive/%2B10000000000"
+        },
+        {
+          "method": "GET",
+          "url": "/v1/receive/%2B10000000000"
+        },
+        {
+          "method": "GET",
+          "url": "/v1/receive/%2B10000000000"
+        }
+      ],
+      "sends": [
+        {
+          "message": "done",
+          "number": "+10000000000",
+          "recipients": [
+            "+10000000001"
+          ]
+        }
+      ],
+      "logs": [
+        {
+          "level": "info",
+          "message": "signal: SSE receive at http://127.0.0.1:<port>/v1/receive/%2B10000000000"
+        },
+        {
+          "level": "error",
+          "message": "signal: receive HTTP 503: retry-me"
+        },
+        {
+          "level": "info",
+          "message": "signal: stopping (fixture-cleanup)"
+        }
+      ],
+      "turns": [
+        {
+          "sessionKey": "signal:chat=dm:+10000000001:general",
+          "channelKey": "signal",
+          "message": "carried"
+        }
+      ],
+      "decisions": [],
+      "answers": [],
+      "steps": [
+        {
+          "kind": "backoff-at-least-2900ms",
+          "value": true
+        },
+        {
+          "kind": "turn",
+          "value": {
+            "sessionKey": "signal:chat=dm:+10000000001:general",
+            "channelKey": "signal",
+            "message": "carried"
+          }
+        },
+        {
+          "kind": "send",
+          "value": {
+            "message": "done",
+            "number": "+10000000000",
+            "recipients": [
+              "+10000000001"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "stop-owned-turn-baseline",
+      "requests": [
+        {
+          "method": "GET",
+          "url": "/v1/receive/%2B10000000000"
+        }
+      ],
+      "sends": [],
+      "logs": [
+        {
+          "level": "info",
+          "message": "signal: SSE receive at http://127.0.0.1:<port>/v1/receive/%2B10000000000"
+        },
+        {
+          "level": "info",
+          "message": "signal: stopping (test-stop)"
+        },
+        {
+          "level": "info",
+          "message": "signal: stopping (fixture-cleanup)"
+        }
+      ],
+      "turns": [
+        {
+          "sessionKey": "signal:chat=dm:+10000000001:general",
+          "channelKey": "signal",
+          "message": "held"
+        }
+      ],
+      "decisions": [],
+      "answers": [],
+      "steps": [
+        {
+          "kind": "turn",
+          "value": {
+            "sessionKey": "signal:chat=dm:+10000000001:general",
+            "channelKey": "signal",
+            "message": "held"
+          }
+        },
+        {
+          "kind": "active-after-stop",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "id": "cron-held-send-after-stop-baseline",
+      "requests": [
+        {
+          "method": "GET",
+          "url": "/v1/receive/%2B10000000000"
+        }
+      ],
+      "sends": [
+        {
+          "message": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "number": "+10000000000",
+          "recipients": [
+            "+10000000001"
+          ]
+        },
+        {
+          "message": "x",
+          "number": "+10000000000",
+          "recipients": [
+            "+10000000001"
+          ]
+        }
+      ],
+      "logs": [
+        {
+          "level": "info",
+          "message": "signal: SSE receive at http://127.0.0.1:<port>/v1/receive/%2B10000000000"
+        },
+        {
+          "level": "info",
+          "message": "signal: stopping (stop-pending-send)"
+        },
+        {
+          "level": "info",
+          "message": "signal: stopping (fixture-cleanup)"
+        }
+      ],
+      "turns": [],
+      "decisions": [],
+      "answers": [],
+      "steps": [
+        {
+          "kind": "send",
+          "value": {
+            "message": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "number": "+10000000000",
+            "recipients": [
+              "+10000000001"
+            ]
+          }
+        },
+        {
+          "kind": "stop-returned-with-provider-post-open",
+          "value": true
+        },
+        {
+          "kind": "send",
+          "value": {
+            "message": "x",
+            "number": "+10000000000",
+            "recipients": [
+              "+10000000001"
+            ]
+          }
+        },
+        {
+          "kind": "late-chunk-after-stop",
+          "value": true
+        }
+      ]
+    },
+    {
+      "id": "ready-empty-busy-batch",
+      "requests": [
+        {
+          "method": "GET",
+          "url": "/v1/receive/%2B10000000000"
+        }
+      ],
+      "sends": [],
+      "logs": [
+        {
+          "level": "info",
+          "message": "signal: SSE receive at http://127.0.0.1:<port>/v1/receive/%2B10000000000"
+        },
+        {
+          "level": "info",
+          "message": "signal: chat dm:+10000000001 already active, skipping"
+        },
+        {
+          "level": "info",
+          "message": "signal: stopping (fixture-cleanup)"
+        }
+      ],
+      "turns": [
+        {
+          "sessionKey": "signal:chat=dm:+10000000001:general",
+          "channelKey": "signal",
+          "message": "ready-first"
+        }
+      ],
+      "decisions": [],
+      "answers": [],
+      "steps": [
+        {
+          "kind": "turn",
+          "value": {
+            "sessionKey": "signal:chat=dm:+10000000001:general",
+            "channelKey": "signal",
+            "message": "ready-first"
+          }
+        },
+        {
+          "kind": "read-chunks",
+          "value": [
+            "{\"envelope\":{\"source\":\"+10000000001\",\"dataMessage\":{\"message\":\"ready-first\"}}}\n{\"envelope\":{\"source\":\"+10000000001\",\"dataMessage\":{\"message\":\"ready-second\"}}}\n"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "layer": "unchanged adapter with native Node WebSocket and scripted empty async generator; not formal Gateway",
+  "driverHash": "e723be71ea4aaef238ca0489c1a7661bb0d27d404f36da405fa30a33813fca3b",
+  "captureResultSha256": "409bc7a0de4e1e7e9726896cef9525e0f602dd50e5f3c3c2b91795359e705392",
+  "expectedMessages": [
+    "first",
+    "second"
+  ],
+  "wireBase64": "wWJky0EKgDAMBMC/5Cw+wM+UYKIWJJV2UYr4d6P2Zi5ZspOTUDelgXRXA3VtD+cXQmsLGBrGhW1WcSUMfpEhooYobsZku+bCiMn6rCzVoekR3udHt0BTzAV0dZRW+bd+pMvnBsENqh4IpxWnAtWmEHQbAA==",
+  "frames": [
+    {
+      "text": "first",
+      "compressed": true,
+      "fin": true,
+      "rsv1": true,
+      "opcode": 1,
+      "payloadBase64": "ZMtBCoAwDATAv+QsPsDPlGCiFiSVdlGK+Hej9mYuWbKTk1A3pYF0VwN1bQ/nF0JrCxgaxoVtVnElDH6RIaKGKG7GZLvmwojJ+qws1aHpEd7nR7dAU8wFdHWUVvm3fqTL5wY=",
+      "plainBase64": "eyJ0eXBlIjoiZXZlbnQiLCJldmVudCI6eyJldmVudF90eXBlIjoic3RhdGVfY2hhbmdlZCIsImRhdGEiOnsiZW50aXR5X2lkIjoiY29udmVyc2F0aW9uLnJlYWR5IiwibmV3X3N0YXRlIjp7InN0YXRlIjoiZmlyc3QifSwib2xkX3N0YXRlIjp7InN0YXRlIjoib2xkIn19fX0=",
+      "wireBase64": "wWJky0EKgDAMBMC/5Cw+wM+UYKIWJJV2UYr4d6P2Zi5ZspOTUDelgXRXA3VtD+cXQmsLGBrGhW1WcSUMfpEhooYobsZku+bCiMn6rCzVoekR3udHt0BTzAV0dZRW+bd+pMvnBg=="
+    },
+    {
+      "text": "second",
+      "compressed": true,
+      "fin": true,
+      "rsv1": true,
+      "opcode": 1,
+      "payloadBase64": "qh4IpxWnAtWmEHQbAA==",
+      "plainBase64": "eyJ0eXBlIjoiZXZlbnQiLCJldmVudCI6eyJldmVudF90eXBlIjoic3RhdGVfY2hhbmdlZCIsImRhdGEiOnsiZW50aXR5X2lkIjoiY29udmVyc2F0aW9uLnJlYWR5IiwibmV3X3N0YXRlIjp7InN0YXRlIjoic2Vjb25kIn0sIm9sZF9zdGF0ZSI6eyJzdGF0ZSI6Im9sZCJ9fX19",
+      "wireBase64": "wQ2qHginFacC1aYQdBsA"
+    }
+  ]
+}

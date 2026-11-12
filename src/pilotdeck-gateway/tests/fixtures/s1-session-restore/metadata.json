@@ -1,0 +1,14 @@
+{
+  "revision": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "sha256": {
+    "src/cli/pilotdeck.ts": "88c672b94f32c53d7bf5f188c62ef82965291aa55156e9032a43ae44198c8182",
+    "src/cli/createLocalGateway.ts": "54c2f856936733ef9c04d9c995a32317ed14a0d4070d202a0c2365447491869f",
+    "src/session/transcript/JsonlTranscriptWriter.ts": "28cd4788ff4465be4594edf7fb59762299362ac867ef9a50c24732ab212a4678",
+    "src/session/persistence/JsonlSessionPersistence.ts": "721c720f36f0fb0f2b6bd77bd2490d181182dfa909c3bd85e80d2ca3df643124",
+    "dist/src/cli/pilotdeck.js": "4489ef95805baa7ae2c278aec9bd4683ee6a8b4d838271a984142303f8bd4483",
+    "dist/src/cli/createLocalGateway.js": "eb8ee430b7f03bee4cd28c0367d606484f066873c2ae246286ae46aae5ce37b0",
+    "dist/src/session/transcript/JsonlTranscriptWriter.js": "cf3af6aeefb1b079adb25b001f4a1af45e2082843d2298812f72e13db1bf3c2a",
+    "dist/src/session/persistence/JsonlSessionPersistence.js": "7c6889801813bf92bc3a85e7422bc69614b6920b5e8c9da680dd0e05651698f4"
+  }
+}

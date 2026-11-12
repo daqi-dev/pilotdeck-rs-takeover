@@ -1,0 +1,1559 @@
+{
+  "layer": "fixed-modules-real-loopback-http",
+  "rows": [
+    {
+      "id": "collector-fields",
+      "requests": [
+        {
+          "method": "POST",
+          "url": "/collect",
+          "contentType": "application/json",
+          "body": [
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "7f2911088bd58392b8925356",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "list": [
+                  "safe",
+                  null
+                ],
+                "nested": {
+                  "kept": true,
+                  "none": null
+                },
+                "relative": "./keep",
+                "url": "https://example.invalid/path",
+                "number": 7
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "0967115f2813a3541eaef77d",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "cron_job",
+                "ownerModule": "memory",
+                "loopStage": "override",
+                "outcome": "denied",
+                "array": [
+                  1,
+                  2
+                ]
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "error_occurred",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "7f2911088bd58392b8925356",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "invalid",
+                "loopStage": "invalid",
+                "errorCategory": "invalid",
+                "code": "TypeError",
+                "toolName": "bash"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "7f2911088bd58392b8925356",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "loopStage": "loop_end",
+                "outcome": "failed",
+                "errorCategory": "runtime_error",
+                "code": "TypeError",
+                "toolName": "bash",
+                "provider": "p",
+                "model": "m",
+                "providerBaseUrl": "https://example.invalid/v1"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "error_occurred",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "runtime",
+                "ownerModule": "runtime",
+                "loopStage": "loop_end",
+                "errorCategory": "runtime_error",
+                "code": "UnknownError"
+              }
+            }
+          ]
+        }
+      ],
+      "trace": [
+        {
+          "config": {
+            "enabled": true,
+            "baseUrl": "http://127.0.0.1:<port>/",
+            "flushIntervalMs": 600000,
+            "batchSize": 100,
+            "timeoutMs": 1000,
+            "maxRetries": 2,
+            "maxQueueSize": 2000,
+            "queueFilePath": "<out>/collector-fields/pilot/telemetry/queue.jsonl"
+          },
+          "metrics": {
+            "queued": 5,
+            "sent": 5,
+            "sendFailures": 0,
+            "retries": 0,
+            "dropped": 0,
+            "queueDepth": 0,
+            "lastSuccessAt": "<iso-time>"
+          },
+          "context": {
+            "installationId": "eafd536d17957dbce066c567",
+            "instanceId": "<verified-instance-id>",
+            "deploymentMode": "docker",
+            "commitHash": "o1-fixed-commit",
+            "appVersion": "o1-fixed-version",
+            "platform": "darwin"
+          }
+        }
+      ],
+      "queue": null
+    },
+    {
+      "id": "retry-order",
+      "requests": [
+        {
+          "method": "POST",
+          "url": "/collect",
+          "contentType": "application/json",
+          "body": [
+            {
+              "eventId": "A"
+            },
+            {
+              "eventId": "B"
+            }
+          ]
+        },
+        {
+          "method": "POST",
+          "url": "/collect",
+          "contentType": "application/json",
+          "body": [
+            {
+              "eventId": "B"
+            },
+            {
+              "eventId": "A"
+            }
+          ]
+        },
+        {
+          "method": "POST",
+          "url": "/collect",
+          "contentType": "application/json",
+          "body": [
+            {
+              "eventId": "A"
+            },
+            {
+              "eventId": "B"
+            }
+          ]
+        },
+        {
+          "method": "POST",
+          "url": "/collect",
+          "contentType": "application/json",
+          "body": [
+            {
+              "eventId": "C"
+            }
+          ]
+        }
+      ],
+      "trace": [
+        {
+          "queued": 0,
+          "sent": 0,
+          "sendFailures": 1,
+          "retries": 2,
+          "dropped": 1,
+          "queueDepth": 3
+        },
+        {
+          "queued": 0,
+          "sent": 0,
+          "sendFailures": 2,
+          "retries": 4,
+          "dropped": 1,
+          "queueDepth": 3
+        },
+        {
+          "queued": 0,
+          "sent": 0,
+          "sendFailures": 3,
+          "retries": 4,
+          "dropped": 3,
+          "queueDepth": 1
+        },
+        {
+          "queued": 0,
+          "sent": 1,
+          "sendFailures": 3,
+          "retries": 4,
+          "dropped": 3,
+          "queueDepth": 0,
+          "lastSuccessAt": "<iso-time>"
+        }
+      ],
+      "queue": null
+    },
+    {
+      "id": "jsonl-restore-disabled",
+      "requests": [],
+      "trace": [
+        {
+          "metrics": {
+            "queued": 0,
+            "sent": 0,
+            "sendFailures": 0,
+            "retries": 0,
+            "dropped": 0,
+            "queueDepth": 5
+          },
+          "restored": [
+            {
+              "event": {
+                "eventId": "R0",
+                "unknown": "kept"
+              },
+              "attempts": 0
+            },
+            {
+              "event": {
+                "eventId": "R1",
+                "unknown": "kept"
+              },
+              "attempts": 2.5
+            },
+            {
+              "event": {
+                "eventId": "R2",
+                "unknown": "kept"
+              },
+              "attempts": 0
+            },
+            {
+              "event": {
+                "eventId": "R3",
+                "unknown": "kept"
+              },
+              "attempts": null
+            },
+            {
+              "event": {
+                "eventId": "R4",
+                "unknown": "kept"
+              },
+              "attempts": 0
+            }
+          ]
+        }
+      ],
+      "queue": "{\"event\":{\"eventId\":\"R0\",\"unknown\":\"kept\"},\"attempts\":0}\n{\"event\":{\"eventId\":\"R1\",\"unknown\":\"kept\"},\"attempts\":2.5}\n{\"event\":{\"eventId\":\"R2\",\"unknown\":\"kept\"},\"attempts\":0}\n{\"event\":{\"eventId\":\"R3\",\"unknown\":\"kept\"},\"attempts\":null}\n{\"event\":{\"eventId\":\"R4\",\"unknown\":\"kept\"},\"attempts\":0}\n"
+    },
+    {
+      "id": "enable-timer-alias",
+      "requests": [
+        {
+          "method": "POST",
+          "url": "/collect",
+          "contentType": "application/json",
+          "body": [
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "case": "enabled-after-construct"
+              }
+            }
+          ]
+        }
+      ],
+      "trace": [
+        {
+          "automaticRequests": 0,
+          "metrics": {
+            "queued": 1,
+            "sent": 0,
+            "sendFailures": 0,
+            "retries": 0,
+            "dropped": 0,
+            "queueDepth": 1
+          }
+        }
+      ],
+      "queue": null
+    },
+    {
+      "id": "disable-enable-existing-timer",
+      "requests": [
+        {
+          "method": "POST",
+          "url": "/collect",
+          "contentType": "application/json",
+          "body": [
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "case": "timer-was-not-cleared"
+              }
+            }
+          ]
+        }
+      ],
+      "trace": [
+        {
+          "queued": 1,
+          "sent": 1,
+          "sendFailures": 0,
+          "retries": 0,
+          "dropped": 0,
+          "queueDepth": 0,
+          "lastSuccessAt": "<iso-time>"
+        }
+      ],
+      "queue": null
+    },
+    {
+      "id": "shutdown-inflight-baseline",
+      "requests": [
+        {
+          "method": "POST",
+          "url": "/collect",
+          "contentType": "application/json",
+          "body": [
+            {
+              "eventId": "inflight"
+            }
+          ]
+        },
+        {
+          "method": "POST",
+          "url": "/collect",
+          "contentType": "application/json",
+          "body": [
+            {
+              "eventId": "queued"
+            }
+          ]
+        }
+      ],
+      "trace": [
+        {
+          "phase": "shutdown-returned",
+          "metrics": {
+            "queued": 2,
+            "sent": 0,
+            "sendFailures": 0,
+            "retries": 0,
+            "dropped": 0,
+            "queueDepth": 1
+          },
+          "queue": "{\"event\":{\"eventId\":\"queued\"},\"attempts\":0}\n",
+          "pendingResponseOpen": true
+        },
+        {
+          "phase": "late-send-completed",
+          "metrics": {
+            "queued": 2,
+            "sent": 2,
+            "sendFailures": 0,
+            "retries": 0,
+            "dropped": 0,
+            "queueDepth": 0,
+            "lastSuccessAt": "<iso-time>"
+          },
+          "queue": "{\"event\":{\"eventId\":\"queued\"},\"attempts\":0}\n"
+        }
+      ],
+      "queue": "{\"event\":{\"eventId\":\"queued\"},\"attempts\":0}\n"
+    },
+    {
+      "id": "timeout",
+      "requests": [
+        {
+          "method": "POST",
+          "url": "/collect",
+          "contentType": "application/json",
+          "body": [
+            {
+              "eventId": "timeout"
+            }
+          ]
+        }
+      ],
+      "trace": [
+        {
+          "metrics": {
+            "queued": 1,
+            "sent": 0,
+            "sendFailures": 1,
+            "retries": 0,
+            "dropped": 1,
+            "queueDepth": 0
+          },
+          "responseClosedBeforeCleanup": true
+        }
+      ],
+      "queue": null
+    },
+    {
+      "id": "gateway-observer",
+      "requests": [
+        {
+          "method": "POST",
+          "url": "/collect",
+          "contentType": "application/json",
+          "body": [
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "user_session",
+                "phase": "phase",
+                "loopStage": "model_request",
+                "outcome": "success",
+                "runId": "run",
+                "provider": "p",
+                "model": "m",
+                "providerBaseUrl": "http://example.invalid/v1",
+                "permissionMode": "default",
+                "channelKey": "web"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "user_session",
+                "phase": "phase",
+                "loopStage": "model_response",
+                "outcome": "success",
+                "runId": "run"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "error_occurred",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "user_session",
+                "phase": "phase",
+                "loopStage": "model_request",
+                "errorCategory": "model_request_error",
+                "code": "bad_model"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "user_session",
+                "phase": "phase",
+                "loopStage": "model_request",
+                "outcome": "failed",
+                "errorCategory": "model_request_error",
+                "code": "bad_model",
+                "provider": "p"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "user_session",
+                "phase": "phase",
+                "loopStage": "tool_prepare",
+                "outcome": "success",
+                "runId": "run",
+                "toolCount": 2,
+                "toolNames": [
+                  "bash",
+                  "read_file"
+                ]
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "user_session",
+                "phase": "phase",
+                "loopStage": "tool_call",
+                "outcome": "success",
+                "runId": "run",
+                "toolName": "bash",
+                "toolCallId": "tc"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "user_session",
+                "phase": "phase",
+                "loopStage": "tool_call",
+                "outcome": "failed",
+                "errorCategory": "tool_runtime_error",
+                "runId": "run",
+                "toolName": "bash",
+                "toolCallId": "tc",
+                "success": false
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "error_occurred",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "user_session",
+                "phase": "phase",
+                "loopStage": "tool_call",
+                "errorCategory": "tool_param_error",
+                "code": "invalid_argument",
+                "toolName": "bash"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "user_session",
+                "phase": "phase",
+                "loopStage": "tool_call",
+                "outcome": "failed",
+                "errorCategory": "tool_param_error",
+                "code": "invalid_argument",
+                "toolName": "bash"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "error_occurred",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "user_session",
+                "phase": "phase",
+                "loopStage": "tool_call",
+                "errorCategory": "tool_result_parse_error",
+                "code": "json_decode",
+                "toolName": "bash"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "user_session",
+                "phase": "phase",
+                "loopStage": "tool_call",
+                "outcome": "failed",
+                "errorCategory": "tool_result_parse_error",
+                "code": "json_decode",
+                "toolName": "bash"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "error_occurred",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "user_session",
+                "phase": "phase",
+                "loopStage": "tool_call",
+                "errorCategory": "tool_runtime_error",
+                "code": "other",
+                "toolName": "bash"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "user_session",
+                "phase": "phase",
+                "loopStage": "tool_call",
+                "outcome": "failed",
+                "errorCategory": "tool_runtime_error",
+                "code": "other",
+                "toolName": "bash"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "user_session",
+                "phase": "phase",
+                "loopStage": "permission_check",
+                "outcome": "success",
+                "runId": "run",
+                "toolName": "bash",
+                "toolCallId": "tc"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "error_occurred",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "user_session",
+                "phase": "phase",
+                "loopStage": "permission_check",
+                "errorCategory": "permission_error",
+                "code": "permission_denied",
+                "toolName": "bash"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "user_session",
+                "phase": "phase",
+                "loopStage": "permission_check",
+                "outcome": "failed",
+                "errorCategory": "permission_error",
+                "code": "permission_denied",
+                "toolName": "bash"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "user_session",
+                "phase": "phase",
+                "loopStage": "loop_end",
+                "outcome": "success",
+                "runId": "run",
+                "stopReason": "done",
+                "turns": 2
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "error_occurred",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "user_session",
+                "phase": "phase",
+                "loopStage": "loop_end",
+                "errorCategory": "loop_error",
+                "code": "loop_bad"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "user_session",
+                "phase": "phase",
+                "loopStage": "loop_end",
+                "outcome": "failed",
+                "errorCategory": "loop_error",
+                "code": "loop_bad"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "user_session",
+                "phase": "phase",
+                "loopStage": "loop_end",
+                "outcome": "aborted",
+                "runId": "run",
+                "reason": "abort"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "subagent",
+                "phase": "phase",
+                "loopStage": "model_request",
+                "outcome": "success",
+                "runId": "run",
+                "provider": "p",
+                "model": "m",
+                "subagentId": "sub",
+                "subagentType": "test"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "subagent",
+                "phase": "phase",
+                "loopStage": "model_response",
+                "outcome": "success",
+                "runId": "run",
+                "subagentId": "sub",
+                "subagentType": "test"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "error_occurred",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "subagent",
+                "phase": "phase",
+                "loopStage": "model_request",
+                "errorCategory": "model_request_error",
+                "code": "sub_bad"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "subagent",
+                "phase": "phase",
+                "loopStage": "model_request",
+                "outcome": "failed",
+                "errorCategory": "model_request_error",
+                "code": "sub_bad",
+                "provider": "p"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "subagent",
+                "phase": "phase",
+                "loopStage": "tool_prepare",
+                "outcome": "success",
+                "runId": "run",
+                "subagentId": "sub",
+                "subagentType": "test",
+                "toolCount": 1,
+                "toolNames": [
+                  "tool"
+                ]
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "error_occurred",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "subagent",
+                "phase": "phase",
+                "loopStage": "tool_call",
+                "errorCategory": "tool_param_error",
+                "code": "schema",
+                "toolName": "tool"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "subagent",
+                "phase": "phase",
+                "loopStage": "tool_call",
+                "outcome": "failed",
+                "errorCategory": "tool_param_error",
+                "code": "schema",
+                "toolName": "tool"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "sessionId": "3f3af1ecebbd1410ab417ec0",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "memory",
+                "executionKind": "subagent",
+                "phase": "phase",
+                "loopStage": "tool_call",
+                "outcome": "success",
+                "runId": "run",
+                "subagentId": "sub",
+                "subagentType": "test",
+                "toolName": "tool",
+                "toolCallId": "subtc"
+              }
+            }
+          ]
+        }
+      ],
+      "trace": [
+        {
+          "inputs": [
+            {
+              "type": "model_request_started"
+            },
+            {
+              "type": "model_event",
+              "event": {
+                "type": "request_started",
+                "provider": "p",
+                "model": "m",
+                "providerBaseUrl": "http://example.invalid/v1"
+              }
+            },
+            {
+              "type": "model_event",
+              "event": {
+                "type": "message_end"
+              }
+            },
+            {
+              "type": "model_event",
+              "event": {
+                "type": "error",
+                "error": {
+                  "code": "bad_model",
+                  "provider": "p"
+                }
+              }
+            },
+            {
+              "type": "tool_calls_detected",
+              "calls": [
+                {
+                  "name": "bash"
+                },
+                {
+                  "name": "read_file"
+                }
+              ]
+            },
+            {
+              "type": "pre_tool_execute",
+              "toolName": "bash",
+              "toolCallId": "tc"
+            },
+            {
+              "type": "post_tool_execute",
+              "toolName": "bash",
+              "toolCallId": "tc",
+              "success": false
+            },
+            {
+              "type": "tool_result",
+              "result": {
+                "type": "error",
+                "toolName": "bash",
+                "toolCallId": "tc",
+                "error": {
+                  "code": "invalid_argument",
+                  "message": "private"
+                }
+              }
+            },
+            {
+              "type": "tool_result",
+              "result": {
+                "type": "error",
+                "toolName": "bash",
+                "toolCallId": "tc",
+                "error": {
+                  "code": "json_decode",
+                  "message": "private"
+                }
+              }
+            },
+            {
+              "type": "tool_result",
+              "result": {
+                "type": "error",
+                "toolName": "bash",
+                "toolCallId": "tc",
+                "error": {
+                  "code": "other",
+                  "message": "private"
+                }
+              }
+            },
+            {
+              "type": "permission_requested",
+              "toolName": "bash",
+              "toolCallId": "tc"
+            },
+            {
+              "type": "permission_denied",
+              "toolName": "bash",
+              "reason": "private"
+            },
+            {
+              "type": "turn_completed",
+              "result": {
+                "stopReason": "done",
+                "turns": 2
+              }
+            },
+            {
+              "type": "turn_failed",
+              "error": {
+                "code": "loop_bad"
+              }
+            },
+            {
+              "type": "session_aborted",
+              "reason": "abort"
+            },
+            {
+              "type": "subagent_model_event",
+              "subagentId": "sub",
+              "subagentType": "test",
+              "event": {
+                "type": "request_started",
+                "provider": "p",
+                "model": "m",
+                "error": {
+                  "code": "sub_bad",
+                  "provider": "p"
+                }
+              }
+            },
+            {
+              "type": "subagent_model_event",
+              "subagentId": "sub",
+              "subagentType": "test",
+              "event": {
+                "type": "message_end",
+                "provider": "p",
+                "model": "m",
+                "error": {
+                  "code": "sub_bad",
+                  "provider": "p"
+                }
+              }
+            },
+            {
+              "type": "subagent_model_event",
+              "subagentId": "sub",
+              "subagentType": "test",
+              "event": {
+                "type": "error",
+                "provider": "p",
+                "model": "m",
+                "error": {
+                  "code": "sub_bad",
+                  "provider": "p"
+                }
+              }
+            },
+            {
+              "type": "subagent_tool_calls_detected",
+              "subagentId": "sub",
+              "subagentType": "test",
+              "calls": [
+                {
+                  "name": "tool"
+                }
+              ]
+            },
+            {
+              "type": "subagent_tool_result",
+              "subagentId": "sub",
+              "subagentType": "test",
+              "result": {
+                "type": "error",
+                "toolName": "tool",
+                "toolCallId": "subtc",
+                "error": {
+                  "code": "schema",
+                  "message": "private"
+                }
+              }
+            },
+            {
+              "type": "subagent_tool_result",
+              "subagentId": "sub",
+              "subagentType": "test",
+              "result": {
+                "type": "text",
+                "toolName": "tool",
+                "toolCallId": "subtc"
+              }
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "never telemetered"
+            }
+          ],
+          "context": {
+            "sessionId": "session",
+            "runId": "run",
+            "channelKey": "web",
+            "permissionMode": "default",
+            "ownerModule": "memory",
+            "executionKind": "user_session",
+            "phase": "phase"
+          },
+          "resolved": [
+            {
+              "input": {
+                "channelKey": "web"
+              },
+              "value": {
+                "ownerModule": "session",
+                "executionKind": "user_session"
+              }
+            },
+            {
+              "input": {
+                "channelKey": "always-on/daily",
+                "telemetry": {
+                  "phase": "other"
+                }
+              },
+              "value": {
+                "ownerModule": "always_on",
+                "executionKind": "always_on",
+                "phase": "daily"
+              }
+            },
+            {
+              "input": {
+                "channelKey": "always-on/",
+                "telemetry": {
+                  "phase": "fallback",
+                  "ownerModule": "memory"
+                }
+              },
+              "value": {
+                "ownerModule": "always_on",
+                "executionKind": "always_on",
+                "phase": "fallback"
+              }
+            },
+            {
+              "input": {
+                "channelKey": "always-on/daily",
+                "telemetry": {
+                  "ownerModule": "cron_job",
+                  "executionKind": "cron_job",
+                  "phase": "explicit"
+                }
+              },
+              "value": {
+                "ownerModule": "cron_job",
+                "executionKind": "cron_job",
+                "phase": "explicit"
+              }
+            }
+          ],
+          "metrics": {
+            "queued": 28,
+            "sent": 28,
+            "sendFailures": 0,
+            "retries": 0,
+            "dropped": 0,
+            "queueDepth": 0,
+            "lastSuccessAt": "<iso-time>"
+          }
+        }
+      ],
+      "queue": null
+    },
+    {
+      "id": "registry",
+      "requests": [
+        {
+          "method": "POST",
+          "url": "/collect",
+          "contentType": "application/json",
+          "body": [
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "error_occurred",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "session",
+                "loopStage": "loop_end",
+                "errorCategory": "runtime_error",
+                "code": "TypeError"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "session",
+                "ownerModule": "session",
+                "loopStage": "loop_end",
+                "outcome": "failed",
+                "errorCategory": "runtime_error",
+                "code": "TypeError"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "module": "memory",
+                "ownerModule": "memory",
+                "loopStage": "module_event",
+                "outcome": "success"
+              }
+            },
+            {
+              "schemaVersion": "analytics.v2",
+              "eventId": "<uuid-v4>",
+              "eventName": "feature_used",
+              "occurredAt": "<iso-time>",
+              "installationId": "eafd536d17957dbce066c567",
+              "instanceId": "<verified-instance-id>",
+              "deploymentMode": "docker",
+              "commitHash": "o1-fixed-commit",
+              "appVersion": "o1-fixed-version",
+              "platform": "darwin",
+              "properties": {
+                "after": "dispose"
+              }
+            }
+          ]
+        }
+      ],
+      "trace": [
+        {
+          "logs": [
+            [
+              "old",
+              "error"
+            ],
+            [
+              "new",
+              "feature_used"
+            ],
+            [
+              "disposed",
+              "broken"
+            ],
+            [
+              "disposed",
+              "new"
+            ],
+            [
+              "disposed",
+              "old"
+            ]
+          ],
+          "failures": [
+            {
+              "name": "broken",
+              "generation": 2,
+              "message": "observer failed"
+            },
+            {
+              "name": "broken",
+              "generation": 2,
+              "message": "observer failed"
+            }
+          ],
+          "metrics": {
+            "queued": 4,
+            "sent": 4,
+            "sendFailures": 0,
+            "retries": 0,
+            "dropped": 0,
+            "queueDepth": 0,
+            "lastSuccessAt": "<iso-time>"
+          }
+        }
+      ],
+      "queue": null
+    }
+  ]
+}

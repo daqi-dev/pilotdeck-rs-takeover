@@ -1,0 +1,8 @@
+{
+  "node": "v22.22.0",
+  "revision": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "driverSha256": "c4d5b9fcf73c7235f492c034b314326f6392bc5751212706b7ff6b3da8be21b7",
+  "sourceSha256": "c955137bff5f241d288de1a9d040c5bd57e0ca0a38af172cbbf426ce8d126452",
+  "distSha256": "91462a3d801f3cc3d6f80e372cf01045f39ebf8b996b6efcd9eb0588fff71ae8",
+  "boundary": "actual TS start; embedded NUL makes native spawn throw before any child/HTTP"
+}

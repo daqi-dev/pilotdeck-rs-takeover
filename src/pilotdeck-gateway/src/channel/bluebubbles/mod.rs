@@ -622,6 +622,7 @@ impl Runtime {
                 session_key: session_key.clone(),
                 channel_key: self.key.clone(),
                 message: message.clone(),
+                ..Default::default()
             })
             .await
         {

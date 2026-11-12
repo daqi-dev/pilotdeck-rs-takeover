@@ -67,7 +67,7 @@ def dependencies(metadata_path, source, output):
                         candidates.add(path)  # r-efi keeps its license text here.
         if not package.get("source") and not candidates and package["name"].startswith("pilotdeck-"):
             candidates.add(source / "LICENSE")
-        supplemental = supplement(package, root) if not candidates else None
+        supplemental = supplement(package, root)
         if supplemental:
             candidates.add(supplemental[0])
         if not candidates:

@@ -33,6 +33,7 @@ pub struct LocalOptions {
     pub env: Env,
     pub builtin_skills_root: Option<PathBuf>,
     pub builtin_plugins_root: Option<PathBuf>,
+    pub telemetry_context: Option<crate::telemetry::TelemetryRuntimeContext>,
 }
 
 /// A started in-process gateway. It is never stopped: the baseline CLI keeps
@@ -81,6 +82,9 @@ impl LocalGateway {
                 builtin_skills_root: options.builtin_skills_root.clone(),
                 builtin_plugins_root: options.builtin_plugins_root.clone(),
                 in_process_cli: true,
+                telemetry: None,
+                telemetry_context: options.telemetry_context.clone(),
+                telemetry_reload: false,
             };
             let (host, _webhook, _switch) =
                 assembly::start_with_extensions(process, options.env.clone(), extensions).await?;

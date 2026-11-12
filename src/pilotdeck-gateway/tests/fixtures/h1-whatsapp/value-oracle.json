@@ -1,0 +1,525 @@
+{
+  "normalizations": [
+    {
+      "input": null,
+      "output": []
+    },
+    {
+      "input": 42,
+      "output": []
+    },
+    {
+      "input": "text",
+      "output": []
+    },
+    {
+      "input": [],
+      "output": []
+    },
+    {
+      "input": {},
+      "output": []
+    },
+    {
+      "input": [
+        {
+          "id": " m ",
+          "chatId": " c ",
+          "text": " x "
+        }
+      ],
+      "output": [
+        {
+          "id": "m",
+          "chatId": "c",
+          "text": "x"
+        }
+      ]
+    },
+    {
+      "input": {
+        "data": [
+          {
+            "messageId": "m",
+            "from": "c",
+            "content": "/new"
+          }
+        ]
+      },
+      "output": [
+        {
+          "id": "m",
+          "chatId": "c",
+          "text": "/new"
+        }
+      ]
+    },
+    {
+      "input": {
+        "messages": [
+          {
+            "key": "m",
+            "chat_id": "c",
+            "body": "text"
+          }
+        ],
+        "data": [
+          {
+            "id": "ignored",
+            "chatId": "c",
+            "text": "ignored"
+          }
+        ]
+      },
+      "output": [
+        {
+          "id": "m",
+          "chatId": "c",
+          "text": "text"
+        }
+      ]
+    },
+    {
+      "input": {
+        "messages": [],
+        "data": [
+          {
+            "id": "ignored",
+            "chatId": "c",
+            "text": "ignored"
+          }
+        ]
+      },
+      "output": []
+    },
+    {
+      "input": {
+        "messages": 42,
+        "data": [
+          {
+            "id": "m",
+            "chatId": "c",
+            "text": "fallback"
+          }
+        ]
+      },
+      "output": [
+        {
+          "id": "m",
+          "chatId": "c",
+          "text": "fallback"
+        }
+      ]
+    },
+    {
+      "input": [
+        null,
+        false,
+        42,
+        "x",
+        [],
+        {},
+        {
+          "id": "",
+          "key": "not-a-fallback",
+          "chatId": "c",
+          "text": "x"
+        },
+        {
+          "id": "m",
+          "chatId": "",
+          "from": "not-a-fallback",
+          "text": "x"
+        }
+      ],
+      "output": []
+    },
+    {
+      "input": [
+        {
+          "id": null,
+          "key": 0,
+          "chatId": null,
+          "from": false,
+          "text": null,
+          "body": 0
+        }
+      ],
+      "output": [
+        {
+          "id": "0",
+          "chatId": "false",
+          "text": "0"
+        }
+      ]
+    },
+    {
+      "input": [
+        {
+          "id": {},
+          "chatId": [
+            null,
+            2
+          ],
+          "text": {
+            "nested": "x"
+          }
+        },
+        {
+          "id": 1,
+          "chatId": true,
+          "text": [
+            null,
+            3,
+            false
+          ]
+        }
+      ],
+      "output": [
+        {
+          "id": "[object Object]",
+          "chatId": ",2",
+          "text": "[object Object]"
+        },
+        {
+          "id": "1",
+          "chatId": "true",
+          "text": ",3,false"
+        }
+      ]
+    },
+    {
+      "input": [
+        {
+          "id": "m",
+          "chatId": "c",
+          "text": "",
+          "body": "not-a-fallback"
+        },
+        {
+          "id": "n",
+          "chatId": "c",
+          "text": false
+        }
+      ],
+      "output": [
+        {
+          "id": "m",
+          "chatId": "c",
+          "text": ""
+        },
+        {
+          "id": "n",
+          "chatId": "c",
+          "text": "false"
+        }
+      ]
+    },
+    {
+      "input": [
+        {
+          "id": "﻿m﻿",
+          "chatId": "\ud800",
+          "text": " hello "
+        }
+      ],
+      "output": [
+        {
+          "id": "m",
+          "chatId": "\ud800",
+          "text": "hello"
+        }
+      ]
+    },
+    {
+      "input": [
+        {
+          "id": {
+            "toString": null
+          },
+          "chatId": "c",
+          "text": "x"
+        }
+      ],
+      "error": "TypeError: Cannot convert object to primitive value"
+    },
+    {
+      "input": [
+        {
+          "id": "m",
+          "chatId": "c",
+          "text": [
+            {
+              "toString": "not callable"
+            }
+          ]
+        }
+      ],
+      "error": "TypeError: Cannot convert object to primitive value"
+    }
+  ],
+  "mapped": [
+    {
+      "input": {
+        "chatId": "a",
+        "text": " first "
+      },
+      "output": {
+        "sessionKey": "whatsapp:chat=a:general",
+        "message": "first"
+      }
+    },
+    {
+      "input": {
+        "chatId": "a",
+        "text": " /new "
+      },
+      "output": {
+        "sessionKey": "whatsapp:chat=a:s_12345678-1234-4123-8123-123456789012",
+        "command": "new",
+        "message": ""
+      }
+    },
+    {
+      "input": {
+        "chatId": "a",
+        "text": " next "
+      },
+      "output": {
+        "sessionKey": "whatsapp:chat=a:s_12345678-1234-4123-8123-123456789012",
+        "message": "next"
+      }
+    },
+    {
+      "input": {
+        "chatId": "a",
+        "text": "/new with text"
+      },
+      "output": {
+        "sessionKey": "whatsapp:chat=a:s_12345678-1234-4123-8123-123456789012",
+        "command": "new",
+        "message": "with text"
+      }
+    },
+    {
+      "input": {
+        "chatId": "b",
+        "text": "/new\ttext"
+      },
+      "output": {
+        "sessionKey": "whatsapp:chat=b:general",
+        "message": "/new\ttext"
+      }
+    },
+    {
+      "input": {
+        "chatId": "\ud800",
+        "text": "﻿/new \ud801﻿"
+      },
+      "output": {
+        "sessionKey": "whatsapp:chat=\ud800:s_12345678-1234-4123-8123-123456789012",
+        "command": "new",
+        "message": "\ud801"
+      }
+    }
+  ],
+  "snapshot": {
+    "activeByChatId": {
+      "a": "whatsapp:chat=a:s_12345678-1234-4123-8123-123456789012",
+      "\ud800": "whatsapp:chat=\ud800:s_12345678-1234-4123-8123-123456789012"
+    }
+  },
+  "rendered": [
+    {
+      "event": {
+        "type": "assistant_text_delta",
+        "text": "hello"
+      },
+      "fragment": "hello",
+      "accumulated": "hello"
+    },
+    {
+      "event": {
+        "type": "assistant_text_delta",
+        "text": null
+      },
+      "fragment": null,
+      "accumulated": ""
+    },
+    {
+      "event": {
+        "type": "assistant_text_delta",
+        "text": 7
+      },
+      "fragment": 7,
+      "accumulated": "7"
+    },
+    {
+      "event": {
+        "type": "assistant_text_delta"
+      },
+      "fragment": {
+        "undefined": true
+      },
+      "accumulated": ""
+    },
+    {
+      "event": {
+        "type": "assistant_thinking_delta",
+        "text": "hidden"
+      },
+      "fragment": "",
+      "accumulated": ""
+    },
+    {
+      "event": {
+        "type": "tool_call_started"
+      },
+      "fragment": "",
+      "accumulated": ""
+    },
+    {
+      "event": {
+        "type": "tool_call_finished",
+        "ok": true
+      },
+      "fragment": "",
+      "accumulated": ""
+    },
+    {
+      "event": {
+        "type": "tool_call_finished",
+        "ok": false,
+        "toolName": "read",
+        "toolCallId": "id"
+      },
+      "fragment": "\n⚠️ read failed\n",
+      "accumulated": "\n⚠️ read failed\n"
+    },
+    {
+      "event": {
+        "type": "tool_call_finished",
+        "ok": false,
+        "toolName": null,
+        "toolCallId": "id"
+      },
+      "fragment": "\n⚠️ id failed\n",
+      "accumulated": "\n⚠️ id failed\n"
+    },
+    {
+      "event": {
+        "type": "tool_call_finished",
+        "ok": false
+      },
+      "fragment": "\n⚠️ undefined failed\n",
+      "accumulated": "\n⚠️ undefined failed\n"
+    },
+    {
+      "event": {
+        "type": "error",
+        "message": "broken"
+      },
+      "fragment": "\n❌ broken\n",
+      "accumulated": "\n❌ broken\n"
+    },
+    {
+      "event": {
+        "type": "error",
+        "message": null
+      },
+      "fragment": "\n❌ null\n",
+      "accumulated": "\n❌ null\n"
+    },
+    {
+      "event": {
+        "type": "error"
+      },
+      "fragment": "\n❌ undefined\n",
+      "accumulated": "\n❌ undefined\n"
+    },
+    {
+      "event": {
+        "type": "completed"
+      },
+      "fragment": {
+        "undefined": true
+      },
+      "accumulated": ""
+    },
+    {
+      "event": {
+        "type": "elicitation_request",
+        "questions": [
+          {
+            "header": "Title",
+            "question": "Question?",
+            "options": [
+              {
+                "label": "one"
+              },
+              {
+                "label": "two"
+              }
+            ]
+          }
+        ]
+      },
+      "fragment": "\n**Title**\nQuestion?\n1. one\n2. two\n",
+      "accumulated": "\n**Title**\nQuestion?\n1. one\n2. two\n"
+    }
+  ],
+  "constructors": [
+    {
+      "options": {},
+      "path": "",
+      "url": "http://127.0.0.1:3100"
+    },
+    {
+      "options": {
+        "bridgePath": null,
+        "bridgeUrl": null
+      },
+      "path": "",
+      "url": "http://127.0.0.1:3100"
+    },
+    {
+      "options": {
+        "bridgePath": "  fixture.mjs  ",
+        "bridgeUrl": "http://localhost:1///"
+      },
+      "path": "fixture.mjs",
+      "url": "http://localhost:1"
+    },
+    {
+      "options": {
+        "bridgePath": ""
+      },
+      "path": "",
+      "url": "http://127.0.0.1:3100"
+    },
+    {
+      "options": {
+        "bridgePath": 0
+      },
+      "error": "TypeError: (options.bridgePath ?? process.env.WHATSAPP_BRIDGE_PATH ?? \"\").trim is not a function"
+    },
+    {
+      "options": {
+        "bridgePath": []
+      },
+      "error": "TypeError: (options.bridgePath ?? process.env.WHATSAPP_BRIDGE_PATH ?? \"\").trim is not a function"
+    },
+    {
+      "options": {
+        "bridgeUrl": 42
+      },
+      "error": "TypeError: url.replace is not a function"
+    },
+    {
+      "options": {
+        "bridgeUrl": {}
+      },
+      "error": "TypeError: url.replace is not a function"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+# H1 正式挂载后的负控迁移
+
+本轮实现已先落地：Signal、Mattermost、HomeAssistant，以及Email、DingTalk、Discord、Matrix、Telegram、WhatsApp均由production_loader_mounts构造。UNMIGRATED仅保留qq/wecom严格true拒绝。此迁移不修改冻结评分、接受差异或历史测试成绩；本次只完成静态锚检查，尚未运行mutant编译或执行，不能宣称KILLED。
+
+旧九个loader渠道的rejects_unmigrated_*拒绝测试由对应production_loader_mount_builds_*_with_js_truthiness替换：实际调用生产mounts与load_enabled_channels，13格enabled值分别核对不拒绝、无构造错误、精确构造key/空集合。它们只证明真实构造与loader接线，不代表外部协议或正式server收发通过。固定基线及各适配器协议证据由各自交付记录承担。
+
+seam矩阵由23行变为21行：原telegram-dropped已按拒绝边界依次转为whatsapp-dropped，最终qq-dropped；implemented-gains-rejected-telegram同样改为implemented-gains-rejected-qq。rejection-silenced与message-loses-key仍保护剩余qq/wecom；partition显式固定15已实现loader、0拒绝loader、17 subset，双向闭包保持。
+
+原enabled-gate-always-true和loader-gate-strictened停止在rejects_enabled的已不可达loader arm造mutant；原意为保护loader enabled真值，现由channel-loader-startup的h1-loader-disabled-constructed与h1-loader-truthiness-tightened在真实load_enabled_channels处替代，覆盖六个本批新mount的实际构造/skip。因此没有将旧行静默删除或当作已杀死。旧8/6等历史分母不延用。
+
+检查：python3 -I negative_controls.py --check，21 unique anchors checked。未运行Cargo。

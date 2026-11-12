@@ -6,7 +6,14 @@
 use super::requests::Requests;
 use crate::runtime::connection::RequestError;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
-use std::{collections::HashSet, sync::Mutex};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 const MAX_MESSAGES: usize = 10_000;
 const MAX_BYTES: usize = 2 * 1024 * 1024;
@@ -290,58 +297,173 @@ impl Requests {
                 "Cannot restore over an active Gateway session.",
             ));
         }
-        let _restoring = {
-            let mut set = RESTORING.lock().unwrap_or_else(|e| e.into_inner());
-            let set = set.get_or_insert_with(HashSet::new);
-            if set.contains(&session_key) {
-                return Err(dialog(
-                    "SESSION_RESTORE_CONFLICT",
-                    "A transcript restore is already in progress for this session.",
-                ));
-            }
-            // TS adds the key only after the archive and the target pass;
-            // the window is synchronous there, so claiming here is the same.
-            set.insert(session_key.clone());
-            Restoring(session_key.clone())
-        };
+        let restoring = claim_restore(&session_key)?;
         let archive = field(&params, "archive").clone();
         validate(&archive)?;
-        let home = self.options.home.clone();
-        tokio::task::spawn_blocking(move || {
-            write_restored(&home, &project_root, &session_key, &archive)
-        })
+        restore_validated(
+            self.options.home.clone(),
+            project_root,
+            session_key,
+            archive,
+            restoring,
+            Arc::new(crate::storage::JsonlTranscriptStore::new()),
+        )
         .await
-        .map_err(|error| RequestError::new(error.to_string()))?
     }
 }
 
+fn claim_restore(session_key: &JsString) -> Result<Restoring, RequestError> {
+    let mut set = RESTORING.lock().unwrap_or_else(|error| error.into_inner());
+    let set = set.get_or_insert_with(HashSet::new);
+    if !set.insert(session_key.clone()) {
+        return Err(dialog(
+            "SESSION_RESTORE_CONFLICT",
+            "A transcript restore is already in progress for this session.",
+        ));
+    }
+    Ok(Restoring(session_key.clone()))
+}
+
+fn target_conflict() -> RequestError {
+    dialog(
+        "SESSION_RESTORE_CONFLICT",
+        "A persistent transcript already exists for this session.",
+    )
+}
+
+/// Preserve a genuine storage errno without inferring one from its text.
+/// Existing stage wrappers win over the fallback supplied by the actual call
+/// site. A Rust-only lease error with no stage keeps its honest diagnostic.
+fn restore_io_error(
+    error: std::io::Error,
+    fallback: Option<(&str, Option<&Path>)>,
+) -> RequestError {
+    let diagnostic = crate::node_io::staged_diagnostic(&error).or_else(|| {
+        fallback.and_then(|(syscall, path)| {
+            let path = path.map(|path| path.to_string_lossy());
+            crate::node_io::diagnostic(&error, syscall, path.as_deref())
+        })
+    });
+    if let Some((code, message)) = diagnostic {
+        dialog(code, &message)
+    } else if let Some((code, _)) = crate::node_io::lookup(&error) {
+        dialog(code, &error.to_string())
+    } else {
+        RequestError::new(error.to_string())
+    }
+}
+fn restore_ledger_error(
+    error: crate::storage::LedgerError,
+    fallback: Option<(&str, Option<&Path>)>,
+) -> RequestError {
+    match error {
+        crate::storage::LedgerError::Io(error) => restore_io_error(error, fallback),
+        error => RequestError::new(error.to_string()),
+    }
+}
+fn restore_writer_error(error: crate::storage::AdapterError) -> RequestError {
+    match error {
+        crate::storage::AdapterError::Store(error) => restore_ledger_error(error, None),
+        error => RequestError::new(error.to_string()),
+    }
+}
+
+/// A directory or symlink is also an occupied target. In particular, a
+/// dangling symlink must not be treated as a missing, writable transcript.
+fn require_absent(path: &Path) -> Result<(), RequestError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Err(target_conflict()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(restore_io_error(error, Some(("lstat", Some(path))))),
+    }
+}
+
+struct RestoreCancellation(Arc<AtomicBool>);
+impl Drop for RestoreCancellation {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+fn check_restore_cancelled(cancelled: &AtomicBool) -> Result<(), RequestError> {
+    if cancelled.load(Ordering::Acquire) {
+        Err(RequestError::new(
+            "Session transcript restore was cancelled.",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+async fn restore_validated(
+    home: PathBuf,
+    project_root: PathBuf,
+    session_key: JsString,
+    archive: JsValue,
+    restoring: Restoring,
+    store: Arc<dyn crate::storage::TranscriptStore>,
+) -> Result<JsValue, RequestError> {
+    let supplied = crate::runtime::session::transcript_locks::session_transcript_path(
+        &home,
+        &project_root,
+        &session_key,
+    );
+    let target = tokio::task::spawn_blocking(move || {
+        // Check before canonicalization so even a dangling leaf is a conflict.
+        require_absent(&supplied)?;
+        crate::storage::canonical_transcript_path(&supplied)
+            .map_err(|error| restore_ledger_error(error, Some(("realpath", Some(&supplied)))))
+    })
+    .await
+    .map_err(|error| RequestError::new(error.to_string()))??;
+    let fence = crate::runtime::session::transcript_locks::acquire_key(target.clone()).await;
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let _cancellation = RestoreCancellation(cancelled.clone());
+    tokio::task::spawn_blocking(move || {
+        // Cancellation of the awaiting request cannot release these while
+        // the blocking writer still owns its stage and could publish it.
+        let _restoring = restoring;
+        let _fence = fence;
+        let Some(_lease) = crate::runtime::session::factory::try_writer_lease_storage(&target)
+            .map_err(|error| restore_ledger_error(error, None))?
+        else {
+            return Err(crate::runtime::session::transcript_locks::writer_busy_error());
+        };
+        write_restored(
+            &home,
+            &project_root,
+            &session_key,
+            &archive,
+            &target,
+            &cancelled,
+            store,
+        )
+    })
+    .await
+    .map_err(|error| RequestError::new(error.to_string()))?
+}
+
 fn write_restored(
-    home: &std::path::Path,
-    project_root: &std::path::Path,
+    home: &Path,
+    project_root: &Path,
     session_key: &JsString,
     archive: &JsValue,
+    target: &Path,
+    cancelled: &AtomicBool,
+    store: Arc<dyn crate::storage::TranscriptStore>,
 ) -> Result<JsValue, RequestError> {
-    let home2 = home.to_path_buf();
-    let adapter = crate::storage::AsyncTranscriptAdapter::new(
-        std::sync::Arc::new(crate::storage::JsonlTranscriptStore::new()),
-        std::sync::Arc::new(move |k: &crate::storage::ProjectKey| {
-            crate::session_chat_dir(&home2, &k.project_root, &k.project_root.to_string_lossy())
-        }),
-    );
-    let storage = adapter
-        .create_session_storage(crate::storage::SessionStorageInput {
+    require_absent(target)?;
+    check_restore_cancelled(cancelled)?;
+    let (temporary_file, temporary) = crate::storage::create_temporary(target)
+        .map_err(|error| restore_ledger_error(error, Some(("open", Some(target)))))?;
+    let writer = crate::storage::TranscriptWriter::for_store(
+        store,
+        crate::storage::TranscriptKey {
             project_root: project_root.to_path_buf(),
             pilot_home: home.to_path_buf(),
             session_id: session_key.clone(),
-            now: None,
-        })
-        .map_err(|error| RequestError::new(error.to_string()))?;
-    if storage.transcript_path.is_file() {
-        return Err(dialog(
-            "SESSION_RESTORE_CONFLICT",
-            "A persistent transcript already exists for this session.",
-        ));
-    }
+            transcript_path: temporary.path().to_path_buf(),
+        },
+    );
     let turn: JsString = format!("sdk:restore:{}", uuid::Uuid::new_v4()).into();
     let messages = match field(archive, "messages") {
         JsValue::Array(messages) => messages.clone(),
@@ -364,11 +486,11 @@ fn write_restored(
                 .into(),
             ),
         );
-        storage
-            .transcript
+        writer
             .record_session_metadata(session_key, &turn, JsValue::Object(metadata))
-            .map_err(|error| RequestError::new(error.to_string()))?;
+            .map_err(restore_writer_error)?;
     }
+    check_restore_cancelled(cancelled)?;
     let canonical = messages
         .iter()
         .map(|message| {
@@ -387,10 +509,39 @@ fn write_restored(
     let mut metadata = JsObject::new();
     metadata.insert("restoredFromGatewayArchive".into(), JsValue::Bool(true));
     metadata.insert("archiveSchemaVersion".into(), JsValue::Number(1.0));
-    storage
-        .transcript
+    writer
         .record_accepted_input(session_key, &turn, canonical, Some(metadata))
-        .map_err(|error| RequestError::new(error.to_string()))?;
+        .map_err(restore_writer_error)?;
+    check_restore_cancelled(cancelled)?;
+    temporary_file
+        .sync_all()
+        .map_err(|error| restore_io_error(error, Some(("fsync", None))))?;
+    check_restore_cancelled(cancelled)?;
+    // Same-directory link atomically publishes the complete inode and fails
+    // if anything already occupies the target. Never fall back to replacing
+    // rename: an external creator need not participate in our writer lease.
+    // A cancellation racing this commit may observe a complete published
+    // archive; it can never expose a partially imported transcript.
+    std::fs::hard_link(temporary.path(), target).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::AlreadyExists {
+            target_conflict()
+        } else {
+            let mut failure = restore_io_error(error, Some(("link", Some(temporary.path()))));
+            if failure.code != "gateway_request_failed" {
+                let suffix = format!(" -> '{}'", target.display());
+                failure.message = JsString::from_utf16(
+                    failure
+                        .message
+                        .units()
+                        .iter()
+                        .copied()
+                        .chain(suffix.encode_utf16())
+                        .collect(),
+                );
+            }
+            failure
+        }
+    })?;
     let mut result = JsObject::new();
     result.insert("sessionKey".into(), JsValue::String(session_key.clone()));
     result.insert(
@@ -399,3 +550,7 @@ fn write_restored(
     );
     Ok(JsValue::Object(result))
 }
+
+#[cfg(test)]
+#[path = "session_archive_s1_tests.rs"]
+mod s1_tests;

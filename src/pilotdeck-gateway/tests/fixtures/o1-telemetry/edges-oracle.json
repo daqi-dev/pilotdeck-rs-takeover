@@ -1,0 +1,31 @@
+{
+  "tokenBytes": [
+    239,
+    187,
+    191,
+    255,
+    195,
+    40,
+    32
+  ],
+  "decodedTrimmed": "��(",
+  "installationId": "71ca9ea70cdad6a6d16d18c5",
+  "sanitizedOwnKeys": [
+    "normal"
+  ],
+  "sanitizedPrototypeKept": "prototype-member",
+  "spreadHasOwnProto": true,
+  "eventProperties": [
+    {
+      "normal": "value"
+    },
+    {
+      "module": "session",
+      "ownerModule": "session",
+      "loopStage": "module_event",
+      "outcome": "success",
+      "normal": "value"
+    }
+  ],
+  "zeroDrainResolvedWhileLaterObservationPending": true
+}

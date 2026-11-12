@@ -19,6 +19,7 @@ base64 = "=0.22.1"
 png = "=0.18.1"
 libc = "=0.2.190"
 sha2.workspace = true
+md-5.workspace = true
 # FileMemoryStore hashText uses Node crypto SHA-1 (10 hex digits).
 sha1 = "=0.10.7"
 # #1336: WeCom callback envelope is AES-256-CBC with PKCS#7 (Node crypto).

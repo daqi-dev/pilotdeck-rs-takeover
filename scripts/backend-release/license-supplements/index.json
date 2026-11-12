@@ -111,6 +111,25 @@
           "sourceCommit": "1bb309784f25c401ddf95131dcde4c4cdad7aee7"
         }
       ]
+    },
+    {
+      "file": "rquickjs.txt",
+      "url": "https://raw.githubusercontent.com/DelSkayn/rquickjs/d7ef5eeae702fea24c03643064de454f1c1dd4b0/LICENSE",
+      "retrievedVia": "https://api.github.com/repos/DelSkayn/rquickjs/contents/LICENSE?ref=d7ef5eeae702fea24c03643064de454f1c1dd4b0",
+      "gitBlobSha1": "3aa726b708598dbbf587e7ca2dcd0eff4987bef7",
+      "sha256": "976ad3d07927343ab99b31510625acba89eac8e0e517c712925620ddeda91b70",
+      "packages": [
+        {
+          "name": "rquickjs-core",
+          "version": "0.14.0",
+          "sourceCommit": "d7ef5eeae702fea24c03643064de454f1c1dd4b0"
+        },
+        {
+          "name": "rquickjs-sys",
+          "version": "0.14.0",
+          "sourceCommit": "d7ef5eeae702fea24c03643064de454f1c1dd4b0"
+        }
+      ]
     }
   ]
 }

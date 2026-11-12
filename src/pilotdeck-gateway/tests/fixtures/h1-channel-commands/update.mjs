@@ -1,0 +1,8 @@
+// Run real TS /update against an in-memory child-process spawn mock. No script executes.
+import fs from 'node:fs'; import path from 'node:path'; import {createRequire,syncBuiltinESMExports} from 'node:module'; import {EventEmitter} from 'node:events'; import {PassThrough} from 'node:stream'; import {pathToFileURL} from 'node:url';
+const [base,out]=process.argv.slice(2); if(!path.isAbsolute(base)||!path.isAbsolute(out)||fs.existsSync(out))throw Error('absolute baseline and new output required');
+const require=createRequire(import.meta.url);const child=require('node:child_process');let mode='';const calls=[];
+child.spawn=(executable,args,options)=>{calls.push({mode,executable,args,cwd:options.cwd}); const process=new EventEmitter();process.stdout=new PassThrough();process.stderr=new PassThrough();queueMicrotask(()=>{if(mode==='spawn-error'){process.emit('error',Error('injected spawn failure'));return;}process.stdout.write('building\n');process.stderr.write('done\n');process.stdout.end();process.stderr.end();process.emit('close',mode==='up-to-date'?2:mode==='failed'?1:0);});return process;};syncBuiltinESMExports();
+const {executeChannelCommand}=await import(pathToFileURL(path.join(base,'dist/src/adapters/channel/protocol/ChannelCommandRegistry.js')));const rows=[];
+for(const [kind,input] of [['ok','/update'],['up-to-date','/update check'],['failed','/update'],['spawn-error','/update']]){mode=kind;const replies=[];const handled=await executeChannelCommand(input,{gateway:{},chatId:'mock',channelKey:'mock',reply:async text=>replies.push(text)});rows.push({kind,input,handled,replies});}
+fs.writeFileSync(out,JSON.stringify({node:process.version,rows,calls},null,2)+'\n',{flag:'wx'});

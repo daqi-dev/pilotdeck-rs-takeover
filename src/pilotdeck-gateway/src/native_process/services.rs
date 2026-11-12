@@ -1347,6 +1347,7 @@ impl SubmitHostServices for Services {
             let state =
                 crate::session_model::execute(&metadata, &params, &self.env).map_err(|e| {
                     SubmitError::new(&e.code, String::from_utf16_lossy(e.message.units()))
+                        .with_error_name(e.name)
                 })?;
             let saved = state.get("saved").cloned().unwrap_or(JsValue::Undefined);
             if saved.get("mode") == Some(&"model".into()) {
@@ -1505,6 +1506,13 @@ pub struct NativeSettings {
 /// tests that observe the dirty/broadcast order `bind_server` a recording
 /// server themselves and assert `has_notification_server()`.
 pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
+    native_settings_with_maintenance(options, Arc::new(NoMemoryMaintenance))
+}
+
+fn native_settings_with_maintenance(
+    options: NativeSettingsOptions,
+    memory_maintenance: Arc<dyn crate::runtime::refresh::MemoryMaintenance>,
+) -> NativeSettings {
     let NativeSettingsOptions {
         owner,
         router,
@@ -1519,7 +1527,7 @@ pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
     let bundle = Arc::new(RefreshBundle::new(RefreshOptions {
         config_store: Arc::new(store.clone()),
         registry,
-        memory_maintenance: Arc::new(NoMemoryMaintenance),
+        memory_maintenance,
         router: Arc::new(move || Some(router.clone())),
         project_root,
         memory_diagnostics: None,
@@ -1713,6 +1721,40 @@ pub fn native_settings_for_process(
     overrides: Arc<super::SessionOverrides>,
     output_styles: Option<Arc<dyn crate::runtime::settings::ReloadOutputStyles>>,
 ) -> std::io::Result<NativeSettings> {
+    native_settings_for_process_with_maintenance(
+        owner,
+        project,
+        home,
+        served_project,
+        env,
+        overrides,
+        NativeProcessRefreshPorts {
+            output_styles,
+            memory_maintenance: Arc::new(NoMemoryMaintenance),
+        },
+    )
+}
+
+/// Production refresh ports retained by the one process settings bundle.
+pub struct NativeProcessRefreshPorts {
+    pub output_styles: Option<Arc<dyn crate::runtime::settings::ReloadOutputStyles>>,
+    pub memory_maintenance: Arc<dyn crate::runtime::refresh::MemoryMaintenance>,
+}
+
+/// Compose the process settings with its generation-owned memory worker.
+pub fn native_settings_for_process_with_maintenance(
+    owner: SessionOwner,
+    project: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
+    home: &std::path::Path,
+    served_project: &std::path::Path,
+    env: &crate::config::Env,
+    overrides: Arc<super::SessionOverrides>,
+    refresh_ports: NativeProcessRefreshPorts,
+) -> std::io::Result<NativeSettings> {
+    let NativeProcessRefreshPorts {
+        output_styles,
+        memory_maintenance,
+    } = refresh_ports;
     // #1320 fix-r1 F3: same anchor as every other config read of the process
     // (`NativeConfigSource`): PILOT_HOME from the environment resolved
     // against the served project, `--home` only as the fallback homedir for
@@ -1739,20 +1781,23 @@ pub fn native_settings_for_process(
             ),
         )
     })?;
-    Ok(native_settings(NativeSettingsOptions {
-        owner: owner.clone(),
-        router: Arc::new(owner),
-        registry: Arc::new(RegistryRefresh::new(project)),
-        store: store.clone(),
-        project_root: JsString::from(served_project.to_string_lossy().into_owned()),
-        log: Arc::new(ConsoleLog),
-        apply_flag_settings: Some(Arc::new(NativeFlagSettings { overrides })),
-        // createLocalGateway.ts:1384-1401 with no organization policy.
-        update_settings: Some(crate::runtime::settings::UpdateSettings {
-            organization_denied: false,
-            writer: Arc::new(writer),
+    Ok(native_settings_with_maintenance(
+        NativeSettingsOptions {
+            owner: owner.clone(),
+            router: Arc::new(owner),
+            registry: Arc::new(RegistryRefresh::new(project)),
             store: store.clone(),
-        }),
-        reload_output_styles: output_styles,
-    }))
+            project_root: JsString::from(served_project.to_string_lossy().into_owned()),
+            log: Arc::new(ConsoleLog),
+            apply_flag_settings: Some(Arc::new(NativeFlagSettings { overrides })),
+            // createLocalGateway.ts:1384-1401 with no organization policy.
+            update_settings: Some(crate::runtime::settings::UpdateSettings {
+                organization_denied: false,
+                writer: Arc::new(writer),
+                store: store.clone(),
+            }),
+            reload_output_styles: output_styles,
+        },
+        memory_maintenance,
+    ))
 }

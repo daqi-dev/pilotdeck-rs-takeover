@@ -1062,10 +1062,11 @@ pub(super) fn resolve_settings(
 pub(super) fn settings_submit_error(
     error: crate::runtime::sdk_session::SdkSessionError,
 ) -> SubmitError {
-    if error.name == "DialogGatewayError" {
-        err(&error.code, error.message)
+    let name = error.name;
+    if name == "DialogGatewayError" {
+        err(&error.code, error.message).with_error_name(name)
     } else {
-        invalid(error.message)
+        invalid(error.message).with_error_name(name)
     }
 }
 

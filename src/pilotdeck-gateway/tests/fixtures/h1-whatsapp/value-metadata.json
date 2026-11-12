@@ -1,0 +1,26 @@
+{
+  "layer": "real TS components; no platform SDK or formal server claim",
+  "node": "v22.22.0",
+  "revision": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "driverSha256": "d24391cd853cbbe2aa6ea7914beaeab994ba5efb319226b647d77791a1a8aee5",
+  "identities": [
+    {
+      "source": "src/adapters/channel/whatsapp/WhatsAppChannel.ts",
+      "sourceSha256": "c955137bff5f241d288de1a9d040c5bd57e0ca0a38af172cbbf426ce8d126452",
+      "built": "dist/src/adapters/channel/whatsapp/WhatsAppChannel.js",
+      "distSha256": "91462a3d801f3cc3d6f80e372cf01045f39ebf8b996b6efcd9eb0588fff71ae8"
+    },
+    {
+      "source": "src/adapters/channel/whatsapp/WhatsAppSessionMapper.ts",
+      "sourceSha256": "0f214a1c595cfd5916afacc43feb3b9b5e6d84327c15ce23639ab4c833b33c05",
+      "built": "dist/src/adapters/channel/whatsapp/WhatsAppSessionMapper.js",
+      "distSha256": "c67eba20c4b209a67d55c6bc8b40ac4589a54f6cff02a44edf538cca53aaec29"
+    },
+    {
+      "source": "src/adapters/channel/whatsapp/whatsapp-render.ts",
+      "sourceSha256": "46e255e24990f55b93a9b78e1ff1357cd72487fd077222eaffaa8ff31bd84d13",
+      "built": "dist/src/adapters/channel/whatsapp/whatsapp-render.js",
+      "distSha256": "6dc40575f3e0c5fa3f3e897507047b59592db10aca68b8aa944cd17730c6f0a7"
+    }
+  ]
+}

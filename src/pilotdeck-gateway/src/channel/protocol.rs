@@ -86,12 +86,45 @@ pub struct TurnRequest {
     pub session_key: JsString,
     pub channel_key: ChannelKey,
     pub message: JsString,
+    pub attachments: Option<Vec<JsValue>>,
+    pub allow_plan_mode_tools: Option<bool>,
+    pub synthetic_messages: Option<Vec<JsValue>>,
+    pub project_key: Option<JsString>,
+}
+
+impl Default for TurnRequest {
+    fn default() -> Self {
+        Self {
+            session_key: "".into(),
+            channel_key: ChannelKey::new(""),
+            message: "".into(),
+            attachments: None,
+            allow_plan_mode_tools: None,
+            synthetic_messages: None,
+            project_key: None,
+        }
+    }
 }
 
 /// The event stream of one accepted turn. Dropping it is the TS consumer
 /// cleanup: the underlying submission drains its own writer; it never creates
 /// a second session owner.
 pub trait TurnEventStream: Send {
+    /// Cancel this exact submitted turn and wait for its terminal persistence
+    /// and lifecycle tail. Dropping a stream alone does not cancel a turn.
+    /// Embedders without owned cancellation must fail explicitly, never claim
+    /// a stopped channel while its turn is still executing.
+    fn cancel_and_drain(
+        &mut self,
+        _reason: JsString,
+    ) -> Pin<Box<dyn Future<Output = Result<(), ChannelError>> + Send + '_>> {
+        Box::pin(async {
+            Err(ChannelError::error(
+                "Owned turn cancellation is unavailable.",
+            ))
+        })
+    }
+
     fn next(
         &mut self,
     ) -> Pin<Box<dyn Future<Output = Result<Option<JsValue>, ChannelError>> + Send + '_>>;

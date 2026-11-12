@@ -7,13 +7,97 @@
 //! and the TS oracles/Rust tests supply the same scripted fake so the
 //! comparison covers each channel, not helper internals.
 
-use std::{future::Future, pin::Pin};
+mod helper;
+mod native;
 
-use pilotdeck_protocol::JsValue;
+pub use super::bluebubbles::HelperInteraction;
+pub use helper::{InteractionResponder, JsHelperInteraction, ResponderRef};
+pub use native::NativeInteractionResponder;
+
+use std::{future::Future, pin::Pin, sync::Arc};
+
+use pilotdeck_protocol::{JsString, JsValue};
 
 use super::protocol::ChannelError;
 
 pub(crate) type InteractionFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+/// A new helper belongs to one adapter instance. Only its responder is shared
+/// with other adapters; chat IDs and delivery tokens are adapter-local.
+pub fn js_helper_interaction(responder: ResponderRef) -> Arc<dyn JsInteractionPort> {
+    Arc::new(JsHelperInteraction::new(responder))
+}
+
+/// Compatibility constructor for adapters that already use scalar strings.
+pub fn helper_interaction(responder: ResponderRef) -> Arc<dyn InteractionPort> {
+    Arc::new(HelperInteraction::new(responder))
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct JsPermissionAnswer {
+    pub text: Option<JsString>,
+    pub can_advance: bool,
+    pub retry_prompt: bool,
+    pub answer_token: Option<u64>,
+}
+
+/// The JS-string preserving helper boundary for newly migrated channels.
+/// Request IDs, option labels, and prompts may contain lone UTF-16 units.
+pub trait JsInteractionPort: Send + Sync {
+    /// Release this adapter's local helper state after every owned turn and
+    /// reply task has successfully drained. This never cancels a gateway run.
+    fn clear_chat_for_shutdown(&self, chat_id: &JsString);
+    fn elicitation_pending(&self, chat_id: &JsString) -> bool;
+    fn elicitation_capture(
+        &self,
+        chat_id: &JsString,
+        session_key: &JsString,
+        event: &JsValue,
+    ) -> JsString;
+    fn elicitation_answer<'a>(
+        &'a self,
+        chat_id: &'a JsString,
+        text: &'a JsString,
+    ) -> InteractionFuture<'a, Result<Option<JsString>, ChannelError>>;
+    fn elicitation_clear(&self, chat_id: &JsString);
+    fn permission_pending(&self, chat_id: &JsString) -> bool;
+    fn permission_capture(
+        &self,
+        chat_id: &JsString,
+        session_key: &JsString,
+        event: &JsValue,
+    ) -> Option<JsString>;
+    fn permission_confirm_initial(
+        &self,
+        chat_id: &JsString,
+        delivered: bool,
+        request_id: Option<&JsString>,
+    );
+    fn permission_answer<'a>(
+        &'a self,
+        chat_id: &'a JsString,
+        text: &'a JsString,
+    ) -> InteractionFuture<'a, Result<Option<JsPermissionAnswer>, ChannelError>>;
+    fn permission_release_answer(&self, chat_id: &JsString, answer_token: Option<u64>);
+    fn permission_take_next_prompt(
+        &self,
+        chat_id: &JsString,
+        answer_token: Option<u64>,
+    ) -> Option<JsString>;
+    fn permission_prompt_request_id(
+        &self,
+        chat_id: &JsString,
+        answer_token: Option<u64>,
+    ) -> Option<JsString>;
+    fn permission_confirm_next(
+        &self,
+        chat_id: &JsString,
+        delivered: bool,
+        request_id: Option<&JsString>,
+        answer_token: Option<u64>,
+    );
+    fn permission_clear_after_turn(&self, chat_id: &JsString);
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PermissionAnswer {
@@ -113,3 +197,6 @@ impl InteractionPort for NoInteraction {
     fn permission_confirm_next(&self, _: &str, _: bool, _: Option<&str>, _: Option<u64>) {}
     fn permission_clear_after_turn(&self, _: &str) {}
 }
+
+#[cfg(test)]
+mod tests;

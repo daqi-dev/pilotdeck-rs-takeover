@@ -1,0 +1,212 @@
+{
+  "boundary": "module seam: actual WhatsApp adapter/helpers/local HTTP, scripted Gateway; no formal startup claim",
+  "records": [
+    {
+      "mode": "elicitation",
+      "posts": [
+        {
+          "method": "POST",
+          "path": "/send",
+          "body": {
+            "chatId": "chat",
+            "message": "**h**\nChoose\n1. A\n2. B\n\n回复数字选择（多选用逗号分隔），回复 0 取消。"
+          },
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/send",
+          "body": {
+            "chatId": "chat",
+            "message": "finished"
+          },
+          "status": 200
+        }
+      ],
+      "submits": [
+        {
+          "sessionKey": "whatsapp:chat=chat:general",
+          "channelKey": "whatsapp",
+          "message": "start"
+        }
+      ],
+      "answers": [
+        {
+          "sessionKey": "whatsapp:chat=chat:general",
+          "requestId": "e1",
+          "answer": {
+            "type": "answered",
+            "answers": {
+              "Choose": "A"
+            }
+          }
+        }
+      ],
+      "logs": []
+    },
+    {
+      "mode": "permission",
+      "posts": [
+        {
+          "method": "POST",
+          "path": "/send",
+          "body": {
+            "chatId": "chat",
+            "message": "工具 write 需要权限才能继续执行。\n\n请求内容：\n{\n  \"path\": \"fixture.txt\"\n}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。"
+          },
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/send",
+          "body": {
+            "chatId": "chat",
+            "message": "已允许一次，继续执行。"
+          },
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/send",
+          "body": {
+            "chatId": "chat",
+            "message": "工具 read 需要权限才能继续执行。\n\n请求内容：\n{\n  \"path\": \"fixture2.txt\"\n}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。"
+          },
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/send",
+          "body": {
+            "chatId": "chat",
+            "message": "已允许本会话，继续执行。"
+          },
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/send",
+          "body": {
+            "chatId": "chat",
+            "message": "finished"
+          },
+          "status": 200
+        }
+      ],
+      "submits": [
+        {
+          "sessionKey": "whatsapp:chat=chat:general",
+          "channelKey": "whatsapp",
+          "message": "start"
+        }
+      ],
+      "answers": [
+        {
+          "sessionKey": "whatsapp:chat=chat:general",
+          "requestId": "p1",
+          "decision": "allow",
+          "remember": false
+        },
+        {
+          "sessionKey": "whatsapp:chat=chat:general",
+          "requestId": "p2",
+          "decision": "allow",
+          "remember": true
+        }
+      ],
+      "logs": []
+    },
+    {
+      "mode": "permission-initial-failure",
+      "posts": [
+        {
+          "method": "POST",
+          "path": "/send",
+          "body": {
+            "chatId": "chat",
+            "message": "工具 write 需要权限才能继续执行。\n\n请求内容：\n{\n  \"path\": \"fixture.txt\"\n}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。"
+          },
+          "status": 503
+        },
+        {
+          "method": "POST",
+          "path": "/send",
+          "body": {
+            "chatId": "chat",
+            "message": "上一条权限提示发送失败，正在重试。"
+          },
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/send",
+          "body": {
+            "chatId": "chat",
+            "message": "工具 write 需要权限才能继续执行。\n\n请求内容：\n{\n  \"path\": \"fixture.txt\"\n}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。"
+          },
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/send",
+          "body": {
+            "chatId": "chat",
+            "message": "已允许一次，继续执行。"
+          },
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/send",
+          "body": {
+            "chatId": "chat",
+            "message": "工具 read 需要权限才能继续执行。\n\n请求内容：\n{\n  \"path\": \"fixture2.txt\"\n}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。"
+          },
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/send",
+          "body": {
+            "chatId": "chat",
+            "message": "已允许本会话，继续执行。"
+          },
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/send",
+          "body": {
+            "chatId": "chat",
+            "message": "finished"
+          },
+          "status": 200
+        }
+      ],
+      "submits": [
+        {
+          "sessionKey": "whatsapp:chat=chat:general",
+          "channelKey": "whatsapp",
+          "message": "start"
+        }
+      ],
+      "answers": [
+        {
+          "sessionKey": "whatsapp:chat=chat:general",
+          "requestId": "p1",
+          "decision": "allow",
+          "remember": false
+        },
+        {
+          "sessionKey": "whatsapp:chat=chat:general",
+          "requestId": "p2",
+          "decision": "allow",
+          "remember": true
+        }
+      ],
+      "logs": [
+        "whatsapp: send HTTP 503: fixture denied"
+      ]
+    }
+  ]
+}

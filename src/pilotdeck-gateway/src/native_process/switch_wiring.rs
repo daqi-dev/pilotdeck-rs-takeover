@@ -114,9 +114,18 @@ pub(crate) struct ProductionFaces {
     /// verdict, checked by the flush face.
     entries_drained: Arc<AtomicBool>,
     release_interactions: Option<ReleaseInteractions>,
+    telemetry_snapshot: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl ProductionFaces {
+    pub(crate) fn with_telemetry_snapshot(
+        mut self,
+        snapshot: Option<Arc<dyn Fn() + Send + Sync>>,
+    ) -> Self {
+        self.telemetry_snapshot = snapshot;
+        self
+    }
+
     pub(crate) fn with_release_interactions(
         mut self,
         release: Option<ReleaseInteractions>,
@@ -136,6 +145,7 @@ impl ProductionFaces {
             phased,
             entries_drained: Arc::new(AtomicBool::new(false)),
             release_interactions: None,
+            telemetry_snapshot: None,
         }
     }
 
@@ -297,6 +307,7 @@ impl SwitchFaces for ProductionFaces {
     fn flush(&self) -> FaceFuture {
         let channels = self.admission.channels().clone();
         let entries_drained = self.entries_drained.clone();
+        let telemetry_snapshot = self.telemetry_snapshot.clone();
         Box::pin(async move {
             // A10: flush is unreachable while entries are still in flight.
             // The machine enforces the order; the face re-asserts it so a
@@ -310,7 +321,11 @@ impl SwitchFaces for ProductionFaces {
                     "channel flush before the entry drain completed",
                 ));
             }
-            channels.flush().await.map_err(StepFailure::step)
+            channels.flush().await.map_err(StepFailure::step)?;
+            if let Some(snapshot) = telemetry_snapshot {
+                snapshot();
+            }
+            Ok(())
         })
     }
 

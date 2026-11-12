@@ -1,0 +1,139 @@
+{
+  "sent": [
+    {
+      "cmd": "aibot_subscribe",
+      "headers": {
+        "req_id": "subscribe-fixed2"
+      },
+      "body": {
+        "bot_id": "fixture",
+        "secret": "secret",
+        "device_id": "fixed1"
+      }
+    },
+    {
+      "cmd": "aibot_respond_msg",
+      "headers": {
+        "req_id": "r-1"
+      },
+      "body": {
+        "msgtype": "markdown",
+        "markdown": {
+          "content": "答复\n⚠️ mock failed"
+        }
+      }
+    },
+    {
+      "cmd": "aibot_respond_msg",
+      "headers": {
+        "req_id": "r-2"
+      },
+      "body": {
+        "msgtype": "markdown",
+        "markdown": {
+          "content": "答复\n⚠️ mock failed"
+        }
+      }
+    },
+    {
+      "cmd": "aibot_respond_msg",
+      "headers": {
+        "req_id": "r-4"
+      },
+      "body": {
+        "msgtype": "markdown",
+        "markdown": {
+          "content": "已创建新会话。"
+        }
+      }
+    },
+    {
+      "cmd": "aibot_respond_msg",
+      "headers": {
+        "req_id": "r-5"
+      },
+      "body": {
+        "msgtype": "markdown",
+        "markdown": {
+          "content": "答复\n⚠️ mock failed"
+        }
+      }
+    },
+    {
+      "cmd": "aibot_respond_msg",
+      "headers": {
+        "req_id": "r-6"
+      },
+      "body": {
+        "msgtype": "markdown",
+        "markdown": {
+          "content": "答复\n⚠️ mock failed"
+        }
+      }
+    }
+  ],
+  "turns": [
+    {
+      "sessionKey": "wecom:dm=user:general",
+      "channelKey": "wecom",
+      "message": "hello",
+      "allowPlanModeTools": false,
+      "syntheticMessages": [
+        {
+          "text": "[WeCom attachment hint: If the user explicitly asks you to send a generated file to this WeCom chat, save it to an absolute local path and include MEDIA:/absolute/path in your final answer. Do not use MEDIA for files that were only read or analyzed internally.]",
+          "purpose": "wecom_deliverable_hint"
+        }
+      ]
+    },
+    {
+      "sessionKey": "wecom:group=room:user=user:general",
+      "channelKey": "wecom",
+      "message": "hello group",
+      "allowPlanModeTools": false,
+      "syntheticMessages": [
+        {
+          "text": "[WeCom attachment hint: If the user explicitly asks you to send a generated file to this WeCom chat, save it to an absolute local path and include MEDIA:/absolute/path in your final answer. Do not use MEDIA for files that were only read or analyzed internally.]",
+          "purpose": "wecom_deliverable_hint"
+        }
+      ]
+    },
+    {
+      "sessionKey": "wecom:dm=user:s_session",
+      "channelKey": "wecom",
+      "message": "follow",
+      "allowPlanModeTools": false,
+      "syntheticMessages": [
+        {
+          "text": "[WeCom attachment hint: If the user explicitly asks you to send a generated file to this WeCom chat, save it to an absolute local path and include MEDIA:/absolute/path in your final answer. Do not use MEDIA for files that were only read or analyzed internally.]",
+          "purpose": "wecom_deliverable_hint"
+        }
+      ]
+    },
+    {
+      "sessionKey": "wecom:dm=user:s_session",
+      "channelKey": "wecom",
+      "message": "quoted",
+      "allowPlanModeTools": false,
+      "syntheticMessages": [
+        {
+          "text": "[WeCom attachment hint: If the user explicitly asks you to send a generated file to this WeCom chat, save it to an absolute local path and include MEDIA:/absolute/path in your final answer. Do not use MEDIA for files that were only read or analyzed internally.]",
+          "purpose": "wecom_deliverable_hint"
+        }
+      ]
+    }
+  ],
+  "logs": [
+    [
+      "info",
+      "wecom: connected to ws://mock.invalid as bot fixture"
+    ],
+    [
+      "info",
+      "wecom: duplicate message 1 ignored"
+    ],
+    [
+      "info",
+      "wecom: stopping (fixture)"
+    ]
+  ]
+}

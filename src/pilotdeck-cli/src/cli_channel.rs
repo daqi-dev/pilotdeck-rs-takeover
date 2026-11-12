@@ -33,8 +33,9 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
         stderr_line(&warning);
     }
     config::check(env, cwd, &pilot_home)?;
-    telemetry_git_probes(env, cwd);
+    let telemetry_context = super::telemetry::runtime_context(env, cwd, &pilot_home)?;
     let gateway = LocalGateway::start(LocalOptions {
+        telemetry_context: Some(telemetry_context),
         pilot_home,
         project: cwd.to_path_buf(),
         os_home: env.get("HOME").map(PathBuf::from),
@@ -178,51 +179,6 @@ fn read_line(
         let count = available.len();
         line.extend_from_slice(available);
         input.consume(count);
-    }
-}
-
-/// The local gateway resolves the telemetry runtime context even with
-/// telemetry disabled (src/telemetry/context.ts): outside a container it asks
-/// `git rev-parse --is-inside-work-tree` whether this is a source checkout,
-/// and without a commit hash in the environment `git rev-parse --short HEAD`.
-/// Both run in the working directory with stdout captured and stderr
-/// inherited, so outside a git checkout each leaves git's `fatal:` line on
-/// this process's stderr. Their answers feed only telemetry, which the port
-/// does not send.
-fn telemetry_git_probes(env: &Env, cwd: &Path) {
-    let set = |name: &str| env.get(name).is_some_and(|value| !value.is_empty());
-    let git = |args: &[&str]| {
-        let _ = std::process::Command::new("git")
-            .args(args)
-            .current_dir(cwd)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::inherit())
-            .output();
-    };
-    // looksLikeDocker, then looksLikeDesktopInstaller (an Electron runtime or
-    // a `pilotdeck.app` / `pilotdeck.exe` executable, never this binary).
-    let docker = env
-        .get("DOCKER_CONTAINER")
-        .is_some_and(|value| value == "1")
-        || set("KUBERNETES_SERVICE_HOST")
-        || Path::new("/.dockerenv").exists()
-        || std::fs::read_to_string("/proc/1/cgroup").is_ok_and(|cgroup| {
-            let cgroup = cgroup.to_lowercase();
-            ["docker", "containerd", "kubepods", "podman"]
-                .iter()
-                .any(|name| cgroup.contains(name))
-        });
-    if !docker {
-        git(&["rev-parse", "--is-inside-work-tree"]);
-    }
-    // `COMMIT_HASH ?? GIT_COMMIT ?? PILOTDECK_GIT_SHA ?? GIT_SHA`, then
-    // `if (fromEnv)`: an empty first value still falls through to git.
-    let from_env = ["COMMIT_HASH", "GIT_COMMIT", "PILOTDECK_GIT_SHA", "GIT_SHA"]
-        .iter()
-        .find_map(|name| env.get(name));
-    if from_env.is_none_or(|value| value.is_empty()) {
-        git(&["rev-parse", "--short", "HEAD"]);
     }
 }
 

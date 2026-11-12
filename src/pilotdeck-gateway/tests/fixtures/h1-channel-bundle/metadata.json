@@ -1,0 +1,23 @@
+{
+  "revision": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "sourceSha256": {
+    "src/cli/ChannelAdapterBundle.ts": "029caf6b5087ed014efcf8ae92bef7d38b83acdb323a7ec4a3c2ee9f03fcc139",
+    "src/cli/pilotdeckServer.ts": "3b8bfffdeadf90487f1cb7eb174242f3d0852a3d5d1a3d014f431c0464e42410",
+    "src/adapters/channel/loadEnabledChannels.ts": "e07a6a2241194d4683f0d015c98947dfe8d896d63cdae1be075be7b0f5002158",
+    "dist/src/cli/ChannelAdapterBundle.js": "95ff6c429303efa9a1d465f7db956a646b60a12aeac94b6bed380749acc665cb",
+    "dist/src/cli/pilotdeckServer.js": "c11ad2ce35f6adc0f270e5f9705686de2868d69c8ae74069c1ba5c6a776e46df",
+    "dist/src/adapters/channel/loadEnabledChannels.js": "35705b92a4a064a3c5c83527eeb320ba8894d5f3d2b865e5a927dc6aec4efe71",
+    "src/adapters/channel/signal/SignalChannel.ts": "09c38ef6cc01253f7d8ae149332fa0c5e58b7a03dc5103ed3d6907de52a0f5a6",
+    "src/adapters/channel/mattermost/MattermostChannel.ts": "b1bf10820d6a0179c9eca41b549880d2693f082e3e1e5bcaad4e0a9df133ca21",
+    "src/adapters/channel/homeassistant/HomeAssistantChannel.ts": "b5e15279004849843c04637cbe10a0350a1b9d270ffcfb2c07b4e63ad51d67ff",
+    "dist/src/adapters/channel/signal/SignalChannel.js": "1317f58a5c1af7e51aa01512afe051795325555bc961678d8c7e0f5bdfcb196e",
+    "dist/src/adapters/channel/mattermost/MattermostChannel.js": "f4bc7b73c8c8e6738733531ce19994419a838be9d3a33b85e6eb55669b8f7396",
+    "dist/src/adapters/channel/homeassistant/HomeAssistantChannel.js": "6782a2cd1e46cde782da4a5c1ba69858f87d4b42b8e453b8ca4b31ab8dc88f17"
+  },
+  "compiler": {
+    "version": "5.9.3",
+    "tsconfigSha256": "2911e204056ccad033ca4a60d57accbb4b23b8d9872b7f952c5faeb9e894cc52",
+    "typescriptSha256": "3ae902c92cc44dace175c0e69e13a4b0899f6983c6121d76b9ab8dd5795e7675"
+  }
+}

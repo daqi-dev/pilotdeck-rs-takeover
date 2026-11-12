@@ -1,6 +1,23 @@
-# 后端交付暂停交接
+# 后端交付统一交接
 
-更新：2026-11-13 05:05:59，Asia/Shanghai。用户要求准备停下交接，**已停止新增实现、修复、构建和测试批次**；只保留此前已启动的 cb8 全 workspace 流水线写完日志。本文件是唯一总进度入口，不能将此前“继续执行”的历史记录当作恢复授权。**本期尚未完成交付。StaffDeck 本期延期，不再作为门禁。**
+更新：2026-11-13（Asia/Shanghai），本次用户已明确授权按本记录恢复核心后端交付。原停工快照保留在 `e8618392e7e4eb24c227eedd28e14c84237ca8a4`。**本期尚未完成交付。StaffDeck 本期继续延期，不作为门禁。**
+
+## 本次恢复状态
+
+- 根从 `e8618392e7e4eb24c227eedd28e14c84237ca8a4` 恢复；初始只有用户的 `.codex/`、`plan.md` 未跟踪，未覆盖。C1 的 tar 与 manifest SHA-256 重新核实均与下文一致，146 文件未改变。
+- 当前实际额度为主协调者加 12 名子智能体；首批启用 E0、C1 验证、S1 独审、H1 协议、O1 遥测、D1 发行、SDK 装置审查及 H1 剩余渠道盘点，随后增加 native 回归修复。公共接线由根协调者持有；本机唯一 Cargo 槽交 C1 验证（jobs4），cb8 唯一重型槽由 E0 调度（jobs6）。
+- 旧 `ea6d8e71` 全量已结束：nextest **7983 run / 7977 passed / 6 failed / 742 skipped**，exit100；doc exit0。六个失败为 factory production adapter、两项 PDF 工具、execute_code nested glob、unsafe boundary 构建环境检查及 write_tools 文件权限；分别归因与修复中，不能称全量通过。原 PID/PGID 已结束。详细证据 `_tmp/20261113-e0-resume/old-failures.txt`，远端原日志保持。
+- C1 已完成四轮窄验证，首次失败全部保留：S1 新10+既有restore5通过；Signal17、HA25、WS8、MM13、O1模块18通过；第四批 WhatsApp macOS24、shared/network18、owned25全部通过（67次执行/62个去重测试，0ignored）。最新 C1 binary `2f77ecdd817835d0d313044d65c11a9c8e66b9253901a7eccdbc68f599f68b4b`，汇总在 C1 `_tmp/20261113-c1-resume-validation/{results,third-results,fourth-results}.json`。这不代表根集成或正式入口通过。
+- SDK 装置补齐全 provider 唯一性、信号 PID/时间证据核验，固定源53项装置测试通过；C1 `docs/backend-delivery/C1-sdk-cancel-review.md` 已完成独审。正式 TS 自比/Rust 重放仍未执行，尚未移入根。
+- 根主分支 HEAD 仍为 `e8618392`。独立 core 验证候选 `977026b2922e7196afcafa747e7865a201a15a81` 通过 clippy、9项定向lib、15/16 integration；首败分别为fmt和综合工具的时区别名。下一候选 `824b9160546691aa365aac6b88144cdee99adeb8` 在其上增加同源 `tzdata.zi` Link解析、fmt修复及局部变量命名修正（避免源码扫描器把变量include误认宏）。824的fmt、gateway+transport clippy、transport system_clock44、lib9、integration16全部通过。四项实际负控为3 KILLED/1 SURVIVED/0 INVALID，四项均恢复通过；hooks原注入检查规范化config中已剔除的字段，恒不触发。新窄候选 `cf143ff81c2277745ccd6870e5e1151de811561e` 改到实际diagnostics并补正向因果前置，仅重跑hooks，尚未合主。
+- `A8.3-CRON-TZ-ALIAS-001` 末尾明确未批准，不是已接受差异；本次没有据此放宽oracle。cb8同源tzdata.zi已有 `L America/Los_Angeles US/Pacific`，产品修复利用此记录，不修改系统时区树或手写别名表。
+- 根工作区已受控三方应用 C1 S1/ownership/H1共享及首三渠道101文件，另应用已测WhatsApp27文件；均为工作候选，清单 `_tmp/20261113-c1-root-integration/`，未直接合C1分支。七个剩余渠道独立作者已产出新模块，QQ/WeCom的bundle及共享命令真实宿主仍待接，不能因有代码而称已迁移完成。
+- O1在根补充正式server/local/assembly/turn/maintenance接线及跨runtime ownership（root21专项，C1只有18专项）；尚未根编译验收，统一automation/channel reload顺序仍未闭合。根 `TurnRequest` 补附件、plan工具策略、synthetic消息和project字段；MD5仅使用已有缓存的固定RustCrypto md-5 0.10.6源码，完整metadata现在277包，发行许可需最终候选复验。
+- 根首次gateway+CLI all-targets check exit101有37诊断（含lib/libtest重复）；第二次仅余Email测试E0509；修复后第三次fmt及all-targets check均exit0。正在同一冻结源码编译gateway lib测试二进制（jobs4，根src/target），尚未跑根WIP测试。精确首次日志与三批结果在 `_tmp/20261113-c1-resume-validation/` 和 `_build/backend-validation/`，所有原始失败保留。
+- 824 core v2父PID1136738已结束且clean；cb8唯一在途为cf143ff8 hooks-v3（父PID1285278，`logs/cf143ff8-hooks-v3`），E0持有单路构建/负控队列。cf143ff8的fmt/clippy/66静态锚已过，实际hooks正控/变异/恢复在途。既有target为满足负控守卫已原地迁移至 `checkout/_build/negative-target`（约315GB），后续显式指定该路径，不重复创建src/target。977负控两轮均为装置INVALID、未产生变异：首次target在src内，第二次include标识符被保守扫描器误报；v2保留判据且更名局部变量后重做。
+- D1装置9/9与276包完整许可归集通过；根新增MD5后的277包完整归集也已通过，证据 `_tmp/20261113-d1-resume/license-probe-277/`。这只是当前锁定缓存材料验证，最终clean发行候选仍需同机重新归集。release构建、assemble/verify/smoke、内建资源、平台、性能和组合恢复仍未完成。新渠道第三方SDK未锁/未装的部分明确只有固定adapter mock合同，不冒充真实SDK协议或账号验收。
+- 后续已分派：QQ/WeCom真实bundle持久化与启动/重载顺序；共享commands真实搜索/更新/状态宿主；SMS永久noop、Slack缺native提交器、BlueBubbles缺真实交互的旧渠道修复；O1统一reload chain/动态cron及always-on发布/正式after-turn maintenance；Email TLS与自行限制清理；32个技能/3个插件的独立发行资源。均在进行中或待解冻，不能因mock存在宣告交付。
+- 本节是当前状态；下文“停工”“下次恢复”叙述属于先前快照，新的验证结果只追加实际证据，不将旧成绩移记到新源码。
 
 ## 源码检查点
 

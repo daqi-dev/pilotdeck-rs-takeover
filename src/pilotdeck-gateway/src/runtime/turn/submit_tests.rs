@@ -1907,3 +1907,6 @@ async fn context_budget_cancelled_wait_does_not_retain_admission() {
         .await
         .expect("#748 cancelled status bounded turn");
 }
+
+#[path = "submit_owned_tests.rs"]
+mod owned;

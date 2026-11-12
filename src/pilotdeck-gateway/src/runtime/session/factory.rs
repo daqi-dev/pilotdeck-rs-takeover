@@ -273,8 +273,16 @@ pub(crate) fn save_cold_projection_checkpoint(
 }
 
 pub(crate) fn try_writer_lease(path: &Path) -> Result<Option<WriterLease>, RuntimeError> {
-    let canonical = crate::storage::canonical_transcript_path(path)
-        .map_err(|e| RuntimeError::new(e.to_string()))?;
+    try_writer_lease_storage(path).map_err(|error| RuntimeError::new(error.to_string()))
+}
+
+/// The same writer ownership protocol with its storage error still intact.
+/// Restore needs the real errno/stage; existing runtime callers retain the
+/// original RuntimeError API and mapping above.
+pub(crate) fn try_writer_lease_storage(
+    path: &Path,
+) -> Result<Option<WriterLease>, crate::storage::LedgerError> {
+    let canonical = crate::storage::canonical_transcript_path(path)?;
     let Ok(process) = writer_mutex(&canonical).try_lock_owned() else {
         return Ok(None);
     };
@@ -285,7 +293,7 @@ pub(crate) fn try_writer_lease(path: &Path) -> Result<Option<WriterLease>, Runti
         {
             return Ok(None);
         }
-        Err(e) => return Err(RuntimeError::new(e.to_string())),
+        Err(error) => return Err(error),
     };
     Ok(Some(WriterLease {
         _file: file,

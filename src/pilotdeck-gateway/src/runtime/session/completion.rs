@@ -29,6 +29,18 @@ struct Handle {
 pub struct TurnCompletionHandle(Arc<Handle>);
 
 impl TurnCompletionHandle {
+    /// Cancel only this captured completion identity. A later turn with the
+    /// same session/run strings has a different watch and cannot be changed.
+    pub(crate) fn cancel_owned(&self, reason: &JsString) {
+        self.0.progress.send_if_modified(|progress| {
+            if progress.done || progress.reason.is_some() {
+                return false;
+            }
+            progress.reason = Some(CompletionAbortReason::Reason(reason.clone()));
+            true
+        });
+    }
+
     pub fn run_id(&self) -> &JsString {
         &self.0.run_id
     }

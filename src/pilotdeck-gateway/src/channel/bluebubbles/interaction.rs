@@ -1,147 +1,68 @@
-//! The `Gateway` half of the TS helper protocol that #1327's `TurnGateway`
-//! port does not carry: `respondElicitation` / `permissionDecide`. The channel
-//! speaks the shared [`InteractionPort`] (`im_interaction.rs`, the wecom/feishu
-//! lane) and this unit supplies its real implementation, backed by the
-//! ported `ImElicitationHelper` / `ImPermissionHelper` state machines plus a
-//! small responder port. The golden replay installs a scripted responder; the
-//! production assembly mount installs [`crate::channel::bluebubbles::no_interaction`]
-//! until the A7 boundary grows the respond calls (registered diff
-//! A8.3-CH-BLUEBUBBLES-002).
-use std::sync::{Arc, Mutex as StdMutex};
-
+//! Compatibility facade for the original scalar-string IM port. The shared
+//! helper owns all state transitions; this facade retains the existing lossy
+//! output boundary for adapters that already used `InteractionPort`.
 use pilotdeck_protocol::{JsString, JsValue};
 
 use crate::channel::im_interaction::{
-    InteractionFuture, InteractionPort, PermissionAnswer as PortAnswer,
+    InteractionFuture, InteractionPort, JsHelperInteraction, JsInteractionPort, JsPermissionAnswer,
+    PermissionAnswer,
 };
-use crate::channel::protocol::{BoxFuture, ChannelError};
-use crate::channel::sms::{
-    self, AnswerGuard, BeginAnswer, DecisionReply, ElicitationResponse, ImElicitationHelper,
-    ImPermissionHelper, PermissionAnswer, PermissionDecision, PermissionDecisionOutcome,
-    PermissionState,
-};
+use crate::channel::protocol::ChannelError;
 
-/// `gateway.respondElicitation(response)` / `gateway.permissionDecide(decision)`
-/// — everything the TS helpers need from the gateway besides `submitTurn`.
-pub trait InteractionResponder: Send + Sync {
-    fn respond_elicitation(
-        &self,
-        response: ElicitationResponse,
-    ) -> BoxFuture<Result<(), ChannelError>>;
-    fn permission_decide(
-        &self,
-        decision: PermissionDecision,
-    ) -> BoxFuture<Result<PermissionDecisionOutcome, ChannelError>>;
-}
+pub use crate::channel::im_interaction::{InteractionResponder, ResponderRef};
 
-pub type ResponderRef = Arc<dyn InteractionResponder>;
-
-/// The `InteractionPort` the channel drives, with the real helper state
-/// machines (`ImElicitationHelper.ts` / `ImPermissionHelper.ts`) behind it.
-pub struct HelperInteraction {
-    responder: ResponderRef,
-    elicitation: StdMutex<ImElicitationHelper>,
-    permissions: PermissionState,
-}
+pub struct HelperInteraction(JsHelperInteraction);
 
 impl HelperInteraction {
     pub fn new(responder: ResponderRef) -> Self {
-        Self {
-            responder,
-            elicitation: StdMutex::new(ImElicitationHelper::default()),
-            permissions: Arc::new(StdMutex::new(ImPermissionHelper::default())),
-        }
-    }
-
-    /// The port's `&str` boundary meets the helpers' `JsString` keys here
-    /// (feishu/wecom accept the same scalar-string boundary at their ports).
-    fn js_id(chat_id: &str) -> JsString {
-        JsString::from(chat_id)
+        Self(JsHelperInteraction::new(responder))
     }
 }
 
-/// `ImPermissionAnswerResult` → the port's scalar-text answer shape.
-fn port_answer(answer: PermissionAnswer) -> PortAnswer {
-    PortAnswer {
-        text: answer
-            .text
-            .map(|text| String::from_utf16_lossy(text.units())),
+fn scalar(text: JsString) -> String {
+    String::from_utf16_lossy(text.units())
+}
+
+fn scalar_answer(answer: JsPermissionAnswer) -> PermissionAnswer {
+    PermissionAnswer {
+        text: answer.text.map(scalar),
         can_advance: answer.can_advance,
         retry_prompt: answer.retry_prompt,
-        answer_token: answer.answer_token.map(u64::from),
+        answer_token: answer.answer_token,
     }
 }
 
 impl InteractionPort for HelperInteraction {
     fn elicitation_pending(&self, chat_id: &str) -> bool {
-        let id = Self::js_id(chat_id);
-        self.elicitation
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .has_pending(&id)
+        self.0.elicitation_pending(&chat_id.into())
     }
 
-    /// `capture`'s question text (`String` through the port boundary).
     fn elicitation_capture(&self, chat_id: &str, session_key: &str, event: &JsValue) -> String {
-        let id = Self::js_id(chat_id);
-        let session_key = JsString::from(session_key);
-        let text = self
-            .elicitation
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .capture(&id, &session_key, event);
-        String::from_utf16_lossy(text.units())
+        scalar(
+            self.0
+                .elicitation_capture(&chat_id.into(), &session_key.into(), event),
+        )
     }
 
-    /// `ImElicitationHelper.answer` including the `respondElicitation` await:
-    /// the channel sees the confirmation text or the error, never the helper
-    /// internals. `take` runs in the same lock section as the pending check
-    /// (#1339 fix-r1's fused shape — TS runs the stretch synchronously).
     fn elicitation_answer<'a>(
         &'a self,
         chat_id: &'a str,
         text: &'a str,
     ) -> InteractionFuture<'a, Result<Option<String>, ChannelError>> {
         Box::pin(async move {
-            let id = Self::js_id(chat_id);
-            let entry = {
-                let mut elicitation = self
-                    .elicitation
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                elicitation.take(&id)
-            };
-            let Some(entry) = entry else {
-                return Ok(None);
-            };
-            let trimmed =
-                JsString::from_utf16(sms::trim_units(JsString::from(text).units()).to_vec());
-            if trimmed.equals_str("0") {
-                let response = sms::elicitation::cancelled_response(&entry);
-                self.responder.respond_elicitation(response).await?;
-                Ok(Some("已取消。".to_owned()))
-            } else {
-                let response = sms::elicitation::answered_response(&entry, &trimmed);
-                self.responder.respond_elicitation(response).await?;
-                Ok(None)
-            }
+            self.0
+                .elicitation_answer(&chat_id.into(), &text.into())
+                .await
+                .map(|value| value.map(scalar))
         })
     }
 
     fn elicitation_clear(&self, chat_id: &str) {
-        let id = Self::js_id(chat_id);
-        self.elicitation
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clear(&id);
+        self.0.elicitation_clear(&chat_id.into());
     }
 
     fn permission_pending(&self, chat_id: &str) -> bool {
-        let id = Self::js_id(chat_id);
-        self.permissions
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .has_pending(&id)
+        self.0.permission_pending(&chat_id.into())
     }
 
     fn permission_capture(
@@ -150,115 +71,35 @@ impl InteractionPort for HelperInteraction {
         session_key: &str,
         event: &JsValue,
     ) -> Option<String> {
-        let id = Self::js_id(chat_id);
-        let session_key = JsString::from(session_key);
-        self.permissions
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .capture(&id, &session_key, event)
-            .map(|text| String::from_utf16_lossy(text.units()))
+        self.0
+            .permission_capture(&chat_id.into(), &session_key.into(), event)
+            .map(scalar)
     }
 
     fn permission_confirm_initial(&self, chat_id: &str, delivered: bool, request_id: Option<&str>) {
-        let id = Self::js_id(chat_id);
-        let expected = request_id.map(JsString::from);
-        self.permissions
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .confirm_initial_prompt(&id, delivered, expected.as_ref());
+        self.0.permission_confirm_initial(
+            &chat_id.into(),
+            delivered,
+            request_id.map(JsString::from).as_ref(),
+        );
     }
 
-    /// `ImPermissionHelper.answerWithState`: the state machine's synchronous
-    /// prefix (`begin_answer`), the single `permissionDecide` await, then
-    /// `finish_answer` / `fail_answer`. The `AnswerGuard` owns the in-flight
-    /// release across the await (#1790), exactly like the sms lane.
     fn permission_answer<'a>(
         &'a self,
         chat_id: &'a str,
         text: &'a str,
-    ) -> InteractionFuture<'a, Result<Option<PortAnswer>, ChannelError>> {
+    ) -> InteractionFuture<'a, Result<Option<PermissionAnswer>, ChannelError>> {
         Box::pin(async move {
-            let id = Self::js_id(chat_id);
-            let text = JsString::from(text);
-            let began = {
-                let mut permissions = self
-                    .permissions
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                permissions.begin_answer(&id, &text)
-            };
-            match began {
-                BeginAnswer::None => Ok(None),
-                BeginAnswer::Status(answer) => Ok(Some(port_answer(answer))),
-                BeginAnswer::Decide {
-                    entry,
-                    deny,
-                    remember,
-                    answer_token,
-                    generation,
-                    shifted_rest,
-                } => {
-                    let mut guard = AnswerGuard::new(
-                        self.permissions.clone(),
-                        id.clone(),
-                        generation,
-                        entry.clone(),
-                        shifted_rest.clone(),
-                    );
-                    let decision = PermissionDecision {
-                        session_key: entry.session_key.clone(),
-                        request_id: entry.request_id.clone(),
-                        deny,
-                        remember,
-                    };
-                    let reply = if deny {
-                        DecisionReply::Deny
-                    } else if remember {
-                        DecisionReply::AllowSession
-                    } else {
-                        DecisionReply::AllowOnce
-                    };
-                    match self.responder.permission_decide(decision).await {
-                        Err(error) => {
-                            self.permissions
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                .fail_answer(&id, generation, entry, shifted_rest);
-                            guard.settle();
-                            Err(error)
-                        }
-                        Ok(outcome) => {
-                            let answer = self
-                                .permissions
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                .finish_answer(
-                                    &id,
-                                    answer_token,
-                                    generation,
-                                    reply,
-                                    shifted_rest,
-                                    outcome,
-                                );
-                            guard.settle();
-                            Ok(answer.map(port_answer))
-                        }
-                    }
-                }
-            }
+            self.0
+                .permission_answer(&chat_id.into(), &text.into())
+                .await
+                .map(|value| value.map(scalar_answer))
         })
     }
 
-    /// The TS channel's catch-side `releaseAnswer(chatGuid, answerToken)` only
-    /// ever ran with an assigned token when the reply POST failed to deliver;
-    /// the decide-failure path leaves the token unset (the helper's own catch
-    /// restored the state), so the error arm here releases nothing.
     fn permission_release_answer(&self, chat_id: &str, answer_token: Option<u64>) {
-        let id = Self::js_id(chat_id);
-        self.permissions
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .release_answer(&id, answer_token.map(|token| token as u32));
+        self.0
+            .permission_release_answer(&chat_id.into(), answer_token);
     }
 
     fn permission_take_next_prompt(
@@ -266,12 +107,9 @@ impl InteractionPort for HelperInteraction {
         chat_id: &str,
         answer_token: Option<u64>,
     ) -> Option<String> {
-        let id = Self::js_id(chat_id);
-        self.permissions
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take_next_prompt(&id, answer_token.map(|token| token as u32))
-            .map(|text| String::from_utf16_lossy(text.units()))
+        self.0
+            .permission_take_next_prompt(&chat_id.into(), answer_token)
+            .map(scalar)
     }
 
     fn permission_prompt_request_id(
@@ -279,12 +117,9 @@ impl InteractionPort for HelperInteraction {
         chat_id: &str,
         answer_token: Option<u64>,
     ) -> Option<String> {
-        let id = Self::js_id(chat_id);
-        self.permissions
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get_prompt_request_id(&id, answer_token.map(|token| token as u32))
-            .map(|text| String::from_utf16_lossy(text.units()))
+        self.0
+            .permission_prompt_request_id(&chat_id.into(), answer_token)
+            .map(scalar)
     }
 
     fn permission_confirm_next(
@@ -294,24 +129,15 @@ impl InteractionPort for HelperInteraction {
         request_id: Option<&str>,
         answer_token: Option<u64>,
     ) {
-        let id = Self::js_id(chat_id);
-        let expected = request_id.map(JsString::from);
-        self.permissions
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .confirm_next_prompt(
-                &id,
-                delivered,
-                expected.as_ref(),
-                answer_token.map(|token| token as u32),
-            );
+        self.0.permission_confirm_next(
+            &chat_id.into(),
+            delivered,
+            request_id.map(JsString::from).as_ref(),
+            answer_token,
+        );
     }
 
     fn permission_clear_after_turn(&self, chat_id: &str) {
-        let id = Self::js_id(chat_id);
-        self.permissions
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clear_after_turn(&id);
+        self.0.permission_clear_after_turn(&chat_id.into());
     }
 }

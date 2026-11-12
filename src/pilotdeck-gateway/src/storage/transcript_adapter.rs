@@ -659,7 +659,7 @@ impl TranscriptWriter {
     }
     /// Standalone recorder convenience constructor; integrations inject their
     /// existing session writer instead of creating another writer for the key.
-    pub(super) fn for_store(store: Arc<dyn TranscriptStore>, key: TranscriptKey) -> Self {
+    pub(crate) fn for_store(store: Arc<dyn TranscriptStore>, key: TranscriptKey) -> Self {
         let base = Arc::new(KeyBase {
             project: ProjectKey {
                 project_root: key.project_root,

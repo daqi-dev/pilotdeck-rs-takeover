@@ -6,7 +6,15 @@
 //! exactly as the baseline CLI resolves them (src/cli/pilotdeck.ts:35-299),
 //! and the inherited environment is handed to the assembly unchanged.
 use super::{Options, assembly, production_api_web, serve_until_signal};
-use crate::{ProxyError, config::Env};
+use crate::{
+    ProxyError,
+    config::Env,
+    telemetry::{
+        NativeTelemetry, TelemetryClient, TelemetryCollector, TelemetryCollectorOptions,
+        TelemetryRuntimeContext,
+    },
+};
+use std::sync::Arc;
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     path::{Path, PathBuf},
@@ -22,6 +30,8 @@ const DRAIN_BUDGET: Duration = Duration::from_millis(5000);
 
 /// What `pilotdeck server` resolved before starting the gateway.
 pub struct ServerOptions {
+    pub telemetry_context: TelemetryRuntimeContext,
+    pub telemetry_enabled: bool,
     /// `resolvePilotHome(env)`.
     pub pilot_home: PathBuf,
     /// `process.cwd()`.
@@ -85,6 +95,15 @@ async fn serve_on_runtime(
     options: ServerOptions,
     listening: impl FnOnce(&Listening),
 ) -> Result<(), ProxyError> {
+    // Collector creation requires this live runtime; the CLI already resolved
+    // its context at the baseline startup point, so no second git probe runs.
+    let mut telemetry_options = TelemetryCollectorOptions::new(
+        options.env.clone().into_iter().collect(),
+        options.pilot_home.clone(),
+        options.telemetry_context.clone(),
+    );
+    telemetry_options.enabled = Some(options.telemetry_enabled);
+    let telemetry = TelemetryCollector::new(telemetry_options);
     ensure_router_dir(&options.pilot_home);
     let process = Options {
         home: options.pilot_home.clone(),
@@ -112,23 +131,39 @@ async fn serve_on_runtime(
         builtin_skills_root: options.builtin_skills_root.clone(),
         builtin_plugins_root: options.builtin_plugins_root.clone(),
         in_process_cli: false,
+        telemetry: Some(NativeTelemetry(telemetry.clone())),
+        telemetry_context: None,
+        telemetry_reload: true,
     };
     // createLocalGateway precedes startGatewayServer in the baseline, so the
     // host and token checks below run with the gateway already built.
     let (host, feishu_webhook, switch_handles) =
-        assembly::start_with_webhook(process, options.env.clone()).await?;
-    let module_host = switch_handles.module_host.clone().ok_or_else(|| {
-        ProxyError::from("module host provider was not constructed during assembly")
-    })?;
+        match assembly::start_with_webhook(process, options.env.clone()).await {
+            Ok(assembled) => assembled,
+            Err(error) => {
+                telemetry.shutdown().await;
+                return Err(error);
+            }
+        };
+    let module_host = match switch_handles.module_host.clone() {
+        Some(module_host) => module_host,
+        None => {
+            let _ = host.shutdown(DRAIN_BUDGET).await;
+            telemetry.shutdown().await;
+            return Err("module host provider was not constructed during assembly".into());
+        }
+    };
     let (server, started) = match bind(&options, &host, feishu_webhook, module_host).await {
         Ok(bound) => bound,
         Err(error) => {
             let _ = host.shutdown(DRAIN_BUDGET).await;
+            telemetry.shutdown().await;
             return Err(error);
         }
     };
     let host_name = options.host.as_deref().unwrap_or("127.0.0.1").to_owned();
-    serve_until_signal(
+    let snapshot_telemetry = telemetry.clone();
+    let result = serve_until_signal(
         DRAIN_BUDGET,
         host,
         server,
@@ -145,8 +180,17 @@ async fn serve_on_runtime(
             });
         },
         || {},
+        Some(Arc::new(move || {
+            if let Ok(Some(snapshot)) =
+                pilotdeck_protocol::stringify_json(&snapshot_telemetry.snapshot())
+            {
+                println!("[telemetry] shutdown snapshot {snapshot}");
+            }
+        })),
     )
-    .await
+    .await;
+    telemetry.shutdown().await;
+    result
 }
 
 /// ProjectRouterEventBusProvider.ensureEventsPath

@@ -1,0 +1,184 @@
+{
+  "boundary": "module seam with real helper and HTTP; not production Gateway registration",
+  "records": [
+    {
+      "mode": "elicitation",
+      "posts": [
+        {
+          "body": {
+            "channel_id": "c",
+            "message": "**h**\nChoose\n1. A\n2. B\n\n回复数字选择（多选用逗号分隔），回复 0 取消。"
+          },
+          "status": 200
+        },
+        {
+          "body": {
+            "channel_id": "c",
+            "message": "finished"
+          },
+          "status": 200
+        }
+      ],
+      "submits": [
+        {
+          "sessionKey": "mattermost:chat=c:general",
+          "channelKey": "mattermost",
+          "message": "start"
+        }
+      ],
+      "answers": [
+        {
+          "sessionKey": "mattermost:chat=c:general",
+          "requestId": "e1",
+          "answer": {
+            "type": "answered",
+            "answers": {
+              "Choose": "A"
+            }
+          }
+        }
+      ],
+      "logs": []
+    },
+    {
+      "mode": "permission",
+      "posts": [
+        {
+          "body": {
+            "channel_id": "c",
+            "message": "工具 write 需要权限才能继续执行。\n\n请求内容：\n{\n  \"path\": \"fixture.txt\"\n}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。"
+          },
+          "status": 200
+        },
+        {
+          "body": {
+            "channel_id": "c",
+            "message": "已允许一次，继续执行。"
+          },
+          "status": 200
+        },
+        {
+          "body": {
+            "channel_id": "c",
+            "message": "工具 read 需要权限才能继续执行。\n\n请求内容：\n{\n  \"path\": \"fixture2.txt\"\n}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。"
+          },
+          "status": 200
+        },
+        {
+          "body": {
+            "channel_id": "c",
+            "message": "已允许本会话，继续执行。"
+          },
+          "status": 200
+        },
+        {
+          "body": {
+            "channel_id": "c",
+            "message": "finished"
+          },
+          "status": 200
+        }
+      ],
+      "submits": [
+        {
+          "sessionKey": "mattermost:chat=c:general",
+          "channelKey": "mattermost",
+          "message": "start"
+        }
+      ],
+      "answers": [
+        {
+          "sessionKey": "mattermost:chat=c:general",
+          "requestId": "p1",
+          "decision": "allow",
+          "remember": false
+        },
+        {
+          "sessionKey": "mattermost:chat=c:general",
+          "requestId": "p2",
+          "decision": "allow",
+          "remember": true
+        }
+      ],
+      "logs": []
+    },
+    {
+      "mode": "permission-initial-failure",
+      "posts": [
+        {
+          "body": {
+            "channel_id": "c",
+            "message": "工具 write 需要权限才能继续执行。\n\n请求内容：\n{\n  \"path\": \"fixture.txt\"\n}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。"
+          },
+          "status": 500
+        },
+        {
+          "body": {
+            "channel_id": "c",
+            "message": "上一条权限提示发送失败，正在重试。"
+          },
+          "status": 200
+        },
+        {
+          "body": {
+            "channel_id": "c",
+            "message": "工具 write 需要权限才能继续执行。\n\n请求内容：\n{\n  \"path\": \"fixture.txt\"\n}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。"
+          },
+          "status": 200
+        },
+        {
+          "body": {
+            "channel_id": "c",
+            "message": "已允许一次，继续执行。"
+          },
+          "status": 200
+        },
+        {
+          "body": {
+            "channel_id": "c",
+            "message": "工具 read 需要权限才能继续执行。\n\n请求内容：\n{\n  \"path\": \"fixture2.txt\"\n}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。"
+          },
+          "status": 200
+        },
+        {
+          "body": {
+            "channel_id": "c",
+            "message": "已允许本会话，继续执行。"
+          },
+          "status": 200
+        },
+        {
+          "body": {
+            "channel_id": "c",
+            "message": "finished"
+          },
+          "status": 200
+        }
+      ],
+      "submits": [
+        {
+          "sessionKey": "mattermost:chat=c:general",
+          "channelKey": "mattermost",
+          "message": "start"
+        }
+      ],
+      "answers": [
+        {
+          "sessionKey": "mattermost:chat=c:general",
+          "requestId": "p1",
+          "decision": "allow",
+          "remember": false
+        },
+        {
+          "sessionKey": "mattermost:chat=c:general",
+          "requestId": "p2",
+          "decision": "allow",
+          "remember": true
+        }
+      ],
+      "logs": [
+        "mattermost: post failed: Error: HTTP 500: fixture rejected"
+      ]
+    }
+  ]
+}

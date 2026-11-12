@@ -254,6 +254,22 @@ fn optional_string(input: &JsValue, key: &str) -> Option<JsString> {
     field(input, key).as_string().cloned()
 }
 
+/// Covers cancellation by dropping the outer tool future before it can poll
+/// the context's abort notification.
+struct AbortOnDrop {
+    signal: AbortSignal,
+    armed: bool,
+}
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        if self.armed {
+            // The signal's callback owns the original channel registration.
+            // Do not look up a possibly newer request by its public ID.
+            self.signal.abort();
+        }
+    }
+}
+
 /// Waits for the channel to settle the request. The call's abort signal is
 /// forwarded to the channel once, which cancels a registered dialog.
 async fn wait(
@@ -261,9 +277,14 @@ async fn wait(
     abort: AbortSignal,
     context: &ToolRunContext,
 ) -> Result<DialogAnswer, String> {
+    let mut abort = AbortOnDrop {
+        signal: abort,
+        armed: true,
+    };
     let mut forwarded = false;
     loop {
         if let Some(result) = request.try_result() {
+            abort.armed = false;
             return result;
         }
         if forwarded {
@@ -274,11 +295,15 @@ async fn wait(
             _ = tokio::time::sleep(POLL) => {}
             _ = context.cancelled() => {
                 forwarded = true;
-                abort.abort();
+                abort.signal.abort();
             }
         }
     }
 }
+
+#[cfg(test)]
+#[path = "request_user_owned_tests.rs"]
+mod owned_tests;
 
 fn text_output(message: JsString, data: JsObject) -> ToolOutput {
     ToolOutput {

@@ -1,0 +1,3 @@
+# Channel commands oracle
+
+`capture.mjs` loads the fixed baseline's compiled command registry using an in-memory gateway, project mapper, reply and search service. It does not start PilotDeck or contact accounts. Run twice in new output files with isolated `HOME` and `PILOT_HOME`; verify source/dist identity and reproducible case rows before using them as an oracle. The source/dist hash pair alone does not prove that dist was built from the fixed source; establish this separately before accepting captures. `/update` only exercises invalid arguments; valid update and `/status` run real child processes in the baseline and require a separately controlled fake executable/PATH environment. Their actual process behavior is not covered by this driver.

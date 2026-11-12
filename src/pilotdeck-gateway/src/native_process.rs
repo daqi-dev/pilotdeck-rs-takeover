@@ -115,6 +115,7 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
         false,
         |address| eprintln!("native listening {address}"),
         || eprintln!("native stopping"),
+        None,
     )
     .await
 }
@@ -132,6 +133,7 @@ async fn serve_until_signal(
     until_clients_leave: bool,
     listening: impl FnOnce(SocketAddr),
     stopping: impl FnOnce(),
+    telemetry_snapshot: Option<Arc<dyn Fn() + Send + Sync>>,
 ) -> Result<(), ProxyError> {
     #[cfg(unix)]
     let signals = (|| -> std::io::Result<_> {
@@ -181,7 +183,8 @@ async fn serve_until_signal(
         switch_wiring::AdmissionGate::new(switch_handles.channels, trigger),
         phased,
     )
-    .with_release_interactions(switch_handles.release_interactions);
+    .with_release_interactions(switch_handles.release_interactions)
+    .with_telemetry_snapshot(telemetry_snapshot);
     let mut timeouts = crate::switch::SwitchTimeouts::production(drain_budget);
     timeouts.entries_unbounded = until_clients_leave;
     let machine = crate::switch::SwitchMachine::new(faces.clone(), timeouts);
@@ -306,6 +309,11 @@ pub struct Options {
     /// gateway, never registers its default project: a turn from an
     /// unregistered working directory is refused `Unknown projectKey`.
     pub in_process_cli: bool,
+    /// An injected collector remains owned by the embedding.
+    pub telemetry: Option<crate::telemetry::NativeTelemetry>,
+    pub telemetry_context: Option<crate::telemetry::TelemetryRuntimeContext>,
+    /// Only the server composition subscribes analytics enabled to config reload.
+    pub telemetry_reload: bool,
 }
 
 pub fn native_requested(first: Option<&std::ffi::OsStr>) -> bool {
@@ -450,6 +458,9 @@ impl Options {
             builtin_skills_root: None,
             builtin_plugins_root: None,
             in_process_cli: false,
+            telemetry: None,
+            telemetry_context: None,
+            telemetry_reload: false,
         })
     }
 

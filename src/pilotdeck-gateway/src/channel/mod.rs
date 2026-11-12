@@ -3,23 +3,37 @@
 pub mod api_server;
 pub mod bluebubbles;
 pub mod cli;
+pub mod commands;
+pub mod dingtalk;
+pub mod discord;
+pub mod email;
 pub mod feishu;
+pub mod homeassistant;
 pub(crate) mod http_client;
 pub(crate) mod im_attachment;
 pub mod im_cron;
 pub(crate) mod im_interaction;
 pub mod loader;
+pub mod matrix;
+pub mod mattermost;
+pub(crate) mod network;
 pub mod protocol;
+pub mod qq;
 pub mod runtime_status;
 pub mod server;
+pub mod signal;
 pub mod slack;
 pub mod sms;
+pub mod telegram;
 #[cfg(test)]
 mod tests;
 pub mod turn_submitter;
 pub mod webhook;
+pub mod wecom;
 pub mod wecom_callback;
 pub mod weixin;
+pub mod whatsapp;
+pub(crate) mod ws_transport;
 
 use std::{
     collections::HashSet,

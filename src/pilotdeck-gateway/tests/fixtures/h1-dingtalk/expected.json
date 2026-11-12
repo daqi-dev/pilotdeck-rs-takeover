@@ -1,0 +1,70 @@
+{
+  "options": {
+    "clientId": "fixture",
+    "clientSecret": "secret",
+    "debug": false
+  },
+  "messages": [
+    {
+      "sessionKey": "dingtalk:chat=room:general",
+      "channelKey": "dingtalk",
+      "message": "hello"
+    },
+    {
+      "sessionKey": "dingtalk:chat=user:general",
+      "channelKey": "dingtalk",
+      "message": "rich text"
+    },
+    {
+      "sessionKey": "dingtalk:chat=room:s_fixed",
+      "channelKey": "dingtalk",
+      "message": "follow"
+    }
+  ],
+  "replies": [
+    {
+      "url": "https://api.dingtalk.com/robot/send?access_token=fixture",
+      "body": {
+        "msgtype": "markdown",
+        "markdown": {
+          "title": "Reply",
+          "text": "你好\n⚠️ mock 执行失败"
+        }
+      }
+    },
+    {
+      "url": "https://api.dingtalk.com/robot/send?access_token=fixture",
+      "body": {
+        "msgtype": "markdown",
+        "markdown": {
+          "title": "Reply",
+          "text": "已创建新会话。"
+        }
+      }
+    },
+    {
+      "url": "https://api.dingtalk.com/robot/send?access_token=fixture",
+      "body": {
+        "msgtype": "markdown",
+        "markdown": {
+          "title": "Reply",
+          "text": "你好\n⚠️ mock 执行失败"
+        }
+      }
+    }
+  ],
+  "logs": [
+    [
+      "info",
+      "dingtalk: connected via Stream mode"
+    ],
+    [
+      "warn",
+      "dingtalk: no sessionWebhook for chat user, cannot send"
+    ],
+    [
+      "info",
+      "dingtalk: stopping (fixture)"
+    ]
+  ]
+}

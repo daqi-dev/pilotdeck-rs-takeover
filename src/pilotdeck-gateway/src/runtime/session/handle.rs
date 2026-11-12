@@ -733,6 +733,16 @@ pub struct SessionSubmission {
     _activity: Option<HandleActivity>,
 }
 impl SessionSubmission {
+    /// Abort the activity this stream still owns. The mutable borrow prevents
+    /// `next` from releasing its guard during the callback; even queued turns
+    /// cannot reserve this handle until that callback has returned. Once EOF
+    /// or an error released the guard this is a no-op, including after reuse.
+    pub(crate) fn abort_owned(&mut self, reason: &JsString) -> RuntimeResult {
+        self._activity
+            .as_ref()
+            .map_or(Ok(()), |activity| activity.0.abort(reason))
+    }
+
     pub async fn next(&mut self) -> Result<Option<JsValue>, RuntimeError> {
         let result = self.stream.next().await;
         if !matches!(result, Ok(Some(_))) {
@@ -1106,3 +1116,7 @@ mod drop_contract_tests;
 #[cfg(test)]
 #[path = "handle_queue_tests.rs"]
 mod queue_tests;
+
+#[cfg(test)]
+#[path = "handle_owned_tests.rs"]
+mod owned_tests;

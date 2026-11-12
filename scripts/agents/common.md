@@ -7,7 +7,7 @@
 - 正式共享工作区：`/Users/da/ws/pilotdeck-rs-cc2c`；分支 `codex/backend-completion`；审查起点 `e8702d36c82cd5fa030d5e8ba3e724b0bfa68c95`。
 - 固定 TS 基线：`OpenBMB/PilotDeck@cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`；本机只读路径 `/Users/da/ws/pilotdeck-rs/resources/PilotDeck`。不修改参考材料。
 - cb8 任务根目录：`/home/clawbox-08/ws/pilotdeck-rs-cc2c`，具体候选 checkout、工具和证据由 E0 登记。按 Git 提交传源码，不同步本机 target、node_modules 或私有状态。
-- 当前生效额度：主协调者加 3 名子智能体。由主协调者统一派工，不自行派生；不假设项目配置热修改可以增加额度。采用当前会话模型，不伪造模型署名。
+- 2026-11-13 本次恢复会话实际生效额度：主协调者加 12 名子智能体；用户明确允许使用 GPT-6.1 Sol 与 GPT-6.1 Terra。由主协调者统一派工，不自行派生；模型署名遵循实际作者，不把历史 3 名额度当作当前上限。
 - 共用 checkout，严格遵守派工的独占文件范围。禁止 reset、清理、覆盖其他人的修改；不要执行旧流程的 merge/reset。公共装配、CLI 顶层、协议类型与 Cargo 依赖由主协调者分配唯一写入人。子智能体不自行提交，主协调者按逻辑单元集中提交。
 
 ## 构建队列

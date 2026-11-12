@@ -1,0 +1,303 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "undici": "6.23.0",
+  "source": "native WebSocket raw loopback, two identical runs; _tmp/20261113-h1-ws-deflate/double-run-compare.json",
+  "cases": [
+    {
+      "name": "broken-deflate",
+      "extension": "permessage-deflate",
+      "frames": [
+        "wQP///8="
+      ],
+      "messages": [],
+      "failure": true,
+      "baselineCrash": false,
+      "inputSource": "raw bytes captured from both native probe runs"
+    },
+    {
+      "name": "context",
+      "extension": "permessage-deflate",
+      "frames": [
+        "wiVKyUwuyczPSyyq1C1OzSvJzEvN0U0ZFRsVGxUbFRsVGxUjIAYA",
+        "wRAaFRsVGxUbFRsVGxUjRwwA"
+      ],
+      "messages": [
+        {
+          "type": "binary",
+          "base64": "ZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLQ=="
+        },
+        {
+          "type": "text",
+          "text": "dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-"
+        }
+      ],
+      "failure": false,
+      "baselineCrash": false,
+      "inputSource": "raw bytes captured from both native probe runs"
+    },
+    {
+      "name": "continuation-rsv1",
+      "extension": "permessage-deflate",
+      "frames": [
+        "QRJKyUwuyczPSyyq1C1OzSvJzEs=",
+        "iQRwaW5n",
+        "wBPN0U0ZFRsVGxUbFRsVGxUjIAYA"
+      ],
+      "messages": [
+        {
+          "type": "text",
+          "text": "dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-"
+        }
+      ],
+      "failure": false,
+      "baselineCrash": false,
+      "inputSource": "raw bytes captured from both native probe runs"
+    },
+    {
+      "name": "control-rsv1",
+      "extension": "permessage-deflate",
+      "frames": [
+        "yQRwaW5n",
+        "wSVKyUwuyczPSyyq1C1OzSvJzEvN0U0ZFRsVGxUbFRsVGxUjIAYA"
+      ],
+      "messages": [
+        {
+          "type": "text",
+          "text": "dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-"
+        }
+      ],
+      "failure": false,
+      "baselineCrash": false,
+      "inputSource": "raw bytes captured from both native probe runs"
+    },
+    {
+      "name": "fragment",
+      "extension": "permessage-deflate",
+      "frames": [
+        "QRJKyUwuyczPSyyq1C1OzSvJzEs=",
+        "iQRwaW5n",
+        "gBPN0U0ZFRsVGxUbFRsVGxUjIAYA"
+      ],
+      "messages": [
+        {
+          "type": "text",
+          "text": "dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-"
+        }
+      ],
+      "failure": false,
+      "baselineCrash": false,
+      "inputSource": "raw bytes captured from both native probe runs"
+    },
+    {
+      "name": "masked",
+      "extension": "permessage-deflate",
+      "frames": [
+        "waUBAgMES8tPKsjOzE8tqNcpT88ozc1JztVMGxYfFBkWHxQZFh8UISMCAQ=="
+      ],
+      "messages": [],
+      "failure": true,
+      "baselineCrash": false,
+      "inputSource": "raw bytes captured from both native probe runs"
+    },
+    {
+      "name": "no-context",
+      "extension": "permessage-deflate; server_no_context_takeover",
+      "frames": [
+        "wiVKyUwuyczPSyyq1C1OzSvJzEvN0U0ZFRsVGxUbFRsVGxUjIAYA",
+        "wRAaFRsVGxUbFRsVGxUjRwwA"
+      ],
+      "messages": [
+        {
+          "type": "binary",
+          "base64": "ZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLWRpY3Rpb25hcnktc2VudGluZWwtZGljdGlvbmFyeS1zZW50aW5lbC1kaWN0aW9uYXJ5LXNlbnRpbmVsLQ=="
+        },
+        {
+          "type": "text",
+          "text": "dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-"
+        }
+      ],
+      "failure": false,
+      "baselineCrash": false,
+      "inputSource": "raw bytes captured from both native probe runs"
+    },
+    {
+      "name": "no-extension",
+      "extension": "",
+      "frames": [
+        "wSVKyUwuyczPSyyq1C1OzSvJzEvN0U0ZFRsVGxUbFRsVGxUjIAYA"
+      ],
+      "messages": [],
+      "failure": true,
+      "baselineCrash": false,
+      "inputSource": "raw bytes captured from both native probe runs"
+    },
+    {
+      "name": "plain",
+      "extension": "permessage-deflate",
+      "frames": [
+        "wSVKyUwuyczPSyyq1C1OzSvJzEvN0U0ZFRsVGxUbFRsVGxUjIAYA"
+      ],
+      "messages": [
+        {
+          "type": "text",
+          "text": "dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-"
+        }
+      ],
+      "failure": false,
+      "baselineCrash": false,
+      "inputSource": "raw bytes captured from both native probe runs"
+    },
+    {
+      "name": "rsv2",
+      "extension": "permessage-deflate",
+      "frames": [
+        "4SVKyUwuyczPSyyq1C1OzSvJzEvN0U0ZFRsVGxUbFRsVGxUjIAYA"
+      ],
+      "messages": [],
+      "failure": true,
+      "baselineCrash": false,
+      "inputSource": "raw bytes captured from both native probe runs"
+    },
+    {
+      "name": "uncompressed",
+      "extension": "permessage-deflate",
+      "frames": [
+        "gQVwbGFpbg=="
+      ],
+      "messages": [
+        {
+          "type": "text",
+          "text": "plain"
+        }
+      ],
+      "failure": false,
+      "baselineCrash": false,
+      "inputSource": "raw bytes captured from both native probe runs"
+    },
+    {
+      "name": "unknown-alongside",
+      "extension": "permessage-deflate; unrequested-extension",
+      "frames": [
+        "wSVKyUwuyczPSyyq1C1OzSvJzEvN0U0ZFRsVGxUbFRsVGxUjIAYA"
+      ],
+      "messages": [
+        {
+          "type": "text",
+          "text": "dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-"
+        }
+      ],
+      "failure": false,
+      "baselineCrash": false,
+      "inputSource": "raw bytes captured from both native probe runs"
+    },
+    {
+      "name": "unknown-extension",
+      "extension": "unrequested-extension",
+      "frames": [
+        "wSVKyUwuyczPSyyq1C1OzSvJzEvN0U0ZFRsVGxUbFRsVGxUjIAYA"
+      ],
+      "messages": [],
+      "failure": true,
+      "baselineCrash": false,
+      "inputSource": "raw bytes captured from both native probe runs"
+    },
+    {
+      "name": "window-\"9\"",
+      "extension": "permessage-deflate; server_max_window_bits=\"9\"",
+      "frames": [
+        "wSVKyUwuyczPSyyq1C1OzSvJzEvN0U0ZFRsVGxUbFRsVGxUjIAYA"
+      ],
+      "messages": [],
+      "failure": true,
+      "baselineCrash": false,
+      "inputSource": "raw bytes captured from both native probe runs"
+    },
+    {
+      "name": "window-0",
+      "extension": "permessage-deflate; server_max_window_bits=0",
+      "frames": [
+        "wSVKyUwuyczPSyyq1C1OzSvJzEvN0U0ZFRsVGxUbFRsVGxUjIAYA"
+      ],
+      "messages": [],
+      "failure": true,
+      "baselineCrash": true,
+      "inputSource": "deterministic plain probe frame; crashing child emitted stderr before JSON capture"
+    },
+    {
+      "name": "window-09",
+      "extension": "permessage-deflate; server_max_window_bits=09",
+      "frames": [
+        "wSVKyUwuyczPSyyq1C1OzSvJzEvN0U0ZFRsVGxUbFRsVGxUjIAYA"
+      ],
+      "messages": [
+        {
+          "type": "text",
+          "text": "dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-"
+        }
+      ],
+      "failure": false,
+      "baselineCrash": false,
+      "inputSource": "raw bytes captured from both native probe runs"
+    },
+    {
+      "name": "window-15",
+      "extension": "permessage-deflate; server_max_window_bits=15",
+      "frames": [
+        "wSVKyUwuyczPSyyq1C1OzSvJzEvN0U0ZFRsVGxUbFRsVGxUjIAYA"
+      ],
+      "messages": [
+        {
+          "type": "text",
+          "text": "dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-"
+        }
+      ],
+      "failure": false,
+      "baselineCrash": false,
+      "inputSource": "raw bytes captured from both native probe runs"
+    },
+    {
+      "name": "window-16",
+      "extension": "permessage-deflate; server_max_window_bits=16",
+      "frames": [
+        "wSVKyUwuyczPSyyq1C1OzSvJzEvN0U0ZFRsVGxUbFRsVGxUjIAYA"
+      ],
+      "messages": [],
+      "failure": true,
+      "baselineCrash": true,
+      "inputSource": "deterministic plain probe frame; crashing child emitted stderr before JSON capture"
+    },
+    {
+      "name": "window-8",
+      "extension": "permessage-deflate; server_max_window_bits=8",
+      "frames": [
+        "wSVKyUwuyczPSyyq1C1OzSvJzEvN0U0ZFRsVGxUbFRsVGxUjIAYA"
+      ],
+      "messages": [
+        {
+          "type": "text",
+          "text": "dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-"
+        }
+      ],
+      "failure": false,
+      "baselineCrash": false,
+      "inputSource": "raw bytes captured from both native probe runs"
+    },
+    {
+      "name": "window-9",
+      "extension": "permessage-deflate; server_max_window_bits=9",
+      "frames": [
+        "wSVKyUwuyczPSyyq1C1OzSvJzEvN0U0ZFRsVGxUbFRsVGxUjIAYA"
+      ],
+      "messages": [
+        {
+          "type": "text",
+          "text": "dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-dictionary-sentinel-"
+        }
+      ],
+      "failure": false,
+      "baselineCrash": false,
+      "inputSource": "raw bytes captured from both native probe runs"
+    }
+  ]
+}

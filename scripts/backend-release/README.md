@@ -8,7 +8,7 @@
 
 ## 构建输入
 
-在已固定且构建成功的 checkout 中，由构建负责人生成完整 `cargo metadata --locked --format-version 1`，不能使用 `--no-deps`。记录必须保留构建命令、退出码、工具链/目标信息和源码身份。采集元数据须在同一依赖缓存仍可读取时完成许可证归集。
+在已固定且构建成功的 checkout 中，由构建负责人生成完整 `cargo metadata --locked --all-features --format-version 1`，不能使用 `--no-deps`；还须覆盖 Cargo.lock 的所有 registry/git 包，缺失即拒绝。曾有普通 metadata 只含270包，遗漏锁文件中的6个可选依赖，因此不能用于发行。记录必须保留构建命令、退出码、工具链/目标信息和源码身份。采集元数据须在同一依赖缓存仍可读取时完成许可证归集。
 
 ```sh
 python3 scripts/backend-release/record.py \

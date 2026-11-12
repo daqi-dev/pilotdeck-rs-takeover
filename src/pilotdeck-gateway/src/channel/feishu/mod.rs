@@ -1004,6 +1004,7 @@ impl Runtime {
                 session_key: JsString::from(turn.session_key.as_str()),
                 channel_key: self.key.clone(),
                 message: JsString::from(turn.message.as_str()),
+                ..Default::default()
             })
             .await
         {

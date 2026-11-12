@@ -400,6 +400,47 @@ async fn start_assembly(
     switch_slots: Option<super::switch_wiring::AssemblySwitchSlots>,
     seams: AssemblySeams,
 ) -> Result<TurnGateway, ProxyError> {
+    let mut telemetry_options = crate::telemetry::GatewayTelemetryBundleOptions::new(
+        env.clone().into_iter().collect(),
+        options.home.clone(),
+        options.project_root.clone(),
+    );
+    telemetry_options.telemetry = options.telemetry.as_ref().map(|client| client.0.clone());
+    telemetry_options.context = options.telemetry_context.clone();
+    let telemetry = crate::telemetry::GatewayTelemetryBundle::new(telemetry_options)
+        .map_err(|error| ProxyError::from(error.to_string()))?;
+    let result = start_assembly_resources(
+        options,
+        env,
+        upload_cleanup_interval,
+        cleanup_observer,
+        cleanup_diagnostic.clone(),
+        webhook_slot,
+        switch_slots,
+        seams,
+        telemetry.clone(),
+    )
+    .await;
+    if result.is_err()
+        && let Err(error) = telemetry.dispose().await
+    {
+        cleanup_diagnostic(&error.to_string());
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn start_assembly_resources(
+    options: Options,
+    env: Env,
+    upload_cleanup_interval: Duration,
+    cleanup_observer: CleanupObserver,
+    cleanup_diagnostic: Arc<dyn Fn(&str) + Send + Sync>,
+    webhook_slot: Option<Arc<std::sync::OnceLock<Arc<crate::channel::feishu::FeishuWebhookSlot>>>>,
+    switch_slots: Option<super::switch_wiring::AssemblySwitchSlots>,
+    seams: AssemblySeams,
+    telemetry_bundle: Arc<crate::telemetry::GatewayTelemetryBundle>,
+) -> Result<TurnGateway, ProxyError> {
     let AssemblySeams {
         extensions,
         permission_rule_sets,
@@ -479,6 +520,11 @@ async fn start_assembly(
             emit: gateway_emit.clone(),
             active_run: active_run.clone(),
         })),
+        Some(Arc::new(
+            crate::runtime::memory::edgeclaw::factory::MemoryTelemetry(Arc::new(
+                crate::telemetry::NativeTelemetry(telemetry_bundle.client()),
+            )),
+        )),
     );
     // The public host provider reads the same project runtimes the sessions
     // run on (createLocalGateway.ts:1524-1556).
@@ -1737,6 +1783,18 @@ async fn start_assembly(
             idle_options,
         )
     };
+    if !channel_assembly.set_interaction_responder(Arc::new(
+        crate::channel::im_interaction::NativeInteractionResponder::new(interactions.clone()),
+    )) {
+        let _ = factory.dispose().await;
+        let _ = project.dispose().await;
+        return Err("channel interaction responder already published".into());
+    }
+    let build_telemetry = telemetry_bundle.clone();
+    let cleanup_telemetry = telemetry_bundle.clone();
+    let telemetry_subscription: Arc<OnceLock<crate::config::store::Subscription>> = Arc::default();
+    let build_telemetry_subscription = telemetry_subscription.clone();
+    let cleanup_telemetry_subscription = telemetry_subscription.clone();
     let build_channels = channel_assembly.clone();
     let cleanup_channels = channel_assembly.clone();
     // #2294: the builder constructs and starts the one automation bundle (the
@@ -1861,7 +1919,19 @@ async fn start_assembly(
             // (createLocalGateway.ts:795-835, 1383-1410), composed in
             // `services::native_settings_for_process`; a store load failure
             // fails assembly, like the TS boot.
-            let settings = super::services::native_settings_for_process(
+            let maintenance_project = build_project.clone();
+            let memory_maintenance = Arc::new(
+                crate::runtime::memory::maintenance::ProjectMemoryMaintenanceController::new(
+                    Arc::new(move |key: Option<&JsString>| {
+                        let root =
+                            key.map(|key| PathBuf::from(String::from_utf16_lossy(key.units())));
+                        maintenance_project.resolve(root.as_deref())
+                    }),
+                    Arc::new(crate::telemetry::NativeTelemetry(build_telemetry.client())),
+                    None,
+                ),
+            );
+            let settings = super::services::native_settings_for_process_with_maintenance(
                 owner.clone(),
                 build_project.clone(),
                 &options.homedir(),
@@ -1871,13 +1941,16 @@ async fn start_assembly(
                 &options.project_root,
                 &env,
                 session_overrides.clone(),
-                Some(Arc::new(super::services::NativeOutputStylesReload {
-                    options: options.clone(),
-                    project: build_project.clone(),
-                    owner: owner.clone(),
-                    interactions: interactions.clone(),
-                    overrides: session_overrides.clone(),
-                })),
+                super::services::NativeProcessRefreshPorts {
+                    output_styles: Some(Arc::new(super::services::NativeOutputStylesReload {
+                        options: options.clone(),
+                        project: build_project.clone(),
+                        owner: owner.clone(),
+                        interactions: interactions.clone(),
+                        overrides: session_overrides.clone(),
+                    })),
+                    memory_maintenance,
+                },
             )?;
             let cron_hooks = cron::NativeCronHooks {
                 session_overrides: session_overrides.config_overrides(),
@@ -1902,6 +1975,22 @@ async fn start_assembly(
                     worktree_broadcast.broadcast("worktree_created", &JsValue::Object(payload));
                 })),
             };
+            if !options.in_process_cli {
+                build_channels
+                    .attach_config_store(&settings.store)
+                    .map_err(|error| std::io::Error::other(error.message().to_string()))?;
+            }
+            if options.telemetry_reload {
+                let subscription = crate::telemetry::subscribe_enabled_reload(
+                    &settings.store,
+                    build_telemetry.client(),
+                );
+                build_telemetry_subscription
+                    .set(subscription)
+                    .map_err(|_| {
+                        std::io::Error::other("telemetry config subscription already published")
+                    })?;
+            }
             settings.bundle.bind_server(build_connection_broadcast);
             // `configStore.startWatching()` (createLocalGateway.ts:801): a
             // config file change reloads the store, which the refresh bundle
@@ -2010,11 +2099,14 @@ async fn start_assembly(
                 coordinator,
                 registry: runs.map(|runs| runs as Arc<dyn TurnRunRegistry>),
                 workspace_admissions: WorkspaceAdmissions::default(),
-                host: Arc::new(GatewaySubmitHost::new(
-                    services,
-                    Arc::new(NativeSubmitReplacement((*replacement).clone())),
-                    Arc::new(GatewaySubmitAdmission::new(admission)),
-                )),
+                host: Arc::new(
+                    GatewaySubmitHost::new(
+                        services,
+                        Arc::new(NativeSubmitReplacement((*replacement).clone())),
+                        Arc::new(GatewaySubmitAdmission::new(admission)),
+                    )
+                    .with_telemetry(build_telemetry.client()),
+                ),
                 projector,
             });
             // #2294: attach the live gateway facade and start the bundle.
@@ -2172,6 +2264,9 @@ async fn start_assembly(
                 )
                 .await;
                 let channel_flush = cleanup_channels.flush().await;
+                if let Some(subscription) = cleanup_telemetry_subscription.get() {
+                    subscription.unsubscribe();
+                }
                 // #1959: the completion flags flip before the observers run, so
                 // an observer that stalls cannot un-complete a finished
                 // resource (and the fallback below will not re-run it).
@@ -2193,7 +2288,11 @@ async fn start_assembly(
                     &cleanup_ephemeral.1,
                     &cleanup_ephemeral.2,
                 );
-                let mut outcome = sessions.and(project);
+                let telemetry_dispose = cleanup_telemetry
+                    .dispose()
+                    .await
+                    .map_err(|error| error.to_string());
+                let mut outcome = sessions.and(project).and(telemetry_dispose);
                 for failure in [
                     automation_stop.err(),
                     channel_stop.err(),
@@ -2235,6 +2334,7 @@ async fn start_assembly(
             if !startup.is_empty() {
                 channel_assembly.server().start_channels(startup);
             }
+            channel_assembly.activate_config_reload();
             Ok(host)
         }
         Err(error) => {
@@ -2463,6 +2563,7 @@ pub(super) fn project_registry(options: &Options, env: &Env) -> Arc<ProjectRunti
         crate::extensions::NativeExtensions::default(),
         None,
         None,
+        None,
     )
 }
 
@@ -2621,6 +2722,7 @@ fn project_registry_with(
     extensions: crate::extensions::NativeExtensions,
     on_completion: Option<crate::runtime::background::CompletionHandler>,
     router_events: Option<Arc<dyn crate::runtime::model::router::RouterEventSink>>,
+    telemetry: Option<crate::runtime::project::TelemetryClient>,
 ) -> Arc<ProjectRuntimeRegistry> {
     // `builtinPlugins: options.builtinPlugins ?? loadBuiltinPlugins()`
     // (ProjectRuntimeRegistry.ts:1609): one scan for the process, shared by
@@ -2647,7 +2749,7 @@ fn project_registry_with(
             homedir: Some(options.homedir()),
             builtin_skills_root: options.builtin_skills_root.clone(),
             now: Arc::new(SystemTime::now),
-            telemetry: None,
+            telemetry,
             config_version: None,
             runtime_profile_overrides: RuntimeProfileOverrides::default(),
             families: Families {

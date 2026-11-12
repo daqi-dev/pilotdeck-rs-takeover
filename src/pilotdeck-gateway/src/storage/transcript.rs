@@ -402,7 +402,7 @@ pub(super) fn after_debris(current: &[u8], appended: &[u8]) -> Vec<u8> {
     next
 }
 /// Private sibling for an atomic replace; removed on drop unless renamed away.
-pub(super) fn create_temporary(path: &Path) -> Result<(File, Temporary)> {
+pub(crate) fn create_temporary(path: &Path) -> Result<(File, Temporary)> {
     let temporary = path.with_file_name(format!(".ledger-{}.tmp", uuid()?));
     let file = private_open()
         .write(true)
@@ -426,7 +426,12 @@ pub(super) fn private_dirs(dir: &Path) -> io::Result<()> {
     dirs.mode(0o700);
     dirs.create(dir).map_err(|e| path_error(e, "mkdir", dir))
 }
-pub(super) struct Temporary(pub(super) PathBuf);
+pub(crate) struct Temporary(pub(super) PathBuf);
+impl Temporary {
+    pub(crate) fn path(&self) -> &Path {
+        &self.0
+    }
+}
 impl Drop for Temporary {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);

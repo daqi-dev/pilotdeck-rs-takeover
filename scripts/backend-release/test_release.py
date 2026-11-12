@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 from common import Path, archive, digest, inventory, write_json
 from verify import verify
 from assemble import dependencies
@@ -92,6 +93,19 @@ class PackageTests(unittest.TestCase):
         write_json(metadata, {"packages": []})
         with self.assertRaisesRegex(ValueError, "metadata is incomplete"):
             dependencies(metadata, source, self.root)
+
+    def test_supplement_does_not_replace_embedded_native_notice(self):
+        source, crate, metadata = self.dependency_fixture()
+        (crate / "native/COPYING").write_text("native dependency license")
+        wrapper = Path(self.temp.name) / "wrapper-license"
+        wrapper.write_text("wrapper license")
+        with patch("assemble.supplement", return_value=(wrapper, {"file": "wrapper-license"})):
+            dependencies(metadata, source, self.root)
+        result = json.loads((self.root / "dependencies.json").read_text())
+        notices = result["packages"][0]["noticeFiles"]
+        self.assertEqual(len(notices), 2)
+        self.assertEqual({(self.root / p).read_text() for p in notices},
+                         {"native dependency license", "wrapper license"})
 
     def test_native_dependency_notices_are_retained_with_wrapper_license(self):
         source, crate, metadata = self.dependency_fixture()

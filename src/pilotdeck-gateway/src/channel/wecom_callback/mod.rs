@@ -559,6 +559,7 @@ impl Runtime {
                 session_key: JsString::from(session_key),
                 channel_key: self.key.clone(),
                 message: JsString::from(message),
+                ..Default::default()
             })
             .await
         {

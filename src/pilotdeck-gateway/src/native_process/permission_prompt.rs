@@ -9,7 +9,7 @@
 use crate::{
     config::permission::{PermissionRule, RuleSetHandle},
     runtime::{
-        interaction::{GatewayInteractionCoordinator, PendingEntry},
+        interaction::{GatewayInteractionCoordinator, PendingEntry, Registration},
         tools::ToolRunContext,
     },
 };
@@ -19,6 +19,16 @@ use std::{
     time::Duration,
 };
 use tokio::sync::oneshot;
+
+/// A pending request belongs to this particular future, including when its
+/// caller drops it before an answer or abort can reach the ordinary cleanup.
+/// Registration disposal uses its unique token, never a session/request sweep.
+struct PendingPermission(Registration);
+impl Drop for PendingPermission {
+    fn drop(&mut self) {
+        self.0.dispose();
+    }
+}
 
 /// `GatewaySessionInteractionFacade.emit`: push a gateway event into the
 /// session's active `submit_turn` stream; `false` when there is none.
@@ -223,6 +233,7 @@ impl PermissionPrompt {
         let Ok(registration) = registration else {
             return PromptOutcome::Deny("Permission prompt denied.".into());
         };
+        let registration = PendingPermission(registration);
         // `settle`: only the party that takes the entry off the bus decides.
         let settle = |reason: &str| -> Option<PromptOutcome> {
             bus.consume(&self.session, &request_id, None)
@@ -246,7 +257,7 @@ impl PermissionPrompt {
                 _ = tokio::time::sleep(self.timeout) => settle("Permission prompt timed out."),
             }
         };
-        registration.dispose();
+        registration.0.dispose();
         match answer {
             Some(outcome) => outcome,
             // Someone else consumed the entry between the trigger and our
@@ -356,6 +367,10 @@ fn session_allow_rules(options: Option<&JsValue>, fallback: &JsString) -> Vec<Pe
         })
         .collect()
 }
+
+#[cfg(test)]
+#[path = "permission_prompt_owned_tests.rs"]
+mod owned_tests;
 
 #[cfg(test)]
 mod tests {

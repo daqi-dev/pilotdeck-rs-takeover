@@ -1006,6 +1006,7 @@ async fn the_drain_forwards_every_event_and_stops_when_the_sink_throws() {
     let mut broken = Scripted(VecDeque::from([Err(SubmitError {
         code: "channel_closed".into(),
         message: "closed".into(),
+        error_name: None,
     })]));
     let failure = super::drain_turn(&mut broken, &mut |_| true)
         .await

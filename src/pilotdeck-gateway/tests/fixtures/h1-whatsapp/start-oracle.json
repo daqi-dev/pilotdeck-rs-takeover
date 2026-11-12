@@ -1,0 +1,59 @@
+{
+  "records": [
+    {
+      "bridgePath": "bad\u0000bridge.mjs",
+      "logs": [
+        [
+          "error",
+          "whatsapp: start failed: TypeError [ERR_INVALID_ARG_VALUE]: The argument 'args[0]' must be a string without null bytes. Received 'bad\\x00bridge.mjs'"
+        ]
+      ],
+      "readinessCalls": 0,
+      "child": null,
+      "running": false
+    },
+    {
+      "bridgePath": "prefix\u0000suffix",
+      "logs": [
+        [
+          "error",
+          "whatsapp: start failed: TypeError [ERR_INVALID_ARG_VALUE]: The argument 'args[0]' must be a string without null bytes. Received 'prefix\\x00suffix'"
+        ]
+      ],
+      "readinessCalls": 0,
+      "child": null,
+      "running": false
+    },
+    {
+      "bridgePath": "plain\nline\u0000.mjs",
+      "logs": [
+        [
+          "error",
+          "whatsapp: start failed: TypeError [ERR_INVALID_ARG_VALUE]: The argument 'args[0]' must be a string without null bytes. Received 'plain\\nline\\x00.mjs'"
+        ]
+      ],
+      "readinessCalls": 0,
+      "child": null,
+      "running": false
+    }
+  ],
+  "asyncRecord": {
+    "mode": "actual OS spawn failure with injected executable and successful readiness",
+    "logs": [
+      [
+        "error",
+        "whatsapp: bridge spawn error: Error: spawn <missing-executable> ENOENT"
+      ],
+      [
+        "info",
+        "whatsapp: connected, polling http://127.0.0.1:18081/messages"
+      ],
+      [
+        "info",
+        "whatsapp: stopping (fixture)"
+      ]
+    ],
+    "readinessCalls": 1,
+    "runningBeforeStop": true
+  }
+}
