@@ -578,6 +578,12 @@ impl SessionTools {
                 })
                     as Arc<dyn crate::runtime::hooks::runtime::AsyncHookRegistrationHandler>
             }),
+            // Command hooks run on the execution world's (sandboxed) shell.
+            shell: self.world.sandbox.confines().then(|| {
+                Arc::new(crate::runtime::hooks::exec::LocalShellPort::sandboxed(
+                    self.world.sandbox,
+                )) as Arc<dyn crate::runtime::hooks::exec::ShellPort>
+            }),
         };
         let _ = self.permission.3.set(self.tool_hooks.clone());
         self

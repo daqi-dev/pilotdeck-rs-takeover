@@ -1,0 +1,82 @@
+{
+ "name": "sandbox-ww-hooks",
+ "about": "agent.sandboxMode=workspace-write 下的命令 hook（SessionInteractionBundle.ts 以 executionWorld.shell 构造 CommandHookExecutor，受限模式下即 SandboxedShellPort）：插件的 PostToolUse hook 在插件目录写文件、写 home 下文件，并输出 additionalContext。比较 hook 事件、发给 provider 的请求与落盘。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\n  sandboxMode: workspace-write\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+ "files": {
+  "home/.pilotdeck/plugins/bbx-sbx/plugin.json": {
+   "name": "bbx-sbx",
+   "version": "0.1.0",
+   "description": "bbx sandbox hook",
+   "hooks": {
+    "PostToolUse": [
+     {
+      "matcher": "bash",
+      "hooks": [
+       {
+        "type": "command",
+        "command": "pwd > hook-pwd.txt; echo rc=$? >&2; echo h > {HOME}/hook-home.txt; echo rc=$? >&2; printf '%s\\n' '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"hook ran\"}}'"
+       }
+      ]
+     }
+    ]
+   }
+  }
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Hk\"}"
+   }
+  },
+  {
+   "name": "h1-after",
+   "when": [
+    "h1:",
+    "\"tool_call_id\":\"call_h1\""
+   ],
+   "reply": {
+    "text": "Done h1."
+   }
+  },
+  {
+   "name": "h1",
+   "when": [
+    "h1:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_h1",
+     "name": "bash",
+     "arguments": {
+      "command": "echo hi"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-hk",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-hk",
+    "channelKey": "test",
+    "message": "h1: go"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 300
+  }
+ ]
+}
