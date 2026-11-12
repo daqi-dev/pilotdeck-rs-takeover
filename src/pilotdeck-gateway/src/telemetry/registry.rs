@@ -352,12 +352,12 @@ impl TelemetryRegistration {
         }
     }
     fn report(&self, observation: &TelemetryObservation, error: &TelemetryFailure) {
-        if let Some(registry) = self.inner.registry.upgrade() {
-            if let Some(handler) = &registry.failure {
-                let _ = catch_unwind(AssertUnwindSafe(|| {
-                    handler(&self.inner.name, self.inner.generation, observation, error)
-                }));
-            }
+        if let Some(registry) = self.inner.registry.upgrade()
+            && let Some(handler) = &registry.failure
+        {
+            let _ = catch_unwind(AssertUnwindSafe(|| {
+                handler(&self.inner.name, self.inner.generation, observation, error)
+            }));
         }
     }
     pub fn dispose(&self) -> BoxFuture<Result<(), TelemetryFailure>> {
@@ -452,10 +452,10 @@ impl Drop for Release {
         let mut state = lock(&self.registration.inner.state);
         state.inflight -= 1;
         self.registration.inner.count.send_replace(state.inflight);
-        if state.inflight == 0 {
-            if let Some(drained) = state.drain.take() {
-                drained.send_replace(true);
-            }
+        if state.inflight == 0
+            && let Some(drained) = state.drain.take()
+        {
+            drained.send_replace(true);
         }
     }
 }

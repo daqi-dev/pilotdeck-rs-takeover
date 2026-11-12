@@ -296,16 +296,16 @@ impl Shared {
             }
         }
         let network = self.runtime.lock().expect("HA runtime").network.take();
-        if let Some(network) = network {
-            if let Err(error) = network.await {
-                self.runtime
-                    .lock()
-                    .expect("HA runtime")
-                    .stop_errors
-                    .push(ChannelError::error(format!(
-                        "homeassistant socket task failed: {error}"
-                    )));
-            }
+        if let Some(network) = network
+            && let Err(error) = network.await
+        {
+            self.runtime
+                .lock()
+                .expect("HA runtime")
+                .stop_errors
+                .push(ChannelError::error(format!(
+                    "homeassistant socket task failed: {error}"
+                )));
         }
         let chats = {
             let mut runtime = self.runtime.lock().expect("HA runtime");
@@ -348,9 +348,10 @@ impl Shared {
         // Admit/map the first frame before a later frame can win on another
         // runtime worker. The spawned task repolls and installs its own waker.
         let mut incoming = Box::pin(self.clone().incoming(chat, text));
-        if let Poll::Pending = incoming
+        if incoming
             .as_mut()
             .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending()
         {
             let mut runtime = self.runtime.lock().expect("HA runtime");
             let errors = reap_finished(&mut runtime.tasks, "message");

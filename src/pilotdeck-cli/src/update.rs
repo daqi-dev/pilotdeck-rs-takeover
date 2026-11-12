@@ -7,12 +7,11 @@
 //! Rust runtime nor claims to update a standalone Rust distribution. A native
 //! installation without the script fails before looking for Node.
 use crate::{Failure, stderr_line};
-use rustix::process::{Pid, Signal, WaitId, WaitIdOptions, waitid};
+use rustix::process::Signal;
 use signal_hook::consts::signal::{SIGINT, SIGTERM};
 use std::io::{self, Read, Write};
-use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::ExitStatus;
 use std::sync::{
     Arc, OnceLock,
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -20,7 +19,9 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-const MISSING_UPDATER: &str = "This installation does not include the Git Web updater. Use application settings or update manually.";
+use pilotdeck_gateway::channel::commands::update::{
+    MISSING_UPDATER, OwnedUpdater, find_update_root,
+};
 
 /// `handleUpdateCommand` (`src/cli/pilotdeck.ts:351-359`). Arguments belong
 /// to the installed updater, including validation of unknown options. Exit 2
@@ -44,12 +45,6 @@ pub(crate) fn run(argv: &[String]) -> Result<u8, Failure> {
     }
 }
 
-fn find_update_root(start: Option<&Path>) -> Option<&Path> {
-    start?
-        .ancestors()
-        .find(|directory| directory.join("scripts/update-web.mjs").exists())
-}
-
 fn run_process(root: &Path, argv: &[String]) -> io::Result<ExitStatus> {
     let signals = UpdateSignals::install()?;
     if let Some(signal) = signals.take() {
@@ -59,15 +54,7 @@ fn run_process(root: &Path, argv: &[String]) -> io::Result<ExitStatus> {
     // CLI only needs Node for this optional Web-management command, resolved
     // through the installation owner's PATH. No TS gateway/agent fallback is
     // introduced into the native startup path.
-    let mut child = Command::new("node")
-        .arg(root.join("scripts/update-web.mjs"))
-        .args(argv)
-        .current_dir(root)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .process_group(0)
-        .spawn()?;
+    let mut child = pilotdeck_gateway::channel::commands::update::command(root, argv).spawn()?;
     let stdout = child.stdout.take().expect("piped updater stdout");
     let stderr = child.stderr.take().expect("piped updater stderr");
     let owner = OwnedUpdater::new(child);
@@ -165,62 +152,6 @@ impl Drop for UpdateSignals {
         // the normal process behavior outside this command's owned lifetime.
         self.0.default_action.store(true, Ordering::SeqCst);
         self.0.active.store(false, Ordering::SeqCst);
-    }
-}
-
-struct OwnedUpdater {
-    child: Child,
-    group: Option<Pid>,
-}
-
-impl OwnedUpdater {
-    fn new(child: Child) -> Self {
-        let group = Pid::from_raw(child.id() as i32).expect("spawn returned positive updater PID");
-        Self {
-            child,
-            group: Some(group),
-        }
-    }
-
-    fn exited(&mut self) -> io::Result<bool> {
-        let group = self.group.expect("updater has not been reaped");
-        match waitid(
-            WaitId::Pid(group),
-            WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
-        ) {
-            Ok(status) => Ok(status.is_some()),
-            Err(rustix::io::Errno::INTR) => Ok(false),
-            Err(error) => {
-                if error == rustix::io::Errno::CHILD {
-                    // An externally reaped PID is no longer an ownership
-                    // certificate. Never signal that numeric group again.
-                    self.group = None;
-                }
-                Err(error.into())
-            }
-        }
-    }
-
-    fn signal(&self, signal: Signal) {
-        if let Some(group) = self.group {
-            let _ = rustix::process::kill_process_group(group, signal);
-        }
-    }
-
-    fn reap(&mut self) -> io::Result<ExitStatus> {
-        // The last group signal has already been sent. Dropping the anchor
-        // before wait prevents any later path from targeting a reused PGID.
-        self.group = None;
-        self.child.wait()
-    }
-}
-
-impl Drop for OwnedUpdater {
-    fn drop(&mut self) {
-        if self.group.is_some() {
-            self.signal(Signal::KILL);
-            let _ = self.reap();
-        }
     }
 }
 
@@ -346,11 +277,7 @@ fn decode_output(pending: &mut Vec<u8>, eof: bool) -> Vec<u8> {
 }
 
 fn process_error(error: &io::Error) -> String {
-    match error.kind() {
-        io::ErrorKind::NotFound => "spawn node ENOENT".to_owned(),
-        io::ErrorKind::PermissionDenied => "spawn node EACCES".to_owned(),
-        _ => error.to_string(),
-    }
+    pilotdeck_gateway::channel::commands::update::spawn_error_message(error)
 }
 
 #[cfg(test)]

@@ -83,12 +83,12 @@ pub fn message_text(body: &JsValue) -> JsString {
     if kind == "mixed" {
         if let Some(JsValue::Array(items)) = body.get("mixed").and_then(|m| m.get("msg_item")) {
             for item in items {
-                if lower(&string(item, "msgtype")) == "text" {
-                    if let Some(text) = item.get("text") {
-                        let c = trim(string(text, "content"));
-                        if !c.is_empty() {
-                            parts.push(c);
-                        }
+                if lower(&string(item, "msgtype")) == "text"
+                    && let Some(text) = item.get("text")
+                {
+                    let c = trim(string(text, "content"));
+                    if !c.is_empty() {
+                        parts.push(c);
                     }
                 }
             }
@@ -100,26 +100,26 @@ pub fn message_text(body: &JsValue) -> JsString {
                 parts.push(c);
             }
         }
-        if kind == "voice" || kind == "appmsg" {
-            if let Some(value) = body.get(&kind) {
-                let c = trim(string(
-                    value,
-                    if kind == "voice" { "content" } else { "title" },
-                ));
-                if !c.is_empty() {
-                    parts.push(c);
-                }
+        if (kind == "voice" || kind == "appmsg")
+            && let Some(value) = body.get(&kind)
+        {
+            let c = trim(string(
+                value,
+                if kind == "voice" { "content" } else { "title" },
+            ));
+            if !c.is_empty() {
+                parts.push(c);
             }
         }
     }
-    if parts.is_empty() {
-        if let Some(quote) = body.get("quote") {
-            let kind = lower(&string(quote, "msgtype"));
-            if kind == "text" || kind == "voice" {
-                if let Some(value) = quote.get(&kind) {
-                    return trim(string(value, "content"));
-                }
-            }
+    if parts.is_empty()
+        && let Some(quote) = body.get("quote")
+    {
+        let kind = lower(&string(quote, "msgtype"));
+        if (kind == "text" || kind == "voice")
+            && let Some(value) = quote.get(&kind)
+        {
+            return trim(string(value, "content"));
         }
     }
     let mut result = Vec::new();

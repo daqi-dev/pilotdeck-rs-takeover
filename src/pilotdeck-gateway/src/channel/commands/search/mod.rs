@@ -12,6 +12,7 @@ mod title;
 #[derive(Debug)]
 pub enum Failure {
     Error(String),
+    JsError(JsString),
 }
 fn node_fs_message(error: &std::io::Error, syscall: &str, path: &Path) -> Option<String> {
     crate::node_fs_message(error, syscall, Some(path.to_string_lossy().as_ref()))
@@ -63,7 +64,7 @@ struct Target {
 pub struct SearchInput<'a> {
     pub home: &'a Path,
     pub cwd: &'a Path,
-    pub project: Option<&'a str>,
+    pub project: Option<&'a JsString>,
     pub session: Option<&'a JsString>,
     pub query: &'a JsString,
     pub limit: f64,
@@ -192,22 +193,41 @@ fn internal(id: &str) -> bool {
 fn collect(
     home: &Path,
     cwd: &Path,
-    project: Option<&str>,
+    project: Option<&JsString>,
     session: Option<&JsString>,
 ) -> Vec<Target> {
+    // Resolve the project identity as UTF-16 before disk encoding. Disk .cwd
+    // markers are valid UTF-8 and cannot equal an unpaired surrogate that
+    // survives lexical resolution; in that case TS falls back to legacy slug.
+    let directory = |project: &JsString| {
+        let resolved = crate::metadata::resolve_units(&cwd.to_string_lossy(), project);
+        let disk = String::from_utf16_lossy(resolved.units());
+        let dir = if resolved.to_utf8().is_ok() {
+            session_chat_dir(home, cwd, &disk)
+        } else {
+            home.join("projects")
+                .join(crate::metadata::project_id(Path::new(&disk)))
+                .join("chats")
+        };
+        // Storage resolution is absolute, but result.projectKey retains the
+        // caller's spelling, as in NodeSessionSearchPort.
+        (String::from_utf16_lossy(project.units()), dir)
+    };
     if let Some(id) = session.filter(|id| !id.is_empty()) {
         if internal(&String::from_utf16_lossy(id.units())) {
             return vec![];
         }
-        let project = project.unwrap_or_else(|| cwd.to_str().unwrap_or(""));
+        let fallback = JsString::from(cwd.to_string_lossy().as_ref());
+        let (project, dir) = directory(project.unwrap_or(&fallback));
         let id = crate::storage::sanitize_session_id(id);
         return vec![Target {
-            path: session_chat_dir(home, cwd, project).join(format!("{id}.jsonl")),
-            project: project.into(),
+            path: dir.join(format!("{id}.jsonl")),
+            project,
         }];
     }
     if let Some(project) = project.filter(|p| !p.is_empty()) {
-        return list(&session_chat_dir(home, cwd, project), project);
+        let (project, dir) = directory(project);
+        return list(&dir, &project);
     }
     list_session_entries(&home.join("projects"))
         .unwrap_or_default()

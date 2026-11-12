@@ -509,9 +509,12 @@ async fn channel_bridge_preserves_optional_fields_for_both_submission_modes() {
                     assert!(fields.get(key).is_none(), "unexpected {key}");
                 }
             }
-            // Exhaust the real submission even if a later validation rejects
-            // the synthetic fixture; the bridge assertion is at admission.
-            while matches!(bounded(stream.next()).await, Ok(Some(_))) {}
+            // Release the real fixture's accepted, terminal and SessionEnd
+            // gates; otherwise its stream intentionally waits forever.
+            fixture.session.accepted.open();
+            fixture.session.terminal.open();
+            fixture.session.end.open();
+            while bounded(stream.next()).await.unwrap().is_some() {}
             drop(stream);
             fixture.clean().await;
         }
@@ -531,7 +534,10 @@ async fn legacy_channel_submit_starts_before_its_future_is_polled() {
     bounded(fixture.entered.notified()).await;
     assert_eq!(fixture.inputs.lock().unwrap().len(), 1);
     let mut stream = bounded(future).await.unwrap();
-    while matches!(bounded(stream.next()).await, Ok(Some(_))) {}
+    fixture.session.accepted.open();
+    fixture.session.terminal.open();
+    fixture.session.end.open();
+    while bounded(stream.next()).await.unwrap().is_some() {}
     drop(stream);
     fixture.clean().await;
 }

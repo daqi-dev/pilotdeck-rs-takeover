@@ -1,0 +1,223 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "cases": [
+    {
+      "name": "plain",
+      "input": {
+        "type": "text",
+        "text": "/local:greet arg"
+      },
+      "body": " body ",
+      "result": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<plugin-command name=\"/local:greet\">\n<command-body>\n<<<PILOTDECK_COMMAND_BODY_0>>>\nbody\n<<<PILOTDECK_COMMAND_BODY_0>>>\n</command-body>\n\n<command-argument>\n<<<PILOTDECK_COMMAND_ARGUMENT_0>>>\narg\n<<<PILOTDECK_COMMAND_ARGUMENT_0>>>\n</command-argument>\n</plugin-command>"
+              }
+            ]
+          }
+        ],
+        "shouldCallModel": true,
+        "diagnostics": [],
+        "command": {
+          "name": "local:greet",
+          "argument": "arg",
+          "source": "extension"
+        }
+      }
+    },
+    {
+      "name": "no-argument",
+      "input": {
+        "type": "text",
+        "text": "/local:greet"
+      },
+      "body": "body",
+      "result": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<plugin-command name=\"/local:greet\">\n<command-body>\n<<<PILOTDECK_COMMAND_BODY_0>>>\nbody\n<<<PILOTDECK_COMMAND_BODY_0>>>\n</command-body>\n\n</plugin-command>"
+              }
+            ]
+          }
+        ],
+        "shouldCallModel": true,
+        "diagnostics": [],
+        "command": {
+          "name": "local:greet",
+          "source": "extension"
+        }
+      }
+    },
+    {
+      "name": "empty-body",
+      "input": {
+        "type": "text",
+        "text": "/local:greet arg"
+      },
+      "body": " ",
+      "result": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Run plugin command \"/local:greet\" with argument: arg"
+              }
+            ]
+          }
+        ],
+        "shouldCallModel": true,
+        "diagnostics": [],
+        "command": {
+          "name": "local:greet",
+          "argument": "arg",
+          "source": "extension"
+        }
+      }
+    },
+    {
+      "name": "unknown",
+      "input": {
+        "type": "text",
+        "text": "/unknown arg"
+      },
+      "body": "body",
+      "result": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "/unknown arg"
+              }
+            ]
+          }
+        ],
+        "shouldCallModel": true,
+        "diagnostics": [
+          {
+            "code": "unknown_command",
+            "severity": "warning",
+            "message": "Slash command /unknown is not registered. Forwarding as plain text."
+          }
+        ],
+        "command": {
+          "name": "unknown",
+          "argument": "arg",
+          "source": "unknown"
+        }
+      }
+    },
+    {
+      "name": "blocks",
+      "input": {
+        "type": "blocks",
+        "content": [
+          {
+            "type": "text",
+            "text": "/local:greet arg"
+          }
+        ]
+      },
+      "body": "body",
+      "result": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "/local:greet arg"
+              }
+            ]
+          }
+        ],
+        "shouldCallModel": true,
+        "diagnostics": []
+      }
+    },
+    {
+      "name": "collision",
+      "input": {
+        "type": "text",
+        "text": "/local:greet arg"
+      },
+      "body": "<<<PILOTDECK_COMMAND_BODY_0>>>",
+      "result": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<plugin-command name=\"/local:greet\">\n<command-body>\n<<<PILOTDECK_COMMAND_BODY_1>>>\n<<<PILOTDECK_COMMAND_BODY_0>>>\n<<<PILOTDECK_COMMAND_BODY_1>>>\n</command-body>\n\n<command-argument>\n<<<PILOTDECK_COMMAND_ARGUMENT_0>>>\narg\n<<<PILOTDECK_COMMAND_ARGUMENT_0>>>\n</command-argument>\n</plugin-command>"
+              }
+            ]
+          }
+        ],
+        "shouldCallModel": true,
+        "diagnostics": [],
+        "command": {
+          "name": "local:greet",
+          "argument": "arg",
+          "source": "extension"
+        }
+      }
+    },
+    {
+      "name": "unicode",
+      "input": {
+        "type": "text",
+        "text": "/local:greet\ufeff\ud800"
+      },
+      "body": "body",
+      "result": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<plugin-command name=\"/local:greet\">\n<command-body>\n<<<PILOTDECK_COMMAND_BODY_0>>>\nbody\n<<<PILOTDECK_COMMAND_BODY_0>>>\n</command-body>\n\n<command-argument>\n<<<PILOTDECK_COMMAND_ARGUMENT_0>>>\n\ud800\n<<<PILOTDECK_COMMAND_ARGUMENT_0>>>\n</command-argument>\n</plugin-command>"
+              }
+            ]
+          }
+        ],
+        "shouldCallModel": true,
+        "diagnostics": [],
+        "command": {
+          "name": "local:greet",
+          "argument": "\ud800",
+          "source": "extension"
+        }
+      }
+    }
+  ],
+  "bounded": {
+    "length": 40259,
+    "sha256Utf16Le": "b66b4faa57ed52839940a15d801896910cd834bc576f30d65dfb0bb8598a5c5d",
+    "diagnostics": [
+      {
+        "code": "plugin_command_body_truncated",
+        "severity": "warning",
+        "message": "Plugin command /local:greet body exceeded 32000 characters and was truncated."
+      },
+      {
+        "code": "plugin_command_argument_truncated",
+        "severity": "warning",
+        "message": "Plugin command /local:greet argument exceeded 8000 characters and was truncated."
+      }
+    ]
+  }
+}

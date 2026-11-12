@@ -421,17 +421,18 @@ async fn elicitation_answer_bypasses_busy_and_keeps_utf16_request_and_option() {
     let prompt = outgoing(&mut wire).await;
     ack(&channel.shared, &prompt, true);
     channel.shared.dispatch("conversation.a".into(), "2".into());
-    let responses = responder.elicitation.lock().unwrap();
-    assert_eq!(responses.len(), 1);
-    assert_eq!(
-        responses[0].request_id,
-        Some(JsString::from_utf16(vec![101, 0xd800]))
-    );
-    assert_eq!(
-        responses[0].answer.get("answers").unwrap().get("Q"),
-        Some(&JsValue::String(JsString::from_utf16(vec![98, 0xd800])))
-    );
-    drop(responses);
+    {
+        let responses = responder.elicitation.lock().unwrap();
+        assert_eq!(responses.len(), 1);
+        assert_eq!(
+            responses[0].request_id,
+            Some(JsString::from_utf16(vec![101, 0xd800]))
+        );
+        assert_eq!(
+            responses[0].answer.get("answers").unwrap().get("Q"),
+            Some(&JsValue::String(JsString::from_utf16(vec![98, 0xd800])))
+        );
+    }
     assert_eq!(gateway.requests.lock().unwrap().len(), 1);
     channel.shared.stop_and_drain().await.unwrap();
 }
@@ -962,7 +963,28 @@ async fn failed_cancel_retains_owned_stream_for_retry_and_only_then_clears_helpe
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn compressed_same_write_runs_ready_turns_but_keeps_held_turn_busy() {
     use base64::Engine;
-    use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+    use tokio_tungstenite::tungstenite::handshake::server::{
+        Callback, ErrorResponse, Request, Response,
+    };
+
+    struct DeflateHandshake;
+    impl Callback for DeflateHandshake {
+        fn on_request(
+            self,
+            request: &Request,
+            mut response: Response,
+        ) -> Result<Response, ErrorResponse> {
+            assert_eq!(
+                request.headers()["sec-websocket-extensions"],
+                "permessage-deflate; client_max_window_bits"
+            );
+            response.headers_mut().insert(
+                "sec-websocket-extensions",
+                "permessage-deflate".parse().unwrap(),
+            );
+            Ok(response)
+        }
+    }
 
     let fixture: serde_json::Value = serde_json::from_str(include_str!(
         "../../../tests/fixtures/h1-homeassistant/compressed-ready.json"
@@ -991,22 +1013,9 @@ async fn compressed_same_write_runs_ready_turns_but_keeps_held_turn_busy() {
             ..Default::default()
         }));
         let (stream, _) = listener.accept().await.unwrap();
-        let mut peer = tokio_tungstenite::accept_hdr_async(
-            stream,
-            |request: &Request, mut response: Response| {
-                assert_eq!(
-                    request.headers()["sec-websocket-extensions"],
-                    "permessage-deflate; client_max_window_bits"
-                );
-                response.headers_mut().insert(
-                    "sec-websocket-extensions",
-                    "permessage-deflate".parse().unwrap(),
-                );
-                Ok(response)
-            },
-        )
-        .await
-        .unwrap();
+        let mut peer = tokio_tungstenite::accept_hdr_async(stream, DeflateHandshake)
+            .await
+            .unwrap();
         peer.send(Message::Text("{\"type\":\"auth_ok\"}".into()))
             .await
             .unwrap();

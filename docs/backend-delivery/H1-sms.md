@@ -62,3 +62,5 @@ cargo test -p pilotdeck-gateway --lib channel::sms::tests
 | 接线 | 待集成 | 公共装配调用新network入口 |
 | 验证 | 进行中 | 新短TS特征、真实本地HTTP测试、正式入口及负控 |
 | 交付 | 待实现 | 固定集成候选及发行组合 |
+
+根封存4525bb2候选的五项native SMS测试全部通过；Telegram4和QQ8也通过。全channel同binary807集合800通过/1失败/6ignored，唯一失败为旧SMS fixed-host端口装置；忽略项与fixture生成尚待显式关闭，不能据此关包。失败单项sealed binary两次稳定exit101，证据 `_tmp/20261113-sms-dual-stack-first/`，排除807并发竞态。macOS26.6.1对dual-stack non-listening holder允许IPv4 SO_REUSEADDR bind+listen，随后connect却吞SYN；装置误以connect推翻已成功的产品形状bind。仅修装置成功bind后return，原test成功分支进一步调用实际 `bind_listener` 证明产品可绑定；跳过probe的原mutant仍不能通过。新补丁尚未编译。

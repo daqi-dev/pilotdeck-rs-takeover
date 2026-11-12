@@ -214,15 +214,16 @@ async fn real_websocket_subscribe_reply_correlation_and_turn_payload_match_ts() 
         .await
         .unwrap()
         .unwrap();
-    let turns = turns.lock().unwrap();
-    assert_eq!(turns.len(), 1);
-    let request = &turns[0];
-    assert_eq!(request.message, JsString::from("hello"));
-    assert_eq!(request.session_key, JsString::from("wecom:dm=user:general"));
-    assert!(request.attachments.is_none());
-    assert_eq!(request.allow_plan_mode_tools, Some(false));
-    assert!(request.synthetic_messages.is_some());
-    drop(turns);
+    {
+        let turns = turns.lock().unwrap();
+        assert_eq!(turns.len(), 1);
+        let request = &turns[0];
+        assert_eq!(request.message, JsString::from("hello"));
+        assert_eq!(request.session_key, JsString::from("wecom:dm=user:general"));
+        assert!(request.attachments.is_none());
+        assert_eq!(request.allow_plan_mode_tools, Some(false));
+        assert!(request.synthetic_messages.is_some());
+    }
     release_tx.send(()).unwrap();
     tokio::time::timeout(Duration::from_secs(3), handle.stop("fixture"))
         .await
@@ -830,5 +831,245 @@ fn access_lists_do_not_collapse_distinct_lone_utf16_identities() {
             0xd800, 44, 0xd801
         ])))),
         vec![left, right]
+    );
+}
+
+#[cfg(unix)]
+#[derive(Debug)]
+struct UpdatePidIdentity {
+    pid: i32,
+    ppid: i32,
+    pgid: i32,
+    birth: String,
+    state: String,
+    command: String,
+}
+#[cfg(unix)]
+fn update_pid_identity(pid: i32) -> std::io::Result<Option<UpdatePidIdentity>> {
+    let output = std::process::Command::new("/bin/ps")
+        .args([
+            "-p",
+            &pid.to_string(),
+            "-o",
+            "pid=,ppid=,pgid=,lstart=,stat=,command=",
+        ])
+        .output()?;
+    if !output.status.success() {
+        return if output.status.code() == Some(1) {
+            Ok(None)
+        } else {
+            Err(std::io::Error::other("ps process identity failed"))
+        };
+    }
+    let text = String::from_utf8(output.stdout).map_err(std::io::Error::other)?;
+    let fields = text.split_whitespace().collect::<Vec<_>>();
+    if fields.len() < 10 {
+        return Err(std::io::Error::other("truncated ps process identity"));
+    }
+    let number = |index: usize| fields[index].parse::<i32>().map_err(std::io::Error::other);
+    let identity = UpdatePidIdentity {
+        pid: number(0)?,
+        ppid: number(1)?,
+        pgid: number(2)?,
+        birth: fields[3..8].join(" "),
+        state: fields[8].into(),
+        command: fields[9..].join(" "),
+    };
+    if identity.pid != pid || pid <= 0 {
+        return Err(std::io::Error::other("wrong ps process identity"));
+    }
+    Ok(Some(identity))
+}
+#[cfg(unix)]
+struct ExactUpdateCleanup(std::path::PathBuf);
+#[cfg(unix)]
+impl Drop for ExactUpdateCleanup {
+    fn drop(&mut self) {
+        let recorded = std::fs::read(self.0.join("update-identities.json"))
+            .ok()
+            .and_then(|raw| serde_json::from_slice::<serde_json::Value>(&raw).ok());
+        for file in ["update-child", "update-leader"] {
+            let Some(pid) = std::fs::read_to_string(self.0.join(file))
+                .ok()
+                .and_then(|raw| raw.trim().parse::<i32>().ok())
+                .filter(|pid| *pid > 0)
+            else {
+                continue;
+            };
+            let Some(identity) = update_pid_identity(pid).ok().flatten() else {
+                continue;
+            };
+            let recorded_match = recorded
+                .as_ref()
+                .and_then(|records| records.as_array())
+                .is_some_and(|records| {
+                    records.iter().any(|record| {
+                        record["pid"].as_i64() == Some(i64::from(pid))
+                            && record["pgid"].as_i64() == Some(i64::from(identity.pgid))
+                            && record["birth"].as_str() == Some(identity.birth.as_str())
+                            && record["command"].as_str() == Some(identity.command.as_str())
+                    })
+                });
+            let own_unrecorded_leader = file == "update-leader"
+                && identity.pgid == pid
+                && identity.command.contains(self.0.to_string_lossy().as_ref());
+            if !identity.state.starts_with('Z')
+                && (recorded_match || own_unrecorded_leader)
+                && let Some(pid) = rustix::process::Pid::from_raw(pid)
+            {
+                let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
+            }
+        }
+    }
+}
+#[cfg(unix)]
+#[tokio::test]
+async fn update_stop_drains_only_its_process_group_and_inherited_pipes() {
+    use std::{
+        fs,
+        os::unix::{fs::PermissionsExt, process::CommandExt},
+        process::Command,
+    };
+    const CHILD: &str = "PDRS_WECOM_UPDATE_TEST_ROOT";
+    if let Some(root) = std::env::var_os(CHILD) {
+        let root = std::path::PathBuf::from(root);
+        struct Bystander(std::process::Child);
+        impl Drop for Bystander {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let mut command = Command::new("/bin/sleep");
+        command.arg("300").process_group(0);
+        let mut bystander = Bystander(command.spawn().unwrap());
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        let peer = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let subscribe = socket.next().await.unwrap().unwrap();
+            let subscribe = parse_json(subscribe.to_text().unwrap()).unwrap();
+            socket
+                .send(Message::Text(
+                    encode(&object([
+                        ("headers", subscribe.get("headers").unwrap().clone()),
+                        ("body", object([("errcode", JsValue::Number(0.0))])),
+                    ]))
+                    .into(),
+                ))
+                .await
+                .unwrap();
+            socket.send(Message::Text(r#"{"cmd":"aibot_msg_callback","headers":{"req_id":"update-command"},"body":{"msgid":"update-command","from":{"userid":"user"},"msgtype":"text","text":{"content":"/update"}}}"#.into())).await.unwrap();
+            let announcement = socket.next().await.unwrap().unwrap();
+            let announcement = parse_json(announcement.to_text().unwrap()).unwrap();
+            assert!(string(&announcement, "cmd").equals_str("aibot_respond_msg"));
+            let text = announcement
+                .get("body")
+                .unwrap()
+                .get("markdown")
+                .map(|body| string(body, "content"))
+                .unwrap();
+            assert!(String::from_utf16_lossy(text.units()).starts_with("⏳ "));
+            socket
+                .send(Message::Text(
+                    r#"{"headers":{"req_id":"update-command"},"body":{"errcode":0}}"#.into(),
+                ))
+                .await
+                .unwrap();
+            // After cancellation there must be no synthetic failure/success
+            // reply. The next and only frame is the owned socket close.
+            assert!(matches!(
+                socket.next().await.unwrap().unwrap(),
+                Message::Close(_)
+            ));
+        });
+        let mut config = options(url);
+        config.command_host = Some(Arc::new(
+            crate::channel::commands::host::NativeCommandsHost::new(
+                root.join("pilot"),
+                root.clone(),
+                Some(root.join("bin/pilotdeck")),
+                Some(std::time::Instant::now()),
+            ),
+        ));
+        let channel = WeComChannel::new(config, js_helper_interaction(Arc::new(Responder)));
+        let handle = channel.start(Default::default()).await.unwrap();
+        let (leader,descendant,identities)=tokio::time::timeout(Duration::from_secs(5),async {
+            loop {
+                let read_pid=|file:&str|fs::read_to_string(root.join(file)).ok().and_then(|raw|raw.trim().parse::<i32>().ok()).filter(|pid|*pid>0);
+                if let (Some(leader),Some(descendant))=(read_pid("update-leader"),read_pid("update-child"))
+                    && let (Some(parent),Some(child))=(update_pid_identity(leader).unwrap(),update_pid_identity(descendant).unwrap())
+                    && parent.pgid==leader && child.pgid==leader && child.ppid==leader && !parent.state.starts_with('Z') && !child.state.starts_with('Z') {
+                    let records=serde_json::json!([{"pid":leader,"pgid":parent.pgid,"birth":parent.birth,"command":parent.command},{"pid":descendant,"pgid":child.pgid,"birth":child.birth,"command":child.command}]);
+                    break (leader,descendant,records);
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        }).await.expect("positive PID files and owned process identities before stop");
+        fs::write(
+            root.join("update-identities.json"),
+            serde_json::to_vec(&identities).unwrap(),
+        )
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), handle.stop("held updater"))
+            .await
+            .expect("channel stop awaits actual updater kill/reap/pipe drain")
+            .unwrap();
+        // Leader wait() is synchronous in the updater owner before receipt.
+        // Descendant inherited both pipes, so keeping it alive cannot pass.
+        assert!(
+            update_pid_identity(leader).unwrap().is_none(),
+            "updater leader must already be reaped at stop receipt"
+        );
+        if let Some(child) = update_pid_identity(descendant).unwrap() {
+            assert!(
+                child.state.starts_with('Z'),
+                "owned descendant still live at stop receipt: {child:?}"
+            );
+        }
+        assert!(
+            bystander.0.try_wait().unwrap().is_none(),
+            "unrelated process must survive"
+        );
+        assert!(channel.0.handlers.lock().unwrap().is_empty());
+        peer.await.unwrap();
+        return;
+    }
+    let scratch = Scratch(
+        std::env::temp_dir().join(format!("pilotdeck-wecom-update-{}", uuid::Uuid::new_v4())),
+    );
+    let root = &scratch.0;
+    let _cleanup = ExactUpdateCleanup(root.clone());
+    for directory in ["bin", "scripts", "home", "pilot"] {
+        fs::create_dir_all(root.join(directory)).unwrap();
+    }
+    fs::write(root.join("scripts/update-web.mjs"), "// local mock only\n").unwrap();
+    fs::write(root.join("bin/pilotdeck"), "").unwrap();
+    fs::write(root.join("bin/node"),"#!/bin/sh\n/bin/sleep 300 &\nprintf '%s' \"$$\" > update-leader\nprintf '%s' \"$!\" > update-child\nprintf 'held stdout\\n'\nprintf 'held stderr\\n' >&2\nwait\n").unwrap();
+    fs::set_permissions(root.join("bin/node"), fs::Permissions::from_mode(0o755)).unwrap();
+    let exact = format!(
+        "{}::update_stop_drains_only_its_process_group_and_inherited_pipes",
+        module_path!().split_once("::").unwrap().1
+    );
+    let mut process = tokio::process::Command::new(std::env::current_exe().unwrap());
+    process
+        .args(["--exact", &exact, "--nocapture"])
+        .env(CHILD, root)
+        .env("HOME", root.join("home"))
+        .env("PILOT_HOME", root.join("pilot"))
+        .env("PATH", root.join("bin"))
+        .kill_on_drop(true);
+    let output = tokio::time::timeout(Duration::from_secs(15), process.output())
+        .await
+        .expect("isolated update test deadline")
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
 }

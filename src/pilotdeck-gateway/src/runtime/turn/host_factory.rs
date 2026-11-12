@@ -192,6 +192,7 @@ pub struct SessionPorts {
     pub compaction: CompactionPorts,
     /// `sdkSessionConfig.skills`: the prompt lists only these skills.
     pub skills: Option<Vec<String>>,
+    pub plugin_contributions: Option<crate::runtime::plugins::PluginSessionContributionSnapshot>,
     /// The session's context-runtime state (cache generations, prompt-time
     /// anchors) that the baseline keeps for the live session's lifetime.
     /// `None` composes a context with fresh state, as a new session would.
@@ -230,6 +231,7 @@ pub struct TurnHostFactory {
     agent_config: Option<JsObject>,
     permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
     turn_override_sink: Option<super::live::TurnOverrideSink>,
+    input_transform: Option<super::live::InputTransform>,
     /// See [`LiveSessionAdapter::as_in_process_loop`].
     in_process_loop: bool,
     /// The session's project root; `None` is the registry's default project.
@@ -282,6 +284,7 @@ impl TurnHostFactory {
             agent_config: None,
             permission_mode_source: None,
             turn_override_sink: None,
+            input_transform: None,
             project_root: None,
         }
     }
@@ -351,6 +354,11 @@ impl TurnHostFactory {
         self
     }
 
+    pub fn with_input_transform(mut self, transform: Option<super::live::InputTransform>) -> Self {
+        self.input_transform = transform;
+        self
+    }
+
     /// See [`LiveSessionAdapter::with_turn_override_sink`].
     pub fn with_turn_override_sink(mut self, sink: super::live::TurnOverrideSink) -> Self {
         self.turn_override_sink = Some(sink);
@@ -386,6 +394,7 @@ impl TurnHostFactory {
         let agent_config = self.agent_config.clone();
         let permission_mode_source = self.permission_mode_source.take();
         let turn_override_sink = self.turn_override_sink.take();
+        let input_transform = self.input_transform.take();
         let in_process_loop = self.in_process_loop;
         let durable_message_observer = self.durable_message_observer.clone();
         let factory = Arc::new(self);
@@ -431,6 +440,10 @@ impl TurnHostFactory {
         };
         let session = match turn_override_sink {
             Some(sink) => session.with_turn_override_sink(sink),
+            None => session,
+        };
+        let session = match input_transform {
+            Some(transform) => session.with_input_transform(transform),
             None => session,
         };
         if in_process_loop {
@@ -567,6 +580,7 @@ impl TurnHostFactory {
             mut interaction,
             compaction,
             skills,
+            plugin_contributions,
             context_state,
         } = ports;
         let context = lease
@@ -655,11 +669,16 @@ impl TurnHostFactory {
             None => Some(
                 session_context_runtime(
                     &context,
-                    tool_results_dir,
-                    compaction,
-                    compaction_model,
-                    skills.as_deref(),
-                    context_state,
+                    SessionContextInputs {
+                        tool_results_dir,
+                        compaction,
+                        compaction_model,
+                        skills: skills.as_deref(),
+                        plugin_contributions: plugin_contributions.as_ref(),
+                        session_state: context_state,
+                        memory_disabled: context_config.get("subagentMemoryDisabled")
+                            == Some(&JsValue::Bool(true)),
+                    },
                 )
                 .await?,
             ),
@@ -708,14 +727,29 @@ use crate::runtime::context as context_runtime;
 /// The session's context runtime composed from the leased generation's
 /// context storage (`SessionContextRuntimeBundle.compose`), with the
 /// session's compaction ports.
-async fn session_context_runtime(
-    context: &crate::runtime::project::StageContext,
+struct SessionContextInputs<'a> {
     tool_results_dir: PathBuf,
     compaction: CompactionPorts,
     compaction_model: Arc<dyn crate::host::modules::model::ModelExecution>,
-    skills: Option<&[String]>,
+    skills: Option<&'a [String]>,
+    plugin_contributions: Option<&'a crate::runtime::plugins::PluginSessionContributionSnapshot>,
     session_state: Option<Arc<crate::runtime::context::SessionContextState>>,
+    memory_disabled: bool,
+}
+
+async fn session_context_runtime(
+    context: &crate::runtime::project::StageContext,
+    inputs: SessionContextInputs<'_>,
 ) -> Result<Arc<dyn context::ContextRuntime>, HostError> {
+    let SessionContextInputs {
+        tool_results_dir,
+        compaction,
+        compaction_model,
+        skills,
+        plugin_contributions,
+        session_state,
+        memory_disabled,
+    } = inputs;
     let storage = context
         .resource(Resource::InstructionStorage)
         .ok_or_else(|| {
@@ -747,7 +781,7 @@ async fn session_context_runtime(
             message,
         )
     };
-    let extension = session_extension(context, skills)
+    let extension = session_extension(context, skills, plugin_contributions)
         .await
         .map_err(|error| session_error(error.to_string()))?;
     Ok(Arc::new(
@@ -765,6 +799,7 @@ async fn session_context_runtime(
                         },
                     ),
                     session_state,
+                    memory_disabled,
                     ..Default::default()
                 },
             )
@@ -908,11 +943,16 @@ impl TurnHostFactory {
         );
         let runtime = session_context_runtime(
             &context,
-            ports.tool_results_dir,
-            ports.compaction,
-            compaction_model,
-            ports.skills.as_deref(),
-            ports.context_state,
+            SessionContextInputs {
+                tool_results_dir: ports.tool_results_dir,
+                compaction: ports.compaction,
+                compaction_model,
+                skills: ports.skills.as_deref(),
+                plugin_contributions: ports.plugin_contributions.as_ref(),
+                session_state: ports.context_state,
+                memory_disabled: ports.context_config.get("subagentMemoryDisabled")
+                    == Some(&JsValue::Bool(true)),
+            },
         )
         .await?;
         Ok(MaintenanceContext {
@@ -931,10 +971,44 @@ impl TurnHostFactory {
 async fn session_extension(
     context: &crate::runtime::project::StageContext,
     selected: Option<&[String]>,
+    snapshot: Option<&crate::runtime::plugins::PluginSessionContributionSnapshot>,
 ) -> Result<
     Option<Arc<dyn context_runtime::ExtensionResolver>>,
     crate::runtime::plugins::PluginRuntimeError,
 > {
+    if let Some(snapshot) = snapshot {
+        let disabled = crate::runtime::project::skills_module_disabled(&context.snapshot());
+        return Ok(Some(Arc::new(PluginExtension {
+            commands: snapshot
+                .commands
+                .iter()
+                .map(|command| context_runtime::ContributedCommand {
+                    name: command.name.clone(),
+                    description: command.description.clone(),
+                    argument_hint: command.argument_hint.clone(),
+                })
+                .collect(),
+            skills: snapshot
+                .skills
+                .iter()
+                .filter(|_| !disabled)
+                .filter(|skill| selected.is_none_or(|names| names.contains(&skill.name)))
+                .map(|skill| context_runtime::ContributedSkill {
+                    name: skill.name.clone(),
+                    description: skill.description.clone(),
+                    path: skill.path.to_string_lossy().into_owned(),
+                })
+                .collect(),
+            mcp_instructions: snapshot
+                .mcp_instructions
+                .iter()
+                .map(|entry| context_runtime::McpServerInstruction {
+                    server_name: String::from_utf16_lossy(entry.server_name.units()),
+                    instructions: Some(String::from_utf16_lossy(entry.instructions.units())),
+                })
+                .collect(),
+        })));
+    }
     let Some(resource) = context.resource(Resource::PluginRuntime) else {
         return Ok(None);
     };

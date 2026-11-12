@@ -7,7 +7,7 @@ use crate::{
 };
 use std::path::Path;
 
-use pilotdeck_gateway::channel::commands::search::{self, SearchResult, Text};
+use pilotdeck_gateway::channel::commands::search::{self, SearchResult};
 const USAGE: &str = "Usage: pilotdeck chat search <keyword> [--project <path>] [--all-projects] [--limit N] [--json] [--regex] [--case-sensitive] [--role user|assistant|all] [--session <id>]";
 
 pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
@@ -57,10 +57,11 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
         .unwrap_or("all");
     let query_js = query.as_str().into();
     let session_js = flag("--session").map(pilotdeck_protocol::JsString::from);
+    let project_js = pilotdeck_protocol::JsString::from(project);
     let result = search::search(search::SearchInput {
         home: &home,
         cwd,
-        project: (!all_projects).then_some(project),
+        project: (!all_projects).then_some(&project_js),
         session: session_js.as_ref(),
         query: &query_js,
         limit,
@@ -70,6 +71,9 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
     })
     .map_err(|error| match error {
         search::Failure::Error(message) => Failure::Error(message),
+        search::Failure::JsError(message) => {
+            Failure::Error(String::from_utf16_lossy(message.units()))
+        }
     })?;
     if has("--json") {
         stdout_line(

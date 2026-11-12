@@ -31,6 +31,9 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Duration, Instant, sleep_until};
 
+pub type InputTransform =
+    Arc<dyn Fn(super::runner::AgentInput) -> super::runner::AgentInput + Send + Sync>;
+
 type StatusReceipt = Option<oneshot::Sender<()>>;
 type ForwardedEvent = (JsValue, bool, StatusReceipt, bool);
 
@@ -117,6 +120,7 @@ pub struct LiveSessionAdapter {
     /// See [`Self::with_maintenance`].
     maintenance: Option<Arc<MaintenanceFactory>>,
     durable_message_observer: Option<DurableMessageObserver>,
+    input_transform: Option<InputTransform>,
 }
 
 /// Composes the session's context runtime outside a turn.
@@ -168,6 +172,7 @@ impl LiveSessionAdapter {
             permission_mode_source: None,
             turn_override_sink: None,
             durable_message_observer: None,
+            input_transform: None,
             in_process_loop: false,
             sidechain: false,
             tail: None,
@@ -183,6 +188,13 @@ impl LiveSessionAdapter {
             state: Arc::default(),
             maintenance: None,
         }
+    }
+
+    /// Bind the session's frozen input admission. Blocks remain unchanged in
+    /// the plugin processor; expansion precedes both durable input and model IO.
+    pub fn with_input_transform(mut self, transform: InputTransform) -> Self {
+        self.input_transform = Some(transform);
+        self
     }
 
     /// Install the maintenance composer behind manual compaction.
@@ -398,6 +410,7 @@ impl LiveSessionAdapter {
             permission_mode_source: None,
             turn_override_sink: None,
             durable_message_observer: None,
+            input_transform: None,
             in_process_loop: false,
             sidechain: false,
             tail: None,
@@ -552,6 +565,9 @@ impl LiveSession for LiveSessionAdapter {
         let reload_execution = self.reload_execution_started();
         // Read the projection only after admission owns the slot. Rejected
         // submissions must not observe history or race its current owner.
+        if let Some(transform) = &self.input_transform {
+            input.input = transform(input.input);
+        }
         input.history = (self.history)();
         let reload_source = self.state.lock().unwrap().reload.clone();
         if let Some(source) = reload_source {

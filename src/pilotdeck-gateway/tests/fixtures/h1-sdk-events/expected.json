@@ -1,0 +1,58 @@
+{
+  "requests": [
+    {
+      "url": "http://127.0.0.1/hook?retained=1&event=ConfigChange&matcher=0",
+      "headers": {
+        "content-type": "application/json",
+        "x-fixture": "value"
+      },
+      "body": {
+        "sessionId": "session-fixture",
+        "transcriptPath": "",
+        "cwd": "/fixture/project",
+        "changedPaths": [
+          "agent.model"
+        ],
+        "changeClasses": [
+          "runtime"
+        ],
+        "hookEventName": "ConfigChange"
+      }
+    },
+    {
+      "url": "http://127.0.0.1/hook?retained=1&event=FileChanged&matcher=0",
+      "headers": {
+        "content-type": "application/json",
+        "x-fixture": "value"
+      },
+      "body": {
+        "sessionId": "session-fixture",
+        "transcriptPath": "",
+        "cwd": "/fixture/project",
+        "filePath": "a.txt",
+        "absolutePath": "/fixture/project/a.txt",
+        "root": "/fixture/project",
+        "changeType": "created",
+        "hookEventName": "FileChanged"
+      }
+    },
+    {
+      "url": "http://127.0.0.1/hook?retained=1&event=FileChanged&matcher=0",
+      "headers": {
+        "content-type": "application/json",
+        "x-fixture": "value"
+      },
+      "body": {
+        "sessionId": "session-fixture",
+        "transcriptPath": "",
+        "cwd": "/fixture/project",
+        "filePath": "a.txt",
+        "absolutePath": "/fixture/project/a.txt",
+        "root": "/fixture/project",
+        "changeType": "updated",
+        "hookEventName": "FileChanged"
+      }
+    }
+  ],
+  "unregistered": 1
+}

@@ -48,6 +48,7 @@ use tokio::sync::{Mutex as TokioMutex, Notify, watch};
 
 // ─────────────────────────────────────────────────────────── public re-exports
 
+pub(crate) use contributions::render_skill_content;
 pub use contributions::{
     PluginCommandCatalogLease, PluginCommandCatalogSnapshot, PluginCommandContribution,
     PluginContributionLease, PluginContributionSnapshot, PluginMcpInstruction,

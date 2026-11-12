@@ -2591,3 +2591,324 @@ fn image_bytes_and_missing_paths_are_diagnosed() {
         )
     );
 }
+
+#[tokio::test]
+async fn after_turn_preserves_identity_and_isolates_only_background_schedule_failure() {
+    use super::services::{NativeConfigStore, Services};
+    use crate::runtime::{
+        refresh::{MemoryDiagnostics, MemoryMaintenance, RefreshBundle, RefreshOptions},
+        turn::submit_host::SubmitHostServices,
+    };
+    use crate::telemetry::{TelemetryClient, TelemetryErrorValue};
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering},
+    };
+    struct Maintenance {
+        keys: Arc<Mutex<Vec<JsString>>>,
+        failed: AtomicBool,
+    }
+    impl MemoryMaintenance for Maintenance {
+        fn schedule(&self, key: &JsString) -> RuntimeResult {
+            self.keys.lock().unwrap().push(key.clone());
+            if !self.failed.swap(true, Ordering::SeqCst) {
+                Err(
+                    RuntimeError::new("INJECTED_FORMAL_RESOLVE_FAILURE").with_js_error(
+                        crate::runtime::project::RuntimeJsError {
+                            name: "TypeError".into(),
+                            code: None,
+                            message: "INJECTED_FORMAL_RESOLVE_FAILURE".into(),
+                            requires_host: false,
+                        },
+                    ),
+                )
+            } else {
+                Ok(())
+            }
+        }
+    }
+    struct Diagnostics(Arc<Mutex<Vec<JsValue>>>);
+    impl MemoryDiagnostics for Diagnostics {
+        fn log_memory_diagnostic(&self, input: JsValue) {
+            self.0.lock().unwrap().push(input);
+        }
+        fn summarize_messages(&self, _: &JsValue) -> JsObject {
+            JsObject::new()
+        }
+    }
+    struct Errors(Mutex<Vec<(TelemetryErrorValue, JsValue)>>);
+    impl TelemetryClient for Errors {
+        fn track(&self, _: &JsString, _: &JsValue, _: &JsValue) {
+            panic!("unexpected track");
+        }
+        fn track_feature_used(&self, _: &JsValue) {
+            panic!("unexpected feature");
+        }
+        fn track_feature_loop_stage(&self, _: &JsValue) {
+            panic!("unexpected stage");
+        }
+        fn track_error(&self, error: &TelemetryErrorValue, input: &JsValue) {
+            self.0.lock().unwrap().push((error.clone(), input.clone()));
+        }
+        fn set_enabled(&self, _: bool) {
+            panic!("unexpected enabled");
+        }
+        fn flush(&self) -> crate::telemetry::BoxFuture<()> {
+            Box::pin(async {})
+        }
+        fn shutdown(&self) -> crate::telemetry::BoxFuture<()> {
+            Box::pin(async {})
+        }
+        fn snapshot(&self) -> JsValue {
+            panic!("unexpected snapshot");
+        }
+        fn get_config(&self) -> JsValue {
+            panic!("unexpected config");
+        }
+    }
+    let (_scratch, requests) = crate::native_process::management_tests::setup();
+    std::fs::write(requests.options.home.join("pilotdeck.yaml"), SETTINGS_YAML).unwrap();
+    let store = ConfigStore::new(StoreOptions::new(
+        &requests.options.home,
+        &requests.options.project_root,
+        Env::from([(
+            "PILOT_HOME".into(),
+            requests.options.home.to_string_lossy().into_owned(),
+        )]),
+    ))
+    .unwrap();
+    let keys = Arc::new(Mutex::new(Vec::new()));
+    let diagnostics = Arc::new(Mutex::new(Vec::new()));
+    let telemetry = Arc::new(Errors(Mutex::new(Vec::new())));
+    let fallback: JsString = requests
+        .options
+        .project_root
+        .to_string_lossy()
+        .as_ref()
+        .into();
+    let refresh = Arc::new(RefreshBundle::new(RefreshOptions {
+        config_store: Arc::new(store.clone()),
+        registry: Arc::new(NullRegistry),
+        memory_maintenance: Arc::new(Maintenance {
+            keys: keys.clone(),
+            failed: AtomicBool::new(false),
+        }),
+        router: Arc::new(|| None),
+        project_root: fallback.clone(),
+        memory_diagnostics: Some(Arc::new(Diagnostics(diagnostics.clone()))),
+        sdk: None,
+        log: Arc::new(ConsoleLog),
+    }));
+    let services = Services {
+        options: requests.options.clone(),
+        project: requests.project.clone(),
+        env: Env::new(),
+        recorders: Arc::default(),
+        owner: requests.owner.clone(),
+        snapshot_recorder: None,
+        upload_store: Arc::new(crate::upload::UploadStore::new(
+            crate::upload::UploadStoreOptions::new(|_| Ok(PathBuf::new()), || Ok(Vec::new())),
+        )),
+        session_overrides: Arc::default(),
+        config_store: Some(NativeConfigStore {
+            store,
+            _watch: Arc::new(Mutex::new(None)),
+            refresh: Some(refresh),
+            telemetry: Some(telemetry.clone()),
+        }),
+    };
+    let first = crate::storage::RunRef {
+        session_key: Some("raw:session".into()),
+        project_key: Some("raw/project".into()),
+        run_id: "first-run".into(),
+    };
+    services
+        .after_turn(&first)
+        .expect("completed turn survives the resolver rejection");
+    let second = crate::storage::RunRef {
+        session_key: Some("next:session".into()),
+        project_key: None,
+        run_id: "second-run".into(),
+    };
+    services
+        .after_turn(&second)
+        .expect("next completion still schedules maintenance");
+    assert_eq!(
+        *keys.lock().unwrap(),
+        [JsString::from("raw/project"), fallback]
+    );
+    let logs = diagnostics.lock().unwrap();
+    assert_eq!(logs.len(), 2);
+    assert_eq!(
+        logs[0].get("session").unwrap().get("sessionKey"),
+        Some(&"raw:session".into())
+    );
+    assert_eq!(
+        logs[0].get("session").unwrap().get("projectKey"),
+        Some(&"raw/project".into())
+    );
+    assert_eq!(
+        logs[0].get("session").unwrap().get("runId"),
+        Some(&"first-run".into())
+    );
+    assert_eq!(
+        logs[1].get("session").unwrap().get("runId"),
+        Some(&"second-run".into())
+    );
+    let errors = telemetry.0.lock().unwrap();
+    assert_eq!(errors.len(), 1);
+    assert!(
+        matches!(&errors[0].0, TelemetryErrorValue::ErrorName(name) if name.equals_str("TypeError"))
+    );
+    assert_eq!(
+        errors[0].1,
+        object([
+            ("module", "runtime".into()),
+            (
+                "metadata",
+                object([("source", "unhandledRejection".into())])
+            )
+        ])
+    );
+}
+
+#[tokio::test]
+async fn settings_reload_dispatches_config_change_through_the_same_session_sdk_bus() {
+    use super::{
+        hooks::{SdkEventBus, ToolHooks},
+        services::{NativeProcessRefreshPorts, native_settings_for_process_with_maintenance},
+    };
+    use crate::runtime::refresh::MemoryMaintenance;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    struct Maintenance;
+    impl MemoryMaintenance for Maintenance {
+        fn schedule(&self, _: &JsString) -> RuntimeResult {
+            Ok(())
+        }
+    }
+    struct Abort(tokio::task::AbortHandle);
+    impl Drop for Abort {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    assert_ne!(address.port(), 18789);
+    let mut request = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut bytes = Vec::new();
+        let mut buffer = [0u8; 1024];
+        let header_end = loop {
+            let read = socket.read(&mut buffer).await.unwrap();
+            assert_ne!(read, 0);
+            bytes.extend_from_slice(&buffer[..read]);
+            assert!(bytes.len() < 64 * 1024);
+            if let Some(end) = bytes.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
+                break end + 4;
+            }
+        };
+        let headers = String::from_utf8_lossy(&bytes[..header_end]).into_owned();
+        let length: usize = headers
+            .lines()
+            .find_map(|line| {
+                line.split_once(':')
+                    .filter(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                    .map(|(_, value)| value.trim().parse().unwrap())
+            })
+            .unwrap();
+        while bytes.len() < header_end + length {
+            let read = socket.read(&mut buffer).await.unwrap();
+            assert_ne!(read, 0);
+            bytes.extend_from_slice(&buffer[..read]);
+        }
+        socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").await.unwrap();
+        let body = pilotdeck_protocol::parse_json(
+            std::str::from_utf8(&bytes[header_end..header_end + length]).unwrap(),
+        )
+        .unwrap();
+        (headers, body)
+    });
+    let _abort = Abort(request.abort_handle());
+    let scratch = Scratch::new();
+    std::fs::write(scratch.0.join("pilotdeck.yaml"), SETTINGS_YAML).unwrap();
+    let bus = Arc::new(SdkEventBus::default());
+    let hooks = ToolHooks::default();
+    let config = crate::metadata::object([(
+        "hooks",
+        crate::metadata::object([
+            (
+                "url",
+                JsValue::String(format!("http://{address}/sdk-hook").into()),
+            ),
+            (
+                "events",
+                crate::metadata::object([(
+                    "ConfigChange",
+                    JsValue::Array(vec![crate::metadata::object([])]),
+                )]),
+            ),
+        ]),
+    )]);
+    hooks.configure_sdk_events(
+        Some(&config),
+        bus.clone(),
+        "settings:session".into(),
+        scratch.0.to_string_lossy().as_ref().into(),
+        &Default::default(),
+    );
+    let registry = Arc::new(ProjectRuntimeRegistry::new(
+        scratch.0.clone(),
+        Arc::new(|_: &Path, _: &mut ResourceBundle| Ok(())),
+    ));
+    let settings = native_settings_for_process_with_maintenance(
+        settings_owner(),
+        registry.clone(),
+        &scratch.0,
+        &scratch.0,
+        &Env::from([(
+            "PILOT_HOME".into(),
+            scratch.0.to_string_lossy().into_owned(),
+        )]),
+        Arc::default(),
+        NativeProcessRefreshPorts {
+            output_styles: None,
+            memory_maintenance: Arc::new(Maintenance),
+            sdk: Some(bus),
+        },
+    )
+    .unwrap();
+    let changed = SETTINGS_YAML.replace(
+        "  model: test/test\n",
+        "  model: test/test\n  maxOutputTokens: 4096\n",
+    );
+    std::fs::write(scratch.0.join("pilotdeck.yaml"), changed).unwrap();
+    settings
+        .gateway
+        .dispatch("reload_config", &JsValue::Undefined)
+        .await
+        .unwrap()
+        .unwrap();
+    let (headers, body) = tokio::time::timeout(std::time::Duration::from_secs(5), &mut request)
+        .await
+        .expect("same SDK bus received actual refresh notice")
+        .unwrap();
+    assert!(
+        headers
+            .lines()
+            .next()
+            .unwrap()
+            .contains("event=ConfigChange")
+    );
+    assert_eq!(body.get("hookEventName"), Some(&"ConfigChange".into()));
+    assert_eq!(body.get("sessionId"), Some(&"settings:session".into()));
+    assert!(
+        matches!(body.get("changedPaths"), Some(JsValue::Array(paths)) if paths.iter().any(|path| path.as_string().is_some_and(|path| path.equals_str("agent.maxOutputTokens"))))
+    );
+    assert!(
+        matches!(body.get("changeClasses"), Some(JsValue::Array(classes)) if !classes.is_empty())
+    );
+    assert!(body.get("config").is_none());
+    drop(hooks);
+    registry.dispose().await.unwrap();
+}

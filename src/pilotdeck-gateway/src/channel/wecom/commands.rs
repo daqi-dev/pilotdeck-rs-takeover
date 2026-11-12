@@ -48,6 +48,33 @@ impl Context<'_> {
     }
 }
 impl CommandContext for Context<'_> {
+    fn is_stopping(&self) -> bool {
+        *self.shared.stopping.borrow()
+    }
+    fn wait_update<'a>(
+        &'a self,
+        mut operation: crate::channel::commands::update::UpdateOperation,
+    ) -> CommandFuture<'a, crate::channel::commands::UpdateResult> {
+        Box::pin(async move {
+            let result = tokio::select! {biased;_=self.shared.stopped()=>None,result=operation.result()=>Some(result)};
+            if result.is_none() || *self.shared.stopping.borrow() {
+                if let Err(error) = operation.cancel_and_drain().await {
+                    self.shared
+                        .failed_updates
+                        .lock()
+                        .expect("wecom failed updates")
+                        .push(operation);
+                    return Err(error);
+                }
+                return Err(CommandError("updater cancelled".into()));
+            }
+            result.expect("completed updater receipt")
+        })
+    }
+    fn log_error(&self, message: &JsString) {
+        self.shared
+            .log("error", &String::from_utf16_lossy(message.units()));
+    }
     fn reply<'a>(&'a self, text: &'a JsString) -> CommandFuture<'a, ()> {
         Box::pin(async move {
             if self

@@ -280,14 +280,15 @@ async fn slack_native_socket_ack_submits_real_turn_and_sends_thread_reply() {
     f.inbound("envelope-1", "hello <@U1>", Some("100"));
     until(|| f.gateway.requests.lock().unwrap().len() == 1 && f.acks.lock().unwrap().len() == 1)
         .await;
-    let requests = f.gateway.requests.lock().unwrap();
-    assert_eq!(
-        requests[0].session_key,
-        JsString::from("slack:chat=C1:100:general")
-    );
-    assert_eq!(requests[0].message, JsString::from("hello"));
-    assert_eq!(requests[0].channel_key, ChannelKey::new("slack"));
-    drop(requests);
+    {
+        let requests = f.gateway.requests.lock().unwrap();
+        assert_eq!(
+            requests[0].session_key,
+            JsString::from("slack:chat=C1:100:general")
+        );
+        assert_eq!(requests[0].message, JsString::from("hello"));
+        assert_eq!(requests[0].channel_key, ChannelKey::new("slack"));
+    }
     f.gateway.senders.lock().unwrap()[0]
         .send(Some(
             parse_json(r#"{"type":"assistant_text_delta","text":" answer **bold** "}"#).unwrap(),
@@ -302,19 +303,21 @@ async fn slack_native_socket_ack_submits_real_turn_and_sends_thread_reply() {
     let posted = f.posted();
     assert_eq!(posted[0].get("thread_ts"), Some(&JsValue::from("100")));
     assert_eq!(posted[0].get("text"), Some(&JsValue::from("answer *bold*")));
-    let requests = f.rest.requests.lock().unwrap();
-    assert_eq!(requests[0].0, "/api/apps.connections.open");
-    assert_eq!(
-        requests[0].1.get("authorization").unwrap(),
-        "Bearer xapp-fixture"
-    );
-    assert!(
-        requests
-            .iter()
-            .skip(1)
-            .all(|(_, headers, _)| headers.get("authorization").unwrap() == "Bearer xoxb-fixture")
-    );
-    drop(requests);
+    {
+        let requests = f.rest.requests.lock().unwrap();
+        assert_eq!(requests[0].0, "/api/apps.connections.open");
+        assert_eq!(
+            requests[0].1.get("authorization").unwrap(),
+            "Bearer xapp-fixture"
+        );
+        assert!(
+            requests
+                .iter()
+                .skip(1)
+                .all(|(_, headers, _)| headers.get("authorization").unwrap()
+                    == "Bearer xoxb-fixture")
+        );
+    }
     f.stop().await;
 }
 

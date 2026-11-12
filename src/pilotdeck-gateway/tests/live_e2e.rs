@@ -419,6 +419,7 @@ fn ports(
     };
     SessionPorts {
         skills: None,
+        plugin_contributions: None,
         context_state: None,
         compaction: Default::default(),
         model: RouterModelPortOptions::main_agent(),

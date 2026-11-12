@@ -654,16 +654,16 @@ impl Shared {
             Vec::new()
         };
         let receiver = self.receiver.lock().expect("signal receiver").take();
-        if let Some(receiver) = receiver {
-            if let Err(error) = receiver.task.await {
-                self.fatal_cleanup.store(true, Ordering::Release);
-                self.cleanup_errors
-                    .lock()
-                    .expect("signal cleanup errors")
-                    .push(ChannelError::error(format!(
-                        "signal: receiver cleanup failed: {error}"
-                    )));
-            }
+        if let Some(receiver) = receiver
+            && let Err(error) = receiver.task.await
+        {
+            self.fatal_cleanup.store(true, Ordering::Release);
+            self.cleanup_errors
+                .lock()
+                .expect("signal cleanup errors")
+                .push(ChannelError::error(format!(
+                    "signal: receiver cleanup failed: {error}"
+                )));
         }
         let handlers = std::mem::take(&mut *self.handlers.lock().expect("signal handlers"));
         for handler in handlers {

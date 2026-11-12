@@ -148,48 +148,59 @@ async fn observe(name: &str) -> (Value, Value) {
     let mut owner_options = SessionOwnerOptions::new(Arc::new(NoResources));
     owner_options.idle_sweep_interval_ms = 0;
     let owner = SessionOwner::new(owner_options);
-    let requests = requests::Requests {
-        subsystems: None,
-        project: Arc::new(ProjectRuntimeRegistry::new(
-            options.project.clone(),
-            Arc::new(NoResources),
-        )),
-        options: options.clone(),
-        env: options.environment(Env::new()),
-        memory: Arc::new(crate::runtime::memory::gateway::MemoryGateway::disabled()),
-        coordinator: Arc::default(),
-        runs: Some(Arc::new(
-            crate::runtime::turn::publish::FileRegistry::new(
-                crate::storage::FileRunRegistry::open(options.home.join("runs.json"))
-                    .expect("#1154 run file"),
-            )
-            .expect("#1154 run registry"),
-        )),
-        owner: owner.clone(),
-        replacement: Arc::new(crate::runtime::replacement::ReplacementCoordinator::new(
-            Default::default(),
-            Arc::new(owner.clone()),
-            5000,
-            None,
-        )),
-        recorders: Arc::default(),
-        interactions: Arc::default(),
-        mcp: requests::Requests::stub_mcp(&owner),
-        async_hook_registry: None,
-        // #1600: match production (connected), not the retired
-        // observer-coupled bus.
-        user_dialog_bus: Arc::new(std::sync::Mutex::new(
-            crate::user_dialog::GatewayUserDialogBus::connected(
-                crate::user_dialog::DialogRuntime::default(),
-            ),
-        )),
-        upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
-        prepare_weixin_login: None,
-        cron: None,
-        always_on: None,
-        always_on_standalone: Default::default(),
-        settings: requests::Requests::stub_settings(&owner),
-        session_overrides: Arc::default(),
+    let requests = {
+        let task_budget_overrides: std::sync::Arc<crate::native_process::SessionOverrides> =
+            std::sync::Arc::default();
+        let task_budget_owner =
+            std::sync::Arc::new(crate::native_process::task_budget::NativeTaskBudget::new(
+                options.clone(),
+                task_budget_overrides.clone(),
+                &options.environment(Env::new()),
+            ));
+        requests::Requests {
+            subsystems: None,
+            task_budget: task_budget_owner,
+            project: Arc::new(ProjectRuntimeRegistry::new(
+                options.project.clone(),
+                Arc::new(NoResources),
+            )),
+            options: options.clone(),
+            env: options.environment(Env::new()),
+            memory: Arc::new(crate::runtime::memory::gateway::MemoryGateway::disabled()),
+            coordinator: Arc::default(),
+            runs: Some(Arc::new(
+                crate::runtime::turn::publish::FileRegistry::new(
+                    crate::storage::FileRunRegistry::open(options.home.join("runs.json"))
+                        .expect("#1154 run file"),
+                )
+                .expect("#1154 run registry"),
+            )),
+            owner: owner.clone(),
+            replacement: Arc::new(crate::runtime::replacement::ReplacementCoordinator::new(
+                Default::default(),
+                Arc::new(owner.clone()),
+                5000,
+                None,
+            )),
+            recorders: Arc::default(),
+            interactions: Arc::default(),
+            mcp: requests::Requests::stub_mcp(&owner),
+            async_hook_registry: None,
+            // #1600: match production (connected), not the retired
+            // observer-coupled bus.
+            user_dialog_bus: Arc::new(std::sync::Mutex::new(
+                crate::user_dialog::GatewayUserDialogBus::connected(
+                    crate::user_dialog::DialogRuntime::default(),
+                ),
+            )),
+            upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
+            prepare_weixin_login: None,
+            cron: None,
+            always_on: None,
+            always_on_standalone: Default::default(),
+            settings: requests::Requests::stub_settings(&owner),
+            session_overrides: task_budget_overrides,
+        }
     };
     let services = services::Services {
         config_store: None,
@@ -490,53 +501,64 @@ async fn observe_archive(name: &str) {
     let owner = SessionOwner::new(owner_options);
     let mut owner_options_2 = SessionOwnerOptions::new(Arc::new(NoResources));
     owner_options_2.idle_sweep_interval_ms = 0;
-    let requests = requests::Requests {
-        subsystems: None,
-        project: Arc::new(ProjectRuntimeRegistry::new(
-            options.project.clone(),
-            Arc::new(NoResources),
-        )),
-        options: options.clone(),
-        env: options.environment(Env::new()),
-        memory: Arc::new(crate::runtime::memory::gateway::MemoryGateway::disabled()),
-        coordinator: Arc::default(),
-        runs: Some(Arc::new(
-            crate::runtime::turn::publish::FileRegistry::new(
-                crate::storage::FileRunRegistry::open(options.home.join("runs.json"))
-                    .expect("#1154 archive run file"),
-            )
-            .expect("#1154 archive run registry"),
-        )),
-        owner: SessionOwner::new(owner_options_2),
-        replacement: Arc::new(crate::runtime::replacement::ReplacementCoordinator::new(
-            Default::default(),
-            Arc::new(SessionOwner::new({
-                let mut o =
-                    crate::runtime::session::SessionOwnerOptions::new(Arc::new(NoResources));
-                o.idle_sweep_interval_ms = 0;
-                o
-            })),
-            5000,
-            None,
-        )),
-        recorders: Arc::default(),
-        interactions: Arc::default(),
-        mcp: requests::Requests::stub_mcp(&owner),
-        async_hook_registry: None,
-        // #1600: match production (connected), not the retired
-        // observer-coupled bus.
-        user_dialog_bus: Arc::new(std::sync::Mutex::new(
-            crate::user_dialog::GatewayUserDialogBus::connected(
-                crate::user_dialog::DialogRuntime::default(),
-            ),
-        )),
-        upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
-        prepare_weixin_login: None,
-        cron: None,
-        always_on: None,
-        always_on_standalone: Default::default(),
-        settings: requests::Requests::stub_settings(&owner),
-        session_overrides: Arc::default(),
+    let requests = {
+        let task_budget_overrides: std::sync::Arc<crate::native_process::SessionOverrides> =
+            std::sync::Arc::default();
+        let task_budget_owner =
+            std::sync::Arc::new(crate::native_process::task_budget::NativeTaskBudget::new(
+                options.clone(),
+                task_budget_overrides.clone(),
+                &options.environment(Env::new()),
+            ));
+        requests::Requests {
+            subsystems: None,
+            task_budget: task_budget_owner,
+            project: Arc::new(ProjectRuntimeRegistry::new(
+                options.project.clone(),
+                Arc::new(NoResources),
+            )),
+            options: options.clone(),
+            env: options.environment(Env::new()),
+            memory: Arc::new(crate::runtime::memory::gateway::MemoryGateway::disabled()),
+            coordinator: Arc::default(),
+            runs: Some(Arc::new(
+                crate::runtime::turn::publish::FileRegistry::new(
+                    crate::storage::FileRunRegistry::open(options.home.join("runs.json"))
+                        .expect("#1154 archive run file"),
+                )
+                .expect("#1154 archive run registry"),
+            )),
+            owner: SessionOwner::new(owner_options_2),
+            replacement: Arc::new(crate::runtime::replacement::ReplacementCoordinator::new(
+                Default::default(),
+                Arc::new(SessionOwner::new({
+                    let mut o =
+                        crate::runtime::session::SessionOwnerOptions::new(Arc::new(NoResources));
+                    o.idle_sweep_interval_ms = 0;
+                    o
+                })),
+                5000,
+                None,
+            )),
+            recorders: Arc::default(),
+            interactions: Arc::default(),
+            mcp: requests::Requests::stub_mcp(&owner),
+            async_hook_registry: None,
+            // #1600: match production (connected), not the retired
+            // observer-coupled bus.
+            user_dialog_bus: Arc::new(std::sync::Mutex::new(
+                crate::user_dialog::GatewayUserDialogBus::connected(
+                    crate::user_dialog::DialogRuntime::default(),
+                ),
+            )),
+            upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
+            prepare_weixin_login: None,
+            cron: None,
+            always_on: None,
+            always_on_standalone: Default::default(),
+            settings: requests::Requests::stub_settings(&owner),
+            session_overrides: task_budget_overrides,
+        }
     };
     let mut params = json!({"sessionKey":"fixture"});
     match key {

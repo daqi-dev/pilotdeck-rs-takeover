@@ -1,0 +1,891 @@
+{
+  "boundary": "actual frozen InProcessGateway.steerTurn and actual composer; active run/router outcome seam, no formal server claim",
+  "records": [
+    {
+      "name": "plain",
+      "input": {
+        "sessionKey": "session",
+        "runId": "run",
+        "itemId": "item",
+        "message": "steered"
+      },
+      "result": {
+        "accepted": true
+      },
+      "calls": [
+        {
+          "sessionKey": "session",
+          "item": {
+            "turnId": "run",
+            "itemId": "item",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "steered"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "item"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "null-attachments",
+      "input": {
+        "sessionKey": "session",
+        "runId": "run",
+        "itemId": "item",
+        "message": "steered",
+        "attachments": null
+      },
+      "result": {
+        "accepted": true
+      },
+      "calls": [
+        {
+          "sessionKey": "session",
+          "item": {
+            "turnId": "run",
+            "itemId": "item",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "steered"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "item"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "empty-attachments",
+      "input": {
+        "sessionKey": "session",
+        "runId": "run",
+        "itemId": "item",
+        "message": "steered",
+        "attachments": []
+      },
+      "result": {
+        "accepted": true
+      },
+      "calls": [
+        {
+          "sessionKey": "session",
+          "item": {
+            "turnId": "run",
+            "itemId": "item",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "steered"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "item"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "inline-text",
+      "input": {
+        "sessionKey": "session",
+        "runId": "run",
+        "itemId": "item",
+        "message": "steered",
+        "attachments": [
+          {
+            "type": "text",
+            "content": "INLINE-STEER"
+          }
+        ]
+      },
+      "result": {
+        "accepted": true
+      },
+      "calls": [
+        {
+          "sessionKey": "session",
+          "item": {
+            "turnId": "run",
+            "itemId": "item",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "steered"
+                },
+                {
+                  "type": "text",
+                  "text": "INLINE-STEER"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "item"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "image",
+      "input": {
+        "sessionKey": "session",
+        "runId": "run",
+        "itemId": "item",
+        "message": "steered",
+        "attachments": [
+          {
+            "type": "image",
+            "content": "aGVsbG8=",
+            "mimeType": "image/png",
+            "bytes": 5
+          }
+        ]
+      },
+      "result": {
+        "accepted": true
+      },
+      "calls": [
+        {
+          "sessionKey": "session",
+          "item": {
+            "turnId": "run",
+            "itemId": "item",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "steered"
+                },
+                {
+                  "type": "image",
+                  "source": "base64",
+                  "data": "aGVsbG8=",
+                  "mimeType": "image/png",
+                  "bytes": 5
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "item"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "path-registered",
+      "input": {
+        "sessionKey": "session",
+        "runId": "run",
+        "itemId": "item",
+        "message": "steered",
+        "projectKey": "<fixture>/project",
+        "attachments": [
+          {
+            "type": "text",
+            "path": "<fixture>/project/link.txt",
+            "name": "registered",
+            "metadata": {
+              "channelKey": "fixture"
+            }
+          }
+        ]
+      },
+      "result": {
+        "accepted": true
+      },
+      "calls": [
+        {
+          "sessionKey": "session",
+          "item": {
+            "turnId": "run",
+            "itemId": "item",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "steered"
+                },
+                {
+                  "type": "text",
+                  "text": "<attachment path=\"<fixture>/project/link.txt\">\nREGISTERED-STEER-CONTENT\n\n</attachment>"
+                },
+                {
+                  "type": "text",
+                  "text": "\n\n[Registered attachment files in this session:]\n- registered: <fixture>/project/link.txt\nThese are path references for reuse. If an image/PDF is already visible in this turn, do not call read_file just to view it."
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "item"
+              }
+            },
+            "allowedReadFiles": [
+              "<fixture>/project/link.txt",
+              "<fixture>/external/registered.txt"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "path-unregistered",
+      "input": {
+        "sessionKey": "session",
+        "runId": "run",
+        "itemId": "item",
+        "message": "steered",
+        "attachments": [
+          {
+            "type": "text",
+            "path": "<fixture>/project/link.txt",
+            "name": "unregistered"
+          }
+        ]
+      },
+      "result": {
+        "accepted": true
+      },
+      "calls": [
+        {
+          "sessionKey": "session",
+          "item": {
+            "turnId": "run",
+            "itemId": "item",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "steered"
+                },
+                {
+                  "type": "text",
+                  "text": "<attachment path=\"<fixture>/project/link.txt\">\nREGISTERED-STEER-CONTENT\n\n</attachment>"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "item"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-path",
+      "input": {
+        "sessionKey": "session",
+        "runId": "run",
+        "itemId": "item",
+        "message": "steered",
+        "attachments": [
+          {
+            "type": "text",
+            "path": "<fixture>/missing.txt"
+          }
+        ]
+      },
+      "result": {
+        "accepted": true
+      },
+      "calls": [
+        {
+          "sessionKey": "session",
+          "item": {
+            "turnId": "run",
+            "itemId": "item",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "steered"
+                },
+                {
+                  "type": "text",
+                  "text": "[Attachment diagnostics]\n- Attachment not found: <fixture>/missing.txt (ENOENT: no such file or directory, stat '<fixture>/missing.txt')."
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "item"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "uploaded-ignored",
+      "input": {
+        "sessionKey": "session",
+        "runId": "run",
+        "itemId": "item",
+        "message": "steered",
+        "uploadedAttachments": [
+          {
+            "uploadId": "not-acquired"
+          }
+        ]
+      },
+      "result": {
+        "accepted": true
+      },
+      "calls": [
+        {
+          "sessionKey": "session",
+          "item": {
+            "turnId": "run",
+            "itemId": "item",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "steered"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "item"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "raw-object-message",
+      "input": {
+        "sessionKey": "session",
+        "runId": "run",
+        "itemId": "item",
+        "message": {
+          "raw": true
+        }
+      },
+      "result": {
+        "accepted": true
+      },
+      "calls": [
+        {
+          "sessionKey": "session",
+          "item": {
+            "turnId": "run",
+            "itemId": "item",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": {
+                    "raw": true
+                  }
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "item"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "undefined-message",
+      "input": {
+        "sessionKey": "session",
+        "runId": "run",
+        "itemId": "item"
+      },
+      "result": {
+        "accepted": true
+      },
+      "calls": [
+        {
+          "sessionKey": "session",
+          "item": {
+            "turnId": "run",
+            "itemId": "item",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "item"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "null-message",
+      "input": {
+        "sessionKey": "session",
+        "runId": "run",
+        "itemId": "item",
+        "message": null
+      },
+      "result": {
+        "accepted": true
+      },
+      "calls": [
+        {
+          "sessionKey": "session",
+          "item": {
+            "turnId": "run",
+            "itemId": "item",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": null
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "item"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "block-null-message",
+      "input": {
+        "sessionKey": "session",
+        "runId": "run",
+        "itemId": "item",
+        "message": null,
+        "attachments": [
+          {
+            "type": "text",
+            "content": "inline"
+          }
+        ]
+      },
+      "error": {
+        "name": "TypeError",
+        "message": "Cannot read properties of null (reading 'length')"
+      },
+      "calls": []
+    },
+    {
+      "name": "block-number-message",
+      "input": {
+        "sessionKey": "session",
+        "runId": "run",
+        "itemId": "item",
+        "message": 12,
+        "attachments": [
+          {
+            "type": "text",
+            "content": "inline"
+          }
+        ]
+      },
+      "result": {
+        "accepted": true
+      },
+      "calls": [
+        {
+          "sessionKey": "session",
+          "item": {
+            "turnId": "run",
+            "itemId": "item",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "inline"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "item"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "null-entry",
+      "input": {
+        "sessionKey": "session",
+        "runId": "run",
+        "itemId": "item",
+        "message": "steered",
+        "attachments": [
+          null
+        ]
+      },
+      "error": {
+        "name": "TypeError",
+        "message": "Cannot read properties of null (reading 'path')"
+      },
+      "calls": []
+    },
+    {
+      "name": "number-entry",
+      "input": {
+        "sessionKey": "session",
+        "runId": "run",
+        "itemId": "item",
+        "message": "steered",
+        "attachments": [
+          1
+        ]
+      },
+      "result": {
+        "accepted": true
+      },
+      "calls": [
+        {
+          "sessionKey": "session",
+          "item": {
+            "turnId": "run",
+            "itemId": "item",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "steered"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "item"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "false-attachments",
+      "input": {
+        "sessionKey": "session",
+        "runId": "run",
+        "itemId": "item",
+        "message": "steered",
+        "attachments": false
+      },
+      "result": {
+        "accepted": true
+      },
+      "calls": [
+        {
+          "sessionKey": "session",
+          "item": {
+            "turnId": "run",
+            "itemId": "item",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "steered"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "item"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "zero-attachments",
+      "input": {
+        "sessionKey": "session",
+        "runId": "run",
+        "itemId": "item",
+        "message": "steered",
+        "attachments": 0
+      },
+      "result": {
+        "accepted": true
+      },
+      "calls": [
+        {
+          "sessionKey": "session",
+          "item": {
+            "turnId": "run",
+            "itemId": "item",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "steered"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "item"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "number-attachments",
+      "input": {
+        "sessionKey": "session",
+        "runId": "run",
+        "itemId": "item",
+        "message": "steered",
+        "attachments": 1
+      },
+      "error": {
+        "name": "TypeError",
+        "message": "attachments is not iterable"
+      },
+      "calls": []
+    },
+    {
+      "name": "object-attachments",
+      "input": {
+        "sessionKey": "session",
+        "runId": "run",
+        "itemId": "item",
+        "message": "steered",
+        "attachments": {}
+      },
+      "error": {
+        "name": "TypeError",
+        "message": "attachments is not iterable"
+      },
+      "calls": []
+    },
+    {
+      "name": "object-zero-length",
+      "input": {
+        "sessionKey": "session",
+        "runId": "run",
+        "itemId": "item",
+        "message": "steered",
+        "attachments": {
+          "length": 0
+        }
+      },
+      "result": {
+        "accepted": true
+      },
+      "calls": [
+        {
+          "sessionKey": "session",
+          "item": {
+            "turnId": "run",
+            "itemId": "item",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "steered"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "item"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "string-attachments",
+      "input": {
+        "sessionKey": "session",
+        "runId": "run",
+        "itemId": "item",
+        "message": "steered",
+        "attachments": "x"
+      },
+      "result": {
+        "accepted": true
+      },
+      "calls": [
+        {
+          "sessionKey": "session",
+          "item": {
+            "turnId": "run",
+            "itemId": "item",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "steered"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "item"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "no-active-invalid",
+      "input": {
+        "sessionKey": "session",
+        "runId": "run",
+        "itemId": "item",
+        "message": "steered",
+        "attachments": [
+          null
+        ]
+      },
+      "result": {
+        "accepted": false,
+        "reason": "no_active_turn"
+      },
+      "calls": []
+    },
+    {
+      "name": "wrong-run-invalid",
+      "input": {
+        "sessionKey": "session",
+        "runId": "wrong",
+        "itemId": "item",
+        "message": "steered",
+        "attachments": [
+          null
+        ]
+      },
+      "result": {
+        "accepted": false,
+        "reason": "turn_mismatch"
+      },
+      "calls": []
+    },
+    {
+      "name": "no-resource-valid",
+      "input": {
+        "sessionKey": "session",
+        "runId": "run",
+        "itemId": "item",
+        "message": "steered",
+        "attachments": [
+          {
+            "type": "text",
+            "content": "PREPARED-BEFORE-RESOURCE"
+          }
+        ]
+      },
+      "result": {
+        "accepted": false,
+        "reason": "no_active_turn"
+      },
+      "calls": [
+        {
+          "sessionKey": "session",
+          "item": {
+            "turnId": "run",
+            "itemId": "item",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "steered"
+                },
+                {
+                  "type": "text",
+                  "text": "PREPARED-BEFORE-RESOURCE"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "item"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "no-resource-invalid",
+      "input": {
+        "sessionKey": "session",
+        "runId": "run",
+        "itemId": "item",
+        "message": "steered",
+        "attachments": [
+          null
+        ]
+      },
+      "error": {
+        "name": "TypeError",
+        "message": "Cannot read properties of null (reading 'path')"
+      },
+      "calls": []
+    }
+  ]
+}

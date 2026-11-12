@@ -459,6 +459,7 @@ fn ports_with_tool_results_dir(
     let signal = Cancellation::new();
     SessionPorts {
         skills: None,
+        plugin_contributions: None,
         context_state: None,
         compaction: Default::default(),
         model: RouterModelPortOptions::main_agent(),
@@ -2231,4 +2232,69 @@ async fn supplied_generation_stays_with_session_services_after_registry_reload()
     drop(current);
     registry.dispose().await.unwrap();
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn frozen_input_transform_reaches_both_durable_input_and_model_messages_once() {
+    use super::super::runner::AgentInput;
+    let scratch = Scratch::new();
+    let registry = registry(&scratch);
+    let recorder = test_recorder();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seen = calls.clone();
+    let expected =
+        JsString::from("<plugin-command name=\"/local:greet\">frozen body</plugin-command>");
+    let transformed = expected.clone();
+    let session = factory(registry.clone(), peer("success", None), None)
+        .with_input_transform(Some(Arc::new(move |input| {
+            seen.fetch_add(1, Ordering::SeqCst);
+            match input {
+                AgentInput::Text(raw) if raw.equals_str("/local:greet") => {
+                    AgentInput::Text(transformed.clone())
+                }
+                other => other,
+            }
+        })))
+        .into_live_session(recorder.clone(), Vec::new);
+    let mut turn = session
+        .submit_turn_for_test(
+            parse_json(r#"{"type":"text","text":"/local:greet"}"#).unwrap(),
+            wire(),
+        )
+        .unwrap();
+    let mut completed = None;
+    while let Some(event) = bounded_liveness(turn.next()).await.unwrap() {
+        if event.get("type") == Some(&"turn_completed".into()) {
+            completed = Some(event);
+        }
+    }
+    let completed = completed.unwrap();
+    let messages = completed.get("messages").map(array).unwrap();
+    assert_eq!(
+        messages[0].get("content").map(array).unwrap()[0].get("text"),
+        Some(&JsValue::String(expected.clone())),
+        "the sidecar actually received expanded input"
+    );
+    let rows = std::fs::read_to_string(recorder.writer().path()).unwrap();
+    let accepted: Vec<JsValue> = rows
+        .lines()
+        .map(|line| parse_json(line).unwrap())
+        .filter(|row| row.get("type") == Some(&"accepted_input".into()))
+        .collect();
+    assert_eq!(accepted.len(), 1);
+    assert_eq!(
+        accepted[0].get("messages").map(array).unwrap()[0]
+            .get("content")
+            .map(array)
+            .unwrap()[0]
+            .get("text"),
+        Some(&JsValue::String(expected))
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "admission expands once, not again during model serialization"
+    );
+    session.dispose().await.unwrap();
+    bounded_liveness(registry.dispose()).await.unwrap();
 }

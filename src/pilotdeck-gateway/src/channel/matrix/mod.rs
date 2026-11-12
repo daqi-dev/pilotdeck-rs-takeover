@@ -713,17 +713,18 @@ impl Shared {
             Vec::new()
         };
         let receiver = self.receiver.lock().expect("matrix receiver").take();
-        if let Some(receiver) = receiver {
-            if let Err(error) = receiver.task.await {
-                self.fatal_cleanup.store(true, Ordering::Release);
-                self.cleanup_errors
-                    .lock()
-                    .expect("matrix cleanup errors")
-                    .push(ChannelError::error(format!(
-                        "matrix: receiver cleanup failed: {error}"
-                    )));
-            }
+        if let Some(receiver) = receiver
+            && let Err(error) = receiver.task.await
+        {
+            self.fatal_cleanup.store(true, Ordering::Release);
+            self.cleanup_errors
+                .lock()
+                .expect("matrix cleanup errors")
+                .push(ChannelError::error(format!(
+                    "matrix: receiver cleanup failed: {error}"
+                )));
         }
+
         let handlers = std::mem::take(&mut *self.handlers.lock().expect("matrix handlers"));
         for handler in handlers {
             if let Err(error) = handler.await {

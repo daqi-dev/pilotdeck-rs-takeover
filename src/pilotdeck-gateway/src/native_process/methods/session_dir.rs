@@ -294,24 +294,9 @@ impl Requests {
         })
         .await
         .map_err(|e| RequestError::new(e.to_string()))??;
-        // `registry.clearSdkSessionState(input.sessionKey)` — after every
-        // storage delete succeeded, exactly like the baseline. The native
-        // split (#2392): the MCP fields (server table, permission-mode
-        // overrides, generated permission rules, the shared session→project
-        // entry) live in `SdkMcpConfig`; `sdkThinkingOverrides` and
-        // `sdkSessionConfigs.outputStyle` (the TS clear deletes the whole
-        // config row, ProjectRuntimeRegistry.ts:776-786) live in
-        // `session_overrides`. The registry half of the TS clear (task-budget
-        // ledger, plugins, handler registrations) has no production instance
-        // in this process yet — see `clear_session_state`'s contract
-        // (runtime/sdk_session/registry.rs): it must be called **before**
-        // the MCP clear, because the MCP clear drops the shared projects
-        // entry its budget step reads. When that half is wired (#1839), it
-        // belongs above this line, never below it.
-        // `if (projectRoot) this.clearTaskBudgetLedger(projectRoot,
-        // sessionKey)`: the session's SDK project (from its config or its
-        // MCP servers) gets a `cleared` ledger record. The store is
-        // append-only and this clear does not load it.
+        // Budget persistence must clear through the same owner the snapshot
+        // and settlement paths use, before publishing the in-memory clear.
+        // A failed append is an error, never an acknowledged cache-only clear.
         let sdk_project = self
             .session_overrides
             .sdk_config_project(&key)
@@ -322,8 +307,9 @@ impl Requests {
                     .session_project(&JsValue::String(key.clone()))
             });
         if let Some(root) = sdk_project {
-            let _ = crate::storage::TaskBudgetStore::new(&self.options.home, None)
-                .clear_session(&root, &key);
+            self.task_budget
+                .clear_sdk(&key, Some(&root))
+                .map_err(|error| RequestError::new(error.message))?;
         }
         self.mcp
             .config()

@@ -358,7 +358,7 @@ async fn s1_real_directory_permission_error_preserves_eacces() {
         parent.to_path_buf(),
         std::fs::metadata(parent).unwrap().permissions(),
     );
-    std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0)).unwrap();
+    std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o000)).unwrap();
     let probe = std::fs::write(parent.join("permission-probe"), b"probe");
     if !matches!(&probe,Err(error) if error.kind()==std::io::ErrorKind::PermissionDenied) {
         assert!(

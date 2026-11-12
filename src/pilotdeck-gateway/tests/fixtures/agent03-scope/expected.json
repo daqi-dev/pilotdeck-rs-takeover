@@ -1,0 +1,231 @@
+{
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "\ud800"
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "directive"
+        }
+      ]
+    }
+  ],
+  "results": [
+    {
+      "failure": false,
+      "outcome": {
+        "success": true,
+        "markdown": "final"
+      },
+      "calls": [
+        {
+          "definition": {
+            "id": "worker",
+            "description": "worker",
+            "systemPromptSuffix": "work",
+            "allowedTools": [
+              "*"
+            ],
+            "omitProjectInstructions": false,
+            "omitGitStatus": false,
+            "isReadOnly": false,
+            "initialPrompt": " prefix ",
+            "memory": "inherit",
+            "mcpServers": {
+              "private": {
+                "type": "stdio",
+                "command": "fixture"
+              }
+            },
+            "observer": "review",
+            "observerMessage": " postamble "
+          },
+          "directive": " task "
+        },
+        {
+          "definition": {
+            "id": "review",
+            "description": "review",
+            "systemPromptSuffix": "review",
+            "allowedTools": [],
+            "omitProjectInstructions": false,
+            "omitGitStatus": false,
+            "isReadOnly": true,
+            "memory": "disabled",
+            "disallowedTools": [],
+            "permissionMode": "plan"
+          },
+          "directive": "You are an observer. Do not execute the observed task or attempt to change its outcome.\nReview this read-only activity digest and produce a concise report of risks, failures, or notable findings.\n\nObserved agent: worker\nObserved directive: task\n\nActivity:\n- model request: mock/fixture\n- assistant response emitted\n\nOutcome: completed\nObserved final report:\nfinal\n\npostamble"
+        }
+      ],
+      "launches": [
+        {
+          "sessionId": "parent",
+          "turnId": "turn",
+          "observedSubagentId": "child",
+          "observerSubagentId": "fixed-1",
+          "observerSubagentType": "review"
+        }
+      ],
+      "events": [
+        {
+          "type": "subagent_started",
+          "sessionId": "parent",
+          "turnId": "turn",
+          "subagentId": "child",
+          "subagentType": "worker"
+        },
+        {
+          "type": "subagent_completed",
+          "sessionId": "parent",
+          "turnId": "turn",
+          "subagentId": "child",
+          "subagentType": "worker",
+          "success": true,
+          "durationMs": 0
+        },
+        {
+          "type": "subagent_started",
+          "sessionId": "parent",
+          "turnId": "turn",
+          "subagentId": "fixed-1",
+          "subagentType": "review"
+        },
+        {
+          "type": "subagent_completed",
+          "sessionId": "parent",
+          "turnId": "turn",
+          "subagentId": "fixed-1",
+          "subagentType": "review",
+          "success": true,
+          "durationMs": 0
+        },
+        {
+          "type": "observer_report",
+          "sessionId": "parent",
+          "turnId": "turn",
+          "observedSubagentId": "child",
+          "observedSubagentType": "worker",
+          "observerSubagentId": "fixed-1",
+          "observerSubagentType": "review",
+          "success": true,
+          "report": "review report",
+          "durationMs": 0
+        }
+      ]
+    },
+    {
+      "failure": true,
+      "outcome": {
+        "success": false,
+        "error": "fixture failure"
+      },
+      "calls": [
+        {
+          "definition": {
+            "id": "worker",
+            "description": "worker",
+            "systemPromptSuffix": "work",
+            "allowedTools": [
+              "*"
+            ],
+            "omitProjectInstructions": false,
+            "omitGitStatus": false,
+            "isReadOnly": false,
+            "initialPrompt": " prefix ",
+            "memory": "inherit",
+            "mcpServers": {
+              "private": {
+                "type": "stdio",
+                "command": "fixture"
+              }
+            },
+            "observer": "review",
+            "observerMessage": " postamble "
+          },
+          "directive": " task "
+        },
+        {
+          "definition": {
+            "id": "review",
+            "description": "review",
+            "systemPromptSuffix": "review",
+            "allowedTools": [],
+            "omitProjectInstructions": false,
+            "omitGitStatus": false,
+            "isReadOnly": true,
+            "memory": "disabled",
+            "disallowedTools": [],
+            "permissionMode": "plan"
+          },
+          "directive": "You are an observer. Do not execute the observed task or attempt to change its outcome.\nReview this read-only activity digest and produce a concise report of risks, failures, or notable findings.\n\nObserved agent: worker\nObserved directive: task\n\nActivity:\n- model request: mock/fixture\n- assistant response emitted\n\nOutcome: failed\nObserved error: fixture failure\n\npostamble"
+        }
+      ],
+      "launches": [
+        {
+          "sessionId": "parent",
+          "turnId": "turn",
+          "observedSubagentId": "child",
+          "observerSubagentId": "fixed-1",
+          "observerSubagentType": "review"
+        }
+      ],
+      "events": [
+        {
+          "type": "subagent_started",
+          "sessionId": "parent",
+          "turnId": "turn",
+          "subagentId": "child",
+          "subagentType": "worker"
+        },
+        {
+          "type": "subagent_completed",
+          "sessionId": "parent",
+          "turnId": "turn",
+          "subagentId": "child",
+          "subagentType": "worker",
+          "success": false,
+          "aborted": false,
+          "durationMs": 0
+        },
+        {
+          "type": "subagent_started",
+          "sessionId": "parent",
+          "turnId": "turn",
+          "subagentId": "fixed-1",
+          "subagentType": "review"
+        },
+        {
+          "type": "subagent_completed",
+          "sessionId": "parent",
+          "turnId": "turn",
+          "subagentId": "fixed-1",
+          "subagentType": "review",
+          "success": true,
+          "durationMs": 0
+        },
+        {
+          "type": "observer_report",
+          "sessionId": "parent",
+          "turnId": "turn",
+          "observedSubagentId": "child",
+          "observedSubagentType": "worker",
+          "observerSubagentId": "fixed-1",
+          "observerSubagentType": "review",
+          "success": true,
+          "report": "review report",
+          "durationMs": 0
+        }
+      ]
+    }
+  ]
+}

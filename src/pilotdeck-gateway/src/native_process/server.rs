@@ -169,24 +169,26 @@ async fn serve_on_runtime(
         server,
         switch_handles,
         true,
-        |address| {
-            // `http://${host}:${port}` with the host as given and the port
-            // the listener actually got (GatewayServer.ts:69-72).
-            let port = address.port();
-            listening(&Listening {
-                url: format!("http://{host_name}:{port}"),
-                ws_url: format!("ws://{host_name}:{port}/ws"),
-                token_path: started,
-            });
+        super::ServeLifecycle {
+            listening: |address: std::net::SocketAddr| {
+                // `http://${host}:${port}` with the host as given and the port
+                // the listener actually got (GatewayServer.ts:69-72).
+                let port = address.port();
+                listening(&Listening {
+                    url: format!("http://{host_name}:{port}"),
+                    ws_url: format!("ws://{host_name}:{port}/ws"),
+                    token_path: started,
+                });
+            },
+            stopping: || {},
+            telemetry_snapshot: Some(Arc::new(move || {
+                if let Ok(Some(snapshot)) =
+                    pilotdeck_protocol::stringify_json(&snapshot_telemetry.snapshot())
+                {
+                    println!("[telemetry] shutdown snapshot {snapshot}");
+                }
+            })),
         },
-        || {},
-        Some(Arc::new(move || {
-            if let Ok(Some(snapshot)) =
-                pilotdeck_protocol::stringify_json(&snapshot_telemetry.snapshot())
-            {
-                println!("[telemetry] shutdown snapshot {snapshot}");
-            }
-        })),
     )
     .await;
     telemetry.shutdown().await;

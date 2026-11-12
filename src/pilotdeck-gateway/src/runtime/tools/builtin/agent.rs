@@ -58,7 +58,13 @@ pub struct SubagentDefinition {
     pub model_override: Option<(String, String)>,
     pub max_turns: Option<f64>,
     pub permission_mode: Option<String>,
-    pub initial_prompt: Option<String>,
+    pub initial_prompt: Option<JsString>,
+    pub mcp_servers: Option<JsObject>,
+    pub memory_disabled: bool,
+    pub observer: Option<String>,
+    pub observer_message: Option<JsString>,
+    /// Internal read-only observer override; not a user configuration field.
+    pub observer_run: bool,
     pub critical_system_reminder: Option<String>,
     pub background: bool,
 }
@@ -223,7 +229,24 @@ pub fn definitions_from_config(config: &JsObject) -> Vec<Arc<SubagentDefinition>
                 }),
                 max_turns: definition.get("maxTurns").and_then(JsValue::as_number),
                 permission_mode: text_of(definition.get("permissionMode")),
-                initial_prompt: text_of(definition.get("initialPrompt")),
+                initial_prompt: definition
+                    .get("initialPrompt")
+                    .and_then(JsValue::as_string)
+                    .cloned(),
+                mcp_servers: definition
+                    .get("mcpServers")
+                    .and_then(JsValue::as_object)
+                    .cloned(),
+                memory_disabled: definition
+                    .get("memory")
+                    .and_then(JsValue::as_string)
+                    .is_some_and(|v| v.equals_str("disabled")),
+                observer: text_of(definition.get("observer")),
+                observer_message: definition
+                    .get("observerMessage")
+                    .and_then(JsValue::as_string)
+                    .cloned(),
+                observer_run: false,
                 critical_system_reminder: text_of(definition.get("criticalSystemReminder")),
                 background: flag("background"),
             }))

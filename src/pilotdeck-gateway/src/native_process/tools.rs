@@ -215,6 +215,7 @@ pub(super) struct ForkSeed {
     /// The parent session's hooks: a child loop shares its parent's
     /// `dependencies.lifecycle`.
     hooks: crate::hooks::protocol::HooksSettings,
+    sdk_events: Option<Arc<super::hooks::SdkSessionEvents>>,
     hook_observers: crate::runtime::hooks::runtime::HookObservers,
     interaction: super::permission_prompt::SessionInteraction,
     context_state: Arc<crate::runtime::context::SessionContextState>,
@@ -259,9 +260,41 @@ impl ForkSeed {
         let tool_hooks: Arc<super::hooks::ToolHooks> = Arc::default();
         tool_hooks.configure(&hooks);
         tool_hooks.configure_session(&hooks, &self.hook_observers);
+        tool_hooks.inherit_sdk_events(self.sdk_events);
         let child_permission_hooks = std::sync::OnceLock::new();
         if !hooks.is_empty() {
             let _ = child_permission_hooks.set(tool_hooks.clone());
+        }
+        let context_state = if config.get("subagentMemoryDisabled") == Some(&JsValue::Bool(true)) {
+            Arc::default()
+        } else {
+            self.context_state
+        };
+        let mut world = self.world;
+        let skills = if config.get("subagentObserverReadOnly") == Some(&JsValue::Bool(true)) {
+            Some(Vec::new())
+        } else {
+            config
+                .get("sdkSkills")
+                .or_else(|| {
+                    config
+                        .get("subagentDefinitions")
+                        .and_then(|definitions| definitions.get(&scope.definition.id))
+                        .and_then(|definition| definition.get("skills"))
+                })
+                .and_then(|skills| match skills {
+                    JsValue::Array(skills) => Some(
+                        skills
+                            .iter()
+                            .filter_map(JsValue::as_string)
+                            .map(|name| String::from_utf16_lossy(name.units()))
+                            .collect(),
+                    ),
+                    _ => None,
+                })
+        };
+        if let Some(skills) = skills {
+            world.skills_filter = Some(skills);
         }
         SessionTools {
             plan_files: Arc::new(crate::runtime::plan_todo::SessionPlanFiles::new(
@@ -286,7 +319,7 @@ impl ForkSeed {
             permission_mode_source: None,
             run_mode,
             turn_permission: Arc::default(),
-            world: self.world,
+            world,
             goal: Arc::default(),
             events: self.events,
             subagents: self.subagents,
@@ -303,7 +336,7 @@ impl ForkSeed {
             // A one-shot subagent without its own context definition runs on
             // the parent's context runtime (`createContext` returns
             // `undefined`), whose state is keyed by the child's session id.
-            context_state: self.context_state,
+            context_state,
             // The child's permission context is a copy of the parent's,
             // user rules included; only the root session's turns re-read the
             // settings file.
@@ -557,6 +590,7 @@ impl SessionTools {
             file_history: self.file_history.clone(),
             elicitation_timeout: self.elicitation_timeout,
             hooks: self.hooks.clone(),
+            sdk_events: self.tool_hooks.sdk_events(),
             hook_observers: self.hook_observers.clone(),
             interaction: self.interaction,
             context_state: self.context_state.clone(),
@@ -642,6 +676,21 @@ impl SessionTools {
     /// SDK session hooks, an async output naming an invocation id is
     /// registered with the gateway's deferred-result registry
     /// (SessionInteractionBundle.ts:146-157).
+    pub(super) fn with_sdk_events(
+        self,
+        config: Option<&JsValue>,
+        bus: Arc<super::hooks::SdkEventBus>,
+    ) -> Self {
+        self.tool_hooks.configure_sdk_events(
+            config,
+            bus,
+            self.binding.context.session_key.clone(),
+            self.project.to_string_lossy().as_ref().into(),
+            &self.hook_observers,
+        );
+        self
+    }
+
     pub(super) fn with_hooks(
         mut self,
         settings: crate::hooks::protocol::HooksSettings,
@@ -865,6 +914,7 @@ impl SessionTools {
         // tool with the same name or alias as an existing capability.
         let mut world = self.world.clone();
         world.excluded_tools.clear();
+        world.sdk_sandbox = None;
         self.session_registry_in_world(config, &world)
     }
 
@@ -917,6 +967,25 @@ impl SessionTools {
                 tools
                     .register(tool)
                     .expect("native continuation tool names are unique");
+            }
+        }
+        if world.sdk_sandbox.is_some() {
+            for tool in tools
+                .list_all()
+                .expect("native session catalog remains active")
+            {
+                let fields = tool.fields();
+                if let Some(name) = fields.get("name").and_then(JsValue::as_string)
+                    && !super::sdk_sandbox::tool_allowed(
+                        world.sdk_sandbox.as_ref(),
+                        name,
+                        fields.get("kind").and_then(JsValue::as_string),
+                    )
+                {
+                    tools
+                        .unregister(name)
+                        .expect("native sandbox filtering uses active registry");
+                }
             }
         }
         tools
@@ -1254,6 +1323,7 @@ impl SessionTools {
                     _ => Vec::new(),
                 },
             },
+            plugin_contributions: self.world.plugin_contributions.clone(),
             recorder: None,
             tool_results_dir: session_tool_results_dir(&self.project, &identity.session_id),
             context_runtime: None,
@@ -1940,9 +2010,11 @@ pub(super) struct ExecutionWorld {
     /// `sdkSessionConfig.skills`: the session's skills restricted to these
     /// names (`filterSessionSkills`), for `read_skill` and the prompt.
     skills_filter: Option<Vec<String>>,
+    plugin_contributions: Option<crate::runtime::plugins::PluginSessionContributionSnapshot>,
     /// `sdkSessionConfig.managedTools`: the `{ allow, deny }` selector policy
     /// (`blockedToolNames`' `managed`).
     managed_tools: Option<JsValue>,
+    sdk_sandbox: Option<JsValue>,
     /// The gateway's `extraTools` (the automation providers' tools,
     /// `ProjectExecutionWorldBundle.ts:107-111`), registered after the
     /// builtins.
@@ -1971,7 +2043,9 @@ impl ExecutionWorld {
             deferred: None,
             skills: None,
             skills_filter: None,
+            plugin_contributions: None,
             managed_tools: None,
+            sdk_sandbox: None,
             extra_tools: Vec::new(),
             excluded_tools: Vec::new(),
             invocation: None,
@@ -2015,6 +2089,24 @@ impl SessionTools {
     ) -> Self {
         self.world.extra_tools = extra;
         self.world.excluded_tools = excluded;
+        self
+    }
+
+    pub(super) fn with_sdk_sandbox(mut self, sandbox: Option<&JsValue>) -> Self {
+        self.world.sdk_sandbox = sandbox.filter(|sandbox| !sandbox.is_undefined()).cloned();
+        self
+    }
+
+    pub(super) fn with_plugin_contributions(
+        mut self,
+        snapshot: crate::runtime::plugins::PluginSessionContributionSnapshot,
+    ) -> Self {
+        self.world.plugin_contributions = Some(snapshot);
+        self
+    }
+
+    pub(super) fn with_fork_mcp_tools(mut self, tools: Vec<Arc<McpBridgeTool>>) -> Self {
+        self.mcp.per_session.extend(tools);
         self
     }
 
@@ -2150,10 +2242,12 @@ pub(super) fn native_tools(
     builtins.push(Arc::new(builtin::send_attachment::SendAttachmentTool::new()));
     builtins.extend(builtin::goal::goal_tools());
     if let Some(plugins) = &world.skills {
-        builtins.push(Arc::new(
-            builtin::read_skill::ReadSkillTool::new(plugins.clone())
-                .with_selected(world.skills_filter.clone()),
-        ));
+        let mut read = builtin::read_skill::ReadSkillTool::new(plugins.clone())
+            .with_selected(world.skills_filter.clone());
+        if let Some(snapshot) = &world.plugin_contributions {
+            read = read.with_contributions(snapshot.skills.clone());
+        }
+        builtins.push(Arc::new(read));
     }
     for tool in builtins {
         tools

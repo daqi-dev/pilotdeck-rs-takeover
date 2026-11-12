@@ -406,10 +406,10 @@ impl Shared {
             }
             state.seen.insert(id.clone());
             state.seen_order.push_back(id);
-            if state.seen_order.len() > 2000 {
-                if let Some(old) = state.seen_order.pop_front() {
-                    state.seen.remove(&old);
-                }
+            if state.seen_order.len() > 2000
+                && let Some(old) = state.seen_order.pop_front()
+            {
+                state.seen.remove(&old);
             }
         }
         let text = wire::text(&data);
@@ -428,10 +428,10 @@ impl Shared {
         let webhook = string(&data, "sessionWebhook");
         if !webhook.is_empty() && wire::trusted_webhook(&webhook) {
             let mut state = self.state.lock().expect("dingtalk state");
-            if state.webhooks.len() >= 500 {
-                if let Some(old) = state.webhook_order.pop_front() {
-                    state.webhooks.remove(&old);
-                }
+            if state.webhooks.len() >= 500
+                && let Some(old) = state.webhook_order.pop_front()
+            {
+                state.webhooks.remove(&old);
             }
             if !state.webhooks.contains_key(&chat) {
                 state.webhook_order.push_back(chat.clone());
@@ -613,15 +613,15 @@ impl Shared {
     async fn cleanup_all(self: Arc<Self>, reason: String) -> Result<(), ChannelError> {
         self.log("info", &format!("dingtalk: stopping ({reason})"));
         let receiver = self.receiver.lock().expect("dingtalk receiver").take();
-        if let Some(task) = receiver {
-            if let Err(e) = task.await {
-                self.fatal_cleanup
-                    .store(true, std::sync::atomic::Ordering::Release);
-                self.errors
-                    .lock()
-                    .unwrap()
-                    .push(ChannelError::error(e.to_string()));
-            }
+        if let Some(task) = receiver
+            && let Err(e) = task.await
+        {
+            self.fatal_cleanup
+                .store(true, std::sync::atomic::Ordering::Release);
+            self.errors
+                .lock()
+                .unwrap()
+                .push(ChannelError::error(e.to_string()));
         }
         let handlers = std::mem::take(&mut *self.handlers.lock().expect("dingtalk handlers"));
         for task in handlers {

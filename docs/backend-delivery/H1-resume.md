@@ -16,3 +16,12 @@ WS8首跑7/1，deflate6为5/1，见`_build/20261113-051530-resume-ws-corrected/o
 - 本页。
 
 没有修改产品实现、Signal/MM实现、公共channel/loader/native_process/assembly、Cargo或冻结判据。文件级rustfmt已执行；没有自行运行Cargo。下一步主协调统一冻结源码后编译并运行HA25项、WS8项及必要Signal17/MM13回归。正式Gateway继续存活/资源收口、真实互动/cron/reload与全量门禁仍待验，局部测试不代表H1交付。
+
+
+### 4525 clippy 私有窄修（待集中编译）
+
+按root授权只修HA/Signal/WhatsApp嵌套判断、HA pending判断、HA测试MutexGuard词法scope；两处WS握手测试把自由closure改为实现既有Callback trait的struct，保持全部请求头/URI断言及返回response。BlueBubbles只加cleanup receipt类型别名并合并嵌套取消判断，inventory已明确让出两块。未用allow隐藏诊断。
+
+Mattermost删除未使用的私有`register(mounts,responder)`薄wrapper：它原本仅创建独立默认ChannelNetwork再转调register_with_network，无库内调用。现由native_process/channels.rs正式调用register_with_network，传入共享真实network/responder，保持原可观察协议。公开adapter和生产register_with_network均保留。
+
+八文件独立rustfmt与diff --check通过；未运行Cargo/测试，不标clippy通过。精确对4525差异及hash在 `_tmp/20261113-c1-resume-validation/private-clippy-changes/`；后续由根固定候选集中验证。

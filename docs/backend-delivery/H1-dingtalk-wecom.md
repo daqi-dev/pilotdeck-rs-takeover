@@ -80,3 +80,13 @@ S1 独审指出：首 poll 后才登记 handler 的窗口可让 stop 先取空 r
 后续窄策略修正：exact/case-folded/wildcard group 配置只接受 record，防止非 record exact 项跳过 wildcard sender 限制；group_sessions_per_user 两个 alias 按 bool 类型选择；allowlist 归一化、逗号名单和 group identity 比较保留孤立 UTF-16 单元，避免 lossy 转换将两个不同 ID 折叠为同一个替换字符。增加 wildcard 拒绝和孤立 UTF-16 身份隔离断言。当前候选分母 **DingTalk 9 + WeCom 18 =27**，尚未编译运行。
 
 `h1_protocol` 对 S1 三项修复作独立只读复核：确认 handoff worker 先入册、锁外首 poll，stop 共用 admission barrier；屏障测试能因果捕获旧 gap；cron HeldExchange 证明 future owner（不冒充真实 TCP wire）；safe filename 与固定 TS `WeComChannel.ts:1649-1651` 的 basename+连续非法字符替换一致。未发现这三项新增局部阻断，仍需集中编译和运行；不把只读审查当测试通过。
+
+## WeCom `/update` 的单操作停止所有权（第六检查待验）
+
+根批准 shared commands 的 `UpdateOperation` 后，WeCom `CommandContext::wait_update` 持有该单操作，stop 优先；即使操作自然结果与stop并发，也再次检查stop，随后等待 `cancel_and_drain` 的可重复receipt。不会调用global cancel。失败operation留在adapter的failed_updates，cleanup继续等待或保持失败，不因handler返回而丢失失败owner。`is_stopping`使commands避免停止后的失败回复。
+
+新增正式adapter组件测试：真实本地WebSocket接收`/update`，真实NativeCommandsHost和updater owner启动隔离fake node；它的sleep后代继承stdout/stderr。只有观察到实际leader/child活着后才触发channel stop；测试检查leader/后代不再live、handler registry空、无关bystander仍活、socket关闭前无迟到更新回复。隔离test subprocess有deadline，异常路径有精确PID兜底清理。此测试尚未运行，不声称实际kill/reap或pipeclose通过。
+
+本候选分母为DingTalk9 + WeCom19 =28；原4525的18条本包clippy诊断已按实际位置修源码（let-chain、测试guard词法作用域、握手trait callback保URI断言，无allow），仍待第六统一fmt/check验证。根已正式冻结src，作者停止Rust和src fixture编辑。
+
+独立C1只读复审要求进一步收紧/update测试，根在第七check exit101后仅释放该测试文件：leader stop receipt处必须ps缺失（不能以Z冒充已reap），仅孙进程允许已死/Z；启动门仍为5秒，改为等两份正PID及完整ps birth/group身份，核parent pgid=leader、child ppid/pgid=leader。精确PID兜底使用记录的birth/command/pgid防止复用。源码已修、rustfmt通过，生产owner未改，待第八编译。before-reap因果负控尚待共享updater作者后续单独窗口；未声称已执行。

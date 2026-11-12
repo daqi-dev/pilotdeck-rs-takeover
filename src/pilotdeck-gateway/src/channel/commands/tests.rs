@@ -153,7 +153,7 @@ async fn help_and_unknown_project_are_complete() {
 async fn native_status_and_optional_updater_use_real_owned_processes() {
     use std::{
         fs,
-        os::unix::fs::PermissionsExt,
+        os::unix::{fs::PermissionsExt, process::CommandExt},
         path::PathBuf,
         process::Command,
         time::{Duration, Instant},
@@ -227,6 +227,117 @@ async fn native_status_and_optional_updater_use_real_owned_processes() {
                 "This installation does not include the Git Web updater. Use application settings or update manually."
             )
         );
+        // Keep a bystander in a distinct group and observe the updater's
+        // leader + child before dropping its receipt. Only owned PIDs may die.
+        struct Bystander(std::process::Child);
+        impl Drop for Bystander {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let mut other = Command::new("/bin/sleep");
+        other.arg("300").process_group(0);
+        let mut other = Bystander(other.spawn().unwrap());
+        fs::write(root.join("hold-update"), "").unwrap();
+        let update_host = host::NativeCommandsHost::new(
+            root.join("pilot"),
+            root.clone(),
+            Some(root.join("bin/pilotdeck")),
+            Some(Instant::now()),
+        );
+        let mut operation = update_host.update_operation(false).unwrap().unwrap();
+        let group = |pid: &str| {
+            let out = Command::new("/bin/ps")
+                .args(["-o", "pgid=", "-p", pid.trim()])
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).trim().to_owned()
+        };
+        let birth = |pid: &str| {
+            let out = Command::new("/bin/ps")
+                .args(["-o", "lstart=", "-p", pid.trim()])
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).trim().to_owned()
+        };
+        let (leader, child, _leader_birth, _child_birth) =
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    if let (Ok(leader), Ok(child)) = (
+                        fs::read_to_string(root.join("updater-leader")),
+                        fs::read_to_string(root.join("updater-child")),
+                    ) && leader.trim().parse::<u32>().is_ok_and(|pid| pid > 0)
+                        && child.trim().parse::<u32>().is_ok_and(|pid| pid > 0)
+                        && group(&leader) == leader.trim()
+                        && group(&child) == leader.trim()
+                    {
+                        let leader_birth = birth(&leader);
+                        let child_birth = birth(&child);
+                        if !leader_birth.is_empty() && !child_birth.is_empty() {
+                            break (leader, child, leader_birth, child_birth);
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("updater descendants start with established identity");
+        assert_ne!(group(&other.0.id().to_string()), leader.trim());
+        let other_birth = birth(&other.0.id().to_string());
+        assert!(!other_birth.is_empty());
+        // Dropping a pending waiter must not discard the repeatable receipt.
+        let mut first_wait = Box::pin(operation.cancel_and_drain());
+        let waker = std::task::Waker::noop();
+        let mut context = std::task::Context::from_waker(waker);
+        let _ = std::future::Future::poll(first_wait.as_mut(), &mut context);
+        drop(first_wait);
+        operation.cancel_and_drain().await.unwrap();
+        operation.cancel_and_drain().await.unwrap();
+        assert!(group(&leader).is_empty(), "receipt must follow leader reap");
+        let child_state = Command::new("/bin/ps")
+            .args(["-o", "stat=", "-p", child.trim()])
+            .output()
+            .unwrap();
+        let child_state = String::from_utf8_lossy(&child_state.stdout);
+        assert!(
+            child_state.trim().is_empty() || child_state.trim().starts_with('Z'),
+            "receipt must follow owned child termination"
+        );
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let state = |pid: &str| {
+                    let out = Command::new("/bin/ps")
+                        .args(["-o", "stat=", "-p", pid.trim()])
+                        .output()
+                        .unwrap();
+                    String::from_utf8_lossy(&out.stdout).trim().to_owned()
+                };
+                let leader_state = state(&leader);
+                let child_state = state(&child);
+                // The leader is our direct child and must be reaped. An
+                // orphaned grandchild may transiently remain an init-owned
+                // zombie, but it must no longer be running.
+                if leader_state.is_empty()
+                    && (child_state.is_empty() || child_state.starts_with('Z'))
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("cancelled updater group stops");
+        assert!(
+            other.0.try_wait().unwrap().is_none(),
+            "unrelated process group survives"
+        );
+        assert_eq!(
+            birth(&other.0.id().to_string()),
+            other_birth,
+            "bystander is the same process"
+        );
+        drop(other);
         fs::write(root.join("hang-git"), "").unwrap();
         let pending = tokio::spawn(async move { host.status().await });
         tokio::time::timeout(Duration::from_secs(5), async {
@@ -277,7 +388,7 @@ async fn native_status_and_optional_updater_use_real_owned_processes() {
     fs::write(&git,"#!/bin/sh\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$PDRS_H1_COMMAND_HOST_CHILD/git-calls\"\nif [ -f \"$PDRS_H1_COMMAND_HOST_CHILD/hang-git\" ]; then printf '%s' \"$$\" > \"$PDRS_H1_COMMAND_HOST_CHILD/git-pid\"; exec /bin/sleep 30; fi\ncase \"$1 $2\" in\n 'branch --show-current') printf 'mock-branch\\n';;\n 'log --oneline') printf 'abc123 mock commit\\n';;\n *) exit 3;;\nesac\n").unwrap();
     fs::set_permissions(&git, fs::Permissions::from_mode(0o755)).unwrap();
     let node = root.join("bin/node");
-    fs::write(&node,"#!/bin/sh\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$PDRS_H1_COMMAND_HOST_CHILD/node-calls\"\nprintf called > \"$PDRS_H1_COMMAND_HOST_CHILD/node-called\"\nif [ -f \"$PDRS_H1_COMMAND_HOST_CHILD/fail-update\" ]; then printf 'failed\\n' >&2; exit 1; fi\ncase \"$2\" in --check) printf 'already latest\\n'; exit 2;; --restart) printf 'finished\\n'; exit 0;; *) exit 3;; esac\n").unwrap();
+    fs::write(&node,"#!/bin/sh\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$PDRS_H1_COMMAND_HOST_CHILD/node-calls\"\nprintf called > \"$PDRS_H1_COMMAND_HOST_CHILD/node-called\"\nif [ -f \"$PDRS_H1_COMMAND_HOST_CHILD/hold-update\" ]; then printf '%s' \"$$\" > \"$PDRS_H1_COMMAND_HOST_CHILD/updater-leader\"; /bin/sleep 300 & printf '%s' \"$!\" > \"$PDRS_H1_COMMAND_HOST_CHILD/updater-child\"; wait; exit 0; fi\nif [ -f \"$PDRS_H1_COMMAND_HOST_CHILD/fail-update\" ]; then printf 'failed\\n' >&2; exit 1; fi\ncase \"$2\" in --check) printf 'already latest\\n'; exit 2;; --restart) printf 'finished\\n'; exit 0;; *) exit 3;; esac\n").unwrap();
     fs::set_permissions(&node, fs::Permissions::from_mode(0o755)).unwrap();
     let exact = format!(
         "{}::native_status_and_optional_updater_use_real_owned_processes",
@@ -354,6 +465,14 @@ async fn native_search_reads_real_history_and_honours_scope_and_role() {
     let scoped = crate::session_chat_dir(&root.join("pilot"), &root, &replaced);
     fs::create_dir_all(&scoped).unwrap();
     fs::copy(chats.join("s.jsonl"), scoped.join("scoped.jsonl")).unwrap();
+    // TS compares the original UTF-16 identity to marker text before the OS
+    // converts a lone surrogate to U+FFFD. A marker for the replacement path
+    // must not capture the distinct, unrepresentable JS identity.
+    fs::create_dir_all(&replaced).unwrap();
+    let marker = root.join("pilot/projects/collision");
+    fs::create_dir_all(marker.join("chats")).unwrap();
+    fs::write(marker.join(".cwd"), &replaced).unwrap();
+    fs::write(marker.join("chats/wrong.jsonl"),"{\"type\":\"accepted_input\",\"sessionId\":\"wrong\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"needle marker-only\"}]}]}\n").unwrap();
     let scoped_result = host
         .search(&"needle --role user".into(), Some(&bad_project))
         .await
@@ -363,6 +482,59 @@ async fn native_search_reads_real_history_and_honours_scope_and_role() {
         scoped_result.to_utf8().unwrap().contains("needle hello"),
         "Node path encoding replacement must still find scoped history"
     );
+    assert!(
+        !scoped_result.to_utf8().unwrap().contains("marker-only"),
+        "replacement marker belongs to another JS identity"
+    );
+    // Resolve JS path segments before deciding whether a marker identity can
+    // be represented as UTF-8: the surrogate component is cancelled by `..`.
+    let normalized_dir = root.join("normalized-project");
+    fs::create_dir_all(&normalized_dir).unwrap();
+    let normalized_marker = root.join("pilot/projects/normalized-marker");
+    fs::create_dir_all(normalized_marker.join("chats")).unwrap();
+    fs::write(
+        normalized_marker.join(".cwd"),
+        normalized_dir.to_str().unwrap(),
+    )
+    .unwrap();
+    fs::write(normalized_marker.join("chats/fold.jsonl"), "{\"type\":\"accepted_input\",\"sessionId\":\"fold\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"fold-needle\"}]}]}\n").unwrap();
+    let mut folded_units = root
+        .join("discard-")
+        .to_string_lossy()
+        .encode_utf16()
+        .collect::<Vec<_>>();
+    folded_units.push(0xd800);
+    folded_units.extend("/../normalized-project".encode_utf16());
+    let folded_project = JsString::from_utf16(folded_units);
+    let folded_result = host
+        .search(&"fold-needle --role user".into(), Some(&folded_project))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        folded_result.to_utf8().unwrap().contains("fold-needle"),
+        "path normalization must precede marker identity comparison"
+    );
+    let relative = JsString::from("relative-project");
+    let rel_dir = crate::session_chat_dir(&root.join("pilot"), &root, "relative-project");
+    fs::create_dir_all(&rel_dir).unwrap();
+    fs::copy(chats.join("s.jsonl"), rel_dir.join("rel.jsonl")).unwrap();
+    let raw = search::search(search::SearchInput {
+        home: &root.join("pilot"),
+        cwd: &root,
+        project: Some(&relative),
+        session: None,
+        query: &"needle".into(),
+        limit: 20.0,
+        regex: false,
+        sensitive: false,
+        role: "all",
+    })
+    .unwrap();
+    assert_eq!(
+        raw.matches[0].project_key, "relative-project",
+        "projectKey keeps caller spelling"
+    );
     let no_match = host
         .search(&"needle --all --role assistant".into(), None)
         .await
@@ -370,5 +542,17 @@ async fn native_search_reads_real_history_and_honours_scope_and_role() {
         .unwrap();
     assert!(no_match.to_utf8().unwrap().contains("未找到包含「needle」"));
     assert!(host.search(&"[ --all --regex".into(), None).await.is_err());
+    let mut invalid = vec![b'[' as u16, 0xd800];
+    invalid.extend(" --all --regex".encode_utf16());
+    let error = host
+        .search(&JsString::from_utf16(invalid), None)
+        .await
+        .unwrap_err();
+    let mut expected = "Invalid regular expression: /["
+        .encode_utf16()
+        .collect::<Vec<_>>();
+    expected.push(0xd800);
+    expected.extend("/i: Unterminated character class".encode_utf16());
+    assert_eq!(error.0.units(), expected.as_slice());
     fs::remove_dir_all(root).unwrap();
 }

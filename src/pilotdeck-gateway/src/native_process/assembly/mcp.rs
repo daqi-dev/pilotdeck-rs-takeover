@@ -2,8 +2,7 @@ use super::{
     GatewaySessionPermissionRuleSetRegistry, JsString, JsValue, McpGateway, McpGatewayOptions,
     PluginProjectRuntime, PluginResources, ProjectResources, ProjectRuntimeRegistry, Resource,
     SdkMcpCloseSession, SdkMcpConfig, SdkMcpConfigOptions, SdkMcpError, SdkMcpFuture,
-    SdkMcpProject, SdkMcpProjectResolver, SdkMcpSessionPlugins, SdkSessionProjects, SessionOwner,
-    SystemEnvironment,
+    SdkMcpProject, SdkMcpProjectResolver, SdkSessionProjects, SessionOwner, SystemEnvironment,
 };
 use crate::runtime::plugins::LoadedPlugin;
 use crate::runtime::project::RuntimeLease;
@@ -82,16 +81,6 @@ impl SdkMcpProject for LeasedMcpProject {
     }
 }
 
-/// The native process has no SDK session plugin sources (only project-level
-/// plugins apply). This satisfies the `SdkMcpSessionPlugins` contract with an
-/// empty list, matching the TS path where `sdkSessionPlugins` is never set.
-struct NoSessionPlugins;
-impl SdkMcpSessionPlugins for NoSessionPlugins {
-    fn plugins(&self, _session_key: &JsValue) -> Vec<Arc<crate::runtime::plugins::LoadedPlugin>> {
-        Vec::new()
-    }
-}
-
 pub(super) fn build_mcp_gateway(
     owner: &SessionOwner,
     build_project: &Arc<ProjectRuntimeRegistry>,
@@ -135,7 +124,10 @@ pub(super) fn build_mcp_gateway(
             project: build_project.clone(),
         }),
         close_session,
-        session_plugins: Arc::new(NoSessionPlugins),
+        session_plugins: Arc::new(super::super::sdk_plugins::SessionPluginSource({
+            let overrides = session_overrides.clone();
+            Arc::new(move |key| overrides.sdk_plugins(key))
+        })),
         permission_rule_sets: permission_rule_sets.clone(),
         environment: Arc::new(SystemEnvironment),
         projects: SdkSessionProjects::shared(),

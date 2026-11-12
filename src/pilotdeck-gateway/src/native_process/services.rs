@@ -46,6 +46,47 @@ pub struct NativeConfigStore {
     /// Held for its `Drop`, which stops the watcher.
     pub _watch: Arc<std::sync::Mutex<Option<crate::config::store::WatchHandle>>>,
     pub refresh: Option<Arc<crate::runtime::refresh::RefreshBundle>>,
+    pub telemetry: Option<Arc<dyn crate::telemetry::TelemetryClient>>,
+}
+impl Services {
+    fn report_maintenance_schedule_failure(
+        &self,
+        run: &RunRef,
+        error: crate::runtime::project::RuntimeError,
+    ) {
+        // O1-MEMORY-MAINTENANCE-RESOLVE-001: an already completed turn must
+        // survive a background resolver rejection. Retain the baseline's
+        // global-handler telemetry without terminating the whole application.
+        let name = error
+            .js_error
+            .as_ref()
+            .map(|error| error.name.as_str())
+            .unwrap_or("Error");
+        if let Some(telemetry) = self
+            .config_store
+            .as_ref()
+            .and_then(|config| config.telemetry.as_ref())
+        {
+            telemetry.track_error(
+                &crate::telemetry::TelemetryErrorValue::ErrorName(name.into()),
+                &object([
+                    ("module", "runtime".into()),
+                    (
+                        "metadata",
+                        object([("source", "unhandledRejection".into())]),
+                    ),
+                ]),
+            );
+        }
+        let project = run
+            .project_key
+            .as_ref()
+            .map(|key| String::from_utf16_lossy(key.units()))
+            .unwrap_or_else(|| self.options.project_root.to_string_lossy().into_owned());
+        eprintln!(
+            "[pilotdeck] memory maintenance scheduling failed for project {project}: {error}"
+        );
+    }
 }
 fn base64_encode(bytes: &[u8]) -> String {
     BASE64_STANDARD.encode(bytes)
@@ -1425,14 +1466,14 @@ impl SubmitHostServices for Services {
             .config_store
             .as_ref()
             .and_then(|config| config.refresh.as_ref())
-        {
-            refresh
-                .after_turn_completed(crate::runtime::refresh::TurnCompleted {
+            && let Err(error) =
+                refresh.after_turn_completed(crate::runtime::refresh::TurnCompleted {
                     session_key: run.session().clone(),
                     project_key: run.project_key.clone(),
                     run_id: Some(run.run_id.clone()),
                 })
-                .map_err(|error| failure(error.to_string()))?;
+        {
+            self.report_maintenance_schedule_failure(run, error);
         }
         Ok(())
     }
@@ -1450,9 +1491,11 @@ impl SubmitHostServices for Services {
 
 // ------------------------------------------------ U7 native settings (#1320)
 use crate::config::store::{ConfigStore, StoreOptions};
+#[cfg(test)]
+use crate::runtime::refresh::NoMemoryMaintenance;
 use crate::runtime::refresh::{
-    ConsoleLog, NoMemoryMaintenance, RefreshBundle, RefreshLog, RefreshOptions, RefreshRegistry,
-    RefreshRouter, RegistryRefresh,
+    ConsoleLog, RefreshBundle, RefreshLog, RefreshOptions, RefreshRegistry, RefreshRouter,
+    RegistryRefresh,
 };
 use crate::runtime::session::SessionOwner;
 use crate::runtime::settings::{ResolvedSettingsPort, SettingsGateway, SettingsGatewayOptions};
@@ -1519,13 +1562,17 @@ pub struct NativeSettings {
 /// after it (`ConnectionBroadcast`, the baseline's `bindServer(server)`);
 /// tests that observe the dirty/broadcast order `bind_server` a recording
 /// server themselves and assert `has_notification_server()`.
+// Legacy contained-harness convenience only. Shipping assembly supplies the
+// real maintenance and SDK ports through the process refresh composition.
+#[cfg(test)]
 pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
-    native_settings_with_maintenance(options, Arc::new(NoMemoryMaintenance))
+    native_settings_with_maintenance(options, Arc::new(NoMemoryMaintenance), None)
 }
 
 fn native_settings_with_maintenance(
     options: NativeSettingsOptions,
     memory_maintenance: Arc<dyn crate::runtime::refresh::MemoryMaintenance>,
+    sdk: Option<Arc<dyn crate::runtime::refresh::SdkConfigChange>>,
 ) -> NativeSettings {
     let NativeSettingsOptions {
         owner,
@@ -1545,7 +1592,7 @@ fn native_settings_with_maintenance(
         router: Arc::new(move || Some(router.clone())),
         project_root,
         memory_diagnostics: None,
-        sdk: None,
+        sdk,
         log,
     }));
     // `runtimeRefresh.attach()` (createLocalGateway.ts:831): without the
@@ -1726,6 +1773,8 @@ impl crate::runtime::settings::ReloadOutputStyles for NativeOutputStylesReload {
 /// after it (`ConnectionBroadcast`, the baseline's `bindServer(server)`);
 /// tests that observe the dirty/broadcast order `bind_server` a recording
 /// server themselves and assert `has_notification_server()`.
+// Preserves fixture call sites; shipping assembly uses the explicit ports.
+#[cfg(test)]
 pub fn native_settings_for_process(
     owner: SessionOwner,
     project: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
@@ -1745,12 +1794,14 @@ pub fn native_settings_for_process(
         NativeProcessRefreshPorts {
             output_styles,
             memory_maintenance: Arc::new(NoMemoryMaintenance),
+            sdk: None,
         },
     )
 }
 
 /// Production refresh ports retained by the one process settings bundle.
 pub struct NativeProcessRefreshPorts {
+    pub sdk: Option<Arc<dyn crate::runtime::refresh::SdkConfigChange>>,
     pub output_styles: Option<Arc<dyn crate::runtime::settings::ReloadOutputStyles>>,
     pub memory_maintenance: Arc<dyn crate::runtime::refresh::MemoryMaintenance>,
 }
@@ -1768,6 +1819,7 @@ pub fn native_settings_for_process_with_maintenance(
     let NativeProcessRefreshPorts {
         output_styles,
         memory_maintenance,
+        sdk,
     } = refresh_ports;
     // #1320 fix-r1 F3: same anchor as every other config read of the process
     // (`NativeConfigSource`): PILOT_HOME from the environment resolved
@@ -1813,5 +1865,6 @@ pub fn native_settings_for_process_with_maintenance(
             reload_output_styles: output_styles,
         },
         memory_maintenance,
+        sdk,
     ))
 }

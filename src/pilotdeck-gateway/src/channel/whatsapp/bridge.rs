@@ -394,15 +394,13 @@ fn query_single_zombie(mut command: Command, leader: i32) -> io::Result<bool> {
                     || error.kind() == io::ErrorKind::Interrupted => {}
             Err(error) => return Err(error),
         }
-        if eof {
-            if let Some(status) = child.0.try_wait()? {
-                return Ok(single_zombie_output(
-                    &output,
-                    leader,
-                    status.success(),
-                    true,
-                ));
-            }
+        if eof && let Some(status) = child.0.try_wait()? {
+            return Ok(single_zombie_output(
+                &output,
+                leader,
+                status.success(),
+                true,
+            ));
         }
         std::thread::sleep(Duration::from_millis(2));
     }

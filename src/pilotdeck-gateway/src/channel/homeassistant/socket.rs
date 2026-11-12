@@ -111,16 +111,15 @@ pub(super) fn on_message(shared: &Arc<Shared>, raw: &str) {
         return;
     };
     if is_kind(&message, "result") {
-        if let Some(JsValue::Number(id)) = message.get("id") {
-            if let Some(pending) = shared
+        if let Some(JsValue::Number(id)) = message.get("id")
+            && let Some(pending) = shared
                 .runtime
                 .lock()
                 .expect("HA runtime")
                 .pending
                 .remove(&id.to_bits())
-            {
-                let _ = pending.send(matches!(message.get("success"), Some(JsValue::Bool(true))));
-            }
+        {
+            let _ = pending.send(matches!(message.get("success"), Some(JsValue::Bool(true))));
         }
     } else if is_kind(&message, "auth_required") {
         shared.send_json(object([
@@ -147,10 +146,10 @@ pub(super) fn on_message(shared: &Arc<Shared>, raw: &str) {
             format!("homeassistant: auth invalid: {}", super::display(&message)),
         );
         shared.settle_auth(false);
-    } else if is_kind(&message, "event") {
-        if let Some((chat, text)) = event_input(&message, &shared.prefixes) {
-            shared.dispatch(chat, text);
-        }
+    } else if is_kind(&message, "event")
+        && let Some((chat, text)) = event_input(&message, &shared.prefixes)
+    {
+        shared.dispatch(chat, text);
     }
 }
 

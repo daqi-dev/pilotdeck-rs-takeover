@@ -121,4 +121,62 @@ Linux共252次执行、247唯一适用测试：241通过、6失败；另外1 mac
 
 SDK诊断措辞纠正：abort-first的unhandledClosed=false只表示没有未处理堆栈；其stderr仍有main.catch捕获的单行Gateway client closed，且没有正式self首轮的aborted JSON。首轮mock不能证明正式self当次的实际帧序。
 
-SDK诊断r2：新driver SHA `92cf45cedcf979c37e6c9b601b9267f97971f9a0c5c96a9517f89c5c51e114d7`，首driver/首证据保留。三种门控driver exit0，均真实SIGINT/submit/abort观测、CLIcode1：final+abort同TCP批次输出aborted JSON、无未处理堆栈（stderr166B）；setImmediate下一eventloop与直到client close两种分离交付均出现未处理Gateway client closed栈（stderr1511B）。完整原帧/时间线在本地 `_tmp/20261113-e0-resume/5046398b-sdk-order-diagnostic-r2/` 与identity sibling，已交作者和review。该受控mock的因果支持不能证明正式self当次帧序或代替最终真实Gateway验收。
+SDK诊断r2：新driver SHA `92cf45cedcf979c37e6c9b601b9267f97971f9a0c5c96a9517f89c5c51e114d7`，首driver/首证据保留。三种门控driver exit0，均真实SIGINT/submit/abort观测、CLIcode1：final+abort同corked发送批次输出aborted JSON、无未处理堆栈（stderr166B）；setImmediate下一eventloop与直到client close两种分离交付均出现未处理Gateway client closed栈（stderr1511B）。完整原帧/时间线在本地 `_tmp/20261113-e0-resume/5046398b-sdk-order-diagnostic-r2/` 与identity sibling，已交作者和review。该受控mock的因果支持不能证明正式self当次帧序或代替最终真实Gateway验收。
+
+SDK r2协审边界：cork/uncork只证明发送侧批次，未直接观测客户端TCP read边界。next-turn的abort response readyState=1且send callback成功仍触发未处理close；separated在readyState=3时已无法发出。
+
+SDK诊断r3：driver SHA `97e2fefbf51decf454bfec348e2410b32d9a24ac0a2be12e9fd7eaec98cc4fd6`。terminal event后等待真实CLI stdout result，再corked发送submit-final+abort-response；结果stdout为aborted_streaming completed result后紧接aborted JSON，stderr仅SQLite ExperimentalWarning，无Gateway错误或未处理堆栈。driverexit0，真实SIGINT/submit/abort均观测，CLIcode1。完整原帧/身份在 `_tmp/20261113-e0-resume/5046398b-sdk-order-diagnostic-r3/` 及identity sibling；已交作者与review，正式self首败仍保留，尚不计SAME。
+
+## 集成候选4525全 workspace Linux
+
+固定 `4525bb2abdee1e7e1f398889d9ad56baa3337367`，clean checkout，单heavy jobs6、unset CARGO_BUILD_JOBS、umask022、真实MuPDF/image/rg、隔离HOME/PILOT_HOME。远端 `logs/4525bb2a-workspace/`，完整本地副本同名。最终父1594223退出、source clean、余盘410GB。
+
+- 全workspace/all-targets clippy `-D warnings` exit101：完整56条带位置诊断索引保留 `4525-clippy-diagnostics.json`，不只摘最后一条；lib46项及libtest额外诊断，未当作通过。
+- CLI/gateway debug build exit0。CLI SHA `73136b3e676a5145309dcc0e4c90038f5e2ece611470d0f77de2f5b3f131ff6f`；gateway SHA `4aef4ef47d4c66794e2429bfc86c871266d9a6ee947337afef41605516bda0e8`。不能当release。
+- workspace nextest exit100，651.416s：8241 run，8238 passed（8 slow），3 failed，742 skipped。
+- 三失败：native_ws::tests::legacy_proxy_body_unchanged 的#749源码hash guard（实际082782f5…，期望02613cf4…）；owned::channel_bridge_preserves_optional_fields_for_both_submission_modes、owned::legacy_channel_submit_starts_before_its_future_is_polled 均submit_owned_tests.rs297 5s owned lifecycle settle超时。首次日志及时交根，未修改source或断言。
+- workspace doc tests exit0。
+
+## 组合场景首败与独立419 harness
+
+4525原组合TSself首轮两侧唯一capture failures为phase-2-disconnect（INVALID），strict verify均因no hidden capture failures失败；6corruption正控前置不成立，没计通过。原capture/identity与 `4525bb2a-core-channel-verify-first` 完整保留。
+
+修正候选 `419773804a4bdaa7b87c7efbb6ed470d2bdf618b` 独立clone在taskroot/harness/41977380-core，未切heavy4525源码。scenario SHA1fc400370e3e7825867b78774ef94ce7fe95acde4ebe610ac61c01a078400606；verify b0ee912c318a651135043d336e873a0b2a3d96ce96d8ebabc2103b0d8e5dbbd5。
+
+419 TS双轮capture均无failures，但self exit1/DIFF7：仅七个channel-poll URL的after epoch秒差异（1794523716/3725 对1794523731/3740）；未新增归一化。严格门两侧又暴露私有verify.mjs57：actual是真newline，expected为String.raw literal backslash-n。完整首败 `41977380-core-channel-self/` 与 `41977380-core-extra/`（含identity）已本地同步并交inventory/root。6corruption及actualwrongreply受positive前置失败未执行，不能计通过；保持原scores/原capture。
+
+## D1 Linux只读准备核验与后续顺序
+
+未跑旧测试、未修改checker。既有Linux aarch64组件身份仍一致：MuPDF helper bf370bfe…，image helper1e76e87d…，libvips-cpp0be6a13b…；readelf确认三者最高GLIBC_2.38，image RUNPATH为`$ORIGIN/../lib`，源码及许可目录齐备。源归档MuPDF SHA `31d856aff4a7bbbb3d94d1acff78a4c7e835169ddf8747a2c6ca782c150b9630`，vips SHA `8bc6b8318aa7b5f8e354af75e8b0af336f3b08036eab568f7fb41e92b9c4b904`。此前组件测试可作各自身份的历史证据，正式组包仍核完整文件清单/动态依赖。
+
+当前无release目录、正式发行包或最终package manifest。D1本机277包许可归集通过只属于其候选/cache；最终Linux须从同clean集成SHA生成原始locked/all-features metadata并在原cache重归集。内建技能/插件资源仍pending；macOS组件正在源准备，尚无编译/发行证据；x86_64无本轮发行证据。
+
+最终候选必需顺序：固定完整集成SHA并闭合适用全量门→同SHA release构建CLI/独立sidecar（gateway若纳包须同构建）并归档命令/退出码/target/toolchain/hash→完整metadata及锁依赖许可归集→record.py→core/full assemble（full使用上述组件及source/licenses）→verify→搬迁smoke→仅挂载包、不挂TS参考仓的隔离正式smoke→资源/平台/性能及正式组合重启验收。不能用debug二进制、目录存在或工具装置测试替代这些门。
+
+## AGENT03 SDK fork 首校准
+
+独立harness候选 `643493af4c667e52b845c24579716b1c8bd7b4b0`（parent4525，仅3fixture文件），taskroot/harness/643493af-agent03 clean固定。先单次 `run.mjs ts .../scenario.json capture.json`，没有先假设成功跑self。既有Docker digest、network none、非root、无端口映射、保留18789 guard、隔离HOME，未修改TS或产品。
+
+runner1749765已结束，run.mjs exit0但artifact含unexpected `steps[0] timeout`，不能记业务成功。实际provider title2、parent1、child-alpha1、child-beta1、child-mcp1、child-after-mcp1、second1；缺observer、parent-after、parent-check。完整原artifact与source/命令/image/docker日志本地 `_tmp/20261113-e0-resume/643493af-agent03-first/`，已交S1review与根校准首因。初版private verify未阻断采集；因首轮未实际成功，尚未进入TSself或strictnegative，不放宽断言。队列空闲。
+
+AGENT03第二候选 `e47c5e3bec3802b6054ec39854f2ee7345bcf134` 独立harness固定后，单capture自然完成且failures=[]，精确MCP allow已通。private verifier首败child-alpha请求数2≠1；child四阶段均2、observer1/parent-check1/second1、缺parent-after。随后按实际capture成功继续固定TSself，exit1/DIFF217，起始resultBytes669/668、context/token链等；完整原两capture+diff本地 `_tmp/20261113-e0-resume/e47c5e3b-agent03-self/self/`，单首capture与verify首错在同级e47c5e3b-agent03-first。
+
+S1review只读定位parent-after规则落在child规则之后，父工具结果含child directive导致误命中并重复child链；observer_report字面期待也不符真实WS投影。等待根固定后续校准，未调整volatile，private校准错误不当产品缺陷；strictnegative有效正控尚不成立，未执行/不计通过。两runner均退出，队列空闲。
+
+## 0e统一正式harness的组合与AGENT03
+
+固定 `0e214d726bdec2758c55786819af65b7c6ec9c72`，独立harness，未改heavy4525源码。两个轻槽运行结束。
+
+组合：TSself 1/1 SAME，strict A/B通过；六项artifact破坏负控全被拒绝，原正控hash保持。实际wrongreply派生scene真实两次server capture成功，strict因phase0历史不含应有CORE-DONE而非零拒绝（真实模型错误穿过业务链），不把JSON破坏替代实际负控。完整证据 `_tmp/20261113-e0-resume/0e214d72-core-{self,extra,extra-run}/`，正控artifact SHA80e7be615a36e2bf60f9b7266257cf3f73b674d752fa9c857417f57802ff3961。
+
+AGENT03：第三单capture及其private strict七项业务检查通过；TSself仍DIFF90，context/token链等，private strict两侧均通过但不能代替self。全证据 `0e214d72-agent03-{first,self}/`；已交S1只读原因，不重跑，不加忽略。actual MCP错回复负控尚未执行，根后续优先slash事实核验。
+
+## 插件slash正式WS行为事实
+
+在0e固定harness与TS基线，原slash-plugin-command单capture failures=[]，原短名self1/1SAME。六项未注册短名/unknown/leading空格原样进入model user与durable accepted_input；这个事实仅覆盖这些输入，旧scene about对所有plugin不展开的推断不能成立。
+
+按根指示只派生四个message为全名：/cmd-plugin:hello（带args/空）及/cmd-plugin:empty（带args/空）；其余steps/provider/files/unknown与leading空格对照保持。派生scenario SHA `c952aaf2029d26020076c1bb23dc6dd873444eda8bc993258a27c8696e426ff1`，完整before/after manifest在 `0e214d72-slash-plugin-qualified-input/`。
+
+真实qualified capture failures=[]：hello已展开为plugin-command包装，body保留`Say hello to $ARGUMENTS.`字面，参数单独command-argument块；带参碰撞marker使body分隔符编号1/argument0。无args仍有body但无argument块。空body命令为 `Run plugin command "/cmd-plugin:empty" with argument: some argument` 或 `Run plugin command "/cmd-plugin:empty".`。model最后user与落盘accepted_input文本完全对应。完整原artifact在 `0e214d72-slash-plugin-qualified-first/`，事实索引 `slash-plugin-facts.json` 保留原artifactsha、model、accepted及commands_list原始帧；已直接交root/Protocol/O1。限定全名vs短名，不泛化为所有入口。
+
+qualified派生场景TSself也已完成1/1SAME（exit0），证据 `0e214d72-slash-plugin-qualified-self/self/`；原短名对照未改。两类实际行为在同固定基线上各自自比稳定。当前E0重型/轻量均空闲。

@@ -1,0 +1,19 @@
+{
+  "revision": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "sourceSha256": "db806a2414a6ceacb34ce619ae8c2485a7f2e7a21aebab12153992991613fd69",
+  "distSha256": "a87e68659a2fd009340fa974fec61f51407a34c43cacfa2fdf4b43d1071924eb",
+  "driverSha256": "f8ec05a826029960f4295373e0e0d8b9c29d9b85d643dae60e3f1640e0d9f6bc",
+  "functions": [
+    {
+      "name": "blockedToolNames",
+      "startLine": 775,
+      "sha256": "f11e260b7adfbb82e074c8720e4d5161f8d32395f9691d375059b75df926403a"
+    },
+    {
+      "name": "matchesToolSelector",
+      "startLine": 831,
+      "sha256": "3766aa41a93b8152ce026c4b459ce800de1bf9c13c24cf73fb20a53cc117da8a"
+    }
+  ]
+}

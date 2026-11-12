@@ -75,6 +75,7 @@ struct Inbound {
     attachments: Option<Vec<JsValue>>,
 }
 struct Shared {
+    failed_updates: Mutex<Vec<crate::channel::commands::update::UpdateOperation>>,
     admission: Mutex<()>,
     media_cache_dir: std::path::PathBuf,
     fatal_cleanup: std::sync::atomic::AtomicBool,
@@ -209,6 +210,7 @@ impl WeComChannel {
             .cloned()
             .unwrap_or_default();
         Self(Arc::new(Shared {
+            failed_updates: Mutex::new(Vec::new()),
             admission: Mutex::new(()),
             media_cache_dir: options
                 .media_cache_dir
@@ -387,7 +389,7 @@ impl Shared {
             .await
             .map_err(|e| ChannelError::error(e.to_string()))?;
         let auth=tokio::time::timeout(Duration::from_secs(20),async{
-            loop {let message=tokio::select!{biased;_=self.stopped()=>return Err(ChannelError::error("WeCom adapter stopped")),message=socket.next()=>message};match message{Some(Ok(Message::Text(raw)))=>if let Ok(payload)=parse_json(&raw){if payload_id(&payload)==id{return Ok(payload);}},Some(Ok(Message::Ping(data)))=>{socket.send(Message::Pong(data)).await.map_err(|e|ChannelError::error(e.to_string()))?;},Some(Err(e))=>return Err(ChannelError::error(e.to_string())),Some(Ok(Message::Close(_)))|None=>return Err(ChannelError::error("WeCom connection interrupted")),_=>{}}}
+            loop {let message=tokio::select!{biased;_=self.stopped()=>return Err(ChannelError::error("WeCom adapter stopped")),message=socket.next()=>message};match message{Some(Ok(Message::Text(raw)))=>if let Ok(payload)=parse_json(&raw) && payload_id(&payload)==id{return Ok(payload);},Some(Ok(Message::Ping(data)))=>{socket.send(Message::Pong(data)).await.map_err(|e|ChannelError::error(e.to_string()))?;},Some(Err(e))=>return Err(ChannelError::error(e.to_string())),Some(Ok(Message::Close(_)))|None=>return Err(ChannelError::error("WeCom connection interrupted")),_=>{}}}
         }).await.map_err(|_|ChannelError::error("Timeout waiting for WeCom response"))??;
         if wire::response_error(&auth).is_some() {
             let body = auth.get("body");
@@ -456,7 +458,7 @@ impl Shared {
                 tokio::select! {biased;
                     _=self.stopped()=>{self.writer.lock().unwrap().take();self.fail_pending("WeCom adapter stopped");let _=tokio::time::timeout(Duration::from_secs(2),socket.close(None)).await;return;},
                     message=socket.next()=>match message {
-                        Some(Ok(Message::Text(raw)))=>{let Ok(payload)=parse_json(&raw) else{continue;};let cmd=string(&payload,"cmd");let id=payload_id(&payload);if !cmd.equals_str("aibot_msg_callback") && !cmd.equals_str("aibot_callback") && !cmd.equals_str("aibot_event_callback") && !id.is_empty(){if let Some(sender)=self.pending.lock().unwrap().remove(&id){let _=sender.send(Ok(payload));continue;}}
+                        Some(Ok(Message::Text(raw)))=>{let Ok(payload)=parse_json(&raw) else{continue;};let cmd=string(&payload,"cmd");let id=payload_id(&payload);if !cmd.equals_str("aibot_msg_callback") && !cmd.equals_str("aibot_callback") && !cmd.equals_str("aibot_event_callback") && !id.is_empty() && let Some(sender)=self.pending.lock().unwrap().remove(&id){let _=sender.send(Ok(payload));continue;}
                             if cmd.equals_str("aibot_msg_callback") || cmd.equals_str("aibot_callback"){let shared=self.clone();self.spawn_handler(async move{shared.callback(payload).await;});}},
                         Some(Ok(Message::Ping(data)))=>{if !self.write_socket(&mut socket,Message::Pong(data)).await{break;}},
                         Some(Ok(Message::Close(_)))|None|Some(Err(_))=>break,_=>{},
@@ -735,10 +737,10 @@ impl Shared {
                 group_sessions_per_user: self.per_user,
             };
             let mapped = state.mapper.resolve(&scope, &input.text);
-            if mapped.command_new {
-                if let Some(change) = &self.on_state_change {
-                    change(state.mapper.snapshot());
-                }
+            if mapped.command_new
+                && let Some(change) = &self.on_state_change
+            {
+                change(state.mapper.snapshot());
             }
             (mapped, state.gateway.clone())
         };
@@ -906,15 +908,15 @@ impl Shared {
     async fn cleanup_all(self: Arc<Self>, reason: String) -> Result<(), ChannelError> {
         self.log("info", &format!("wecom: stopping ({reason})"));
         let receiver = self.receiver.lock().unwrap().take();
-        if let Some(task) = receiver {
-            if let Err(e) = task.await {
-                self.fatal_cleanup
-                    .store(true, std::sync::atomic::Ordering::Release);
-                self.errors
-                    .lock()
-                    .unwrap()
-                    .push(ChannelError::error(e.to_string()));
-            }
+        if let Some(task) = receiver
+            && let Err(e) = task.await
+        {
+            self.fatal_cleanup
+                .store(true, std::sync::atomic::Ordering::Release);
+            self.errors
+                .lock()
+                .unwrap()
+                .push(ChannelError::error(e.to_string()));
         }
         loop {
             let handlers = std::mem::take(&mut *self.handlers.lock().unwrap());
@@ -930,6 +932,20 @@ impl Shared {
                         .unwrap()
                         .push(ChannelError::error(e.to_string()));
                 }
+            }
+        }
+        let mut updates =
+            std::mem::take(&mut *self.failed_updates.lock().expect("wecom failed updates"));
+        while let Some(mut operation) = updates.pop() {
+            if let Err(error) = operation.cancel_and_drain().await {
+                updates.push(operation);
+                self.failed_updates
+                    .lock()
+                    .expect("wecom failed updates")
+                    .extend(updates);
+                return Err(ChannelError::Plain(String::from_utf16_lossy(
+                    error.0.units(),
+                )));
             }
         }
         let mut streams = std::mem::take(&mut *self.failed_streams.lock().unwrap());

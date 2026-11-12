@@ -27,6 +27,28 @@ impl Generation {
                 .fork()
         })
     }
+    pub(super) fn mcp_provider(
+        &self,
+    ) -> Result<Arc<crate::runtime::mcp::registry::ProjectMcpRuntimeProvider>, JsString> {
+        let owner = lock(&self.0);
+        let lease = owner
+            .as_ref()
+            .ok_or_else(|| JsString::from("Subagent generation is closed."))?;
+        let resources = lease
+            .runtime()
+            .resources()
+            .get::<crate::runtime::project::ProjectResources>()
+            .ok_or_else(|| JsString::from("Native project resources are missing."))?;
+        let provider = resources
+            .context()
+            .owner(crate::runtime::project::Family::McpProvider)
+            .ok_or_else(|| JsString::from("Native MCP provider is missing."))?;
+        provider
+            .as_any()
+            .downcast_ref::<crate::runtime::project::tools_mcp::McpProviderResource>()
+            .map(|resource| resource.provider().clone())
+            .ok_or_else(|| JsString::from("Native MCP provider has the wrong type."))
+    }
     pub(super) fn close(&self) -> DisposeFuture<'static> {
         let lease = lock(&self.0).take();
         Box::pin(async move {
@@ -44,6 +66,7 @@ pub(super) struct ChildSession {
     extensions: Arc<Mutex<Option<Arc<crate::extensions::SessionExtensions>>>>,
     hooks: super::super::hooks::SessionHookCleanup,
     cleanup: Mutex<Option<tokio::sync::watch::Receiver<Option<RuntimeResult>>>>,
+    mcp: Arc<Mutex<Option<super::scope::ForkMcp>>>,
     executor: tokio::runtime::Handle,
 }
 impl ChildSession {
@@ -59,8 +82,13 @@ impl ChildSession {
             extensions: Arc::new(Mutex::new(extensions)),
             hooks,
             cleanup: Mutex::default(),
+            mcp: Arc::default(),
             executor: tokio::runtime::Handle::current(),
         }
+    }
+    pub(super) fn with_mcp(mut self, mcp: Option<super::scope::ForkMcp>) -> Self {
+        self.mcp = Arc::new(Mutex::new(mcp));
+        self
     }
     fn start_dispose(&self) -> tokio::sync::watch::Receiver<Option<RuntimeResult>> {
         let mut cleanup = lock(&self.cleanup);
@@ -75,12 +103,25 @@ impl ChildSession {
         let inner = self.inner.clone();
         let hooks = self.hooks.clone();
         let extensions = self.extensions.clone();
+        let mcp = lock(&self.mcp).take();
         self.executor.spawn(async move {
             let session_result = inner.dispose().await;
             let hook_result = hooks.release().await;
+            let mcp_result = match mcp {
+                Some(mcp) => mcp
+                    .stop()
+                    .await
+                    .map_err(|error| RuntimeError::new(String::from_utf16_lossy(error.units()))),
+                None => Ok(()),
+            };
             lock(&extensions).take();
             let generation_result = release_generation.await;
-            completed.send_replace(Some(session_result.and(hook_result).and(generation_result)));
+            completed.send_replace(Some(
+                session_result
+                    .and(hook_result)
+                    .and(mcp_result)
+                    .and(generation_result),
+            ));
         });
         completion
     }

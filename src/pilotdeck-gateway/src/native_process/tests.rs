@@ -1945,44 +1945,55 @@ async fn requests_registry_switch_gates_run_reads() {
         .expect("#1369 requests run registry"),
     );
     for (runs, on) in [(Some(runs), true), (None, false)] {
-        let requests = requests::Requests {
-            subsystems: None,
-            options: options.clone(),
-            env: options.environment(Env::new()),
-            memory: Arc::new(crate::runtime::memory::gateway::MemoryGateway::disabled()),
-            coordinator: Arc::default(),
-            runs,
-            owner: owner.clone(),
-            project: project.clone(),
-            replacement: Arc::new(crate::runtime::replacement::ReplacementCoordinator::new(
-                Default::default(),
-                Arc::new(crate::runtime::session::SessionOwner::new({
-                    let mut o =
-                        crate::runtime::session::SessionOwnerOptions::new(Arc::new(NoSessions));
-                    o.idle_sweep_interval_ms = 0;
-                    o
-                })),
-                5000,
-                None,
-            )),
-            recorders: Arc::default(),
-            interactions: Arc::default(),
-            mcp: requests::Requests::stub_mcp(&owner),
-            async_hook_registry: None,
-            // #1600: match production (connected), not the retired
-            // observer-coupled bus.
-            user_dialog_bus: Arc::new(std::sync::Mutex::new(
-                crate::user_dialog::GatewayUserDialogBus::connected(
-                    crate::user_dialog::DialogRuntime::default(),
-                ),
-            )),
-            upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
-            prepare_weixin_login: None,
-            cron: None,
-            always_on: None,
-            always_on_standalone: Default::default(),
-            settings: requests::Requests::stub_settings(&owner),
-            session_overrides: Arc::default(),
+        let requests = {
+            let task_budget_overrides: std::sync::Arc<crate::native_process::SessionOverrides> =
+                std::sync::Arc::default();
+            let task_budget_owner =
+                std::sync::Arc::new(crate::native_process::task_budget::NativeTaskBudget::new(
+                    options.clone(),
+                    task_budget_overrides.clone(),
+                    &options.environment(Env::new()),
+                ));
+            requests::Requests {
+                subsystems: None,
+                task_budget: task_budget_owner,
+                options: options.clone(),
+                env: options.environment(Env::new()),
+                memory: Arc::new(crate::runtime::memory::gateway::MemoryGateway::disabled()),
+                coordinator: Arc::default(),
+                runs,
+                owner: owner.clone(),
+                project: project.clone(),
+                replacement: Arc::new(crate::runtime::replacement::ReplacementCoordinator::new(
+                    Default::default(),
+                    Arc::new(crate::runtime::session::SessionOwner::new({
+                        let mut o =
+                            crate::runtime::session::SessionOwnerOptions::new(Arc::new(NoSessions));
+                        o.idle_sweep_interval_ms = 0;
+                        o
+                    })),
+                    5000,
+                    None,
+                )),
+                recorders: Arc::default(),
+                interactions: Arc::default(),
+                mcp: requests::Requests::stub_mcp(&owner),
+                async_hook_registry: None,
+                // #1600: match production (connected), not the retired
+                // observer-coupled bus.
+                user_dialog_bus: Arc::new(std::sync::Mutex::new(
+                    crate::user_dialog::GatewayUserDialogBus::connected(
+                        crate::user_dialog::DialogRuntime::default(),
+                    ),
+                )),
+                upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
+                prepare_weixin_login: None,
+                cron: None,
+                always_on: None,
+                always_on_standalone: Default::default(),
+                settings: requests::Requests::stub_settings(&owner),
+                session_overrides: task_budget_overrides,
+            }
         };
         let described = requests
             .describe_server()
@@ -2066,3 +2077,6 @@ fn session_tool_results_dir_layout_and_sanitization() {
         "#897 session tool-results directory sanitizes the session id"
     );
 }
+
+#[path = "sdk_output_controls_tests.rs"]
+pub(in crate::native_process) mod sdk_output_controls_tests;

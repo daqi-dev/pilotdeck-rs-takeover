@@ -23,6 +23,7 @@ use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
 pub struct Requests {
+    pub(super) task_budget: Arc<super::task_budget::NativeTaskBudget>,
     /// Some is the production generation authority; it never falls back to
     /// the legacy fixture fields, including while a family is unpublished.
     pub subsystems: Option<Arc<super::assembly::publication::SubsystemPublication>>,

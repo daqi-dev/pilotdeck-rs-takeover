@@ -35,6 +35,7 @@ impl From<Failure> for EventError {
 enum Terminal {
     Completed(Option<JsValue>),
     Failed(JsValue),
+    Aborted,
     Unknown(JsString),
 }
 
@@ -180,6 +181,12 @@ impl TextOutput {
         Ok(())
     }
 
+    /// Only a successfully acknowledged, single real CLI signal enters this
+    /// state. Provider terminal events keep their original streamed bytes.
+    pub(super) fn signal_aborted(&mut self) {
+        self.terminal = Some(Terminal::Aborted);
+    }
+
     pub(super) fn finish(self) -> Result<u8, Failure> {
         let terminal = self
             .terminal
@@ -199,6 +206,10 @@ impl TextOutput {
                     ("finishReason", self.finish_reason),
                 ]),
                 Terminal::Failed(error) => object([("status", "failed".into()), ("error", error)]),
+                Terminal::Aborted => object([
+                    ("status", "aborted".into()),
+                    ("reason", "CLI interrupted".into()),
+                ]),
                 Terminal::Unknown(run_id) => object([
                     ("status", "result_unknown".into()),
                     (
@@ -227,6 +238,13 @@ impl TextOutput {
             }
             Terminal::Failed(error) => {
                 print_value(&object([("status", "failed".into()), ("error", error)]))?;
+                Ok(1)
+            }
+            Terminal::Aborted => {
+                print_value(&object([
+                    ("status", "aborted".into()),
+                    ("reason", "CLI interrupted".into()),
+                ]))?;
                 Ok(1)
             }
             Terminal::Unknown(run_id) => {

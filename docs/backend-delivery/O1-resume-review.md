@@ -83,3 +83,19 @@ telemetry配置订阅现有显式Options.telemetry_reload，仅server=true；nat
 skipPermissions项经独审更正：正式Services恒返回Some(default)，固定TS createLocalGateway同样传默认mode，fallback在本轮生产入口不可达，未作为P1扩修。
 
 root专项现21项，C1仍18项。上述修正后rustfmt/diff-check/frozen30通过，第二次编译尚未运行；首次失败不擦除。
+
+## Maintenance 崩溃隔离与 SDK 公共接线候选
+
+根在正式 TS 两轮自然退出证据后授权 O1-MEMORY-MAINTENANCE-RESOLVE-001。Services::after_turn 已仅对后台 resolve/schedule 错误保留成功 turn、不传播 submit Err，保留原 TypeError 的 runtime 错误遥测并输出项目诊断；下一次 after_turn 仍调度。服务调用错误/取消/queued-repeat/精确 generation 租约路径不扩大。新增 Services→实际 RefreshBundle 的项目回退与原session/run身份、首错后二次成功、准确单次 ErrorName/handler input 测试，仍待集中编译执行。
+
+新 `maintenance-formal.mjs` 两轮真实 TS server/WS/mock 成功，`_tmp/20261113-o1-maintenance-formal-ts-{first,second}` 的 contract.json 和 driver.mjs 逐字节相同。真实结果为四条feature加一条runtime error、queued5/sent0/depth5 snapshot、首turn_completed、关闭WS后自然exit1/signal=null、queue删除。旧S1第二turn探针会在shutdown窗口额外引发session error，因此本driver的TS分支不再发第二turn；Rust正判仍必须证明第二turn成功。原S1失败/重复取证保留。
+
+准确wire error properties只有module=runtime、ownerModule=runtime、loopStage=loop_end、errorCategory=runtime_error、code=TypeError。handler传入的metadata.source=unhandledRejection被既有collector丢弃于该首事件，runtime又不派生feature；不能凭handler input发明wire source或sessionId。unit spy验证handler input，正式driver验证真实五字段。
+
+受控Rust故障生成器只生成独立positive/negative源码overlay，不修改/构建shipping源码；在真实resolver acquire前对特定隔离项目注入一次TypeError，negative额外仅恢复旧同步Err传播。driver要求保留源码overlay哈希与实际二进制SHA绑定。初次overlay已生成于`_tmp/20261113-o1-maintenance-mutants-first`，之后assembly已继续接SDK，正式构建前必须对最终候选重新生成新目录，不能沿用旧overlay哈希。Rust正式正判/旧路径负控尚未运行。
+
+SDK公共接线已按作者精确API：ConfigChange走既有RefreshOptions.sdk=same SdkEventBus而非server专用第二订阅，保持空changeClasses与native/local边界；FileChanged紧随with_hooks配置with_sdk_events。新增真实settings reload→RefreshBundle→samebus→HTTP ConfigChange回归，仍待编译。session创建一次sdk_snapshot原子取得config/plugins；一个plugin contribution lease的hooks/MCP/commands/skills沿同一静态快照传递，逆序清理保证MCP/hooks先于plugin lease、plugin lease先于project lease。同快照InputProcessor在record/model前消费directory-plugin命令。disk manifest无programmatic prompt贡献，旧JS函数加载已排除；原生X1 prompt仍走extension_lease，不为Vec<String>臆造命名或插入额外system prompt。
+
+旧native_settings/native_settings_for_process contained-harness便利构造及NoMemoryMaintenance已获根确认改为明确test-only；它们原本用于设置replay不运行maintenance，如今生产全由带真实leased controller/SDK bus的with_maintenance组合替代，不使用allow dead_code掩盖产品空实现。observer未用import及registry let-chain clippy项已精准修。
+
+本批仍为未编译候选，不把TS自比或新账本存在当Rust通过。下一步根冻结最终源码后集中check/tests；维护故障两种源码overlay与正常shipping入口分别验证。

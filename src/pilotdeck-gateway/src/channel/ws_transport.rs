@@ -74,6 +74,26 @@ mod tests {
 
     use crate::runtime::model::http::rooted_client_config;
 
+    struct ExactHandshake;
+    impl tokio_tungstenite::tungstenite::handshake::server::Callback for ExactHandshake {
+        fn on_request(
+            self,
+            request: &tokio_tungstenite::tungstenite::handshake::server::Request,
+            response: tokio_tungstenite::tungstenite::handshake::server::Response,
+        ) -> Result<
+            tokio_tungstenite::tungstenite::handshake::server::Response,
+            tokio_tungstenite::tungstenite::handshake::server::ErrorResponse,
+        > {
+            assert_eq!(
+                request.uri().to_string(),
+                "/prefix/api/websocket?token=a%2Fb%27"
+            );
+            assert_eq!(request.headers()["origin"], "https://fixture.invalid");
+            assert!(!request.headers().contains_key("proxy-authorization"));
+            Ok(response)
+        }
+    }
+
     const BUDGET: Duration = Duration::from_secs(10);
 
     // Fixed cc7c4e6 HA/MM adapter probes use real WS peers: ::1 routes
@@ -96,18 +116,9 @@ mod tests {
             let mut peers = JoinSet::new();
             peers.spawn(async move {
                 let (stream, _) = target.accept().await.expect("H1 WS accepted");
-                let mut socket = tokio_tungstenite::accept_hdr_async(
-                    stream,
-                    |request: &tokio_tungstenite::tungstenite::handshake::server::Request,
-                     response: tokio_tungstenite::tungstenite::handshake::server::Response| {
-                        assert_eq!(request.uri().to_string(), "/prefix/api/websocket?token=a%2Fb%27");
-                        assert_eq!(request.headers()["origin"], "https://fixture.invalid");
-                        assert!(!request.headers().contains_key("proxy-authorization"));
-                        Ok(response)
-                    },
-                )
-                .await
-                .expect("H1 WS handshake");
+                let mut socket = tokio_tungstenite::accept_hdr_async(stream, ExactHandshake)
+                    .await
+                    .expect("H1 WS handshake");
                 let message = socket.next().await.unwrap().expect("H1 WS frame");
                 assert_eq!(message.to_text().unwrap(), "fixture-message");
                 socket.send(message).await.expect("H1 WS echo");

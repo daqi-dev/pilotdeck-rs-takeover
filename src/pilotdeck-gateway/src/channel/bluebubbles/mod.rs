@@ -233,10 +233,12 @@ struct Runtime {
     owned: bool,
     client: HttpClient,
     tasks: StdMutex<Vec<tokio::task::JoinHandle<()>>>,
-    cleanup: StdMutex<Option<watch::Receiver<Option<Result<(), ChannelError>>>>>,
+    cleanup: StdMutex<Option<CleanupReceipt>>,
     failed_streams: StdMutex<Vec<Box<dyn crate::channel::protocol::TurnEventStream>>>,
     cleanup_errors: StdMutex<Vec<ChannelError>>,
 }
+
+type CleanupReceipt = watch::Receiver<Option<Result<(), ChannelError>>>;
 
 impl Runtime {
     fn log(&self, level: &str, message: &str) {
@@ -729,13 +731,11 @@ impl Runtime {
             }
         }
         if cancelled {
-            if cancellation_failed {
-                if let Some(stream) = stream.take() {
-                    self.failed_streams
-                        .lock()
-                        .expect("bluebubbles failed stream")
-                        .push(stream);
-                }
+            if cancellation_failed && let Some(stream) = stream.take() {
+                self.failed_streams
+                    .lock()
+                    .expect("bluebubbles failed stream")
+                    .push(stream);
             }
             return;
         }

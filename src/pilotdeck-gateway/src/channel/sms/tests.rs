@@ -2981,7 +2981,15 @@ async fn ensure_replay_port_free(port: u16, host: &str) {
     // holder, never whether one does.
     if !host.is_empty() && !crate::mutants::on("sms-port-preflight-bind-probe-skipped") {
         match std::net::TcpListener::bind((host, port)) {
-            Ok(listener) => drop(listener),
+            Ok(listener) => {
+                drop(listener);
+                // A successful product-shaped bind+listen is conclusive.
+                // macOS 26.6.1 permits this SO_REUSEADDR listener over a
+                // non-listening dual-stack wildcard holder, while a connect
+                // after dropping it stalls on that holder. The connect does
+                // not disprove that the product can bind and serve here.
+                return;
+            }
             Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => panic!(
                 "#1339 port {port} is already bound on {host}: the product's own \
                  bind would fail and start would degrade to the no-op handle — \
@@ -6455,7 +6463,7 @@ fn dual_stack_occupier_is_reported_by_the_fixed_host_bind_probe() {
             // the product's own bind really succeeds there — the same std
             // shape the probe uses — or the preflight silently lost the
             // occupier.
-            match std::net::TcpListener::bind((DEFAULT_HOST, PORT)) {
+            match runtime.block_on(bind_listener(DEFAULT_HOST, PORT)) {
                 Ok(listener) => drop(listener),
                 Err(error) => panic!(
                     "#2691 the fixed-host bind probe did not fire although the \

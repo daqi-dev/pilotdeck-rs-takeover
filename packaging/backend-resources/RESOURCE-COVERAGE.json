@@ -1,0 +1,464 @@
+{
+  "schema": 1,
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "license": "AGPL-3.0-only",
+  "scope": "All 32 baseline top-level skills, including model-facing frontend creation skills; product frontend implementation remains excluded.",
+  "skills": {
+    "1password": {
+      "state": "待验证",
+      "resource": "skills/1password/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [
+        "op",
+        "authorized account"
+      ],
+      "remaining": [
+        "real Rust loader and final package verification",
+        "external software/account not bundled or exercised"
+      ]
+    },
+    "apple-notes": {
+      "state": "待验证",
+      "resource": "skills/apple-notes/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [
+        "macOS",
+        "memo",
+        "Notes permission"
+      ],
+      "remaining": [
+        "real Rust loader and final package verification",
+        "external software/account not bundled or exercised"
+      ]
+    },
+    "apple-reminders": {
+      "state": "待验证",
+      "resource": "skills/apple-reminders/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [
+        "macOS",
+        "remindctl",
+        "Reminders permission"
+      ],
+      "remaining": [
+        "real Rust loader and final package verification",
+        "external software/account not bundled or exercised"
+      ]
+    },
+    "audio-transcription": {
+      "state": "待验证",
+      "resource": "skills/audio-transcription/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [
+        "Node optional MCP runtime",
+        "source-built llama-funasr-sensevoice",
+        "licensed SenseVoice and FSMN VAD models",
+        "Python 3 POSIX supervisor; current Windows execution unavailable"
+      ],
+      "remaining": [
+        "real Rust loader and final package verification",
+        "real acoustic transcription and model packaging not verified"
+      ]
+    },
+    "bear-notes": {
+      "state": "待验证",
+      "resource": "skills/bear-notes/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [
+        "Bear",
+        "grizzly",
+        "authorized token"
+      ],
+      "remaining": [
+        "real Rust loader and final package verification",
+        "external software/account not bundled or exercised"
+      ]
+    },
+    "blogwatcher": {
+      "state": "待验证",
+      "resource": "skills/blogwatcher/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [
+        "blogwatcher",
+        "network"
+      ],
+      "remaining": [
+        "real Rust loader and final package verification",
+        "external software/account not bundled or exercised"
+      ]
+    },
+    "browser-use": {
+      "state": "待验证",
+      "resource": "skills/browser-use/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [
+        "Node",
+        "pinned Playwright MCP source/dependencies",
+        "browser executable"
+      ],
+      "remaining": [
+        "real Rust loader and final package verification",
+        "real browser/MCP provision and loader invocation not verified"
+      ]
+    },
+    "diagram-maker": {
+      "state": "待验证",
+      "resource": "skills/diagram-maker/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [],
+      "remaining": [
+        "real Rust loader and final package verification"
+      ]
+    },
+    "docx": {
+      "state": "待验证",
+      "resource": "skills/docx/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [
+        "Python 3.10+ for supplied inspector when applicable",
+        "format-specific editing/rendering tools as described in SKILL.md"
+      ],
+      "remaining": [
+        "real Rust loader and final package verification",
+        "advanced baseline helper CLI and outputs not reproduced",
+        "creation/editing/visual rendering require external libraries and execution verification"
+      ],
+      "implementedHelpers": [
+        "read-only OOXML/CSV inventory",
+        "basic editable document creation with separately installed format library"
+      ]
+    },
+    "find-skills": {
+      "state": "待验证",
+      "resource": "skills/find-skills/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [],
+      "remaining": [
+        "real Rust loader and final package verification"
+      ]
+    },
+    "frontend-design": {
+      "state": "待验证",
+      "resource": "skills/frontend-design/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [],
+      "remaining": [
+        "real Rust loader and final package verification"
+      ]
+    },
+    "frontend-slides": {
+      "state": "待验证",
+      "resource": "skills/frontend-slides/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [],
+      "remaining": [
+        "real Rust loader and final package verification"
+      ]
+    },
+    "github": {
+      "state": "待验证",
+      "resource": "skills/github/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [
+        "gh",
+        "authorized account"
+      ],
+      "remaining": [
+        "real Rust loader and final package verification",
+        "external software/account not bundled or exercised"
+      ]
+    },
+    "gog": {
+      "state": "待验证",
+      "resource": "skills/gog/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [
+        "gog",
+        "authorized account"
+      ],
+      "remaining": [
+        "real Rust loader and final package verification",
+        "external software/account not bundled or exercised"
+      ]
+    },
+    "himalaya": {
+      "state": "待验证",
+      "resource": "skills/himalaya/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [
+        "himalaya",
+        "mail account"
+      ],
+      "remaining": [
+        "real Rust loader and final package verification",
+        "external software/account not bundled or exercised"
+      ]
+    },
+    "karpathy-guidelines": {
+      "state": "待验证",
+      "resource": "skills/karpathy-guidelines/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [],
+      "remaining": [
+        "real Rust loader and final package verification"
+      ]
+    },
+    "meeting-recorder-assistant": {
+      "state": "待验证",
+      "resource": "skills/meeting-recorder-assistant/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [
+        "Node optional MCP runtime",
+        "source-built llama-funasr-sensevoice",
+        "licensed SenseVoice and FSMN VAD models",
+        "Python 3 POSIX supervisor; current Windows execution unavailable"
+      ],
+      "remaining": [
+        "real Rust loader and final package verification",
+        "real acoustic transcription and model packaging not verified",
+        "microphone capture, diarization and automated semantic helper equivalence not supplied"
+      ],
+      "implementedHelpers": [
+        "SRT timestamp normalization; not semantic inference"
+      ]
+    },
+    "notion": {
+      "state": "待验证",
+      "resource": "skills/notion/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [
+        "Notion CLI or client",
+        "authorized workspace"
+      ],
+      "remaining": [
+        "real Rust loader and final package verification",
+        "external software/account not bundled or exercised"
+      ]
+    },
+    "obsidian": {
+      "state": "待验证",
+      "resource": "skills/obsidian/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [
+        "Obsidian CLI",
+        "selected vault"
+      ],
+      "remaining": [
+        "real Rust loader and final package verification",
+        "external software/account not bundled or exercised"
+      ]
+    },
+    "pdf": {
+      "state": "待验证",
+      "resource": "skills/pdf/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [
+        "Python 3.10+ for supplied inspector when applicable",
+        "format-specific editing/rendering tools as described in SKILL.md"
+      ],
+      "remaining": [
+        "real Rust loader and final package verification",
+        "advanced baseline helper CLI and outputs not reproduced",
+        "creation/editing/visual rendering require external libraries and execution verification"
+      ],
+      "implementedHelpers": [
+        "pypdf page structure inspect/select/reorder/rotate with input preservation"
+      ]
+    },
+    "pilotdeck-skills-migration": {
+      "state": "待验证",
+      "resource": "skills/pilotdeck-skills-migration/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [],
+      "remaining": [
+        "real Rust loader and final package verification"
+      ],
+      "implementedHelpers": [
+        "explicit-source exclusive-destination copy and hash verification"
+      ]
+    },
+    "powershell": {
+      "state": "待验证",
+      "resource": "skills/powershell/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [
+        "pwsh or selected Windows PowerShell"
+      ],
+      "remaining": [
+        "real Rust loader and final package verification",
+        "external software/account not bundled or exercised"
+      ]
+    },
+    "pptx": {
+      "state": "待验证",
+      "resource": "skills/pptx/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [
+        "Python 3.10+ for supplied inspector when applicable",
+        "format-specific editing/rendering tools as described in SKILL.md"
+      ],
+      "remaining": [
+        "real Rust loader and final package verification",
+        "advanced baseline helper CLI and outputs not reproduced",
+        "creation/editing/visual rendering require external libraries and execution verification"
+      ],
+      "implementedHelpers": [
+        "read-only OOXML/CSV inventory",
+        "basic editable document creation with separately installed format library"
+      ]
+    },
+    "react-next-best-practices": {
+      "state": "待验证",
+      "resource": "skills/react-next-best-practices/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [],
+      "remaining": [
+        "real Rust loader and final package verification"
+      ]
+    },
+    "skill-creator": {
+      "state": "待验证",
+      "resource": "skills/skill-creator/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [],
+      "remaining": [
+        "real Rust loader and final package verification"
+      ]
+    },
+    "spike": {
+      "state": "待验证",
+      "resource": "skills/spike/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [],
+      "remaining": [
+        "real Rust loader and final package verification"
+      ]
+    },
+    "spreadsheets": {
+      "state": "待验证",
+      "resource": "skills/spreadsheets/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [
+        "Python 3.10+ for supplied inspector when applicable",
+        "format-specific editing/rendering tools as described in SKILL.md"
+      ],
+      "remaining": [
+        "real Rust loader and final package verification",
+        "advanced baseline helper CLI and outputs not reproduced",
+        "creation/editing/visual rendering require external libraries and execution verification"
+      ],
+      "implementedHelpers": [
+        "read-only OOXML/CSV inventory",
+        "basic editable document creation with separately installed format library"
+      ]
+    },
+    "summarize": {
+      "state": "待验证",
+      "resource": "skills/summarize/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [
+        "optional summarize CLI",
+        "provider/network when applicable"
+      ],
+      "remaining": [
+        "real Rust loader and final package verification",
+        "external software/account not bundled or exercised"
+      ]
+    },
+    "tmux": {
+      "state": "待验证",
+      "resource": "skills/tmux/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [
+        "tmux"
+      ],
+      "remaining": [
+        "real Rust loader and final package verification",
+        "external software/account not bundled or exercised"
+      ]
+    },
+    "trello": {
+      "state": "待验证",
+      "resource": "skills/trello/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [
+        "authorized Trello API client"
+      ],
+      "remaining": [
+        "real Rust loader and final package verification",
+        "external software/account not bundled or exercised"
+      ]
+    },
+    "weather": {
+      "state": "待验证",
+      "resource": "skills/weather/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [
+        "weather provider/network"
+      ],
+      "remaining": [
+        "real Rust loader and final package verification",
+        "external software/account not bundled or exercised"
+      ]
+    },
+    "web-design-guidelines": {
+      "state": "待验证",
+      "resource": "skills/web-design-guidelines/SKILL.md",
+      "authorship": "independently authored; baseline observed for capability inventory only",
+      "externalDependencies": [],
+      "remaining": [
+        "real Rust loader and final package verification"
+      ]
+    }
+  },
+  "plugins": {
+    "browser-use": {
+      "state": "待验证",
+      "implementation": "existing host markers select separately provisioned external Playwright MCP",
+      "remaining": [
+        "pinned source/dependency/browser package and licenses",
+        "real MCP discovery and local-page interaction"
+      ]
+    },
+    "funasr": {
+      "state": "待验证",
+      "implementation": "independent Node stdio service plus Python 3 POSIX owned-session supervisor; private native status fd; live leader performs final group kill before real close",
+      "remaining": [
+        "source-built runtime and acoustic model license/identity",
+        "real audio inference and host lifecycle integration",
+        "review bounded output/time budgets as accepted safety behavior",
+        "missing-dependency and exceptional-path wording differs from fixed baseline; not an accepted difference",
+        "Windows execution explicitly unavailable until reliable job-object ownership is implemented",
+        "actual macOS/Linux native engine and final package verification pending"
+      ],
+      "externalDependencies": [
+        "Node",
+        "Python 3 on POSIX",
+        "source-built controlled SenseVoice executable",
+        "licensed model and VAD files"
+      ]
+    },
+    "windows-skills": {
+      "state": "待验证",
+      "implementation": "independently authored skill-only plugin",
+      "remaining": [
+        "real loader prompt and Windows execution checks"
+      ]
+    }
+  },
+  "pendingDelivery": [
+    "32 skill documents do not establish 32 equivalent executable workflows",
+    "Office advanced helper/render/recalculation parity incomplete",
+    "optional browser/runtime/models and external CLI software not distributed",
+    "real Rust loader and moved package behavior not executed"
+  ],
+  "verification": {
+    "resourceTests": "13/13 local macOS tests including held-stdio descendants on cancel/EOF/normal exit and Python/native startup failures",
+    "funasr": "actual stdio process + mock native child; acoustic inference not exercised",
+    "rustLoader": "not executed",
+    "finalPackage": "not executed",
+    "negativeControl": "independent resource copy changed actual MCP transcript; dedicated process test exited 1 on content mismatch",
+    "skillFrontmatter": "34/34 quick_validate passed; does not prove loader or task behavior",
+    "ownedCleanup": "exact owned PID disappearance, private status fd not inherited; independent-copy group-cleanup and sheet-case mutants are tested separately"
+  }
+}

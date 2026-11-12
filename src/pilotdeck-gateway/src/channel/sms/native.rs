@@ -43,10 +43,10 @@ impl NativeRuntime {
         &self,
         gateway: Option<Arc<dyn protocol::TurnGateway>>,
     ) -> Result<(), ChannelError> {
-        if let Some(attempt) = self.cleanup.lock().unwrap().as_ref() {
-            if !attempt.result.borrow().as_ref().is_some_and(Result::is_ok) {
-                return Err(ChannelError::error("sms: prior stop has not drained"));
-            }
+        if let Some(attempt) = self.cleanup.lock().unwrap().as_ref()
+            && !attempt.result.borrow().as_ref().is_some_and(Result::is_ok)
+        {
+            return Err(ChannelError::error("sms: prior stop has not drained"));
         }
         *self.cleanup.lock().unwrap() = None;
         *self.gateway.lock().unwrap() = gateway;
@@ -152,16 +152,16 @@ impl NativeRuntime {
             let owner = tokio::spawn(async move {
                 let result = AssertUnwindSafe(async {
                     shared.log("info", format!("sms: stopping ({reason})"));
-                    if let Some(server) = server {
-                        if let Err(error) = server.task.await {
-                            owned
-                                .fatal
-                                .lock()
-                                .unwrap()
-                                .push(ChannelError::error(format!(
-                                    "sms: HTTP owner failed: {error}"
-                                )));
-                        }
+                    if let Some(server) = server
+                        && let Err(error) = server.task.await
+                    {
+                        owned
+                            .fatal
+                            .lock()
+                            .unwrap()
+                            .push(ChannelError::error(format!(
+                                "sms: HTTP owner failed: {error}"
+                            )));
                     }
                     let result = owned.drain().await;
                     if result.is_ok() {

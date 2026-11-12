@@ -30,3 +30,18 @@ Rust 正式对拍用同一 formal 命令增加 `--rust-bin <绝对二进制> --r
 所有 raw 请求正文、HTTP headers、socket 事件、stdout/stderr、WS frame、PID/信号、JSONL 和 metrics 均保留。只归一化已验证格式/公式的 UUID、ISO 时间、instanceId、同一 runId、指定回环端口和隔离输出路径；installation/session hash、业务字段和事件顺序精确比较。source-identity 核对固定 HEAD、对应 tracked 源码 clean、12 个实际执行模块与已安装 TypeScript 转译结果，只忽略 sourceMap 尾注和外围空白；它不证明完整 dist/dependency 树重新构建。
 
 Rust 修复 shutdown 在途事件丢失属于主协调者已授权窄差异：同步停 timer、等待同一个 owned flush receipt 确定结果后 persist，外层 shutdown future 被 drop 不丢失 owner。普通 flush 在 flushing 时仍立即返回，enabled 别名的定时器行为保持基线。该修复的 Rust 因果测试尚未运行，正式 in-flight Rust/TS 差异验收也待主协调者安排。
+
+## Maintenance resolver 崩溃窄差异
+
+`maintenance-formal.mjs` 是真实 CLI server、公有 WS、loopback 模型/analytics 的故障场景。TS preload 仅在真实 `ProjectMemoryMaintenanceController` 的 resolver 边界注入一次 TypeError；不会改参考源码。TS 期望首个成功终态、runtime 错误和有序 exit1。Rust 正判期望首个终态与第二 turn 成功、准确 runtime 错误、九事件 snapshot/上传、SIGINT exit0 与 JSONL 清除。具体窄期望见 `O1-MEMORY-MAINTENANCE-RESOLVE-001`。
+
+Rust 不提供产品环境开关。`prepare-maintenance-mutants.py --source-root <候选源码根> --out <新目录>` 只读取候选，生成 positive/negative 两套源码 overlay 与清单，既不修改源码树也不构建。两个 overlay 在真实 maintenance resolver acquire 前向名为 `maintenance-fault-project` 的隔离项目注入同一个一次性 TypeError；negative 只额外恢复旧同步 submit Err 传播。
+
+调度者将 overlay 复制到两个独立保留的源码快照后分别构建，记录二进制 SHA 并写入对应 manifest 的 `binarySha256`，禁止在产品受测进程运行时覆盖二进制。调用例：
+
+```sh
+node maintenance-formal.mjs --baseline <固定TS目录> --out <新TS输出目录>
+node maintenance-formal.mjs --baseline <固定TS目录> --out <新Rust输出目录> --rust-bin <注入候选二进制> --rust-root <保留的overlay源码快照> --rust-sha <40位Git检查点> --rust-manifest <正向manifest>
+```
+
+对 negative 二进制运行完全相同的正判命令，必须非零且保存首次失败。driver核对注入边界、项目 basename、保留源码 overlay 哈希与实际二进制哈希；普通 shipping candidate 另跑无注入 `formal.mjs`，不能用注入候选替代发行验收。当前生成器与driver仅做语法检查/overlay生成，Rust故障正判与旧路径负控尚未构建运行。

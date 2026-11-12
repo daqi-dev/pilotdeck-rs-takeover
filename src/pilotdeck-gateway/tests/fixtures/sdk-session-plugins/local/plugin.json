@@ -1,0 +1,1 @@
+{"name":"session-data","version":"1.0.0","mcpServers":{"session-local":{"command":"unused-local-mock","args":[]}},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"true"}]}]}}

@@ -299,6 +299,7 @@ async fn stream_turn(
     let mut abort_ids = Vec::with_capacity(2);
     let mut abort_deadline = None;
     let mut terminal_seen = false;
+    let mut stream_done = false;
     loop {
         while abort_ids.len() < signals.count() {
             // Both signals can independently invoke abort while the first RPC
@@ -323,7 +324,12 @@ async fn stream_turn(
             }
             abort_deadline = Some(deadline);
         }
-        let next = next_query_frame(query, &initialized.request_id, &abort_ids, signals);
+        let next = next_query_frame(
+            query,
+            (!stream_done).then_some(initialized.request_id.as_str()),
+            &abort_ids,
+            signals,
+        );
         let incoming = if let Some(deadline) = abort_deadline {
             match within_abort_deadline(deadline, async { Ok(next.await) }).await {
                 Ok(incoming) => incoming,
@@ -355,6 +361,14 @@ async fn stream_turn(
                 return QueryOutcome::FatalAbort(error);
             }
             QueryInput::Frame(Ok(QueryFrame::AbortReply(Ok(_)))) => {
+                // One real CLI signal owns this exact run's abort. A natural
+                // stream end must not close the transport underneath its RPC.
+                // Acknowledgement is the canonical interrupted result, even
+                // when the provider's terminal event was already observed.
+                if abort_ids.len() == 1 && signals.count() == 1 {
+                    output.signal_aborted();
+                    return QueryOutcome::Complete(Box::new(output));
+                }
                 return QueryOutcome::Closed(client_closed());
             }
             QueryInput::Frame(Ok(QueryFrame::Event(event, final_frame))) => {
@@ -377,16 +391,22 @@ async fn stream_turn(
                     signals::observe("terminal-consumed");
                 }
                 if final_frame {
+                    if abort_ids.len() == 1 && signals.count() == 1 {
+                        stream_done = true;
+                        continue;
+                    }
                     return if abort_ids.is_empty() {
                         QueryOutcome::Complete(Box::new(output))
                     } else {
-                        // Closing a naturally completed stream rejects the
-                        // still-pending abort; it must not become exit zero.
                         QueryOutcome::Closed(client_closed())
                     };
                 }
             }
             QueryInput::Frame(Ok(QueryFrame::StreamDone)) => {
+                if abort_ids.len() == 1 && signals.count() == 1 {
+                    stream_done = true;
+                    continue;
+                }
                 return if abort_ids.is_empty() {
                     QueryOutcome::Complete(Box::new(output))
                 } else {
@@ -456,12 +476,12 @@ enum QueryInput {
 
 async fn next_query_frame(
     query: &mut Transport,
-    request_id: &str,
+    request_id: Option<&str>,
     abort_ids: &[String],
     signals: &mut Signals,
 ) -> QueryInput {
     match select(
-        Box::pin(query.query_frame(Some(request_id), abort_ids)),
+        Box::pin(query.query_frame(request_id, abort_ids)),
         Box::pin(signals.next()),
     )
     .await

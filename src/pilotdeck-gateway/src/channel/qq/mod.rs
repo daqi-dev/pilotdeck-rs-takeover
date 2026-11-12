@@ -333,10 +333,10 @@ impl Shared {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<JsString, String>> + Send + '_>>
     {
         Box::pin(async move {
-            if let Some((token, expires)) = self.token.lock().expect("qq token").as_ref() {
-                if *expires > tokio::time::Instant::now() + Duration::from_secs(120) {
-                    return Ok(token.clone());
-                }
+            if let Some((token, expires)) = self.token.lock().expect("qq token").as_ref()
+                && *expires > tokio::time::Instant::now() + Duration::from_secs(120)
+            {
+                return Ok(token.clone());
             }
             let body = object(&[
                 ("appId", JsValue::String(self.app_id.clone())),
@@ -692,10 +692,10 @@ impl Shared {
                 }
             }
         };
-        if let Some(state) = changed_state {
-            if let Some(callback) = &self.on_state_change {
-                callback(state);
-            }
+        if let Some(state) = changed_state
+            && let Some(callback) = &self.on_state_change
+        {
+            callback(state);
         }
         match admission {
             Admission::Busy => self.log(
@@ -901,11 +901,11 @@ impl Shared {
                 ("content", JsValue::String(chunk)),
                 ("msg_type", JsValue::Number(0.0)),
             ]);
-            if let JsValue::Object(fields) = &mut body {
-                if let Some(id) = message_id.as_ref().filter(|id| sms::truthy(id)) {
-                    fields.insert("msg_id".into(), id.clone());
-                    fields.insert("msg_seq".into(), JsValue::Number((index + 1) as f64));
-                }
+            if let JsValue::Object(fields) = &mut body
+                && let Some(id) = message_id.as_ref().filter(|id| sms::truthy(id))
+            {
+                fields.insert("msg_id".into(), id.clone());
+                fields.insert("msg_seq".into(), JsValue::Number((index + 1) as f64));
             }
             let url = format!(
                 "{}/v2/{}/messages",
@@ -948,16 +948,16 @@ impl Shared {
             Vec::new()
         };
         let receiver = self.receiver.lock().expect("qq receiver").take();
-        if let Some(receiver) = receiver {
-            if let Err(error) = receiver.task.await {
-                self.fatal_cleanup.store(true, Ordering::Release);
-                self.cleanup_errors
-                    .lock()
-                    .expect("qq cleanup errors")
-                    .push(ChannelError::error(format!(
-                        "qq: receiver cleanup failed: {error}"
-                    )));
-            }
+        if let Some(receiver) = receiver
+            && let Err(error) = receiver.task.await
+        {
+            self.fatal_cleanup.store(true, Ordering::Release);
+            self.cleanup_errors
+                .lock()
+                .expect("qq cleanup errors")
+                .push(ChannelError::error(format!(
+                    "qq: receiver cleanup failed: {error}"
+                )));
         }
         let handlers = std::mem::take(&mut *self.handlers.lock().expect("qq handlers"));
         for handler in handlers {
@@ -1161,31 +1161,11 @@ impl ChannelAdapter for QQChannel {
 /// Each loader construction gets its own helper state; the responder remains
 /// the one native gateway owner shared by the host.
 pub fn register(mounts: &mut crate::channel::loader::ChannelLoaderMounts, responder: ResponderRef) {
-    register_transport(mounts, responder, None);
-}
-
-pub(crate) fn register_with_network(
-    mounts: &mut crate::channel::loader::ChannelLoaderMounts,
-    responder: ResponderRef,
-    network: Arc<crate::channel::network::ChannelNetwork>,
-) {
-    register_transport(mounts, responder, Some(network));
-}
-
-fn register_transport(
-    mounts: &mut crate::channel::loader::ChannelLoaderMounts,
-    responder: ResponderRef,
-    network: Option<Arc<crate::channel::network::ChannelNetwork>>,
-) {
     mounts.register(
         CHANNEL_KEY,
         Arc::new(move |options: &JsObject| {
-            let mut options = QQChannelOptions::from_config(options);
-            if let Some(network) = &network {
-                options = options.with_network(network.clone());
-            }
             Ok(Arc::new(QQChannel::new(
-                options,
+                QQChannelOptions::from_config(options),
                 js_helper_interaction(responder.clone()),
             )) as Arc<dyn ChannelAdapter>)
         }),

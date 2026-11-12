@@ -8,7 +8,9 @@
 //! execution events; `ToolRuntime.dispatchLifecycle` dispatches the tool
 //! events. A `hooks` section in `pilotdeck.yaml` is not a source: the config
 //! loader reports it as an unknown top-level field (loadPilotConfig.ts:343-375).
+mod sdk_events;
 mod session;
+pub(super) use sdk_events::{SdkEventBus, SdkSessionEvents};
 mod sop;
 use super::permission_prompt::GatewayEmitSlot;
 use crate::{
@@ -36,8 +38,15 @@ use std::sync::{Arc, Mutex};
 /// their own runtimes and are left out here. SDK matchers follow the plugin
 /// matchers of the same event.
 pub(super) fn session_hook_settings(
+    settings: HooksSettings,
+    sdk_config: Option<&JsValue>,
+) -> HooksSettings {
+    merge_sdk_hooks(settings, sdk_config, false)
+}
+fn merge_sdk_hooks(
     mut settings: HooksSettings,
     sdk_config: Option<&JsValue>,
+    separate: bool,
 ) -> HooksSettings {
     let Some(hooks) = sdk_config
         .and_then(|config| config.get("hooks"))
@@ -64,8 +73,7 @@ pub(super) fn session_hook_settings(
     };
     for (event, matchers) in events.own_entries() {
         if !is_hook_event(event)
-            || event.equals_str("ConfigChange")
-            || event.equals_str("FileChanged")
+            || (!separate && (event.equals_str("ConfigChange") || event.equals_str("FileChanged")))
         {
             continue;
         }
@@ -248,8 +256,33 @@ pub(super) struct ToolHooks {
     /// baseline's session `HookRuntime`, which a turn's end neither cancels
     /// nor waits for.
     session: Mutex<Option<session::SessionLifecycle>>,
+    sdk_events: Mutex<Option<(Arc<SdkSessionEvents>, bool)>>,
 }
 impl ToolHooks {
+    pub(super) fn configure_sdk_events(
+        &self,
+        config: Option<&JsValue>,
+        bus: Arc<SdkEventBus>,
+        session: JsString,
+        cwd: JsString,
+        observers: &crate::runtime::hooks::runtime::HookObservers,
+    ) {
+        if let Some(events) = SdkSessionEvents::new(config, bus, session, cwd, observers) {
+            *self.sdk_events.lock().unwrap_or_else(|e| e.into_inner()) =
+                Some((Arc::new(events), true));
+        }
+    }
+    pub(super) fn sdk_events(&self) -> Option<Arc<SdkSessionEvents>> {
+        self.sdk_events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|(events, _)| events.clone())
+    }
+    pub(super) fn inherit_sdk_events(&self, events: Option<Arc<SdkSessionEvents>>) {
+        *self.sdk_events.lock().unwrap_or_else(|e| e.into_inner()) =
+            events.map(|events| (events, false));
+    }
     /// The session's own runtime over `settings`, with the session's
     /// observers (execution projection, async registration, shell).
     pub(super) fn configure_session(
@@ -294,11 +327,27 @@ impl ToolHooks {
             .unwrap_or_else(|e| e.into_inner())
             .take();
         self.bind(None);
-        match session {
-            Some(session) => session.dispose(),
-            None => Box::pin(async { Ok(()) }),
-        }
+        let sdk = self
+            .sdk_events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+            .filter(|(_, owner)| *owner)
+            .map(|(events, _)| events.close());
+        let session = session.map(|session| session.dispose());
+        Box::pin(async move {
+            let first = match sdk {
+                Some(future) => future.await,
+                None => Ok(()),
+            };
+            let second = match session {
+                Some(future) => future.await,
+                None => Ok(()),
+            };
+            first.and(second)
+        })
     }
+
     /// `void this.lifecycle.dispatch({ event, baseInput: { sessionId:
     /// sessionKey, transcriptPath: "", cwd: projectRoot }, payload,
     /// matchQuery: event }).catch(() => {})` — the session-scoped observers
@@ -417,8 +466,19 @@ impl ToolLifecycle for ToolHooks {
             .iter()
             .any(|configured| configured.equals_str(event));
         let port = self.port.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let sdk = if event == "FileChanged" {
+            self.sdk_events()
+                .map(|events| events.file_changed(&payload))
+        } else {
+            None
+        };
         let (Some(port), true) = (port, configured) else {
-            return Box::pin(async { Ok(None) });
+            return Box::pin(async move {
+                if let Some(future) = sdk {
+                    future.await?;
+                }
+                Ok(None)
+            });
         };
         let field = |key: &str| {
             context
@@ -447,6 +507,12 @@ impl ToolLifecycle for ToolHooks {
             signal: None,
         };
         let future = port.dispatch(input);
-        Box::pin(async move { future.await.map(Some) })
+        Box::pin(async move {
+            let result = future.await;
+            if let Some(sdk) = sdk {
+                let _ = sdk.await;
+            }
+            result.map(Some)
+        })
     }
 }

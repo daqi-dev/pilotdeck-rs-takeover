@@ -16,10 +16,7 @@ use crate::channel::{
     sms,
 };
 use crate::runtime::{
-    model::http::{
-        HyperModelTransport, ModelBody, ModelHttpTransport, TransportFailure, TransportFuture,
-        fetch::fetch,
-    },
+    model::http::{ModelBody, ModelHttpTransport, TransportFailure, TransportFuture, fetch::fetch},
     network::UNDICI_BODY_TIMEOUT,
     tools::builtin::bash::runner::Utf8Stream,
 };
@@ -459,26 +456,26 @@ impl Shared {
                                             ),
                                         );
                                     }
-                                } else if kind.is_some_and(|s| s.equals_str("MESSAGE_CREATE")) {
-                                    if let Some(data) = packet.get("d") {
-                                        let Some(chat) = data
-                                            .get("channel_id")
-                                            .and_then(JsValue::as_string)
-                                            .cloned()
-                                        else {
-                                            continue;
-                                        };
-                                        let shared = self.clone();
-                                        let data = data.clone();
-                                        let mut future = Box::pin(async move {
-                                            shared.parse_message(chat, data).await;
-                                        });
-                                        if future.as_mut().now_or_never().is_none() {
-                                            let mut handlers =
-                                                self.handlers.lock().expect("discord handlers");
-                                            self.harvest_finished(&mut handlers, "handler");
-                                            handlers.push(tokio::spawn(future));
-                                        }
+                                } else if kind.is_some_and(|s| s.equals_str("MESSAGE_CREATE"))
+                                    && let Some(data) = packet.get("d")
+                                {
+                                    let Some(chat) = data
+                                        .get("channel_id")
+                                        .and_then(JsValue::as_string)
+                                        .cloned()
+                                    else {
+                                        continue;
+                                    };
+                                    let shared = self.clone();
+                                    let data = data.clone();
+                                    let mut future = Box::pin(async move {
+                                        shared.parse_message(chat, data).await;
+                                    });
+                                    if future.as_mut().now_or_never().is_none() {
+                                        let mut handlers =
+                                            self.handlers.lock().expect("discord handlers");
+                                        self.harvest_finished(&mut handlers, "handler");
+                                        handlers.push(tokio::spawn(future));
                                     }
                                 }
                             }
@@ -820,17 +817,18 @@ impl Shared {
             Vec::new()
         };
         let receiver = self.receiver.lock().expect("discord receiver").take();
-        if let Some(receiver) = receiver {
-            if let Err(error) = receiver.task.await {
-                self.fatal_cleanup.store(true, Ordering::Release);
-                self.cleanup_errors
-                    .lock()
-                    .expect("discord cleanup errors")
-                    .push(ChannelError::error(format!(
-                        "discord: receiver cleanup failed: {error}"
-                    )));
-            }
+        if let Some(receiver) = receiver
+            && let Err(error) = receiver.task.await
+        {
+            self.fatal_cleanup.store(true, Ordering::Release);
+            self.cleanup_errors
+                .lock()
+                .expect("discord cleanup errors")
+                .push(ChannelError::error(format!(
+                    "discord: receiver cleanup failed: {error}"
+                )));
         }
+
         let handlers = std::mem::take(&mut *self.handlers.lock().expect("discord handlers"));
         for handler in handlers {
             if let Err(error) = handler.await {

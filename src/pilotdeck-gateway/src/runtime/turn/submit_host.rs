@@ -169,6 +169,10 @@ pub trait SubmitAdmission: Send + Sync {
         input: &'a JsValue,
         event: &'a JsValue,
     ) -> SubmitFuture<'a, Result<(), SubmitError>>;
+    fn task_budget_options(&self, _run: &RunRef) -> JsValue {
+        JsValue::Undefined
+    }
+    fn release_task_budget(&self, _run: &RunRef) {}
     fn has_sdk_config(&self) -> bool;
     fn validate_sdk_config(&self, config: &JsValue) -> Result<(), SubmitError>;
     fn set_sdk_config<'a>(
@@ -378,6 +382,13 @@ impl SubmitHost for GatewaySubmitHost {
                 ),
             ]);
             if let JsValue::Object(fields) = &mut options {
+                let task_budget = self.admission.task_budget_options(run);
+                for key in ["taskBudgetUsd", "initialTaskBudgetSpentUsd"] {
+                    if let Some(value) = task_budget.get(key).filter(|value| !value.is_undefined())
+                    {
+                        fields.insert(key.into(), value.clone());
+                    }
+                }
                 // `maxTurns` / `maxBudgetUsd: capGatewayTurnLimit(input.x,
                 // turnLimits?.x)` (InProcessGateway.ts:1553-1554): with no
                 // organization turn limits, the client's value as given.
@@ -472,6 +483,7 @@ impl SubmitHost for GatewaySubmitHost {
         self.services.record_failure(run, status)
     }
     fn finish_pump<'a>(&'a self, run: &'a RunRef) -> SubmitFuture<'a, Result<(), SubmitError>> {
+        self.admission.release_task_budget(run);
         // Removal before release is the exactly-once guard: repeated or
         // racing finish_pump calls find no entry for the second caller. The
         // lock is taken poison-tolerantly: a panic elsewhere must not block

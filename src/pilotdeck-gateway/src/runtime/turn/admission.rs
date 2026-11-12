@@ -119,7 +119,28 @@ pub trait SubmitTaskBudgetSnapshot: Send + Sync {
         session: &'a JsString,
         project: Option<&'a JsString>,
     ) -> SubmitFuture<'a, Result<JsValue, SubmitError>>;
+    /// Freeze the exact preflight amount for this accepted completion identity.
+    fn snapshot_for_run<'a>(
+        &'a self,
+        session: &'a JsString,
+        project: Option<&'a JsString>,
+        _completion: &'a TurnCompletionHandle,
+    ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
+        self.snapshot(session, project)
+    }
+    fn turn_options(&self, _session: &JsString, _run: &JsString) -> JsValue {
+        JsValue::Undefined
+    }
+    fn observe_event<'a>(
+        &'a self,
+        _input: &'a JsValue,
+        _event: &'a JsValue,
+    ) -> SubmitFuture<'a, Result<(), SubmitError>> {
+        Box::pin(async { Ok(()) })
+    }
+    fn release_run(&self, _session: &JsString, _run: &JsString) {}
 }
+
 /// `options.clearRecoveredUserDialogs` (InProcessGateway.ts:1183-1191).
 pub trait SubmitDialogRecovery: Send + Sync {
     fn clear_recovered<'a>(
@@ -674,7 +695,7 @@ impl super::submit_host::SubmitAdmission for GatewaySubmitAdmission {
             }
             if let Some(budget) = self.options.task_budget.as_ref() {
                 let budget = budget
-                    .snapshot(run.session(), run.project_key.as_ref())
+                    .snapshot_for_run(run.session(), run.project_key.as_ref(), completion)
                     .await?;
                 if completion.is_cancelled() {
                     return Ok(vec![aborted(run)]);
@@ -755,14 +776,28 @@ impl super::submit_host::SubmitAdmission for GatewaySubmitAdmission {
             Ok(vec![])
         })
     }
-    /// Permission-mode migration, model telemetry and task-budget spend are
-    /// 7b; without them there is nothing to observe before projection.
+    fn task_budget_options(&self, run: &RunRef) -> JsValue {
+        self.options
+            .task_budget
+            .as_ref()
+            .map(|budget| budget.turn_options(run.session(), &run.run_id))
+            .unwrap_or(JsValue::Undefined)
+    }
+    fn release_task_budget(&self, run: &RunRef) {
+        if let Some(budget) = &self.options.task_budget {
+            budget.release_run(run.session(), &run.run_id);
+        }
+    }
+    /// Settle raw terminal usage before projecting its gateway frames.
     fn observe_event<'a>(
         &'a self,
-        _: &'a JsValue,
-        _: &'a JsValue,
+        input: &'a JsValue,
+        event: &'a JsValue,
     ) -> SubmitFuture<'a, Result<(), SubmitError>> {
-        Box::pin(async { Ok(()) })
+        match &self.options.task_budget {
+            Some(budget) => budget.observe_event(input, event),
+            None => Box::pin(async { Ok(()) }),
+        }
     }
     fn has_sdk_config(&self) -> bool {
         self.options.sdk_config.is_some()

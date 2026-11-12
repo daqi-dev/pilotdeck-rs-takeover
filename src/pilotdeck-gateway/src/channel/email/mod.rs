@@ -528,16 +528,16 @@ impl Shared {
             Vec::new()
         };
         let receiver = self.receiver.lock().expect("email receiver").take();
-        if let Some(receiver) = receiver {
-            if let Err(error) = receiver.task.await {
-                self.fatal_cleanup.store(true, Ordering::Release);
-                self.cleanup_errors
-                    .lock()
-                    .expect("email cleanup errors")
-                    .push(ChannelError::error(format!(
-                        "email: receiver cleanup failed: {error}"
-                    )));
-            }
+        if let Some(receiver) = receiver
+            && let Err(error) = receiver.task.await
+        {
+            self.fatal_cleanup.store(true, Ordering::Release);
+            self.cleanup_errors
+                .lock()
+                .expect("email cleanup errors")
+                .push(ChannelError::error(format!(
+                    "email: receiver cleanup failed: {error}"
+                )));
         }
         let handlers = std::mem::take(&mut *self.handlers.lock().expect("email handlers"));
         for handler in handlers {

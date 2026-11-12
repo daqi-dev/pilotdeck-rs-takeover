@@ -130,12 +130,15 @@ pub fn js_trim(text: &str) -> &str {
 /// Node fs error message `CODE: description, syscall 'path'`, formatted by the
 /// gateway's libuv template (a descriptor read/write-stage error omits the
 /// path; a staged error from `read_session_bytes` etc. carries its own stage).
+// The former CLI production search entry now uses the shared gateway search.
+// Keep this adapter only for the existing CLI path compatibility tests.
+#[cfg(test)]
 pub fn node_fs_message(error: &std::io::Error, syscall: &str, path: &Path) -> Option<String> {
     let path = path.to_string_lossy();
     pilotdeck_gateway::node_fs_message(error, syscall, Some(path.as_ref()))
 }
 
-/// [`node_fs_message`] with libuv's `UV_UNKNOWN` fallback for errnos outside
+/// [`pilotdeck_gateway::node_fs_message`] with libuv's `UV_UNKNOWN` fallback for errnos outside
 /// the table, under the same stage rule: a descriptor read/write error
 /// carries no path even in the fallback.
 pub fn node_fs_message_or_unknown(error: &std::io::Error, syscall: &str, path: &Path) -> String {

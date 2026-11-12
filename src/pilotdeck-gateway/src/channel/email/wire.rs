@@ -260,7 +260,9 @@ fn fetch_fields(line: &str) -> Option<Vec<Value>> {
 }
 fn field<'a>(fields: &'a [Value], name: &str) -> Option<&'a Value> {
     fields
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .find(|pair| {
             pair[0]
                 .text()

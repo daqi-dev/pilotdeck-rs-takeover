@@ -3,7 +3,7 @@
 use pilotdeck_protocol::JsString;
 pub mod host;
 pub mod search;
-mod update;
+pub mod update;
 use std::{future::Future, pin::Pin};
 
 pub type CommandFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, CommandError>> + Send + 'a>>;
@@ -34,6 +34,13 @@ pub struct Status {
 pub trait CommandHost: Send + Sync {
     fn list_projects(&self) -> CommandFuture<'_, Vec<Project>>;
     fn run_update(&self, check: bool) -> CommandFuture<'_, UpdateResult>;
+    /// None is for legacy injected hosts; production returns a per-call owner.
+    fn update_operation(
+        &self,
+        _check: bool,
+    ) -> Result<Option<update::UpdateOperation>, CommandError> {
+        Ok(None)
+    }
     fn status(&self) -> CommandFuture<'_, Status>;
     fn search<'a>(
         &'a self,
@@ -48,6 +55,15 @@ pub trait CommandContext: Send + Sync {
     fn current_project(&self) -> Option<JsString>;
     fn bind_project(&self, project: &JsString) -> Result<(), CommandError>;
     fn reset_session(&self) -> Result<(), CommandError>;
+    fn wait_update<'a>(
+        &'a self,
+        mut operation: update::UpdateOperation,
+    ) -> CommandFuture<'a, UpdateResult> {
+        Box::pin(async move { operation.result().await })
+    }
+    fn is_stopping(&self) -> bool {
+        false
+    }
     fn log_error(&self, _message: &JsString) {}
 }
 
@@ -239,7 +255,12 @@ async fn handle(
                 },
             )
             .await?;
-            match host.run_update(check).await {
+            let result = match host.update_operation(check) {
+                Ok(Some(operation)) => ctx.wait_update(operation).await,
+                Ok(None) => host.run_update(check).await,
+                Err(error) => Err(error),
+            };
+            match result {
                 Ok(result) if result.code == Some(2) => {
                     say(ctx, "✅ 已是最新 Release，无需更新。").await
                 }
@@ -278,6 +299,7 @@ async fn handle(
                     ]))
                     .await
                 }
+                Err(e) if ctx.is_stopping() => Err(e),
                 Err(e) => ctx.reply(&concat(&[&text("❌ 更新失败："), &e.0])).await,
             }
         }
@@ -328,6 +350,9 @@ pub async fn execute(
         return Ok(false);
     }
     if let Err(error) = handle(resolved.name, &resolved.arg, host, ctx).await {
+        if ctx.is_stopping() {
+            return Err(error);
+        }
         let name = match resolved.name {
             Name::Projects => "projects",
             Name::SwitchProject => "switch-project",

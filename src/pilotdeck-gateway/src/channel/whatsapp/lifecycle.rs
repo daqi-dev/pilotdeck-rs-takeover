@@ -49,14 +49,14 @@ impl Shared {
             self.record_join(poll.await, "poll");
         }
         let bridge = self.bridge.lock().expect("whatsapp bridge").take();
-        if let Some(bridge) = bridge {
-            if let Err(error) = bridge.join().await {
-                self.fatal_cleanup.store(true, Ordering::Release);
-                self.cleanup_errors
-                    .lock()
-                    .expect("whatsapp cleanup errors")
-                    .push(error);
-            }
+        if let Some(bridge) = bridge
+            && let Err(error) = bridge.join().await
+        {
+            self.fatal_cleanup.store(true, Ordering::Release);
+            self.cleanup_errors
+                .lock()
+                .expect("whatsapp cleanup errors")
+                .push(error);
         }
         let handlers = std::mem::take(&mut *self.handlers.lock().expect("whatsapp handlers"));
         for handler in handlers {

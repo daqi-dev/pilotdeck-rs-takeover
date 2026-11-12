@@ -262,41 +262,52 @@ fn harness() -> Harness {
         config,
     }));
 
-    let requests = Requests {
-        subsystems: None,
-        env: options.environment(Env::new()),
-        options: options.clone(),
-        memory: Arc::new(MemoryGateway::disabled()),
-        coordinator: Arc::default(),
-        runs: None,
-        owner: owner.clone(),
-        project: Arc::new(ProjectRuntimeRegistry::new(
-            options.project.clone(),
-            Arc::new(NoRuntimeFactory),
-        )),
-        replacement: Arc::new(ReplacementCoordinator::new(
-            Default::default(),
-            Arc::new(owner.clone()),
-            5000,
-            None,
-        )),
-        recorders: Arc::default(),
-        interactions: Arc::default(),
-        mcp,
-        async_hook_registry: None,
-        // #1600: production assembles a connected bus; this stub must match.
-        user_dialog_bus: Arc::new(Mutex::new(
-            crate::user_dialog::GatewayUserDialogBus::connected(
-                crate::user_dialog::DialogRuntime::default(),
-            ),
-        )),
-        upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
-        prepare_weixin_login: None,
-        cron: None,
-        always_on: None,
-        always_on_standalone: Default::default(),
-        settings: Requests::stub_settings(&owner),
-        session_overrides: Arc::default(),
+    let requests = {
+        let task_budget_overrides: std::sync::Arc<crate::native_process::SessionOverrides> =
+            std::sync::Arc::default();
+        let task_budget_owner =
+            std::sync::Arc::new(crate::native_process::task_budget::NativeTaskBudget::new(
+                options.clone(),
+                task_budget_overrides.clone(),
+                &options.environment(Env::new()),
+            ));
+        Requests {
+            subsystems: None,
+            task_budget: task_budget_owner,
+            env: options.environment(Env::new()),
+            options: options.clone(),
+            memory: Arc::new(MemoryGateway::disabled()),
+            coordinator: Arc::default(),
+            runs: None,
+            owner: owner.clone(),
+            project: Arc::new(ProjectRuntimeRegistry::new(
+                options.project.clone(),
+                Arc::new(NoRuntimeFactory),
+            )),
+            replacement: Arc::new(ReplacementCoordinator::new(
+                Default::default(),
+                Arc::new(owner.clone()),
+                5000,
+                None,
+            )),
+            recorders: Arc::default(),
+            interactions: Arc::default(),
+            mcp,
+            async_hook_registry: None,
+            // #1600: production assembles a connected bus; this stub must match.
+            user_dialog_bus: Arc::new(Mutex::new(
+                crate::user_dialog::GatewayUserDialogBus::connected(
+                    crate::user_dialog::DialogRuntime::default(),
+                ),
+            )),
+            upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
+            prepare_weixin_login: None,
+            cron: None,
+            always_on: None,
+            always_on_standalone: Default::default(),
+            settings: Requests::stub_settings(&owner),
+            session_overrides: task_budget_overrides,
+        }
     };
     Harness {
         requests,

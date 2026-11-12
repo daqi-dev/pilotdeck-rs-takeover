@@ -9,7 +9,7 @@
 
 Telegram 配置触发 `telegram::register_with_network(mounts, responder, network)`，注册键 `telegram`。接收配置 `token`、`webhookUrl`；令牌回退 `TELEGRAM_BOT_TOKEN`。Webhook 模式只调用 Telegram setWebhook，不新增接收 HTTP 路由，与基线适配器的能力范围一致。
 
-QQ 配置触发 `qq::register_with_network(mounts, responder, network)`，注册键 `qq`。支持 `appId`、`clientSecret`、`allowGroups`、`triggerPrefixes`、`maxMessageLength`；凭据与允许群回退 `QQ_BOT_APPID`、`QQ_BOT_SECRET`、`QQ_ALLOW_GROUPS`。公开 `QQSessionMapper` / `QQSessionMapperState` 与 `on_state_change` 回调供 CLI bundle 保存 `activeByChatKey`。状态提供 `from_js(&JsValue)` / `to_js()`，内部 `JsObject` 保留 UTF-16 key、JS 属性顺序及更新时的原有 key 位置。公共 bundle 接线仍由根协调者闭合。
+QQ 配置由原生bundle通过 `QQChannelOptions::from_config(options).with_network(network)` 构造，注册键 `qq`。支持 `appId`、`clientSecret`、`allowGroups`、`triggerPrefixes`、`maxMessageLength`；凭据与允许群回退 `QQ_BOT_APPID`、`QQ_BOT_SECRET`、`QQ_ALLOW_GROUPS`。公开 `QQSessionMapper` / `QQSessionMapperState` 与 `on_state_change` 回调供 CLI bundle 保存 `activeByChatKey`。状态提供 `from_js(&JsValue)` / `to_js()`，内部 `JsObject` 保留 UTF-16 key、JS 属性顺序及更新时的原有 key 位置。公共 bundle 接线仍由根协调者闭合。
 
 两者均使用共享 `ChannelNetwork` 的 HTTP dispatcher；QQ WS 也通过同一 dispatcher 快照创建。原生业务不调用 Node/TS。每个构造器创建独立 JsInteractionPort helper，TurnGateway / responder 由宿主注入。
 
@@ -79,3 +79,5 @@ Telegram 四项组件测试包含 sticky/new/final reply、send失败、UTF-16�
 2026-11-13 root首次检查失败修正：保留root的TurnRequest默认字段；QQ改正String/JsValue构造、UTF-16/UTF-8转换与BodyExt boxed歧义；Telegram以借用数组并逐项clone保留JsValue Drop所有权。非正QQ分块上限真实TS正控2返回，0/-1各100ms未返回后由父终止自建worker；证据及窄挂起修复登记 `specs/gateway-parity/diffs/H1-QQ-CHUNK-LIMIT-001.md`。当前检查状态仍是待复验。
 
 81bc7e5d5定向首轮：Telegram3通过/1失败、QQ7通过/1失败。两个失败都是双LF恰落max-1/max的测试期望错误：真实固定TS再次验证首块保留第一LF、第二块为rest；产品chunk未改，仅修正断言。原始首次失败保留 `_build/20261113-060046-root-81bc-h1-corrected/output.log`，新证据 `_tmp/20261113-h1-qq/double-lf-oracle.json`，驱动 `tests/fixtures/h1-telegram/chunk-oracle.cjs`。本轮QQ builder `from_config(&JsObject)` / `with_network(self,Arc<ChannelNetwork>)` 已供公共bundle复用字段解析及HTTP/WS双接线。修正后的测试尚未复验。
+
+4525bb2候选Telegram4/QQ8全部通过。QQ旧register_with_network薄wrapper已经无生产调用并触发dead_code：其原意为统一HTTP/WS dispatcher，现由bundle的from_config/with_network完成并同时接持久mapper状态；只删除该已无调用wrapper，保留public register消费者接口，没有停止网络dispatcher能力。4525 clippy指明的QQ/SMS/TG let-chain及纯String format已改，未用allow压警告，待统一复验。

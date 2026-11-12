@@ -44,6 +44,10 @@ use std::{path::PathBuf, sync::Arc, time::Instant};
 
 #[path = "subagent_generation.rs"]
 mod generation;
+#[path = "agent_observer.rs"]
+mod observer;
+#[path = "agent_scope.rs"]
+pub(super) mod scope;
 use generation::{ChildSession, Generation};
 
 /// `SUBAGENT_PROMPT_PREVIEW_BYTES` / `SUBAGENT_SUMMARY_PREVIEW_BYTES`
@@ -195,6 +199,23 @@ impl SubagentRuntime {
         let generation = self
             .acquire_generation(&cwd)
             .map_err(|error| fail(&error))?;
+        let (fork_mcp_tools, fork_mcp) = match definition
+            .mcp_servers
+            .as_ref()
+            .filter(|servers| !servers.is_empty())
+        {
+            Some(servers) => {
+                let (tools, owner) = scope::ForkMcp::start(
+                    generation.mcp_provider()?,
+                    generation.clone(),
+                    servers,
+                    &definition,
+                )
+                .await?;
+                (tools, Some(owner))
+            }
+            None => (Vec::new(), None),
+        };
         let hooks = super::hooks::SessionHookCleanup::default();
         let storage = Arc::new(FactoryStorage::new(
             Arc::new(JsonlTranscriptStore::new()),
@@ -245,6 +266,7 @@ impl SubagentRuntime {
                     root_recorder: storage.recorder.clone(),
                 },
             )
+            .with_fork_mcp_tools(fork_mcp_tools)
             .with_continuation_parent(parent)
             .with_subagents(self.clone().with_lease_supplier(generation.supplier()))
             .with_hook_cleanup(&hooks);
@@ -275,12 +297,10 @@ impl SubagentRuntime {
             // the loop's status messages like any session's.
             .with_tail(tail);
         Ok((
-            Arc::new(ChildSession::new(
-                Arc::new(session),
-                generation,
-                child_extensions,
-                hooks,
-            )),
+            Arc::new(
+                ChildSession::new(Arc::new(session), generation, child_extensions, hooks)
+                    .with_mcp(fork_mcp),
+            ),
             storage,
         ))
     }
@@ -501,6 +521,8 @@ impl OneShotSubagent for OneShotPort {
             turn: id("turnId"),
             read,
             write,
+            definition_override: None,
+            suppress_auto_observer: false,
         })))
     }
 }
@@ -508,6 +530,8 @@ impl OneShotSubagent for OneShotPort {
 /// `createNativeForkApi` bound to one parent turn.
 #[derive(Clone)]
 struct Fork {
+    definition_override: Option<Arc<SubagentDefinition>>,
+    suppress_auto_observer: bool,
     runtime: SubagentRuntime,
     seed: ForkSeed,
     parent: ParentTurn,
@@ -710,6 +734,14 @@ fn build_child_config(
         config.insert("maxTurns".into(), JsValue::Number(turns));
     }
     config.insert("isSubagent".into(), JsValue::Bool(true));
+    config.insert(
+        "subagentMemoryDisabled".into(),
+        JsValue::Bool(definition.memory_disabled),
+    );
+    if definition.observer_run {
+        config.insert("subagentObserverReadOnly".into(), JsValue::Bool(true));
+        config.insert("sdkSkills".into(), JsValue::Array(Vec::new()));
+    }
     // `[buildSubagentSystemPrompt(definition), definition.criticalSystemReminder]`
     // without blank parts, joined by a blank line.
     let subagent_system = [
@@ -948,6 +980,7 @@ impl Fork {
         storage: &FactoryStorage,
         child_session: &JsString,
         context: &ToolRunContext,
+        activity: &mut Vec<JsValue>,
     ) -> Result<ChildOutcome, JsString> {
         let started = Instant::now();
         let fail = |error: &dyn std::fmt::Display| JsString::from(error.to_string());
@@ -965,20 +998,37 @@ impl Fork {
             .runtime
             .acquire_generation(&storage.cwd)
             .map_err(|error| fail(&error))?;
+        let (fork_mcp_tools, fork_mcp) = match definition
+            .mcp_servers
+            .as_ref()
+            .filter(|servers| !servers.is_empty())
+        {
+            Some(servers) => {
+                let provider = generation.mcp_provider()?;
+                let owner = scope::ForkMcp::prepare(provider, generation.clone(), servers);
+                let tools = tokio::select! {biased;_=context.cancelled()=>{owner.stop().await?;return Err("Subagent aborted before completion.".into());},result=owner.attach(&definition)=>result?};
+                (tools, Some(owner))
+            }
+            None => (Vec::new(), None),
+        };
         let hooks = super::hooks::SessionHookCleanup::default();
-        let tools: SessionTools = self.seed.clone().child(
-            SessionBinding {
-                context: self.seed.context.clone(),
-                recorder: storage.recorder.clone(),
-                checkpoint,
-                projection: storage.projection.clone(),
-            },
-            config.clone(),
-            ForkScope {
-                definition: definition.clone(),
-                root_recorder: self.parent.recorder.clone(),
-            },
-        );
+        let tools: SessionTools = self
+            .seed
+            .clone()
+            .child(
+                SessionBinding {
+                    context: self.seed.context.clone(),
+                    recorder: storage.recorder.clone(),
+                    checkpoint,
+                    projection: storage.projection.clone(),
+                },
+                config.clone(),
+                ForkScope {
+                    definition: definition.clone(),
+                    root_recorder: self.parent.recorder.clone(),
+                },
+            )
+            .with_fork_mcp_tools(fork_mcp_tools);
         let tools = tools
             .with_subagents(
                 self.runtime
@@ -1014,19 +1064,13 @@ impl Fork {
             )
             .into_live_session(storage.recorder.clone(), Vec::new)
             .as_sidechain();
-        let session = ChildSession::new(Arc::new(session), generation, child_extensions, hooks);
+        let session = ChildSession::new(Arc::new(session), generation, child_extensions, hooks)
+            .with_mcp(fork_mcp);
         let turn_id = JsString::from(format!("{}-t0", text(&request.subagent_id)));
+        let (input, submit_options) =
+            scope::fork_input(&definition, &request.directive, child_session, &turn_id);
         let mut turn = session
-            .submit(
-                JsValue::Object(object([
-                    ("type", "text".into()),
-                    ("text", JsValue::String(request.directive.clone())),
-                ])),
-                JsValue::Object(object([
-                    ("sessionId", JsValue::String(child_session.clone())),
-                    ("turnId", JsValue::String(turn_id.clone())),
-                ])),
-            )
+            .submit(input, submit_options)
             .map_err(|error| fail(&error.message))?;
         let timeout = tokio::time::sleep(std::time::Duration::from_millis(
             request.timeout_ms.max(0.0) as u64,
@@ -1061,6 +1105,11 @@ impl Fork {
                 Step::Next(Err(error)) => break Some(fail(&error.message)),
             };
             let kind = event.get("type").and_then(JsValue::as_string).map(text);
+            if activity.len() < 64
+                && !matches!(kind.as_deref(), Some("turn_started" | "user_input"))
+            {
+                activity.push(event.clone());
+            }
             match kind.as_deref() {
                 // The descriptor is the entry right after `turn_started`,
                 // before the first visible child input
@@ -1109,7 +1158,10 @@ impl Fork {
             self.forward(&event, &request.subagent_id, &definition);
         };
         drop(turn);
-        let _ = session.dispose().await;
+        session
+            .dispose()
+            .await
+            .map_err(|error| JsString::from(error.to_string()))?;
         if timed_out {
             return Err(format!("Subagent timed out after {}ms.", request.timeout_ms).into());
         }
@@ -1205,15 +1257,43 @@ impl Fork {
         context: ToolRunContext,
         started: Option<tokio::sync::oneshot::Sender<()>>,
     ) -> Result<ForkReport, JsString> {
-        let definition = definitions_from_config(&self.parent.config)
-            .into_iter()
-            .find(|definition| definition.id == text(&request.definition_id))
+        let definition = self
+            .definition_override
+            .clone()
+            .or_else(|| {
+                definitions_from_config(&self.parent.config)
+                    .into_iter()
+                    .find(|definition| definition.id == text(&request.definition_id))
+            })
             .ok_or_else(|| {
                 JsString::from(format!(
                     "Unknown subagent type: {}",
                     text(&request.definition_id)
                 ))
             })?;
+        let observer_definition = if self.suppress_auto_observer {
+            None
+        } else if let Some(name) = &definition.observer {
+            let target = definitions_from_config(&self.parent.config)
+                .into_iter()
+                .find(|definition| definition.id == *name)
+                .ok_or_else(|| {
+                    JsString::from(format!(
+                        "Observer definition {name} for {} is not configured.",
+                        definition.id
+                    ))
+                })?;
+            if self.runtime.background.is_none() {
+                return Err(format!(
+                    "Observer definition {} requires a host observer-subagent launcher.",
+                    target.id
+                )
+                .into());
+            }
+            Some(target)
+        } else {
+            None
+        };
         let cwd = self
             .parent
             .config
@@ -1275,6 +1355,7 @@ impl Fork {
             event.insert("durationMs".into(), JsValue::Number(duration_ms));
             event
         };
+        let mut activity = Vec::new();
         let outcome = self
             .run_child(
                 &request,
@@ -1282,6 +1363,7 @@ impl Fork {
                 &storage,
                 &child_session,
                 &context,
+                &mut activity,
             )
             .await;
         // A parent completion never advertises a child whose storage has not
@@ -1311,6 +1393,17 @@ impl Fork {
                 )
                 .await?;
                 self.emit(completed(true, None, outcome.duration_ms));
+                if let Some(observer_definition) = observer_definition {
+                    observer::launch(
+                        &self,
+                        &request,
+                        &context,
+                        &definition,
+                        observer_definition,
+                        activity,
+                        Ok(&outcome.markdown),
+                    )?;
+                }
                 Ok(ForkReport {
                     parsed: parse_summary(&outcome.markdown),
                     markdown,
@@ -1352,6 +1445,20 @@ impl Fork {
                     }
                 };
                 self.emit(completed(false, Some(aborted), 0.0));
+                if let Some(observer_definition) = observer_definition
+                    && observer::launch(
+                        &self,
+                        &request,
+                        &context,
+                        &definition,
+                        observer_definition,
+                        activity,
+                        Err(&failure),
+                    )
+                    .is_err()
+                {
+                    return Err("Subagent failed and its observer could not be launched.".into());
+                }
                 Err(failure)
             }
         }

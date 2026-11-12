@@ -277,7 +277,7 @@ impl Shared {
                 .get("description")
                 .map(sms::js_string_of)
                 .unwrap_or_else(|| JsString::from(text));
-            return Err(format!("{}", String::from_utf16_lossy(description.units())));
+            return Err(String::from_utf16_lossy(description.units()));
         }
         Ok(value.get("result").cloned().unwrap_or(JsValue::Undefined))
     }
@@ -619,16 +619,16 @@ impl Shared {
             Vec::new()
         };
         let receiver = self.receiver.lock().expect("telegram receiver").take();
-        if let Some(receiver) = receiver {
-            if let Err(error) = receiver.task.await {
-                self.fatal_cleanup.store(true, Ordering::Release);
-                self.cleanup_errors
-                    .lock()
-                    .expect("telegram cleanup errors")
-                    .push(ChannelError::error(format!(
-                        "telegram: receiver cleanup failed: {error}"
-                    )));
-            }
+        if let Some(receiver) = receiver
+            && let Err(error) = receiver.task.await
+        {
+            self.fatal_cleanup.store(true, Ordering::Release);
+            self.cleanup_errors
+                .lock()
+                .expect("telegram cleanup errors")
+                .push(ChannelError::error(format!(
+                    "telegram: receiver cleanup failed: {error}"
+                )));
         }
         let handlers = std::mem::take(&mut *self.handlers.lock().expect("telegram handlers"));
         for handler in handlers {

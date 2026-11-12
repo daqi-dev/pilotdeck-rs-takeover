@@ -134,6 +134,20 @@ impl TurnGateway for Gateway {
         })
     }
 }
+struct AssertDingHandshake;
+impl tokio_tungstenite::tungstenite::handshake::server::Callback for AssertDingHandshake {
+    fn on_request(
+        self,
+        request: &tokio_tungstenite::tungstenite::handshake::server::Request,
+        response: tokio_tungstenite::tungstenite::handshake::server::Response,
+    ) -> Result<
+        tokio_tungstenite::tungstenite::handshake::server::Response,
+        tokio_tungstenite::tungstenite::handshake::server::ErrorResponse,
+    > {
+        assert_eq!(request.uri().to_string(), "/connect?ticket=fixture");
+        Ok(response)
+    }
+}
 #[tokio::test]
 async fn stream_real_peer_ack_gateway_and_https_webhook_match_injected_oracle() {
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
@@ -144,16 +158,9 @@ async fn stream_real_peer_ack_gateway_and_https_webhook_match_injected_oracle() 
     let (release_tx, release_rx) = tokio::sync::oneshot::channel();
     let peer = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
-        let mut socket = tokio_tungstenite::accept_hdr_async(
-            stream,
-            |request: &tokio_tungstenite::tungstenite::handshake::server::Request,
-             response: tokio_tungstenite::tungstenite::handshake::server::Response| {
-                assert_eq!(request.uri().to_string(), "/connect?ticket=fixture");
-                Ok(response)
-            },
-        )
-        .await
-        .unwrap();
+        let mut socket = tokio_tungstenite::accept_hdr_async(stream, AssertDingHandshake)
+            .await
+            .unwrap();
         let data=serde_json::json!({"msgId":"1","conversationId":"room","text":{"content":" hello "},"sessionWebhook":"https://api.dingtalk.com/robot/send?access_token=fixture"}).to_string();
         let frame=serde_json::json!({"type":"CALLBACK","headers":{"topic":wire::ROBOT_TOPIC,"messageId":"wire-1"},"data":data}).to_string();
         socket
@@ -204,32 +211,34 @@ async fn stream_real_peer_ack_gateway_and_https_webhook_match_injected_oracle() 
     })
     .await
     .unwrap();
-    assert_eq!(turns.lock().unwrap().len(), 1);
-    let turns = turns.lock().unwrap();
-    assert_eq!(turns[0].message, JsString::from("hello"));
-    assert_eq!(
-        turns[0].session_key,
-        JsString::from("dingtalk:chat=room:general")
-    );
-    drop(turns);
-    let requests = requests.lock().unwrap();
-    assert_eq!(
-        requests[0].1.get("subscriptions"),
-        Some(&JsValue::Array(vec![object([
-            ("type", JsValue::from("CALLBACK")),
-            ("topic", JsValue::from(wire::ROBOT_TOPIC))
-        ])]))
-    );
-    let oracle = parse_json(include_str!(
-        "../../../tests/fixtures/h1-dingtalk/expected.json"
-    ))
-    .unwrap();
-    let expected = match oracle.get("replies").unwrap() {
-        JsValue::Array(items) => items[0].get("body").unwrap(),
-        _ => panic!(),
-    };
-    assert_eq!(&requests[1].1, expected);
-    drop(requests);
+    {
+        assert_eq!(turns.lock().unwrap().len(), 1);
+        let turns = turns.lock().unwrap();
+        assert_eq!(turns[0].message, JsString::from("hello"));
+        assert_eq!(
+            turns[0].session_key,
+            JsString::from("dingtalk:chat=room:general")
+        );
+    }
+    {
+        let requests = requests.lock().unwrap();
+        assert_eq!(
+            requests[0].1.get("subscriptions"),
+            Some(&JsValue::Array(vec![object([
+                ("type", JsValue::from("CALLBACK")),
+                ("topic", JsValue::from(wire::ROBOT_TOPIC))
+            ])]))
+        );
+        let oracle = parse_json(include_str!(
+            "../../../tests/fixtures/h1-dingtalk/expected.json"
+        ))
+        .unwrap();
+        let expected = match oracle.get("replies").unwrap() {
+            JsValue::Array(items) => items[0].get("body").unwrap(),
+            _ => panic!(),
+        };
+        assert_eq!(&requests[1].1, expected);
+    }
     release_tx.send(()).unwrap();
     tokio::time::timeout(Duration::from_secs(3), handle.stop("fixture"))
         .await

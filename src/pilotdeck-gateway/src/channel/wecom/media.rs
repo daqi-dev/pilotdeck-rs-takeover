@@ -192,12 +192,11 @@ impl Shared {
                 .headers()
                 .get("content-length")
                 .and_then(|v| v.to_str().ok())
+                && length.parse::<u64>().is_ok_and(|v| v > 20 * 1024 * 1024)
             {
-                if length.parse::<u64>().is_ok_and(|v| v > 20 * 1024 * 1024) {
-                    return Err(format!(
-                        "remote media exceeds limit: {length} bytes > 20971520"
-                    ));
-                }
+                return Err(format!(
+                    "remote media exceeds limit: {length} bytes > 20971520"
+                ));
             }
             let disposition = response
                 .headers()
@@ -529,16 +528,16 @@ impl Shared {
         .await;
         match result {
             Ok(ok) => {
-                if let Some(note) = prepared.downgrade {
-                    if ok {
-                        self.send_reply(
-                            &input.chat,
-                            &note.into(),
-                            Some(&input.message_id),
-                            input.group,
-                        )
-                        .await;
-                    }
+                if let Some(note) = prepared.downgrade
+                    && ok
+                {
+                    self.send_reply(
+                        &input.chat,
+                        &note.into(),
+                        Some(&input.message_id),
+                        input.group,
+                    )
+                    .await;
                 }
                 ok
             }
@@ -769,11 +768,9 @@ impl Shared {
             attachments: None,
         };
         let sent = self.send_prepared(&input, prepared).await;
-        if sent {
-            if let Some(caption) = caption.filter(|text| !text.is_empty()) {
-                self.send_reply(&input.chat, &caption, Some(&input.message_id), false)
-                    .await;
-            }
+        if sent && let Some(caption) = caption.filter(|text| !text.is_empty()) {
+            self.send_reply(&input.chat, &caption, Some(&input.message_id), false)
+                .await;
         }
         sent
     }

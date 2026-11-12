@@ -75,6 +75,12 @@ impl CommandHost for NativeCommandsHost {
     fn run_update(&self, check: bool) -> CommandFuture<'_, UpdateResult> {
         Box::pin(super::update::run(self.executable.as_deref(), check))
     }
+    fn update_operation(
+        &self,
+        check: bool,
+    ) -> Result<Option<super::update::UpdateOperation>, CommandError> {
+        super::update::start(self.executable.as_deref(), check).map(Some)
+    }
     fn status(&self) -> CommandFuture<'_, Status> {
         Box::pin(async move {
             async fn git(cwd: &std::path::Path, args: &[&str]) -> Result<JsString, CommandError> {
@@ -194,17 +200,15 @@ impl CommandHost for NativeCommandsHost {
             if query.is_empty() {
                 return Ok(Some("用法：/search <关键词> [--all] [--limit N] [--role user|assistant]\n示例：/search docker 部署".into()));
             }
-            // Node encodes unpaired surrogate units as U+FFFD for filesystem
-            // paths and project-id hashing; the isolated Node probe pins this.
-            let project = project.map(|p| String::from_utf16_lossy(p.units()));
+            let project = project.cloned();
             let home = self.home.clone();
             let cwd = self.cwd.clone();
-            let include_project = all || project.as_ref().is_none_or(String::is_empty);
+            let include_project = all || project.as_ref().is_none_or(JsString::is_empty);
             let result = tokio::task::spawn_blocking(move || {
                 search::search(search::SearchInput {
                     home: &home,
                     cwd: &cwd,
-                    project: if all { None } else { project.as_deref() },
+                    project: if all { None } else { project.as_ref() },
                     session: session.as_ref(),
                     query: &query,
                     limit,
@@ -217,6 +221,7 @@ impl CommandHost for NativeCommandsHost {
             .map_err(|error| CommandError(error.to_string().into()))?
             .map_err(|error| match error {
                 search::Failure::Error(message) => CommandError(message.into()),
+                search::Failure::JsError(message) => CommandError(message),
             })?;
             Ok(Some(format_search(&result, include_project)))
         })

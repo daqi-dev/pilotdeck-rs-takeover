@@ -51,12 +51,12 @@ impl Matcher {
             });
         }
 
-        let query = String::from_utf16_lossy(units);
         let invalid = |detail: &str| {
-            Failure::Error(format!(
-                "Invalid regular expression: /{query}/{}: {detail}",
-                if sensitive { "" } else { "i" }
-            ))
+            let mut message: Vec<u16> = "Invalid regular expression: /".encode_utf16().collect();
+            message.extend_from_slice(units);
+            message
+                .extend(format!("/{}: {detail}", if sensitive { "" } else { "i" }).encode_utf16());
+            Failure::JsError(pilotdeck_protocol::JsString::from_utf16(message))
         };
         let translated = translate(units, sensitive).map_err(invalid)?;
         let pattern = RegexBuilder::new(&translated).build().map_err(|error| {
@@ -82,10 +82,7 @@ impl Matcher {
                     }
                 }
             };
-            Failure::Error(format!(
-                "Invalid regular expression: /{query}/{}: {detail}",
-                if sensitive { "" } else { "i" }
-            ))
+            invalid(detail)
         })?;
         Ok(Self::Regex { pattern, sensitive })
     }

@@ -1,0 +1,6 @@
+{
+  "name": "windows-skills",
+  "version": "1.0.0",
+  "description": "Independent Windows command invocation guidance.",
+  "skills": "skills"
+}

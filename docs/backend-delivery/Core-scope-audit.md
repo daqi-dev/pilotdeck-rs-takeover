@@ -4,9 +4,9 @@
 
 扫描从 `pilotdeck-cli/src/main.rs::run` 的正式dispatch、`native_process/assembly.rs` 的正式构造出发，沿 production request / submitter / tools 到实际委托；不把测试fake、未配置时guard、允许的旧JS函数加载拒绝、无基线正式调用的可选callback当成stub。以下仅列确认存在的范围内产品缺口，非覆盖率或全后端完成声明。
 
-## 确认缺口
+## 发现时确认的缺口（实现进展另记）
 
-| ID / 严重级 | 正式触发 | 当前产品结果及直接证据 | 固定基线能力 | 后续责任与所需验证 |
+| ID / 严重级 | 正式触发 | 发现时产品结果及直接证据 | 固定基线能力 | 后续责任与所需验证 |
 |---|---|---|---|---|
 | CORE-SDK-HOOK-01 / P1 | `submit_turn.sdkSessionConfig.hooks.events.ConfigChange` 或 `FileChanged` | `NativeSdkSessionConfig::validate` 在 `native_process/sdk_config.rs:1292-1317` 因事件名本身直接返回 `CAPABILITY_UNAVAILABLE`；`native_process/hooks.rs:65-70` 构建hook settings时也显式排除两事件 | `src/cli/SessionInteractionBundle.ts:130-134,170-216,286-299` 为二者分别建runtime；ConfigChange注册gateway回调，FileChanged通过didSave发HTTP hook | 根已决定交给本审计作者专项实现。必须对固定TS捕获HTTP hook输入/selector，验证配置变更和正式write/edit触发、匹配、吞错、session释放；不能只删除拒绝 |
 | CORE-SDK-SCOPE-02 / P1 | 同一SDK配置包含`skills:[]`与任意`agents`（包括合法空skills数组） | `sdk_config.rs:1304-1311` 的`scoped_agents`直接拒绝整个配置，注释明确child context没有compose该scope | `src/cli/ProjectRuntimeRegistry.ts:2118-2166` 将父skills数组继承给缺省/`all`子agent，解析显式子skills并拒绝越出父范围 | 根已交给本审计作者专项实现。需验证父子prompt/read_skill/tool registry同一scope、相邻session不泄漏、父范围越界错误；不能仅放行配置 |
@@ -31,3 +31,7 @@ CORE-STEER-ATTACH-05已有历史差异卡 `specs/gateway-parity/diffs/A7.2-STEER
 5. 固定TS probe通过SessionInteractionBundle实际入口捕获两类HTTP hook输入/释放及skill scope解析；本地mock、隔离HOME/PILOT_HOME，无真实hook账号或provider。Rust正式配置→turn→write/config-refresh路径是最终验收对象。
 
 上述发现均已即时发主协调者；尚未实现或验收的项保持未完成。
+
+## 后续实施状态
+
+根在封存4525bb2后明确解冻并派出专项。HOOK-01/SCOPE-02、output controls与plugins当前已有WIP实现，准确范围与未验证边界见`Core-sdk-events-scopes.md`；AGENT03/sandbox/taskBudget分别由其他作者实施，steer附件由根派单修复。上述表格保留发现时证据，不把WIP当验收通过，也不声称被修改后的当前源码仍原样保有每个拒绝分支。最终关闭必须依集成提交的实际测试结果更新。

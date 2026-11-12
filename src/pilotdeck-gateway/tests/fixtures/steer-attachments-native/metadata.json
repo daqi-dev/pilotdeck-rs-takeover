@@ -1,0 +1,17 @@
+{
+  "node": "v22.22.0",
+  "revision": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "driverSha256": "47b581acbfd69a34dfc0fe3f09f3fb4a611b1f2c4bb22297d6724f6e246e39e8",
+  "identities": [
+    {
+      "file": "src/gateway/client/InProcessGateway.ts",
+      "sourceSha256": "bbeabd02733d2cba2020f64fdcff31bcb0defd589aa695aa80a6041900859c7a",
+      "distSha256": "7106b4f13224e0e38150bf5c01b74c372cb893221cb9ce5743a4aa93c85f0898"
+    },
+    {
+      "file": "src/gateway/dialog/GatewayAttachmentTurnComposer.ts",
+      "sourceSha256": "4896c129136b0f30ab0eb8985f7c3d7f8ac65148a6c2aaf5da990c0b9de5c400",
+      "distSha256": "ef576ecf480f3dea12d42d7f7bb36e72c68b334dc23583009a34f0a1c81e5b06"
+    }
+  ]
+}

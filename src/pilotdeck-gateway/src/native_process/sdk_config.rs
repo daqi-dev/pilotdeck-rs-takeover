@@ -20,6 +20,12 @@ use std::sync::Arc;
 
 /// The `sdkSessionConfig` fields whose effect the native session composes.
 pub(super) const WIRED_FIELDS: &[&str] = &[
+    "taskBudget",
+    "sandbox",
+    "plugins",
+    "outputFormat",
+    "agentProgressSummaries",
+    "forwardSubagentText",
     "userDialogKinds",
     "systemPrompt",
     "appendSystemPrompt",
@@ -43,11 +49,15 @@ pub(super) const WIRED_FIELDS: &[&str] = &[
     "settingSources",
 ];
 
-/// The `agents.<id>` keys whose effect the native subagent composes. A
-/// definition naming any other key (`mcpServers`, `skills`, `memory`,
-/// `initialPrompt`, `observer`, `observerMessage`) keeps the
-/// whole config unavailable.
+/// The serializable `agents.<id>` keys consumed by the native fork,
+/// its scope and its owned observer/MCP runtimes. Unknown fields fail closed.
 const WIRED_AGENT_FIELDS: &[&str] = &[
+    "mcpServers",
+    "memory",
+    "initialPrompt",
+    "observer",
+    "observerMessage",
+    "skills",
     "description",
     "prompt",
     "tools",
@@ -594,12 +604,16 @@ fn validate_agents(agents: &JsValue) -> Result<(), SubmitError> {
                 .is_none_or(|model| model.as_string().is_some_and(|model| !trim_empty(model)))
             && names("tools")
             && names("disallowedTools")
+            && present(agent,"skills").is_none_or(|skills| skills.as_string().is_some_and(|s|s.equals_str("all")) || matches!(skills,JsValue::Array(items) if items.iter().all(|name|name.as_string().is_some_and(|name|!trim_empty(name)))))
             && present(agent, "maxTurns").is_none_or(|value| {
                 value
                     .as_number()
                     .is_some_and(|value| is_integer(value) && value > 0.0)
             })
             && present(agent, "background").is_none_or(|value| value.as_bool().is_some())
+            && present(agent,"initialPrompt").is_none_or(is_string)
+            && present(agent,"memory").is_none_or(|value|string_in(value,&["inherit","disabled"]))
+            && present(agent,"mcpServers").is_none_or(|value|matches!(value,JsValue::Object(_)|JsValue::Array(_)))
             && present(agent, "observer")
                 .is_none_or(|value| value.as_string().is_some_and(|value| !trim_empty(value)))
             && present(agent, "observerMessage").is_none_or(is_string)
@@ -699,6 +713,12 @@ pub(super) fn apply_prompt_fields(agent: &mut JsObject, config: Option<&JsValue>
     let Some(config) = config.and_then(JsValue::as_object) else {
         return;
     };
+    if present(config, "agentProgressSummaries") == Some(&JsValue::Bool(true)) {
+        agent.insert("includeToolProgress".into(), JsValue::Bool(true));
+    }
+    if present(config, "outputFormat").is_some_and(truthy) {
+        agent.insert("stopOnStructuredOutput".into(), JsValue::Bool(true));
+    }
     if let Some(prompt) = present(config, "systemPrompt") {
         agent.insert("systemPrompt".into(), prompt.clone());
     }
@@ -719,51 +739,6 @@ pub(super) fn apply_prompt_fields(agent: &mut JsObject, config: Option<&JsValue>
     if let Some(aliases) = present(config, "toolAliases").filter(|aliases| truthy(aliases)) {
         agent.insert("toolAliases".into(), aliases.clone());
     }
-}
-
-/// `extensionView.getAllSkills()` of the project the config is set for, after
-/// `runtime.pluginRuntime.refresh()`.
-async fn project_skill_names(
-    registry: &crate::runtime::project::ProjectRuntimeRegistry,
-    root: &std::path::Path,
-) -> Result<Vec<String>, SubmitError> {
-    let lease = registry
-        .acquire(Some(root))
-        .map_err(|error| err("gateway_request_failed", error.to_string()))?;
-    let resources = lease
-        .runtime()
-        .resources()
-        .get::<crate::runtime::project::ProjectResources>()
-        .ok_or_else(|| {
-            err(
-                "gateway_request_failed",
-                "Native project resources are missing.",
-            )
-        })?;
-    let Some(resource) = resources
-        .context()
-        .resource(crate::runtime::project::Resource::PluginRuntime)
-    else {
-        return Ok(Vec::new());
-    };
-    let Some(plugins) = resource
-        .as_any()
-        .downcast_ref::<crate::runtime::project::plugins::PluginResources>()
-    else {
-        return Ok(Vec::new());
-    };
-    plugins
-        .runtime
-        .refresh()
-        .await
-        .map_err(|error| err("gateway_request_failed", error.to_string()))?;
-    Ok(plugins
-        .runtime
-        .all_skills()
-        .await
-        .into_iter()
-        .map(|skill| skill.name)
-        .collect())
 }
 
 /// `resolveSdkSessionSkills` (ProjectRuntimeRegistry.ts:1850-1869): each
@@ -834,6 +809,8 @@ pub(super) struct NativeSdkSessionConfig {
     /// The project runtimes whose model catalog the server-side checks
     /// resolve against (`this.resolve(projectKey).snapshot`).
     pub project: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
+    pub mcp_config: Arc<crate::runtime::mcp::sdk::SdkMcpConfig>,
+    pub task_budget: Arc<super::task_budget::NativeTaskBudget>,
 }
 
 /// `runtime.snapshot.config.model` of the project the config is set for.
@@ -977,6 +954,68 @@ fn validate_selector_policy(
         }
     }
     Ok(())
+}
+
+/// Resolve each fork against the same available names and parent ceiling.
+fn resolve_agent_skills(
+    agents: &JsObject,
+    parent: Option<&JsValue>,
+    available: &[String],
+) -> Result<JsObject, SubmitError> {
+    let mut resolved = agents.clone();
+    let parent = match parent {
+        Some(JsValue::Array(names)) => Some(names),
+        _ => None,
+    };
+    for (id, definition) in agents.own_entries() {
+        let Some(definition) = definition.as_object() else {
+            continue;
+        };
+        let selected = match definition.get("skills") {
+            Some(JsValue::Array(names)) => Some(resolve_session_skills(names, available)?),
+            None | Some(JsValue::Undefined) => parent.map(|names| {
+                names
+                    .iter()
+                    .filter_map(JsValue::as_string)
+                    .map(text)
+                    .collect()
+            }),
+            Some(JsValue::String(all)) if all.equals_str("all") => parent.map(|names| {
+                names
+                    .iter()
+                    .filter_map(JsValue::as_string)
+                    .map(text)
+                    .collect()
+            }),
+            _ => None,
+        };
+        if let Some(selected) = selected {
+            if let Some(parent) = parent {
+                for name in &selected {
+                    if !parent.iter().any(|allowed| {
+                        allowed
+                            .as_string()
+                            .is_some_and(|allowed| text(allowed) == *name)
+                    }) {
+                        return Err(err(
+                            "SDK_AGENT_SKILL_OUT_OF_SCOPE",
+                            format!(
+                                "Agent {} skill is not visible to the parent SDK session: {name}",
+                                text(id)
+                            ),
+                        ));
+                    }
+                }
+            }
+            let mut definition = definition.clone();
+            definition.insert(
+                "skills".into(),
+                JsValue::Array(selected.iter().map(|name| name.as_str().into()).collect()),
+            );
+            resolved.insert(id.clone(), JsValue::Object(definition));
+        }
+    }
+    Ok(resolved)
 }
 
 /// `assertSdkManagedModelAllowed` (ProjectRuntimeRegistry.ts:1926-1940).
@@ -1216,6 +1255,11 @@ pub(super) fn apply_agent_fields(agent: &mut JsObject, config: Option<&JsValue>)
             definition.insert("modelOverride".into(), JsValue::Object(model));
         }
         for (key, source) in [
+            ("mcpServers", "mcpServers"),
+            ("memory", "memory"),
+            ("initialPrompt", "initialPrompt"),
+            ("observer", "observer"),
+            ("skills", "skills"),
             ("maxTurns", "maxTurns"),
             ("effort", "effort"),
             ("permissionMode", "permissionMode"),
@@ -1227,6 +1271,17 @@ pub(super) fn apply_agent_fields(agent: &mut JsObject, config: Option<&JsValue>)
             if let Some(value) = field(source) {
                 definition.insert(key.into(), value.clone());
             }
+        }
+        if let Some(message) = field("observerMessage")
+            .and_then(JsValue::as_string)
+            .filter(|message| !trim_empty(message))
+        {
+            definition.insert(
+                "observerMessage".into(),
+                JsValue::String(JsString::from_utf16(
+                    crate::channel::sms::trim_units(message.units()).to_vec(),
+                )),
+            );
         }
         if field("background") == Some(&JsValue::Bool(true)) {
             definition.insert("background".into(), JsValue::Bool(true));
@@ -1289,27 +1344,8 @@ impl SubmitSdkSessionConfig for NativeSdkSessionConfig {
                     .filter(|(_, value)| !value.is_undefined())
                     .all(|(key, _)| WIRED_FIELDS.iter().any(|name| key.equals_str(name)))
             });
-        // The SDK `ConfigChange` / `FileChanged` hooks run in runtimes of
-        // their own (SessionInteractionBundle.ts:130-134,170-216) that this
-        // host does not compose yet.
-        let separate_runtime_hooks = config
-            .get("hooks")
-            .and_then(|hooks| hooks.get("events"))
-            .and_then(JsValue::as_object)
-            .is_some_and(|events| {
-                events.own_entries().iter().any(|(event, _)| {
-                    event.equals_str("ConfigChange") || event.equals_str("FileChanged")
-                })
-            });
-        // With a session skill list, `resolveSdkSubagentScopes` gives every
-        // agent that list as its own `skills` scope, which the native child
-        // context does not compose.
-        let scoped_agents = matches!(config.get("skills"), Some(JsValue::Array(_)))
-            && config
-                .get("agents")
-                .is_some_and(|agents| !agents.is_undefined());
-        let wired = wired && !scoped_agents && config.as_object().is_none_or(agents_wired);
-        if wired && !separate_runtime_hooks {
+        let wired = wired && config.as_object().is_none_or(agents_wired);
+        if wired {
             Ok(())
         } else {
             Err(err(
@@ -1324,7 +1360,7 @@ impl SubmitSdkSessionConfig for NativeSdkSessionConfig {
         session: &'a JsString,
         config: &'a JsValue,
         project: Option<&'a JsString>,
-        _completion: &'a TurnCompletionHandle,
+        completion: &'a TurnCompletionHandle,
     ) -> SubmitFuture<'a, Result<bool, SubmitError>> {
         Box::pin(async move {
             // `this.resolve(projectKey)` and `sdkSessionProjects.set`.
@@ -1380,11 +1416,51 @@ impl SubmitSdkSessionConfig for NativeSdkSessionConfig {
             if previous.as_ref().map(serialize) == Some(serialize(config)) {
                 return Ok(false);
             }
+            // Keep the project generation leased while resolving the candidate.
+            let plugin_lease = self
+                .project
+                .acquire(Some(&root))
+                .map_err(|error| err("gateway_request_failed", error.to_string()))?;
+            let plugin_runtime = plugin_lease
+                .runtime()
+                .resources()
+                .get::<crate::runtime::project::ProjectResources>()
+                .and_then(|resources| {
+                    resources
+                        .context()
+                        .resource(crate::runtime::project::Resource::PluginRuntime)
+                })
+                .and_then(|resource| {
+                    resource
+                        .as_any()
+                        .downcast_ref::<crate::runtime::project::plugins::PluginResources>()
+                        .map(|plugins| plugins.runtime.clone())
+                });
+            let prepared = match &plugin_runtime {
+                Some(runtime) => super::sdk_plugins::prepare(runtime, config.get("plugins"))
+                    .await
+                    .map_err(settings_submit_error)?,
+                None if config
+                    .get("plugins")
+                    .is_some_and(|plugins| !plugins.is_undefined()) =>
+                {
+                    return Err(err(
+                        "CAPABILITY_UNAVAILABLE",
+                        "SDK session plugin runtime is unavailable.",
+                    ));
+                }
+                None => super::sdk_plugins::PreparedPlugins {
+                    plugins: Vec::new(),
+                },
+            };
+            let available = match &plugin_runtime {
+                Some(runtime) => prepared.skill_names(runtime).await,
+                None => Vec::new(),
+            };
             let mut next = config.clone();
             // `next.skills = resolveSdkSessionSkills(next.skills,
             // extensionView.getAllSkills())` after a plugin refresh.
             if let Some(JsValue::Array(requested)) = config.get("skills") {
-                let available = project_skill_names(&self.project, &root).await?;
                 let resolved = resolve_session_skills(requested, &available)?;
                 if let JsValue::Object(fields) = &mut next {
                     fields.insert(
@@ -1436,6 +1512,24 @@ impl SubmitSdkSessionConfig for NativeSdkSessionConfig {
                     fields.insert("agents".into(), JsValue::Object(resolved_agents));
                 }
             }
+            if let Some(JsValue::Object(agents)) = next.get("agents") {
+                let resolved = resolve_agent_skills(agents, next.get("skills"), &available)?;
+                if let JsValue::Object(fields) = &mut next {
+                    fields.insert("agents".into(), JsValue::Object(resolved));
+                }
+            }
+            if let Some(JsValue::Object(agents)) = next.get("agents") {
+                let mut agents = agents.clone();
+                super::subagents::scope::resolve_sdk_agent_mcp_agents(
+                    &mut agents,
+                    &self
+                        .mcp_config
+                        .session_mcp_servers(&JsValue::String(session.clone())),
+                )?;
+                if let JsValue::Object(fields) = &mut next {
+                    fields.insert("agents".into(), JsValue::Object(agents));
+                }
+            }
             let config = &next;
             // `if (next.settings?.agent?.model)` (ProjectRuntimeRegistry.ts:
             // 1006-1010): the SDK's own model, labelled `model`.
@@ -1480,9 +1574,75 @@ impl SubmitSdkSessionConfig for NativeSdkSessionConfig {
                     &resolved.1,
                 )?;
             }
-            self.overrides.set_sdk_config(session, config.clone());
-            self.overrides.mark_sdk_config(session, root);
+            if !self
+                .task_budget
+                .configure_sdk(session, project, config, completion)?
+            {
+                return Ok(false);
+            }
+            self.overrides.commit_sdk_config_with_plugins(
+                session,
+                config.clone(),
+                prepared.plugins,
+                root,
+            );
             Ok(true)
         })
+    }
+}
+
+#[cfg(test)]
+mod scope_tests {
+    use super::*;
+    #[test]
+    fn sdk_child_skill_scopes_match_executed_fixed_ts_resolver() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/h1-sdk-scopes/expected.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            fixture.as_array().unwrap().len(),
+            6,
+            "all fixed TS scope cases must execute"
+        );
+        for case in fixture.as_array().unwrap() {
+            let input = &case["input"];
+            let agents = pilotdeck_protocol::parse_json(&input["agents"].to_string()).unwrap();
+            let parent = pilotdeck_protocol::parse_json(&input["parent"].to_string()).unwrap();
+            let available = input["available"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|name| name.as_str().unwrap().to_owned())
+                .collect::<Vec<_>>();
+            let result =
+                resolve_agent_skills(agents.as_object().unwrap(), Some(&parent), &available);
+            if let Some(expected) = case.get("error") {
+                let error = result.expect_err("fixed TS rejects this scope");
+                assert_eq!(error.code, expected["code"].as_str().unwrap());
+                assert_eq!(error.message, expected["message"].as_str().unwrap());
+            } else {
+                let resolved = result.unwrap();
+                let expected = pilotdeck_protocol::parse_json(&case["agents"].to_string()).unwrap();
+                assert_eq!(JsValue::Object(resolved.clone()), expected);
+                let mut sdk = JsObject::new();
+                sdk.insert("agents".into(), JsValue::Object(resolved));
+                let mut config = JsObject::new();
+                apply_agent_fields(&mut config, Some(&JsValue::Object(sdk)));
+                for (id, definition) in expected.as_object().unwrap().own_entries() {
+                    assert_eq!(
+                        config
+                            .get("subagentDefinitions")
+                            .unwrap()
+                            .as_object()
+                            .unwrap()
+                            .get_key(id)
+                            .unwrap()
+                            .get("skills"),
+                        definition.get("skills")
+                    );
+                }
+            }
+        }
     }
 }

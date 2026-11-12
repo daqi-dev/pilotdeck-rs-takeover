@@ -308,13 +308,12 @@ async fn registry_management_gate_agrees() {
 }
 
 #[tokio::test]
-async fn steer_turn_rejects_attachments_explicitly() {
+async fn steer_turn_composes_attachments_without_acquiring_uploaded_references() {
     // Reuse the isolated registry fixture. Without a live turn every
     // attachment-shaped input takes the ordinary no-active-turn path: TS
     // steerTurn never reads `uploadedAttachments`, and its attachment merge
     // runs after the activeTurnRunId gates (InProcessGateway.ts:1859-1870).
-    // With a live turn staged, a non-empty `attachments` payload is
-    // rejected explicitly instead of being silently dropped.
+    // With a live turn staged, non-empty attachments must enter canonical content.
     use crate::runtime::turn::gateway::GatewayRequests;
 
     let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
@@ -322,7 +321,7 @@ async fn steer_turn_rejects_attachments_explicitly() {
     let upload = || {
         JsValue::Array(vec![crate::metadata::object([
             ("type", "text".into()),
-            ("text", "attachment".into()),
+            ("content", "attachment".into()),
         ])])
     };
     let steer_params = |extra: Option<(&'static str, JsValue)>| {
@@ -370,19 +369,39 @@ async fn steer_turn_rejects_attachments_explicitly() {
         .expect("#1307 admission slot");
     let steer = steer_resource(&requests);
     let _turn = start_steer_run(&steer, "s", "t", "r");
-    // With a live turn, a non-empty `attachments` payload is rejected with the
-    // domain error rather than a fake accepted.
-    let error = requests
+    // A real non-empty attachment now reaches the actual mailbox projection.
+    let result = requests
         .request(
             "steer_turn".into(),
             steer_params(Some(("attachments", upload()))),
         )
         .await
-        .expect_err("#1307 attachments must be rejected with a live turn");
+        .expect("attachment composition");
     negative_assert_eq!(
-        error.code,
-        "STEER_ATTACHMENTS_UNSUPPORTED",
-        "#1307 attachments rejection uses the domain code"
+        result.get("accepted"),
+        Some(&JsValue::Bool(true)),
+        "attachments must be accepted, not discarded"
+    );
+    let info = crate::runtime::project::interaction_steer::active_turn_for(
+        &requests.project,
+        &"s".into(),
+        Some(&"r".into()),
+    )
+    .unwrap();
+    let messages = info.mailbox.drain(&"t".into());
+    negative_assert_eq!(messages.len(), 1, "one exact attachment steer queued");
+    negative_assert_eq!(
+        messages[0].message.get("content"),
+        Some(&JsValue::Array(vec![
+            crate::metadata::object([("type", "text".into()), ("text", "hello".into())]),
+            crate::metadata::object([("type", "text".into()), ("text", "attachment".into())]),
+        ])),
+        "steer canonical content includes attachment bytes"
+    );
+    negative_assert_eq!(
+        messages[0].allowed_read_files,
+        Some(vec![]),
+        "inline attachment grants no file paths"
     );
     // A non-empty `uploadedAttachments` stays accepted-and-ignored with a live
     // turn: TS steerTurn never reads the field, so the steer itself proceeds.
@@ -483,12 +502,7 @@ async fn steer_turn_attachments_sit_between_admission_and_resource_gates() {
 
     let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
         .expect("#1307 registry fixture setup");
-    let upload = || {
-        JsValue::Array(vec![crate::metadata::object([
-            ("type", "text".into()),
-            ("text", "attachment".into()),
-        ])])
-    };
+    let upload = || JsValue::Array(vec![JsValue::Null]);
     let steer_params = |run_id: &str, attachments: bool| {
         let fields: Vec<(&'static str, JsValue)> = [
             ("sessionKey", "s".into()),
@@ -523,14 +537,14 @@ async fn steer_turn_attachments_sit_between_admission_and_resource_gates() {
     );
     // Admission matched but no steer run staged: TS would still have prepared
     // the attachments before router.steer reports no_active_turn, so the
-    // slice's explicit rejection fires here.
+    // real preparation error fires here.
     let error = requests
         .request("steer_turn".into(), steer_params("r", true))
         .await
         .expect_err("#1307 attachments rejected before the resource gate");
     negative_assert_eq!(
-        error.code,
-        "STEER_ATTACHMENTS_UNSUPPORTED",
+        error.message,
+        pilotdeck_protocol::JsString::from("Cannot read properties of null (reading 'path')"),
         "#1307 attachments rejection precedes the resource gate"
     );
     // Same when a steer run exists but its run ID disagrees with the
@@ -542,8 +556,8 @@ async fn steer_turn_attachments_sit_between_admission_and_resource_gates() {
         .await
         .expect_err("#1307 attachments rejected before the slot-mismatch gate");
     negative_assert_eq!(
-        error.code,
-        "STEER_ATTACHMENTS_UNSUPPORTED",
+        error.message,
+        pilotdeck_protocol::JsString::from("Cannot read properties of null (reading 'path')"),
         "#1307 attachments rejection precedes the slot-mismatch gate"
     );
     requests

@@ -40,6 +40,7 @@ mod elicitation;
 mod hooks;
 mod permission_prompt;
 mod permission_settings;
+mod plugin_input;
 mod projects;
 mod requests;
 // The product entry (`pilotdeck server`): the baseline's startGatewayServer
@@ -50,6 +51,8 @@ pub use local::{LocalGateway, LocalOptions};
 mod server;
 pub use server::{DEFAULT_PORT, Listening, ServerOptions, parse_port, serve};
 mod sdk_config;
+mod sdk_plugins;
+mod sdk_sandbox;
 mod services;
 mod session_archive;
 mod session_fork;
@@ -68,6 +71,7 @@ mod switch_wiring;
 mod switch_wiring_tests;
 pub use session_overrides::SessionOverrides;
 mod subagents;
+mod task_budget;
 mod tools;
 // #1433: the session MCP tool composition (SessionMcpRuntimeBundle) behind
 // the turn registry — public so the integration test drives the production
@@ -113,9 +117,11 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
         server,
         switch_handles,
         false,
-        |address| eprintln!("native listening {address}"),
-        || eprintln!("native stopping"),
-        None,
+        ServeLifecycle {
+            listening: |address| eprintln!("native listening {address}"),
+            stopping: || eprintln!("native stopping"),
+            telemetry_snapshot: None,
+        },
     )
     .await
 }
@@ -125,16 +131,25 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
 /// signals, serve, and on SIGTERM / SIGINT run the switch machine to a clean
 /// stop. `listening` runs once the accept loop is live and `stopping` when the
 /// signal arrives; each entry prints its own lines there.
+struct ServeLifecycle<L, S> {
+    listening: L,
+    stopping: S,
+    telemetry_snapshot: Option<Arc<dyn Fn() + Send + Sync>>,
+}
+
 async fn serve_until_signal(
     drain_budget: Duration,
     host: crate::runtime::turn::gateway::TurnGateway,
     server: crate::native_ws::NativeWsServer,
     switch_handles: switch_wiring::AssemblySwitchHandles,
     until_clients_leave: bool,
-    listening: impl FnOnce(SocketAddr),
-    stopping: impl FnOnce(),
-    telemetry_snapshot: Option<Arc<dyn Fn() + Send + Sync>>,
+    lifecycle: ServeLifecycle<impl FnOnce(SocketAddr), impl FnOnce()>,
 ) -> Result<(), ProxyError> {
+    let ServeLifecycle {
+        listening,
+        stopping,
+        telemetry_snapshot,
+    } = lifecycle;
     #[cfg(unix)]
     let signals = (|| -> std::io::Result<_> {
         Ok((

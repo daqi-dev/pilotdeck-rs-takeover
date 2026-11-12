@@ -65,34 +65,111 @@ fn item_id_string(value: &JsValue) -> Result<JsString, RequestError> {
         .map_err(|_| RequestError::new(js_value::StackOverflow::MESSAGE))
 }
 
-/// An attachments field carries nothing when it is absent, null/undefined,
-/// or an empty array.
-fn attachments_empty(value: &JsValue) -> bool {
-    matches!(value, JsValue::Undefined | JsValue::Null)
-        || matches!(value, JsValue::Array(items) if items.is_empty())
+/// Steer uses the composer's raw `attachments ?? []` contract, not submit's
+/// array normalization. Keep the early iterable/property errors in the TS
+/// collection pass before calling the shared, typed attachment projection.
+fn steer_attachments(value: Option<&JsValue>) -> Result<Vec<JsValue>, RequestError> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let attachments = match value {
+        JsValue::Undefined | JsValue::Null | JsValue::Bool(false) => return Ok(Vec::new()),
+        JsValue::Number(number) if *number == 0.0 || number.is_nan() => return Ok(Vec::new()),
+        JsValue::String(_) => return Ok(Vec::new()),
+        JsValue::Object(object)
+            if object.get("length").and_then(JsValue::as_number) == Some(0.0) =>
+        {
+            return Ok(Vec::new());
+        }
+        JsValue::Array(items) => items.clone(),
+        _ => return Err(RequestError::new("attachments is not iterable")),
+    };
+    for attachment in &attachments {
+        match attachment {
+            JsValue::Null => {
+                return Err(RequestError::new(
+                    "Cannot read properties of null (reading 'path')",
+                ));
+            }
+            JsValue::Undefined => {
+                return Err(RequestError::new(
+                    "Cannot read properties of undefined (reading 'path')",
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok(attachments)
 }
 
-/// TS `steerTurn` merges non-empty `attachments` into the content array via
-/// `prepareAttachmentTurn` and never reads `uploadedAttachments` (only
-/// `submitTurn` consumes uploads; InProcessGateway.ts:1864-1870). This native
-/// slice cannot steer with attachments yet: a non-empty `attachments` payload
-/// is rejected explicitly — at the TS attachment-preparation position, right
-/// after the admission branches and before the resource gates — instead of
-/// being silently dropped (ledger A7.2-STEER-ATTACH-001, corrected by
-/// A7.2-STEER-ATTACH-001-R1); `uploadedAttachments` is accepted and ignored,
-/// matching the TS baseline.
-fn attachments_unsupported(field: &str) -> RequestError {
-    RequestError {
-        code: "STEER_ATTACHMENTS_UNSUPPORTED".into(),
-        message: format!(
-            "steer_turn does not support attachments in this native slice: `{field}` \
-             must be absent, null, or an empty array."
-        )
-        .into(),
-        details: None,
-        validation: None,
-    }
+async fn prepare_steer_content(
+    project: std::path::PathBuf,
+    message: JsValue,
+    attachments: Vec<JsValue>,
+) -> Result<(JsValue, Vec<JsString>), RequestError> {
+    let raw = message.clone();
+    let prepared = tokio::task::spawn_blocking(move || {
+        super::super::services::compose_attachment_turn(&project, &message, &attachments)
+    })
+    .await
+    .map_err(|error| RequestError::new(error.to_string()))?
+    .map_err(|error| RequestError::new(error.message))?;
+    let allowed = match prepared.get("allowedReadFiles") {
+        Some(JsValue::Array(paths)) => paths
+            .iter()
+            .filter_map(JsValue::as_string)
+            .cloned()
+            .collect(),
+        _ => Vec::new(),
+    };
+    let content = if prepared
+        .get("type")
+        .and_then(JsValue::as_string)
+        .is_some_and(|kind| kind.equals_str("blocks"))
+    {
+        // TS reads `message.length` only when some projected block/note exists.
+        // The ordinary submit service rejects non-strings earlier; steer must
+        // preserve its pre-existing raw input semantics here.
+        match &raw {
+            JsValue::Null => {
+                return Err(RequestError::new(
+                    "Cannot read properties of null (reading 'length')",
+                ));
+            }
+            JsValue::Undefined => {
+                return Err(RequestError::new(
+                    "Cannot read properties of undefined (reading 'length')",
+                ));
+            }
+            _ => {}
+        }
+        let mut content = prepared
+            .get("content")
+            .cloned()
+            .unwrap_or(JsValue::Array(Vec::new()));
+        if !matches!(&raw, JsValue::String(_)) {
+            let length = match &raw {
+                JsValue::Array(items) => JsValue::Number(items.len() as f64),
+                _ => raw.get("length").cloned().unwrap_or(JsValue::Undefined),
+            };
+            if js_value::to_number(&length)
+                .map_err(|_| RequestError::new(js_value::StackOverflow::MESSAGE))?
+                > 0.0
+                && let JsValue::Array(blocks) = &mut content
+            {
+                blocks.insert(0, object([("type", "text".into()), ("text", raw)]));
+            }
+        }
+        content
+    } else {
+        JsValue::Array(vec![object([("type", "text".into()), ("text", raw)])])
+    };
+    Ok((content, allowed))
 }
+
+#[cfg(test)]
+#[path = "steer_attachment_tests.rs"]
+mod attachment_tests;
 
 impl Requests {
     pub(in crate::native_process) fn steer_request(
@@ -135,22 +212,16 @@ impl Requests {
             return Ok(turn_mismatch("accepted"));
         }
 
-        // Attachments are rejected immediately after the admission branches,
-        // mirroring the TS order: steerTurn prepares attachments right after
-        // the activeTurnRunId gates (InProcessGateway.ts:1864-1870), while the
-        // session/run resource gates run later, inside router.steer
-        // (SessionRouter.ts:307-314, AgentSession.ts:290-297). The caller
-        // still learns no_active_turn / turn_mismatch before the slice's
-        // explicit attachments error.
-        if params
-            .get("attachments")
-            .is_some_and(|value| !attachments_empty(value))
-        {
-            return Err(attachments_unsupported("attachments"));
-        }
-        // `uploadedAttachments` is never read by TS `steerTurn` (only
-        // `submitTurn` consumes uploads): a non-empty payload is accepted
-        // and ignored here, matching the baseline.
+        // Actual TS order: admission first, attachment composition next, then
+        // the router's resource gates. Uploaded references are never acquired
+        // or read by steerTurn (only submitTurn consumes their leases).
+        let attachments = steer_attachments(params.get("attachments"))?;
+        let message_text = input_property(&params, "message")?.unwrap_or(JsValue::Undefined);
+        let project = self
+            .options
+            .project_root_for(params.get("projectKey").and_then(JsValue::as_string));
+        let (content, allowed_read_files) =
+            prepare_steer_content(project, message_text, attachments).await?;
 
         // Same shared lookup as the async-hook registry's turn resolution:
         // fetch the steer slot and guard it against the admission run ID
@@ -178,16 +249,9 @@ impl Requests {
         // item id's coerced form (see `item_id_string`).
         let item_id =
             item_id_string(&input_property(&params, "itemId")?.unwrap_or(JsValue::Undefined))?;
-        let message_text = input_property(&params, "message")?.unwrap_or(JsValue::Undefined);
         let message = crate::metadata::object([
             ("role", "user".into()),
-            (
-                "content",
-                JsValue::Array(vec![object([
-                    ("type", "text".into()),
-                    ("text", message_text),
-                ])]),
-            ),
+            ("content", content),
             (
                 "metadata",
                 object([
@@ -201,7 +265,7 @@ impl Requests {
             .enqueue(SteerMessage {
                 item_id,
                 message,
-                allowed_read_files: Some(Vec::new()),
+                allowed_read_files: Some(allowed_read_files),
             })
             .await
             .map_err(|e| RequestError::new(e.message.clone()))?;

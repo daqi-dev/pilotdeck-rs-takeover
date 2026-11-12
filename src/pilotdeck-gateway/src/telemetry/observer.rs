@@ -1,4 +1,4 @@
-use super::{TelemetryClient, TelemetryErrorValue, defaulted, field, object, string, truthy};
+use super::{TelemetryClient, TelemetryErrorValue, defaulted, field, string, truthy};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::sync::Arc;
 

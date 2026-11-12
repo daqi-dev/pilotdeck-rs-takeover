@@ -885,9 +885,6 @@ fn chunk_text(text: &JsString, max: usize) -> Vec<JsString> {
     }
     result
 }
-pub(crate) fn register(mounts: &mut ChannelLoaderMounts, responder: ResponderRef) {
-    register_with_network(mounts, responder, Arc::new(ChannelNetwork::new(None)));
-}
 pub(crate) fn register_with_network(
     mounts: &mut ChannelLoaderMounts,
     responder: ResponderRef,

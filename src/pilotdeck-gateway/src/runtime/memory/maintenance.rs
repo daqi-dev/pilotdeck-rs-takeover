@@ -153,7 +153,6 @@ impl<R: MaintenanceRuntime> ProjectMemoryMaintenanceController<R> {
         }
         let inner = self.0.clone();
         self.0.executor.spawn(async move {
-            let lease = lease;
             let mut flight = flight;
             let mut next = first;
             loop {

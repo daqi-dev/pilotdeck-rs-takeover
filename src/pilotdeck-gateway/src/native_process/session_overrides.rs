@@ -18,6 +18,7 @@ struct Inner {
     /// selection is its `outputStyle` field, as in the baseline, so a later
     /// `sdkSessionConfig` replaces a selection made by `set_output_style`.
     sdk_configs: HashMap<JsString, JsValue>,
+    sdk_plugins: HashMap<JsString, Vec<std::sync::Arc<crate::runtime::plugins::LoadedPlugin>>>,
     /// `sdkSessionConfigs` membership with its `sdkSessionProjects` root:
     /// the sessions `reloadOutputStylesForSdk` closes
     /// (ProjectRuntimeRegistry.ts:1111-1121).
@@ -38,6 +39,7 @@ struct LiveMode {
 #[derive(Default)]
 pub struct SessionOverrides {
     inner: std::sync::Mutex<Inner>,
+    sdk_events: std::sync::Arc<super::hooks::SdkEventBus>,
     /// `SessionConfigOverrides` (always-on/runtime/SessionConfigOverrides.ts):
     /// the unattended runtimes' per-session `permissionMode` /
     /// `bypassAvailable` / `canPrompt` / `excludeTools`, read when a session
@@ -47,6 +49,40 @@ pub struct SessionOverrides {
 }
 
 impl SessionOverrides {
+    pub(super) fn sdk_events(&self) -> std::sync::Arc<super::hooks::SdkEventBus> {
+        self.sdk_events.clone()
+    }
+    pub(super) fn sdk_snapshot(
+        &self,
+        key: &JsString,
+    ) -> (
+        Option<JsValue>,
+        Vec<std::sync::Arc<crate::runtime::plugins::LoadedPlugin>>,
+    ) {
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        (
+            inner.sdk_configs.get(key).cloned(),
+            inner.sdk_plugins.get(key).cloned().unwrap_or_default(),
+        )
+    }
+    pub(super) fn sdk_plugins(
+        &self,
+        key: &JsString,
+    ) -> Vec<std::sync::Arc<crate::runtime::plugins::LoadedPlugin>> {
+        self.sdk_snapshot(key).1
+    }
+    pub(super) fn commit_sdk_config_with_plugins(
+        &self,
+        key: &JsString,
+        config: JsValue,
+        plugins: Vec<std::sync::Arc<crate::runtime::plugins::LoadedPlugin>>,
+        root: std::path::PathBuf,
+    ) {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner.sdk_configs.insert(key.clone(), config);
+        inner.sdk_plugins.insert(key.clone(), plugins);
+        inner.sdk_config_projects.insert(key.clone(), root);
+    }
     /// The shared `SessionConfigOverrides` registry the automation runtimes
     /// write (`ProjectAutomationBundle.sessionOverrides`).
     pub fn config_overrides(
@@ -245,6 +281,7 @@ impl SessionOverrides {
     pub fn clear_sdk_config(&self, key: &JsString) {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         inner.sdk_configs.remove(key);
+        inner.sdk_plugins.remove(key);
         inner.sdk_config_projects.remove(key);
     }
 

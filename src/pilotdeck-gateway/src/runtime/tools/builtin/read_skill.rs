@@ -20,6 +20,7 @@ pub struct ReadSkillTool {
     /// 302-316): the loader answers only an exact selected name and the
     /// lister lists only the selected skills.
     selected: Option<Vec<String>>,
+    contributions: Option<Vec<crate::runtime::plugins::PluginSkillContribution>>,
 }
 
 impl ReadSkillTool {
@@ -27,6 +28,7 @@ impl ReadSkillTool {
         Self {
             plugins,
             selected: None,
+            contributions: None,
             fields: object([
                 ("name", string("read_skill")),
                 ("aliases", JsValue::Array(vec![string("ReadSkill")])),
@@ -49,6 +51,13 @@ impl ReadSkillTool {
 }
 
 impl ReadSkillTool {
+    pub fn with_contributions(
+        mut self,
+        skills: Vec<crate::runtime::plugins::PluginSkillContribution>,
+    ) -> Self {
+        self.contributions = Some(skills);
+        self
+    }
     pub fn with_selected(mut self, selected: Option<Vec<String>>) -> Self {
         self.selected = selected;
         self
@@ -105,6 +114,7 @@ impl ExecutableTool for ReadSkillTool {
     fn execute(&self, input: JsValue, _context: ToolRunContext) -> ToolFuture<ToolOutput> {
         let plugins = self.plugins.clone();
         let selected = self.selected.clone();
+        let contributions = self.contributions.clone();
         Box::pin(async move {
             let name = match field(&input, "skillName") {
                 JsValue::String(name) => text(name),
@@ -115,14 +125,38 @@ impl ExecutableTool for ReadSkillTool {
                     .as_ref()
                     .is_none_or(|names| names.iter().any(|name| name == skill))
             };
-            let content = if chosen(&name) {
-                plugins.load_skill_prompt(&name).await
-            } else {
-                None
+            let (skills, content) = match contributions {
+                Some(skills) => {
+                    let content = if chosen(&name) {
+                        skills
+                            .iter()
+                            .find(|skill| skill.name == name)
+                            .or_else(|| {
+                                skills
+                                    .iter()
+                                    .find(|skill| skill.name.ends_with(&format!(":{name}")))
+                            })
+                            .map(|skill| {
+                                crate::runtime::plugins::render_skill_content(
+                                    &skill.content,
+                                    &skill.path,
+                                )
+                            })
+                    } else {
+                        None
+                    };
+                    (skills, content)
+                }
+                None => {
+                    let content = if chosen(&name) {
+                        plugins.load_skill_prompt(&name).await
+                    } else {
+                        None
+                    };
+                    (plugins.all_skills().await, content)
+                }
             };
-            let available: Vec<(String, String)> = plugins
-                .all_skills()
-                .await
+            let available: Vec<(String, String)> = skills
                 .into_iter()
                 .filter(|skill| chosen(&skill.name))
                 .map(|skill| (skill.name, skill.path.to_string_lossy().into_owned()))

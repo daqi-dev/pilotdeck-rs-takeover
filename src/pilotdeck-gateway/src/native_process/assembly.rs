@@ -14,8 +14,7 @@ use crate::{
             gateway::{McpGateway, McpGatewayOptions},
             sdk::{
                 PluginProjectRuntime, SdkMcpCloseSession, SdkMcpConfig, SdkMcpConfigOptions,
-                SdkMcpError, SdkMcpFuture, SdkMcpProject, SdkMcpProjectResolver,
-                SdkMcpSessionPlugins, SystemEnvironment,
+                SdkMcpError, SdkMcpFuture, SdkMcpProject, SdkMcpProjectResolver, SystemEnvironment,
             },
         },
         memory::{
@@ -556,6 +555,11 @@ async fn start_assembly_resources(
     // both writers (the three selector methods on `Requests`) and the reader
     // (the prepare closure composing each session's agent config).
     let session_overrides: Arc<super::SessionOverrides> = Arc::default();
+    let task_budget = Arc::new(super::task_budget::NativeTaskBudget::new(
+        options.clone(),
+        session_overrides.clone(),
+        &env,
+    ));
     let prepare_overrides = session_overrides.clone();
     let evict_session_overrides = session_overrides.clone();
     let prepare_user_dialog_bus = user_dialog_bus.clone();
@@ -702,6 +706,9 @@ async fn start_assembly_resources(
                             .cloned()
                     });
                 let snapshot = staged.snapshot();
+                // Config and SDK plugin selection are committed under one lock.
+                let (sdk_config, sdk_plugins) =
+                    session_overrides.sdk_snapshot(&context.session_key);
                 let sop_profile = snapshot
                     .get("config")
                     .and_then(|value| value.get("modules"))
@@ -730,7 +737,7 @@ async fn start_assembly_resources(
                     &options.home,
                     options.os_home.as_deref(),
                     &project_root,
-                    session_overrides.sdk_config(&context.session_key).as_ref(),
+                    sdk_config.as_ref(),
                 )
                 .map_err(|error| RuntimeError::new(error.message))?;
                 super::sdk_config::apply_settings_overlay(&mut agent, sdk_settings.as_ref());
@@ -884,7 +891,6 @@ async fn start_assembly_resources(
                 let stored_thinking = session_overrides.thinking(&context.session_key);
                 // `sdkSessionConfig.userDialogKinds` of the config stored
                 // before this session was created.
-                let sdk_config = session_overrides.sdk_config(&context.session_key);
                 let user_dialog_kinds = super::sdk_config::user_dialog_kinds(sdk_config.as_ref());
                 // `await runtime.pluginRuntime.refresh()` (ProjectSessionRuntimeBundle
                 // .ts:247-264): the session's plugin contributions are taken
@@ -894,16 +900,29 @@ async fn start_assembly_resources(
                 let session_plugins = plugin_runtime_resource
                     .as_ref()
                     .and_then(|resource| resource.as_any().downcast_ref::<PluginResources>());
-                let plugin_hooks = match session_plugins {
-                    Some(plugins) => crate::runtime::plugins::collect_plugin_hooks(
-                        &plugins
-                            .runtime
-                            .refresh()
+                let mut plugin_lease = match session_plugins {
+                    Some(plugins) => Some(
+                        super::sdk_plugins::acquire(&plugins.runtime, sdk_plugins.clone())
                             .await
                             .map_err(|error| RuntimeError::new(error.to_string()))?,
                     ),
-                    None => Vec::new(),
+                    None if !sdk_plugins.is_empty() => {
+                        return Err(RuntimeError::new(
+                            "Session SDK plugins require a plugin runtime.",
+                        ));
+                    }
+                    None => None,
                 };
+                let plugin_contributions = plugin_lease
+                    .as_ref()
+                    .map(|lease| lease.contributions.clone());
+                let plugin_input = plugin_contributions
+                    .as_ref()
+                    .map(super::plugin_input::transformer);
+                let plugin_hooks = plugin_contributions
+                    .as_ref()
+                    .map(|snapshot| snapshot.hooks.clone())
+                    .unwrap_or_default();
                 let hook_settings =
                     super::hooks::session_hook_settings(plugin_hooks, sdk_config.as_ref());
                 let include_hook_events = sdk_config
@@ -916,15 +935,13 @@ async fn start_assembly_resources(
                     .as_ref()
                     .and_then(|config| config.get("hooks"))
                     .is_some_and(|hooks| !hooks.is_undefined());
-                let stored_style_content =
-                    match session_overrides.output_style(&context.session_key) {
-                        Some(name) => output_style_content(&staged, &name).await,
-                        None => None,
-                    };
-                super::sdk_config::apply_prompt_fields(
-                    &mut config,
-                    session_overrides.sdk_config(&context.session_key).as_ref(),
-                );
+                let stored_style_content = match session_overrides
+                    .output_style(&context.session_key)
+                {
+                    Some(name) => output_style_content(&staged, &name, sdk_plugins.clone()).await,
+                    None => None,
+                };
+                super::sdk_config::apply_prompt_fields(&mut config, sdk_config.as_ref());
                 super::sdk_config::apply_model_fields(
                     &mut config,
                     sdk_config.as_ref(),
@@ -971,6 +988,18 @@ async fn start_assembly_resources(
                         }
                     })
                 });
+                // Registered before MCP/hooks so reverse cleanup releases all
+                // consumers before the exact plugin generation lease.
+                if let Some(mut plugin_lease) = plugin_lease.take() {
+                    retained.push(move || {
+                        Box::pin(async move {
+                            plugin_lease
+                                .release()
+                                .await
+                                .map_err(|error| RuntimeError::new(error.to_string()))
+                        })
+                    });
+                }
                 // `acquirePermissionRuleSet({ permissionRules:
                 // override?.permissionRules })` (ProjectSessionFactory.ts:
                 // 262-265): the always-on execute phase's deny rules.
@@ -1060,10 +1089,10 @@ async fn start_assembly_resources(
                         // (ProjectSessionRuntimeBundle.ts:247-279): plugin
                         // servers — the builtin ones included — are composed
                         // when the session is created.
-                        let plugin_servers = match session_plugins {
-                            Some(plugins) => plugins.runtime.mcp_servers().await,
-                            None => JsObject::new(),
-                        };
+                        let plugin_servers = plugin_contributions
+                            .as_ref()
+                            .map(|snapshot| snapshot.mcp_servers.clone())
+                            .unwrap_or_default();
                         super::tools::session_mcp_tools(super::tools::SessionMcpToolsOptions {
                             mcp_config,
                             plugin_servers,
@@ -1233,6 +1262,9 @@ async fn start_assembly_resources(
                         .with_deferred_tools(sdk_config.as_ref())?
                         .with_prompt_policy(can_prompt_override, bypass_available_override)
                         .with_sdk_permissions(sdk_config.as_ref())
+                        .with_sdk_sandbox(
+                            sdk_config.as_ref().and_then(|config| config.get("sandbox")),
+                        )
                         .with_sdk_tool_scope(
                             super::sdk_config::session_skills(sdk_config.as_ref()),
                             sdk_config
@@ -1251,6 +1283,7 @@ async fn start_assembly_resources(
                             include_hook_events,
                             sdk_hooks.then(|| async_hooks.clone()),
                         )
+                        .with_sdk_events(sdk_config.as_ref(), session_overrides.sdk_events())
                         .with_hook_cleanup(&hook_cleanup)
                         .with_permission_prompt(
                             gateway_emit.clone(),
@@ -1277,6 +1310,10 @@ async fn start_assembly_resources(
                         let ports = match plugin_runtime {
                             Some(plugins) if !skills_disabled => ports.with_skills(plugins),
                             Some(_) => ports,
+                            None => ports,
+                        };
+                        let ports = match plugin_contributions.clone() {
+                            Some(snapshot) => ports.with_plugin_contributions(snapshot),
                             None => ports,
                         };
                         let ports = match interaction_events.clone() {
@@ -1439,6 +1476,7 @@ async fn start_assembly_resources(
                             },
                         )
                         .with_agent_config(config)
+                        .with_input_transform(plugin_input.clone())
                         .with_lease_supplier(turn_lease_supplier)
                         .with_turn_override_sink(turn_override_sink)
                         .for_project(turn_project_root)
@@ -1656,7 +1694,7 @@ async fn start_assembly_resources(
     let cleanup_ephemeral = (
         ephemeral_roots.clone(),
         session_overrides.clone(),
-        options.home.clone(),
+        task_budget.clone(),
     );
     let cleanup_project = project.clone();
     // #1746: exactly one teardown may run. The host polls this cleanup itself
@@ -1920,18 +1958,29 @@ async fn start_assembly_resources(
                 registry: build_project.clone(),
                 overrides: session_overrides.clone(),
             });
+            let mcp_gateway = mcp::build_mcp_gateway(
+                &owner,
+                &build_project,
+                &permission_rule_sets,
+                &build_mcp_config,
+                &interactions,
+                &session_overrides,
+            );
             let admission = SubmitAdmissionOptions {
                 interactions: interactions.clone(),
                 sdk_config: Some(Arc::new(super::sdk_config::NativeSdkSessionConfig {
                     options: options.clone(),
                     overrides: session_overrides.clone(),
                     project: build_project.clone(),
+                    mcp_config: mcp_gateway.config().clone(),
+                    task_budget: task_budget.clone(),
                 })),
                 compaction: Some(Arc::new(super::manual_compaction::OwnerCompaction {
                     owner: owner.clone(),
                 })),
                 model_assertion: Some(project_admission.clone()),
                 dialog_recovery: Some(project_admission),
+                task_budget: Some(task_budget.clone()),
                 ..SubmitAdmissionOptions::new(replacement.clone())
             };
             // U7 global settings (#1320): `createPilotConfigStoreSync` +
@@ -1968,6 +2017,7 @@ async fn start_assembly_resources(
                 &env,
                 session_overrides.clone(),
                 super::services::NativeProcessRefreshPorts {
+                    sdk: Some(session_overrides.sdk_events()),
                     output_styles: Some(Arc::new(super::services::NativeOutputStylesReload {
                         options: options.clone(),
                         project: build_project.clone(),
@@ -2021,16 +2071,18 @@ async fn start_assembly_resources(
                     store: settings.store.clone(),
                     _watch: config_watch.clone(),
                     refresh: Some(settings.bundle.clone()),
+                    // Server global-handler errors go directly to its injected
+                    // base; self-owned embeddings share their native client.
+                    telemetry: Some(
+                        options
+                            .telemetry
+                            .as_ref()
+                            .map(|client| client.0.clone())
+                            .unwrap_or_else(|| build_telemetry.client()),
+                    ),
                 }),
             });
-            let mcp_gateway = mcp::build_mcp_gateway(
-                &owner,
-                &build_project,
-                &permission_rule_sets,
-                &build_mcp_config,
-                &interactions,
-                &session_overrides,
-            );
+
             let async_hook_registry =
                 steer::build_async_hook_registry(&build_project, &owner, &coordinator);
             if let Some(registry) = &async_hook_registry {
@@ -2072,6 +2124,7 @@ async fn start_assembly_resources(
             let options_telemetry_reload = options.telemetry_reload;
             let requests = Arc::new(super::requests::Requests {
                 subsystems: Some(build_subsystems.clone()),
+                task_budget: task_budget.clone(),
                 project: build_project,
                 memory: memory.clone(),
                 options,
@@ -2361,7 +2414,7 @@ async fn start_assembly_resources(
                 if let Err(error) = &project {
                     cleanup_diagnostic(error);
                 }
-                dispose_ephemeral_sessions(
+                let ephemeral = dispose_ephemeral_sessions(
                     &cleanup_ephemeral.0,
                     &cleanup_ephemeral.1,
                     &cleanup_ephemeral.2,
@@ -2370,7 +2423,7 @@ async fn start_assembly_resources(
                     .dispose()
                     .await
                     .map_err(|error| error.to_string());
-                let mut outcome = sessions.and(project).and(telemetry_dispose);
+                let mut outcome = sessions.and(project).and(ephemeral).and(telemetry_dispose);
                 for failure in [
                     reload_stop.err(),
                     automation_stop.err(),
@@ -2508,7 +2561,11 @@ pub(super) fn apply_session_overrides(
 /// PluginResources.runtime). Like ProjectRuntimeRegistry's
 /// getSdkOutputStyleContent the view is read without a refresh and a
 /// missing style is not an error: `None` leaves the field alone.
-async fn output_style_content(staged: &StageContext, name: &JsString) -> Option<String> {
+async fn output_style_content(
+    staged: &StageContext,
+    name: &JsString,
+    additional: Vec<Arc<crate::runtime::plugins::LoadedPlugin>>,
+) -> Option<String> {
     let plugin_runtime = staged
         .resource(Resource::PluginRuntime)?
         .as_any()
@@ -2516,7 +2573,7 @@ async fn output_style_content(staged: &StageContext, name: &JsString) -> Option<
         .runtime
         .clone();
     plugin_runtime
-        .create_view(vec![])
+        .create_view(additional)
         .await
         .list_output_styles()
         .into_iter()
@@ -2893,23 +2950,30 @@ fn make_ephemeral_root() -> std::io::Result<PathBuf> {
 fn dispose_ephemeral_sessions(
     roots: &Mutex<HashMap<JsString, PathBuf>>,
     overrides: &super::SessionOverrides,
-    pilot_home: &std::path::Path,
-) {
+    task_budget: &super::task_budget::NativeTaskBudget,
+) -> Result<(), String> {
     let roots: Vec<(JsString, PathBuf)> = roots
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .drain()
         .collect();
     if roots.is_empty() {
-        return;
+        return Ok(());
     }
     let projects = overrides.sdk_config_sessions();
-    let mut ledger = crate::storage::TaskBudgetStore::new(pilot_home, None);
+    let mut failures = Vec::new();
     for (session, root) in roots {
         let _ = std::fs::remove_dir_all(&root);
         if let Some((_, project)) = projects.iter().find(|(key, _)| *key == session) {
             let project: JsString = project.to_string_lossy().as_ref().into();
-            let _ = ledger.clear_session(&project, &session);
+            if let Err(error) = task_budget.clear_sdk(&session, Some(&project)) {
+                failures.push(error.message)
+            }
         }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
     }
 }

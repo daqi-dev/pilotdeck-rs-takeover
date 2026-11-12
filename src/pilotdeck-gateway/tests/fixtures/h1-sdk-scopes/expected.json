@@ -1,0 +1,197 @@
+[
+  {
+    "input": {
+      "id": "inherit-and-all",
+      "parent": [
+        "pkg:alpha"
+      ],
+      "available": [
+        "pkg:alpha",
+        "pkg:beta"
+      ],
+      "agents": {
+        "a": {
+          "description": "worker",
+          "prompt": "do work"
+        },
+        "b": {
+          "description": "worker",
+          "prompt": "do work",
+          "skills": "all"
+        },
+        "c": {
+          "description": "worker",
+          "prompt": "do work",
+          "skills": [
+            "alpha",
+            "alpha"
+          ]
+        }
+      }
+    },
+    "agents": {
+      "a": {
+        "description": "worker",
+        "prompt": "do work",
+        "skills": [
+          "pkg:alpha"
+        ]
+      },
+      "b": {
+        "description": "worker",
+        "prompt": "do work",
+        "skills": [
+          "pkg:alpha"
+        ]
+      },
+      "c": {
+        "description": "worker",
+        "prompt": "do work",
+        "skills": [
+          "pkg:alpha"
+        ]
+      }
+    }
+  },
+  {
+    "input": {
+      "id": "empty-parent",
+      "parent": [],
+      "available": [
+        "pkg:alpha"
+      ],
+      "agents": {
+        "a": {
+          "description": "worker",
+          "prompt": "do work"
+        },
+        "b": {
+          "description": "worker",
+          "prompt": "do work",
+          "skills": "all"
+        }
+      }
+    },
+    "agents": {
+      "a": {
+        "description": "worker",
+        "prompt": "do work",
+        "skills": []
+      },
+      "b": {
+        "description": "worker",
+        "prompt": "do work",
+        "skills": []
+      }
+    }
+  },
+  {
+    "input": {
+      "id": "all-without-parent",
+      "parent": "all",
+      "available": [
+        "pkg:alpha"
+      ],
+      "agents": {
+        "a": {
+          "description": "worker",
+          "prompt": "do work",
+          "skills": "all"
+        },
+        "b": {
+          "description": "worker",
+          "prompt": "do work",
+          "skills": [
+            "alpha"
+          ]
+        }
+      }
+    },
+    "agents": {
+      "a": {
+        "description": "worker",
+        "prompt": "do work",
+        "skills": "all"
+      },
+      "b": {
+        "description": "worker",
+        "prompt": "do work",
+        "skills": [
+          "pkg:alpha"
+        ]
+      }
+    }
+  },
+  {
+    "input": {
+      "id": "escape",
+      "parent": [
+        "pkg:alpha"
+      ],
+      "available": [
+        "pkg:alpha",
+        "pkg:beta"
+      ],
+      "agents": {
+        "a": {
+          "description": "worker",
+          "prompt": "do work",
+          "skills": [
+            "beta"
+          ]
+        }
+      }
+    },
+    "error": {
+      "code": "SDK_AGENT_SKILL_OUT_OF_SCOPE",
+      "message": "Agent a skill is not visible to the parent SDK session: pkg:beta"
+    }
+  },
+  {
+    "input": {
+      "id": "missing",
+      "parent": [
+        "pkg:alpha"
+      ],
+      "available": [
+        "pkg:alpha"
+      ],
+      "agents": {
+        "a": {
+          "description": "worker",
+          "prompt": "do work",
+          "skills": [
+            "missing"
+          ]
+        }
+      }
+    },
+    "error": {
+      "code": "SDK_SKILL_NOT_FOUND",
+      "message": "SDK session skill is not available in this project: missing"
+    }
+  },
+  {
+    "input": {
+      "id": "ambiguous",
+      "parent": "all",
+      "available": [
+        "one:alpha",
+        "two:alpha"
+      ],
+      "agents": {
+        "a": {
+          "description": "worker",
+          "prompt": "do work",
+          "skills": [
+            "alpha"
+          ]
+        }
+      }
+    },
+    "error": {
+      "code": "SDK_SKILL_AMBIGUOUS",
+      "message": "SDK session skill is ambiguous; use its fully-qualified name: alpha"
+    }
+  }
+]

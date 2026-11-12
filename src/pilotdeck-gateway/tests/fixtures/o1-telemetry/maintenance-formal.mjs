@@ -6,11 +6,23 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import {spawn,spawnSync} from 'node:child_process';
+import {pathToFileURL} from 'node:url';
 import {sourceIdentity,hash} from './source-identity.mjs';
 const options={};for(let i=2;i<process.argv.length;i+=2)options[process.argv[i].replace(/^--/,'')]=process.argv[i+1];assert.equal(process.version,'v22.22.0');assert.ok(options.baseline&&options.out);
 let candidate=null;if(options['rust-bin']){assert.ok(options['rust-root']);assert.match(options['rust-sha']??'',/^[0-9a-f]{40}$/);const root=fs.realpathSync(options['rust-root']);assert.equal(spawnSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).stdout.trim(),options['rust-sha']);candidate={root,sha:options['rust-sha']};}
 const out=path.resolve(options.out);fs.mkdirSync(out);const json=v=>JSON.stringify(v,null,2)+'\n',save=(name,v)=>fs.writeFileSync(path.join(out,name),json(v));
-const root=path.join(out,'fixture'),home=path.join(root,'home'),pilot=path.join(home,'.pilotdeck'),project=path.join(root,'maintenance-fault-project');for(const p of [pilot,project,path.join(root,'tmp'),path.join(root,'skills'),path.join(root,'plugins')])fs.mkdirSync(p,{recursive:true});fs.writeFileSync(path.join(pilot,'server-token'),'o1-fake-server-token\n',{mode:0o600});fs.writeFileSync(path.join(pilot,'.legacy-bundled-skills-migrated-v1'),'completed\n');save('source-identity.json',await sourceIdentity(options.baseline));fs.copyFileSync(new URL(import.meta.url),path.join(out,'driver.mjs'));
+const root=path.join(out,'fixture'),home=path.join(root,'home'),pilot=path.join(home,'.pilotdeck'),project=path.join(root,'maintenance-fault-project');for(const p of [pilot,project,path.join(root,'tmp'),path.join(root,'skills'),path.join(root,'plugins')])fs.mkdirSync(p,{recursive:true});fs.writeFileSync(path.join(pilot,'server-token'),'o1-fake-server-token\n',{mode:0o600});fs.writeFileSync(path.join(pilot,'.legacy-bundled-skills-migrated-v1'),'completed\n');const identity=await sourceIdentity(options.baseline);
+const maintenanceFiles=['src/cli/ProjectMemoryMaintenanceController.ts','src/cli/GatewayRuntimeRefreshBundle.ts','src/cli/createLocalGateway.ts'];
+assert.equal(spawnSync('git',['diff','--quiet','HEAD','--',...maintenanceFiles],{cwd:options.baseline}).status,0);
+const {default:maintenanceCompiler}=await import(pathToFileURL(path.join(options.baseline,'node_modules/typescript/lib/typescript.js')));
+const canonical=s=>s.replace(/\/\/# sourceMappingURL=.*$/m,'').trim();
+for(const file of maintenanceFiles){
+  const source=fs.readFileSync(path.join(options.baseline,file),'utf8'),dist=fs.readFileSync(path.join(options.baseline,'dist',file.replace(/\.ts$/,'.js')),'utf8');
+  const emitted=maintenanceCompiler.transpileModule(source,{fileName:file,compilerOptions:{target:maintenanceCompiler.ScriptTarget.ES2022,module:maintenanceCompiler.ModuleKind.ESNext,sourceMap:true,esModuleInterop:true}}).outputText;
+  assert.equal(canonical(dist),canonical(emitted),file+' differs from fixed source');
+  identity.files.push({file,sourceSha256:hash(source),distSha256:hash(dist)});
+}
+save('source-identity.json',identity);fs.copyFileSync(new URL(import.meta.url),path.join(out,'driver.mjs'));
 const wait=ms=>new Promise(r=>setTimeout(r,ms));async function until(fn,label,ms=20000){const end=Date.now()+ms;while(!fn()){assert.ok(Date.now()<end,'deadline: '+label);await wait(5);}}
 const requests=[],telemetry=[],models=[],connections=[],sockets=new Set(),frames=[],sentFrames=[];let status=null,ws=null,failure=null;
 const record=(kind,details)=>fs.appendFileSync(path.join(out,'network.jsonl'),JSON.stringify({kind,at:new Date().toISOString(),...details})+'\n');
@@ -50,6 +62,9 @@ ProjectMemoryMaintenanceController.prototype.schedule=function(key){if(faulted)r
   const manifest=JSON.parse(fs.readFileSync(options['rust-manifest']));
   assert.equal(manifest.boundary,'maintenance-resolver-before-acquire');
   assert.equal(manifest.projectBasename,'maintenance-fault-project');
+  assert.match(manifest.binarySha256??'',/^[0-9a-f]{64}$/,'validator must bind the built fixture binary');
+  assert.equal(manifest.binarySha256,hash(fs.readFileSync(options['rust-bin'])));
+  for(const [relative,expected] of Object.entries(manifest.overlayFiles)){assert.ok(!relative.includes('..')&&!path.isAbsolute(relative));assert.equal(hash(fs.readFileSync(path.join(candidate.root,relative))),expected,'retained candidate source overlay must match manifest');}
   save('mutant-manifest.json',manifest);
 }
 const command=options['rust-bin']?fs.realpathSync(options['rust-bin']):process.execPath,args=options['rust-bin']?['server','--port','0','--host','127.0.0.1']:[path.join(options.baseline,'dist/src/cli/pilotdeck.js'),'server','--port','0','--host','127.0.0.1'];save('identity.json',{candidate,command,args,commandHash:hash(fs.readFileSync(command)),entryHash:fs.existsSync(args[0])?hash(fs.readFileSync(args[0])):null,driverHash:hash(fs.readFileSync(new URL(import.meta.url))),node:process.version,env,cwd:project});
@@ -85,8 +100,7 @@ try {
     signal('SIGINT','user-stop');await Promise.race([exit,wait(10000).then(()=>{throw Error('shutdown deadline')})]);
     assert.deepEqual(status,{code:0,signal:null});
   } else {
-    if(ws.readyState===WebSocket.OPEN) submit('maintenance-second','o1:maintenance-second');
-    await wait(100);ws.close();
+    ws.close();
     await Promise.race([exit,wait(15000).then(()=>{throw Error('baseline fault shutdown deadline')})]);
     assert.deepEqual(status,{code:1,signal:null});assert.equal(signals.length,0);
   }
@@ -94,7 +108,8 @@ try {
   assert.equal(errors.length,1,'one actual runtime error event');
   assert.equal(errors[0].properties.module,'runtime');
   assert.equal(errors[0].properties.code,'TypeError');
-  assert.equal(errors[0].properties.source,'unhandledRejection');
+  assert.deepEqual(errors[0].properties,{module:'runtime',ownerModule:'runtime',loopStage:'loop_end',errorCategory:'runtime_error',code:'TypeError'});
+  assert.equal(Object.hasOwn(errors[0],'sessionId'),false);
   const expected=options['rust-bin']?9:5;
   assert.equal(events.length,expected);
   assert.deepEqual(events.filter(e=>e.eventName==='feature_used').map(e=>e.properties.loopStage),Array.from({length:options['rust-bin']?2:1},()=>['loop_start','model_request','model_response','loop_end']).flat());
