@@ -1,0 +1,184 @@
+{
+ "name": "sandbox-ro-code",
+ "about": "agent.sandboxMode=read-only 下的 execute_code（SandboxedCodeRuntimePort.ts，executeCode.ts:255-265/429-518：工具描述、解释器受限、RPC 去掉 bash/write_file/edit_file）与后台任务（SandboxedDetachedShellPort.ts）：python 写工作区内/外/TMPDIR、python 子进程写外部、经 helper 写；task_create 写内外并 task_wait。最后一轮列出落点。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\n  sandboxMode: read-only\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+ "files": {
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+  "home/work/alpha/README.md": "alpha\n",
+  "home/work/alpha/nb.ipynb": "{\n \"cells\": [\n  {\n   \"cell_type\": \"code\",\n   \"id\": \"c1\",\n   \"metadata\": {},\n   \"source\": \"print(1)\",\n   \"outputs\": [],\n   \"execution_count\": null\n  }\n ],\n \"metadata\": {},\n \"nbformat\": 4,\n \"nbformat_minor\": 5\n}\n",
+  "outside/o.txt": "outside\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Sbx\"}"
+   }
+  },
+  {
+   "name": "b99-after",
+   "when": [
+    "b99:",
+    "\"tool_call_id\":\"call_b99\""
+   ],
+   "reply": {
+    "text": "Done b99."
+   }
+  },
+  {
+   "name": "b99",
+   "when": [
+    "b99:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_b99",
+     "name": "bash",
+     "arguments": {
+      "command": "ls -la {ROOT}/outside | awk '{print $1, $NF}'; ls ../; ls -R $TMPDIR/sbx 2>&1 | sort; ls -la . | awk '{print $1, $NF}'"
+     }
+    }
+   }
+  },
+  {
+   "name": "x03-after",
+   "when": [
+    "x03:",
+    "\"tool_call_id\":\"call_x03\""
+   ],
+   "reply": {
+    "text": "Done x03."
+   }
+  },
+  {
+   "name": "x03",
+   "when": [
+    "x03:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_x03",
+     "name": "execute_code",
+     "arguments": {
+      "code": "from pilotdeck_tools import write_file, bash\nfor f, kw in ((write_file, dict(file_path='xc-helper.txt', content='h')), (bash, dict(command='echo hb > xc-helper-bash.txt'))):\n    try:\n        f(**kw)\n        print('helper ok')\n    except RuntimeError as e:\n        print('helper error', e)"
+     }
+    }
+   }
+  },
+  {
+   "name": "x02-after",
+   "when": [
+    "x02:",
+    "\"tool_call_id\":\"call_x02\""
+   ],
+   "reply": {
+    "text": "Done x02."
+   }
+  },
+  {
+   "name": "x02",
+   "when": [
+    "x02:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_x02",
+     "name": "execute_code",
+     "arguments": {
+      "code": "try:\n    open('{ROOT}/outside/xc-out.txt','w').write('x')\n    print('out ok')\nexcept Exception as e:\n    print('out', type(e).__name__, e.errno)\nimport os, tempfile\ntry:\n    open(os.path.join(os.environ['TMPDIR'], 'xc-tmp.txt'),'w').write('x')\n    print('tmp ok')\nexcept Exception as e:\n    print('tmp', type(e).__name__, e.errno)\nimport subprocess\nprint('child rc', subprocess.call(['sh','-c','echo c > {ROOT}/outside/xc-child.txt'], stderr=subprocess.DEVNULL))"
+     }
+    }
+   }
+  },
+  {
+   "name": "x01-after",
+   "when": [
+    "x01:",
+    "\"tool_call_id\":\"call_x01\""
+   ],
+   "reply": {
+    "text": "Done x01."
+   }
+  },
+  {
+   "name": "x01",
+   "when": [
+    "x01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_x01",
+     "name": "execute_code",
+     "arguments": {
+      "code": "open('xc-in.txt','w').write('x')\nprint('in ok')"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-sbx",
+    "mode": "bypassPermissions",
+    "projectKey": "{HOME}/work/alpha"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "x01: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "x02: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "x03: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "b99: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  }
+ ]
+}

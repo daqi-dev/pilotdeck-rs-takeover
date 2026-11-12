@@ -1,0 +1,526 @@
+{
+ "name": "sandbox-ww-shell",
+ "about": "agent.sandboxMode=workspace-write（NodeSandboxPort.ts:18-111 Seatbelt 包裹 /bin/sh -c；SandboxedShellPort.ts）：bypassPermissions 下 bash 写工作区内、工作区外、TMPDIR、/tmp、读工作区外、子 shell / python / perl 再写、..、符号链接、tee/子 shell/here-doc、改 HOME/TMPDIR 环境变量、cp/mv/rm/touch。最后一轮列出工作区外和 TMPDIR 下的落点。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\n  sandboxMode: workspace-write\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+ "files": {
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+  "home/work/alpha/README.md": "alpha\n",
+  "home/work/alpha/nb.ipynb": "{\n \"cells\": [\n  {\n   \"cell_type\": \"code\",\n   \"id\": \"c1\",\n   \"metadata\": {},\n   \"source\": \"print(1)\",\n   \"outputs\": [],\n   \"execution_count\": null\n  }\n ],\n \"metadata\": {},\n \"nbformat\": 4,\n \"nbformat_minor\": 5\n}\n",
+  "outside/o.txt": "outside\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Sbx\"}"
+   }
+  },
+  {
+   "name": "b99-after",
+   "when": [
+    "b99:",
+    "\"tool_call_id\":\"call_b99\""
+   ],
+   "reply": {
+    "text": "Done b99."
+   }
+  },
+  {
+   "name": "b99",
+   "when": [
+    "b99:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_b99",
+     "name": "bash",
+     "arguments": {
+      "command": "ls -la {ROOT}/outside | awk '{print $1, $NF}'; ls ../; ls -R $TMPDIR/sbx 2>&1 | sort; ls -la . | awk '{print $1, $NF}'"
+     }
+    }
+   }
+  },
+  {
+   "name": "b13-after",
+   "when": [
+    "b13:",
+    "\"tool_call_id\":\"call_b13\""
+   ],
+   "reply": {
+    "text": "Done b13."
+   }
+  },
+  {
+   "name": "b13",
+   "when": [
+    "b13:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_b13",
+     "name": "bash",
+     "arguments": {
+      "command": "perl -e 'open(F, \">{ROOT}/outside/perl.txt\") or print \"perl: $!\\n\"'; echo rc=$?; echo z >> /dev/null; echo rc=$?"
+     }
+    }
+   }
+  },
+  {
+   "name": "b12-after",
+   "when": [
+    "b12:",
+    "\"tool_call_id\":\"call_b12\""
+   ],
+   "reply": {
+    "text": "Done b12."
+   }
+  },
+  {
+   "name": "b12",
+   "when": [
+    "b12:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_b12",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/outside/o.txt copied.txt; echo rc=$?; mv {ROOT}/outside/o.txt {ROOT}/outside/moved.txt; echo rc=$?; rm {ROOT}/outside/o.txt; echo rc=$?; touch {ROOT}/outside/o.txt; echo rc=$?"
+     }
+    }
+   }
+  },
+  {
+   "name": "b11-after",
+   "when": [
+    "b11:",
+    "\"tool_call_id\":\"call_b11\""
+   ],
+   "reply": {
+    "text": "Done b11."
+   }
+  },
+  {
+   "name": "b11",
+   "when": [
+    "b11:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_b11",
+     "name": "bash",
+     "arguments": {
+      "command": "env HOME={ROOT}/outside sh -c 'echo h > $HOME/envhome.txt; echo rc=$?'"
+     }
+    }
+   }
+  },
+  {
+   "name": "b10-after",
+   "when": [
+    "b10:",
+    "\"tool_call_id\":\"call_b10\""
+   ],
+   "reply": {
+    "text": "Done b10."
+   }
+  },
+  {
+   "name": "b10",
+   "when": [
+    "b10:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_b10",
+     "name": "bash",
+     "arguments": {
+      "command": "echo t | tee {ROOT}/outside/tee.txt; (echo s > {ROOT}/outside/sub.txt); echo rc=$?; cat > {ROOT}/outside/heredoc.txt <<'EOF'\nh\nEOF\necho rc=$?"
+     }
+    }
+   }
+  },
+  {
+   "name": "b09-after",
+   "when": [
+    "b09:",
+    "\"tool_call_id\":\"call_b09\""
+   ],
+   "reply": {
+    "text": "Done b09."
+   }
+  },
+  {
+   "name": "b09",
+   "when": [
+    "b09:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_b09",
+     "name": "bash",
+     "arguments": {
+      "command": "ln -s {ROOT}/outside lnk; echo rc=$?; echo y > lnk/via-link.txt; echo rc=$?"
+     }
+    }
+   }
+  },
+  {
+   "name": "b08-after",
+   "when": [
+    "b08:",
+    "\"tool_call_id\":\"call_b08\""
+   ],
+   "reply": {
+    "text": "Done b08."
+   }
+  },
+  {
+   "name": "b08",
+   "when": [
+    "b08:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_b08",
+     "name": "bash",
+     "arguments": {
+      "command": "echo x > ../escape.txt; echo rc=$?; echo x > ./sub/../../escape2.txt; echo rc=$?"
+     }
+    }
+   }
+  },
+  {
+   "name": "b07-after",
+   "when": [
+    "b07:",
+    "\"tool_call_id\":\"call_b07\""
+   ],
+   "reply": {
+    "text": "Done b07."
+   }
+  },
+  {
+   "name": "b07",
+   "when": [
+    "b07:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_b07",
+     "name": "bash",
+     "arguments": {
+      "command": "python3 -c \"open('{ROOT}/outside/py.txt','w').write('p')\" 2>&1 | tail -1; python3 -c \"open('py-in.txt','w').write('p')\" 2>&1 | tail -1; ls py-in.txt 2>&1; true"
+     }
+    }
+   }
+  },
+  {
+   "name": "b06-after",
+   "when": [
+    "b06:",
+    "\"tool_call_id\":\"call_b06\""
+   ],
+   "reply": {
+    "text": "Done b06."
+   }
+  },
+  {
+   "name": "b06",
+   "when": [
+    "b06:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_b06",
+     "name": "bash",
+     "arguments": {
+      "command": "sh -c 'echo n > {ROOT}/outside/nested.txt'; echo rc=$?; bash -c 'echo n2 > nested2.txt'; echo rc=$?"
+     }
+    }
+   }
+  },
+  {
+   "name": "b05-after",
+   "when": [
+    "b05:",
+    "\"tool_call_id\":\"call_b05\""
+   ],
+   "reply": {
+    "text": "Done b05."
+   }
+  },
+  {
+   "name": "b05",
+   "when": [
+    "b05:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_b05",
+     "name": "bash",
+     "arguments": {
+      "command": "cat {ROOT}/outside/o.txt; cat /etc/hosts > /dev/null; echo rc=$?"
+     }
+    }
+   }
+  },
+  {
+   "name": "b03-after",
+   "when": [
+    "b03:",
+    "\"tool_call_id\":\"call_b03\""
+   ],
+   "reply": {
+    "text": "Done b03."
+   }
+  },
+  {
+   "name": "b03",
+   "when": [
+    "b03:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_b03",
+     "name": "bash",
+     "arguments": {
+      "command": "mkdir -p $TMPDIR/sbx; echo rc=$?; echo t > $TMPDIR/sbx/t.txt; echo rc=$?"
+     }
+    }
+   }
+  },
+  {
+   "name": "b02-after",
+   "when": [
+    "b02:",
+    "\"tool_call_id\":\"call_b02\""
+   ],
+   "reply": {
+    "text": "Done b02."
+   }
+  },
+  {
+   "name": "b02",
+   "when": [
+    "b02:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_b02",
+     "name": "bash",
+     "arguments": {
+      "command": "echo out > {ROOT}/outside/b.txt; echo rc=$?"
+     }
+    }
+   }
+  },
+  {
+   "name": "b01-after",
+   "when": [
+    "b01:",
+    "\"tool_call_id\":\"call_b01\""
+   ],
+   "reply": {
+    "text": "Done b01."
+   }
+  },
+  {
+   "name": "b01",
+   "when": [
+    "b01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_b01",
+     "name": "bash",
+     "arguments": {
+      "command": "echo in > in.txt; echo rc=$?; cat in.txt"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-sbx",
+    "mode": "bypassPermissions",
+    "projectKey": "{HOME}/work/alpha"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "b01: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "b02: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "b03: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "b05: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "b06: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "b07: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "b08: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "b09: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "b10: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "b11: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "b12: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "b13: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sbx",
+    "channelKey": "test",
+    "message": "b99: go",
+    "projectKey": "{HOME}/work/alpha"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 200
+  }
+ ]
+}

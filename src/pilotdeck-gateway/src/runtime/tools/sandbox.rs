@@ -388,4 +388,37 @@ mod tests {
         assert!(target.exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
+
+    /// The bbx scenarios run below `/tmp`, which `workspace-write` keeps
+    /// writable; this covers a target outside every writable root.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn workspace_write_confines_writes_outside_the_writable_roots() {
+        let base = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../target")
+            .join(format!("sbx-outside-{}", std::process::id()));
+        let workspace = base.join("ws");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let script = format!(
+            "echo in > inside.txt && (echo out > '{0}/a.txt'; sh -c \"echo n > '{0}/b.txt'\"; ln -s '{0}' lnk; echo l > lnk/c.txt; echo up > ../up.txt); exit 0",
+            outside.display()
+        );
+        let prepared = Sandbox::new(SandboxMode::WorkspaceWrite)
+            .prepare("/bin/sh", vec!["-c".into(), script], &workspace, None)
+            .unwrap();
+        let output = std::process::Command::new(&prepared.executable)
+            .args(&prepared.args)
+            .current_dir(&workspace)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert!(workspace.join("inside.txt").exists());
+        for escaped in ["a.txt", "b.txt", "c.txt"] {
+            assert!(!outside.join(escaped).exists(), "{escaped} escaped");
+        }
+        assert!(!base.join("up.txt").exists());
+        std::fs::remove_dir_all(&base).unwrap();
+    }
 }
