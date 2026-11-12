@@ -66,7 +66,12 @@ impl Default for HyperCountTransport {
 impl ProviderCountTransport for HyperCountTransport {
     fn post(&self, request: CountHttpRequest) -> CountFuture {
         let client = self.client.clone();
-        CountFuture::io(fetch_count(request, move |request| {
+        CountFuture::io(fetch_count(request, move |mut request| {
+            // The baseline counts with Node's global `fetch` (user-agent
+            // `node`); every hop carries its default header block.
+            let wire =
+                crate::fetch_redirect::node_fetch_wire_headers(request.uri(), request.headers());
+            *request.headers_mut() = wire;
             let client = client.clone();
             async move { client.request(request).await.map_err(|_| failed()) }
         }))
