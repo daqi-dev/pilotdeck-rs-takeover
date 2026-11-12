@@ -510,13 +510,12 @@ async fn start_assembly(
     // the session bundle's `onDiagnostic` (ProjectRuntimeRegistry.ts:366-369):
     // `console.warn(\`[pilotdeck] ${message}\`, error?.message ?? "")`, two
     // arguments joined by one space on stderr.
-    let prepare_mcp_diagnostic: Option<crate::runtime::mcp::registry::McpDiagnosticSink> = Some(
-        Arc::new(|message: String, error: Option<RuntimeError>| {
+    let prepare_mcp_diagnostic: Option<crate::runtime::mcp::registry::McpDiagnosticSink> =
+        Some(Arc::new(|message: String, error: Option<RuntimeError>| {
             use std::io::Write;
             let detail = error.map(|error| error.message).unwrap_or_default();
             let _ = writeln!(std::io::stderr(), "[pilotdeck] {message} {detail}");
-        }),
-    );
+        }));
     // The `#[cfg(test)]` seam passes `false` to drive the published-miss branch;
     // production always publishes into the handle the prepare closure reads.
     let build_mcp_config = if publish_mcp_config {
@@ -1088,10 +1087,11 @@ async fn start_assembly(
                         {
                             let mut checkpoint = open_path.clone().into_os_string();
                             checkpoint.push(".projections.json");
-                            let _ = crate::runtime::session::factory::save_empty_projection_checkpoint(
-                                std::path::Path::new(&checkpoint),
-                                &context.session_key,
-                            );
+                            let _ =
+                                crate::runtime::session::factory::save_empty_projection_checkpoint(
+                                    std::path::Path::new(&checkpoint),
+                                    &context.session_key,
+                                );
                         }
                         opened
                     }),
