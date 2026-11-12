@@ -412,6 +412,31 @@ async fn configured_hooks_section_is_not_refused() {
             .expect("#1071 configured hook fixture");
         // The baseline's loader reports a top-level `hooks` section as an
         // unknown field and starts without it (loadPilotConfig.ts:343-375).
+        // Pin the actual normalized snapshot boundary: an unknown field is
+        // retained as a diagnostic, rather than as executable config.
+        use crate::runtime::project::ConfigSource;
+        let snapshot = crate::runtime::project::NativeConfigSource::new(
+            options.project.clone(),
+            env.clone(),
+            Some(options.homedir()),
+            None,
+        )
+        .load(&options.project)
+        .expect("#1071 hooks snapshot loads");
+        assert!(
+            snapshot.get("diagnostics").is_some_and(|value| {
+                matches!(value, JsValue::Array(rows) if rows.iter().any(|row|
+                    row.get("path") == Some(&"hooks".into())
+                        && row.get("code") == Some(&"CONFIG_UNKNOWN_FIELD".into())))
+            }),
+            "#1071 hooks fixture reaches unknown-field diagnostics"
+        );
+        assert!(
+            snapshot
+                .get("config")
+                .is_some_and(|config| config.get("hooks").is_none()),
+            "#1071 unknown hooks are absent from normalized config"
+        );
         negative_assert!(
             assembly::validate_profile(&options, &env).await.is_ok(),
             "#1071 config-file hooks section permits startup"

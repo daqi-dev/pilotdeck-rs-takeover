@@ -196,7 +196,7 @@ impl Clone for ReplacementCoordinator {
     # positive startup assertions, with their normal nonce receipts, to fail.
     ('configured-hooks', ASSEMBLY,
      '    let external = |binding: &JsValue| {',
-     '    if snapshot.get("config").and_then(|v| v.get("hooks")).is_some() { return Err("mutated hook refusal".into()); }\n    let external = |binding: &JsValue| {',
+     '    if snapshot.get("diagnostics").is_some_and(|v| matches!(v, JsValue::Array(rows) if rows.iter().any(|row| row.get("path") == Some(&"hooks".into())))) { return Err("mutated hook refusal".into()); }\n    let external = |binding: &JsValue| {',
      'native_process::tests::review::configured_hooks_section_is_not_refused', '#1071 config-file hooks section permits startup'),
     ('refreshed-hooks', SERVICES,
      'super::assembly::validate_profile(&self.options, &self.env)',
