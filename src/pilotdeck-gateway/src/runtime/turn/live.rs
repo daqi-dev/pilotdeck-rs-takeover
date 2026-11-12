@@ -2522,6 +2522,9 @@ fn mark_module_message(message: &mut JsValue, module: &JsString) -> Result<(), R
 }
 
 fn map_host_error(error: HostError) -> RuntimeError {
+    if error.kind == HostErrorKind::LoopFailure {
+        return RuntimeError::new(error.message);
+    }
     if error.kind == HostErrorKind::Protocol
         && (error
             .message

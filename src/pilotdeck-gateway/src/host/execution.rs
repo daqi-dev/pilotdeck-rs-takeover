@@ -689,6 +689,21 @@ pub(super) fn validate_event(
         {
             return Ok(true);
         }
+        // A failed terminal without a result is the loop's own failure. The
+        // error it carries is what an in-process loop would have thrown.
+        if event.outcome == Some(ModuleOutcome::Failed)
+            && event.payload.get("result").is_none()
+            && let Some(message) = event
+                .payload
+                .get("error")
+                .and_then(|error| error.get("message"))
+                .and_then(JsValue::as_string)
+        {
+            return Err(HostError::new(
+                HostErrorKind::LoopFailure,
+                String::from_utf16_lossy(message.units()),
+            ));
+        }
         let result = event
             .payload
             .get("result")

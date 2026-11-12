@@ -221,6 +221,13 @@ pub enum HostErrorKind {
     /// boundary must keep the original message instead of reporting it as a
     /// host execution failure.
     Session,
+    /// The loop itself failed: the sidecar's failed terminal carries no
+    /// AgentLoop result, only the error that ended the loop — for example a
+    /// host module callback (tool, hook, permission, persistence) that
+    /// rejected. The baseline runs the loop in process, where that error is
+    /// rethrown to the turn unchanged (`normalizeAgentError`), so the message
+    /// is the original error's and is not reported as a host failure.
+    LoopFailure,
 }
 #[derive(Debug, Clone)]
 pub struct HostError {

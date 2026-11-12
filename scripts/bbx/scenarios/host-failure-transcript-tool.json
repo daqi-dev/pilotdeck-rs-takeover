@@ -1,0 +1,77 @@
+{
+  "name": "host-failure-transcript-tool",
+  "about": "宿主回调失败（落盘）：PreToolUse hook 在工具执行前把会话记录文件改成只读，之后工具调用 / 结果的落盘失败；看本轮的失败事件、错误码与文案（基线进程内循环把原始错误抛到轮次）。本文件由同目录的 host-failure.gen.mjs 生成，不手改。",
+  "files": {
+    "home/.pilotdeck/plugins/ro/plugin.json": {
+      "name": "ro",
+      "version": "0.1.0",
+      "description": "bbx ro",
+      "hooks": {
+        "PreToolUse": [
+          {
+            "matcher": "read_file",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "chmod 444 \"$HOME\"/.pilotdeck/projects/*/chats/s-ro.jsonl"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "home/.pilotdeck/notes/a.txt": "alpha\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Host failure\"}"
+      }
+    },
+    {
+      "name": "after",
+      "when": [
+        "ro run:",
+        "\"tool_call_id\":\"call_ro\""
+      ],
+      "reply": {
+        "text": "done"
+      }
+    },
+    {
+      "name": "tool",
+      "when": [
+        "ro run:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_ro",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "{PILOT_HOME}/notes/a.txt"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ro",
+        "channelKey": "test",
+        "message": "ro run: read the note"
+      }
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "list_sessions"
+    }
+  ]
+}
