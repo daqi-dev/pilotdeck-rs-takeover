@@ -216,5 +216,9 @@
         "sessionKey": "s-ag"
       }
     }
-  ]
+  ],
+  "volatile": [
+    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages|resultBytes|content-length)$"
+  ],
+  "volatileWhy": "子代理结果文本里带位数不定的耗时，token 估算和字节数随之变；基线自比已证明"
 }
