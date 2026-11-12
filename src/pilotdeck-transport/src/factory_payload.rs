@@ -514,8 +514,11 @@ fn leaf(o: &JsObject) -> Option<JsValue> {
         out = object([
             ("type", "image".into()),
             ("source", JsValue::String(string(o.get("source"))?)),
-            ("mimeType", JsValue::String(string(o.get("mimeType"))?)),
+            // The baseline's image blocks (AttachmentResolver,
+            // GatewayAttachmentTurnComposer, projectToolResults) carry
+            // `data` before `mimeType`; the in-process turn keeps that order.
             ("data", JsValue::String(string(o.get("data"))?)),
+            ("mimeType", JsValue::String(string(o.get("mimeType"))?)),
         ]);
         if let Some(n) = nonnegative(o.get("bytes")) {
             out.insert("bytes".into(), JsValue::Number(n));

@@ -1,0 +1,123 @@
+{
+ "name": "gap-attachments-paths",
+ "about": "submit_turn.attachments 的路径校验（GatewayAttachmentTurnComposer.ts、AttachmentResolver.ts）：基线不限制目录——工作区内、工作区外、相对路径都 resolve 后 stat/读取；不存在、目录、伪造的图片字节、mime 与字节不符、白名单外扩展名、Office 扩展名、PDF、带 channelKey 的登记与路径说明；uploadedAttachments 缺 projectKey、未知 uploadId。比较发给 provider 的请求、事件与会话记录。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+ "files": {
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+  "home/work/alpha/notes.md": "# notes in workspace\n",
+  "home/work/alpha/sub/data.json": "{\"k\": 1}\n",
+  "home/work/alpha/fake.png": "this is not a png at all",
+  "home/work/alpha/report.pdf": "%PDF-1.4 fake pdf body",
+  "home/work/alpha/sheet.xlsx": "not really a spreadsheet",
+  "home/work/alpha/script.rb": "puts 1\n",
+  "home/work/alpha/dir.txt/keep": "x",
+  "outside/secret.txt": "outside the project\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Paths\"}"
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "Seen."
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-p1",
+    "channelKey": "test",
+    "message": "files",
+    "projectKey": "{HOME}/work/alpha",
+    "attachments": [
+     {"type": "file", "name": "notes.md", "path": "{HOME}/work/alpha/notes.md"},
+     {"type": "file", "path": "{ROOT}/outside/secret.txt", "mimeType": "text/plain"},
+     {"type": "file", "name": "data.json", "path": "{HOME}/work/alpha/sub/../sub/data.json"},
+     {"type": "file", "path": "{HOME}/work/alpha/missing.txt"},
+     {"type": "file", "path": "{HOME}/work/alpha/script.rb"},
+     {"type": "file", "path": "{HOME}/work/alpha/sheet.xlsx"},
+     {"type": "file", "path": "{HOME}/work/alpha/report.pdf"}
+    ]
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-p1",
+    "channelKey": "test",
+    "message": "images",
+    "projectKey": "{HOME}/work/alpha",
+    "attachments": [
+     {"type": "image", "path": "{HOME}/work/alpha/fake.png", "mimeType": "image/png"},
+     {"type": "image", "path": "{HOME}/work/alpha/notes.md"},
+     {"type": "image", "path": "{HOME}/work/alpha/nope.png"},
+     {"type": "file", "path": "{HOME}/work/alpha/report.pdf", "mimeType": "application/pdf", "metadata": {"channelKey": "test"}},
+     {"type": "file", "name": "notes.md", "path": "{HOME}/work/alpha/notes.md", "metadata": {"channelKey": "test"}},
+     {"type": "file", "path": "{ROOT}/outside/secret.txt", "metadata": {"channelKey": "test"}}
+    ]
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-p2",
+    "channelKey": "test",
+    "message": "a directory",
+    "projectKey": "{HOME}/work/alpha",
+    "attachments": [
+     {"type": "file", "path": "{HOME}/work/alpha/dir.txt"}
+    ]
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-p3",
+    "channelKey": "test",
+    "message": "uploads without project",
+    "uploadedAttachments": [{"uploadId": "up-unknown"}]
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-p4",
+    "channelKey": "test",
+    "message": "unknown upload",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": [{"uploadId": "up-unknown"}]
+   }
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-p1",
+    "projectKey": "{HOME}/work/alpha"
+   }
+  }
+ ]
+}
