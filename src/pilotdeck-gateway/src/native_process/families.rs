@@ -7,7 +7,7 @@ use crate::{
             DisposeFuture, Family, FamilyResource, Resource, ResourceFamilySource, RuntimeError,
             RuntimeResult, StageContext, StageSink, model::ModelResources,
         },
-        turn::runner::tail::TitleProvider,
+        turn::runner::tail::{SuggestionGenerator, TitleProvider},
     },
 };
 use pilotdeck_protocol::{JsString, JsValue, parse_json};
@@ -304,4 +304,151 @@ fn parse_title(response: &JsValue) -> Option<JsString> {
     let mut title = normalized(parsed.get("title")?.as_string()?);
     title.truncate(80);
     (!title.is_empty()).then(|| JsString::from_utf16(title))
+}
+
+const PROMPT_SUGGESTION_SYSTEM_PROMPT: &str = "Suggest the single most useful next message the human user could send after this completed agent turn.\n\nWrite the suggestion in the user's voice and in the same natural language as the original request. It must be a short, concrete follow-up request, not advice to the user and not a summary of the completed work. Do not claim an action already happened. Return only the suggested prompt, without quotes, labels, Markdown, code fences, analysis, or explanation.";
+const PROMPT_SUGGESTION_MAX_INPUT_UNITS: usize = 6_000;
+const PROMPT_SUGGESTION_MAX_OUTPUT_UNITS: usize = 320;
+
+/// `createPromptSuggestionGenerator` (session/prompt/PromptSuggestionGenerator.ts):
+/// the opt-in SDK `promptSuggestions` request, isolated from the transcript.
+/// Every failure (provider error, timeout, empty content) is a skipped
+/// suggestion, never an error.
+pub fn prompt_suggestion_generator(
+    model: Arc<dyn RouterModelInvocation>,
+    selection: JsValue,
+    timeout: Duration,
+) -> SuggestionGenerator {
+    Arc::new(move |input| {
+        let model = model.clone();
+        let selection = selection.clone();
+        Box::pin(async move {
+            let user = suggestion_truncate(&input.user_prompt);
+            let assistant = suggestion_truncate(&input.assistant_response);
+            if user.is_empty() || assistant.is_empty() {
+                return Ok(None);
+            }
+            let prompt =
+                format!("Original user request:\n{user}\n\nCompleted agent response:\n{assistant}");
+            let request = object([
+                ("provider", field(&selection, "provider")),
+                ("model", field(&selection, "model")),
+                (
+                    "systemPrompt",
+                    JsValue::from(PROMPT_SUGGESTION_SYSTEM_PROMPT),
+                ),
+                (
+                    "messages",
+                    JsValue::Array(vec![object([
+                        ("role", "user".into()),
+                        (
+                            "content",
+                            JsValue::Array(vec![object([
+                                ("type", "text".into()),
+                                ("text", JsValue::from(prompt.as_str())),
+                            ])]),
+                        ),
+                    ])]),
+                ),
+                ("maxOutputTokens", JsValue::Number(160.0)),
+                ("temperature", JsValue::Number(0.2)),
+                (
+                    "metadata",
+                    object([
+                        ("purpose", "prompt_suggestion_generation".into()),
+                        ("sessionId", JsValue::String(input.session_id)),
+                        ("turnId", JsValue::String(input.turn_id)),
+                    ]),
+                ),
+            ]);
+            let abort = AbortFlag::new();
+            if input.signal.is_cancelled() {
+                abort.abort();
+            }
+            let response = model.complete(request, Some(abort.clone()));
+            tokio::pin!(response);
+            let result = tokio::select! {
+                result = &mut response => result.ok(),
+                _ = input.signal.cancelled() => { abort.abort(); response.await.ok() },
+                _ = tokio::time::sleep(timeout) => { abort.abort(); response.await.ok() },
+            };
+            Ok(result.as_ref().and_then(sanitize_prompt_suggestion))
+        })
+    })
+}
+
+/// `value.replace(/\s+/g, " ").trim()`.
+fn collapse_whitespace(value: &str) -> String {
+    let mut output = String::new();
+    let mut space = false;
+    for ch in value.chars() {
+        if ch.is_whitespace() || ch == '\u{feff}' {
+            space = true;
+        } else {
+            if space && !output.is_empty() {
+                output.push(' ');
+            }
+            space = false;
+            output.push(ch);
+        }
+    }
+    output
+}
+
+/// The generator's `truncate`: collapsed whitespace, then the middle cut to
+/// 6000 UTF-16 units around ` ... `.
+fn suggestion_truncate(value: &JsString) -> String {
+    let normalized = collapse_whitespace(&String::from_utf16_lossy(value.units()));
+    let units: Vec<u16> = normalized.encode_utf16().collect();
+    if units.len() <= PROMPT_SUGGESTION_MAX_INPUT_UNITS {
+        return normalized;
+    }
+    let marker = " ... ";
+    let available = PROMPT_SUGGESTION_MAX_INPUT_UNITS - marker.len();
+    let head = available / 2;
+    let tail = available - head;
+    let mut out = String::from_utf16_lossy(&units[..head]);
+    out.push_str(marker);
+    out.push_str(&String::from_utf16_lossy(&units[units.len() - tail..]));
+    out
+}
+
+/// `sanitizePromptSuggestion`.
+fn sanitize_prompt_suggestion(response: &JsValue) -> Option<JsString> {
+    let JsValue::Array(blocks) = response.get("content")? else {
+        return None;
+    };
+    let text = blocks
+        .iter()
+        .filter(|block| block.get("type") == Some(&"text".into()))
+        .map(|block| {
+            block
+                .get("text")
+                .and_then(JsValue::as_string)
+                .map(|text| String::from_utf16_lossy(text.units()))
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let replace = |text: &str, pattern: &str| {
+        regex::Regex::new(pattern)
+            .map(|regex| regex.replace(text, "").into_owned())
+            .unwrap_or_else(|_| text.to_owned())
+    };
+    let text = replace(&text, r"(?i)^```(?:text|markdown)?\s*");
+    let text = replace(&text, r"(?i)\s*```$");
+    let text = replace(&text, r"(?i)^(?:suggestion|prompt)\s*:\s*");
+    let text = collapse_whitespace(&text);
+    let text = regex::Regex::new(r#"^["']|["']$"#)
+        .map(|regex| regex.replace_all(&text, "").into_owned())
+        .unwrap_or(text);
+    if text.is_empty() {
+        return None;
+    }
+    let units: Vec<u16> = text.encode_utf16().collect();
+    if units.len() > PROMPT_SUGGESTION_MAX_OUTPUT_UNITS {
+        let cut = String::from_utf16_lossy(&units[..PROMPT_SUGGESTION_MAX_OUTPUT_UNITS]);
+        return Some(JsString::from(cut.trim()));
+    }
+    Some(JsString::from(text))
 }

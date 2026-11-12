@@ -943,6 +943,21 @@ async fn start_assembly(
                     // cells; an inert entry keeps the production request.
                     auto_generate_title: !loop_planned,
                     title_provider: (!loop_planned).then_some(title),
+                    // `promptSuggestionGenerator` only for a session whose SDK
+                    // config sets `promptSuggestions: true`
+                    // (ProjectSessionFactory.ts:151,195).
+                    suggestion_generator: sdk_config
+                        .as_ref()
+                        .is_some_and(|config| {
+                            config.get("promptSuggestions") == Some(&JsValue::Bool(true))
+                        })
+                        .then(|| {
+                            super::families::prompt_suggestion_generator(
+                                model.providers.clone(),
+                                selected.clone(),
+                                Duration::from_millis(15_000),
+                            )
+                        }),
                     ..Default::default()
                 };
                 let session = context.session_key;
