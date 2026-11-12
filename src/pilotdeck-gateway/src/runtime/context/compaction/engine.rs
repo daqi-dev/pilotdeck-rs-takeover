@@ -22,6 +22,11 @@ pub trait CompactionLifecycle: Send + Sync {
 }
 pub type EstimateMessages = Arc<dyn Fn(&[JsValue]) -> Result<f64, HostError> + Send + Sync>;
 pub type EventEmitter = Arc<dyn Fn(JsValue) + Send + Sync>;
+/// The summary failure cooldown (`summaryFailureCooldownUntil` /
+/// `summaryFailureError`). The baseline engine lives as long as the session's
+/// context composition, so a session that rebuilds its runtime per turn
+/// shares this state across those runtimes.
+pub type SummaryCooldown = Arc<Mutex<Option<(f64, JsString)>>>;
 
 #[derive(Clone)]
 pub struct CompactionEngineOptions {
@@ -37,6 +42,8 @@ pub struct CompactionEngineOptions {
     pub uuid: Option<Arc<dyn Fn() -> JsString + Send + Sync>>,
     /// Clock for Date.now()'s failure cooldown; independent of marker dates.
     pub clock_ms: Option<Arc<dyn Fn() -> f64 + Send + Sync>>,
+    /// Session-owned cooldown state; `None` gives the engine its own.
+    pub cooldown: Option<SummaryCooldown>,
 }
 impl CompactionEngineOptions {
     pub fn new(model: Arc<dyn ModelExecution>, provider: JsString, model_id: JsString) -> Self {
@@ -52,6 +59,7 @@ impl CompactionEngineOptions {
             event_emitter: None,
             uuid: None,
             clock_ms: None,
+            cooldown: None,
         }
     }
 }
@@ -174,14 +182,14 @@ impl CompactionResult {
 pub struct CompactionEngine {
     options: CompactionEngineOptions,
     protected: ProtectedNames,
-    cooldown: Arc<Mutex<Option<(f64, JsString)>>>,
+    cooldown: SummaryCooldown,
 }
 impl CompactionEngine {
     pub fn new(options: CompactionEngineOptions) -> Self {
         Self {
             protected: ProtectedNames::from_options(options.protected_tool_names.clone()),
+            cooldown: options.cooldown.clone().unwrap_or_default(),
             options,
-            cooldown: Arc::new(Mutex::new(None)),
         }
     }
     fn now(&self) -> f64 {

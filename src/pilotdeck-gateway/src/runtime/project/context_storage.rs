@@ -76,6 +76,22 @@ pub struct SessionContextOptions {
     /// commands, skills and MCP instructions for the system prompt. `None`
     /// contributes nothing.
     pub extension: Option<Arc<dyn crate::runtime::context::ExtensionResolver>>,
+    /// The session-owned inputs of the full-summary stage. `None` composes
+    /// the port without `CompactionEngine`, as a caller that supplies no
+    /// model.
+    pub compaction: Option<SessionCompaction>,
+}
+
+/// What `SessionContextRuntimeBundle` hands its `CompactionEngine`
+/// (`SessionContextRuntimeBundle.ts:91-135`) beyond the generation's own
+/// config: the router stream, the session's lifecycle and event emitter, and
+/// the engine's failure cooldown, which outlives one turn's runtime.
+pub struct SessionCompaction {
+    pub model: Arc<dyn crate::host::modules::model::ModelExecution>,
+    pub lifecycle:
+        Option<Arc<dyn crate::runtime::context::compaction::engine::CompactionLifecycle>>,
+    pub events: Option<crate::runtime::context::compaction::engine::EventEmitter>,
+    pub cooldown: crate::runtime::context::compaction::engine::SummaryCooldown,
 }
 
 /// Owned by one session/context composition. Scoped callers use
@@ -146,6 +162,10 @@ impl ContextStorageResources {
         options: SessionContextOptions,
     ) -> Result<SessionContextStorage, RuntimeError> {
         let max_context_tokens = self.max_context_tokens()?;
+        let summary = options
+            .compaction
+            .map(|compaction| self.compaction_engine(compaction))
+            .transpose()?;
         // Even an opted-out context must respect the generation's lifetime.
         let memory_resolver = self
             .memory
@@ -194,7 +214,7 @@ impl ContextStorageResources {
             memory_retrieval_timeout_ms,
             now: Some(self.now.clone()),
             extension: options.extension,
-            compaction: Some(Arc::new(native_compaction_port())),
+            compaction: Some(Arc::new(native_compaction_port(summary))),
             // `new PromptContributionRegistry({ name: `agent:${sessionKey}` })`
             // (`SessionContextRuntimeBundle.ts:164-166`): the session always
             // owns a registry, so every materialization carries its
@@ -208,6 +228,36 @@ impl ContextStorageResources {
             context_runtime,
             tool_result_budget,
         })
+    }
+
+    /// `new CompactionEngine({ model, tokenBudget, tokenAccounting, lifecycle,
+    /// provider, model_, protectedToolNames, now, eventEmitter })` with the
+    /// agent model of this generation (`ProjectSessionRuntimeBundle.ts:531-532`).
+    fn compaction_engine(
+        &self,
+        compaction: SessionCompaction,
+    ) -> Result<crate::runtime::context::compaction::engine::CompactionEngine, RuntimeError> {
+        use crate::runtime::context::compaction::engine::{
+            CompactionEngine, CompactionEngineOptions,
+        };
+        let route = self
+            .snapshot
+            .get("config")
+            .and_then(|config| config.get("agent"))
+            .and_then(|agent| agent.get("model"));
+        let field = |key: &str| {
+            route
+                .and_then(|route| route.get(key))
+                .and_then(JsValue::as_string)
+                .cloned()
+                .ok_or_else(|| RuntimeError::new("Agent model provider is missing."))
+        };
+        let mut options =
+            CompactionEngineOptions::new(compaction.model, field("provider")?, field("model")?);
+        options.lifecycle = compaction.lifecycle;
+        options.event_emitter = compaction.events;
+        options.cooldown = Some(compaction.cooldown);
+        Ok(CompactionEngine::new(options))
     }
 
     fn max_context_tokens(&self) -> Result<f64, RuntimeError> {
@@ -291,11 +341,11 @@ fn convert_runtime_context_surface(
 /// policy, micro compaction, snip and overflow recovery, all with the
 /// baseline's default protected tool names.
 ///
-/// The full-summary stage (`CompactionEngine`) is not composed yet: it needs
-/// the router stream bound as a non-main-agent model port. Without it the
-/// orchestrator still evaluates the real budget snapshot and applies the micro
-/// stage, and answers `skipped` where the baseline would summarize.
-fn native_compaction_port() -> crate::runtime::context::compaction::engine::port::CompactionPort {
+/// `summary` is the session's `CompactionEngine`; without it the orchestrator
+/// answers `skipped` where the full summary would run.
+fn native_compaction_port(
+    summary: Option<crate::runtime::context::compaction::engine::CompactionEngine>,
+) -> crate::runtime::context::compaction::engine::port::CompactionPort {
     use crate::runtime::context::compaction::{
         MicroCompactionEngine, MicroCompactionEngineOptions, SnipEngine, SnipEngineOptions,
         engine::port::{CompactionBudgetPort, CompactionPort},
@@ -312,6 +362,10 @@ fn native_compaction_port() -> crate::runtime::context::compaction::engine::port
         ))),
         snip: Some(Arc::new(SnipEngine::new(SnipEngineOptions::default()))),
         recovery: Some(Arc::new(ContextOverflowRecovery::default())),
+        summary: summary.map(|engine| {
+            Arc::new(engine)
+                as Arc<dyn crate::runtime::context::compaction::engine::port::CompactionSummaryPort>
+        }),
         ..CompactionPort::default()
     }
 }

@@ -1,0 +1,90 @@
+{
+  "name": "host-failure-hook-prompt",
+  "about": "宿主回调失败（hook）：UserPromptSubmit 的 SDK HTTP hook 回 async，两个会话登记同一个 asyncHookId，第二个会话的 lifecycle 派发失败；这一派发在循环开始前，基线以 gateway_submit_failed 结束本轮，消息是冲突原文。本文件由同目录的 host-failure.gen.mjs 生成，不手改。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Host failure\"}"
+      }
+    },
+    {
+      "name": "hook-UserPromptSubmit",
+      "when": [
+        "\"transcriptPath\"",
+        "\"hookEventName\":\"UserPromptSubmit\""
+      ],
+      "reply": {
+        "status": 200,
+        "body": {
+          "async": true,
+          "asyncHookId": "inv-shared",
+          "asyncTimeout": 60
+        }
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "answer"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-first",
+        "channelKey": "test",
+        "message": "first: hi",
+        "sdkSessionConfig": {
+          "hooks": {
+            "url": "{MOCK}/hooks",
+            "events": {
+              "UserPromptSubmit": [
+                {}
+              ]
+            }
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-second",
+        "channelKey": "test",
+        "message": "second: hi",
+        "sdkSessionConfig": {
+          "hooks": {
+            "url": "{MOCK}/hooks",
+            "events": {
+              "UserPromptSubmit": [
+                {}
+              ]
+            }
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "hook_async_result",
+      "params": {
+        "sessionKey": "s-first",
+        "invocationId": "inv-shared",
+        "output": {}
+      }
+    }
+  ]
+}

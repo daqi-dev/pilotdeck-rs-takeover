@@ -1,0 +1,56 @@
+{
+  "name": "host-failure-transcript-prompt",
+  "about": "宿主回调失败（落盘）：第二轮的 UserPromptSubmit hook 把会话记录文件改成只读，之后这一轮开模型请求前的上下文落盘失败；看失败事件的错误码与文案。本文件由同目录的 host-failure.gen.mjs 生成，不手改。",
+  "files": {
+    "home/.pilotdeck/plugins/ro/plugin.json": {
+      "name": "ro",
+      "version": "0.1.0",
+      "description": "bbx ro",
+      "hooks": {
+        "UserPromptSubmit": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "chmod 444 \"$HOME\"/.pilotdeck/projects/*/chats/s-ro2.jsonl"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Host failure\"}"
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "answer"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ro2",
+        "channelKey": "test",
+        "message": "first: hi"
+      }
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "list_sessions"
+    }
+  ]
+}

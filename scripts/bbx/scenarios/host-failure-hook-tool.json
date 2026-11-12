@@ -1,0 +1,111 @@
+{
+  "name": "host-failure-hook-tool",
+  "about": "宿主回调失败（工具批次）：PreToolUse 的 SDK HTTP hook 回 async，两个会话登记同一个 asyncHookId，第二个会话的工具批次在宿主侧失败；基线把冲突原文作为该批次每个调用的缺失结果（TOOL_ERROR 格式与恢复建议），模型再回一句收尾。本文件由同目录的 host-failure.gen.mjs 生成，不手改。",
+  "files": {
+    "home/.pilotdeck/notes/a.txt": "alpha\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Host failure\"}"
+      }
+    },
+    {
+      "name": "hook-PreToolUse",
+      "when": [
+        "\"transcriptPath\"",
+        "\"hookEventName\":\"PreToolUse\""
+      ],
+      "reply": {
+        "status": 200,
+        "body": {
+          "async": true,
+          "asyncHookId": "inv-shared",
+          "asyncTimeout": 60
+        }
+      }
+    },
+    {
+      "name": "after",
+      "when": [
+        "\"tool_call_id\":\"call_hk\""
+      ],
+      "reply": {
+        "text": "done"
+      }
+    },
+    {
+      "name": "tool",
+      "when": [
+        "read it"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_hk",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "{PILOT_HOME}/notes/a.txt"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-first",
+        "channelKey": "test",
+        "message": "first: read it",
+        "sdkSessionConfig": {
+          "hooks": {
+            "url": "{MOCK}/hooks",
+            "events": {
+              "PreToolUse": [
+                {}
+              ]
+            }
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-second",
+        "channelKey": "test",
+        "message": "second: read it",
+        "sdkSessionConfig": {
+          "hooks": {
+            "url": "{MOCK}/hooks",
+            "events": {
+              "PreToolUse": [
+                {}
+              ]
+            }
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "hook_async_result",
+      "params": {
+        "sessionKey": "s-first",
+        "invocationId": "inv-shared",
+        "output": {}
+      }
+    }
+  ]
+}

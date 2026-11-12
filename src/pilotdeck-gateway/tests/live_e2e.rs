@@ -420,6 +420,7 @@ fn ports(
         ..Default::default()
     };
     SessionPorts {
+        compaction: Default::default(),
         model: RouterModelPortOptions::main_agent(),
         recorder: None,
         tool_results_dir: directory.join("tool-results"),

@@ -146,105 +146,55 @@ fn clock_host(value: JsValue) -> RemoteHost<ClockExchange> {
     )
 }
 
+/// The baseline runs AgentLoop in process: a host-side failure of the tool
+/// batch is thrown into the loop, whose catch gives every call the
+/// missing-result error (AgentLoop.ts:1949-1969). A known failed capability
+/// response is therefore a batch rejection carrying the host error's message,
+/// not the sidecar host port's per-call `moduleFailureResult`; no result is
+/// built here, so no clock is sampled.
 #[test]
-fn known_failed_batch_returns_module_results_with_independent_clocks_and_raw_details() {
+fn known_failed_batch_is_a_batch_rejection_with_the_host_message() {
     let raw = json(
         r#"{"kind":"response","messageId":"m","inReplyTo":"reply","ok":false,"code":"future_code","error":{"message":["x",null,"\ud800"],"extension":null}}"#,
     );
-    let mut h = clock_host(raw.clone());
-    let HostReply::ToolResults(results) = h
-        .call(
-            &control(),
-            HostCall::ExecuteBatch {
-                calls: vec![invocation("a"), invocation("b")],
-                hints: tools(),
-            },
-        )
-        .unwrap()
-    else {
-        panic!("known failed response must be projected results")
+    let mut h = clock_host(raw);
+    let Ok(HostReply::ToolBatchRejected { message, .. }) = h.call(
+        &control(),
+        HostCall::ExecuteBatch {
+            calls: vec![invocation("a"), invocation("b")],
+            hints: tools(),
+        },
+    ) else {
+        panic!("known failed response must reject the batch")
     };
-    let message = JsString::from_utf16(vec![120, 44, 44, 0xd800]);
-    for (index, result) in results.iter().enumerate() {
-        let value = result.boundary.value();
-        let error = value.get("error").unwrap();
-        assert_eq!(
-            error.get("code"),
-            Some(&JsValue::from("tool_execution_failed"))
-        );
-        assert_eq!(
-            error.get("message"),
-            Some(&JsValue::String(message.clone()))
-        );
-        assert_eq!(
-            error.get("details").unwrap().get("moduleError"),
-            raw.get("error")
-        );
-        assert_eq!(
-            error.get("details").unwrap().get("moduleCode"),
-            raw.get("code")
-        );
-        assert_eq!(
-            result.started_at,
-            JsString::from(format!("2026-10-09T00:00:00.{:03}Z", 2 * index))
-        );
-        assert_eq!(
-            result.completed_at,
-            JsString::from(format!("2026-10-09T00:00:00.{:03}Z", 2 * index + 1))
-        );
-        assert_eq!(
-            result.tool_call_id,
-            JsString::from(if index == 0 { "a" } else { "b" })
-        );
-        assert!(value.get("metadata").is_none());
-        let Some(JsValue::Array(content)) = value.get("content") else {
-            panic!()
-        };
-        assert_eq!(
-            content[0].get("text"),
-            Some(&JsValue::String(message.clone()))
-        );
-    }
+    assert_eq!(message, JsString::from_utf16(vec![120, 44, 44, 0xd800]));
     let exchange = h.into_exchange();
-    assert_eq!(exchange.samples.get(), 4);
+    assert_eq!(exchange.samples.get(), 0);
     assert_eq!(exchange.inner.calls.len(), 1);
     assert_eq!(exchange.inner.calls[0].2, CallEffect::SideEffect);
 }
 
 #[test]
-fn failed_batch_maps_known_permission_code_and_omits_falsy_module_details() {
-    for (extra, code, details) in [
-        (r#", "code":"permission_denied""#, "permission_denied", true),
-        (
-            r#", "code":"", "error":null"#,
-            "tool_execution_failed",
-            false,
-        ),
+fn failed_batch_without_a_message_rejects_with_the_fallback_text() {
+    for extra in [
+        r#", "code":"permission_denied""#,
+        r#", "code":"", "error":null"#,
     ] {
         let raw = json(&format!(
             r#"{{"kind":"response","messageId":"m","inReplyTo":"reply","ok":false{extra}}}"#
         ));
         let mut h = clock_host(raw);
-        let HostReply::ToolResults(results) = h
-            .call(
-                &control(),
-                HostCall::ExecuteBatch {
-                    calls: vec![invocation("a")],
-                    hints: tools(),
-                },
-            )
-            .unwrap()
-        else {
+        let Ok(HostReply::ToolBatchRejected { message, .. }) = h.call(
+            &control(),
+            HostCall::ExecuteBatch {
+                calls: vec![invocation("a")],
+                hints: tools(),
+            },
+        ) else {
             panic!()
         };
-        let error = results[0].boundary.value().get("error").unwrap();
-        assert_eq!(error.get("code"), Some(&JsValue::from(code)));
-        assert_eq!(
-            error.get("message"),
-            Some(&JsValue::from("Capability module failed."))
-        );
-        assert_eq!(error.get("details").is_some(), details);
-        assert_eq!(h.into_exchange().samples.get(), 2);
+        assert!(message.equals_str("Capability module failed."));
+        assert_eq!(h.into_exchange().samples.get(), 0);
     }
 }
 
@@ -2776,8 +2726,10 @@ fn ack_first_failure_only_rechecks_abort_when_the_stdio_consumer_throws() {
                     matches!(result, Ok(HostReply::ToolBatchRejected { message, identity, .. }) if message.equals_str("Tool execution cancelled.") && *identity == owner())
                 );
             } else {
+                // In process the thrown failure reaches AgentLoop's catch,
+                // which settles the batch before its own abort check.
                 assert!(
-                    matches!(result, Ok(HostReply::ToolResults(results)) if results.len() == 1)
+                    matches!(result, Ok(HostReply::ToolBatchRejected { message, .. }) if message.equals_str("Known failure"))
                 );
             }
         }

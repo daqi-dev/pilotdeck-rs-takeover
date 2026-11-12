@@ -1954,82 +1954,6 @@ fn reply(response: &JsValue, call: &HostCall) -> PortResult<HostReply> {
         HostCall::EmitEvent { .. } => HostReply::EventEmitted,
     })
 }
-fn wire_truthy(value: &JsValue) -> bool {
-    match value {
-        JsValue::Undefined | JsValue::Null => false,
-        JsValue::Bool(value) => *value,
-        JsValue::Number(value) => *value != 0.0 && !value.is_nan(),
-        JsValue::String(value) => !value.is_empty(),
-        JsValue::Array(_) | JsValue::Object(_) => true,
-    }
-}
-fn module_failure_tool_result<E: HostExchange>(
-    exchange: &E,
-    response: &JsValue,
-    tool: &pilotdeck_agent::ports::ToolInvocation,
-) -> PortResult<pilotdeck_agent::ToolExecutionResult> {
-    // Original hostToolPort.moduleFailureResult: a known failed response is a
-    // result for each call; it does not enter AgentLoop's missing-result catch.
-    let undefined = JsValue::Undefined;
-    let raw_code = response.get("code").unwrap_or(&undefined);
-    let code = raw_code
-        .as_string()
-        .filter(|s| {
-            [
-                "tool_not_found",
-                "tool_unavailable",
-                "invalid_tool_input",
-                "permission_denied",
-                "permission_cancelled",
-                "permission_required",
-                "tool_execution_failed",
-                "tool_aborted",
-                "tool_timeout",
-                "result_too_large",
-                "path_not_allowed",
-                "file_not_found",
-                "file_conflict",
-                "unsupported_tool",
-                "setup_required",
-                "plan_mode_violation",
-                "ask_mode_violation",
-            ]
-            .iter()
-            .any(|known| s.equals_str(known))
-        })
-        .cloned()
-        .unwrap_or_else(|| "tool_execution_failed".into());
-    let raw_error = response.get("error").unwrap_or(&undefined);
-    let message = nullish(raw_error.get("message"))
-        .map(js_string)
-        .transpose()?
-        .unwrap_or_else(|| "Capability module failed.".into());
-    let mut error = obj([("code", s(&code)), ("message", s(&message))]);
-    if wire_truthy(raw_code) || wire_truthy(raw_error) {
-        let mut details = JsObject::new();
-        if wire_truthy(raw_code) {
-            put(&mut details, "moduleCode", raw_code.clone());
-        }
-        if wire_truthy(raw_error) {
-            put(&mut details, "moduleError", raw_error.clone());
-        }
-        put(&mut error, "details", JsValue::Object(details));
-    }
-    let content = JsValue::Array(vec![JsValue::Object(obj([
-        ("type", "text".into()),
-        ("text", s(&message)),
-    ]))]);
-    let result = JsValue::Object(obj([
-        ("type", "error".into()),
-        ("toolCallId", s(&tool.tool_call_id)),
-        ("toolName", s(&tool.name)),
-        ("error", JsValue::Object(error)),
-        ("content", content),
-        ("startedAt", s(&exchange.wall_now_iso())),
-        ("completedAt", s(&exchange.wall_now_iso())),
-    ]));
-    a::tool_result(&result)
-}
 fn transport_failure_tool_result<E: HostExchange>(
     exchange: &E,
     tool: &ToolInvocation,
@@ -2337,11 +2261,23 @@ pub(crate) fn call<E: HostExchange>(
                 }
                 Err(error) => return Err(error),
             }
-            return calls
-                .iter()
-                .map(|tool| module_failure_tool_result(exchange, response, tool))
-                .collect::<PortResult<Vec<_>>>()
-                .map(HostReply::ToolResults);
+            // The baseline runs the loop in process: a host-side failure of
+            // the tool batch (the scheduler, the durable tool port, a
+            // permission audit write) is thrown into AgentLoop, whose catch
+            // gives every call of the batch the missing-result error with its
+            // recovery advice (AgentLoop.ts:1949-1969,
+            // ensureToolResultPairing.ts:39-67). It never becomes the sidecar
+            // host port's per-call `moduleFailureResult`.
+            // The thrown error's message is the host error's own message.
+            let message = nullish(response.get("error").and_then(|e| e.get("message")))
+                .map(js_string)
+                .transpose()?
+                .unwrap_or_else(|| "Capability module failed.".into());
+            return Ok(HostReply::ToolBatchRejected {
+                message,
+                boundary: exchanged.boundary.clone(),
+                identity: Box::new(exchanged.identity.clone()),
+            });
         }
         if matches!(
             &call,

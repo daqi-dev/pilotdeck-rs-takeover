@@ -127,6 +127,8 @@ pub struct SessionTools {
     hook_observers: crate::runtime::hooks::runtime::HookObservers,
     /// The tool runtime's lifecycle: the current turn's bound hooks.
     tool_hooks: Arc<super::hooks::ToolHooks>,
+    /// The session's `CompactionEngine` failure cooldown.
+    compaction_cooldown: crate::runtime::context::compaction::engine::SummaryCooldown,
 }
 
 /// `SessionFileHistoryBundle.compose`: backups under the session's
@@ -277,6 +279,7 @@ impl ForkSeed {
             hooks,
             hook_observers: self.hook_observers,
             tool_hooks,
+            compaction_cooldown: Arc::default(),
         }
     }
 }
@@ -344,6 +347,7 @@ impl SessionTools {
             hooks: Vec::new(),
             hook_observers: Default::default(),
             tool_hooks: Arc::default(),
+            compaction_cooldown: Arc::default(),
             elicitation_timeout: super::permission_prompt::interaction_timeout(
                 env.get("PILOTDECK_ELICITATION_TIMEOUT_MS")
                     .map(|value| value.as_str()),
@@ -900,13 +904,45 @@ impl SessionTools {
             }),
             ..Default::default()
         };
+        // `TurnRunner`'s `onCompactPersisted` (TurnRunner.ts:338-374): the
+        // replacement boundary and the deferred `compaction_completed` land in
+        // this session's transcript; a failed write aborts the turn.
+        let persist_compaction = crate::host::modules::turn::persist_compaction_to_recorder(
+            recorder.clone(),
+            identity.session_id.clone(),
+            identity.turn_id.clone(),
+            {
+                let signal = signal.clone();
+                Arc::new(move |_reason: &str| signal.abort())
+            },
+        );
         let sink = Durable {
             recorder,
             session: identity.session_id.clone(),
             turn: identity.turn_id.clone(),
         };
         let message_sink = sink.clone();
+        let compaction = crate::runtime::turn::host_factory::CompactionPorts {
+            lifecycle: Some(Arc::new(super::hooks::CompactionHooks {
+                hooks: self.tool_hooks.clone(),
+                session: identity.session_id.clone(),
+                cwd: self.project.to_string_lossy().into_owned().into(),
+            })),
+            // The engine's `eventEmitter` is the session's event buffer; a
+            // forked child's composition carries none.
+            events: match (&self.fork, self.events.clone()) {
+                (None, Some(events)) => Some(Arc::new(move |event: JsValue| {
+                    if let Some(event) = event.as_object() {
+                        let _ = events.emit_current(event.clone());
+                    }
+                })
+                    as crate::runtime::context::compaction::engine::EventEmitter),
+                _ => None,
+            },
+            cooldown: self.compaction_cooldown.clone(),
+        };
         SessionPorts {
+            compaction,
             model: RouterModelPortOptions {
                 invocation: self.world.invocation.clone(),
                 project_path: Some(self.project.to_string_lossy().into_owned().into()),
@@ -963,7 +999,8 @@ impl SessionTools {
                 runtime: plan_todo,
                 turn: identity.turn_id.clone(),
             })),
-            turn: Default::default(),
+            turn: crate::host::modules::turn::Ports::default()
+                .with_persist_compaction(persist_compaction),
             interaction: InteractionTurnInput {
                 permission: PermissionTurnOptions {
                     profile: RuntimeProfile::resolve(

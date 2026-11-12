@@ -241,10 +241,12 @@ fn assert_snapshot(h: &Harness, expected: &JsValue, index: usize) {
         );
     } else {
         assert_eq!(
-            h.storage
-                .projection
-                .snapshot()
-                .expect("#1011 readable projection"),
+            visible(
+                h.storage
+                    .projection
+                    .snapshot()
+                    .expect("#1011 readable projection")
+            ),
             expected_state(expected, index),
             "#1011 projection equals TS durable state"
         );
@@ -355,10 +357,12 @@ async fn matrix(name: &str) {
     assert!(!action.is_finished(), "#1011 held operation is pending");
     if event != "recreate" {
         assert_eq!(
-            h.storage
-                .projection
-                .snapshot()
-                .expect("#1011 held projection"),
+            visible(
+                h.storage
+                    .projection
+                    .snapshot()
+                    .expect("#1011 held projection")
+            ),
             expected_state(&snapshots[1], 0),
             "#1011 held projection equals TS"
         );
@@ -791,10 +795,12 @@ async fn concurrent_append_keeps_both_commits() {
         "#1011 pending predecessor blocks second commit"
     );
     assert_eq!(
-        h.storage
-            .projection
-            .snapshot()
-            .expect("#1011 concurrent held projection"),
+        visible(
+            h.storage
+                .projection
+                .snapshot()
+                .expect("#1011 concurrent held projection")
+        ),
         expected_state(&snaps[1], 0),
         "#1011 concurrent held equals TS"
     );
@@ -983,10 +989,12 @@ async fn cancelling_waiter_keeps_admitted_append() {
     .expect("#1011 cancel gate join");
     let held = field(field(&row, "details"), "held");
     assert_eq!(
-        h.storage
-            .projection
-            .snapshot()
-            .expect("#1011 pending projection readable"),
+        visible(
+            h.storage
+                .projection
+                .snapshot()
+                .expect("#1011 pending projection readable")
+        ),
         expected_state(held, 0),
         "#1011 never completed predecessor stays uncommitted at held observation"
     );
@@ -1123,10 +1131,12 @@ async fn queued_matrix(event: &str) {
         "#1011 all admitted operations remain pending behind predecessor"
     );
     assert_eq!(
-        h.storage
-            .projection
-            .snapshot()
-            .expect("#1011 queue held projection"),
+        visible(
+            h.storage
+                .projection
+                .snapshot()
+                .expect("#1011 queue held projection")
+        ),
         expected_state(&snaps[1], 0),
         "#1011 queue held projection equals TS"
     );
@@ -1168,12 +1178,14 @@ async fn queued_matrix(event: &str) {
             "#1011 fenced recreation retains both predecessor commits"
         );
         assert_eq!(
-            next.storage
-                .projection
-                .snapshot()
-                .expect("#1011 fenced projection")
-                .metadata
-                .get("title"),
+            visible(
+                next.storage
+                    .projection
+                    .snapshot()
+                    .expect("#1011 fenced projection")
+            )
+            .metadata
+            .get("title"),
             Some(&JsValue::String("concurrent-2".into())),
             "#1011 fenced replacement is current rather than TS stale handle"
         );
@@ -1254,11 +1266,12 @@ async fn active_corrupt_transcript_rejected() {
     let snapshots = array(field(&row, "snapshots")).expect("#1011 corrupt active snapshots");
     let h = Harness::new(&snapshots[0]);
     h.storage.restore().await.expect("#1011 valid active seed");
-    let state = h
-        .storage
-        .projection
-        .snapshot()
-        .expect("#1011 valid seed state");
+    let state = visible(
+        h.storage
+            .projection
+            .snapshot()
+            .expect("#1011 valid seed state"),
+    );
     let writer = h.storage.recorder.snapshot_state();
     let duplicate = lock(&h.log.entries)
         .last()
@@ -1275,10 +1288,12 @@ async fn active_corrupt_transcript_rejected() {
         "#1011 rejected active restore preserves writer"
     );
     assert_eq!(
-        h.storage
-            .projection
-            .snapshot()
-            .expect("#1011 preserved state readable"),
+        visible(
+            h.storage
+                .projection
+                .snapshot()
+                .expect("#1011 preserved state readable")
+        ),
         state,
         "#1011 rejected active restore preserves projection"
     );
@@ -1319,4 +1334,18 @@ async fn committed_error_requires_recreation() {
         3,
         "#1011 uncertain commit remains single durable record"
     );
+}
+
+/// The durable state as JSON shows it: `mergeMetadata` keeps `title` and
+/// `linkedPullRequest` keys with `undefined` values, which the recorded TS
+/// state (JSON) omits.
+fn visible(mut state: DurableSessionState) -> DurableSessionState {
+    let mut metadata = pilotdeck_protocol::JsObject::new();
+    for (key, value) in state.metadata.entries() {
+        if !value.is_undefined() {
+            metadata.insert(key.clone(), value.clone());
+        }
+    }
+    state.metadata = metadata;
+    state
 }

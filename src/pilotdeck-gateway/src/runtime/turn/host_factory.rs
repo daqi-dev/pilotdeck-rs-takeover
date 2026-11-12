@@ -194,6 +194,20 @@ pub struct SessionPorts {
     /// Trusted per-turn interaction input; `InteractionTurn::bind` still
     /// replaces the profile and the four interaction ports from the lease.
     pub interaction: InteractionTurnInput,
+    /// Session-owned inputs of the context's `CompactionEngine`.
+    pub compaction: CompactionPorts,
+}
+
+/// The session's side of `CompactionEngine`'s composition: its lifecycle
+/// dispatcher (PreCompact / PostCompact), its event emitter, and the summary
+/// failure cooldown that the baseline engine keeps for the session's life.
+/// The model comes from the leased generation's router.
+#[derive(Clone, Default)]
+pub struct CompactionPorts {
+    pub lifecycle:
+        Option<Arc<dyn crate::runtime::context::compaction::engine::CompactionLifecycle>>,
+    pub events: Option<crate::runtime::context::compaction::engine::EventEmitter>,
+    pub cooldown: crate::runtime::context::compaction::engine::SummaryCooldown,
 }
 
 type PortsFactory = dyn Fn(&ExecutionIdentity, Arc<Recorder>, crate::runtime::hooks::Cancellation) -> SessionPorts
@@ -443,6 +457,7 @@ impl TurnHostFactory {
             plan_todo,
             turn,
             mut interaction,
+            compaction,
         } = ports;
         let context = lease
             .runtime()
@@ -478,6 +493,12 @@ impl TurnHostFactory {
                 )
             })?;
         let context_recorder = recorder.as_ref().map(|durable| durable.recorder.clone());
+        let compaction_model = model_port::compaction_execution(
+            router.router.clone(),
+            router.model_config.clone(),
+            model.project_path.clone(),
+            identity.session_id.clone(),
+        );
         let mut result = ModuleRouter {
             model: model_port::compose(
                 router.router.clone(),
@@ -555,6 +576,14 @@ impl TurnHostFactory {
                             tool_results_dir,
                             crate::runtime::project::context_storage::SessionContextOptions {
                                 extension,
+                                compaction: Some(
+                                    crate::runtime::project::context_storage::SessionCompaction {
+                                        model: compaction_model,
+                                        lifecycle: compaction.lifecycle,
+                                        events: compaction.events,
+                                        cooldown: compaction.cooldown,
+                                    },
+                                ),
                                 ..Default::default()
                             },
                         )
