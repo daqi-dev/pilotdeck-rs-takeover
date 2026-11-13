@@ -87,7 +87,7 @@ impl Requests {
             // `options.alwaysOnControl` (InProcessGateway.ts:2992-3016). A
             // staged manager delegates to the control port verbatim; no
             // manager answers the #1313 envelopes.
-            let Some(manager) = self.always_on.clone() else {
+            let Some(manager) = self.always_on.get() else {
                 return self.standalone(&method, &params).await;
             };
             match method.as_str() {
@@ -523,8 +523,7 @@ mod tests {
     /// runtime is bound to nothing, so every control call answers the
     /// `not_ready` envelope the r1 golden pins.
     async fn configured_requests() -> crate::native_process::requests::Requests {
-        let (_scratch, mut requests) =
-            std::panic::catch_unwind(setup).expect("#2294 fixture setup");
+        let (_scratch, requests) = std::panic::catch_unwind(setup).expect("#2294 fixture setup");
         let project_key = requests.options.project.to_string_lossy().into_owned();
         let mut config = crate::runtime::always_on::AlwaysOnConfig::default_config();
         config.projects = vec![(project_key, true)];
@@ -541,7 +540,7 @@ mod tests {
             },
         )
         .expect("#2294 manager constructs");
-        requests.always_on = Some(std::sync::Arc::new(manager));
+        requests.always_on.set(Some(std::sync::Arc::new(manager)));
         requests
     }
 

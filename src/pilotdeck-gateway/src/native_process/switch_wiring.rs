@@ -35,13 +35,15 @@ use std::{
 };
 use tokio::sync::watch;
 
+use super::assembly::Published;
 use super::channels::NativeChannels;
 
 /// The handles `start_with_webhook` hands the embedding that drives the
-/// machine: the cron stop handle (absent when no `cron:` section was
-/// configured) and the channel assembly.
+/// machine: the cron stop handle (empty while no cron manager is published;
+/// a config hot reload republishes it for the new manager) and the channel
+/// assembly.
 pub(crate) struct AssemblySwitchHandles {
-    pub(crate) cron: Option<Arc<CronStopHandle>>,
+    pub(crate) cron: Published<CronStopHandle>,
     pub(crate) channels: Arc<NativeChannels>,
     pub(crate) release_interactions: Option<ReleaseInteractions>,
     /// The public host capability provider over the project runtimes
@@ -62,7 +64,7 @@ pub(crate) type ReleaseInteractions = Arc<dyn Fn() + Send + Sync>;
 /// through `OnceLock`s the embedding reads once the builder has run.
 #[derive(Clone, Default)]
 pub(crate) struct AssemblySwitchSlots {
-    pub(crate) cron: Arc<std::sync::OnceLock<Arc<CronStopHandle>>>,
+    pub(crate) cron: Published<CronStopHandle>,
     pub(crate) channels: Arc<std::sync::OnceLock<Arc<NativeChannels>>>,
     pub(crate) release_interactions: Arc<std::sync::OnceLock<ReleaseInteractions>>,
     pub(crate) module_host: Arc<std::sync::OnceLock<Arc<crate::module_host::runtime::RuntimeHost>>>,
@@ -107,7 +109,7 @@ impl AdmissionGate {
 /// clone and the embedding keeps another for the post-halt walk.
 #[derive(Clone)]
 pub(crate) struct ProductionFaces {
-    cron: Option<Arc<CronStopHandle>>,
+    cron: Published<CronStopHandle>,
     admission: AdmissionGate,
     phased: Arc<PhasedRun>,
     /// A10's precondition latch: set by the S2 face to the WS drain's own
@@ -126,7 +128,7 @@ impl ProductionFaces {
     }
 
     pub(crate) fn new(
-        cron: Option<Arc<CronStopHandle>>,
+        cron: Published<CronStopHandle>,
         admission: AdmissionGate,
         phased: Arc<PhasedRun>,
     ) -> Self {
@@ -253,7 +255,7 @@ impl ProductionFaces {
 
 impl SwitchFaces for ProductionFaces {
     fn stop_automation(&self) -> FaceFuture {
-        match &self.cron {
+        match self.cron.get() {
             // S1: close the management face (A6) before the stop, stop the
             // manager exactly once, report the swallowed abort rejections
             // (A7). Without a `cron:` section there is no automation to stop.

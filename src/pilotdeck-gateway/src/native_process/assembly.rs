@@ -64,7 +64,9 @@ use std::{
 
 mod always_on;
 mod automation;
+pub(super) use automation::Published;
 mod cron;
+mod hot_reload;
 mod mcp;
 mod memory;
 pub(crate) mod snapshot;
@@ -357,7 +359,7 @@ pub(super) async fn start_with_webhook(
         host,
         crate::channel::feishu::FeishuWebhookSlot::resolver(&slot),
         super::switch_wiring::AssemblySwitchHandles {
-            cron: switch_slots.cron.get().cloned(),
+            cron: switch_slots.cron.clone(),
             channels: switch_slots.channels.get().cloned().ok_or_else(|| {
                 ProxyError::from("channel assembly slot was not constructed during assembly")
             })?,
@@ -606,16 +608,16 @@ async fn start_assembly(
     // session owner is bound once the host has built it.
     let continuations: Arc<super::continuations::Continuations> = Arc::default();
     let prepare_continuations = continuations.clone();
-    // The automation bundle's cron manager, published once the builder has
-    // constructed it: its tools are the gateway's `extraTools`.
-    let cron_manager_slot: Arc<std::sync::OnceLock<Arc<crate::runtime::cron::CronManager>>> =
-        Arc::default();
+    // The automation bundle's cron manager as its `updateSubsystems` last
+    // published it (start, every config hot reload, stop): its tools are the
+    // gateway's `extraTools`, read per session build.
+    let cron_manager_slot: Published<crate::runtime::cron::CronManager> = Published::default();
     let prepare_cron_manager = cron_manager_slot.clone();
-    // The automation bundle's always-on manager: its tools join every
-    // `always-on/…` session (SessionToolCompositionBundle.ts:71-79).
-    let always_on_manager_slot: Arc<
-        std::sync::OnceLock<Arc<crate::runtime::always_on::AlwaysOnManager>>,
-    > = Arc::default();
+    // The automation bundle's always-on manager, published the same way:
+    // its tools join every `always-on/…` session
+    // (SessionToolCompositionBundle.ts:71-79).
+    let always_on_manager_slot: Published<crate::runtime::always_on::AlwaysOnManager> =
+        Published::default();
     let prepare_always_on_manager = always_on_manager_slot.clone();
     let storage_project = project.clone();
     let storage_options = options.clone();
@@ -890,7 +892,7 @@ async fn start_assembly(
                     cron_tools_slot
                         .get()
                         .filter(|manager| manager.enabled())
-                        .map(crate::runtime::cron::cron_tools)
+                        .map(|manager| crate::runtime::cron::cron_tools(&manager))
                         .unwrap_or_default(),
                 );
                 // `sessionOverride?.permissionMode ?? options.permissionMode`
@@ -1650,10 +1652,13 @@ async fn start_assembly(
     // bundle through the slot above; after a machine-driven stop the bundle's
     // own cron stop repeats benignly — no active runs remain and the release
     // pairs are idempotent — while always-on still stops there.
-    let build_cron_slot: Arc<OnceLock<Arc<crate::switch::CronStopHandle>>> = match &switch_slots {
+    // A config hot reload replaces the manager, and the publication below
+    // replaces this handle with one over the new manager.
+    let build_cron_slot: Published<crate::switch::CronStopHandle> = match &switch_slots {
         Some(slots) => slots.cron.clone(),
-        None => Arc::default(),
+        None => Published::default(),
     };
+    let hot_reload_off = options.in_process_cli;
     let build_release_slot = switch_slots
         .as_ref()
         .map(|slots| slots.release_interactions.clone());
@@ -1822,6 +1827,9 @@ async fn start_assembly(
                 .store
                 .start_watching(crate::config::store::WatchOptions::default())
                 .ok();
+            // `pilotdeck server` only: the in-process CLI composes no
+            // automation and has no subsystem to reload.
+            let hot_reload_store = (!hot_reload_off).then(|| settings.store.clone());
             let services = Arc::new(super::services::Services {
                 options: options.clone(),
                 project: build_project.clone(),
@@ -1871,12 +1879,13 @@ async fn start_assembly(
                     make_cron: cron::native_factory(cron_hooks),
                 },
             )?);
-            if let Some(manager) = automation.cron_manager() {
-                let _ = cron_manager_slot.set(manager);
-            }
-            if let Some(manager) = automation.always_on_manager() {
-                let _ = always_on_manager_slot.set(manager);
-            }
+            // `getInitialGatewayOptions()` (ProjectAutomationBundle.ts:154-160):
+            // the staged generation's managers before the first publish.
+            cron_manager_slot.set(automation.cron_manager());
+            always_on_manager_slot.set(automation.always_on_manager());
+            let always_on_standalone_slot: Published<
+                crate::runtime::always_on::StandaloneAlwaysOn,
+            > = Published::default();
             // #1326: the cron port's own volatile fence. It must NOT be the
             // owner's `SessionAdmission`: `SessionAdmissionCronGateway` holds
             // its fence for the whole of `run_turn`, and that call ends in
@@ -1910,14 +1919,15 @@ async fn start_assembly(
                 // hot-start the weixin channel on request, after the same
                 // durable-state restore as a config-enabled start.
                 prepare_weixin_login: Some(build_channels.prepare_login_callback()),
-                cron: automation.cron_manager(),
                 // #2294: TS `getInitialGatewayOptions` reads the generation's
                 // managers the same way (`generation.cron`,
-                // `generation.alwaysOn`); the composition face is the
-                // bundle's, so the `#1313` not_configured envelopes stay the
-                // answer exactly when no always-on provider was staged.
-                always_on: automation.always_on_manager(),
-                always_on_standalone: Default::default(),
+                // `generation.alwaysOn`), and every `updateSubsystems` after
+                // it republishes them; the `#1313` not_configured envelopes
+                // stay the answer exactly when no always-on provider is
+                // published.
+                cron: cron_manager_slot.clone(),
+                always_on: always_on_manager_slot.clone(),
+                always_on_standalone: always_on_standalone_slot.clone(),
                 settings: settings.gateway,
                 session_overrides,
             });
@@ -1944,10 +1954,8 @@ async fn start_assembly(
             // runs inside the host's `block_on`, where `Handle::block_on`
             // would panic. A `None` means some start step unexpectedly
             // yielded; failing assembly is the honest answer, never a
-            // deadlock. `update_subsystems` is the TS hot-reload publication
-            // (`setCronController` / `setAlwaysOnControl`); this embedding has
-            // no hot reload, so the consumer is a documented no-op. The
-            // bundle's own bind gate enforces the attach-before-start order.
+            // deadlock. The bundle's own bind gate enforces the
+            // attach-before-start order.
             {
                 use futures_util::FutureExt;
                 let busy_owner = cron_owner.clone();
@@ -1976,26 +1984,68 @@ async fn start_assembly(
                         cron_owner.clone(),
                         submitter.clone(),
                     ));
-                // The standalone control's turn facade (createApplyHandler.ts:
-                // 142-150) — the same gateway the bundle's providers bind.
-                let _ = requests.always_on_standalone.set(Arc::new(
-                    crate::runtime::always_on::StandaloneAlwaysOn {
-                        gateway: always_on_gateway.clone(),
-                        session_overrides: always_on_hooks.session_overrides.clone(),
-                        on_turn_event: always_on_hooks.on_turn_event.clone(),
-                        language: always_on_section
+                // `updateSubsystems` (createLocalGateway.ts:1559-1566): the
+                // bundle publishes at start, around every config hot reload
+                // and at stop. The gateway's cron controller and always-on
+                // control, the session tool slots and the stop machine's
+                // cron handle all follow the published generation. Where TS
+                // publishes the standalone fallback control, the port
+                // rebuilds its standalone apply facade from the generation's
+                // `alwaysOn` section (createApplyHandler.ts:142-150 — the
+                // same turn gateway the bundle's providers bind).
+                let update_subsystems: Arc<dyn Fn(automation::SubsystemUpdate) + Send + Sync> = {
+                    let cron_slot = cron_manager_slot.clone();
+                    let always_on_slot = always_on_manager_slot.clone();
+                    let standalone_slot = always_on_standalone_slot.clone();
+                    let switch_slot = build_cron_slot.clone();
+                    let standalone_gateway = always_on_gateway.clone();
+                    let standalone_overrides = always_on_hooks.session_overrides.clone();
+                    let standalone_events = always_on_hooks.on_turn_event.clone();
+                    let abort_failures = cron_gateway.failures();
+                    Arc::new(move |update: automation::SubsystemUpdate| {
+                        let cron = update
+                            .cron
                             .as_ref()
-                            .map(crate::runtime::always_on::AlwaysOnConfig::from_section)
-                            .and_then(|config| config.language),
-                    },
-                ));
+                            .and_then(|provider| provider.cron_manager());
+                        // The stop machine keeps one handle per manager, so a
+                        // republication of the same manager keeps its handle.
+                        let same_manager = match (switch_slot.get(), &cron) {
+                            (Some(handle), Some(manager)) => Arc::ptr_eq(handle.manager(), manager),
+                            (None, None) => true,
+                            _ => false,
+                        };
+                        if !same_manager {
+                            switch_slot.set(cron.clone().map(|manager| {
+                                Arc::new(crate::switch::CronStopHandle::new(
+                                    manager,
+                                    abort_failures.clone(),
+                                ))
+                            }));
+                        }
+                        cron_slot.set(cron);
+                        always_on_slot.set(
+                            update
+                                .always_on_control
+                                .as_ref()
+                                .and_then(|provider| provider.always_on_manager()),
+                        );
+                        standalone_slot.set(update.fallback.map(|fallback| {
+                            Arc::new(crate::runtime::always_on::StandaloneAlwaysOn {
+                                gateway: standalone_gateway.clone(),
+                                session_overrides: standalone_overrides.clone(),
+                                on_turn_event: standalone_events.clone(),
+                                language: fallback.config.and_then(|config| config.language),
+                            })
+                        }));
+                    })
+                };
                 automation.attach(automation::ProjectAutomationAttachment {
                     agent_gateway: automation::ProjectAutomationAgentGateway {
                         always_on: always_on_gateway,
                         cron: cron_gateway.clone(),
                     },
                     is_project_busy: Some(is_project_busy),
-                    update_subsystems: Arc::new(|_| ()),
+                    update_subsystems,
                 })?;
                 match std::pin::pin!(automation.start()).now_or_never() {
                     Some(result) => {
@@ -2012,18 +2062,18 @@ async fn start_assembly(
                 build_automation_slot.set(automation.clone()).map_err(|_| {
                     std::io::Error::other("automation bundle slot already occupied")
                 })?;
-                // #1353 A8.5-pr2: the machine's S1 face stops the bundle's
-                // cron manager through the shared handle, reading the abort
-                // rejections the recording wrapper above accumulated. Without
-                // a `cron:` section there is no manager and no handle — the
-                // S1 face is a no-op, exactly as before the bundle existed.
-                if let Some(cron) = automation.cron_manager() {
-                    build_cron_slot
-                        .set(Arc::new(crate::switch::CronStopHandle::new(
-                            cron,
-                            cron_gateway.failures(),
-                        )))
-                        .map_err(|_| std::io::Error::other("cron manager slot already occupied"))?;
+                // #1353 A8.5-pr2: the machine's S1 face stops the published
+                // cron manager through the handle the publication above put
+                // in `build_cron_slot`, reading the abort rejections the
+                // recording wrapper accumulated. Without a cron manager there
+                // is no handle — the S1 face is a no-op.
+                //
+                // The server's config subscription (src/cli/pilotdeck.ts:
+                // 136-191), made after the bundle started like the TS one:
+                // `alwaysOn` / `cron` changes reload the automation families.
+                if let Some(store) = &hot_reload_store {
+                    let _ =
+                        hot_reload::subscribe(store, automation.clone(), build_cron_slot.clone());
                 }
             }
             // #1328: publish the weixin gateway port (the TS `baseDeps.gateway`

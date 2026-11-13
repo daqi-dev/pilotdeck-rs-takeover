@@ -105,7 +105,11 @@ async fn wiring_harness_over(
     }
     let (trigger, trigger_rx) = watch::channel(false);
     let phased = Arc::new(server.run_phased(trigger_stop(trigger_rx), drain_budget));
-    let faces = ProductionFaces::new(None, AdmissionGate::new(channels, trigger), phased);
+    let faces = ProductionFaces::new(
+        Default::default(),
+        AdmissionGate::new(channels, trigger),
+        phased,
+    );
     (address, faces, home)
 }
 
@@ -510,7 +514,7 @@ async fn a_hung_host_teardown_exceeds_the_halt_owner_bound() {
         Ok(())
     });
     let (_, phased, gate, _home) = wiring_harness_with_host(Duration::from_millis(250), host).await;
-    let faces = ProductionFaces::new(None, gate, phased);
+    let faces = ProductionFaces::new(Default::default(), gate, phased);
     let owner_bound = Duration::from_millis(250 + crate::switch::BACKSTOP_SLACK_MS);
     let started = tokio::time::Instant::now();
     let teardown = faces.finish_after_halt().await;
@@ -556,7 +560,7 @@ async fn a_hung_host_teardown_exceeds_the_halt_owner_bound() {
 async fn an_erroring_owner_finish_is_recorded_for_the_revisit() {
     let host = native_ws_fixture_with_cleanup(Arc::new(WiringRequests), std::future::pending());
     let (_, phased, gate, _home) = wiring_harness_with_host(Duration::from_millis(100), host).await;
-    let faces = ProductionFaces::new(None, gate, phased);
+    let faces = ProductionFaces::new(Default::default(), gate, phased);
     let machine = SwitchMachine::new(faces.clone(), SwitchTimeouts::uniform(bound(5_000)));
     match machine.run().await {
         Err(SwitchError::Drain(StepFailure::Step(message))) => assert!(
@@ -594,7 +598,7 @@ async fn an_interrupted_owner_finish_is_not_rerun_by_the_revisit() {
         Ok(())
     });
     let (_, phased, gate, _home) = wiring_harness_with_host(Duration::from_secs(5), host).await;
-    let faces = ProductionFaces::new(None, gate.clone(), phased.clone());
+    let faces = ProductionFaces::new(Default::default(), gate.clone(), phased.clone());
     // Fire the stop the way the machine's S2 face would and let both entry
     // surfaces settle, so the first finish below starts from the same
     // post-drain state the machine's S4 face starts from.
@@ -669,7 +673,11 @@ async fn wiring_harness_with_host_and_channel(
         .expect("#2363 the pre-seeded harness channel starts");
     let (trigger, trigger_rx) = watch::channel(false);
     let phased = Arc::new(server.run_phased(trigger_stop(trigger_rx), drain_budget));
-    let faces = ProductionFaces::new(None, AdmissionGate::new(channels, trigger), phased);
+    let faces = ProductionFaces::new(
+        Default::default(),
+        AdmissionGate::new(channels, trigger),
+        phased,
+    );
     (address, faces, home)
 }
 
@@ -796,7 +804,11 @@ async fn a_panicking_runner_halts_and_the_death_march_returns() {
         },
         Duration::from_millis(100),
     ));
-    let faces = ProductionFaces::new(None, AdmissionGate::new(channels, trigger), phased);
+    let faces = ProductionFaces::new(
+        Default::default(),
+        AdmissionGate::new(channels, trigger),
+        phased,
+    );
     let limit = crate::switch::BoundedTimeout::from_millis(100)
         .expect("#2351 walk machine budget is valid");
     let machine = SwitchMachine::new(faces.clone(), SwitchTimeouts::uniform(limit));
@@ -877,7 +889,11 @@ async fn the_final_cancellation_cell_still_requests_the_host_teardown() {
         .expect("#2557 cell hanging channel starts");
     let (trigger, trigger_rx) = watch::channel(false);
     let phased = Arc::new(server.run_phased(trigger_stop(trigger_rx), Duration::from_millis(150)));
-    let faces = ProductionFaces::new(None, AdmissionGate::new(channels, trigger), phased.clone());
+    let faces = ProductionFaces::new(
+        Default::default(),
+        AdmissionGate::new(channels, trigger),
+        phased.clone(),
+    );
     let mut survivor = TcpStream::connect(address)
         .await
         .expect("#2557 survivor connect");

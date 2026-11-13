@@ -277,9 +277,6 @@
      "sleep": 1500
     },
     {
-     "connect": true
-    },
-    {
      "ws": "cron_list",
      "params": {
       "projectKey": "{HOME}/work/alpha",
@@ -314,6 +311,12 @@
       "channelKey": "test",
       "message": "plain turn on an old session"
      }
+    },
+    {
+     "disconnect": true
+    },
+    {
+     "connect": true
     },
     {
      "ws": "set_permission_mode",
@@ -397,6 +400,9 @@
       "projectKey": "{HOME}/work/alpha",
       "includeHistory": true
      }
+    },
+    {
+     "disconnect": true
     },
     {
      "connect": true

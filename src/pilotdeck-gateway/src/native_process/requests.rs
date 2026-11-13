@@ -1,4 +1,8 @@
-use super::{Options, SessionOverrides, assembly::Recorders, methods};
+use super::{
+    Options, SessionOverrides,
+    assembly::{Published, Recorders},
+    methods,
+};
 use crate::{
     metadata::object,
     runtime::{
@@ -52,21 +56,25 @@ pub struct Requests {
     /// A8 U8 cron runtime (#1326). `None` is TS `options.cron` unconfigured
     /// (no `cron:` section in the config): the six names stay out of
     /// capabilities and every call answers the `requireCron` gate
-    /// (InProcessGateway.ts:3016-3022).
-    pub cron: Option<Arc<crate::runtime::cron::CronManager>>,
+    /// (InProcessGateway.ts:3016-3022). The value is what the automation
+    /// bundle last published (`setCronController`), so a config hot reload
+    /// swaps it.
+    pub cron: Published<crate::runtime::cron::CronManager>,
     /// A7.8 always-on background runtime (#2294): the automation bundle's
     /// staged always-on manager, the port of TS `options.alwaysOnControl`.
     /// `None` is the unconfigured shape (no `alwaysOn:` section, or no
     /// project with `enabled: true`): the three names stay out of
     /// capabilities and every call answers the #1313 `not_configured`
-    /// envelopes byte for byte (InProcessGateway.ts:2992-3016).
-    pub always_on: Option<Arc<crate::runtime::always_on::AlwaysOnManager>>,
+    /// envelopes byte for byte (InProcessGateway.ts:2992-3016). Republished
+    /// by every config hot reload (`setAlwaysOnControl`).
+    pub always_on: Published<crate::runtime::always_on::AlwaysOnManager>,
     /// `createStandaloneAlwaysOnControl` (createApplyHandler.ts:142-173):
     /// what the standalone `always_on_apply` drives its apply turn through —
     /// the live turn facade plus the bundle's override registry and
-    /// turn-event broadcast. Published once the gateway's submitter exists.
-    pub always_on_standalone:
-        std::sync::OnceLock<Arc<crate::runtime::always_on::StandaloneAlwaysOn>>,
+    /// turn-event broadcast. Published with every generation that has no
+    /// always-on provider (TS `createFallbackAlwaysOnControl(config)`), built
+    /// from that generation's `alwaysOn` section.
+    pub always_on_standalone: Published<crate::runtime::always_on::StandaloneAlwaysOn>,
     /// U7 global settings gateway (#1320): the six settings methods route
     /// here through the #1305 registry. Production binds
     /// [`crate::native_process::services::native_settings`].

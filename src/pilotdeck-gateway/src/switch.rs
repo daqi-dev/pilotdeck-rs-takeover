@@ -595,6 +595,12 @@ impl CronStopHandle {
         self.stopped.load(Ordering::SeqCst)
     }
 
+    /// The manager this handle stops — a config hot reload republishes the
+    /// handle only when the published manager is a different one.
+    pub fn manager(&self) -> &Arc<CronManager> {
+        &self.manager
+    }
+
     /// A7: the abort rejections `CronManager::stop` swallowed while aborting
     /// in-flight runs.
     pub fn abort_failures(&self) -> Vec<String> {
