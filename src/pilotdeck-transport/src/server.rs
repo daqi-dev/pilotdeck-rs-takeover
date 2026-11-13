@@ -342,6 +342,8 @@ pub struct ExecutionServer {
     factory: Arc<dyn ExecutionFactory>,
     clock: Arc<dyn ExecutionClock>,
     queue_capacity: usize,
+    /// The threads running this connection's executions.
+    executions: Mutex<Vec<thread::JoinHandle<()>>>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ShutdownReport {
@@ -385,6 +387,7 @@ impl ExecutionServer {
             factory,
             clock,
             queue_capacity: queue_capacity.max(1),
+            executions: Mutex::default(),
         })
     }
     /// Called by one reader. No factory work or blocking output occurs here.
@@ -747,7 +750,10 @@ impl ExecutionServer {
         self.ready.notify();
         Ok(())
     }
-    fn worker(&self) {
+    /// Each accepted execute runs on its own thread: the baseline starts every
+    /// execution without awaiting it (agentLoopSidecarServer.ts:153-156), so
+    /// executions on one connection proceed concurrently.
+    fn worker(self: &Arc<Self>) {
         loop {
             let generation = self.ready.generation();
             if self.owner.is_closed() {
@@ -763,129 +769,146 @@ impl ExecutionServer {
                 self.ready.wait(generation, None);
                 continue;
             };
-            let mut context = ExecutionContext {
-                owner: self.owner.clone(),
-                request: work.request.clone(),
-                stream_id: work.stream_id.clone(),
-                sequence: work.sequence,
-                identities: Mutex::new(Vec::new()),
-                scope: Arc::default(),
-                control: work.control,
-            };
-            // Catching a worker panic prevents a permanently running operation.
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                crate::default_factory::requested_cancel_left_to_loop(context.control.check())?;
-                self.factory.execute(&work.request, &mut context)
-            }));
-            let terminal = match result {
-                Ok(Ok(terminal)) => with_module_failure(terminal, context.scope.module_failure()),
-                Ok(Err(error)) => failure_terminal(error),
-                Err(_) => failure_terminal(PortError::InvalidResponse {
-                    message: "Execution worker panicked.".into(),
-                }),
-            };
-            if context
-                .control
-                .deadline
-                .is_some_and(|deadline| Instant::now() >= deadline)
-            {
-                context.control.cancellation.cancel(CancelCause::Deadline);
+            let server = self.clone();
+            let handle = thread::spawn(move || {
+                let owner = server.owner.clone();
+                owner.run_in_turns(|| server.run(work));
+            });
+            let mut executions = self.executions.lock().unwrap_or_else(|p| p.into_inner());
+            executions.retain(|execution| !execution.is_finished());
+            executions.push(handle);
+        }
+    }
+    fn executions_finished(&self) -> bool {
+        self.executions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .all(thread::JoinHandle::is_finished)
+    }
+    fn run(&self, work: Work) {
+        let mut context = ExecutionContext {
+            owner: self.owner.clone(),
+            request: work.request.clone(),
+            stream_id: work.stream_id.clone(),
+            sequence: work.sequence,
+            identities: Mutex::new(Vec::new()),
+            scope: Arc::default(),
+            control: work.control,
+        };
+        // Catching a worker panic prevents a permanently running operation.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::default_factory::requested_cancel_left_to_loop(context.control.check())?;
+            self.factory.execute(&work.request, &mut context)
+        }));
+        let terminal = match result {
+            Ok(Ok(terminal)) => with_module_failure(terminal, context.scope.module_failure()),
+            Ok(Err(error)) => failure_terminal(error),
+            Err(_) => failure_terminal(PortError::InvalidResponse {
+                message: "Execution worker panicked.".into(),
+            }),
+        };
+        if context
+            .control
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            context.control.cancellation.cancel(CancelCause::Deadline);
+        }
+        let terminal = if matches!(
+            context.control.cancellation.cause(),
+            Some(CancelCause::Deadline)
+        ) {
+            ExecutionTerminal {
+                outcome: ModuleOutcome::ResultUnknown,
+                payload: JsObject::new(),
+                error: Some(object([
+                    ("code", JsValue::from("DEADLINE_EXCEEDED")),
+                    (
+                        "message",
+                        JsValue::from("Module execution deadline exceeded."),
+                    ),
+                ])),
             }
-            let terminal = if matches!(
-                context.control.cancellation.cause(),
-                Some(CancelCause::Deadline)
-            ) {
-                ExecutionTerminal {
-                    outcome: ModuleOutcome::ResultUnknown,
-                    payload: JsObject::new(),
-                    error: Some(object([
-                        ("code", JsValue::from("DEADLINE_EXCEEDED")),
-                        (
-                            "message",
-                            JsValue::from("Module execution deadline exceeded."),
-                        ),
-                    ])),
-                }
-            } else {
-                terminal
-            };
-            let event_type = format!("agent.execute.{}", outcome_name(terminal.outcome));
-            let final_event = context.event(
-                event_type.into(),
-                terminal.payload,
-                Some(terminal.outcome),
-                terminal.error,
-            );
-            // Wake and reap the exact owned timer; completion is already classified.
-            context
-                .control
-                .cancellation
-                .cancel(CancelCause::OwnerRetired);
-            let timer = self
-                .state
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
+        } else {
+            terminal
+        };
+        let event_type = format!("agent.execute.{}", outcome_name(terminal.outcome));
+        let final_event = context.event(
+            event_type.into(),
+            terminal.payload,
+            Some(terminal.outcome),
+            terminal.error,
+        );
+        // Wake and reap the exact owned timer; completion is already classified.
+        context
+            .control
+            .cancellation
+            .cancel(CancelCause::OwnerRetired);
+        let timer = self
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .operations
+            .get_mut(&work.request.operation_id)
+            .filter(|op| op.stream_id == work.stream_id)
+            .and_then(|op| op.timer.take());
+        if let Some(timer) = timer {
+            let _ = timer.join();
+        }
+        {
+            let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+            let Some(op) = state
                 .operations
                 .get_mut(&work.request.operation_id)
                 .filter(|op| op.stream_id == work.stream_id)
-                .and_then(|op| op.timer.take());
-            if let Some(timer) = timer {
-                let _ = timer.join();
-            }
-            {
-                let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-                let Some(op) = state
-                    .operations
-                    .get_mut(&work.request.operation_id)
-                    .filter(|op| op.stream_id == work.stream_id)
-                else {
-                    continue;
-                };
-                if op.terminal.is_some() {
-                    continue;
-                }
-                op.terminal = Some(final_event.clone());
-            }
-            // recordFinal precedes the final frame (318-319).
-            if let Some(snapshot) = self
-                .registry
-                .lock()
-                .operations
-                .get_mut(&work.request.operation_id)
-            {
-                snapshot.record_final(terminal.outcome, self.clock.now_iso());
-            }
-            // Main cancellation must not suppress its own terminal. Cleanup has a
-            // separately bounded publication budget, never a permission to retry effects.
-            let cleanup = CallControl {
-                cancellation: Cancellation::default(),
-                deadline: Instant::now().checked_add(Duration::from_secs(5)),
+            else {
+                return;
             };
-            if self.owner.publish(&cleanup, &final_event).is_err() {
-                self.retire();
+            if op.terminal.is_some() {
+                return;
             }
-            // The abortControllers entry goes after the final is sent (395-398).
-            self.release_active(&work.request.operation_id, &work.stream_id);
-            if let Some(op) = self
-                .state
+            op.terminal = Some(final_event.clone());
+        }
+        // recordFinal precedes the final frame (318-319).
+        if let Some(snapshot) = self
+            .registry
+            .lock()
+            .operations
+            .get_mut(&work.request.operation_id)
+        {
+            snapshot.record_final(terminal.outcome, self.clock.now_iso());
+        }
+        // Main cancellation must not suppress its own terminal. Cleanup has a
+        // separately bounded publication budget, never a permission to retry effects.
+        let cleanup = CallControl {
+            cancellation: Cancellation::default(),
+            deadline: Instant::now().checked_add(Duration::from_secs(5)),
+        };
+        if self.owner.publish(&cleanup, &final_event).is_err() {
+            self.retire();
+        }
+        // The abortControllers entry goes after the final is sent (395-398).
+        self.release_active(&work.request.operation_id, &work.stream_id);
+        if let Some(op) = self
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .operations
+            .get_mut(&work.request.operation_id)
+            .filter(|op| op.stream_id == work.stream_id)
+        {
+            op.terminal_published = true;
+        }
+        self.ready.notify();
+        if terminal.outcome != ModuleOutcome::ResultUnknown {
+            for identity in context
+                .identities
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
-                .operations
-                .get_mut(&work.request.operation_id)
-                .filter(|op| op.stream_id == work.stream_id)
+                .iter()
             {
-                op.terminal_published = true;
-            }
-            self.ready.notify();
-            if terminal.outcome != ModuleOutcome::ResultUnknown {
-                for identity in context
-                    .identities
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .iter()
-                {
-                    self.owner.release_known_calls(identity);
-                }
+                self.owner.release_known_calls(identity);
             }
         }
     }
@@ -1058,14 +1081,17 @@ impl ExecutionServer {
             .checked_add(grace)
             .unwrap_or_else(Instant::now);
         while Instant::now() < until
-            && !(reader.is_finished() && writer.is_finished() && worker.is_finished())
+            && !(reader.is_finished()
+                && writer.is_finished()
+                && worker.is_finished()
+                && self.executions_finished())
         {
             thread::sleep(Duration::from_millis(5));
         }
         let report = ShutdownReport {
             reader_joined: reader.is_finished(),
             writer_joined: writer.is_finished(),
-            worker_joined: worker.is_finished(),
+            worker_joined: worker.is_finished() && self.executions_finished(),
         };
         if report.reader_joined {
             let _ = reader.join();

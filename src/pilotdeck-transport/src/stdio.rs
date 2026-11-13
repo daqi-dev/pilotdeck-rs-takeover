@@ -70,6 +70,59 @@ struct Inner {
     state: Mutex<State>,
     wake: Arc<WakeSignal>,
     queue_capacity: usize,
+    turns: Turns,
+}
+/// Executions of one connection take turns between their outputs, the way
+/// the baseline's single event loop interleaves them: each execution runs
+/// until it has written one frame (an event or a module call), then lets the
+/// next waiting execution run; one waiting for a host reply is out of the
+/// queue until the reply is in. With one execution it never waits. Only the
+/// threads that [`ConnectionOwner::run_in_turns`] runs take part.
+#[derive(Debug, Default)]
+struct Turns {
+    state: Mutex<TurnQueue>,
+    changed: std::sync::Condvar,
+}
+#[derive(Debug, Default)]
+struct TurnQueue {
+    holder: Option<u64>,
+    waiting: VecDeque<u64>,
+    next: u64,
+}
+thread_local! {
+    static TURN: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+impl Turns {
+    fn wait_for(&self, ticket: u64) {
+        let mut queue = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        queue.waiting.push_back(ticket);
+        while queue.holder.is_some() || queue.waiting.front() != Some(&ticket) {
+            queue = self.changed.wait(queue).unwrap_or_else(|p| p.into_inner());
+        }
+        queue.waiting.pop_front();
+        queue.holder = Some(ticket);
+    }
+    fn release(&self, ticket: u64) {
+        let mut queue = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if queue.holder == Some(ticket) {
+            queue.holder = None;
+        }
+        drop(queue);
+        self.changed.notify_all();
+    }
+    /// After one written frame: let every execution already waiting go first.
+    fn pass(&self, ticket: u64) {
+        let others = !self
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .waiting
+            .is_empty();
+        if others {
+            self.release(ticket);
+            self.wait_for(ticket);
+        }
+    }
 }
 /// Clone is a handle to this exact connection, not a new generation.
 #[derive(Debug, Clone)]
@@ -88,10 +141,47 @@ impl ConnectionOwner {
             state: Mutex::new(State::default()),
             wake: Arc::new(WakeSignal::default()),
             queue_capacity: queue_capacity.max(1),
+            turns: Turns::default(),
         }))
     }
     pub fn binding(&self) -> &SidecarBinding {
         &self.0.binding
+    }
+    /// Runs one execution of this connection in turns with the others (see
+    /// [`Turns`]).
+    pub(crate) fn run_in_turns<T>(&self, run: impl FnOnce() -> T) -> T {
+        let ticket = {
+            let mut queue = self.0.turns.state.lock().unwrap_or_else(|p| p.into_inner());
+            queue.next += 1;
+            queue.next
+        };
+        self.0.turns.wait_for(ticket);
+        TURN.with(|turn| turn.set(Some(ticket)));
+        struct Leave<'a>(&'a Turns, u64);
+        impl Drop for Leave<'_> {
+            fn drop(&mut self) {
+                TURN.with(|turn| turn.set(None));
+                self.0.release(self.1);
+            }
+        }
+        let _leave = Leave(&self.0.turns, ticket);
+        run()
+    }
+    fn pass_turn(&self) {
+        if let Some(ticket) = TURN.with(std::cell::Cell::get) {
+            self.0.turns.pass(ticket);
+        }
+    }
+    /// Out of the turn queue while `wait` blocks (a host reply), back at its
+    /// end afterwards.
+    fn outside_turns<T>(&self, wait: impl FnOnce() -> T) -> T {
+        let Some(ticket) = TURN.with(std::cell::Cell::get) else {
+            return wait();
+        };
+        self.0.turns.release(ticket);
+        let result = wait();
+        self.0.turns.wait_for(ticket);
+        result
     }
     /// `nextId(prefix)` (agentLoopSidecarServer.ts:647-649): `${prefix}-${uuid()}`
     /// with the baseline sidecar's default id source,
@@ -259,6 +349,7 @@ impl ConnectionOwner {
                 });
                 drop(state);
                 self.0.wake.notify();
+                self.pass_turn();
                 return Ok(());
             }
             drop(state);
@@ -767,7 +858,8 @@ pub(crate) struct PendingExchange {
 impl PendingExchange {
     pub(crate) fn wait(self, control: &CallControl) -> PortResult<HostExchangeResponse> {
         let (module, operation, scope) = (self.module, self.operation, self.scope.clone());
-        let response = self.wait_reply(control)?;
+        let owner = self.owner.clone();
+        let response = owner.outside_turns(|| self.wait_reply(control))?;
         scope.record(module, operation, response.boundary.value());
         Ok(response)
     }
