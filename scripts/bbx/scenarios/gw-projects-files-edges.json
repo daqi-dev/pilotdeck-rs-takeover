@@ -1,0 +1,219 @@
+{
+  "name": "gw-projects-files-edges",
+  "about": "project_files_list / project_file_read 的边界（src/gateway/dialog/projectFiles.ts、src/cli/createLocalGateway.ts:1098-1114、src/gateway/dialog/projectRegistry.ts:41-60）：排除的目录名全集（.git .pilotdeck .tmp node_modules dist build coverage，只按目录名排除，同名文件照列）；大小写混排的名字按 localeCompare 排序；query 去首尾空白、不分大小写、同一字段多处命中、超过 256 字 INVALID_QUERY；limit 为 0 / 501 / 小数 / 字符串时 INVALID_LIMIT；cursor 乱写、换了 query 再用旧 cursor 时 INVALID_CURSOR，用对时接着翻页；includeDirs:false 只列文件；projectKey 带尾斜杠或 .. 段时按 resolve 后匹配；project_file_read 的 maxBytes 为 0 / 负数 / 小数 / 超过上限 / 截断在多字节字符中间、encoding 为其他值时按 utf-8、读 PilotHome 这个默认工作区下的文件、路径是 . 时返回 null。",
+  "files": {
+    "home/work/alpha/README.md": "alpha readme\n",
+    "home/work/alpha/Zeta.md": "z\n",
+    "home/work/alpha/beta.md": "b\n",
+    "home/work/alpha/_under.md": "u\n",
+    "home/work/alpha/alpha-data.txt": "aaa\n",
+    "home/work/alpha/.git/HEAD": "ref\n",
+    "home/work/alpha/.pilotdeck/x.md": "x\n",
+    "home/work/alpha/.tmp/t.md": "t\n",
+    "home/work/alpha/dist/d.js": "d\n",
+    "home/work/alpha/build/b.js": "b\n",
+    "home/work/alpha/coverage/c.json": "{}\n",
+    "home/work/alpha/src/build": "a file named build\n",
+    "home/work/alpha/src/main.rs": "fn main() {}\n",
+    "home/work/alpha/utf.txt": "héllo wörld\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+    "home/.pilotdeck/notes.md": "pilot home note\n"
+  },
+  "steps": [
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha/",
+        "includeDirs": false
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha/src/..",
+        "query": "  A  "
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "query": "a",
+        "limit": 3
+      },
+      "save": {
+        "cursor": "\"nextCursor\": ?\"([^\"]+)\""
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "query": "a",
+        "limit": 3,
+        "cursor": "{saved.cursor}"
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "query": "b",
+        "limit": 3,
+        "cursor": "{saved.cursor}"
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "cursor": "not-a-cursor"
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": 0
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": 501
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": 1.5
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": "2"
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "limit": 500
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "query": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "   "
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{HOME}/work/alpha/README.md"
+      }
+    },
+    {
+      "ws": "project_file_read",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "path": "utf.txt",
+        "maxBytes": 2
+      }
+    },
+    {
+      "ws": "project_file_read",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "path": "utf.txt",
+        "maxBytes": 0
+      }
+    },
+    {
+      "ws": "project_file_read",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "path": "utf.txt",
+        "maxBytes": -5
+      }
+    },
+    {
+      "ws": "project_file_read",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "path": "utf.txt",
+        "maxBytes": 3.7
+      }
+    },
+    {
+      "ws": "project_file_read",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "path": "utf.txt",
+        "maxBytes": 99999999999
+      }
+    },
+    {
+      "ws": "project_file_read",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "path": "utf.txt",
+        "encoding": "latin1"
+      }
+    },
+    {
+      "ws": "project_file_read",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "path": "utf.txt",
+        "encoding": "base64",
+        "maxBytes": 4
+      }
+    },
+    {
+      "ws": "project_file_read",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "path": "."
+      }
+    },
+    {
+      "ws": "project_file_read",
+      "params": {
+        "projectKey": "{HOME}/work/alpha",
+        "path": "{HOME}/work/alpha/README.md"
+      }
+    },
+    {
+      "ws": "project_file_read",
+      "params": {
+        "projectKey": "{PILOT_HOME}",
+        "path": "notes.md"
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{PILOT_HOME}",
+        "query": "notes"
+      }
+    }
+  ]
+}

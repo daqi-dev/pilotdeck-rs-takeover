@@ -16322,6 +16322,870 @@
      "probe": []
     }
    ]
+  },
+  "gw-behaviors": {
+   "about": "gateway 连接层对外可观察的行为点，一个分支一项（2026-11-13 缺口审查从基线源码与实际运行列出）。来源：src/gateway/server/websocket.ts（自写的 WS 帧解析）、GatewayServer.ts（node:http 缺省选项、路由次序、升级）、GatewayWsConnection.ts（握手、请求、关闭）、src/adapters/web/、src/cli/pilotdeck.ts 与 pilotdeckServer.ts（入口与停机）、src/gateway/dialog/projectFiles.ts 与 projectRegistry.ts（项目文件）。连接数、大帧、慢客户端、空闲连接的量测见审查报告。没有 probe 的项是场景做不到或没做的，判为没碰到。",
+   "items": [
+    {
+     "id": "gw:ws.upgrade-path",
+     "where": "src/gateway/server/GatewayServer.ts:145",
+     "note": "升级请求的路径不是 /ws：直接 socket.destroy()，不回任何字节。路径按 new URL 取，带查询串的 /ws?x=1 照常升级。",
+     "probe": [
+      "\"path\": \"/wsx\"",
+      "/ws?client="
+     ]
+    },
+    {
+     "id": "gw:ws.upgrade-no-key",
+     "where": "src/gateway/server/GatewayServer.ts:149",
+     "note": "缺 Sec-WebSocket-Key：直接断开，不回字节。",
+     "probe": [
+      "\"Sec-WebSocket-Key\": null"
+     ]
+    },
+    {
+     "id": "gw:ws.upgrade-lenient",
+     "where": "src/gateway/server/GatewayServer.ts:154",
+     "note": "Upgrade 头的值、请求方法、Sec-WebSocket-Version、Origin 都不检查；101 只带 Upgrade / Connection / Sec-WebSocket-Accept，不回显子协议。",
+     "probe": [
+      "\"Upgrade\": \"not-websocket\"",
+      "\"method\": \"POST\"",
+      "\"Sec-WebSocket-Protocol\""
+     ]
+    },
+    {
+     "id": "gw:ws.upgrade-head-dropped",
+     "where": "src/gateway/server/GatewayServer.ts:67",
+     "note": "与升级请求挤在同一 TCP 段里的帧被丢掉（upgrade 事件的 head 参数没有读），所以同包发的 hello 得不到 hello_ok。",
+     "probe": [
+      "\"name\": \"gw-ws-upgrade-variants\""
+     ]
+    },
+    {
+     "id": "gw:ws.http-get-ws",
+     "where": "src/gateway/server/GatewayServer.ts:130",
+     "note": "对 /ws 的普通 GET（不带升级头）落到普通 HTTP 路由，404 text/plain。",
+     "probe": [
+      "\"http\": \"GET /ws\""
+     ]
+    },
+    {
+     "id": "gw:ws.hello-required",
+     "where": "src/gateway/server/GatewayWsConnection.ts:96",
+     "note": "握手前第一条消息不是合法 hello（type 不对、字段缺失或类型不对、数组、字符串）：关闭 4001 hello_required。",
+     "probe": [
+      "\"name\": \"robust-frame-handshake\""
+     ]
+    },
+    {
+     "id": "gw:ws.protocol-mismatch",
+     "where": "src/gateway/server/GatewayWsConnection.ts:100",
+     "note": "protocolVersion 不等于 \"1.2\"：关闭 4001 protocol_mismatch（先于 token 检查）。",
+     "probe": [
+      "/\"protocolVersion\": ?\"1\\.1\"/"
+     ]
+    },
+    {
+     "id": "gw:ws.auth-failed",
+     "where": "src/gateway/server/GatewayWsConnection.ts:104",
+     "note": "token 不对：关闭 4003 auth_failed。",
+     "observe": "auth_failed"
+    },
+    {
+     "id": "gw:ws.hello-ok",
+     "where": "src/gateway/server/GatewayWsConnection.ts:108",
+     "note": "hello_ok：protocolVersion、serverVersion（缺省 0.1.0）、serverInfo（describeServer 的结果）、interactionBinding（connectionId + 递增的 generation）。clientName 不在名单里也接受。",
+     "probe": [
+      "\"name\": \"server-entry-handshake\""
+     ],
+     "observe": "\"type\": ?\"hello_ok\""
+    },
+    {
+     "id": "gw:ws.pipelined-after-hello",
+     "where": "src/gateway/server/GatewayWsConnection.ts:108",
+     "note": "authed 在 await describeServer 之前就置位：hello 后不等 hello_ok 立刻发的请求照常处理。",
+     "probe": [
+      "\"pipelined-1\""
+     ]
+    },
+    {
+     "id": "gw:ws.second-hello",
+     "where": "src/gateway/server/GatewayWsConnection.ts:88",
+     "note": "握手后再发 hello（或任何不是 request 的对象）：关闭 4002 invalid_frame。",
+     "probe": [
+      "\"name\": \"gw-ws-upgrade-variants\""
+     ]
+    },
+    {
+     "id": "gw:ws.request-shape",
+     "where": "src/gateway/server/GatewayWsConnection.ts:630",
+     "note": "request 帧要求 id、method 是字符串，params 不检查；id 是数字时关闭 4002 invalid_frame。",
+     "probe": [
+      "\"id\": 7"
+     ]
+    },
+    {
+     "id": "gw:ws.invalid-json",
+     "where": "src/gateway/server/GatewayWsConnection.ts:76",
+     "note": "消息不是 JSON（握手前后都一样）：关闭 4002 invalid_json。",
+     "probe": [
+      "\"fin\": false, \"text\"",
+      "invalid_json"
+     ]
+    },
+    {
+     "id": "gw:ws.unknown-method",
+     "where": "src/gateway/server/GatewayWsConnection.ts:573",
+     "note": "未知 method：response ok:false，error.code gateway_request_failed，message「Unknown gateway method X.」。",
+     "probe": [
+      "/\"ws\": ?\"no_such_method\"/"
+     ]
+    },
+    {
+     "id": "gw:ws.error-mapping",
+     "where": "src/gateway/server/GatewayWsConnection.ts:188",
+     "note": "请求失败的错误形状：SkillValidationError 带 validation；SkillManagerError 带 code；DialogGatewayError / 带 code 的错误带 details（sop_* 加 httpStatus）；其余 gateway_request_failed。",
+     "probe": [
+      "\"name\": \"survey-empty-params\""
+     ]
+    },
+    {
+     "id": "gw:ws.concurrent-requests",
+     "where": "src/gateway/server/GatewayWsConnection.ts:44",
+     "note": "每条消息 void handleMessage 并发处理：同一连接上的请求不排队，应答按完成先后发出；submit_turn 进行中同一连接上的其他请求照常应答。",
+     "probe": [
+      "\"name\": \"robust-concurrent-second-submit\""
+     ]
+    },
+    {
+     "id": "gw:ws.submit-turn-frames",
+     "where": "src/gateway/server/GatewayWsConnection.ts:129",
+     "note": "submit_turn 的事件帧：seq 从 0 递增、final:false；结束时一条 final:true，事件取最后的 error，否则最后的 turn_completed，都没有时合成 result_unknown。",
+     "probe": [
+      "\"ws\": \"submit_turn\""
+     ],
+     "observe": "\"final\": ?true"
+    },
+    {
+     "id": "gw:ws.permission-changed",
+     "where": "src/gateway/server/GatewayWsConnection.ts:144",
+     "note": "permission_request 事件与 permission_decide 应答之后各广播一条 permission_changed 通知（requested / resolved），只发给已握手的连接。",
+     "probe": [
+      "permission_decide"
+     ],
+     "observe": "\"permission_changed\""
+    },
+    {
+     "id": "gw:ws.notify-authed-only",
+     "where": "src/gateway/server/GatewayWsConnection.ts:65",
+     "note": "广播通知只发给已握手的连接，未握手的连接收不到。",
+     "probe": [
+      "\"name\": \"robust-disconnect-permission-new-conn\""
+     ]
+    },
+    {
+     "id": "gw:ws.ping-pong",
+     "where": "src/gateway/server/websocket.ts:64",
+     "note": "客户端 ping：回同样载荷的 pong（握手前后都回）。",
+     "probe": [
+      "\"opcode\": 9"
+     ]
+    },
+    {
+     "id": "gw:ws.non-text-ignored",
+     "where": "src/gateway/server/websocket.ts:68",
+     "note": "二进制帧、客户端 pong、孤立的续帧（opcode 0）都不处理也不报错，连接保持。",
+     "probe": [
+      "\"opcode\": 2"
+     ]
+    },
+    {
+     "id": "gw:ws.fin-not-checked",
+     "where": "src/gateway/server/websocket.ts:107",
+     "note": "不看 FIN：FIN=0 的文本帧当成完整消息处理；分片消息的第一段因此按半截 JSON 解析失败（关 4002 invalid_json），续帧被丢弃。",
+     "probe": [
+      "\"fin\": false"
+     ]
+    },
+    {
+     "id": "gw:ws.rsv-ignored",
+     "where": "src/gateway/server/websocket.ts:107",
+     "note": "不看 RSV 位：带 RSV 的帧照常处理（也不协商扩展）。",
+     "probe": [
+      "\"rsv\": 4"
+     ]
+    },
+    {
+     "id": "gw:ws.invalid-utf8",
+     "where": "src/gateway/server/websocket.ts:69",
+     "note": "文本帧不是合法 UTF-8：按替换字符解码后照常处理，不关闭 1007。",
+     "probe": [
+      "7b2274797065223a2272657175657374222c226964223a2275fffe"
+     ]
+    },
+    {
+     "id": "gw:ws.split-and-batched",
+     "where": "src/gateway/server/websocket.ts:52",
+     "note": "一帧跨多次 TCP 读时拼起来；一次读到多帧时逐帧处理。",
+     "probe": [
+      "\"splitAt\""
+     ]
+    },
+    {
+     "id": "gw:ws.client-close",
+     "where": "src/gateway/server/websocket.ts:60",
+     "note": "客户端关闭帧（任何码）：服务端回关闭帧 1000、原因为空，然后 end()；不回显客户端的码。之后 sendText 一律丢弃（31-34）。",
+     "probe": [
+      "\"opcode\": 8"
+     ]
+    },
+    {
+     "id": "gw:ws.server-frame-encoding",
+     "where": "src/gateway/server/websocket.ts:89",
+     "note": "服务端帧不加掩码、FIN=1、长度按 7 / 16 / 64 位编码，单帧发完整消息（不分片）。",
+     "probe": [
+      "\"raw\": {\"ws\""
+     ]
+    },
+    {
+     "id": "gw:ws.no-size-limit",
+     "where": "src/gateway/server/websocket.ts:121",
+     "note": "不设帧长 / 消息长上限（只拒绝超过 Number.MAX_SAFE_INTEGER 的长度）。缓冲用 Buffer.concat 累加，大帧的内存是长度的平方级（量测：64 MiB 一帧 RSS 约 4.4 GB、3.5 秒后应答；300 MiB 一帧 60 秒未应答、RSS 约 14 GB）。场景只比 16 MiB 一帧照常应答。",
+     "probe": [
+      "\"repeat\": 1048576"
+     ]
+    },
+    {
+     "id": "gw:ws.unmasked-crash",
+     "where": "src/gateway/server/websocket.ts:133",
+     "note": "疑似基线 bug：客户端帧不加掩码时在 data 回调里抛错，成为 uncaughtException，pilotdeck.ts:267-270 开始停机（不再接受新连接，等现有连接断开后以 1 退出）。握手前即可触发。",
+     "probe": [
+      "\"mask\": false"
+     ]
+    },
+    {
+     "id": "gw:ws.length-overflow-crash",
+     "where": "src/gateway/server/websocket.ts:126",
+     "note": "疑似基线 bug：64 位长度超过 Number.MAX_SAFE_INTEGER 时同样在 data 回调里抛错，进程停机。场景没有单独覆盖（与不加掩码同一条路径）。"
+    },
+    {
+     "id": "gw:conn.no-connection-limit",
+     "where": "src/gateway/server/GatewayServer.ts:62",
+     "note": "没有连接数上限（node:http 缺省、不设 maxConnections）：量测 1000 条 WS 同时在线全部 hello_ok，/health 照常；HTTP 与 WS 不共享名额。",
+     "probe": [
+      "\"flood\": 100"
+     ]
+    },
+    {
+     "id": "gw:conn.no-handshake-timeout",
+     "where": "src/gateway/server/websocket.ts:17",
+     "note": "升级后不发 hello 的连接不会被服务端关闭（没有握手超时、没有空闲超时、不发 ping）。量测 75 秒未关。"
+    },
+    {
+     "id": "gw:conn.http-timeouts",
+     "where": "src/gateway/server/GatewayServer.ts:64",
+     "note": "HTTP 连接沿用 node:http 缺省：headersTimeout 60 秒、requestTimeout 300 秒、keepAliveTimeout 5 秒。量测 75 秒内半截请求头与空连接都未被关闭（两侧相同），未定量到具体时长。"
+    },
+    {
+     "id": "gw:conn.no-request-limit",
+     "where": "src/gateway/server/GatewayWsConnection.ts:44",
+     "note": "同一连接上的在途请求数不设上限：不等应答连发的请求全部处理、全部应答，连接保持。",
+     "probe": [
+      "\"times\": 200"
+     ]
+    },
+    {
+     "id": "gw:conn.no-backpressure",
+     "where": "src/gateway/server/websocket.ts:37",
+     "note": "sendText 不看 socket.write 的返回值：客户端不读时应答堆在进程内存里，不断开连接（量测：2 万个请求不读，RSS 涨约 66 MB，连接保持，恢复读取后 20001 帧全部收到）。慢读需要客户端停读，采集器的 raw 步骤一直在读，场景没有覆盖；量测记录在审查报告。"
+    },
+    {
+     "id": "gw:conn.close-aborts-turns",
+     "where": "src/gateway/server/GatewayWsConnection.ts:48",
+     "note": "连接关闭：对在途与有交互绑定的会话调 disconnectInteraction，不保留轮次的就 abortTurn。",
+     "probe": [
+      "robust-drop-",
+      "\"name\": \"robust-drop-close-frame-midturn\""
+     ]
+    },
+    {
+     "id": "gw:conn.fin-half-close",
+     "where": "src/gateway/server/websocket.ts:17",
+     "note": "客户端只发 FIN（半关闭）：不监听 end，连接保持可写，服务端继续发帧；关闭只认 close / error 事件。",
+     "probe": [
+      "\"disconnect\": \"end\""
+     ]
+    },
+    {
+     "id": "gw:conn.reset",
+     "where": "src/gateway/server/websocket.ts:19",
+     "note": "客户端 RST：error / close 事件走同一个关闭处理。",
+     "probe": [
+      "\"disconnect\": \"reset\""
+     ]
+    },
+    {
+     "id": "gw:conn.vanished",
+     "where": "src/gateway/server/GatewayServer.ts:170",
+     "note": "客户端进程被杀（FIN 后整条关闭）：连接从集合里移除，资源归还。",
+     "probe": [
+      "\"vanish\""
+     ]
+    },
+    {
+     "id": "gw:conn.disconnect-pending-interaction",
+     "where": "src/gateway/server/GatewayWsConnection.ts:51",
+     "note": "断开时挂起的权限询问 / 提问 / 用户对话框：交给 disconnectInteraction，新连接可以接着答。",
+     "probe": [
+      "\"name\": \"robust-disconnect-permission-new-conn\""
+     ]
+    },
+    {
+     "id": "gw:conn.broadcast",
+     "where": "src/gateway/server/GatewayServer.ts:80",
+     "note": "broadcastNotification 发给集合里全部连接（未握手的在 sendNotification 里跳过）。",
+     "probe": [
+      "notification"
+     ]
+    },
+    {
+     "id": "gw:conn.header-too-large",
+     "where": "node:http 缺省 maxHeaderSize",
+     "note": "请求头超过 16 KiB：431 Request Header Fields Too Large 后关闭。",
+     "probe": [
+      "\"repeat\": 20000"
+     ]
+    },
+    {
+     "id": "gw:conn.malformed-request",
+     "where": "node:http clientError 缺省处理",
+     "note": "不是 HTTP 的字节：400 Bad Request 后关闭。",
+     "probe": [
+      "HELLO THERE"
+     ]
+    },
+    {
+     "id": "gw:conn.keepalive-pipelining",
+     "where": "node:http",
+     "note": "同一连接上连发的两个请求按序各自应答；HTTP/1.0 请求的应答关闭连接。",
+     "probe": [
+      "GET /nope HTTP/1.1"
+     ]
+    },
+    {
+     "id": "gw:http.route-order",
+     "where": "src/gateway/server/GatewayServer.ts:95",
+     "note": "路由次序：公共审批 → 公共宿主 → /health → /auth/local-token → /feishu/webhook → /api/web/* → 静态资源 → 404 text/plain「not found」。",
+     "probe": [
+      "\"name\": \"http-general\""
+     ]
+    },
+    {
+     "id": "gw:http.health",
+     "where": "src/gateway/server/GatewayServer.ts:98",
+     "note": "/health 任意方法、忽略查询串、200 {\"ok\":true}；尾斜杠与大小写不同都 404；百分号编码不解码。",
+     "probe": [
+      "/\"http\": ?\"GET /health/"
+     ]
+    },
+    {
+     "id": "gw:http.url-parse",
+     "where": "src/gateway/server/GatewayServer.ts:95",
+     "note": "路径取 new URL(request.url, \"http://127.0.0.1\").pathname：绝对形式的请求目标取其路径，//health 被当成协议相对 URL（路径变成 /）。",
+     "probe": [
+      "http://elsewhere.example/health",
+      "GET //health"
+     ]
+    },
+    {
+     "id": "gw:http.bad-target-crash",
+     "where": "src/gateway/server/GatewayServer.ts:95",
+     "note": "疑似基线 bug：请求目标让 new URL 抛错（如 //[）时，async 处理函数被 void，成为 unhandledRejection，进程停机并以 1 退出（未鉴权可触发）。",
+     "probe": [
+      "GET //["
+     ]
+    },
+    {
+     "id": "gw:http.local-token",
+     "where": "src/gateway/server/GatewayServer.ts:103",
+     "note": "/auth/local-token 任意方法回 {token}（不看 Host / Origin）；非回环监听时 404。",
+     "probe": [
+      "local-token"
+     ]
+    },
+    {
+     "id": "gw:http.api-web-auth",
+     "where": "src/adapters/web/httpRouter.ts:112",
+     "note": "/api/web/* 要 Authorization: Bearer <token>（不分大小写、\\s+），否则 401 {error:{code:\"unauthorized\"}}；查询串和 cookie 不认。",
+     "probe": [
+      "\"name\": \"http-api-web\""
+     ]
+    },
+    {
+     "id": "gw:http.api-web-routes",
+     "where": "src/adapters/web/httpRouter.ts:38",
+     "note": "项目列表只认 GET；项目描述出错 404 project_not_found；files/tree、files/read、files/write 的方法、参数与 400 / 403 / 500 分支；其余 404 not_found「No /api/web route for <path>」。",
+     "probe": [
+      "\"name\": \"http-api-web\""
+     ]
+    },
+    {
+     "id": "gw:http.api-web-root-verbatim",
+     "where": "src/cli/pilotdeckServer.ts:261",
+     "note": "没有接 resolveProject：URL 里的 projectKey 解码后原样当项目根（任意存在的目录都能读写，只要有 token）。",
+     "probe": [
+      "%2Fprivate%2Ftmp%2Fpdrs-bbx"
+     ]
+    },
+    {
+     "id": "gw:http.api-web-bad-key-crash",
+     "where": "src/adapters/web/httpRouter.ts:60",
+     "note": "疑似基线 bug：files 路由里 projectKey 的百分号编码不合法时 decodeURIComponent 在 try 外抛错，unhandledRejection 使进程停机（需要 token）。描述项目那一支在 try 里，回 404。",
+     "probe": [
+      "/files/tree HTTP/1.1"
+     ]
+    },
+    {
+     "id": "gw:http.api-web-files",
+     "where": "src/adapters/web/projectFiles.ts:114",
+     "note": "readTree 目录在前、localeCompare 排序；readFile 按扩展名名单决定 utf8 / base64，超过 1 MiB 只给元数据；writeFile 先建父目录，base64 解码写入。",
+     "probe": [
+      "files/read",
+      "files/write"
+     ]
+    },
+    {
+     "id": "gw:http.api-web-boundary",
+     "where": "src/adapters/web/projectFiles.ts:209",
+     "note": "绝对路径、规范化后以 .. 开头（含名字以 .. 开头的文件）、realpath 落在根外：403 workspace_boundary。",
+     "probe": [
+      "../escape.txt"
+     ]
+    },
+    {
+     "id": "gw:http.api-web-write-symlink",
+     "where": "src/adapters/web/projectFiles.ts:238",
+     "note": "疑似基线 bug（安全）：写入只做字面检查不解析符号链接，项目内指向外部的符号链接可被写穿。采集器不能种符号链接，场景没有覆盖。"
+    },
+    {
+     "id": "gw:http.api-web-body",
+     "where": "src/adapters/web/httpRouter.ts:132",
+     "note": "请求体不限大小；读不出 JSON 时按缺字段处理，回 400 invalid_body。",
+     "probe": [
+      "4194335"
+     ]
+    },
+    {
+     "id": "gw:http.static",
+     "where": "src/gateway/server/staticAssets.ts:13",
+     "note": "静态资源：项目根 ui/dist 下的文件，/ 映射 index.html，找不到的路径回 index.html（SPA），按扩展名给 content-type，路径穿越被夹回根内；没有 ui/dist 时落到 404。",
+     "probe": [
+      "\"name\": \"http-static\""
+     ]
+    },
+    {
+     "id": "gw:http.feishu-webhook",
+     "where": "src/gateway/server/GatewayServer.ts:113",
+     "note": "/feishu/webhook 只有飞书渠道在跑时才交给它处理；否则先把请求体读完再落到后面的路由。",
+     "probe": [
+      "/feishu/webhook"
+     ]
+    },
+    {
+     "id": "gw:server.port-parse",
+     "where": "src/cli/pilotdeck.ts:517",
+     "note": "--port 与 PILOTDECK_GATEWAY_PORT 都按 parseInt 读（38413xyz 读成 38413），读不出数就落到下一级，最后 18789；--port 写两次取第一个。",
+     "probe": [
+      "\"name\": \"server-entry-port-host\""
+     ]
+    },
+    {
+     "id": "gw:server.host-parse",
+     "where": "src/cli/pilotdeck.ts:527",
+     "note": "--host 后面跟 -- 开头的词时当没给，落到 PILOTDECK_GATEWAY_HOST；只有 127.0.0.1 与 localhost 两个字面量算回环。",
+     "probe": [
+      "\"name\": \"server-entry-port-host\""
+     ]
+    },
+    {
+     "id": "gw:server.listen-errors",
+     "where": "src/gateway/server/GatewayServer.ts:47",
+     "note": "监听失败：端口越界（RangeError 文案）、端口被占（listen EADDRINUSE…）、非回环缺 PILOTDECK_GATEWAY_ALLOW_REMOTE=1、非回环缺显式 token：stderr 一行、退出码 1，启动期资源回滚。",
+     "probe": [
+      "\"name\": \"server-entry-port-host\""
+     ]
+    },
+    {
+     "id": "gw:server.token-source",
+     "where": "src/cli/pilotdeck.ts:223",
+     "note": "token 取 PILOTDECK_GATEWAY_TOKEN || PILOTDECK_TOKEN（空串算没给），都没有时读 <PilotHome>/server-token（去首尾空白，空文件重新生成），生成时 32 字节 base64url、目录 0700、文件 0600。",
+     "probe": [
+      "\"name\": \"server-entry-token-sources\"",
+      "\"name\": \"server-entry-token-generate\""
+     ]
+    },
+    {
+     "id": "gw:server.startup-output",
+     "where": "src/cli/pilotdeck.ts:252",
+     "note": "stdout：「PilotDeck server listening: <url>」「WebSocket: <wsUrl>」，token 是生成 / 读文件得来时再加「Token: <路径>」。",
+     "probe": [
+      "\"name\": \"server-entry-start-stop\""
+     ]
+    },
+    {
+     "id": "gw:server.signals",
+     "where": "src/cli/pilotdeck.ts:266",
+     "note": "SIGINT / SIGTERM 停机退出 0；uncaughtException / unhandledRejection 停机退出 1；重复的信号共用同一次停机（shutdownCoordinator.ts）。",
+     "probe": [
+      "\"name\": \"server-entry-start-stop\""
+     ]
+    },
+    {
+     "id": "gw:server.shutdown-order",
+     "where": "src/cli/PilotDeckServerShutdownBundle.ts:30",
+     "note": "停机次序：自动化 → 关服务（等现有连接断开，server.close）→ 渠道状态落盘与 telemetry 快照日志行 → 释放 gateway → telemetry 关闭；各步失败汇总后抛出。",
+     "probe": [
+      "\"name\": \"server-stop-client-connected\"",
+      "\"name\": \"server-stop-pending-turn\""
+     ]
+    },
+    {
+     "id": "gw:server.shutdown-waits-clients",
+     "where": "src/gateway/server/GatewayServer.ts:184",
+     "note": "停机时还连着的客户端不会被踢：server.close 等到它们自己断开才退出（客户端只发 FIN 时会一直等）。",
+     "probe": [
+      "\"name\": \"server-stop-client-connected\""
+     ]
+    },
+    {
+     "id": "gw:projects.list",
+     "where": "src/web/server/listProjects.ts:23",
+     "note": "list_projects：枚举 <PilotHome>/projects/*，按 .cwd 标记（失效时按旧的目录名编码反推）还原路径，跳过 PilotHome 本身，按 lastActivity 倒序。",
+     "probe": [
+      "list_projects"
+     ]
+    },
+    {
+     "id": "gw:projects.describe",
+     "where": "src/web/server/listProjects.ts:112",
+     "note": "describe_project：按 createProjectId 找存储目录并核对 .cwd，找不到时扫全部标记；不存在的项目也返回摘要（sessionCount 0）。",
+     "probe": [
+      "describe_project"
+     ]
+    },
+    {
+     "id": "gw:projects.resolve-key",
+     "where": "src/gateway/dialog/projectRegistry.ts:41",
+     "note": "projectKey 按 path.resolve 后匹配登记的项目（尾斜杠、.. 段都归一），PilotHome 本身是虚拟的默认工作区，总能匹配；其余 PROJECT_NOT_FOUND「Unknown projectKey: …」。",
+     "probe": [
+      "\"projectKey\": \"{PILOT_HOME}\""
+     ]
+    },
+    {
+     "id": "gw:projects.files-list-validation",
+     "where": "src/gateway/dialog/projectFiles.ts:129",
+     "note": "project_files_list 参数：projectKey 缺 / 空白 / 不是目录 → PROJECT_NOT_FOUND；query 去空白后超过 256 → INVALID_QUERY；limit 不是 1–500 的整数 → INVALID_LIMIT；cursor 解不开或与 query / 根 / includeDirs 不配 → INVALID_CURSOR。",
+     "probe": [
+      "\"limit\": 0"
+     ]
+    },
+    {
+     "id": "gw:projects.files-list-walk",
+     "where": "src/gateway/dialog/projectFiles.ts:61",
+     "note": "遍历：按目录名排除 .git .pilotdeck .tmp node_modules dist build coverage；realpath 落在根外的跳过，目录环只走一次；按 relativePath 的 localeCompare 排序；query 不分大小写，在 name 与 relativePath 上记全部命中区间；includeDirs:false 只列文件；id 是 sha256(根\\0相对路径)；分页游标。",
+     "probe": [
+      "\"query\": \"  A  \""
+     ]
+    },
+    {
+     "id": "gw:projects.files-list-limits",
+     "where": "src/gateway/dialog/projectFiles.ts:71",
+     "note": "扫描超过 10 万项、深度 64 或 5 秒：FILE_INDEX_LIMIT。场景没有覆盖（要造 10 万个文件）。"
+    },
+    {
+     "id": "gw:projects.file-read",
+     "where": "src/cli/createLocalGateway.ts:1098",
+     "note": "project_file_read：越界 PATH_NOT_ALLOWED（字面越界与 realpath 越界两种文案，文件不存在算后者）；不是文件返回 null；maxBytes 夹在 [1, 10000000]（0 / 负数取 1，小数按 subarray 截断）；encoding 只有 base64 特殊，其余 utf-8（截在多字节中间出替换字符）。",
+     "probe": [
+      "\"maxBytes\": 0"
+     ]
+    },
+    {
+     "id": "gw:projects.capabilities",
+     "where": "src/gateway/client/InProcessGateway.ts:2088",
+     "note": "describe_server 的 capabilities 清单与 sessionCount、mode。",
+     "probe": [
+      "describe_server"
+     ]
+    }
+   ]
+  },
+  "recovery-behaviors": {
+   "about": "崩溃与重启后的恢复行为点（session.recovery）。来源：src/session/transcript/TranscriptReader.ts、src/session/persistence/JsonlSessionPersistence.ts、src/session/transcript/JsonlTranscriptWriter.ts、src/gateway/run/RunRegistry.ts、src/session/replacement/。",
+   "items": [
+    {
+     "id": "recovery:transcript.truncated-tail",
+     "where": "src/session/persistence/JsonlSessionPersistence.ts:47",
+     "note": "会话文件末尾没有换行（写到一半被杀）：下一次追加前先补一个换行，半条记录原样保留。",
+     "probe": [
+      "\"name\": \"robust-restart-truncated-session\""
+     ]
+    },
+    {
+     "id": "recovery:transcript.invalid-line",
+     "where": "src/session/transcript/TranscriptReader.ts:58",
+     "note": "不是 JSON 的行跳过（transcript_line_invalid），空行跳过。",
+     "probe": [
+      "\"name\": \"robust-restart-truncated-session\""
+     ]
+    },
+    {
+     "id": "recovery:transcript.invalid-shape",
+     "where": "src/session/transcript/TranscriptReader.ts:60",
+     "note": "合法 JSON 但不是会话记录形状：跳过（transcript_entry_invalid）。",
+     "probe": [
+      "not_a_known_entry"
+     ]
+    },
+    {
+     "id": "recovery:transcript.reorder",
+     "where": "src/session/transcript/TranscriptReader.ts:81",
+     "note": "读入后按 sequence、再按 createdAt 排序，文件里的行序不算数；按 /\\r?\\n/ 切行，CRLF 照读。",
+     "probe": [
+      "\"name\": \"recovery-transcript-reorder\""
+     ]
+    },
+    {
+     "id": "recovery:transcript.missing",
+     "where": "src/session/transcript/TranscriptReader.ts:33",
+     "note": "会话文件不存在：transcript_missing（警告），按空会话处理。",
+     "probe": [
+      "\"sessionKey\": \"s-missing\""
+     ]
+    },
+    {
+     "id": "recovery:transcript.too-large",
+     "where": "src/session/transcript/TranscriptReader.ts:19",
+     "note": "会话文件超过 50 MiB：不读，transcript_too_large，按空会话处理。场景没有覆盖（要种 50 MiB 的文件）。"
+    },
+    {
+     "id": "recovery:sequence-continues",
+     "where": "src/session/transcript/JsonlTranscriptWriter.ts:84",
+     "note": "续写时 sequence 接着已有记录的最大值，parentEntryId 接最后一条。",
+     "probe": [
+      "\"name\": \"robust-restart-truncated-session\"",
+      "\"name\": \"session-kill-after-turn\""
+     ]
+    },
+    {
+     "id": "recovery:runs.orphan-interrupted",
+     "where": "src/gateway/run/RunRegistry.ts:158",
+     "note": "启动时 runs/registry.json 里 accepted / running 且 ownerPid 已死的记录改成 interrupted（revision+1）；ownerPid 活着（含无权探测的 1）的不动。",
+     "probe": [
+      "\"name\": \"robust-restart-crash-leftovers\""
+     ]
+    },
+    {
+     "id": "recovery:runs.lock-leftover",
+     "where": "src/gateway/run/RunRegistry.ts:110",
+     "note": "残留的 registry.json.lock：mtime 超过 60 秒且 pid 已死的删掉重来；没过期的等到 30 秒超时报「Timed out acquiring run registry lock」。",
+     "probe": [
+      "\"name\": \"robust-restart-registry-lock-leftover\""
+     ]
+    },
+    {
+     "id": "recovery:runs.corrupt",
+     "where": "src/gateway/run/RunRegistry.ts:93",
+     "note": "registry.json 不是 JSON 或 schemaVersion 不是 1：启动恢复抛错（只放过 ENOENT / EINVAL），之后的运行记录操作随之失败。",
+     "probe": [
+      "\"name\": \"recovery-runs-registry-corrupt\""
+     ]
+    },
+    {
+     "id": "recovery:kill-midturn",
+     "where": "src/session/persistence/JsonlSessionPersistence.ts:21",
+     "note": "gateway 在一轮中途被杀（SIGKILL）后重启：已追加的记录保留，未完成的轮次在会话里停在半途，下一轮照常接上。",
+     "probe": [
+      "\"name\": \"session-kill-after-turn\"",
+      "\"name\": \"robust-drop-cli-kill-midturn\""
+     ]
+    },
+    {
+     "id": "recovery:leftovers",
+     "where": "src/cli/createLocalGateway.ts",
+     "note": "被杀后留下的未答对话框日志、后台任务快照里 running 的任务、压缩后的会话：重启后读回与续写。",
+     "probe": [
+      "\"name\": \"robust-restart-crash-leftovers\"",
+      "\"name\": \"compact-restart\""
+     ]
+    },
+    {
+     "id": "recovery:replace-transaction",
+     "where": "src/session/replacement/",
+     "note": "末轮替换事务在进程被杀后留下的 .replace.json：启动时恢复或过期处理。",
+     "probe": [
+      "\"name\": \"session-replace-recovery\""
+     ]
+    }
+   ]
+  },
+  "module-behaviors": {
+   "about": "外部能力模块与 sidecar 部署的行为点（modules.*）。来源：src/cli/AgentLoopDeploymentProfile.ts、src/cli/pilotdeck-agent-loop-sidecar.ts、src/agent/modules/transport/（sidecar 服务端、宿主侧客户端、stdio / TCP 连接）、src/agent/modules/protocol.ts、src/composition/publicHostHttpTransport.ts 与 publicApprovalHttpTransport.ts。",
+   "items": [
+    {
+     "id": "mod:deploy.transport-env",
+     "where": "src/cli/AgentLoopDeploymentProfile.ts:129",
+     "note": "PILOTDECK_AGENT_LOOP_TRANSPORT：空 / native / stdio / tcp（去空白、不分大小写），其他值报「PILOTDECK_AGENT_LOOP_TRANSPORT must be native, stdio, or tcp.」。",
+     "probe": [
+      "\"name\": \"agent-loop-sidecar-env-invalid\""
+     ]
+    },
+    {
+     "id": "mod:deploy.tcp-env",
+     "where": "src/cli/AgentLoopDeploymentProfile.ts:142",
+     "note": "tcp 部署：PILOTDECK_AGENT_LOOP_TCP_PORT 必填且为 1–65535 的整数、TCP_HOST 缺省 127.0.0.1 且不能为空、CONNECT_TIMEOUT_MS 为正整数，各自的报错文案。",
+     "probe": [
+      "\"name\": \"agent-loop-sidecar-env-invalid\"",
+      "\"name\": \"env-agent-loop-tcp-startup\""
+     ]
+    },
+    {
+     "id": "mod:deploy.stdio-env",
+     "where": "src/cli/AgentLoopDeploymentProfile.ts:61",
+     "note": "stdio 部署：SIDECAR_COMMAND 缺省为当前 node，SIDECAR_PATH 相对 cwd 解析，子进程环境去掉 TCP_HOST / TCP_PORT（不让每轮的子进程去监听）。",
+     "probe": [
+      "\"name\": \"agent-loop-sidecar-stdio\""
+     ]
+    },
+    {
+     "id": "mod:deploy.binding",
+     "where": "src/cli/AgentLoopDeploymentProfile.ts:107",
+     "note": "modules.agentLoop 的 module-stdio-v2 / module-tcp-v2 绑定：期望的 moduleId 取 implementationId，stdio 绑定的 env 盖在进程环境上。",
+     "probe": [
+      "\"name\": \"agent-loop-sidecar-tcp-binding\"",
+      "\"name\": \"modules-tools-batch-sidecar-binding\""
+     ]
+    },
+    {
+     "id": "mod:sidecar.entry",
+     "where": "src/cli/pilotdeck-agent-loop-sidecar.ts:11",
+     "note": "sidecar 可执行入口：PILOTDECK_AGENT_LOOP_FACTORY 指定工厂模块（default 或 createSidecarExecution 导出，都没有时报错退出）；设了 TCP_PORT 就监听 TCP（端口非法报错退出），否则走 stdio。",
+     "probe": [
+      "\"name\": \"agent-loop-sidecar-tcp\""
+     ]
+    },
+    {
+     "id": "mod:sidecar.tcp-listen",
+     "where": "src/agent/modules/transport/tcpAgentLoopSidecarServer.ts:29",
+     "note": "TCP 监听：host 缺省 127.0.0.1、不限回环；每条连接独立 serve，共用同一个 sidecar 实例（同一 moduleInstanceId）。",
+     "probe": [
+      "\"name\": \"agent-loop-sidecar-tcp-restart\""
+     ]
+    },
+    {
+     "id": "mod:sidecar.proto-errors",
+     "where": "src/agent/modules/transport/agentLoopSidecarServer.ts:112",
+     "note": "sidecar 收到非 JSON 行回 error INVALID_JSON，形状不对回 validateModuleMessage 的码（INVALID_KIND、MISSING_MESSAGE_ID、MISSING_EXECUTE_FIELD 等），继续读下一行；空行跳过。场景没有直接覆盖：应答的 messageId 带 Math.random 的随机后缀，比较器没有归一化，要主会话决定是否声明 volatile。"
+    },
+    {
+     "id": "mod:sidecar.proto-control",
+     "where": "src/agent/modules/transport/agentLoopSidecarServer.ts:146",
+     "note": "hello / capabilities 回握手应答；收到 module_call 回 UNEXPECTED_MODULE_CALL；cancel 身份不配回 UNKNOWN_OPERATION / OPERATION_IDENTITY_MISMATCH；status 不认识回 UNKNOWN_REQUEST；重复 execute 回 OPERATION_ALREADY_ACTIVE；截止时间已过回 DEADLINE_EXCEEDED。场景只经宿主间接碰到正常路径（同上，随机 messageId）。"
+    },
+    {
+     "id": "mod:client.handshake",
+     "where": "src/agent/modules/transport/agentLoopSidecarClient.ts:541",
+     "note": "宿主侧每轮先 hello 再 capabilities 再 execute；握手应答不配、moduleId 与配置的 implementationId 不符时报错；没有握手超时。",
+     "probe": [
+      "\"name\": \"agent-loop-sidecar-tcp-binding-mismatch\""
+     ]
+    },
+    {
+     "id": "mod:client.reconnect",
+     "where": "src/agent/modules/transport/agentLoopSidecarClient.ts:895",
+     "note": "连接断开时最多重连一次（重新握手后 resume），失败则以连接关闭的错误结束这一轮。",
+     "probe": [
+      "\"name\": \"agent-loop-sidecar-tcp-cut\""
+     ]
+    },
+    {
+     "id": "mod:client.stdio-exit",
+     "where": "src/agent/modules/transport/stdioAgentLoopSidecarConnection.ts:142",
+     "note": "stdio 子进程在终止事件前退出：「Sidecar exited with code N / from signal S before execute reached a terminal event.」，附最多 64 KiB 的 stderr；起不来时报启动错误；结束时先等 5 秒，再 SIGTERM，再 SIGKILL。",
+     "probe": [
+      "\"name\": \"agent-loop-sidecar-stdio-exit\"",
+      "\"name\": \"agent-loop-sidecar-stdio-crash\"",
+      "\"name\": \"agent-loop-sidecar-stdio-spawn-fail\""
+     ]
+    },
+    {
+     "id": "mod:client.tcp-connect",
+     "where": "src/agent/modules/transport/tcpAgentLoopSidecarConnection.ts:138",
+     "note": "TCP 连接：拒绝时「Failed to connect to sidecar TCP server.」，缺省 5 秒超时「Timed out connecting to sidecar TCP server after Nms.」，畸形 NDJSON「Sidecar TCP stream contains malformed NDJSON.」。超时那一支场景没有覆盖（要一个只 accept 不应答的监听者）。",
+     "probe": [
+      "\"name\": \"agent-loop-sidecar-tcp-unreachable\"",
+      "\"name\": \"agent-loop-sidecar-tcp-invalid\""
+     ]
+    },
+    {
+     "id": "mod:client.abort",
+     "where": "src/agent/modules/transport/agentLoopSidecarClient.ts",
+     "note": "用户中止：向 sidecar 发 cancel，挂起的模块调用立刻以取消结束。",
+     "probe": [
+      "\"name\": \"agent-loop-sidecar-stdio-abort\"",
+      "\"name\": \"agent-loop-sidecar-tcp-abort\""
+     ]
+    },
+    {
+     "id": "mod:host.public-host",
+     "where": "src/composition/publicHostHttpTransport.ts:10",
+     "note": "/api/module-host/describe|call：鉴权要求逐字 \"Bearer <token>\"（与 /api/web 不同，大小写和空白都不放宽）401 PUBLIC_HOST_TRANSPORT_UNAUTHORIZED；非 POST 405；没有提供者 501；体超过 32 MiB 413；JSON 坏 400；principal 缺字段 400；不支持的 operation 409；input 不是对象 400；input 带作用域字段 400 PUBLIC_SCOPE_OVERRIDE。路由先于 /health 判定。",
+     "probe": [
+      "\"name\": \"http-module-host\"",
+      "module-host"
+     ]
+    },
+    {
+     "id": "mod:host.approvals",
+     "where": "src/composition/publicApprovalHttpTransport.ts:4",
+     "note": "/api/module-host/approvals/status|resume：401 / 405；没有审批桥 503 APPROVAL_BINDING_UNAVAILABLE（先于读体）；体超过 64 KiB 413；字段名单外 400 APPROVAL_AUTHORITY_OVERRIDE；作用域不符 403。",
+     "probe": [
+      "\"name\": \"http-module-host\"",
+      "\"name\": \"sop-approval-binding\""
+     ]
+    },
+    {
+     "id": "mod:tools.http-module",
+     "where": "src/composition/HttpModuleClient.ts",
+     "note": "modules.tools 外部工具：清单加载、execute / execute_batch、冲突、不可达、result_unknown、中止。",
+     "probe": [
+      "modules-tools"
+     ]
+    },
+    {
+     "id": "mod:knowledge",
+     "where": "src/composition/domainPorts.ts",
+     "note": "modules.knowledge 与 knowledge_query：凭据环境变量、查询请求与结果。",
+     "probe": [
+      "tool-knowledge-query"
+     ]
+    },
+    {
+     "id": "mod:sop.staffdeck-authority",
+     "where": "src/composition/nativeSopAuthority.ts",
+     "note": "SOP 的 StaffDeck authority 与发现服务。",
+     "skip": "不在范围：StaffDeck 不做（specs/delivery/README.md「不在范围」；2026-11-12 人定），只要求缺省与未开启时的表现，后者由 sop-disabled / cfg-modules-binding 覆盖。"
+    },
+    {
+     "id": "mod:sop.disabled",
+     "where": "src/composition/sopCapabilityAuthority.ts",
+     "note": "modules.sop 缺省或未开启时 sop_status / sop_resume 的表现。",
+     "probe": [
+      "\"name\": \"sop-disabled\"",
+      "\"name\": \"params-sop-resume-slot-updates\""
+     ]
+    }
+   ]
   }
  }
 }

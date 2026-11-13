@@ -548,8 +548,142 @@ const sidecarStep = async (step) => {
   }
   throw new Error(`unknown sidecar action: ${step.sidecar}`);
 };
+// ── 原始字节与并发连接（raw / flood 步骤，见 README）──
+// raw：自己开一条 TCP 连接，可选地做 WS 升级和 hello，然后按顺序写原始字节或手工拼的 WS 帧（可不加掩码、
+// 改 FIN / RSV / 声明长度），读到服务端关闭或 readMs 到时为止，记下解析后的应答。浏览器式客户端做不到的
+// 输入（非法帧、超大帧、半截请求行、不升级的握手）都走这里。
+const wsClientFrame = (f) => {
+  const payload = f.json !== undefined ? Buffer.from(JSON.stringify(substDeep(f.json)))
+    : f.hex !== undefined ? Buffer.from(f.hex, 'hex')
+    : Buffer.from(subst(f.prefix ?? '') + subst(f.text ?? '').repeat(f.repeat ?? 1) + subst(f.suffix ?? ''));
+  const len = f.length ?? payload.length; const mask = f.mask !== false;
+  const b0 = (f.fin === false ? 0 : 0x80) | ((f.rsv ?? 0) << 4) | (f.opcode ?? 1);
+  let head;
+  if (len < 126) head = Buffer.from([b0, (mask ? 0x80 : 0) | len]);
+  else if (len <= 0xffff) { head = Buffer.alloc(4); head[0] = b0; head[1] = (mask ? 0x80 : 0) | 126; head.writeUInt16BE(len, 2); }
+  else { head = Buffer.alloc(10); head[0] = b0; head[1] = (mask ? 0x80 : 0) | 127; head.writeBigUInt64BE(BigInt(len), 2); }
+  if (!mask) return Buffer.concat([head, payload]);
+  const key = Buffer.from([0x12, 0x34, 0x56, 0x78]); const body = Buffer.from(payload);
+  for (let i = 0; i < body.length; i++) body[i] ^= key[i & 3];
+  return Buffer.concat([head, key, body]);
+};
+// 服务端帧：文本能解析成 JSON 的记解析结果，长文本只记长度和 sha256，关闭帧记码和原因。
+const readServerFrames = (buf) => {
+  const frames = []; let off = 0;
+  for (;;) {
+    if (buf.length - off < 2) break;
+    let len = buf[off + 1] & 0x7f, at = off + 2;
+    if (len === 126) { if (buf.length - off < 4) break; len = buf.readUInt16BE(off + 2); at = off + 4; }
+    else if (len === 127) { if (buf.length - off < 10) break; len = Number(buf.readBigUInt64BE(off + 2)); at = off + 10; }
+    if (buf[off + 1] & 0x80) at += 4;
+    if (buf.length < at + len) break;
+    const p = buf.subarray(at, at + len); const op = buf[off] & 0x0f;
+    const fr = { fin: !!(buf[off] & 0x80), rsv: (buf[off] >> 4) & 7, opcode: op, masked: !!(buf[off + 1] & 0x80) };
+    if (op === 8) Object.assign(fr, p.length >= 2 ? { code: p.readUInt16BE(0), reason: p.subarray(2).toString() } : { code: null });
+    else { const t = p.toString(); let j; try { j = JSON.parse(t); } catch {} if (j !== undefined) fr.json = j; else if (t.length <= 4096) fr.text = t; else fr.len = p.length, fr.sha256 = createHash('sha256').update(p).digest('hex'); }
+    frames.push(fr); off = at + len;
+  }
+  return { frames, rest: buf.subarray(off) };
+};
+// HTTP 应答头：状态行和头（小写名，去掉 date），正文原样。
+const parseHttpHead = (raw) => {
+  // 管线化时后一个应答整段落在正文里，它的 Date 行同样去掉。
+  const text = raw.replace(/^date: .*\r\n/gim, '');
+  const i = text.indexOf('\r\n\r\n'); const head = i < 0 ? text : text.slice(0, i);
+  const [status, ...lines] = head.split('\r\n');
+  const headers = Object.fromEntries(lines.map((l) => [l.slice(0, l.indexOf(':')).toLowerCase(), l.slice(l.indexOf(':') + 1).trim()]).filter(([k]) => k !== 'date'));
+  return { status, headers, ...(i >= 0 && { body: text.slice(i + 4) }) };
+};
+const openRaw = (port) => new Promise((resolve) => {
+  const s = net.connect(port, '127.0.0.1'); const st = { s, buf: Buffer.alloc(0), ended: null, error: null, closed: false, wake: [] };
+  const poke = () => st.wake.splice(0).forEach((w) => w());
+  s.on('data', (d) => { st.buf = Buffer.concat([st.buf, d]); poke(); });
+  s.on('end', () => { st.ended = st.ended ?? 'fin'; poke(); });
+  s.on('error', (e) => { st.error = e.code ?? String(e); poke(); });
+  s.on('close', () => { st.closed = true; if (!st.ended && st.error) st.ended = 'reset'; poke(); resolve(st); });
+  s.once('connect', () => resolve(st));
+});
+const rawWait = (st, pred, ms) => new Promise((resolve) => {
+  const t0 = Date.now();
+  const check = () => { if (pred() || st.closed || Date.now() - t0 >= ms) return resolve(); st.wake.push(check); setTimeout(check, Math.min(50, Math.max(1, ms - (Date.now() - t0)))); };
+  check();
+});
+const upgradeRequest = (spec) => {
+  const o = spec === true ? {} : spec;
+  const headers = { Host: `127.0.0.1:${GATEWAY_PORT}`, Upgrade: 'websocket', Connection: 'Upgrade', 'Sec-WebSocket-Key': 'YmJ4LXJhdy1rZXktMDAwMA==', 'Sec-WebSocket-Version': '13', ...substDeep(o.headers ?? {}) };
+  return `${o.method ?? 'GET'} ${subst(o.path ?? '/ws')} HTTP/1.1\r\n${Object.entries(headers).filter(([, v]) => v !== null).map(([k, v]) => `${k}: ${v}`).join('\r\n')}\r\n\r\n`;
+};
+const rawStep = async (spec) => {
+  const st = await openRaw(spec.port ?? GATEWAY_PORT);
+  if (st.error && !st.s.writable) return { refused: st.error };
+  const r = {};
+  let upgraded = false;
+  if (spec.ws) {
+    st.s.write(upgradeRequest(spec.ws));
+    await rawWait(st, () => st.buf.includes('\r\n\r\n'), 5000);
+    const i = st.buf.indexOf('\r\n\r\n');
+    if (i >= 0) { r.upgrade = parseHttpHead(st.buf.subarray(0, i).toString()); delete r.upgrade.body; st.buf = st.buf.subarray(i + 4); upgraded = r.upgrade.status.includes(' 101 '); }
+    if (upgraded && spec.hello) {
+      st.s.write(wsClientFrame({ json: { type: 'hello', protocolVersion: '1.2', clientName: 'test', clientVersion: '0.0.0', token: TOKEN } }));
+      await rawWait(st, () => readServerFrames(st.buf).frames.length > 0, 5000);
+    }
+  }
+  for (const item of spec.send ?? []) {
+    if (st.closed) break;
+    if (item.wait) { await rawWait(st, () => false, item.wait); continue; }
+    const one = item.frame ? wsClientFrame(item.frame) : item.hex !== undefined ? Buffer.from(item.hex, 'hex')
+      : Buffer.from(subst(item.prefix ?? '') + subst(item.text ?? '').repeat(item.repeat ?? 1) + subst(item.suffix ?? ''));
+    // times：同样的字节连写 n 遍、一次写出（例如不等应答连发很多个请求帧）。
+    const bytes = item.times ? Buffer.concat(Array(item.times).fill(one)) : one;
+    // splitAt：先写前 n 个字节，停 200 毫秒再写其余（一帧跨两次 TCP 读）。
+    if (item.splitAt) { st.s.write(bytes.subarray(0, item.splitAt)); await rawWait(st, () => false, 200); st.s.write(bytes.subarray(item.splitAt)); }
+    else st.s.write(bytes);
+    if (item.end) st.s.end();
+  }
+  await rawWait(st, () => false, spec.readMs ?? 1000);
+  if (upgraded || (spec.ws && st.buf.length && !st.buf.subarray(0, 5).toString().startsWith('HTTP/'))) {
+    const { frames, rest } = readServerFrames(st.buf); r.frames = frames; if (rest.length) r.trailingBytes = rest.length;
+  } else if (st.buf.length) r.http = parseHttpHead(st.buf.toString());
+  r.serverClosed = st.closed ? (st.ended ?? 'close') : st.ended === 'fin' ? 'fin-half' : null;
+  await rawClose(st, upgraded || / 101 /.test(r.http?.status ?? ''));
+  return r;
+};
+// 收尾：升级过、还开着的连接先发关闭帧等服务端关（最多 1 秒），再断开。基线对只收到 FIN 的 WS 连接
+// 不做处理（websocket.ts 不听 end），直接断开会让它停机时一直等这条连接（见上面 disconnect 的说明）。
+// 收尾这段的往来不记录。
+const rawClose = async (st, upgraded) => {
+  if (upgraded && !st.closed) {
+    st.s.write(wsClientFrame({ opcode: 8, hex: '03e8' }));
+    await rawWait(st, () => false, 1000);
+  }
+  st.s.destroy();
+};
+// flood：{flood: N} 同时另开 N 条 WS 连接（升级 + hello），等每条拿到第一帧或被关（5 秒），连接保持到
+// {flood: "release"} 或场景结束；结果按结局计数。用来比连接很多时服务端是否照常接受、照常服务别的请求。
+const floodSockets = [];
+const floodStep = async (step) => {
+  if (step.flood === 'release') { const all = floodSockets.splice(0); await Promise.all(all.map((st) => rawClose(st, true))); return { released: all.length }; }
+  const all = await Promise.all(Array.from({ length: step.flood }, () => openRaw(GATEWAY_PORT)));
+  // 先等 101 再发 hello：跟升级请求挤在同一段里的字节基线不读（GatewayServer.ts:67 丢掉 upgrade 事件的 head）。
+  for (const st of all) if (!st.closed) st.s.write(upgradeRequest(true));
+  await Promise.all(all.map((st) => rawWait(st, () => st.buf.includes('\r\n\r\n'), 5000)));
+  for (const st of all) if (!st.closed && st.buf.subarray(0, st.buf.indexOf('\r\n')).toString().includes(' 101 ')) st.s.write(wsClientFrame({ json: { type: 'hello', protocolVersion: '1.2', clientName: 'test', clientVersion: '0.0.0', token: TOKEN } }));
+  await Promise.all(all.map((st) => rawWait(st, () => { const i = st.buf.indexOf('\r\n\r\n'); return i >= 0 && readServerFrames(st.buf.subarray(i + 4)).frames.length > 0; }, 5000)));
+  const tally = {};
+  for (const st of all) {
+    const i = st.buf.indexOf('\r\n\r\n'); const status = i >= 0 ? st.buf.subarray(0, st.buf.indexOf('\r\n')).toString() : null;
+    const first = i >= 0 ? readServerFrames(st.buf.subarray(i + 4)).frames[0] : undefined;
+    const k = !status ? (st.closed ? `closed-before-upgrade:${st.ended ?? 'close'}` : 'no-upgrade-response')
+      : !status.includes(' 101 ') ? status : first ? (first.json?.type ?? `opcode-${first.opcode}`) : st.closed ? `closed-after-upgrade:${st.ended ?? 'close'}` : 'no-frame';
+    tally[k] = (tally[k] ?? 0) + 1;
+    if (!st.closed) floodSockets.push(st);
+  }
+  return { flood: step.flood, tally };
+};
 let requestSeq = 0;
 const runStep = async (step) => {
+  if (step.raw) return { raw: await rawStep(step.raw) };
+  if (step.flood) return await floodStep(step);
   if (step.sleep) { await sleep(step.sleep); return { slept: true }; }
   if (step.disconnect === 'end') {
     // 只关写方向（半关闭，发 FIN）：不发关闭帧、不再发请求，但照常接收服务端的帧。之后可以再
@@ -728,6 +862,7 @@ out.failures = [
 out.notifications = allFrames.filter((f) => f.type === 'notification');
 out.unsolicited = allFrames.filter((f) => !['notification', 'hello_ok', 'response', 'event', '__closed'].includes(f.type));
 if (ws) ws.close();
+await Promise.all(floodSockets.splice(0).map((st) => rawClose(st, true)));
 
 // ── 停机：SIGTERM，记退出码 ──
 if (server && server.exitCode === null) {
