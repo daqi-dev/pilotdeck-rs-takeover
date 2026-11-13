@@ -1,0 +1,79 @@
+{
+  "name": "cli-cron-online-disabled",
+  "about": "配置里没有 cron 段时 server 上的 cron 方法回错误，CLI 由 main().catch 打 message、退出码 1（src/cli/pilotdeck.ts:626-629）；参数错误仍是用法。基线 CLI 连上 server 后 WebSocket 不关，输出完不退出（挂起，疑似基线 bug，见报告），这类步骤声明 expectTimeout；最后 stopServer SIGKILL：被杀掉的 CLI 只发 FIN 不发关闭帧，基线 server 的 WebSocket 不处理半关闭（src/gateway/server/websocket.ts:19-20 只听 close / error），SIGTERM 后 server.close() 永远等不完（另一处挂起，见报告），所以用 SIGKILL 统一收尾，停机行为不在这些场景里比。",
+  "gatewayPort": 18789,
+  "files": {
+    "home/.pilotdeck/server-token": "bbx-token\n"
+  },
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "steps": [
+    {
+      "cli": [
+        "cron",
+        "list",
+        "--history"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "create",
+        "--session",
+        "cli:s",
+        "--message",
+        "m",
+        "--cron",
+        "0 9 * * *"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "delete",
+        "t1",
+        "--stop-running"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "stop",
+        "t1"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "stop",
+        "--run",
+        "r1"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "create",
+        "--session",
+        "s"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "stopServer": "SIGKILL"
+    }
+  ]
+}
