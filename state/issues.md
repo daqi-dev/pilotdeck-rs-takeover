@@ -17,17 +17,17 @@
 | 问题 | 功能域 | 位置 / 依据 | 来源 | 状态 |
 |---|---|---|---|---|
 | `turn-steer-terminal`：轮次进行中插话（steer）后，会话文件里插话记录与本轮记录的先后与基线不同（Rust 的循环在 sidecar 里，落盘经宿主一跳）。macOS 与 cb8 都稳定差 33 处 | loop, session | 场景 `turn-steer-terminal`；cb8 验收（`6894f3dca`） | 审阅 | 待派（与 sidecar 进程内化一起评估） |
+| sidecar 的执行模型与基线不同：同一连接上的多个 execute，Rust 只有一个 worker、一次只跑一个，基线并发执行；连接断开时在途的执行，基线让它继续跑（别的连接查 status 是 `running`），Rust 取消并记 `result_unknown`（查到 `resolving`）；stdio 在 EOF 时还有挂在宿主调用上的执行，基线退出码 13、Rust 退出码 0 | modules | 只有探测脚本，没有场景 | sidecar 原始协议对齐的报告 | 待派（先给采集器加 stdio 版的 raw 步骤和 module_call 标识的归一化，才能做成场景） |
+| sidecar 被取消时不立即释放挂起的模块调用（旧条目，这次用探测脚本复核成立）：基线立即发 `turn_completed`（aborted）与 `cancelled` 终止帧；Rust 约 5 秒后发 `result_unknown`。另一处同类：宿主超时取消（`timeout:<runId>`）Rust 只在带截止时间时才当截止处理，基线不看这个条件 | modules | 上游验收集附加的 stdio 组 4/6 | sidecar 原始协议对齐的报告 | 待派（同上） |
 | 子代理的 SubagentStart hook 被中止杀掉时，Rust 不写子代理自己的会话文件；基线照样写出 `turn_started` / descriptor / `accepted_input` / `turn_result`。`abort-hook-subagent-start`（稳定差 254 处）与 `abort-timeout-hook-subagent-start` 因此不一致 | agents, session | 场景同名 | 超时收尾与中止遗留的报告 | 在修（2026-11-14 派） |
 | 超时后 pump 停下时，Rust 把在途的工具 future 一起取消；基线在途的子代理继续在后台跑完、SubagentStop 照常开始（`abort-timeout-tool-agent`，基线 20/20） | agents, loop | 场景同名 | 超时收尾与中止遗留的报告 | 在修（同上一个子代理） |
 | 配置里的 `proxy.url` 对 Rust 的模型、hook 等请求不生效：这些请求只读环境变量里的代理（`ProxyConfig::from_settings(None)`），启动时配置里写的代理也没用上；基线启动时与热重载时都会安装全局代理并打 `[proxy] Global fetch proxy → URL (noProxy: …)` / `[proxy] Global fetch proxy removed` | model, config | 无场景 | 配置热重载的报告 | 待派（要一个进程级、可替换的代理状态；启动与热重载两条入口一起做） |
 | 渠道的配置热重载没接：Rust 的 `NativeChannels::reload` 只管 feishu 与 weixin，没有订阅配置变化；基线重载后打 `[pilotdeck] Adapter hot-reload complete: …`（只有 `adapters.` 开头的子路径触发，整段新增不触发）。还没量 | channels, config | 基线 `ChannelAdapterBundle.ts:96` | 配置热重载的报告 | 待派（与「渠道配齐凭据时拒绝启动」的取舍一起，等人定之后做） |
-| `request_user_form` 遇到带 Draft 2020-12 声明的表单 schema 时工具报 Rust 自造的「not supported by this gateway」（G3）；模型写 schema 时常带这一行 | tools | `form_dialog.rs:160-164` | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 待派（先实测基线对这类 schema 的处理） |
 
 ## 3 边角
 
 | 问题 | 功能域 | 位置 / 依据 | 来源 | 状态 |
 |---|---|---|---|---|
-| sidecar 被取消时不立即释放挂起的模块调用：基线立刻拒绝挂起的调用、以 `cancelled` 结束；Rust 再等宿主回应最多 5 秒，等不到以 `result_unknown` 结束（宿主会回应时两边一样） | modules | `scripts/upstream-tests` 的 stdio 组有 1 例因此全红；基线 `agentLoopSidecarServer.ts` | 上游 sidecar 测试 | 待派 |
 | 非字符串 `workspaceCwd`：只在场景覆盖的两处模拟了基线的 TypeError，工具实际仍在项目根执行。场景没有工具调用所以看不到 | loop | `host/modules/lifecycle.rs:130-132`、`session/factory.rs:1309-1344`、`native_process/assembly.rs:835-846` | 审阅 | 文案已在 `c6a53a052` 对齐；「工具实际仍在项目根执行」这一半没有场景，待派 |
 | 进程本地时区的建模只对场景里的 11 个 `TZ` 值、只在 macOS 上有依据：`GMT` 的单点特判；POSIX 规则串不建模；`/etc/localtime` 是普通文件或多级链接；绝对路径 `TZ`；cron 缓存键用 Unicode 小写 | auto, tools | `pilotdeck-transport/src/system_clock.rs:220-310`、`runtime/cron/schedule.rs:161` | 审阅 | 待派（在 cb8 上量 Node） |
 | 客户端只发 FIN 后，这一轮在第几帧写失败而中止取决于时序（基线约十来帧，Rust 约三四帧） | gw | 无场景 | 断开后续跑 | 记为已知 |
@@ -40,14 +40,16 @@
 | 请求转储在带 `extraBody` 或 Google 协议时，Rust 转储的是实际发出的请求体，与基线不同；无场景 | model | `runtime/model/http.rs` | 任务预算与中止差异 | 待派 |
 | sidecar 收到「请求方取消」恰好落在 factory 前或准备阶段的毫秒级窗口时：Rust 给干净的中止结果，基线 TS sidecar 给缺结果的 `cancelled` 终止帧（只在显式外部部署下可见） | modules | `pilotdeck-transport/src/server.rs`、`default_factory.rs` | 任务预算与中止差异 | 记为已知 |
 | 审阅第 3 级修复没做完的：子代理场景的用量正则没有加位置限定（只认字段名）；Google 协议分支的重试日志行没有对拍覆盖 | agents, model | `c6a53a052` 的报告 | 审阅 | 待派 |
+| sidecar 帧里还没对齐的细节：`preparationId` 基线是 `prepared-<随机>-<序号>`、Rust 是 UUID；metadata 查询失败时 Rust 的终止帧多了 `code` 与 `error.code`；Rust 独有的三个拒绝码（`UNSUPPORTED_DEADLINE_PROFILE`、`INVALID_OWNER_CLOCK`、`EXECUTION_QUEUE_FULL`）保留着。新场景在 Rust 侧只各跑了一次，没有 20 次的分布 | modules | sidecar 原始协议对齐的报告 | sidecar 原始协议对齐的报告 | 待派 |
+| 表单 schema（Draft 2020-12）基线接受、Rust 仍明确拒绝的六类：带 `$id`；`$dynamicRef` / `$dynamicAnchor` / `$recursiveRef`；`formatMaximum` 一族；`unevaluated*` 与 `anyOf` / `oneOf` / `if` / `dependentSchemas` / `patternProperties` / 递归 `$ref` 的组合（Ajv 的求值标记取决于生成代码的写法，不是规范语义）；本机正则引擎表达不了的 pattern；format 名与 `Object.prototype` 成员同名。常见用法已一致（121 个 schema、182 个答案对着基线核过） | tools | `form_dialog_2020.rs:710`；场景 `tool-request-user-form-2020` | 占位缺口修复的报告 | 记为已知（明确报错；盲审时看是否有常见写法落在这里） |
+| `sdkSessionConfig` 的两处残余：`plugins` 指向真实目录时基线会为这个会话加载插件（影响 skills、MCP、hooks、output style、agents），Rust 仍回 `CAPABILITY_UNAVAILABLE`，工作量大；`skills` 列表与 `agents` 同时给时仍拒绝（基线给每个子代理单独过滤 skills）。未知键、`plugins` 的两种路径报错、三处自造拒绝已对齐 | config, ext | `native_process/sdk_config.rs` | 占位缺口修复的报告 | 待派（`skills` + `agents` 可做；`plugins` 的会话级加载先评估规模） |
+| 配置里的 JS 内建属性名残余：选择串的模型段用内建名且 provider 存在时（`agent.model`、`tokenSaver.judge` / `tiers`、`fallback`、`stats.baselineModel`），基线能加载、到使用时才报错，Rust 仍在加载时输出 TODO 退出码 2；另有两个 `requires_host` 触发点没实测（多个配置源成环且带 `__proto__`；stat 遇到不常见的 IO 错误）。G6（少见的会话记录形状）、G8（少见 YAML 特性）没做 | config, session | `config/sections.rs:143,146`、`graph.rs:344`、`mod.rs:516` | 占位缺口修复的报告 | 待派 |
 | 没有场景的热重载边角：停机第一步停掉 cron 之后再来一次重载（Rust 选择跳过）；服务运行中把配置改成非法内容——基线这时半停机（记忆维护里 `loadPilotConfig` 抛的异常没人接，cron 与 always-on 被撤下、之后每轮报 `INVALID_SDK_SESSION_CONFIG`、客户端断开后以 1 退出，疑似基线 bug），Rust 的表现没量 | config, auto | 配置热重载的报告 | 配置热重载的报告 | 待派（先量 Rust；基线那条核实后登记） |
-| 直接对 sidecar 说原始协议时的差异（基线自比 5/5 稳定，对 Rust 稳定差 28 处）：应答的 messageId 前缀不同（基线 `parse-` / `validation-` / `hello-` / `cancel-` / `status-` / `module-call-` 加随机串，Rust 是 `error-` / `response-<连接代>-<序号>`）；status 与 module_call 应答里 `requestId` 和 `ok` 的键序相反；客户端发半行后半关闭时基线抛未处理异常、不回，Rust 回 `INVALID_JSON`（疑似基线 bug） | modules | 尺子第二批的报告（场景 `sidecar-raw-protocol`） | 待派（前两处照基线改；第三处先核实再登记） |
 | 中止矩阵里没有场景的格子：上下文准备中、续写 / 恢复间隙（没有可观察的触发帧）；web 工具（采集器没有慢速本机端点）；后台子代理；工具调用参数传到一半。检查点之间的其余段落没有逐段审查 | loop, tools, agents | 矩阵文件 | 中止语义审查（`specs/delivery/abort-matrix.md`） | 记为已知 |
-| `sdkSessionConfig` 的三种合法写法被拒（G2）：`plugins`、基线会忽略的未知键、同时给 `skills` 列表和 `agents`；请求带基线没有的 `sdkConfig` 字段、畸形的 `uploadedAttachments` 引用、method 名含孤立代理项时回 Rust 自造的拒绝（G11） | config, loop, session | `sdk_config.rs:1365-1391` | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 待派 |
 | `modules.skills` / `modelProvider` / `context` 配了外部模块绑定时 server 拒绝启动（G4） | modules | 文案 `Native isolated profile does not yet support configured module bindings.` | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 待派 |
 | `gateway setup` 里只写本地 yaml、不联网的三步输出 `TODO`（G5） | cli | `gateway_setup.rs:269,307,361` | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 待派（联网的三步等人定范围） |
 | 会话记录里少见的条目形状读取时报「not implemented (A7.5)」（G6，只核对了 Rust 侧，没逐个读基线的 reducer）；MCP 工具的 `outputSchema` 用 JS 专有正则时报错（G7）；`update_settings` 遇到少见 YAML 特性报错（G8） | session, ext, config | 见盘点文件 | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 待派 |
-| 循环与工厂里 42 处「原生档案缺口」：模型或宿主回来的值形状异常时整轮失败，文案是 Rust 自造的（G9）；配置里用 `constructor`、`toString` 这类 JS 内建属性名时 CLI 输出 `TODO config requiring JavaScript host support`（G10） | loop, context, config | `*_PROFILE` 错误码、`requires_host` | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 待派（先各实测几条基线的表现） |
+| 循环与工厂里 42 处「原生档案缺口」：模型或宿主回来的值形状异常时整轮失败，文案是 Rust 自造的（G9） | loop, context, config | `*_PROFILE` 错误码、`requires_host` | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 待派（先各实测几条基线的表现） |
 | 盘点没有实测（只读源码）：技能文件 EACCES 等「没测量过的 errno」约 45 行里哪些真机上会撞到；三句「不可达防御」是否真的走不到；`file_history` 的 `backupStorage` 在 server 下是否注入 | * | 盘点文件「没查清的」 | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 待派 |
 | 没有场景、只有量测或源码依据的 gw 行为：50 MiB 会话文件、超过 60 秒的过期锁（采集器控制不了 mtime）、文件索引 10 万项上限、TCP 连接超时、握手超时与 HTTP 缺省超时 | gw, session | `surface.json` 的 `gw-behaviors`、`recovery` 里没有 probe 的项 | gw 缺口审查 | 记为已知 |
 
@@ -71,6 +73,8 @@
 | cb8 上并行跑全量时每轮 5–9 个场景偶发不一致，单独重跑一致（常见：`gap-tool-glob`、`gap-tool-grep`、`gap-permissions-json-rules`、`robust-large-message`、`loop-parallel-tools`、`loop-multi-tool`）。至少一部分的根因是上面的 `Keep-Alive` 差异 | * | cb8 验收 | 在查 |
 | cb8 上单槽位重跑偶发不一致（同一轮里另一次重跑与全量都一致）：`hook-post-tool-use-interrupt` 一次差 318 处，`abort-hook-advisory-late-50` 一次差 2 处（后者靠 25 毫秒的收尾窗口）。没有两侧各量 20 次 | hooks, loop | cb8 验收（`2bfa0c7a7`） | 待派（在 cb8 上量；基线稳定而 Rust 不稳就是产品差异） |
 | `[gateway:turn-timing]` 日志行两侧都是「耗时达到 200 毫秒才打」（基线 `InProcessGateway.ts:1629、1820`），所以它出不出现取决于机器快慢：`cli-entry-flags` 在 cb8 全量里 Rust 多打一行（`releaseMs` 218）。规则已定：比较器把这类行从 stdout 里摘出来不比（两侧各记条数供性能报告用） | cli, gw | cb8 验收（`809bc4cb8`） | 待派（下一批尺子修复） |
+| 两个 nextest 测试并行时串端口：`mcp_proxy::replays_ts_mcp_http_proxy_scenarios` 的本机假服务收到了 `web_tools::real_ts_web_fetch_and_web_search_over_loopback` 发给「连不上的端口」的请求（后者挑的空闲端口被前者随后占用）。cb8 的 v21 里各失败一次，单独重跑通过 | ext, tools | cb8 验收（`380e07062`） | 待派（「连不上的端口」改成持有后关闭监听但不释放给别人的做法，或两个测试放进同一个串行组） |
+| 采集器缺两样，挡住 sidecar 执行流的直接场景：stdio 版的 raw 步骤（起 sidecar 子进程、往 stdin 写字节、按行记 stdout）；比较器对 module_call 帧里 `requestId`（`<端口前缀>-<随机>`）与 `preparationId` 随机段的归一化 | modules | sidecar 原始协议对齐的报告 | 待派 |
 | 7 个 `abort-timeout-*` 场景声明了 volatile（超时事件与被中止循环的即时反应在运行记录里的先后，基线自己 19/1 或 11/9；数字写在各场景说明里）；`abort-turn-finishing` 的 close 列基线自己不稳（末尾标题记录 3/20 有）还没声明 | loop | `abort.gen.mjs` 的 `TIMEOUT_ORDER` | 超时收尾与中止遗留的报告 | 记为已知 |
 | `abort-tool-bash-disconnect` 在 cb8 的 v20 全量里差 404 处（v19 里一致），没看原因 | loop, tools | cb8 验收（`809bc4cb8`） | 待派（与上面两个中止场景一起在 cb8 上量） |
 | `turn-steer-terminal`：场景已改回在 `model_request_started` 触发插话，差异如实露出（macOS 与 cb8 都稳定差 33 处）——Rust 经 sidecar 一跳落盘，插话记录与这一轮记录的先后与基线不同。属产品差异，见第 2 级 | loop | 审阅 | 已转第 2 级 |

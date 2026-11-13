@@ -1,0 +1,75 @@
+{
+ "name": "sidecar-raw-connections",
+ "about": "TCP 部署的一个 sidecar 进程服务多条连接（tcpAgentLoopSidecarServer.ts:72-80，每条连接一次 serve）：同一个 moduleInstanceId，每条连接一个新的 connectionGeneration（agentLoopSidecarServer.ts:617-627）；operation 表与 requestId 映射是进程级的（ModuleOperationHost、requestOperations 是 server 的字段），所以别的连接上能查到前一条连接的执行、同一 operation 能在另一条连接上再执行。写完几行后半关闭（不留半截行）：全部应答之后对方关闭，进程照常服务下一条连接。",
+ "server": false,
+ "env": {
+  "PILOTDECK_AGENT_LOOP_TCP_PORT": "38414"
+ },
+ "steps": [
+  {
+   "sidecar": "start",
+   "port": 38414
+  },
+  {
+   "raw": {
+    "port": 38414,
+    "lines": true,
+    "readMs": 1500,
+    "send": [
+     {
+      "text": "{\"kind\":\"request\",\"messageId\":\"h1\",\"method\":\"hello\",\"payload\":{}}\n{\"kind\":\"request\",\"messageId\":\"x1\",\"method\":\"execute\",\"runId\":\"run-1\",\"operationId\":\"op-1\",\"requestId\":\"rq-1\",\"payload\":{\"seedState\":\"bad\"}}\n"
+     },
+     {
+      "wait": 500
+     }
+    ]
+   }
+  },
+  {
+   "raw": {
+    "port": 38414,
+    "lines": true,
+    "readMs": 1500,
+    "send": [
+     {
+      "text": "{\"kind\":\"request\",\"messageId\":\"h2\",\"method\":\"hello\",\"payload\":{}}\n{\"kind\":\"request\",\"messageId\":\"s1\",\"method\":\"status\",\"requestId\":\"rq-1\"}\n{\"kind\":\"request\",\"messageId\":\"x2\",\"method\":\"execute\",\"runId\":\"run-1\",\"operationId\":\"op-1\",\"requestId\":\"rq-2\",\"payload\":{\"seedState\":\"bad\"}}\n"
+     },
+     {
+      "wait": 500
+     },
+     {
+      "text": "{\"kind\":\"request\",\"messageId\":\"s2\",\"method\":\"status\",\"requestId\":\"rq-2\"}\n{\"kind\":\"request\",\"messageId\":\"c2\",\"method\":\"cancel\",\"runId\":\"run-1\",\"operationId\":\"op-1\",\"reason\":\"user\"}\n"
+     }
+    ]
+   }
+  },
+  {
+   "raw": {
+    "port": 38414,
+    "lines": true,
+    "readMs": 1500,
+    "send": [
+     {
+      "text": "{\"kind\":\"request\",\"messageId\":\"h3\",\"method\":\"hello\",\"payload\":{}}\n{\"kind\":\"request\",\"messageId\":\"s3\",\"method\":\"status\",\"requestId\":\"rq-2\"}\n",
+      "end": true
+     }
+    ]
+   }
+  },
+  {
+   "raw": {
+    "port": 38414,
+    "lines": true,
+    "readMs": 800,
+    "send": [
+     {
+      "text": "{\"kind\":\"request\",\"messageId\":\"h4\",\"method\":\"capabilities\",\"payload\":{}}\n"
+     }
+    ]
+   }
+  },
+  {
+   "sidecar": "stop"
+  }
+ ]
+}

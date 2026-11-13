@@ -70,41 +70,96 @@ fn selection(
     };
     let p = JsString::from_utf16(s.units()[..i].to_vec());
     let m = JsString::from_utf16(s.units()[i + 1..].to_vec());
-    if let Some(provider) = providers.iter().find(|provider| provider.id == p) {
-        if !provider.models.iter().any(|model| model.id == m) {
-            d.fatal(
-                "CONFIG_AGENT_MODEL_NOT_FOUND",
-                format!(
-                    "{path} references unknown model {} for provider {}.",
-                    js_string(&JsValue::String(m.clone())),
-                    js_string(&JsValue::String(p.clone()))
-                ),
-                path,
-            );
-        }
-    } else {
-        if builtin_property(&p) {
-            let mut e = Error::new(
-                "gateway_request_failed",
-                format!(
-                    "Cannot read properties of undefined (reading '{}')",
-                    js_string(&JsValue::String(m.clone()))
-                ),
-            );
-            e.name = "TypeError";
-            return Err(e);
-        }
-        d.fatal(
+    match js_model_lookup(providers, &p, &m, BuiltinModel::Refuse)? {
+        ModelLookup::Found => {}
+        ModelLookup::ModelMissing => d.fatal(
+            "CONFIG_AGENT_MODEL_NOT_FOUND",
+            format!(
+                "{path} references unknown model {} for provider {}.",
+                js_string(&JsValue::String(m.clone())),
+                js_string(&JsValue::String(p.clone()))
+            ),
+            path,
+        ),
+        ModelLookup::ProviderMissing => d.fatal(
             "CONFIG_AGENT_PROVIDER_NOT_FOUND",
             format!(
                 "{path} references unknown provider {}.",
                 js_string(&JsValue::String(p.clone()))
             ),
             path,
-        );
+        ),
     }
     d.check()?;
     Ok((p, m))
+}
+
+/// What `modelConfig.providers[providerId].models[modelId]` finds in the
+/// baseline, whose provider and model tables are plain objects.
+pub(super) enum ModelLookup {
+    Found,
+    ProviderMissing,
+    ModelMissing,
+}
+
+/// What a model id named after an `Object.prototype` member does to one
+/// selection (see [`js_model_lookup`]).
+#[derive(Clone, Copy)]
+pub(super) enum BuiltinModel {
+    /// The selection is never used to call a model on the paths the baseline
+    /// exercises at load time (`memory.model`, `agent.subagents.default`,
+    /// `router.scenarios.default` that `agent.model` overrides,
+    /// `router.stats.modelPricing` keys): it passes like the baseline's.
+    Accept,
+    /// The selection drives model calls that fail with the baseline's own
+    /// `TypeError` at use, which this host does not reproduce.
+    Refuse,
+}
+
+/// The lookup with JavaScript property semantics. A provider id named after
+/// an `Object.prototype` member finds that member, whose `.models` is
+/// `undefined`, so reading the model throws a `TypeError` (measured:
+/// `cfg-builtin-property-keys`). A model id named after one finds the member
+/// and passes the check; where the selection is then used to call a model
+/// the baseline fails (a turn answers `Cannot read properties of undefined
+/// (reading 'input')`), which this host does not reproduce, so
+/// [`BuiltinModel::Refuse`] keeps it refused as configuration requiring the
+/// JavaScript host.
+pub(super) fn js_model_lookup(
+    providers: &[Provider],
+    provider: &JsString,
+    model: &JsString,
+    builtin_model: BuiltinModel,
+) -> Result<ModelLookup, Error> {
+    match providers.iter().find(|candidate| candidate.id == *provider) {
+        Some(found) if found.models.iter().any(|candidate| candidate.id == *model) => {
+            Ok(ModelLookup::Found)
+        }
+        Some(_) if builtin_property(model) && matches!(builtin_model, BuiltinModel::Accept) => {
+            Ok(ModelLookup::Found)
+        }
+        Some(_) if builtin_property(model) => {
+            let mut error = Error::new(
+                "JS_HOST_REQUIRED",
+                "Configuration depends on JavaScript host intrinsic state.",
+            );
+            error.requires_host = true;
+            Err(error)
+        }
+        Some(_) => Ok(ModelLookup::ModelMissing),
+        None if builtin_property(provider) => {
+            let mut error = Error::new(
+                "gateway_request_failed",
+                format!(
+                    "Cannot read properties of undefined (reading '{}')",
+                    js_string(&JsValue::String(model.clone()))
+                ),
+            );
+            error.name = "TypeError";
+            Err(error)
+        }
+        None => Ok(ModelLookup::ProviderMissing),
+    }
 }
 fn immediate_number(
     raw: &JsValue,
@@ -247,16 +302,22 @@ fn subagent_ref(v: &JsValue, p: &[Provider], d: &mut Diagnostics) {
     let a = JsString::from_utf16(s.units()[..i].to_vec());
     let b = JsString::from_utf16(s.units()[i + 1..].to_vec());
     let at = js_string(&JsValue::String(a.clone()));
-    if let Some(p) = p.iter().find(|p| p.id == a) {
-        if !p.models.iter().any(|m| m.id == b) {
-            d.warn("CONFIG_AGENT_SUBAGENT_MODEL_NOT_FOUND",format!("{path} references unknown model {} for provider {at}. Inheriting agent.model instead.",js_string(&JsValue::String(b))),path);
-        }
-    } else {
-        d.warn(
+    match js_model_lookup(p, &a, &b, BuiltinModel::Accept) {
+        Ok(ModelLookup::Found) => {}
+        Ok(ModelLookup::ModelMissing) => d.warn(
+            "CONFIG_AGENT_SUBAGENT_MODEL_NOT_FOUND",
+            format!(
+                "{path} references unknown model {} for provider {at}. Inheriting agent.model instead.",
+                js_string(&JsValue::String(b))
+            ),
+            path,
+        ),
+        Ok(ModelLookup::ProviderMissing) => d.warn(
             "CONFIG_AGENT_SUBAGENT_PROVIDER_NOT_FOUND",
             format!("{path} references unknown provider {at}. Inheriting agent.model instead."),
             path,
-        );
+        ),
+        Err(error) => d.throw(error),
     }
 }
 pub(super) fn extension(raw: &JsValue, d: &mut Diagnostics) {
@@ -361,23 +422,21 @@ pub(super) fn memory(raw: &JsValue, p: &[Provider], d: &mut Diagnostics) -> Resu
         let a = JsString::from_utf16(s.units()[..i].to_vec());
         let b = JsString::from_utf16(s.units()[i + 1..].to_vec());
         let at = js_string(&JsValue::String(a.clone()));
-        if let Some(p) = p.iter().find(|p| p.id == a) {
-            if !p.models.iter().any(|m| m.id == b) {
-                d.warn(
-                    "CONFIG_MEMORY_MODEL_NOT_FOUND",
-                    format!(
-                        "memory.model references unknown model {} for provider {at}.",
-                        js_string(&JsValue::String(b))
-                    ),
-                    "memory.model",
-                );
-            }
-        } else {
-            d.warn(
+        match js_model_lookup(p, &a, &b, BuiltinModel::Accept)? {
+            ModelLookup::Found => {}
+            ModelLookup::ModelMissing => d.warn(
+                "CONFIG_MEMORY_MODEL_NOT_FOUND",
+                format!(
+                    "memory.model references unknown model {} for provider {at}.",
+                    js_string(&JsValue::String(b))
+                ),
+                "memory.model",
+            ),
+            ModelLookup::ProviderMissing => d.warn(
                 "CONFIG_MEMORY_MODEL_PROVIDER_NOT_FOUND",
                 format!("memory.model references unknown provider {at}."),
                 "memory.model",
-            );
+            ),
         }
     }
     let schedule = field(raw, "schedule");

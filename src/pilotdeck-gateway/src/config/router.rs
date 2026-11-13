@@ -1,3 +1,4 @@
+use super::sections::{BuiltinModel, ModelLookup, js_model_lookup};
 use super::{Diagnostics, model::Provider, value::*};
 use pilotdeck_protocol::{JsString, JsValue};
 fn shape(v: &JsValue, d: &mut Diagnostics, code: &str, msg: &str, path: &str) -> bool {
@@ -43,26 +44,41 @@ fn reference(
     let a = JsString::from_utf16(s.units()[..i].to_vec());
     let b = JsString::from_utf16(s.units()[i + 1..].to_vec());
     let at = js_string(&JsValue::String(a.clone()));
-    let Some(p) = p.iter().find(|p| p.id == a) else {
-        d.fatal(
-            "ROUTER_REF_PROVIDER_NOT_FOUND",
-            format!("{path} references unknown provider {at}."),
-            path,
-        );
-        return None;
-    };
-    if !p.models.iter().any(|m| m.id == b) {
-        d.fatal(
-            "ROUTER_REF_MODEL_NOT_FOUND",
-            format!(
-                "{path} references unknown model {} for provider {at}.",
-                js_string(&JsValue::String(b))
-            ),
-            path,
-        );
-        return None;
+    // `router.scenarios.default` yields to `agent.model` and pricing keys
+    // only label rows; the judge, tiers, fallbacks and the stats baseline
+    // call or price that model.
+    let builtin_model =
+        if path == "router.scenarios.default" || path.starts_with("router.stats.modelPricing.") {
+            BuiltinModel::Accept
+        } else {
+            BuiltinModel::Refuse
+        };
+    match js_model_lookup(p, &a, &b, builtin_model) {
+        Ok(ModelLookup::Found) => Some((a, b)),
+        Ok(ModelLookup::ProviderMissing) => {
+            d.fatal(
+                "ROUTER_REF_PROVIDER_NOT_FOUND",
+                format!("{path} references unknown provider {at}."),
+                path,
+            );
+            None
+        }
+        Ok(ModelLookup::ModelMissing) => {
+            d.fatal(
+                "ROUTER_REF_MODEL_NOT_FOUND",
+                format!(
+                    "{path} references unknown model {} for provider {at}.",
+                    js_string(&JsValue::String(b))
+                ),
+                path,
+            );
+            None
+        }
+        Err(error) => {
+            d.throw(error);
+            None
+        }
     }
-    Some((a, b))
 }
 fn bool_enabled(v: &JsValue, d: &mut Diagnostics, code: &str, msg: &str, path: &str) -> bool {
     if !v.is_undefined() && v.as_bool().is_none() {

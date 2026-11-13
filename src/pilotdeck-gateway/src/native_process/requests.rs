@@ -236,9 +236,14 @@ impl GatewayRequests for Requests {
             // No project gate here: the baseline has none. Each method reads
             // `input.projectKey ?? fallbackProjectRoot` itself and applies its
             // own rule (see `native_process::projects`).
-            let method = method
-                .to_utf8()
-                .map_err(|_| RequestError::new("Unknown native gateway method."))?;
+            // A name with a lone surrogate matches no method; the baseline
+            // echoes it unchanged (`Unknown gateway method ${method}.`).
+            let method = method.to_utf8().map_err(|_| {
+                let mut units: Vec<u16> = "Unknown gateway method ".encode_utf16().collect();
+                units.extend_from_slice(method.units());
+                units.push(u16::from(b'.'));
+                RequestError::new(JsString::from_utf16(units))
+            })?;
             methods::request(self, method, params).await
         })
     }

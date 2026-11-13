@@ -3283,12 +3283,23 @@ mod tests {
                 "sessionKey is required.",
             ),
             (
-                "sdkSessionConfig with a field the native port does not wire",
+                // Unknown keys are stored like the baseline does
+                // (`sdk-config-unknown-keys`); a session plugin is not composed.
+                "sdkSessionConfig with a plugin the native port does not load",
                 object([
                     ("sessionKey", "cfg-seed-4".into()),
                     ("path", "seeded.txt".into()),
                     ("mtime", JsValue::Number(mtime_ms)),
-                    ("sdkSessionConfig", object([("k", "v".into())])),
+                    (
+                        "sdkSessionConfig",
+                        object([(
+                            "plugins",
+                            JsValue::Array(vec![object([
+                                ("type", "local".into()),
+                                ("path", "/".into()),
+                            ])]),
+                        )]),
+                    ),
                 ]),
                 "CAPABILITY_UNAVAILABLE",
                 "sdk_session_config is unavailable.",

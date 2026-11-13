@@ -109,12 +109,23 @@ pub(crate) fn validate(
     schema: &JsValue,
     data: &JsValue,
 ) -> Result<Option<String>, ValidationError> {
+    validate_with_budget(schema, data, MAX_VALIDATION_BUDGET)
+}
+
+/// [`validate`] with another weighted recursion budget. The form dialog's
+/// Draft 2020-12 meta-schema check walks a far larger static schema than any
+/// tool output schema, so the SDK-calibrated budget does not apply to it.
+pub(crate) fn validate_with_budget(
+    schema: &JsValue,
+    data: &JsValue,
+    limit: usize,
+) -> Result<Option<String>, ValidationError> {
     // The bounded Rust walk still needs more than Tokio's 2 MiB worker
     // stack in debug builds. The dedicated stack is not the V8 limit.
     std::thread::scope(|scope| {
         let handle = std::thread::Builder::new()
             .stack_size(64 * 1024 * 1024)
-            .spawn_scoped(scope, || validate_inner(schema, data))
+            .spawn_scoped(scope, || validate_limited(schema, data, limit))
             .expect("spawn output-schema validator");
         match handle.join() {
             Ok(result) => result,
@@ -123,13 +134,23 @@ pub(crate) fn validate(
     })
 }
 
+#[cfg(test)]
 fn validate_inner(schema: &JsValue, data: &JsValue) -> Result<Option<String>, ValidationError> {
+    validate_limited(schema, data, MAX_VALIDATION_BUDGET)
+}
+
+fn validate_limited(
+    schema: &JsValue,
+    data: &JsValue,
+    limit: usize,
+) -> Result<Option<String>, ValidationError> {
     check_schema(schema).map_err(|SchemaError(message)| ValidationError::Unsupported(message))?;
     let refs = SchemaRefs::new(schema);
     let mut validator = Validator {
         refs,
         errors: Vec::new(),
         budget_used: 0,
+        limit,
         weights: schema_weights(schema),
         seen: HashSet::new(),
     };
@@ -758,6 +779,8 @@ struct Validator<'a> {
     refs: SchemaRefs<'a>,
     errors: Vec<(String, String)>,
     budget_used: usize,
+    /// Weighted recursion budget ([`MAX_VALIDATION_BUDGET`] for the SDK).
+    limit: usize,
     weights: HashMap<usize, usize>,
     /// `(schema, data)` pairs on the current recursion path. Re-entering one
     /// is Ajv's `Maximum call stack size exceeded` without consuming data
@@ -814,16 +837,12 @@ fn data_type_matches(name: &str, data: &JsValue) -> bool {
 }
 
 /// fast-deep-equal over JSON values (object key order is irrelevant).
-fn deep_equal(
-    left: &JsValue,
-    right: &JsValue,
-    budget_used: usize,
-) -> Result<bool, ValidationError> {
+fn deep_equal(left: &JsValue, right: &JsValue, remaining: usize) -> Result<bool, ValidationError> {
     let mut pending = vec![(left, right, 1)];
     while let Some((a, b, depth)) = pending.pop() {
         // fast-deep-equal recurses even though this implementation uses a
         // heap stack. Charge its active comparison calls to the same budget.
-        if depth > MAX_VALIDATION_BUDGET - budget_used {
+        if depth > remaining {
             return Err(ValidationError::Threw);
         }
         match (a, b) {
@@ -863,7 +882,7 @@ fn number(value: Option<&JsValue>) -> Option<f64> {
     value.and_then(JsValue::as_number)
 }
 
-fn code_points(text: &JsString) -> usize {
+pub(crate) fn code_points(text: &JsString) -> usize {
     char::decode_utf16(text.units().iter().copied()).count()
 }
 
@@ -1250,6 +1269,13 @@ fn parse_js_pattern(pattern: &str) -> Result<ParsedJsPattern, JsPatternSyntaxErr
 /// escapes, a literal `]`/`}`, and `{` that is not a quantifier.
 fn parse_js_pattern_non_unicode(pattern: &str) -> Result<(), JsPatternSyntaxError> {
     parse_js_pattern_mode(pattern, false).map(|_| ())
+}
+
+/// V8's reason when `new RegExp(pattern)` (no flags) throws.
+pub(crate) fn js_regex_non_unicode_error(pattern: &str) -> Option<&'static str> {
+    parse_js_pattern_non_unicode(pattern)
+        .err()
+        .map(|error| error.0)
 }
 
 fn parse_js_pattern_mode(
@@ -2219,7 +2245,7 @@ fn ascii_fold_haystack(text: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
-fn string_format_valid(format: &str, text: &str) -> Option<bool> {
+pub(crate) fn string_format_valid(format: &str, text: &str) -> Option<bool> {
     if format == "regex" {
         return regex_format_valid(text);
     }
@@ -2260,7 +2286,7 @@ fn string_format_valid(format: &str, text: &str) -> Option<bool> {
     })
 }
 
-fn number_format_valid(format: &str, value: f64) -> Option<bool> {
+pub(crate) fn number_format_valid(format: &str, value: f64) -> Option<bool> {
     Some(match format {
         "int32" => {
             value.is_finite()
@@ -2657,7 +2683,7 @@ impl<'a> Validator<'a> {
             self.weights.extend(schema_weights(schema_value));
         }
         let weight = self.weights[&key];
-        if weight > MAX_VALIDATION_BUDGET - self.budget_used {
+        if weight > self.limit - self.budget_used {
             return Err(ValidationError::Threw);
         }
         let pair = (
@@ -2749,14 +2775,14 @@ impl<'a> Validator<'a> {
             self.check(target, data, path)?;
         }
         if let Some(expected) = schema.get("const")
-            && !deep_equal(expected, data, self.budget_used)?
+            && !deep_equal(expected, data, self.limit - self.budget_used)?
         {
             self.fail(path, "must be equal to constant");
         }
         if let Some(JsValue::Array(allowed)) = schema.get("enum") {
             let mut found = false;
             for value in allowed {
-                if deep_equal(value, data, self.budget_used)? {
+                if deep_equal(value, data, self.limit - self.budget_used)? {
                     found = true;
                     break;
                 }
@@ -3055,7 +3081,7 @@ impl<'a> Validator<'a> {
         } else {
             'outer: for i in (0..items.len()).rev() {
                 for j in (0..i).rev() {
-                    if deep_equal(&items[i], &items[j], self.budget_used)? {
+                    if deep_equal(&items[i], &items[j], self.limit - self.budget_used)? {
                         self.fail(
                             path,
                             format!(

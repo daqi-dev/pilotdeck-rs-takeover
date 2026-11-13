@@ -351,7 +351,7 @@ mod tests {
         assert_eq!(
             run(
                 "host-required",
-                "schemaVersion: 1\nagent: {model: constructor/m}\nmodel: {}\n",
+                "schemaVersion: 1\nagent: {model: test/constructor}\nmodel:\n  providers:\n    test: {protocol: openai, url: \"https://model.invalid/v1\", apiKey: k, models: {m: {}}}\n",
                 None
             ),
             "TODO config requiring JavaScript host support"

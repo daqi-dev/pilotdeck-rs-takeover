@@ -1,0 +1,104 @@
+{
+ "name": "sidecar-raw-execute-terminal",
+ "about": "原始协议的 execute 在不需要宿主模块的路径上：载荷让默认工厂立即失败（seedState / modelState 不是对象，default-factory 抛错），agentLoopSidecarServer.ts:208-400 回 accepted（前缀 accepted-，requestId 在 ok 之前）后发失败终止帧（catch 分支，前缀 failed-，final / outcome / code / error 在 payload 之前）；已过期的 operationDeadline / attemptDeadline 回 DEADLINE_EXCEEDED（224-236，前缀 deadline-），解析不了的截止时间（garbage、空串）当作没有截止时间。之后的 status（ModuleOperationHost 的快照，requestIds 累加、终态不被后来的执行改写）、终止后 cancel 回 UNKNOWN_OPERATION（abortControllers 已清）、同一身份重发 execute 照常再跑一遍（基线不按 requestId 去重）、同一 requestId 换 operation 时 status 指向新的那个。",
+ "server": false,
+ "env": {
+  "PILOTDECK_AGENT_LOOP_TCP_PORT": "38414"
+ },
+ "steps": [
+  {
+   "sidecar": "start",
+   "port": 38414
+  },
+  {
+   "raw": {
+    "port": 38414,
+    "lines": true,
+    "readMs": 1200,
+    "send": [
+     {
+      "text": "{\"kind\":\"request\",\"messageId\":\"x1\",\"method\":\"execute\",\"runId\":\"run-1\",\"operationId\":\"op-1\",\"requestId\":\"rq-1\",\"payload\":{\"seedState\":\"bad\"}}\n"
+     },
+     {
+      "wait": 600
+     },
+     {
+      "text": "{\"kind\":\"request\",\"messageId\":\"s1\",\"method\":\"status\",\"requestId\":\"rq-1\"}\n{\"kind\":\"request\",\"messageId\":\"c1\",\"method\":\"cancel\",\"runId\":\"run-1\",\"operationId\":\"op-1\",\"reason\":\"user\",\"requestId\":\"rq-1\"}\n"
+     },
+     {
+      "text": "{\"kind\":\"request\",\"messageId\":\"x2\",\"method\":\"execute\",\"runId\":\"run-1\",\"operationId\":\"op-1\",\"requestId\":\"rq-1\",\"payload\":{\"seedState\":\"bad\"}}\n"
+     },
+     {
+      "wait": 600
+     },
+     {
+      "text": "{\"kind\":\"request\",\"messageId\":\"x3\",\"method\":\"execute\",\"runId\":\"run-2\",\"operationId\":\"op-2\",\"requestId\":\"rq-1\",\"payload\":{\"seedState\":\"bad\"}}\n"
+     },
+     {
+      "wait": 600
+     },
+     {
+      "text": "{\"kind\":\"request\",\"messageId\":\"x3b\",\"method\":\"execute\",\"runId\":\"run-1\",\"operationId\":\"op-1\",\"requestId\":\"rq-3\",\"payload\":{\"modelState\":5}}\n"
+     },
+     {
+      "wait": 600
+     },
+     {
+      "text": "{\"kind\":\"request\",\"messageId\":\"s2\",\"method\":\"status\",\"requestId\":\"rq-1\"}\n{\"kind\":\"request\",\"messageId\":\"s3\",\"method\":\"status\",\"requestId\":\"rq-3\"}\n{\"kind\":\"request\",\"messageId\":\"s4\",\"method\":\"status\",\"requestId\":\"rq-4\"}\n"
+     },
+     {
+      "text": "{\"kind\":\"request\",\"messageId\":\"x5\",\"method\":\"execute\",\"runId\":\"run-5\",\"operationId\":\"op-5\",\"requestId\":\"rq-5\",\"payload\":{},\"operationDeadline\":\"2000-01-01T00:00:00.000Z\"}\n"
+     },
+     {
+      "wait": 300
+     },
+     {
+      "text": "{\"kind\":\"request\",\"messageId\":\"s5\",\"method\":\"status\",\"requestId\":\"rq-5\"}\n{\"kind\":\"request\",\"messageId\":\"c5\",\"method\":\"cancel\",\"runId\":\"run-5\",\"operationId\":\"op-5\",\"reason\":\"user\"}\n"
+     },
+     {
+      "text": "{\"kind\":\"request\",\"messageId\":\"x6\",\"method\":\"execute\",\"runId\":\"run-5\",\"operationId\":\"op-5\",\"requestId\":\"rq-5\",\"payload\":{},\"operationDeadline\":\"2000-01-01T00:00:00.000Z\"}\n"
+     },
+     {
+      "wait": 300
+     },
+     {
+      "text": "{\"kind\":\"request\",\"messageId\":\"x7\",\"method\":\"execute\",\"runId\":\"run-7\",\"operationId\":\"op-7\",\"requestId\":\"rq-7\",\"payload\":{},\"attemptDeadline\":\"2000-01-01\",\"idempotencyKey\":\"k\",\"sessionId\":\"sess\",\"turnId\":\"turn\"}\n"
+     },
+     {
+      "wait": 300
+     },
+     {
+      "text": "{\"kind\":\"request\",\"messageId\":\"x8\",\"method\":\"execute\",\"runId\":\"run-8\",\"operationId\":\"op-8\",\"requestId\":\"rq-8\",\"payload\":{\"seedState\":\"bad\"},\"operationDeadline\":\"garbage\"}\n"
+     },
+     {
+      "wait": 600
+     },
+     {
+      "text": "{\"kind\":\"request\",\"messageId\":\"x9\",\"method\":\"execute\",\"runId\":\"run-9\",\"operationId\":\"op-9\",\"requestId\":\"rq-9\",\"payload\":{\"seedState\":\"bad\"},\"operationDeadline\":\"Jan 1 2000\"}\n"
+     },
+     {
+      "wait": 600
+     },
+     {
+      "text": "{\"kind\":\"request\",\"messageId\":\"x10\",\"method\":\"execute\",\"runId\":\"run-10\",\"operationId\":\"op-10\",\"requestId\":\"rq-10\",\"payload\":{\"seedState\":\"bad\"},\"operationDeadline\":\"\"}\n"
+     },
+     {
+      "wait": 600
+     },
+     {
+      "text": "{\"kind\":\"request\",\"messageId\":\"x11\",\"method\":\"execute\",\"runId\":\"run-11\",\"operationId\":\"op-11\",\"requestId\":\"rq-11\",\"payload\":{\"seedState\":\"bad\"},\"operationDeadline\":\"2000-01-01T00:00:00+05:00\",\"attemptDeadline\":\"2999-01-01T00:00:00Z\"}\n"
+     },
+     {
+      "wait": 600
+     },
+     {
+      "text": "{\"kind\":\"request\",\"messageId\":\"s11\",\"method\":\"status\",\"requestId\":\"rq-11\"}\n{\"kind\":\"request\",\"messageId\":\"s7\",\"method\":\"status\",\"requestId\":\"rq-7\"}\n{\"kind\":\"request\",\"messageId\":\"s9\",\"method\":\"status\",\"requestId\":\"rq-9\"}\n"
+     }
+    ]
+   }
+  },
+  {
+   "sidecar": "stop"
+  }
+ ]
+}

@@ -1,0 +1,56 @@
+{
+ "name": "sidecar-raw-half-line-eof",
+ "about": "TCP 部署：客户端发一个完整的 hello 再发半行，然后半关闭写端。基线读端结束时 net.Socket（allowHalfOpen false）已自动结束写端，readline 把半行当最后一行交出，JSON.parse 失败后要回 INVALID_JSON，writeSidecarLine（agentLoopSidecarServer.ts:658-661）因输出已结束而拒绝，serve 抛出，tcpAgentLoopSidecarServer.ts:76-78 以这个错误 destroy 套接字，套接字上没有 error 监听，成了未捕获异常，整个 sidecar 进程以退出码 1 结束，之后的连接被拒绝。等 3 秒让基线退完，再连一次看进程还在不在。",
+ "server": false,
+ "env": {
+  "PILOTDECK_AGENT_LOOP_TCP_PORT": "38414"
+ },
+ "steps": [
+  {
+   "sidecar": "start",
+   "port": 38414
+  },
+  {
+   "raw": {
+    "port": 38414,
+    "lines": true,
+    "readMs": 1000,
+    "send": [
+     {
+      "text": "{\"kind\":\"request\",\"messageId\":\"d1\",\"method\":\"hello\",\"payload\":{}}\n{\"kind\":\"request\",\"messageId\":\"d2\",\"method\":\"hel",
+      "end": true
+     }
+    ]
+   }
+  },
+  {
+   "sleep": 3000
+  },
+  {
+   "raw": {
+    "port": 38414,
+    "lines": true,
+    "readMs": 800,
+    "send": [
+     {
+      "text": "{\"kind\":\"request\",\"messageId\":\"d3\",\"method\":\"hello\",\"payload\":{}}\n"
+     }
+    ]
+   }
+  },
+  {
+   "sidecar": "stop"
+  }
+ ],
+ "accepted": [
+  {
+   "id": "tcp-sidecar-half-line-eof-crash",
+   "why": "基线 bug（崩溃）：TCP 部署的 sidecar 上，客户端发一段不带换行的内容后半关闭。基线把半行当作最后一行、要回 INVALID_JSON 时写端已随读端结束（net.Socket 默认 allowHalfOpen: false），写入被拒、serve 抛出，tcpAgentLoopSidecarServer.ts:76-78 拿这个错误 destroy 套接字而套接字上没有 error 监听，成了未捕获异常：整个 sidecar 进程以 1 退出，之后的连接全部被拒——一个客户端就能让常驻的 sidecar 连同其他连接一起退出。Rust 对半行回 INVALID_JSON，进程继续服务（stdio 部署下基线自己也是这样回的）。只放过：多出的那一帧、之后那次连接是否被拒、sidecar 的退出方式与 stderr 里的异常文本",
+   "paths": [
+    "^\\$\\.steps\\[1\\]\\.raw\\.lines(\\.length|\\[1\\])$",
+    "^\\$\\.steps\\[3\\]\\.raw\\.(refused|lines|serverClosed)$",
+    "^\\$\\.steps\\[4\\]\\.sidecar\\.(exitCode|signal|stderr)$"
+   ]
+  }
+ ]
+}

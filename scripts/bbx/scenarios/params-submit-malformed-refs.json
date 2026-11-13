@@ -1,0 +1,511 @@
+{
+ "name": "params-submit-malformed-refs",
+ "about": "submit_turn 的 uploadedAttachments 畸形引用：uploadId 为数字、布尔、null、缺失、对象、数组，引用本身是字符串/数字/null，attachmentIds 为数字数组、混合数组、字符串、数字、布尔、对象、null、0（基线把它们原样交给 UploadStore，报 JS 运行时错误或 UPLOAD_NOT_FOUND / ATTACHMENT_NOT_FOUND）；空数组与非数组被忽略；未知字段 sdkConfig 被忽略；method 名含孤立代理项时的未知方法错误。",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Attachments\"}"
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "Got it."
+   }
+  }
+ ],
+ "files": {
+  "home/work/alpha/README.md": "alpha\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+  "home/work/alpha/.tmp/chat-uploads/up-ok/metadata.json": {
+   "uploadId": "up-ok",
+   "projectKey": "{HOME}/work/alpha",
+   "status": "completed",
+   "manifest": [
+    {
+     "clientFileId": "f1",
+     "name": "note.txt",
+     "relativePath": "docs/note.txt",
+     "size": 12,
+     "mimeType": "text/plain"
+    },
+    {
+     "clientFileId": "f2",
+     "name": "data.bin",
+     "relativePath": "data.bin",
+     "size": 3
+    }
+   ],
+   "totalBytes": 15,
+   "uploadedBytes": 15,
+   "createdAt": "2026-01-01T00:00:00.000Z",
+   "updatedAt": "2026-01-01T00:00:00.000Z",
+   "expiresAt": "2099-01-01T00:00:00.000Z",
+   "receivedClientFileIds": [
+    "f1",
+    "f2"
+   ],
+   "attachments": [
+    {
+     "attachmentId": "f1",
+     "name": "note.txt",
+     "relativePath": "docs/note.txt",
+     "mimeType": "text/plain",
+     "bytes": 12,
+     "sha256": "a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447",
+     "path": "{HOME}/work/alpha/.tmp/chat-uploads/up-ok/files/f1"
+    },
+    {
+     "attachmentId": "f2",
+     "name": "data.bin",
+     "relativePath": "data.bin",
+     "bytes": 3,
+     "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+     "path": "{HOME}/work/alpha/.tmp/chat-uploads/up-ok/files/f2"
+    }
+   ]
+  },
+  "home/work/alpha/.tmp/chat-uploads/up-ok/files/f1": "hello world\n",
+  "home/work/alpha/.tmp/chat-uploads/up-ok/files/f2": "abc"
+ },
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-1",
+    "channelKey": "test",
+    "message": "turn 1",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": [
+     {
+      "uploadId": 5
+     }
+    ]
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-2",
+    "channelKey": "test",
+    "message": "turn 2",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": [
+     {
+      "uploadId": 1.5
+     }
+    ]
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-3",
+    "channelKey": "test",
+    "message": "turn 3",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": [
+     {
+      "uploadId": 1e+300
+     }
+    ]
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-4",
+    "channelKey": "test",
+    "message": "turn 4",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": [
+     {
+      "uploadId": true
+     }
+    ]
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-5",
+    "channelKey": "test",
+    "message": "turn 5",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": [
+     {
+      "uploadId": null
+     }
+    ]
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-6",
+    "channelKey": "test",
+    "message": "turn 6",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": [
+     {}
+    ]
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-7",
+    "channelKey": "test",
+    "message": "turn 7",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": [
+     "up-ok"
+    ]
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-8",
+    "channelKey": "test",
+    "message": "turn 8",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": [
+     7
+    ]
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-9",
+    "channelKey": "test",
+    "message": "turn 9",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": [
+     null
+    ]
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-10",
+    "channelKey": "test",
+    "message": "turn 10",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": [
+     {
+      "uploadId": {}
+     }
+    ]
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-11",
+    "channelKey": "test",
+    "message": "turn 11",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": [
+     {
+      "uploadId": [
+       "up",
+       "ok"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-12",
+    "channelKey": "test",
+    "message": "turn 12",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": [
+     {
+      "uploadId": [
+       "up-ok"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-13",
+    "channelKey": "test",
+    "message": "turn 13",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": [
+     {
+      "uploadId": [
+       "a",
+       ".."
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-14",
+    "channelKey": "test",
+    "message": "turn 14",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": [
+     {
+      "uploadId": "up-x",
+      "attachmentIds": [
+       1
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-15",
+    "channelKey": "test",
+    "message": "turn 15",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": [
+     {
+      "uploadId": "up-ok",
+      "attachmentIds": [
+       1
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-16",
+    "channelKey": "test",
+    "message": "turn 16",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": [
+     {
+      "uploadId": "up-ok",
+      "attachmentIds": [
+       "f1",
+       1
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-17",
+    "channelKey": "test",
+    "message": "turn 17",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": [
+     {
+      "uploadId": "up-ok",
+      "attachmentIds": "f1"
+     }
+    ]
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-18",
+    "channelKey": "test",
+    "message": "turn 18",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": [
+     {
+      "uploadId": "up-ok",
+      "attachmentIds": "x"
+     }
+    ]
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-19",
+    "channelKey": "test",
+    "message": "turn 19",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": [
+     {
+      "uploadId": "up-ok",
+      "attachmentIds": 5
+     }
+    ]
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-20",
+    "channelKey": "test",
+    "message": "turn 20",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": [
+     {
+      "uploadId": "up-ok",
+      "attachmentIds": true
+     }
+    ]
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-21",
+    "channelKey": "test",
+    "message": "turn 21",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": [
+     {
+      "uploadId": "up-ok",
+      "attachmentIds": {}
+     }
+    ]
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-22",
+    "channelKey": "test",
+    "message": "turn 22",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": [
+     {
+      "uploadId": "up-x",
+      "attachmentIds": null
+     }
+    ]
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-23",
+    "channelKey": "test",
+    "message": "turn 23",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": [
+     {
+      "uploadId": "up-open",
+      "attachmentIds": 0
+     }
+    ]
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-24",
+    "channelKey": "test",
+    "message": "turn 24",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": [
+     {
+      "uploadId": "up-x",
+      "attachmentIds": 5
+     }
+    ]
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-25",
+    "channelKey": "test",
+    "message": "turn 25",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": [
+     {
+      "uploadId": "up-ok",
+      "attachmentIds": [
+       "f1"
+      ]
+     },
+     {
+      "uploadId": 5
+     }
+    ]
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-26",
+    "channelKey": "test",
+    "message": "turn 26",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": []
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-27",
+    "channelKey": "test",
+    "message": "turn 27",
+    "projectKey": "{HOME}/work/alpha",
+    "uploadedAttachments": {
+     "uploadId": "up-ok"
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-28",
+    "channelKey": "test",
+    "message": "turn 28",
+    "projectKey": "{HOME}/work/alpha",
+    "sdkConfig": {
+     "model": "x"
+    }
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-29",
+    "channelKey": "test",
+    "message": "turn 29",
+    "projectKey": "{HOME}/work/alpha",
+    "sdkConfig": null
+   }
+  },
+  {
+   "ws": "x\ud800y",
+   "params": {}
+  },
+  {
+   "ws": "\udc00",
+   "params": {}
+  },
+  {
+   "ws": "a😀b",
+   "params": {}
+  },
+  {
+   "sleep": 500
+  }
+ ],
+ "settleMs": 800
+}
