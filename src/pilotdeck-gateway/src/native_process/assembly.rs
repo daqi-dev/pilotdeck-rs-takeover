@@ -2355,6 +2355,18 @@ async fn start_assembly_resources(
                     },
                     is_project_busy: Some(is_project_busy),
                     update_subsystems: Arc::new(move |update| {
+                        // Local composition has no server automation generation.
+                        // Its initial empty publication only makes the live facade
+                        // available; retiring the already-staged project here would
+                        // dispose its resources before the first session acquires it.
+                        // Server publication and all later updates keep invalidation.
+                        let initial_empty_local = in_process_cli
+                            && publication.snapshot().is_none()
+                            && update.published
+                            && update.cron.is_none()
+                            && update.always_on_control.is_none()
+                            && update.always_on_config.is_none()
+                            && update.extra_tools.is_empty();
                         let cron = update
                             .cron
                             .as_ref()
@@ -2386,7 +2398,9 @@ async fn start_assembly_resources(
                             cron_stop,
                             extra_tools: update.extra_tools,
                         });
-                        publication_project.invalidate(None);
+                        if !initial_empty_local {
+                            publication_project.invalidate(None);
+                        }
                     }),
                 })?;
                 match std::pin::pin!(automation.start()).now_or_never() {
