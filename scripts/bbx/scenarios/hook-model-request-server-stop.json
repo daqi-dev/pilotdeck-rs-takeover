@@ -1,6 +1,6 @@
 {
   "name": "hook-model-request-server-stop",
-  "about": "PreModelRequest hook 执行中停机：轮次停在权限询问上、客户端发关闭帧断开（有挂起的询问，这一轮不被中止）后 SIGTERM，disposeGateway 中止运行中的轮次，hook 进程被杀（hooklog 没有 done 行）。",
+  "about": "PreModelRequest hook 执行中停机：轮次停在权限询问上、客户端发关闭帧断开（有挂起的询问，这一轮不被中止）后 SIGTERM，disposeGateway 中止运行中的轮次，hook 进程被杀（hooklog 没有 done 行）。等权限询问的那一步限时 3000 ms（原 1500 ms：机器忙时被测进程起来后的第一轮走到权限询问可能超过 1.5 秒，cb8 上把采集绑到一个核时 Rust 侧 10 次都只收到 2 个事件；PreModelRequest hook 本身不阻塞这一轮，睡 5000 ms，3 秒的窗口加断开与停机仍在它写 done 行之前）。",
   "server": false,
   "files": {
     "home/.pilotdeck/plugins/bbx-model-dispose/plugin.json": {
@@ -73,7 +73,7 @@
             "channelKey": "test",
             "message": "stop-case: run the tool"
           },
-          "timeout": 1500,
+          "timeout": 3000,
           "expectTimeout": true
         },
         {

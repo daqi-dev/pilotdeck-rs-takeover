@@ -1,6 +1,6 @@
 {
   "name": "cli-run-resume",
-  "about": "run / resume 一轮对话：纯文本输出、--json、--stream-json、提示词来自 stdin、缺提示词、--channel、--project、resume 已有 / 不存在的会话、provider 报错时的输出与退出码、工具调用（bash；--permission-mode 另见 cli-run-permission-mode）。token 走 PILOTDECK_TOKEN，地址走 PILOTDECK_GATEWAY_PORT。 每个 run 用不同的 --channel（会话文件名是 <channel>:s_<随机 uuid>，同一渠道多个会话时落盘树的排序随 uuid 变，基线自比不稳）。 resume 前先断开造会话的那条 ws 连接。",
+  "about": "run / resume 一轮对话：纯文本输出、--json、--stream-json、提示词来自 stdin、缺提示词、--channel、--project、resume 已有 / 不存在的会话、provider 报错时的输出与退出码、工具调用（bash；--permission-mode 另见 cli-run-permission-mode）。token 走 PILOTDECK_TOKEN，地址走 PILOTDECK_GATEWAY_PORT。 每个 run 用不同的 --channel（会话文件名是 <channel>:s_<随机 uuid>，同一渠道多个会话时落盘树的排序随 uuid 变，基线自比不稳）。 resume 前先断开造会话的那条 ws 连接，最后读会话记录前重新连上（断开后采集器不会自动重连）。",
   "env": {
     "PILOTDECK_TOKEN": "{TOKEN}"
   },
@@ -181,6 +181,9 @@
         "s-does-not-exist",
         "hello"
       ]
+    },
+    {
+      "connect": true
     },
     {
       "ws": "read_session_messages",
