@@ -440,6 +440,7 @@ pub(super) async fn start_observed_with_permission_rule_sets(
             permission_rule_sets: Some(permission_rule_sets),
             acquire_miss_report: Some(miss_report),
             publish_mcp_config,
+            defer_channel_activation: false,
         },
     )
     .await
