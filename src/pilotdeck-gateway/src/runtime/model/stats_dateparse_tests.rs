@@ -83,9 +83,14 @@ fn dateparse_zone_child() {
         let local = JsString::from("2000-01-01T00:00:00");
         let shared = pilotdeck_transport::system_clock::parse_node22_date(&local);
         if zone == ":/nonexistent" {
-            assert!(
-                shared.is_err(),
-                "#273 unresolvable TZ path must stay unreadable: {zone}"
+            // Node v22.22.0: an identifier neither ICU nor the C library
+            // resolves is a fixed zone at offset 0 (`new Date(local)` is
+            // 946684800000, `resolvedOptions().timeZone` undefined);
+            // `system_clock::host_zone` models it.
+            assert_eq!(
+                shared,
+                Ok(Some(946_684_800_000.0)),
+                "#273 unresolvable TZ path parses at offset 0 like Node: {zone}"
             );
         } else {
             assert!(shared.unwrap().is_some());

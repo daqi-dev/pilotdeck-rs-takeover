@@ -217,9 +217,19 @@ fn read_snapshots(projects_dir: &Path) -> Result<Vec<StoreSnapshot>, CronStoreEr
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error.into()),
     };
+    // Node's `readdir` lists through libuv's `scandir`, which sorts the names
+    // bytewise; `read_dir` is in file-system order.
+    let mut entries = entries.collect::<Result<Vec<_>, _>>()?;
+    {
+        use std::os::unix::ffi::OsStrExt;
+        entries.sort_by(|left, right| {
+            left.file_name()
+                .as_bytes()
+                .cmp(right.file_name().as_bytes())
+        });
+    }
     let mut snapshots = Vec::new();
     for entry in entries {
-        let entry = entry?;
         if !entry.file_type()?.is_dir() {
             continue;
         }
