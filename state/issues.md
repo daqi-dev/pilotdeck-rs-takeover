@@ -68,6 +68,8 @@
 |---|---|---|---|
 | cb8 上并行跑全量时每轮 5–9 个场景偶发不一致，单独重跑一致（常见：`gap-tool-glob`、`gap-tool-grep`、`gap-permissions-json-rules`、`robust-large-message`、`loop-parallel-tools`、`loop-multi-tool`）。至少一部分的根因是上面的 `Keep-Alive` 差异 | * | cb8 验收 | 在查 |
 | cb8 上单槽位重跑偶发不一致（同一轮里另一次重跑与全量都一致）：`hook-post-tool-use-interrupt` 一次差 318 处，`abort-hook-advisory-late-50` 一次差 2 处（后者靠 25 毫秒的收尾窗口）。没有两侧各量 20 次 | hooks, loop | cb8 验收（`2bfa0c7a7`） | 待派（在 cb8 上量；基线稳定而 Rust 不稳就是产品差异） |
+| `[gateway:turn-timing]` 日志行两侧都是「耗时达到 200 毫秒才打」（基线 `InProcessGateway.ts:1629、1820`），所以它出不出现取决于机器快慢：`cli-entry-flags` 在 cb8 全量里 Rust 多打一行（`releaseMs` 218）。规则已定：比较器把这类行从 stdout 里摘出来不比（两侧各记条数供性能报告用） | cli, gw | cb8 验收（`809bc4cb8`） | 待派（下一批尺子修复） |
+| `abort-tool-bash-disconnect` 在 cb8 的 v20 全量里差 404 处（v19 里一致），没看原因 | loop, tools | cb8 验收（`809bc4cb8`） | 待派（与上面两个中止场景一起在 cb8 上量） |
 | `turn-steer-terminal`：场景已改回在 `model_request_started` 触发插话，差异如实露出（macOS 与 cb8 都稳定差 33 处）——Rust 经 sidecar 一跳落盘，插话记录与这一轮记录的先后与基线不同。属产品差异，见第 2 级 | loop | 审阅 | 已转第 2 级 |
 | 范围偏宽的放过：四个记忆场景放过整段 `state_json`；`hook-cancelled` 的 `accepted` 放过会话文件第 20–29 条和整份 `projections.json`；TCP 场景整值放过 `moduleInstanceId`（证明不了「新实例」）；子代理场景的用量正则只认字段名；`always-on-fire-git` 一次略过 256 处 | memory, hooks, modules, agents, auto | 审阅 | 在修（收窄） |
 | `scripts/upstream-tests/run.mjs` 的缺省运行包含 parity 组，而它在 Rust 上按设计有 14 个不过，所以退出码不能反映「计入的全过」；也还没在 Linux 上跑过 | modules | 主会话 | 待派 |
