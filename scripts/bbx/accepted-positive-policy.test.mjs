@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
-import {acceptedPositiveContract} from './accepted-positive-policy.mjs';
+import {acceptedPositiveContract,recoveredDialog} from './accepted-positive-policy.mjs';
 const config={scene:'baseline-bug-rename-reload',id:'rename-then-reload-bricks-session'};
 const minimal=()=>({scenario:config.scene,side:'rust',failures:[],steps:[],tree:{},provider:{}});
 test('unknown accepted scene cannot obtain a receipt',()=>assert.throws(()=>acceptedPositiveContract(minimal(),{scene:'unknown',id:'unknown'})));
@@ -81,3 +81,27 @@ if(root){
 }
 
 test('CLI shutdown delegate rejects false marker and missing real contract',()=>{for(const a of [{id:'p',path:'/steps',cliShutdownCompleted:false},{id:'p',path:'/wrong',cliShutdownCompleted:true},{id:'p',path:'/steps',cliShutdownCompleted:true}])assert.equal(assertionResults([a],minimal(),'rust')[0].passed,false);});
+
+// Optional exact actual capture: call the inner relation oracle without altering
+// its recorded failures or manufacturing a new capture/assertion receipt.
+const crashRaw=process.env.BBX_CRASH_POSITIVE_RAW;
+if(crashRaw){
+ const bytes=fs.readFileSync(crashRaw),original=JSON.parse(bytes),digest=createHash('sha256').update(bytes).digest('hex');
+ const dialogs=(a,i)=>a.steps[i].frames.find(f=>f.type==='response').result.dialogs;
+ test('actual loaded crash seed satisfies inner relation without clearing failures',()=>{assert.equal(recoveredDialog(original).length,3);assert.ok(original.failures.length>0);});
+ const controls=[
+ ['missing nested dialog',a=>{dialogs(a,5).splice(0);}],
+ ['missing nested request',a=>{delete dialogs(a,5)[0].request;}],
+ ['foreign nested request ID',a=>{dialogs(a,5)[0].request.requestId='foreign';}],
+ ['foreign nested tool ID',a=>{dialogs(a,5)[0].request.toolCallId='foreign';}],
+ ['wrong wrapper',a=>{dialogs(a,5)[0].type='user_dialog_request';}],
+ ['wrong restart reason',a=>{dialogs(a,5)[0].reason='foreign';}],
+ ['wrong continuation',a=>{dialogs(a,5)[0].recovery='foreign';}],
+ ['duplicate exact nested request',a=>{dialogs(a,5).push(structuredClone(dialogs(a,5)[0]));}],
+ ['answered request remains immediately',a=>{dialogs(a,8).push(structuredClone(dialogs(a,5)[0]));}],
+ ['answered request remains after turn',a=>{dialogs(a,11).push(structuredClone(dialogs(a,5)[0]));}],
+ ['old provider history missing',a=>{a.provider['turn-3'][0].body.messages=a.provider['turn-3'][0].body.messages.filter(m=>m.content!=='first question');}],
+ ];
+ for(const [label,mutate]of controls)test('actual crash nested control rejects '+label,()=>{const a=structuredClone(original);mutate(a);assert.throws(()=>recoveredDialog(a));});
+ test('actual crash capture failure and bytes remain unchanged',()=>{assert.equal(createHash('sha256').update(fs.readFileSync(crashRaw)).digest('hex'),digest);assert.throws(()=>acceptedPositiveContract(original,{scene:'robust-restart-crash-leftovers',id:'dialog-recovery-keeps-history'}),/no capture failures/);});
+}

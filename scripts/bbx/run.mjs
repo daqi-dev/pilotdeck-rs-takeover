@@ -20,7 +20,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import { inputIdentity, scenarioIdentity, assertionResults } from './evidence.mjs';
-import { externalConfigRewrite } from './fixtures/config-watch-input.mjs';
+import { externalConfigRewrite, configWatchStepResult } from './fixtures/config-watch-input.mjs';
 import { componentSupplyEnvironment, componentSupplyIdentity } from './component-supply.mjs';
 import { matchesProviderRule, writeSeedFile } from './mock-support.mjs';
 import { observePersistedRunEvent, trackProviderResponse, validateTrigger } from './serve-persisted-event.mjs';
@@ -381,7 +381,7 @@ const runStep = async (step) => {
     const receipts = evidence.configWatchInput ??= [];
     const receiptIndex = receipts.length;
     receipts.push({ ...receipt, stepIndex: out.steps.length });
-    return { ...result, externalConfigRewrite: { ...result.externalConfigRewrite, receiptIndex } };
+    return configWatchStepResult(side, result, receipt, receiptIndex);
   }
   if (step.sleep) { await sleep(step.sleep); return { slept: true }; }
   if (step.disconnect) {

@@ -20,7 +20,7 @@ function rewritten(source){
 function snapshot(value,allowedPaths){
  assert.equal(value?.step?.ws,'resolve_settings','only read-only snapshot RPC');assert.deepEqual(value.step.params,{});
  const response=value.frames?.filter(f=>f.type==='response');assert.equal(response?.length,1);assert.equal(response[0].ok,true);assert.equal(response[0].error,undefined);
- const result=response[0].result;assert.ok(Number.isSafeInteger(result?.version)&&result.version>0);assert.match(result.contentHash,/^[a-f0-9]{64}$/);assert.ok(Array.isArray(result.sources)&&result.sources.some(s=>allowedPaths.includes(s.path)),'snapshot belongs to exact written config');return {version:result.version,contentHash:result.contentHash};
+ const result=response[0].result;assert.ok(Number.isSafeInteger(result?.version)&&result.version>0);assert.match(result.contentHash,/^[a-f0-9]{64}$/);assert.ok(Array.isArray(result.sources));const sources=result.sources.filter(s=>allowedPaths.includes(s.path));assert.equal(sources.length,1,'one exact owned config source');assert.match(sources[0].contentHash,/^[a-f0-9]{64}$/);return {version:result.version,contentHash:result.contentHash,sourceHash:sources[0].contentHash};
 }
 async function bounded(promise,remaining){
  if(remaining<=0)return null;let timer;
@@ -40,6 +40,7 @@ export async function externalConfigRewrite({scene,input,pilotHome,ownedRoot,res
   fd=fs.openSync(file,flags);const opened=fs.fstatSync(fd,{bigint:true});assert.equal(opened.dev,entry.dev);assert.equal(opened.ino,entry.ino);assert.ok(opened.isFile());assert.equal(opened.nlink,1n);assert.ok(opened.size<=1048576n);
   const before=fs.readFileSync(fd),source=before.toString('utf8');assert.equal(Buffer.from(source).compare(before),0,'UTF8 fixture config');
   const after=Buffer.from(rewritten(source));
+  assert.equal(beforeSnapshot.sourceHash,hash(before),'snapshot source matches actual before bytes');
   receipt.beforeFile={...identity(opened),sha256:hash(before),text:source};receipt.frameCursor=readFrames().length;
   assert.ok(performance.now()<deadline,'deadline before mutation');receipt.writeStartedMs=performance.now()-start;fs.writeSync(fd,after,0,after.length,0);fs.ftruncateSync(fd,after.length);fs.fsyncSync(fd);
   const observedFile=readOwned(file,opened),actual=observedFile.bytes,afterStat=observedFile.stat;assert.ok(afterStat.isFile()&&!afterStat.isSymbolicLink());assert.equal(afterStat.dev,opened.dev);assert.equal(afterStat.ino,opened.ino,'same inode external inplace write');assert.deepEqual(actual,after);assert.notEqual(hash(before),hash(actual));
@@ -50,13 +51,14 @@ export async function externalConfigRewrite({scene,input,pilotHome,ownedRoot,res
    if(index>=0){
     nextNotification=index+1;
     const candidate=await bounded(resolveSettings(),deadline-performance.now());if(candidate===null)break;receipt.rpc.push({...clone(candidate),afterNotificationIndex:index});const observed=snapshot(candidate,[file,requestedFile]);
-    if(observed.version>beforeSnapshot.version&&observed.contentHash!==beforeSnapshot.contentHash&&performance.now()<deadline){
-     const current=readOwned(file,opened),now=current.stat;assert.deepEqual(current.bytes,after,'no other config writer');assert.equal(now.nlink,1n);assert.equal(now.mode,opened.mode);assert.equal(now.uid,opened.uid);
+    const current=readOwned(file,opened),now=current.stat;assert.deepEqual(current.bytes,after,'no other config writer');assert.equal(now.nlink,1n);assert.equal(now.mode,opened.mode);assert.equal(now.uid,opened.uid);
+    if(observed.version>beforeSnapshot.version&&observed.sourceHash===hash(after)&&performance.now()<deadline){
      receipt.notification={index,frame:clone(frames[index])};receipt.observedFrameCount=readFrames().length;receipt.afterSnapshot=observed;receipt.observed=true;break;
     }
    }
    await new Promise(resolve=>setTimeout(resolve,Math.min(pollMs,Math.max(1,deadline-performance.now()))));
   }
+  const observedFrames=readFrames();receipt.observedFrameCount=observedFrames.length;receipt.observationFrames=clone(observedFrames.slice(receipt.frameCursor));
   receipt.durationMs=performance.now()-start;
   return {externalConfigRewrite:{written:true,observed:receipt.observed,fromMaxOutputTokens:4096,toMaxOutputTokens:2048},...(!receipt.observed?{timedOut:true}:{}),receipt};
  }finally{if(fd!==undefined)fs.closeSync(fd);}
@@ -73,9 +75,20 @@ export function verifyConfigWatchInput(artifact){
  for(const key of ['dev','ino','uid','mode'])assert.equal(after[key],before[key],'same owned inode '+key);assert.equal(after.text,rewritten(before.text));assert.notEqual(before.sha256,after.sha256);assert.equal(artifact.tree?.['/home/.pilotdeck/pilotdeck.yaml']?.text,after.text,'actual final config bytes');
  assert.ok(Number.isFinite(proof.writeStartedMs)&&proof.writeStartedMs>=0);assert.ok(proof.writeCompletedMs>=proof.writeStartedMs&&proof.durationMs>=proof.writeCompletedMs&&proof.durationMs<=30000);
  assert.ok(Number.isSafeInteger(proof.frameCursor)&&proof.frameCursor>=0);assert.ok(Number.isSafeInteger(proof.notification?.index)&&proof.notification.index>=proof.frameCursor&&Number.isSafeInteger(proof.observedFrameCount)&&proof.notification.index<proof.observedFrameCount);assert.ok(notification(proof.notification.frame));assert.ok(artifact.notifications.some(n=>JSON.stringify(n)===JSON.stringify(proof.notification.frame)),'same actual captured config notification');
- assert.ok(Array.isArray(proof.rpc)&&proof.rpc.length>=2);const first=snapshot(proof.rpc[0],[proof.file,proof.requestedFile]);assert.equal(proof.rpc[0].afterNotificationIndex,undefined);for(const rpc of proof.rpc)snapshot(rpc,[proof.file,proof.requestedFile]);const last=one(proof.rpc.filter(r=>r.afterNotificationIndex===proof.notification.index),'read-only snapshot tied to fresh notification');const next=snapshot(last,[proof.file,proof.requestedFile]);assert.deepEqual(first,proof.beforeSnapshot);assert.deepEqual(next,proof.afterSnapshot);assert.ok(next.version>first.version&&next.contentHash!==first.contentHash);
+ assert.ok(Array.isArray(proof.rpc)&&proof.rpc.length>=2);const first=snapshot(proof.rpc[0],[proof.file,proof.requestedFile]);assert.equal(proof.rpc[0].afterNotificationIndex,undefined);for(const rpc of proof.rpc)snapshot(rpc,[proof.file,proof.requestedFile]);const last=one(proof.rpc.filter(r=>r.afterNotificationIndex===proof.notification.index),'read-only snapshot tied to fresh notification');const next=snapshot(last,[proof.file,proof.requestedFile]);assert.deepEqual(first,proof.beforeSnapshot);assert.deepEqual(next,proof.afterSnapshot);assert.equal(first.sourceHash,before.sha256);assert.equal(next.sourceHash,after.sha256);assert.ok(next.version>first.version&&next.sourceHash!==first.sourceHash);
  const turn=artifact.steps[28];assert.deepEqual(turn.step,{ws:'submit_turn',params:{sessionKey:'s-watch-rewrite',channelKey:'test',message:'watch-rewrite: confirm current config'}});assert.ok(!turn.frames.some(f=>f.error||f.type?.startsWith('__')));const started=one(turn.frames.filter(f=>f.event?.type==='turn_started'),'real following turn');const terminal=one(turn.frames.filter(f=>f.final),'real following terminal');assert.equal(terminal.event?.type,'turn_completed');assert.equal(terminal.event.runId,started.event.runId);assert.equal(terminal.event.finishReason,'completed');assert.ok(terminal.seq>started.seq);
  const request=one(artifact.provider?.['watch-rewrite'],'actual following provider request');assert.equal(request.method,'POST');assert.equal(request.url,'/v1/chat/completions');assert.equal(request.body.max_tokens,2048);assert.equal(request.body.messages.filter(m=>m.role==='user'&&messageText(m)==='watch-rewrite: confirm current config').length,1);
  const [chat]=one(Object.entries(artifact.tree).filter(([file])=>file.endsWith('/chats/s-watch-rewrite.jsonl')),'actual following durable transcript');const rows=artifact.tree[chat].jsonl;assert.ok(Array.isArray(rows)&&rows.length>0);const entryIds=new Set();for(let i=0;i<rows.length;i++){const row=rows[i];assert.equal(row.sessionId,'s-watch-rewrite');assert.equal(row.sequence,i+1);assert.ok(typeof row.entryId==='string'&&row.entryId&&!entryIds.has(row.entryId));entryIds.add(row.entryId);assert.equal(row.parentEntryId,i?rows[i-1].entryId:null);}one(rows.filter(r=>r.type==='turn_started'&&r.turnId===started.event.runId),'same-run durable start');const model=one(rows.filter(r=>r.type==='model_request'&&r.turnId===started.event.runId),'same-run durable model');assert.ok(model.request?.messages?.some(m=>m.role==='user'&&messageText(m)==='watch-rewrite: confirm current config'));const assistant=one(rows.filter(r=>r.type==='assistant_message'&&r.turnId===started.event.runId),'same-run durable assistant');assert.equal(messageText(assistant.message),'Watch rewrite applied.');const accepted=one(rows.filter(r=>r.type==='accepted_input'&&r.turnId===started.event.runId),'same-run persisted input');assert.equal(accepted.sessionId,'s-watch-rewrite');assert.equal(accepted.messages.filter(m=>m.role==='user'&&messageText(m)==='watch-rewrite: confirm current config').length,1);const completed=one(rows.filter(r=>r.type==='turn_result'&&r.turnId===started.event.runId),'same-run persisted terminal');assert.equal(completed.result?.type,'success');assert.equal(completed.result.turnId,started.event.runId);assert.equal(completed.result.sessionId,'s-watch-rewrite');assert.equal(completed.result.stopReason,'completed');assert.equal(messageText(completed.result.finalMessage),'Watch rewrite applied.');
  return true;
+}
+
+// Expiration of a completed TS observation is an observed baseline outcome,
+// not a killed RPC/collector timeout. Rust retains its required positive gate.
+export function configWatchStepResult(side,result,receipt,receiptIndex){
+ assert.ok(['ts','rust'].includes(side));
+ const output={...result,externalConfigRewrite:{...result.externalConfigRewrite,receiptIndex}};
+ if(side==='ts'&&result.timedOut===true&&receipt.written===true&&receipt.observed===false&&receipt.notification===null&&receipt.rpc.length===1&&Array.isArray(receipt.observationFrames)&&receipt.observedFrameCount===receipt.frameCursor+receipt.observationFrames.length&&!receipt.observationFrames.some(notification)&&receipt.durationMs>=receipt.timeoutMs){
+  delete output.timedOut;output.externalConfigRewrite.observationExpired=true;
+ }
+ return output;
 }
