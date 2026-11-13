@@ -56,10 +56,21 @@ pub fn register_read_only_tools(
 }
 
 pub fn read_only_tools() -> Vec<Arc<dyn ExecutableTool>> {
+    read_only_tools_with(Default::default())
+}
+
+/// [`read_only_tools`] over the execution world's subprocess provider: a
+/// constrained `agent.sandboxMode` routes the ripgrep child of `glob` / `grep`
+/// through the sandbox too (ExecutionWorldBundle.ts:137-144,
+/// SandboxedSubprocessPort.ts:28-37), so it fails closed where no enforcing
+/// sandbox exists.
+pub fn read_only_tools_with(
+    sandbox: crate::runtime::tools::sandbox::Sandbox,
+) -> Vec<Arc<dyn ExecutableTool>> {
     vec![
         Arc::new(read_file::ReadFileTool::new()),
-        Arc::new(glob::GlobTool::new()),
-        Arc::new(grep::GrepTool::new()),
+        Arc::new(glob::GlobTool::new().with_sandbox(sandbox)),
+        Arc::new(grep::GrepTool::new().with_sandbox(sandbox)),
         Arc::new(time::GetCurrentTimeTool::new()),
     ]
 }

@@ -1,6 +1,7 @@
 {
  "name": "gap-tool-glob",
- "about": "glob 的参数分支（tool/builtin/glob.ts:90-149 与 extractGlobBaseDirectory）：先用 touch 把各文件的修改时间排成与字典序不同的顺序（结果按修改时间升序，filesystem/ripgrepFiles.ts:60,76-77）；递归 **、path 限定子目录、limit 截断、绝对路径模式（拆出基目录）、绝对模式指向工作区外、path 不存在、path 是文件、无匹配、隐藏目录与 .gitignore / node_modules、非 ASCII 文件名、花括号与字符类、缺 pattern。",
+ "about": "glob 的参数分支（tool/builtin/glob.ts:90-149 与 extractGlobBaseDirectory）：先用 touch 把各文件的修改时间排成与字典序不同的顺序（结果按修改时间升序，filesystem/ripgrepFiles.ts:60,76-77）；递归 **、path 限定子目录、limit 截断、绝对路径模式（拆出基目录）、绝对模式指向工作区外、path 不存在、path 是文件、无匹配、隐藏目录与 .gitignore / node_modules、非 ASCII 文件名、花括号与字符类、缺 pattern。（volatile 依据：Linux 上基线自比 8 次有 1 次 session.fileSize 不同，差 27 字节，来自会话文件里 glob 结果的 durationMs 位数（9 与 12 毫秒之间跳动）；durationMs 本身已归一化，只有它的位数漏进了文件大小。）",
+ "volatile": ["^\\$\\.steps\\[\\d+\\]\\.frames\\[\\d+\\]\\.result\\.session\\.fileSize$"],
  "files": {
   "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
   "home/work/alpha/a.ts": "a\n",

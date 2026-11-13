@@ -8,6 +8,7 @@ use super::{
     basename, dirname, is_absolute, object, resolve_workspace_path, schema, string, text,
     tool_error,
 };
+use crate::runtime::tools::sandbox::Sandbox;
 use crate::{
     host::{HostError, modules::capability::ToolDefinition},
     runtime::tools::{ExecutableTool, ToolError, ToolFuture, ToolOutput, ToolRunContext},
@@ -19,13 +20,21 @@ const DEFAULT_LIMIT: usize = 1_000;
 
 pub struct GlobTool {
     fields: JsObject,
+    sandbox: Sandbox,
 }
 
 impl GlobTool {
     pub fn new() -> Self {
         Self {
             fields: definition(),
+            sandbox: Sandbox::default(),
         }
+    }
+
+    /// Spawn ripgrep through the execution world's sandbox.
+    pub fn with_sandbox(mut self, sandbox: Sandbox) -> Self {
+        self.sandbox = sandbox;
+        self
     }
 }
 
@@ -49,7 +58,8 @@ impl ToolDefinition for GlobTool {
 
 impl ExecutableTool for GlobTool {
     fn execute(&self, input: JsValue, context: ToolRunContext) -> ToolFuture<ToolOutput> {
-        Box::pin(async move { execute(&input, &context).await })
+        let sandbox = self.sandbox;
+        Box::pin(async move { execute(&input, &context, sandbox).await })
     }
 }
 
@@ -74,7 +84,11 @@ fn definition() -> JsObject {
     ])
 }
 
-async fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, ToolError> {
+async fn execute(
+    input: &JsValue,
+    context: &ToolRunContext,
+    sandbox: Sandbox,
+) -> Result<ToolOutput, ToolError> {
     let pattern = input
         .get("pattern")
         .and_then(JsValue::as_string)
@@ -99,7 +113,7 @@ async fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput
     } else {
         format!("{}/", text(&resolved.relative))
     };
-    let files = ripgrep_files(&resolved.absolute, &search_pattern, context).await?;
+    let files = ripgrep_files(&resolved.absolute, &search_pattern, context, sandbox).await?;
     let limit = input
         .get("limit")
         .and_then(JsValue::as_number)
@@ -191,6 +205,7 @@ async fn ripgrep_files(
     cwd: &JsString,
     pattern: &JsString,
     context: &ToolRunContext,
+    sandbox: Sandbox,
 ) -> Result<Vec<String>, ToolError> {
     let glob = normalize_ripgrep_glob_pattern(&text(pattern), &super::os_path(cwd));
     let args: Vec<String> = [
@@ -205,7 +220,7 @@ async fn ripgrep_files(
     .iter()
     .map(|arg| (*arg).to_owned())
     .collect();
-    let stdout = super::grep::run_ripgrep_for("glob", &args, cwd, context).await?;
+    let stdout = super::grep::run_ripgrep_for("glob", &args, cwd, context, sandbox).await?;
     Ok(super::grep::split_ripgrep_lines(&stdout)
         .iter()
         .map(|line| super::grep::normalize_relative_path(line))

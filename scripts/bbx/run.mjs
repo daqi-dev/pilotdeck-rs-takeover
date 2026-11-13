@@ -26,12 +26,20 @@ const TARGET = process.env.BBX_TARGET || path.join(REPO, 'src/target/debug');
 // 不同槽位的采集产物之间不要互相比。槽位 0（缺省）就是原来的固定目录和端口。
 const SLOT = Number(process.env.BBX_SLOT || 0);
 if (!Number.isInteger(SLOT) || SLOT < 0 || SLOT > 8) { console.error('bbx: BBX_SLOT must be 0..8'); process.exit(2); }
-// 根目录的父目录：macOS 上是 /private/tmp（/tmp 的物理路径），其他平台是 /tmp。场景里写死的
-// /private/tmp/pdrs-bbx 在读入时换成本平台的写法。两侧在同一台机器上跑，路径长度随平台变不影响结论；
-// 不同平台的采集产物不要互相比。
-const TMP_BASE = process.platform === 'darwin' ? '/private/tmp' : '/tmp';
+// 根目录的父目录：macOS 上是 /private/tmp（/tmp 的物理路径），其他平台是 /tmp/private。后者与前者等长，
+// 这样各平台上根目录之下的所有路径（以及由路径派生的项目目录名、项目键、百分号编码）都与 macOS 等长：
+// 基线有按字符数截断的文本（例如会话元数据里 1200 字符的 firstPrompt），路径短 8 个字符会把截断点挪进
+// 随机 UUID 的中间，基线自比就不稳了；token 估算、文件大小同理。场景里写死的三种写法在读入时换成
+// 本平台的写法：/private/tmp/pdrs-bbx、项目目录名 private-tmp-pdrs-bbx、编码后的 %2Fprivate%2Ftmp%2Fpdrs-bbx。
+// macOS 上不做任何替换。两侧在同一台机器上跑；不同平台的采集产物不要互相比。
+const TMP_BASE = process.platform === 'darwin' ? '/private/tmp' : '/tmp/private';
+const PLATFORM_FORMS = TMP_BASE === '/private/tmp' ? [] : [
+  ['/private/tmp/pdrs-bbx', `${TMP_BASE}/pdrs-bbx`],
+  ['%2Fprivate%2Ftmp%2Fpdrs-bbx', `${encodeURIComponent(TMP_BASE)}%2Fpdrs-bbx`],
+  ['private-tmp-pdrs-bbx', `${TMP_BASE.slice(1).replaceAll('/', '-')}-pdrs-bbx`],
+];
 const slotText = (t) => {
-  const local = TMP_BASE === '/private/tmp' ? t : t.replaceAll('/private/tmp/pdrs-bbx', `${TMP_BASE}/pdrs-bbx`);
+  const local = PLATFORM_FORMS.reduce((s, [from, to]) => s.replaceAll(from, to), t);
   return SLOT ? local.replaceAll('pdrs-bbx', `pdrs-bb${SLOT}`).replaceAll('3841', `384${1 + SLOT}`) : local;
 };
 export const ROOT = slotText('/private/tmp/pdrs-bbx/root');

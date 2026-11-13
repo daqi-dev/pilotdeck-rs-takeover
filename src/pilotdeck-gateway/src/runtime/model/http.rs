@@ -49,6 +49,7 @@ mod complete;
 pub(crate) mod encoding;
 mod errors;
 mod google;
+pub(crate) mod keep_alive;
 mod sse;
 mod tls;
 pub use complete::complete_model;
@@ -324,7 +325,9 @@ impl HyperModelTransport {
     }
     fn from_config(config: rustls::ClientConfig, proxy: Option<ProxyConfig>) -> Self {
         Self {
+            // 空闲连接的弃用时机由 `keep_alive` 按 undici 的规则逐条决定，不用 hyper 的全局时限。
             client: Client::builder(TokioExecutor::new())
+                .pool_idle_timeout(None)
                 .build(proxy_https_connector(config, proxy)),
         }
     }
@@ -965,6 +968,9 @@ pub(crate) struct PrefixedStream<S> {
     inner: S,
     prefix: Vec<u8>,
     position: usize,
+    /// 空闲期限（见 `keep_alive`）：到期后空闲中的读返回 EOF。
+    keep_alive: Arc<keep_alive::KeepAliveState>,
+    idle_timer: Option<Pin<Box<tokio::time::Sleep>>>,
 }
 impl<S> PrefixedStream<S> {
     fn new(inner: S, prefix: Vec<u8>) -> Self {
@@ -972,6 +978,8 @@ impl<S> PrefixedStream<S> {
             inner,
             prefix,
             position: 0,
+            keep_alive: Arc::default(),
+            idle_timer: None,
         }
     }
 }
@@ -988,12 +996,21 @@ impl<S: hyper::rt::Read + Unpin> hyper::rt::Read for PrefixedStream<S> {
             this.position += count;
             return Poll::Ready(Ok(()));
         }
-        Pin::new(&mut this.inner).poll_read(context, buffer)
+        match Pin::new(&mut this.inner).poll_read(context, buffer) {
+            Poll::Pending => {}
+            ready => return ready,
+        }
+        if this.keep_alive.idle_expired(context, &mut this.idle_timer) {
+            // 什么也不填就是 EOF：hyper 把空闲连接当作已关闭，不再复用。
+            return Poll::Ready(Ok(()));
+        }
+        Poll::Pending
     }
 }
 impl<S> hyper_util::client::legacy::connect::Connection for PrefixedStream<S> {
     fn connected(&self) -> hyper_util::client::legacy::connect::Connected {
         hyper_util::client::legacy::connect::Connected::new()
+            .extra(keep_alive::KeepAliveHandle(self.keep_alive.clone()))
     }
 }
 impl<S: hyper::rt::Write + Unpin> hyper::rt::Write for PrefixedStream<S> {
@@ -1002,7 +1019,9 @@ impl<S: hyper::rt::Write + Unpin> hyper::rt::Write for PrefixedStream<S> {
         context: &mut Context<'_>,
         buffer: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        Pin::new(&mut self.get_mut().inner).poll_write(context, buffer)
+        let this = self.get_mut();
+        this.keep_alive.mark_busy();
+        Pin::new(&mut this.inner).poll_write(context, buffer)
     }
     fn poll_flush(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         Pin::new(&mut self.get_mut().inner).poll_flush(context)
@@ -1104,21 +1123,36 @@ impl Default for HyperModelTransport {
     }
 }
 impl ModelHttpTransport for HyperModelTransport {
-    fn send(&self, request: Request<Full<Bytes>>) -> TransportFuture {
+    fn send(&self, mut request: Request<Full<Bytes>>) -> TransportFuture {
         let client = self.client.clone();
         let method = request.method().clone();
         let follow_redirects = request
             .extensions()
             .get::<crate::fetch_redirect::FollowRedirects>()
             .is_some();
+        let captured = hyper_util::client::legacy::connect::capture_connection(&mut request);
         TransportFuture::io(async move {
             let response = client
                 .request(request)
                 .await
                 .map_err(|error| TransportFailure::fetch_failed(cause_code(&error)))?;
+            let keep_alive = captured
+                .connection_metadata()
+                .as_ref()
+                .and_then(|connected| {
+                    let mut extras = hyper::http::Extensions::new();
+                    connected.get_extras(&mut extras);
+                    extras.get::<keep_alive::KeepAliveHandle>().map(|handle| {
+                        (handle.0.clone(), keep_alive::idle_after(response.headers()))
+                    })
+                });
             encoding::decode_response(
                 &method,
-                response.map(|body| body.map_err(|_| BodyFailure::Terminated).boxed()),
+                response.map(|body| {
+                    keep_alive::IdleOnEnd::new(body, keep_alive)
+                        .map_err(|_| BodyFailure::Terminated)
+                        .boxed()
+                }),
                 follow_redirects,
             )
         })
