@@ -35,6 +35,17 @@ const withProj = (records, kind = 'k') => {
     '/home/x/chats/s.jsonl.projections.json': { mode: '644', json: { entries: [{ index: e.sequence - 1, kind, entry: { sequence: e.sequence, entryId: e.entryId, parentEntryId: null } }] } },
   } });
 };
+// 规则 17：会话文件 s.jsonl（第一条记录最短）加一帧 read_session_messages 的 session.fileSize。
+// dur 是每条工具记录里 durationMs 的值，size 缺省为整份文件的字节数，sizeAt 给出时取前 sizeAt 条记录的字节数。
+const sessRecs = (dur, n = 11) => [{ type: 'accepted_input', turnId: 't1' },
+  ...Array.from({ length: n }, (_, i) => ({ type: 'tool_result', turnId: 't1', toolUseId: `call_${i}`, output: 'some tool output text here', durationMs: dur }))];
+const bytes = (recs) => recs.reduce((n, r) => n + Buffer.byteLength(JSON.stringify(r)) + 1, 0);
+const sized = (recs, { size = bytes(recs), sizeAt, file = true, rewritten = false } = {}) => art(
+  [{ step: { ws: 'read_session_messages' }, frames: [{ type: 'response', ok: true, result: { session: { sessionId: 's', fileSize: sizeAt === undefined ? size : bytes(recs.slice(0, sizeAt)) } } }] }],
+  { tree: file ? { '/home/.pilotdeck/projects/p/chats/s.jsonl': { mode: '644', jsonl: recs, raw: { lines: rewritten ? recs.length + 1 : recs.length, finalNewline: true, skeletons: {} } } } : {} });
+const LOCK = '/home/.pilotdeck/runs/registry.json.lock';
+const withLock = (text) => art([], { tree: text === undefined ? {} : { [LOCK]: { mode: '644', text } } });
+const memState = (caseId, traceId, extra = 'x') => sql({ state_key: 'recentCaseTraces', state_json: JSON.stringify([{ caseId, note: extra, retrieval: { trace: { traceId, steps: [{ stepId: `${traceId}:step:1` }, { stepId: `${traceId}:step:2` }] } } }]) });
 const cases = [
   // [说明, a, b, 期望, diff.mjs 额外参数]
   ['相同', frame({ a: 1 }), frame({ a: 1 }), 'SAME'],
@@ -100,6 +111,26 @@ const cases = [
   ['sqlite 的 _json 单元格键顺序不同', sql({ k: 'a', state_json: '{"x":1,"y":2}' }), sql({ k: 'a', state_json: '{"y":2,"x":1}' }), 'DIFF'],
   ['sqlite 的 _json 单元格一侧不是 JSON', sql({ k: 'a', state_json: '{"x":1}' }), sql({ k: 'a', state_json: 'x=1' }), 'DIFF'],
   ['别的列里的 JSON 文本照整串比', sql({ k: 'a', note: '{"caseId":"r1"}' }, ['\\.note\\.<json>\\.caseId$']), sql({ k: 'a', note: '{"caseId":"r2"}' }, ['\\.note\\.<json>\\.caseId$']), 'DIFF'],
+  ['记忆轨迹 id 的随机段', memState('case_trace_c8152c51eb', 'trace_32ee88c4c6'), memState('case_trace_df3f4efaa4', 'trace_2dcd40dfd6'), 'SAME'],
+  ['记忆轨迹：步骤 id 不再指向同一条轨迹', memState('case_trace_c8152c51eb', 'trace_32ee88c4c6'),
+    sql({ state_key: 'recentCaseTraces', state_json: JSON.stringify([{ caseId: 'case_trace_df3f4efaa4', note: 'x', retrieval: { trace: { traceId: 'trace_2dcd40dfd6', steps: [{ stepId: 'trace_2dcd40dfd6:step:1' }, { stepId: 'trace_aaaaaaaaaa:step:2' }] } } }]) }), 'DIFF'],
+  ['记忆轨迹：case id 与 trace id 的相等关系', frame({ a: 'case_trace_1111111111', b: 'trace_2222222222' }), frame({ a: 'case_trace_3333333333', b: 'case_trace_3333333333' }), 'DIFF'],
+  ['记忆轨迹旁边的字段照比', memState('case_trace_c8152c51eb', 'trace_32ee88c4c6', 'x'), memState('case_trace_df3f4efaa4', 'trace_2dcd40dfd6', 'y'), 'DIFF'],
+  ['index_trace_ 不抹', frame({ id: 'index_trace_c8152c51eb' }), frame({ id: 'index_trace_df3f4efaa4' }), 'DIFF'],
+  ['trace_ 后面位数不对不抹', frame({ id: 'trace_c8152c51eb0' }), frame({ id: 'trace_df3f4efaa41' }), 'DIFF'],
+  ['fileSize：差 11 字节（11 个耗时 8 → 13），两侧都写到同一条', sized(sessRecs(8)), sized(sessRecs(13)), 'SAME'],
+  ['fileSize：一侧是少写最后一条时的旧值', sized(sessRecs(8)), sized(sessRecs(8), { sizeAt: 11 }), 'DIFF'],
+  ['fileSize：差一整条最短记录', sized(sessRecs(8)), sized(sessRecs(8), { size: bytes(sessRecs(8)) - bytes(sessRecs(8).slice(0, 1)) }), 'DIFF'],
+  ['fileSize：一侧为 0', sized(sessRecs(8)), sized(sessRecs(8), { size: 0 }), 'DIFF'],
+  ['fileSize 退到固定容差：差 11 字节', sized(sessRecs(8), { rewritten: true }), sized(sessRecs(13), { rewritten: true }), 'SAME'],
+  ['fileSize 退到固定容差：差一整条最短记录', sized(sessRecs(8), { rewritten: true }), sized(sessRecs(8), { rewritten: true, size: bytes(sessRecs(8)) - bytes(sessRecs(8).slice(0, 1)) }), 'DIFF'],
+  ['fileSize 退到固定容差：差值超过最短记录的一半', sized(sessRecs(8), { rewritten: true }), sized(sessRecs(8), { rewritten: true, size: bytes(sessRecs(8)) + 21 }), 'DIFF'],
+  ['fileSize 退到固定容差：超过 64 字节', sized([{ type: 'accepted_input', text: 'x'.repeat(300) }], { rewritten: true }), sized([{ type: 'accepted_input', text: 'x'.repeat(300) }], { rewritten: true, size: bytes([{ type: 'accepted_input', text: 'x'.repeat(300) }]) + 65 }), 'DIFF'],
+  ['fileSize 退到固定容差：一侧为 0', sized(sessRecs(8), { rewritten: true }), sized(sessRecs(8), { rewritten: true, size: 0 }), 'DIFF'],
+  ['fileSize：树里没有这个会话文件', sized(sessRecs(8), { file: false }), sized(sessRecs(13), { file: false, size: bytes(sessRecs(13)) }), 'DIFF'],
+  ['运行记录锁只在一侧有', withLock('{"pid":1,"acquiredAt":"2026-01-01T00:00:00.000Z"}'), withLock(undefined), 'SAME'],
+  ['运行记录锁两侧都有、内容不同', withLock('{"pid":1,"acquiredAt":"2026-01-01T00:00:00.000Z"}'), withLock('{"pid":2,"acquiredAt":"2026-01-01T00:00:00.000Z","x":1}'), 'DIFF'],
+  ['别的锁文件只在一侧有', art([], { tree: { '/home/.pilotdeck/other.json.lock': { mode: '644', text: 'x' } } }), art([]), 'DIFF'],
   ['created 之外的 10 位整数', frame({ startedAt: 1794495673 }), frame({ startedAt: 1794495675 }), 'DIFF'],
   ['created 一侧不是时间戳', frame({ created: 1794495673 }), frame({ created: 12 }), 'DIFF'],
   ['警告之外的 stderr', frame({ stderr: '(node:1) ExperimentalWarning: x\n(Use `node --trace-warnings ...` to show where the warning was created)\nreal\n' }), frame({ stderr: 'other\n' }), 'DIFF'],
