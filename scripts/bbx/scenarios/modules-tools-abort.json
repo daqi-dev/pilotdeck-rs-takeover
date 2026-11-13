@@ -1,0 +1,192 @@
+{
+ "name": "modules-tools-abort",
+ "about": "外部工具模块（module-http-v2，只有 execute）的调用进行中用户中止：先一轮正常调用把清单缓存下来，第二轮模块延迟 20 秒才应答，收到 tool_call_started 就 abort_turn。基线 callModule 带 execution.abortSignal（hostToolPort.ts:244），HttpModuleClient.ts:107-113 立即中断这次 fetch 并报 MODULE_ABORTED，工具抛「Tool execution cancelled.」，这一轮立刻以 turn_completed（aborted_streaming）结束、同一会话下一轮照常；模块确实收到过这次请求（m-slow 记录 1 条）。步骤限时 10 秒：等模块应答的实现会超时。",
+ "volatile": [
+  "^\\$\\.provider\\.m-[a-z0-9-]+\\[\\d+\\]\\.(body\\.requestId|headers\\.content-length)$"
+ ],
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  tools:\n    enabled: true\n    implementationId: bbx.tools\n    contract: pilotdeck.tools/v1\n    transport: module-http-v2\n    endpoint: {MOCK}/tools\n    timeoutMs: 30000\n    methods:\n      - execute\n    catalog:\n      - name: bbx_echo\n        description: Echo text through the external capability module.\n        inputSchema:\n          type: object\n          properties:\n            text:\n              type: string\n          required:\n            - text\n",
+ "files": {
+  "home/.pilotdeck/permissions.json": {
+   "version": 1,
+   "allowedTools": [],
+   "disallowedTools": [
+    "bbx_echo"
+   ],
+   "askTools": []
+  }
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Tool run\"}"
+   }
+  },
+  {
+   "name": "manifest",
+   "unless": [
+    "\""
+   ],
+   "reply": {
+    "status": 200,
+    "body": {
+     "protocolVersion": "2.0",
+     "implementationId": "bbx.tools",
+     "contract": "pilotdeck.tools/v1",
+     "transport": "module-http-v2",
+     "methods": [
+      "execute"
+     ]
+    }
+   }
+  },
+  {
+   "name": "m-t01",
+   "when": [
+    "\"method\":\"module_call\"",
+    "\"toolCallId\":\"call_t01\""
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "r",
+     "inReplyTo": "{saved.mid}",
+     "requestId": "{saved.rid}",
+     "ok": true,
+     "payload": {
+      "type": "success",
+      "toolCallId": "call_t01",
+      "toolName": "bbx_echo",
+      "content": [
+       {
+        "type": "text",
+        "text": "bbx_echo t01"
+       }
+      ],
+      "startedAt": "2026-01-01T00:00:00.000Z",
+      "completedAt": "2026-01-01T00:00:00.000Z"
+     }
+    }
+   }
+  },
+  {
+   "name": "m-slow",
+   "when": [
+    "\"method\":\"module_call\"",
+    "\"toolCallId\":\"call_slow\""
+   ],
+   "reply": {
+    "text": "late",
+    "delayMs": 20000
+   }
+  },
+  {
+   "name": "next",
+   "when": [
+    "next:"
+   ],
+   "reply": {
+    "text": "next reply"
+   }
+  },
+  {
+   "name": "slow-after",
+   "when": [
+    "slow:",
+    "\"tool_call_id\":\"call_slow\""
+   ],
+   "reply": {
+    "text": "slow done"
+   }
+  },
+  {
+   "name": "slow",
+   "when": [
+    "slow:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_slow",
+     "name": "bbx_echo",
+     "arguments": {
+      "text": "slow"
+     }
+    }
+   }
+  },
+  {
+   "name": "warm-after",
+   "when": [
+    "warm:",
+    "\"tool_call_id\":\"call_t01\""
+   ],
+   "reply": {
+    "text": "warm done"
+   }
+  },
+  {
+   "name": "warm",
+   "when": [
+    "warm:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_t01",
+     "name": "bbx_echo",
+     "arguments": {
+      "text": "warm"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-mt",
+    "channelKey": "test",
+    "message": "warm: call once"
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-mt",
+    "channelKey": "test",
+    "message": "slow: call and abort"
+   },
+   "timeout": 10000,
+   "answer": [
+    {
+     "on": {
+      "type": "tool_call_started"
+     },
+     "ws": "abort_turn",
+     "params": {
+      "sessionKey": "s-mt"
+     },
+     "count": 1
+    }
+   ]
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-mt",
+    "channelKey": "test",
+    "message": "next: after abort"
+   },
+   "timeout": 10000
+  }
+ ]
+}
