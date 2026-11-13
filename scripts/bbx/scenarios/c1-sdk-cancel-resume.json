@@ -207,6 +207,26 @@
         "signal-aborted-footer",
         "signal-empty-stderr"
       ]
+    },
+    {
+      "id": "D1-SDK-SIGNAL-TERMINAL-OBSERVATION-001",
+      "policy": "sdkSignalTerminalObservation",
+      "why": "Explicitly approved preservation of Rust complete terminal: only TS missing the sole result seq7 with exact six-event prefix, matching durable seq8, real recovery and same-binary strict eight-wire proof. TS self never accepted.",
+      "assertions": [
+        "initial-completed",
+        "partial-reached",
+        "signal-handled",
+        "cancel-exit",
+        "recovery-completed",
+        "recovery-real-output",
+        "recovery-status",
+        "history-read",
+        "history-after-recovery",
+        "cancel-model-request",
+        "recovery-model-request",
+        "signal-aborted-footer",
+        "signal-empty-stderr"
+      ]
     }
   ]
 }

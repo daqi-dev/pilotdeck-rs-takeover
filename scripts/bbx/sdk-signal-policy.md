@@ -64,3 +64,11 @@ node --test scripts/bbx/sdk-signal-policy.test.mjs \
 ```
 
 单测中的 formal/wire 数据明确是 synthetic 合同。另一个 macOS 全链探针重验实际封存 binary 的 wire 原件，但 formal Rust 部分是 synthetic 克隆，证明比较/证据装置，不能冒充实际 Rust Gateway 恢复。Linux 最终候选仍须 E0 实际执行 Gateway/provider/持久化/resume。
+
+## 已批准的唯一终端观察差异
+
+2026-11-13用户在当前会话明确批准「批准，保留 Rust 完整终态（推荐）」。新条目`D1-SDK-SIGNAL-TERMINAL-OBSERVATION-001`独立于原abort-order崩溃差异；没有将本形态冒称持久数据丢失或固定测试矛盾。
+
+具名scene新增`sdkSignalTerminalObservation`声明。它只认领第1 serve的stdout：TS准确六事件seq0/1/2/3/4/6、唯一缺result seq7，六事件值与Rust一致；原始持久registry有同run准确seq8 terminal。Rust必须完整六事件+准确result seq7，两侧signal/partial/canonical/恢复及同binary raw8wire仍全部强制。TS omission形态只许原SQLite warning，不接受任意close栈；新策略不认领stderr。旧abort-order策略也不认领新遗漏差异，各自独立打印ID。原环境变量与受信driver/verifier不变。
+
+本次真实2c9首formal INVALID完整保留；`_tmp/20261113-sdk-terminal-proposal/public-first-rule-check/`为旧行为原件的新规则校验副本，仅重绑批准声明、本地严格重验wire身份和现有assertion记录，原stdout/stderr及行为字段没有改动，不是新正式产品执行。公共diff新规则exit0、仅新ID认领stdout；四个精准副本破坏（错run/缺其他事件/缺durable/Rust漏terminal）均INVALID2；当前TS与此前3fTS的self仍DIFF1且无新差异豁免。原artifact SHA前后不变。新正式pair由E0另行执行，不能覆盖或重算首成绩冒称原PASS。

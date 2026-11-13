@@ -11,7 +11,7 @@ import { nativeDependencyIdentity } from './native-identity.mjs';
 import { validatePersistedRunTriggers } from './serve-persisted-event.mjs';
 import { channelPollContract } from './channel-poll-policy.mjs';
 import { sdkAgentContract } from './sdk-agent-policy.mjs';
-import { validateSdkSignalArtifact, SDK_SIGNAL_POLICY_ID } from './sdk-signal-policy.mjs';
+import { validateSdkSignalArtifact, SDK_SIGNAL_POLICY_ID, SDK_SIGNAL_TERMINAL_POLICY_ID } from './sdk-signal-policy.mjs';
 
 export const here = path.dirname(fileURLToPath(import.meta.url));
 export const repo = path.resolve(here, '../..');
@@ -77,7 +77,8 @@ export function loadSdkSignalWireEvidence({ binarySha256, expectedIdentity } = {
   return { receipt: checked, identity };
 }
 export function sdkSignalAcceptedEntry(entry) {
-  return entry?.policy === 'sdkSignalAbortOrder' && entry.id === SDK_SIGNAL_POLICY_ID
+  return ((entry?.policy === 'sdkSignalAbortOrder' && entry.id === SDK_SIGNAL_POLICY_ID)
+    || (entry?.policy === 'sdkSignalTerminalObservation' && entry.id === SDK_SIGNAL_TERMINAL_POLICY_ID))
     && (entry.paths === undefined || isDeepStrictEqual(entry.paths, [])) && entry.config === undefined;
 }
 function signalWireForArtifact(artifact, inputs = artifact.evidence?.inputs) {
@@ -200,7 +201,7 @@ export function validateArtifact(artifact, scenario, expected) {
       else errors.push('unsupported volatile value policy');
     } catch (error) { errors.push(error.message); }
   }
-  for (const accepted of scenario.accepted ?? []) if (accepted.policy === 'sdkSignalAbortOrder') {
+  for (const accepted of scenario.accepted ?? []) if (['sdkSignalAbortOrder','sdkSignalTerminalObservation'].includes(accepted.policy)) {
     try {
       if (!sdkSignalAcceptedEntry(accepted)) throw Error('invalid SDK signal accepted declaration');
       validateSdkSignalAcceptedEvidence(artifact, scenario, expected.inputs);

@@ -74,3 +74,28 @@ const mutations={
 for(const [name,mutate] of Object.entries(mutations))test(`reject ${name}`,()=>{const input=pair();mutate(input);assert.throws(()=>sdkSignalAcceptedPaths(input));});
 test('policy does not grant paths for mutations outside the two fields',()=>{const input=pair();input.right.tree.extra={text:'corrupt'};input.right.provider.extra=[];input.right.steps[2].cli.stdout='corrupt';const accepted=sdkSignalAcceptedPaths(input);assert.deepEqual([...accepted.keys()],['$.steps[1].serve.stdout','$.steps[1].serve.stderr']);});
 test('formal validation declares its RPC proof limitation',()=>{assert.match(validateSdkSignalArtifact(fixture(),scenario,'rust').proofLayers.abortRpc,/not present in formal capture/);});
+
+// Approved D1-SDK-SIGNAL-TERMINAL-OBSERVATION-001: synthetic proof data only.
+function omissionPair(){
+ const input=pair(false);
+ const types=['turn.started','user.accepted','pilotdeck.model_request_started','context.usage','pilotdeck.model_selection_changed','pilotdeck.assistant_block'];
+ const sequences=[0,1,2,3,4,6];
+ for(const raw of [input.rawLeft,input.rawRight]){
+  const prefix=types.map((type,i)=>({type,sequence:sequences[i],runId:run,sessionId:session}));
+  const terminal={type:'result',usage:{},finishReason:'aborted_streaming',runId:run,sequence:7,sessionId:session,status:'completed'};
+  raw.steps[1].serve.stdout=[...prefix,...(raw.side==='rust'?[terminal]:[])].map(e=>JSON.stringify(e)).join('\n')+'\n'+canonical+'\n';
+  raw.tree['/home/.pilotdeck/runs/registry.json'].json.events[`${project}\0${session}\0${run}`][1]={seq:8,event:{type:'turn_completed',usage:{},finishReason:'aborted_streaming',runId:run}};
+ }
+ input.left=structuredClone(input.rawLeft);input.right=structuredClone(input.rawRight);input.policy='sdkSignalTerminalObservation';return input;
+}
+test('approved TS-only terminal omission maps stdout solely under its own policy',()=>{
+ const input=omissionPair();assert.deepEqual([...sdkSignalAcceptedPaths(input).keys()],['$.steps[1].serve.stdout']);
+ input.policy='sdkSignalAbortOrder';assert.equal(sdkSignalAcceptedPaths(input).size,0);
+});
+for(const [name,mutate]of [
+ ['wrong run',p=>p.rawLeft.steps[1].serve.stdout=p.rawLeft.steps[1].serve.stdout.replace('"runId":"cancel-run"','"runId":"wrong-run"')],
+ ['missing other event',p=>p.rawLeft.steps[1].serve.stdout=p.rawLeft.steps[1].serve.stdout.split('\n').filter(line=>!line.includes('"sequence":3')).join('\n')],
+ ['missing durable terminal',p=>p.rawLeft.tree['/home/.pilotdeck/runs/registry.json'].json.events[`${project}\0${session}\0${run}`].pop()],
+ ['Rust missing terminal',p=>p.rawRight.steps[1].serve.stdout=p.rawRight.steps[1].serve.stdout.split('\n').filter(line=>!line.includes('"type":"result"')).join('\n')],
+])test(`approved terminal omission rejects ${name}`,()=>{const input=omissionPair();mutate(input);assert.throws(()=>sdkSignalAcceptedPaths(input));});
+test('approved terminal omission never accepts TS self',()=>{const input=omissionPair();input.selfCompare=true;assert.equal(sdkSignalAcceptedPaths(input).size,0);});

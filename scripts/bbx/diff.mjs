@@ -236,14 +236,14 @@ if (!selfCompare && raw.some(artifact => artifact.scenario === 'c1-sdk-cancel-re
 }
 const scenarioAccepted = (raw[0].accepted ?? []).map((x) => ({ ...x, res: (x.paths ?? []).map((p) => new RegExp(p)), hits: 0 }));
 for (const entry of scenarioAccepted) if (entry.policy) {
-  if (entry.policy === 'sdkSignalAbortOrder') {
+  if (['sdkSignalAbortOrder','sdkSignalTerminalObservation'].includes(entry.policy)) {
     if (!sdkSignalAcceptedEntry(entry) || !isDeepStrictEqual(raw[0].accepted ?? [], raw[1].accepted ?? [])) throw Error('invalid SDK signal accepted declaration');
     if (selfCompare) { entry.checked = new Map(); continue; }
     try {
       const scenario = sdkSignalScenario ?? JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'scenarios/c1-sdk-cancel-resume.json'), 'utf8'));
       validateSdkSignalAcceptedEvidence(raw[0], scenario);
       const wire = validateSdkSignalAcceptedEvidence(raw[1], scenario);
-      entry.checked = sdkSignalAcceptedPaths({ left: a, right: b, rawLeft: raw[0], rawRight: raw[1], scenario, wireReceipt: wire?.receipt });
+      entry.checked = sdkSignalAcceptedPaths({ left: a, right: b, rawLeft: raw[0], rawRight: raw[1], scenario, wireReceipt: wire?.receipt, policy: entry.policy });
     } catch (error) { console.error(`INVALID SDK signal evidence: ${error.message}`); process.exit(2); }
     continue;
   }

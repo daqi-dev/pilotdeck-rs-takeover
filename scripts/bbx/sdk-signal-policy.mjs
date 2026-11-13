@@ -4,6 +4,7 @@ import {isDeepStrictEqual} from 'node:util';
 import {createHash} from 'node:crypto';
 import {validatePersistedRunTriggers} from './serve-persisted-event.mjs';
 export const SDK_SIGNAL_POLICY_ID='D1-SDK-SIGNAL-ABORT-ORDER-001';
+export const SDK_SIGNAL_TERMINAL_POLICY_ID='D1-SDK-SIGNAL-TERMINAL-OBSERVATION-001';
 export const SDK_SIGNAL_WIRE_CASES=Object.freeze(['final-and-abort-batch','final-and-abort-next-turn','final-and-abort-separated','wrong-run-response','malformed-response','abort-rpc-error','connection-drop','abort-timeout']);
 const insist=(condition,message)=>{if(!condition)throw Error(`sdk signal policy: ${message}`);};
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
@@ -26,6 +27,17 @@ function stdoutParts(text,side){
 function sessionEnvelope(step,label){
  insist(step?.cli?.exitCode===0&&step.cli.signal===null,`${label} did not naturally succeed`);
  const lines=step.cli.stdout.trimEnd().split('\n');return parse(lines.at(-1),`${label} result envelope`);
+}
+const omissionTypes=['turn.started','user.accepted','pilotdeck.model_request_started','context.usage','pilotdeck.model_selection_changed','pilotdeck.assistant_block'];
+const omissionSequences=[0,1,2,3,4,6];
+function exactOmissionPrefix(events,run,session){
+ insist(events.length===6&&isDeepStrictEqual(events.map(e=>e.type),omissionTypes)&&isDeepStrictEqual(events.map(e=>e.sequence),omissionSequences),'terminal omission requires the exact six-event prefix');
+ insist(events.every(e=>e.runId===run&&e.sessionId===session),'terminal omission prefix has wrong run/session');
+}
+function durablePublicTerminal(events,run,session){
+ const terminals=events.filter(e=>e.event?.type==='turn_completed');
+ insist(terminals.length===1&&isDeepStrictEqual(terminals[0],{seq:8,event:{type:'turn_completed',usage:{},finishReason:'aborted_streaming',runId:run}}),'terminal omission requires exact same-run durable seq8 terminal');
+ return {type:'result',usage:{},finishReason:'aborted_streaming',runId:run,sequence:7,sessionId:session,status:'completed'};
 }
 function scenarioContract(scenario){
  insist(scenario?.name==='c1-sdk-cancel-resume'&&scenario.steps?.length===4,'only the named four-step scenario is eligible');
@@ -73,25 +85,41 @@ export function validateSdkSignalArtifact(raw,scenario,side){
  const recoveryMessages=raw.provider.recovered[0].body?.messages;
  insist(Array.isArray(recoveryMessages)&&isDeepStrictEqual(recoveryMessages.slice(-4).map(m=>({role:m.role,text:textMessage(m)})),[{role:'assistant',text:'C1 initial reply.'},{role:'user',text:'C1-CANCEL'},{role:'assistant',text:'C1 partial'},{role:'user',text:'C1-RECOVER'}]),'recovery model request lost or duplicated persisted conversation');
  const parts=stdoutParts(serve.stdout,side),terminal=parts.events.filter(e=>e.type==='result');
- insist(terminal.length===1&&terminal[0].runId===run&&terminal[0].sessionId===session&&terminal[0].finishReason==='aborted_streaming'&&terminal[0].status==='completed','streamed provider terminal identity/value changed');
+ let omittedTerminal=null;
+ if(side==='ts'&&terminal.length===0){
+  insist(scenario.accepted?.some(e=>e.id===SDK_SIGNAL_TERMINAL_POLICY_ID&&e.policy==='sdkSignalTerminalObservation'),'terminal omission requires separately approved named policy');
+  exactOmissionPrefix(parts.events,run,session);
+  insist(parts.footer===canonical,'terminal omission requires canonical TS aborted footer');
+  omittedTerminal=durablePublicTerminal(runs[1].events,run,session);
+ }else insist(terminal.length===1&&terminal[0].runId===run&&terminal[0].sessionId===session&&terminal[0].finishReason==='aborted_streaming'&&terminal[0].status==='completed','streamed provider terminal identity/value changed');
  if(side==='rust')insist(parts.footer===canonical&&serve.stderr==='','Rust requires exact canonical aborted footer and empty stderr');
  else{const stderr=serve.stderr.replace(warning,'');insist(parts.footer===canonical?stderr==='':hash(stderr)===CLOSE_STACK_SHA,'TS output is neither observed clean abort nor exact fixed SDK unhandled-close stack');}
- return {session,project,run,parts,proofLayers:{formal:'raw persisted partial + actual signal/PID + durable recovery',abortRpc:'not present in formal capture; independently verified wire receipt required'}};
+ return {session,project,run,parts,omittedTerminal,durableCancelEvents:runs[1].events,proofLayers:{formal:'raw persisted partial + actual signal/PID + durable recovery',abortRpc:'not present in formal capture; independently verified wire receipt required'}};
 }
 // wireReceipt is a result from the independently executed strict 8-wire verifier,
 // not a claim that the formal capture contains RPC frames. The caller owns
 // loading its original output, identity and manifest before invoking this policy.
-export function sdkSignalAcceptedPaths({left,right,rawLeft,rawRight,scenario,selfCompare=false,wireReceipt}){
+export function sdkSignalAcceptedPaths({left,right,rawLeft,rawRight,scenario,selfCompare=false,wireReceipt,policy='sdkSignalAbortOrder'}){
  if(selfCompare)return new Map();
  insist(rawLeft?.side==='ts'&&rawRight?.side==='rust','only TS-to-Rust comparisons are eligible');
- const ts=validateSdkSignalArtifact(rawLeft,scenario,'ts');validateSdkSignalArtifact(rawRight,scenario,'rust');
+ const ts=validateSdkSignalArtifact(rawLeft,scenario,'ts'),rust=validateSdkSignalArtifact(rawRight,scenario,'rust');
+ insist(['sdkSignalAbortOrder','sdkSignalTerminalObservation'].includes(policy),'unknown SDK signal policy');
  const binary=rawRight.evidence?.inputs?.binaries?.pilotdeck;
  const binarySha=typeof binary==='string'?binary:binary?.sha256;
  insist(/^[a-f0-9]{64}$/.test(binarySha??''),'Rust formal binary identity missing');
  insist(isDeepStrictEqual(Object.keys(wireReceipt??{}).sort(),['binary','cases','status']),'strict wire verifier receipt shape required');
  insist(wireReceipt?.status==='PASS'&&wireReceipt.binary===binarySha&&isDeepStrictEqual(wireReceipt.cases,SDK_SIGNAL_WIRE_CASES),'independent exact-eight-case wire PASS receipt must bind the same formal binary');
  const a=stdoutParts(left.steps[1].serve.stdout,'ts'),b=stdoutParts(right.steps[1].serve.stdout,'rust');
+ if(ts.omittedTerminal){
+  exactOmissionPrefix(rust.parts.events.slice(0,-1),rust.run,rust.session);
+  const expected=durablePublicTerminal(rust.durableCancelEvents,rust.run,rust.session);
+  insist(rust.parts.events.length===7&&isDeepStrictEqual(rust.parts.events.at(-1),expected),'Rust must preserve exact durable-derived result seq7');
+  insist(a.prefix===b.prefix.trimEnd().split('\n').slice(0,-1).join('\n')+'\n','normalized terminal-omission prefix values differ');
+  if(policy!=='sdkSignalTerminalObservation')return new Map();
+  return new Map([['$.steps[1].serve.stdout',`${SDK_SIGNAL_TERMINAL_POLICY_ID}: exact TS-only missing result seq7; six prior events identical, durable seq8 and same-binary eight-wire/recovery verified; Rust retains complete terminal`]]);
+ }
  insist(a.prefix===b.prefix,'normalized pre-footer stream event bytes differ');
+ if(policy==='sdkSignalTerminalObservation')return new Map();
  const accepted=new Map();
  if(left.steps[1].serve.stdout!==right.steps[1].serve.stdout)accepted.set('$.steps[1].serve.stdout',`${SDK_SIGNAL_POLICY_ID}: identical streamed events; verified current-run signal abort has canonical footer (${ts.parts.footer===canonical?'clean TS':'fixed SDK race'} baseline)`);
  if(left.steps[1].serve.stderr!==right.steps[1].serve.stderr)accepted.set('$.steps[1].serve.stderr',`${SDK_SIGNAL_POLICY_ID}: exact observed cc7c4e6 unhandled-close stack; Rust empty stderr and same-binary strict wire PASS`);
