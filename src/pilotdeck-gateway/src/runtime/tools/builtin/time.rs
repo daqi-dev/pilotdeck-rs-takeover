@@ -113,7 +113,7 @@ fn execute(
         .map(text)
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| host_timezone(zone_cache));
+        .unwrap_or_else(host_timezone);
     let now = context
         .now_ms()
         .map_err(|error| tool_error("tool_execution_failed", error.message.clone()))?;
@@ -197,41 +197,15 @@ pub(crate) fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     era * 146_097 + y * 365 + y / 4 - y / 100 + doy - 719_468
 }
 
-/// Per-call reads of `TZ` and the `/etc/*` fallbacks are intentional, not a
-/// #2314 named-zone cache miss: like the free function
-/// `pilotdeck_transport::system_clock::resolve_local`, there is no immutable
-/// key to invalidate on (`TZ` is mutable in-process and `/etc/localtime` is
-/// repointable), so every call re-reads the host. Only the *zone parsing*
-/// goes through the cache.
-fn host_timezone(zone_cache: &CronZoneResolverCache) -> String {
-    if let Ok(timezone) = std::env::var("TZ") {
-        let timezone = timezone.strip_prefix(':').unwrap_or(&timezone).to_owned();
-        // Same admission check as before the #2314 cache: parse plus one
-        // parts read (the cached resolver's `parts_at(0)`), never a re-parse.
-        if !timezone.is_empty()
-            && zone_cache
-                .resolver(&timezone)
-                .and_then(|resolver| resolver.parts_at(0))
-                .is_ok()
-        {
-            return timezone;
-        }
-    }
-    for path in ["/etc/localtime", "/usr/local/etc/localtime"] {
-        if let Ok(target) = std::fs::read_link(path) {
-            let target = target.to_string_lossy();
-            if let Some(index) = target.find("zoneinfo/") {
-                return target[index + "zoneinfo/".len()..].to_owned();
-            }
-        }
-    }
-    if let Ok(contents) = std::fs::read_to_string("/etc/timezone") {
-        let timezone = contents.trim();
-        if !timezone.is_empty() {
-            return timezone.to_owned();
-        }
-    }
-    "UTC".into()
+/// `Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"`
+/// (getCurrentTime.ts:36): the ICU canonical name of the process zone
+/// (`TZ=Asia/Kolkata` reports `Asia/Calcutta`, `TZ=US/Pacific`
+/// `America/Los_Angeles`, `TZ=` `Etc/Unknown`, which the tool then rejects),
+/// `UTC` where Node reports `undefined`. Read per call: `TZ` is mutable
+/// in-process and `/etc/localtime` is repointable. The name itself is then
+/// parsed through the #2314 cache like an explicit one.
+fn host_timezone() -> String {
+    pilotdeck_transport::system_clock::host_zone_name().unwrap_or_else(|| "UTC".into())
 }
 
 #[cfg(test)]
@@ -434,32 +408,15 @@ mod zone_cache_tests {
             timezone_of(&second),
             "#2314 tool empty zone: both calls must agree on the host zone"
         );
-        // Host-robust form (review r3/r4/r5, both families): compute the
-        // expected delta for this host shape instead of a slack `<= 1`
-        // bound. `host_timezone` admits `TZ` on every call and failed
-        // admissions are never memoized (#2314 contract, `schedule.rs`
-        // `parses += 1` on every probe), so a set-but-unparseable `TZ`
-        // (POSIX spellings like `CST-8`) adds exactly one parse to the
-        // second call; every other shape (TZ unset, or set and admitted)
-        // must add zero — the fallback zone itself may never re-parse.
-        // `ZonedPartsResolver::new` + `parts_at(0)` is the same admission
-        // the tool performs, taken outside the cache so the probe does not
-        // perturb `parse_count`.
-        let host_tz = std::env::var("TZ")
-            .ok()
-            .map(|value| value.strip_prefix(':').unwrap_or(&value).to_owned());
-        let tz_admitted = host_tz.as_deref().map(|tz| {
-            !tz.is_empty()
-                && ZonedPartsResolver::new(tz)
-                    .and_then(|resolver| resolver.parts_at(0))
-                    .is_ok()
-        });
-        let expected = if tz_admitted == Some(false) { 1 } else { 0 };
+        // `host_timezone` names the zone without parsing it (the host zone
+        // model is `system_clock::host_zone`); only the tool's own lookup of
+        // that name goes through the cache, so the second call re-parses
+        // nothing whatever the host's `TZ` is.
         assert_eq!(
             cache.parse_count() - after_first,
-            expected,
+            0,
             "#2314 tool empty zone: the second call must not re-parse the \
-             fallback zone (expected delta {expected}, got {} after {})",
+             host zone (got {} after {})",
             cache.parse_count() - after_first,
             after_first
         );

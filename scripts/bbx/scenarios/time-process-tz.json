@@ -1,0 +1,2903 @@
+{
+ "name": "time-process-tz",
+ "about": "进程时区（TZ）对本地时间的影响，每个取值单独起一次 server。Node v22.22.0 / ICU 77.1 的做法：ICU 认得的时区名（精确大小写，含 US/Pacific、Asia/Calcutta 这类 tzdb 旧别名）用 ICU 自带数据，与系统装没装 tzdata-legacy 无关；一个前导 ':' 忽略；三四个字母的名字只有 C 库给的标准偏移与 ICU 一致时才保留，ICU 独有的 PST 因此是偏移 0、名字仍报 America/Los_Angeles；空串是 ICU 的未知时区（偏移 0，名字 Etc/Unknown）；不认得的名字（garbage）是 C 库标准偏移（这里 0），名字 undefined。观察点：① cron 一次性任务 runAt 不带时区（cron/runtime/CronSchedule.ts:20-27 的 new Date(runAt)）落在哪个 UTC 时刻——cron_list 按 nextRunAt 排序（CronManager.ts:134），与一组带 Z 的参照任务的先后就是偏移；② get_current_time 不给 timezone 时回显 resolvedOptions().timeZone || 'UTC'（tool/builtin/getCurrentTime.ts:36）：Asia/Kolkata→Asia/Calcutta、Europe/Kyiv→Europe/Kiev、US/Pacific→America/Los_Angeles、GMT→+00:00、garbage→UTC，空串时工具报 Invalid timezone: Etc/Unknown。只选结果不依赖宿主的取值：大小写不对的名字（macOS 上按文件系统找到文件、取其标准偏移，Linux 上是 0）、POSIX 规则串、SystemV/*DT（退回 /etc/localtime）不在这里。time 字段只比形状（ISO 被归一化），date/weekday 在两次运行跨午夜时可能不同。",
+ "server": false,
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ncron:\n  enabled: true\n",
+ "files": {
+  "home/work/tz01/README.md": "tz 01\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-tz01/.cwd": "{HOME}/work/tz01\n",
+  "home/work/tz02/README.md": "tz 02\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-tz02/.cwd": "{HOME}/work/tz02\n",
+  "home/work/tz03/README.md": "tz 03\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-tz03/.cwd": "{HOME}/work/tz03\n",
+  "home/work/tz04/README.md": "tz 04\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-tz04/.cwd": "{HOME}/work/tz04\n",
+  "home/work/tz05/README.md": "tz 05\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-tz05/.cwd": "{HOME}/work/tz05\n",
+  "home/work/tz06/README.md": "tz 06\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-tz06/.cwd": "{HOME}/work/tz06\n",
+  "home/work/tz07/README.md": "tz 07\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-tz07/.cwd": "{HOME}/work/tz07\n",
+  "home/work/tz08/README.md": "tz 08\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-tz08/.cwd": "{HOME}/work/tz08\n",
+  "home/work/tz09/README.md": "tz 09\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-tz09/.cwd": "{HOME}/work/tz09\n",
+  "home/work/tz10/README.md": "tz 10\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-tz10/.cwd": "{HOME}/work/tz10\n",
+  "home/work/tz11/README.md": "tz 11\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-tz11/.cwd": "{HOME}/work/tz11\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"tz\"}"
+   }
+  },
+  {
+   "name": "t01-after",
+   "when": [
+    "now01:",
+    "\"tool_call_id\":\"call_t01\""
+   ],
+   "reply": {
+    "text": "Done 01."
+   }
+  },
+  {
+   "name": "t01",
+   "when": [
+    "now01:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_t01",
+     "name": "get_current_time",
+     "arguments": {}
+    }
+   }
+  },
+  {
+   "name": "t02-after",
+   "when": [
+    "now02:",
+    "\"tool_call_id\":\"call_t02\""
+   ],
+   "reply": {
+    "text": "Done 02."
+   }
+  },
+  {
+   "name": "t02",
+   "when": [
+    "now02:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_t02",
+     "name": "get_current_time",
+     "arguments": {}
+    }
+   }
+  },
+  {
+   "name": "t03-after",
+   "when": [
+    "now03:",
+    "\"tool_call_id\":\"call_t03\""
+   ],
+   "reply": {
+    "text": "Done 03."
+   }
+  },
+  {
+   "name": "t03",
+   "when": [
+    "now03:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_t03",
+     "name": "get_current_time",
+     "arguments": {}
+    }
+   }
+  },
+  {
+   "name": "t04-after",
+   "when": [
+    "now04:",
+    "\"tool_call_id\":\"call_t04\""
+   ],
+   "reply": {
+    "text": "Done 04."
+   }
+  },
+  {
+   "name": "t04",
+   "when": [
+    "now04:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_t04",
+     "name": "get_current_time",
+     "arguments": {}
+    }
+   }
+  },
+  {
+   "name": "t05-after",
+   "when": [
+    "now05:",
+    "\"tool_call_id\":\"call_t05\""
+   ],
+   "reply": {
+    "text": "Done 05."
+   }
+  },
+  {
+   "name": "t05",
+   "when": [
+    "now05:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_t05",
+     "name": "get_current_time",
+     "arguments": {}
+    }
+   }
+  },
+  {
+   "name": "t06-after",
+   "when": [
+    "now06:",
+    "\"tool_call_id\":\"call_t06\""
+   ],
+   "reply": {
+    "text": "Done 06."
+   }
+  },
+  {
+   "name": "t06",
+   "when": [
+    "now06:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_t06",
+     "name": "get_current_time",
+     "arguments": {}
+    }
+   }
+  },
+  {
+   "name": "t07-after",
+   "when": [
+    "now07:",
+    "\"tool_call_id\":\"call_t07\""
+   ],
+   "reply": {
+    "text": "Done 07."
+   }
+  },
+  {
+   "name": "t07",
+   "when": [
+    "now07:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_t07",
+     "name": "get_current_time",
+     "arguments": {}
+    }
+   }
+  },
+  {
+   "name": "t08-after",
+   "when": [
+    "now08:",
+    "\"tool_call_id\":\"call_t08\""
+   ],
+   "reply": {
+    "text": "Done 08."
+   }
+  },
+  {
+   "name": "t08",
+   "when": [
+    "now08:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_t08",
+     "name": "get_current_time",
+     "arguments": {}
+    }
+   }
+  },
+  {
+   "name": "t09-after",
+   "when": [
+    "now09:",
+    "\"tool_call_id\":\"call_t09\""
+   ],
+   "reply": {
+    "text": "Done 09."
+   }
+  },
+  {
+   "name": "t09",
+   "when": [
+    "now09:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_t09",
+     "name": "get_current_time",
+     "arguments": {}
+    }
+   }
+  },
+  {
+   "name": "t10-after",
+   "when": [
+    "now10:",
+    "\"tool_call_id\":\"call_t10\""
+   ],
+   "reply": {
+    "text": "Done 10."
+   }
+  },
+  {
+   "name": "t10",
+   "when": [
+    "now10:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_t10",
+     "name": "get_current_time",
+     "arguments": {}
+    }
+   }
+  },
+  {
+   "name": "t11-after",
+   "when": [
+    "now11:",
+    "\"tool_call_id\":\"call_t11\""
+   ],
+   "reply": {
+    "text": "Done 11."
+   }
+  },
+  {
+   "name": "t11",
+   "when": [
+    "now11:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_t11",
+     "name": "get_current_time",
+     "arguments": {}
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "TZ": "UTC"
+   },
+   "timeout": 30000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz01",
+      "message": "ref 2099-01-14T21:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-14T21:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz01",
+      "message": "ref 2099-01-14T22:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-14T22:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz01",
+      "message": "ref 2099-01-15T06:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T06:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz01",
+      "message": "ref 2099-01-15T06:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T06:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz01",
+      "message": "ref 2099-01-15T09:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T09:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz01",
+      "message": "ref 2099-01-15T10:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T10:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz01",
+      "message": "ref 2099-01-15T11:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T11:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz01",
+      "message": "ref 2099-01-15T12:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T12:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz01",
+      "message": "ref 2099-01-15T19:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T19:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz01",
+      "message": "ref 2099-01-15T20:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T20:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz01",
+      "message": "ref 2099-07-15T08:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T08:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz01",
+      "message": "ref 2099-07-15T09:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T09:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz01",
+      "message": "ref 2099-07-15T11:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T11:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz01",
+      "message": "ref 2099-07-15T12:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T12:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz01",
+      "message": "ref 2099-07-15T18:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T18:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz01",
+      "message": "ref 2099-07-15T19:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T19:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz01",
+      "message": "local jan noon",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T12:00:00"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz01",
+      "message": "local jul noon",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T12:00:00"
+      }
+     }
+    },
+    {
+     "ws": "cron_list",
+     "params": {
+      "projectKey": "{HOME}/work/tz01"
+     }
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "s-tz01",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-tz01",
+      "channelKey": "test",
+      "message": "now01: go"
+     },
+     "timeout": 20000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "TZ": "US/Pacific"
+   },
+   "timeout": 30000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz02",
+      "message": "ref 2099-01-14T21:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-14T21:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz02",
+      "message": "ref 2099-01-14T22:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-14T22:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz02",
+      "message": "ref 2099-01-15T06:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T06:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz02",
+      "message": "ref 2099-01-15T06:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T06:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz02",
+      "message": "ref 2099-01-15T09:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T09:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz02",
+      "message": "ref 2099-01-15T10:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T10:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz02",
+      "message": "ref 2099-01-15T11:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T11:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz02",
+      "message": "ref 2099-01-15T12:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T12:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz02",
+      "message": "ref 2099-01-15T19:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T19:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz02",
+      "message": "ref 2099-01-15T20:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T20:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz02",
+      "message": "ref 2099-07-15T08:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T08:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz02",
+      "message": "ref 2099-07-15T09:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T09:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz02",
+      "message": "ref 2099-07-15T11:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T11:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz02",
+      "message": "ref 2099-07-15T12:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T12:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz02",
+      "message": "ref 2099-07-15T18:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T18:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz02",
+      "message": "ref 2099-07-15T19:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T19:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz02",
+      "message": "local jan noon",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T12:00:00"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz02",
+      "message": "local jul noon",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T12:00:00"
+      }
+     }
+    },
+    {
+     "ws": "cron_list",
+     "params": {
+      "projectKey": "{HOME}/work/tz02"
+     }
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "s-tz02",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-tz02",
+      "channelKey": "test",
+      "message": "now02: go"
+     },
+     "timeout": 20000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "TZ": ":US/Pacific"
+   },
+   "timeout": 30000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz03",
+      "message": "ref 2099-01-14T21:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-14T21:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz03",
+      "message": "ref 2099-01-14T22:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-14T22:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz03",
+      "message": "ref 2099-01-15T06:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T06:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz03",
+      "message": "ref 2099-01-15T06:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T06:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz03",
+      "message": "ref 2099-01-15T09:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T09:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz03",
+      "message": "ref 2099-01-15T10:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T10:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz03",
+      "message": "ref 2099-01-15T11:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T11:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz03",
+      "message": "ref 2099-01-15T12:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T12:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz03",
+      "message": "ref 2099-01-15T19:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T19:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz03",
+      "message": "ref 2099-01-15T20:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T20:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz03",
+      "message": "ref 2099-07-15T08:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T08:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz03",
+      "message": "ref 2099-07-15T09:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T09:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz03",
+      "message": "ref 2099-07-15T11:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T11:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz03",
+      "message": "ref 2099-07-15T12:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T12:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz03",
+      "message": "ref 2099-07-15T18:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T18:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz03",
+      "message": "ref 2099-07-15T19:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T19:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz03",
+      "message": "local jan noon",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T12:00:00"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz03",
+      "message": "local jul noon",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T12:00:00"
+      }
+     }
+    },
+    {
+     "ws": "cron_list",
+     "params": {
+      "projectKey": "{HOME}/work/tz03"
+     }
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "s-tz03",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-tz03",
+      "channelKey": "test",
+      "message": "now03: go"
+     },
+     "timeout": 20000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "TZ": "Asia/Kolkata"
+   },
+   "timeout": 30000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz04",
+      "message": "ref 2099-01-14T21:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-14T21:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz04",
+      "message": "ref 2099-01-14T22:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-14T22:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz04",
+      "message": "ref 2099-01-15T06:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T06:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz04",
+      "message": "ref 2099-01-15T06:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T06:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz04",
+      "message": "ref 2099-01-15T09:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T09:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz04",
+      "message": "ref 2099-01-15T10:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T10:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz04",
+      "message": "ref 2099-01-15T11:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T11:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz04",
+      "message": "ref 2099-01-15T12:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T12:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz04",
+      "message": "ref 2099-01-15T19:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T19:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz04",
+      "message": "ref 2099-01-15T20:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T20:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz04",
+      "message": "ref 2099-07-15T08:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T08:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz04",
+      "message": "ref 2099-07-15T09:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T09:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz04",
+      "message": "ref 2099-07-15T11:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T11:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz04",
+      "message": "ref 2099-07-15T12:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T12:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz04",
+      "message": "ref 2099-07-15T18:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T18:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz04",
+      "message": "ref 2099-07-15T19:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T19:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz04",
+      "message": "local jan noon",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T12:00:00"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz04",
+      "message": "local jul noon",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T12:00:00"
+      }
+     }
+    },
+    {
+     "ws": "cron_list",
+     "params": {
+      "projectKey": "{HOME}/work/tz04"
+     }
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "s-tz04",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-tz04",
+      "channelKey": "test",
+      "message": "now04: go"
+     },
+     "timeout": 20000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "TZ": "Asia/Calcutta"
+   },
+   "timeout": 30000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz05",
+      "message": "ref 2099-01-14T21:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-14T21:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz05",
+      "message": "ref 2099-01-14T22:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-14T22:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz05",
+      "message": "ref 2099-01-15T06:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T06:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz05",
+      "message": "ref 2099-01-15T06:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T06:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz05",
+      "message": "ref 2099-01-15T09:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T09:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz05",
+      "message": "ref 2099-01-15T10:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T10:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz05",
+      "message": "ref 2099-01-15T11:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T11:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz05",
+      "message": "ref 2099-01-15T12:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T12:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz05",
+      "message": "ref 2099-01-15T19:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T19:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz05",
+      "message": "ref 2099-01-15T20:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T20:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz05",
+      "message": "ref 2099-07-15T08:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T08:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz05",
+      "message": "ref 2099-07-15T09:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T09:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz05",
+      "message": "ref 2099-07-15T11:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T11:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz05",
+      "message": "ref 2099-07-15T12:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T12:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz05",
+      "message": "ref 2099-07-15T18:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T18:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz05",
+      "message": "ref 2099-07-15T19:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T19:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz05",
+      "message": "local jan noon",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T12:00:00"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz05",
+      "message": "local jul noon",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T12:00:00"
+      }
+     }
+    },
+    {
+     "ws": "cron_list",
+     "params": {
+      "projectKey": "{HOME}/work/tz05"
+     }
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "s-tz05",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-tz05",
+      "channelKey": "test",
+      "message": "now05: go"
+     },
+     "timeout": 20000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "TZ": "Europe/Kyiv"
+   },
+   "timeout": 30000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz06",
+      "message": "ref 2099-01-14T21:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-14T21:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz06",
+      "message": "ref 2099-01-14T22:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-14T22:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz06",
+      "message": "ref 2099-01-15T06:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T06:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz06",
+      "message": "ref 2099-01-15T06:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T06:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz06",
+      "message": "ref 2099-01-15T09:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T09:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz06",
+      "message": "ref 2099-01-15T10:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T10:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz06",
+      "message": "ref 2099-01-15T11:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T11:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz06",
+      "message": "ref 2099-01-15T12:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T12:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz06",
+      "message": "ref 2099-01-15T19:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T19:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz06",
+      "message": "ref 2099-01-15T20:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T20:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz06",
+      "message": "ref 2099-07-15T08:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T08:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz06",
+      "message": "ref 2099-07-15T09:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T09:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz06",
+      "message": "ref 2099-07-15T11:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T11:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz06",
+      "message": "ref 2099-07-15T12:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T12:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz06",
+      "message": "ref 2099-07-15T18:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T18:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz06",
+      "message": "ref 2099-07-15T19:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T19:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz06",
+      "message": "local jan noon",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T12:00:00"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz06",
+      "message": "local jul noon",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T12:00:00"
+      }
+     }
+    },
+    {
+     "ws": "cron_list",
+     "params": {
+      "projectKey": "{HOME}/work/tz06"
+     }
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "s-tz06",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-tz06",
+      "channelKey": "test",
+      "message": "now06: go"
+     },
+     "timeout": 20000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "TZ": "Etc/GMT-14"
+   },
+   "timeout": 30000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz07",
+      "message": "ref 2099-01-14T21:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-14T21:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz07",
+      "message": "ref 2099-01-14T22:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-14T22:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz07",
+      "message": "ref 2099-01-15T06:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T06:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz07",
+      "message": "ref 2099-01-15T06:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T06:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz07",
+      "message": "ref 2099-01-15T09:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T09:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz07",
+      "message": "ref 2099-01-15T10:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T10:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz07",
+      "message": "ref 2099-01-15T11:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T11:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz07",
+      "message": "ref 2099-01-15T12:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T12:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz07",
+      "message": "ref 2099-01-15T19:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T19:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz07",
+      "message": "ref 2099-01-15T20:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T20:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz07",
+      "message": "ref 2099-07-15T08:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T08:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz07",
+      "message": "ref 2099-07-15T09:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T09:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz07",
+      "message": "ref 2099-07-15T11:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T11:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz07",
+      "message": "ref 2099-07-15T12:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T12:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz07",
+      "message": "ref 2099-07-15T18:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T18:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz07",
+      "message": "ref 2099-07-15T19:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T19:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz07",
+      "message": "local jan noon",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T12:00:00"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz07",
+      "message": "local jul noon",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T12:00:00"
+      }
+     }
+    },
+    {
+     "ws": "cron_list",
+     "params": {
+      "projectKey": "{HOME}/work/tz07"
+     }
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "s-tz07",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-tz07",
+      "channelKey": "test",
+      "message": "now07: go"
+     },
+     "timeout": 20000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "TZ": "GMT"
+   },
+   "timeout": 30000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz08",
+      "message": "ref 2099-01-14T21:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-14T21:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz08",
+      "message": "ref 2099-01-14T22:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-14T22:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz08",
+      "message": "ref 2099-01-15T06:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T06:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz08",
+      "message": "ref 2099-01-15T06:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T06:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz08",
+      "message": "ref 2099-01-15T09:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T09:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz08",
+      "message": "ref 2099-01-15T10:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T10:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz08",
+      "message": "ref 2099-01-15T11:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T11:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz08",
+      "message": "ref 2099-01-15T12:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T12:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz08",
+      "message": "ref 2099-01-15T19:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T19:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz08",
+      "message": "ref 2099-01-15T20:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T20:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz08",
+      "message": "ref 2099-07-15T08:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T08:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz08",
+      "message": "ref 2099-07-15T09:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T09:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz08",
+      "message": "ref 2099-07-15T11:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T11:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz08",
+      "message": "ref 2099-07-15T12:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T12:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz08",
+      "message": "ref 2099-07-15T18:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T18:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz08",
+      "message": "ref 2099-07-15T19:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T19:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz08",
+      "message": "local jan noon",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T12:00:00"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz08",
+      "message": "local jul noon",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T12:00:00"
+      }
+     }
+    },
+    {
+     "ws": "cron_list",
+     "params": {
+      "projectKey": "{HOME}/work/tz08"
+     }
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "s-tz08",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-tz08",
+      "channelKey": "test",
+      "message": "now08: go"
+     },
+     "timeout": 20000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "TZ": "PST"
+   },
+   "timeout": 30000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz09",
+      "message": "ref 2099-01-14T21:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-14T21:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz09",
+      "message": "ref 2099-01-14T22:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-14T22:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz09",
+      "message": "ref 2099-01-15T06:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T06:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz09",
+      "message": "ref 2099-01-15T06:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T06:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz09",
+      "message": "ref 2099-01-15T09:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T09:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz09",
+      "message": "ref 2099-01-15T10:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T10:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz09",
+      "message": "ref 2099-01-15T11:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T11:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz09",
+      "message": "ref 2099-01-15T12:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T12:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz09",
+      "message": "ref 2099-01-15T19:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T19:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz09",
+      "message": "ref 2099-01-15T20:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T20:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz09",
+      "message": "ref 2099-07-15T08:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T08:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz09",
+      "message": "ref 2099-07-15T09:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T09:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz09",
+      "message": "ref 2099-07-15T11:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T11:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz09",
+      "message": "ref 2099-07-15T12:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T12:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz09",
+      "message": "ref 2099-07-15T18:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T18:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz09",
+      "message": "ref 2099-07-15T19:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T19:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz09",
+      "message": "local jan noon",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T12:00:00"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz09",
+      "message": "local jul noon",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T12:00:00"
+      }
+     }
+    },
+    {
+     "ws": "cron_list",
+     "params": {
+      "projectKey": "{HOME}/work/tz09"
+     }
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "s-tz09",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-tz09",
+      "channelKey": "test",
+      "message": "now09: go"
+     },
+     "timeout": 20000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "TZ": "garbage"
+   },
+   "timeout": 30000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz10",
+      "message": "ref 2099-01-14T21:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-14T21:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz10",
+      "message": "ref 2099-01-14T22:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-14T22:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz10",
+      "message": "ref 2099-01-15T06:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T06:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz10",
+      "message": "ref 2099-01-15T06:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T06:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz10",
+      "message": "ref 2099-01-15T09:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T09:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz10",
+      "message": "ref 2099-01-15T10:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T10:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz10",
+      "message": "ref 2099-01-15T11:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T11:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz10",
+      "message": "ref 2099-01-15T12:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T12:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz10",
+      "message": "ref 2099-01-15T19:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T19:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz10",
+      "message": "ref 2099-01-15T20:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T20:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz10",
+      "message": "ref 2099-07-15T08:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T08:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz10",
+      "message": "ref 2099-07-15T09:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T09:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz10",
+      "message": "ref 2099-07-15T11:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T11:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz10",
+      "message": "ref 2099-07-15T12:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T12:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz10",
+      "message": "ref 2099-07-15T18:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T18:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz10",
+      "message": "ref 2099-07-15T19:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T19:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz10",
+      "message": "local jan noon",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T12:00:00"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz10",
+      "message": "local jul noon",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T12:00:00"
+      }
+     }
+    },
+    {
+     "ws": "cron_list",
+     "params": {
+      "projectKey": "{HOME}/work/tz10"
+     }
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "s-tz10",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-tz10",
+      "channelKey": "test",
+      "message": "now10: go"
+     },
+     "timeout": 20000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "TZ": ""
+   },
+   "timeout": 30000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz11",
+      "message": "ref 2099-01-14T21:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-14T21:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz11",
+      "message": "ref 2099-01-14T22:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-14T22:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz11",
+      "message": "ref 2099-01-15T06:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T06:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz11",
+      "message": "ref 2099-01-15T06:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T06:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz11",
+      "message": "ref 2099-01-15T09:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T09:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz11",
+      "message": "ref 2099-01-15T10:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T10:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz11",
+      "message": "ref 2099-01-15T11:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T11:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz11",
+      "message": "ref 2099-01-15T12:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T12:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz11",
+      "message": "ref 2099-01-15T19:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T19:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz11",
+      "message": "ref 2099-01-15T20:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T20:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz11",
+      "message": "ref 2099-07-15T08:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T08:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz11",
+      "message": "ref 2099-07-15T09:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T09:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz11",
+      "message": "ref 2099-07-15T11:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T11:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz11",
+      "message": "ref 2099-07-15T12:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T12:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz11",
+      "message": "ref 2099-07-15T18:45:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T18:45:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz11",
+      "message": "ref 2099-07-15T19:15:00Z",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T19:15:00Z"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz11",
+      "message": "local jan noon",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-01-15T12:00:00"
+      }
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/tz11",
+      "message": "local jul noon",
+      "schedule": {
+       "type": "once",
+       "runAt": "2099-07-15T12:00:00"
+      }
+     }
+    },
+    {
+     "ws": "cron_list",
+     "params": {
+      "projectKey": "{HOME}/work/tz11"
+     }
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "s-tz11",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-tz11",
+      "channelKey": "test",
+      "message": "now11: go"
+     },
+     "timeout": 20000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  }
+ ]
+}
