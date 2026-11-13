@@ -1,0 +1,116 @@
+{
+  "name": "cli-skills-migrate-args",
+  "about": "skills migrate 参数解析的边角（src/cli/pilotdeck.ts:426-481、527-544）：--from 给空串或只有逗号空白时当作没给（缺省全部来源）；--from / --source / --project / --pilot-home 后面缺值或跟着 -- 开头的词时当作没给；--overwrite 与 --rename 同时给时 overwrite 优先；--source 重复与缺值混用；非 migrate 子命令带 --json 仍报 Usage。只做 dry run，不写盘。技能文件与 cli-skills-migrate 相同。",
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "files": {
+    "home/.claude/skills/alpha/SKILL.md": "---\nname: alpha\ndescription: Alpha skill from Claude Code\n---\nAlpha body\n",
+    "home/.claude/skills/alpha/notes.txt": "extra file\n",
+    "home/.claude/skills/beta/SKILL.md": "---\nname: beta\ndescription: Beta skill\n---\nBeta body\n",
+    "home/.claude/skills/no-skill-here/readme.txt": "not a skill\n",
+    "home/.claude/skills/.hidden/SKILL.md": "---\nname: hidden\ndescription: hidden slug\n---\nx\n",
+    "home/.claude/skills/broken/SKILL.md": "no frontmatter at all\n",
+    "proj/.claude/skills/gamma/SKILL.md": "---\nname: gamma\ndescription: Project gamma\n---\nGamma\n",
+    "home/.openclaw/workspace/skills/delta/SKILL.md": "---\nname: delta\ndescription: OpenClaw delta\n---\nDelta\n",
+    "home/.agents/skills/README.md": "empty shared dir\n",
+    "home/.hermes/skills/epsilon/SKILL.md": "---\nname: epsilon\ndescription: Hermes epsilon\n---\nEpsilon\n",
+    "home/custom-single/SKILL.md": "---\nname: custom-single\ndescription: Single skill root\n---\nSingle\n",
+    "home/.pilotdeck/skills/beta/SKILL.md": "---\nname: beta\ndescription: Existing beta\n---\nExisting\n",
+    "home/.pilotdeck/skills/beta-imported/SKILL.md": "---\nname: beta\ndescription: Existing beta imported\n---\nExisting 2\n"
+  },
+  "steps": [
+    {
+      "cli": [
+        "skills",
+        "migrate",
+        "--from",
+        ""
+      ]
+    },
+    {
+      "cli": [
+        "skills",
+        "migrate",
+        "--from",
+        " , ,",
+        "--json"
+      ]
+    },
+    {
+      "cli": [
+        "skills",
+        "migrate",
+        "--from",
+        "--json"
+      ]
+    },
+    {
+      "cli": [
+        "skills",
+        "migrate",
+        "--from",
+        "cc",
+        "--source"
+      ]
+    },
+    {
+      "cli": [
+        "skills",
+        "migrate",
+        "--from",
+        "hermes",
+        "--source",
+        "--json",
+        "--source",
+        "~/custom-single"
+      ]
+    },
+    {
+      "cli": [
+        "skills",
+        "migrate",
+        "--from",
+        "cc",
+        "--overwrite",
+        "--rename"
+      ]
+    },
+    {
+      "cli": [
+        "skills",
+        "migrate",
+        "--from",
+        "cc",
+        "--project"
+      ]
+    },
+    {
+      "cli": [
+        "skills",
+        "migrate",
+        "--from",
+        "cc",
+        "--pilot-home",
+        "--json"
+      ]
+    },
+    {
+      "cli": [
+        "skills",
+        "list",
+        "--json"
+      ]
+    },
+    {
+      "cli": [
+        "skills",
+        "migrate",
+        "--from",
+        "CLAUDE-CODE,Hermes"
+      ]
+    }
+  ]
+}

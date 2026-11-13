@@ -1053,6 +1053,10 @@ async fn start_assembly(
                             session_key: &context.session_key,
                             max_per_session_instances,
                             on_diagnostic: mcp_diagnostic.clone(),
+                            browser_use: Some((
+                                browser_use_preparation(&project_root, &snapshot),
+                                env.clone(),
+                            )),
                         })
                         .await?
                     }
@@ -2611,4 +2615,26 @@ fn explicit_stdio_deployment(
         cwd,
         env: child,
     })
+}
+
+/// `{ projectRoot: runtime.projectRoot, proxy: runtime.snapshot.config.proxy }`
+/// for the browser-use spec preparation (ProjectRuntimeRegistry.ts:345-351).
+fn browser_use_preparation(
+    project_root: &std::path::Path,
+    snapshot: &JsValue,
+) -> crate::runtime::mcp::browser_use::BrowserUsePreparation {
+    let proxy = snapshot
+        .get("config")
+        .and_then(|config| config.get("proxy"));
+    let field = |key: &str| {
+        proxy
+            .and_then(|proxy| proxy.get(key))
+            .and_then(JsValue::as_string)
+            .map(|value| String::from_utf16_lossy(value.units()))
+    };
+    crate::runtime::mcp::browser_use::BrowserUsePreparation {
+        project_root: project_root.to_path_buf(),
+        proxy_url: field("url"),
+        proxy_no_proxy: field("noProxy"),
+    }
 }

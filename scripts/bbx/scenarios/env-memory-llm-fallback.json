@@ -1,0 +1,187 @@
+{
+  "name": "env-memory-llm-fallback",
+  "about": "记忆模型请求里由环境变量兜底的部分（context/memory/createEdgeClawMemoryProviderFromConfig.ts:78-103 resolveMemoryLlm 只从配置传 provider / model / url / apiKey / apiType；edgeclaw-memory-core/src/service.ts:262-300 buildLlmConfig 在配置没给时依次取 EDGECLAW_MEMORY_BASE_URL > OPENAI_BASE_URL、EDGECLAW_MEMORY_API_KEY > OPENAI_API_KEY、EDGECLAW_MEMORY_API_TYPE > 缺省 openai-responses；core/skills/llm-extraction.ts:2231-2245 resolveApiKey 在配置的 apiKey 形如环境变量名且该变量非空时改用变量值）。memory.model 指向配置里没有的 provider ghost（只是 warning，pilot/config/parseMemoryConfig.ts:164-172），url 与 apiKey 因此都落到环境变量。四次 serve：EDGECLAW_* 全给（OPENAI_* 同时给、应被忽略）走 chat completions；只给 OPENAI_BASE_URL / OPENAI_API_KEY 走缺省的 Responses；都不给时没有 baseUrl；第四次换配置（PILOTDECK_CONFIG_PATH）让 memory.model 用已配置的 provider，其 apiKey 写成变量名 BBX_MEMORY_KEY。比发给 provider 的请求（路径、头、体）与 serve 输出。 已知不稳（--self 证明，与 cfg-memory-capture 同一原因）：记忆库 l0_sessions 的 l0_index_id（<session>_<时间散列>_raw）与 pipeline_state 里 recentCaseTraces 的整段 JSON（caseId / traceId 随机），声明为 volatile。 EDGECLAW_MEMORY_MODEL / EDGECLAW_MEMORY_PROVIDER / OPENAI_MODEL 只在配置没给出 provider/model 时才用（service.ts:263-274），而 PilotDeck 的 agent.model 必须是 provider/model（pilot/config/loadPilotConfig.ts:395），resolveMemoryLlm 因此总会给出 provider 与 model：第一次 serve 同时设了这三个变量，证明它们不改变请求。",
+  "volatile": [
+    "control\\.sqlite\\.sqlite\\.tables\\.l0_sessions\\[\\d+\\]\\.l0_index_id$",
+    "control\\.sqlite\\.sqlite\\.tables\\.pipeline_state\\[0\\]\\.state_json$"
+  ],
+  "server": false,
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmemory:\n  enabled: true\n  provider: edgeclaw\n  model: ghost/mem-model\n",
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "files": {
+    "cfgs/envkey.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    memkey:\n      protocol: openai\n      url: {MOCK}/mem\n      apiKey: BBX_MEMORY_KEY\n      models:\n        m1:\n          capabilities:\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmemory:\n  enabled: true\n  provider: edgeclaw\n  model: memkey/m1\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Memory env\"}"
+      }
+    },
+    {
+      "name": "mem-edge",
+      "when": [
+        "\"model\":\"mem-model\"",
+        "mem1:"
+      ],
+      "reply": {
+        "text": "{}"
+      }
+    },
+    {
+      "name": "mem-openai",
+      "when": [
+        "\"model\":\"mem-model\"",
+        "mem2:"
+      ],
+      "reply": {
+        "text": "{}"
+      }
+    },
+    {
+      "name": "mem-envkey",
+      "when": [
+        "\"model\":\"m1\""
+      ],
+      "reply": {
+        "text": "{}"
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "Noted."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "serve": [
+        "server"
+      ],
+      "env": {
+        "EDGECLAW_MEMORY_BASE_URL": "{MOCK}/v1",
+        "EDGECLAW_MEMORY_API_KEY": "edge-key",
+        "EDGECLAW_MEMORY_API_TYPE": "openai-completions",
+        "OPENAI_BASE_URL": "http://127.0.0.1:9/ignored",
+        "OPENAI_API_KEY": "openai-key-ignored",
+        "EDGECLAW_MEMORY_MODEL": "other/env-model",
+        "EDGECLAW_MEMORY_PROVIDER": "env-provider",
+        "OPENAI_MODEL": "openai-env-model"
+      },
+      "timeout": 40000,
+      "then": [
+        {
+          "connect": true
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-mem1",
+            "channelKey": "test",
+            "message": "mem1: I prefer tabs over spaces in every project."
+          },
+          "timeout": 30000
+        },
+        {
+          "sleep": 1500
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    },
+    {
+      "serve": [
+        "server"
+      ],
+      "env": {
+        "OPENAI_BASE_URL": "{MOCK}/v1",
+        "OPENAI_API_KEY": "openai-key"
+      },
+      "timeout": 40000,
+      "then": [
+        {
+          "connect": true
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-mem2",
+            "channelKey": "test",
+            "message": "mem2: I always use dark themes."
+          },
+          "timeout": 30000
+        },
+        {
+          "sleep": 1500
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    },
+    {
+      "serve": [
+        "server"
+      ],
+      "timeout": 40000,
+      "then": [
+        {
+          "connect": true
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-mem3",
+            "channelKey": "test",
+            "message": "mem3: no memory endpoint at all."
+          },
+          "timeout": 30000
+        },
+        {
+          "sleep": 1500
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    },
+    {
+      "serve": [
+        "server"
+      ],
+      "env": {
+        "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/envkey.yaml",
+        "BBX_MEMORY_KEY": "  key-from-env  "
+      },
+      "timeout": 40000,
+      "then": [
+        {
+          "connect": true
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-mem4",
+            "channelKey": "test",
+            "message": "mem4: the key comes from the environment."
+          },
+          "timeout": 30000
+        },
+        {
+          "sleep": 1500
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    }
+  ]
+}

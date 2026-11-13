@@ -20,13 +20,6 @@ pub(super) fn run(
     connection: &Connection,
     resume: Option<&str>,
 ) -> Result<u8, Failure> {
-    if read_value(argv, "--model").is_some() && read_value(argv, "--project").is_none() {
-        // The TS query leaks its socket after this validation error. Keep the
-        // exceptional lifecycle explicitly unimplemented until P06/P08.
-        return Err(Failure::Todo(
-            "pilotdeck run model without project (#123 P06/P08)",
-        ));
-    }
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -491,6 +484,15 @@ async fn resolve_model(
     project: Option<&str>,
     model: &str,
 ) -> Result<ModelOverride, Failure> {
+    // `resolveModelOverride` (packages/sdk/src/client.ts:2001-2002) rejects
+    // before asking for the catalog. Like an unresolvable model, the error
+    // takes the retained-query path: the CLI prints it and the open query
+    // keeps the process alive (observed on the baseline).
+    let Some(project) = project else {
+        return Err(Failure::Error(
+            "projectKey is required when options.model is set.".into(),
+        ));
+    };
     let catalog = query
         .request("model_catalog_list", json!({"projectKey":project}))
         .await?;
