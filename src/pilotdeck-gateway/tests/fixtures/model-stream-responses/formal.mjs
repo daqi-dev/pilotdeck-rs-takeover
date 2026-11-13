@@ -13,6 +13,9 @@ import { sourceClosureSha256 } from '../../baseline_source_guard.mjs';
 
 assert.ok(process.env.PDRS_BASELINE, 'PDRS_BASELINE is required');
 assert.ok(process.argv[2], 'a new output directory is required');
+const side=process.env.J7_IMPLEMENTATION??(process.env.M1_BINARY?undefined:'ts');
+assert.ok(['ts','rust'].includes(side),'J7_IMPLEMENTATION=ts|rust is required when M1_BINARY is set');
+assert.ok(process.env.M1_BINARY||side==='ts','the source-TS entry cannot be declared as rust');
 const baseline=resolve(process.env.PDRS_BASELINE), out=resolve(process.argv[2]);
 assert.ok(!existsSync(out), 'refuse to overwrite prior evidence');
 mkdirSync(out,{recursive:true});
@@ -22,7 +25,8 @@ const sourceSha256=sourceClosureSha256(baseline,sourceCommit,gitExecutable,['src
 const hash=x=>createHash('sha256').update(x).digest('hex');
 const json=x=>JSON.stringify(x,null,2)+'\n';
 const pause=ms=>new Promise(done=>setTimeout(done,ms));
-const home=join(out,'home'),pilot=join(home,'.pilotdeck'),project=join(out,'project'),tmp=join(out,'tmp');
+// This unbound session uses General, whose workspace is PILOT_HOME, not cwd.
+const home=join(out,'home'),pilot=join(home,'.pilotdeck'),project=pilot,tmp=join(out,'tmp');
 for(const dir of [pilot,project,tmp])mkdirSync(dir,{recursive:true});
 const marker='J7-RESPONSES-FILE', expectedOutput=`1|${marker}\n2|`;
 // Negative control changes the real file consumed by read_file, not capture data.
@@ -72,7 +76,7 @@ writeFileSync(join(pilot,'pilotdeck.yaml'),config);
 const env={PATH:process.env.PATH,HOME:home,USERPROFILE:home,CFFIXED_USER_HOME:home,PILOT_HOME:pilot,PILOTDECK_CONFIG_PATH:join(pilot,'pilotdeck.yaml'),TMPDIR:tmp,LANG:'en_US.UTF-8',LC_ALL:'en_US.UTF-8',TZ:'UTC',NO_COLOR:'1',NODE_NO_WARNINGS:'1'};
 const command=process.env.M1_BINARY?resolve(process.env.M1_BINARY):process.execPath;
 const args=process.env.M1_BINARY?['server','--host','127.0.0.1','--port','0']:['--import',join(baseline,'node_modules/tsx/dist/loader.mjs'),join(baseline,'src/cli/pilotdeck.ts'),'server','--host','127.0.0.1','--port','0'];
-writeFileSync(join(out,'identity.json'),json({sourceCommit,sourceSha256,command,args,cwd:project,env,driverSha256:hash(readFileSync(fileURLToPath(import.meta.url))),commandSha256:hash(readFileSync(command)),negative:!!process.env.J7_WRONG_TOOL_OUTPUT}));
+writeFileSync(join(out,'identity.json'),json({sourceCommit,sourceSha256,side,command,args,cwd:project,env,driverSha256:hash(readFileSync(fileURLToPath(import.meta.url))),commandSha256:hash(readFileSync(command)),negative:!!process.env.J7_WRONG_TOOL_OUTPUT}));
 const child=spawn(command,args,{cwd:project,env,stdio:['ignore','pipe','pipe']});
 let stdout='',stderr='',exit=null,spawnError=null,socket,history=null,terminal=null,failure=null;
 child.once('error',error=>{spawnError=String(error)});
@@ -93,6 +97,6 @@ try{
 }catch(error){failure=String(error)}finally{
  socket?.close();if(!exit&&!spawnError&&child.pid)child.kill('SIGINT');await Promise.race([ended,pause(10000)]);if(!exit&&!spawnError&&child.pid){child.kill('SIGKILL');await Promise.race([ended,pause(10000)])}mock.closeAllConnections();await new Promise(done=>mock.close(done));
  writeFileSync(join(out,'stdout.log'),stdout);writeFileSync(join(out,'stderr.log'),stderr);
- writeFileSync(join(out,'capture.json'),json({sourceCommit,sourceSha256,side:process.env.M1_BINARY?'rust':'ts',negative:!!process.env.J7_WRONG_TOOL_OUTPUT,requests,responses,frames,history,terminal,errors,failure,spawnError,exit,driverSha256:hash(readFileSync(fileURLToPath(import.meta.url)))}));
+ writeFileSync(join(out,'capture.json'),json({sourceCommit,sourceSha256,side,negative:!!process.env.J7_WRONG_TOOL_OUTPUT,requests,responses,frames,history,terminal,errors,failure,spawnError,exit,driverSha256:hash(readFileSync(fileURLToPath(import.meta.url)))}));
 }
 if(failure)throw Error(failure);

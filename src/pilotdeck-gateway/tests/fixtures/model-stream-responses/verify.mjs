@@ -12,9 +12,12 @@ const hash=x=>createHash('sha256').update(x).digest('hex');
 
 export function verifyCapture(c,identity) {
  assert.equal(c.sourceCommit,SOURCE);assert.equal(identity.sourceCommit,SOURCE);
- assert.equal(c.sourceSha256,identity.sourceSha256);assert.match(c.sourceSha256,/^[a-f0-9]{64}$/);
+ assert.deepEqual(c.sourceSha256,identity.sourceSha256);
+ assert.ok(c.sourceSha256&&typeof c.sourceSha256==='object'&&!Array.isArray(c.sourceSha256),'source closure must be a path-to-SHA256 map');
+ assert.ok(Object.hasOwn(c.sourceSha256,'src/cli/pilotdeck.ts'),'source closure must include the CLI entry');
+ for(const digest of Object.values(c.sourceSha256))assert.match(digest,/^[a-f0-9]{64}$/);
  assert.equal(c.driverSha256,identity.driverSha256);assert.match(c.driverSha256,/^[a-f0-9]{64}$/);
- assert.match(identity.commandSha256,/^[a-f0-9]{64}$/);assert.ok(['ts','rust'].includes(c.side));
+ assert.match(identity.commandSha256,/^[a-f0-9]{64}$/);assert.ok(['ts','rust'].includes(c.side));assert.equal(c.side,identity.side,'declared implementation identity must match');
  assert.equal(c.negative,false,'negative capture cannot satisfy the positive contract');
  assert.equal(identity.negative,false);assert.equal(c.failure,null);assert.deepEqual(c.errors,[]);assert.deepEqual(c.exit,{code:0,signal:null});
  assert.equal(c.frames.filter(f=>f.type==='hello_ok').length,1,'authenticated handshake');
