@@ -13,7 +13,9 @@ pub mod tool_budget;
 pub use instructions::{
     InstructionDiscovery, Layer as InstructionLayer, Scope as InstructionScope,
 };
-pub use prepare::{DefaultContextRuntime, Options, RuntimeContextSurface, SessionContextState};
+pub use prepare::{
+    DefaultContextRuntime, Options, RuntimeContextSurface, ScopedContext, SessionContextState,
+};
 pub use prompt::{
     AssembledRuntimeContext, AssembledSection, ContributedCommand, ContributedPrompt,
     ContributedSkill, ContributionContext, ContributionRegistration, DynamicTextProvider,

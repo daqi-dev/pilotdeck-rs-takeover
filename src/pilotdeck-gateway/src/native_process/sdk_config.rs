@@ -39,6 +39,7 @@ pub(super) const WIRED_FIELDS: &[&str] = &[
     "agents",
     "skills",
     "managedTools",
+    "sandbox",
     "deferredTools",
     "persistSession",
     "promptSuggestions",
@@ -59,6 +60,13 @@ const WIRED_AGENT_FIELDS: &[&str] = &[
     "maxTurns",
     "permissionMode",
     "background",
+    // `buildForkedMessages`: the child's first user message.
+    "initialPrompt",
+    // `attachDefinitionMcpTools`: the fork's own MCP endpoints.
+    "mcpServers",
+    // `memory: "disabled"`: the fork's own context runtime without the
+    // memory resolver (ProjectSessionRuntimeBundle.ts:567-597).
+    "memory",
     // Carried on the definition; the baseline's subagent runtime reads it
     // nowhere.
     "effort",
@@ -844,6 +852,9 @@ pub(super) fn session_skills(config: Option<&JsValue>) -> Option<Vec<String>> {
 pub(super) struct NativeSdkSessionConfig {
     pub options: super::Options,
     pub overrides: Arc<SessionOverrides>,
+    /// The SDK session MCP table (`this.sdkSessionMcpServers`) an agent's
+    /// string `mcpServers` entries reference.
+    pub mcp: Arc<std::sync::OnceLock<Arc<crate::runtime::mcp::sdk::SdkMcpConfig>>>,
     /// The project runtimes whose model catalog the server-side checks
     /// resolve against (`this.resolve(projectKey).snapshot`).
     pub project: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
@@ -1235,6 +1246,9 @@ pub(super) fn apply_agent_fields(agent: &mut JsObject, config: Option<&JsValue>)
                 "criticalSystemReminder",
                 "criticalSystemReminder_EXPERIMENTAL",
             ),
+            ("memory", "memory"),
+            ("initialPrompt", "initialPrompt"),
+            ("mcpServers", "mcpServers"),
         ] {
             if let Some(value) = field(source) {
                 definition.insert(key.into(), value.clone());
@@ -1288,6 +1302,63 @@ pub(super) fn apply_model_fields(
         "fallbackModels".into(),
         JsValue::Array(vec![JsValue::Object(fallback)]),
     );
+}
+
+/// `resolveSdkSubagentMcpServers`: a string names an enabled SDK-session
+/// server (its config is copied); an object adds its servers, a name at most
+/// once.
+fn resolve_agent_mcp_servers(
+    agent: &JsString,
+    specs: &JsValue,
+    table: &[(JsString, JsValue)],
+) -> Result<JsObject, SubmitError> {
+    let mut resolved = JsObject::new();
+    let entries = match specs {
+        JsValue::Array(items) => items.clone(),
+        other => vec![other.clone()],
+    };
+    for spec in &entries {
+        if let JsValue::String(name) = spec {
+            let Some((_, entry)) = table.iter().find(|(key, _)| key == name) else {
+                return Err(err(
+                    "SDK_AGENT_MCP_REFERENCE_NOT_FOUND",
+                    format!(
+                        "Agent {} references SDK-session MCP server {}, but it is not configured for this session.",
+                        text(agent),
+                        text(name)
+                    ),
+                ));
+            };
+            let enabled = entry.get("enabled").cloned().unwrap_or(JsValue::Undefined);
+            if !crate::runtime::mcp::sdk::js_truthy(&enabled) {
+                return Err(err(
+                    "SDK_AGENT_MCP_REFERENCE_DISABLED",
+                    format!(
+                        "Agent {} references SDK-session MCP server {}, but it is disabled.",
+                        text(agent),
+                        text(name)
+                    ),
+                ));
+            }
+            resolved.insert(
+                name.clone(),
+                entry.get("config").cloned().unwrap_or(JsValue::Undefined),
+            );
+            continue;
+        }
+        if let JsValue::Object(servers) = spec {
+            for (name, config) in servers.own_entries() {
+                if resolved.get_key(name).is_some() {
+                    return Err(err(
+                        "INVALID_MCP_SERVER",
+                        format!("Agent {} repeats MCP server {}.", text(agent), text(name)),
+                    ));
+                }
+                resolved.insert(name.clone(), config.clone());
+            }
+        }
+    }
+    Ok(resolved)
 }
 
 impl SubmitSdkSessionConfig for NativeSdkSessionConfig {
@@ -1413,11 +1484,32 @@ impl NativeSdkSessionConfig {
             if let Some(JsValue::Object(agents)) = config.get("agents") {
                 let mut resolved_agents = agents.clone();
                 for (id, agent) in agents.own_entries() {
+                    // `resolveSdkSubagentMcpServers` (ProjectRuntimeRegistry.ts:
+                    // 2162-2203) runs after the agent's model.
+                    let resolve_mcp = |resolved_agents: &mut JsObject| -> Result<(), SubmitError> {
+                        let Some(specs) = agent.get("mcpServers").filter(|v| !v.is_undefined())
+                        else {
+                            return Ok(());
+                        };
+                        let table = self
+                            .mcp
+                            .get()
+                            .map(|mcp| mcp.session_mcp_servers(&JsValue::String(session.clone())))
+                            .unwrap_or_default();
+                        let servers = resolve_agent_mcp_servers(id, specs, &table)?;
+                        if let Some(JsValue::Object(agent)) = resolved_agents.get_key(id) {
+                            let mut agent = agent.clone();
+                            agent.insert("mcpServers".into(), JsValue::Object(servers));
+                            resolved_agents.insert(id.clone(), JsValue::Object(agent));
+                        }
+                        Ok(())
+                    };
                     let Some(model) = agent
                         .get("model")
                         .and_then(JsValue::as_string)
                         .filter(|model| !model.is_empty())
                     else {
+                        resolve_mcp(&mut resolved_agents)?;
                         continue;
                     };
                     let model_config = project_model_config(&self.project, &root)?;
@@ -1446,6 +1538,7 @@ impl NativeSdkSessionConfig {
                         );
                         resolved_agents.insert(id.clone(), JsValue::Object(agent));
                     }
+                    resolve_mcp(&mut resolved_agents)?;
                 }
                 if let JsValue::Object(fields) = &mut next {
                     fields.insert("agents".into(), JsValue::Object(resolved_agents));
@@ -1499,5 +1592,60 @@ impl NativeSdkSessionConfig {
             self.overrides.mark_sdk_config(session, root);
             Ok(true)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pilotdeck_protocol::parse_json;
+
+    fn table() -> Vec<(JsString, JsValue)> {
+        vec![
+            (
+                "on".into(),
+                parse_json(r#"{"config":{"type":"stdio","command":"node"},"enabled":true}"#)
+                    .unwrap(),
+            ),
+            (
+                "off".into(),
+                parse_json(r#"{"config":{"type":"stdio","command":"node"},"enabled":false}"#)
+                    .unwrap(),
+            ),
+        ]
+    }
+
+    #[test]
+    fn agent_mcp_references_resolve_like_the_baseline() {
+        let agent: JsString = "a".into();
+        let resolved = resolve_agent_mcp_servers(
+            &agent,
+            &parse_json(r#"["on",{"x":{"type":"sse","url":"http://h"}}]"#).unwrap(),
+            &table(),
+        )
+        .expect("an enabled reference and an inline server resolve");
+        assert_eq!(
+            stringify_json(&JsValue::Object(resolved)).unwrap().unwrap(),
+            r#"{"on":{"type":"stdio","command":"node"},"x":{"type":"sse","url":"http://h"}}"#
+        );
+        let code = |specs: &str| {
+            resolve_agent_mcp_servers(&agent, &parse_json(specs).unwrap(), &table())
+                .unwrap_err()
+                .code
+        };
+        assert_eq!(code(r#"["ghost"]"#), "SDK_AGENT_MCP_REFERENCE_NOT_FOUND");
+        assert_eq!(code(r#""off""#), "SDK_AGENT_MCP_REFERENCE_DISABLED");
+        assert_eq!(
+            code(r#"[{"d":{"type":"stdio","command":"a"}},{"d":{"type":"stdio","command":"b"}}]"#),
+            "INVALID_MCP_SERVER"
+        );
+    }
+
+    #[test]
+    fn sandbox_and_agent_context_fields_are_wired() {
+        for field in ["initialPrompt", "memory", "mcpServers"] {
+            assert!(WIRED_AGENT_FIELDS.contains(&field), "{field}");
+        }
+        assert!(WIRED_FIELDS.contains(&"sandbox"));
     }
 }

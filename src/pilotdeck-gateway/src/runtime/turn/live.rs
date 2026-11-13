@@ -2682,7 +2682,10 @@ fn parse_execute_request(
         .expect("identity checked above")
         .entries()
     {
-        if !key.equals_str("syntheticMessages") && !key.equals_str("inboxItemId") {
+        if !key.equals_str("syntheticMessages")
+            && !key.equals_str("prefixMessages")
+            && !key.equals_str("inboxItemId")
+        {
             payload.insert(key.clone(), value.clone());
         }
     }

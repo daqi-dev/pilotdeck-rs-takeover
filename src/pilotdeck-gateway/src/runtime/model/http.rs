@@ -110,7 +110,8 @@ fn is_stream_guard_error(name: &JsString) -> bool {
 /// - a `streamModel.ts` stream guard error (own `name`): `{ name }`;
 /// - `NetworkFetchError` (`network/fetch.ts`, own `code`, `cause`, `name`);
 /// - a Node fs/system `Error` (own `errno`, `code`, `syscall`, `path`);
-/// - the Google SDK `ApiError` (own `name: "ApiError"`, `status`).
+/// - the Google SDK `ApiError` (own `name: "ApiError"`, `status`);
+/// - `ModelRequestError` (own `code`, `details`, `name`).
 ///
 /// TS keeps the Error object itself as `details.raw`. Live projections
 /// (`providerError.raw`) `JSON.stringify` it; the transcript writer
@@ -143,6 +144,13 @@ pub(crate) fn is_error_instance_raw(raw: &JsValue) -> bool {
     }
     if name.is_some_and(|name| name.equals_str("ApiError")) {
         return keys_within(&["name", "status"]);
+    }
+    // `ModelRequestError` thrown while building a Google request
+    // (`throwIfUnsupportedThinkingPlan`, google/request.ts:89) reaches
+    // `toProviderError` as the instance itself (own `code`, `details`,
+    // `name`).
+    if name.is_some_and(|name| name.equals_str("ModelRequestError")) {
+        return keys_within(&["code", "details", "name"]);
     }
     name.is_none()
         && fields.get("syscall").and_then(JsValue::as_string).is_some()
@@ -2010,15 +2018,10 @@ fn dump_request_to_file(final_body: &JsValue, model: &JsValue) -> Result<(), Dum
     #[cfg(unix)]
     crate::ensure_sigxfsz_ignored();
 
-    // Format as pretty-printed JSON (TS uses `JSON.stringify(body, null, 2)`).
+    // `JSON.stringify(body, null, 2)`: insertion-ordered keys, two-space
+    // indent (a `serde_json::Value` round trip would sort the keys).
     let json = match crate::js_value::json_stringify(final_body) {
-        Ok(Some(compact)) => {
-            // Parse and re-stringify with indentation.
-            match serde_json::from_str::<serde_json::Value>(&compact) {
-                Ok(value) => serde_json::to_string_pretty(&value).unwrap_or(compact),
-                Err(_) => compact,
-            }
-        }
+        Ok(Some(_)) => crate::runtime::memory::edgeclaw::llm::recall::pretty_json(final_body),
         _ => return Ok(()), // Failed to serialize; skip the dump.
     };
 

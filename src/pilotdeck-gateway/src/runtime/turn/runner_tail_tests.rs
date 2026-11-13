@@ -605,7 +605,7 @@ async fn pending_suggestion_drop_and_title_never_finishes() {
         });
         let cancel=Cancellation::default();let runner=f.runner(tail.clone(),cancel.clone(),JsValue::Null,"turn-1");
         let (runner,_)=runner.start().await.expect("#742 never start");
-        let input=TurnInput {input:super::super::AgentInput::Text("request".into()),history:vec![],synthetic:vec![],metadata:None};
+        let input=TurnInput {input:super::super::AgentInput::Text("request".into()),prefix:vec![],history:vec![],synthetic:vec![],metadata:None};
         let (runner,_)=runner.accept(input.clone()).await.expect("#742 never accept");
         let (mut runner,_)=runner.submit_prompt(input.input,cancel).await.expect("#742 never prompt");runner.begin_tail_work();
         let mut recording=Recording::new(runner,Arc::new(()));
@@ -772,7 +772,7 @@ async fn metadata_write_retains_owner_and_serial_lock() {
         let tail=SessionTail::new(f.recorder.clone(),"session-742".into(),TailConfig::default());
         let runner=f.runner(tail.clone(),Cancellation::default(),JsValue::Null,"turn-1");let (runner,_)=runner.start().await.expect("#742 metadata start");
         let owner=Arc::new(());let mut recording=Recording::new(runner,owner.clone());
-        recording.begin(RecordingAction::Accept(TurnInput {input:super::super::AgentInput::Text("request".into()),history:vec![],synthetic:vec![],metadata:None})).expect("#742 metadata begin");
+        recording.begin(RecordingAction::Accept(TurnInput {input:super::super::AgentInput::Text("request".into()),prefix:vec![],history:vec![],synthetic:vec![],metadata:None})).expect("#742 metadata begin");
         {let settle=recording.settle();tokio::pin!(settle);tokio::select!{out=&mut settle=>panic!("#742 metadata did not block {:?}",out.map(|v|v.len())),out=entered=>out.expect("#742 metadata worker entered")}}
         drop(recording);
         assert!(tail.writes.try_lock().is_err(),"#742 metadata cancelled worker retains serial lock");

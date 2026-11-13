@@ -244,6 +244,7 @@ impl ForkSeed {
         // none, SubagentRuntimeComposition.ts:102-130), so its tool context
         // names no plan directory (AgentLoop.ts:2731-2738).
         permission.plan_directory_path = None;
+        let own_context = scope.definition.memory.as_deref() == Some("disabled");
         let run_mode = Arc::new(Mutex::new(config_run_mode(&config)));
         // The child runs its loop without an AgentSession or TurnRunner
         // (SubAgentSession.runNative): the session events and
@@ -304,7 +305,19 @@ impl ForkSeed {
             // A one-shot subagent without its own context definition runs on
             // the parent's context runtime (`createContext` returns
             // `undefined`), whose state is keyed by the child's session id.
-            context_state: self.context_state,
+            // `memory: "disabled"` composes the fork's own context
+            // (`definition.memory !== "disabled" && definition.skills ===
+            // undefined` is the inheriting case).
+            context_state: if own_context {
+                Arc::new(
+                    self.context_state
+                        .scoped_child(crate::runtime::context::ScopedContext {
+                            memory_disabled: true,
+                        }),
+                )
+            } else {
+                self.context_state
+            },
             // The child's permission context is a copy of the parent's,
             // user rules included; only the root session's turns re-read the
             // settings file.
@@ -917,6 +930,12 @@ impl SessionTools {
                 tools
                     .register(tool)
                     .expect("native continuation tool names are unique");
+            }
+        }
+        // `attachDefinitionMcpTools`: `registry.registerOrReplace(tool)`.
+        if let Some(fork) = &self.fork {
+            for tool in &fork.mcp_tools {
+                let _ = tools.register_or_replace(tool.clone());
             }
         }
         tools
@@ -2030,6 +2049,9 @@ pub(super) struct ExecutionWorld {
     /// `sdkSessionConfig.managedTools`: the `{ allow, deny }` selector policy
     /// (`blockedToolNames`' `managed`).
     managed_tools: Option<JsValue>,
+    /// `sdkSessionConfig.sandbox`: the session-local tool visibility policy
+    /// (`blockedToolNames`' `sandbox`).
+    sandbox_policy: Option<JsValue>,
     /// The gateway's `extraTools` (the automation providers' tools,
     /// `ProjectExecutionWorldBundle.ts:107-111`), registered after the
     /// builtins.
@@ -2078,6 +2100,7 @@ impl ExecutionWorld {
             bypass_override: None,
             skills_filter: None,
             managed_tools: None,
+            sandbox_policy: None,
             extra_tools: Vec::new(),
             excluded_tools: Vec::new(),
             invocation: None,
@@ -2177,6 +2200,12 @@ impl SessionTools {
         self
     }
 
+    /// The SDK config's `sandbox` tool policy.
+    pub(super) fn with_sdk_sandbox(mut self, policy: Option<JsValue>) -> Self {
+        self.world.sandbox_policy = policy;
+        self
+    }
+
     /// The project generation's sandbox mode for every tool this session
     /// (and its forks) builds.
     pub(super) fn with_sandbox(mut self, mode: crate::runtime::project::SandboxMode) -> Self {
@@ -2231,6 +2260,48 @@ fn managed_tool_blocked(policy: &JsValue, name: &JsString) -> bool {
     selectors("deny").iter().any(matches) || (!allow.is_empty() && !allow.iter().any(matches))
 }
 
+/// `blockedToolNames`' `sandbox` (ProjectSessionRuntimeBundle.ts:807-826):
+/// `process: deny` blocks the host-bridge tools (shell / mcp / custom kinds,
+/// `execute_code`, `agent`, `task_*`); `filesystem: deny` also every
+/// filesystem tool, `read_only` the three writers; `network: deny` also every
+/// network tool.
+fn sandbox_tool_blocked(
+    policy: &JsValue,
+    tool: &dyn crate::runtime::tools::ExecutableTool,
+) -> bool {
+    let fields = tool.fields();
+    let Some(name) = fields.get("name").and_then(JsValue::as_string) else {
+        return false;
+    };
+    let name = String::from_utf16_lossy(name.units());
+    let kind = fields
+        .get("kind")
+        .and_then(JsValue::as_string)
+        .map(|kind| String::from_utf16_lossy(kind.units()))
+        .unwrap_or_default();
+    let setting = |key: &str| {
+        policy
+            .get(key)
+            .and_then(JsValue::as_string)
+            .map(|value| String::from_utf16_lossy(value.units()))
+    };
+    let host_bridge = matches!(kind.as_str(), "shell" | "mcp" | "custom")
+        || name == "execute_code"
+        || name == "agent"
+        || name.starts_with("task_");
+    let deny_process = setting("process").as_deref() == Some("deny") && host_bridge;
+    let deny_filesystem = match setting("filesystem").as_deref() {
+        Some("deny") => kind == "filesystem" || host_bridge,
+        Some("read_only") => {
+            matches!(name.as_str(), "write_file" | "edit_file" | "edit_notebook") || host_bridge
+        }
+        _ => false,
+    };
+    let deny_network =
+        setting("network").as_deref() == Some("deny") && (kind == "network" || host_bridge);
+    deny_process || deny_filesystem || deny_network
+}
+
 pub(super) fn native_tools(
     allowed: Option<Vec<JsString>>,
     denied: Option<Vec<JsString>>,
@@ -2239,15 +2310,19 @@ pub(super) fn native_tools(
     world: &ExecutionWorld,
 ) -> ToolRegistry {
     let managed = world.managed_tools.clone();
+    let sandbox = world.sandbox_policy.clone();
     let tools = ToolRegistry::new(
         None,
         Some(Arc::new(move |tool| {
             let Some(name) = tool.fields().get("name").and_then(JsValue::as_string) else {
                 return false;
             };
-            !managed
+            !sandbox
                 .as_ref()
-                .is_some_and(|policy| managed_tool_blocked(policy, name))
+                .is_some_and(|policy| sandbox_tool_blocked(policy, tool))
+                && !managed
+                    .as_ref()
+                    .is_some_and(|policy| managed_tool_blocked(policy, name))
                 && allowed.as_ref().is_none_or(|names| names.contains(name))
                 && !denied.as_ref().is_some_and(|names| names.contains(name))
         })),

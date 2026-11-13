@@ -1,0 +1,183 @@
+{
+  "name": "proto-unsupported-thinking",
+  "about": "推理设置与参数格式不兼容时，请求发出前就以 unsupported_thinking 结束（model/thinking/registry.ts:39-89 resolveThinkingPlan 的各个 fail 分支 + throwIfUnsupportedThinkingPlan）。model_stream 走公共 host 时基线在 200 头之后断连接、采集器记不下来（见 proto-anthropic-request.gen.mjs 开头），这里改走普通 submit_turn（modelOverride 选模型、set_session_thinking 选强度 high）：u1 server-default 格式选了强度；u2 server-default 而模型关闭推理；u3 强度不在 efforts 里；u4 moonshot kimi-k3 用 provider 格式时关闭推理；u5 只支持预算推理的老 Claude 模型选了强度；u6 非 gemini-3 的 Gemini 选了强度；u7 Gemini 关闭推理。比较事件（model_error 的 code / message）、落盘与 provider 收到的请求（主请求应当一个都没有）。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        sd-effort:\n          thinking:\n            state: enabled\n            efforts: [high]\n            format: server-default\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        sd-off:\n          thinking:\n            state: disabled\n            format: server-default\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        few-efforts:\n          thinking:\n            state: enabled\n            efforts: [low]\n            format: openai\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    moonshot:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        kimi-k3-bbx:\n          thinking:\n            state: disabled\n            format: provider\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    anth:\n      protocol: anthropic\n      url: {MOCK}/anth/v1\n      apiKey: bbx-mock-only\n      models:\n        claude-3-5-bbx:\n          thinking:\n            state: enabled\n            efforts: [high]\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    gem:\n      protocol: google\n      url: {MOCK}/gem\n      apiKey: bbx-mock-only\n      models:\n        gemini-2.5-bbx:\n          thinking:\n            state: enabled\n            efforts: [high]\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        gemini-3-off:\n          thinking:\n            state: disabled\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Thinking\"}"
+      }
+    },
+    {
+      "name": "any",
+      "reply": {
+        "text": "should not be asked"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_session_thinking",
+      "params": {
+        "sessionKey": "s-u1",
+        "thinking": {
+          "enabled": true,
+          "mode": "high"
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-u1",
+        "channelKey": "test",
+        "message": "u1: think",
+        "modelOverride": {
+          "mode": "model",
+          "provider": "bbx",
+          "model": "sd-effort"
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-u2",
+        "channelKey": "test",
+        "message": "u2: think",
+        "modelOverride": {
+          "mode": "model",
+          "provider": "bbx",
+          "model": "sd-off"
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_session_thinking",
+      "params": {
+        "sessionKey": "s-u3",
+        "thinking": {
+          "enabled": true,
+          "mode": "high"
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-u3",
+        "channelKey": "test",
+        "message": "u3: think",
+        "modelOverride": {
+          "mode": "model",
+          "provider": "bbx",
+          "model": "few-efforts"
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-u4",
+        "channelKey": "test",
+        "message": "u4: think",
+        "modelOverride": {
+          "mode": "model",
+          "provider": "moonshot",
+          "model": "kimi-k3-bbx"
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_session_thinking",
+      "params": {
+        "sessionKey": "s-u5",
+        "thinking": {
+          "enabled": true,
+          "mode": "high"
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-u5",
+        "channelKey": "test",
+        "message": "u5: think",
+        "modelOverride": {
+          "mode": "model",
+          "provider": "anth",
+          "model": "claude-3-5-bbx"
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "set_session_thinking",
+      "params": {
+        "sessionKey": "s-u6",
+        "thinking": {
+          "enabled": true,
+          "mode": "high"
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-u6",
+        "channelKey": "test",
+        "message": "u6: think",
+        "modelOverride": {
+          "mode": "model",
+          "provider": "gem",
+          "model": "gemini-2.5-bbx"
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-u7",
+        "channelKey": "test",
+        "message": "u7: think",
+        "modelOverride": {
+          "mode": "model",
+          "provider": "gem",
+          "model": "gemini-3-off"
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    }
+  ]
+}

@@ -133,6 +133,7 @@ fn input() -> TurnInput {
         input: AgentInput::Text("probe".into()),
         history: vec![],
         synthetic: vec![],
+        prefix: vec![],
         metadata: None,
     }
 }

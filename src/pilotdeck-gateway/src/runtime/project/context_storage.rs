@@ -67,6 +67,9 @@ pub struct SessionContextOptions {
     /// Set for a scoped agent whose definition has `memory: "disabled"`.
     /// The default inherits this generation's resolver.
     pub memory_disabled: bool,
+    /// `includeExtensionsWithCustomSystemPrompt`: a forked child's own
+    /// context lists the session's extensions under its custom prompt.
+    pub include_extensions_with_custom_system_prompt: bool,
     /// `sessionExecution.handle.hostWorkspaceRoot`, when provided. Both memory
     /// retrieval and instruction discovery use it; otherwise the generation's
     /// project root is used (`ProjectSessionRuntimeBundle.ts:518,572`).
@@ -217,6 +220,8 @@ impl ContextStorageResources {
             memory_retrieval_timeout_ms,
             now: Some(self.now.clone()),
             extension: options.extension,
+            include_extensions_with_custom_system_prompt: options
+                .include_extensions_with_custom_system_prompt,
             compaction: Some(Arc::new(native_compaction_port(summary))),
             session_state: options.session_state,
             // `new PromptContributionRegistry({ name: `agent:${sessionKey}` })`

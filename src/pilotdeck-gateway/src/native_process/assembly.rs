@@ -1211,6 +1211,15 @@ async fn start_assembly(
                                 })
                                 .cloned(),
                         )
+                        .with_sdk_sandbox(
+                            sdk_config
+                                .as_ref()
+                                .and_then(|config| config.get("sandbox"))
+                                .filter(|policy| {
+                                    !matches!(policy, JsValue::Undefined | JsValue::Null)
+                                })
+                                .cloned(),
+                        )
                         .with_session_extension(session_extension.clone())
                         .with_permission_mode_source(permission_source.clone())
                         .with_continuation_parent(continuation_parent.parent_ref())
@@ -1728,6 +1737,7 @@ async fn start_assembly(
                 sdk_config: Some(Arc::new(super::sdk_config::NativeSdkSessionConfig {
                     options: options.clone(),
                     overrides: session_overrides.clone(),
+                    mcp: build_mcp_config.clone(),
                     project: build_project.clone(),
                 })),
                 compaction: Some(Arc::new(super::manual_compaction::OwnerCompaction {

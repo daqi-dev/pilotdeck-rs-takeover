@@ -6572,30 +6572,30 @@
     {
      "id": "execute_code.error:invalid_rpc",
      "where": "src/tool/builtin/executeCode.ts:589",
-     "note": "工具 execute_code 可能返回的错误码 invalid_rpc（结果里 isError + 错误码 / 消息）。",
+     "note": "工具 execute_code 可能返回的错误码 invalid_rpc（结果里 isError + 错误码 / 消息）。 RPC 应答在脚本里被打印出来，产物里是 Python 字典的写法（'code': 'invalid_rpc'）或 JSON，observe 两种都认。",
      "probe": [],
-     "observe": "\"invalid_rpc\""
+     "observe": "['\"]code['\"]: ?['\"]invalid_rpc['\"]"
     },
     {
      "id": "execute_code.error:invalid_rpc_token",
      "where": "src/tool/builtin/executeCode.ts:595",
-     "note": "工具 execute_code 可能返回的错误码 invalid_rpc_token（结果里 isError + 错误码 / 消息）。",
+     "note": "工具 execute_code 可能返回的错误码 invalid_rpc_token（结果里 isError + 错误码 / 消息）。 RPC 应答在脚本里被打印出来，产物里是 Python 字典的写法（'code': 'invalid_rpc_token'）或 JSON，observe 两种都认。",
      "probe": [],
-     "observe": "\"invalid_rpc_token\""
+     "observe": "['\"]code['\"]: ?['\"]invalid_rpc_token['\"]"
     },
     {
      "id": "execute_code.error:tool_not_allowed",
      "where": "src/tool/builtin/executeCode.ts:598",
-     "note": "工具 execute_code 可能返回的错误码 tool_not_allowed（结果里 isError + 错误码 / 消息）。",
+     "note": "工具 execute_code 可能返回的错误码 tool_not_allowed（结果里 isError + 错误码 / 消息）。 RPC 应答在脚本里被打印出来，产物里是 Python 字典的写法（'code': 'tool_not_allowed'）或 JSON，observe 两种都认。",
      "probe": [],
-     "observe": "\"tool_not_allowed\""
+     "observe": "['\"]code['\"]: ?['\"]tool_not_allowed['\"]"
     },
     {
      "id": "execute_code.error:tool_call_limit_reached",
      "where": "src/tool/builtin/executeCode.ts:603",
-     "note": "工具 execute_code 可能返回的错误码 tool_call_limit_reached（结果里 isError + 错误码 / 消息）。",
+     "note": "工具 execute_code 可能返回的错误码 tool_call_limit_reached（结果里 isError + 错误码 / 消息）。 RPC 应答在脚本里被打印出来，产物里是 Python 字典的写法（'code': 'tool_call_limit_reached'）或 JSON，observe 两种都认。",
      "probe": [],
-     "observe": "\"tool_call_limit_reached\""
+     "observe": "['\"]code['\"]: ?['\"]tool_call_limit_reached['\"]"
     },
     {
      "id": "<pathSafety>.error:invalid_tool_input",
@@ -14618,7 +14618,7 @@
    ]
   },
   "hooks": {
-   "about": "hook 事件、hook 种类、配置字段、输出字段、输入字段、来源与执行结果。来源：src/extension/hooks/protocol/events.ts（PILOTDECK_HOOK_EVENTS 与不适用的旧事件）、settings.ts（PilotDeckHookCommand 联合与 matcher）、output.ts + execution/parseHookOutput.ts（stdout JSON 里被识别的每个字段）、input.ts（toLegacyHookInput 的 snake_case 输入）、config/parseHooksConfig.ts、execution/HookRuntime.ts 与各 *HookExecutor.ts；触发点用 grep 每个事件名在非协议文件里的出现位置核对——Notification、CwdChanged、WorktreeCreate、WorktreeRemove 没有触发点。hook 只来自插件（hooks.json 或内联）与 SDK 会话的 sdkSessionConfig.hooks，pilotdeck.yaml 没有 hooks 段。probe 用事件名 / 字段名（场景里的 hook 配置或 hook 脚本输出），结果类用 observe。",
+   "about": "hook 事件、hook 种类、配置字段、输出字段、输入字段、来源与执行结果。来源：src/extension/hooks/protocol/events.ts（PILOTDECK_HOOK_EVENTS 与不适用的旧事件）、settings.ts（PilotDeckHookCommand 联合与 matcher）、output.ts + execution/parseHookOutput.ts（stdout JSON 里被识别的每个字段）、input.ts（toLegacyHookInput 的 snake_case 输入）、config/parseHooksConfig.ts、execution/HookRuntime.ts 与各 *HookExecutor.ts；触发点用 grep 每个事件名在非协议文件里的出现位置核对——Notification、CwdChanged、WorktreeCreate、WorktreeRemove 没有触发点。hook 只来自插件（hooks.json 或内联）与 SDK 会话的 sdkSessionConfig.hooks，pilotdeck.yaml 没有 hooks 段。probe 用事件名 / 字段名（场景里的 hook 配置或 hook 脚本输出），结果类用 observe。 修正（2026-11-12）：hook 输入是 createHookInput 的 camelCase 对象（不是 toLegacyHookInput 的 snake_case，后者生产路径不调用）；PilotDeckHookBaseInput 的 agentId / agentType 没有任何生产路径填写（grep 全部 baseInput 构造处），不列。",
    "items": [
     {
      "id": "hook-event:PreToolUse",
@@ -15117,53 +15117,39 @@
      ]
     },
     {
-     "id": "hook-input:hook_event_name",
-     "where": "src/extension/hooks/protocol/input.ts:42",
-     "note": "command / http hook 收到的输入 JSON 字段 hook_event_name；事件载荷其它字段一律 camelCase 转 snake_case。",
+     "id": "hook-input:hookEventName",
+     "where": "src/extension/hooks/protocol/input.ts:17-27",
+     "note": "command / http hook 从 stdin / 请求体收到的输入 JSON 字段 hookEventName（createHookInput：base 字段在前、事件载荷居中、hookEventName 在最后，全部 camelCase；LifecycleRuntime.ts:41、HttpHookExecutor.ts:24）。旧条目按 toLegacyHookInput 写成 snake_case，但该函数只被导出、生产路径从未调用，基线实际输入是 camelCase（hook-pre-tool-use 的 hooklog 为证）。observe 认的是 hook 输入里相邻字段的排布。",
      "probe": [],
-     "observe": "hook_event_name"
+     "observe": "\"hookEventName\": \"[A-Z][A-Za-z]+\"\\s*\\}"
     },
     {
-     "id": "hook-input:session_id",
-     "where": "src/extension/hooks/protocol/input.ts:43",
-     "note": "command / http hook 收到的输入 JSON 字段 session_id；事件载荷其它字段一律 camelCase 转 snake_case。",
+     "id": "hook-input:sessionId",
+     "where": "src/extension/hooks/protocol/input.ts:3-4",
+     "note": "command / http hook 从 stdin / 请求体收到的输入 JSON 字段 sessionId（createHookInput：base 字段在前、事件载荷居中、hookEventName 在最后，全部 camelCase；LifecycleRuntime.ts:41、HttpHookExecutor.ts:24）。旧条目按 toLegacyHookInput 写成 snake_case，但该函数只被导出、生产路径从未调用，基线实际输入是 camelCase（hook-pre-tool-use 的 hooklog 为证）。observe 认的是 hook 输入里相邻字段的排布。",
      "probe": [],
-     "observe": "session_id"
+     "observe": "\"sessionId\": \"[^\"]*\",\\s*\"transcriptPath\": "
     },
     {
-     "id": "hook-input:transcript_path",
-     "where": "src/extension/hooks/protocol/input.ts:44",
-     "note": "command / http hook 收到的输入 JSON 字段 transcript_path；事件载荷其它字段一律 camelCase 转 snake_case。",
+     "id": "hook-input:transcriptPath",
+     "where": "src/extension/hooks/protocol/input.ts:5",
+     "note": "command / http hook 从 stdin / 请求体收到的输入 JSON 字段 transcriptPath（createHookInput：base 字段在前、事件载荷居中、hookEventName 在最后，全部 camelCase；LifecycleRuntime.ts:41、HttpHookExecutor.ts:24）。旧条目按 toLegacyHookInput 写成 snake_case，但该函数只被导出、生产路径从未调用，基线实际输入是 camelCase（hook-pre-tool-use 的 hooklog 为证）。observe 认的是 hook 输入里相邻字段的排布。",
      "probe": [],
-     "observe": "transcript_path"
+     "observe": "\"transcriptPath\": \"[^\"]*\",\\s*\"cwd\": "
     },
     {
      "id": "hook-input:cwd",
-     "where": "src/extension/hooks/protocol/input.ts:45",
-     "note": "command / http hook 收到的输入 JSON 字段 cwd；事件载荷其它字段一律 camelCase 转 snake_case。",
+     "where": "src/extension/hooks/protocol/input.ts:6",
+     "note": "command / http hook 从 stdin / 请求体收到的输入 JSON 字段 cwd（createHookInput：base 字段在前、事件载荷居中、hookEventName 在最后，全部 camelCase；LifecycleRuntime.ts:41、HttpHookExecutor.ts:24）。旧条目按 toLegacyHookInput 写成 snake_case，但该函数只被导出、生产路径从未调用，基线实际输入是 camelCase（hook-pre-tool-use 的 hooklog 为证）。observe 认的是 hook 输入里相邻字段的排布。",
      "probe": [],
-     "observe": "cwd"
+     "observe": "\"transcriptPath\": \"[^\"]*\",\\s*\"cwd\": \"[^\"]*\""
     },
     {
-     "id": "hook-input:permission_mode",
-     "where": "src/extension/hooks/protocol/input.ts:48",
-     "note": "command / http hook 收到的输入 JSON 字段 permission_mode（有时）；事件载荷其它字段一律 camelCase 转 snake_case。",
+     "id": "hook-input:permissionMode",
+     "where": "src/extension/hooks/protocol/input.ts:7",
+     "note": "command / http hook 从 stdin / 请求体收到的输入 JSON 字段 permissionMode（createHookInput：base 字段在前、事件载荷居中、hookEventName 在最后，全部 camelCase；LifecycleRuntime.ts:41、HttpHookExecutor.ts:24）。旧条目按 toLegacyHookInput 写成 snake_case，但该函数只被导出、生产路径从未调用，基线实际输入是 camelCase（hook-pre-tool-use 的 hooklog 为证）。observe 认的是 hook 输入里相邻字段的排布。",
      "probe": [],
-     "observe": "permission_mode"
-    },
-    {
-     "id": "hook-input:agent_id",
-     "where": "src/extension/hooks/protocol/input.ts:49",
-     "note": "command / http hook 收到的输入 JSON 字段 agent_id（子代理内）；事件载荷其它字段一律 camelCase 转 snake_case。",
-     "probe": [],
-     "observe": "agent_id"
-    },
-    {
-     "id": "hook-input:agent_type",
-     "where": "src/extension/hooks/protocol/input.ts:50",
-     "note": "command / http hook 收到的输入 JSON 字段 agent_type（子代理内）；事件载荷其它字段一律 camelCase 转 snake_case。",
-     "probe": [],
-     "observe": "agent_type"
+     "observe": "\"transcriptPath\": \"[^\"]*\",\\s*\"cwd\": \"[^\"]*\",\\s*\"permissionMode\": "
     },
     {
      "id": "hook-source:plugin hooks/hooks.json",
@@ -16220,7 +16206,8 @@
      "note": "IM 渠道的 /new：开新会话（各渠道 SessionMapper 处理）；commands_list 里被过滤掉不显示。",
      "probe": [
       "/\"message\": ?\"\\/new(\\s|\\\\n|\")/",
-      "/\"text\": ?\"\\/new(\\s|\\\\n|\")/"
+      "/\"text\": ?\"\\/new(\\s|\\\\n|\")/",
+      "/\"content\": ?\"\\/new(\\s|\\\\n|\")/"
      ]
     },
     {
@@ -16261,88 +16248,78 @@
     {
      "id": "channel-command:/ask",
      "where": "src/adapters/channel/qq/QQChannel.ts:19",
-     "note": "QQ 渠道的触发前缀之一（缺省 triggerPrefixes）。",
+     "note": "QQ 渠道的触发前缀之一（缺省 triggerPrefixes）。 旧探测是裸子串 \"/ask\"，被 /chat/completions 之类的路径命中，属误报；改为只认消息正文以它开头。",
      "probe": [
-      "/ask"
+      "/\"(message|text|content)\": ?\"\\/ask(\\s|\\\\n|\")/"
      ]
     },
     {
      "id": "channel-command:/chat",
      "where": "src/adapters/channel/qq/QQChannel.ts:19",
-     "note": "QQ 渠道的触发前缀之一。",
+     "note": "QQ 渠道的触发前缀之一。 旧探测是裸子串 \"/chat\"，被 /chat/completions 之类的路径命中，属误报；改为只认消息正文以它开头。",
      "probe": [
-      "/chat"
+      "/\"(message|text|content)\": ?\"\\/chat(\\s|\\\\n|\")/"
      ]
     },
     {
      "id": "tui-command:/new",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:678",
-     "note": "TUI 本地命令：新会话（只在 pilotdeck tui 里，不发给 gateway）。",
-     "probe": [],
-     "observe": "/new"
+     "note": "TUI 本地命令：新会话（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/new\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
+     "probe": []
     },
     {
      "id": "tui-command:/sessions",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:687",
-     "note": "TUI 本地命令：会话列表（只在 pilotdeck tui 里，不发给 gateway）。",
-     "probe": [],
-     "observe": "/sessions"
+     "note": "TUI 本地命令：会话列表（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/sessions\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
+     "probe": []
     },
     {
      "id": "tui-command:/switch",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:688",
-     "note": "TUI 本地命令：切换会话（只在 pilotdeck tui 里，不发给 gateway）。",
-     "probe": [],
-     "observe": "/switch"
+     "note": "TUI 本地命令：切换会话（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/switch\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
+     "probe": []
     },
     {
      "id": "tui-command:/dashboard",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:689",
-     "note": "TUI 本地命令：仪表盘（只在 pilotdeck tui 里，不发给 gateway）。",
-     "probe": [],
-     "observe": "/dashboard"
+     "note": "TUI 本地命令：仪表盘（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/dashboard\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
+     "probe": []
     },
     {
      "id": "tui-command:/permissions",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:706",
-     "note": "TUI 本地命令：权限（只在 pilotdeck tui 里，不发给 gateway）。",
-     "probe": [],
-     "observe": "/permissions"
+     "note": "TUI 本地命令：权限（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/permissions\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
+     "probe": []
     },
     {
      "id": "tui-command:/mode",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:765",
-     "note": "TUI 本地命令：切换模式（只在 pilotdeck tui 里，不发给 gateway）。",
-     "probe": [],
-     "observe": "/mode"
+     "note": "TUI 本地命令：切换模式（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/mode\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
+     "probe": []
     },
     {
      "id": "tui-command:/view",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:787",
-     "note": "TUI 本地命令：查看（只在 pilotdeck tui 里，不发给 gateway）。",
-     "probe": [],
-     "observe": "/view"
+     "note": "TUI 本地命令：查看（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/view\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
+     "probe": []
     },
     {
      "id": "tui-command:/clear",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:806",
-     "note": "TUI 本地命令：清屏（只在 pilotdeck tui 里，不发给 gateway）。",
-     "probe": [],
-     "observe": "/clear"
+     "note": "TUI 本地命令：清屏（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/clear\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
+     "probe": []
     },
     {
      "id": "tui-command:/help",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:809",
-     "note": "TUI 本地命令：帮助（只在 pilotdeck tui 里，不发给 gateway）。",
-     "probe": [],
-     "observe": "/help"
+     "note": "TUI 本地命令：帮助（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/help\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
+     "probe": []
     },
     {
      "id": "tui-command:/exit",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:812",
-     "note": "TUI 本地命令：退出（只在 pilotdeck tui 里，不发给 gateway）。",
-     "probe": [],
-     "observe": "/exit"
+     "note": "TUI 本地命令：退出（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/exit\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
+     "probe": []
     }
    ]
   }

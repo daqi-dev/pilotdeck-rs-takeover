@@ -59,6 +59,12 @@ pub struct SubagentDefinition {
     pub max_turns: Option<f64>,
     pub permission_mode: Option<String>,
     pub initial_prompt: Option<String>,
+    /// `memory`: `"disabled"` gives the fork its own context runtime without
+    /// the project's memory resolver.
+    pub memory: Option<String>,
+    /// `mcpServers`: the fork's own MCP endpoints, already resolved from
+    /// SDK-session references (`resolveSdkSubagentMcpServers`).
+    pub mcp_servers: Vec<(String, JsValue)>,
     pub critical_system_reminder: Option<String>,
     pub background: bool,
 }
@@ -224,6 +230,15 @@ pub fn definitions_from_config(config: &JsObject) -> Vec<Arc<SubagentDefinition>
                 max_turns: definition.get("maxTurns").and_then(JsValue::as_number),
                 permission_mode: text_of(definition.get("permissionMode")),
                 initial_prompt: text_of(definition.get("initialPrompt")),
+                memory: text_of(definition.get("memory")),
+                mcp_servers: match definition.get("mcpServers") {
+                    Some(JsValue::Object(servers)) => servers
+                        .entries()
+                        .iter()
+                        .map(|(name, config)| (text(name), config.clone()))
+                        .collect(),
+                    _ => Vec::new(),
+                },
                 critical_system_reminder: text_of(definition.get("criticalSystemReminder")),
                 background: flag("background"),
             }))

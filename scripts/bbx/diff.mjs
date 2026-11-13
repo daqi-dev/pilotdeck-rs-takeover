@@ -18,7 +18,6 @@
 //                        位数本身逐次不同。取整和打印的写法由 Rust 侧单元测试负责
 //   7. 基线 execute_code 的两处随机路径段：mkdtemp 目录 pilotdeck_execute_code_XXXXXX 的随机后缀 → <tmp>，
 //      工具输出溢出目录 pilotdeck-tool-output/<进程号>/ → <pid>。只认这两个固定前缀
-//      同类的还有 PILOTDECK_DUMP_REQUEST 的转储文件名 pilotdeck_request_<毫秒>.json → pilotdeck_request_<ms>.json
 //      （上面第 3 条因为紧跟着「.」不抹它；只认这个前缀和后缀）
 //   9. 工作区快照：快照 id 由随机的轮次 id 散列得来（键 snapshotId，以及路径段 /snapshots/<64 位十六进制>）
 //      → <snap:N>，N 是它在该侧第一次出现的序号；快照恢复用的 mkdtemp 目录 .pilotdeck-restore-XXXXXX → <tmp>
@@ -32,6 +31,9 @@
 //      打不打、数值多少都随机器快慢变
 //  12. 秒级时间戳      → <sec>（只认键名 created：apiServer 渠道的 OpenAI 兼容响应里 Math.floor(Date.now()/1000)，
 //      1.6e9 ~ 2.0e9 之间的整数；SSE 正文文本里的 "created":<10 位整数> 同样处理）。别的键名的 10 位整数照原样比
+//  13. 请求转储文件名  → pilotdeck_request_<dump:N>.json（PILOTDECK_DUMP_REQUEST=1 时 streamModel.ts:196-203 写的
+//      os.tmpdir()/pilotdeck_request_<Date.now()>.json；文件名里的毫秒后面紧跟 ".json"，第 3 条不抹）。N 是它在该侧
+//      第一次出现的序号，保留「同一个文件」的关系，两个文件不会被抹成同一个键
 // 数组按下标比。唯一的例外：元素全是带名字的对象（function.name 或 name，且名字不重复）的数组
 // 按名字对齐——缺的、多的各报一条，共有元素的相对顺序不同报一条，同名元素再逐字段比。
 // 这只改变差异的报法（少一个工具不再表现为后面所有工具都错位），不会让任何差异消失。
@@ -75,14 +77,17 @@ function normalizer() {
   const snaps = new Map();
   const snap = (id) => { if (!snaps.has(id)) snaps.set(id, snaps.size + 1); return `<snap:${snaps.get(id)}>`; };
   // turn-timing 行先删再给 UUID 编号：行里的 UUID 参与编号的话，一侧多打一行就会让后面所有序号错位。
-  const text = (s) => s.replace(/^\[gateway:turn-timing\] \{.*\}\n/gm, '').replace(UUID, (u) => {
+  const dumps = new Map();
+  const text = (s) => s.replace(/^\[gateway:turn-timing\] \{.*\}\n/gm, '').replace(/pilotdeck_request_(1[6-9]\d{11})\.json/g, (_, ms) => {
+    if (!dumps.has(ms)) dumps.set(ms, dumps.size + 1);
+    return `pilotdeck_request_<dump:${dumps.get(ms)}>.json`;
+  }).replace(UUID, (u) => {
     const k = u.toLowerCase();
     if (!ids.has(k)) ids.set(k, ids.size + 1);
     return `<uuid:${ids.get(k)}>`;
   }).replace(ISO, '<iso>').replace(/\(node:\d+\)/g, '(node:<pid>)')
     .replace(/(?<![\da-fA-F.])1[6-9]\d{11}(?![\da-fA-F.])/g, '<ms>')
     .replace(/pilotdeck_execute_code_[A-Za-z0-9]{6}/g, 'pilotdeck_execute_code_<tmp>')
-    .replace(/(pilotdeck_request_)1[6-9]\d{11}(\.json)/g, '$1<ms>$2')
     .replace(/\.pilotdeck-restore-[A-Za-z0-9]{6}/g, '.pilotdeck-restore-<tmp>')
     .replace(/(\/snapshots\/)([0-9a-f]{64})/g, (_, pre, id) => pre + snap(id))
     .replace(/(pilotdeck-tool-output\/)\d+\//g, '$1<pid>/')
