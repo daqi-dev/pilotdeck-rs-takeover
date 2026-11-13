@@ -3,7 +3,7 @@
 > 本文件由 `node scripts/bbx/status.mjs` 生成，不要手改。改功能清单改 `scripts/bbx/features.json`，改问题改 `state/issues.md`，改审阅记录改 `state/audits.md`，改检查结果改 `state/check-results.json`，然后重新生成。
 
 - 生成时间：2026-11-13T10:00:00Z
-- 仓库提交：`551a27b0d`（场景、表面清单、功能清单、台账都取自这个提交的工作区）
+- 仓库提交：`44ccd5dee`（场景、表面清单、功能清单、台账都取自这个提交的工作区）
 - 对拍产物：`cb8:~/ws/pdrs-takeover/pilotdeck-rs/_build/bbx`
 - 产物来历（人给的说明）：cb8（Linux aarch64）上 `~/ws/pdrs-takeover/pilotdeck-rs/_build/bbx/`，2026-11-13 09:45Z 后拷回，拷回后逐个核对修改时间与 cb8 上一致；494 个场景结果的修改时间都落在 09:07–09:36Z 之间，是同一轮全量。那时 cb8 的检出是 `9a5fb723`（本提交之后又合并了 `a3211dde`：六个 hook 场景去掉延迟退出的包装、Rust 固定被取消的 hook 完成帧次序；`9a5fb723` 只改文档），但 cb8 的 `pilotdeck` 二进制在 09:38Z 又重建过，这一轮实际用的是哪个提交的构建从产物里读不出来。本表用本提交的场景文件（那六个 hook 场景与 cb8 那一轮的写法不同）匹配 probe。产物只拷了基线侧 `*.ts.json` 与 `*.diff.txt`（结论与表面判定只用这两种）。
 - 产物里的场景结果：494 个 `.diff.txt`；修改时间 2026-11-13T09:07:00.000Z 至 2026-11-13T09:36:08.000Z（UTC）；按小时：2026-11-13T09:00Z 494 个
@@ -19,7 +19,7 @@
 | 2 | 表面覆盖完整 | 表面项 2006 个，范围内 1978 个：被 SAME 场景碰到 1873，只被有差异的场景碰到 5，没碰到 100；标为不计 28（理由表在 `state/out-of-scope.md`，待人过目） |
 | 3 | 盲审收敛 | 审阅记录 9 次，其中类型为「盲审」的 1 次；16 个功能域里从没有过盲审或缺口审查的 2 个。各功能域最近一次见下表。「两次连续盲审覆盖全部区域且无 1、2 级新发现」：不满足 |
 | 4 | 原版界面可用 | 没有数据：需要 `scripts/ui-smoke` 的当次结果和人亲手使用的记录 |
-| 5 | 构建与测试全绿，没有占位 | 四条命令：2026-11-13 在 cb8（Linux aarch64） 上、提交 `fd84c0719`：fmt pass，clippy pass，nextest pass（7837/7837），文档测试 pass。`src/` 产品代码里 `unimplemented!` 0 处、`todo!` 0 处、`NOT_IMPLEMENTED` 1 处（共 1，逐条见下；空 match 分支与转发给 TS 的兜底没有机械判据，未统计） |
+| 5 | 构建与测试全绿，没有占位 | 四条命令：2026-11-13 在 cb8（Linux aarch64） 上、提交 `fd84c0719`：fmt pass，clippy pass，nextest pass（7837/7837），文档测试 pass。`src/` 产品代码里 `unimplemented!` 0 处、`todo!` 0 处、`NOT_IMPLEMENTED` 0 处（共 0，逐条见下；空 match 分支与转发给 TS 的兜底没有机械判据，未统计） |
 | 6 | TS gateway 退役 | 透明代理入口的机械判据命中 0 处。进程树里没有 Node gateway 的证据：没有数据（需要全量对拍与界面冒烟期间的进程列表） |
 | 7 | 性能报告 | 没有数据：需要发布构建下两侧的启动耗时、每轮开销、内存、并发会话的测量 |
 | 8 | 真实使用 | 没有数据：需要人在最终组合上完成的真实任务记录 |
@@ -45,9 +45,10 @@
 
 ### 第 5 条：占位的逐处位置
 
-判据：`src/` 下的 `.rs`，跳过 `target`、`tests`、`benches`、`examples`、`fixtures` 目录和 `tests.rs`、`*_tests.rs`、`test_*.rs` 一类文件名，跳过整行注释；文件内的 `#[cfg(test)]` 模块没有排除。
+判据：`src/` 下的 `.rs`，跳过 `target`、`tests`、`benches`、`examples`、`fixtures` 目录和 `tests.rs`、`*_tests.rs`、`test_*.rs` 一类文件名，跳过整行注释；HTTP 状态码 `StatusCode::NOT_IMPLEMENTED`（501）不算；文件内的 `#[cfg(test)]` 模块没有排除。
 
-- `NOT_IMPLEMENTED`：`pilotdeck-gateway/src/module_host.rs:264`
+（无）
+
 
 ### 第 6 条：透明代理的判据
 

@@ -3,7 +3,7 @@
 > 本文件由 `node scripts/bbx/status.mjs` 生成，不要手改。理由来自 `scripts/bbx/surface.json` 各项的 `skip` 字段；要改理由或改成计入，改那里再重新生成。
 
 - 生成时间：2026-11-13T10:00:00Z
-- 仓库提交：`551a27b0d`
+- 仓库提交：`44ccd5dee`
 
 共 28 项，其中没有理由的 0 项。
 
