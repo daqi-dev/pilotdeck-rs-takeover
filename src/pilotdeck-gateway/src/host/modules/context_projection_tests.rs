@@ -137,20 +137,21 @@ async fn native_external_budget_projection_retains_request_after_real_preparatio
     );
     native.call(input.clone(), &budget, &model).await.unwrap();
     sidecar.call(input, &budget, &model).await.unwrap();
-    let posts = transport.0.lock().unwrap();
-    let native_input = posts[0].get("payload").unwrap().get("input").unwrap();
-    let sidecar_input = posts[1].get("payload").unwrap().get("input").unwrap();
-    assert_eq!(
-        native_input.get("budgetRequest"),
-        Some(&json(r#"{"provider":"p","model":"m","messages":[]}"#))
-    );
-    assert!(native_input.get("budgetPreparationId").is_none());
-    assert!(sidecar_input.get("budgetRequest").is_none());
-    assert_eq!(
-        sidecar_input.get("budgetPreparationId"),
-        Some(&"known".into())
-    );
-    drop(posts);
+    {
+        let posts = transport.0.lock().unwrap();
+        let native_input = posts[0].get("payload").unwrap().get("input").unwrap();
+        let sidecar_input = posts[1].get("payload").unwrap().get("input").unwrap();
+        assert_eq!(
+            native_input.get("budgetRequest"),
+            Some(&json(r#"{"provider":"p","model":"m","messages":[]}"#))
+        );
+        assert!(native_input.get("budgetPreparationId").is_none());
+        assert!(sidecar_input.get("budgetRequest").is_none());
+        assert_eq!(
+            sidecar_input.get("budgetPreparationId"),
+            Some(&"known".into())
+        );
+    }
     let bad = json(
         r#"{"payload":{"operation":"try_auto_compact","input":{"budgetRequest":{"provider":"p","model":"m","messages":[]},"budgetPreparation":{"provider":"p","model":"m","tools":[]},"budgetPreparationId":"missing","maxContextTokens":100}}}"#,
     );

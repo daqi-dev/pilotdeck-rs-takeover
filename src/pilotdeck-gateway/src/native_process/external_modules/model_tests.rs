@@ -403,13 +403,14 @@ async fn optional_remote_materialization_is_owned_and_production_selects_indepen
         .await
         .unwrap();
     assert_eq!(materialized, request());
-    let calls = server.calls.lock().unwrap();
-    assert_eq!(operation(&calls[1]), &"materialize_prepared_request".into());
-    assert_eq!(
-        calls[0].get("payload").unwrap().get("preparationId"),
-        calls[1].get("payload").unwrap().get("preparationId")
-    );
-    drop(calls);
+    {
+        let calls = server.calls.lock().unwrap();
+        assert_eq!(operation(&calls[1]), &"materialize_prepared_request".into());
+        assert_eq!(
+            calls[0].get("payload").unwrap().get("preparationId"),
+            calls[1].get("payload").unwrap().get("preparationId")
+        );
+    }
     let foreign = ExternalModelExecution::new(port.client.clone(), Cancellation::new());
     assert_eq!(
         foreign

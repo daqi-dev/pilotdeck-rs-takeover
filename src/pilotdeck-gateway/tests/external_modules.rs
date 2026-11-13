@@ -670,10 +670,10 @@ impl Drop for Fixture {
                 let path = entry.path();
                 if path.is_dir() {
                     collect(&path, files);
-                } else if path.extension().is_some_and(|x| x == "jsonl") {
-                    if let Ok(text) = std::fs::read_to_string(&path) {
-                        files.push(json!({"path":path,"raw":text}));
-                    }
+                } else if path.extension().is_some_and(|x| x == "jsonl")
+                    && let Ok(text) = std::fs::read_to_string(&path)
+                {
+                    files.push(json!({"path":path,"raw":text}));
                 }
             }
         }
