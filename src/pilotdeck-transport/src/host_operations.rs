@@ -2109,35 +2109,36 @@ pub(crate) fn call<E: HostExchange>(
     if !methods.supports(module, operation) {
         return Err(PortError::NotAdvertised { module, operation });
     }
-    let exchanged = match exchange.exchange(control, module, operation, call.effect(), payload(&call)) {
-        Ok(exchanged) => exchanged,
-        // The baseline's external loop module rejects a pending tool call the
-        // moment its execution is aborted; its capability port turns that
-        // into `onAbort("tool_cancelled")` and the thrown "Tool execution
-        // cancelled." (hostToolPort.ts:199-203, 251-256).
-        Err(PortError::Cancelled {
-            cause: CancelCause::Requested(_),
-        }) if crate::factory_payload::external_deployment()
-            && matches!(
-                &call,
-                HostCall::ExecuteBatch { .. } | HostCall::ExecuteSingle { .. }
-            ) =>
-        {
-            if let (HostCall::ExecuteBatch { .. }, Some(identity)) =
-                (&call, exchange.bound_identity())
+    let exchanged =
+        match exchange.exchange(control, module, operation, call.effect(), payload(&call)) {
+            Ok(exchanged) => exchanged,
+            // The baseline's external loop module rejects a pending tool call the
+            // moment its execution is aborted; its capability port turns that
+            // into `onAbort("tool_cancelled")` and the thrown "Tool execution
+            // cancelled." (hostToolPort.ts:199-203, 251-256).
+            Err(PortError::Cancelled {
+                cause: CancelCause::Requested(_),
+            }) if crate::factory_payload::external_deployment()
+                && matches!(
+                    &call,
+                    HostCall::ExecuteBatch { .. } | HostCall::ExecuteSingle { .. }
+                ) =>
             {
-                return Ok(HostReply::ToolBatchRejected {
-                    message: "Tool execution cancelled.".into(),
-                    boundary: BoundarySnapshot::capture(&JsValue::Undefined),
-                    identity: Box::new(identity),
+                if let (HostCall::ExecuteBatch { .. }, Some(identity)) =
+                    (&call, exchange.bound_identity())
+                {
+                    return Ok(HostReply::ToolBatchRejected {
+                        message: "Tool execution cancelled.".into(),
+                        boundary: BoundarySnapshot::capture(&JsValue::Undefined),
+                        identity: Box::new(identity),
+                    });
+                }
+                return Err(PortError::Cancelled {
+                    cause: CancelCause::Requested("tool_cancelled".into()),
                 });
             }
-            return Err(PortError::Cancelled {
-                cause: CancelCause::Requested("tool_cancelled".into()),
-            });
-        }
-        Err(error) => return Err(error),
-    };
+            Err(error) => return Err(error),
+        };
     let response = exchanged.boundary.value();
     let unresolved = || PortError::AcceptedUnknown {
         identity: Box::new(exchanged.identity.clone()),

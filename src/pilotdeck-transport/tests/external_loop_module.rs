@@ -94,11 +94,31 @@ fn successful_model_reply_without_events_is_the_ports_invalid_model_response() {
         hints: hints(),
     };
     for (call, payload, message) in [
-        (eager(), "{}", "Model module response must contain canonical events."),
-        (eager(), r#"{"events":{}}"#, "Model module response must contain canonical events."),
-        (pull(), r#"{"events":{},"done":true}"#, "Model stream_next response must contain events and done."),
-        (pull(), r#"{"events":[],"done":0}"#, "Model stream_next response must contain events and done."),
-        (pull(), r#"{"events":[]}"#, "Model stream_next response must contain events and done."),
+        (
+            eager(),
+            "{}",
+            "Model module response must contain canonical events.",
+        ),
+        (
+            eager(),
+            r#"{"events":{}}"#,
+            "Model module response must contain canonical events.",
+        ),
+        (
+            pull(),
+            r#"{"events":{},"done":true}"#,
+            "Model stream_next response must contain events and done.",
+        ),
+        (
+            pull(),
+            r#"{"events":[],"done":0}"#,
+            "Model stream_next response must contain events and done.",
+        ),
+        (
+            pull(),
+            r#"{"events":[]}"#,
+            "Model stream_next response must contain events and done.",
+        ),
     ] {
         let error = host(payload).call(&control(), call).unwrap_err();
         assert!(

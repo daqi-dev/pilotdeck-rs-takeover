@@ -825,9 +825,9 @@ impl BoundExchange {
                     // only on the execution's abort.
                     drop(state);
                     let owner = self.owner.clone();
-                    return Err(owner.outside_turns(|| {
-                        owner.park(|| parked_until_cancelled(control))
-                    }));
+                    return Err(
+                        owner.outside_turns(|| owner.park(|| parked_until_cancelled(control)))
+                    );
                 }
                 return Err(before(closed()));
             }
