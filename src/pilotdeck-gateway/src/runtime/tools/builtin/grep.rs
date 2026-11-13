@@ -23,6 +23,7 @@ use super::{
     ResolvedPath, basename, dirname, invalid, join, normalize, object, os_path, schema, string,
     text, tool_error, truthy,
 };
+use crate::runtime::tools::sandbox::Sandbox;
 use crate::{
     host::{HostError, modules::capability::ToolDefinition},
     metadata::{js_space, js_trim, js_trim_end, js_trim_start},
@@ -62,13 +63,21 @@ const INPUT_SCHEMA: &str = r#"{"type":"object","required":["pattern"],"additiona
 
 pub struct GrepTool {
     fields: JsObject,
+    sandbox: Sandbox,
 }
 
 impl GrepTool {
     pub fn new() -> Self {
         Self {
             fields: definition(),
+            sandbox: Sandbox::default(),
         }
+    }
+
+    /// Spawn ripgrep through the execution world's sandbox.
+    pub fn with_sandbox(mut self, sandbox: Sandbox) -> Self {
+        self.sandbox = sandbox;
+        self
     }
 }
 
@@ -92,7 +101,8 @@ impl ToolDefinition for GrepTool {
 
 impl ExecutableTool for GrepTool {
     fn execute(&self, input: JsValue, context: ToolRunContext) -> ToolFuture<ToolOutput> {
-        Box::pin(async move { execute(&input, &context).await })
+        let sandbox = self.sandbox;
+        Box::pin(async move { execute(&input, &context, sandbox).await })
     }
 }
 
@@ -136,7 +146,11 @@ fn input_bool(input: &JsValue, key: &str) -> Option<bool> {
     input.get(key).and_then(JsValue::as_bool)
 }
 
-async fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, ToolError> {
+async fn execute(
+    input: &JsValue,
+    context: &ToolRunContext,
+    sandbox: Sandbox,
+) -> Result<ToolOutput, ToolError> {
     let pattern = input_string(input, "pattern")
         .ok_or_else(|| invalid("pattern must be a string."))?
         .clone();
@@ -152,7 +166,7 @@ async fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput
     let mode = Mode::parse(&mode_name);
     let target = resolve_search_target(&resolved)?;
     let args = build_ripgrep_args(input, mode, &text(&pattern), &target.target);
-    let stdout = run_ripgrep(&args, &target.cwd, context).await?;
+    let stdout = run_ripgrep(&args, &target.cwd, context, sandbox).await?;
 
     match mode {
         Mode::Content => content_mode(input, &stdout, &target),
@@ -487,31 +501,36 @@ pub(super) async fn run_ripgrep_for(
     args: &[String],
     cwd: &JsString,
     context: &ToolRunContext,
+    sandbox: Sandbox,
 ) -> Result<String, ToolError> {
-    run_ripgrep(args, cwd, context).await.map_err(|mut error| {
-        let message = text(&error.message);
-        let relabelled = if let Some(rest) = message.strip_prefix("ripgrep grep ") {
-            format!("ripgrep {tool} {rest}")
-        } else if let Some(rest) = message.strip_prefix("grep ") {
-            format!("{tool} {rest}")
-        } else {
-            message
-        };
-        error.message = JsString::from(relabelled);
-        error
-    })
+    run_ripgrep(args, cwd, context, sandbox)
+        .await
+        .map_err(|mut error| {
+            let message = text(&error.message);
+            let relabelled = if let Some(rest) = message.strip_prefix("ripgrep grep ") {
+                format!("ripgrep {tool} {rest}")
+            } else if let Some(rest) = message.strip_prefix("grep ") {
+                format!("{tool} {rest}")
+            } else {
+                message
+            };
+            error.message = JsString::from(relabelled);
+            error
+        })
 }
 
 async fn run_ripgrep(
     args: &[String],
     cwd: &JsString,
     context: &ToolRunContext,
+    sandbox: Sandbox,
 ) -> Result<String, ToolError> {
-    run_ripgrep_with_timeout(
+    run_ripgrep_in(
         args,
         cwd,
         context,
         Duration::from_millis(RIPGREP_TIMEOUT_MS),
+        sandbox,
     )
     .await
 }
@@ -594,19 +613,53 @@ impl Drop for RipgrepProcess {
     }
 }
 
+#[cfg(test)]
 async fn run_ripgrep_with_timeout(
     args: &[String],
     cwd: &JsString,
     context: &ToolRunContext,
     limit: Duration,
 ) -> Result<String, ToolError> {
-    let executable = resolve_ripgrep(context)?;
+    run_ripgrep_in(args, cwd, context, limit, Sandbox::default()).await
+}
+
+async fn run_ripgrep_in(
+    args: &[String],
+    cwd: &JsString,
+    context: &ToolRunContext,
+    limit: Duration,
+    sandbox: Sandbox,
+) -> Result<String, ToolError> {
+    let resolved = resolve_ripgrep(context)?;
     if context.is_aborted() {
         return Err(tool_aborted());
     }
+    // `SandboxedSubprocessPort.executeFile`: `sandbox.prepare({ executable,
+    // args, cwd, policy: resolvePolicy({ workspaceRoot: request.cwd }) })`
+    // before the spawn. A constrained mode becomes `sandbox-exec -p <profile>
+    // -- rg ...` on macOS and `SandboxUnavailableError` elsewhere, which
+    // `runRipgrep` reports as `ripgrep grep search failed: <message>`.
+    let (executable, args) = if sandbox.confines() {
+        let prepared = sandbox
+            .prepare(
+                &resolved.to_string_lossy(),
+                args.to_vec(),
+                &os_path(cwd),
+                None,
+            )
+            .map_err(|message| {
+                tool_error(
+                    "tool_execution_failed",
+                    format!("ripgrep grep search failed: {message}"),
+                )
+            })?;
+        (PathBuf::from(prepared.executable), prepared.args)
+    } else {
+        (resolved, args.to_vec())
+    };
     let mut command = Command::new(&executable);
     command
-        .args(args)
+        .args(&args)
         .current_dir(os_path(cwd))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

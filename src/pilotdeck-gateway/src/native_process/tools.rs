@@ -2092,7 +2092,7 @@ pub(super) fn native_tools(
     // `createBuiltinRegistry` (tool/registry/createBuiltinRegistry.ts:128):
     // the catalog builtins. `agent`, `subagent` and `send_message` join per
     // turn in `SessionTools::turn`, bound to the session's subagent ports.
-    let mut builtins = builtin::read_only_tools();
+    let mut builtins = builtin::read_only_tools_with(world.sandbox);
     builtins.extend(builtin::write_tools_with(world.sandbox));
     #[cfg(unix)]
     {
