@@ -1,0 +1,272 @@
+{
+ "name": "modules-tools-sidecar-stdio",
+ "about": "显式 stdio 部署（PILOTDECK_AGENT_LOOP_TRANSPORT=stdio）加 modules.tools 外部能力模块：宿主替 sidecar 执行工具批次（module_call capability execute_batch），外部模块的结果经宿主原样回给 sidecar。外部模块回 ok:false + outcome:result_unknown（t13）或 CANCELLED（t14）时宿主的工具端口抛错（hostToolPort.ts:254-275、291-293），宿主把它回成 ok:false 的 module 应答（agentLoopSidecarClient.ts:1088-1092、1238-1251，不带 outcome），sidecar 自己的工具端口按 !response.ok 给批次里每个调用一份 moduleFailureResult（hostToolPort.ts:211-213、357-376），模型照常收到工具错误结果、轮次继续。t01 是成功的对照。 sidecar 自己的工具端口给外部模块调用起的 requestId 是 tool-<Math.random 的 base36 串>（hostToolPort.ts:242，agentLoopSidecarServer.ts:96），长度随机，进外部模块请求的 body.requestId 与 content-length。",
+ "volatile": [
+  "\\.jsonl\\[\\d+\\]\\.binding\\.(moduleInstanceId|connectionGeneration)$",
+  "\\.jsonl\\[\\d+\\]\\.streamId$",
+  "^\\$\\.provider\\.m-t\\d+\\[\\d+\\]\\.(body\\.requestId|headers\\.content-length)$"
+ ],
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  tools:\n    enabled: true\n    implementationId: bbx.tools\n    contract: pilotdeck.tools/v1\n    transport: module-http-v2\n    endpoint: {MOCK}/tools\n    timeoutMs: 1500\n    methods:\n      - execute\n    catalog:\n      - name: bbx_echo\n        description: Echo text through the external capability module.\n        inputSchema:\n          type: object\n          properties:\n            text:\n              type: string\n          required:\n            - text\n",
+ "env": {
+  "PILOTDECK_AGENT_LOOP_TRANSPORT": "stdio"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Tool run\"}",
+    "delayMs": 4000
+   }
+  },
+  {
+   "name": "manifest",
+   "unless": [
+    "\""
+   ],
+   "reply": {
+    "status": 200,
+    "body": {
+     "protocolVersion": "2.0",
+     "implementationId": "bbx.tools",
+     "contract": "pilotdeck.tools/v1",
+     "transport": "module-http-v2",
+     "methods": [
+      "execute"
+     ]
+    }
+   }
+  },
+  {
+   "name": "m-t01",
+   "when": [
+    "\"method\":\"module_call\"",
+    "\"toolCallId\":\"call_t01\""
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "r",
+     "inReplyTo": "{saved.mid}",
+     "requestId": "{saved.rid}",
+     "ok": true,
+     "payload": {
+      "type": "success",
+      "toolCallId": "call_t01",
+      "toolName": "bbx_echo",
+      "content": [
+       {
+        "type": "text",
+        "text": "bbx_echo t01"
+       }
+      ],
+      "startedAt": "2026-01-01T00:00:00.000Z",
+      "completedAt": "2026-01-01T00:00:00.000Z"
+     }
+    }
+   }
+  },
+  {
+   "name": "m-t13",
+   "when": [
+    "\"method\":\"module_call\"",
+    "\"toolCallId\":\"call_t13\""
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "r",
+     "inReplyTo": "{saved.mid}",
+     "requestId": "{saved.rid}",
+     "ok": false,
+     "code": "UNKNOWN",
+     "error": {
+      "code": "UNKNOWN",
+      "message": "Lost track.",
+      "retryability": "unsafe"
+     },
+     "outcome": "result_unknown"
+    }
+   }
+  },
+  {
+   "name": "m-t14",
+   "when": [
+    "\"method\":\"module_call\"",
+    "\"toolCallId\":\"call_t14\""
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "r",
+     "inReplyTo": "{saved.mid}",
+     "requestId": "{saved.rid}",
+     "ok": false,
+     "code": "CANCELLED",
+     "error": {
+      "code": "CANCELLED",
+      "message": "Stopped.",
+      "retryability": "safe"
+     }
+    }
+   }
+  },
+  {
+   "name": "t01-after",
+   "when": [
+    "t01:",
+    "\"tool_call_id\":\"call_t01\""
+   ],
+   "reply": {
+    "text": "Done t01."
+   }
+  },
+  {
+   "name": "t13-after",
+   "when": [
+    "t13:",
+    "\"tool_call_id\":\"call_t13\""
+   ],
+   "reply": {
+    "text": "Done t13."
+   }
+  },
+  {
+   "name": "t14-after",
+   "when": [
+    "t14:",
+    "\"tool_call_id\":\"call_t14\""
+   ],
+   "reply": {
+    "text": "Done t14."
+   }
+  },
+  {
+   "name": "t14",
+   "when": [
+    "t14:"
+   ],
+   "reply": {
+    "tools": [
+     {
+      "id": "call_t14",
+      "name": "bbx_echo",
+      "arguments": {
+       "text": "a"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "name": "t13",
+   "when": [
+    "t13:"
+   ],
+   "reply": {
+    "tools": [
+     {
+      "id": "call_t13",
+      "name": "bbx_echo",
+      "arguments": {
+       "text": "a"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "name": "t01",
+   "when": [
+    "t01:"
+   ],
+   "reply": {
+    "tools": [
+     {
+      "id": "call_t01",
+      "name": "bbx_echo",
+      "arguments": {
+       "text": "a"
+      }
+     }
+    ]
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-t01",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-t01",
+    "channelKey": "test",
+    "message": "t01: go"
+   },
+   "timeout": 60000
+  },
+  {
+   "sleep": 5000
+  },
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-t13",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-t13",
+    "channelKey": "test",
+    "message": "t13: go"
+   },
+   "timeout": 60000
+  },
+  {
+   "sleep": 5000
+  },
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-t14",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-t14",
+    "channelKey": "test",
+    "message": "t14: go"
+   },
+   "timeout": 60000
+  },
+  {
+   "sleep": 5000
+  }
+ ]
+}

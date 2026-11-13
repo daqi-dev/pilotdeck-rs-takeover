@@ -1,0 +1,19 @@
+{
+  "name": "agent-loop-sidecar-tcp",
+  "about": "PILOTDECK_AGENT_LOOP_TRANSPORT=tcp：sidecar 是外部常驻进程（pilotdeck-agent-loop-sidecar.ts:26-37，设了 PILOTDECK_AGENT_LOOP_TCP_PORT 就用 AgentLoopSidecarTcpServer 在 127.0.0.1 上监听），gateway 每轮连一次（AgentLoopDeploymentProfile.ts:52-58、84-93，tcpAgentLoopSidecarConnection.ts），NDJSON 帧，握手 hello / capabilities 后 execute。比一轮纯文本对话的帧、发给 provider 的请求、落盘（agent_loop_operation_* 账本）与 sidecar 进程自己的输出和退出。",
+  "volatile": ["\\.jsonl\\[\\d+\\]\\.binding\\.(moduleInstanceId|connectionGeneration)$", "\\.jsonl\\[\\d+\\]\\.streamId$"],
+  "env": {
+    "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+    "PILOTDECK_AGENT_LOOP_TCP_PORT": "38414"
+  },
+  "provider": [
+    {"name": "title", "when": ["Generate a concise title"], "reply": {"text": "{\"title\": \"Sidecar tcp\"}", "delayMs": 4000}},
+    {"name": "main", "reply": {"text": "Hello from the tcp sidecar mock."}}
+  ],
+  "steps": [
+    {"sidecar": "start", "port": 38414},
+    {"ws": "submit_turn", "params": {"sessionKey": "s-bbx-tcp", "channelKey": "test", "message": "hello tcp sidecar"}, "timeout": 60000},
+    {"sleep": 5000},
+    {"sidecar": "stop"}
+  ]
+}
