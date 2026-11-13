@@ -53,6 +53,11 @@ const plugin = (name, hooks, where = 'home/.pilotdeck/plugins') => ({
   [`${where}/${name}/hook.mjs`]: HOOK_SCRIPT,
 });
 
+// 收到 SIGTERM 后 300ms 才退出，其余行为与 hook.mjs 相同（参数照传）。
+const TERM_LATE = `// bbx hook fixture: hook.mjs that outlives SIGTERM by 300ms
+process.on('SIGTERM', () => { setTimeout(() => process.exit(143), 300); });
+await import('./hook.mjs');
+`;
 const TITLE = { name: 'title', when: ['Generate a concise title'], reply: { text: '{"title": "Hook run"}' } };
 // 每个用例一个会话：消息里带标记，模型先发一次工具调用，拿到结果后回一句话。
 const toolCase = (marker, tool, args, id = `call_${marker.replace(/-/g, '_')}`) => [
@@ -398,8 +403,8 @@ hooks:
 // ── 子代理：SubagentStart / SubagentStop，子代理自己的工具调用 ──
 {
   const hooks = {
-    // SubagentStart / SubagentStop 的执行事件投影在父会话的流上，与子代理状态事件的先后在基线里不稳定，
-    // 所以这里不配；它们由手工对比验证（见报告）。子代理自己的 hook 事件带子会话 id，不投影。
+    // SubagentStart / SubagentStop 在 hook-subagent-lifecycle 里单独配（那里把 hook 时长摆开，让帧的先后确定）。
+    // 子代理自己的 hook 事件带子会话 id，不投影。
     SessionStart: [{ hooks: [cmd('session', {})] }],
     Setup: [{ hooks: [cmd('session', {})] }],
     SessionEnd: [{ hooks: [cmd('session', {})] }],
@@ -421,6 +426,29 @@ hooks:
     steps: [submit('s-sub', 'turn-1: delegate'), { sleep: 300 }],
     volatile: ['\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages|resultBytes|content-length)$'],
     volatileWhy: '子代理结果文本里带位数不定的耗时，token 估算随之变；基线自比已证明',
+  };
+  // SubagentStart / SubagentStop 的执行帧直接发到父会话流上，子代理自己的事件（subagent_started、
+  // subagent_tool_*、subagent_text_delta ……）进宿主事件缓冲，sidecar 来帧或 500ms 无帧时才冲刷
+  // （基线 agentLoopSidecarClient.ts:379-395；进程内循环是 AgentLoop.ts:2908-2919 的同一种泵）。
+  // 帧的先后因此取决于 hook 时长：SubagentStart 不睡、SubagentStop 睡 1000ms，子代理运行期间攒下的事件
+  // 确定地在 SubagentStop 的 started 与 completed 之间冲刷，subagent_completed 在 completed 之后。
+  scenarios['hook-subagent-lifecycle'] = {
+    about: 'SubagentStart / SubagentStop hook（一次性子代理）：hook 收到的输入与环境、matcher 按事件名匹配（按子代理类型写的 matcher 不跑），以及父会话 WS 流上 hook_execution 帧与子代理事件的先后。基线的子代理事件进宿主事件缓冲，只在 sidecar 来帧或 500ms 无帧时冲刷（agentLoopSidecarClient.ts:379-395），hook 执行帧直接发；SubagentStop hook 睡 1000ms，让子代理运行期间攒下的事件确定地落在 SubagentStop 的 started 与 completed 之间，subagent_completed 落在 completed 之后。',
+    files: plugin('bbx-sub', {
+      SubagentStart: [
+        { hooks: [cmd('substart', {})] },
+        { matcher: 'explore', hooks: [cmd('never', {})] },
+        { matcher: 'SubagentStart', hooks: [cmd('substart-matched', {})] },
+      ],
+      SubagentStop: [
+        { hooks: [cmd('substop', { sleep: 1000 })] },
+        { matcher: 'explore', hooks: [cmd('never', {})] },
+      ],
+    }),
+    provider: scenarios['hook-subagent'].provider,
+    steps: [submit('s-sub', 'turn-1: delegate'), { sleep: 300 }],
+    volatile: scenarios['hook-subagent'].volatile,
+    volatileWhy: scenarios['hook-subagent'].volatileWhy,
   };
 }
 
@@ -511,6 +539,43 @@ hooks:
     steps: [bypass('s-model'), submit('s-model', 'model-case: run the tool'), { sleep: 2500 }],
     settleMs: 500,
   };
+  // 用户中止这一轮时 hook 还在跑：基线派发时带着轮次的中止信号
+  // （sidecarDefaultModuleDispatcher.ts:378-391、AgentLoop.ts:699-702 / 2281-2283），
+  // 中止即杀 hook 进程（hooklog 没有 done 行）。模型 0.8 秒后才吐第一块文本然后挂住，收到这块文本就中止：
+  // 那时 hook 进程已经起来并记下开始行（立刻中止的话进程可能还没起来，开始行有无取决于时机），
+  // 中止落在流进行中、hook 睡完之前。之后同一会话再跑一轮：hook 照常派发、跑完。
+  // hook 进程收到 SIGTERM 后再活 300ms 才退出（term.mjs 包一层 hook.mjs）：被杀的 hook 的执行结果因此确定地落在
+  // 中止的一轮收尾之后、不上这一轮的流。不包这层时它与被截断的 assistant_block 只差几毫秒，Rust 侧五次里有一次先后颠倒。
+  // 两个事件各一个场景：同时杀两个 hook 时两条 hook_execution_completed 的先后取决于进程退出的先后，基线自比不稳。
+  for (const [name, event, log] of [
+    ['hook-model-request-cancelled', 'PreModelRequest', 'pre-model'],
+    ['hook-instructions-loaded-cancelled', 'InstructionsLoaded', 'instructions'],
+  ]) {
+    const session = `s-${log}-cancel`;
+    scenarios[name] = {
+      about: `${event} hook 执行中用户中止这一轮：hook 进程被杀（hooklog 没有 done 行）、中止的一轮照常收尾；同一会话下一轮的 hook 照常派发并跑完。`,
+      files: {
+        ...plugin('bbx-model-cancel', { [event]: [{ hooks: [{ ...cmd(log, { sleep: 3000 }), command: cmd(log, { sleep: 3000 }).command.replace('hook.mjs', 'term.mjs') }] }] }),
+        'home/.pilotdeck/plugins/bbx-model-cancel/term.mjs': TERM_LATE,
+      },
+      provider: [
+        TITLE,
+        { name: 'next', when: ['next-case:'], reply: { text: 'next reply' } },
+        { name: 'slow', when: ['slow-case:'], reply: { chunks: ['partial ', 'never sent'], delayMs: 800, hangAfter: 1, hangMs: 6000 } },
+      ],
+      steps: [
+        bypass(session),
+        submit(session, 'slow-case: answer slowly', { answer: [{
+          on: { type: 'assistant_text_delta' }, ws: 'abort_turn', params: { sessionKey: session }, count: 1,
+        }] }),
+        { sleep: 4000 },
+        submit(session, 'next-case: answer'),
+        { sleep: 3800 },
+        read(session),
+      ],
+      settleMs: 500,
+    };
+  }
 }
 
 // ── Elicitation / ElicitationResult：提问发出与得到回答时 ──
@@ -551,6 +616,16 @@ hooks:
       { sleep: 3500 },
       read('s-cancel'),
     ],
+    accepted: [{
+      id: 'aborted-hook-does-not-run-tool',
+      why: '基线把被中止杀掉的 PreToolUse hook（outcome cancelled）当作非阻断，用户中止这一轮之后仍然走权限并真的执行了工具（落盘里有 ran.txt，会话记录多出 permission_started / permission_completed）；Rust 中止后不执行工具',
+      paths: [
+        '^\\$\\.tree\\./home/\\.pilotdeck/ran\\.txt$',
+        '/chats/s-cancel\\.jsonl\\.jsonl(\\.length|\\[2\\d\\].*)$',
+        '/chats/s-cancel\\.jsonl\\.(raw|projections\\.json)\\.',
+        '^\\$\\.steps\\[3\\]\\.frames\\[0\\]\\.result\\.session\\.fileSize$',
+      ],
+    }],
   };
 }
 

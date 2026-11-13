@@ -168,19 +168,34 @@ impl PermissionPrompt {
         suggestions: Option<&JsValue>,
         context: &ToolRunContext,
     ) -> PromptOutcome {
-        self.deliver(hook_status(
-            "hook_execution_started",
-            "PermissionRequest",
-            false,
-        ));
+        // The callback hook's execution events carry the dispatching run's
+        // session id; the session's projection drops any other session's
+        // (GatewayHookExecutionProjection.ts:22). A subagent's tools share
+        // this prompt (SubagentRuntimeComposition.ts:57-81) but dispatch
+        // under the child's session id, so their hook status stays off the
+        // stream while the ask itself is still delivered.
+        let own_session = context
+            .fields
+            .get("sessionId")
+            .and_then(JsValue::as_string)
+            .is_none_or(|session| session == &self.session);
+        if own_session {
+            self.deliver(hook_status(
+                "hook_execution_started",
+                "PermissionRequest",
+                false,
+            ));
+        }
         let outcome = self
             .ask(tool_name, tool_call_id, input, suggestions, context)
             .await;
-        self.deliver(hook_status(
-            "hook_execution_completed",
-            "PermissionRequest",
-            true,
-        ));
+        if own_session {
+            self.deliver(hook_status(
+                "hook_execution_completed",
+                "PermissionRequest",
+                true,
+            ));
+        }
         outcome
     }
 

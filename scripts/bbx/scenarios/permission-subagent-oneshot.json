@@ -1,0 +1,192 @@
+{
+  "name": "permission-subagent-oneshot",
+  "about": "一次性子代理（agent 工具，general-purpose）在父会话默认权限模式下调 bash：询问经父会话的应答器发到父会话的流上（permission_request 的字段、与子代理事件的先后），批准则执行（文件落盘），拒绝则工具结果为拒绝、子代理照常回报告；两个会话分别看。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Sub ask\"}"
+      }
+    },
+    {
+      "name": "allow-parent-after",
+      "when": [
+        "PARENT-allow",
+        "\"tool_call_id\":\"call_parent\""
+      ],
+      "reply": {
+        "text": "parent done allow"
+      }
+    },
+    {
+      "name": "allow-parent",
+      "when": [
+        "PARENT-allow"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_parent",
+          "name": "agent",
+          "arguments": {
+            "description": "Run allow",
+            "prompt": "CHILD-allow: write the file.",
+            "subagent_type": "general-purpose"
+          }
+        }
+      }
+    },
+    {
+      "name": "allow-child-after",
+      "when": [
+        "CHILD-allow",
+        "\"tool_call_id\":\"call_child\""
+      ],
+      "reply": {
+        "text": "Scope: ran.\nResult: done.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "allow-child",
+      "when": [
+        "CHILD-allow"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_child",
+          "name": "bash",
+          "arguments": {
+            "command": "printf allow > child-allow.txt",
+            "description": "child allow"
+          }
+        }
+      }
+    },
+    {
+      "name": "deny-parent-after",
+      "when": [
+        "PARENT-deny",
+        "\"tool_call_id\":\"call_parent\""
+      ],
+      "reply": {
+        "text": "parent done deny"
+      }
+    },
+    {
+      "name": "deny-parent",
+      "when": [
+        "PARENT-deny"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_parent",
+          "name": "agent",
+          "arguments": {
+            "description": "Run deny",
+            "prompt": "CHILD-deny: write the file.",
+            "subagent_type": "general-purpose"
+          }
+        }
+      }
+    },
+    {
+      "name": "deny-child-after",
+      "when": [
+        "CHILD-deny",
+        "\"tool_call_id\":\"call_child\""
+      ],
+      "reply": {
+        "text": "Scope: ran.\nResult: done.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "deny-child",
+      "when": [
+        "CHILD-deny"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_child",
+          "name": "bash",
+          "arguments": {
+            "command": "printf deny > child-deny.txt",
+            "description": "child deny"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-allow",
+        "channelKey": "test",
+        "message": "PARENT-allow delegate"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-allow",
+            "requestId": "{event.requestId}",
+            "decision": "allow"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-allow"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-deny",
+        "channelKey": "test",
+        "message": "PARENT-deny delegate"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-deny",
+            "requestId": "{event.requestId}",
+            "decision": "deny",
+            "reason": "bbx says no"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-deny"
+      }
+    }
+  ],
+  "volatile": [
+    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages|resultBytes|content-length)$"
+  ],
+  "volatileWhy": "子代理结果文本里带位数不定的耗时，token 估算随之变；基线自比已证明（三次自比都只差在这些字段上）"
+}

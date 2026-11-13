@@ -1,0 +1,127 @@
+{
+  "name": "permission-subagent-abort",
+  "about": "一次性子代理的工具询问还没回答时用户中止父轮：父轮收尾、子代理以 aborted 结束，询问被撤回（之后的 permission_list 为空），子代理的工具不执行（文件不落盘）；同一会话下一轮照常。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Sub ask\"}"
+      }
+    },
+    {
+      "name": "next",
+      "when": [
+        "next:"
+      ],
+      "reply": {
+        "text": "next done"
+      }
+    },
+    {
+      "name": "abort-parent-after",
+      "when": [
+        "PARENT-abort",
+        "\"tool_call_id\":\"call_parent\""
+      ],
+      "reply": {
+        "text": "parent done abort"
+      }
+    },
+    {
+      "name": "abort-parent",
+      "when": [
+        "PARENT-abort"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_parent",
+          "name": "agent",
+          "arguments": {
+            "description": "Run abort",
+            "prompt": "CHILD-abort: write the file.",
+            "subagent_type": "general-purpose"
+          }
+        }
+      }
+    },
+    {
+      "name": "abort-child-after",
+      "when": [
+        "CHILD-abort",
+        "\"tool_call_id\":\"call_child\""
+      ],
+      "reply": {
+        "text": "Scope: ran.\nResult: done.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "abort-child",
+      "when": [
+        "CHILD-abort"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_child",
+          "name": "bash",
+          "arguments": {
+            "command": "printf abort > child-abort.txt",
+            "description": "child abort"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-abort",
+        "channelKey": "test",
+        "message": "PARENT-abort delegate"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "abort_turn",
+          "params": {
+            "sessionKey": "s-abort"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "permission_list",
+      "params": {
+        "sessionKey": "s-abort"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-abort",
+        "channelKey": "test",
+        "message": "next: go on"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-abort"
+      }
+    }
+  ]
+}

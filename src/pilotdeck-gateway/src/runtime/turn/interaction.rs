@@ -77,6 +77,9 @@ pub struct HookWiring {
     /// The session-scoped runtime the loop's advisory lifecycle events
     /// (`PreModelRequest`, `InstructionsLoaded`) run on, detached from the turn.
     pub advisory: Option<Arc<dyn lifecycle::LifecyclePort>>,
+    /// The turn's user-abort signal the advisory events run under. Unlike
+    /// the input's `signal`, it does not fire when the turn simply ends.
+    pub advisory_signal: Option<Cancellation>,
 }
 #[derive(Clone, Default)]
 pub struct InteractionPorts {
@@ -214,7 +217,9 @@ impl InteractionTurn {
                 hook_wiring.observers.clone(),
             )?;
             if let Some(advisory) = &hook_wiring.advisory {
-                router.lifecycle.set_advisory(advisory.clone());
+                router
+                    .lifecycle
+                    .set_advisory(advisory.clone(), hook_wiring.advisory_signal.clone());
             }
             if let Some(sink) = &hook_wiring.turn_sink {
                 sink(Some(Arc::new(hooks.clone())));

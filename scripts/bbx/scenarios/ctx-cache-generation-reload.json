@@ -1,0 +1,174 @@
+{
+  "name": "ctx-cache-generation-reload",
+  "about": "项目级刷新与提示缓存代际：reload_extensions 把全部活会话标脏（GatewayRuntimeRefreshBundle.ts:84-106），下一轮重建、代际回到 1；update_settings 改了非 runPolicy 的配置后 ConfigStore 重载、运行时刷新完再把全部会话标脏（GatewayRuntimeRefreshBundle.ts:137-169）；没有变化的 reload_config 不标脏。两个会话一起看。模型一律回 400。",
+  "config": "schemaVersion: 1\nagent:\n  model: anth/claude-bbx\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    anth:\n      protocol: anthropic\n      url: {MOCK}\n      apiKey: bbx-anthropic-key\n      retry:\n        baseDelayMs: 1\n        maxDelayMs: 1\n        jitter: 0\n      models:\n        claude-bbx:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Gen\"}"
+      }
+    },
+    {
+      "name": "fail",
+      "reply": {
+        "status": 400,
+        "body": {
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "bbx: rejected"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-a",
+        "channelKey": "test",
+        "message": "s-a t1"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-a",
+        "channelKey": "test",
+        "message": "s-a t2"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-b",
+        "channelKey": "test",
+        "message": "s-b t3"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "reload_config",
+      "params": {}
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-a",
+        "channelKey": "test",
+        "message": "s-a t4"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-b",
+        "channelKey": "test",
+        "message": "s-b t5"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "reload_extensions",
+      "params": {}
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-a",
+        "channelKey": "test",
+        "message": "s-a t6"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-a",
+        "channelKey": "test",
+        "message": "s-a t7"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-b",
+        "channelKey": "test",
+        "message": "s-b t8"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "update_settings",
+      "params": {
+        "source": "localSettings",
+        "settings": {
+          "agent": {
+            "maxOutputTokens": 4096
+          }
+        }
+      }
+    },
+    {
+      "sleep": 1000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-a",
+        "channelKey": "test",
+        "message": "s-a t9"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-b",
+        "channelKey": "test",
+        "message": "s-b t10"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-b",
+        "channelKey": "test",
+        "message": "s-b t11"
+      }
+    },
+    {
+      "sleep": 300
+    }
+  ]
+}
