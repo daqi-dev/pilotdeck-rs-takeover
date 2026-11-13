@@ -173,13 +173,14 @@ Rust 明确报错而不假装支持（文案是 Rust 自己的）：`update_sett
 2026-11-12 人答复：
 
 4. 「可以推，这些决策您都可以做。」——对拍通过、gitleaks 无命中时，把 `dev/takeover` 推到接手仓库（remote `takeover`）不必再问。
-5. 「阶段B和前端不用做。」——范围只剩 gateway（A）、sidecar（C）、CLI（D）。原版 `ui/server` 接 Rust gateway 的兼容性仍然要保。`.42cog/intent.md` 的收敛方向还写着 `ui/server` 和前端，尚未同步，等人改或明确让我改。
+5. 「阶段B和前端不用做。」——范围只剩 gateway（A）、sidecar（C）、CLI（D）。原版 `ui/server` 接 Rust gateway 的兼容性仍然要保。`.42cog/intent.md` 已于 2026-11-12 按人的指示同步（见第 11 条）。
 
 6. 渠道只做到与基线启动表现一致（基线没装 Telegram / Discord / Slack / 钉钉 / 邮件 / 短信等渠道的 SDK，启用后只打一行「not installed」然后照常启动）；不为每个渠道写生产实现。
 7. StaffDeck（SOP authority、审批、多用户隔离等）这一期不做。
 8. 第二台机器是 `cb8`（ssh 主机名，本机解析到 10.99.0.2）。用途：安静环境下的全量对拍与四条命令、占用 18789 端口对拍 CLI 的 `cron`、验证 Linux 行为。2026-11-12 下午从本机 ssh 连接超时，还没用上。
 9. PDF 按页渲染、写后语法诊断由主会话定：不移植。它们不是基线 bug，所以不登记 `accepted`，两个场景保持不一致、在全量结果里可见。
-10. 「这8条标准我认可，您写成正式文件吧」——交付标准八条写入 `specs/delivery/README.md`。`intent.md` 尚未同步，是否由我同步人没有说；公开 agent 评测的两侧对比是否加、用哪个模型和预算，人没有答复。
+10. 「这8条标准我认可，您写成正式文件吧」——交付标准八条写入 `specs/delivery/README.md`。
+11. 「intent.md 您来同步吧，公开评测之后再决定。」——`.42cog/intent.md` 的收敛方向、不做什么、完成条件已同步到收窄后的范围和八条（真难题、真相源排序未改）；公开 agent 评测的两侧对比暂不做，等人以后再定。
 
 ## 做过的决定
 
