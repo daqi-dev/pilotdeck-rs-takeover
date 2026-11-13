@@ -5,6 +5,8 @@
 //
 // 归一化只有下面四条，都是「同一侧连跑两次也会变」的值，别的一律按原样比：
 //   1. UUID            → <uuid:N>，N 是它在该侧输出里第一次出现的序号（保留「同一个 id」的关系）
+//      AO discovery 唯一例外：完整输入/run/provider/metadata/projection严格关联后，
+//      将1200 UTF16边界内的UUID残片映射到该完整UUID同别名，保留残片长度。
 //   2. ISO 时间戳      → <iso>
 //   3. 毫秒时间戳      → <ms>（1.6e12 ~ 2.0e12 之间的整数；文本里独立出现的同范围 13 位整数同样处理（前后紧挨十六进制字符或小数点的不算，免得误伤哈希），
 //                        例如 CLI 输出的 JSON 文本里的 lastModified）；带小数的记成 <ms.frac>，
@@ -41,6 +43,7 @@
 // 过期检查：基线 vs Rust 比较时，场景登记的每条 accepted 正则一处都没命中，打印 STALE 并计 1 处差异；
 // volatile 正则一处都没命中只打印 STALE? 提示（基线这次没抖时本来就是 0）。--self（基线自比）不做这个检查。
 import fs from 'node:fs';
+import { discoveryPrefixPair } from './ao-discovery-prefix-policy.mjs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -78,7 +81,7 @@ const dur = () => '<dur>';
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const ISO = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g;
 
-function normalizer() {
+function normalizer(prefixes = new WeakMap()) {
   const ids = new Map();
   const snaps = new Map();
   const snap = (id) => { if (!snaps.has(id)) snaps.set(id, snaps.size + 1); return `<snap:${snaps.get(id)}>`; };
@@ -104,7 +107,7 @@ function normalizer() {
     if (typeof v === 'number') return v > 1.6e12 && v < 2.0e12 ? (Number.isInteger(v) ? '<ms>' : '<ms.frac>') : v;
     if (Array.isArray(v)) return v.map(walk);
     if (v && typeof v === 'object') {
-      return Object.fromEntries(Object.entries(v).map(([k, x]) => [text(k), PID_KEYS.includes(k) && Number.isInteger(x) ? '<pid>' : DURATION_KEYS.includes(k) && typeof x === 'number' ? dur(x) : k === 'snapshotId' && /^[0-9a-f]{64}$/.test(x) ? snap(x) : k === 'requestFingerprint' && typeof x === 'string' ? '<fingerprint>' : k === 'created' && Number.isInteger(x) && x > 1.6e9 && x < 2.0e9 ? '<sec>' : walk(x)]));
+      return Object.fromEntries(Object.entries(v).map(([k, x]) => [text(k), PID_KEYS.includes(k) && Number.isInteger(x) ? '<pid>' : DURATION_KEYS.includes(k) && typeof x === 'number' ? dur(x) : k === 'snapshotId' && /^[0-9a-f]{64}$/.test(x) ? snap(x) : k === 'requestFingerprint' && typeof x === 'string' ? '<fingerprint>' : k === 'created' && Number.isInteger(x) && x > 1.6e9 && x < 2.0e9 ? '<sec>' : prefixes.get(v)?.has(k) ? (() => { const d = prefixes.get(v).get(k); return text(d.prefix) + text(d.run) + `<prefix:${d.length}/36>`; })() : walk(x)]));
     }
     return v;
   };
@@ -147,8 +150,8 @@ function resettleProjections(v, moved) {
 // 记录的集合和每条内容照比。
 const UNORDERED_JSONL = /\/always-on\/projects\/[^/]+\/events\.jsonl$/;
 const orderKey = (r) => JSON.stringify(r).replace(UUID, 'U').replace(ISO, 'T').replace(/\d{13}(\.\d+)?/g, 'M');
-function load(file) {
-  let raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+function load(input, prefixes) {
+  let raw = input;
   for (const entry of raw.volatilePolicies ?? []) {
     if (isDeepStrictEqual(entry, { policy: 'sdkAgent03DerivedValues' })) {
       raw = sdkAgentOrderChildTree(raw, entry);
@@ -163,7 +166,7 @@ function load(file) {
     if (UNORDERED_JSONL.test(name) && Array.isArray(entry?.jsonl)) entry.jsonl.sort((x, y) => (orderKey(x) < orderKey(y) ? -1 : orderKey(x) > orderKey(y) ? 1 : 0));
   }
   for (const k of Object.keys(IGNORED)) delete raw[k];
-  return normalizer()(raw);
+  return normalizer(prefixes)(raw);
 }
 
 const show = (v) => { const s = JSON.stringify(v); return s === undefined ? '(absent)' : s.length > 200 ? s.slice(0, 200) + `… (${s.length} chars)` : s; };
@@ -205,7 +208,11 @@ function compare(a, b, at, outList) {
 }
 
 const [fa, fb] = files;
-const a = load(fa), b = load(fb);
+const inputs = [fa, fb].map(file => JSON.parse(fs.readFileSync(file, 'utf8')));
+let prefixes;
+try { prefixes = discoveryPrefixPair(inputs[0], inputs[1], value => normalizer()(value)); }
+catch (error) { console.error(`INVALID AO discovery UUID prefix: ${error.message}`); process.exit(2); }
+const a = load(inputs[0], prefixes[0]), b = load(inputs[1], prefixes[1]);
 const scenarioVolatile = (JSON.parse(fs.readFileSync(fa, 'utf8')).volatile ?? []).map((p) => new RegExp(p));
 const all = [];
 compare(a, b, '$', all);
