@@ -1,0 +1,312 @@
+{
+  "name": "skills-extension-watch-symlink",
+  "about": "被监视的扩展路径本身是符号链接时的热更新（ExtensionWatchManager.ts:109-131、170-188）。第一次起服务时 <pilotHome>/skills 还不存在，基线从最近的已存在祖先递归监视；这一轮用 bash 把 skills 建成指向 home/elsewhere/gskills 的链接、在 gskills 里再建一个指向 home/elsewhere/inner 的子目录链接、把 alpha 项目的 .pilotdeck/skills 建成指向 home/elsewhere/pskills 的链接（链接本身出现会被报告一次）。重启后这些路径在监视开始时已存在：基线的 fs.watch 直接监视链接（macOS 上实测会跟到链接背后的目录），于是往 gskills 里写技能打 Extensions changed（全局），往 pskills 里写打项目那一行，之后的轮次看到新技能；往树内子目录链接背后（inner）写不报告。第一次起服务期间，链接建好之后往 gskills 写也不报告（祖先监视不跟链接）。Linux 上的推断（未实测）：Node 22 的递归监视在 Linux 上逐目录 inotify，根路径的 inotify_add_watch 跟随链接、遍历子目录时不跟随，结论应相同。",
+  "server": false,
+  "files": {
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+    "home/work/alpha/README.md": "alpha\n",
+    "home/elsewhere/gskills/old-global/SKILL.md": "---\nname: old-global\ndescription: A user skill behind the link.\n---\n\n# old-global\n",
+    "home/elsewhere/inner/README.md": "inner\n",
+    "home/elsewhere/pskills/README.md": "pskills\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Link run\"}"
+      }
+    },
+    {
+      "name": "setup-after",
+      "when": [
+        "setup links:",
+        "\"tool_call_id\":\"call_setup_0\""
+      ],
+      "reply": {
+        "text": "Linked."
+      }
+    },
+    {
+      "name": "setup",
+      "when": [
+        "setup links:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_setup_0",
+          "name": "bash",
+          "arguments": {
+            "command": "ln -s {HOME}/elsewhere/gskills {HOME}/.pilotdeck/skills && ln -s {HOME}/elsewhere/inner {HOME}/elsewhere/gskills/linked && mkdir -p {HOME}/work/alpha/.pilotdeck && ln -s {HOME}/elsewhere/pskills {HOME}/work/alpha/.pilotdeck/skills && echo done"
+          }
+        }
+      }
+    },
+    {
+      "name": "early-after",
+      "when": [
+        "write early:",
+        "\"tool_call_id\":\"call_early_0\""
+      ],
+      "reply": {
+        "text": "Wrote early."
+      }
+    },
+    {
+      "name": "early",
+      "when": [
+        "write early:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_early_0",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "{HOME}/elsewhere/gskills/early-global/SKILL.md",
+            "content": "---\nname: early-global\ndescription: Written behind the link before the restart.\n---\n\n# early-global\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "inner-after",
+      "when": [
+        "write inner:",
+        "\"tool_call_id\":\"call_inner_0\""
+      ],
+      "reply": {
+        "text": "Wrote inner."
+      }
+    },
+    {
+      "name": "inner",
+      "when": [
+        "write inner:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_inner_0",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "{HOME}/elsewhere/inner/SKILL.md",
+            "content": "---\nname: inner-skill\ndescription: Behind an inner link.\n---\n\n# inner-skill\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "global-after",
+      "when": [
+        "write global:",
+        "\"tool_call_id\":\"call_global_0\""
+      ],
+      "reply": {
+        "text": "Wrote global."
+      }
+    },
+    {
+      "name": "global",
+      "when": [
+        "write global:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_global_0",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "{HOME}/elsewhere/gskills/fresh-global/SKILL.md",
+            "content": "---\nname: fresh-global\ndescription: Written behind the linked skills root.\n---\n\n# fresh-global\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "project-after",
+      "when": [
+        "write project:",
+        "\"tool_call_id\":\"call_project_0\""
+      ],
+      "reply": {
+        "text": "Wrote project."
+      }
+    },
+    {
+      "name": "project",
+      "when": [
+        "write project:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_project_0",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "{HOME}/elsewhere/pskills/fresh-alpha/SKILL.md",
+            "content": "---\nname: fresh-alpha\ndescription: Written behind the linked project skills root.\n---\n\n# fresh-alpha\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "ok"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "serve": [
+        "server"
+      ],
+      "timeout": 90000,
+      "then": [
+        {
+          "connect": true
+        },
+        {
+          "ws": "set_permission_mode",
+          "params": {
+            "sessionKey": "s-setup",
+            "mode": "bypassPermissions"
+          }
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-setup",
+            "channelKey": "test",
+            "message": "setup links: make the links"
+          }
+        },
+        {
+          "sleep": 1500
+        },
+        {
+          "ws": "set_permission_mode",
+          "params": {
+            "sessionKey": "s-early",
+            "mode": "bypassPermissions"
+          }
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-early",
+            "channelKey": "test",
+            "message": "write early: behind the new link"
+          }
+        },
+        {
+          "sleep": 1500
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    },
+    {
+      "serve": [
+        "server"
+      ],
+      "timeout": 90000,
+      "then": [
+        {
+          "connect": true
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-old",
+            "channelKey": "test",
+            "message": "old one"
+          }
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-alpha",
+            "channelKey": "test",
+            "message": "alpha one",
+            "projectKey": "{HOME}/work/alpha"
+          }
+        },
+        {
+          "ws": "set_permission_mode",
+          "params": {
+            "sessionKey": "s-w",
+            "mode": "bypassPermissions"
+          }
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-w",
+            "channelKey": "test",
+            "message": "write inner: behind the inner link"
+          }
+        },
+        {
+          "sleep": 1500
+        },
+        {
+          "ws": "set_permission_mode",
+          "params": {
+            "sessionKey": "s-wg",
+            "mode": "bypassPermissions"
+          }
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-wg",
+            "channelKey": "test",
+            "message": "write global: behind the linked root"
+          }
+        },
+        {
+          "sleep": 1500
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-old",
+            "channelKey": "test",
+            "message": "old two"
+          }
+        },
+        {
+          "ws": "set_permission_mode",
+          "params": {
+            "sessionKey": "s-wp",
+            "mode": "bypassPermissions"
+          }
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-wp",
+            "channelKey": "test",
+            "message": "write project: behind the linked project root"
+          }
+        },
+        {
+          "sleep": 1500
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-alpha",
+            "channelKey": "test",
+            "message": "alpha two",
+            "projectKey": "{HOME}/work/alpha"
+          }
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    }
+  ]
+}

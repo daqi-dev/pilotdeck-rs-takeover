@@ -374,6 +374,52 @@ async fn connection_cap_covers_handshakes_and_recovers() {
     finish(running).await;
 }
 
+/// A client that vanishes with only a FIN (killed process, no close frame)
+/// leaves its connection half-open, like TS (websocket.ts:17-21). TS has no
+/// connection cap, so those vanished clients never lock new peers out; ours
+/// returns the slot — and the unfinished input tail — at the FIN, so a full
+/// house of vanished clients still lets the next peer in.
+#[tokio::test]
+async fn peer_fin_returns_slot_and_input() {
+    let running = start(2, 64, Arc::default()).await;
+    let mut first = upgrade(running.address).await;
+    let second = upgrade(running.address).await;
+    write(&mut first, &partial()).await;
+    remaining(&running.connections, 0, CAP_ASSERT).await;
+    remaining(&running.input, 48, "#1079 partial frame charges input").await;
+    let mut excess = tcp(running.address).await;
+    negative_assert!(
+        matches!(timeout(DEADLINE, excess.read_u8()).await, Ok(Err(_))),
+        "#1079 live connections still fill the cap"
+    );
+    drop(first);
+    remaining(
+        &running.connections,
+        1,
+        "peer FIN returns the connection slot",
+    )
+    .await;
+    remaining(&running.input, 64, "peer FIN returns the input tail").await;
+    let mut successor = upgrade(running.address).await;
+    write(&mut successor, &small_frame(9, b"s")).await;
+    negative_assert_eq!(
+        read_frame(&mut successor, "successor after a vanished client").await,
+        (10, b"s".to_vec()),
+        "a vanished client does not lock out the next peer"
+    );
+    drop(second);
+    remaining(&running.connections, 1, "second FIN returns its slot").await;
+    write(&mut successor, &small_frame(9, b"t")).await;
+    negative_assert_eq!(
+        read_frame(&mut successor, "successor still served").await,
+        (10, b"t".to_vec()),
+        "the successor keeps being served"
+    );
+    vanish(successor);
+    remaining(&running.connections, 2, "all slots back").await;
+    finish(running).await;
+}
+
 #[test]
 fn growth_charges_old_and_new_backing() {
     let budget = Arc::new(Semaphore::new(48));

@@ -568,9 +568,37 @@ const runStep = async (step) => {
     return { disconnected: true, close: last.type === '__closed' ? { code: last.code, reason: last.reason } : last };
   }
   if (step.connect) return { hello: await connect(step.connect === true ? undefined : substDeep(step.connect)) };
+  if (step.vanish) {
+    // {vanish: N}：另建 N 条 WS 连接，各自 hello、等到第一帧非通知应答后不发关闭帧直接关掉 TCP（FIN），
+    // 模拟 N 个客户端进程被杀。逐条依次建，与场景的主连接互不相干：这些连接上的帧不进步骤结果和通知。
+    const keep = wsSocket; const replies = {}; let opened = 0;
+    for (let i = 0; i < step.vanish; i++) {
+      wsSocket = null; captureWsSocket = true;
+      const c = new WebSocket(`ws://127.0.0.1:${GATEWAY_PORT}/ws`);
+      await new Promise((resolve) => { c.onopen = resolve; c.onerror = resolve; });
+      captureWsSocket = false;
+      const socket = wsSocket;
+      if (c.readyState !== 1 || !socket) { c.onclose = null; replies.connectFailed = (replies.connectFailed ?? 0) + 1; continue; }
+      opened++;
+      const reply = new Promise((resolve) => {
+        const timer = setTimeout(() => resolve('__timeout'), 5000);
+        c.onmessage = (e) => { let f; try { f = JSON.parse(e.data); } catch { f = {}; } if (f.type !== 'notification') { clearTimeout(timer); resolve(f.type); } };
+        c.onclose = () => { clearTimeout(timer); resolve('__closed'); };
+      });
+      c.send(JSON.stringify({ type: 'hello', protocolVersion: '1.2', clientName: 'test', clientVersion: '0.0.0', token: TOKEN }));
+      const type = await reply;
+      replies[type] = (replies[type] ?? 0) + 1;
+      c.onmessage = null; c.onclose = null;
+      socket.destroy();
+    }
+    wsSocket = keep;
+    return { vanish: { opened, replies } };
+  }
   if (step.ws) {
     let hello; if (!ws) hello = await connect();
     if (hello?.connectFailed) return { hello };
+    // 当前连接已经断了（例如前面的 connect 没连上）：如实记下，不往关掉的连接上发。
+    if (ws.readyState !== 1) return { notConnected: true };
     const id = `q${++requestSeq}`;
     ws.send(JSON.stringify({ type: 'request', id, method: step.ws, params: substDeep(step.params ?? {}) }));
     // answer：收集本步骤的帧期间，遇到匹配的事件就按模板发一个请求（见 README）。
@@ -673,7 +701,8 @@ const failuresOf = (step, r, at) => {
   const httpTimeout = ['TimeoutError', 'AbortError'].includes(r.http?.error);
   const kinds = [];
   if (r.timedOut || r.sidecar?.timedOut || t(r.close) || t(r.hello) || (r.frames ?? []).some(t) || (r.answers ?? []).some((a) => a.frames.some(t)) || httpTimeout) kinds.push('timeout');
-  if (r.hello?.connectFailed || (r.http?.error && !httpTimeout)) kinds.push('connect');
+  if (r.vanish?.replies.__timeout) kinds.push('timeout');
+  if (r.hello?.connectFailed || r.notConnected || r.vanish?.replies.connectFailed || (r.http?.error && !httpTimeout)) kinds.push('connect');
   return [...kinds.map((kind) => ({ at, kind, expected: kind === 'timeout' && step.expectTimeout === true })),
     ...(r.then ?? []).flatMap((x, i) => failuresOf(x.step, x, `${at}.then[${i}]`))];
 };

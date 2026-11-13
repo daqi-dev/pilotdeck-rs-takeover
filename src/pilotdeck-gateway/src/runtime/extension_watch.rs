@@ -16,22 +16,32 @@
 //!   the config store's watcher (`config/store.rs`), this crate has no native
 //!   watcher dependency, so each watched path's tree is polled: a fingerprint
 //!   of every entry under it (type, length, modification time; symbolic links
-//!   are not followed, as `fs.watch` does not report changes behind them).
+//!   inside the tree are not followed, as `fs.watch` does not report changes
+//!   behind them, but a watched path that is itself a link is).
 //!   A change is therefore seen up to one poll interval late, and a change
 //!   that leaves every fingerprinted field as it was is not seen.
+//! * The polling runs on its own thread, never on an async worker, and no
+//!   lock is held while it touches the file system: registering a scope
+//!   (`watch_project`, called on every project resolve under the registry's
+//!   lock) only records the paths and wakes the thread, which samples a new
+//!   scope's starting point before anything else. A pass over the trees is
+//!   followed by a pause of at least `IDLE_DUTY - 1` times its own length:
+//!   a huge tree (a `node_modules` under `plugins/`) is polled less often
+//!   instead of keeping a core busy, at the price of its changes being seen
+//!   later.
 
 use std::collections::{BTreeSet, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, Weak};
-use std::time::Duration;
-
-use tokio::time::{Instant, MissedTickBehavior};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
+use std::time::{Duration, Instant};
 
 /// `debounceMs ?? 250`.
 pub const DEBOUNCE: Duration = Duration::from_millis(250);
-/// How often every watched tree is sampled.
+/// How often every watched tree is sampled while sampling is cheap.
 pub const POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// The walk takes at most this fraction (1 / n) of one core.
+const IDLE_DUTY: u32 = 20;
 
 /// `ExtensionWatchScope`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -57,7 +67,11 @@ pub struct ExtensionWatchOptions {
 
 struct WatchedPath {
     path: PathBuf,
-    fingerprint: u64,
+    /// `None` until the watch thread has sampled the path once.
+    fingerprint: Option<u64>,
+    /// Whether the path itself is followed when it is a symbolic link:
+    /// decided at the first sample (see `watch_thread`).
+    follow_root: bool,
 }
 
 struct ScopeRecord {
@@ -67,13 +81,29 @@ struct ScopeRecord {
     deadline: Option<Instant>,
 }
 
-struct Shared {
-    options: ExtensionWatchOptions,
-    scopes: Mutex<Vec<ScopeRecord>>,
+#[derive(Default)]
+struct State {
+    /// Only ever appended to, so a `(scope, path)` index pair taken under
+    /// the lock stays valid after it is released.
+    scopes: Vec<ScopeRecord>,
+    /// A scope was added since the thread last looked.
+    added: bool,
 }
 
-/// `ExtensionWatchManager`, started. Dropping every handle stops the polling
-/// task at its next tick.
+struct Shared {
+    options: ExtensionWatchOptions,
+    state: Mutex<State>,
+    wake: Condvar,
+}
+
+impl Shared {
+    fn lock(&self) -> MutexGuard<'_, State> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// `ExtensionWatchManager`, started. Dropping every handle stops the watch
+/// thread at its next wake-up.
 #[derive(Clone)]
 pub struct ExtensionWatchManager {
     shared: Arc<Shared>,
@@ -81,42 +111,67 @@ pub struct ExtensionWatchManager {
 
 impl ExtensionWatchManager {
     /// `new ExtensionWatchManager(options).start()`: the global scope is
-    /// watched from here on. Must be called inside a Tokio runtime.
+    /// watched from here on.
     pub fn start(options: ExtensionWatchOptions) -> Self {
         let manager = Self {
             shared: Arc::new(Shared {
                 options,
-                scopes: Mutex::new(Vec::new()),
+                state: Mutex::new(State::default()),
+                wake: Condvar::new(),
             }),
         };
         manager.ensure_scope(ExtensionWatchScope::Global);
-        tokio::spawn(poll_loop(Arc::downgrade(&manager.shared)));
+        let shared = Arc::downgrade(&manager.shared);
+        std::thread::Builder::new()
+            .name("extension-watch".into())
+            .spawn(move || watch_thread(shared))
+            .expect("spawn the extension watch thread");
         manager
     }
 
-    /// `watchProject(projectRoot)`; the root is already resolved.
+    /// `watchProject(projectRoot)`; the root is already resolved. No file
+    /// system access here: the watch thread takes the first sample.
     pub fn watch_project(&self, project_root: &Path) {
         self.ensure_scope(ExtensionWatchScope::Project(project_root.to_path_buf()));
     }
 
+    /// Test-only: wait until the thread has taken every registered path's
+    /// starting point, which `watch_project` itself no longer waits for.
+    #[cfg(test)]
+    async fn sampled(&self) {
+        while self
+            .shared
+            .lock()
+            .scopes
+            .iter()
+            .any(|record| record.paths.iter().any(|path| path.fingerprint.is_none()))
+        {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
     fn ensure_scope(&self, scope: ExtensionWatchScope) {
-        let mut scopes = self.shared.scopes.lock().unwrap_or_else(|e| e.into_inner());
-        if scopes.iter().any(|record| record.scope == scope) {
+        let mut state = self.shared.lock();
+        if state.scopes.iter().any(|record| record.scope == scope) {
             return;
         }
         let paths = watched_paths(&self.shared.options, &scope)
             .into_iter()
             .map(|path| WatchedPath {
-                fingerprint: fingerprint(&path),
                 path,
+                fingerprint: None,
+                follow_root: false,
             })
             .collect();
-        scopes.push(ScopeRecord {
+        state.scopes.push(ScopeRecord {
             scope,
             paths,
             pending: BTreeSet::new(),
             deadline: None,
         });
+        state.added = true;
+        drop(state);
+        self.shared.wake.notify_one();
     }
 }
 
@@ -145,57 +200,135 @@ fn watched_paths(options: &ExtensionWatchOptions, scope: &ExtensionWatchScope) -
     }
 }
 
-async fn poll_loop(shared: Weak<Shared>) {
-    let mut ticker = tokio::time::interval(POLL_INTERVAL);
-    ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+/// The paths to sample, as `(scope index, path index, path, follow_root)`:
+/// the ones never sampled yet (`initial`) or all the others.
+fn sample_list(state: &State, initial: bool) -> Vec<(usize, usize, PathBuf, bool)> {
+    let mut list = Vec::new();
+    for (scope, record) in state.scopes.iter().enumerate() {
+        for (index, watched) in record.paths.iter().enumerate() {
+            if watched.fingerprint.is_none() == initial {
+                list.push((scope, index, watched.path.clone(), watched.follow_root));
+            }
+        }
+    }
+    list
+}
+
+fn watch_thread(shared: Weak<Shared>) {
+    let mut next_poll = Instant::now();
     loop {
-        ticker.tick().await;
         let Some(shared) = shared.upgrade() else {
             return;
         };
-        let now = Instant::now();
-        let mut due = Vec::new();
-        {
-            let mut scopes = shared.scopes.lock().unwrap_or_else(|e| e.into_inner());
-            for record in scopes.iter_mut() {
-                for watched in &mut record.paths {
-                    let current = fingerprint(&watched.path);
-                    if current != watched.fingerprint {
-                        watched.fingerprint = current;
-                        record
-                            .pending
-                            .insert(watched.path.to_string_lossy().encode_utf16().collect());
-                        record.deadline = Some(now + DEBOUNCE);
-                    }
-                }
-                if record.deadline.is_some_and(|deadline| deadline <= now) {
-                    record.deadline = None;
-                    // `[...pendingPaths].sort()`: UTF-16 code unit order.
-                    let changed_paths = std::mem::take(&mut record.pending)
-                        .into_iter()
-                        .map(|units| String::from_utf16_lossy(&units))
-                        .collect();
-                    due.push(ExtensionWatchEvent {
-                        scope: record.scope.clone(),
-                        changed_paths,
-                    });
-                }
+        // A new scope's starting point is taken first and on its own, so a
+        // change right after `watch_project` is not folded into it while
+        // the other trees are walked.
+        let initial = {
+            let mut state = shared.lock();
+            state.added = false;
+            sample_list(&state, true)
+        };
+        if !initial.is_empty() {
+            // `resolveExistingWatchTarget` (ExtensionWatchManager.ts:170-180)
+            // runs once, when the watcher is created: a path that exists then
+            // (`existsSync` follows links) is watched itself, through a link
+            // too; one that does not is watched from an ancestor, which never
+            // looks behind a link created there later.
+            let samples: Vec<(u64, bool)> = initial
+                .iter()
+                .map(|(_, _, path, _)| {
+                    let follow = path.exists();
+                    (fingerprint(path, follow), follow)
+                })
+                .collect();
+            let mut state = shared.lock();
+            for ((scope, index, _, _), (sample, follow)) in initial.iter().zip(samples) {
+                let watched = &mut state.scopes[*scope].paths[*index];
+                watched.fingerprint = Some(sample);
+                watched.follow_root = follow;
             }
         }
-        for event in due {
-            (shared.options.on_change)(event);
+        let started = Instant::now();
+        if started >= next_poll {
+            let list = sample_list(&shared.lock(), false);
+            let samples: Vec<u64> = list
+                .iter()
+                .map(|(_, _, path, follow)| fingerprint(path, *follow))
+                .collect();
+            let finished = Instant::now();
+            let mut state = shared.lock();
+            for ((scope, index, path, _), sample) in list.into_iter().zip(samples) {
+                let record = &mut state.scopes[scope];
+                let watched = &mut record.paths[index];
+                if watched.fingerprint != Some(sample) {
+                    watched.fingerprint = Some(sample);
+                    record
+                        .pending
+                        .insert(path.to_string_lossy().encode_utf16().collect());
+                    record.deadline = Some(finished + DEBOUNCE);
+                }
+            }
+            next_poll = finished + POLL_INTERVAL.max((finished - started) * (IDLE_DUTY - 1));
         }
+        let now = Instant::now();
+        let mut due = Vec::new();
+        let mut state = shared.lock();
+        for record in state.scopes.iter_mut() {
+            if record.deadline.is_some_and(|deadline| deadline <= now) {
+                record.deadline = None;
+                // `[...pendingPaths].sort()`: UTF-16 code unit order.
+                let changed_paths = std::mem::take(&mut record.pending)
+                    .into_iter()
+                    .map(|units| String::from_utf16_lossy(&units))
+                    .collect();
+                due.push(ExtensionWatchEvent {
+                    scope: record.scope.clone(),
+                    changed_paths,
+                });
+            }
+        }
+        if !due.is_empty() {
+            drop(state);
+            for event in due {
+                (shared.options.on_change)(event);
+            }
+            continue;
+        }
+        let wake_at = state
+            .scopes
+            .iter()
+            .filter_map(|record| record.deadline)
+            .fold(next_poll, Instant::min);
+        let wait = wake_at.saturating_duration_since(Instant::now());
+        drop(
+            shared
+                .wake
+                .wait_timeout_while(state, wait, |state| !state.added)
+                .unwrap_or_else(|e| e.into_inner()),
+        );
     }
 }
 
 /// Everything under `path` that a recursive watch would report a change
 /// of: each entry's relative name, type, length and modification time.
-fn fingerprint(path: &Path) -> u64 {
+/// With `follow_root` the watched path itself is followed when it is a
+/// symbolic link — the baseline's `fs.watch` on an existing linked path
+/// watches the link's target (measured on macOS: a write behind a linked
+/// `skills` / `plugins` / project `.pilotdeck/skills` is reported) — while
+/// links inside the tree never are (a write behind an inner linked directory
+/// is not reported).
+fn fingerprint(path: &Path, follow_root: bool) -> u64 {
     let mut hasher = DefaultHasher::new();
     let mut stack = vec![(path.to_path_buf(), PathBuf::new())];
     while let Some((absolute, relative)) = stack.pop() {
+        let root = follow_root && relative.as_os_str().is_empty();
         relative.hash(&mut hasher);
-        let Ok(metadata) = std::fs::symlink_metadata(&absolute) else {
+        let metadata = if root {
+            std::fs::metadata(&absolute)
+        } else {
+            std::fs::symlink_metadata(&absolute)
+        };
+        let Ok(metadata) = metadata else {
             0u8.hash(&mut hasher);
             continue;
         };
@@ -243,14 +376,47 @@ mod tests {
     fn fingerprint_sees_changes_under_the_path_only() {
         let root = temp_dir("fingerprint");
         let skills = root.join("skills");
-        let missing = fingerprint(&skills);
+        let missing = fingerprint(&skills, true);
         std::fs::create_dir_all(skills.join("a")).unwrap();
-        let created = fingerprint(&skills);
+        let created = fingerprint(&skills, true);
         assert_ne!(missing, created);
         std::fs::write(root.join("unrelated.txt"), "x").unwrap();
-        assert_eq!(created, fingerprint(&skills));
+        assert_eq!(created, fingerprint(&skills, true));
         std::fs::write(skills.join("a/SKILL.md"), "x").unwrap();
-        assert_ne!(created, fingerprint(&skills));
+        assert_ne!(created, fingerprint(&skills, true));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_watched_path_is_followed_but_inner_links_are_not() {
+        let root = temp_dir("links");
+        let elsewhere = root.join("elsewhere");
+        std::fs::create_dir_all(elsewhere.join("skills")).unwrap();
+        std::fs::create_dir_all(elsewhere.join("inner")).unwrap();
+        let skills = root.join("skills");
+        std::os::unix::fs::symlink(elsewhere.join("skills"), &skills).unwrap();
+        let before = fingerprint(&skills, true);
+        std::fs::create_dir_all(elsewhere.join("skills/new")).unwrap();
+        std::fs::write(elsewhere.join("skills/new/SKILL.md"), "x").unwrap();
+        let after = fingerprint(&skills, true);
+        assert_ne!(before, after, "a write behind a linked root is seen");
+        let unfollowed = fingerprint(&skills, false);
+        std::fs::write(elsewhere.join("skills/new/OTHER.md"), "x").unwrap();
+        assert_eq!(
+            unfollowed,
+            fingerprint(&skills, false),
+            "a link that appeared after the watch started is not followed"
+        );
+        std::os::unix::fs::symlink(elsewhere.join("inner"), elsewhere.join("skills/linked"))
+            .unwrap();
+        let linked = fingerprint(&skills, true);
+        std::fs::write(elsewhere.join("inner/SKILL.md"), "x").unwrap();
+        assert_eq!(
+            linked,
+            fingerprint(&skills, true),
+            "an inner link is not followed"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -269,6 +435,7 @@ mod tests {
             on_change: Arc::new(move |event| sink.lock().unwrap().push(event)),
         });
         manager.watch_project(&project);
+        manager.sampled().await;
         std::fs::create_dir_all(home.join("skills/x")).unwrap();
         std::fs::write(home.join("mcp.json"), "{}").unwrap();
         std::fs::create_dir_all(project.join(".pilotdeck/plugins/p")).unwrap();

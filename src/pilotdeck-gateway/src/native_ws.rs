@@ -409,14 +409,17 @@ impl PhasedInner {
                         let stop_observed = self.stop_observed.clone();
                         let grid_anchor = self.grid_anchor;
                         self.connections.spawn(async move {
-                            let _permit = if crate::mutants::on("ws-caps-early-connection-release") {
+                            let slot = if crate::mutants::on("ws-caps-early-connection-release") {
                                 drop(permit);
                                 None
                             } else {
                                 Some(permit)
                             };
+                            // The slot travels with the connection: it is
+                            // returned when the serving ends, or earlier when
+                            // the peer half-closes an upgraded connection.
                             if let Err(error) =
-                                serve_socket(socket, host, token, version, input, http, grid_anchor, stop_http, stop_observed, close_notice)
+                                serve_socket(socket, host, token, version, input, http, grid_anchor, stop_http, stop_observed, close_notice, slot)
                                 .await
                                 && !is_peer_gone(error.as_ref())
                             {
@@ -432,9 +435,6 @@ impl PhasedInner {
                                     &mut std::io::stderr(),
                                     &format!("native WS connection: {error}"),
                                 );
-                            }
-                            if crate::mutants::on("ws-caps-connection-leak") {
-                                std::mem::forget(_permit);
                             }
                         });
                         #[cfg(test)]
@@ -986,6 +986,7 @@ async fn serve_socket(
     stop: watch::Receiver<bool>,
     stop_observed: Arc<std::sync::atomic::AtomicUsize>,
     close_notice: watch::Receiver<bool>,
+    slot: Option<OwnedSemaphorePermit>,
 ) -> Result<(), ProxyError> {
     let server_stop = stop.clone();
     let (upgrade, upgraded) = oneshot::channel();
@@ -1052,6 +1053,7 @@ async fn serve_socket(
         input,
         close_notice,
         server_stop,
+        slot,
     )
     .await
 }
@@ -1178,6 +1180,7 @@ where
         Arc::new(Semaphore::new(MAX_TOTAL_INPUT_BYTES)),
         close_notice,
         stop,
+        None,
     )
     .await;
     drop(close_notice_tx);
@@ -1194,6 +1197,7 @@ async fn transport_with_budget<S>(
     input_budget: Arc<Semaphore>,
     mut close_notice: watch::Receiver<bool>,
     mut server_stop: watch::Receiver<bool>,
+    mut slot: Option<OwnedSemaphorePermit>,
 ) -> Result<(), ProxyError>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -1274,6 +1278,14 @@ where
                 // never complete, so its input budget goes back now.
                 buffered.decoder = Decoder::default();
                 buffered.allocation = None;
+                // TS has no connection cap; ours must not let vanished
+                // clients (killed with no close frame, nothing written to
+                // them since) fill it and lock every new peer out — HTTP
+                // included, which shares the listener. A half-open
+                // connection reads nothing more, so it stops counting
+                // against the cap; it keeps its writer until a write fails
+                // or the server stops.
+                drop(slot.take());
                 continue;
             }
             if !buffered.append(&input[..count]) {
