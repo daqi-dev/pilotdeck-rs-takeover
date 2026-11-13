@@ -4,6 +4,9 @@ Original strict score and ruler are never changed or relabeled PASS.
 """
 import sys
 if not sys.flags.isolated:raise SystemExit('run with python3 -I')
+sys.dont_write_bytecode = True
+import tempfile
+sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-accepted-summary-pyc-')
 import argparse,copy,importlib.util,json
 from pathlib import Path
 HERE=Path(__file__).resolve().parent

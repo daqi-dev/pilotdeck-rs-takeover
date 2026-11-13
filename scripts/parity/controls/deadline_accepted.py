@@ -1,5 +1,8 @@
 import sys
 if not sys.flags.isolated:raise SystemExit('run with python3 -I')
+sys.dont_write_bytecode = True
+import tempfile
+sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-deadline-controls-pyc-')
 import importlib.util,copy,json,itertools,hashlib
 from pathlib import Path
 HERE=Path(__file__).resolve().parent
