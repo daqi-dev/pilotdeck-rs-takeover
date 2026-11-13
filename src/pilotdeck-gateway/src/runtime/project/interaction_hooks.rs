@@ -78,9 +78,9 @@ impl Run {
                 // These synchronous callbacks can panic too (for example a
                 // poisoned callback registry). They must already own completion.
                 self.cancelled.cancel();
-                if let Some(signal) = &*lock(&self.session_signal) {
-                    signal.cancel();
-                }
+                // session_signal is borrowed user authority, not this scope's
+                // revocation controller. Each admitted session dispatch owns
+                // its executor signal and joins its drain below.
                 if let Some(permission) = &self.permission {
                     permission.close();
                 }
@@ -607,12 +607,40 @@ impl TurnHooks {
             if !session {
                 input.signal = Some(turn.run.cancelled.clone());
             }
+            let session_signals = if session {
+                let source = input.signal.take().unwrap_or_default();
+                let execution = Cancellation::new();
+                forward_session_abort(&source, &execution);
+                input.signal = Some(execution.clone());
+                Some((source, execution))
+            } else {
+                None
+            };
             // Keep shell TERM/drain alive even if the caller cancels or drops
             // its receive future. close waits for this job before disposal.
+            // Session dispatch borrows the user's signal, but revocation may
+            // only cancel this worker's owned executor, never the source.
             let task = turn.run.executor.spawn(async move {
                 let _job = job;
                 worker.check(&lock(&worker.state))?;
-                worker.run.runtime.dispatch(input).await
+                if let Some((source, execution)) = session_signals {
+                    let dispatch = worker.run.runtime.dispatch(input);
+                    tokio::pin!(dispatch);
+                    tokio::select! {
+                        biased;
+                        result = &mut dispatch => result,
+                        _ = source.cancelled() => {
+                            forward_session_abort(&source, &execution);
+                            dispatch.await
+                        },
+                        _ = worker.run.cancelled.cancelled() => {
+                            execution.cancel();
+                            dispatch.await
+                        },
+                    }
+                } else {
+                    worker.run.runtime.dispatch(input).await
+                }
             });
             let mut on_drop = CancelDispatch(Some(turn.clone()));
             let result = tokio::select! {
@@ -630,6 +658,19 @@ impl TurnHooks {
             on_drop.0 = None;
             Ok(result)
         })
+    }
+}
+
+fn forward_session_abort(source: &Cancellation, execution: &Cancellation) {
+    // Cancellation is sticky: observe it first so a concurrent first event
+    // cannot be mistaken for a synchronous abort between these reads.
+    if !source.is_aborted() {
+        return;
+    }
+    if let Some(at) = source.abort_event_at() {
+        execution.cancel_at(at);
+    } else if source.is_aborted() {
+        execution.abort();
     }
 }
 
