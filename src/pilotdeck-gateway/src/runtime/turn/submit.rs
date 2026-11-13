@@ -55,7 +55,7 @@ pub type SubmitFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// completions and the tool batch's failure hook land on either side (11/9,
 /// declared volatile in the abort-timeout-* scenarios). Rust's record
 /// settles in well under that, so the registry events wait out this window,
-/// measured from the abort — the same span as the advisory hooks' kill
+/// measured from the deadline the abort fires at — the same span as the advisory hooks' kill
 /// window (`ADVISORY_KILL_SETTLE`, live.rs).
 const TIMEOUT_REGISTRY_WINDOW: Duration = Duration::from_millis(25);
 
@@ -718,8 +718,9 @@ impl TurnSubmitter {
             } else {
                 1
             };
-            tokio::time::sleep_until(started + Duration::from_millis(delay)).await;
-            handle
+            let deadline = started + Duration::from_millis(delay);
+            tokio::time::sleep_until(deadline).await;
+            (deadline, handle)
         };
         let manage = async {
             tokio::pin!(timer);
@@ -760,7 +761,7 @@ impl TurnSubmitter {
                         publisher.close_live();
                     }
                 },
-                handle = &mut timer => {
+                (deadline, handle) = &mut timer => {
                     // Deadline takeover, in this order: mark the timeout (the pump
                     // checks it before registering its own failure), take the
                     // single terminal claim, stop admission/abort the live
@@ -780,7 +781,6 @@ impl TurnSubmitter {
                         // is released.
                         publisher.cut_live();
                     }
-                    let aborted_at = tokio::time::Instant::now();
                     let _ = handle.abort(&format!("timeout:{}", display(&run.run_id)).into());
                     if owns_terminal {
                         let mut failure = status("turn_timeout", &message, hint, "turn");
@@ -810,7 +810,7 @@ impl TurnSubmitter {
                             // the failure hook of a killed tool starting) reach
                             // the registry in that window. See
                             // TIMEOUT_REGISTRY_WINDOW.
-                            tokio::time::sleep_until(aborted_at + TIMEOUT_REGISTRY_WINDOW).await;
+                            tokio::time::sleep_until(deadline + TIMEOUT_REGISTRY_WINDOW).await;
                             if recorded {
                                 publisher.gateway_event(with_run(failure, &run));
                             }

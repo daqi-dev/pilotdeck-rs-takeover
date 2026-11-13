@@ -286,8 +286,10 @@ const subagentTimeoutVolatile = (session) => [
     else steps.push(submit(s, `${c.m}: go`, { timeoutMs: c.timeoutMs }));
     steps.push({ sleep: 4500 });
     steps.push(submit(s, `next-${c.m}: again`));
+    // 紧跟着读：读历史带回的上一轮保留流只保留 30 秒（GatewayTurnReplayStore.ts:10、81），
+    // 全部读放到最后时第一个会话的读正好落在这 30 秒的边上（基线约 27.7 秒、Rust 约 30.3 秒）。
+    steps.push(read(s));
   }
-  for (const c of cases) steps.push(read(`s-${c.m}`));
   scenarios['abort-model-stream'] = {
     about: '中止落在模型请求中：已发出还没有响应头、推理输出到一半、文本之后工具调用已到但结束原因未到、文本输出到一半（abort_turn 带 runId / close_session / timeoutMs）。比较帧、部分 assistant 消息是否落盘、工具是否执行、下一轮请求带着的历史。',
     provider,
@@ -438,7 +440,8 @@ const TIMEOUT_ORDER = {
 const timeoutOrderVolatile = ({ session, from, to }) => {
   const indices = Array.from({ length: to - from + 1 }, (_, i) => from + i).join('|');
   return [
-    `^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.json\\.events\\. ${session} <uuid:\\d+>\\[(${indices})\\]\\.event\\.`,
+    // 运行记录事件的键是「\\0会话\\0runId」（RunRegistry 的 eventKey），差异路径里照原样带着 NUL。
+    `^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.json\\.events\\.\\u0000${session}\\u0000<uuid:\\d+>\\[(${indices})\\]\\.event\\.`,
     '^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.raw\\.skeletons\\.',
   ];
 };

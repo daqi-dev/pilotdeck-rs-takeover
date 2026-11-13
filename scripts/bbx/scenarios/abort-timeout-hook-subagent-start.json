@@ -206,7 +206,7 @@
   ],
   "volatile": [
     "/chats/s-ss-timeout\\.jsonl\\.(jsonl\\[\\d+\\]|projections\\.json\\.json\\.projections\\.agent-transcript\\.subagent-references\\.state\\.completed\\[0\\])\\.summaryPreview$",
-    "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.json\\.events\\. s-ss-timeout <uuid:\\d+>\\[(7|8|9)\\]\\.event\\.",
+    "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.json\\.events\\.\\u0000s-ss-timeout\\u0000<uuid:\\d+>\\[(7|8|9)\\]\\.event\\.",
     "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.raw\\.skeletons\\."
   ]
 }

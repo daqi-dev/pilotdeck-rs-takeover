@@ -247,7 +247,7 @@
     }
   ],
   "volatile": [
-    "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.json\\.events\\. s-tp-timeout <uuid:\\d+>\\[(10|11|12)\\]\\.event\\.",
+    "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.json\\.events\\.\\u0000s-tp-timeout\\u0000<uuid:\\d+>\\[(10|11|12)\\]\\.event\\.",
     "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.raw\\.skeletons\\."
   ]
 }
