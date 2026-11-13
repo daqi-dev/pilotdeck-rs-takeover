@@ -371,7 +371,13 @@ impl ExecutionServer {
                     op.updated_at = self.clock.now_iso();
                     let mut timeout: Vec<u16> = "timeout:".encode_utf16().collect();
                     timeout.extend_from_slice(run_id.units());
-                    let cause = if reason.units() == timeout {
+                    // A gateway timeout reaches a sidecar together with the
+                    // operation deadline it derives from `timeoutMs`. The
+                    // gateway's own in-process loop gets neither a deadline
+                    // nor a deadline terminal (the baseline runs it as a plain
+                    // AgentLoop), so the reason marks a deadline only for an
+                    // operation that carries one.
+                    let cause = if reason.units() == timeout && op.deadline.is_some() {
                         CancelCause::Deadline
                     } else {
                         CancelCause::Requested(reason.clone())

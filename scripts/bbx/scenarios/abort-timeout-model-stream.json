@@ -248,6 +248,12 @@
       "timeout": 20000
     },
     {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-sh-timeout"
+      }
+    },
+    {
       "ws": "set_permission_mode",
       "params": {
         "sessionKey": "s-st-timeout",
@@ -275,12 +281,6 @@
         "message": "next-st-timeout: again"
       },
       "timeout": 20000
-    },
-    {
-      "ws": "read_session_messages",
-      "params": {
-        "sessionKey": "s-sh-timeout"
-      }
     },
     {
       "ws": "read_session_messages",

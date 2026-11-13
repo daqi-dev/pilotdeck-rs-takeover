@@ -42,6 +42,23 @@ use crate::{
 
 pub type SubmitFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
+/// The baseline's timeout settlement (InProcessGateway.ts:1386-1433) aborts
+/// the session, then awaits the timeout status's transcript append — queued
+/// behind the session writer's pending writes and settled on the libuv pool —
+/// and only then appends the status and error events to the run registry.
+/// Nothing orders the aborted loop's immediate reactions against that I/O,
+/// but measured over 20 runs per row they land in between: a killed hook's
+/// completion before the status (PostToolUse 20/20, UserPromptSubmit 20/20,
+/// PreToolUse / PostToolUseFailure / SubagentStart 19/20 each), the failure
+/// hook of a killed tool starting before it (MCP 20/20, bash 19/20), while a
+/// node hook's own completion never does and the Stop / SubagentStop
+/// completions and the tool batch's failure hook land on either side (11/9,
+/// declared volatile in the abort-timeout-* scenarios). Rust's record
+/// settles in well under that, so the registry events wait out this window,
+/// measured from the deadline the abort fires at — the same span as the advisory hooks' kill
+/// window (`ADVISORY_KILL_SETTLE`, live.rs).
+const TIMEOUT_REGISTRY_WINDOW: Duration = Duration::from_millis(25);
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SubmitError {
     pub code: String,
@@ -701,8 +718,9 @@ impl TurnSubmitter {
             } else {
                 1
             };
-            tokio::time::sleep_until(started + Duration::from_millis(delay)).await;
-            handle
+            let deadline = started + Duration::from_millis(delay);
+            tokio::time::sleep_until(deadline).await;
+            (deadline, handle)
         };
         let manage = async {
             tokio::pin!(timer);
@@ -743,7 +761,7 @@ impl TurnSubmitter {
                         publisher.close_live();
                     }
                 },
-                handle = &mut timer => {
+                (deadline, handle) = &mut timer => {
                     // Deadline takeover, in this order: mark the timeout (the pump
                     // checks it before registering its own failure), take the
                     // single terminal claim, stop admission/abort the live
@@ -757,6 +775,12 @@ impl TurnSubmitter {
                     let message = format!("Turn exceeded the {}ms timeout.", crate::js_value::number_string(ms));
                     let hint = "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.";
                     let _ = self.host.reject_pending(run.session(), "turn_timeout");
+                    if owns_terminal {
+                        // The timeout ends forwarding to the client; the aborted
+                        // loop's events are still recorded until the turn's sink
+                        // is released.
+                        publisher.cut_live();
+                    }
                     let _ = handle.abort(&format!("timeout:{}", display(&run.run_id)).into());
                     if owns_terminal {
                         let mut failure = status("turn_timeout", &message, hint, "turn");
@@ -777,7 +801,17 @@ impl TurnSubmitter {
                         // that settles later never enqueues its frames.
                         let budget = self.abort_budget();
                         let _ = tokio::time::timeout(budget, async {
-                            if self.host.record_failure(&run, &record).await.is_ok() {
+                            let recorded = self.host.record_failure(&run, &record).await.is_ok();
+                            // The status takes its transcript position at the
+                            // abort, ahead of the aborted loop's reactions; its
+                            // run-registry events follow only after the
+                            // transcript write settled. The aborted loop's
+                            // immediate reactions (a killed hook's completion,
+                            // the failure hook of a killed tool starting) reach
+                            // the registry in that window. See
+                            // TIMEOUT_REGISTRY_WINDOW.
+                            tokio::time::sleep_until(deadline + TIMEOUT_REGISTRY_WINDOW).await;
+                            if recorded {
                                 publisher.gateway_event(with_run(failure, &run));
                             }
                             let mut event = error_event(&run, "turn_timeout", &message, false);
@@ -785,12 +819,12 @@ impl TurnSubmitter {
                             publisher.gateway_event(event);
                         })
                         .await;
-                        // The timed-out session is never reused: the baseline
-                        // closes it as soon as the timeout settled, so the
-                        // aborted loop's own terminal records (step_completed,
-                        // turn_result, turn_failed) land on a closed writer and
-                        // are dropped (InProcessGateway.ts:1824-1836).
-                        handle.close_transcript();
+                        // The transcript stays open: like the baseline, the
+                        // aborted loop keeps recording until the pump stops
+                        // pulling it (at the first event after the timeout),
+                        // and the session's disposal closes the writer once
+                        // that run has ended (AgentHandle.finishDispose waits
+                        // for no active run before onDispose).
                     }
                     // The settlement lets a worker that observed the timeout
                     // drain and finish (which closes delivery itself).

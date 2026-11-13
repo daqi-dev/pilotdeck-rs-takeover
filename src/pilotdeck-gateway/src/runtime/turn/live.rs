@@ -512,6 +512,18 @@ impl LiveSession for LiveSessionAdapter {
     fn submit(&self, input: JsValue, options: JsValue) -> Result<Box<dyn LiveTurn>, RuntimeError> {
         // Invalid requests must not occupy the session's active turn slot.
         let (mut request, mut input) = parse_execute_request(&input, &options, vec![])?;
+        let timeout_reason = options
+            .get("execution")
+            .and_then(|execution| execution.get("runId"))
+            .and_then(JsValue::as_string)
+            .map(|run| {
+                JsString::from_utf16(
+                    "timeout:"
+                        .encode_utf16()
+                        .chain(run.units().iter().copied())
+                        .collect(),
+                )
+            });
         if let Some(config) = &self.agent_config {
             let mut config = config.clone();
             // `applyAgentPermissionOverrides` (permissionOverrides.ts:5-19):
@@ -816,6 +828,7 @@ impl LiveSession for LiveSessionAdapter {
             execute_ready: Some(execute_ready),
             execute_messages: None,
             recorded: std::collections::VecDeque::new(),
+            timeout_reason,
             timeline: if crate::mutants::on("timeline-terminal-unwired") {
                 None
             } else {
@@ -959,6 +972,11 @@ pub(super) struct LiveTurnStream {
     // from the runner the stream keeps recording into afterwards.
     execute_messages: Option<Vec<JsValue>>,
     recorded: std::collections::VecDeque<JsValue>,
+    /// `timeout:<execution.runId>`: the abort reason under which a
+    /// result-unknown loop failure is the gateway's own turn timeout
+    /// (`isTimedOutUnknownOperation`, TurnRunner.ts:701-705). `None` when the
+    /// submit options carry no string `execution.runId`.
+    timeout_reason: Option<JsString>,
     // #1220: the turn's coordinate allocator, shared with the handler's
     // Forwarding so terminal blocks reuse the positions the stream assigned.
     timeline: Option<Arc<Mutex<super::timeline::TurnTimeline>>>,
@@ -1107,6 +1125,21 @@ impl LiveTurn for LiveTurnStream {
                     continue;
                 }
                 return match self.result.take() {
+                    // `isTimedOutUnknownOperation` (TurnRunner.ts:422-426,
+                    // 701-705): a loop that ends result-unknown under the
+                    // gateway's own `timeout:<runId>` abort is rethrown
+                    // without completing the turn — no terminal records, no
+                    // failure status. The gateway already recorded the
+                    // timeout.
+                    Some(Err(error))
+                        if error.kind == HostErrorKind::ResultUnknown
+                            && self.timeout_reason.is_some()
+                            && self.callback_cancel.as_ref().and_then(Cancellation::reason)
+                                == self.timeout_reason =>
+                    {
+                        self.release();
+                        Err(map_host_error(error))
+                    }
                     Some(result) => match self.finish(result) {
                         Ok(Some(event)) => self.record_event(event, true, false, None).await,
                         Err(error)
@@ -2932,6 +2965,7 @@ mod tests {
             execute_ready: None,
             execute_messages: None,
             recorded: std::collections::VecDeque::new(),
+            timeout_reason: None,
             timeline: None,
         };
         for case in cases {

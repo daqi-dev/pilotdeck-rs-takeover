@@ -1,6 +1,6 @@
 {
   "name": "abort-timeout-tool-bash",
-  "about": "超时列（submit_turn.timeoutMs，从 abort-tool-bash 拆出）：中止落在 bash 工具执行中（子进程在睡眠）：abort_turn 带 / 不带 runId、close_session、timeoutMs 超时、插话、同会话再提交。比较：子进程是否被杀（late-*.txt）、PostToolUse / PostToolUseFailure hook 是否跑与 isInterrupt、帧序列与 finishReason、turn_aborted 状态、会话记录、下一轮请求带着的历史。",
+  "about": "超时列（submit_turn.timeoutMs，从 abort-tool-bash 拆出）：中止落在 bash 工具执行中（子进程在睡眠）：abort_turn 带 / 不带 runId、close_session、timeoutMs 超时、插话、同会话再提交。比较：子进程是否被杀（late-*.txt）、PostToolUse / PostToolUseFailure hook 是否跑与 isInterrupt、帧序列与 finishReason、turn_aborted 状态、会话记录、下一轮请求带着的历史。\n运行记录里超时事件的先后（volatile 的依据）：基线 20 次：bash 被杀后 PostToolUseFailure 的开始在 turn_timeout 之前 19 次、在 error 之后 1 次。",
   "files": {
     "home/.pilotdeck/plugins/bbx-abort/plugin.json": {
       "name": "bbx-abort",
@@ -290,5 +290,9 @@
         "sessionKey": "s-tb-timeout"
       }
     }
+  ],
+  "volatile": [
+    "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.json\\.events\\.\\u0000s-tb-timeout\\u0000<uuid:\\d+>\\[(6|7|8)\\]\\.event\\.",
+    "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.raw\\.skeletons\\."
   ]
 }

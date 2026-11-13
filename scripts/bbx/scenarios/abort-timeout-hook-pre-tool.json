@@ -1,6 +1,6 @@
 {
   "name": "abort-timeout-hook-pre-tool",
-  "about": "超时列（submit_turn.timeoutMs，从 abort-hook-pre-tool 拆出）：中止落在 PreToolUse hook 执行中（ToolRuntime.ts:188）：close_session、timeoutMs（abort_turn 见 hook-cancelled）。比较 hook 是否被杀、工具是否仍执行（ran-*.txt）、帧、会话记录、下一轮。",
+  "about": "超时列（submit_turn.timeoutMs，从 abort-hook-pre-tool 拆出）：中止落在 PreToolUse hook 执行中（ToolRuntime.ts:188）：close_session、timeoutMs（abort_turn 见 hook-cancelled）。比较 hook 是否被杀、工具是否仍执行（ran-*.txt）、帧、会话记录、下一轮。\n运行记录里超时事件的先后（volatile 的依据）：基线 20 次：PreToolUse 的完成在 turn_timeout 之前 19 次、在 error 之后 1 次。",
   "files": {
     "home/.pilotdeck/plugins/bbx-abort/plugin.json": {
       "name": "bbx-abort",
@@ -139,5 +139,18 @@
         "sessionKey": "s-hp-timeout"
       }
     }
+  ],
+  "accepted": [
+    {
+      "id": "aborted-hook-does-not-run-tool",
+      "why": "基线把被中止杀掉的 PreToolUse hook（outcome cancelled）当作非阻断，中止这一轮之后仍然走权限并真的执行了工具（落盘里有 ran-*.txt）：已中止的信号上 abort 监听器不会再触发，bash 跑完（commandRunner.ts:96-101）。Rust 同样走权限、会话记录与基线一致，但工具见到已中止的信号不再执行。与 hook-cancelled 同一条，只放过工具执行留下的 ran-*.txt",
+      "paths": [
+        "^\\$\\.tree\\./home/\\.pilotdeck/ran-hp-timeout\\.txt$"
+      ]
+    }
+  ],
+  "volatile": [
+    "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.json\\.events\\.\\u0000s-hp-timeout\\u0000<uuid:\\d+>\\[(7|8|9)\\]\\.event\\.",
+    "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.raw\\.skeletons\\."
   ]
 }

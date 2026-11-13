@@ -171,6 +171,7 @@ fn stream(
         execute_ready: None,
         execute_messages: None,
         recorded: std::collections::VecDeque::new(),
+        timeout_reason: None,
         timeline: None,
     }
 }

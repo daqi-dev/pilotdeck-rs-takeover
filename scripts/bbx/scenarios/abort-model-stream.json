@@ -261,6 +261,12 @@
       "timeout": 20000
     },
     {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-sh-run"
+      }
+    },
+    {
       "ws": "set_permission_mode",
       "params": {
         "sessionKey": "s-sh-close",
@@ -299,6 +305,12 @@
         "message": "next-sh-close: again"
       },
       "timeout": 20000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-sh-close"
+      }
     },
     {
       "ws": "set_permission_mode",
@@ -343,6 +355,12 @@
       "timeout": 20000
     },
     {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-sr-run"
+      }
+    },
+    {
       "ws": "set_permission_mode",
       "params": {
         "sessionKey": "s-sr-close",
@@ -381,6 +399,12 @@
         "message": "next-sr-close: again"
       },
       "timeout": 20000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-sr-close"
+      }
     },
     {
       "ws": "set_permission_mode",
@@ -425,6 +449,12 @@
       "timeout": 20000
     },
     {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-sc-run"
+      }
+    },
+    {
       "ws": "set_permission_mode",
       "params": {
         "sessionKey": "s-sc-close",
@@ -465,6 +495,12 @@
       "timeout": 20000
     },
     {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-sc-close"
+      }
+    },
+    {
       "ws": "set_permission_mode",
       "params": {
         "sessionKey": "s-st-close",
@@ -503,42 +539,6 @@
         "message": "next-st-close: again"
       },
       "timeout": 20000
-    },
-    {
-      "ws": "read_session_messages",
-      "params": {
-        "sessionKey": "s-sh-run"
-      }
-    },
-    {
-      "ws": "read_session_messages",
-      "params": {
-        "sessionKey": "s-sh-close"
-      }
-    },
-    {
-      "ws": "read_session_messages",
-      "params": {
-        "sessionKey": "s-sr-run"
-      }
-    },
-    {
-      "ws": "read_session_messages",
-      "params": {
-        "sessionKey": "s-sr-close"
-      }
-    },
-    {
-      "ws": "read_session_messages",
-      "params": {
-        "sessionKey": "s-sc-run"
-      }
-    },
-    {
-      "ws": "read_session_messages",
-      "params": {
-        "sessionKey": "s-sc-close"
-      }
     },
     {
       "ws": "read_session_messages",

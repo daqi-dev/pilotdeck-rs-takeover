@@ -286,8 +286,10 @@ const subagentTimeoutVolatile = (session) => [
     else steps.push(submit(s, `${c.m}: go`, { timeoutMs: c.timeoutMs }));
     steps.push({ sleep: 4500 });
     steps.push(submit(s, `next-${c.m}: again`));
+    // 紧跟着读：读历史带回的上一轮保留流只保留 30 秒（GatewayTurnReplayStore.ts:10、81），
+    // 全部读放到最后时第一个会话的读正好落在这 30 秒的边上（基线约 27.7 秒、Rust 约 30.3 秒）。
+    steps.push(read(s));
   }
-  for (const c of cases) steps.push(read(`s-${c.m}`));
   scenarios['abort-model-stream'] = {
     about: '中止落在模型请求中：已发出还没有响应头、推理输出到一半、文本之后工具调用已到但结束原因未到、文本输出到一半（abort_turn 带 runId / close_session / timeoutMs）。比较帧、部分 assistant 消息是否落盘、工具是否执行、下一轮请求带着的历史。',
     provider,
@@ -337,9 +339,17 @@ scenarios['abort-hook-user-prompt'] = {
   about: '中止落在 UserPromptSubmit hook 执行中（TurnRunner.ts:229-241）：abort_turn、close_session、timeoutMs。比较 hook 是否被杀、user_prompt_submitted 之后的走向、turn_aborted 状态、会话记录、下一轮。',
   ...hookRow('hu', 'UserPromptSubmit', null, { provider: (ss) => perSession(ss, (m) => ({ text: `answer ${m}` })) }),
 };
+// 与 hook-cancelled 是同一个基线 bug：被中止杀掉的 PreToolUse hook 不阻断，工具在已中止的信号上照常执行。
+// 沿用 hook-cancelled 的已接受差异，每列只放过它自己的 ran-*.txt（超时列拆出去后放过 ran-hp-timeout.txt）。
+const abortedHookRunsTool = (marker) => ({
+  id: 'aborted-hook-does-not-run-tool',
+  why: '基线把被中止杀掉的 PreToolUse hook（outcome cancelled）当作非阻断，中止这一轮之后仍然走权限并真的执行了工具（落盘里有 ran-*.txt）：已中止的信号上 abort 监听器不会再触发，bash 跑完（commandRunner.ts:96-101）。Rust 同样走权限、会话记录与基线一致，但工具见到已中止的信号不再执行。与 hook-cancelled 同一条，只放过工具执行留下的 ran-*.txt',
+  paths: [`^\\$\\.tree\\./home/\\.pilotdeck/ran-${marker}\\.txt$`],
+});
 scenarios['abort-hook-pre-tool'] = {
   about: '中止落在 PreToolUse hook 执行中（ToolRuntime.ts:188）：close_session、timeoutMs（abort_turn 见 hook-cancelled）。比较 hook 是否被杀、工具是否仍执行（ran-*.txt）、帧、会话记录、下一轮。',
   ...hookRow('hp', 'PreToolUse', 'bash', { cols: ['close', 'timeout'], provider: (ss) => perSession(ss, toolReply('bash', (m) => ({ command: `echo ran > ran-${m}.txt`, description: m })), { afterId: callId }) }),
+  accepted: [abortedHookRunsTool('hp-close'), abortedHookRunsTool('hp-timeout')],
 };
 scenarios['abort-hook-post-tool'] = {
   about: '中止落在 PostToolUse hook 执行中（ToolRuntime.ts:387-394）：abort_turn、close_session、timeoutMs。比较 hook 是否被杀、工具结果是否保留、帧、会话记录、下一轮。',
@@ -412,6 +422,30 @@ for (const late of [50, 300, 900, 2000]) {
 // 超时列单独成场景（abort-timeout-*）：超时之后基线不等这一轮收尾，被中止的循环在后台继续跑完
 // （InProcessGateway.ts:1386-1433、1587、1824-1836），它的副作用与时序和其他列不同，分开才看得清各列各自是否一致。
 // 按会话把步骤分开：一个步骤属于它 params.sessionKey 的会话，sleep 属于前一个会话。
+// 超时之后，被中止的循环的即时反应（被杀 hook 的完成、被杀工具的失败 hook 开始）与网关写超时事件
+// 进运行记录谁先谁后，基线取决于两件异步的事谁先完成：InProcessGateway.ts:1405 等超时状态写进会话记录
+// （JsonlTranscriptWriter.ts:304-308 排在写入队列之后，落在 libuv 线程池上），之后 1414/1426 才把
+// agent_status / error 追加进运行记录；另一边是被 SIGTERM 的子进程 close 之后 hook 的完成经
+// GatewayTurnEventCoordinator.emit（GatewayTurnEventCoordinator.ts:38-50）追加进运行记录。
+// 基线各自连跑 20 次的分布写在 note 里；只放过该会话这几条运行记录事件和运行记录文件的排版骨架。
+const TIMEOUT_ORDER = {
+  'abort-timeout-hook-post-tool-failure': { session: 's-hf-timeout', from: 7, to: 9, note: '基线 20 次：PostToolUseFailure 的完成在 turn_timeout 之前 19 次、在 error 之后 1 次。' },
+  'abort-timeout-hook-pre-tool': { session: 's-hp-timeout', from: 7, to: 9, note: '基线 20 次：PreToolUse 的完成在 turn_timeout 之前 19 次、在 error 之后 1 次。' },
+  'abort-timeout-hook-subagent-start': { session: 's-ss-timeout', from: 7, to: 9, note: '基线 20 次：SubagentStart 的完成在 turn_timeout 之前 19 次、在 error 之后 1 次。' },
+  'abort-timeout-hook-stop': { session: 's-hs-timeout', from: 8, to: 10, note: '基线 20 次：Stop 的完成在 turn_timeout 之前 11 次、在 error 之后 9 次。' },
+  'abort-timeout-hook-subagent-stop': { session: 's-sp-timeout', from: 10, to: 12, note: '基线 20 次：SubagentStop 的完成在 turn_timeout 之前 11 次、在 error 之后 9 次。' },
+  'abort-timeout-tool-bash': { session: 's-tb-timeout', from: 6, to: 8, note: '基线 20 次：bash 被杀后 PostToolUseFailure 的开始在 turn_timeout 之前 19 次、在 error 之后 1 次。' },
+  'abort-timeout-tool-batch': { session: 's-tp-timeout', from: 10, to: 12, note: '基线 20 次：bash 被杀后 PostToolUseFailure 的开始在 error 之后 11 次、在 turn_timeout 之前 9 次。' },
+};
+const timeoutOrderVolatile = ({ session, from, to }) => {
+  const indices = Array.from({ length: to - from + 1 }, (_, i) => from + i).join('|');
+  return [
+    // 运行记录事件的键是「\\0会话\\0runId」（RunRegistry 的 eventKey），差异路径里照原样带着 NUL。
+    `^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.json\\.events\\.\\u0000${session}\\u0000<uuid:\\d+>\\[(${indices})\\]\\.event\\.`,
+    '^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.raw\\.skeletons\\.',
+  ];
+};
+
 function splitTimeout(name, body) {
   const isTimeout = (key) => /-timeout$/.test(key ?? '');
   const keep = [];
@@ -425,20 +459,31 @@ function splitTimeout(name, body) {
   if (moved.length === 0) return { [name]: body };
   const volatile = body.volatile ?? [];
   const pick = (want) => volatile.filter((v) => /-timeout/.test(v) === want);
-  const base = { ...body, steps: keep, ...(pick(false).length ? { volatile: pick(false) } : {}) };
+  // accepted 按路径归列：路径里带 -timeout 的跟超时列走。
+  const accepted = body.accepted ?? [];
+  const pickAccepted = (want) => accepted.filter((a) => a.paths.every((p) => /-timeout/.test(p) === want));
+  const base = { ...body, steps: keep, ...(pick(false).length ? { volatile: pick(false) } : {}), ...(pickAccepted(false).length ? { accepted: pickAccepted(false) } : {}) };
   if (!pick(false).length) delete base.volatile;
+  if (!pickAccepted(false).length) delete base.accepted;
   const timeout = {
     ...body,
     about: `超时列（submit_turn.timeoutMs，从 ${name} 拆出）：${body.about}`,
     steps: moved,
     ...(pick(true).length ? { volatile: pick(true) } : {}),
+    ...(pickAccepted(true).length ? { accepted: pickAccepted(true) } : {}),
   };
   if (!pick(true).length) delete timeout.volatile;
+  if (!pickAccepted(true).length) delete timeout.accepted;
   return { [name]: base, [name.replace(/^abort-/, 'abort-timeout-')]: timeout };
 }
 
 for (const [original, whole] of Object.entries(scenarios)) {
   for (const [name, body] of Object.entries(splitTimeout(original, whole))) {
+    const order = TIMEOUT_ORDER[name];
+    if (order) {
+      body.volatile = [...(body.volatile ?? []), ...timeoutOrderVolatile(order)];
+      body.about = `${body.about}\n运行记录里超时事件的先后（volatile 的依据）：${order.note}`;
+    }
     fs.writeFileSync(path.join(here, `${name}.json`), JSON.stringify({ name, ...body }, null, 2) + '\n');
     console.log('wrote', name);
   }

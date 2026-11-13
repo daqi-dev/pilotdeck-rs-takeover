@@ -183,7 +183,16 @@ pub(super) async fn run(
     if let Some(key) = request.idempotency_key {
         outgoing.insert("idempotencyKey".into(), JsValue::String(key));
     }
-    if let Some(deadline) = request.operation_deadline {
+    // The baseline's gateway runs its own loop in-process (`new AgentLoop`,
+    // createAgentSession.ts:132): no sidecar server enforces the operation
+    // deadline there, so a timed-out turn's aborted loop keeps unwinding to
+    // its own terminal instead of ending result-unknown at the deadline
+    // (agentLoopSidecarServer.ts:246-253 applies only to a sidecar). The
+    // deadline still reaches the loop through the turn's `execution`
+    // context, where it narrows the subagent budget.
+    if let Some(deadline) = request.operation_deadline
+        && !client.in_process_loop
+    {
         outgoing.insert("operationDeadline".into(), JsValue::String(deadline));
     }
     let outgoing = JsValue::Object(outgoing);
