@@ -1,0 +1,31 @@
+{
+  "name": "cli-entry-no-config-nontui",
+  "about": "由 cli-entry-no-config 逐步收敛本期后端/非TUI独有输入；原混合场景未运行且不改。保留原环境、配置、stdin、timeout、expectTimeout和合法步骤顺序；不扩展原行为。原步骤0-based索引：0,1,3。",
+  "server": false,
+  "config": null,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "steps": [
+    {
+      "cli": [],
+      "stdin": "",
+      "timeout": 8000
+    },
+    {
+      "cli": [
+        "nonsense"
+      ],
+      "stdin": "hello\n",
+      "timeout": 8000
+    },
+    {
+      "cli": [
+        "cron",
+        "list"
+      ],
+      "timeout": 8000
+    }
+  ]
+}

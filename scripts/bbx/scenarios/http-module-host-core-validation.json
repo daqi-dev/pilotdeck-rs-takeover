@@ -1,0 +1,124 @@
+{
+  "name": "http-module-host-core-validation",
+  "about": "由 http-module-host 逐步收敛本期后端/非TUI独有输入；原混合场景未运行且不改。保留原环境、配置、stdin、timeout、expectTimeout和合法步骤顺序；不扩展原行为。原步骤0-based索引：0,1,2,3,5,6,7,8,10,11,12,13,31。",
+  "volatile": [
+    "\\.http\\.headers\\.date$"
+  ],
+  "steps": [
+    {
+      "http": "POST /api/module-host/describe"
+    },
+    {
+      "http": "POST /api/module-host/describe",
+      "headers": {
+        "authorization": "Bearer wrong"
+      }
+    },
+    {
+      "http": "POST /api/module-host/describe",
+      "headers": {
+        "authorization": "bearer {TOKEN}"
+      }
+    },
+    {
+      "http": "GET /api/module-host/describe",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      }
+    },
+    {
+      "http": "POST /api/module-host/describe",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": "{bad"
+    },
+    {
+      "http": "POST /api/module-host/describe",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      }
+    },
+    {
+      "http": "POST /api/module-host/describe",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {}
+    },
+    {
+      "http": "POST /api/module-host/describe",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": " "
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "nope",
+        "input": {}
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "list_model_catalog",
+        "input": []
+      }
+    },
+    {
+      "http": "POST /api/module-host/call",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "principal": {
+          "pilotDeckUserId": "u",
+          "tenantId": "t",
+          "actorUserId": "a",
+          "agentId": "g"
+        },
+        "operation": "list_model_catalog",
+        "input": {
+          "tenantId": "x"
+        }
+      }
+    },
+    {
+      "http": "POST /api/module-host/describe/",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {}
+    },
+    {
+      "http": "GET /api/module-host/nope"
+    }
+  ]
+}
