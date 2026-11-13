@@ -52,10 +52,14 @@ type PreparedHost = (
 /// session hook scope is revoked at its end); the fourth fires only on a user
 /// abort or session close, like the baseline turn's `abortSignal`.
 /// How long an aborted turn waits for the advisory hooks its abort killed
-/// (`AdvisorySignal::settled`) before publishing its terminal. A killed hook
-/// ends within milliseconds; a hook that outlives SIGTERM past this bound
-/// completes after the turn, off its stream.
-const ADVISORY_KILL_SETTLE: std::time::Duration = std::time::Duration::from_millis(1000);
+/// (`AdvisorySignal::settled`) before publishing its terminal. The baseline
+/// does not wait at all (the hooks are fire-and-forget): a killed hook's
+/// completion is on the stream only if its child closes while the in-process
+/// loop is still unwinding, which takes milliseconds. Measured on the
+/// baseline (`abort-hook-advisory-late-*`): a hook that dies on SIGTERM is on
+/// the stream; one that outlives it by 50 ms or more never is. This bound
+/// stands in for that unwinding window.
+const ADVISORY_KILL_SETTLE: std::time::Duration = std::time::Duration::from_millis(25);
 
 type TurnHostFactory = dyn Fn(
         ExecutionIdentity,

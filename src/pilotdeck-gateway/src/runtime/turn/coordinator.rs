@@ -96,7 +96,7 @@ struct SinkRegistration {
 struct Held {
     events: Vec<JsValue>,
     /// Set once the owner took the held events: from then on
-    /// `emit_before_terminal` delivers like `emit`.
+    /// `emit_before_terminal` drops its events.
     released: bool,
 }
 
@@ -291,12 +291,15 @@ impl TurnEventCoordinator {
                 return true;
             }
         }
-        self.emit(session_key, event)
+        // Released: the turn has published its terminal. The baseline's
+        // fire-and-forget advisory hook that closes after its turn ended
+        // finds no sink (GatewayTurnEventCoordinator.ts:38-50) and its
+        // completion is neither delivered nor replayed.
+        false
     }
     /// Ends `registration`'s hold and returns the events it held, in arrival
     /// order, with their runId filled like `emit` does. The caller records
-    /// and delivers them; anything `emit_before_terminal` accepts afterwards
-    /// is delivered at once.
+    /// and delivers them; `emit_before_terminal` drops anything afterwards.
     pub fn release_held(
         &self,
         session_key: &JsString,
@@ -3045,9 +3048,9 @@ mod tests {
                 .all(|event| text(field(event, "runId")).equals_str("run-1"))
         );
         assert!(coordinator.release_held(&session, &registration).is_empty());
-        // Released: later events are delivered at once.
-        assert!(coordinator.emit_before_terminal(&session, &event("late")));
-        assert_eq!(kinds(&delivered.lock().unwrap()), ["block", "late"]);
+        // Released: the terminal is out; a later completion is dropped.
+        assert!(!coordinator.emit_before_terminal(&session, &event("late")));
+        assert_eq!(kinds(&delivered.lock().unwrap()), ["block"]);
         drop(registration);
         assert!(!coordinator.emit_before_terminal(&session, &event("gone")));
     }
