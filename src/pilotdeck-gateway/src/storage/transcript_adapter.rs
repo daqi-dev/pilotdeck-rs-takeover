@@ -43,6 +43,9 @@ use std::{
     },
 };
 
+#[path = "transcript_adapter_sort.rs"]
+mod transcript_adapter_sort;
+
 const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 
 pub type StoreResult<T> = super::Result<T>;
@@ -486,11 +489,10 @@ impl AsyncTranscriptAdapter {
                 }
             }
             if sessions.iter().any(|(modified, _)| modified.is_nan()) {
-                return Err(projection_unavailable(
-                    "Session listing with a NaN lastModified is not implemented (A7.5).".into(),
-                ));
+                transcript_adapter_sort::sort_sessions(&mut sessions);
+            } else {
+                sessions.sort_by(|a, b| b.0.partial_cmp(&a.0).expect("non-NaN lastModified"));
             }
-            sessions.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
             // Math.max(0, NaN) is NaN, unlike f64::max.
             let offset = offset.unwrap_or(0.0);
             let offset = if offset.is_nan() {
@@ -2659,5 +2661,59 @@ mod list_shape_resume_tests {
         ] {
             assert_eq!(run(entry).unwrap_err().to_string(), expected, "{entry}");
         }
+    }
+}
+
+#[cfg(test)]
+mod list_nan_resume_tests {
+    use super::*;
+    #[derive(Default)]
+    struct Store {
+        reads: Mutex<Vec<JsString>>,
+    }
+    impl TranscriptStore for Store {
+        fn append(&self, _: &TranscriptKey, _: &JsValue) -> StoreResult<()> {
+            Ok(())
+        }
+        fn read(&self, key: &TranscriptKey, _: Option<u64>) -> StoreResult<TranscriptRead> {
+            self.reads.lock().unwrap().push(key.session_id.clone());
+            Ok(TranscriptRead { entries: vec![parse_json(r#"{"type":"accepted_input","createdAt":"2026-01-01T00:00:00Z","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}"#).unwrap()], diagnostics: vec![] })
+        }
+        fn list(&self, _: &ProjectKey) -> Option<StoreResult<Vec<StoredSession>>> {
+            Some(Ok([1.0, 2.0, f64::NAN, 4.0, 3.0]
+                .into_iter()
+                .enumerate()
+                .map(|(i, last_modified)| StoredSession {
+                    session_id: format!("s{i}").into(),
+                    last_modified,
+                    file_size: None,
+                })
+                .collect()))
+        }
+    }
+    #[test]
+    fn nan_pagination_uses_v8_order_after_reading_every_session() {
+        let store = Arc::new(Store::default());
+        let adapter = AsyncTranscriptAdapter::new(
+            store.clone(),
+            Arc::new(|_: &ProjectKey| "/pdrs-fixture/chats".into()),
+        );
+        let key = ProjectKey {
+            project_root: "/pdrs-fixture/project".into(),
+            pilot_home: "/pdrs-fixture/home".into(),
+        };
+        let result = adapter
+            .list_sessions(&key, Some(2.0), Some(1.0))
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.len(), 2);
+        assert!(is_str(field(&result[0], "sessionId"), "s4"));
+        assert!(is_str(field(&result[1], "sessionId"), "s1"));
+        assert_eq!(
+            *store.reads.lock().unwrap(),
+            (0..5)
+                .map(|i| JsString::from(format!("s{i}")))
+                .collect::<Vec<_>>()
+        );
     }
 }

@@ -25,7 +25,16 @@ enum Operation {
     Replace(Arc<dyn ChannelAdapter>),
     Disable,
 }
+struct FirstPoll(Option<oneshot::Sender<()>>);
+impl Drop for FirstPoll {
+    fn drop(&mut self) {
+        if let Some(receipt) = self.0.take() {
+            let _ = receipt.send(());
+        }
+    }
+}
 struct Request {
+    first_poll: Option<FirstPoll>,
     operation: Operation,
     result: oneshot::Sender<Result<bool, ChannelError>>,
 }
@@ -46,9 +55,19 @@ struct Inner {
     reports: Mutex<Reports>,
     close_host: CloseHost,
     closed: watch::Sender<Option<Result<(), ChannelError>>>,
+    startup_publication: Mutex<Option<watch::Sender<bool>>>,
 }
 #[derive(Clone)]
 pub struct ChannelServer(Arc<Inner>);
+
+struct StartupCancellation(Option<ChannelServer>);
+impl Drop for StartupCancellation {
+    fn drop(&mut self) {
+        if let Some(server) = self.0.take() {
+            server.publish_startup();
+        }
+    }
+}
 
 impl ChannelServer {
     /// Creates an unopened component. `start_channels` performs TS background startup.
@@ -63,6 +82,7 @@ impl ChannelServer {
             reports: Mutex::new(Reports::default()),
             close_host,
             closed: watch::Sender::new(None),
+            startup_publication: Mutex::new(None),
         }))
     }
 
@@ -93,13 +113,120 @@ impl ChannelServer {
     }
 
     pub fn start_channels(&self, channels: Vec<Arc<dyn ChannelAdapter>>) {
+        let _ = self.launch_startup(channels, None, false);
+    }
+
+    /// Initial host startup only: wait until each unqueued adapter has actually
+    /// been polled once, without waiting for a pending network start to finish.
+    /// Completion logs are published explicitly after the embedding's ready log.
+    pub fn start_channels_staged(
+        &self,
+        channels: Vec<Arc<dyn ChannelAdapter>>,
+    ) -> BoxFuture<Result<(), ChannelError>> {
+        let state = self.0.state.lock().expect("channel state");
+        if state.closing {
+            return Box::pin(async { Err(closing_error()) });
+        }
+        #[cfg(test)]
+        self.0.transition("startup-checked", &ChannelKey::new(""));
+        let publication = watch::Sender::new(false);
+        let mut slot = self
+            .0
+            .startup_publication
+            .lock()
+            .expect("startup publication");
+        if slot.is_some() {
+            return Box::pin(async {
+                Err(ChannelError::error(
+                    "initial channel startup already staged",
+                ))
+            });
+        }
+        *slot = Some(publication.clone());
+        drop(slot);
+        drop(state);
+        let (completed, wait) = oneshot::channel();
+        let owner = self.clone();
+        tokio::spawn(async move {
+            let result = async {
+                // JS initial operation microtasks invoke adapter prefixes in
+                // input order. Only the first poll, never network completion,
+                // separates the launches of distinct initial adapters.
+                let mut initial_keys = HashSet::new();
+                for channel in channels {
+                    let key = channel.channel_key().clone();
+                    let first = initial_keys.insert(key.clone());
+                    #[cfg(test)]
+                    owner.0.transition("startup-before-launch", &key);
+                    for receipt in
+                        owner.launch_startup(vec![channel], Some(publication.subscribe()), first)
+                    {
+                        receipt.await.map_err(|_| {
+                            ChannelError::error("channel initial poll driver dropped")
+                        })?;
+                        #[cfg(test)]
+                        owner.0.transition("startup-prefix-received", &key);
+                    }
+                }
+                Ok(())
+            }
+            .await;
+            let _ = completed.send(result);
+        });
+        let cancellation = StartupCancellation(Some(self.clone()));
+        Box::pin(async move {
+            let mut cancellation = cancellation;
+            receive(wait).await?;
+            // The host now owns the publication stage. Dropping a caller's
+            // unpolled/pending waiter releases the gate but never cancels starts.
+            cancellation.0 = None;
+            Ok(())
+        })
+    }
+
+    pub fn publish_startup(&self) {
+        if let Some(publication) = self
+            .0
+            .startup_publication
+            .lock()
+            .expect("startup publication")
+            .as_ref()
+        {
+            publication.send_replace(true);
+        }
+    }
+
+    fn launch_startup(
+        &self,
+        channels: Vec<Arc<dyn ChannelAdapter>>,
+        publication: Option<watch::Receiver<bool>>,
+        wait_prefix: bool,
+    ) -> Vec<oneshot::Receiver<()>> {
+        let mut receipts = Vec::new();
         for channel in channels {
             let key = channel.channel_key().clone();
-            let operation = self.hot_start_channel(channel);
+            let prefix = wait_prefix.then(|| {
+                let (tx, rx) = oneshot::channel();
+                receipts.push(rx);
+                FirstPoll(Some(tx))
+            });
+            let operation =
+                enqueue_with_prefix(&self.0, key.clone(), Operation::Replace(channel), prefix);
             let inner = self.0.clone();
+            let mut publication = publication.clone();
             tokio::spawn(async move {
-                match operation.await {
-                    Ok(()) => inner.log(
+                let result = receive(operation).await;
+                if let Some(gate) = publication.as_mut() {
+                    #[cfg(test)]
+                    inner.transition("startup-publication-wait", &key);
+                    while !*gate.borrow_and_update() {
+                        if gate.changed().await.is_err() {
+                            break;
+                        }
+                    }
+                }
+                match result {
+                    Ok(_) => inner.log(
                         "info",
                         &format!("[adapters] channel {key} startup task completed"),
                     ),
@@ -110,6 +237,7 @@ impl ChannelServer {
                 }
             });
         }
+        receipts
     }
 
     pub fn hot_start_channel(
@@ -200,6 +328,7 @@ impl ChannelServer {
             state.closing = true;
             std::mem::take(&mut state.running)
         };
+        self.publish_startup();
         let mut stops = Vec::new();
         for entry in claimed {
             let stop = begin_stop(entry.handle.clone(), "server-shutdown");
@@ -357,10 +486,23 @@ fn enqueue(
     key: ChannelKey,
     operation: Operation,
 ) -> oneshot::Receiver<Result<bool, ChannelError>> {
+    enqueue_with_prefix(inner, key, operation, None)
+}
+fn enqueue_with_prefix(
+    inner: &Arc<Inner>,
+    key: ChannelKey,
+    operation: Operation,
+    mut first_poll: Option<FirstPoll>,
+) -> oneshot::Receiver<Result<bool, ChannelError>> {
     let (result, rx) = oneshot::channel();
     let mut queues = inner.queues.lock().expect("channel queues");
     if queues.get(&key).is_some_and(|sender| sender.is_closed()) {
         queues.remove(&key);
+    }
+    if queues.contains_key(&key) {
+        // A later same-key operation cannot execute before its predecessor;
+        // JS startup does not wait for that predecessor's pending network I/O.
+        drop(first_poll.take());
     }
     let tx = queues.entry(key.clone()).or_insert_with(|| {
         let (tx, rx) = mpsc::unbounded_channel();
@@ -368,7 +510,11 @@ fn enqueue(
         tx
     });
     // The driver removes the sender under this same mutex before exiting.
-    let _ = tx.send(Request { operation, result });
+    let _ = tx.send(Request {
+        operation,
+        result,
+        first_poll,
+    });
     rx
 }
 async fn drive(inner: Arc<Inner>, key: ChannelKey, mut rx: mpsc::UnboundedReceiver<Request>) {
@@ -379,12 +525,16 @@ async fn drive(inner: Arc<Inner>, key: ChannelKey, mut rx: mpsc::UnboundedReceiv
                 Ok(request) => request,
                 Err(_) => {
                     queues.remove(&key);
+                    #[cfg(test)]
+                    inner.transition("driver-idle", &key);
                     return;
                 }
             }
         };
         let result = match request.operation {
-            Operation::Replace(channel) => replace(&inner, &key, channel).await.map(|_| true),
+            Operation::Replace(channel) => replace(&inner, &key, channel, request.first_poll)
+                .await
+                .map(|_| true),
             Operation::Disable => stop(&inner, &key, "config-disabled").await,
         };
         let _ = request.result.send(result);
@@ -394,6 +544,7 @@ async fn start(
     inner: &Arc<Inner>,
     key: &ChannelKey,
     adapter: Arc<dyn ChannelAdapter>,
+    first_poll: Option<FirstPoll>,
 ) -> Result<(), ChannelError> {
     {
         let state = inner.state.lock().expect("channel state");
@@ -411,7 +562,16 @@ async fn start(
     let starter = adapter.clone();
     let deps = inner.deps.clone();
     let handle = task_result(
-        tokio::spawn(async move { starter.start(deps).await }),
+        tokio::spawn(async move {
+            let mut first_poll = first_poll;
+            let mut future = Box::pin(async move { starter.start(deps).await });
+            std::future::poll_fn(move |cx| {
+                let result = future.as_mut().poll(cx);
+                drop(first_poll.take());
+                result
+            })
+            .await
+        }),
         "start",
     )
     .await?;
@@ -519,6 +679,7 @@ async fn replace(
     inner: &Arc<Inner>,
     key: &ChannelKey,
     channel: Arc<dyn ChannelAdapter>,
+    first_poll: Option<FirstPoll>,
 ) -> Result<(), ChannelError> {
     let (previous, claimed) = {
         let mut state = inner.state.lock().expect("channel state");
@@ -549,7 +710,7 @@ async fn replace(
     if let Some(entry) = claimed {
         stop_claimed(inner, entry, "hot-reload").await?;
     }
-    match start(inner, key, channel).await {
+    match start(inner, key, channel, first_poll).await {
         Ok(()) => Ok(()),
         Err(error) => {
             inner.report(
@@ -559,7 +720,7 @@ async fn replace(
                 Some(error.message().into()),
             );
             if let Some(previous) = previous {
-                if let Err(restore_error) = start(inner, key, previous).await {
+                if let Err(restore_error) = start(inner, key, previous, None).await {
                     inner.report(
                         key,
                         ChannelState::Failed,
@@ -637,5 +798,454 @@ impl ChannelServer {
             .iter()
             .map(|entry| entry.key.to_string())
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod startup_stage_tests {
+    use super::*;
+    use std::time::Duration;
+
+    struct Probe {
+        key: ChannelKey,
+        id: &'static str,
+        events: mpsc::UnboundedSender<String>,
+        held: Option<watch::Receiver<bool>>,
+        panic: bool,
+        stop_held: Option<watch::Receiver<bool>>,
+    }
+    struct Handle(
+        &'static str,
+        mpsc::UnboundedSender<String>,
+        Option<watch::Receiver<bool>>,
+    );
+    impl ChannelHandle for Handle {
+        fn stop(&self, reason: &str) -> BoxFuture<Result<(), ChannelError>> {
+            self.1.send(format!("stop:{}:{reason}", self.0)).unwrap();
+            let mut held = self.2.clone();
+            Box::pin(async move {
+                if let Some(gate) = held.as_mut() {
+                    while !*gate.borrow_and_update() {
+                        gate.changed().await.unwrap();
+                    }
+                }
+                Ok(())
+            })
+        }
+    }
+    impl ChannelAdapter for Probe {
+        fn channel_key(&self) -> &ChannelKey {
+            &self.key
+        }
+        fn start(
+            &self,
+            _deps: ChannelStartDeps,
+        ) -> BoxFuture<Result<Arc<dyn ChannelHandle>, ChannelError>> {
+            self.events.send(format!("construct:{}", self.id)).unwrap();
+            let (id, events, mut held, panic) =
+                (self.id, self.events.clone(), self.held.clone(), self.panic);
+            let stop_held = self.stop_held.clone();
+            Box::pin(async move {
+                events.send(format!("poll:{id}")).unwrap();
+                assert!(!panic, "controlled initial poll panic");
+                if let Some(gate) = held.as_mut() {
+                    while !*gate.borrow_and_update() {
+                        gate.changed().await.unwrap();
+                    }
+                }
+                Ok(Arc::new(Handle(id, events, stop_held)) as Arc<dyn ChannelHandle>)
+            })
+        }
+    }
+    fn fixture() -> (
+        ChannelServer,
+        mpsc::UnboundedSender<String>,
+        mpsc::UnboundedReceiver<String>,
+    ) {
+        let (events, rx) = mpsc::unbounded_channel();
+        let logs = events.clone();
+        let deps = ChannelStartDeps {
+            log: Some(Arc::new(move |_, text| {
+                logs.send(format!("log:{text}")).unwrap();
+            })),
+            ..Default::default()
+        };
+        let server = ChannelServer::new(deps, Arc::new(|| Box::pin(async { Ok(()) })));
+        let waits = events.clone();
+        server.set_hook(Some(Arc::new(move |point, key| {
+            if point == "startup-publication-wait" {
+                waits.send(format!("publication-wait:{key}")).unwrap();
+            }
+        })));
+        (server, events, rx)
+    }
+    fn probe(
+        id: &'static str,
+        key: &str,
+        events: &mpsc::UnboundedSender<String>,
+        held: Option<watch::Receiver<bool>>,
+        panic: bool,
+    ) -> Arc<dyn ChannelAdapter> {
+        Arc::new(Probe {
+            key: ChannelKey::new(key),
+            id,
+            events: events.clone(),
+            held,
+            panic,
+            stop_held: None,
+        })
+    }
+    async fn next(rx: &mut mpsc::UnboundedReceiver<String>) -> String {
+        tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("causal event deadline")
+            .expect("event source live")
+    }
+    async fn through(rx: &mut mpsc::UnboundedReceiver<String>, expected: &str) -> Vec<String> {
+        let mut seen = Vec::new();
+        loop {
+            let event = next(rx).await;
+            let matched = event == expected;
+            seen.push(event);
+            if matched {
+                return seen;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn ready_adapter_prefix_precedes_host_ready_but_completion_waits_publication() {
+        let (server, events, mut rx) = fixture();
+        server
+            .start_channels_staged(vec![probe("ready", "ready", &events, None, false)])
+            .await
+            .unwrap();
+        let before = through(&mut rx, "publication-wait:ready").await;
+        assert!(before.contains(&"construct:ready".to_string()));
+        assert!(before.contains(&"poll:ready".to_string()));
+        assert!(!before.iter().any(|event| event.starts_with("log:")));
+        assert!(rx.try_recv().is_err());
+        events.send("host-ready".into()).unwrap();
+        server.publish_startup();
+        assert_eq!(next(&mut rx).await, "host-ready");
+        assert_eq!(
+            next(&mut rx).await,
+            "log:[adapters] channel ready startup task completed"
+        );
+        server.close().await.unwrap();
+        assert_eq!(next(&mut rx).await, "stop:ready:server-shutdown");
+    }
+
+    #[tokio::test]
+    async fn pending_network_start_does_not_hold_ready_or_close_and_stops_its_late_handle() {
+        let (server, events, mut rx) = fixture();
+        let (release, held) = watch::channel(false);
+        server
+            .start_channels_staged(vec![probe("held", "held", &events, Some(held), false)])
+            .await
+            .unwrap();
+        assert_eq!(next(&mut rx).await, "construct:held");
+        assert_eq!(next(&mut rx).await, "poll:held");
+        assert!(rx.try_recv().is_err());
+        // close must finish while the adapter start is still held.
+        tokio::time::timeout(Duration::from_secs(2), server.close())
+            .await
+            .unwrap()
+            .unwrap();
+        release.send_replace(true);
+        let seen = through(
+            &mut rx,
+            "log:[adapters] channel held start failed: channel server is closing",
+        )
+        .await;
+        assert_eq!(
+            seen.iter()
+                .filter(|event| event.as_str() == "stop:held:server-shutdown")
+                .count(),
+            1
+        );
+        assert!(server.running_keys().is_empty());
+    }
+
+    #[tokio::test]
+    async fn dropped_unpolled_waiter_keeps_owned_start_and_releases_completion_gate() {
+        let (server, events, mut rx) = fixture();
+        let wait =
+            server.start_channels_staged(vec![probe("owned", "owned", &events, None, false)]);
+        drop(wait);
+        let seen = through(
+            &mut rx,
+            "log:[adapters] channel owned startup task completed",
+        )
+        .await;
+        assert!(seen.contains(&"poll:owned".into()));
+        server.close().await.unwrap();
+        assert_eq!(next(&mut rx).await, "stop:owned:server-shutdown");
+    }
+
+    #[tokio::test]
+    async fn duplicate_key_does_not_wait_for_pending_predecessor_or_start_after_close() {
+        let (server, events, mut rx) = fixture();
+        let (release, held) = watch::channel(false);
+        server
+            .start_channels_staged(vec![
+                probe("first", "same", &events, Some(held), false),
+                probe("second", "same", &events, None, false),
+            ])
+            .await
+            .unwrap();
+        assert_eq!(next(&mut rx).await, "construct:first");
+        assert_eq!(next(&mut rx).await, "poll:first");
+        server.close().await.unwrap();
+        release.send_replace(true);
+        let mut seen = Vec::new();
+        for _ in 0..5 {
+            seen.push(next(&mut rx).await);
+        }
+        assert_eq!(
+            seen.iter()
+                .filter(|event| event.starts_with("log:"))
+                .count(),
+            2
+        );
+        assert_eq!(
+            seen.iter()
+                .filter(|event| event.as_str() == "stop:first:server-shutdown")
+                .count(),
+            1
+        );
+        assert!(
+            !seen
+                .iter()
+                .any(|event| event == "construct:second" || event == "poll:second")
+        );
+    }
+
+    #[tokio::test]
+    async fn initial_poll_panic_releases_receipt_and_reports_failure_after_publication() {
+        let (server, events, mut rx) = fixture();
+        server
+            .start_channels_staged(vec![probe("panic", "panic", &events, None, true)])
+            .await
+            .unwrap();
+        let before = through(&mut rx, "publication-wait:panic").await;
+        assert!(before.contains(&"poll:panic".into()));
+        assert!(!before.iter().any(|event| event.starts_with("log:")));
+        server.publish_startup();
+        assert_eq!(
+            next(&mut rx).await,
+            "log:[adapters] channel panic start failed: channel start task panicked"
+        );
+        server.close().await.unwrap();
+    }
+    #[tokio::test]
+    async fn replacement_remains_fifo_and_stops_each_exact_handle_once() {
+        let (server, events, mut rx) = fixture();
+        let (release, held) = watch::channel(false);
+        server
+            .start_channels_staged(vec![probe("old", "same", &events, Some(held), false)])
+            .await
+            .unwrap();
+        assert_eq!(next(&mut rx).await, "construct:old");
+        assert_eq!(next(&mut rx).await, "poll:old");
+        let replacing = server.hot_start_channel(probe("new", "same", &events, None, false));
+        release.send_replace(true);
+        replacing.await.unwrap();
+        let seen = through(&mut rx, "poll:new").await;
+        let stopped = seen
+            .iter()
+            .position(|event| event == "stop:old:hot-reload")
+            .unwrap();
+        let started = seen
+            .iter()
+            .position(|event| event == "construct:new")
+            .unwrap();
+        assert!(stopped < started);
+        assert_eq!(
+            seen.iter()
+                .filter(|event| event.as_str() == "stop:old:hot-reload")
+                .count(),
+            1
+        );
+        server.publish_startup();
+        server.close().await.unwrap();
+        let mut final_events = through(&mut rx, "stop:new:server-shutdown").await;
+        let completion = "log:[adapters] channel same startup task completed";
+        if !final_events.iter().any(|event| event == completion) {
+            final_events.extend(through(&mut rx, completion).await);
+        }
+        assert!(
+            !final_events
+                .iter()
+                .any(|event| event.starts_with("stop:old:"))
+        );
+    }
+
+    #[tokio::test]
+    async fn distinct_initial_prefixes_follow_input_order_without_waiting_pending_network() {
+        let (server, events, mut rx) = fixture();
+        let (release, held) = watch::channel(false);
+        server
+            .start_channels_staged(vec![
+                probe("first", "one", &events, Some(held), false),
+                probe("second", "two", &events, None, false),
+            ])
+            .await
+            .unwrap();
+        let before = through(&mut rx, "publication-wait:two").await;
+        let prefixes: Vec<_> = before
+            .iter()
+            .filter(|event| event.starts_with("construct:") || event.starts_with("poll:"))
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            prefixes,
+            [
+                "construct:first",
+                "poll:first",
+                "construct:second",
+                "poll:second"
+            ]
+        );
+        assert!(!before.iter().any(|event| event.starts_with("log:")));
+        server.close().await.unwrap();
+        release.send_replace(true);
+        let after = through(
+            &mut rx,
+            "log:[adapters] channel one start failed: channel server is closing",
+        )
+        .await;
+        assert_eq!(
+            after
+                .iter()
+                .filter(|event| event.as_str() == "stop:first:server-shutdown")
+                .count(),
+            1
+        );
+        let completion = "log:[adapters] channel two startup task completed";
+        if !after.iter().any(|event| event == completion) {
+            through(&mut rx, completion).await;
+        }
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn publication_install_and_close_share_one_serial_boundary() {
+        let (server, events, mut rx) = fixture();
+        let (release, blocked) = std::sync::mpsc::channel();
+        let blocked = Mutex::new(blocked);
+        let (launch_release, launch_blocked) = std::sync::mpsc::channel();
+        let launch_blocked = Mutex::new(launch_blocked);
+        let transitions = events.clone();
+        server.set_hook(Some(Arc::new(move |point, _| {
+            if point == "startup-checked" {
+                transitions.send("checked".into()).unwrap();
+                blocked.lock().unwrap().recv().unwrap();
+            } else if point == "close-entered" {
+                transitions.send("close-entered".into()).unwrap();
+            } else if point == "startup-before-launch" {
+                launch_blocked.lock().unwrap().recv().unwrap();
+            }
+        })));
+        let runtime = tokio::runtime::Handle::current();
+        let staging_server = server.clone();
+        let staged_events = events.clone();
+        let staging = std::thread::spawn(move || {
+            let _entered = runtime.enter();
+            staging_server.start_channels_staged(vec![probe(
+                "late",
+                "late",
+                &staged_events,
+                None,
+                false,
+            )])
+        });
+        assert_eq!(next(&mut rx).await, "checked");
+        // A try_lock assertion, not scheduling delay, proves that close cannot
+        // pass the check/install region exposed by the regression hook.
+        assert!(server.0.state.try_lock().is_err());
+        let runtime = tokio::runtime::Handle::current();
+        let closing_server = server.clone();
+        let closing = std::thread::spawn(move || {
+            let _entered = runtime.enter();
+            closing_server.close()
+        });
+        assert_eq!(next(&mut rx).await, "close-entered");
+        release.send(()).unwrap();
+        let staged = staging.join().unwrap();
+        let closed = closing.join().unwrap();
+        closed.await.unwrap();
+        launch_release.send(()).unwrap();
+        assert!(
+            *server
+                .0
+                .startup_publication
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .borrow()
+        );
+        staged.await.unwrap();
+        let failures = through(
+            &mut rx,
+            "log:[adapters] channel late start failed: channel server is closing",
+        )
+        .await;
+        assert!(!failures.iter().any(|event| event == "construct:late"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn repeated_initial_key_does_not_wait_for_retired_queue_and_held_stop() {
+        let (server, events, mut rx) = fixture();
+        let (resume, paused) = std::sync::mpsc::channel();
+        let paused = Mutex::new(paused);
+        let once = std::sync::atomic::AtomicBool::new(false);
+        let transitions = events.clone();
+        server.set_hook(Some(Arc::new(move |point, key| {
+            if point == "startup-prefix-received"
+                && !once.swap(true, std::sync::atomic::Ordering::SeqCst)
+            {
+                transitions.send("first-prefix-received".into()).unwrap();
+                paused.lock().unwrap().recv().unwrap();
+            } else if point == "driver-idle" {
+                let _ = transitions.send("queue-retired".into());
+            } else if point == "startup-publication-wait" {
+                transitions.send(format!("publication-wait:{key}")).unwrap();
+            }
+        })));
+        let (stop_release, stop_held) = watch::channel(false);
+        let first = Arc::new(Probe {
+            key: ChannelKey::new("same"),
+            id: "first",
+            events: events.clone(),
+            held: None,
+            panic: false,
+            stop_held: Some(stop_held),
+        });
+        let staged = server
+            .start_channels_staged(vec![first, probe("second", "same", &events, None, false)]);
+        let before = through(&mut rx, "queue-retired").await;
+        // The first adapter has returned its handle and the per-key driver
+        // entry is gone before the second same-key request can be enqueued.
+        assert!(before.contains(&"poll:first".into()));
+        resume.send(()).unwrap();
+        staged.await.unwrap();
+        let stopping = through(&mut rx, "stop:first:hot-reload").await;
+        assert!(!stopping.iter().any(|event| event == "construct:second"));
+        // Ready was obtained with the old exact handle's stop still pending.
+        server.publish_startup();
+        stop_release.send_replace(true);
+        let mut completions = before
+            .iter()
+            .chain(stopping.iter())
+            .filter(|event| event.starts_with("log:"))
+            .count();
+        while completions < 2 {
+            let event = next(&mut rx).await;
+            if event.starts_with("log:") {
+                completions += 1;
+            }
+        }
+        server.close().await.unwrap();
+        through(&mut rx, "stop:second:server-shutdown").await;
     }
 }

@@ -189,34 +189,90 @@ fn canonical(v: &JsValue) -> JsValue {
 }
 
 #[test]
-fn host_intrinsics_keep_upstream_ownership() {
-    let tests = cases(include_str!(
-        "../../tests/fixtures/config/host-boundaries.json"
-    ));
-    assert_eq!(tests.len(), 18);
-    for test in tests {
-        let yaml = text(field(&test, "yaml")).unwrap();
+fn intrinsic_json_existing_load_and_wire_oracle() {
+    let failures = verify(
+        include_str!("../../tests/fixtures/config/host-boundaries.json"),
+        18,
+    );
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn intrinsic_json_full_snapshot_matrix() {
+    let oracle = parse_json(include_str!(
+        "../../tests/fixtures/config/intrinsic-json/oracle.json"
+    ))
+    .unwrap();
+    let JsValue::Array(cases) = field(&oracle, "cases") else {
+        panic!("cases")
+    };
+    assert_eq!(cases.len(), 48);
+    let mut seen = std::collections::HashSet::new();
+    for case in cases {
+        let kind = text(field(case, "kind")).unwrap();
+        let key = text(field(case, "key")).unwrap();
+        assert!(seen.insert((kind.clone(), key.clone())));
+        let provider = if kind == "provider" { &key } else { "parity" };
+        let model = if kind == "model" {
+            &key
+        } else {
+            "deterministic"
+        };
+        let mut raw = serde_json::json!({"schemaVersion":1,"agent":{"model":format!("{provider}/{model}")},"model":{"providers":{(provider):{"protocol":"openai","url":"http://127.0.0.1:28794/v1","apiKey":"mock-only","models":{(model):{}}}}}});
+        if kind == "always" {
+            raw["alwaysOn"] = serde_json::json!({(key.clone()):7});
+        }
+        if kind == "project" {
+            raw["alwaysOn"] = serde_json::json!({"projects":{"/fixture":{(key.clone()):7}}});
+        }
         let metadata = Metadata {
             home: PathBuf::from("<PILOT_HOME>"),
             cwd: PathBuf::from("/offline"),
             files: FixtureFiles {
-                data: yaml.into_bytes(),
+                data: raw.to_string().into_bytes(),
                 kind: None,
             },
         };
-        let env = Env::new();
-        let error = super::load(&metadata, &env)
-            .err()
-            .expect("requires JS host");
-        assert!(error.requires_host);
-        let request = parse_json(&text(field(&test, "request")).unwrap()).unwrap();
-        assert!(matches!(
-            crate::dispatch::route_catalog(&request, Some(&metadata), &env),
-            crate::dispatch::Route::Forward
-        ));
-        // The separate Node oracle records the host response; no synthetic Rust
-        // response is compared or counted as a native wire match.
-        assert!(!text(field(&test, "response")).unwrap().is_empty());
+        let result = super::load_project_with_files_inner(
+            &metadata,
+            &Env::new(),
+            None,
+            Some((1.0, "2026-01-01T00:00:00.000Z".into())),
+        );
+        let expected = field(case, "result");
+        if field(expected, "ok") == &JsValue::Bool(false) {
+            let error = match result {
+                Ok(_) => panic!("TS oracle rejects provider: {kind}/{key}"),
+                Err(error) => error,
+            };
+            assert_eq!(
+                error.name,
+                text(field(expected, "name")).unwrap(),
+                "{kind}/{key}"
+            );
+            assert_eq!(
+                error.message,
+                field(expected, "message").as_string().unwrap().clone(),
+                "{kind}/{key}"
+            );
+        } else {
+            let config = result.unwrap_or_else(|error| panic!("{kind}/{key}: {error:?}"));
+            let snapshot = config.snapshot.unwrap();
+            let mut actual = JsObject::new();
+            actual.insert("ok".into(), JsValue::Bool(true));
+            actual.insert("diagnostics".into(), JsValue::Array(config.diagnostics));
+            for name in ["model", "agent", "alwaysOn"] {
+                let value = field(field(&snapshot, "config"), name);
+                if !value.is_undefined() {
+                    actual.insert(name.into(), value.clone());
+                }
+            }
+            assert_eq!(
+                encode(&canonical(&JsValue::Object(actual))),
+                encode(&canonical(expected)),
+                "{kind}/{key}"
+            );
+        }
     }
 }
 

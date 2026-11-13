@@ -131,5 +131,40 @@
         }
       ]
     }
+  ],
+  "sourceNotices": [
+    {
+      "id": "transcript-adapter-sort",
+      "applicablePaths": [
+        "src/pilotdeck-gateway/src/storage/transcript_adapter_sort.rs"
+      ],
+      "origin": {
+        "algorithm": "V8 12.4.254 third_party/v8/builtins/array-sort.tq, derived from CPython TimSort",
+        "url": "https://github.com/v8/v8/blob/12.4.254/third_party/v8/builtins/array-sort.tq",
+        "copyright": "2001\u20132018 Python Software Foundation",
+        "licenseExpressions": [
+          "PSF-2.0",
+          "BSD-3-Clause"
+        ],
+        "cpythonRevision": "unspecified by V8; CPython 3.7.0 LICENSE retained as complete 2001\u20132018 notice text, not an assertion of exact algorithm revision"
+      },
+      "files": [
+        {
+          "file": "README.md",
+          "sha256": "e53f46f2273f63c0ebde47cb1fff90316cf966735b2d72e5c7f1b52a3bcd7a05",
+          "url": null
+        },
+        {
+          "file": "v8-12.4.254-LICENSE.txt",
+          "sha256": "81680185f0cb339021e3b73714499264de72f33b17cfdb0c14f400de6d95cf0e",
+          "url": "https://raw.githubusercontent.com/v8/v8/12.4.254/LICENSE"
+        },
+        {
+          "file": "cpython-3.7.0-LICENSE.txt",
+          "sha256": "b9a6d9320b8f2693e8d41e496ce56caadacaddcca9be2a64a61749278f425cf2",
+          "url": "https://raw.githubusercontent.com/python/cpython/v3.7.0/LICENSE"
+        }
+      ]
+    }
   ]
 }

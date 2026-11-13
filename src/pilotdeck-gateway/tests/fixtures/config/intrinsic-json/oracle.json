@@ -1,0 +1,2426 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "keys": [
+    "constructor",
+    "__defineGetter__",
+    "__defineSetter__",
+    "hasOwnProperty",
+    "__lookupGetter__",
+    "__lookupSetter__",
+    "isPrototypeOf",
+    "propertyIsEnumerable",
+    "toString",
+    "valueOf",
+    "__proto__",
+    "toLocaleString"
+  ],
+  "cases": [
+    {
+      "kind": "provider",
+      "key": "constructor",
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'deterministic')"
+      }
+    },
+    {
+      "kind": "provider",
+      "key": "__defineGetter__",
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'deterministic')"
+      }
+    },
+    {
+      "kind": "provider",
+      "key": "__defineSetter__",
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'deterministic')"
+      }
+    },
+    {
+      "kind": "provider",
+      "key": "hasOwnProperty",
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'deterministic')"
+      }
+    },
+    {
+      "kind": "provider",
+      "key": "__lookupGetter__",
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'deterministic')"
+      }
+    },
+    {
+      "kind": "provider",
+      "key": "__lookupSetter__",
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'deterministic')"
+      }
+    },
+    {
+      "kind": "provider",
+      "key": "isPrototypeOf",
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'deterministic')"
+      }
+    },
+    {
+      "kind": "provider",
+      "key": "propertyIsEnumerable",
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'deterministic')"
+      }
+    },
+    {
+      "kind": "provider",
+      "key": "toString",
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'deterministic')"
+      }
+    },
+    {
+      "kind": "provider",
+      "key": "valueOf",
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'deterministic')"
+      }
+    },
+    {
+      "kind": "provider",
+      "key": "__proto__",
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'deterministic')"
+      }
+    },
+    {
+      "kind": "provider",
+      "key": "toLocaleString",
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'deterministic')"
+      }
+    },
+    {
+      "kind": "model",
+      "key": "constructor",
+      "result": {
+        "ok": true,
+        "diagnostics": [],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "constructor": {
+                  "id": "constructor",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/constructor",
+            "provider": "parity",
+            "model": "constructor"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        }
+      }
+    },
+    {
+      "kind": "model",
+      "key": "__defineGetter__",
+      "result": {
+        "ok": true,
+        "diagnostics": [],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "__defineGetter__": {
+                  "id": "__defineGetter__",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/__defineGetter__",
+            "provider": "parity",
+            "model": "__defineGetter__"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        }
+      }
+    },
+    {
+      "kind": "model",
+      "key": "__defineSetter__",
+      "result": {
+        "ok": true,
+        "diagnostics": [],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "__defineSetter__": {
+                  "id": "__defineSetter__",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/__defineSetter__",
+            "provider": "parity",
+            "model": "__defineSetter__"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        }
+      }
+    },
+    {
+      "kind": "model",
+      "key": "hasOwnProperty",
+      "result": {
+        "ok": true,
+        "diagnostics": [],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "hasOwnProperty": {
+                  "id": "hasOwnProperty",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/hasOwnProperty",
+            "provider": "parity",
+            "model": "hasOwnProperty"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        }
+      }
+    },
+    {
+      "kind": "model",
+      "key": "__lookupGetter__",
+      "result": {
+        "ok": true,
+        "diagnostics": [],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "__lookupGetter__": {
+                  "id": "__lookupGetter__",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/__lookupGetter__",
+            "provider": "parity",
+            "model": "__lookupGetter__"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        }
+      }
+    },
+    {
+      "kind": "model",
+      "key": "__lookupSetter__",
+      "result": {
+        "ok": true,
+        "diagnostics": [],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "__lookupSetter__": {
+                  "id": "__lookupSetter__",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/__lookupSetter__",
+            "provider": "parity",
+            "model": "__lookupSetter__"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        }
+      }
+    },
+    {
+      "kind": "model",
+      "key": "isPrototypeOf",
+      "result": {
+        "ok": true,
+        "diagnostics": [],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "isPrototypeOf": {
+                  "id": "isPrototypeOf",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/isPrototypeOf",
+            "provider": "parity",
+            "model": "isPrototypeOf"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        }
+      }
+    },
+    {
+      "kind": "model",
+      "key": "propertyIsEnumerable",
+      "result": {
+        "ok": true,
+        "diagnostics": [],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "propertyIsEnumerable": {
+                  "id": "propertyIsEnumerable",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/propertyIsEnumerable",
+            "provider": "parity",
+            "model": "propertyIsEnumerable"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        }
+      }
+    },
+    {
+      "kind": "model",
+      "key": "toString",
+      "result": {
+        "ok": true,
+        "diagnostics": [],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "toString": {
+                  "id": "toString",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/toString",
+            "provider": "parity",
+            "model": "toString"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        }
+      }
+    },
+    {
+      "kind": "model",
+      "key": "valueOf",
+      "result": {
+        "ok": true,
+        "diagnostics": [],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "valueOf": {
+                  "id": "valueOf",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/valueOf",
+            "provider": "parity",
+            "model": "valueOf"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        }
+      }
+    },
+    {
+      "kind": "model",
+      "key": "__proto__",
+      "result": {
+        "ok": true,
+        "diagnostics": [],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {}
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/__proto__",
+            "provider": "parity",
+            "model": "__proto__"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        }
+      }
+    },
+    {
+      "kind": "model",
+      "key": "toLocaleString",
+      "result": {
+        "ok": true,
+        "diagnostics": [],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "toLocaleString": {
+                  "id": "toLocaleString",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/toLocaleString",
+            "provider": "parity",
+            "model": "toLocaleString"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        }
+      }
+    },
+    {
+      "kind": "always",
+      "key": "constructor",
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.constructor",
+            "recoverable": true
+          }
+        ],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "deterministic": {
+                  "id": "deterministic",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/deterministic",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        },
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "kind": "always",
+      "key": "__defineGetter__",
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.__defineGetter__",
+            "recoverable": true
+          }
+        ],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "deterministic": {
+                  "id": "deterministic",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/deterministic",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        },
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "kind": "always",
+      "key": "__defineSetter__",
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.__defineSetter__",
+            "recoverable": true
+          }
+        ],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "deterministic": {
+                  "id": "deterministic",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/deterministic",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        },
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "kind": "always",
+      "key": "hasOwnProperty",
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.hasOwnProperty",
+            "recoverable": true
+          }
+        ],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "deterministic": {
+                  "id": "deterministic",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/deterministic",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        },
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "kind": "always",
+      "key": "__lookupGetter__",
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.__lookupGetter__",
+            "recoverable": true
+          }
+        ],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "deterministic": {
+                  "id": "deterministic",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/deterministic",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        },
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "kind": "always",
+      "key": "__lookupSetter__",
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.__lookupSetter__",
+            "recoverable": true
+          }
+        ],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "deterministic": {
+                  "id": "deterministic",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/deterministic",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        },
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "kind": "always",
+      "key": "isPrototypeOf",
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.isPrototypeOf",
+            "recoverable": true
+          }
+        ],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "deterministic": {
+                  "id": "deterministic",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/deterministic",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        },
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "kind": "always",
+      "key": "propertyIsEnumerable",
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.propertyIsEnumerable",
+            "recoverable": true
+          }
+        ],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "deterministic": {
+                  "id": "deterministic",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/deterministic",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        },
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "kind": "always",
+      "key": "toString",
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.toString",
+            "recoverable": true
+          }
+        ],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "deterministic": {
+                  "id": "deterministic",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/deterministic",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        },
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "kind": "always",
+      "key": "valueOf",
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.valueOf",
+            "recoverable": true
+          }
+        ],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "deterministic": {
+                  "id": "deterministic",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/deterministic",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        },
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "kind": "always",
+      "key": "__proto__",
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "message": {},
+            "path": "alwaysOn.__proto__",
+            "recoverable": true
+          }
+        ],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "deterministic": {
+                  "id": "deterministic",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/deterministic",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        },
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "kind": "always",
+      "key": "toLocaleString",
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.toLocaleString",
+            "recoverable": true
+          }
+        ],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "deterministic": {
+                  "id": "deterministic",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/deterministic",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        },
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "kind": "project",
+      "key": "constructor",
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.projects./fixture.constructor",
+            "recoverable": true
+          }
+        ],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "deterministic": {
+                  "id": "deterministic",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/deterministic",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        },
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {
+            "/fixture": {
+              "enabled": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "kind": "project",
+      "key": "__defineGetter__",
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.projects./fixture.__defineGetter__",
+            "recoverable": true
+          }
+        ],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "deterministic": {
+                  "id": "deterministic",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/deterministic",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        },
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {
+            "/fixture": {
+              "enabled": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "kind": "project",
+      "key": "__defineSetter__",
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.projects./fixture.__defineSetter__",
+            "recoverable": true
+          }
+        ],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "deterministic": {
+                  "id": "deterministic",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/deterministic",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        },
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {
+            "/fixture": {
+              "enabled": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "kind": "project",
+      "key": "hasOwnProperty",
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.projects./fixture.hasOwnProperty",
+            "recoverable": true
+          }
+        ],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "deterministic": {
+                  "id": "deterministic",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/deterministic",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        },
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {
+            "/fixture": {
+              "enabled": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "kind": "project",
+      "key": "__lookupGetter__",
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.projects./fixture.__lookupGetter__",
+            "recoverable": true
+          }
+        ],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "deterministic": {
+                  "id": "deterministic",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/deterministic",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        },
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {
+            "/fixture": {
+              "enabled": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "kind": "project",
+      "key": "__lookupSetter__",
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.projects./fixture.__lookupSetter__",
+            "recoverable": true
+          }
+        ],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "deterministic": {
+                  "id": "deterministic",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/deterministic",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        },
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {
+            "/fixture": {
+              "enabled": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "kind": "project",
+      "key": "isPrototypeOf",
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.projects./fixture.isPrototypeOf",
+            "recoverable": true
+          }
+        ],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "deterministic": {
+                  "id": "deterministic",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/deterministic",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        },
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {
+            "/fixture": {
+              "enabled": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "kind": "project",
+      "key": "propertyIsEnumerable",
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.projects./fixture.propertyIsEnumerable",
+            "recoverable": true
+          }
+        ],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "deterministic": {
+                  "id": "deterministic",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/deterministic",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        },
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {
+            "/fixture": {
+              "enabled": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "kind": "project",
+      "key": "toString",
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.projects./fixture.toString",
+            "recoverable": true
+          }
+        ],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "deterministic": {
+                  "id": "deterministic",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/deterministic",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        },
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {
+            "/fixture": {
+              "enabled": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "kind": "project",
+      "key": "valueOf",
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.projects./fixture.valueOf",
+            "recoverable": true
+          }
+        ],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "deterministic": {
+                  "id": "deterministic",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/deterministic",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        },
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {
+            "/fixture": {
+              "enabled": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "kind": "project",
+      "key": "__proto__",
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "message": {},
+            "path": "alwaysOn.projects./fixture.__proto__",
+            "recoverable": true
+          }
+        ],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "deterministic": {
+                  "id": "deterministic",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/deterministic",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        },
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {
+            "/fixture": {
+              "enabled": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "kind": "project",
+      "key": "toLocaleString",
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.projects./fixture.toLocaleString",
+            "recoverable": true
+          }
+        ],
+        "model": {
+          "providers": {
+            "parity": {
+              "id": "parity",
+              "protocol": "openai",
+              "url": "http://127.0.0.1:28794/v1",
+              "apiKey": "mock-only",
+              "credentialSource": "literal",
+              "headers": {},
+              "models": {
+                "deterministic": {
+                  "id": "deterministic",
+                  "capabilities": {
+                    "supportsToolUse": true,
+                    "supportsStreaming": true,
+                    "supportsParallelToolCalls": true,
+                    "supportsThinking": true,
+                    "supportsJsonSchema": true,
+                    "supportsSystemPrompt": true,
+                    "supportsPromptCache": false,
+                    "maxContextTokens": 128000,
+                    "maxOutputTokens": 32768
+                  },
+                  "multimodal": {
+                    "input": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agent": {
+          "model": {
+            "id": "parity/deterministic",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "sandboxMode": "danger-full-access",
+          "runtimeContextSurface": "system_prompt",
+          "interactionProfile": "interactive"
+        },
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {
+            "/fixture": {
+              "enabled": false
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -2470,8 +2470,14 @@ async fn start_assembly_resources(
             if let Some(wecom) = wecom {
                 startup.push(wecom);
             }
-            if !startup.is_empty() {
-                channel_assembly.server().start_channels(startup);
+            if !startup.is_empty()
+                && let Err(error) = channel_assembly
+                    .server()
+                    .start_channels_staged(startup)
+                    .await
+            {
+                let _ = host.shutdown(budget).await;
+                return Err(error.message().to_string().into());
             }
             if let Some(driver) = reload_slot.get() {
                 driver.activate();

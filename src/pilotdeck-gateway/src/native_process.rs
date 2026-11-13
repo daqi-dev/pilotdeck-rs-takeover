@@ -193,6 +193,7 @@ async fn serve_until_signal(
     } else {
         server.run_phased(stop, drain_budget)
     });
+    let startup_channels = switch_handles.channels.clone();
     let faces = switch_wiring::ProductionFaces::new(
         switch_handles.cron,
         switch_wiring::AdmissionGate::new(switch_handles.channels, trigger),
@@ -205,6 +206,7 @@ async fn serve_until_signal(
     timeouts.entries_unbounded = until_clients_leave;
     let machine = crate::switch::SwitchMachine::new(faces.clone(), timeouts);
     listening(address);
+    startup_channels.server().publish_startup();
     #[cfg(unix)]
     tokio::select! { _ = terminate.recv() => {}, _ = interrupt.recv() => {} }
     #[cfg(not(unix))]

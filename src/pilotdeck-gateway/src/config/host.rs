@@ -15,18 +15,11 @@ fn selection(v: &JsValue) -> bool {
     ))
 }
 pub(super) fn required(raw: &JsValue) -> bool {
-    let providers = field(field(raw, "model"), "providers");
-    if entries(providers).iter().any(|(key, p)| {
-        builtin_property(key)
-            || entries(field(p, "models"))
-                .iter()
-                .any(|(key, _)| builtin_property(key))
-    }) {
-        return true;
-    }
+    // Own provider/model keys and the ordinary agent selection are handled
+    // by model::parse and sections::agent, including inherited catalog errors.
+    // Keep the host boundary for other selection sites until separately proven.
     let agent = field(raw, "agent");
-    if selection(field(agent, "model"))
-        || selection(field(field(agent, "subagents"), "default"))
+    if selection(field(field(agent, "subagents"), "default"))
         || selection(field(field(raw, "memory"), "model"))
     {
         return true;
@@ -68,9 +61,5 @@ pub(super) fn required(raw: &JsValue) -> bool {
     {
         return true;
     }
-    let always = field(raw, "alwaysOn");
-    entries(always).iter().any(|(key, _)| builtin_property(key))
-        || entries(field(always, "projects"))
-            .iter()
-            .any(|(_, p)| entries(p).iter().any(|(key, _)| builtin_property(key)))
+    false
 }
