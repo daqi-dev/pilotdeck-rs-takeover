@@ -1,6 +1,6 @@
 {
   "name": "abort-timeout-hook-subagent-start",
-  "about": "超时列（submit_turn.timeoutMs，从 abort-hook-subagent-start 拆出）：中止落在 SubagentStart hook 执行中（OneShotSubagentPort.ts:139）：abort_turn、close_session、timeoutMs。比较 subagent_started / subagent_completed、hook 是否被杀、子代理是否仍发模型请求、帧、会话与子代理记录、下一轮。",
+  "about": "超时列（submit_turn.timeoutMs，从 abort-hook-subagent-start 拆出）：中止落在 SubagentStart hook 执行中（OneShotSubagentPort.ts:139）：abort_turn、close_session、timeoutMs。比较 subagent_started / subagent_completed、hook 是否被杀、子代理是否仍发模型请求、帧、会话与子代理记录、下一轮。\n运行记录里超时事件的先后（volatile 的依据）：基线 20 次：SubagentStart 的完成在 turn_timeout 之前 19 次、在 error 之后 1 次。",
   "files": {
     "home/.pilotdeck/plugins/bbx-abort/plugin.json": {
       "name": "bbx-abort",
@@ -205,6 +205,8 @@
     }
   ],
   "volatile": [
-    "/chats/s-ss-timeout\\.jsonl\\.(jsonl\\[\\d+\\]|projections\\.json\\.json\\.projections\\.agent-transcript\\.subagent-references\\.state\\.completed\\[0\\])\\.summaryPreview$"
+    "/chats/s-ss-timeout\\.jsonl\\.(jsonl\\[\\d+\\]|projections\\.json\\.json\\.projections\\.agent-transcript\\.subagent-references\\.state\\.completed\\[0\\])\\.summaryPreview$",
+    "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.json\\.events\\. s-ss-timeout <uuid:\\d+>\\[(7|8|9)\\]\\.event\\.",
+    "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.raw\\.skeletons\\."
   ]
 }

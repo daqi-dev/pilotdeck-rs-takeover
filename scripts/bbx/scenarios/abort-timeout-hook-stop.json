@@ -1,6 +1,6 @@
 {
   "name": "abort-timeout-hook-stop",
-  "about": "超时列（submit_turn.timeoutMs，从 abort-hook-stop 拆出）：中止落在 Stop hook 执行中（AgentLoop.ts:1884-1929：Stop 之后没有中止检查）：abort_turn、close_session、timeoutMs。比较 finishReason、turn_failed / error 有无、帧、会话记录、下一轮。",
+  "about": "超时列（submit_turn.timeoutMs，从 abort-hook-stop 拆出）：中止落在 Stop hook 执行中（AgentLoop.ts:1884-1929：Stop 之后没有中止检查）：abort_turn、close_session、timeoutMs。比较 finishReason、turn_failed / error 有无、帧、会话记录、下一轮。\n运行记录里超时事件的先后（volatile 的依据）：基线 20 次：Stop 的完成在 turn_timeout 之前 11 次、在 error 之后 9 次。",
   "files": {
     "home/.pilotdeck/plugins/bbx-abort/plugin.json": {
       "name": "bbx-abort",
@@ -122,5 +122,9 @@
         "sessionKey": "s-hs-timeout"
       }
     }
+  ],
+  "volatile": [
+    "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.json\\.events\\. s-hs-timeout <uuid:\\d+>\\[(8|9|10)\\]\\.event\\.",
+    "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.raw\\.skeletons\\."
   ]
 }

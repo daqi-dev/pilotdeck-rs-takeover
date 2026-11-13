@@ -1,6 +1,6 @@
 {
   "name": "abort-timeout-hook-post-tool-failure",
-  "about": "超时列（submit_turn.timeoutMs，从 abort-hook-post-tool-failure 拆出）：中止落在 PostToolUseFailure hook 执行中（ToolRuntime.ts:418-423；bash 以非零退出码失败）：abort_turn、close_session、timeoutMs。",
+  "about": "超时列（submit_turn.timeoutMs，从 abort-hook-post-tool-failure 拆出）：中止落在 PostToolUseFailure hook 执行中（ToolRuntime.ts:418-423；bash 以非零退出码失败）：abort_turn、close_session、timeoutMs。\n运行记录里超时事件的先后（volatile 的依据）：基线 20 次：PostToolUseFailure 的完成在 turn_timeout 之前 19 次、在 error 之后 1 次。",
   "files": {
     "home/.pilotdeck/plugins/bbx-abort/plugin.json": {
       "name": "bbx-abort",
@@ -174,5 +174,9 @@
         "sessionKey": "s-hf-timeout"
       }
     }
+  ],
+  "volatile": [
+    "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.json\\.events\\. s-hf-timeout <uuid:\\d+>\\[(7|8|9)\\]\\.event\\.",
+    "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.raw\\.skeletons\\."
   ]
 }
