@@ -560,7 +560,7 @@ async fn a_budget_cut_cleanup_still_disposes_factory_and_project() {
 /// asserted here. Full phase-specific replies remain the formal AO scenario.
 #[tokio::test]
 async fn native_always_on_publishes_discovery_tool_and_advances_after_saved_plan() {
-    use crate::native_process::sdk_output_controls_tests::ControlProvider;
+    use crate::native_process::tests::sdk_output_controls_tests::ControlProvider;
     use std::time::Duration;
 
     let (scratch, requests) = crate::native_process::management_tests::setup();
@@ -667,7 +667,7 @@ async fn native_always_on_publishes_discovery_tool_and_advances_after_saved_plan
 /// it must not acquire the always-on-only tools through that shared fence.
 #[tokio::test]
 async fn native_session_publishes_and_executes_enabled_cron_tools() {
-    use crate::native_process::sdk_output_controls_tests::ControlProvider;
+    use crate::native_process::tests::sdk_output_controls_tests::ControlProvider;
     use std::time::Duration;
 
     let (scratch, requests) = crate::native_process::management_tests::setup();
