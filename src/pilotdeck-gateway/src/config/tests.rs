@@ -189,7 +189,7 @@ fn canonical(v: &JsValue) -> JsValue {
 }
 
 #[test]
-fn host_intrinsics_keep_upstream_ownership() {
+fn host_intrinsics_answer_like_the_baseline() {
     let tests = cases(include_str!(
         "../../tests/fixtures/config/host-boundaries.json"
     ));
@@ -200,23 +200,29 @@ fn host_intrinsics_keep_upstream_ownership() {
             home: PathBuf::from("<PILOT_HOME>"),
             cwd: PathBuf::from("/offline"),
             files: FixtureFiles {
-                data: yaml.into_bytes(),
+                data: yaml.clone().into_bytes(),
                 kind: None,
             },
         };
         let env = Env::new();
-        let error = super::load(&metadata, &env)
-            .err()
-            .expect("requires JS host");
-        assert!(error.requires_host);
+        // Each case's response was recorded from a separate baseline Node
+        // process: Object.prototype-named providers throw while the catalog
+        // is looked up, prototype-named models and alwaysOn keys load as
+        // plain keys (`cfg-builtin-property-keys` replays the same on the
+        // server).
         let request = parse_json(&text(field(&test, "request")).unwrap()).unwrap();
-        assert!(matches!(
-            crate::dispatch::route_catalog(&request, Some(&metadata), &env),
-            crate::dispatch::Route::Forward
-        ));
-        // The separate Node oracle records the host response; no synthetic Rust
-        // response is compared or counted as a native wire match.
-        assert!(!text(field(&test, "response")).unwrap().is_empty());
+        let expected = parse_json(&text(field(&test, "response")).unwrap()).unwrap();
+        let crate::dispatch::Route::LocalResponse(bytes) =
+            crate::dispatch::route_catalog(&request, Some(&metadata), &env)
+        else {
+            panic!("{yaml}: answered locally");
+        };
+        let actual = parse_json(std::str::from_utf8(&bytes).unwrap()).unwrap();
+        assert_eq!(
+            stringify_json(&actual).unwrap(),
+            stringify_json(&expected).unwrap(),
+            "{yaml}"
+        );
     }
 }
 
