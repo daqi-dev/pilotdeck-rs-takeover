@@ -11,8 +11,10 @@ const scene=JSON.parse(fs.readFileSync(scenePath));
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const text=v=>typeof v==='string'?v:Array.isArray(v)?v.filter(b=>b.type==='text').map(b=>b.text??'').join(''):'';
 const only=(rows,label)=>{assert.equal(rows?.length,1,label);return rows[0]};
+function httpBody(base64){const value=Buffer.from(base64,'base64').toString();try{return JSON.parse(value)}catch{return {raw:value}}}
 function validate(a,receipt,raw){
  assert.equal(a.scenario,scene.name);assert.deepEqual(a.failures,[]);assert.ok(['ts','rust'].includes(a.side));assert.equal(a.evidence.side,a.side);
+ const tail=raw.at(-1);assert.equal(tail?.kind,'mock-drain-complete','raw sealed only after actual mock drain');assert.deepEqual(tail,{kind:'mock-drain-complete',...receipt.mockDrain});assert.equal(tail.listeners,3);assert.ok(tail.acceptedSockets>0);assert.equal(tail.closedSockets,tail.acceptedSockets);assert.equal(tail.socketsRemaining,0);assert.equal(tail.handlersRemaining,0);assert.equal(tail.httpHandlersStarted,tail.httpHandlersCompleted);
  assert.equal(receipt.side,a.side);assert.equal(receipt.network,'linux-loopback-only');assert.equal(receipt.process.code,0);assert.equal(receipt.process.signal,null);
  assert.ok(['normal','wrongreply'].includes(receipt.variant));assert.equal(a.evidence.scenario.sha256,receipt.scenario.sha256);
  const declared=structuredClone(scene);if(receipt.variant==='wrongreply')declared.provider.find(r=>r.name==='channel').reply.text='FEISHU-STREAM-ACTUAL-NEGATIVE';
@@ -45,7 +47,7 @@ function validate(a,receipt,raw){
  }
  const wrong=JSON.parse(facts.ack.find(r=>r.headers.some(([k,v])=>k==='message_id'&&v==='wire-wrong')).payload);assert.equal(Buffer.from(wrong.data,'base64').toString(),JSON.stringify('no not.registered event handle'));
  const actualHttp=raw.filter(r=>r.kind==='http');assert.equal(actualHttp.filter(r=>new URL(r.url,'https://open.feishu.cn').pathname==='/callback/ws/endpoint').length,1);
- const actualOutbound=actualHttp.filter(r=>new URL(r.url,'https://open.feishu.cn').pathname.startsWith('/open-apis/')).map(r=>({method:r.method,path:new URL(r.url,'https://open.feishu.cn').pathname+new URL(r.url,'https://open.feishu.cn').search,authorization:r.headers.authorization??null,body:JSON.parse(Buffer.from(r.bodyBase64,'base64').toString())}));assert.deepEqual(actualOutbound,facts.outbound,'actual outbound bytes represented without rewriting raw trace');
+ const actualOutbound=actualHttp.filter(r=>new URL(r.url,'https://open.feishu.cn').pathname.startsWith('/open-apis/')).map(r=>({method:r.method,path:new URL(r.url,'https://open.feishu.cn').pathname+new URL(r.url,'https://open.feishu.cn').search,authorization:r.headers.authorization??null,body:httpBody(r.bodyBase64)}));assert.deepEqual(actualOutbound,facts.outbound,'actual outbound bytes represented without rewriting raw trace');
  const replies=facts.outbound.filter(r=>(r.path.startsWith('/open-apis/im/v1/messages?')||r.method==='PATCH')&&String(r.body.content??'').includes('FEISHU-STREAM-DONE'));
  assert.ok(replies.length>=1,'actual outbound reply must contain FEISHU-STREAM-DONE');assert.ok(JSON.stringify(history.result).includes('FEISHU-STREAM-DONE'),'actual formal history contains the same final reply');assert.ok(replies.every(r=>r.authorization==='Bearer feishu-local-token'));
  assert.ok(!JSON.stringify(facts.outbound).includes('FEISHU-STREAM-ACTUAL-NEGATIVE'),'wrong actual reply is rejected');

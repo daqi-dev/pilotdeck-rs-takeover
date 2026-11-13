@@ -50,3 +50,13 @@ node scripts/bbx/fixtures/feishu-stream/verify.mjs /evidence/feishu-wrongreply.j
 当前仅源码 ready，Node 语法检查通过；TLS / Axios 双代理、首轮正式 TS capture、TS self 和真实负控均待 E0。首败必须先分清装置与产品，不盲重跑。
 
 停止差异单独按 `H1-FEISHU-STREAM-OWNERSHIP-001` 验收。需要真实禁用 reload **完成 receipt** 后，再由独立实际工具查询旧 socket 精确 identity 的存活状态；TS 原实现泄漏与 Rust 关闭的差异要逐值登记。当前 wrapper 不把 product 整体退出后的 close 当作 adapter stop 证明，也未加入没有完成 barrier 的盲 sleep stop 场景。先校准正常阶段，再核 TS/Rust reload 的真实 completion 观测点并实现该专项，不以本文替代测试。
+
+## 首轮 raw 封存错误与收尾修复
+
+保留首败 `_tmp/20261113-e0-resume/a5ac63fd-feishu-first-r3` / `first-strict`。真实 raw 最后一行是 `ws-close`：完整 raw SHA 为 `b65c693a...`，去掉该最后一行的前缀 SHA 为 `9680f62b...`，恰好等于原 receipt。原因是旧 mock 只等待 `http.Server.close`；Node 不把 upgraded WS 计入该等待，实际 socket close 回调在封存后又追加 raw。没有重算或回写旧 receipt。
+
+新 close barrier 先停止监听，再销毁并等待全部 accepted/tunneled socket 的 close receipt 与全部 async HTTP handler；仅在这些 receipt 全部完成后写 `mock-drain-complete` 末行、禁止后续 raw 追加，再由 wrapper 计算 raw/artifact identity 并写 receipt。strict 验证末行与 receipt 相等、socket accepted=closed、handler started=completed、全部 remaining=0。重复 close 共享同一 receipt。
+
+局部非产品复算：`node scripts/bbx/fixtures/feishu-stream/mock.mjs --self-test-drain`。它建立真实 HTTP upgrade socket 与一个被明确 gate 持有的 async HTTP handler，证明只看到 socket close 不能提前封存；释放 handler 后 close 才返回，raw 指纹保持不再变化。移除 receipt drain await 的独立故障 copy 必须在“handler 未完成却已返回”的断言处 exit1。原始完整正式 TS 四件套仍需在新候选重采；局部测试不替代它。
+
+同轮原证另显示 DELETE reaction 请求具有真实空 body，mock 按 JSON-or-raw 保存 `{raw:""}`。strict 的 HTTP 字节重建现使用相同的精确表示，不再对空字节盲目 JSON.parse；仍完整比较 DELETE 的方法、路径、授权和空 body，不忽略该请求。该修正只读诊断旧 raw/facts，不回写旧证据或制造正式通过。

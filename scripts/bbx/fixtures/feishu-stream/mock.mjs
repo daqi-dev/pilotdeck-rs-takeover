@@ -4,20 +4,50 @@ import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
+import {fileURLToPath} from 'node:url';
 import {encode,decode,websocket,websocketReader} from './wire.mjs';
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const origin='https://open.feishu.cn';
+// Server.close does not own upgraded WebSocket connections. Every accepted or
+// tunneled socket and every async HTTP handler has its own completion receipt.
+export function closeBarrier(){
+ const sockets=new Map(),handlers=new Set();let closing=false,total=0,closed=0,started=0,completed=0,cleanup;
+ return {
+  track(socket){
+   if(sockets.has(socket))return socket;
+   total++;const receipt=new Promise(resolve=>socket.once('close',()=>{closed++;sockets.delete(socket);resolve()}));
+   sockets.set(socket,receipt);if(closing)socket.destroy();return socket;
+  },
+  handle(work){started++;handlers.add(work);const finish=()=>{completed++;handlers.delete(work)};work.then(finish,finish);return work},
+  close(servers){
+   if(cleanup)return cleanup;
+   cleanup=(async()=>{
+   closing=true;
+   // Stop all listeners first. An already accepted late socket is immediately
+   // destroyed by track(), and remains in this same receipt set until close.
+   const listeners=servers.map(server=>new Promise(resolve=>server.close(resolve)));
+   for(const socket of sockets.keys())socket.destroy();
+   await Promise.all(listeners);
+   while(sockets.size||handlers.size)await Promise.allSettled([...sockets.values(),...handlers]);
+   return {listeners:servers.length,acceptedSockets:total,closedSockets:closed,socketsRemaining:sockets.size,httpHandlersStarted:started,httpHandlersCompleted:completed,handlersRemaining:handlers.size};
+   })();return cleanup;
+  }
+ };
+}
+
 export async function startMock({root,caDir,proxyPort,wsPort,tlsPort,rawPath,variant='normal'}){
  if(!['normal','wrongreply'].includes(variant))throw Error('unknown fixture variant');
  const sourceHashes=Object.fromEntries(['mock.mjs','wire.mjs'].map(name=>[name,hash(fs.readFileSync(new URL(name,import.meta.url)))]));
  const state={fixture:'feishu-stream-v1',sourceHashes,variant,endpoint:[],upgrade:[],sent:[],ping:[],ack:[],outbound:[]};
- const sockets=new Set(),waiters=new Set();let injected=false,replyObserved=false;
- const raw=record=>fs.appendFileSync(rawPath,JSON.stringify(record)+'\n');
+ const drain=closeBarrier(),waiters=new Set();let injected=false,replyObserved=false;
+ let sealed=false;
+ const raw=record=>{if(sealed)throw Error('mock raw append after drain seal');fs.appendFileSync(rawPath,JSON.stringify(record)+'\n')};
  const save=()=>{const dir=path.join(root,'home/.pilotdeck/feishu-stream-witness');fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(path.join(dir,'facts.json'),JSON.stringify(state,null,2)+'\n',{mode:0o600})};
- const track=socket=>{sockets.add(socket);socket.once('close',()=>sockets.delete(socket));return socket};
+ const track=socket=>drain.track(socket);
  const sendJson=(res,body,status=200)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify(body))};
  function notify(){if(!replyObserved)return;for(const res of waiters){sendJson(res,{marker:'FEISHU-STREAM-REPLY-OBSERVED',replyCount:state.outbound.filter(r=>r.path.startsWith('/open-apis/im/v1/messages?')).length});}waiters.clear()}
- async function handle(req,res){
+ function handle(req,res){return drain.handle(respond(req,res));}
+ async function respond(req,res){
   try{
    const parts=[];for await(const chunk of req)parts.push(chunk);const bodyBytes=Buffer.concat(parts),bodyText=bodyBytes.toString();let body;try{body=JSON.parse(bodyText)}catch{body={raw:bodyText}}
    const url=req.url.startsWith('https://')?new URL(req.url):new URL(req.url,origin);
@@ -83,5 +113,32 @@ export async function startMock({root,caDir,proxyPort,wsPort,tlsPort,rawPath,var
  });
  for(const server of [tls,proxy,ws])server.on('connection',track);
  await Promise.all([[tls,tlsPort],[proxy,proxyPort],[ws,wsPort]].map(([server,port])=>new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',resolve)})));
- return {async close(){for(const res of waiters)res.destroy();for(const socket of sockets)socket.destroy();await Promise.all([tls,proxy,ws].map(server=>new Promise(resolve=>server.close(resolve))))}};
+ let closeReceipt;return {close(){if(!closeReceipt)closeReceipt=(async()=>{for(const res of waiters)res.destroy();const receipt=await drain.close([tls,proxy,ws]);raw({kind:'mock-drain-complete',...receipt});sealed=true;return receipt})();return closeReceipt;}};
 }
+
+// Local fixture-only causal test; no product, credentials, CA or external traffic.
+export async function selfTestDrain(){
+const assert=(await import('node:assert/strict')).default;const os=await import('node:os');const {once}=await import('node:events');
+const sha=b=>createHash('sha256').update(b).digest('hex');
+const temp=fs.mkdtempSync(path.join(os.tmpdir(),'feishu-drain-'));const rawPath=path.join(temp,'raw.jsonl');fs.writeFileSync(rawPath,'');
+const drain=closeBarrier();const server=http.createServer();server.on('connection',socket=>drain.track(socket));
+let releaseHandler,handlerStarted;const handlerGate=new Promise(resolve=>releaseHandler=resolve),started=new Promise(resolve=>handlerStarted=resolve);
+server.on('request',(req,res)=>{drain.handle((async()=>{handlerStarted();await handlerGate;res.end('finished')})())});
+let upgraded,upgradedClosed;const upgrade=new Promise(resolve=>upgraded=resolve),closed=new Promise(resolve=>upgradedClosed=resolve);
+server.on('upgrade',(req,socket)=>{socket.on('close',()=>{fs.appendFileSync(rawPath,JSON.stringify({kind:'ws-close'})+'\n');upgradedClosed()});socket.write('HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n');upgraded()});
+server.listen(0,'127.0.0.1');await once(server,'listening');const port=server.address().port;
+const client=net.connect({host:'127.0.0.1',port});client.on('error',()=>{});client.on('data',()=>{});await once(client,'connect');client.write('GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n');await upgrade;
+const pending=net.connect({host:'127.0.0.1',port});pending.on('error',()=>{});await once(pending,'connect');pending.write('GET /held HTTP/1.1\r\nHost: localhost\r\n\r\n');await started;
+let returned=false;const receipt=drain.close([server]).then(value=>{returned=true;return value});await closed;
+assert.equal(returned,false,'real socket close does not allow seal while HTTP handler is unresolved');
+// Deliberately sealing before the held handler drains must fail the completion assertion.
+assert.throws(()=>assert.equal(returned,true),'negative premature seal is rejected');
+releaseHandler();const result=await receipt;
+assert.equal(result.acceptedSockets,2);assert.equal(result.closedSockets,2);assert.equal(result.httpHandlersStarted,1);assert.equal(result.httpHandlersCompleted,1);assert.equal(result.socketsRemaining,0);assert.equal(result.handlersRemaining,0);
+const sealed=fs.readFileSync(rawPath);assert.deepEqual(JSON.parse(sealed.toString()),{kind:'ws-close'});const fingerprint=sha(sealed);
+await new Promise(resolve=>setImmediate(resolve));assert.equal(sha(fs.readFileSync(rawPath)),fingerprint,'no late close append after drain returns');
+assert.strictEqual(drain.close([server]),drain.close([server]),'close receipt is shared');
+client.destroy();pending.destroy();fs.rmSync(temp,{recursive:true,force:true});console.log('real upgraded socket + held async HTTP handler drain PASS; premature-seal negative rejected');
+
+}
+if(process.argv[2]==="--self-test-drain" && process.argv[1] && path.resolve(process.argv[1])===fileURLToPath(import.meta.url))await selfTestDrain();

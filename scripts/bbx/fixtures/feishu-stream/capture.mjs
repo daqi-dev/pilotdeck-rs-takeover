@@ -41,8 +41,8 @@ try{
  const onSignal=()=>child.kill('SIGTERM');process.once('SIGTERM',onSignal);process.once('SIGINT',onSignal);
  const result=await new Promise(resolve=>{child.once('error',error=>resolve({error:error.message}));child.once('close',(code,signal)=>resolve({code,signal}))});
  process.removeListener('SIGTERM',onSignal);process.removeListener('SIGINT',onSignal);fs.closeSync(log);
- await mock.close();mock=undefined;
- const receipt={schema:1,side,variant,network:'linux-loopback-only',sources,scenario:{path:scenarioPath,sha256:sha(fs.readFileSync(scenarioPath))},artifact:fs.existsSync(outputPath)?{sha256:sha(fs.readFileSync(outputPath))}:null,raw:{sha256:sha(fs.readFileSync(rawPath))},process:result};
+ const mockDrain=await mock.close();mock=undefined;
+ const receipt={schema:1,side,variant,network:'linux-loopback-only',mockDrain,sources,scenario:{path:scenarioPath,sha256:sha(fs.readFileSync(scenarioPath))},artifact:fs.existsSync(outputPath)?{sha256:sha(fs.readFileSync(outputPath))}:null,raw:{sha256:sha(fs.readFileSync(rawPath))},process:result};
  fs.writeFileSync(outputPath+'.receipt.json',JSON.stringify(receipt,null,2)+'\n');
  process.exitCode=result.code??1;
 }finally{
