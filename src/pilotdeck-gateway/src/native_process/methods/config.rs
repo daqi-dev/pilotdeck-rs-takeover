@@ -2163,14 +2163,12 @@ mod tests {
         teardown(&r).await;
     }
 
-    /// #1873: the model-set cold path surfaces a broken ledger lock as the
-    /// storage error it is. The pre-#1873 `try_writer_lease` folded it into
-    /// the retryable busy answer, which a model-set request would then relay
-    /// as a session that never drains; the same separation the status
-    /// caller got covers this caller through the shared three-segment
-    /// protocol.
+    /// The model-set cold path neither reports a fence inode that cannot open
+    /// as the retryable busy answer (a session that never drains) nor fails
+    /// the write: the Rust-only fence turns itself off and the selection is
+    /// appended, as the baseline (no fence) does.
     #[tokio::test]
-    async fn model_set_cold_write_surfaces_a_broken_lock_file_as_an_error() {
+    async fn model_set_cold_write_proceeds_when_the_fence_cannot_open() {
         let (_scratch, r) = setup_fixture();
         let transcript_path = transcript_locks::session_transcript_path(
             &r.options.home,
@@ -2186,24 +2184,24 @@ mod tests {
         .expect("#1873 the ledger lock directory");
         std::fs::create_dir(&lock).expect("#1873 the broken ledger lock is in place");
         let _remove_lock = RemoveDir(lock.clone());
-        let error = r
-            .session_model_request_keyed(
-                "session_model_set".into(),
-                object([
-                    ("sessionKey", "bl-session".into()),
-                    ("selection", selection("model", "test", "test")),
-                ]),
+        r.session_model_request_keyed(
+            "session_model_set".into(),
+            object([
+                ("sessionKey", "bl-session".into()),
+                ("selection", selection("model", "test", "test")),
+            ]),
+        )
+        .await
+        .unwrap_or_else(|error| {
+            panic!(
+                "the model-set append proceeds unfenced, got {}",
+                error_text(&error)
             )
-            .await
-            .expect_err("#1873 the model-set append surfaces the storage failure");
-        negative_assert!(
-            error.code.as_str() != "SESSION_WRITER_BUSY",
-            "#1873 the model-set storage failure is never the retryable busy code"
-        );
-        negative_assert!(
-            error_text(&error).contains("Could not open session ledger lock"),
-            "#1873 the model-set storage error names the ledger lock, got {}",
-            error_text(&error)
+        });
+        let text = std::fs::read_to_string(&transcript_path).expect("the transcript exists");
+        assert!(
+            text.contains("model-selection"),
+            "the selection is on disk: {text}"
         );
         teardown(&r).await;
     }

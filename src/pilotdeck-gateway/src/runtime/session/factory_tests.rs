@@ -7775,13 +7775,14 @@ async fn session_cwd_preflight_worker() {
     crate::test_process::receipt(&name);
 }
 
-/// #1873: `try_writer_lease` must separate the two failure families. Lock
-/// contention — the ledger flock held by another open file description — is
-/// the retryable `Ok(None)` a hydrating or closing session produces. A lock
-/// file that cannot be opened is a storage error; the pre-fix shape folded
-/// it into `None`, so a broken chat directory masqueraded as a busy session.
+/// `try_writer_lease` separates contention from a fence that cannot be
+/// built. Lock contention — the ledger held by another holder — is the
+/// retryable `Ok(None)` a hydrating or closing session produces. A fence
+/// inode that cannot be opened is neither busy nor a storage error: the
+/// fence only guards against our own concurrent processes, so the writer
+/// proceeds unfenced, as the baseline (which has no fence) does.
 #[test]
-fn try_writer_lease_separates_contention_from_storage_failure() {
+fn try_writer_lease_separates_contention_from_an_unusable_fence() {
     let dir = std::env::temp_dir().join(format!("pdrs-1873-lease-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).expect("#1873 the scratch directory opens");
     let transcript = dir.join("healthy.jsonl");
@@ -7810,20 +7811,18 @@ fn try_writer_lease_separates_contention_from_storage_failure() {
     )
     .expect("#1873 the ledger lock directory");
     std::fs::create_dir(&lock_path).expect("#1873 the broken ledger lock is in place");
-    let error = match try_writer_lease(&broken) {
-        Err(error) => error,
-        Ok(None) => panic!("#1873 a lock file that cannot open must not read as busy"),
-        Ok(Some(_)) => panic!("#1873 a lock file that cannot open must not yield a lease"),
+    let lease = match try_writer_lease(&broken) {
+        Ok(Some(lease)) => lease,
+        Ok(None) => panic!("a fence inode that cannot open must not read as busy"),
+        Err(error) => panic!("a fence inode that cannot open must not fail the write: {error}"),
     };
-    crate::negative_assert!(
-        !error.message.contains("SESSION_WRITER_BUSY"),
-        "#1873 the storage failure is never the retryable busy code"
+    assert!(
+        !lease._file.is_fenced(),
+        "the lease runs unfenced when its fence inode cannot open"
     );
-    crate::negative_assert!(
-        error.message.contains("Could not open session ledger lock"),
-        "#1873 the error names the ledger lock, got {}",
-        error.message
-    );
+    // The in-process exclusion still holds without the fence file.
+    assert!(matches!(try_writer_lease(&broken), Ok(None)));
+    drop(lease);
     std::fs::remove_dir(&lock_path).expect("#1873 the broken ledger lock cleans up");
     std::fs::remove_dir_all(&dir).expect("#1873 the scratch directory cleans up");
 }

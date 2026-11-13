@@ -931,13 +931,12 @@ mod tests {
         );
     }
 
-    /// #1873 P2: a `<transcript>.lock` that cannot be opened is a storage
-    /// failure. The pre-fix `try_writer_lease` folded every error into the
-    /// busy answer, so a broken chat directory masqueraded as a session that
-    /// would eventually drain; the request must fail with the underlying
-    /// error, never the retryable busy code.
+    /// A fence inode that cannot be opened is neither the retryable busy
+    /// answer (a session that would never drain) nor a failed write: the
+    /// Rust-only fence turns itself off and the status entry is appended, as
+    /// the baseline (no fence) does.
     #[tokio::test]
-    async fn status_cold_write_surfaces_a_broken_lock_file_as_an_error() {
+    async fn status_cold_write_proceeds_when_the_fence_cannot_open() {
         let (_scratch, requests) = crate::native_process::management_tests::setup();
         let home = requests.options.home.clone();
         let project = requests.options.project.clone();
@@ -964,36 +963,35 @@ mod tests {
         .expect("#1873 the ledger lock directory");
         std::fs::create_dir(&lock).expect("#1873 the broken ledger lock is in place");
         let _remove_lock = RemoveDir(lock.clone());
-        let error = crate::runtime::turn::gateway::GatewayRequests::request(
+        let recorded = crate::runtime::turn::gateway::GatewayRequests::request(
             &requests,
             "record_agent_status_message".into(),
             crate::metadata::object([
                 ("sessionKey", "d5-session".into()),
                 ("turnId", "broken-lock".into()),
-                ("status", JsValue::Undefined),
+                (
+                    "status",
+                    crate::metadata::object([("event", "note".into())]),
+                ),
             ]),
         )
         .await
-        .expect_err("#1873 the status append surfaces the storage failure");
-        negative_assert!(
-            error.code.as_str() != "SESSION_WRITER_BUSY",
-            "#1873 a broken lock file is a storage error, not the retryable busy answer"
-        );
-        negative_assert!(
-            String::from_utf16_lossy(error.message.units())
-                .contains("Could not open session ledger lock"),
-            "#1873 the storage error names the ledger lock, got {}",
-            String::from_utf16_lossy(error.message.units())
-        );
+        .unwrap_or_else(|error| {
+            panic!(
+                "the status append proceeds unfenced, got {}",
+                String::from_utf16_lossy(error.message.units())
+            )
+        });
+        assert_eq!(recorded.get("recorded"), Some(&JsValue::Bool(true)));
+        let text = std::fs::read_to_string(&storage.transcript_path).expect("the transcript");
+        assert!(text.contains("broken-lock"), "the status entry is on disk");
     }
 
-    /// #1873: the rename cold path answers the same storage-error separation
-    /// the status caller got — a broken ledger lock is never the retryable
-    /// busy answer for a rename either. The `#1873` `try_writer_lease`
-    /// `Result` split reaches this caller through the shared
-    /// `append_metadata_with_lease` protocol.
+    /// The rename cold path, like the status caller: a fence inode that
+    /// cannot open is never the retryable busy answer and never fails the
+    /// write; the rename is appended unfenced, as in the baseline.
     #[tokio::test]
-    async fn rename_cold_write_surfaces_a_broken_lock_file_as_an_error() {
+    async fn rename_cold_write_proceeds_when_the_fence_cannot_open() {
         let (_scratch, requests) = crate::native_process::management_tests::setup();
         let home = requests.options.home.clone();
         let project = requests.options.project.clone();
@@ -1018,7 +1016,7 @@ mod tests {
         .expect("#1873 the ledger lock directory");
         std::fs::create_dir(&lock).expect("#1873 the rename broken ledger lock is in place");
         let _remove_lock = RemoveDir(lock.clone());
-        let error = crate::runtime::turn::gateway::GatewayRequests::request(
+        crate::runtime::turn::gateway::GatewayRequests::request(
             &requests,
             "rename_session".into(),
             crate::metadata::object([
@@ -1027,17 +1025,14 @@ mod tests {
             ]),
         )
         .await
-        .expect_err("#1873 the rename append surfaces the storage failure");
-        negative_assert!(
-            error.code.as_str() != "SESSION_WRITER_BUSY",
-            "#1873 the rename storage failure is never the retryable busy code"
-        );
-        negative_assert!(
-            String::from_utf16_lossy(error.message.units())
-                .contains("Could not open session ledger lock"),
-            "#1873 the rename storage error names the ledger lock, got {}",
-            String::from_utf16_lossy(error.message.units())
-        );
+        .unwrap_or_else(|error| {
+            panic!(
+                "the rename append proceeds unfenced, got {}",
+                String::from_utf16_lossy(error.message.units())
+            )
+        });
+        let text = std::fs::read_to_string(&storage.transcript_path).expect("the transcript");
+        assert!(text.contains("broken-lock-rename"), "the rename is on disk");
     }
 
     /// #1874: a recorder whose writer already closed must not answer

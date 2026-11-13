@@ -872,6 +872,125 @@ fn ledger_lock_file_exists_only_while_held() {
     drop(again);
     assert!(!lock_file.exists());
 }
+fn env_of(
+    pairs: Vec<(&'static str, std::ffi::OsString)>,
+) -> impl Fn(&str) -> Option<std::ffi::OsString> {
+    move |key| {
+        pairs
+            .iter()
+            .find(|(name, _)| *name == key)
+            .map(|(_, value)| value.clone())
+    }
+}
+fn lock_dir_name() -> String {
+    format!(
+        "pilotdeck-ledger-locks-{}",
+        rustix::process::geteuid().as_raw()
+    )
+}
+/// The fence directory follows Node's `os.tmpdir()`: an empty TMPDIR counts
+/// as unset (falling through to TMP), so it never lands in the cwd.
+#[test]
+fn ledger_lock_dir_skips_an_empty_tmpdir_like_node() {
+    let scratch = Scratch::new();
+    let dir = super::transcript::ledger_lock_dir(env_of(vec![
+        ("TMPDIR", "".into()),
+        ("TMP", scratch.0.clone().into_os_string()),
+    ]))
+    .expect("a private directory under TMP");
+    assert_eq!(dir, scratch.0.join(lock_dir_name()));
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(
+        fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+}
+/// A name in the temporary directory that is not a private directory of
+/// ours (another user's, writable by others, a symlink, a file) turns the
+/// fence off instead of failing writes.
+#[test]
+fn ledger_lock_dir_refuses_a_name_that_is_not_ours() {
+    use std::os::unix::fs::PermissionsExt;
+    let env = |scratch: &Scratch| env_of(vec![("TMPDIR", scratch.0.clone().into_os_string())]);
+    let open = Scratch::new();
+    fs::create_dir(open.0.join(lock_dir_name())).unwrap();
+    fs::set_permissions(
+        open.0.join(lock_dir_name()),
+        fs::Permissions::from_mode(0o777),
+    )
+    .unwrap();
+    assert_eq!(super::transcript::ledger_lock_dir(env(&open)), None);
+    let linked = Scratch::new();
+    let elsewhere = Scratch::new();
+    std::os::unix::fs::symlink(&elsewhere.0, linked.0.join(lock_dir_name())).unwrap();
+    assert_eq!(super::transcript::ledger_lock_dir(env(&linked)), None);
+    let file = Scratch::new();
+    fs::write(file.0.join(lock_dir_name()), b"").unwrap();
+    assert_eq!(super::transcript::ledger_lock_dir(env(&file)), None);
+    let read_only = Scratch::new();
+    fs::set_permissions(&read_only.0, fs::Permissions::from_mode(0o500)).unwrap();
+    let refused = super::transcript::ledger_lock_dir(env(&read_only));
+    fs::set_permissions(&read_only.0, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(refused, None);
+}
+/// On Linux a private `$XDG_RUNTIME_DIR` is preferred over the shared
+/// temporary directory; one that is not private (or not absolute) is not.
+#[cfg(target_os = "linux")]
+#[test]
+fn ledger_lock_dir_prefers_a_private_xdg_runtime_dir() {
+    use std::os::unix::fs::PermissionsExt;
+    let runtime = Scratch::new();
+    fs::set_permissions(&runtime.0, fs::Permissions::from_mode(0o700)).unwrap();
+    let tmp = Scratch::new();
+    let both = |xdg: std::ffi::OsString| {
+        env_of(vec![
+            ("XDG_RUNTIME_DIR", xdg),
+            ("TMPDIR", tmp.0.clone().into_os_string()),
+        ])
+    };
+    assert_eq!(
+        super::transcript::ledger_lock_dir(both(runtime.0.clone().into_os_string())),
+        Some(runtime.0.join(lock_dir_name()))
+    );
+    assert_eq!(
+        super::transcript::ledger_lock_dir(both("relative/run".into())),
+        Some(tmp.0.join(lock_dir_name()))
+    );
+    fs::set_permissions(&runtime.0, fs::Permissions::from_mode(0o777)).unwrap();
+    assert_eq!(
+        super::transcript::ledger_lock_dir(both(runtime.0.clone().into_os_string())),
+        Some(tmp.0.join(lock_dir_name()))
+    );
+}
+/// When the fence inode cannot be opened the ledger opens and writes
+/// unfenced (the baseline behaviour); a second holder in the same process is
+/// still refused without any file.
+#[test]
+fn unusable_fence_leaves_writes_working_and_in_process_exclusion() {
+    let scratch = Scratch::new();
+    let canonical = super::canonical_transcript_path(&scratch.path()).unwrap();
+    let lock_file = super::ledger_lock_path(&canonical).unwrap();
+    fs::create_dir(&lock_file).unwrap();
+    let opened = JsonlLedgerStore::open(scratch.path(), "session-1");
+    let second = JsonlLedgerStore::open(scratch.path(), "session-1");
+    fs::remove_dir(&lock_file).unwrap();
+    let ledger = opened.expect("an unusable fence does not fail the open");
+    assert!(
+        matches!(second, Err(LedgerError::Io(e)) if e.kind() == io::ErrorKind::WouldBlock),
+        "the in-process exclusion holds without the fence file"
+    );
+    let (_, unfenced) = {
+        drop(ledger);
+        fs::create_dir(&lock_file).unwrap();
+        let pair = super::LedgerLock::acquire(&scratch.path()).unwrap();
+        fs::remove_dir(&lock_file).unwrap();
+        pair
+    };
+    assert!(!unfenced.is_fenced());
+    drop(unfenced);
+    let (_, fenced) = super::LedgerLock::acquire(&scratch.path()).unwrap();
+    assert!(fenced.is_fenced());
+}
 #[test]
 fn half_written_tail_is_preserved_and_separated_before_append() {
     let scratch = Scratch::new();
