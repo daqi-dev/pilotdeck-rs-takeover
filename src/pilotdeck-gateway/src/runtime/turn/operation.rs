@@ -251,9 +251,13 @@ fn ledger_failure(error: LedgerError) -> HostError {
 }
 
 /// `resolveAgentLoopDeploymentProfile`'s transport selection
-/// (`AgentLoopDeploymentProfile.ts:130-134`) names stdio.
-pub fn explicit_stdio(transport: Option<&str>) -> bool {
-    transport.is_some_and(|value| value.trim().eq_ignore_ascii_case("stdio"))
+/// (`AgentLoopDeploymentProfile.ts:130-134`) names an external loop: stdio
+/// or tcp.
+pub fn explicit_external(transport: Option<&str>) -> bool {
+    transport.is_some_and(|value| {
+        let value = value.trim();
+        value.eq_ignore_ascii_case("stdio") || value.eq_ignore_ascii_case("tcp")
+    })
 }
 
 /// The module outcome a final event declares.

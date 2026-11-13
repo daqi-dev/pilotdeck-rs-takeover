@@ -240,6 +240,10 @@ impl ForkSeed {
         if let Some(mode) = &scope.definition.permission_mode {
             permission.mode = mode.as_str().into();
         }
+        // The child loop has no plan file manager (its dependencies carry
+        // none, SubagentRuntimeComposition.ts:102-130), so its tool context
+        // names no plan directory (AgentLoop.ts:2731-2738).
+        permission.plan_directory_path = None;
         let run_mode = Arc::new(Mutex::new(config_run_mode(&config)));
         // The child runs its loop without an AgentSession or TurnRunner
         // (SubAgentSession.runNative): the session events and
@@ -284,7 +288,7 @@ impl ForkSeed {
             permission_mode_source: None,
             run_mode,
             turn_permission: Arc::default(),
-            world: self.world,
+            world: self.world.for_child_session(),
             goal: Arc::default(),
             events: self.events,
             subagents: self.subagents,
@@ -1058,11 +1062,19 @@ impl SessionTools {
             .fork
             .as_ref()
             .map_or_else(|| recorder.clone(), |scope| scope.root_recorder.clone());
+        let external_loop = self.world.external_loop_binding
+            || crate::runtime::turn::operation::explicit_external(
+                self.env
+                    .get("PILOTDECK_AGENT_LOOP_TRANSPORT")
+                    .and_then(JsValue::as_string)
+                    .map(|value| String::from_utf16_lossy(value.units()))
+                    .as_deref(),
+            );
         // `composeToolPorts(externalPorts.tools, nativeToolPort)`
         // (AgentSessionRuntimeBundle.ts:156-206): an external `modules.tools`
         // binding is listed and routed ahead of the session's own tools.
         let inner: Arc<dyn capability::ToolExecution> = match &self.world.module_tools {
-            Some(external) if self.fork.is_none() => Arc::new(super::module_tools::ComposedTools {
+            Some(external) => Arc::new(super::module_tools::ComposedTools {
                 external: external.clone(),
                 native: Arc::new(runtime),
                 // `createDefaultPermissionContext({ acceptEdits: sdk?.permissionMode
@@ -1085,6 +1097,7 @@ impl SessionTools {
                     ),
                 ])),
                 late: self.late_host_tools(),
+                external_loop,
             }),
             _ => Arc::new(runtime),
         };
@@ -1095,13 +1108,7 @@ impl SessionTools {
             session: identity.session_id.clone(),
             turn: identity.turn_id.clone(),
             signal: signal.clone(),
-            external_loop: crate::runtime::turn::operation::explicit_stdio(
-                self.env
-                    .get("PILOTDECK_AGENT_LOOP_TRANSPORT")
-                    .and_then(JsValue::as_string)
-                    .map(|value| String::from_utf16_lossy(value.units()))
-                    .as_deref(),
-            ),
+            external_loop,
         });
         let binding = TurnBinding {
             config: config.clone(),
@@ -1147,7 +1154,11 @@ impl SessionTools {
         let tool_ports = ToolContextPorts {
             clock: Some(Arc::new(|| JsValue::String(SystemExecutionClock.now_iso()))),
             goal: Some(Arc::new(crate::runtime::goal::GoalSessions(goal))),
-            plan_files: Some(self.plan_files.clone()),
+            // A child loop has no plan file manager
+            // (SubagentRuntimeComposition.ts:102-130, AgentLoop.ts:2731-2738).
+            plan_files: self.fork.is_none().then(|| {
+                self.plan_files.clone() as Arc<dyn crate::host::modules::tool_context::PlanFiles>
+            }),
             // The gateway elicitation channel, inside its durable bracket.
             // `questionProvider` (SessionInteractionBundle.ts:228-262):
             // `gateway` asks over the session stream, `deterministic`
@@ -1389,7 +1400,7 @@ struct DurableTools {
     turn: JsString,
     signal: Cancellation,
     /// The loop is an explicitly deployed sidecar
-    /// (`PILOTDECK_AGENT_LOOP_TRANSPORT=stdio`). The baseline's durable tool
+    /// (`PILOTDECK_AGENT_LOOP_TRANSPORT=stdio` or `tcp`). The baseline's durable tool
     /// port then sees only what the capability wire carries, so its
     /// `tool_call` entries hold the bare call, without a timeline position.
     external_loop: bool,
@@ -2023,8 +2034,24 @@ pub(super) struct ExecutionWorld {
     /// `sandboxMode`, `ProjectExecutionWorldBundle.ts:61-65`): the fs, shell
     /// and code-runtime providers behind the builtin tools.
     sandbox: crate::runtime::tools::sandbox::Sandbox,
+    /// The session config binds `modules.agentLoop` to an external module
+    /// (`createAgentLoopBindingFactory`, AgentLoopDeploymentProfile.ts:107-127).
+    external_loop_binding: bool,
 }
 impl ExecutionWorld {
+    /// The world of a child (subagent) session: shared services, but its own
+    /// external `modules.tools` port, since the child composes its module
+    /// ports for its own session (AgentSessionRuntimeBundle.ts:156, 200-206).
+    fn for_child_session(&self) -> Self {
+        let mut world = self.clone();
+        world.module_tools = self
+            .module_tools
+            .as_ref()
+            .and_then(|port| port.fresh())
+            .map(Arc::new);
+        world
+    }
+
     pub(super) fn new() -> Self {
         Self {
             #[cfg(unix)]
@@ -2044,6 +2071,7 @@ impl ExecutionWorld {
             excluded_tools: Vec::new(),
             invocation: None,
             sandbox: Default::default(),
+            external_loop_binding: false,
         }
     }
 }
@@ -2102,6 +2130,13 @@ impl SessionTools {
 
     /// An external `modules.tools` binding: its catalog is composed ahead
     /// of the session's tools, one module client per session.
+    /// The session's loop runs in an external module bound by
+    /// `modules.agentLoop`.
+    pub(super) fn with_external_loop_binding(mut self, external: bool) -> Self {
+        self.world.external_loop_binding = external;
+        self
+    }
+
     pub(super) fn with_module_tools(mut self, binding: Option<&JsValue>) -> Self {
         self.world.module_tools = binding
             .and_then(super::module_tools::ExternalToolPort::from_binding)

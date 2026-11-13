@@ -1,4 +1,5 @@
-//! One owned process group and independent pipe pumps. No callbacks in pumps.
+//! One owned process group (or one TCP socket) and independent pumps. No
+//! callbacks in pumps.
 use super::{
     HostError, HostErrorKind, Limits,
     budget::{Budget, Frame, Lease},
@@ -9,11 +10,11 @@ use std::{
     process::Stdio,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     process::{Child, Command},
     sync::{mpsc, oneshot, watch},
     task::JoinHandle,
@@ -25,10 +26,84 @@ enum WriteCommand {
     Flush(oneshot::Sender<()>),
 }
 
+/// What carries the NDJSON frames. The baseline's two connection providers
+/// word their transport failures differently
+/// (stdioAgentLoopSidecarConnection.ts, tcpAgentLoopSidecarConnection.ts).
+#[derive(Clone)]
+enum Link {
+    Stdio,
+    /// `closed` turns true once the read side ended or failed: Node destroys
+    /// a socket whose peer ended it, so later writes find it not writable
+    /// (tcpAgentLoopSidecarConnection.ts:78-80).
+    Tcp {
+        closed: Arc<AtomicBool>,
+    },
+}
+impl Link {
+    fn ended(&self) -> HostError {
+        match self {
+            Self::Stdio => HostError::new(
+                HostErrorKind::Disconnected,
+                "Sidecar stdout closed before execute reached a terminal event.",
+            ),
+            Self::Tcp { closed } => {
+                closed.store(true, Ordering::SeqCst);
+                tcp_error("Sidecar TCP socket closed before execute reached a terminal event.")
+            }
+        }
+    }
+    fn read_failed(&self, error: std::io::Error) -> HostError {
+        match self {
+            Self::Stdio => HostError::io(error),
+            Self::Tcp { closed } => {
+                closed.store(true, Ordering::SeqCst);
+                tcp_error(format!(
+                    "Sidecar TCP socket failed before execute reached a terminal event: {}",
+                    node_socket_error("read", &error)
+                ))
+            }
+        }
+    }
+    fn write_failed(&self, error: std::io::Error) -> HostError {
+        match self {
+            Self::Stdio => HostError::io(error),
+            Self::Tcp { closed } => {
+                closed.store(true, Ordering::SeqCst);
+                tcp_error("Failed to write to sidecar TCP socket.")
+            }
+        }
+    }
+}
+
+/// A failure of the external TCP connection, worded as the baseline's
+/// connection reports it; the turn surfaces it verbatim.
+pub(super) fn tcp_error(message: impl Into<String>) -> HostError {
+    let message = message.into();
+    let mut error = HostError::new(HostErrorKind::Disconnected, message.clone());
+    error.transport_message = Some(message);
+    error
+}
+
+/// Node's socket error message (`read ECONNRESET`) for the errors a peer
+/// that vanished produces; anything else keeps the OS wording.
+fn node_socket_error(syscall: &str, error: &std::io::Error) -> String {
+    use std::io::ErrorKind;
+    let code = match error.kind() {
+        ErrorKind::ConnectionReset => "ECONNRESET",
+        ErrorKind::BrokenPipe => "EPIPE",
+        ErrorKind::ConnectionAborted => "ECONNABORTED",
+        ErrorKind::TimedOut => "ETIMEDOUT",
+        _ => return error.to_string(),
+    };
+    format!("{syscall} {code}")
+}
+
 pub(super) struct Connection {
-    child: Child,
+    /// The owned sidecar process; `None` for a TCP connection.
+    child: Option<Child>,
     #[cfg(unix)]
     group: Option<rustix::process::Pid>,
+    link: Link,
     outgoing: Option<mpsc::Sender<WriteCommand>>,
     // Separate one-slot allowances: optional writes cannot consume required
     // queue slots or its byte budget. ACKs coalesce to the latest applied seq.
@@ -36,7 +111,7 @@ pub(super) struct Connection {
     cancel: watch::Sender<Option<Arc<String>>>,
     incoming: mpsc::Receiver<Result<Frame, HostError>>,
     pumps: Vec<JoinHandle<()>>,
-    stderr_task: JoinHandle<()>,
+    stderr_task: Option<JoinHandle<()>>,
     stderr: Arc<Mutex<VecDeque<u8>>>,
     pending_required: Arc<AtomicUsize>,
     pub(super) budget: Arc<Budget>,
@@ -51,6 +126,138 @@ pub(super) struct Connection {
     // only that last wait. Production always uses `limits.close_timeout`.
     #[cfg(test)]
     reap_deadline: Option<std::time::Duration>,
+}
+
+struct Pumps {
+    outgoing: mpsc::Sender<WriteCommand>,
+    ack: watch::Sender<Option<Arc<String>>>,
+    cancel: watch::Sender<Option<Arc<String>>>,
+    incoming: mpsc::Receiver<Result<Frame, HostError>>,
+    pumps: Vec<JoinHandle<()>>,
+    pending_required: Arc<AtomicUsize>,
+}
+
+/// Start the reader and writer pumps over one byte stream pair. The writer
+/// task must stay last in `pumps` (see `close`).
+fn start_pumps<R, W>(
+    input: R,
+    mut output: W,
+    limits: Limits,
+    budget: &Arc<Budget>,
+    link: Link,
+) -> Pumps
+where
+    R: AsyncRead + Send + Unpin + 'static,
+    W: AsyncWrite + Send + Unpin + 'static,
+{
+    let (outgoing, mut writes) = mpsc::channel(limits.queue_capacity);
+    let (reads, incoming) = mpsc::channel(limits.queue_capacity);
+    let (ack, mut acks) = watch::channel(None::<Arc<String>>);
+    let (cancel, mut cancels) = watch::channel(None::<Arc<String>>);
+    let writer_errors = reads.clone();
+    let pending_required = Arc::new(AtomicUsize::new(0));
+    let pending = pending_required.clone();
+    let writer_link = link.clone();
+    let writer = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                biased;
+                command = writes.recv() => {
+                    let Some(command) = command else { break; };
+                    let result = match command {
+                        WriteCommand::Frame(line, _lease) => {
+                            let result = output.write_all(line.as_bytes()).await;
+                            if result.is_ok() { pending.fetch_sub(1, Ordering::SeqCst); }
+                            result
+                        }
+                        WriteCommand::Flush(done) => {
+                            // Include the optional slots in the barrier, but their
+                            // failures must not invalidate an authoritative final.
+                            let cancel = cancels.has_changed().unwrap_or(false).then(|| cancels.borrow_and_update().clone()).flatten();
+                            let ack = acks.has_changed().unwrap_or(false).then(|| acks.borrow_and_update().clone()).flatten();
+                            if let Some(line) = cancel { optional_write(&mut output, &line).await; }
+                            if let Some(line) = ack { optional_write(&mut output, &line).await; }
+                            match output.flush().await {
+                                Ok(()) => { let _ = done.send(()); Ok(()) }
+                                Err(e) => Err(e),
+                            }
+                        }
+                    };
+                    if let Err(error) = result {
+                        let _ = writer_errors.send(Err(writer_link.write_failed(error))).await;
+                        break;
+                    }
+                }
+                changed = cancels.changed() => {
+                    if changed.is_err() { break; }
+                    let line = cancels.borrow_and_update().clone();
+                    if let Some(line) = line { optional_write(&mut output, &line).await; }
+                }
+                changed = acks.changed() => {
+                    if changed.is_err() { break; }
+                    let line = acks.borrow_and_update().clone();
+                    if let Some(line) = line { optional_write(&mut output, &line).await; }
+                }
+            }
+        }
+    });
+    let input_budget = budget.clone();
+    let reader = tokio::spawn(async move {
+        let mut reader = BufReader::new(input);
+        let mut line = Vec::new();
+        let mut line_lease = input_budget.reserve(0).expect("empty reservation");
+        loop {
+            let available = match reader.fill_buf().await {
+                Ok([]) => {
+                    if !line.is_empty()
+                        && !deliver(&reads, std::mem::take(&mut line), line_lease).await
+                    {
+                        return;
+                    }
+                    let _ = reads.send(Err(link.ended())).await;
+                    return;
+                }
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    let _ = reads.send(Err(link.read_failed(error))).await;
+                    return;
+                }
+            };
+            let size = available
+                .iter()
+                .position(|b| *b == b'\n')
+                .map_or(available.len(), |i| i + 1);
+            if line.len() + size > limits.max_frame_bytes {
+                let _ = reads
+                    .send(Err(HostError::new(
+                        HostErrorKind::Limit,
+                        "Sidecar stdout frame exceeds configured byte limit.",
+                    )))
+                    .await;
+                return;
+            }
+            if let Err(error) = line_lease.grow(size) {
+                let _ = reads.send(Err(error)).await;
+                return;
+            }
+            line.extend_from_slice(&available[..size]);
+            reader.consume(size);
+            if line.last() == Some(&b'\n') {
+                if !deliver(&reads, std::mem::take(&mut line), line_lease).await {
+                    return;
+                }
+                line_lease = input_budget.reserve(0).expect("empty reservation");
+            }
+        }
+    });
+    Pumps {
+        outgoing,
+        ack,
+        cancel,
+        incoming,
+        pumps: vec![reader, writer],
+        pending_required,
+    }
 }
 
 impl Connection {
@@ -78,113 +285,10 @@ impl Connection {
         let group = child
             .id()
             .and_then(|pid| rustix::process::Pid::from_raw(pid as i32));
-        let mut stdin = child.stdin.take().expect("piped stdin");
+        let stdin = child.stdin.take().expect("piped stdin");
         let stdout = child.stdout.take().expect("piped stdout");
         let mut stderr_pipe = child.stderr.take().expect("piped stderr");
-        let (outgoing, mut writes) = mpsc::channel(limits.queue_capacity);
-        let (reads, incoming) = mpsc::channel(limits.queue_capacity);
-        let (ack, mut acks) = watch::channel(None::<Arc<String>>);
-        let (cancel, mut cancels) = watch::channel(None::<Arc<String>>);
-        let writer_errors = reads.clone();
-        let pending_required = Arc::new(AtomicUsize::new(0));
-        let pending = pending_required.clone();
-        let writer = tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    biased;
-                    command = writes.recv() => {
-                        let Some(command) = command else { break; };
-                        let result = match command {
-                            WriteCommand::Frame(line, _lease) => {
-                                let result = stdin.write_all(line.as_bytes()).await;
-                                if result.is_ok() { pending.fetch_sub(1, Ordering::SeqCst); }
-                                result
-                            }
-                            WriteCommand::Flush(done) => {
-                                // Include the optional slots in the barrier, but their
-                                // failures must not invalidate an authoritative final.
-                                let cancel = cancels.has_changed().unwrap_or(false).then(|| cancels.borrow_and_update().clone()).flatten();
-                                let ack = acks.has_changed().unwrap_or(false).then(|| acks.borrow_and_update().clone()).flatten();
-                                if let Some(line) = cancel { optional_write(&mut stdin, &line).await; }
-                                if let Some(line) = ack { optional_write(&mut stdin, &line).await; }
-                                match stdin.flush().await {
-                                    Ok(()) => { let _ = done.send(()); Ok(()) }
-                                    Err(e) => Err(e),
-                                }
-                            }
-                        };
-                        if let Err(error) = result {
-                            let _ = writer_errors.send(Err(HostError::io(error))).await;
-                            break;
-                        }
-                    }
-                    changed = cancels.changed() => {
-                        if changed.is_err() { break; }
-                        let line = cancels.borrow_and_update().clone();
-                        if let Some(line) = line { optional_write(&mut stdin, &line).await; }
-                    }
-                    changed = acks.changed() => {
-                        if changed.is_err() { break; }
-                        let line = acks.borrow_and_update().clone();
-                        if let Some(line) = line { optional_write(&mut stdin, &line).await; }
-                    }
-                }
-            }
-        });
-        let input_budget = budget.clone();
-        let reader = tokio::spawn(async move {
-            let mut reader = BufReader::new(stdout);
-            let mut line = Vec::new();
-            let mut line_lease = input_budget.reserve(0).expect("empty reservation");
-            loop {
-                let available = match reader.fill_buf().await {
-                    Ok([]) => {
-                        if !line.is_empty()
-                            && !deliver(&reads, std::mem::take(&mut line), line_lease).await
-                        {
-                            return;
-                        }
-                        let _ = reads
-                            .send(Err(HostError::new(
-                                HostErrorKind::Disconnected,
-                                "Sidecar stdout closed before execute reached a terminal event.",
-                            )))
-                            .await;
-                        return;
-                    }
-                    Ok(bytes) => bytes,
-                    Err(error) => {
-                        let _ = reads.send(Err(HostError::io(error))).await;
-                        return;
-                    }
-                };
-                let size = available
-                    .iter()
-                    .position(|b| *b == b'\n')
-                    .map_or(available.len(), |i| i + 1);
-                if line.len() + size > limits.max_frame_bytes {
-                    let _ = reads
-                        .send(Err(HostError::new(
-                            HostErrorKind::Limit,
-                            "Sidecar stdout frame exceeds configured byte limit.",
-                        )))
-                        .await;
-                    return;
-                }
-                if let Err(error) = line_lease.grow(size) {
-                    let _ = reads.send(Err(error)).await;
-                    return;
-                }
-                line.extend_from_slice(&available[..size]);
-                reader.consume(size);
-                if line.last() == Some(&b'\n') {
-                    if !deliver(&reads, std::mem::take(&mut line), line_lease).await {
-                        return;
-                    }
-                    line_lease = input_budget.reserve(0).expect("empty reservation");
-                }
-            }
-        });
+        let pumps = start_pumps(stdout, stdin, limits, &budget, Link::Stdio);
         // TS stdio:81-84,158-169: drain continuously, retain only the tail.
         let stderr = Arc::new(Mutex::new(VecDeque::new()));
         let retained = stderr.clone();
@@ -200,18 +304,67 @@ impl Connection {
                 tail.drain(..excess);
             }
         });
-        Ok(Self {
+        Ok(Self::assemble(
+            Some(child),
+            #[cfg(unix)]
+            group,
+            Link::Stdio,
+            pumps,
+            Some(stderr_task),
+            stderr,
+            budget,
+            limits,
+        ))
+    }
+
+    /// One connection to a long-lived TCP sidecar (TS
+    /// `TcpAgentLoopSidecarConnection`): the socket carries the same NDJSON
+    /// frames; there is no process or stderr to own.
+    pub(super) fn tcp(stream: tokio::net::TcpStream, limits: Limits) -> Self {
+        let budget = Budget::new(limits.max_buffered_bytes);
+        let _ = stream.set_nodelay(true);
+        let (input, output) = stream.into_split();
+        let link = Link::Tcp {
+            closed: Arc::new(AtomicBool::new(false)),
+        };
+        let pumps = start_pumps(input, output, limits, &budget, link.clone());
+        Self::assemble(
+            None,
+            #[cfg(unix)]
+            None,
+            link,
+            pumps,
+            None,
+            Arc::new(Mutex::new(VecDeque::new())),
+            budget,
+            limits,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn assemble(
+        child: Option<Child>,
+        #[cfg(unix)] group: Option<rustix::process::Pid>,
+        link: Link,
+        pumps: Pumps,
+        stderr_task: Option<JoinHandle<()>>,
+        stderr: Arc<Mutex<VecDeque<u8>>>,
+        budget: Arc<Budget>,
+        limits: Limits,
+    ) -> Self {
+        Self {
             child,
             #[cfg(unix)]
             group,
-            outgoing: Some(outgoing),
-            ack,
-            cancel,
-            incoming,
-            pumps: vec![reader, writer],
+            link,
+            outgoing: Some(pumps.outgoing),
+            ack: pumps.ack,
+            cancel: pumps.cancel,
+            incoming: pumps.incoming,
+            pumps: pumps.pumps,
             stderr_task,
             stderr,
-            pending_required,
+            pending_required: pumps.pending_required,
             budget,
             limits,
             closed: false,
@@ -220,10 +373,20 @@ impl Connection {
             term_sent: Arc::new(AtomicUsize::new(0)),
             #[cfg(test)]
             reap_deadline: None,
-        })
+        }
+    }
+
+    /// True for a connection to an external TCP sidecar.
+    pub(super) fn is_tcp(&self) -> bool {
+        matches!(self.link, Link::Tcp { .. })
     }
 
     pub(super) fn send(&self, value: &JsValue) -> Result<(), HostError> {
+        if let Link::Tcp { closed } = &self.link
+            && closed.load(Ordering::SeqCst)
+        {
+            return Err(tcp_error("Sidecar TCP socket is not writable."));
+        }
         let line = self.encode(value)?;
         let lease = self.budget.reserve(line.len())?;
         self.pending_required.fetch_add(1, Ordering::SeqCst);
@@ -321,7 +484,7 @@ impl Connection {
             .into()
     }
     pub(super) fn pid(&self) -> Option<u32> {
-        self.child.id()
+        self.child.as_ref().and_then(Child::id)
     }
 
     #[cfg(test)]
@@ -367,6 +530,10 @@ impl Connection {
             .map_err(|error| HostError::io(error.into()))
     }
     async fn stop_child(&mut self) -> Result<(), HostError> {
+        if self.child.is_none() {
+            // A TCP connection owns no process: the long-lived sidecar stays.
+            return Ok(());
+        }
         #[cfg(unix)]
         {
             if !self.wait_for_exit_unreaped().await? {
@@ -381,12 +548,15 @@ impl Connection {
         }
         #[cfg(not(unix))]
         {
-            if let Ok(result) = timeout(self.limits.close_timeout, self.child.wait()).await {
+            let child = self.child.as_mut().expect("checked above");
+            if let Ok(result) = timeout(self.limits.close_timeout, child.wait()).await {
                 return result.map(|_| ()).map_err(HostError::io);
             }
-            let _ = self.child.start_kill();
+            let _ = child.start_kill();
         }
-        let status = timeout(self.reap_deadline(), self.child.wait())
+        let reap_deadline = self.reap_deadline();
+        let child = self.child.as_mut().expect("checked above");
+        let status = timeout(reap_deadline, child.wait())
             .await
             .map_err(|_| {
                 HostError::new(HostErrorKind::Timeout, "Sidecar did not exit after kill.")
@@ -417,12 +587,13 @@ impl Connection {
         let result = self.stop_child().await;
         // TS stdio:123-154 keeps collecting exit diagnostics. EOF normally wins;
         // a descendant that escaped the owned process group cannot hang close.
-        if timeout(self.limits.close_timeout, &mut self.stderr_task)
-            .await
-            .is_err()
+        if let Some(stderr_task) = self.stderr_task.as_mut()
+            && timeout(self.limits.close_timeout, &mut *stderr_task)
+                .await
+                .is_err()
         {
-            self.stderr_task.abort();
-            let _ = timeout(self.limits.close_timeout, &mut self.stderr_task).await;
+            stderr_task.abort();
+            let _ = timeout(self.limits.close_timeout, stderr_task).await;
         }
         let _ = timeout(self.limits.close_timeout, async {
             for task in self.pumps.drain(..) {
@@ -443,7 +614,9 @@ impl Drop for Connection {
         for pump in &self.pumps {
             pump.abort();
         }
-        self.stderr_task.abort();
+        if let Some(stderr_task) = &self.stderr_task {
+            stderr_task.abort();
+        }
         // Child::kill_on_drop also reaps dropped spawn/execute futures.
     }
 }
@@ -463,9 +636,9 @@ async fn deliver(
     let valid = value.is_ok();
     sender.send(value).await.is_ok() && valid
 }
-async fn optional_write(stdin: &mut tokio::process::ChildStdin, line: &str) {
+async fn optional_write<W: AsyncWrite + Unpin>(output: &mut W, line: &str) {
     // TS client:943-970: cancel and ACK failures never enter the input stream.
-    if let Err(error) = stdin.write_all(line.as_bytes()).await {
+    if let Err(error) = output.write_all(line.as_bytes()).await {
         best_effort_log(format_args!(
             "Sidecar optional write failed (best-effort): {error}"
         ));
@@ -601,7 +774,7 @@ mod tests {
         assert!(connection.wait_for_exit_unreaped().await.unwrap());
         connection.kill_group();
         assert!(connection.group.is_none());
-        connection.child.wait().await.unwrap();
+        connection.child.as_mut().unwrap().wait().await.unwrap();
         assert_eq!(connection.pid(), None);
         connection.close().await.unwrap();
         assert!(connection.group.is_none());

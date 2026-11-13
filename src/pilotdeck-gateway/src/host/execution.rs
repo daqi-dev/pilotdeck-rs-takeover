@@ -199,6 +199,8 @@ pub(super) async fn run(
     let mut drain_deadline = None;
     let callbacks = &mut scope.callbacks;
     let mut interruption = None;
+    // A TCP read failure held back while a module call is still running.
+    let mut ended_during_call: Option<HostError> = None;
     // True once the cancel deadline is seen already elapsed at a loop top,
     // i.e. this future resumed after being unpolled (a slow consumer). One
     // scheduling turn is then granted so an application spawned on this poll
@@ -363,6 +365,16 @@ pub(super) async fn run(
                                 break;
                             }
                         }
+                        // The read side ended while this call ran: its reply
+                        // write has now met the closed socket, or this was
+                        // the last call outstanding.
+                        if let Some(ended) = ended_during_call.take() {
+                            if calls.values().any(|call| call.response.is_none()) && interruption.is_none() {
+                                ended_during_call = Some(ended);
+                            } else if interruption.is_none() {
+                                interruption = Some(ended);
+                            }
+                        }
                     }
                     Completed::Event(event, aborted, result) => {
                         result?;
@@ -403,9 +415,18 @@ pub(super) async fn run(
                 }
                 return Err(post_cancel_timeout());
             }
-            input = client.connection.receive(), if !terminal_received => {
+            input = client.connection.receive(), if !terminal_received && ended_during_call.is_none() => {
                 let raw = match input {
                     Ok(raw) => raw,
+                    // TS client:570-579 handles one message at a time: a
+                    // module call is dispatched and answered before the next
+                    // read, so a TCP peer that went away mid-call is found by
+                    // the reply write (tcpAgentLoopSidecarConnection.ts:78-80).
+                    Err(error) if client.connection.is_tcp()
+                        && calls.values().any(|call| call.response.is_none()) => {
+                        ended_during_call = Some(error);
+                        continue;
+                    }
                     Err(error) => { interruption = Some(error); continue; }
                 };
                 match decode(&raw)? {
@@ -443,7 +464,24 @@ pub(super) async fn run(
                             || event.identity.operation_id != &identity.operation_id || event.identity.request_id != &identity.request_id {
                             return Err(HostError::protocol("Sidecar event identity does not match the active execution (or event before acceptance)."));
                         }
-                        let aborted = validate_event(event, &identity, &cancellation)?;
+                        let aborted = match validate_event(event, &identity, &cancellation) {
+                            // The baseline's external client counts the final
+                            // (client:889-892) before `readFinalTerminal`
+                            // rejects a payload without a result
+                            // (client:1320-1326); the loop's own error is not
+                            // rethrown as an in-process loop would.
+                            Err(error) if client.external_loop
+                                && event.final_event
+                                && event.sequence.value() == next_sequence
+                                && (error.kind == HostErrorKind::LoopFailure
+                                    || error.message == NO_TERMINAL_RESULT) => {
+                                progress.last_applied_sequence.store(next_sequence.to_bits(), Ordering::SeqCst);
+                                let mut error = HostError::protocol(NO_TERMINAL_RESULT);
+                                error.transport_message = Some(NO_TERMINAL_RESULT.into());
+                                return Err(error);
+                            }
+                            result => result?,
+                        };
                         if event.sequence.value() != next_sequence {
                             return Err(HostError::protocol(format!("Sidecar event sequence mismatch: expected {next_sequence}, got {}.", event.sequence.value())));
                         }
@@ -637,6 +675,8 @@ pub(super) fn module_response(call: &JsValue, result: Result<JsObject, HostError
     }
     JsValue::Object(response)
 }
+const NO_TERMINAL_RESULT: &str = "Sidecar terminal payload does not contain an AgentLoop result.";
+
 pub(super) fn validate_event(
     event: EventRef<'_>,
     identity: &ExecutionIdentity,
@@ -717,11 +757,7 @@ pub(super) fn validate_event(
             .payload
             .get("result")
             .and_then(JsValue::as_object)
-            .ok_or_else(|| {
-                HostError::protocol(
-                    "Sidecar terminal payload does not contain an AgentLoop result.",
-                )
-            })?;
+            .ok_or_else(|| HostError::protocol(NO_TERMINAL_RESULT))?;
         if !matches!(event.payload.get("messages"), Some(JsValue::Array(_)))
             || !matches_identity(result, true)
             || result

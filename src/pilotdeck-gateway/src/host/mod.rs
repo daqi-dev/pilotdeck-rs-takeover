@@ -247,6 +247,11 @@ pub struct HostError {
     /// A [`HostErrorKind::LoopFailure`]'s `modelState`: what the loop had
     /// recorded before it failed, kept for the session's next turn.
     pub model_state: Option<Box<JsValue>>,
+    /// An external loop's failure worded as the baseline client throws it
+    /// (the TCP connection's own errors, tcpAgentLoopSidecarConnection.ts;
+    /// the handshake's module identity check), which the turn reports
+    /// verbatim.
+    pub transport_message: Option<String>,
 }
 
 /// How a sidecar child process ended (TS `ExitStatus`,
@@ -307,6 +312,7 @@ impl HostError {
             diagnostic: String::new(),
             exit: None,
             model_state: None,
+            transport_message: None,
         }
     }
     fn protocol(message: impl Into<String>) -> Self {
@@ -558,6 +564,9 @@ pub struct HostClient {
     reconnect_command: Option<Command>,
     reconnect_attempted: bool,
     reconnect_succeeded: bool,
+    /// The loop is the baseline's external module (an explicit stdio or tcp
+    /// deployment), whose client reads terminals with its own rules.
+    pub(super) external_loop: bool,
     #[cfg(test)]
     test_signals: tests::ExecutionSignals,
 }
@@ -569,10 +578,52 @@ impl HostClient {
         limits: Limits,
     ) -> Result<Self, HostError> {
         limits.validate()?;
-        let mut connection = Connection::spawn(command, limits).map_err(|mut error| {
+        let connection = Connection::spawn(command, limits).map_err(|mut error| {
             error.exit = Some(Box::new(SidecarExit::StartFailed(error.message.clone())));
             error
         })?;
+        Self::handshaken(connection, expected_module_id, limits).await
+    }
+    /// Connect to a long-lived TCP sidecar (TS
+    /// `createTcpAgentLoopSidecarConnectionFactory`,
+    /// tcpAgentLoopSidecarConnection.ts:26-38, 135-161): one connection per
+    /// turn, bounded by the connect timeout (5000 ms by default); a refused or
+    /// timed-out connect fails the turn before execute. The socket is never
+    /// reopened: the baseline sidecar does not advertise stream resume, so
+    /// its client never reconnects (agentLoopSidecarClient.ts:895-904).
+    pub async fn connect_tcp(
+        host: &str,
+        port: u16,
+        connect_timeout_ms: u64,
+        expected_module_id: Option<&JsString>,
+        limits: Limits,
+    ) -> Result<Self, HostError> {
+        limits.validate()?;
+        let stream = match timeout(
+            Duration::from_millis(connect_timeout_ms),
+            tokio::net::TcpStream::connect((host, port)),
+        )
+        .await
+        {
+            Ok(Ok(stream)) => stream,
+            Ok(Err(_)) => {
+                return Err(connection::tcp_error(
+                    "Failed to connect to sidecar TCP server.",
+                ));
+            }
+            Err(_) => {
+                return Err(connection::tcp_error(format!(
+                    "Timed out connecting to sidecar TCP server after {connect_timeout_ms}ms."
+                )));
+            }
+        };
+        Self::handshaken(Connection::tcp(stream, limits), expected_module_id, limits).await
+    }
+    async fn handshaken(
+        mut connection: Connection,
+        expected_module_id: Option<&JsString>,
+        limits: Limits,
+    ) -> Result<Self, HostError> {
         let handshake = bounded(
             limits.handshake_timeout,
             handshake(&mut connection, expected_module_id, None),
@@ -594,6 +645,7 @@ impl HostClient {
                 reconnect_command: None,
                 reconnect_attempted: false,
                 reconnect_succeeded: false,
+                external_loop: false,
                 #[cfg(test)]
                 test_signals: tests::ExecutionSignals::default(),
             }),
@@ -617,6 +669,11 @@ impl HostClient {
         let mut client = Self::spawn(&mut command, expected_module_id, limits).await?;
         client.reconnect_command = Some(command);
         Ok(client)
+    }
+    /// This connection runs the baseline's external loop module.
+    pub fn as_external_loop(mut self) -> Self {
+        self.external_loop = true;
+        self
     }
     pub fn binding(&self) -> &SidecarBinding {
         &self.binding
@@ -755,10 +812,18 @@ async fn handshake(
         let binding = parse_sidecar_binding(response)
             .map_err(|e| HostError::protocol(String::from_utf16_lossy(e.message.units())))?;
         if method == "hello" {
-            if expected_module_id.is_some_and(|id| *id != binding.module_id) {
-                return Err(HostError::protocol(
-                    "Sidecar module identity does not match configured implementation.",
-                ));
+            if let Some(expected) = expected_module_id
+                && *expected != binding.module_id
+            {
+                // TS client:811-813; an external loop's turn reports it as is.
+                let message = format!(
+                    "Sidecar module identity '{}' does not match configured implementation '{}'.",
+                    String::from_utf16_lossy(binding.module_id.units()),
+                    String::from_utf16_lossy(expected.units()),
+                );
+                let mut error = HostError::protocol(message.clone());
+                error.transport_message = Some(message);
+                return Err(error);
             }
             // TS client:814-820: generation may change, the stream owner may not.
             if let Some((previous, handler)) = previous {

@@ -59,6 +59,8 @@ impl ToolDefinition for ExternalToolDefinition {
 /// (its manifest cache and `module-http-N` counter live with the session).
 pub(super) struct ExternalToolPort {
     client: ExternalSkillsPort<HyperModuleTransport>,
+    /// The resolved binding, for a child session's own port.
+    binding: JsValue,
     tools: Vec<Arc<ExternalToolDefinition>>,
     /// `options.methods?.includes("execute_batch")`.
     batch: bool,
@@ -117,9 +119,18 @@ impl ExternalToolPort {
             .collect();
         Some(Self {
             client: ExternalSkillsPort::new(parsed, Arc::new(HyperModuleTransport::new())),
+            binding: binding.clone(),
             tools,
             batch,
         })
+    }
+
+    /// A child session's own port over the same binding: a subagent session
+    /// composes its module ports anew (`createRuntimeModulePorts(
+    /// config.moduleBindings, sessionId)`, AgentSessionRuntimeBundle.ts:156),
+    /// so it has its own module client (manifest, message ids).
+    pub(super) fn fresh(&self) -> Option<Self> {
+        Self::from_binding(&self.binding)
     }
 
     pub(super) fn tools(&self) -> &[Arc<ExternalToolDefinition>] {
@@ -138,6 +149,7 @@ impl ExternalToolPort {
         calls: Vec<ToolCall>,
         context: &ToolInvocationContext,
         host_permission: Option<&JsObject>,
+        external_loop: bool,
     ) -> Result<Vec<JsObject>, HostError> {
         let runtime = context
             .runtime
@@ -154,8 +166,8 @@ impl ExternalToolPort {
             move || run.is_aborted()
         };
         let wire_context = serialize_tool_context(&runtime.fields, host_permission);
-        let wire_execution = serialize_execution_context(&execution.fields);
-        let identity = CallIdentity::of(&execution.fields);
+        let wire_execution = serialize_execution_context(&execution.fields, external_loop);
+        let identity = CallIdentity::of(&execution.fields, external_loop);
 
         if self.batch && !calls.is_empty() {
             let payload = object([
@@ -297,13 +309,18 @@ struct CallIdentity {
 }
 impl CallIdentity {
     /// The in-process loop's execution context has no `operationId` or
-    /// `idempotencyKey`: the call falls back to the turn id.
-    fn of(execution: &JsObject) -> Self {
+    /// `idempotencyKey`: the call falls back to the turn id. An external
+    /// loop's context carries what its execute request named.
+    fn of(execution: &JsObject, external_loop: bool) -> Self {
         let text = |key: &str| execution.get(key).and_then(JsValue::as_string).cloned();
         Self {
             run_id: text("runId").unwrap_or_default(),
-            operation_id: text("turnId").unwrap_or_default(),
-            idempotency_key: None,
+            operation_id: external_loop
+                .then(|| text("operationId"))
+                .flatten()
+                .or_else(|| text("turnId"))
+                .unwrap_or_default(),
+            idempotency_key: external_loop.then(|| text("idempotencyKey")).flatten(),
         }
     }
     fn call(&self, request_id: String, payload: JsObject) -> ModuleCall {
@@ -603,10 +620,24 @@ fn serialize_tool_context(fields: &JsObject, host_permission: Option<&JsObject>)
     context
 }
 
-/// `serializeExecutionContext(execution)` of the in-process loop's execution
-/// context, which carries only the run and turn ids.
-fn serialize_execution_context(fields: &JsObject) -> JsObject {
-    pick(fields, &["runId", "turnId"])
+/// `serializeExecutionContext(execution)` (hostToolPort.ts:421-429). The
+/// in-process loop's execution context carries only the run and turn ids; an
+/// external loop's also carries its operation fields.
+fn serialize_execution_context(fields: &JsObject, external_loop: bool) -> JsObject {
+    if external_loop {
+        pick(
+            fields,
+            &[
+                "runId",
+                "turnId",
+                "operationId",
+                "idempotencyKey",
+                "operationDeadline",
+            ],
+        )
+    } else {
+        pick(fields, &["runId", "turnId"])
+    }
 }
 
 fn pick(fields: &JsObject, keys: &[&str]) -> JsObject {
@@ -709,6 +740,9 @@ pub(super) struct ComposedTools {
     /// The session's own permission context for this turn (the host
     /// config's `permissionContext`, SessionAgentConfigBundle.ts:176-186).
     pub(super) host_permission: Option<JsObject>,
+    /// The loop is an external module: the execution context the host
+    /// received from it is the sidecar's whole serialized context.
+    pub(super) external_loop: bool,
 }
 
 impl ToolCatalog for ComposedTools {
@@ -743,6 +777,7 @@ impl ToolExecution for ComposedTools {
         let native = self.native.clone();
         let late = self.late.clone();
         let host_permission = self.host_permission.clone();
+        let external_loop = self.external_loop;
         Box::pin(async move {
             let native_tools = native.list().await?;
             let native_safe: HashMap<JsString, Arc<dyn ToolDefinition>> = native_tools
@@ -795,7 +830,7 @@ impl ToolExecution for ComposedTools {
                     let (indexes, calls): (Vec<usize>, Vec<ToolCall>) = group.into_iter().unzip();
                     let results = if owned {
                         external
-                            .execute_all(calls, &context, host_permission.as_ref())
+                            .execute_all(calls, &context, host_permission.as_ref(), external_loop)
                             .await?
                     } else {
                         native.execute_all(calls, context).await?
