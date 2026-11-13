@@ -1174,12 +1174,12 @@ async fn start_assembly(
                             Some((deployment, _)) => Some(deployment.clone()),
                             None => explicit_deployment(&env, &options.sidecar, &project_root),
                         };
-                        let deployment = explicit.clone().unwrap_or_else(|| Deployment::Stdio {
-                            command: options.sidecar.to_string_lossy().into_owned(),
-                            args: options.sidecar_args.clone(),
-                            cwd: project_root.clone(),
-                            env: env.clone(),
-                        });
+                        // Without one, the gateway's own loop runs inside
+                        // this process (createAgentSession.ts:132).
+                        let deployment =
+                            explicit.clone().unwrap_or_else(|| Deployment::InProcess {
+                                cwd: project_root.clone(),
+                            });
                         continuation_parent.bind_recorder(binding.recorder.clone());
                         let tool_checkpoint = binding.checkpoint.clone();
                         // `GatewayUserDialogChannel` (ProjectSessionRuntimeBundle.ts:

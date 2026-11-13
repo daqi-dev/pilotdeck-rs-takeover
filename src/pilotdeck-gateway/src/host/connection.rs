@@ -99,8 +99,11 @@ fn node_socket_error(syscall: &str, error: &std::io::Error) -> String {
 }
 
 pub(super) struct Connection {
-    /// The owned sidecar process; `None` for a TCP connection.
+    /// The owned sidecar process; `None` for a TCP or in-process connection.
     child: Option<Child>,
+    /// The end of the thread serving an in-process connection
+    /// ([`super::in_process`]); `None` otherwise.
+    hosted: Option<oneshot::Receiver<super::in_process::LoopEnd>>,
     #[cfg(unix)]
     group: Option<rustix::process::Pid>,
     link: Link,
@@ -354,6 +357,7 @@ impl Connection {
     ) -> Self {
         Self {
             child,
+            hosted: None,
             #[cfg(unix)]
             group,
             link,
@@ -374,6 +378,33 @@ impl Connection {
             #[cfg(test)]
             reap_deadline: None,
         }
+    }
+
+    /// One connection to the gateway's own loop served in this process
+    /// ([`super::in_process`]): the same frames over in-memory pipes, worded
+    /// like the stdio child it replaces. There is no process or stderr.
+    pub(super) fn in_process(launched: super::in_process::Launched, limits: Limits) -> Self {
+        let budget = Budget::new(limits.max_buffered_bytes);
+        let pumps = start_pumps(
+            launched.output,
+            launched.input,
+            limits,
+            &budget,
+            Link::Stdio,
+        );
+        let mut connection = Self::assemble(
+            None,
+            #[cfg(unix)]
+            None,
+            Link::Stdio,
+            pumps,
+            None,
+            Arc::new(Mutex::new(VecDeque::new())),
+            budget,
+            limits,
+        );
+        connection.hosted = Some(launched.ended);
+        connection
     }
 
     /// True for a connection to an external TCP sidecar.
@@ -530,6 +561,17 @@ impl Connection {
             .map_err(|error| HostError::io(error.into()))
     }
     async fn stop_child(&mut self) -> Result<(), HostError> {
+        if let Some(ended) = self.hosted.as_mut() {
+            // Input is closed: the server settles, retires the connection
+            // and returns. A thread that does not end within the bound is
+            // left to finish on its own; there is nothing to kill, and it
+            // holds nothing the gateway waits for (both pipes are closed).
+            if let Ok(Ok(end)) = timeout(self.limits.close_timeout, ended).await {
+                self.exit = Some(super::SidecarExit::Code(Some(end.exit_code())));
+            }
+            self.hosted = None;
+            return Ok(());
+        }
         if self.child.is_none() {
             // A TCP connection owns no process: the long-lived sidecar stays.
             return Ok(());
