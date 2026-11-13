@@ -178,19 +178,28 @@ impl PermissionPrompt {
         suggestions: Option<&JsValue>,
         context: &ToolRunContext,
     ) -> PromptOutcome {
-        self.deliver(hook_status(
-            "hook_execution_started",
-            "PermissionRequest",
-            false,
-        ));
+        // The answerer is inherited by forks, but the hook execution belongs
+        // to the actual tool session. Match the gateway's session projection;
+        // the permission request itself still routes through this answerer.
+        let project_hook =
+            context.fields.get("sessionId").and_then(JsValue::as_string) == Some(&self.session);
+        if project_hook {
+            self.deliver(hook_status(
+                "hook_execution_started",
+                "PermissionRequest",
+                false,
+            ));
+        }
         let outcome = self
             .ask(tool_name, tool_call_id, input, suggestions, context)
             .await;
-        self.deliver(hook_status(
-            "hook_execution_completed",
-            "PermissionRequest",
-            true,
-        ));
+        if project_hook {
+            self.deliver(hook_status(
+                "hook_execution_completed",
+                "PermissionRequest",
+                true,
+            ));
+        }
         outcome
     }
 

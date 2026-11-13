@@ -116,3 +116,79 @@ async fn h1_permission_request_drop_cannot_remove_same_key_successor() {
     assert_eq!(coordinator.permission_bus().pending_count(&"s".into()), 1);
     newer.dispose();
 }
+
+#[tokio::test]
+async fn callback_status_is_session_scoped_while_child_permission_uses_parent_answerer() {
+    for actual_session in [Some("s"), Some("s::sub::child"), None] {
+        let coordinator = Arc::new(GatewayInteractionCoordinator::default());
+        let emitted = Arc::new(Mutex::new(Vec::<(JsString, JsValue)>::new()));
+        let prompt = PermissionPrompt {
+            session: "s".into(),
+            coordinator: coordinator.clone(),
+            emit: Arc::default(),
+            rules: RuleSetHandle::default(),
+            timeout: Duration::from_secs(30),
+            interaction: SessionInteraction::default(),
+        };
+        let seen = emitted.clone();
+        assert!(
+            prompt
+                .emit
+                .set(Arc::new(move |session, event| {
+                    seen.lock().unwrap().push((session.clone(), event));
+                    true
+                }))
+                .is_ok()
+        );
+        let mut run = context();
+        if let Some(session) = actual_session {
+            run.fields.insert("sessionId".into(), session.into());
+        }
+        let (tool, call, input) = ("write_file".into(), "child-tool".into(), JsValue::Null);
+        let mut pending = Box::pin(prompt.request(&tool, &call, &input, None, &run));
+        std::future::poll_fn(|cx| {
+            assert!(pending.as_mut().poll(cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        assert_eq!(coordinator.permission_bus().pending_count(&"s".into()), 1);
+        let request_id = {
+            let rows = emitted.lock().unwrap();
+            assert!(rows.iter().all(|(session, _)| session.equals_str("s")));
+            assert_eq!(rows.len(), if actual_session == Some("s") { 2 } else { 1 });
+            rows.iter()
+                .find(|(_, event)| event.get("type") == Some(&"permission_request".into()))
+                .unwrap()
+                .1
+                .get("requestId")
+                .unwrap()
+                .as_string()
+                .unwrap()
+                .clone()
+        };
+        let decision = || PermissionDecision {
+            request_id: request_id.clone(),
+            decision: "allow".into(),
+            remember: Some(JsValue::Bool(false)),
+            reason: None,
+        };
+        assert!(!coordinator.decide_permission(&"s::sub::child".into(), decision(), None));
+        assert!(coordinator.decide_permission(&"s".into(), decision(), None));
+        assert!(matches!(pending.await, PromptOutcome::Allow));
+        assert_eq!(coordinator.permission_bus().pending_count(&"s".into()), 0);
+        let rows = emitted.lock().unwrap();
+        let states: Vec<_> = rows
+            .iter()
+            .filter_map(|(_, event)| event.get("event").and_then(JsValue::as_string))
+            .map(|s| String::from_utf16_lossy(s.units()))
+            .collect();
+        assert_eq!(
+            states,
+            if actual_session == Some("s") {
+                vec!["hook_execution_started", "hook_execution_completed"]
+            } else {
+                Vec::new()
+            }
+        );
+    }
+}

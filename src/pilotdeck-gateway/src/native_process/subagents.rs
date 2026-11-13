@@ -598,6 +598,23 @@ fn filter_parent_system(prompt: &str, definition: &SubagentDefinition) -> String
     next.trim_end_matches(js_space).to_owned()
 }
 
+/// OneShotSubagentPort caps the first 64 AgentLoop events. The live-session
+/// adapter also yields session preflight events; they must not consume that
+/// loop activity budget (SubAgentSession.runNative iterates the loop directly).
+fn collect_observer_activity(activity: &mut Vec<JsValue>, event: &JsValue) {
+    let kind = event.get("type").and_then(JsValue::as_string);
+    if kind.is_some_and(|kind| {
+        ["turn_started", "input_accepted", "user_prompt_submitted"]
+            .iter()
+            .any(|name| kind.equals_str(name))
+    }) {
+        return;
+    }
+    if activity.len() < 64 {
+        activity.push(event.clone());
+    }
+}
+
 /// `input.replace(/(?:^|\n)\s*<tag(?:\s[^>]*)?>[\s\S]*?<\/tag>\s*/g, "\n")`.
 fn strip_block(input: &str, tag: &str) -> String {
     let open = format!("<{tag}");
@@ -1105,11 +1122,7 @@ impl Fork {
                 Step::Next(Err(error)) => break Some(fail(&error.message)),
             };
             let kind = event.get("type").and_then(JsValue::as_string).map(text);
-            if activity.len() < 64
-                && !matches!(kind.as_deref(), Some("turn_started" | "user_input"))
-            {
-                activity.push(event.clone());
-            }
+            collect_observer_activity(activity, &event);
             match kind.as_deref() {
                 // The descriptor is the entry right after `turn_started`,
                 // before the first visible child input
@@ -1565,6 +1578,53 @@ impl SubagentFork for Fork {
 mod tests {
     use super::*;
     use crate::runtime::tools::builtin::agent::subagent_definition;
+
+    #[test]
+    fn observer_activity_cap_counts_loop_events_without_session_preflight() {
+        let mut activity = Vec::new();
+        for kind in ["turn_started", "input_accepted", "user_prompt_submitted"] {
+            collect_observer_activity(
+                &mut activity,
+                &JsValue::Object(object([("type", kind.into())])),
+            );
+        }
+        assert!(activity.is_empty());
+        // These raw model events have no digest line, but still consume the
+        // baseline's raw-loop budget. Filtering only printable lines is wrong.
+        for index in 0..63 {
+            collect_observer_activity(
+                &mut activity,
+                &JsValue::Object(object([
+                    ("type", "model_event".into()),
+                    ("index", JsValue::Number(f64::from(index))),
+                ])),
+            );
+        }
+        let assistant = JsValue::Object(object([("type", "assistant_message".into())]));
+        collect_observer_activity(&mut activity, &assistant);
+        collect_observer_activity(
+            &mut activity,
+            &JsValue::Object(object([
+                ("type", "warning".into()),
+                ("code", "REAL-LOOP-EVENT-65".into()),
+            ])),
+        );
+        assert_eq!(activity.len(), 64);
+        assert_eq!(activity[63], assistant);
+        assert_eq!(activity[0].get("index"), Some(&JsValue::Number(0.0)));
+        let definition = SubagentDefinition::default();
+        let directive = observer::digest(&definition, &"bounded".into(), &activity, Ok("done"));
+        let directive = text(&directive);
+        assert!(directive.contains("- assistant response emitted"));
+        assert!(!directive.contains("REAL-LOOP-EVENT-65"));
+        assert_eq!(
+            activity
+                .iter()
+                .filter(|event| event.get("type") == Some(&"model_event".into()))
+                .count(),
+            63
+        );
+    }
 
     #[test]
     fn preview_cuts_between_code_points_at_the_byte_cap() {
