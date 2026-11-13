@@ -29,13 +29,21 @@ mod permission_faults;
 mod skip_line;
 
 #[derive(Default)]
-struct CaptureTransport(std::sync::Arc<std::sync::Mutex<Vec<Value>>>);
+struct CaptureTransport(
+    std::sync::Arc<std::sync::Mutex<Vec<Value>>>,
+    /// The same bodies as sent, byte for byte (key order kept).
+    std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+);
 
 impl ModelHttpTransport for CaptureTransport {
     fn send(&self, request: Request<Full<Bytes>>) -> TransportFuture {
         let bodies = self.0.clone();
+        let raw = self.1.clone();
         TransportFuture::io(async move {
             let bytes = request.into_body().collect().await.unwrap().to_bytes();
+            raw.lock()
+                .unwrap()
+                .push(String::from_utf8(bytes.to_vec()).unwrap());
             bodies
                 .lock()
                 .unwrap()
@@ -149,13 +157,14 @@ fn run_case(protocol: &str, enabled: Option<&str>) {
         exact_receipt::single_pass(&output.status, "dump_child", &stdout),
         "#942 dump rerun (enabled gate) matched no test: {protocol}/{enabled:?}:\n{stdout}\n{stderr}"
     );
-    let sent: Value = serde_json::from_str(
-        stdout
-            .lines()
-            .find_map(|line| line.strip_prefix("SENT_BODY="))
-            .expect("child must exercise the transport"),
-    )
-    .unwrap();
+    let sent_raw = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("SENT_BODY="))
+        .expect("child must exercise the transport");
+    let sent: Value = serde_json::from_str(sent_raw).unwrap();
+    let sent_text = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("SENT_RAW="));
     assert_eq!(sent["dumpMarker"], marker);
 
     // Closed-dump check: the filesystem of the child's own temp directory,
@@ -184,7 +193,13 @@ fn run_case(protocol: &str, enabled: Option<&str>) {
         let contents = std::fs::read_to_string(path)
             .unwrap_or_else(|error| panic!("read child-reported dump {path:?}: {error}"));
         assert_eq!(serde_json::from_str::<Value>(&contents).unwrap(), sent);
-        assert_eq!(contents, serde_json::to_string_pretty(&sent).unwrap());
+        // `JSON.stringify(body, null, 2)`: the sent body's own key order
+        // (compacting the dump gives the sent text back), two-space indent.
+        assert_eq!(
+            Some(compact_json_text(&contents).as_str()),
+            sent_text.map(compact_json_text).as_deref()
+        );
+        assert!(contents.starts_with("{\n  \""), "{contents}");
     } else {
         assert!(
             dumps.is_empty(),
@@ -794,4 +809,28 @@ async fn dump_child() {
     );
     assert_eq!(bodies[0]["dumpMarker"], marker);
     println!("SENT_BODY={}", bodies[0]);
+    println!("SENT_RAW={}", transport.1.lock().unwrap()[0]);
+}
+
+/// The text with every whitespace character outside string literals removed.
+fn compact_json_text(text: &str) -> String {
+    let (mut out, mut in_string, mut escaped) = (String::new(), false, false);
+    for ch in text.chars() {
+        if in_string {
+            out.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+        } else if ch == '"' {
+            in_string = true;
+            out.push(ch);
+        } else if !ch.is_whitespace() {
+            out.push(ch);
+        }
+    }
+    out
 }
