@@ -1,0 +1,24 @@
+{
+ "name": "agent-loop-sidecar-tcp-kill",
+ "about": "PILOTDECK_AGENT_LOOP_TRANSPORT=tcp，一轮进行中（宿主正替 sidecar 发模型请求时）sidecar 进程被 SIGKILL：默认 sidecar 不支持续传（agentLoopSidecarServer.ts:764-775 resume / ack 关闭），客户端不重连（agentLoopSidecarClient.ts:895-904），已接受的执行按传输中断记 result_unknown 终态（:695-717、1000-1034），轮次失败。之后重启 sidecar（新实例），同一会话再提交一轮：每轮新建连接，新实例照常执行。比较帧、会话记录（agent_loop_operation_* 账本）、provider 请求与 sidecar 进程的退出。",
+ "volatile": ["\\.jsonl\\[\\d+\\]\\.binding\\.(moduleInstanceId|connectionGeneration)$", "\\.jsonl\\[\\d+\\]\\.streamId$"],
+ "env": {
+  "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+  "PILOTDECK_AGENT_LOOP_TCP_PORT": "38414"
+ },
+ "provider": [
+  {"name": "title", "when": ["Generate a concise title"], "reply": {"text": "{\"title\": \"Sidecar kill\"}", "delayMs": 4000}},
+  {"name": "after", "when": ["sk-after:"], "reply": {"text": "New sidecar instance answered."}},
+  {"name": "kill", "when": ["sk-kill:"], "reply": {"killSidecar": "SIGKILL", "delayMs": 1000, "text": "Answer after the sidecar died."}}
+ ],
+ "steps": [
+  {"sidecar": "start", "port": 38414},
+  {"ws": "submit_turn", "params": {"sessionKey": "s-sk", "channelKey": "test", "message": "sk-kill: hello"}, "timeout": 30000},
+  {"sleep": 5000},
+  {"sidecar": "stop"},
+  {"sidecar": "start", "port": 38414},
+  {"ws": "submit_turn", "params": {"sessionKey": "s-sk", "channelKey": "test", "message": "sk-after: again"}, "timeout": 30000},
+  {"sleep": 1000},
+  {"sidecar": "stop"}
+ ]
+}

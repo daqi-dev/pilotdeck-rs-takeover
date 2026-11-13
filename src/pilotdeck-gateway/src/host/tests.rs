@@ -546,7 +546,7 @@ async fn handshake_and_execute_correlation_negative_controls() {
     assert!(
         error
             .message
-            .contains("module identity does not match configured implementation"),
+            .ends_with("does not match configured implementation 'other-module'."),
         "{error}"
     );
     println!("HOST_REJECT expected-module-mismatch: {error}");

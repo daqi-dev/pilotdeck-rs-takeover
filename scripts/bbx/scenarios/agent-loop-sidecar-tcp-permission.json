@@ -1,0 +1,25 @@
+{
+ "name": "agent-loop-sidecar-tcp-permission",
+ "about": "PILOTDECK_AGENT_LOOP_TRANSPORT=tcp 下的权限询问：缺省权限模式，bash 写文件要询问。第一轮允许、第二轮拒绝。询问由宿主的 permission 模块在 sidecar 的 module_call 期间发给客户端（sidecarDefaultModuleDispatcher.ts、sidecarHostModulePorts.ts），回答后宿主把结果回给 sidecar。比较询问帧、回答、工具结果、agent_loop_operation_* 记录与落盘的文件。",
+ "volatile": ["\\.jsonl\\[\\d+\\]\\.binding\\.(moduleInstanceId|connectionGeneration)$", "\\.jsonl\\[\\d+\\]\\.streamId$"],
+ "env": {
+  "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+  "PILOTDECK_AGENT_LOOP_TCP_PORT": "38414"
+ },
+ "provider": [
+  {"name": "title", "when": ["Generate a concise title"], "reply": {"text": "{\"title\": \"Sidecar permission\"}", "delayMs": 4000}},
+  {"name": "p2-after", "when": ["sp-two:", "\"tool_call_id\":\"call_sp_two\""], "reply": {"text": "Denied handled."}},
+  {"name": "p2", "when": ["sp-two:"], "reply": {"tool": {"id": "call_sp_two", "name": "bash", "arguments": {"command": "echo two > {PROJECT}/two.txt"}}}},
+  {"name": "p1-after", "when": ["sp-one:", "\"tool_call_id\":\"call_sp_one\""], "reply": {"text": "Allowed handled."}},
+  {"name": "p1", "when": ["sp-one:"], "reply": {"tool": {"id": "call_sp_one", "name": "bash", "arguments": {"command": "echo one > {PROJECT}/one.txt"}}}}
+ ],
+ "steps": [
+  {"sidecar": "start", "port": 38414},
+  {"ws": "submit_turn", "params": {"sessionKey": "s-sp", "channelKey": "test", "message": "sp-one: write one"}, "timeout": 60000,
+   "answer": [{"on": {"type": "permission_request"}, "ws": "permission_decide", "params": {"sessionKey": "s-sp", "requestId": "{event.requestId}", "decision": "allow"}, "count": 1}]},
+  {"sleep": 5000},
+  {"ws": "submit_turn", "params": {"sessionKey": "s-sp", "channelKey": "test", "message": "sp-two: write two"}, "timeout": 60000,
+   "answer": [{"on": {"type": "permission_request"}, "ws": "permission_decide", "params": {"sessionKey": "s-sp", "requestId": "{event.requestId}", "decision": "deny"}, "count": 1}]},
+  {"sidecar": "stop"}
+ ]
+}

@@ -1991,6 +1991,84 @@ fn transport_failure_tool_result<E: HostExchange>(
     ]));
     a::tool_result(&result)
 }
+/// `moduleFailureResult` (hostToolPort.ts:357-376): a capability reply with
+/// `ok: false` as one call's error result. The code is the reply's code when
+/// it names a tool error code (`asToolErrorCode`, :431-454); the details carry
+/// the raw `code` and `error` when either is truthy. `message` is
+/// `String(response.error?.message ?? "Capability module failed.")`.
+fn module_failure_tool_result<E: HostExchange>(
+    exchange: &E,
+    tool: &ToolInvocation,
+    response: &JsValue,
+    message: &JsString,
+) -> PortResult<pilotdeck_agent::ToolExecutionResult> {
+    const TOOL_ERROR_CODES: [&str; 17] = [
+        "tool_not_found",
+        "tool_unavailable",
+        "invalid_tool_input",
+        "permission_denied",
+        "permission_cancelled",
+        "permission_required",
+        "tool_execution_failed",
+        "tool_aborted",
+        "tool_timeout",
+        "result_too_large",
+        "path_not_allowed",
+        "file_not_found",
+        "file_conflict",
+        "unsupported_tool",
+        "setup_required",
+        "plan_mode_violation",
+        "ask_mode_violation",
+    ];
+    let truthy = |value: Option<&JsValue>| match value {
+        None | Some(JsValue::Undefined | JsValue::Null) => false,
+        Some(JsValue::Bool(value)) => *value,
+        Some(JsValue::Number(value)) => *value != 0.0 && !value.is_nan(),
+        Some(JsValue::String(value)) => !value.is_empty(),
+        Some(_) => true,
+    };
+    let raw_code = response.get("code");
+    let code = raw_code
+        .and_then(JsValue::as_string)
+        .filter(|code| TOOL_ERROR_CODES.iter().any(|known| code.equals_str(known)))
+        .cloned()
+        .unwrap_or_else(|| "tool_execution_failed".into());
+    let mut error = obj([("code", s(&code)), ("message", s(message))]);
+    let raw_error = response.get("error");
+    if truthy(raw_code) || truthy(raw_error) {
+        let mut details = JsObject::new();
+        if truthy(raw_code) {
+            details.insert(
+                "moduleCode".into(),
+                raw_code.cloned().unwrap_or(JsValue::Undefined),
+            );
+        }
+        if truthy(raw_error) {
+            details.insert(
+                "moduleError".into(),
+                raw_error.cloned().unwrap_or(JsValue::Undefined),
+            );
+        }
+        error.insert("details".into(), JsValue::Object(details));
+    }
+    let result = JsValue::Object(obj([
+        ("type", "error".into()),
+        ("toolCallId", s(&tool.tool_call_id)),
+        ("toolName", s(&tool.name)),
+        ("error", JsValue::Object(error)),
+        (
+            "content",
+            JsValue::Array(vec![JsValue::Object(obj([
+                ("type", "text".into()),
+                ("text", s(message)),
+            ]))]),
+        ),
+        ("startedAt", s(&exchange.wall_now_iso())),
+        ("completedAt", s(&exchange.wall_now_iso())),
+    ]));
+    a::tool_result(&result)
+}
 // Original stock hostToolPort validates a shallow completed batch before
 // typed domain projection. These are known consumer exceptions, not lost ACKs.
 fn batch_consumer_exception(response: &JsValue, calls: &[ToolInvocation]) -> Option<JsString> {
@@ -2276,6 +2354,17 @@ pub(crate) fn call<E: HostExchange>(
                     message,
                     boundary: exchanged.boundary.clone(),
                 });
+            }
+            // The baseline's external sidecar runs its own capability port:
+            // a batch reply with `ok: false` gives every call of the batch a
+            // `moduleFailureResult` (hostToolPort.ts:211-213, 357-376), and
+            // the loop carries on with those results.
+            if crate::factory_payload::external_deployment() {
+                return calls
+                    .iter()
+                    .map(|tool| module_failure_tool_result(exchange, tool, response, &message))
+                    .collect::<PortResult<Vec<_>>>()
+                    .map(HostReply::ToolResults);
             }
             return Ok(HostReply::ToolBatchRejected {
                 message,

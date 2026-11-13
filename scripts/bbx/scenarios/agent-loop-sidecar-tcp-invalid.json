@@ -1,0 +1,16 @@
+{
+ "name": "agent-loop-sidecar-tcp-invalid",
+ "about": "tcp 部署的配置出错路径（AgentLoopDeploymentProfile.ts:52-58、136-160，createLocalGateway.ts:623 启动时解析）：端口不是整数 / 为 0 / 带小数、主机只有空白、连接超时为 0 / 负数 / 小数 / 非数字时 server 的输出与退出码；端口写成 +38414、超时写成 1e3 这类 Number() 认的写法照常起来。补 agent-loop-sidecar-env-invalid 没覆盖的取值。",
+ "server": false,
+ "steps": [
+  {"serve": ["server", "--port", "38413"], "env": {"PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp", "PILOTDECK_AGENT_LOOP_TCP_PORT": "abc"}},
+  {"serve": ["server", "--port", "38413"], "env": {"PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp", "PILOTDECK_AGENT_LOOP_TCP_PORT": "0"}},
+  {"serve": ["server", "--port", "38413"], "env": {"PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp", "PILOTDECK_AGENT_LOOP_TCP_PORT": "38414.5"}},
+  {"serve": ["server", "--port", "38413"], "env": {"PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp", "PILOTDECK_AGENT_LOOP_TCP_PORT": "38414", "PILOTDECK_AGENT_LOOP_TCP_HOST": "   "}},
+  {"serve": ["server", "--port", "38413"], "env": {"PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp", "PILOTDECK_AGENT_LOOP_TCP_PORT": "38414", "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS": "0"}},
+  {"serve": ["server", "--port", "38413"], "env": {"PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp", "PILOTDECK_AGENT_LOOP_TCP_PORT": "38414", "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS": "-5"}},
+  {"serve": ["server", "--port", "38413"], "env": {"PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp", "PILOTDECK_AGENT_LOOP_TCP_PORT": "38414", "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS": "2.5"}},
+  {"serve": ["server", "--port", "38413"], "env": {"PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp", "PILOTDECK_AGENT_LOOP_TCP_PORT": "38414", "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS": "soon"}},
+  {"serve": ["server", "--port", "38413"], "env": {"PILOTDECK_AGENT_LOOP_TRANSPORT": "Tcp", "PILOTDECK_AGENT_LOOP_TCP_PORT": "+38414", "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS": "1e3"}}
+ ]
+}

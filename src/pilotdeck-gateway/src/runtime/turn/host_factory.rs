@@ -233,6 +233,8 @@ pub struct TurnHostFactory {
     in_process_loop: bool,
     /// The session's project root; `None` is the registry's default project.
     project_root: Option<PathBuf>,
+    /// The deployment is an explicit external loop ([`Self::with_operation_ledger`]).
+    external_loop: bool,
     /// See [`Self::with_operation_ledger`].
     operation_ledger: Option<(
         JsString,
@@ -284,6 +286,7 @@ impl TurnHostFactory {
             in_process_loop: false,
             project_root: None,
             operation_ledger: None,
+            external_loop: false,
         }
     }
 
@@ -333,6 +336,7 @@ impl TurnHostFactory {
         checkpoint: crate::host::modules::tool_context::HostToolCheckpoint,
     ) -> Self {
         self.operation_ledger = Some((session_id, checkpoint));
+        self.external_loop = true;
         self
     }
 
@@ -444,26 +448,12 @@ impl TurnHostFactory {
         recorder: Arc<Recorder>,
         signal: crate::runtime::hooks::Cancellation,
     ) -> Result<InteractionHost, HostError> {
-        let (command, args, cwd, env) = match &self.deployment {
-            Deployment::Stdio {
-                command,
-                args,
-                cwd,
-                env,
-            } => (command, args, cwd, env),
-            Deployment::Native => {
-                return Err(HostError::new(
-                    HostErrorKind::Protocol,
-                    "Agent loop transport 'native' has no sidecar host factory.",
-                ));
-            }
-            Deployment::Tcp { .. } => {
-                return Err(HostError::new(
-                    HostErrorKind::Protocol,
-                    "Agent loop transport 'tcp' is not supported; see #130.",
-                ));
-            }
-        };
+        if self.deployment == Deployment::Native {
+            return Err(HostError::new(
+                HostErrorKind::Protocol,
+                "Agent loop transport 'native' has no sidecar host factory.",
+            ));
+        }
         let lease = self
             .registry
             .acquire(self.project_root.as_deref())
@@ -474,14 +464,49 @@ impl TurnHostFactory {
             // `assemble` owns (and therefore drops) the lease on error.
             Err(error) => return Err(error),
         };
-        let mut command = Command::new(command);
-        command.args(args).current_dir(cwd).env_clear().envs(env);
         let expected = self.expected_module_id.clone();
         let limits = self.limits;
+        let external = self.external_loop;
+        let mark = move |client: HostClient| {
+            if external {
+                client.as_external_loop()
+            } else {
+                client
+            }
+        };
+        let client: crate::host::HostFuture<HostClient> = match &self.deployment {
+            Deployment::Stdio {
+                command,
+                args,
+                cwd,
+                env,
+            } => {
+                let mut command = Command::new(command);
+                command.args(args).current_dir(cwd).env_clear().envs(env);
+                Box::pin(async move {
+                    HostClient::spawn(&mut command, expected.as_ref(), limits)
+                        .await
+                        .map(mark)
+                })
+            }
+            Deployment::Tcp {
+                host,
+                port,
+                connect_timeout_ms,
+            } => {
+                let (host, port) = (host.clone(), *port);
+                // tcpAgentLoopSidecarConnection.ts:10, 32-35.
+                let connect_timeout = connect_timeout_ms.unwrap_or(5_000);
+                Box::pin(async move {
+                    HostClient::connect_tcp(&host, port, connect_timeout, expected.as_ref(), limits)
+                        .await
+                        .map(mark)
+                })
+            }
+            Deployment::Native => unreachable!("rejected above"),
+        };
         Ok(InteractionHost {
-            client: Box::pin(async move {
-                HostClient::spawn(&mut command, expected.as_ref(), limits).await
-            }),
+            client,
             lease,
             router,
             input,

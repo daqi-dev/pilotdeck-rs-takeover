@@ -1012,12 +1012,28 @@ pub fn decode(
 
 /// The process runs as an explicitly deployed sidecar: the gateway selected
 /// `PILOTDECK_AGENT_LOOP_TRANSPORT=stdio` and its environment reaches this
-/// child unchanged (`AgentLoopDeploymentProfile.ts:66-73`). Without it this
-/// process is the gateway's own in-process loop.
+/// child unchanged (`AgentLoopDeploymentProfile.ts:66-73`), or the process
+/// listens as the long-lived TCP sidecar ([`serve_as_tcp_sidecar`]). Without
+/// either this process is the gateway's own in-process loop.
 pub(crate) fn external_deployment() -> bool {
     static EXTERNAL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *EXTERNAL.get_or_init(|| {
-        std::env::var("PILOTDECK_AGENT_LOOP_TRANSPORT")
-            .is_ok_and(|value| value.trim().eq_ignore_ascii_case("stdio"))
-    })
+    TCP_SIDECAR.load(std::sync::atomic::Ordering::SeqCst)
+        || *EXTERNAL.get_or_init(|| {
+            std::env::var("PILOTDECK_AGENT_LOOP_TRANSPORT").is_ok_and(|value| {
+                let value = value.trim();
+                value.eq_ignore_ascii_case("stdio") || value.eq_ignore_ascii_case("tcp")
+            })
+        })
+}
+
+static TCP_SIDECAR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// This process serves the TCP deployment (`PILOTDECK_AGENT_LOOP_TCP_PORT`,
+/// pilotdeck-agent-loop-sidecar.ts:27-37): a long-lived sidecar is always an
+/// external loop, whatever its environment names.
+// `tests/factory_payload.rs` includes this file as its own module, where the
+// binary's only caller does not exist.
+#[allow(dead_code)]
+pub fn serve_as_tcp_sidecar() {
+    TCP_SIDECAR.store(true, std::sync::atomic::Ordering::SeqCst);
 }

@@ -725,6 +725,12 @@ async fn start_assembly(
                     .and_then(|config| config.get("modules"))
                     .and_then(|modules| modules.get("tools"))
                     .cloned();
+                // `snapshot.config.modules.agentLoop` (SessionAgentConfigBundle.ts:157-158).
+                let agent_loop_binding = snapshot
+                    .get("config")
+                    .and_then(|config| config.get("modules"))
+                    .and_then(|modules| modules.get("agentLoop"))
+                    .cloned();
                 // `snapshot.config.tools?.webSearch` (ProjectExecutionWorldBundle.ts:124).
                 let web_search_config = snapshot
                     .get("config")
@@ -1137,11 +1143,20 @@ async fn start_assembly(
                         };
                         let turn_project_root = project_root.clone();
                         // An explicit `PILOTDECK_AGENT_LOOP_TRANSPORT=stdio`
-                        // runs the loop as the baseline's external module;
-                        // otherwise this child is the gateway's own loop,
-                        // which the baseline runs in process.
-                        let explicit =
-                            explicit_stdio_deployment(&env, &options.sidecar, &project_root);
+                        // or `tcp` runs the loop as the baseline's external
+                        // module; otherwise this child is the gateway's own
+                        // loop, which the baseline runs in process.
+                        // A `modules.agentLoop` binding wins over the
+                        // environment's deployment and names the module
+                        // identity the handshake must report
+                        // (createLocalGateway.ts:631-634).
+                        let bound = agent_loop_binding
+                            .as_ref()
+                            .and_then(|binding| binding_deployment(binding, &env));
+                        let explicit = match &bound {
+                            Some((deployment, _)) => Some(deployment.clone()),
+                            None => explicit_deployment(&env, &options.sidecar, &project_root),
+                        };
                         let deployment = explicit.clone().unwrap_or_else(|| Deployment::Stdio {
                             command: options.sidecar.to_string_lossy().into_owned(),
                             args: options.sidecar_args.clone(),
@@ -1173,6 +1188,7 @@ async fn start_assembly(
                         .with_extra_tools(extra_tools, excluded_tools)
                         .with_knowledge(knowledge_binding.as_ref())
                         .with_module_tools(tools_binding.as_ref())
+                        .with_external_loop_binding(bound.is_some())
                         .with_sandbox(profile.sandbox_mode)
                         .with_interaction(profile.interaction, can_prompt_override)
                         .with_web_search(&web_search_config)
@@ -1253,8 +1269,10 @@ async fn start_assembly(
                         // The baseline's env deployment names no expected
                         // module (`createAgentLoopDeploymentFactory(profile,
                         // { transportObserver })`, createLocalGateway.ts:624).
-                        let expected_module =
-                            explicit.is_none().then(|| "pilotdeck-agent-loop".into());
+                        let expected_module = match bound {
+                            Some((_, implementation)) => Some(implementation),
+                            None => explicit.is_none().then(|| "pilotdeck-agent-loop".into()),
+                        };
                         let factory = TurnHostFactory::new_with_signal(
                             project,
                             deployment,
@@ -2275,9 +2293,10 @@ pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(),
     // `modules`: a built-in binding (`provider: pilotdeck`) and a disabled
     // `skills` / `knowledge` slot need no outside service and are served; an
     // external `knowledge` module is reached only by `knowledge_query`, an
-    // external `tools` module is composed ahead of the session's tools.
-    // A protocol binding (an external module process or endpoint) and the
-    // StaffDeck `sop` module are not served yet.
+    // external `tools` module is composed ahead of the session's tools, an
+    // external `agentLoop` module runs each turn's loop (`binding_deployment`).
+    // Other protocol bindings (an external module process or endpoint) and
+    // the StaffDeck `sop` module are not served yet.
     let external = |binding: &JsValue| {
         binding
             .as_object()
@@ -2292,7 +2311,8 @@ pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(),
                 slot.equals_str("sop")
                     || (external(binding)
                         && !slot.equals_str("knowledge")
-                        && !slot.equals_str("tools"))
+                        && !slot.equals_str("tools")
+                        && !slot.equals_str("agentLoop"))
             })
         })
     {
@@ -2584,6 +2604,65 @@ fn dispose_ephemeral_sessions(
     }
 }
 
+/// `createAgentLoopBindingFactory` (AgentLoopDeploymentProfile.ts:107-127)
+/// for an external `modules.agentLoop` binding: `module-tcp-v2` connects to
+/// the bound host and port; `module-stdio-v2` starts the bound command with
+/// its args in the gateway's working directory, under the gateway's
+/// environment overlaid by the binding's `env`. The implementation id is the
+/// module identity the handshake must report. `None` for a native or absent
+/// binding.
+fn binding_deployment(
+    binding: &JsValue,
+    env: &crate::config::Env,
+) -> Option<(Deployment, JsString)> {
+    let text = |key: &str| {
+        binding
+            .get(key)
+            .and_then(JsValue::as_string)
+            .map(|value| String::from_utf16_lossy(value.units()))
+    };
+    let implementation = binding.get("implementationId")?.as_string()?.clone();
+    let deployment = match text("transport")?.as_str() {
+        "module-tcp-v2" => Deployment::Tcp {
+            host: text("host")?,
+            port: u16::try_from(binding.get("port")?.as_number()? as i64).ok()?,
+            connect_timeout_ms: binding
+                .get("connectTimeoutMs")
+                .and_then(JsValue::as_number)
+                .map(|ms| ms as u64),
+        },
+        "module-stdio-v2" => {
+            let mut child = env.clone();
+            if let Some(JsValue::Object(overlay)) = binding.get("env") {
+                for (key, value) in overlay.entries() {
+                    if let Some(value) = value.as_string() {
+                        child.insert(
+                            String::from_utf16_lossy(key.units()),
+                            String::from_utf16_lossy(value.units()),
+                        );
+                    }
+                }
+            }
+            let args = match binding.get("args") {
+                Some(JsValue::Array(args)) => args
+                    .iter()
+                    .filter_map(JsValue::as_string)
+                    .map(|arg| String::from_utf16_lossy(arg.units()))
+                    .collect(),
+                _ => Vec::new(),
+            };
+            Deployment::Stdio {
+                command: text("command")?,
+                args,
+                cwd: std::env::current_dir().ok()?,
+                env: child,
+            }
+        }
+        _ => return None,
+    };
+    Some((deployment, implementation))
+}
+
 /// `resolveAgentLoopDeploymentProfile` when it selects stdio
 /// (`AgentLoopDeploymentProfile.ts:62-80`): the configured command (by
 /// default this gateway's sidecar binary, which stands in for `node` running
@@ -2593,18 +2672,23 @@ fn dispose_ephemeral_sessions(
 /// relative sidecar path resolves against the project root
 /// (createLocalGateway.ts:623). `None` for the default deployment; the server
 /// rejected invalid values at startup.
-fn explicit_stdio_deployment(
+///
+/// A tcp selection (`AgentLoopDeploymentProfile.ts:52-58`) connects to the
+/// configured long-lived sidecar for every turn.
+fn explicit_deployment(
     env: &crate::config::Env,
     sidecar: &std::path::Path,
     project_root: &std::path::Path,
 ) -> Option<Deployment> {
     let cwd = std::env::current_dir().ok()?;
-    let Ok(Deployment::Stdio {
-        args, env: child, ..
-    }) = crate::runtime::turn::host_factory::resolve_deployment(env, project_root)
-    else {
-        return None;
-    };
+    let (args, child) =
+        match crate::runtime::turn::host_factory::resolve_deployment(env, project_root) {
+            Ok(Deployment::Stdio {
+                args, env: child, ..
+            }) => (args, child),
+            Ok(tcp @ Deployment::Tcp { .. }) => return Some(tcp),
+            _ => return None,
+        };
     let command = env
         .get("PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND")
         .map(|command| command.trim().to_owned())

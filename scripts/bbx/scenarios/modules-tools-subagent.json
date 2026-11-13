@@ -1,0 +1,181 @@
+{
+ "name": "modules-tools-subagent",
+ "about": "modules.tools 外部能力模块与 agent 工具派出的一次性子代理：外部工具只组合进会话的工具端口（AgentSessionRuntimeBundle.ts:156、200-206 的 composeToolPorts，挂在 dependencies.ports.tools 上），子代理的组合只拿父会话工具注册表的作用域视图和新的调度器（SubagentRuntimeComposition.ts:56-81、102-130，没有 ports），所以子代理发给模型的工具列表里没有 bbx_echo；子代理的模型硬要调 bbx_echo 时按未知工具处理，外部模块收不到调用。父会话自己照常能调。比较父、子两路模型请求（含工具列表）、外部模块收到的请求、帧与落盘。 子代理结果（agent 工具的结果文本与 data）带 durationMs，它的数字进父会话后续的 resultBytes、content-length 与 token 估算，随耗时变；volatile 只列这些由它派生的计数路径（与 tool-agent-nested 等子代理场景相同）。 父、子会话给外部模块调用起的 requestId 是 tool-<Math.random 的 base36 串>（hostToolPort.ts:242 的 uuid 缺省），基线自比也不同。",
+ "volatile": [
+  "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages|resultBytes|content-length)$",
+  "^\\$\\.provider\\.m-(parent|child)\\[\\d+\\]\\.body\\.requestId$"
+ ],
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  tools:\n    enabled: true\n    implementationId: bbx.tools\n    contract: pilotdeck.tools/v1\n    transport: module-http-v2\n    endpoint: {MOCK}/tools\n    timeoutMs: 1500\n    methods:\n      - execute\n    catalog:\n      - name: bbx_echo\n        description: Echo text through the external capability module.\n        inputSchema:\n          type: object\n          properties:\n            text:\n              type: string\n          required:\n            - text\n",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Tool run\"}"
+   }
+  },
+  {
+   "name": "manifest",
+   "unless": [
+    "\""
+   ],
+   "reply": {
+    "status": 200,
+    "body": {
+     "protocolVersion": "2.0",
+     "implementationId": "bbx.tools",
+     "contract": "pilotdeck.tools/v1",
+     "transport": "module-http-v2",
+     "methods": [
+      "execute"
+     ]
+    }
+   }
+  },
+  {
+   "name": "m-parent",
+   "when": [
+    "\"method\":\"module_call\"",
+    "\"toolCallId\":\"call_ms_parent\""
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "r",
+     "inReplyTo": "{saved.mid}",
+     "requestId": "{saved.rid}",
+     "ok": true,
+     "payload": {
+      "type": "success",
+      "toolCallId": "call_ms_parent",
+      "toolName": "bbx_echo",
+      "content": [
+       {
+        "type": "text",
+        "text": "bbx_echo parent"
+       }
+      ],
+      "startedAt": "2026-01-01T00:00:00.000Z",
+      "completedAt": "2026-01-01T00:00:00.000Z"
+     }
+    }
+   }
+  },
+  {
+   "name": "m-child",
+   "when": [
+    "\"method\":\"module_call\"",
+    "\"toolCallId\":\"call_ms_child\""
+   ],
+   "reply": {
+    "status": 500,
+    "body": {
+     "error": "the child must not reach the module"
+    }
+   }
+  },
+  {
+   "name": "child-after",
+   "when": [
+    "You are a subagent of PilotDeck",
+    "CHILD-MS",
+    "\"tool_call_id\":\"call_ms_child\""
+   ],
+   "reply": {
+    "text": "Scope: echo.\nResult: echo is not available here.\nKey files: none\nFiles changed: none\nIssues: none"
+   }
+  },
+  {
+   "name": "child",
+   "when": [
+    "You are a subagent of PilotDeck",
+    "CHILD-MS"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_ms_child",
+     "name": "bbx_echo",
+     "arguments": {
+      "text": "from child"
+     }
+    }
+   }
+  },
+  {
+   "name": "parent-done",
+   "when": [
+    "ms:",
+    "\"tool_call_id\":\"call_ms_parent\""
+   ],
+   "reply": {
+    "text": "Parent done."
+   }
+  },
+  {
+   "name": "parent-echo",
+   "when": [
+    "ms:",
+    "\"tool_call_id\":\"call_ms_agent\""
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_ms_parent",
+     "name": "bbx_echo",
+     "arguments": {
+      "text": "from parent"
+     }
+    }
+   }
+  },
+  {
+   "name": "parent",
+   "when": [
+    "ms:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_ms_agent",
+     "name": "agent",
+     "arguments": {
+      "description": "Echo via child",
+      "prompt": "CHILD-MS: call bbx_echo with text from child."
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-ms",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-ms",
+    "channelKey": "test",
+    "message": "ms: delegate"
+   },
+   "timeout": 60000
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-ms"
+   }
+  }
+ ]
+}

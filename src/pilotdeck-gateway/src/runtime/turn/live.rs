@@ -2740,6 +2740,11 @@ fn mark_module_message(message: &mut JsValue, module: &JsString) -> Result<(), R
 /// the native mapping.
 fn external_host_error(error: HostError) -> RuntimeError {
     use crate::host::SidecarExit;
+    // A TCP sidecar's connection errors carry no stderr
+    // (tcpAgentLoopSidecarConnection.ts:163-165).
+    if let Some(SidecarExit::Reported(message)) = error.exit.as_deref() {
+        return RuntimeError::new(message.clone());
+    }
     let message = match (error.exit.as_deref(), error.kind) {
         (Some(SidecarExit::StartFailed(_)), _) => "Failed to write to sidecar stdin.".to_owned(),
         (Some(exit), HostErrorKind::Disconnected) => {
@@ -2747,7 +2752,9 @@ fn external_host_error(error: HostError) -> RuntimeError {
                 SidecarExit::Code(Some(code)) => format!("exited with code {code}"),
                 SidecarExit::Code(None) => "exited with code unknown".to_owned(),
                 SidecarExit::Signal(signal) => format!("exited from signal {signal}"),
-                SidecarExit::StartFailed(_) => unreachable!("matched above"),
+                SidecarExit::StartFailed(_) | SidecarExit::Reported(_) => {
+                    unreachable!("matched above")
+                }
             };
             format!("Sidecar {exit} before execute reached a terminal event.")
         }

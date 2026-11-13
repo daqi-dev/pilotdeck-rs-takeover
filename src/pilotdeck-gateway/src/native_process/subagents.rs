@@ -903,6 +903,15 @@ impl Fork {
                 JsValue::Object(object([
                     ("sessionId", JsValue::String(child_session.clone())),
                     ("turnId", JsValue::String(turn_id.clone())),
+                    // The child loop runs without an execution context, so
+                    // its run id is `${sessionId}:${turnId}`
+                    // (AgentLoop.ts:538-540).
+                    (
+                        "runId",
+                        JsValue::String(
+                            format!("{}:{}", text(child_session), text(&turn_id)).into(),
+                        ),
+                    ),
                 ])),
             )
             .map_err(|error| fail(&error.message))?;
