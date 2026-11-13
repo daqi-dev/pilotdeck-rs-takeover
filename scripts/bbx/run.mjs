@@ -238,11 +238,17 @@ const rules = [...substDeep(scenario.provider ?? []), { name: 'default', reply: 
 const providerRequests = {};
 const mock = http.createServer(async (req, res) => {
   const parts = []; for await (const p of req) parts.push(p);
-  const raw = Buffer.concat(parts).toString('utf8');
+  const bytes = Buffer.concat(parts);
+  const raw = bytes.toString('utf8');
   let body = null; try { body = JSON.parse(raw); } catch {}
   const rule = rules.find((r) => (r.when ?? []).every((s) => raw.includes(s)) && (r.unless ?? []).every((s) => !raw.includes(s)));
+  // 请求头 content-length 在这里就核对：等于实际收到的请求体字节数记 true，否则 false；没有这个头不记。
+  // 比较器的规则 19 在两侧都是 true 时不比这个头的数值（数值里含着被归一化的变长值的位数）。
+  const declared = req.headers['content-length'];
   (providerRequests[rule.name] ??= []).push({
-    method: req.method, url: req.url, headers: req.headers, body: body ?? { raw },
+    method: req.method, url: req.url, headers: req.headers,
+    ...(declared === undefined ? {} : { 'content-length-ok': /^\d+$/.test(declared) && Number(declared) === bytes.length }),
+    body: body ?? { raw },
   });
   capture(rule.save, raw);
   const reply = withSaved(rule.reply ?? {});

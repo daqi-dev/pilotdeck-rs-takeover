@@ -46,7 +46,33 @@ const sized = (recs, { size = bytes(recs), sizeAt, file = true, rewritten = fals
 const LOCK = '/home/.pilotdeck/runs/registry.json.lock';
 const withLock = (text) => art([], { tree: text === undefined ? {} : { [LOCK]: { mode: '644', text } } });
 const memState = (caseId, traceId, extra = 'x') => sql({ state_key: 'recentCaseTraces', state_json: JSON.stringify([{ caseId, note: extra, retrieval: { trace: { traceId, steps: [{ stepId: `${traceId}:step:1` }, { stepId: `${traceId}:step:2` }] } } }]) });
+// 规则 19：工具结果原文（会话文件里的 tool_result 记录）加一帧带 resultBytes 的 tool_call_finished。
+const toolRec = (id, content, turnId = 't1') => ({ type: 'tool_result', turnId, result: { type: 'success', toolCallId: id, toolName: 'bash', content } });
+const finished = (id, bytes, turnId = 't1') => ({ type: 'event', event: { type: 'tool_call_finished', toolCallId: id, toolName: 'bash', resultBytes: bytes, timeline: { turnId } } });
+const withResult = (text, { bytes = Buffer.byteLength(text), recs = [toolRec('c1', [{ type: 'text', text }])], turnId = 't1' } = {}) =>
+  art([{ step: { ws: 'submit_turn' }, frames: [finished('c1', bytes, turnId)] }], { tree: { '/home/x/chats/s.jsonl': { mode: '644', jsonl: recs } } });
+const DUR6 = 'exit_code: 1\n- duration_ms: 6', DUR12 = 'exit_code: 1\n- duration_ms: 12';
+const toProvider = (len, ok, extra = {}) => art([], { provider: { m: [{ method: 'POST', url: '/v1/chat/completions', headers: { 'content-type': 'application/json', 'content-length': String(len), ...extra },
+  ...(ok === undefined ? {} : { 'content-length-ok': ok }), body: { messages: [{ role: 'tool', content: `- duration_ms: ${len}` }] } }] } });
 const cases = [
+  ['resultBytes：两侧各自等于本侧原文字节数（耗时位数不同）', withResult(DUR6), withResult(DUR12), 'SAME'],
+  ['resultBytes：一侧不等于本侧原文字节数', withResult(DUR6), withResult(DUR12, { bytes: Buffer.byteLength(DUR12) + 1 }), 'DIFF'],
+  ['resultBytes：一侧找不到原文', withResult(DUR6), withResult(DUR12, { recs: [] }), 'DIFF'],
+  ['resultBytes：两侧核对通过但原文内容不同', withResult(DUR6), withResult('exit_code: 2\n- duration_ms: 12'), 'DIFF'],
+  ['resultBytes：同一个调用 id 在两轮里各有原文，按轮次挑出', withResult(DUR6, { recs: [toolRec('c1', [{ type: 'text', text: 'other' }], 't0'), toolRec('c1', [{ type: 'text', text: DUR6 }])] }),
+    withResult(DUR12, { recs: [toolRec('c1', [{ type: 'text', text: 'other' }], 't0'), toolRec('c1', [{ type: 'text', text: DUR12 }])] }), 'SAME'],
+  ['resultBytes：同一个调用 id 有两份大小不同的原文、分不出轮次', withResult(DUR6, { recs: [toolRec('c1', [{ type: 'text', text: 'other' }], 't0'), toolRec('c1', [{ type: 'text', text: DUR6 }], 't2')] }),
+    withResult(DUR12, { recs: [toolRec('c1', [{ type: 'text', text: 'other' }], 't0'), toolRec('c1', [{ type: 'text', text: DUR12 }], 't2')] }), 'DIFF'],
+  ['resultBytes：多段内容按换行拼接、json 段按 JSON.stringify', withResult('', { bytes: Buffer.byteLength('a\n{"durationMs":6}'), recs: [toolRec('c1', [{ type: 'text', text: 'a' }, { type: 'json', value: { durationMs: 6 } }])] }),
+    withResult('', { bytes: Buffer.byteLength('a\n{"durationMs":12}'), recs: [toolRec('c1', [{ type: 'text', text: 'a' }, { type: 'json', value: { durationMs: 12 } }])] }), 'SAME'],
+  ['resultBytes：多段内容拼接时少算了换行', withResult('', { bytes: Buffer.byteLength('a\n{"durationMs":6}'), recs: [toolRec('c1', [{ type: 'text', text: 'a' }, { type: 'json', value: { durationMs: 6 } }])] }),
+    withResult('', { bytes: Buffer.byteLength('a{"durationMs":123}'), recs: [toolRec('c1', [{ type: 'text', text: 'a' }, { type: 'json', value: { durationMs: 123 } }])] }), 'DIFF'],
+  ['resultBytes：一侧变成了字符串', withResult(DUR6), withResult(DUR12, { bytes: String(Buffer.byteLength(DUR12)) }), 'DIFF'],
+  ['content-length：两侧都核对通过、数值不同', toProvider(9, true), toProvider(10, true), 'SAME'],
+  ['content-length：一侧核对不通过', toProvider(9, true), toProvider(10, false), 'DIFF'],
+  ['content-length：两侧都没有核对记录（旧产物）照比', toProvider(9), toProvider(10), 'DIFF'],
+  ['content-length：核对通过，旁边的头不同照报', toProvider(9, true), toProvider(10, true, { 'x-extra': '1' }), 'DIFF'],
+
   // [说明, a, b, 期望, diff.mjs 额外参数]
   ['相同', frame({ a: 1 }), frame({ a: 1 }), 'SAME'],
   ['值不同', frame({ a: 1 }), frame({ a: 2 }), 'DIFF'],
