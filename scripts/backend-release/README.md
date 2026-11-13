@@ -154,3 +154,18 @@ python3 scripts/backend-release/compact_ripgrep.py \
 ```
 
 新 prefix 仅省去重复的展开 vendor，保留原 tar、锁、source pins、许可、recipe 与全部原始构建证据；原 vendor role 已指向该 tar 时保持原 role 不变。`share/compaction/` 保留原 build record 和逐文件覆盖证明。新 build record 仅在原 role 为目录时将其指向原 tar，并重算 exact inventory，随后再次运行原组件校验。输出路径已存在即拒绝，不覆盖旧组件或发行包。新 prefix 必须作为新的组件身份参与后续 assemble、verify 与搬移验收，不能沿用旧包 hash，也不能把源码层从完整体积指标中剔除。本转换不宣称已达到 full 体积目标。
+
+### librsvg 完整 vendor 的归档与离线恢复
+
+`compact_librsvg.py compact` 将已有 image prefix 转为全新 prefix，只把展开的完整 `rsvg-vendor` 改为指定 SHA 的保真 tar.gz。它核对固定 rsvg Cargo.lock、原 source archive、逐 crate/package/checksum 文件、归档内每个文件的 SHA/大小/可执行位，保留全部许可证、helper、运行库和原构建/source provenance。输出已存在即拒绝，旧 prefix/full 不改；公共 assemble/verify 规则不变。
+
+```sh
+python3 scripts/backend-release/compact_librsvg.py compact \
+  --input /absolute/source-built-image-prefix --out /absolute/NEW-image-prefix \
+  --target aarch64-apple-darwin --vendor-archive /absolute/rsvg-vendor.tar.gz \
+  --archive-sha256 ACTUAL_REVIEWED_SHA256
+```
+
+新 `share/source/rsvg-vendor-archive.json` 独立绑定归档与完整文件清单，既有 `source-distribution.json`、`vendor-manifest.json`、锁和旧配置原字节保留，不改其 schema；其中旧 offline metadata 收据仍只是原构建证据。`BUILD-MACOS.md` 追加恢复步骤且保留原文副本。重建前运行随源码分发的独立 `restore-rsvg-vendor.py restore --source SOURCE_DIR --out NEW_BUILD_INPUT`，它先只读验证全归档，再安全恢复至全新目录并写 `cargo-home/config.toml`，继续使用相同 vendored-sources 配置且强制 `net.offline=true`。原 source-cache 固定下载/补丁 recipe、锁、许可和本地平台适配仍须照原步骤使用；恢复不会下载或启动编译器。
+
+转换拒绝缺许可、源码/锁/checksum 不符、损坏归档、路径逃逸、重复路径、符号/硬链接和特殊条目；失败仅移除本次创建的输出。归档验证与恢复控制不代表重新执行离线编译、最终 full 组包或搬移业务。完整体积分母仍包括归档与证明材料，不宣称已达到体积目标。
