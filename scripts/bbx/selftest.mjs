@@ -212,6 +212,11 @@ const cases = [
   ['别的 jsonl 文件里记录换位照报', art([], { tree: { '/home/.pilotdeck/other/events.jsonl': { mode: '644', jsonl: [{ phase: 'a' }, { phase: 'b' }] } } }), art([], { tree: { '/home/.pilotdeck/other/events.jsonl': { mode: '644', jsonl: [{ phase: 'b' }, { phase: 'a' }] } } }), 'DIFF'],
   ['计时行有无与数值', frame({ stdout: 'listening\n[gateway:turn-timing] {"totalMs":250}\nbye\n' }), frame({ stdout: 'listening\nbye\n' }), 'SAME'],
   ['计时行之外的输出', frame({ stdout: 'listening\n[gateway:turn-timing] {"totalMs":250}\nbye\n' }), frame({ stdout: 'listening\nBYE\n' }), 'DIFF'],
+  ['CLI stdout 末尾没有换行的计时行', art([{ step: { cli: [] }, cli: { stdout: 'hi\n[gateway:turn-timing] {"sessionKey":"s","phase":"released","releaseMs":231}', stderr: '' } }]), art([{ step: { cli: [] }, cli: { stdout: 'hi\n', stderr: '' } }]), 'SAME'],
+  ['stderr 里两侧各多一行不同阶段的计时行', art([{ step: { cli: [] }, cli: { stdout: '', stderr: 'a\n[gateway:turn-timing] {"phase":"accepted","totalMs":201}\nb\n' } }]), art([{ step: { cli: [] }, cli: { stdout: '', stderr: 'a\nb\n[gateway:turn-timing] not json at all\n' } }]), 'SAME'],
+  ['计时行前缀不在行首不摘', frame({ stdout: 'x [gateway:turn-timing] {"totalMs":250}\n' }), frame({ stdout: 'x\n' }), 'DIFF'],
+  ['别的 [gateway: 行照比', frame({ stdout: '[gateway:turn-timings] {"totalMs":250}\n' }), frame({ stdout: '' }), 'DIFF'],
+  ['计时行前缀少了空格不摘', frame({ stdout: '[gateway:turn-timing]{"totalMs":250}\n' }), frame({ stdout: '' }), 'DIFF'],
   ['标题换位连带的投影位置字段', withProj([rec('accepted_input'), title, rec('step_started'), rec('model_request')]), withProj([rec('accepted_input'), rec('step_started'), title, rec('model_request')]), 'SAME'],
   ['投影里别的字段不同照报', withProj([rec('accepted_input'), title, rec('step_started'), rec('model_request')]), withProj([rec('accepted_input'), rec('step_started'), title, rec('model_request')], 'other'), 'DIFF'],
   ['volatile 路径被略过', art([{ step: {}, frames: [{ used: 1 }] }], { volatile: ['\\.used$'] }), art([{ step: {}, frames: [{ used: 2 }] }], { volatile: ['\\.used$'] }), 'SAME'],
@@ -251,6 +256,13 @@ const collectorCases = [];
   const check = run('check.mjs', ['--out', out, scenarioFile('needs-18789-c', 18789)]);
   collectorCases.push(['check.mjs 记 SKIPPED、退出码 0', check.status === 0 && /needs-18789-c\s+SKIPPED/.test(check.stdout)]);
   collectorCases.push(['汇总行报出跳过个数', /0\/0 SAME，另有 1 个 SKIPPED/.test(check.stdout)]);
+}
+// 规则 11 的计数：差异报告头部写出每侧摘掉的行数。
+{
+  fs.writeFileSync(path.join(dir, 'a.json'), JSON.stringify(frame({ stdout: '[gateway:turn-timing] {"totalMs":250}\nok\n[gateway:turn-timing] {"releaseMs":300}' })));
+  fs.writeFileSync(path.join(dir, 'b.json'), JSON.stringify(frame({ stdout: 'ok\n' })));
+  const r = spawnSync(process.execPath, [path.join(here, 'diff.mjs'), path.join(dir, 'a.json'), path.join(dir, 'b.json')], { encoding: 'utf8' });
+  collectorCases.push(['比较器：报告头部写出两侧摘掉的计时行数', /摘掉 a 侧 2 行、b 侧 0 行/.test(r.stdout) && /SAME$/.test(r.stdout.trim())]);
 }
 for (const [name, ok] of collectorCases) if (!ok) { bad++; console.log(`不符合预期  采集器：${name}`); }
 fs.rmSync(dir, { recursive: true, force: true });
