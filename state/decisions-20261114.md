@@ -45,3 +45,19 @@ Sol 承担边界清楚的实现、取证与验证整理；Terra 承担复杂接�
 主协调重新核本轮正本 `docs/plan/backend-completion.md:240,248,273` 及非作者范围审计 `_tmp/20261114-package-remaining-audit/scope-note.md`（SHA `deb3f949d381b2f804ccd1448f88f73797883bf0b23b563d4031b0e06c664999`）。硬要求是同扩展集合、真实安装体积/启动分布/全进程树内存/排除网络后的开销比较与完整性能报告；缩小部署、降低内存、避免执行退化是目标，未达指标必须报告。未见本会话明确把 full 小于 TS 另定为硬阈值，不能自行把改进目标升级成无限阻断交付的门。
 
 因此暂停进一步 source archive 压缩探索，优先产品真实失败、完整必需能力与最终组合验收。已完成 rg/librsvg 无损转换保留并按其真实新prefix身份参与后续包装；未重新离线构建的限制继续保留。原 full 1,168,781,633B、两项净减54,459,368B与332,579,305B、算术余量781,742,960B及TS295,973,079B不变；算术估计不是新包实测。最终包仍按原完整分母计量和如实报告，不能删源码/许可或把估计写成达标。剩余体积优化属于明确未达目标及后续工作，不因本决定删除或改绿。
+
+## 外部 HTTP 模型：修复宿主物化时的基线崩溃
+
+主协调按用户自主决策授权及意向书“崩溃、与类型矛盾的基线 bug 默认修”作出精确实现决定。固定 cc7 基线的真实回环 HTTP prepare、原 createAgentTurnCapabilities、原 createRouterRuntime 和默认 RouterRequestMaterializer 已实际串联：外部 prepared 无 opaque，原桥实际传入 undefined，读取 requestPatch 抛出 TypeError。证据 `_tmp/20261114-external-materializer-baseline/esm-second/result.json`、原件身份及回收收据保留；POST 一次、native dispatch 零。此证据仅覆盖真实生产 factory 的最窄桥调用，未冒称完整 AgentLoop 预算 turn。首个 .ts 探针的 CJS 装置失败也保留。
+
+仅当生产选择的是外部 HTTP modelProvider 时，装配独立 prepared-execution materializer，采用固定基线 `src/agent/loop/AgentLoop.ts:2508–2530` 已有 fallback 语义：完整保留 prepared.request 的 provider 专有控制、prompt、tools、输出上限等字段，只以候选 messages、cacheBreakpoints、cachePlan 更新窗口与缓存，并以 prepared.provider/model 保持路由。候选缺少缓存字段时不残留旧缓存。外部 opaque 只供外部执行身份使用，不交给 native RouterDecision；此修复不新增远端 materialize POST，不自动暴露生产 wrapper 原本丢弃的可选远端 materializer。
+
+宿主原配置 metadata、sticky 行为、durable 记录、权限、native router 物化、stdio/TCP 协议字段及错误投影均不随本决定放宽。正常 prepared 身份仍贯穿 prepare、预算和 stream；所有非此崩溃的差异继续核验。实现由 model 作者完成，Astra 非作者复核，集中候选须实际验证保持字段、缓存替换/缺失、身份及无额外调用，另核 context 投影在 native/stdio/TCP 的边界。当前是允许实现并验收的决定，尚非测试通过或交付声明；公共差异条目及适用冻结登记须随实际验证证据补齐。
+
+## LSP：绑定来源读取与 prepared cwd 两项精确基线修复
+
+主协调根据用户项目自主决策授权及既有基线 bug 默认修规则，正式接受两项分别登记的修复：`T1-LSP-BOUND-SOURCE-READ-001` 与 `T1-LSP-PREPARED-CWD-001`。前者限自有 Unix native LSP source，使用原 workspace 目录描述符逐段 NOFOLLOW、有界读取并保持合法根内链接；后者限准备器返回不同 cwd 时执行完整 prepared command，同时保留原 LSP workspace URI/name。不得借此扩大工具权限、改变普通 LSP 结果或放宽完整场景评分。
+
+固定 TS 的实际 owned canary 竞态原件、prepared cwd 首次 FAIL wire、原类型合同和源码均已经作者与非作者复核，原首败及取证汇总 turn 被工具终止的历史保留，不重采安全 probe。非作者最终复核 `_tmp/20261114-lsp-diff-independent/review.md` SHA `f1d7bf5a9992c0a3e7dc803a4945f2dbb3e5068d23cb165461b3b12c94556453`，36份原件及36/37/38相关源码对象SHA均核同。36双平台七项安全读取与一项真实prepared child控制实际PASS，整批Mac557/562、Linux558/563的五个生命周期首败不抹除；37双平台7/8与38双平台仅更正一项1/1另列，不合并伪称重跑全绿。
+
+准许只追加这两条公共差异记录，原冻结判据与历史差异文件不改，不产生整场景忽略规则。非Unix、自定义/guest端口、所有中间目录竞态排列、并发增长屏障、hardlink/mount隔离及最终发行组合的未验范围继续明确保留。该决定接受有证据的窄修复，不能将其解释为LSP整模块或本期交付完成。
