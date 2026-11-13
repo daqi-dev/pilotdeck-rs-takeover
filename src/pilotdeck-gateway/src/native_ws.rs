@@ -133,7 +133,7 @@ impl NativeWsServer {
                 if crate::mutants::on("ws-caps-default-connections") {
                     1
                 } else {
-                    MAX_CONNECTIONS
+                    UNBOUNDED_CONNECTIONS
                 },
                 if crate::mutants::on("ws-caps-default-input") {
                     1
@@ -385,6 +385,9 @@ impl PhasedInner {
         let (stop_http, stop_http_rx) = watch::channel(false);
         self.stop_http = Some(stop_http);
         let mut stop = self.stop.as_mut();
+        // A spare descriptor for shedding peers while descriptors are
+        // exhausted (see `shed_on_descriptor_exhaustion`).
+        let mut spare = spare_descriptor();
         let accept_error = loop {
             tokio::select! {
                 biased;
@@ -441,6 +444,20 @@ impl PhasedInner {
                         self.resources.task_high_watermark.fetch_max(self.connections.len(), std::sync::atomic::Ordering::SeqCst);
                     }
                     Err(error) if matches!(error.kind(), std::io::ErrorKind::InvalidInput | std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Unsupported) => break Some(error),
+                    Err(error) if is_descriptor_exhaustion(&error) => {
+                        // TS (libuv) neither logs nor stalls here: it frees a
+                        // reserved descriptor, accepts the pending peer and
+                        // closes it at once, so the peer sees the connection
+                        // end instead of waiting in the backlog. Existing
+                        // connections are untouched; accepting resumes on its
+                        // own once descriptors are freed.
+                        let listener = self.listener.as_ref().expect("the listener is held until stop");
+                        shed_on_descriptor_exhaustion(listener, &mut spare).await;
+                        tokio::select! {
+                            _ = &mut stop => break None,
+                            _ = tokio::time::sleep(Duration::from_millis(10)) => {}
+                        }
+                    }
                     Err(error) => {
                         // #2434: same best-effort shape as the connection
                         // line above — a failed stderr write must not panic
@@ -677,7 +694,13 @@ impl Drop for StopHost {
 
 // Resource safety differences from TS's unbounded custom WS implementation.
 const MAX_INPUT_PAYLOAD: usize = 100 * 1024 * 1024;
-const MAX_CONNECTIONS: usize = 64;
+// TS has no connection cap (node:http defaults, no maxConnections): the
+// connection semaphore only counts live connections (its permits travel with
+// each connection and return when it ends or half-closes), so the production
+// default is the semaphore's maximum and a peer is never turned away for
+// count. Descriptor exhaustion surfaces as an accept error instead: logged,
+// short backoff, then accepting resumes once descriptors are freed.
+const UNBOUNDED_CONNECTIONS: usize = Semaphore::MAX_PERMITS;
 const MAX_TOTAL_INPUT_BYTES: usize = 256 * 1024 * 1024;
 
 // Reserve the actual UTF-8 replacement size before allocating a queued String.
@@ -711,6 +734,32 @@ fn request_text(payload: &[u8], budget: &Arc<Semaphore>) -> Option<(String, Owne
         }
     }
     Some((text, permit))
+}
+
+fn spare_descriptor() -> Option<std::fs::File> {
+    std::fs::File::open("/dev/null").ok()
+}
+
+fn is_descriptor_exhaustion(error: &std::io::Error) -> bool {
+    matches!(error.raw_os_error(), Some(code) if code == libc::EMFILE || code == libc::ENFILE)
+}
+
+/// libuv's EMFILE handling (`uv__emfile_trick`): release the reserved
+/// descriptor, accept every peer that is ready and close each one, then take
+/// the reserve back. Without a reserve (or when none is ready) this only
+/// returns, and the caller backs off briefly before the next accept.
+async fn shed_on_descriptor_exhaustion(
+    listener: &tokio::net::TcpListener,
+    spare: &mut Option<std::fs::File>,
+) {
+    if spare.take().is_none() {
+        *spare = spare_descriptor();
+        return;
+    }
+    while let Ok(Ok((socket, _))) = tokio::time::timeout(Duration::ZERO, listener.accept()).await {
+        drop(socket);
+    }
+    *spare = spare_descriptor();
 }
 
 struct Resources {
@@ -1278,13 +1327,10 @@ where
                 // never complete, so its input budget goes back now.
                 buffered.decoder = Decoder::default();
                 buffered.allocation = None;
-                // TS has no connection cap; ours must not let vanished
-                // clients (killed with no close frame, nothing written to
-                // them since) fill it and lock every new peer out — HTTP
-                // included, which shares the listener. A half-open
-                // connection reads nothing more, so it stops counting
-                // against the cap; it keeps its writer until a write fails
-                // or the server stops.
+                // A half-open connection reads nothing more, so it stops
+                // counting as live (the count only matters when a test
+                // configures a small cap; production has none); it keeps
+                // its writer until a write fails or the server stops.
                 drop(slot.take());
                 continue;
             }
