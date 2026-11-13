@@ -53,7 +53,7 @@ node scripts/bbx/status.mjs --stdout --now 2026-01-01T00:00:00Z   # 只打印；
 node scripts/bbx/status-selftest.mjs                         # 自测（假产物上的归属、计数、缺口清单、逐字节确定）
 ```
 
-它只读产物、不跑对拍，几秒内完成。除了产物，它还读 `state/issues.md`（「功能域」列）、`state/audits.md`（审阅记录）、`state/check-results.json`（四条命令与上游验收集的结果，手写，写明来源；缺哪项就显示「没有数据」）、`specs/delivery/README.md` 的「允许不一致的清单」，并扫 `src/` 的产品代码数占位和透明代理入口。表面项是否被碰到的判定与 `coverage.mjs --surface` 共用 `lib/surface.mjs`，同一产物目录上两者的数字相同（总表末尾有按维度的对照表）。
+它只读产物、不跑对拍。一轮全量产物（约 500 MB 的基线采集）上约半分钟到一分钟，几乎全花在 573 个 `observe` 正则扫产物原文上，与 `coverage.mjs --surface` 同样的代价；没有产物时两三秒。除了产物，它还读 `state/issues.md`（「功能域」列）、`state/audits.md`（审阅记录）、`state/check-results.json`（四条命令与上游验收集的结果，手写，写明来源；缺哪项就显示「没有数据」）、`specs/delivery/README.md` 的「允许不一致的清单」，并扫 `src/` 的产品代码数占位和透明代理入口。表面项是否被碰到的判定与 `coverage.mjs --surface` 共用 `lib/surface.mjs`，同一产物目录上两者的数字相同（总表末尾有按维度的对照表）。
 
 ## 场景格式
 
