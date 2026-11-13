@@ -692,7 +692,7 @@ const upgradeRequest = (spec) => {
 //   字节项可带 times / splitAt / end（写完关闭写方向：TCP 半关闭，stdio 关闭 stdin）；
 //   {wait: 毫秒}；{pauseRead} / {resumeRead}（只对 TCP）；
 //   {until: {lines: N} | {text: "…"}, timeout, save}：等对方的输出里出现第 N 个完整行（从头数）/ 在上一次 until
-//     停下的位置之后出现这段文字且那一行已经完整，再往下走；save 的正则在那一整行上匹配（与步骤上的 save 同一套
+//     停下的位置之后（写 fromStart: true 时从头找）出现这段文字且那一行已经完整，再往下走；save 的正则在那一整行上匹配（与步骤上的 save 同一套
 //     {saved.名字}），用来应答对方发来的请求（例如 sidecar 发给宿主的 module_call）。timeout（缺省 10000 毫秒）
 //     内没等到，后面的项不再执行，结果里记 untilMissed（这一项的下标）。
 // 每一项在用到时才替换 {saved.名字}，所以前面 until 刚存下的值后面的项就能引用。对方关闭后不再写。
@@ -716,7 +716,7 @@ const sendScript = async (items, io) => {
             start = end + 1;
           }
         }
-        const at = text.indexOf(subst(item.until.text), cursor);
+        const at = text.indexOf(subst(item.until.text), item.until.fromStart ? 0 : cursor);
         const end = at < 0 ? -1 : text.indexOf('\n', at);
         if (end < 0) return null;
         return { line: text.slice(text.lastIndexOf('\n', at - 1) + 1, end), next: end + 1 };

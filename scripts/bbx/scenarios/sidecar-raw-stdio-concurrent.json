@@ -1,0 +1,149 @@
+{
+ "name": "sidecar-raw-stdio-concurrent",
+ "about": "stdio 部署：同一条连接上不等终止就发两条 execute。基线每条 execute 各起一个执行（agentLoopSidecarServer.ts:153-156 不 await），两条都先发出 model module_call；宿主先回第二条、再回第一条，第二条先结束。比两条流交错后的帧、各自的终止帧与之后的 status。写完关闭 stdin，进程正常退出。",
+ "server": false,
+ "steps": [
+  {
+   "sidecar": "stdio",
+   "readMs": 3000,
+   "send": [
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x1",
+      "method": "execute",
+      "runId": "run-1",
+      "operationId": "op-1",
+      "requestId": "rq-1",
+      "payload": {}
+     }
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x2",
+      "method": "execute",
+      "runId": "run-2",
+      "operationId": "op-2",
+      "requestId": "rq-2",
+      "payload": {}
+     }
+    },
+    {
+     "until": {
+      "text": "\"method\":\"module_call\",\"runId\":\"run-1\"",
+      "fromStart": true
+     },
+     "timeout": 8000,
+     "save": {
+      "aMsg": "\"messageId\":\"([^\"]+)\"",
+      "aReq": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "until": {
+      "text": "\"method\":\"module_call\",\"runId\":\"run-2\"",
+      "fromStart": true
+     },
+     "timeout": 8000,
+     "save": {
+      "bMsg": "\"messageId\":\"([^\"]+)\"",
+      "bReq": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "wait": 300
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-b",
+      "inReplyTo": "{saved.bMsg}",
+      "requestId": "{saved.bReq}",
+      "ok": true,
+      "payload": {
+       "events": [
+        {
+         "type": "request_started",
+         "provider": "default",
+         "model": "default"
+        },
+        {
+         "type": "message_start",
+         "role": "assistant"
+        },
+        {
+         "type": "text_delta",
+         "text": "second"
+        },
+        {
+         "type": "message_end",
+         "finishReason": "stop"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "wait": 500
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-a",
+      "inReplyTo": "{saved.aMsg}",
+      "requestId": "{saved.aReq}",
+      "ok": true,
+      "payload": {
+       "events": [
+        {
+         "type": "request_started",
+         "provider": "default",
+         "model": "default"
+        },
+        {
+         "type": "message_start",
+         "role": "assistant"
+        },
+        {
+         "type": "text_delta",
+         "text": "first"
+        },
+        {
+         "type": "message_end",
+         "finishReason": "stop"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-1\",\"final\":true"
+     },
+     "timeout": 10000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "s1",
+      "method": "status",
+      "requestId": "rq-1"
+     }
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "s2",
+      "method": "status",
+      "requestId": "rq-2"
+     }
+    },
+    {
+     "text": "",
+     "end": true
+    }
+   ]
+  }
+ ]
+}

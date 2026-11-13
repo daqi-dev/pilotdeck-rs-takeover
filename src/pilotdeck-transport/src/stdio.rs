@@ -888,6 +888,28 @@ impl PendingExchange {
                         | pilotdeck_agent::ports::CancelCause::TransportClosed,
                 })
             );
+            // The baseline's external loop module (agentLoopSidecarServer.ts
+            // callModule, 446-457) releases a pending call the moment its
+            // execution is aborted: the abort listener deletes the pending
+            // entry and rejects with SidecarAbortError, so the loop ends on
+            // its abort and a later host reply is ignored (137-143). No
+            // reconciliation wait, no accepted-call uncertainty.
+            if dispatched
+                && !invalid
+                && !state.closed
+                && matches!(
+                    cancellation,
+                    Some(PortError::Cancelled {
+                        cause: pilotdeck_agent::ports::CancelCause::Requested(_),
+                    })
+                )
+                && crate::factory_payload::external_deployment()
+            {
+                state.calls.remove(&message_id);
+                drop(state);
+                owner.0.wake.notify();
+                return Err(cancellation.expect("matched cancellation"));
+            }
             if dispatched && cancellation.is_some() && !deadline_exceeded {
                 // Reconcile only this already-dispatched identity. Cancellation
                 // cannot prove its outcome; a later valid ACK can settle it.
@@ -1124,6 +1146,9 @@ fn known_uncertainty(state: &State, identity: &ExecutionIdentity) -> Option<Port
         })
 }
 impl HostExchange for BoundExchange {
+    fn bound_identity(&self) -> Option<ExecutionIdentity> {
+        Some(self.identity.clone())
+    }
     fn exchange(
         &mut self,
         control: &CallControl,

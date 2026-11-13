@@ -485,13 +485,17 @@ impl ExecutionServer {
                     }
                     let mut timeout: Vec<u16> = "timeout:".encode_utf16().collect();
                     timeout.extend_from_slice(run_id.units());
-                    // A gateway timeout reaches a sidecar together with the
-                    // operation deadline it derives from `timeoutMs`. The
+                    // The baseline's external loop module marks the execution
+                    // as past its deadline for this reason alone, whether or
+                    // not the execute carried a deadline (178-180). The
                     // gateway's own in-process loop gets neither a deadline
                     // nor a deadline terminal (the baseline runs it as a plain
-                    // AgentLoop), so the reason marks a deadline only for an
-                    // operation that carries one.
-                    let cause = if reason.units() == timeout && active.deadline.is_some() {
+                    // AgentLoop), so there the reason marks a deadline only for
+                    // an operation that carries one.
+                    let cause = if reason.units() == timeout
+                        && (active.deadline.is_some()
+                            || crate::factory_payload::external_deployment())
+                    {
                         CancelCause::Deadline
                     } else {
                         CancelCause::Requested(reason.clone())

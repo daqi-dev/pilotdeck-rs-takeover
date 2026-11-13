@@ -1,0 +1,42 @@
+{
+ "name": "sidecar-raw-stdio-eof-pending",
+ "about": "stdio 部署：execute 发出 model module_call 后宿主不回应，直接关闭 stdin。基线 serve 的读循环结束后 await 全部在途执行（agentLoopSidecarServer.ts:205），而挂起的调用永远等不到应答、事件循环里再没有别的东西，Node 以退出码 13 退出并在 stderr 打「unsettled top-level await」（pilotdeck-agent-loop-sidecar.ts:29 的 await sidecar.serve()）。",
+ "server": false,
+ "steps": [
+  {
+   "sidecar": "stdio",
+   "readMs": 6000,
+   "send": [
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x1",
+      "method": "execute",
+      "runId": "run-1",
+      "operationId": "op-1",
+      "requestId": "rq-1",
+      "payload": {}
+     }
+    },
+    {
+     "until": {
+      "text": "\"method\":\"module_call\""
+     },
+     "timeout": 8000,
+     "save": {
+      "m1Msg": "\"messageId\":\"([^\"]+)\"",
+      "m1Req": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "wait": 200,
+     "end": true
+    },
+    {
+     "text": "",
+     "end": true
+    }
+   ]
+  }
+ ]
+}

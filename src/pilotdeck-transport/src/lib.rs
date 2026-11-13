@@ -38,6 +38,10 @@ pub struct HostExchangeResponse {
 pub trait HostExchange: Send {
     /// SDK module-failure results use two independent wall-clock samples per
     /// tool, rather than the AgentLoop's single missing-result timestamp.
+    /// The execution this exchange is bound to, when it has one.
+    fn bound_identity(&self) -> Option<ExecutionIdentity> {
+        None
+    }
     fn wall_now_iso(&self) -> JsString {
         crate::server::ExecutionClock::now_iso(&crate::system_clock::SystemExecutionClock)
     }

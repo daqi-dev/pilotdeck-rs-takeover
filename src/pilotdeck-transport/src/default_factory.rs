@@ -48,13 +48,27 @@ impl<H: HostPort> HostPort for NotificationFencedHost<H> {
         self.host.call(control, call)
     }
 }
-struct ProductionTurnClock(Arc<dyn ExecutionClock>);
+/// One per execution, like the host model port the baseline's default
+/// factory builds for each execute (createSidecarPorts → createHostModelInvokerPort).
+struct ProductionTurnClock {
+    clock: Arc<dyn ExecutionClock>,
+    preparations: std::sync::atomic::AtomicU64,
+}
 impl TurnClock for ProductionTurnClock {
     fn now_iso(&self) -> JsString {
-        self.0.now_iso()
+        self.clock.now_iso()
     }
     fn uuid(&self) -> JsString {
         uuid::Uuid::new_v4().to_string().into()
+    }
+    /// `prepared-${uuid()}-${++preparationSequence}` (hostModelInvokerPort.ts:72-73):
+    /// the port's random token, then the port's own count of preparations.
+    fn preparation_id(&self) -> JsString {
+        let sequence = self
+            .preparations
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
+        format!("prepared-{}-{sequence}", crate::stdio::random_token()).into()
     }
     /// The gateway builds its agent loops without a `uuid` dependency
     /// (`AgentTurnCapabilities.clock`), so their transient prompts are
@@ -926,6 +940,15 @@ impl ExecutionFactory for OriginalAgentFactory {
                 Ok(HostReply::ModelMetadata(value)) => metadata.push(value),
                 Ok(_) => return Err(gap("metadata operation reply")),
                 Err(error) if observed_by_loop(&error) => {}
+                // The baseline's default factory throws a plain Error carrying
+                // only the message (pilotdeck-agent-loop-default-factory.ts:
+                // 348-353); the reply's code is not on it, so the external
+                // loop's terminal has none.
+                Err(PortError::HostFailure {
+                    message, boundary, ..
+                }) if crate::factory_payload::external_deployment() => {
+                    return Err(PortError::SourceException { message, boundary });
+                }
                 Err(error) => return Err(error),
             }
         }
@@ -1032,7 +1055,10 @@ impl ExecutionFactory for OriginalAgentFactory {
             // is needed, rather than expiring it during a long healthy stream.
             deadline: None,
         };
-        let clock = ProductionTurnClock(self.clock.clone());
+        let clock = ProductionTurnClock {
+            clock: self.clock.clone(),
+            preparations: std::sync::atomic::AtomicU64::new(0),
+        };
         let mut events = EventSink {
             context,
             notifications: notifications.clone(),

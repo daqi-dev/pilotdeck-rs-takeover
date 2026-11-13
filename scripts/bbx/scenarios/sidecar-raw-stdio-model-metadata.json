@@ -1,0 +1,281 @@
+{
+ "name": "sidecar-raw-stdio-model-metadata",
+ "about": "stdio 部署：execute 的 hostModules 宣告 model 有 get_metadata（pilotdeck-agent-loop-default-factory.ts:335-360），sidecar 先发 requestId 为 model-metadata-<provider>-<model> 的 module_call（没有随机段）。(1) 宿主回失败（ok: false, code），工厂抛错，终止帧的 code 与 error.code；(2) 宿主回的元数据缺 provider（387 行）；(3) 宿主回合法元数据，再回 model stream 成功，turn 的 drain_steer 回空。之后的 status。写完关闭 stdin。",
+ "server": false,
+ "steps": [
+  {
+   "sidecar": "stdio",
+   "readMs": 3000,
+   "send": [
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x1",
+      "method": "execute",
+      "runId": "run-1",
+      "operationId": "op-1",
+      "requestId": "rq-1",
+      "payload": {
+       "hostModules": {
+        "model": {
+         "methods": [
+          "stream",
+          "get_metadata"
+         ]
+        }
+       }
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"method\":\"module_call\""
+     },
+     "timeout": 8000,
+     "save": {
+      "m1Msg": "\"messageId\":\"([^\"]+)\"",
+      "m1Req": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-m1",
+      "inReplyTo": "{saved.m1Msg}",
+      "requestId": "{saved.m1Req}",
+      "ok": false,
+      "code": "NO_META",
+      "error": {
+       "message": "no metadata here"
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-1\",\"final\":true"
+     },
+     "timeout": 10000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "s1",
+      "method": "status",
+      "requestId": "rq-1"
+     }
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x2",
+      "method": "execute",
+      "runId": "run-2",
+      "operationId": "op-2",
+      "requestId": "rq-2",
+      "payload": {
+       "hostModules": {
+        "model": {
+         "methods": [
+          "stream",
+          "get_metadata"
+         ]
+        }
+       }
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"method\":\"module_call\""
+     },
+     "timeout": 8000,
+     "save": {
+      "m2Msg": "\"messageId\":\"([^\"]+)\"",
+      "m2Req": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-m2",
+      "inReplyTo": "{saved.m2Msg}",
+      "requestId": "{saved.m2Req}",
+      "ok": true,
+      "payload": {
+       "model": "default"
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-2\",\"final\":true"
+     },
+     "timeout": 10000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "s2",
+      "method": "status",
+      "requestId": "rq-2"
+     }
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x3",
+      "method": "execute",
+      "runId": "run-3",
+      "operationId": "op-3",
+      "requestId": "rq-3",
+      "payload": {
+       "hostModules": {
+        "model": {
+         "methods": [
+          "stream",
+          "get_metadata"
+         ]
+        },
+        "turn": {
+         "methods": [
+          "drain_steer"
+         ]
+        }
+       }
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"method\":\"module_call\""
+     },
+     "timeout": 8000,
+     "save": {
+      "m3Msg": "\"messageId\":\"([^\"]+)\"",
+      "m3Req": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-m3",
+      "inReplyTo": "{saved.m3Msg}",
+      "requestId": "{saved.m3Req}",
+      "ok": true,
+      "payload": {
+       "provider": "default",
+       "model": "default",
+       "protocol": "openai",
+       "capabilities": {
+        "maxContextTokens": 65536,
+        "maxOutputTokens": 8192
+       }
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"method\":\"module_call\""
+     },
+     "timeout": 8000,
+     "save": {
+      "m3bMsg": "\"messageId\":\"([^\"]+)\"",
+      "m3bReq": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-m3b",
+      "inReplyTo": "{saved.m3bMsg}",
+      "requestId": "{saved.m3bReq}",
+      "ok": true,
+      "payload": {
+       "messages": []
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"method\":\"module_call\""
+     },
+     "timeout": 8000,
+     "save": {
+      "m3cMsg": "\"messageId\":\"([^\"]+)\"",
+      "m3cReq": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-m3c",
+      "inReplyTo": "{saved.m3cMsg}",
+      "requestId": "{saved.m3cReq}",
+      "ok": true,
+      "payload": {
+       "events": [
+        {
+         "type": "request_started",
+         "provider": "default",
+         "model": "default"
+        },
+        {
+         "type": "message_start",
+         "role": "assistant"
+        },
+        {
+         "type": "text_delta",
+         "text": "with metadata"
+        },
+        {
+         "type": "message_end",
+         "finishReason": "stop"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"method\":\"module_call\""
+     },
+     "timeout": 1500,
+     "save": {
+      "m3dMsg": "\"messageId\":\"([^\"]+)\"",
+      "m3dReq": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-m3d",
+      "inReplyTo": "{saved.m3dMsg}",
+      "requestId": "{saved.m3dReq}",
+      "ok": true,
+      "payload": {
+       "messages": []
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-3\",\"final\":true"
+     },
+     "timeout": 10000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "s3",
+      "method": "status",
+      "requestId": "rq-3"
+     }
+    },
+    {
+     "text": "",
+     "end": true
+    }
+   ]
+  }
+ ]
+}

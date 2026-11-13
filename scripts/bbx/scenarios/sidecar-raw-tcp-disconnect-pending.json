@@ -1,0 +1,126 @@
+{
+ "name": "sidecar-raw-tcp-disconnect-pending",
+ "about": "TCP 部署：第一条连接上的 execute 发出 model module_call 后，宿主不回应就断开连接（步骤结束时关掉套接字）。基线 serve 的 finally 只把连接标成关闭、解除流的绑定（agentLoopSidecarServer.ts:201-204），执行本身不取消：仍挂在那条调用上，abortControllers / operation 表是进程级的，所以第二条连接上 status 是 running、cancelRequested false；在第二条连接上 cancel 它，abort 释放挂起的调用，执行以 aborted 结束，终止帧因流没有连接而不发（publishStreamEvent 575-576），status 变成 cancelled。第三条连接再查一次。",
+ "server": false,
+ "env": {
+  "PILOTDECK_AGENT_LOOP_TCP_PORT": "38414"
+ },
+ "steps": [
+  {
+   "sidecar": "start",
+   "port": 38414
+  },
+  {
+   "raw": {
+    "port": 38414,
+    "lines": true,
+    "readMs": 300,
+    "send": [
+     {
+      "json": {
+       "kind": "request",
+       "messageId": "x1",
+       "method": "execute",
+       "runId": "run-1",
+       "operationId": "op-1",
+       "requestId": "rq-1",
+       "payload": {}
+      }
+     },
+     {
+      "until": {
+       "text": "\"method\":\"module_call\""
+      },
+      "timeout": 8000,
+      "save": {
+       "m1Msg": "\"messageId\":\"([^\"]+)\"",
+       "m1Req": "\"requestId\":\"([^\"]+)\""
+      }
+     }
+    ]
+   }
+  },
+  {
+   "sleep": 500
+  },
+  {
+   "raw": {
+    "port": 38414,
+    "lines": true,
+    "readMs": 1000,
+    "send": [
+     {
+      "json": {
+       "kind": "request",
+       "messageId": "h2",
+       "method": "hello",
+       "payload": {}
+      }
+     },
+     {
+      "json": {
+       "kind": "request",
+       "messageId": "s1a",
+       "method": "status",
+       "requestId": "rq-1"
+      }
+     },
+     {
+      "wait": 300
+     },
+     {
+      "json": {
+       "kind": "request",
+       "messageId": "c1",
+       "method": "cancel",
+       "runId": "run-1",
+       "operationId": "op-1",
+       "reason": "user"
+      }
+     },
+     {
+      "wait": 500
+     },
+     {
+      "json": {
+       "kind": "request",
+       "messageId": "s1b",
+       "method": "status",
+       "requestId": "rq-1"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "raw": {
+    "port": 38414,
+    "lines": true,
+    "readMs": 800,
+    "send": [
+     {
+      "json": {
+       "kind": "request",
+       "messageId": "s1c",
+       "method": "status",
+       "requestId": "rq-1"
+      }
+     },
+     {
+      "json": {
+       "kind": "request",
+       "messageId": "c1c",
+       "method": "cancel",
+       "runId": "run-1",
+       "operationId": "op-1",
+       "reason": "user"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "sidecar": "stop"
+  }
+ ]
+}

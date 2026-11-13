@@ -315,6 +315,11 @@ pub trait TurnClock {
     fn offers_uuid(&self) -> bool {
         true
     }
+    /// The id a model request's preparation travels under. A host model port
+    /// names it (hostModelInvokerPort.ts:73); without one, a fresh id.
+    fn preparation_id(&self) -> JsString {
+        self.uuid()
+    }
 }
 #[derive(Debug, Clone)]
 pub enum TurnEvent {
@@ -662,7 +667,7 @@ pub fn run_admitted_turn(
                 route: request.route.clone(),
             },
         )?;
-        let handle = PreparedRequestHandle(clock.uuid());
+        let handle = PreparedRequestHandle(clock.preparation_id());
         let base_request = request.clone();
         let mut prepared = if host.advertised("model", "prepare") {
             let HostReply::ModelPrepared(prepared) = host.call(
