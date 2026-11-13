@@ -37,7 +37,7 @@ use native_entry::VALID_HOME_CONFIG;
 use std::{path::PathBuf, process::Command};
 #[test]
 #[ignore = "build gateway+sidecar bins first; requires Node v22.22.0 and the pinned TS baseline"]
-fn executable_native_and_a4() {
+fn executable_native() {
     let target = std::env::var_os("CARGO_TARGET_DIR")
         .map(PathBuf::from)
         .expect("#1071 explicit CARGO_TARGET_DIR");
@@ -108,25 +108,26 @@ fn executable_native_and_a4() {
         assertion != Some("#1071 readiness address carries a port"),
         "#1071 executable readiness address carries a port"
     );
-    negative_assert!(
-        result.status.success(),
-        "#1071 executable native and A4 oracle"
-    );
+    negative_assert!(result.status.success(), "#1071 executable native oracle");
 }
 
+// Every argument is the native options grammar; only a leading `--native`
+// (the removed transparent proxy's selector, still passed by callers) is
+// dropped before parsing, and only once.
 #[tokio::test]
 async fn explicit_entry_selects_parser() {
-    for (args, native) in [
-        (vec!["--native", "--probe-invalid"], true),
-        (vec!["a4", "--native", "--probe-invalid"], false),
-        (vec!["--native=true", "--probe-invalid"], false),
+    for (args, rejected) in [
+        (vec!["--native", "--probe-invalid"], "--probe-invalid"),
+        (vec!["--probe-invalid"], "--probe-invalid"),
+        (vec!["a4", "--native", "--probe-invalid"], "a4"),
+        (vec!["--native=true", "--probe-invalid"], "--native=true"),
+        (vec!["--native", "--native"], "--native"),
     ] {
         let output = tokio::time::timeout(
             std::time::Duration::from_secs(5),
             tokio::process::Command::new(env!("CARGO_BIN_EXE_pilotdeck-gateway"))
                 .args(&args)
                 .env_clear()
-                .env("PILOTDECK_PROXY_LISTEN", "invalid-a4-address")
                 .kill_on_drop(true)
                 .output(),
         )
@@ -139,17 +140,10 @@ async fn explicit_entry_selects_parser() {
         );
         let error = String::from_utf8(output.stderr).expect("#1071 entry stderr UTF8");
         println!("#1071 entry args={args:?}: {error}");
-        if native {
-            negative_assert!(
-                error.contains("unknown native option: --probe-invalid"),
-                "#1071 native first argument selects native parser"
-            );
-        } else {
-            negative_assert!(
-                !error.contains("native option") && error.contains("AddrParseError(Socket)"),
-                "#1071 nonfirst native argument keeps A4 parser"
-            );
-        }
+        negative_assert!(
+            error.contains(&format!("unknown native option: {rejected}")),
+            "#1071 every argument reaches the native parser"
+        );
     }
 }
 

@@ -1,4 +1,5 @@
-//! Parsed WebSocket proxy. TS owns authentication and methods outside the verified local whitelist.
+//! Rust gateway: the native process composition (`native_process`), its HTTP / WS
+//! listeners and the runtime they host.
 mod acceptor;
 mod api_web;
 // Unwired channel component; production assembly is a separate unit.
@@ -33,7 +34,6 @@ extern crate self as pilotdeck_gateway;
 #[allow(clippy::duplicate_mod)]
 mod mutant_facade;
 pub mod node_io;
-mod pairing;
 mod process_group;
 #[cfg(all(test, unix))]
 mod process_spawn;
@@ -90,18 +90,14 @@ mod test_skip_line;
 #[path = "../tests/common/write_stage.rs"]
 mod test_write_stage;
 pub mod upload;
-mod upstream;
 pub mod user_dialog;
 
 use bytes::Bytes;
 use http_body_util::combinators::BoxBody;
-use hyper::body::Incoming;
-use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use std::error::Error;
 
 pub type ProxyError = Box<dyn Error + Send + Sync>;
 pub type Body = BoxBody<Bytes, ProxyError>;
-pub type HttpClient = Client<HttpConnector, Incoming>;
 
 /// Node/libuv `Error.message` for a one-path syscall
 /// (`code: description, syscall 'path'`), when the generated table knows the

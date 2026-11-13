@@ -170,9 +170,6 @@ try{
   for(const [name,args,extraEnv] of [['missing-options',['--native'],{}],['bind-failure',valid,{}],['ambient-managed',valid,{PILOTDECK_MANAGED_CONFIG:join(out,'must-not-read.yaml')}]] as const){
     const child=spawn(binary,[...args],{cwd:existingProject,env:{PATH:process.env.PATH,HOME:existingHome,...extraEnv},stdio:['ignore','pipe','pipe']});children.push(child);let error='';child.stderr.on('data',b=>error+=b);const status=await bounded(once(child,'exit'),'startup failure');assert.notEqual(status[0],0,'#1071 invalid startup exits nonzero');assert.equal(status[1],null,'#1071 failure does not hang');assert.ok(!error.includes('native listening'),'#1071 failed startup never advertises ready');if(name==='bind-failure')assert.match(error,/address already in use/i,'#1071 bind failure reaches occupied listener');rows.push({startupFailure:name,argv:[binary,...args],pid:child.pid,status,stderr:error});
   }
-  const legacy=await launch('a4',[],false);const payload=Buffer.from([255,0,128,13,10,42]);
-  const response=await bounded(new Promise<any>((resolve,reject)=>{const req=request(`http://${legacy.address}/bytes`,{method:'POST'},res=>{const chunks:Buffer[]=[];res.on('data',b=>chunks.push(b));res.on('end',()=>resolve({status:res.statusCode,body:Buffer.concat(chunks).toString('hex')}));});req.on('error',reject);req.end(payload);}), 'A4 byte proxy');
-  assert.deepEqual(response,{status:201,body:'00ff01800d0a'},'#1071 A4 response bytes');assert.ok(rows.some(r=>r.a4Request===payload.toString('hex')),'#1071 A4 request bytes');legacy.child.kill('SIGINT');assert.deepEqual(await bounded(legacy.exit,'A4 exit'),[0,null],'#1071 A4 clean exit');rows.push({defaultA4:response});
  }catch(error:any){
   // Only an actual named assertion can become a target receipt. A network
   // error, process failure or deadline remains an unclassified INVALID.
@@ -189,4 +186,4 @@ try{
   assert.equal(after.binary,identities.binary.sha256,'#1071 binary unchanged');assert.equal(after.sidecar,identities.sidecar.sha256,'#1071 sidecar unchanged');
   await writeFile(join(out,'process-record.json'),JSON.stringify({node:process.version,...identities,after,rows,assertionFailure},null,2)+'\n',{flag:'wx'});
 }
-console.log('#1071 native process signals, production submit, isolated catalog and default A4 bytes passed');
+console.log('#1071 native process signals, production submit and isolated catalog passed');

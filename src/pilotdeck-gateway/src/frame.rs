@@ -1,5 +1,5 @@
-//! Retain the original wire, including nonminimal lengths, FIN/RSV and mask key.
-use bytes::{Bytes, BytesMut};
+//! WebSocket frame decoding for the native listener, and TS-shaped server frames.
+use bytes::BytesMut;
 
 pub(crate) const MAX_CLIENT_HEADER_BYTES: usize = 14;
 pub(crate) const MAX_SERVER_HEADER_BYTES: usize = 10;
@@ -9,7 +9,6 @@ const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
 #[derive(Debug)]
 pub(crate) struct Frame {
     pub opcode: u8,
-    pub wire: Bytes,
     pub payload: Vec<u8>,
 }
 
@@ -25,12 +24,13 @@ pub(crate) struct Decoder {
 }
 
 impl Decoder {
+    #[cfg(test)]
     pub fn next(&mut self) -> Result<Option<Frame>, DecodeError> {
         self.decode(true, MAX_SAFE_INTEGER)
     }
 
-    /// Opt-in native listener bound, checked from the header before payload
-    /// allocation. The transparent proxy retains the baseline's default.
+    /// The native listener's bound, checked from the header before payload
+    /// allocation.
     pub fn next_limited(&mut self, max_payload: u64) -> Result<Option<Frame>, DecodeError> {
         let max_payload = if crate::mutants::on("native-ws-input-boundary") {
             max_payload.saturating_sub(1)
@@ -40,6 +40,7 @@ impl Decoder {
         self.decode(true, max_payload)
     }
 
+    #[cfg(test)]
     pub fn next_server(&mut self) -> Result<Option<Frame>, DecodeError> {
         self.decode(false, MAX_SAFE_INTEGER)
     }
@@ -97,7 +98,6 @@ impl Decoder {
         }
         Ok(Some(Frame {
             opcode: wire[0] & 15,
-            wire,
             payload,
         }))
     }
@@ -139,4 +139,61 @@ pub(crate) fn client_frame(first: u8, length_code: u8, payload: &[u8]) -> Vec<u8
     wire.extend_from_slice(&mask);
     wire.extend(payload.iter().enumerate().map(|(i, b)| b ^ mask[i % 4]));
     wire
+}
+
+// Moved from the removed transparent-proxy pairing tests: they pin the
+// shared decoder (the native listener's `next_limited` runs the same
+// `decode`) and the TS-shaped server frame header.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decoder_waits_for_complete_extended_header_mask_and_payload() {
+        let wire = client_frame(0xf1, 127, b"abc");
+        let mut decoder = Decoder::default();
+        for (index, byte) in wire.iter().enumerate() {
+            decoder.buffer.extend_from_slice(&[*byte]);
+            let frame = decoder.next().unwrap();
+            if index + 1 < wire.len() {
+                assert!(frame.is_none());
+            } else {
+                let frame = frame.unwrap();
+                assert_eq!(frame.opcode, 1);
+                assert_eq!(frame.payload, b"abc");
+            }
+        }
+        assert!(decoder.buffer.is_empty());
+    }
+
+    #[test]
+    fn decoder_length_precedes_mask_validation_and_safe_integer_bound_is_exact() {
+        let mut decoder = Decoder::default();
+        decoder.buffer.extend_from_slice(&[0x81, 127]);
+        assert!(decoder.next().unwrap().is_none());
+        decoder
+            .buffer
+            .extend_from_slice(&((1u64 << 53) - 1).to_be_bytes());
+        assert_eq!(decoder.next().unwrap_err(), DecodeError::Unmasked);
+        decoder.buffer[1] = 255;
+        assert!(decoder.next().unwrap().is_none()); // No huge allocation.
+        decoder.buffer[2..10].copy_from_slice(&(1u64 << 53).to_be_bytes());
+        assert_eq!(decoder.next().unwrap_err(), DecodeError::TooLarge);
+    }
+
+    #[test]
+    fn server_reply_headers_match_ts_length_boundaries() {
+        for (size, expected) in [
+            (0, vec![0x8a, 0]),
+            (125, vec![0x8a, 125]),
+            (126, vec![0x8a, 126, 0, 126]),
+            (65535, vec![0x8a, 126, 255, 255]),
+            (65536, vec![0x8a, 127, 0, 0, 0, 0, 0, 1, 0, 0]),
+        ] {
+            let payload = vec![42; size];
+            let wire = server_frame(10, &payload);
+            assert_eq!(&wire[..expected.len()], expected);
+            assert_eq!(&wire[expected.len()..], payload);
+        }
+    }
 }

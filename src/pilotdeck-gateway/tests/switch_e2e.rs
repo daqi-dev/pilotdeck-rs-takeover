@@ -15,9 +15,8 @@ use tokio::{
     time::timeout,
 };
 
-// The constants and stop-side timing segments shared with
-// `tests/mode_routing.rs`, the same native entry's sibling test (#1354 /
-// #2511): one spelling per product fact, one copy per shared segment.
+// The native entry's shared constants and stop-side timing segments (#2511):
+// one spelling per product fact, one copy per shared segment.
 #[path = "common/native_entry.rs"]
 mod native_entry;
 use native_entry::{ADVERTISEMENT_BUDGET, STDERR_LIMIT, SWITCH_DEADLINE, VALID_HOME_CONFIG};
@@ -82,8 +81,7 @@ async fn sigterm_runs_the_switch_and_exits_clean() {
         .take()
         .expect("#1353 switch e2e child stderr pipe");
     // This consumer's spelling of the shared `STDERR_LIMIT` (#2511 item 2):
-    // `take` bounds the read itself — the sibling in `tests/mode_routing.rs`
-    // keeps draining and bounds only retention instead.
+    // `take` bounds the read itself.
     let mut lines = BufReader::new(stderr).take(STDERR_LIMIT).lines();
     // Wait for the child's own listening advertisement: past this point the
     // assembly is up and the signal handlers are registered.

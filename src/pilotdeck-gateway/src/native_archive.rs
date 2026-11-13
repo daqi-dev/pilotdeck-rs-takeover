@@ -35,12 +35,10 @@ fn nullish(value: &JsValue) -> bool {
 /// `input.projectKey ?? fallbackProjectRoot` (createLocalGateway.ts:1184,
 /// 1205, 1223): a missing or null key takes the boot's configured fallback
 /// project, while an empty string stays explicit and resolves against cwd.
-/// Both boots share this one fill — the isolated gate passes its configured
-/// project and the out-of-process proxy passes PILOT_HOME, the
-/// `pilotdeck server` boot's fallbackProjectRoot (pilotdeck.ts:107-111) — so
-/// the two entry points cannot drift. The pinned default-boot fixture
-/// instead replays nullish keys through `project()`'s cwd resolution, so the
-/// fill stays at the request entry points, not inside `response`.
+/// The native entry gate (`native_process/requests.rs`) passes its configured
+/// project. The pinned default-boot fixture instead replays nullish keys
+/// through `project()`'s cwd resolution, so the fill stays at the request
+/// entry point, not inside `response`.
 pub(crate) fn fill_default_project_key(params: &mut JsValue, fallback: &Path) {
     if let JsValue::Object(fields) = params
         && matches!(
@@ -54,10 +52,8 @@ pub(crate) fn fill_default_project_key(params: &mut JsValue, fallback: &Path) {
         );
     }
 }
-/// The three archive RPC names. `fill_request_default_project_key` below and
-/// the isolated entry gate in `native_process/requests.rs` both branch on this
-/// one list, so a fourth archive method cannot be wired into only one of the
-/// two entry points. `dispatch.rs` spells the same three names alongside other
+/// The three archive RPC names, which the isolated entry gate in
+/// `native_process/requests.rs` branches on. `dispatch.rs` spells the same three names alongside other
 /// methods in `LOCAL_METHODS`, `needs_files` and the archive route, and stays
 /// in sync by hand (see the comments there).
 pub(crate) const ARCHIVE_METHODS: [&str; 3] = [
@@ -66,27 +62,6 @@ pub(crate) const ARCHIVE_METHODS: [&str; 3] = [
     "native_archive_artifact",
 ];
 
-/// Request-level adapter for the proxy path, reusing the same params fill.
-/// `JsValue` has no nested mutation, so params is swapped out and back; a
-/// non-object params keeps TS's own read-error shape and is left untouched.
-pub(crate) fn fill_request_default_project_key(request: &mut JsValue, fallback: &Path) {
-    if !text_field(request, "method")
-        .is_some_and(|method| ARCHIVE_METHODS.contains(&method.as_str()))
-    {
-        return;
-    }
-    let JsValue::Object(fields) = request else {
-        return;
-    };
-    if !matches!(fields.get("params"), Some(JsValue::Object(_))) {
-        return;
-    }
-    let mut params = fields
-        .insert("params".into(), JsValue::Undefined)
-        .unwrap_or(JsValue::Undefined);
-    fill_default_project_key(&mut params, fallback);
-    fields.insert("params".into(), params);
-}
 /// `String(value)`. A too-deep array is V8's RangeError, surfaced as a plain
 /// gateway error (real TS + WS evidence: tests/fixtures/runtime-boundaries.json).
 fn display(value: &JsValue) -> Result<String> {

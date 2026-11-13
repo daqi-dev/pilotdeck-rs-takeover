@@ -274,10 +274,6 @@ regeneration!(
     "memory-maintenance"
 );
 regeneration!(
-    metadata_from_env_regenerates_identically,
-    "metadata-from-env"
-);
-regeneration!(
     metadata_process_cwd_regenerates_identically,
     "metadata-process-cwd"
 );

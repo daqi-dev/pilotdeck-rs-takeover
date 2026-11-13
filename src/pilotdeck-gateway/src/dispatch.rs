@@ -28,23 +28,22 @@ pub(crate) fn parse(payload: &[u8]) -> Option<JsValue> {
     parse_json(&String::from_utf8_lossy(payload)).ok()
 }
 
-pub(crate) fn is_hello(frame: &JsValue) -> bool {
-    text_field(frame, "type").as_deref() == Some("hello")
-        && ["protocolVersion", "clientName", "clientVersion", "token"]
-            .iter()
-            .all(|key| frame.get(key).and_then(JsValue::as_string).is_some())
-}
-
 pub(crate) fn is_request(frame: &JsValue) -> bool {
     text_field(frame, "type").as_deref() == Some("request")
         && frame.get("id").and_then(JsValue::as_string).is_some()
         && frame.get("method").and_then(JsValue::as_string).is_some()
 }
 
+// Production callers were the removed transparent proxy; the tests keep
+// using it as the routing oracle.
+#[cfg(test)]
 pub(crate) fn is_local(request: &JsValue) -> bool {
     text_field(request, "method").is_some_and(|method| LOCAL_METHODS.contains(&method.as_str()))
 }
 
+// Production callers were the removed transparent proxy; the tests keep
+// using it as the routing oracle.
+#[cfg(test)]
 pub(crate) fn needs_files(request: &JsValue) -> bool {
     matches!(
         text_field(request, "method").as_deref(),
@@ -66,6 +65,9 @@ pub(crate) fn needs_files(request: &JsValue) -> bool {
             .is_some())
 }
 
+// Production callers were the removed transparent proxy; the tests keep
+// using it as the routing oracle.
+#[cfg(test)]
 pub(crate) fn route_with_metadata<F: Files>(
     request: &JsValue,
     metadata: Option<&Metadata<F>>,
