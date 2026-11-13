@@ -382,7 +382,24 @@ impl LiveTurn for SessionStream {
                                 Ok(lifecycle) => lifecycle,
                                 Err(error) => return Err(self.fail(error, false)),
                             };
-                            self.turn = Box::new(self.preparing.take().expect("prepared turn").0);
+                            #[cfg(test)]
+                            {
+                                let gate = self.state.lock().unwrap().owner_install_gate.take();
+                                if let Some(gate) = gate {
+                                    gate.entered.notify_one();
+                                    gate.release
+                                        .acquire()
+                                        .await
+                                        .expect("owner install gate")
+                                        .forget();
+                                }
+                            }
+                            self.turn = self
+                                .preparing
+                                .take()
+                                .expect("prepared turn")
+                                .0
+                                .into_session_turn(&self.state);
                         }
                         self.phase = Phase::Start;
                     }

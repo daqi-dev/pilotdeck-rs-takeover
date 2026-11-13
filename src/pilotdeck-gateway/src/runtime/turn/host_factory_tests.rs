@@ -1965,7 +1965,31 @@ async fn session_hooks_wrap_real_turn_and_retain_lease_through_end() {
                     if case == "dispose-turn" {
                         bounded(session.dispose())
                             .await
-                            .expect("#743 production dispose model returns before drain");
+                            .expect("#743 production dispose model owns inner drain while public stream is held");
+                        let operations = crate::storage::read_transcript(recorder.writer().path())
+                            .expect("dispose journal is readable")
+                            .entries
+                            .into_iter()
+                            .filter(|entry| {
+                                entry
+                                    .get("type")
+                                    .and_then(JsValue::as_string)
+                                    .is_some_and(|kind| {
+                                        String::from_utf16_lossy(kind.units())
+                                            .starts_with("agent_loop_operation_")
+                                    })
+                            })
+                            .collect::<Vec<_>>();
+                        assert_eq!(
+                            operations.len(),
+                            3,
+                            "dispose waits for actual started/accepted/terminal journal writes"
+                        );
+                        assert_eq!(
+                            operations[2].get("outcome"),
+                            Some(&"cancelled".into()),
+                            "dispose preserves actual sidecar aborted terminal durably before writer close"
+                        );
                     } else {
                         session
                             .abort(&"user-stop".into())
@@ -2553,4 +2577,85 @@ async fn production_factory_steer_unapplied_offer_does_not_cross_turns() {
     );
     later.dispose().await.unwrap();
     registry.dispose().await.unwrap();
+}
+
+#[tokio::test]
+async fn dispose_between_prepared_host_and_owner_install_never_starts_journal() {
+    let scratch = Scratch::new();
+    let registry = registry(&scratch);
+    let runtime = registry.resolve(None).unwrap();
+    let factory_registry = registry.clone();
+    let recorder = test_recorder();
+    let session = LiveSessionAdapter::with_interaction(
+        recorder.clone(),
+        Vec::new,
+        move |identity, recorder| {
+            let factory = TurnHostFactory::new(
+                factory_registry.clone(),
+                peer("success", None),
+                Limits {
+                    handshake_timeout: Some(Duration::from_secs(60)),
+                    io_timeout: Duration::from_secs(60),
+                    ..Default::default()
+                },
+                Some("fixture".into()),
+                |_, _| ports(None),
+            );
+            Box::pin(async move { factory.create(&identity, recorder).await })
+        },
+    );
+    let gate = Arc::new(super::super::live::OwnerInstallGate {
+        entered: tokio::sync::Notify::new(),
+        release: tokio::sync::Semaphore::new(0),
+    });
+    session.state.lock().unwrap().owner_install_gate = Some(gate.clone());
+    let mut stream = session
+        .submit(
+            parse_json(r#"{"type":"text","text":"hello"}"#).unwrap(),
+            wire(),
+        )
+        .unwrap();
+    assert_eq!(
+        bounded(stream.next()).await.unwrap().unwrap().get("type"),
+        Some(&"session_started".into())
+    );
+    let mut preparing = stream.next();
+    tokio::select! {
+        _=gate.entered.notified()=>{},
+        result=&mut preparing=>panic!("prepared ownership gate must precede stream event: {result:?}"),
+        _=tokio::time::sleep(SIDECAR_LIVENESS)=>panic!("prepared owner gate did not enter"),
+    }
+    bounded(session.dispose())
+        .await
+        .expect("unstarted disposal cannot wait for a caller-held prepare waiter");
+    assert!(
+        recorder.writer().read_operation_entries().is_err(),
+        "unstarted dispose really closes writer"
+    );
+    gate.release.add_permits(1);
+    let mut events = vec![bounded(preparing).await.unwrap().unwrap()];
+    while let Some(event) = bounded(stream.next()).await.unwrap() {
+        events.push(event);
+    }
+    let terminals = events
+        .iter()
+        .filter(|event| event.get("type") == Some(&"turn_completed".into()))
+        .collect::<Vec<_>>();
+    assert_eq!(terminals.len(), 1);
+    assert_eq!(
+        terminals[0].get("result").and_then(|r| r.get("type")),
+        Some(&"aborted".into())
+    );
+    let transcript = crate::storage::read_transcript(recorder.writer().path()).unwrap();
+    assert!(
+        !transcript.entries.iter().any(|entry| entry
+            .get("type")
+            .and_then(JsValue::as_string)
+            .is_some_and(
+                |kind| String::from_utf16_lossy(kind.units()).starts_with("agent_loop_operation_")
+            )),
+        "disposed-before-install must never connect, execute or start a journal operation"
+    );
+    assert_eq!(runtime.lease_count(), 0);
+    bounded(registry.dispose()).await.unwrap();
 }

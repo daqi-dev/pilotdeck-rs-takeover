@@ -28,7 +28,7 @@ use pilotdeck_protocol::parse_json;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, admission::ExecutionIdentity};
 use pilotdeck_transport::{server::ExecutionClock, system_clock::SystemExecutionClock};
 use std::sync::{Arc, Mutex};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::{Duration, Instant, sleep_until};
 
 pub type InputTransform =
@@ -160,6 +160,11 @@ pub(super) struct SessionState {
     reload: Option<Arc<crate::runtime::session::factory::ReloadSource>>,
     reload_execution: Arc<std::sync::atomic::AtomicBool>,
     pub(super) disposed: bool,
+    external_loop: bool,
+    #[cfg(test)]
+    pub(super) owner_install_gate: Option<Arc<OwnerInstallGate>>,
+    external_owner: Option<Arc<ExternalTurnControl>>,
+    disposal: Option<watch::Receiver<Option<RuntimeResult>>>,
     pub(super) active: Option<Cancellation>,
     pub(super) signal: crate::runtime::hooks::Cancellation,
     pub(super) status: super::live_session::SessionStatus,
@@ -175,7 +180,9 @@ pub(super) struct ActiveTurn(pub(super) Arc<Mutex<SessionState>>);
 
 impl Drop for ActiveTurn {
     fn drop(&mut self) {
-        self.0.lock().unwrap().active = None;
+        let mut state = self.0.lock().unwrap();
+        state.active = None;
+        state.external_owner = None;
     }
 }
 
@@ -573,6 +580,8 @@ impl LiveSession for LiveSessionAdapter {
                     ));
                 }
             }
+            state.external_loop = !self.in_process_loop;
+            state.external_owner = None;
             state.active = Some(cancellation.clone());
             state.signal = signal.clone();
             state.status = super::live_session::SessionStatus::Running;
@@ -852,14 +861,15 @@ impl LiveSession for LiveSessionAdapter {
 
     fn dispose(&self) -> DisposeFuture<'_> {
         let mut state = self.state.lock().unwrap();
+        if let Some(receipt) = &state.disposal {
+            return await_disposal(receipt.clone());
+        }
         state.disposed = true;
         if let Some(tail) = &self.tail {
             tail.dispose();
         }
         if state.status == super::live_session::SessionStatus::Running {
             state.status = super::live_session::SessionStatus::Aborted;
-            // #996: dispose-loses-abort-signal skips the session abort signal
-            // (live-session/schemata.py). Off — the original abort.
             if !crate::mutants::on("dispose-loses-abort-signal") {
                 state.signal.abort();
             }
@@ -867,20 +877,53 @@ impl LiveSession for LiveSessionAdapter {
                 cancellation.cancel(Some("session_closed".into()));
             }
         }
-        self.recorder.writer().begin_close();
+        let owner = state.external_owner.clone();
+        if let Some(owner) = &owner {
+            owner.request_drain();
+        }
+        // Native/unstarted sessions preserve the synchronous writer fence.
+        // An accepted external operation retains this same writer until the
+        // original stream/finalizer has really completed its journal writes.
+        if owner.is_none() {
+            self.recorder.writer().begin_close();
+        }
         let writer = self.recorder.writer().clone();
         let tail = self.tail.clone();
-        Box::pin(async move {
-            tokio::task::spawn_blocking(move || writer.close())
-                .await
-                .map_err(|error| RuntimeError::new(error.to_string()))?;
-            if let Some(tail) = tail {
-                tail.close()
+        let (done, receipt) = watch::channel(None);
+        state.disposal = Some(receipt.clone());
+        drop(state);
+        crate::runtime::cleanup_task::spawn_with_error(
+            &tokio::runtime::Handle::current(),
+            done,
+            RuntimeError::new("Session disposal owner was lost before cleanup settled."),
+            async move {
+                let drain = match owner {
+                    Some(owner) => owner.drain().await,
+                    None => Ok(()),
+                };
+                // An owner-loss error is not proof that a dropped execute's
+                // asynchronous finalizer has settled. Fail closed and retain
+                // the same writer rather than closing underneath that owner.
+                if let Err(error) = drain {
+                    if let Some(tail) = tail {
+                        let _ = tail.close().await;
+                    }
+                    return Err(error);
+                }
+                let closed = tokio::task::spawn_blocking(move || writer.close())
                     .await
-                    .map_err(|e| RuntimeError::new(e.to_string()))?;
-            }
-            Ok(())
-        })
+                    .map_err(|e| RuntimeError::new(e.to_string()));
+                let tail = match tail {
+                    Some(tail) => tail
+                        .close()
+                        .await
+                        .map_err(|e| RuntimeError::new(e.to_string())),
+                    None => Ok(()),
+                };
+                closed.and(tail)
+            },
+        );
+        await_disposal(receipt)
     }
 }
 
@@ -910,6 +953,179 @@ impl LiveSessionAdapter {
     pub(crate) fn reload_execution_started(&self) -> Arc<std::sync::atomic::AtomicBool> {
         self.state.lock().unwrap().reload_execution.clone()
     }
+}
+
+fn await_disposal(mut receipt: watch::Receiver<Option<RuntimeResult>>) -> DisposeFuture<'static> {
+    Box::pin(async move {
+        loop {
+            if let Some(result) = receipt.borrow_and_update().clone() {
+                return result;
+            }
+            receipt
+                .changed()
+                .await
+                .map_err(|_| RuntimeError::new("Session disposal receipt was lost."))?;
+        }
+    })
+}
+
+#[cfg(test)]
+pub(super) struct OwnerInstallGate {
+    pub(super) entered: tokio::sync::Notify,
+    pub(super) release: tokio::sync::Semaphore,
+}
+
+enum ExternalTurnCommand {
+    Next(oneshot::Sender<Result<Option<JsValue>, RuntimeError>>),
+    Drain,
+}
+struct ExternalTurnControl {
+    commands: mpsc::UnboundedSender<ExternalTurnCommand>,
+    done: watch::Receiver<Option<RuntimeResult>>,
+    drain_requested: std::sync::atomic::AtomicBool,
+    cancellation: Cancellation,
+}
+impl ExternalTurnControl {
+    fn request_drain(&self) {
+        if !self
+            .drain_requested
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            let _ = self.commands.send(ExternalTurnCommand::Drain);
+        }
+    }
+    async fn drain(&self) -> RuntimeResult {
+        self.request_drain();
+        await_disposal(self.done.clone()).await
+    }
+}
+/// Exactly one worker advances the original stream. Disposal can request its
+/// remaining real events without requiring the caller to release/poll next().
+/// Buffered events are delivered unchanged when that caller resumes.
+struct OwnedLiveTurn {
+    control: Arc<ExternalTurnControl>,
+}
+impl Drop for OwnedLiveTurn {
+    fn drop(&mut self) {
+        self.control
+            .cancellation
+            .cancel(Some("stream_closed".into()));
+        self.control.request_drain();
+    }
+}
+impl LiveTurn for OwnedLiveTurn {
+    fn next(&mut self) -> SessionNext<'_> {
+        let control = self.control.clone();
+        Box::pin(async move {
+            let (send, receive) = oneshot::channel();
+            control
+                .commands
+                .send(ExternalTurnCommand::Next(send))
+                .map_err(|_| RuntimeError::new("External turn owner is closed."))?;
+            receive
+                .await
+                .map_err(|_| RuntimeError::new("External turn owner lost a stream step."))?
+        })
+    }
+}
+impl LiveTurnStream {
+    pub(super) fn into_session_turn(self, state: &Arc<Mutex<SessionState>>) -> Box<dyn LiveTurn> {
+        if !state.lock().unwrap().external_loop {
+            return Box::new(self);
+        }
+        let cancellation = self
+            .callback_cancel
+            .clone()
+            .expect("external turn cancellation");
+        owned_external_turn(Box::new(self), state, cancellation)
+    }
+}
+fn owned_external_turn(
+    inner: Box<dyn LiveTurn>,
+    state: &Arc<Mutex<SessionState>>,
+    cancellation: Cancellation,
+) -> Box<dyn LiveTurn> {
+    let mut session = state.lock().unwrap();
+    // Atomic with dispose's state lock: either the live owner is installed
+    // before it may begin execute, or disposal won while this was still a
+    // lazy prepared host. That cancelled path never polls client/execute.
+    if session.disposed {
+        return inner;
+    }
+    let (commands, mut receive) = mpsc::unbounded_channel();
+    let (done, receipt) = watch::channel(None);
+    let completion = crate::runtime::cleanup_task::Completion::new(
+        done,
+        RuntimeError::new("External turn owner was lost before finalizer drain settled."),
+    );
+    let control = Arc::new(ExternalTurnControl {
+        commands,
+        done: receipt,
+        drain_requested: std::sync::atomic::AtomicBool::new(false),
+        cancellation,
+    });
+    session.external_owner = Some(control.clone());
+    drop(session);
+    tokio::spawn(async move {
+        let mut inner = inner;
+        let mut buffered = std::collections::VecDeque::new();
+        let mut finished = false;
+        let mut failure = None;
+        let mut completion = Some(completion);
+        while let Some(command) = receive.recv().await {
+            match command {
+                ExternalTurnCommand::Next(reply) => {
+                    let result = if let Some(result) = buffered.pop_front() {
+                        result
+                    } else if finished {
+                        Ok(None)
+                    } else {
+                        inner.next().await
+                    };
+                    if result.as_ref().is_ok_and(Option::is_none) || result.is_err() {
+                        finished = true;
+                        if let Err(error) = &result {
+                            failure = Some(error.clone());
+                        }
+                    }
+                    if let Err(result) = reply.send(result) {
+                        buffered.push_front(result);
+                    }
+                }
+                ExternalTurnCommand::Drain => {
+                    while !finished {
+                        let result = inner.next().await;
+                        if result.as_ref().is_ok_and(Option::is_none) || result.is_err() {
+                            finished = true;
+                            if let Err(error) = &result {
+                                failure = Some(error.clone());
+                            }
+                        }
+                        buffered.push_back(result);
+                    }
+                    if let Some(completion) = completion.take() {
+                        completion.finish(failure.clone().map_or(Ok(()), Err));
+                    }
+                }
+            }
+        }
+        // Last consumer gone: drain the same stream and keep its real
+        // execute/lease/finalizer owners until completion, even on Drop.
+        while !finished {
+            match inner.next().await {
+                Ok(Some(_)) => {}
+                Ok(None) => finished = true,
+                Err(error) => {
+                    failure = Some(error);
+                    finished = true;
+                }
+            }
+        }
+        if let Some(completion) = completion {
+            completion.finish(failure.map_or(Ok(()), Err));
+        }
+    });
+    Box::new(OwnedLiveTurn { control })
 }
 
 /// Streaming adapter for one turn execution.
@@ -3483,5 +3699,188 @@ impl SessionState {
     }
     pub(super) fn signal(&self) -> crate::runtime::hooks::Cancellation {
         self.signal.clone()
+    }
+}
+
+#[cfg(test)]
+mod external_owner_tests {
+    use super::*;
+    use std::{
+        sync::atomic::{AtomicUsize, Ordering},
+        task::Poll,
+    };
+    struct Gate {
+        entered: tokio::sync::Notify,
+        release: tokio::sync::Semaphore,
+    }
+    impl Gate {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                entered: tokio::sync::Notify::new(),
+                release: tokio::sync::Semaphore::new(0),
+            })
+        }
+    }
+    struct Steps {
+        index: usize,
+        gates: [Arc<Gate>; 2],
+        calls: Arc<AtomicUsize>,
+        active: Arc<AtomicUsize>,
+        _lease: Arc<()>,
+    }
+    struct Advancing(Arc<AtomicUsize>);
+    impl Drop for Advancing {
+        fn drop(&mut self) {
+            assert_eq!(self.0.fetch_sub(1, Ordering::SeqCst), 1);
+        }
+    }
+    impl LiveTurn for Steps {
+        fn next(&mut self) -> SessionNext<'_> {
+            let index = self.index;
+            self.index += 1;
+            let calls = self.calls.clone();
+            let active = self.active.clone();
+            let gate = self.gates.get(index).cloned();
+            Box::pin(async move {
+                assert_eq!(
+                    active.fetch_add(1, Ordering::SeqCst),
+                    0,
+                    "only one worker advances the original stream"
+                );
+                let _advancing = Advancing(active);
+                calls.fetch_add(1, Ordering::SeqCst);
+                if let Some(gate) = gate {
+                    gate.entered.notify_one();
+                    gate.release.acquire().await.unwrap().forget();
+                    Ok(Some(JsValue::Number(index as f64)))
+                } else {
+                    Ok(None)
+                }
+            })
+        }
+    }
+    async fn assert_pending<T>(
+        future: std::pin::Pin<&mut (dyn std::future::Future<Output = T> + Send + '_)>,
+    ) {
+        let mut future = future;
+        std::future::poll_fn(|cx| {
+            assert!(future.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+    }
+    struct OwnerFixture {
+        turn: Box<dyn LiveTurn>,
+        control: Arc<ExternalTurnControl>,
+        state: Arc<Mutex<SessionState>>,
+        gates: [Arc<Gate>; 2],
+        calls: Arc<AtomicUsize>,
+        lease: std::sync::Weak<()>,
+    }
+    fn owner() -> OwnerFixture {
+        let state = Arc::new(Mutex::new(SessionState::default()));
+        let gates = [Gate::new(), Gate::new()];
+        let calls = Arc::new(AtomicUsize::new(0));
+        let lease = Arc::new(());
+        let weak = Arc::downgrade(&lease);
+        let turn = owned_external_turn(
+            Box::new(Steps {
+                index: 0,
+                gates: gates.clone(),
+                calls: calls.clone(),
+                active: Arc::new(AtomicUsize::new(0)),
+                _lease: lease,
+            }),
+            &state,
+            Cancellation::default(),
+        );
+        let control = state
+            .lock()
+            .unwrap()
+            .external_owner
+            .as_ref()
+            .unwrap()
+            .clone();
+        OwnerFixture {
+            turn,
+            control,
+            state,
+            gates,
+            calls,
+            lease: weak,
+        }
+    }
+    #[tokio::test]
+    async fn cancelled_next_then_dispose_drain_buffers_original_events_once() {
+        let OwnerFixture {
+            mut turn,
+            control,
+            state,
+            gates,
+            calls,
+            lease: _lease,
+        } = owner();
+        let mut first = turn.next();
+        assert_pending(first.as_mut()).await;
+        gates[0].entered.notified().await;
+        drop(first);
+        control.request_drain();
+        let mut concurrent = turn.next();
+        assert_pending(concurrent.as_mut()).await;
+        gates[0].release.add_permits(1);
+        gates[1].entered.notified().await;
+        let mut drain = Box::pin(control.drain());
+        assert_pending(drain.as_mut()).await;
+        drop(concurrent);
+        gates[1].release.add_permits(1);
+        drain.await.unwrap();
+        assert_eq!(turn.next().await.unwrap(), Some(JsValue::Number(0.0)));
+        assert_eq!(turn.next().await.unwrap(), Some(JsValue::Number(1.0)));
+        assert_eq!(turn.next().await.unwrap(), None);
+        assert_eq!(turn.next().await.unwrap(), None);
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            3,
+            "no resend, re-projection or extra underlying next"
+        );
+        state.lock().unwrap().external_owner = None;
+    }
+    #[tokio::test]
+    async fn dropping_outer_consumer_during_drain_keeps_real_step_and_lease_owned() {
+        let OwnerFixture {
+            mut turn,
+            control,
+            state,
+            gates,
+            calls,
+            lease,
+        } = owner();
+        let mut first = turn.next();
+        assert_pending(first.as_mut()).await;
+        gates[0].entered.notified().await;
+        drop(first);
+        control.request_drain();
+        gates[0].release.add_permits(1);
+        gates[1].entered.notified().await;
+        drop(turn);
+        assert!(
+            lease.upgrade().is_some(),
+            "original inner lease survives consumer Drop"
+        );
+        let mut drain = Box::pin(control.drain());
+        assert_pending(drain.as_mut()).await;
+        gates[1].release.add_permits(1);
+        drain.await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        state.lock().unwrap().external_owner = None;
+        drop(state);
+        drop(control);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while lease.upgrade().is_some() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
     }
 }
