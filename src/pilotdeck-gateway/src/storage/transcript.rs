@@ -281,7 +281,7 @@ impl JsonlLedgerStore {
     }
     #[cfg(test)]
     pub(super) fn clone_lock_for_test(&self) -> io::Result<File> {
-        self._lock.file.try_clone()
+        self._lock.clone_file_for_test()
     }
     fn replace(&mut self, appended: &[u8]) -> Result<()> {
         self.check_health()?;
@@ -457,16 +457,47 @@ pub(crate) fn canonical_transcript_path(supplied: &Path) -> Result<PathBuf> {
     Ok(path)
 }
 
+/// Single-writer fence for one canonical transcript path.
+///
+/// Measured on the baseline (bbx `session-two-writers-servers`,
+/// `session-two-writers-server-cli`): two processes that write one session
+/// each take `sequence` from their own memory (SessionRuntime.ts:64), so the
+/// file ends up with duplicate sequences and every later load fails in
+/// validateSessionEventLog — the session can never be continued again. The
+/// fence makes the second writer fail instead (`WouldBlock`, surfaced as the
+/// busy answer). It guards against our own concurrent processes only: when no
+/// private place for it can be prepared (see [`ledger_lock_path`]), or the
+/// fence inode cannot be opened or locked for any reason other than
+/// contention, the writer proceeds unfenced, exactly as the baseline does.
+/// Within one process a registry of held canonical paths keeps the same
+/// exclusion without any file.
 pub(crate) struct LedgerLock {
-    file: File,
+    fence: Option<Fence>,
     path: PathBuf,
+}
+struct Fence {
+    file: File,
     lock_path: PathBuf,
 }
+fn held_in_process() -> std::sync::MutexGuard<'static, HashSet<PathBuf>> {
+    static HELD: std::sync::OnceLock<std::sync::Mutex<HashSet<PathBuf>>> =
+        std::sync::OnceLock::new();
+    HELD.get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
+/// Rust-only single-writer fence: TS has no lock syscall, and the WouldBlock
+/// rejection is synthetic, so it is not rendered as a Node fs error.
+fn ledger_locked() -> LedgerError {
+    LedgerError::Io(io::Error::new(
+        io::ErrorKind::WouldBlock,
+        "Session operation ledger is locked.",
+    ))
+}
 impl LedgerLock {
-    /// Shared single-writer fence. Resolve aliases before opening the
-    /// sibling lock inode, and retain it for the actual writer's lifetime.
-    /// The retained canonical path lets a transfer verify the fence really
-    /// guards the path the holder resolved (#1019).
+    /// Resolve aliases before fencing, and retain the fence for the actual
+    /// writer's lifetime. The retained canonical path lets a transfer verify
+    /// the fence really guards the path the holder resolved (#1019).
     ///
     /// The baseline keeps no lock file anywhere in the session directory,
     /// and a process killed while holding a lock cannot unlink anything, so
@@ -477,104 +508,136 @@ impl LedgerLock {
     /// the path names now, and starts over on a fresh inode.
     pub(crate) fn acquire(supplied: &Path) -> Result<(PathBuf, Self)> {
         let path = canonical_transcript_path(supplied)?;
-        let lock_path = ledger_lock_path(&path)?;
+        if !held_in_process().insert(path.clone()) {
+            return Err(ledger_locked());
+        }
+        // From here on `Drop` releases the in-process claim.
+        let mut lock = Self {
+            fence: None,
+            path: path.clone(),
+        };
+        let Some(lock_path) = ledger_lock_path(&path) else {
+            return Ok((path, lock));
+        };
         loop {
-            let lock = private_open()
+            let Ok(file) = private_open()
                 .read(true)
                 .write(true)
                 .create(true)
-                // Rust-only fence inode: TS has no lock syscall. Keep the errno out
-                // of the error so the wire layer cannot blame the transcript for a
-                // failure that belongs to `<transcript>.lock`; Rust text is honest.
                 .open(&lock_path)
-                .map_err(|error| {
-                    io::Error::new(
-                        error.kind(),
-                        format!(
-                            "Could not open session ledger lock {}: {error}",
-                            lock_path.display()
-                        ),
-                    )
-                })?;
-            // Rust-only single-writer fence: TS has no lock syscall, and the
-            // WouldBlock rejection is synthetic, so neither is rendered as a
-            // Node fs error.
-            lock.try_lock().map_err(|error| match error {
-                fs::TryLockError::WouldBlock => LedgerError::Io(io::Error::new(
-                    io::ErrorKind::WouldBlock,
-                    "Session operation ledger is locked.",
-                )),
-                fs::TryLockError::Error(error) => error.into(),
-            })?;
-            if !same_inode(&lock, &lock_path) {
+            else {
+                return Ok((path, lock));
+            };
+            match file.try_lock() {
+                Ok(()) => {}
+                Err(fs::TryLockError::WouldBlock) => return Err(ledger_locked()),
+                Err(fs::TryLockError::Error(_)) => return Ok((path, lock)),
+            }
+            if !same_inode(&file, &lock_path) {
                 // The previous holder unlinked this inode between our open
                 // and our lock; the lock we hold fences nothing.
-                let _ = lock.unlock();
+                let _ = file.unlock();
                 continue;
             }
-            return Ok((
-                path.clone(),
-                Self {
-                    file: lock,
-                    path,
-                    lock_path,
-                },
-            ));
+            lock.fence = Some(Fence { file, lock_path });
+            return Ok((path, lock));
         }
     }
     /// The canonical path this fence actually guards.
     pub(crate) fn path(&self) -> &Path {
         &self.path
     }
+    #[cfg(test)]
+    pub(crate) fn is_fenced(&self) -> bool {
+        self.fence.is_some()
+    }
+    #[cfg(test)]
+    pub(super) fn clone_file_for_test(&self) -> io::Result<File> {
+        self.fence
+            .as_ref()
+            .ok_or_else(|| io::Error::other("unfenced ledger lock"))?
+            .file
+            .try_clone()
+    }
 }
-/// Where the fence inode for one canonical transcript path lives.
+/// Where the fence inode for one canonical transcript path lives, or `None`
+/// when no private directory for it can be prepared (writers then run
+/// unfenced, like the baseline).
 ///
-/// The fence guards against a second writer of the same transcript, in this
-/// process or another one on the same machine; the baseline has no such fence
-/// and no file for it. Keeping it beside the transcript left
-/// `<session>.jsonl.lock` in the session directory whenever the process was
-/// killed while writing (the baseline's default chat only ends that way), so it
-/// lives in a per-user directory under the temporary directory instead, named
-/// by the SHA-256 of the canonical transcript path. Processes that should
-/// exclude each other must agree on `TMPDIR`, as they agree on the pilot home.
-pub(crate) fn ledger_lock_path(canonical: &Path) -> io::Result<PathBuf> {
+/// The fence guards against a second writer of the same transcript in another
+/// process of the same user; the baseline has no such fence and no file for
+/// it. Keeping it beside the transcript left `<session>.jsonl.lock` in the
+/// session directory whenever the process was killed while writing, so it
+/// lives in a per-user directory `pilotdeck-ledger-locks-<uid>` instead, named
+/// by the SHA-256 of the canonical transcript path. On Linux that directory
+/// goes under `$XDG_RUNTIME_DIR` when it is an absolute, private directory of
+/// this user; otherwise under Node's `os.tmpdir()` (TMPDIR, TMP, TEMP, `/tmp`,
+/// empty values skipped). Processes that should exclude each other must agree
+/// on that choice, as they agree on the pilot home. In a shared temporary
+/// directory another user can occupy the name: that turns the fence off (the
+/// directory is not ours), it never makes writes fail.
+pub(crate) fn ledger_lock_path(canonical: &Path) -> Option<PathBuf> {
     use sha2::{Digest, Sha256};
-    let dir = ledger_lock_dir()?;
+    let dir = ledger_lock_dir(|key| std::env::var_os(key))?;
     let digest = Sha256::digest(canonical.as_os_str().as_encoded_bytes());
     let name: String = digest.iter().map(|b| format!("{b:02x}")).collect();
-    Ok(dir.join(format!("{name}.lock")))
+    Some(dir.join(format!("{name}.lock")))
 }
-fn ledger_lock_dir() -> io::Result<PathBuf> {
+pub(super) fn ledger_lock_dir(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> Option<PathBuf> {
     #[cfg(unix)]
     let uid = rustix::process::geteuid().as_raw();
     #[cfg(not(unix))]
     let uid = 0;
-    let dir = std::env::temp_dir().join(format!("pilotdeck-ledger-locks-{uid}"));
-    let fail = |detail: String| {
-        io::Error::other(format!(
-            "Could not prepare session ledger lock directory {}: {detail}",
-            dir.display()
-        ))
-    };
+    let dir = ledger_lock_base(&var, uid)?.join(format!("pilotdeck-ledger-locks-{uid}"));
     match private_dirs(&dir) {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-        Err(error) => return Err(fail(error.to_string())),
+        Err(_) => return None,
     }
     // The directory may be shared (`/tmp`): only one we own, that is not a
     // symlink and that nobody else can write, may hold our fences.
-    let meta = fs::symlink_metadata(&dir).map_err(|e| fail(e.to_string()))?;
+    private_dir_of(&dir, uid).then_some(dir)
+}
+fn ledger_lock_base(
+    var: &impl Fn(&str) -> Option<std::ffi::OsString>,
+    uid: u32,
+) -> Option<PathBuf> {
+    #[cfg(target_os = "linux")]
+    if let Some(runtime) = var("XDG_RUNTIME_DIR").map(PathBuf::from)
+        && runtime.is_absolute()
+        && private_dir_of(&runtime, uid)
+    {
+        return Some(runtime);
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = uid;
+    let tmp = PathBuf::from(crate::node_io::node_tmpdir(var));
+    if tmp.is_absolute() {
+        Some(tmp)
+    } else {
+        // `os.tmpdir()` may be relative; Node resolves it against the cwd.
+        std::env::current_dir().ok().map(|cwd| cwd.join(tmp))
+    }
+}
+/// A real directory (not a symlink) owned by `uid` that group and others
+/// cannot write.
+fn private_dir_of(dir: &Path, uid: u32) -> bool {
+    let Ok(meta) = fs::symlink_metadata(dir) else {
+        return false;
+    };
     if !meta.is_dir() {
-        return Err(fail("not a directory".into()));
+        return false;
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        if meta.uid() != uid || meta.mode() & 0o022 != 0 {
-            return Err(fail("not a private directory owned by this user".into()));
-        }
+        meta.uid() == uid && meta.mode() & 0o022 == 0
     }
-    Ok(dir)
+    #[cfg(not(unix))]
+    {
+        let _ = uid;
+        true
+    }
 }
 /// Whether `path` still names the inode `file` has open.
 #[cfg(unix)]
@@ -591,18 +654,21 @@ fn same_inode(_: &File, _: &Path) -> bool {
 }
 impl Drop for LedgerLock {
     fn drop(&mut self) {
-        // Unlink while still holding the lock: whoever opens the path from
-        // now on gets a fresh inode, and whoever already opened this one
-        // fails the `same_inode` check after locking it. Only the inode this
-        // fence holds is removed, never a successor's.
-        #[cfg(unix)]
-        if same_inode(&self.file, &self.lock_path) {
-            let _ = fs::remove_file(&self.lock_path);
+        if let Some(fence) = &self.fence {
+            // Unlink while still holding the lock: whoever opens the path from
+            // now on gets a fresh inode, and whoever already opened this one
+            // fails the `same_inode` check after locking it. Only the inode
+            // this fence holds is removed, never a successor's.
+            #[cfg(unix)]
+            if same_inode(&fence.file, &fence.lock_path) {
+                let _ = fs::remove_file(&fence.lock_path);
+            }
+            // Explicit unlock matters when a concurrent process spawn briefly
+            // inherits a duplicate descriptor before exec closes it (CLOEXEC).
+            // Closing only this File would keep that shared flock alive.
+            let _ = fence.file.unlock();
         }
-        // Explicit unlock matters when a concurrent process spawn briefly
-        // inherits a duplicate descriptor before exec closes it (CLOEXEC).
-        // Closing only this File would keep that shared flock alive.
-        let _ = self.file.unlock();
+        held_in_process().remove(&self.path);
     }
 }
 pub(super) fn uuid() -> io::Result<String> {

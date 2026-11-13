@@ -1,0 +1,45 @@
+{
+  "name": "session-two-writers-servers",
+  "about": "同一个会话有两个写者：两个 server 进程共用同一个 PILOT_HOME（A 在 38411，B 在 38413），先后对同一会话续写。A 先跑一轮（会话留在 A 的内存里），B 起来后经 `pilotdeck resume`（PILOTDECK_GATEWAY_PORT 指向 B）续一轮，B 停掉后 A 再续一轮；然后 A 停掉、重新起一个 server 读这个会话并再续一轮。基线的会话写入是 appendFile 追加（session/persistence/JsonlSessionPersistence.ts:20-37），序号取自进程内存（session/events/SessionRuntime.ts:64，restore 只在载入时做），所以 A 的第二轮沿用 B 写之前的序号，文件里出现重复的 sequence；之后任何新进程载入它都在 validateSessionEventLog（session/events/SessionEventLogValidation.ts:35-39）报 Session event sequence must increase strictly，会话再也续不上。比较两侧每一步的输出和最后的会话文件。",
+  "server": false,
+  "env": {
+    "PILOTDECK_TOKEN": "{TOKEN}"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": ["Generate a concise title"],
+      "reply": { "text": "{\"title\": \"Two writers\"}" }
+    },
+    {
+      "name": "main",
+      "reply": { "text": "ok." }
+    }
+  ],
+  "steps": [
+    {
+      "serve": ["server"],
+      "then": [
+        { "ws": "submit_turn", "params": { "sessionKey": "s-two", "channelKey": "cli", "message": "a-1" } },
+        {
+          "serve": ["server"],
+          "env": { "PILOTDECK_GATEWAY_PORT": "38413" },
+          "then": [
+            { "cli": ["resume", "s-two", "b-1"], "env": { "PILOTDECK_GATEWAY_PORT": "38413" } }
+          ]
+        },
+        { "ws": "submit_turn", "params": { "sessionKey": "s-two", "channelKey": "cli", "message": "a-2" } },
+        { "disconnect": true }
+      ]
+    },
+    {
+      "serve": ["server"],
+      "then": [
+        { "connect": true },
+        { "ws": "read_session_messages", "params": { "sessionKey": "s-two" } },
+        { "ws": "submit_turn", "params": { "sessionKey": "s-two", "channelKey": "cli", "message": "a-3" } },
+        { "disconnect": true }
+      ]
+    }
+  ]
+}

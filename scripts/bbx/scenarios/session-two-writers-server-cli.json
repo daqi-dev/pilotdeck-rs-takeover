@@ -1,0 +1,44 @@
+{
+  "name": "session-two-writers-server-cli",
+  "about": "同一个会话有两个写者：server 已经载入某会话（跑过一轮，会话留在它的内存里）时，不带子命令的默认对话连不上 server（它只探 18789，bbx 保证那里没人监听），在进程内起 gateway 对同一会话（cli:project=<cwd>:default，项目已登记）续一轮；server 再续一轮。之后另起一个默认对话进程、再重启 server，各续一轮。基线的会话写入是 appendFile 追加（session/persistence/JsonlSessionPersistence.ts:20-37），序号取自进程内存（session/events/SessionRuntime.ts:64），所以 server 的第二轮与 CLI 那一轮用了同一段 sequence；之后任何新进程载入这个会话都在 validateSessionEventLog（session/events/SessionEventLogValidation.ts:35-39）报 Session event sequence must increase strictly，会话再也续不上。默认对话在基线上输出完不退出，cli 步骤都声明 expectTimeout，比较被杀之前的输出。",
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "files": {
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-proj/.cwd": "{PROJECT}\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": ["Generate a concise title"],
+      "reply": { "text": "{\"title\": \"Two writers\"}" }
+    },
+    {
+      "name": "main",
+      "reply": { "text": "ok." }
+    }
+  ],
+  "steps": [
+    {
+      "serve": ["server"],
+      "then": [
+        { "ws": "submit_turn", "params": { "sessionKey": "cli:project={PROJECT}:default", "channelKey": "cli", "projectKey": "{PROJECT}", "message": "server-1" } },
+        { "cli": ["cli-1"], "timeout": 10000, "expectTimeout": true },
+        { "ws": "submit_turn", "params": { "sessionKey": "cli:project={PROJECT}:default", "channelKey": "cli", "projectKey": "{PROJECT}", "message": "server-2" } },
+        { "disconnect": true }
+      ]
+    },
+    { "cli": ["cli-2"], "timeout": 10000, "expectTimeout": true },
+    {
+      "serve": ["server"],
+      "then": [
+        { "connect": true },
+        { "ws": "read_session_messages", "params": { "sessionKey": "cli:project={PROJECT}:default", "projectKey": "{PROJECT}" } },
+        { "ws": "submit_turn", "params": { "sessionKey": "cli:project={PROJECT}:default", "channelKey": "cli", "projectKey": "{PROJECT}", "message": "server-3" } },
+        { "disconnect": true }
+      ]
+    }
+  ]
+}
