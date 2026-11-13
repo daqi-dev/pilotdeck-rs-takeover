@@ -27,7 +27,7 @@ node scripts/bbx/check.mjs                   # 基线 vs Rust，全部场景
 node scripts/bbx/check.mjs turn-text         # 只跑一个场景
 ```
 
-产物默认在 `_build/bbx/`：每个场景两侧各一份原始采集 `<场景>.<侧>.json` 和一份差异 `<场景>.diff.txt`。`--out DIR` 可改位置。每个场景的判定是 `SAME`、`DIFF N`、`INVALID`（有非预期的失败，括号里是差异结论和失败位置）或 `RUN FAILED`（采集器没跑完，例如锁被占、二进制比源码旧）。退出码 0 表示全部 SAME。
+产物默认在 `_build/bbx/`：每个场景两侧各一份原始采集 `<场景>.<侧>.json` 和一份差异 `<场景>.diff.txt`。`--out DIR` 可改位置。每个场景的判定是 `SAME`、`DIFF N`、`INVALID`（有非预期的失败，括号里是差异结论和失败位置）、`RUN FAILED`（采集器没跑完，例如锁被占、二进制比源码旧）或 `SKIPPED`（要占 18789 而没设 `BBX_ALLOW_18789=1`，见下）。退出码 0 表示除 SKIPPED 外全部 SAME。
 
 单步使用：
 
@@ -39,7 +39,18 @@ node scripts/bbx/diff.mjs /tmp/a.json /tmp/b.json          # 两份基线互比�
 
 采集在一个槽位里是独占的（固定目录和端口；缺省槽位用 `/private/tmp/pdrs-bbx` 和 38411–38414），`check.mjs` 遇到锁会排队等。要并行跑，给每个并行方一个不同的槽位：`BBX_SLOT=1 node scripts/bbx/check.mjs`（1–8）。槽位只把目录名和端口换成等长的另一套，场景里写死的同名路径和端口读入时一并替换；两侧在同一槽位里跑，结论不受影响，但不同槽位的采集产物不要互相比。
 
-改 `diff.mjs` 之后先跑比较器自测：`node scripts/bbx/selftest.mjs`。它给比较器喂成对的小产物，检查每条归一化规则该抹的抹掉了、规则旁边「差一点」的改动仍然报差异。新增归一化规则时同时加这两类例子。
+### 占用 18789 的场景
+
+基线 CLI 的 `cron` 子命令和默认对话（不带子命令的 `pilotdeck`）只探测写死的 `127.0.0.1:18789`（`src/gateway/client/probeServer.ts:16`），不看端口变量；它们连上 server 之后的路径只能把被测 server 起在 18789 上才能对拍。18789 是真实 PilotDeck 的默认端口，所以这要显式选择，两道都要有：
+
+- 场景写 `"gatewayPort": 18789`（只接受这个值）。这时 `"server"` 起的服务、`{GATEWAY}`、采集器给的 `PILOTDECK_GATEWAY_PORT` 都换成 18789；假 provider 仍在槽位端口上。
+- 运行时设 `BBX_ALLOW_18789=1`。没设时 `run.mjs` 在拿锁、查端口、起任何进程之前就以退出码 6 退出，不写产物；`check.mjs` 把它记成 `SKIPPED`（不算 SAME 也不算失败），汇总行写出跳过了几个。
+
+设了变量时的保护：仍然先查 18789 有没有监听者，有就拒跑（与其他场景相同）；除了槽位锁，还要拿一把所有槽位共用的锁 `/tmp/pdrs-bbx-18789.lock`（macOS 上是 `/private/tmp/...`），拿不到时退出码 3，`check.mjs` 照常排队，所以并行槽位里的这类场景自动串行；采集结束后把自己起的进程按进程组杀掉，再确认 18789 上没有留下监听者，留下了记一处失败（`release18789`，判 INVALID）并在 stderr 报警。采集器异常退出（未捕获异常、SIGINT / SIGTERM / SIGHUP）时同样按进程组杀掉子进程、释放锁；只有采集器自己被 SIGKILL 时做不到，下一次运行会因 18789 上有监听者而拒跑，需要人按进程号收拾。
+
+服务端令牌：采集器给 server 的令牌在环境变量里，基线这时不写 `server-token` 文件，而探测要求这个文件存在且非空，所以这类场景要在 `files` 里放 `home/.pilotdeck/server-token`。
+
+改 `diff.mjs` 之后先跑比较器自测：`node scripts/bbx/selftest.mjs`（也检查上面「没设变量就跳过」的几条）。它给比较器喂成对的小产物，检查每条归一化规则该抹的抹掉了、规则旁边「差一点」的改动仍然报差异。新增归一化规则时同时加这两类例子。
 
 ## 进度总表
 
@@ -72,6 +83,7 @@ node scripts/bbx/status-selftest.mjs                         # 自测（假产�
 | 步骤的 `expectTimeout` | `true` 表示这一步在基线上本来就会超时（如等一个采集器不回答的询问、命令常驻不退出）。只有声明了的超时不判 `INVALID`；连不上不能这样声明 |
 | `expectStartFailure` | `true` 表示 `"server"` 起的服务预期启动失败。`serve` / `cli` 步骤里进程自己退出是被比较的输出，不需要声明 |
 | `settleMs` | 最后一步之后、收尾前等待的毫秒数，缺省 300 |
+| `gatewayPort` | 只能是 `18789`：把被测 server 起在 18789 上，要求 `BBX_ALLOW_18789=1`，否则 SKIPPED（见上面「占用 18789 的场景」） |
 | `volatile` | 该场景里确认不稳定的差异路径（正则）。会被略过并打印。用之前先用 `--self` 证明它确实不稳定 |
 | `accepted` | 已接受差异 `[{id, why, paths: [正则]}]`，只用于基线自身的 bug（Rust 有意不照做）。命中的差异略过并打印条数；基线 vs Rust 时某条正则一处都没命中报 `STALE`，计 1 处差异 |
 
