@@ -45,8 +45,8 @@ async fn unsupported_external_compaction_records_skipped_without_calling_runtime
     ));
     let calls = Arc::new(AtomicUsize::new(0));
     let context = MaintenanceContext::for_test(Arc::new(RequiredOnly(calls.clone())), lease);
-    let cancel = Cancellation::new();
-    cancel.cancel();
+    let cancel = Cancellation::default();
+    cancel.cancel(None);
     let result = compact(
         recorder,
         "session".into(),
