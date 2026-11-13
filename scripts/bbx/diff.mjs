@@ -50,6 +50,7 @@ import {observerMemoryWitnessPaths} from './observer-memory-witness.mjs';
 import {durationFileSizePaths} from './duration-file-size-policy.mjs';
 import {feishuStopAcceptedPaths} from './feishu-stop-policy.mjs';
 import {diagnosticsAcceptedPaths} from './diagnostics-policy.mjs';
+import {memoryTreeOrderPaths} from './memory-tree-order-policy.mjs';
 export {IGNORED,ACCEPTED} from './normalization.mjs';
 import { observerUuidViews } from './observer-uuid-policy.mjs';
 import { observerMemoryPaths } from './observer-memory-policy.mjs';
@@ -104,6 +105,7 @@ try {
     ['observerSameIdLinks', observerIdLinkPaths(raw[0], raw[1], baselineRoot)],
     ['observerMemorySchemaApproved', observerMemoryWitnessPaths(raw[0], raw[1], baselineRoot)],
     ['durationFileSizeApproved', durationFileSizePaths(raw[0], raw[1])],
+    ['sealedMemoryTreeOrderApproved', memoryTreeOrderPaths(fa, fb, {self: selfCompare, expectedRaw: raw})],
     ['fixedParserDiagnosticsApproved', selfCompare ? new Map() : diagnosticsAcceptedPaths(raw[0], raw[1], baselineRoot)],
   ]) for (const [at, reason] of paths) compatibilityValues.set(at, { policy, reason });
   if (!selfCompare && raw.some(x => x.scenario === 'backend-feishu-stream-stop')) {

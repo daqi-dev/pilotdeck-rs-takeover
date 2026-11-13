@@ -109,3 +109,13 @@ root独立执行原sealed正控及26重签内容负控，SDK窄静审通过；�
 原TS5十对S52不改；补充必须绑定产生原S52的同source/r1..r5及每轮全部53trace SHA。ruler自行读取原件重算；score第二次实际用于Rust的定标必须等首次已验证锁定结果，输入hash重新核验并平铺外层闭包。**ruler只接受原S52且唯一excluded parent-close，未来S53仍拒绝，不自动扩大准入。**
 
 完整5TS＋5Rust、53分母、其他52项、原cancel已批策略及全部身份/负控不变。run_all仅补随原trace复制原run.json的输入闭包，原缺失/错误ledger负控继续拒。允许这份精确六文件及规则的必要冻结重新登记，不改G03，不覆盖原FAIL。独立16integration+5ruler破坏控制已复验、第二非作者静审通过，但真正5Rust评分和正式冻结未因本批准自动通过；无推送或发布授权。
+
+## Memory：两份固定 TS 原件的 self tree 键序补充
+
+批准来源：2026-11-14 本会话用户对 `_tmp/20261113-memory-tree-order-proposal/README.md` 的明确回答。manifest SHA256 `d5fffbaa1175c9d2c9d1fb4eb27b699fdcd47bdf6e72fe82465a07680c08a799`；私有候选 SHA256 `680d02526f36ddd749f32b38d2e4e863658dec8bfd3364c8b388597176cd594a`。
+
+> 批准这两份原件的精确 self 补充（推荐）
+
+仅两份固定 TS raw（SHA256 `cd96411ddc477083a32947bf4d28cc999675b6fd3431f1f5b39efd5fe020c75e` 与 `5ca79f49465369b96c9b1586018b6927661818bbaaf06f652d6ba9739fd609fd`），允许 27 个 tree 键中零基索引 5–8 的 worker/reviewer 两组 transcript＋projection 互换；其余 23 个键位置/顺序、组内顺序、全部内容、归属及生命周期链严格不变。两 raw 及 closure 见证 SHA 固定在代码，不能信任可替换 manifest 自授权。仅这两原件 self，不扩 Rust pair、未来 capture 或其他对象，不全局排序。
+
+原公共 644 DIFF1 保留。作者及独立 S1 均实际 12/12；批准不等于正式公共 SAME，公共接线、独审、必要冻结和原件重判须另行完成。

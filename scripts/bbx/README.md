@@ -183,3 +183,9 @@ C 组 `diagnostics-policy.mjs` 只处理具名诊断场景中的三个固定文�
 正式输入身份新增记录 `normalization.mjs`、全部上述runtime策略和constants/contract JSON的SHA。ledger仅新增对应 `diffs/` 文件，不改aggregate/FROZEN。两侧原type/键全集/键序/数组长度和非目标内容始终由原比较器保留。
 
 真实原件控制通过显式测试清单提供，避免公共代码依赖开发机 `_tmp`：`BBX_OBSERVER_ACTUAL_MANIFEST` 指向 `{schema:1, observer:{memory:[TS1,TS2,Rust],fork:[TS1,TS2,Rust]}, tail:{场景:{"ts-1":路径,"ts-2":路径,"rust":路径}}, ao:[TS1,TS2,Rust], rawSha256:{路径:原SHA}}`。`BBX_BASELINE` 指定固定TS包，public tests核每份原件SHA后只在内存变异，不重写原件。不提供该清单时只运行明确注册的便携控制，不把缺失原件算作真实正例通过。Feishu原件测试另用 `FEISHU_STOP_ARTIFACT_ROOT`；各结果分母与实际模式须明确报告。
+
+### 两固定 memory TS 原件 self 的四兄弟键序补充
+
+用户单独批准后，`memory-tree-order-policy.mjs` 仅对已审两份 sealed TS 原件的 self 比较许可一个 `$.tree.<key order>` 叶。原件字节 SHA 和原 644 closure receipt SHA 在代码中固定；压缩 closure 在有界解压前核固定压缩 SHA，解压后再核字节 SHA，不能由 fixture manifest 或调用方见证替换。runtime 无开发机绝对 `_tmp` 依赖。完整生命周期见证重新执行；27 键中索引5–8必须是实际 worker/reviewer transcript 与其 projection 两个整组的两种已观察排列，其余23键名称及顺序完全不变，固定 raw SHA 同时保护全部内容和归属。只返回该精确键序叶，不排序或改写对象。pair、未来原件、其他树、额外排列均不适用；原公共644 self DIFF1及原输入保留。
+
+`fixtures/memory-tree-order/` 的压缩原件是已有真实采集的逐字副本，用于便携离线控制，不能冒新产品采集或未来输入许可。`node --test scripts/bbx/memory-tree-order-policy.test.mjs` 包含真实公共CLI self SAME、无self保持DIFF1，以及内容、键名、缺键、外scope、其他键序、归属、未观察排列、未来/Rust、交换原件、篡改固定见证拒绝控制。本次不修改 aggregate 或 FROZEN；登记见 `specs/parity/diffs/D1-MEMORY-SEALED-TREE-ORDER-001.md`。

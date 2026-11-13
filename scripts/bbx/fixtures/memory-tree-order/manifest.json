@@ -1,0 +1,20 @@
+{
+  "purpose": "Exact original bytes; offline tests and sealed closure evidence, not new product capture",
+  "files": {
+    "closure-receipt.json": {
+      "rawSHA256": "a3b4aa0efe32f3edcdfdea5b6b2a47ea92c95746291487b137f565ed681ae358",
+      "compressedSHA256": "e05fd368b6b0be32b03c63ba38662b0f70ddc43d60918e72508766fb3907fe77",
+      "bytes": 471379
+    },
+    "ts-1.json": {
+      "rawSHA256": "cd96411ddc477083a32947bf4d28cc999675b6fd3431f1f5b39efd5fe020c75e",
+      "compressedSHA256": "638fbf804b9eb2884a865c01090a6091b18d7693cee1afdd2126518c0870e7dd",
+      "bytes": 814000
+    },
+    "ts-2.json": {
+      "rawSHA256": "5ca79f49465369b96c9b1586018b6927661818bbaaf06f652d6ba9739fd609fd",
+      "compressedSHA256": "f0cf14fab6eaca348fff1e777f2a28a1e1e72c1ef86af0b56bb4fc823c2e7424",
+      "bytes": 814036
+    }
+  }
+}
