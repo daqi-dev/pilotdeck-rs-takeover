@@ -1670,11 +1670,20 @@ fn loop_stimulus_switch_matrix() {
 // default, and an invalid value is rejected before the file is touched.
 #[tokio::test]
 async fn run_registry_switch_controls_startup() {
-    for (value, starts, gate) in [
-        (Some("off"), true, None),
-        (None, false, None),
-        (Some("on"), false, None),
-        (Some("invalid"), false, Some("must be exactly on or off")),
+    // An unreadable registry (here a directory) does not refuse startup:
+    // like the baseline's unawaited recovery rejection it is reported as a
+    // deferred startup failure, which `pilotdeck server` turns into an exit 1
+    // after its listening lines. Only an invalid switch refuses outright.
+    for (value, starts, gate, deferred) in [
+        (Some("off"), true, None, false),
+        (None, true, None, true),
+        (Some("on"), true, None, true),
+        (
+            Some("invalid"),
+            false,
+            Some("must be exactly on or off"),
+            false,
+        ),
     ] {
         let scratch = Scratch::new();
         let options = Options::parse(scratch.args()).expect("#1369 registry switch options");
@@ -1708,7 +1717,12 @@ async fn run_registry_switch_controls_startup() {
         }
         let host = crate::test_negative_receipt::expect_ok(
             outcome,
-            "#1369 off registry switch starts without the run file",
+            "#1369 registry switch starts (the unreadable file is deferred)",
+        );
+        negative_assert_eq!(
+            super::deferred_startup_failure(),
+            deferred,
+            "an unreadable run registry is a deferred startup failure unless switched off"
         );
         negative_assert!(
             options.home.join("runs/registry.json").is_dir(),

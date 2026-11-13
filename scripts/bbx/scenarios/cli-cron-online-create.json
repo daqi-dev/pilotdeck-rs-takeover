@@ -1,0 +1,254 @@
+{
+  "name": "cli-cron-online-create",
+  "about": "cron create 连上 server（src/cli/pilotdeck.ts:378-397）：缺 --message / --session 或 --once 与 --cron 都没有时打用法、退出码 1；--channel 缺省取 sessionKey 第一个冒号前的部分（冒号在开头或没有时为 cli，pilotdeck.ts:555-558）；--project 缺省为 cwd；--once 优先于 --cron；--timezone 原样传。server 回错误（非法 cron 表达式、非法时间、过去的时间、未知时区、相对路径项目）时 main().catch 打 message、退出码 1。最后 list 看全部任务，落盘比 tasks.json。基线 CLI 连上 server 后 WebSocket 不关，输出完不退出（挂起，疑似基线 bug，见报告），这类步骤声明 expectTimeout；最后 stopServer SIGKILL：被杀掉的 CLI 只发 FIN 不发关闭帧，基线 server 的 WebSocket 不处理半关闭（src/gateway/server/websocket.ts:19-20 只听 close / error），SIGTERM 后 server.close() 永远等不完（另一处挂起，见报告），所以用 SIGKILL 统一收尾，停机行为不在这些场景里比。",
+  "gatewayPort": 18789,
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ncron:\n  enabled: true\n",
+  "files": {
+    "home/.pilotdeck/server-token": "bbx-token\n",
+    "home/work/alpha/README.md": "alpha\n"
+  },
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "steps": [
+    {
+      "cli": [
+        "cron",
+        "create",
+        "--session",
+        "cli:s1",
+        "--message",
+        "every five",
+        "--cron",
+        "*/5 * * * *"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "create",
+        "--session",
+        "web:abc",
+        "--message",
+        "once later",
+        "--once",
+        "2099-01-02T03:04:05.000Z",
+        "--channel",
+        "feishu",
+        "--project",
+        "{HOME}/work/alpha",
+        "--timezone",
+        "Asia/Shanghai"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "create",
+        "--session",
+        "plain",
+        "--message",
+        "both given",
+        "--once",
+        "2099-05-05T00:00:00Z",
+        "--cron",
+        "0 9 * * *"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "create",
+        "--session",
+        ":lead",
+        "--message",
+        "colon first",
+        "--cron",
+        "0 9 * * *",
+        "--timezone",
+        "UTC"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "create",
+        "--message",
+        "--session",
+        "s",
+        "--cron",
+        "0 9 * * *"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "create",
+        "--session",
+        "s",
+        "--cron",
+        "0 9 * * *"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "create",
+        "--message",
+        "m",
+        "--cron",
+        "0 9 * * *"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "create",
+        "--session",
+        "s",
+        "--message",
+        "m"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "create",
+        "--session",
+        "s",
+        "--message",
+        "",
+        "--cron",
+        "0 9 * * *"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "create",
+        "--session",
+        "s",
+        "--message",
+        "m",
+        "--cron",
+        "--once"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "create",
+        "--session",
+        "s",
+        "--message",
+        "bad expr",
+        "--cron",
+        "not a cron"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "create",
+        "--session",
+        "s",
+        "--message",
+        "bad once",
+        "--once",
+        "garbage"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "create",
+        "--session",
+        "s",
+        "--message",
+        "past once",
+        "--once",
+        "2000-01-01T00:00:00Z"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "create",
+        "--session",
+        "s",
+        "--message",
+        "bad tz",
+        "--cron",
+        "0 9 * * *",
+        "--timezone",
+        "Mars/Base"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "create",
+        "--session",
+        "s",
+        "--message",
+        "rel project",
+        "--cron",
+        "0 9 * * *",
+        "--project",
+        "rel/dir"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "list"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "stopServer": "SIGKILL"
+    }
+  ],
+  "accepted": [
+    {
+      "id": "cron-online-cli-never-exits",
+      "why": "基线 bug（挂起）：`pilotdeck cron <子命令>` 连上 18789 上的 server 后从不关闭 WebSocket（`src/cli/pilotdeck.ts:362-424`），结果或用法错误打印完进程仍一直挂着，只能被杀；场景里基线一侧的每个 cron 步骤都是超时后被 SIGKILL。Rust 打印完就关连接退出：成功为 0，用法错误与 server 回错误为 1（基线源码里设的退出码，`pilotdeck.ts:626-629`）。只放过步骤的超时标记、退出码和信号，stdout / stderr 与发给 server 的请求照常比",
+      "paths": [
+        "^\\$\\.steps\\[\\d+\\]\\.timedOut$",
+        "^\\$\\.steps\\[\\d+\\]\\.cli\\.(exitCode|signal)$"
+      ]
+    }
+  ]
+}

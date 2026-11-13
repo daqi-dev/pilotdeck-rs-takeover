@@ -1619,8 +1619,11 @@ pub fn run_admitted_turn(
                     "lastAssistantMessage".into(),
                     JsValue::String(message_text(message.boundary.value())?),
                 );
+                // AgentLoop.ts:1884-1929 has no abort check from here to the
+                // terminal: an abort that kills the Stop hook still ends the
+                // turn as completed.
                 let HostReply::Lifecycle(result) = host.call(
-                    control,
+                    &unchecked_control(control),
                     HostCall::DispatchLifecycle {
                         event: "Stop".into(),
                         payload: Some(payload),
@@ -1633,7 +1636,13 @@ pub fn run_admitted_turn(
             } else {
                 None
             };
-            emit_event(events, &mut state.timeline, input, TurnEvent::StopRequested)?;
+            emit_unchecked_event(
+                events,
+                &mut state.timeline,
+                input,
+                control,
+                TurnEvent::StopRequested,
+            )?;
             if let Some(stop) = stop {
                 // Source Stop appends hook messages after its public stop event;
                 // these messages are not independent assistant-message events.
@@ -1659,27 +1668,36 @@ pub fn run_admitted_turn(
                         TurnStopReason::ToolError,
                     );
                     result.errors.push(error.clone());
-                    emit_event(
+                    emit_unchecked_event(
                         events,
                         &mut state.timeline,
                         input,
+                        control,
                         TurnEvent::AgentStatus {
                             text: None,
                             event: "lifecycle_blocked".into(),
                             detail: lifecycle_blocked_status(reason),
                         },
                     )?;
-                    emit_event(
+                    emit_unchecked_event(
                         events,
                         &mut state.timeline,
                         input,
+                        control,
                         TurnEvent::Failed { error },
                     )?;
-                    capture_turn_advisory(host, control, input, &state.messages, true)?;
-                    emit_event(
+                    capture_turn_advisory(
+                        host,
+                        &unchecked_control(control),
+                        input,
+                        &state.messages,
+                        true,
+                    )?;
+                    emit_unchecked_event(
                         events,
                         &mut state.timeline,
                         input,
+                        control,
                         TurnEvent::Completed {
                             result: result.clone(),
                         },
@@ -1714,10 +1732,11 @@ pub fn run_admitted_turn(
                     .iter()
                     .any(|unit| !source_whitespace(*unit))
             {
-                emit_event(
+                emit_unchecked_event(
                     events,
                     &mut state.timeline,
                     input,
+                    control,
                     TurnEvent::AgentStatus {
                         text: None,
                         event: event.into(),
@@ -1732,11 +1751,18 @@ pub fn run_admitted_turn(
                 TurnResultKind::Success,
                 TurnStopReason::Completed,
             );
-            capture_turn_advisory(host, control, input, &state.messages, false)?;
-            emit_event(
+            capture_turn_advisory(
+                host,
+                &unchecked_control(control),
+                input,
+                &state.messages,
+                false,
+            )?;
+            emit_unchecked_event(
                 events,
                 &mut state.timeline,
                 input,
+                control,
                 TurnEvent::Completed {
                     result: result.clone(),
                 },
@@ -3450,8 +3476,10 @@ fn finish_ordinary_model_error(
     if ports.host.advertised("lifecycle", "dispatch") {
         let mut payload = JsObject::new();
         payload.insert("error".into(), model_error.value().clone());
+        // AgentLoop.ts:1676-1696: no abort check between StopFailure and
+        // the error terminal; an abort that kills the hook does not stop it.
         let HostReply::Lifecycle(_) = ports.host.call(
-            ports.control,
+            &unchecked_control(ports.control),
             HostCall::DispatchLifecycle {
                 event: "StopFailure".into(),
                 payload: Some(payload),
@@ -3468,10 +3496,11 @@ fn finish_ordinary_model_error(
             .map(|text| JsValue::String(text.into()))
             .unwrap_or(JsValue::Undefined),
     };
-    emit_event(
+    emit_unchecked_event(
         ports.events,
         &mut state.timeline,
         ports.input,
+        ports.control,
         TurnEvent::StopFailureBoundary {
             error: BoundarySnapshot::capture(&failure_text),
         },
@@ -3499,10 +3528,11 @@ fn finish_ordinary_model_error(
         .get("detail")
         .map(BoundarySnapshot::capture)
         .ok_or_else(|| wrong_reply("model failure status detail"))?;
-    emit_event(
+    emit_unchecked_event(
         ports.events,
         &mut state.timeline,
         ports.input,
+        ports.control,
         // AgentLoop.toAgentStatusEvent excludes the internal status text.
         TurnEvent::AgentStatus {
             event,
@@ -3510,25 +3540,27 @@ fn finish_ordinary_model_error(
             text: None,
         },
     )?;
-    emit_event(
+    emit_unchecked_event(
         ports.events,
         &mut state.timeline,
         ports.input,
+        ports.control,
         TurnEvent::Failed {
             error: classified_error,
         },
     )?;
     capture_turn_advisory(
         ports.host,
-        ports.control,
+        &unchecked_control(ports.control),
         ports.input,
         &state.messages,
         true,
     )?;
-    emit_event(
+    emit_unchecked_event(
         ports.events,
         &mut state.timeline,
         ports.input,
+        ports.control,
         TurnEvent::Completed {
             result: result.clone(),
         },
@@ -3873,7 +3905,47 @@ fn finish_tool_terminal(
         messages: state.messages,
     })
 }
-/// Capture is the sole terminal cleanup effect admitted after user abort.
+/// Whether only a user abort (abort_turn, a closed session) stops `control`.
+fn user_abort_requested(control: &CallControl) -> bool {
+    matches!(
+        control.cancellation.cause(),
+        Some(CancelCause::Requested(_))
+    ) && control.cancellation.hard_stop_cause().is_none()
+}
+
+/// The control for a stretch the original loop runs without an abort check.
+/// AgentLoop only reads its abort signal at explicit checks; between two of
+/// them the code goes on after an abort (a Stop / StopFailure dispatch whose
+/// hook the abort killed is followed by the turn's ordinary terminal,
+/// AgentLoop.ts:1677-1696, 1884-1929). A user abort therefore does not stop
+/// these host calls; retirement and transport loss still do.
+fn unchecked_control(control: &CallControl) -> CallControl {
+    if user_abort_requested(control) {
+        fresh_capture_cleanup(control)
+    } else {
+        control.clone()
+    }
+}
+
+/// [`emit_event`] for a stretch without an abort check (see
+/// [`unchecked_control`]): after a user abort the event still goes out, on
+/// the accepted-delivery path.
+fn emit_unchecked_event(
+    events: &mut dyn TurnEventPort,
+    timeline: &mut TurnTimeline,
+    input: &TurnInput,
+    control: &CallControl,
+    event: TurnEvent,
+) -> PortResult<()> {
+    if user_abort_requested(control) {
+        emit_accepted_event(events, timeline, input, event)
+    } else {
+        emit_event(events, timeline, input, event)
+    }
+}
+
+/// A cleanup scope admitted after user abort: the aborted terminal's capture,
+/// and the stretches without an abort check (see [`unchecked_control`]).
 /// Its budget starts here, independently of the expired execution deadline.
 fn fresh_capture_cleanup(previous: &CallControl) -> CallControl {
     CallControl {

@@ -35,6 +35,17 @@ const withProj = (records, kind = 'k') => {
     '/home/x/chats/s.jsonl.projections.json': { mode: '644', json: { entries: [{ index: e.sequence - 1, kind, entry: { sequence: e.sequence, entryId: e.entryId, parentEntryId: null } }] } },
   } });
 };
+// 规则 17：会话文件 s.jsonl（第一条记录最短）加一帧 read_session_messages 的 session.fileSize。
+// dur 是每条工具记录里 durationMs 的值，size 缺省为整份文件的字节数，sizeAt 给出时取前 sizeAt 条记录的字节数。
+const sessRecs = (dur, n = 11) => [{ type: 'accepted_input', turnId: 't1' },
+  ...Array.from({ length: n }, (_, i) => ({ type: 'tool_result', turnId: 't1', toolUseId: `call_${i}`, output: 'some tool output text here', durationMs: dur }))];
+const bytes = (recs) => recs.reduce((n, r) => n + Buffer.byteLength(JSON.stringify(r)) + 1, 0);
+const sized = (recs, { size = bytes(recs), sizeAt, file = true, rewritten = false } = {}) => art(
+  [{ step: { ws: 'read_session_messages' }, frames: [{ type: 'response', ok: true, result: { session: { sessionId: 's', fileSize: sizeAt === undefined ? size : bytes(recs.slice(0, sizeAt)) } } }] }],
+  { tree: file ? { '/home/.pilotdeck/projects/p/chats/s.jsonl': { mode: '644', jsonl: recs, raw: { lines: rewritten ? recs.length + 1 : recs.length, finalNewline: true, skeletons: {} } } } : {} });
+const LOCK = '/home/.pilotdeck/runs/registry.json.lock';
+const withLock = (text) => art([], { tree: text === undefined ? {} : { [LOCK]: { mode: '644', text } } });
+const memState = (caseId, traceId, extra = 'x') => sql({ state_key: 'recentCaseTraces', state_json: JSON.stringify([{ caseId, note: extra, retrieval: { trace: { traceId, steps: [{ stepId: `${traceId}:step:1` }, { stepId: `${traceId}:step:2` }] } } }]) });
 const cases = [
   // [说明, a, b, 期望, diff.mjs 额外参数]
   ['相同', frame({ a: 1 }), frame({ a: 1 }), 'SAME'],
@@ -100,6 +111,26 @@ const cases = [
   ['sqlite 的 _json 单元格键顺序不同', sql({ k: 'a', state_json: '{"x":1,"y":2}' }), sql({ k: 'a', state_json: '{"y":2,"x":1}' }), 'DIFF'],
   ['sqlite 的 _json 单元格一侧不是 JSON', sql({ k: 'a', state_json: '{"x":1}' }), sql({ k: 'a', state_json: 'x=1' }), 'DIFF'],
   ['别的列里的 JSON 文本照整串比', sql({ k: 'a', note: '{"caseId":"r1"}' }, ['\\.note\\.<json>\\.caseId$']), sql({ k: 'a', note: '{"caseId":"r2"}' }, ['\\.note\\.<json>\\.caseId$']), 'DIFF'],
+  ['记忆轨迹 id 的随机段', memState('case_trace_c8152c51eb', 'trace_32ee88c4c6'), memState('case_trace_df3f4efaa4', 'trace_2dcd40dfd6'), 'SAME'],
+  ['记忆轨迹：步骤 id 不再指向同一条轨迹', memState('case_trace_c8152c51eb', 'trace_32ee88c4c6'),
+    sql({ state_key: 'recentCaseTraces', state_json: JSON.stringify([{ caseId: 'case_trace_df3f4efaa4', note: 'x', retrieval: { trace: { traceId: 'trace_2dcd40dfd6', steps: [{ stepId: 'trace_2dcd40dfd6:step:1' }, { stepId: 'trace_aaaaaaaaaa:step:2' }] } } }]) }), 'DIFF'],
+  ['记忆轨迹：case id 与 trace id 的相等关系', frame({ a: 'case_trace_1111111111', b: 'trace_2222222222' }), frame({ a: 'case_trace_3333333333', b: 'case_trace_3333333333' }), 'DIFF'],
+  ['记忆轨迹旁边的字段照比', memState('case_trace_c8152c51eb', 'trace_32ee88c4c6', 'x'), memState('case_trace_df3f4efaa4', 'trace_2dcd40dfd6', 'y'), 'DIFF'],
+  ['index_trace_ 不抹', frame({ id: 'index_trace_c8152c51eb' }), frame({ id: 'index_trace_df3f4efaa4' }), 'DIFF'],
+  ['trace_ 后面位数不对不抹', frame({ id: 'trace_c8152c51eb0' }), frame({ id: 'trace_df3f4efaa41' }), 'DIFF'],
+  ['fileSize：差 11 字节（11 个耗时 8 → 13），两侧都写到同一条', sized(sessRecs(8)), sized(sessRecs(13)), 'SAME'],
+  ['fileSize：一侧是少写最后一条时的旧值', sized(sessRecs(8)), sized(sessRecs(8), { sizeAt: 11 }), 'DIFF'],
+  ['fileSize：差一整条最短记录', sized(sessRecs(8)), sized(sessRecs(8), { size: bytes(sessRecs(8)) - bytes(sessRecs(8).slice(0, 1)) }), 'DIFF'],
+  ['fileSize：一侧为 0', sized(sessRecs(8)), sized(sessRecs(8), { size: 0 }), 'DIFF'],
+  ['fileSize 退到固定容差：差 11 字节', sized(sessRecs(8), { rewritten: true }), sized(sessRecs(13), { rewritten: true }), 'SAME'],
+  ['fileSize 退到固定容差：差一整条最短记录', sized(sessRecs(8), { rewritten: true }), sized(sessRecs(8), { rewritten: true, size: bytes(sessRecs(8)) - bytes(sessRecs(8).slice(0, 1)) }), 'DIFF'],
+  ['fileSize 退到固定容差：差值超过最短记录的一半', sized(sessRecs(8), { rewritten: true }), sized(sessRecs(8), { rewritten: true, size: bytes(sessRecs(8)) + 21 }), 'DIFF'],
+  ['fileSize 退到固定容差：超过 64 字节', sized([{ type: 'accepted_input', text: 'x'.repeat(300) }], { rewritten: true }), sized([{ type: 'accepted_input', text: 'x'.repeat(300) }], { rewritten: true, size: bytes([{ type: 'accepted_input', text: 'x'.repeat(300) }]) + 65 }), 'DIFF'],
+  ['fileSize 退到固定容差：一侧为 0', sized(sessRecs(8), { rewritten: true }), sized(sessRecs(8), { rewritten: true, size: 0 }), 'DIFF'],
+  ['fileSize：树里没有这个会话文件', sized(sessRecs(8), { file: false }), sized(sessRecs(13), { file: false, size: bytes(sessRecs(13)) }), 'DIFF'],
+  ['运行记录锁只在一侧有', withLock('{"pid":1,"acquiredAt":"2026-01-01T00:00:00.000Z"}'), withLock(undefined), 'SAME'],
+  ['运行记录锁两侧都有、内容不同', withLock('{"pid":1,"acquiredAt":"2026-01-01T00:00:00.000Z"}'), withLock('{"pid":2,"acquiredAt":"2026-01-01T00:00:00.000Z","x":1}'), 'DIFF'],
+  ['别的锁文件只在一侧有', art([], { tree: { '/home/.pilotdeck/other.json.lock': { mode: '644', text: 'x' } } }), art([]), 'DIFF'],
   ['created 之外的 10 位整数', frame({ startedAt: 1794495673 }), frame({ startedAt: 1794495675 }), 'DIFF'],
   ['created 一侧不是时间戳', frame({ created: 1794495673 }), frame({ created: 12 }), 'DIFF'],
   ['警告之外的 stderr', frame({ stderr: '(node:1) ExperimentalWarning: x\n(Use `node --trace-warnings ...` to show where the warning was created)\nreal\n' }), frame({ stderr: 'other\n' }), 'DIFF'],
@@ -134,6 +165,34 @@ for (const [name, a, b, expected, extra] of cases) {
   const got = verdict(a, b, extra);
   if (got !== expected) { bad++; console.log(`不符合预期  ${name}：期望 ${expected}，实际 ${got}`); }
 }
+
+// 采集器的 18789 开关：没设 BBX_ALLOW_18789=1 时，写了 "gatewayPort": 18789 的场景在拿锁、查端口、
+// 起任何进程之前就退出（退出码 6，不写产物），check.mjs 把它记成 SKIPPED、退出码 0、汇总行报出跳过个数；
+// gatewayPort 写别的值是场景错误（退出码 2）。这几项都不碰 18789，也不需要基线或 Rust 二进制。
+const collectorCases = [];
+{
+  const env = { ...process.env, BBX_SLOT: '0', BBX_BASELINE: path.join(dir, 'no-baseline'), BBX_TARGET: path.join(dir, 'no-target') };
+  delete env.BBX_ALLOW_18789;
+  const scenarioFile = (name, port) => {
+    const f = path.join(dir, `${name}.json`);
+    fs.writeFileSync(f, JSON.stringify({ name, gatewayPort: port, server: false, steps: [{ cli: ['--version'] }] }));
+    return f;
+  };
+  const out = path.join(dir, 'out');
+  const run = (script, args, extraEnv = {}) => spawnSync(process.execPath, [path.join(here, script), ...args], { encoding: 'utf8', env: { ...env, ...extraEnv } });
+  const skip = run('run.mjs', ['ts', scenarioFile('needs-18789', 18789), path.join(out, 'a.json')]);
+  collectorCases.push(['没设变量时 run.mjs 跳过（退出码 6）', skip.status === 6 && /SKIPPED needs-18789/.test(skip.stderr)]);
+  collectorCases.push(['跳过时不写产物', !fs.existsSync(path.join(out, 'a.json'))]);
+  const empty = run('run.mjs', ['rust', scenarioFile('needs-18789-b', 18789), path.join(out, 'b.json')], { BBX_ALLOW_18789: '' });
+  collectorCases.push(['变量不是 1 也跳过', empty.status === 6]);
+  const wrong = run('run.mjs', ['ts', scenarioFile('wrong-port', 18790), path.join(out, 'c.json')], { BBX_ALLOW_18789: '1' });
+  collectorCases.push(['gatewayPort 只能是 18789', wrong.status === 2 && /may only be 18789/.test(wrong.stderr)]);
+  const check = run('check.mjs', ['--out', out, scenarioFile('needs-18789-c', 18789)]);
+  collectorCases.push(['check.mjs 记 SKIPPED、退出码 0', check.status === 0 && /needs-18789-c\s+SKIPPED/.test(check.stdout)]);
+  collectorCases.push(['汇总行报出跳过个数', /0\/0 SAME，另有 1 个 SKIPPED/.test(check.stdout)]);
+}
+for (const [name, ok] of collectorCases) if (!ok) { bad++; console.log(`不符合预期  采集器：${name}`); }
 fs.rmSync(dir, { recursive: true, force: true });
-console.log(bad ? `比较器自测：${cases.length - bad}/${cases.length} 符合预期` : `比较器自测：${cases.length}/${cases.length} 符合预期`);
+const total = cases.length + collectorCases.length;
+console.log(`比较器与采集器自测：${total - bad}/${total} 符合预期`);
 process.exit(bad ? 1 : 0);

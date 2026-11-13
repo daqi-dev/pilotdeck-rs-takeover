@@ -1,0 +1,61 @@
+{
+  "name": "gw-crash-api-web-bad-project-key",
+  "about": "疑似基线 bug（崩溃，需要 token）：/api/web/projects/<键>/files/* 里键的百分号编码不合法时，httpRouter.ts:60 的 decodeURIComponent 在 try 之外抛 URIError（描述项目那一支在 try 里，回 404），成为 unhandledRejection，pilotdeck.ts:271-274 走停机并以 1 退出；这条请求收不到应答。用 serve 起服务，比的是进程自己的退出码和输出。保留为不一致，由主会话决定。环境里的 DOCKER_CONTAINER / COMMIT_HASH 让基线的遥测上下文不去跑 git。",
+  "accepted": [
+    {
+      "id": "gw-api-web-bad-key-crash",
+      "why": "基线 bug（崩溃，需要 token）：/api/web/projects/<键>/files/* 的键百分号编码不合法时，httpRouter.ts:60 的 decodeURIComponent 在 try 之外抛 URIError，成为 unhandledRejection，pilotdeck.ts:271-274 停机，进程以 1 退出，这条请求收不到应答。Rust 回 500 {\"error\":{\"code\":\"internal_error\",\"message\":\"URI malformed\"}}（与基线这个分支在 try 里出错时的 catch-all 形状相同，httpRouter.ts:103），服务照常。只放过进程退出码、出事的那次请求的应答、之后那次探测。",
+      "paths": [
+        "^\\$\\.steps\\[0\\]\\.serve\\.exitCode$",
+        "^\\$\\.steps\\[0\\]\\.then\\[1\\]\\.raw\\.",
+        "^\\$\\.steps\\[0\\]\\.then\\[3\\]\\.raw\\."
+      ]
+    }
+  ],
+  "volatile": [
+    "\\.http\\.headers\\.date$"
+  ],
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "steps": [
+    {
+      "serve": [
+        "server"
+      ],
+      "then": [
+        {
+          "http": "GET /api/web/projects/%E0",
+          "headers": {
+            "authorization": "Bearer {TOKEN}"
+          }
+        },
+        {
+          "raw": {
+            "send": [
+              {
+                "text": "GET /api/web/projects/%E0/files/tree HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer {TOKEN}\r\nConnection: close\r\n\r\n"
+              }
+            ],
+            "readMs": 1500
+          }
+        },
+        {
+          "sleep": 1500
+        },
+        {
+          "raw": {
+            "send": [
+              {
+                "text": "GET /health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+              }
+            ],
+            "readMs": 1000
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -118,5 +118,18 @@
   },
   "env": {
     "PILOTDECK_AGENT_LOOP_TRANSPORT": "stdio"
-  }
+  },
+  "accepted": [
+    {
+      "id": "sidecar-pre-request-abort-no-terminal",
+      "why": "基线自身 bug（丢运行终态）：外置 sidecar 部署下，请求发出前就中止的一轮，sidecar 客户端直接 return abortedResult（src/agent/modules/transport/agentLoopSidecarClient.ts:330、593 → 1434-1448），不像进程内 AgentLoop 那样先 yield turn_completed；TurnRunner 只转发循环自己发出的 turn_completed（src/agent/turn/TurnRunner.ts:393-396、420），网关因此收不到终态事件：RunRegistry 只在 turn_completed / error 时落终态（src/gateway/run/RunRegistry.ts:253-259），记录停在 running（同一进程里一直如此，下次启动才被 markOrphansInterrupted 记成 interrupted，RunRegistry.ts:285-300），事件流里也没有终态；WS 连接只好自己补一帧不进运行记录的 error result_unknown「Gateway stream ended without a terminal result.」（src/gateway/server/GatewayWsConnection.ts:157-161）。进程内部署同样中止时基线发 turn_completed（finishReason aborted_streaming）并把记录落成 aborted（见 turn-abort-before-request-status）；Rust 在 sidecar 部署下也这样做。只放过它直接造成的：三轮 submit_turn 的第 5、6 帧（终态帧）与帧数、read_session_messages 读回的运行事件流里缺的那条 turn_completed、运行记录三条记录的 state / result / revision / lastSeq 与三条事件流的条数和第 5 条、registry.json 原文骨架的两个哈希。会话文件、请求、其余帧照常比",
+      "paths": [
+        "^\\$\\.steps\\[[0-2]\\]\\.frames(\\.length|\\[4\\]\\.(final|event\\.(type|code|message|recoverable|usage|finishReason|runId))|\\[5\\])$",
+        "^\\$\\.steps\\[4\\]\\.frames\\[0\\]\\.result\\.stream\\.events(\\.length|\\[4\\])$",
+        "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.json\\.records\\[[0-2]\\]\\.(state|result|revision|lastSeq)$",
+        "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.json\\.events\\.\\u0000s-ab-[1-3]\\u0000<uuid:\\d+>(\\.length|\\[4\\])$",
+        "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.raw\\.skeletons\\.(b0934e310dd158bb|8830c3454df83eea)$"
+      ]
+    }
+  ]
 }

@@ -1,0 +1,249 @@
+{
+  "name": "abort-timeout-tool-batch",
+  "about": "超时列（submit_turn.timeoutMs，从 abort-tool-batch 拆出）：中止落在一批工具执行中（read_file 已完成、bash 在睡、write_file 还没开始）：abort_turn、close_session、timeoutMs。比较每个调用的 PreToolUse / PostToolUse / PostToolUseFailure、late-*.txt 与 written-*.txt、帧、会话记录、下一轮请求里留下的工具结果。",
+  "files": {
+    "proj/seed.txt": "seed\n",
+    "home/.pilotdeck/plugins/bbx-abort/plugin.json": {
+      "name": "bbx-abort",
+      "version": "0.1.0",
+      "description": "bbx bbx-abort",
+      "hooks": {
+        "PreToolUse": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs pre 0 '' '' 0"
+              }
+            ]
+          }
+        ],
+        "PostToolUse": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs post 0 '' '' 0"
+              }
+            ]
+          }
+        ],
+        "PostToolUseFailure": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs post-failure 0 '' '' 0"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "home/.pilotdeck/plugins/bbx-abort/hook.mjs": "// bbx hook fixture: node hook.mjs <log> <exit> [stdout] [stderr] [sleepMs]\nimport fs from 'node:fs';\nconst [log, exit = '0', out = '', err = '', sleep = '0'] = process.argv.slice(2);\nconst dir = process.env.HOME + '/hooklog';\nconst append = (row) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(dir + '/' + log + '.jsonl', JSON.stringify(row) + '\\n'); };\nlet input = '';\nprocess.stdin.on('data', (d) => { input += d; });\nprocess.stdin.on('end', () => {\n  let parsed; try { parsed = JSON.parse(input); } catch { parsed = { raw: input }; }\n  const keep = {};\n  for (const k of ['hook_event_name', 'hookEventName', 'tool_name', 'toolName', 'error', 'isInterrupt', 'is_interrupt', 'prompt', 'reason', 'stopHookActive']) if (k in parsed) keep[k] = parsed[k];\n  append({ argv: process.argv.slice(2), input: keep });\n  setTimeout(() => {\n    append({ argv: process.argv.slice(2), done: true });\n    if (out) process.stdout.write(out);\n    if (err) process.stderr.write(err);\n    process.exit(Number(exit));\n  }, Number(sleep));\n});\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Abort run\"}"
+      }
+    },
+    {
+      "name": "next-tp-run",
+      "when": [
+        "next-tp-run:"
+      ],
+      "reply": {
+        "text": "Next tp-run."
+      }
+    },
+    {
+      "name": "tp-run-after",
+      "when": [
+        "tp-run:",
+        "\"tool_call_id\""
+      ],
+      "reply": {
+        "text": "Done tp-run."
+      }
+    },
+    {
+      "name": "tp-run",
+      "when": [
+        "tp-run:"
+      ],
+      "reply": {
+        "tools": [
+          {
+            "id": "r_tp_run",
+            "name": "read_file",
+            "arguments": {
+              "path": "seed.txt"
+            }
+          },
+          {
+            "id": "b_tp_run",
+            "name": "bash",
+            "arguments": {
+              "command": "echo started; sleep 2; echo late > late-tp-run.txt",
+              "description": "tp-run"
+            }
+          },
+          {
+            "id": "w_tp_run",
+            "name": "write_file",
+            "arguments": {
+              "path": "written-tp-run.txt",
+              "content": "w"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "next-tp-close",
+      "when": [
+        "next-tp-close:"
+      ],
+      "reply": {
+        "text": "Next tp-close."
+      }
+    },
+    {
+      "name": "tp-close-after",
+      "when": [
+        "tp-close:",
+        "\"tool_call_id\""
+      ],
+      "reply": {
+        "text": "Done tp-close."
+      }
+    },
+    {
+      "name": "tp-close",
+      "when": [
+        "tp-close:"
+      ],
+      "reply": {
+        "tools": [
+          {
+            "id": "r_tp_close",
+            "name": "read_file",
+            "arguments": {
+              "path": "seed.txt"
+            }
+          },
+          {
+            "id": "b_tp_close",
+            "name": "bash",
+            "arguments": {
+              "command": "echo started; sleep 2; echo late > late-tp-close.txt",
+              "description": "tp-close"
+            }
+          },
+          {
+            "id": "w_tp_close",
+            "name": "write_file",
+            "arguments": {
+              "path": "written-tp-close.txt",
+              "content": "w"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "next-tp-timeout",
+      "when": [
+        "next-tp-timeout:"
+      ],
+      "reply": {
+        "text": "Next tp-timeout."
+      }
+    },
+    {
+      "name": "tp-timeout-after",
+      "when": [
+        "tp-timeout:",
+        "\"tool_call_id\""
+      ],
+      "reply": {
+        "text": "Done tp-timeout."
+      }
+    },
+    {
+      "name": "tp-timeout",
+      "when": [
+        "tp-timeout:"
+      ],
+      "reply": {
+        "tools": [
+          {
+            "id": "r_tp_timeout",
+            "name": "read_file",
+            "arguments": {
+              "path": "seed.txt"
+            }
+          },
+          {
+            "id": "b_tp_timeout",
+            "name": "bash",
+            "arguments": {
+              "command": "echo started; sleep 2; echo late > late-tp-timeout.txt",
+              "description": "tp-timeout"
+            }
+          },
+          {
+            "id": "w_tp_timeout",
+            "name": "write_file",
+            "arguments": {
+              "path": "written-tp-timeout.txt",
+              "content": "w"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-tp-timeout",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tp-timeout",
+        "channelKey": "test",
+        "message": "tp-timeout: go",
+        "timeoutMs": 1800
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tp-timeout",
+        "channelKey": "test",
+        "message": "next-tp-timeout: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-tp-timeout"
+      }
+    }
+  ]
+}

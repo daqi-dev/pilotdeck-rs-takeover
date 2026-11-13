@@ -1,0 +1,204 @@
+{
+  "name": "abort-tool-bash-disconnect",
+  "about": "中止来源是客户端断开（GatewayWsConnection.ts:48-62：断开时对本连接在途的会话 abortTurn，原因 aborted）：bash 工具执行中先后以关闭帧、RST 断开，重连后看子进程是否被杀（late-*.txt）、运行记录、会话记录与下一轮。",
+  "files": {
+    "home/.pilotdeck/plugins/bbx-abort/plugin.json": {
+      "name": "bbx-abort",
+      "version": "0.1.0",
+      "description": "bbx bbx-abort",
+      "hooks": {
+        "PostToolUseFailure": [
+          {
+            "matcher": "bash",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs post-failure 0 '' '' 0"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "home/.pilotdeck/plugins/bbx-abort/hook.mjs": "// bbx hook fixture: node hook.mjs <log> <exit> [stdout] [stderr] [sleepMs]\nimport fs from 'node:fs';\nconst [log, exit = '0', out = '', err = '', sleep = '0'] = process.argv.slice(2);\nconst dir = process.env.HOME + '/hooklog';\nconst append = (row) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(dir + '/' + log + '.jsonl', JSON.stringify(row) + '\\n'); };\nlet input = '';\nprocess.stdin.on('data', (d) => { input += d; });\nprocess.stdin.on('end', () => {\n  let parsed; try { parsed = JSON.parse(input); } catch { parsed = { raw: input }; }\n  const keep = {};\n  for (const k of ['hook_event_name', 'hookEventName', 'tool_name', 'toolName', 'error', 'isInterrupt', 'is_interrupt', 'prompt', 'reason', 'stopHookActive']) if (k in parsed) keep[k] = parsed[k];\n  append({ argv: process.argv.slice(2), input: keep });\n  setTimeout(() => {\n    append({ argv: process.argv.slice(2), done: true });\n    if (out) process.stdout.write(out);\n    if (err) process.stderr.write(err);\n    process.exit(Number(exit));\n  }, Number(sleep));\n});\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Abort run\"}"
+      }
+    },
+    {
+      "name": "next-td-closeframe",
+      "when": [
+        "next-td-closeframe:"
+      ],
+      "reply": {
+        "text": "Next td-closeframe."
+      }
+    },
+    {
+      "name": "td-closeframe-after",
+      "when": [
+        "td-closeframe:",
+        "\"tool_call_id\":\"call_td_closeframe\""
+      ],
+      "reply": {
+        "text": "Done td-closeframe."
+      }
+    },
+    {
+      "name": "td-closeframe",
+      "when": [
+        "td-closeframe:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_td_closeframe",
+          "name": "bash",
+          "arguments": {
+            "command": "sleep 2; echo late > late-td-closeframe.txt",
+            "description": "td-closeframe"
+          }
+        }
+      }
+    },
+    {
+      "name": "next-td-reset",
+      "when": [
+        "next-td-reset:"
+      ],
+      "reply": {
+        "text": "Next td-reset."
+      }
+    },
+    {
+      "name": "td-reset-after",
+      "when": [
+        "td-reset:",
+        "\"tool_call_id\":\"call_td_reset\""
+      ],
+      "reply": {
+        "text": "Done td-reset."
+      }
+    },
+    {
+      "name": "td-reset",
+      "when": [
+        "td-reset:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_td_reset",
+          "name": "bash",
+          "arguments": {
+            "command": "sleep 2; echo late > late-td-reset.txt",
+            "description": "td-reset"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-td-closeframe",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-td-closeframe",
+        "channelKey": "test",
+        "runId": "run-td-closeframe",
+        "message": "td-closeframe: go"
+      },
+      "timeout": 1200,
+      "expectTimeout": true
+    },
+    {
+      "disconnect": true
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "connect": true
+    },
+    {
+      "ws": "run_get",
+      "params": {
+        "runId": "run-td-closeframe"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-td-closeframe"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-td-closeframe",
+        "channelKey": "test",
+        "message": "next-td-closeframe: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-td-reset",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-td-reset",
+        "channelKey": "test",
+        "runId": "run-td-reset",
+        "message": "td-reset: go"
+      },
+      "timeout": 1200,
+      "expectTimeout": true
+    },
+    {
+      "disconnect": "reset"
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "connect": true
+    },
+    {
+      "ws": "run_get",
+      "params": {
+        "runId": "run-td-reset"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-td-reset"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-td-reset",
+        "channelKey": "test",
+        "message": "next-td-reset: again"
+      },
+      "timeout": 20000
+    }
+  ]
+}

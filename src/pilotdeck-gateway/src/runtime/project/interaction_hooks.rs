@@ -52,7 +52,18 @@ struct Run {
     permission: Option<TurnPermission>,
     registration: Option<CallbackRegistration>,
     cancelled: Cancellation,
+    /// The turn's abort signal (user abort, timeout, session close). It is
+    /// not a revocation: the baseline's lifecycle runtime stays usable for
+    /// the aborted turn's unwinding, and only `signal` reaches the hooks
+    /// (LifecycleRuntime.ts:48, CommandHookExecutor.ts:37-44).
     external: Cancellation,
+    /// The signal a turn dispatch hands its hooks: fires on the turn's abort
+    /// (`external`) or on this run's revocation (`cancelled`). A hook running
+    /// when it fires is terminated and its completion awaited
+    /// (commandRunner.ts:96-101); one dispatched after it is already fired
+    /// runs to completion and reports `cancelled` (an already-aborted
+    /// signal's `abort` listener never fires, CommandHookExecutor.ts:42).
+    kill: Cancellation,
     session_signal: Mutex<Option<Cancellation>>,
     closed: AtomicBool,
     releases: AtomicUsize,
@@ -78,6 +89,7 @@ impl Run {
                 // These synchronous callbacks can panic too (for example a
                 // poisoned callback registry). They must already own completion.
                 self.cancelled.cancel();
+                self.kill.cancel();
                 if let Some(signal) = &*lock(&self.session_signal) {
                     signal.cancel();
                 }
@@ -256,6 +268,7 @@ impl InteractionHooks {
             registration,
             cancelled: Cancellation::new(),
             external: binding.signal.take().unwrap_or_default(),
+            kill: Cancellation::new(),
             session_signal: Mutex::default(),
             closed: AtomicBool::new(false),
             releases: AtomicUsize::new(0),
@@ -282,7 +295,11 @@ impl InteractionHooks {
             }
             state.draining.push((run.session.clone(), previous));
         }
-        // The externally supplied abort is observed even when no dispatch is pending.
+        // The turn's abort kills the hooks it is running, even when no
+        // dispatch is pending, but leaves the run bound: the aborted turn
+        // still dispatches while it unwinds (PostToolUseFailure with
+        // `isInterrupt`, Stop, SubagentStop ...). The run is revoked when the
+        // turn closes its ports, or when its permission binding goes away.
         let monitor = run.clone();
         let state_ref = Arc::downgrade(&self.state);
         let permission_cancel = run
@@ -291,10 +308,20 @@ impl InteractionHooks {
             .map(TurnPermission::cancellation)
             .unwrap_or_default();
         run.executor.spawn(async move {
+            let retired = monitor.cancelled.clone();
+            let revoked = async move {
+                tokio::select! {
+                    _ = permission_cancel.cancelled() => {},
+                    _ = retired.cancelled() => {},
+                }
+            };
+            tokio::pin!(revoked);
             tokio::select! {
-                _ = monitor.external.cancelled() => {},
-                _ = permission_cancel.cancelled() => {},
-                _ = monitor.cancelled.cancelled() => {},
+                _ = monitor.external.cancelled() => {
+                    monitor.kill.cancel();
+                    revoked.await;
+                },
+                _ = &mut revoked => {},
             }
             if let Some(state) = state_ref.upgrade() {
                 TurnHooks {
@@ -402,7 +429,6 @@ impl TurnHooks {
     fn check(&self, state: &State) -> Result<(), HostError> {
         if state.closed
             || self.run.closed.load(Ordering::SeqCst)
-            || self.run.external.is_cancelled()
             || self
                 .run
                 .permission
@@ -605,7 +631,12 @@ impl TurnHooks {
             let job = DispatchJob(turn.run.clone());
             let worker = turn.clone();
             if !session {
-                input.signal = Some(turn.run.cancelled.clone());
+                // Settle the kill signal before the hook starts: a dispatch
+                // that follows the abort sees it already fired.
+                if turn.run.external.is_cancelled() {
+                    turn.run.kill.cancel();
+                }
+                input.signal = Some(turn.run.kill.clone());
             }
             // Keep shell TERM/drain alive even if the caller cancels or drops
             // its receive future. close waits for this job before disposal.
@@ -615,10 +646,11 @@ impl TurnHooks {
                 worker.run.runtime.dispatch(input).await
             });
             let mut on_drop = CancelDispatch(Some(turn.clone()));
+            // The turn's abort is not awaited here: the hook observes it
+            // through its signal and the dispatch settles with its result.
             let result = tokio::select! {
                 biased;
                 _ = turn.run.cancelled.cancelled() => return Err(stale()),
-                _ = turn.run.external.cancelled() => { turn.close(); return Err(stale()); },
                 result = task => {
                     on_drop.0 = None;
                     result.map_err(|e| ModuleError::new(e.to_string()))??

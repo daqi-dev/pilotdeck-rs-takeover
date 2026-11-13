@@ -179,13 +179,35 @@ function walkRs(dir, acc = []) {
   return acc;
 }
 const rsFiles = walkRs(P.src);
-const PLACEHOLDERS = { 'unimplemented!': /\bunimplemented!\s*\(/, 'todo!': /\btodo!\s*\(/, NOT_IMPLEMENTED: /(?<!StatusCode::)NOT_IMPLEMENTED/ };
+// 前三个是标准里点名的宏与常量；后四个是 2026-11-13 盘点（specs/delivery/placeholder-inventory.md）确认能机械识别的占位写法：
+// - `Failure::Todo`：CLI 的「还没做」分支（打印 `pilotdeck-rs TODO: … is not implemented yet.`、退出码 2）；`Err(Failure::Todo(what))` 这类匹配分支不算。
+// - 自报未实现文案：Rust 自己写的「没实现 / 不支持 / 未迁移」文案（基线没有这些句子），按已知措辞列举，新措辞需要补进来。
+// - 宿主边界哨兵：`NODE_IO_REQUIRED` / `JS_HOST_REQUIRED` / `TS_IO_REQUIRED` 与 `requires_host = true`，原本表示「交给 TS 宿主」，
+//   TS 退役后落成 `CAPABILITY_UNAVAILABLE` 或 CLI 的 TODO。
+// - 原生档案缺口：`*_PROFILE` / `*_PROFILE_UNSUPPORTED` 错误码，以及 `profile_gap(…)` / `gap("…")` 调用（循环与工厂里没实现的形状）。
+// `CAPABILITY_UNAVAILABLE` 不在内：基线自己大量使用，是否顶替了缺失的功能要逐处读，不能机械判。
+const PLACEHOLDERS = {
+  'unimplemented!': /\bunimplemented!\s*\(/,
+  'todo!': /\btodo!\s*\(/,
+  NOT_IMPLEMENTED: /(?<!StatusCode::)NOT_IMPLEMENTED/,
+  'Failure::Todo': /\bFailure::Todo\((?!\s*\w+\s*\))/,
+  自报未实现文案: /candidate has not implemented|does not yet support|is not implemented \(A\d|not available in the native runtime yet|this port (?:does not|supports|cannot)|by this port\b|is not supported by this (?:gateway|host)\b|未迁移到 Rust|isolated (?:native )?process\.|Native gateway (?:method|cannot)/,
+  宿主边界哨兵: /"(?:NODE_IO_REQUIRED|JS_HOST_REQUIRED|TS_IO_REQUIRED)"|\brequires_host\s*(?::|=)\s*true\b/,
+  原生档案缺口: /"[A-Z0-9]+(?:_[A-Z0-9]+)*_PROFILE(?:_UNSUPPORTED)?\b|(?<!fn )\bprofile_gap\(|(?<![\w.])gap\("/,
+};
 const PROXY = /\b(?:var|var_os)\(\s*"PILOTDECK_(?:PROXY_UPSTREAM|PROXY_LISTEN|GATEWAY_MODE)"|dist\/src\/cli\/pilotdeck\.js|\bstruct\s+Proxy\b/;
 const placeholderHits = Object.fromEntries(Object.keys(PLACEHOLDERS).map((k) => [k, []]));
 const proxyHits = [];
 for (const f of rsFiles) {
   const lines = fs.readFileSync(f, 'utf8').split('\n');
+  let inTestModule = false;
   lines.forEach((line, i) => {
+    // 顶层的 `#[cfg(test)]` + `mod x {`（rustfmt 后以行首 `}` 结束）整块跳过；`mod x;` 指向的文件按文件名规则处理。
+    if (inTestModule) { if (line === '}') inTestModule = false; return; }
+    if (line === '#[cfg(test)]') {
+      const next = lines.slice(i + 1).find((l) => !/^#\[/.test(l));
+      if (next !== undefined && /^(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*\{\s*$/.test(next)) { inTestModule = true; return; }
+    }
     if (/^\s*\/\//.test(line)) return;
     const at = `${path.relative(P.src, f)}:${i + 1}`;
     for (const [k, re] of Object.entries(PLACEHOLDERS)) if (re.test(line)) placeholderHits[k].push(at);
@@ -251,7 +273,7 @@ p(`| 1 | 全量对拍稳定一致 | 场景 ${names.length} 个：SAME ${vcount('
 p(`| 2 | 表面覆盖完整 | 表面项 ${totals.items} 个，范围内 ${totals.items - totals.skip} 个：被 SAME 场景碰到 ${totals.same}，只被有差异的场景碰到 ${totals.diff}，没碰到 ${totals.missing}；标为不计 ${totals.skip}（理由表在 \`state/out-of-scope.md\`，待人过目） |`);
 p(`| 3 | 盲审收敛 | 审阅记录 ${audits.length} 次，其中类型为「盲审」的 ${strictBlind} 次；${domains.length} 个功能域里从没有过盲审或缺口审查的 ${neverBlind.length} 个。各功能域最近一次见下表。「两次连续盲审覆盖全部区域且无 1、2 级新发现」：不满足 |`);
 p('| 4 | 原版界面可用 | 没有数据：需要 `scripts/ui-smoke` 的当次结果和人亲手使用的记录 |');
-p(`| 5 | 构建与测试全绿，没有占位 | 四条命令：${fourText}。\`src/\` 产品代码里 \`unimplemented!\` ${placeholderHits['unimplemented!'].length} 处、\`todo!\` ${placeholderHits['todo!'].length} 处、\`NOT_IMPLEMENTED\` ${placeholderHits.NOT_IMPLEMENTED.length} 处（共 ${phCount}，逐条见下；空 match 分支与转发给 TS 的兜底没有机械判据，未统计） |`);
+p(`| 5 | 构建与测试全绿，没有占位 | 四条命令：${fourText}。\`src/\` 产品代码里 \`unimplemented!\` ${placeholderHits['unimplemented!'].length} 处、\`todo!\` ${placeholderHits['todo!'].length} 处、\`NOT_IMPLEMENTED\` ${placeholderHits.NOT_IMPLEMENTED.length} 处、\`Failure::Todo\` ${placeholderHits['Failure::Todo'].length} 处、自报未实现文案 ${placeholderHits['自报未实现文案'].length} 处、宿主边界哨兵 ${placeholderHits['宿主边界哨兵'].length} 处、原生档案缺口 ${placeholderHits['原生档案缺口'].length} 处（共 ${phCount}，逐条见下；\`CAPABILITY_UNAVAILABLE\`、返回固定空结果、空 match 分支没有机械判据，未统计，逐处定性见 \`specs/delivery/placeholder-inventory.md\`） |`);
 p(`| 6 | TS gateway 退役 | 透明代理入口的机械判据命中 ${proxyHits.length} 处${proxyHits.length ? '（见下）' : ''}。进程树里没有 Node gateway 的证据：没有数据（需要全量对拍与界面冒烟期间的进程列表） |`);
 p('| 7 | 性能报告 | 没有数据：需要发布构建下两侧的启动耗时、每轮开销、内存、并发会话的测量 |');
 p('| 8 | 真实使用 | 没有数据：需要人在最终组合上完成的真实任务记录 |');
@@ -264,7 +286,7 @@ p('### 第 1 条：不是 SAME 的场景', '');
 if (!nonSame.length) p('（无）', '');
 else { p('| 场景 | 结论 | 归类 | 子能力 |', '|---|---|---|---|'); for (const s of nonSame) p(`| \`${s.name}\` | ${s.verdict} | ${tagOf(s)} | ${s.caps.map((c) => `\`${c}\``).join(' ') || '归属不了'} |`); p(''); }
 p('### 第 5 条：占位的逐处位置', '');
-p('判据：`src/` 下的 `.rs`，跳过 `target`、`tests`、`benches`、`examples`、`fixtures` 目录和 `tests.rs`、`*_tests.rs`、`test_*.rs` 一类文件名，跳过整行注释；HTTP 状态码 `StatusCode::NOT_IMPLEMENTED`（501）不算；文件内的 `#[cfg(test)]` 模块没有排除。', '');
+p('判据：`src/` 下的 `.rs`，跳过 `target`、`tests`、`benches`、`examples`、`fixtures` 目录和 `tests.rs`、`*_tests.rs`、`test_*.rs` 一类文件名，跳过整行注释和顶层的 `#[cfg(test)] mod x { … }` 块；HTTP 状态码 `StatusCode::NOT_IMPLEMENTED`（501）不算。`Failure::Todo` 只数构造处（`Err(Failure::Todo(what))` 一类匹配分支不算）；自报未实现文案按已知措辞列举（见 `status.mjs` 的 `PLACEHOLDERS`），新措辞要补进去；宿主边界哨兵与原生档案缺口数的是命中行（含构造与转交处）。各处是缺口、一致还是环境性，见 `specs/delivery/placeholder-inventory.md`。', '');
 if (!phCount) p('（无）', '');
 else for (const [k, hits] of Object.entries(placeholderHits)) for (const h of hits) p(`- \`${k}\`：\`${h}\``);
 p('', '### 第 6 条：透明代理的判据', '');

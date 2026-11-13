@@ -1,0 +1,58 @@
+{
+  "name": "gw-crash-bad-request-target",
+  "about": "疑似基线 bug（崩溃，未鉴权即可触发）：请求目标 //[ 让 handleHttpRequest 开头的 new URL(request.url, base) 抛 Invalid URL（GatewayServer.ts:95，async 函数被 void 掉，65），成为 unhandledRejection，pilotdeck.ts:271-274 走停机并以 1 退出；这条连接收不到任何应答，之后连不上。用 serve 起服务，比的是进程自己的退出码和输出。保留为不一致，由主会话决定。环境里的 DOCKER_CONTAINER / COMMIT_HASH 让基线的遥测上下文不去跑 git。",
+  "accepted": [
+    {
+      "id": "gw-bad-request-target-crash",
+      "why": "基线 bug（崩溃，不需要鉴权）：请求目标 //[ 让 GatewayServer.ts:95 的 new URL(request.url, base) 抛 Invalid URL，async 处理函数被 void（65），成为 unhandledRejection，pilotdeck.ts:271-274 停机，进程以 1 退出；这条连接收不到应答，之后连不上。Rust 把它当作一个不认识的路径，回普通的 404 text/plain「not found」（与基线对其他未知路径相同），服务照常。只放过基线死掉直接造成的：进程退出码、出事的那次请求的应答、之后那次探测。",
+      "paths": [
+        "^\\$\\.steps\\[0\\]\\.serve\\.exitCode$",
+        "^\\$\\.steps\\[0\\]\\.then\\[1\\]\\.raw\\.",
+        "^\\$\\.steps\\[0\\]\\.then\\[3\\]\\.raw\\."
+      ]
+    }
+  ],
+  "volatile": [
+    "\\.http\\.headers\\.date$"
+  ],
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "steps": [
+    {
+      "serve": [
+        "server"
+      ],
+      "then": [
+        {
+          "http": "GET /health"
+        },
+        {
+          "raw": {
+            "send": [
+              {
+                "text": "GET //[ HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+              }
+            ],
+            "readMs": 1500
+          }
+        },
+        {
+          "sleep": 1500
+        },
+        {
+          "raw": {
+            "send": [
+              {
+                "text": "GET /health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+              }
+            ],
+            "readMs": 1000
+          }
+        }
+      ]
+    }
+  ]
+}

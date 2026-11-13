@@ -1,0 +1,148 @@
+{
+  "name": "abort-turn-finishing",
+  "about": "中止落在轮次收尾：回复已完整、标题生成请求挂着（假 provider 3 秒后才回标题）。abort_turn、close_session（超时列不适用：标题生成不在轮次内，轮次先于任何超时结束）。比较 turn_completed、会话标题记录、下一轮。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Abort run\"}",
+        "delayMs": 3000
+      }
+    },
+    {
+      "name": "next-fn-run",
+      "when": [
+        "next-fn-run:"
+      ],
+      "reply": {
+        "text": "Next fn-run."
+      }
+    },
+    {
+      "name": "fn-run",
+      "when": [
+        "fn-run:"
+      ],
+      "reply": {
+        "text": "answer fn-run"
+      }
+    },
+    {
+      "name": "next-fn-close",
+      "when": [
+        "next-fn-close:"
+      ],
+      "reply": {
+        "text": "Next fn-close."
+      }
+    },
+    {
+      "name": "fn-close",
+      "when": [
+        "fn-close:"
+      ],
+      "reply": {
+        "text": "answer fn-close"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-fn-run",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-fn-run",
+        "channelKey": "test",
+        "runId": "run-fn-run",
+        "message": "fn-run: go"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "assistant_block"
+          },
+          "ws": "abort_turn",
+          "params": {
+            "sessionKey": "s-fn-run",
+            "runId": "run-fn-run"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-fn-run",
+        "channelKey": "test",
+        "message": "next-fn-run: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-fn-close",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-fn-close",
+        "channelKey": "test",
+        "message": "fn-close: go"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "assistant_block"
+          },
+          "ws": "close_session",
+          "params": {
+            "sessionKey": "s-fn-close"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-fn-close",
+        "channelKey": "test",
+        "message": "next-fn-close: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-fn-run"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-fn-close"
+      }
+    }
+  ]
+}

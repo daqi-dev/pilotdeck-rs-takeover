@@ -1,6 +1,6 @@
 {
   "name": "slash-memory-capture-skip",
-  "about": "记忆捕获跳过只含已知斜杠命令或 !poll / !stop 的用户消息（context/memory/edgeclaw-memory-core/src/message-utils.ts:15-59 KNOWN_SLASH_COMMANDS / KNOWN_BANG_COMMANDS，483-523 shouldSkipUserMessage / isCommandOnlyUserText：开头是已知命令即跳过，后面带别的文字也一样；未知命令照常捕获）。gateway 在 submit_turn 里只特殊处理 /compact 与 /plan，这几条照常发给模型。配置同 cfg-memory-capture（full_session、includeAssistant=false、heartbeatBatchSize=1）。同一会话依次发 /status 带文字、/Think: 带文字（大小写与冒号）、!poll、未知的 /tabsplease 带文字，之后 memory_list，比较落盘的记忆库（只应留下最后一条）与发给 provider 的请求。volatile 与 cfg-memory-capture 相同（l0_index_id 由时间散列得来、pipeline_state 里 caseId / traceId 随机）。",
+  "about": "记忆捕获跳过只含已知斜杠命令或 !poll / !stop 的用户消息（context/memory/edgeclaw-memory-core/src/message-utils.ts:15-59 KNOWN_SLASH_COMMANDS / KNOWN_BANG_COMMANDS，483-523 shouldSkipUserMessage / isCommandOnlyUserText：开头是已知命令即跳过，后面带别的文字也一样；未知命令照常捕获）。gateway 在 submit_turn 里只特殊处理 /compact 与 /plan，这几条照常发给模型。配置同 cfg-memory-capture（full_session、includeAssistant=false、heartbeatBatchSize=1）。同一会话依次发 /status 带文字、/Think: 带文字（大小写与冒号）、!poll、未知的 /tabsplease 带文字，之后 memory_list，比较落盘的记忆库（只应留下最后一条）与发给 provider 的请求。volatile 与 cfg-memory-capture 相同（l0_index_id 由时间散列得来）；pipeline_state 里随机的 caseId / traceId 由比较器规则 16 按出现次序编号。",
   "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmemory:\n  enabled: true\n  provider: edgeclaw\n  captureStrategy: full_session\n  includeAssistant: false\n  maxMessageChars: 24\n  heartbeatBatchSize: 1\n",
   "provider": [
     {
@@ -83,7 +83,6 @@
     }
   ],
   "volatile": [
-    "control\\.sqlite\\.sqlite\\.tables\\.l0_sessions\\[\\d+\\]\\.l0_index_id$",
-    "control\\.sqlite\\.sqlite\\.tables\\.pipeline_state\\[0\\]\\.state_json$"
+    "control\\.sqlite\\.sqlite\\.tables\\.l0_sessions\\[\\d+\\]\\.l0_index_id$"
   ]
 }

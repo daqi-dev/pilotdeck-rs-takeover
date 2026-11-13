@@ -1,0 +1,63 @@
+{
+  "name": "gw-crash-frame-length-overflow",
+  "about": "疑似基线 bug（崩溃，握手前即可触发）：客户端帧的 64 位长度超过 Number.MAX_SAFE_INTEGER 时，websocket.ts:125-128 在 socket 的 data 回调里抛「WebSocket frame is too large.」，与不加掩码同一条路径：uncaughtException，pilotdeck.ts:267-270 开始停机，不再接受新连接；出事的连接缓冲里那一帧一直解析失败，服务一直等它、收到 SIGTERM 也不退（serve 15 秒后 SIGKILL）。用 serve 起服务，比进程自己的退出方式和输出。环境里的 DOCKER_CONTAINER / COMMIT_HASH 让基线的遥测上下文不去探测仓库。",
+  "accepted": [
+    {
+      "id": "gw-frame-length-overflow-crash",
+      "why": "基线 bug（挂死，握手前即可触发）：客户端帧声明的 64 位长度超过 Number.MAX_SAFE_INTEGER 时 websocket.ts:125-128 在 data 回调里抛「WebSocket frame is too large.」，与不加掩码同一条路径：停机、不再接受新连接、等出事的连接、SIGTERM 不退（serve 15 秒后 SIGKILL）。Rust 回关闭帧 1009「frame too large」（Rust 的单帧上限，见 100 MiB 帧长的登记）并关掉这一条连接，服务照常。只放过进程的退出方式与停机输出、出事的连接的应答、之后那次探测。",
+      "paths": [
+        "^\\$\\.steps\\[0\\]\\.serve\\.(exitCode|signal|stdout)$",
+        "^\\$\\.steps\\[0\\]\\.then\\[1\\]\\.raw\\.",
+        "^\\$\\.steps\\[0\\]\\.then\\[3\\]\\.raw\\."
+      ]
+    }
+  ],
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "steps": [
+    {
+      "serve": [
+        "server"
+      ],
+      "then": [
+        {
+          "raw": {
+            "send": [
+              {
+                "text": "GET /health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+              }
+            ],
+            "readMs": 1000
+          }
+        },
+        {
+          "raw": {
+            "ws": true,
+            "send": [
+              {
+                "hex": "81ff7fffffffffffffff12345678"
+              }
+            ],
+            "readMs": 1500
+          }
+        },
+        {
+          "sleep": 1000
+        },
+        {
+          "raw": {
+            "send": [
+              {
+                "text": "GET /health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+              }
+            ],
+            "readMs": 1000
+          }
+        }
+      ]
+    }
+  ]
+}

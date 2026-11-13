@@ -17,6 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
+import { parseHttpHead, parseHttpResponses } from './lib/rawhttp.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const BASELINE = process.env.BBX_BASELINE || path.join(REPO, 'resources/PilotDeck');
@@ -43,8 +44,6 @@ const slotText = (t) => {
   return SLOT ? local.replaceAll('pdrs-bbx', `pdrs-bb${SLOT}`).replaceAll('3841', `384${1 + SLOT}`) : local;
 };
 export const ROOT = slotText('/private/tmp/pdrs-bbx/root');
-const GATEWAY_PORT = 38411 + 10 * SLOT;
-const MOCK_PORT = 38412 + 10 * SLOT;
 const TOKEN = 'bbx-token';
 const STEP_TIMEOUT_MS = 30000;
 
@@ -54,6 +53,19 @@ if (!['ts', 'rust'].includes(side) || !scenarioPath || !outPath) {
   process.exit(2);
 }
 const scenario = JSON.parse(slotText(fs.readFileSync(scenarioPath, 'utf8')));
+// 基线 CLI 的 cron 子命令和默认对话的在线路径只探测写死的 127.0.0.1:18789（真实 PilotDeck 的默认端口），
+// 要对拍它们只能把被测 server 起在 18789 上。这必须显式选择：场景写 "gatewayPort": 18789，并且运行时设
+// BBX_ALLOW_18789=1。没设时这类场景什么都不做，退出码 6（check.mjs 记为 SKIPPED）。设了时仍然先确认 18789
+// 没有监听者（下面对所有场景都做的检查），再用一把跨槽位的全局锁串行化（18789 只有一个）。
+const PORT_18789 = scenario.gatewayPort !== undefined;
+if (PORT_18789 && scenario.gatewayPort !== 18789) {
+  console.error(`bbx: scenario gatewayPort may only be 18789, got ${JSON.stringify(scenario.gatewayPort)}`); process.exit(2);
+}
+if (PORT_18789 && process.env.BBX_ALLOW_18789 !== '1') {
+  console.error(`bbx: SKIPPED ${scenario.name}: it runs the server on port 18789; set BBX_ALLOW_18789=1 to run it`); process.exit(6);
+}
+const GATEWAY_PORT = PORT_18789 ? 18789 : 38411 + 10 * SLOT;
+const MOCK_PORT = 38412 + 10 * SLOT;
 const home = path.join(ROOT, 'home');
 const pilotHome = path.join(home, '.pilotdeck');
 const project = path.join(ROOT, 'proj');
@@ -122,20 +134,27 @@ if (side === 'rust' && process.env.BBX_ALLOW_STALE !== '1') {
 
 // ── 独占：同一时刻只允许一次采集（固定路径和端口的代价） ──
 fs.mkdirSync(path.dirname(ROOT), { recursive: true });
-const lock = path.join(path.dirname(ROOT), 'lock');
-try { fs.mkdirSync(lock); } catch {
-  const owner = Number(fs.readFileSync(path.join(lock, 'pid'), 'utf8').trim() || 0);
-  let alive = false; try { process.kill(owner, 0); alive = true; } catch {}
-  if (alive) { console.error(`bbx: another run holds ${lock} (pid ${owner})`); process.exit(3); }
-}
-fs.writeFileSync(path.join(lock, 'pid'), String(process.pid));
+// 锁是一个目录，里面的 pid 文件记持有者；持有者已经不在了的锁可以接过来。只删自己拿到的锁。
+const heldLocks = [];
+const takeLock = (lock) => {
+  try { fs.mkdirSync(lock); } catch {
+    let owner = 0; try { owner = Number(fs.readFileSync(path.join(lock, 'pid'), 'utf8').trim() || 0); } catch {}
+    let alive = false; try { process.kill(owner, 0); alive = true; } catch {}
+    if (alive) { console.error(`bbx: another run holds ${lock} (pid ${owner})`); process.exit(3); }
+  }
+  fs.writeFileSync(path.join(lock, 'pid'), String(process.pid));
+  heldLocks.push(lock);
+};
 const children = [];
 const cleanup = () => {
   for (const c of children) { try { process.kill(-c.pid, 'SIGKILL'); } catch {} }
-  try { fs.rmSync(lock, { recursive: true, force: true }); } catch {}
+  for (const lock of heldLocks) { try { fs.rmSync(lock, { recursive: true, force: true }); } catch {} }
 };
 process.on('exit', cleanup);
-for (const s of ['SIGINT', 'SIGTERM']) process.on(s, () => process.exit(130));
+for (const s of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(s, () => process.exit(130));
+takeLock(path.join(path.dirname(ROOT), 'lock'));
+// 18789 场景的全局锁：不随槽位变，所有槽位共用一把。
+if (PORT_18789) takeLock(path.join(TMP_BASE, 'pdrs-bbx-18789.lock'));
 
 const portFree = (port) => new Promise((resolve) => {
   const s = net.createServer().once('error', () => resolve(false))
@@ -151,14 +170,14 @@ const portOpen = (port) => new Promise((resolve) => {
 // 那里有人监听时一律拒跑，免得碰到本机正在运行的实例。用 lsof 看，不去连它。
 import { spawnSync } from 'node:child_process';
 // 没有 lsof 的机器（常见于 Linux）改用 ss；两个都没有就拒跑，不当作「没人监听」。
-const listening18789 = (() => {
+const listening18789 = () => {
   const lsof = spawnSync('lsof', ['-nP', '-iTCP:18789', '-sTCP:LISTEN'], { encoding: 'utf8' });
   if (!lsof.error) return lsof.stdout.trim() !== '';
   const ss = spawnSync('ss', ['-H', '-ltn', 'sport = :18789'], { encoding: 'utf8' });
   if (!ss.error && ss.status === 0) return ss.stdout.trim() !== '';
   console.error('bbx: neither lsof nor ss is usable; cannot check port 18789'); process.exit(5);
-})();
-if (listening18789) {
+};
+if (listening18789()) {
   console.error('bbx: something is listening on 18789 (a real PilotDeck?); refusing to run'); process.exit(5);
 }
 for (const p of [GATEWAY_PORT, MOCK_PORT]) {
@@ -202,6 +221,13 @@ for (const [index, [rel, content]] of seedFiles.entries()) {
   fs.writeFileSync(target, typeof content === 'string' ? subst(content) : JSON.stringify(substDeep(content), null, 2) + '\n');
   fs.utimesSync(target, seedBase + index, seedBase + index);
 }
+// symlinks：{"相对根目录的链接路径": "链接内容"}，在种完文件之后建；链接内容同样替换占位符，只能放在根目录之下。
+for (const [rel, link] of Object.entries(scenario.symlinks ?? {})) {
+  const at = path.join(ROOT, rel);
+  if (!at.startsWith(ROOT + '/')) throw new Error(`symlink escapes root: ${rel}`);
+  fs.mkdirSync(path.dirname(at), { recursive: true });
+  fs.symlinkSync(subst(link), at);
+}
 
 // ── 假 provider（按请求路径分流：OpenAI chat completions、Anthropic messages、OpenAI Responses、Google Gemini）──
 // 规则按顺序匹配请求体的 JSON 文本：when（全部包含）/ unless（全部不包含）。
@@ -223,6 +249,13 @@ const mock = http.createServer(async (req, res) => {
   // 在一轮进行中打断外部 sidecar（见下面的 sidecar / tcpProxy 步骤）：先做这件事，再照常应答。
   // killSidecar: 信号名，发给当前的 sidecar 进程；cutProxy: true，断开 TCP 代理上现有的全部连接（代理继续监听）。
   if (reply.killSidecar && sidecarProc) { try { sidecarProc.child.kill(reply.killSidecar); } catch {} }
+  // killServer: 信号名，发给 "server" 起的被测服务（用来在一轮进行中让 server 消失；只发信号，不等它退出）。
+  // killServerDelayMs：收到请求后过这么久再发（缺省立刻）。立刻发时正撞上服务端在写落盘（例如基线的运行登记锁），
+  // 留下什么取决于两侧各自的写入时机；等服务端闲下来在等模型应答时再发，比的才是「server 消失」本身。
+  if (reply.killServer) {
+    const kill = () => { if (server && server.exitCode === null && server.signalCode === null) { try { server.kill(reply.killServer); } catch {} } };
+    if (reply.killServerDelayMs) setTimeout(kill, reply.killServerDelayMs); else kill();
+  }
   if (reply.cutProxy) { for (const s of proxySockets.splice(0)) s.destroy(); }
   if (reply.status) { res.writeHead(reply.status, { 'content-type': 'application/json' }); res.end(JSON.stringify(reply.body ?? {})); return; }
   // 应答的组成：文本（text 或分块的 chunks）、推理文本（reasoning）、零到多个工具调用（tool / tools；
@@ -548,8 +581,148 @@ const sidecarStep = async (step) => {
   }
   throw new Error(`unknown sidecar action: ${step.sidecar}`);
 };
+// ── 原始字节与并发连接（raw / flood 步骤，见 README）──
+// raw：自己开一条 TCP 连接，可选地做 WS 升级和 hello，然后按顺序写原始字节或手工拼的 WS 帧（可不加掩码、
+// 改 FIN / RSV / 声明长度），读到服务端关闭或 readMs 到时为止，记下解析后的应答。浏览器式客户端做不到的
+// 输入（非法帧、超大帧、半截请求行、不升级的握手）都走这里。
+const wsClientFrame = (f) => {
+  const payload = f.json !== undefined ? Buffer.from(JSON.stringify(substDeep(f.json)))
+    : f.hex !== undefined ? Buffer.from(f.hex, 'hex')
+    : Buffer.from(subst(f.prefix ?? '') + subst(f.text ?? '').repeat(f.repeat ?? 1) + subst(f.suffix ?? ''));
+  const len = f.length ?? payload.length; const mask = f.mask !== false;
+  const b0 = (f.fin === false ? 0 : 0x80) | ((f.rsv ?? 0) << 4) | (f.opcode ?? 1);
+  let head;
+  if (len < 126) head = Buffer.from([b0, (mask ? 0x80 : 0) | len]);
+  else if (len <= 0xffff) { head = Buffer.alloc(4); head[0] = b0; head[1] = (mask ? 0x80 : 0) | 126; head.writeUInt16BE(len, 2); }
+  else { head = Buffer.alloc(10); head[0] = b0; head[1] = (mask ? 0x80 : 0) | 127; head.writeBigUInt64BE(BigInt(len), 2); }
+  if (!mask) return Buffer.concat([head, payload]);
+  const key = Buffer.from([0x12, 0x34, 0x56, 0x78]); const body = Buffer.from(payload);
+  for (let i = 0; i < body.length; i++) body[i] ^= key[i & 3];
+  return Buffer.concat([head, key, body]);
+};
+// 服务端帧：文本能解析成 JSON 的记解析结果，长文本只记长度和 sha256，关闭帧记码和原因。
+const readServerFrames = (buf) => {
+  const frames = []; let off = 0;
+  for (;;) {
+    if (buf.length - off < 2) break;
+    let len = buf[off + 1] & 0x7f, at = off + 2;
+    if (len === 126) { if (buf.length - off < 4) break; len = buf.readUInt16BE(off + 2); at = off + 4; }
+    else if (len === 127) { if (buf.length - off < 10) break; len = Number(buf.readBigUInt64BE(off + 2)); at = off + 10; }
+    if (buf[off + 1] & 0x80) at += 4;
+    if (buf.length < at + len) break;
+    const p = buf.subarray(at, at + len); const op = buf[off] & 0x0f;
+    const fr = { fin: !!(buf[off] & 0x80), rsv: (buf[off] >> 4) & 7, opcode: op, masked: !!(buf[off + 1] & 0x80) };
+    if (op === 8) Object.assign(fr, p.length >= 2 ? { code: p.readUInt16BE(0), reason: p.subarray(2).toString() } : { code: null });
+    else { const t = p.toString(); let j; try { j = JSON.parse(t); } catch {} if (j !== undefined) fr.json = j; else if (t.length <= 4096) fr.text = t; else fr.len = p.length, fr.sha256 = createHash('sha256').update(p).digest('hex'); }
+    frames.push(fr); off = at + len;
+  }
+  return { frames, rest: buf.subarray(off) };
+};
+// HTTP 应答头：状态行和头（小写名，去掉 date），正文原样。
+const openRaw = (port) => new Promise((resolve) => {
+  const s = net.connect(port, '127.0.0.1');
+  // 收到的块先攒着，用到 buf 时才拼（几十 MB 的应答逐块 concat 是平方级）。
+  let joined = Buffer.alloc(0); let pending = [];
+  const st = { s, ended: null, error: null, closed: false, wake: [],
+    get buf() { if (pending.length) { joined = Buffer.concat([joined, ...pending]); pending = []; } return joined; },
+    set buf(v) { joined = v; pending = []; } };
+  const poke = () => st.wake.splice(0).forEach((w) => w());
+  s.on('data', (d) => { pending.push(d); poke(); });
+  s.on('end', () => { st.ended = st.ended ?? 'fin'; poke(); });
+  s.on('error', (e) => { st.error = e.code ?? String(e); poke(); });
+  s.on('close', () => { st.closed = true; if (!st.ended && st.error) st.ended = 'reset'; poke(); resolve(st); });
+  s.once('connect', () => resolve(st));
+});
+const rawWait = (st, pred, ms) => new Promise((resolve) => {
+  const t0 = Date.now();
+  const check = () => { if (pred() || st.closed || Date.now() - t0 >= ms) return resolve(); st.wake.push(check); setTimeout(check, Math.min(50, Math.max(1, ms - (Date.now() - t0)))); };
+  check();
+});
+const upgradeRequest = (spec) => {
+  const o = spec === true ? {} : spec;
+  const headers = { Host: `127.0.0.1:${GATEWAY_PORT}`, Upgrade: 'websocket', Connection: 'Upgrade', 'Sec-WebSocket-Key': 'YmJ4LXJhdy1rZXktMDAwMA==', 'Sec-WebSocket-Version': '13', ...substDeep(o.headers ?? {}) };
+  return `${o.method ?? 'GET'} ${subst(o.path ?? '/ws')} HTTP/1.1\r\n${Object.entries(headers).filter(([, v]) => v !== null).map(([k, v]) => `${k}: ${v}`).join('\r\n')}\r\n\r\n`;
+};
+const rawStep = async (spec) => {
+  const st = await openRaw(spec.port ?? GATEWAY_PORT);
+  if (st.error && !st.s.writable) return { refused: st.error };
+  const r = {};
+  let upgraded = false;
+  if (spec.ws) {
+    st.s.write(upgradeRequest(spec.ws));
+    await rawWait(st, () => st.buf.includes('\r\n\r\n'), 5000);
+    const i = st.buf.indexOf('\r\n\r\n');
+    if (i >= 0) { r.upgrade = parseHttpHead(st.buf.subarray(0, i).toString()); delete r.upgrade.body; st.buf = st.buf.subarray(i + 4); upgraded = r.upgrade.status.includes(' 101 '); }
+    if (upgraded && spec.hello) {
+      st.s.write(wsClientFrame({ json: { type: 'hello', protocolVersion: '1.2', clientName: 'test', clientVersion: '0.0.0', token: TOKEN } }));
+      await rawWait(st, () => readServerFrames(st.buf).frames.length > 0, 5000);
+    }
+  }
+  for (const item of spec.send ?? []) {
+    if (st.closed) break;
+    if (item.wait) { await rawWait(st, () => false, item.wait); continue; }
+    // pauseRead / resumeRead：停止从套接字读（字节留在内核缓冲里，服务端写不出去时就在它那边排队），之后恢复。
+    if (item.pauseRead) { st.s.pause(); continue; }
+    if (item.resumeRead) { st.s.resume(); continue; }
+    const one = item.frame ? wsClientFrame(item.frame) : item.hex !== undefined ? Buffer.from(item.hex, 'hex')
+      : Buffer.from(subst(item.prefix ?? '') + subst(item.text ?? '').repeat(item.repeat ?? 1) + subst(item.suffix ?? ''));
+    // times：同样的字节连写 n 遍、一次写出（例如不等应答连发很多个请求帧）。
+    const bytes = item.times ? Buffer.concat(Array(item.times).fill(one)) : one;
+    // splitAt：先写前 n 个字节，停 200 毫秒再写其余（一帧跨两次 TCP 读）。
+    if (item.splitAt) { st.s.write(bytes.subarray(0, item.splitAt)); await rawWait(st, () => false, 200); st.s.write(bytes.subarray(item.splitAt)); }
+    else st.s.write(bytes);
+    if (item.end) st.s.end();
+  }
+  await rawWait(st, () => false, spec.readMs ?? 1000);
+  if (upgraded || (spec.ws && st.buf.length && !st.buf.subarray(0, 5).toString().startsWith('HTTP/'))) {
+    const { frames, rest } = readServerFrames(st.buf); r.frames = frames; if (rest.length) r.trailingBytes = rest.length;
+    // countFrames：帧太多时只记按「类型:id」（关闭帧记码与原因，其余记 opcode）分组的计数和总数，次序不记。
+    if (spec.countFrames) {
+      const counts = {};
+      for (const f of frames) { const k = f.opcode === 8 ? `close:${f.code}:${f.reason}` : f.json ? `${f.json.type}:${f.json.id ?? ''}` : `opcode:${f.opcode}`; counts[k] = (counts[k] ?? 0) + 1; }
+      r.frames = { total: frames.length, counts };
+    }
+  } else if (st.buf.length) r.http = parseHttpResponses(st.buf.toString('latin1'));
+  r.serverClosed = st.closed ? (st.ended ?? 'close') : st.ended === 'fin' ? 'fin-half' : null;
+  await rawClose(st, upgraded || / 101 /.test(r.http?.status ?? ''));
+  return r;
+};
+// 收尾：升级过、还开着的连接先发关闭帧等服务端关（最多 1 秒），再断开。基线对只收到 FIN 的 WS 连接
+// 不做处理（websocket.ts 不听 end），直接断开会让它停机时一直等这条连接（见上面 disconnect 的说明）。
+// 收尾这段的往来不记录。
+const rawClose = async (st, upgraded) => {
+  if (upgraded && !st.closed) {
+    st.s.write(wsClientFrame({ opcode: 8, hex: '03e8' }));
+    await rawWait(st, () => false, 1000);
+  }
+  st.s.destroy();
+};
+// flood：{flood: N} 同时另开 N 条 WS 连接（升级 + hello），等每条拿到第一帧或被关（5 秒），连接保持到
+// {flood: "release"} 或场景结束；结果按结局计数。用来比连接很多时服务端是否照常接受、照常服务别的请求。
+const floodSockets = [];
+const floodStep = async (step) => {
+  if (step.flood === 'release') { const all = floodSockets.splice(0); await Promise.all(all.map((st) => rawClose(st, true))); return { released: all.length }; }
+  const all = await Promise.all(Array.from({ length: step.flood }, () => openRaw(GATEWAY_PORT)));
+  // 先等 101 再发 hello：跟升级请求挤在同一段里的字节基线不读（GatewayServer.ts:67 丢掉 upgrade 事件的 head）。
+  for (const st of all) if (!st.closed) st.s.write(upgradeRequest(true));
+  await Promise.all(all.map((st) => rawWait(st, () => st.buf.includes('\r\n\r\n'), 5000)));
+  for (const st of all) if (!st.closed && st.buf.subarray(0, st.buf.indexOf('\r\n')).toString().includes(' 101 ')) st.s.write(wsClientFrame({ json: { type: 'hello', protocolVersion: '1.2', clientName: 'test', clientVersion: '0.0.0', token: TOKEN } }));
+  await Promise.all(all.map((st) => rawWait(st, () => { const i = st.buf.indexOf('\r\n\r\n'); return i >= 0 && readServerFrames(st.buf.subarray(i + 4)).frames.length > 0; }, 5000)));
+  const tally = {};
+  for (const st of all) {
+    const i = st.buf.indexOf('\r\n\r\n'); const status = i >= 0 ? st.buf.subarray(0, st.buf.indexOf('\r\n')).toString() : null;
+    const first = i >= 0 ? readServerFrames(st.buf.subarray(i + 4)).frames[0] : undefined;
+    const k = !status ? (st.closed ? `closed-before-upgrade:${st.ended ?? 'close'}` : 'no-upgrade-response')
+      : !status.includes(' 101 ') ? status : first ? (first.json?.type ?? `opcode-${first.opcode}`) : st.closed ? `closed-after-upgrade:${st.ended ?? 'close'}` : 'no-frame';
+    tally[k] = (tally[k] ?? 0) + 1;
+    if (!st.closed) floodSockets.push(st);
+  }
+  return { flood: step.flood, tally };
+};
 let requestSeq = 0;
 const runStep = async (step) => {
+  if (step.raw) return { raw: await rawStep(step.raw) };
+  if (step.flood) return await floodStep(step);
   if (step.sleep) { await sleep(step.sleep); return { slept: true }; }
   if (step.disconnect === 'end') {
     // 只关写方向（半关闭，发 FIN）：不发关闭帧、不再发请求，但照常接收服务端的帧。之后可以再
@@ -686,6 +859,19 @@ const runStep = async (step) => {
     return { serve: { reached, exitCode, signal, stdout, stderr }, then, ...(timedOut && { timedOut }) };
   }
   if (step.sidecar) return { sidecar: await sidecarStep(step) };
+  if (step.stopServer) {
+    // 给 "server" 起的被测服务发信号（stopServer 的值是信号名），等它退出，记下退出码和信号；15 秒不退就
+    // SIGKILL 整个进程组，如实记成 SIGKILL。之后收尾不再停机。
+    if (!server || server.exitCode !== null || server.signalCode !== null) {
+      return { stopServer: { running: false, exitCode: server?.exitCode ?? null, signal: server?.signalCode ?? null } };
+    }
+    const exited = new Promise((r) => server.once('exit', (code, sig) => r({ exitCode: code, signal: sig })));
+    server.kill(step.stopServer);
+    const killer = setTimeout(() => { try { process.kill(-server.pid, 'SIGKILL'); } catch {} }, 15000);
+    const result = await exited;
+    clearTimeout(killer);
+    return { stopServer: result };
+  }
   if (step.tcpProxy) return { tcpProxy: await proxyStep(step) };
   if (step.cli) {
     const [cmd, ...prefix] = SIDES[side].cli;
@@ -695,9 +881,21 @@ const runStep = async (step) => {
     child.stdin.end(step.stdin ?? '');
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, step.timeout ?? STEP_TIMEOUT_MS);
-    const [exitCode, signal] = await new Promise((r) => child.on('close', (c, s) => r([c, s])));
+    let ended = false;
+    const closed = new Promise((r) => child.on('close', (c, s) => { ended = true; r([c, s]); }));
+    // until / then：stdout 或 stderr 里出现 until 时（进程还在不在都行），依次执行 then 里的步骤，然后照常等进程退出。
+    // 进程没输出 until 就结束了（或超时）时 then 不执行，记成空数组。
+    let then;
+    if (step.until !== undefined) {
+      const until = subst(step.until);
+      const seen = () => stdout.includes(until) || stderr.includes(until);
+      while (!seen() && !ended) await sleep(20);
+      then = [];
+      if (seen()) for (const inner of step.then ?? []) then.push({ step: inner, ...(await runStep(inner)) });
+    }
+    const [exitCode, signal] = await closed;
     clearTimeout(timer);
-    return { cli: { exitCode, signal, stdout, stderr }, ...(timedOut && { timedOut }) };
+    return { cli: { exitCode, signal, stdout, stderr }, ...(then && { then }), ...(timedOut && { timedOut }) };
   }
   throw new Error(`unknown step: ${JSON.stringify(step)}`);
 };
@@ -728,13 +926,23 @@ out.failures = [
 out.notifications = allFrames.filter((f) => f.type === 'notification');
 out.unsolicited = allFrames.filter((f) => !['notification', 'hello_ok', 'response', 'event', '__closed'].includes(f.type));
 if (ws) ws.close();
+await Promise.all(floodSockets.splice(0).map((st) => rawClose(st, true)));
 
 // ── 停机：SIGTERM，记退出码 ──
-if (server && server.exitCode === null) {
+if (server && server.exitCode === null && server.signalCode === null) {
   const exited = new Promise((r) => server.on('exit', (code, signal) => r({ code, signal })));
   server.kill('SIGTERM');
   out.shutdown = await Promise.race([exited, sleep(15000).then(() => ({ timeout: true }))]);
   if (out.shutdown.timeout) out.failures.push({ at: 'shutdown', kind: 'timeout', expected: false });
+}
+// 18789 场景：采集结束就把自己起的进程全部收掉，再确认 18789 上没有留下监听者；留下了记一处失败并大声说。
+if (PORT_18789) {
+  for (const c of children) { try { process.kill(-c.pid, 'SIGKILL'); } catch {} }
+  for (let i = 0; i < 50 && listening18789(); i++) await sleep(100);
+  if (listening18789()) {
+    out.failures.push({ at: 'release18789', kind: 'listener', expected: false });
+    console.error('bbx: WARNING: something is still listening on 18789 after the run');
+  }
 }
 mock.close(); mock.closeAllConnections();
 out.serverLog = serverLog;

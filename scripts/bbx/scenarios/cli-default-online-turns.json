@@ -1,0 +1,158 @@
+{
+  "name": "cli-default-online-turns",
+  "about": "不带子命令的默认对话在 18789 上有 server 时（src/cli/pilotdeck.ts:347-348，CliChannel.ts:36-46）：先建进程内 gateway，再探测、读令牌、以 clientName cli 握手，之后每一轮 submit_turn（sessionKey cli:project=<cwd>:default、channelKey cli、不带 projectKey、canPrompt false，CliChannel.ts:67-83）走 WebSocket，事件按 cli-render.ts 渲染（final 帧里的事件不渲染，GatewayWsClient.ts:220-231）；stderr 没有 in-process 提示。参数一句话（cwd 是 server 的项目）；没登记的另一个目录里 stdin 多行（纯文本、空行与首尾空白、\\r\\n、读文件工具、bash、推理文本、provider 报 400、末行无换行）；空 stdin。基线在输入结束后不退出（已知、Rust 照做），步骤都声明 expectTimeout；最后 stopServer SIGKILL：被杀掉的 CLI 只发 FIN 不发关闭帧，基线 server 的 WebSocket 不处理半关闭（src/gateway/server/websocket.ts:19-20 只听 close / error），SIGTERM 后 server.close() 永远等不完（另一处挂起，见报告），所以用 SIGKILL 统一收尾，停机行为不在这些场景里比。",
+  "gatewayPort": 18789,
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "files": {
+    "home/.pilotdeck/server-token": "bbx-token\n",
+    "proj/note.txt": "note body\nsecond line\n",
+    "multi/keep.txt": "x\n",
+    "empty/keep.txt": "x\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"CLI chat\"}"
+      }
+    },
+    {
+      "name": "e400",
+      "when": [
+        "case-400:"
+      ],
+      "reply": {
+        "status": 400,
+        "body": {
+          "error": {
+            "message": "bad request from mock",
+            "type": "invalid_request_error"
+          }
+        }
+      }
+    },
+    {
+      "name": "bash-after-tool",
+      "when": [
+        "case-bash:",
+        "\"tool_call_id\":\"call_cli_bash\""
+      ],
+      "reply": {
+        "text": "Bash step done."
+      }
+    },
+    {
+      "name": "bash",
+      "when": [
+        "case-bash:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_cli_bash",
+          "name": "bash",
+          "arguments": {
+            "command": "echo from-bash"
+          }
+        }
+      }
+    },
+    {
+      "name": "read-after-tool",
+      "when": [
+        "case-read:",
+        "\"tool_call_id\":\"call_cli_read\""
+      ],
+      "reply": {
+        "text": "The note was read."
+      }
+    },
+    {
+      "name": "read",
+      "when": [
+        "case-read:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_cli_read",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "note.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "think",
+      "when": [
+        "case-think:"
+      ],
+      "reply": {
+        "reasoning": "pondering",
+        "chunks": [
+          "Thought ",
+          "done."
+        ]
+      }
+    },
+    {
+      "name": "text",
+      "when": [
+        "case-text:"
+      ],
+      "reply": {
+        "text": "Hello from the mock.\nSecond line."
+      }
+    },
+    {
+      "name": "argv",
+      "when": [
+        "case-argv: from arguments"
+      ],
+      "reply": {
+        "text": "Argument turn answered."
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "unexpected"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "cli": [
+        "case-argv:",
+        "from",
+        "arguments"
+      ],
+      "stdin": "ignored line\n",
+      "timeout": 10000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [],
+      "stdin": "case-text: hello there\n\n   \n  case-read: please read  \r\ncase-bash: run it\ncase-think: hmm\ncase-400: fail now\ncase-text: last without newline",
+      "cwd": "{ROOT}/multi",
+      "timeout": 25000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [],
+      "stdin": "",
+      "cwd": "{ROOT}/empty",
+      "timeout": 5000,
+      "expectTimeout": true
+    },
+    {
+      "stopServer": "SIGKILL"
+    }
+  ]
+}

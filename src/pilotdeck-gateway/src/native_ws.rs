@@ -133,7 +133,7 @@ impl NativeWsServer {
                 if crate::mutants::on("ws-caps-default-connections") {
                     1
                 } else {
-                    MAX_CONNECTIONS
+                    UNBOUNDED_CONNECTIONS
                 },
                 if crate::mutants::on("ws-caps-default-input") {
                     1
@@ -385,6 +385,9 @@ impl PhasedInner {
         let (stop_http, stop_http_rx) = watch::channel(false);
         self.stop_http = Some(stop_http);
         let mut stop = self.stop.as_mut();
+        // A spare descriptor for shedding peers while descriptors are
+        // exhausted (see `shed_on_descriptor_exhaustion`).
+        let mut spare = spare_descriptor();
         let accept_error = loop {
             tokio::select! {
                 biased;
@@ -441,6 +444,20 @@ impl PhasedInner {
                         self.resources.task_high_watermark.fetch_max(self.connections.len(), std::sync::atomic::Ordering::SeqCst);
                     }
                     Err(error) if matches!(error.kind(), std::io::ErrorKind::InvalidInput | std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Unsupported) => break Some(error),
+                    Err(error) if is_descriptor_exhaustion(&error) => {
+                        // TS (libuv) neither logs nor stalls here: it frees a
+                        // reserved descriptor, accepts the pending peer and
+                        // closes it at once, so the peer sees the connection
+                        // end instead of waiting in the backlog. Existing
+                        // connections are untouched; accepting resumes on its
+                        // own once descriptors are freed.
+                        let listener = self.listener.as_ref().expect("the listener is held until stop");
+                        shed_on_descriptor_exhaustion(listener, &mut spare).await;
+                        tokio::select! {
+                            _ = &mut stop => break None,
+                            _ = tokio::time::sleep(Duration::from_millis(10)) => {}
+                        }
+                    }
                     Err(error) => {
                         // #2434: same best-effort shape as the connection
                         // line above — a failed stderr write must not panic
@@ -677,7 +694,13 @@ impl Drop for StopHost {
 
 // Resource safety differences from TS's unbounded custom WS implementation.
 const MAX_INPUT_PAYLOAD: usize = 100 * 1024 * 1024;
-const MAX_CONNECTIONS: usize = 64;
+// TS has no connection cap (node:http defaults, no maxConnections): the
+// connection semaphore only counts live connections (its permits travel with
+// each connection and return when it ends or half-closes), so the production
+// default is the semaphore's maximum and a peer is never turned away for
+// count. Descriptor exhaustion surfaces as an accept error instead: logged,
+// short backoff, then accepting resumes once descriptors are freed.
+const UNBOUNDED_CONNECTIONS: usize = Semaphore::MAX_PERMITS;
 const MAX_TOTAL_INPUT_BYTES: usize = 256 * 1024 * 1024;
 
 // Reserve the actual UTF-8 replacement size before allocating a queued String.
@@ -711,6 +734,32 @@ fn request_text(payload: &[u8], budget: &Arc<Semaphore>) -> Option<(String, Owne
         }
     }
     Some((text, permit))
+}
+
+fn spare_descriptor() -> Option<std::fs::File> {
+    std::fs::File::open("/dev/null").ok()
+}
+
+fn is_descriptor_exhaustion(error: &std::io::Error) -> bool {
+    matches!(error.raw_os_error(), Some(code) if code == libc::EMFILE || code == libc::ENFILE)
+}
+
+/// libuv's EMFILE handling (`uv__emfile_trick`): release the reserved
+/// descriptor, accept every peer that is ready and close each one, then take
+/// the reserve back. Without a reserve (or when none is ready) this only
+/// returns, and the caller backs off briefly before the next accept.
+async fn shed_on_descriptor_exhaustion(
+    listener: &tokio::net::TcpListener,
+    spare: &mut Option<std::fs::File>,
+) {
+    if spare.take().is_none() {
+        *spare = spare_descriptor();
+        return;
+    }
+    while let Ok(Ok((socket, _))) = tokio::time::timeout(Duration::ZERO, listener.accept()).await {
+        drop(socket);
+    }
+    *spare = spare_descriptor();
 }
 
 struct Resources {
@@ -809,7 +858,16 @@ impl Drop for InputBuffer {
 }
 const MAX_OUTPUT_PAYLOAD: usize = MAX_INPUT_PAYLOAD;
 const MAX_OUTPUT_BYTES: usize = MAX_OUTPUT_PAYLOAD + frame::MAX_SERVER_HEADER_BYTES;
-const MAX_OUTPUT_FRAMES: usize = 64;
+// Per-connection output not yet written to the socket. TS has no bound (a
+// peer that stops reading makes Node buffer every reply in memory); ours is a
+// byte budget far above normal use: a frame is refused — and the connection
+// closed with 1009 "output limit exceeded" — only when it would push an
+// already non-empty queue past 64 MiB, so a lone frame up to
+// MAX_OUTPUT_PAYLOAD still goes out. There is no frame-count limit: the
+// channel holds as many frames as the byte budget can (each frame is charged
+// at least its header).
+const QUEUED_OUTPUT_LIMIT: usize = 64 * 1024 * 1024;
+const OUTPUT_FRAME_SLOTS: usize = QUEUED_OUTPUT_LIMIT / frame::MAX_SERVER_HEADER_BYTES + 1;
 const MAX_PENDING_REQUESTS: usize = 64;
 // TS has no flush timer. Bound our resource-safety difference with scheduling
 // slack plus one second per remaining MiB, including the in-flight frame.
@@ -840,7 +898,7 @@ impl Text {
         let slots = if crate::mutants::on("native-ws-output-slots") {
             65536
         } else {
-            MAX_OUTPUT_FRAMES
+            OUTPUT_FRAME_SLOTS
         };
         let bytes = if crate::mutants::on("native-ws-output-bytes") {
             1024 * MAX_OUTPUT_BYTES
@@ -906,7 +964,12 @@ impl Text {
             .len()
             .checked_add(frame::MAX_SERVER_HEADER_BYTES)
             .and_then(|n| u32::try_from(n).ok());
-        let permit = length.and_then(|n| self.bytes.clone().try_acquire_many_owned(n).ok());
+        let queued = MAX_OUTPUT_BYTES.saturating_sub(self.bytes.available_permits());
+        let within_budget =
+            queued == 0 || length.is_some_and(|n| queued + n as usize <= QUEUED_OUTPUT_LIMIT);
+        let permit = length
+            .filter(|_| within_budget)
+            .and_then(|n| self.bytes.clone().try_acquire_many_owned(n).ok());
         let slot = self.output.try_reserve();
         if let (Some(permit), Ok(slot), true) = (permit, slot, payload.len() <= max_payload) {
             slot.send(Output::Frame(frame::server_frame(opcode, payload), permit));
@@ -1278,13 +1341,10 @@ where
                 // never complete, so its input budget goes back now.
                 buffered.decoder = Decoder::default();
                 buffered.allocation = None;
-                // TS has no connection cap; ours must not let vanished
-                // clients (killed with no close frame, nothing written to
-                // them since) fill it and lock every new peer out — HTTP
-                // included, which shares the listener. A half-open
-                // connection reads nothing more, so it stops counting
-                // against the cap; it keeps its writer until a write fails
-                // or the server stops.
+                // A half-open connection reads nothing more, so it stops
+                // counting as live (the count only matters when a test
+                // configures a small cap; production has none); it keeps
+                // its writer until a write fails or the server stops.
                 drop(slot.take());
                 continue;
             }
@@ -1302,7 +1362,14 @@ where
                         text.close(code, "frame too large");
                         break;
                     }
-                    Err(error) => return Err(std::io::Error::other(format!("invalid WS frame: {error:?}")).into()),
+                    // TS throws inside its data handler here (unmasked client
+                    // frame, websocket.ts:133-135), which takes the whole
+                    // process down — a registered baseline bug we do not
+                    // copy. RFC 6455 §7.4.1: close this peer with 1002.
+                    Err(frame::DecodeError::Unmasked) => {
+                        text.close(1002, "");
+                        break 'read;
+                    }
                 };
                 match acceptor::action(&frame) {
                     acceptor::Action::Text => {
