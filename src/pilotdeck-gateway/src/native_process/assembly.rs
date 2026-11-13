@@ -2092,7 +2092,14 @@ async fn start_assembly(
             if let Some(weixin) = channel_assembly.create_startup_weixin().await {
                 startup.push(weixin);
             }
+            if let Some(qq) = channel_assembly.create_startup_bundle_unavailable("qq") {
+                startup.push(qq);
+            }
             startup.extend(channel_assembly.create_startup_configured());
+            // `channels: [...configured, ...(wecom ? [wecom] : [])]`.
+            if let Some(wecom) = channel_assembly.create_startup_bundle_unavailable("wecom") {
+                startup.push(wecom);
+            }
             if !startup.is_empty() {
                 channel_assembly.server().start_channels(startup);
             }

@@ -680,8 +680,10 @@ fn startup_error(result: Result<(), crate::ProxyError>, assertion: &'static str)
     crate::test_negative_receipt::expect_err(result, assertion).to_string()
 }
 
-/// An `adapters:` entry the baseline would connect with: the bundle keys
-/// whenever enabled, the credential channels with credentials. The
+/// An `adapters:` entry the baseline would connect with: the credential
+/// channels and the bundle keys `qq` / `wecom` with credentials (without them
+/// the baseline logs one line and keeps running, see
+/// `bundle_channels_without_credentials_start_with_one_line`). The
 /// SDK-missing channels have no such config (their SDK is never installed),
 /// so they are not listed.
 const CONNECTING_ADAPTERS: [(&str, &str); 6] = [
@@ -695,8 +697,8 @@ const CONNECTING_ADAPTERS: [(&str, &str); 6] = [
     ),
     ("whatsapp", "{enabled: true, extra: {bridgePath: /bridge}}"),
     ("homeassistant", "{enabled: true, token: t}"),
-    ("qq", "{enabled: true}"),
-    ("wecom", "{enabled: true}"),
+    ("qq", "{enabled: true, appId: a, clientSecret: b}"),
+    ("wecom", "{enabled: true, token: t, extra: {secret: s}}"),
 ];
 
 #[tokio::test]
@@ -729,7 +731,7 @@ async fn startup_refuses_every_unmigrated_channel() {
 #[tokio::test]
 async fn startup_rejection_reaches_stderr_in_the_debug_form() {
     let error = crate::test_negative_receipt::expect_err(
-        start_with_adapters("  qq: {enabled: true}\n").await,
+        start_with_adapters("  qq: {enabled: true, appId: a, clientSecret: b}\n").await,
         "#1763 enabled unmigrated channel must refuse native startup",
     );
     let printed = format!("Error: {error:?}");

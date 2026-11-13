@@ -131,6 +131,15 @@ pub trait ChannelAdapter: Send + Sync {
         &self,
         deps: ChannelStartDeps,
     ) -> BoxFuture<Result<Arc<dyn ChannelHandle>, ChannelError>>;
+    /// Background startup (`startChannelInBackground`) runs every channel's
+    /// `start` up to its first suspension point in startup order, before the
+    /// server announces itself. A channel whose whole `start` is synchronous
+    /// in the baseline runs its observable part (its log line) here, in that
+    /// order, and returns `true`; its next `start` then skips that part. The
+    /// default is a channel whose `start` does I/O first: nothing happens here.
+    fn start_prelude(&self, _deps: &ChannelStartDeps) -> bool {
+        false
+    }
     /// TS optional `deliverCronResult`. The default is the absent method:
     /// the channel did not take the delivery.
     fn deliver_cron_result(&self, _delivery: &CronResultDelivery) -> BoxFuture<bool> {

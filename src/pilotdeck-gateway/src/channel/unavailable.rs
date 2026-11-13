@@ -6,9 +6,14 @@
 //! running. An option of the wrong type that makes the constructor or the
 //! first lines of `start` throw is logged the baseline's way too. A
 //! configuration the baseline would actually connect with is refused before
-//! startup (`loader::reject_unmigrated_channels`).
+//! startup (`loader::reject_unmigrated_channels`). The same stand-in serves the
+//! `ChannelAdapterBundle` keys `qq` / `wecom` without usable credentials
+//! (`native_process::channels`).
 
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use pilotdeck_protocol::JsObject;
 
@@ -34,21 +39,32 @@ pub const UNAVAILABLE_LOADER_KEYS: &[&str] = &[
 pub struct UnavailableChannel {
     key: ChannelKey,
     start: Start,
+    /// The line was already logged by [`ChannelAdapter::start_prelude`]; the
+    /// next `start` does not log it again.
+    prelude_logged: AtomicBool,
 }
 
 /// What the baseline's `start` does.
 enum Start {
-    /// Logs this line and returns a no-op handle.
-    Line(&'static str),
+    /// Logs this line at this logger level and returns a no-op handle.
+    Line(&'static str, String),
     /// Rejects with a `TypeError` with this message.
     TypeError(&'static str),
 }
 
 impl UnavailableChannel {
     pub fn new(key: &str, line: &'static str) -> Self {
+        Self::logging(key, "error", line.to_string())
+    }
+    /// A channel whose `start` logs `line` at logger `level` (`info`,
+    /// `warn`, `error`) and returns a no-op handle. Also used for the
+    /// `ChannelAdapterBundle` keys `qq` / `wecom`
+    /// (`loader::bundle_unavailable_start`).
+    pub fn logging(key: &str, level: &'static str, line: String) -> Self {
         Self {
             key: ChannelKey::new(key),
-            start: Start::Line(line),
+            start: Start::Line(level, line),
+            prelude_logged: AtomicBool::new(false),
         }
     }
     /// A channel whose `start` rejects with a `TypeError` carrying `message`.
@@ -56,6 +72,7 @@ impl UnavailableChannel {
         Self {
             key: ChannelKey::new(key),
             start: Start::TypeError(message),
+            prelude_logged: AtomicBool::new(false),
         }
     }
 }
@@ -75,21 +92,33 @@ impl ChannelAdapter for UnavailableChannel {
         &self,
         deps: ChannelStartDeps,
     ) -> BoxFuture<Result<Arc<dyn ChannelHandle>, ChannelError>> {
-        let start = match self.start {
-            Start::Line(line) => Ok(line),
-            Start::TypeError(message) => Err(message),
+        let logged = self.prelude_logged.swap(false, Ordering::SeqCst);
+        let start = match &self.start {
+            Start::Line(level, line) => Ok((!logged).then(|| (*level, line.clone()))),
+            Start::TypeError(message) => Err(*message),
         };
         Box::pin(async move {
             match start {
                 Ok(line) => {
-                    if let Some(log) = deps.log {
-                        log("error", line);
+                    if let (Some(log), Some((level, line))) = (deps.log, line) {
+                        log(level, &line);
                     }
                     Ok(Arc::new(NoopHandle) as Arc<dyn ChannelHandle>)
                 }
                 Err(message) => Err(ChannelError::error(message)),
             }
         })
+    }
+    /// The baseline's `start` here never suspends before it logs (or throws),
+    /// so the line comes out during background startup, in startup order.
+    fn start_prelude(&self, deps: &ChannelStartDeps) -> bool {
+        if let Start::Line(level, line) = &self.start {
+            if let Some(log) = &deps.log {
+                log(level, line);
+            }
+            self.prelude_logged.store(true, Ordering::SeqCst);
+        }
+        true
     }
 }
 
@@ -104,6 +133,10 @@ pub fn register_with_env(mounts: &mut ChannelLoaderMounts, env: Arc<EnvLookupFn>
                 match unavailable_start(key, options, env.as_ref()) {
                     Some(UnavailableStart::Line(line)) => {
                         Ok(Arc::new(UnavailableChannel::new(key, line)) as Arc<dyn ChannelAdapter>)
+                    }
+                    Some(UnavailableStart::Logged { level, line }) => {
+                        Ok(Arc::new(UnavailableChannel::logging(key, level, line))
+                            as Arc<dyn ChannelAdapter>)
                     }
                     Some(UnavailableStart::StartTypeError(message)) => {
                         Ok(Arc::new(UnavailableChannel::failing(key, message))
