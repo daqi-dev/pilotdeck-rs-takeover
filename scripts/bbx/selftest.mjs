@@ -134,6 +134,34 @@ for (const [name, a, b, expected, extra] of cases) {
   const got = verdict(a, b, extra);
   if (got !== expected) { bad++; console.log(`不符合预期  ${name}：期望 ${expected}，实际 ${got}`); }
 }
+
+// 采集器的 18789 开关：没设 BBX_ALLOW_18789=1 时，写了 "gatewayPort": 18789 的场景在拿锁、查端口、
+// 起任何进程之前就退出（退出码 6，不写产物），check.mjs 把它记成 SKIPPED、退出码 0、汇总行报出跳过个数；
+// gatewayPort 写别的值是场景错误（退出码 2）。这几项都不碰 18789，也不需要基线或 Rust 二进制。
+const collectorCases = [];
+{
+  const env = { ...process.env, BBX_SLOT: '0', BBX_BASELINE: path.join(dir, 'no-baseline'), BBX_TARGET: path.join(dir, 'no-target') };
+  delete env.BBX_ALLOW_18789;
+  const scenarioFile = (name, port) => {
+    const f = path.join(dir, `${name}.json`);
+    fs.writeFileSync(f, JSON.stringify({ name, gatewayPort: port, server: false, steps: [{ cli: ['--version'] }] }));
+    return f;
+  };
+  const out = path.join(dir, 'out');
+  const run = (script, args, extraEnv = {}) => spawnSync(process.execPath, [path.join(here, script), ...args], { encoding: 'utf8', env: { ...env, ...extraEnv } });
+  const skip = run('run.mjs', ['ts', scenarioFile('needs-18789', 18789), path.join(out, 'a.json')]);
+  collectorCases.push(['没设变量时 run.mjs 跳过（退出码 6）', skip.status === 6 && /SKIPPED needs-18789/.test(skip.stderr)]);
+  collectorCases.push(['跳过时不写产物', !fs.existsSync(path.join(out, 'a.json'))]);
+  const empty = run('run.mjs', ['rust', scenarioFile('needs-18789-b', 18789), path.join(out, 'b.json')], { BBX_ALLOW_18789: '' });
+  collectorCases.push(['变量不是 1 也跳过', empty.status === 6]);
+  const wrong = run('run.mjs', ['ts', scenarioFile('wrong-port', 18790), path.join(out, 'c.json')], { BBX_ALLOW_18789: '1' });
+  collectorCases.push(['gatewayPort 只能是 18789', wrong.status === 2 && /may only be 18789/.test(wrong.stderr)]);
+  const check = run('check.mjs', ['--out', out, scenarioFile('needs-18789-c', 18789)]);
+  collectorCases.push(['check.mjs 记 SKIPPED、退出码 0', check.status === 0 && /needs-18789-c\s+SKIPPED/.test(check.stdout)]);
+  collectorCases.push(['汇总行报出跳过个数', /0\/0 SAME，另有 1 个 SKIPPED/.test(check.stdout)]);
+}
+for (const [name, ok] of collectorCases) if (!ok) { bad++; console.log(`不符合预期  采集器：${name}`); }
 fs.rmSync(dir, { recursive: true, force: true });
-console.log(bad ? `比较器自测：${cases.length - bad}/${cases.length} 符合预期` : `比较器自测：${cases.length}/${cases.length} 符合预期`);
+const total = cases.length + collectorCases.length;
+console.log(`比较器与采集器自测：${total - bad}/${total} 符合预期`);
 process.exit(bad ? 1 : 0);
