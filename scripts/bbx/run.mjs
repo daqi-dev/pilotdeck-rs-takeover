@@ -20,6 +20,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import { inputIdentity, scenarioIdentity, assertionResults } from './evidence.mjs';
+import { externalConfigRewrite } from './fixtures/config-watch-input.mjs';
 import { componentSupplyEnvironment, componentSupplyIdentity } from './component-supply.mjs';
 import { matchesProviderRule, writeSeedFile } from './mock-support.mjs';
 import { observePersistedRunEvent, trackProviderResponse, validateTrigger } from './serve-persisted-event.mjs';
@@ -58,7 +59,7 @@ const tmp = path.join(ROOT, 'tmp');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const subst = (text) => text
   .replaceAll('{ROOT}', ROOT).replaceAll('{HOME}', home).replaceAll('{PILOT_HOME}', pilotHome)
-  .replaceAll('{PROJECT}', project).replaceAll('{MOCK}', `http://127.0.0.1:${MOCK_PORT}`)
+  .replaceAll('{PROJECT}', project).replaceAll('{PROJECT_ENCODED}', encodeURIComponent(project)).replaceAll('{MOCK}', `http://127.0.0.1:${MOCK_PORT}`)
   .replaceAll('{PDF_TOOL}', process.env.BBX_PDF_TOOL || '/missing/bbx-pilotdeck-pdf')
   .replaceAll('{IMAGE_TOOL}', process.env.BBX_IMAGE_TOOL || '/missing/bbx-pilotdeck-image')
   .replaceAll('{GATEWAY}', `http://127.0.0.1:${GATEWAY_PORT}`).replaceAll('{TOKEN}', TOKEN);
@@ -368,6 +369,20 @@ const stepEnv = (step) => {
 };
 let requestSeq = 0;
 const runStep = async (step) => {
+  if (step.externalConfigRewrite) {
+    const { receipt, ...result } = await externalConfigRewrite({
+      scene: scenario.name, input: step.externalConfigRewrite, pilotHome, ownedRoot: ROOT,
+      resolveSettings: async () => {
+        const request = { ws: 'resolve_settings', params: {} };
+        return { step: request, ...await runStep(request) };
+      },
+      readFrames: () => allFrames, timeoutMs: STEP_TIMEOUT_MS,
+    });
+    const receipts = evidence.configWatchInput ??= [];
+    const receiptIndex = receipts.length;
+    receipts.push({ ...receipt, stepIndex: out.steps.length });
+    return { ...result, externalConfigRewrite: { ...result.externalConfigRewrite, receiptIndex } };
+  }
   if (step.sleep) { await sleep(step.sleep); return { slept: true }; }
   if (step.disconnect) {
     if (!ws || ws.readyState > 1) return { disconnected: false };
