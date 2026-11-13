@@ -1500,8 +1500,12 @@ impl LiveTurnStream {
                 let projected = self.finish_with_projection(Ok(*result), Some(&mut captured));
                 let durable = match (&projected, captured) {
                     (Ok(Some(_)), Some(payload)) => Ok(payload),
-                    (Err(error), _) => Err(HostError::protocol(error.message.clone())),
-                    _ => Err(HostError::protocol(
+                    (Err(error), _) => Err(HostError::new(
+                        HostErrorKind::Protocol,
+                        error.message.clone(),
+                    )),
+                    _ => Err(HostError::new(
+                        HostErrorKind::Protocol,
                         "Operation terminal projection is unavailable.",
                     )),
                 };

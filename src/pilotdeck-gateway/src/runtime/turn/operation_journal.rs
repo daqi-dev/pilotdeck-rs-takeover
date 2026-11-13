@@ -46,10 +46,9 @@ impl TranscriptSink for SharedWriterSink {
                         .get("sequence")
                         .and_then(JsValue::as_number)
                         .is_some_and(|sequence| sequence > before as f64)
-                        && expected
-                            .entries()
-                            .iter()
-                            .all(|(key, value)| entry.get(key) == Some(value))
+                        && expected.entries().iter().all(|(key, value)| {
+                            entry.as_object().and_then(|object| object.get_key(key)) == Some(value)
+                        })
                 }) {
                     Ok(())
                 } else {
@@ -377,7 +376,10 @@ impl OperationJournal for SessionJournal {
                 .ok_or_else(|| journal_error("Projected operation terminal lacks result."))?;
             let messages = projected
                 .get("messages")
-                .and_then(JsValue::as_array)
+                .and_then(|value| match value {
+                    JsValue::Array(values) => Some(values),
+                    _ => None,
+                })
                 .ok_or_else(|| journal_error("Projected operation terminal lacks messages."))?
                 .to_vec();
             state
@@ -661,10 +663,7 @@ mod tests {
         assert_eq!(kinds(&store), ["turn_started"]);
     }
     async fn dropped_write_is_owned_until_drain(kind: &'static str) {
-        use std::{
-            future::{Future, poll_fn},
-            task::Poll,
-        };
+        use std::{future::poll_fn, task::Poll};
         let (store, _recorder, journal, id) = setup();
         if kind != "agent_loop_operation_started" {
             journal.begin(id.clone()).await.unwrap();

@@ -901,8 +901,12 @@ impl TranscriptWriter {
                 "Operation journal session writer is closed.".into(),
             ));
         }
-        let read = self.base.store.read(&self.base.key(&self.path), None)?;
-        read.ensure_writable()?;
+        let read = self
+            .base
+            .store
+            .read(&self.base.key(&self.path), None)
+            .map_err(AdapterError::Store)?;
+        read.ensure_writable().map_err(AdapterError::Store)?;
         Ok(read.entries)
     }
 

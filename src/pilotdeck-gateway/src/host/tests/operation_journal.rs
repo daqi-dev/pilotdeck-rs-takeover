@@ -155,7 +155,7 @@ async fn external_finalizer_persists_projected_result_before_real_close() {
     );
     if let JsValue::Object(fields) = &mut projected {
         let mut result = fields.get("result").unwrap().as_object().unwrap().clone();
-        result.insert("fixtureProjectionWitness".into(), true.into());
+        result.insert("fixtureProjectionWitness".into(), JsValue::Bool(true));
         fields.insert("result".into(), JsValue::Object(result));
     }
     finalizer.settle(Ok(projected)).await.unwrap();
@@ -169,7 +169,7 @@ async fn external_finalizer_persists_projected_result_before_real_close() {
             .get("result")
             .unwrap()
             .get("fixtureProjectionWitness"),
-        Some(&true.into())
+        Some(&JsValue::Bool(true))
     );
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
