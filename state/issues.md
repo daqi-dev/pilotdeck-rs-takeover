@@ -64,11 +64,9 @@
 | `turn-steer-terminal`：场景已改回在 `model_request_started` 触发插话，差异如实露出（macOS 与 cb8 都稳定差 33 处）——Rust 经 sidecar 一跳落盘，插话记录与这一轮记录的先后与基线不同。属产品差异，见第 2 级 | loop | 审阅 | 已转第 2 级 |
 | 范围偏宽的放过：四个记忆场景放过整段 `state_json`；`hook-cancelled` 的 `accepted` 放过会话文件第 20–29 条和整份 `projections.json`；TCP 场景整值放过 `moduleInstanceId`（证明不了「新实例」）；子代理场景的用量正则只认字段名；`always-on-fire-git` 一次略过 256 处 | memory, hooks, modules, agents, auto | 审阅 | 在修（收窄） |
 | `scripts/upstream-tests/run.mjs` 的缺省运行包含 parity 组，而它在 Rust 上按设计有 14 个不过，所以退出码不能反映「计入的全过」；也还没在 Linux 上跑过 | modules | 主会话 | 待派 |
-| 耗时（`durationMs`）的位数漏进会话文件大小：`fileSize`、`resultBytes`、`content-length` 随之差几个字节。`gap-tool-grep` / `gap-tool-glob` 已各自声明 `volatile`，`gap-permissions-json-rules` 基线自比稳定所以不能声明、在慢机器上稳定差 11 字节。要在比较器层面定一条通用规则 | * | Linux 差异 | 在修（尺子子代理，2026-11-13 派）。规则已定：`fileSize` 两侧之差不超过会话文件里最短一条记录的一半且不超过 64 字节时放过，超过照常报 |
+| 耗时的位数漏进字节数：帧里的 `fileSize` 已由比较器规则 17 处理（按「文件写到第几条记录」对齐）。同一毛病还在工具结果的 `resultBytes` 与发给 provider 的 `content-length` 上（`loop-multi-tool` 5 次里 2 次因此差 4 处）；另有一批只为 `fileSize` 声明的 `volatile` 现在多余（`gap-tool-glob`、`gap-tool-grep`、`gap-agent-sandbox-workspace-write`、`sdk-config-forward-subagent-text`、`tool-agent-child-stream`，以及约 15 个长正则里的 `fileSize` 一项） | * | Linux 差异；尺子修复的报告 | 待派（规则已定：`resultBytes` 与 `content-length` 各自核对「等于本侧原文的字节数」，成立就不比数值；多余的声明先做基线自比再删） |
 | 基线停机偶发退出码 1（`gap-tool-grep` 自比 3 次里 2 次，疑似停机时触发未捕获异常的处理，`cli/pilotdeck.ts:266-274`）：频率和条件没量清，是否登记为基线 bug 未定 | gw | Linux 差异 | 待量 |
-| 落盘树里 `runs/registry.json.lock` 基线时有时无（`tool-goal-permission`、`tool-send-attachment-outside`、`loop-multi-tool` 偶发只差这 1 处） | session | cb8 验收 | 在修（尺子子代理：先量基线自比 30 次，再定是否列为不比较；同时查 Rust 与基线进程共用同一 home 时的互操作） |
-| 规则 15（sqlite 的 `*_json` 列先解析再比）让旧的 `volatile` 路径匹配不上：`slash-memory-capture-skip` 差 36 处（`caseId`、`traceId` 等标识）；别的场景可能也有匹配不到任何东西的死声明 | memory, * | cb8 验收（`6894f3dca`） | 在修（尺子子代理：标识按出现次序编号，列出死声明） |
-| `turn-abort-before-request-sidecar-stdio`：外置 sidecar 下请求前中止，基线把运行记录永远留在 `running`（基线 bug，Rust 落终态），待登记为已接受差异 | loop, modules | 任务预算与中止差异 | 在修（尺子子代理：先核实再登记最窄路径） |
+| 基线停机时运行记录有时停在 `running`（`tool-goal-permission` 基线连跑 30 次里 3 次：停机抢在终态写入之前），该场景因此偶发不一致 | session | 尺子修复的报告 | 待派（基线自己不稳，声明最窄的 volatile） |
 | 三处远程输入让基线崩溃或挂死（请求目标 `//[`、不加掩码的帧、`/api/web/projects/%E0/…`；前两处不需要鉴权）：基线 bug，Rust 不照做，三个 `gw-crash-*` 场景待登记 accepted。单帧超过 100 MiB 时 Rust 以 1009 关闭、基线接受但内存随帧长平方增长（300 MiB 一帧 60 秒无应答）：Rust 的上限保留，待登记为有意偏离 | gw | `GatewayServer.ts:95`、`websocket.ts:133`、`httpRouter.ts:60` | gw 缺口审查 | 在修（登记最窄路径；登记后列入「需要人过目的决定」） |
 | cb8 是共用机器：同机别人跑同一套测试时，固定端口的测试（18973、18990、28999）会失败。`6894f3dca` 的全量 nextest 因此 7754/7755，单独重跑通过 | channels | cb8 验收（`6894f3dca`） | 记为已知（第 5 条的 cb8 那一次要挑没人跑的时候，或以接手仓库的 CI 为准） |
 | Rust 调试构建的一轮比基线慢 4–8 倍（压缩一步约 0.5–0.8 秒），时间余量紧的场景在慢机器上会翻红 | * | Linux 差异 | 性能报告时看发布构建 |
