@@ -1,0 +1,41 @@
+{
+ "name": "robust-vanished-clients-free-slots",
+ "about": "64 个 WS 客户端各自 hello 后不发关闭帧就消失（只关 TCP，FIN，模拟 ui/server 重启、CLI 被 SIGKILL），服务端此后没往这些连接写过帧：之后的 HTTP 请求和新的 WS 连接照常得到应答。基线依据：GatewayServer 的连接集合没有上限（src/gateway/server/GatewayServer.ts:62、170-171），升级后的 TextWebSocketConnection 只听 close / error、不听 end（src/gateway/server/websocket.ts:17-21），这些连接一直半开着，但不妨碍新连接。用 serve 起服务、最后 SIGKILL 结束：半开连接让基线 SIGTERM 停不下来（已知的基线挂起，见 robust-drop-half-close-midturn），这里不比停机。",
+ "server": false,
+ "volatile": [
+  "\\.http\\.headers\\.date$"
+ ],
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 60000,
+   "signal": "SIGKILL",
+   "then": [
+    {
+     "vanish": 64
+    },
+    {
+     "sleep": 500
+    },
+    {
+     "http": "GET /health",
+     "timeout": 5000
+    },
+    {
+     "connect": true
+    },
+    {
+     "ws": "list_sessions",
+     "params": {},
+     "timeout": 5000
+    },
+    {
+     "http": "GET /health",
+     "timeout": 5000
+    }
+   ]
+  }
+ ]
+}
