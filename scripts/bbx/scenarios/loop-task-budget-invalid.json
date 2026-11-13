@@ -1,0 +1,123 @@
+{
+  "about": "任务预算参数校验（InProcessGateway.ts:3302-3322 validateSdkSessionConfig）：total 必须是正的有限数、scope 只能是 session / project、projectRetentionMs 必须是正的安全整数且只允许 project 作用域；不合格回 error INVALID_SDK_SESSION_CONFIG（recoverable true），不发模型请求。最后一条 taskBudget: null。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Task budget\"}"
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "Should not run."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tbi-0",
+        "channelKey": "test",
+        "message": "tbi: invalid",
+        "sdkSessionConfig": {
+          "taskBudget": {
+            "total": 0
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tbi-1",
+        "channelKey": "test",
+        "message": "tbi: invalid",
+        "sdkSessionConfig": {
+          "taskBudget": {
+            "total": -1
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tbi-2",
+        "channelKey": "test",
+        "message": "tbi: invalid",
+        "sdkSessionConfig": {
+          "taskBudget": {
+            "total": "x"
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tbi-3",
+        "channelKey": "test",
+        "message": "tbi: invalid",
+        "sdkSessionConfig": {
+          "taskBudget": {
+            "total": 1,
+            "scope": "team"
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tbi-4",
+        "channelKey": "test",
+        "message": "tbi: invalid",
+        "sdkSessionConfig": {
+          "taskBudget": {
+            "total": 1,
+            "projectRetentionMs": 1.5,
+            "scope": "project"
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tbi-5",
+        "channelKey": "test",
+        "message": "tbi: invalid",
+        "sdkSessionConfig": {
+          "taskBudget": {
+            "total": 1,
+            "projectRetentionMs": 1000
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tbi-6",
+        "channelKey": "test",
+        "message": "tbi: invalid",
+        "sdkSessionConfig": {
+          "taskBudget": null
+        }
+      },
+      "timeout": 20000
+    }
+  ],
+  "name": "loop-task-budget-invalid"
+}
