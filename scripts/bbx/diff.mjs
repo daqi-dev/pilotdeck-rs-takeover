@@ -72,6 +72,11 @@
 //      b. 发给假 provider 的请求头 content-length：采集器收到请求时核对它是否等于实际收到的请求体字节数，记在
 //         请求记录的 'content-length-ok'（true / false；这个字段本身照常比）。两侧都是 true 时不比头的数值。
 //      不比数值时类型照比；内容本身（工具结果文本、请求体）照常比。不比数值且两侧数值确实不同的处数每次打印
+//  20. agent loop sidecar 原始协议里应答帧的 messageId：基线是 "<前缀>-<Math.random().toString(36).slice(2)>"
+//      （agentLoopSidecarServer.ts:647-649；前缀是 nextId 的全部调用和 handshake 的 hello / capabilities）。键名为 messageId、
+//      前缀在这张名单里、后面只有一段小写字母数字的值，随机段换成 <msg:N>，N 是它在该侧第一次出现的序号（与第 14 条同样的写法，
+//      保留「同一个 id」的关系）。前缀、段数照比；别的格式（包括多段的）不动。
+//      inReplyTo 指向的是客户端发的 messageId（场景写死），不抹
 // 数组按下标比。唯一的例外：元素全是带名字的对象（function.name 或 name，且名字不重复）的数组
 // 按名字对齐——缺的、多的各报一条，共有元素的相对顺序不同报一条，同名元素再逐字段比。
 // 这只改变差异的报法（少一个工具不再表现为后面所有工具都错位），不会让任何差异消失。
@@ -107,18 +112,22 @@ const dur = () => '<dur>';
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const ISO = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g;
 
+// 规则 20 只认基线 sidecar 用过的前缀（agentLoopSidecarServer.ts 里 nextId 的全部调用，加上 handshake 的 hello / capabilities）。
+const SIDECAR_MESSAGE_ID = /^(hello|capabilities|parse|validation|module-call|cancel|status|resume|ack|accepted|event|final|failed|unknown|result-unknown|execute-rejected|deadline|stream)-([a-z0-9]+)$/;
 function normalizer() {
   const ids = new Map();
   const snaps = new Map();
   const snap = (id) => { if (!snaps.has(id)) snaps.set(id, snaps.size + 1); return `<snap:${snaps.get(id)}>`; };
   // 规则 14：sidecar 身份的随机段按出现顺序编号；规则 16：记忆检索的随机轨迹 id 同样编号。
-  const seq = { inst: new Map(), gen: new Map(), stream: new Map(), case: new Map(), trace: new Map() };
+  const seq = { inst: new Map(), gen: new Map(), stream: new Map(), case: new Map(), trace: new Map(), msg: new Map() };
   const tag = (kind, id) => { const m = seq[kind]; if (!m.has(id)) m.set(id, m.size + 1); return `<${kind}:${m.get(id)}>`; };
   const SIDECAR_ID = {
     moduleInstanceId: (x) => x.replace(/^(.+-instance-)([a-z0-9]+)$/, (_, pre, r) => pre + tag('inst', r)),
     connectionGeneration: (x) => x.replace(/^(.+-instance-)([a-z0-9]+)((?:-[a-z0-9]+)+)$/, (_, pre, r, rest) =>
       pre + tag('inst', r) + rest.split('-').slice(1).map((g) => '-' + tag('gen', g)).join('')),
     streamId: (x) => x.replace(/^stream-([a-z0-9]+)$/, (_, r) => 'stream-' + tag('stream', r)),
+    // 规则 20：sidecar 应答帧的 messageId（agentLoopSidecarServer.ts:647-649 nextId = `${prefix}-${Math.random().toString(36).slice(2)}`）。
+    messageId: (x) => x.replace(SIDECAR_MESSAGE_ID, (_, pre, r) => pre + '-' + tag('msg', r)),
   };
   // turn-timing 行先删再给 UUID 编号：行里的 UUID 参与编号的话，一侧多打一行就会让后面所有序号错位。
   const dumps = new Map();

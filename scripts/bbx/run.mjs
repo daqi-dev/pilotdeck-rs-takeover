@@ -680,7 +680,13 @@ const rawStep = async (spec) => {
     if (item.end) st.s.end();
   }
   await rawWait(st, () => false, spec.readMs ?? 1000);
-  if (upgraded || (spec.ws && st.buf.length && !st.buf.subarray(0, 5).toString().startsWith('HTTP/'))) {
+  // lines：对方说的是按行分隔的 JSON（agent loop sidecar 的原始协议），收到的字节按换行切开，
+  // 每行能解析成 JSON 的记解析结果，否则记原文；最后一段没有换行结尾的另记 partial。
+  if (spec.lines) {
+    const text = st.buf.toString('utf8'); const parts = text.split('\n'); const tail = parts.pop();
+    r.lines = parts.map((l) => { try { return JSON.parse(l); } catch { return { text: l }; } });
+    if (tail) r.partial = tail;
+  } else if (upgraded || (spec.ws && st.buf.length && !st.buf.subarray(0, 5).toString().startsWith('HTTP/'))) {
     const { frames, rest } = readServerFrames(st.buf); r.frames = frames; if (rest.length) r.trailingBytes = rest.length;
     // countFrames：帧太多时只记按「类型:id」（关闭帧记码与原因，其余记 opcode）分组的计数和总数，次序不记。
     if (spec.countFrames) {
@@ -690,7 +696,7 @@ const rawStep = async (spec) => {
     }
   } else if (st.buf.length) r.http = parseHttpResponses(st.buf.toString('latin1'));
   r.serverClosed = st.closed ? (st.ended ?? 'close') : st.ended === 'fin' ? 'fin-half' : null;
-  await rawClose(st, upgraded || / 101 /.test(r.http?.status ?? ''));
+  await rawClose(st, !spec.lines && (upgraded || / 101 /.test(r.http?.status ?? '')));
   return r;
 };
 // 收尾：升级过、还开着的连接先发关闭帧等服务端关（最多 1 秒），再断开。基线对只收到 FIN 的 WS 连接
