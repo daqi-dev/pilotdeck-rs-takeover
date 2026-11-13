@@ -111,3 +111,25 @@ Astra独立核20原件及全部有序比较：deadline100格为68 strict PASS、
 候选SHA `079cd9068ff19df4d5ee9813dfd9ceadd62c11edf0426458ce7d1357d74ea753`、manifest `45ad740416fb2333545d734aeb950322c5f8e791b2727a56d0db3c2617805039`，完整结果 `53b07fabac8e264328a17cdb81e7b2f6177d3f7a944432c456b5fbb13c19a588`。原self DIFF8/pair DIFF69及旧self8/pair157均保；私有派生self/pair SAME。24身份和语义负控拒绝，provider内容变更DIFF1、标题三副本一致变更DIFF3；Terra独立构造视图逐对象核同、六独立关系负控及实际原比较器内容控制通过，报告 `_tmp/20261114-stdio-rebind-terra-review/review.md`。
 
 准许新增独立公共固定manifest/入口及精确差异条目，输出继续并列strict与accepted。迁移只改ROOT/HERE、固定manifest引用/SHA、批准来源和全新输出目录的显式参数，不改原diff、场景、raw或产品；必须再核公共投影语义与实际运行，再纳入Git冻结候选及append-only检查。未捕获的本批sidecar子PID/lifetime和独立wire sequence仍是未验，不由旧拓扑PID或durable lastAppliedSequence10补造。未来原件/其他二进制不自动适用。
+
+## Maintenance 固定首件负控的因果判定
+
+主协调依据本会话项目自主决策授权接受这一精确证据判定：仅 `_tmp/20261114-maintenance-negative-first-review/bound-files.json`（SHA `ac65bbe1b912dfee85fe3ef94fb7e78e0cc4d55c044fa2a779bbd27aa5b32548`）绑定的24个原件，允许以同模型完成、唯一故障marker、同run非final completed后同requestId精确gateway_submit_failed/INJECTED_FORMAL_RESOLVE_FAILURE且无final的因果链，证明旧同步错误传播已被实际检出。原driver先等final、后断言completed，故原等待FAIL和wrapper INVALID完整保留；不是将超时判PASS或修改公共业务合同。
+
+正诊断原driver全部通过，负诊断仅额外恢复旧同步传播，源、二进制与输入身份分开封存；不冒shipping。作者5项语义负控及非作者3项关联/次序负控均拒，root再次以普通隔离Python执行固定checker（SHA `5bb805504239cbaf0bba3fab95c78c3ca4335a5d230c791fb2bf2a057dff04ec`）exit0，收据 `_tmp/20261114-maintenance-root-acceptance/receipt.json`。不适用其他原件、任意timeout或未来运行，不重采、不改超时/产品。
+
+## C1 HTTPS 固定三原件的出站名称与运行时警告
+
+主协调依据本会话项目自主决策授权批准 D1-C1-HTTPS-PRESENTATION-001 的精确范围：仅当前三份capture/24case/268原始读项（非作者固定读集SHA `5cfba6f7b72c97dbcc4fd7d5f9ac10738661884d7637fcca8dba5b0b27ce0602`），八个准确request rawHeaders[4]的Content-Type/User-Agent/iLink-App-ClientVersion大小写，以及TS stderr offset0一次准确SQLite两行。其余键值、顺序、重复、正文、退出、stdout/业务stderr、凭据/配置落盘均严格；Rust不伪造Node提示。原严格self8SAME/pair8DIFF完整保留，非历史六HTTP对象豁免的泛化。Watch独审SHA `bfe16be1b03c26c27c3487174e27b57413d7c9af6fa5a4c38b94d966e53563df`，公共入口必须自锁读集/原judge闭包/buildreceipt，实际负控与独审后统一冻结，不适用未来原件或cron挂起。不是用户逐字审批。
+
+## 内置工具剩余名称的明确责任
+
+固定注册枚举中的agent/subagent/send_message/send_attachment/lsp/search_tools/knowledge_query完整工具合同由既有backend.T1.other-builtin-tools主责承接，依据原“等全部适用内置工具”范围；backend.T1.builtin-catalog负责逐名对账，R1代际、H1路由和X1 LSP服务仅为相关证据。不新增/删除任务或改变分母，不以映射存在代替输入输出、副作用、失败和适用取消义务通过。具体尚缺控制仍逐项保留。
+
+## C1 Cron 固定原件的终端输出后连接未关闭
+
+主协调依据本会话项目自主决策授权及基线挂起 bug 默认修规则，批准 `D1-C1-CRON-HANG-001` 的精确范围。只适用 `_tmp/20261113-e0-resume/c1-cron-collector49-formal-first/cron/` 的三份固定 capture、42 次 TS 与14次 Rust46 实际运行。TS已经输出完整准确业务或使用错误终态，此后实测1500.257–1501.970ms仍 child alive、owned WS open=1、无close，外层随后一次owned PGID SIGTERM清理；这是有界观察，不声称已证明无限不退出。固定TS `pilotdeck.ts:297,363–424,626` 的连接后各return/catch缺close与该观测一致。
+
+Rust14次必须自然退出，六格exit0、八格exit1，实际WS关闭，无signal/timeout。完整stdout/stderr、hello、RPC ID/方法/参数/响应、token与98个实际home/project树继续严格；只接受该已证生命周期差与对应close/cleanup后缀次序差，不接受启动超时、缺终端输出、缩短观察、错PGID、提前清理、Rust缺RPC/response或过早退出。原strict self14SAME但productPassed=false、pair14DIFF及更早collector28INVALID保持原样。
+
+私有ready SHA `91c06134933c7884fb99351f6bdb94d2028b171b4c374282239afef3232dcfae`，固定384原judge读键、63额外原件和4构建收据自锁。非作者S1实际重读全部pin、复跑50控制及3附加负控，结果与作者整文件相同；独审 `_tmp/20261114-cron-hang-independent/review.md` SHA `03aac51e5d66486bfc35bcc578bffc1b09619caa583818f3532bcfd8012c50f4`。允许最小公共迁移、追加差异及必要冻结登记；可信registration须不可变、禁止caller manifest自授权，公共投影另审并实际运行。此决定不是未来capture、其他CLI timeout或新二进制的通用豁免，不改产品行为或原判分器，不把私有候选当正式冻结完成。
