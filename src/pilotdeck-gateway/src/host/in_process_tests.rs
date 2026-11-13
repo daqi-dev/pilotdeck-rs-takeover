@@ -126,7 +126,9 @@ async fn a_panicking_loop_fails_its_connection_not_the_gateway() {
     connection
         .send(&pilotdeck_protocol::JsValue::Object(frame))
         .unwrap();
-    let error = connection.receive().await.err().expect("output closed");
+    let Err(error) = connection.receive().await else {
+        panic!("output closed")
+    };
     assert_eq!(error.kind, HostErrorKind::Disconnected);
     connection.close().await.unwrap();
     assert_eq!(
