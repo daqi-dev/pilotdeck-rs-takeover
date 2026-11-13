@@ -12,50 +12,32 @@
 
 **交付标准在 `specs/delivery/README.md`（2026-11-12 人认可的八条）。** 进度按那八条逐条对照，以命令输出为准。
 
-**2026-11-12 晚的最新状态（下面的旧数字以此为准）**：`9c11345cf` 已推送，含五个合并：OpenAI Responses / Google 协议（假 provider 加两种形状，Google 修 4 处）、WS 参数 3 处差异与渠道启动表现、循环行为缺口（12 个场景，修记忆维护调度与记忆请求头顺序）、时区名改用内置数据（`jiff-tzdb`，推翻旧决策卡「不内嵌 tzdata」，账本 `A8.3-CRON-TZ-ALIAS-001` 已过时、待追加说明）、`modules.tools` 接线。
+**2026-11-13 晚的最新状态**（更早的逐轮数字在 git 历史里，不再留在这里）：
 
-验收挪到 cb8（Linux）：`~/ws/pdrs-takeover/verify.sh <标签> [场景…]` 一条龙（构建、单独重跑、全量对拍、四条命令），先 `git push ssh://cb8/~/ws/pdrs-takeover/pilotdeck-rs HEAD:refs/heads/from-mac`。环境在 `~/ws/pdrs-takeover/env.sh`：Node 必须是 `~/opt` 下的 v22.22.0（默认的 v22.22.1 会让每个带模型请求的场景不一致）、`LANG=en_US.UTF-8`、`umask 022`、不设 `CARGO_BUILD_JOBS`；`cargo-nextest` 0.9.150 从源码装。bbx 根目录按平台取（Linux 是 `/tmp/pdrs-bbN`）。
+- 已推送到接手仓库：`991283d50`。被验证的代码提交是 `6894f3dca`（其后只有 `state/` 下的文档提交）。
+- cb8（Linux aarch64）上 `6894f3dca` 的一轮验收（`verify.sh v17`）：全量对拍 509 个场景 491 个一致；fmt、clippy、文档测试通过；`nextest` 7755 个里 7754 个通过，失败的 1 个是固定端口 18973 被同机别的进程占用，单独重跑通过。上一个提交 `5b1aec8cd` 是 7755/7755。逐个不一致的场景与归类看 `state/status.md`。
+- 本机（macOS）：不跑全量 `nextest`（主检出的 `src/target` 涨到过 183 GB），只做子代理各自的构建和按场景抽查；需要 18789 的场景本机跳过。
+- 验收流程：`git push ssh://cb8/~/ws/pdrs-takeover/pilotdeck-rs HEAD:refs/heads/from-mac`，然后 cb8 上 `~/ws/pdrs-takeover/verify.sh <标签> [要单独重跑的场景…]`（构建、单独重跑两次、全量对拍、四条命令）。环境在 `~/ws/pdrs-takeover/env.sh`：Node 必须是 `~/opt` 下的 v22.22.0、`LANG=en_US.UTF-8`、`umask 022`、不设 `CARGO_BUILD_JOBS`、`BBX_WAIT_18789=1`（只在 cb8 开）。验收完在 cb8 上用当轮产物跑 `node scripts/bbx/status.mjs --round-note "…"`，把生成的 `status.md`、`out-of-scope.md` 拷回入库。
+- cb8 上的 worktree：`wt-cron`（分支 `cron-online`）、`wt-linux`（`linux-leftovers`）、`wt-tz`（`ruler-fixes`）。子代理的提交留在 cb8 的分支上，主会话用 `git fetch ssh://cb8/~/ws/pdrs-takeover/pilotdeck-rs <分支>` 取回合并。
 
-cb8 上 `9c11345cf` 的结果：fmt、clippy、文档测试通过；`nextest` 7840 个里 7837 个通过，失败的 3 个单独重跑 3 次都通过（固定端口与并发，当时另有子代理在同机跑同一套测试）；全量对拍 414 个场景 401 个一致。不一致的：已定不移植的 2 个；Linux 上稳定不一致的 5 个（`always-on-fire`、`always-on-fire-execfail`、`hook-sdk-file-changed`、`http-api-web`、`robust-restart-crash-leftovers`）；并行负载下偶发、单独重跑一致的若干（每轮不同，如 `gap-tool-glob`、`gap-tool-grep`、`gap-permissions-json-rules`、`hook-cancelled`、`robust-large-message`、`loop-parallel-tools`）。Linux 差异由 cb8 上的子代理在 `~/ws/pdrs-takeover/wt-linux`（分支 `linux-diffs`）处理。
+在途的子代理（2026-11-13 晚，共 6 个，都是 Opus）：
 
-本机磁盘：主检出的 `src/target` 涨到过 183 GB，已删；全量 `nextest` 以后在 cb8 跑，本机只做子代理各自的构建。人许可并行 4、6 个或更多子代理（硬件和我管得过来为限）。
+| 任务 | 在哪 | 基于 |
+|---|---|---|
+| CLI 的 cron 子命令与默认对话的在线路径（连 18789 上的 server） | cb8 `wt-cron` | 正在并到 `6894f3dca` 上 |
+| 中止语义整块审查与修复（产出 `specs/delivery/abort-matrix.md`） | 本机 worktree | `6894f3dca` 之前 |
+| `gw` 与 `modules` 两个功能域的缺口审查（含 64 条连接上限去留的依据） | 本机 worktree | 同上 |
+| Linux 上稳定不一致的场景（两个 skills 场景、`cli-run-resume`、两个 `server-stop`、`hook-cancelled`、`modules-tools-result-unknown-sidecar-binding`） | cb8 `wt-linux` | `3037b178e` |
+| 比较器的尺子问题（`fileSize` 容差、`registry.json.lock`、规则 15 造成的死声明、登记 `turn-abort-before-request-sidecar-stdio`） | cb8 `wt-tz` | `3037b178e` |
+| 会话写入锁（`LedgerLock`）的去留：先量基线两个写者的表现再定删或留 | 本机 worktree | `991283d50` |
 
-在途的子代理（都基于 `7388b0131`）：零散差异与扩展目录监视；hooks 帧次序 / 中止取消、缓存代际、子代理里的权限询问；CLI 与环境变量缺口审查；cb8 上的 Linux 差异。
+还没派的（额度允许时，同时不超过 5–6 个）：sidecar 取消时释放挂起的模块调用；「场景说明与实际触发行为是否相符」的核对；`scripts/upstream-tests` 缺省去掉 parity 组；清理批 5–9；发布构建与性能报告；ui-smoke 与进程证据；安静机器上连续 3 轮全量（macOS、Linux 各一套）；Fable 盲审与下一次独立代码审阅。给冻结账本 `A8.3-CRON-TZ-ALIAS-001` 追加「已不成立」的说明（只追加，走 `diffs/` 目录规则）。
 
-合并后记下的待办：显式 stdio 部署下外部工具失败时的结果形状；fork 子代理会话不挂外部工具是否与基线一致；批次被拒路径不写 `tool_result` 账本记录；进程本地时区仍读系统 tzdata；时间工具默认时区回显（基线回 ICU 规范名）；Slack Socket Mode 实现已从生产流程摘掉、代码待删；记忆维护的实际抽取没有场景。
+还没进台账的线索：让缓存代际回到 1 的其他入口（MCP 设置变更、`apply_flag_settings`、配置热重载、空闲回收）没有场景；模型错误的 `details.raw` 是否落成 `{}` 现在按形状识别（`is_error_instance_raw`）；疑似基线 bug、先照基线的两处：`run --project P --model <不存在>` 时 CLI 与 server 都退不出，SMS 渠道永远起不来（ESM 里用 `require`）。
 
-以命令输出为准，不手写进度。2026-11-12 下午合并四个分支后的全量对拍（四个子代理同时在构建，不是安静机器；四条命令这次没有全量跑，只跑了改动模块的子集）：
-
-- `node scripts/bbx/check.mjs --slots 5,6,7,8`：339 个场景 336 个 SAME。
-- `node scripts/bbx/coverage.mjs`：101 个 gateway method 里 97 个有场景且全部 SAME，3 个被不一致的场景带上，1 个没有场景（`prepare_weixin_login`）。
-- `node scripts/bbx/coverage.mjs --surface`：2008 项里 1550 项被 SAME 的场景碰到（77%）。各维度还没碰到的：config 95、env 132、ws-params 45、tool-params 35、provider-protocols 30、files 22、loop-behaviors 21、events 16、cli 14、channels 13、tools 8、records 7、hooks 6、slash-commands 5、sdk-session-config 4、http 1、ws-methods 1。
-- `node scripts/bbx/selftest.mjs`：比较器自测 61 个例子。
-- 上一次安静机器上的完整四条命令是 2026-11-12 上午：fmt、clippy、文档测试通过；`nextest` 7749 个里只有本机已知的 3 个失败。
-- `scripts/ui-smoke/`：2026-11-12 凌晨跑过，之后没重跑。
-
-不一致的 3 个场景：
-
-| 场景 | 原因 |
-|---|---|
-| `gap-tool-read-file-vision` | 按页渲染 PDF 没移植（基线用 mupdf） |
-| `tool-write-file-diagnostics` | JS/TS、HTML、CSV 写后语法诊断没移植 |
-| `agent-loop-sidecar-stdio` | stdio 部署方式下 Rust 不写 `agent_loop_operation_started / accepted / terminal` 三种记录（在修） |
-
-负载高时偶发、单独重跑一致的：`server-stop-pending-turn`（基线停机后留下 `registry.json.lock`）、`sandbox-ro-shell`（基线停机退出码为 1）、`gap-loop-long-tool-chain` 与 `hook-pre-tool-use`（会话文件大小差几个字节，前者基线自比也偶发）。安静机器上还出现再处理。
-
-已知没做的（有线索、没有一致的场景）：
-
-- CLI 的 `cron` 子命令连上 server 之后的分支、`run --model` 不带 `--project`：Rust 里是 `Todo`。基线每个 `cron` 子命令先探测写死的 `127.0.0.1:18789`，bbx 不占这个端口，所以现在没法对拍；方案未定。
-- 被取消的 hook 的完成帧与截断的 assistant_block 的先后：基线 40 次全是「截断块在前」，Rust 40 次里 14 次相反（基线只是时延造成的稳定次序，没有代码约束）。两个 `hook-*-cancelled` 场景用 `term.mjs` 让 hook 晚 300ms 退出来避开；主会话定：让 Rust 固定成基线观察到的次序，待做。
-- 客户端只发 FIN 后，这一轮在第几帧写失败而中止取决于时序（基线约十来帧，Rust 约三四帧），短回复在基线里能跑完；没有场景。
-- 让缓存代际回到 1 的其他入口（MCP 设置变更、`apply_flag_settings`、配置热重载、空闲回收）没有场景。
-- 模型错误的 `details.raw` 是否落成 `{}` 按形状识别（`is_error_instance_raw`），以后改成按来源标记。
-- 受限沙箱模式下基线把 `grep` / `glob` / `edit_file` 的子进程也包进沙箱，Rust 没包；只在没有 Seatbelt 的平台上可见，本机验证不了。
-- 疑似基线 bug、先照基线：`run --project P --model <不存在>` 时 CLI 与 server 都退不出；SMS 渠道永远起不来（ESM 里用 `require`）。
+内部约定：gateway 给自己拉起的内置 sidecar 设环境变量 `PILOTDECK_RS_IN_PROCESS_LOOP=1`，sidecar 据此判断「循环不是外部模块」（`c6a53a052` 统一三套判定时引入）。它不是对外接口，基线没有。
 
 2026-11-12 主会话对着基线逐段读过并认为一致的：权限判定顺序与 `ask` 收尾、规则匹配、`permissions.json`、`PermissionRequest` hook 与询问的先后、Seatbelt profile 与写入围栏、bash 命令分类与分词。没读的：`read_file` 的路径检查、hook 进程环境变量、`execute_code` 的只读判定。
-
-Rust 已有实现和场景的：`pilotdeck server` 启停；对话主干与全部工具（含 `web_search`、计划模式、`request_user_*`、`cron_*`、always-on 工具）；权限询问、`permissions.json`、沙箱模式、交互配置；一次性与后台子代理；hooks；自动与手动上下文压缩；循环里的截断续写、流中断恢复、并行工具调用；OpenAI chat 与 Anthropic 两种协议；会话读取、分叉、替换、导出恢复、文件回退；插件、skills、MCP；设置读写与热重载；上传、快照、定时任务、always-on；HTTP 路由；CLI 的主要命令与默认对话；provider / router / gateway / cron 等配置键。
 
 **重要的认识（2026-11-12）：「有场景且一致」不等于做完。** 场景大多是实现者自己写的。一次只看基线源码和场景、不看 Rust 实现的缺口审查，半小时找出 16 处差异，包括安全相关的配置在 Rust 里不生效（`agent.sandboxMode`、`~/.pilotdeck/permissions.json`、`agent.interactionProfile`）和整个缺失的 `web_search` 工具。它还留下一份没来得及测的缺口清单（报告在会话记录里；合并进来的 `gap-*` 场景是已测的部分）。
 
