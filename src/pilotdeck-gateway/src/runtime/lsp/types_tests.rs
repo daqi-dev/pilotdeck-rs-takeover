@@ -98,6 +98,7 @@ async fn original_root_descriptor_survives_rename_and_foreign_real_directory_rep
 #[tokio::test]
 #[cfg(unix)]
 async fn raced_fifo_is_nonblocking_and_rejected_as_nonregular() {
+    use std::os::unix::fs::FileTypeExt;
     let s = Scratch::new();
     let file = s.0.join("source.ts");
     std::fs::write(&file, b"OWNED").unwrap();
@@ -109,12 +110,30 @@ async fn raced_fifo_is_nonblocking_and_rejected_as_nonregular() {
         Cancellation::new(),
         Some(Box::new(move || {
             std::fs::remove_file(&swapped).unwrap();
-            rustix::fs::mkfifoat(
+            #[cfg(target_vendor = "apple")]
+            assert!(
+                std::process::Command::new("/usr/bin/mkfifo")
+                    .args(["-m", "600"])
+                    .arg(&swapped)
+                    .status()
+                    .expect("system mkfifo must create the owned fixture")
+                    .success()
+            );
+            #[cfg(not(target_vendor = "apple"))]
+            rustix::fs::mknodat(
                 rustix::fs::CWD,
                 &swapped,
+                rustix::fs::FileType::Fifo,
                 rustix::fs::Mode::from_raw_mode(0o600),
+                0,
             )
             .unwrap();
+            assert!(
+                std::fs::symlink_metadata(&swapped)
+                    .unwrap()
+                    .file_type()
+                    .is_fifo()
+            );
         })),
     );
     let error = tokio::time::timeout(std::time::Duration::from_secs(1), operation)
