@@ -20,6 +20,8 @@ cb8 上 `9c11345cf` 的结果：fmt、clippy、文档测试通过；`nextest` 78
 
 在途的子代理（都基于 `7388b0131`）：零散差异与扩展目录监视；hooks 帧次序 / 中止取消、缓存代际、子代理里的权限询问；CLI 与环境变量缺口审查；cb8 上的 Linux 差异。
 
+待并入台账的中止类差异（2026-11-13，hook 帧次序子代理用临时场景量出，场景在会话 scratchpad 的 `hook-order/sc/aw-*.json`，未入库）：在 `UserPromptSubmit` hook 执行中中止，Rust 少发 `turn_aborted` 状态、少落一条会话记录；在 `Stop` hook 执行中中止，基线以 `completed` 结束、Rust 发 `turn_failed` 和 `error`；在 `SubagentStart` / `SubagentStop` 执行中中止，Rust 缺 `subagent_started` / `subagent_completed`，且 `SubagentStop` 的完成帧次序不稳（基线 10/10 稳定）。另：被杀的 advisory hook 收到 SIGTERM 后若还活不到 1 秒，Rust 会把它的完成帧放上流而基线可能已结束这一轮（1 秒上限是 Rust 自定的，无场景）。
+
 合并后记下的待办：显式 stdio 部署下外部工具失败时的结果形状；fork 子代理会话不挂外部工具是否与基线一致；批次被拒路径不写 `tool_result` 账本记录；进程本地时区仍读系统 tzdata；时间工具默认时区回显（基线回 ICU 规范名）；Slack Socket Mode 实现已从生产流程摘掉、代码待删；记忆维护的实际抽取没有场景。
 
 以命令输出为准，不手写进度。2026-11-12 下午合并四个分支后的全量对拍（四个子代理同时在构建，不是安静机器；四条命令这次没有全量跑，只跑了改动模块的子集）：
