@@ -10,6 +10,7 @@ pub mod edit_file;
 pub mod edit_notebook;
 pub mod execute_code;
 pub mod form_dialog;
+mod form_dialog_2020;
 pub mod glob;
 pub mod goal;
 pub mod grep;
