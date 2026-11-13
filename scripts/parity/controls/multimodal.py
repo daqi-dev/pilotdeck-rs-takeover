@@ -362,6 +362,30 @@ def run_controls(source):
         cases['singleton_class_refused'] = {
             'ok': singleton['verdict'] == 'REFUSED' and 'singleton' in singleton.get('reason', ''),
             'verdict': singleton['verdict'], 'reason': singleton.get('reason')}
+        # A single fully confirmed class is admitted; Rust must still match
+        # every member, and the pinned registration remains authoritative.
+        for directory in pool:
+            write(directory, 'cancel_during_tool', 'A')
+        for directory in rust:
+            write(directory, 'cancel_during_tool', 'A', 'rust')
+        single = S.score(ts, rust, pool)
+        record_case('single_class_all_members_positive', single,
+                    single['valid_score'] and single['verdict'] == 'PASS' and len(single['TS_calibration']['cancel_during_tool']['classes']) == 1
+                    and single['TS_calibration']['cancel_during_tool']['classes'][0]['count'] == 20)
+        with patch.object(G, 'compare_records', side_effect=partial_comparison):
+            partial_single = S.score(ts, rust, pool)
+        partial_run = partial_single['per_scenario']['cancel_during_tool']['runs'][0]
+        record_case('single_class_partial_match_fails', partial_single,
+                    partial_single['valid_score'] and partial_run['verdict'] == 'FAIL'
+                    and partial_run['matched_classes'] == [])
+        single_pinned = root / 'single-reference-registration.json'
+        single_pinned.write_text(json.dumps({'TS_calibration': single['TS_calibration']}))
+        changed_single = deepcopy(single['TS_calibration'])
+        changed_single['cancel_during_tool']['classes'][0]['count'] = 19
+        single_pinned.write_text(json.dumps({'TS_calibration': changed_single}))
+        bad_single_pinned = S.score(ts, rust, pool, reference_registration=single_pinned)
+        record_case('single_class_changed_registration_refused', bad_single_pinned,
+                    bad_single_pinned['verdict'] == 'REFUSED' and bad_single_pinned['score'] is None)
         contaminated = S.score(ts, rust, pool[:19] + [rust[0]])
         cases['rust_cannot_enter_ts_pool'] = {
             'ok': contaminated['verdict'] == 'REFUSED' and 'valid ts identity' in contaminated.get('reason', ''),

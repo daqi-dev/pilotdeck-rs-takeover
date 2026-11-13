@@ -259,9 +259,9 @@ def calibrate_pool(directories, inputs):
         if any((r['verdict'] == 'PASS') != (membership[i] == membership[j])
                for (i, j), r in matrix.items()):
             raise ValueError(f'{sid}: G03 pair matrix is not an equivalence relation')
-        if len(groups) < 2 or any(len(group) < 2 for group in groups):
+        if any(len(group) < 2 for group in groups):
             details = [{'count': len(group), 'members': [str(captures[i][0]) for i in group]} for group in groups]
-            raise ValueError(f'{sid}: requires >=2 TS classes and >=2 runs per class; singleton is unconfirmed noise; {details}')
+            raise ValueError(f'{sid}: requires >=2 runs per TS class; singleton is unconfirmed noise; {details}')
         registration[sid] = {
             'classes': [{'class': n, 'count': len(group), 'representative': str(captures[group[0]][0]),
                          'members': [str(captures[i][0]) for i in group],
