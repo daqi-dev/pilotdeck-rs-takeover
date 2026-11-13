@@ -328,8 +328,13 @@ fn parse_title(response: &JsValue) -> Result<JsString, TitleSkip> {
     if text.is_empty() {
         return Err(("empty_content", None));
     }
-    let fence = regex::Regex::new(r"(?is)^```(?:json)?\s*([\s\S]*?)\s*```$")
-        .map_err(|error| ("invalid_json", Some(error.to_string())))?;
+    // Compiled once: a case-insensitive Unicode pattern costs milliseconds to
+    // build (tens of milliseconds in a debug build), and this runs between the
+    // title response and the title record on every first turn.
+    static FENCE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?is)^```(?:json)?\s*([\s\S]*?)\s*```$").expect("title fence pattern")
+    });
+    let fence = &*FENCE;
     let body = crate::metadata::js_trim(
         fence
             .captures(text)
