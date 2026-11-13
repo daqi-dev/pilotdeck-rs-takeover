@@ -11,6 +11,7 @@ import tempfile
 import tomllib
 from common import Path, archive, binary_target, digest, inventory, run, source_identity, write_json
 from linkage import inspect
+from resource_layout import resource_contract
 
 
 def copy_tree(source, destination):
@@ -35,6 +36,37 @@ def supplement(package, root):
                 raise ValueError(f"license supplement changed: {path.name}")
             return path, {k: v for k, v in source.items() if k != "packages"}
     return None
+
+
+def source_notices(source, output, directory=None):
+    """Collect identified notices for adapted source outside Cargo packages."""
+    directory = directory or Path(__file__).resolve().parent / "license-supplements"
+    index = json.loads((directory / "index.json").read_text())
+    collected = []
+    for notice in index.get("sourceNotices", []):
+        identifier = notice["id"]
+        if Path(identifier).name != identifier or identifier in {"", ".", ".."}:
+            raise ValueError("invalid source notice identifier")
+        for relative in notice["applicablePaths"]:
+            path = (source / relative).resolve(strict=True)
+            if not path.is_relative_to(source.resolve()):
+                raise ValueError("source notice applicability escapes source")
+        files = []
+        for entry in notice["files"]:
+            if Path(entry["file"]).name != entry["file"] or entry["file"] in {"", ".", ".."}:
+                raise ValueError("source notice escapes supplement directory")
+            path = (directory / entry["file"]).resolve(strict=True)
+            if not path.is_relative_to(directory.resolve()):
+                raise ValueError("source notice escapes supplement directory")
+            if digest(path) != entry["sha256"]:
+                raise ValueError(f"source notice changed: {entry['file']}")
+            relative = Path("licenses/source-notices") / identifier / entry["file"]
+            target = output / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, target)
+            files.append({**entry, "path": relative.as_posix()})
+        collected.append({**notice, "files": files})
+    write_json(output / "source-notices.json", {"schema": 1, "notices": collected})
 
 
 def dependencies(metadata_path, source, output):
@@ -144,6 +176,7 @@ def main():
         parser.error("full package requires both source-built components")
     if args.variant == "core" and (args.mupdf or args.image):
         parser.error("core package must not silently include optional components")
+    contract = resource_contract(args.skills, args.plugins)
     if args.out.exists():
         parser.error("output directory must be new; preserve failed attempts")
     args.out.mkdir(parents=True)
@@ -170,6 +203,7 @@ def main():
     write_json(package / "build.json", provenance)
     shutil.copyfile(source / "LICENSE", package / "LICENSE")
     dependencies(args.cargo_metadata, source, package)
+    source_notices(source, package)
     components = []
     if args.variant == "full":
         components = [component(args.mupdf.resolve(), "mupdf", package, target), component(args.image.resolve(), "image", package, target)]
@@ -202,8 +236,10 @@ def main():
         "schema": 1, "variant": args.variant, "target": target, "sourceDateEpoch": epoch,
         "classification": "development" if args.development else "release-candidate",
         "defaultEntry": "bin/pilotdeck", "defaultRuntime": "native", "components": components,
-        "resources": resources, "scopeExclusions": ["StaffDeck", "Web frontend", "ui/server", "desktop", "TUI"],
-        "pendingDelivery": ([] if all(resources.values()) else ["builtin resource coverage requires separate verification"]),
+        "resources": resources, "resourceContract": contract,
+        "variantMeaning": "native core" if args.variant == "core" else "native core plus source-built MuPDF and image components",
+        "scopeExclusions": ["StaffDeck", "Web frontend", "ui/server", "desktop", "TUI"],
+        "pendingDelivery": ["actual resource workflows and moved-package behavior require separate verification", "Node MCP plugins and their runtimes/models are explicit separate addons"],
         "files": inventory(package),
     })
     rows = inventory(package)

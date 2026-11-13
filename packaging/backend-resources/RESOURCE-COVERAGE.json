@@ -56,8 +56,26 @@
         "Python 3 POSIX supervisor; current Windows execution unavailable"
       ],
       "remaining": [
-        "real Rust loader and final package verification",
-        "real acoustic transcription and model packaging not verified"
+        "real short synthetic WAV transcription and formal attachment/minutes chain verified on macOS; final moved runtime/models pending",
+        "natural meeting accuracy, microphone capture, diarization and Windows/older macOS not established"
+      ],
+      "evidence": [
+        {
+          "path": "_build/funasr-source/records/full-real-run-index.json",
+          "sha256": "a119a85caf0a5d05451d890c17d899b924fe646b0ce060cf65acbdec02765c66"
+        },
+        {
+          "path": "_tmp/20261113-funasr-real/formal-second/verified-receipt.json",
+          "sha256": "1b62e12a6746587cb91865b498a04ac793ba31932c066bc4a4b8e84f46a467f4"
+        },
+        {
+          "path": "_tmp/20261113-funasr-real/fail-cancel/summary.json",
+          "sha256": "873831d4e4234ce29a181adaefb6423115ebe2c26ab96e6ce8a0c12e9acbb1db"
+        },
+        {
+          "path": "_tmp/20261113-funasr-real/minutes-first/verified-receipt.json",
+          "sha256": "089ca1cda271ea73742cc84e160714ed3041f8a68357f16351114983b76f8779"
+        }
       ]
     },
     "bear-notes": {
@@ -97,8 +115,18 @@
         "browser executable"
       ],
       "remaining": [
-        "real Rust loader and final package verification",
-        "real browser/MCP provision and loader invocation not verified"
+        "macOS sealed d0 loader/local-page interaction verified; final moved package and other platforms pending",
+        "external Node/browser supply is explicit addon responsibility"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261113-browser-use-formal-sixth/manifest.json",
+          "sha256": "4253d0cb1a830c1d3c00e45f1a952476ee5c95acef85bec869a940549f351003"
+        },
+        {
+          "path": "_tmp/20261113-browser-use-formal-sixth/source-and-cleanup-receipt.json",
+          "sha256": "128be3e1092335454e4e63964e91efd603acc8e624454a605775b82f9432bc7e"
+        }
       ]
     },
     "diagram-maker": {
@@ -119,14 +147,30 @@
         "format-specific editing/rendering tools as described in SKILL.md"
       ],
       "remaining": [
-        "real Rust loader and final package verification",
-        "advanced baseline helper CLI and outputs not reproduced",
-        "creation/editing/visual rendering require external libraries and execution verification"
+        "fixed render_docx full PyMuPDF/fitz comparison remains unverified; E0 source build in progress",
+        "advanced Word compatibility, Windows owned execution, final loader and moved package pending",
+        "LibreOffice/MuPDF/font supply is external and is not assumed included in full package"
       ],
       "implementedHelpers": [
-        "read-only OOXML/CSV inventory",
-        "basic editable document creation with separately installed format library"
-      ]
+        "inspect/filter/compare/deliver command wrappers",
+        "atomic delivery and concurrent source-save protection",
+        "LibreOffice/MuPDF render with CJK visible-glyph detection"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261113-docx-tools/final-render-second/results.json",
+          "sha256": "0bcb4809dd925d5234f95e5793fb01b955f71253d66d6e7f3e06e8502cb2ae98"
+        },
+        {
+          "path": "_tmp/20261113-docx-tools/snapshot-render/results.json",
+          "sha256": "b95b068e146d14f54adff7fa5633158483eceebeb7e08c0bb20549e850d7de52"
+        },
+        {
+          "path": "_tmp/20261113-docx-tools/snapshot-render/final-source-sha256.json",
+          "sha256": "111b2b0a0f4ba76069ef23af0cd2a11f20b5e82e6f7934b6cfa28a306dd5a403"
+        }
+      ],
+      "verificationBoundary": "current helper ea293696c06005d51417fdf8b07966388cc136497cd3d23a31f1bf03cc8e0fee: 19 wrapper tests, seven rejected mutants, real immutable snapshot input SHA equals revision, normal CJK 14/14 visible and missing-glyph exit3, six leaders reaped, independent Email review passed"
     },
     "find-skills": {
       "state": "待验证",
@@ -214,12 +258,29 @@
         "Python 3 POSIX supervisor; current Windows execution unavailable"
       ],
       "remaining": [
-        "real Rust loader and final package verification",
-        "real acoustic transcription and model packaging not verified",
-        "microphone capture, diarization and automated semantic helper equivalence not supplied"
+        "real short synthetic WAV transcription and formal attachment/minutes chain verified on macOS; final moved runtime/models pending",
+        "natural meeting accuracy, microphone capture, diarization and Windows/older macOS not established"
       ],
       "implementedHelpers": [
         "SRT timestamp normalization; not semantic inference"
+      ],
+      "evidence": [
+        {
+          "path": "_build/funasr-source/records/full-real-run-index.json",
+          "sha256": "a119a85caf0a5d05451d890c17d899b924fe646b0ce060cf65acbdec02765c66"
+        },
+        {
+          "path": "_tmp/20261113-funasr-real/formal-second/verified-receipt.json",
+          "sha256": "1b62e12a6746587cb91865b498a04ac793ba31932c066bc4a4b8e84f46a467f4"
+        },
+        {
+          "path": "_tmp/20261113-funasr-real/fail-cancel/summary.json",
+          "sha256": "873831d4e4234ce29a181adaefb6423115ebe2c26ab96e6ce8a0c12e9acbb1db"
+        },
+        {
+          "path": "_tmp/20261113-funasr-real/minutes-first/verified-receipt.json",
+          "sha256": "089ca1cda271ea73742cc84e160714ed3041f8a68357f16351114983b76f8779"
+        }
       ]
     },
     "notion": {
@@ -257,12 +318,31 @@
         "format-specific editing/rendering tools as described in SKILL.md"
       ],
       "remaining": [
-        "real Rust loader and final package verification",
-        "advanced baseline helper CLI and outputs not reproduced",
-        "creation/editing/visual rendering require external libraries and execution verification"
+        "advanced PDF workflows and interactive form preservation not universally verified",
+        "final loader and moved package pending"
       ],
       "implementedHelpers": [
-        "pypdf page structure inspect/select/reorder/rotate with input preservation"
+        "pypdf structure/select/reorder/rotate",
+        "ReportLab scaffold/build/audit and source-built MuPDF PNG render",
+        "atomic non-overwrite publication and actual PNG-format validation"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261113-pdf-cross-review/fixed-real/results.json",
+          "sha256": "fadfac55ce88488a53c6cfc5ff2717f16547403753270babead655221e191cea"
+        },
+        {
+          "path": "_tmp/20261113-pdf-final-review/first0-2c0rbu6b/results.json",
+          "sha256": "cc115ca650f5a35afc109a7bc8375f1472803841fc124fb5d2d2162c0be5e49d"
+        },
+        {
+          "path": "_tmp/20261113-pdf-helper/reportlab-completion.json",
+          "sha256": "66b63621a5f09794adf969e8b94556aa00ef3dcc0610b97e6dc4d0ae272b09ba"
+        },
+        {
+          "path": "_tmp/20261113-pdf-helper/reportlab-render-evidence.json",
+          "sha256": "034cadebf88954157e598b5b132db722b60cacb1748d5ab3b60cc511174caa1d"
+        }
       ]
     },
     "pilotdeck-skills-migration": {
@@ -298,13 +378,22 @@
         "format-specific editing/rendering tools as described in SKILL.md"
       ],
       "remaining": [
-        "real Rust loader and final package verification",
-        "advanced baseline helper CLI and outputs not reproduced",
-        "creation/editing/visual rendering require external libraries and execution verification"
+        "real render evidence precedes final P1 helper fixes; final helper pure regression and independent race/timeout probes separately verified",
+        "advanced Office compatibility, final loader and moved package pending"
       ],
       "implementedHelpers": [
-        "read-only OOXML/CSV inventory",
-        "basic editable document creation with separately installed format library"
+        "real create/edit/compare/atomic deliver/recovery",
+        "LibreOffice source/candidate render and actual OLE PPT round-trip"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261113-resource-pptx/real-first0/manifest.json",
+          "sha256": "3a6574247cc12ca9cea5afc1cc42c2fb30bb29f32408fef582e59187a8a70d0a"
+        },
+        {
+          "path": "_tmp/20261113-pptx-cross-review/fixed/results.json",
+          "sha256": "86786798f212ed17b78b072862f913c09e87e408decf07368d1e5c17caf21523"
+        }
       ]
     },
     "react-next-best-practices": {
@@ -343,13 +432,39 @@
         "format-specific editing/rendering tools as described in SKILL.md"
       ],
       "remaining": [
-        "real Rust loader and final package verification",
-        "advanced baseline helper CLI and outputs not reproduced",
-        "creation/editing/visual rendering require external libraries and execution verification"
+        "full Excel formula/function and layout compatibility not established",
+        "final loader and moved package pending"
       ],
       "implementedHelpers": [
-        "read-only OOXML/CSV inventory",
-        "basic editable document creation with separately installed format library"
+        "OOXML type-preserving editing and unknown-part checks",
+        "actual LibreOffice recalc with typed cache preservation",
+        "atomic delivery/source-save protection and real-engine negative controls"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261113-xlsx-final-review/first0-5ejyy4o7/results.json",
+          "sha256": "12c6579d307e9bf8c7f8a72d68577016ef7fccc705da81ec304888fe55e349ea"
+        },
+        {
+          "path": "_tmp/20261113-spreadsheet-tools/run-c/results.json",
+          "sha256": "7b7136b3c542595873efbcd96dcb8443a08b01e557ed792ffa33c20a1e93e549"
+        },
+        {
+          "path": "_tmp/20261113-spreadsheet-tools/extra/results.json",
+          "sha256": "67fa0eab1e86b43b15f9bd47612286986cadaf0e6d27677da2d03c6cbda4b724"
+        },
+        {
+          "path": "_tmp/20261113-spreadsheet-tools/types-first/results.json",
+          "sha256": "671f0d7681156735de913a72f932495e1188a2fbdf84861da8a06d6465ebd0dd"
+        },
+        {
+          "path": "_tmp/20261113-spreadsheet-tools/types-render-report.json",
+          "sha256": "2380f3088cc4c19ca1bcfe8aa468d0c9ce23db68fba025e759c76fc18d96168e"
+        },
+        {
+          "path": "_tmp/20261113-spreadsheet-tools/guards-final-fixed.log",
+          "sha256": "0233d675779d88a4b441c00499919e1b1a9ba3f935bb1583533e6ed4f0e3a211"
+        }
       ]
     },
     "summarize": {
@@ -414,28 +529,63 @@
   "plugins": {
     "browser-use": {
       "state": "待验证",
-      "implementation": "existing host markers select separately provisioned external Playwright MCP",
+      "implementation": "independent exact official public-source runtime assembly; actual native Rust loader and isolated local Chrome interaction verified on macOS",
       "remaining": [
-        "pinned source/dependency/browser package and licenses",
-        "real MCP discovery and local-page interaction"
+        "final moved package and same-final-binary verification",
+        "Node/browser actual package supply and other platforms",
+        "real websites/accounts and remaining catalog tools not exercised"
+      ],
+      "requiresNodeOnDiscovery": true,
+      "externalDependencies": [
+        "Node 22 runtime",
+        "@playwright/mcp 0.0.75 with exact locked Playwright packages",
+        "separately installed browser"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261113-browser-use-formal-sixth/manifest.json",
+          "sha256": "4253d0cb1a830c1d3c00e45f1a952476ee5c95acef85bec869a940549f351003"
+        },
+        {
+          "path": "_tmp/20261113-browser-use-formal-sixth/source-and-cleanup-receipt.json",
+          "sha256": "128be3e1092335454e4e63964e91efd603acc8e624454a605775b82f9432bc7e"
+        }
       ]
     },
     "funasr": {
       "state": "待验证",
-      "implementation": "independent Node stdio service plus Python 3 POSIX owned-session supervisor; private native status fd; live leader performs final group kill before real close",
+      "implementation": "independent Node stdio MCP and owned POSIX supervisor; source-built real engine and locked models exercised through native attachment/skills/ASR/minutes path on macOS",
       "remaining": [
-        "source-built runtime and acoustic model license/identity",
-        "real audio inference and host lifecycle integration",
-        "review bounded output/time budgets as accepted safety behavior",
-        "missing-dependency and exceptional-path wording differs from fixed baseline; not an accepted difference",
-        "Windows execution explicitly unavailable until reliable job-object ownership is implemented",
-        "actual macOS/Linux native engine and final package verification pending"
+        "final moved addon/runtime/model distribution and license identity verification",
+        "actual engine minimum macOS deployment target 26.6; older macOS and Windows unresolved",
+        "natural meeting, multilingual accuracy, microphone capture and diarization not established",
+        "missing-dependency and exceptional diagnostic wording not asserted baseline-identical",
+        "bounded-output/time safety behavior requires exact accepted-difference accounting"
       ],
       "externalDependencies": [
         "Node",
         "Python 3 on POSIX",
         "source-built controlled SenseVoice executable",
         "licensed model and VAD files"
+      ],
+      "requiresNodeOnDiscovery": true,
+      "evidence": [
+        {
+          "path": "_build/funasr-source/records/full-real-run-index.json",
+          "sha256": "a119a85caf0a5d05451d890c17d899b924fe646b0ce060cf65acbdec02765c66"
+        },
+        {
+          "path": "_tmp/20261113-funasr-real/formal-second/verified-receipt.json",
+          "sha256": "1b62e12a6746587cb91865b498a04ac793ba31932c066bc4a4b8e84f46a467f4"
+        },
+        {
+          "path": "_tmp/20261113-funasr-real/fail-cancel/summary.json",
+          "sha256": "873831d4e4234ce29a181adaefb6423115ebe2c26ab96e6ce8a0c12e9acbb1db"
+        },
+        {
+          "path": "_tmp/20261113-funasr-real/minutes-first/verified-receipt.json",
+          "sha256": "089ca1cda271ea73742cc84e160714ed3041f8a68357f16351114983b76f8779"
+        }
       ]
     },
     "windows-skills": {
@@ -443,22 +593,49 @@
       "implementation": "independently authored skill-only plugin",
       "remaining": [
         "real loader prompt and Windows execution checks"
-      ]
+      ],
+      "requiresNodeOnDiscovery": false
     }
   },
   "pendingDelivery": [
     "32 skill documents do not establish 32 equivalent executable workflows",
-    "Office advanced helper/render/recalculation parity incomplete",
-    "optional browser/runtime/models and external CLI software not distributed",
-    "real Rust loader and moved package behavior not executed"
+    "Office advanced compatibility and any unverified fixed-baseline helper/render behavior remain itemized",
+    "independent browser/ASR runtimes have real macOS evidence; final optional Node/browser/model/external CLI package supply remains pending",
+    "selected native Rust loader workflows executed; same-final-binary relocated package and per-platform verification remain pending"
   ],
   "verification": {
-    "resourceTests": "13/13 local macOS tests including held-stdio descendants on cancel/EOF/normal exit and Python/native startup failures",
-    "funasr": "actual stdio process + mock native child; acoustic inference not exercised",
-    "rustLoader": "not executed",
+    "resourceTests": "historical 13/13 resource tests retained; newer per-resource suites/negative controls are separate evidence, not one combined rerun",
+    "funasr": "real source-built engine short WAV, formal native loader, attachment skill/ASR/minutes and bad-audio/cancel/EOF passed on macOS; minimum deployment target 26.6",
+    "rustLoader": "browser sealed d0 local-page workflow and FunASR sealed a001 attachment/minutes workflow passed; does not establish every resource or final release",
     "finalPackage": "not executed",
     "negativeControl": "independent resource copy changed actual MCP transcript; dedicated process test exited 1 on content mismatch",
     "skillFrontmatter": "34/34 quick_validate passed; does not prove loader or task behavior",
-    "ownedCleanup": "exact owned PID disappearance, private status fd not inherited; independent-copy group-cleanup and sheet-case mutants are tested separately"
+    "ownedCleanup": "exact owned PID disappearance, private status fd not inherited; independent-copy group-cleanup and sheet-case mutants are tested separately",
+    "defaultCoreNoNode": {
+      "contract": "core/full only skills and pure-skill plugins; executable integrations selected in separate addons",
+      "evidence": [
+        {
+          "path": "_tmp/20261113-core-no-node/core-empty/result.json",
+          "sha256": "b0681c52c0fc5fe2d0d91cbedb2b51d1eae627bc94580d10318d1d2c9c30f8b2"
+        },
+        {
+          "path": "_tmp/20261113-core-no-node/plugins-discovered/result.json",
+          "sha256": "6b18e1d2e73dd0fade24032a6656f226cec34540667b60317ee0bf8602ae9fe4"
+        }
+      ],
+      "observed": "empty builtin root: zero Node attempts and completed turn; browser/funasr discovered: two Node attempts even though ordinary turn completed"
+    },
+    "packagingResourceLayout": "18 lightweight release/layout tests passed including actual complete resource-root rejection, selected browser/funasr addon archive extraction and verify.py inventory/checksum closure; not a final backend package smoke"
+  },
+  "distribution": {
+    "core": "native binaries, skills and optional pure-skill plugins; no executable builtin integrations",
+    "full": "core plus source-built MuPDF and image components, not every external workflow",
+    "explicitAddons": [
+      "browser-use",
+      "funasr"
+    ],
+    "loaderDefaultUnchanged": true,
+    "externalRuntimesIncludedInResourceSourceTree": false,
+    "finalPackageVerified": false
   }
 }

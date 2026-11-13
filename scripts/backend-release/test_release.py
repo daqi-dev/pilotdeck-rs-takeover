@@ -7,7 +7,34 @@ import unittest
 from unittest.mock import patch
 from common import Path, archive, digest, inventory, write_json
 from verify import verify
-from assemble import dependencies
+from assemble import dependencies, source_notices
+
+
+class SourceNoticeTests(unittest.TestCase):
+    def test_real_algorithm_notices_are_collected_and_tampering_rejected(self):
+        source = Path(__file__).resolve().parents[2]
+        supplements = Path(__file__).resolve().parent / "license-supplements"
+        with tempfile.TemporaryDirectory(prefix="pdrs-source-notices-") as temporary:
+            root = Path(temporary)
+            output = root / "output"
+            source_notices(source, output)
+            records = json.loads((output / "source-notices.json").read_text())["notices"]
+            notice = next(n for n in records if n["id"] == "transcript-adapter-sort")
+            self.assertEqual(len(notice["files"]), 3)
+            for entry in notice["files"]:
+                self.assertEqual(digest(output / entry["path"]), entry["sha256"])
+            import shutil
+            copied = root / "supplements"
+            shutil.copytree(supplements, copied)
+            (copied / "cpython-3.7.0-LICENSE.txt").write_text("incorrect replacement")
+            with self.assertRaisesRegex(ValueError, "source notice changed"):
+                source_notices(source, root / "tampered", copied)
+            index = json.loads((copied / "index.json").read_text())
+            index["sourceNotices"][0]["files"][0]["file"] = "../outside.txt"
+            (root / "outside.txt").write_text("escaped")
+            (copied / "index.json").write_text(json.dumps(index))
+            with self.assertRaisesRegex(ValueError, "escapes supplement"):
+                source_notices(source, root / "escaped", copied)
 
 
 class PackageTests(unittest.TestCase):

@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "status": "metadata verified; native build and acoustic inference pending",
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "baselineCommittedAt": "2026-10-13T21:05:13+08:00",
+  "source": {
+    "repository": "https://github.com/modelscope/FunASR.git",
+    "tag": "runtime-llamacpp-v0.2.0",
+    "tagObject": "ef27da6d5332d801ede62dcba9811151d1b936ce",
+    "commit": "500956bc331bb7edbaac58d8f84a84f28bd3d29f",
+    "license": "MIT",
+    "llamaRepository": "https://github.com/ggml-org/llama.cpp.git",
+    "llamaCommit": "803b7fcae893e9caaee3921779628fef83ac0965",
+    "llamaLicense": "MIT"
+  },
+  "models": [
+    {
+      "repository": "FunAudioLLM/SenseVoiceSmall-GGUF",
+      "revision": "cebc2cdd171e895d783040dbd15f10f3a76f7151",
+      "committedAt": "2026-06-21T17:14:05Z",
+      "file": "sensevoice-small-q8.gguf",
+      "bytes": 254208320,
+      "sha256": "4ae45c94422de949b387e2e0fb10d7e14e4c42c69db30c3444ecc7d4b844b7c5",
+      "license": "Apache-2.0",
+      "url": "https://huggingface.co/FunAudioLLM/SenseVoiceSmall-GGUF/resolve/cebc2cdd171e895d783040dbd15f10f3a76f7151/sensevoice-small-q8.gguf"
+    },
+    {
+      "repository": "FunAudioLLM/fsmn-vad-GGUF",
+      "revision": "5644b91e991622131f287c034f2a0424ba5be928",
+      "committedAt": "2026-06-20T06:05:05Z",
+      "file": "fsmn-vad.gguf",
+      "bytes": 1720512,
+      "sha256": "1270f2559c495f4e7b6e739541151027d360761a3fda43fc147034f5719f5479",
+      "license": "Apache-2.0",
+      "url": "https://huggingface.co/FunAudioLLM/fsmn-vad-GGUF/resolve/5644b91e991622131f287c034f2a0424ba5be928/fsmn-vad.gguf"
+    }
+  ]
+}

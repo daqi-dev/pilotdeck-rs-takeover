@@ -1,0 +1,12 @@
+{
+  "scope": "Official public npm source packages from the local pnpm content-addressed cache; no PilotDeck private implementation, Node executable, or browser binary is copied",
+  "baseline": "OpenBMB/PilotDeck@cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "packages": [
+    {"name":"@playwright/mcp","version":"0.0.75","repository":"https://github.com/microsoft/playwright-mcp","license":"Apache-2.0","integrity":"sha512-oBjzVXfEGZ9Ev45tKKQULNDVdF83B82lg0uPejEK3xsp/zWmdNdNVnPi032fmd/o20ZZXs+LX7cr77qRNbV4VA=="},
+    {"name":"playwright","version":"1.61.0-alpha-1778188671000","repository":"https://github.com/microsoft/playwright","license":"Apache-2.0","integrity":"sha512-A6fFc7ExLRmvm0ZHqCyY2uHXSvEdpb8W+/HyIPK4ecRqNil8Mc1Vig1WFYoqk82x3+U9Qb571fQE95wgKqIQ1g=="},
+    {"name":"playwright-core","version":"1.61.0-alpha-1778188671000","repository":"https://github.com/microsoft/playwright","license":"Apache-2.0","integrity":"sha512-nsw2Crz0uZS3IRHiEcOXUt+RaKB/Hna+GAD4oD6cPqCHfJfW77cJdgktC0jzp3Ndyv23EJI3bcWSqFIiqSNE5A=="}
+  ],
+  "optionalDependenciesExcluded": ["fsevents@2.3.2"],
+  "browserDownload": "disabled",
+  "lifecycleScripts": "disabled"
+}

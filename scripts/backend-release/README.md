@@ -29,7 +29,7 @@ python3 scripts/backend-release/assemble.py \
 
 完整组件包在上述命令上使用 `--variant full --mupdf /task/tools/mupdf --image /task/tools/vips`。image 前缀必须同时拥有 helper、共享库、`share/source` 与 `share/licenses`。MuPDF同样需要源码和许可证。完整组件目录按原生查找规则放到 `components/{mupdf,image}`，不依赖环境变量指向构建机器。
 
-确有本项目可发行资源时，显式添加 `--skills DIR --plugins DIR`。打包器拒绝把本 checkout 的参考 `resources` 目录当作资源输入；不能从 TS 参考目录复制技能、插件或业务实现。是否已覆盖所承诺的资源仍须另行验收，存在目录本身不是覆盖证明。
+core/full可显式添加 `--skills DIR`，`--plugins DIR`仅接受纯skill插件（例如windows-skills）；含MCP服务或hook的插件必须作为明确选择的独立addon归档。打包器拒绝把本 checkout 的参考 `resources` 目录当作资源输入；不能从 TS 参考目录复制技能、插件或业务实现。是否已覆盖所承诺的资源仍须另行验收，存在目录本身不是覆盖证明。
 
 `pilotdeck-gateway` 可作为第三个 `--binary` 输入，但只有其默认入口已完成 native 切换与独立验收后才能纳入候选；不能把旧默认透明代理装成正式后端。
 
@@ -57,3 +57,18 @@ python3 scripts/backend-release/test_release.py
 smoke将完整包复制到新目录，使用隔离HOME、项目和临时目录，清空继承环境，PATH只含包及拒绝执行的Node/npm等探针。它通过CLI正式server/WS入口、动态loopback模型服务运行文本读取、PDF和图像读取，要求工具回执到达模型及真实最终完成。core必须明确报告缺组件；full必须实际提取PDF并提供模型图像。默认native验证时，包副本的独立sidecar被临时替换为失败探针，任何Node/sidecar调用都使smoke失败；原副本随后恢复并重新核对包清单。独立sidecar还单独执行`--version`；完整stdio/TCP协议验收由R2记录，不能用版本命令代替。
 
 原始WS帧、模型请求、服务日志及成功/失败结果全部保留。只回收该脚本启动的进程组，不使用固定18789、不访问真实模型或账号。严格的“参考仓不存在”环境验收应由E0在只挂载发行包的隔离环境运行本脚本；本机搬迁证明不冒充完整文件访问审计。
+
+## 默认核心与显式插件附加包
+
+`full`保留既有参数含义：在native core上增加源码构建MuPDF与image两个组件，不表示浏览器、ASR、模型或外部CLI齐备。core/full均可包含纯资源skills；文档出现外部工具不等于包内供给。`resourceContract`记录实际skill/plugin名单、默认发现语义、Node发现依赖、附加项与外部依赖是否包含。默认loader仍对发现的builtin缺省启用，打包器通过拒绝可执行插件进入默认资源root保证布局。
+
+```sh
+python3 scripts/backend-release/addon.py \
+  --plugins packaging/backend-resources/builtin-plugins \
+  --plugin browser-use --out /absolute/NEW-browser-addon \
+  --source-date-epoch 0
+```
+
+附加归档不含核心二进制，也不声称附带Node、Chrome、ASR引擎/模型或独立装配runtime。它只归档显式选择的plugin资源和许可；需按manifest补齐实际外部依赖后显式安装builtin-plugins内容，发现后插件会默认启用。browser公开依赖的独立离线装配方法见其runtime/README.md；该输出与资源归档不同，需单独记录与最终搬迁验证。ASR依赖也须独立记录来源、模型许可、平台与推理证据。不得用宿主绝对路径或复制核心binary冒充包内供给。
+
+封存d0验证：空builtin root、拒Node PATH的普通native turn零Node尝试；当前browser/funasr root相同turn触发两次Node启动，即使turn最终完成仍不符合零Node合同。原始证据`_tmp/20261113-core-no-node/`。最终same-SHA发行须从包外、无资源override、无TS参考目录重验；本轮轻量脚本测试不替代该验收。

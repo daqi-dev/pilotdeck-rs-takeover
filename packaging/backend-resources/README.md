@@ -29,7 +29,8 @@ node --check packaging/backend-resources/builtin-plugins/funasr/funasr-local-mcp
 
 ```text
 --skills packaging/backend-resources/skills
---plugins packaging/backend-resources/builtin-plugins
+核心包不传 --plugins；如需windows-skills，传仅含该skill插件与LICENSE的筛选root。
+Node插件另用 scripts/backend-release/addon.py --plugin browser-use 或 --plugin funasr 显式归档。
 ```
 
 不要因为两个目录存在就移除发行 pendingDelivery。根资源覆盖账本也必须随最终发行证据保留；当前组包器仅复制上述两个输入根，不会自动携带本目录顶层的覆盖账本。
@@ -65,3 +66,11 @@ node --check packaging/backend-resources/builtin-plugins/funasr/funasr-local-mcp
 XLSX创建在任何写入前按casefold拒绝重复sheet名；创建后再次比对actualname，防止库静默把Data/data改为Data/data1。正控重新打开Data/Other验证名字保持，反例要求失败且无输出文件。
 
 新13项资源测试通过，其中owned进程测试覆盖cancel、EOF、native正常结束但后代持pipe三组，确认native没有继承statusfd且leader/native/后代exact PID均消失；缺Python/native启动失败也有界返回真实错误。独立副本禁用group清理和恢复case-sensitive silentrename两个负控均须被拒绝，证据在 `_tmp/20261113-resource-owned-fix/`。前述初轮10项/34项记录保留为旧证据，不能冒充本次或真实loader验证。
+
+## 本轮发行布局与证据分层
+
+默认core/full资源入口只允许skills与纯skill插件。full仅增加源码构建MuPDF/image；browser-use/funasr为显式附加资源，保持loader发现后缺省启用语义。封存d0普通turn实测：无Node插件时Node尝试0；发现browser/funasr时尝试2次Node，即使缺依赖后普通turn仍完成，也不能声称默认无Node。详见`_tmp/20261113-core-no-node/`。
+
+browser精确公开依赖已由已有pnpmstore离线装配，官方MCP实际catalog23工具；macOS已安装Chrome通过封存正式Rust loader完成本地HTML导航、填表、两次snapshot、点击、close，进程/profile已自然释放。证据`_tmp/20261113-browser-use-formal-sixth/`。快照为实际receipt声明的本地YAML文件，不是内联provider文本。独立源码包及Apache许可在装配输出中记录；本资源源树仍不携带Node、Chrome或安装后的node_modules。首次至第五次装置失败保留，不能宣称最终发行、Linux或全部23工具已验。
+
+当前Office/FunASR新增实测按RESOURCE-COVERAGE.json分项记录；早期10/13项测试与34项frontmatter只是旧轮，不替代新增收据。实际搬迁发行、相同最终binary与资源哈希绑定、外部runtime与模型许可依然逐项验收，不将资源数量或文件存在当作全部能力完成。
