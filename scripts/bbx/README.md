@@ -77,7 +77,7 @@ node scripts/bbx/diff.mjs /tmp/a.json /tmp/b.json          # 两份基线互比�
 
 引用前面跑出来的值（服务端随机生成的 id 之类）：步骤或 provider 规则上写 `"save": {"名字": "正则"}`，正则在该步骤结果的 JSON 文本上（provider 规则则是在命中它的那次模型请求的原文上）匹配，第一个捕获组存成这个名字；之后的步骤参数和 provider 应答里用 `{saved.名字}` 引用。存下来的值不进产物，两侧各存各的。
 
-字符串里可用 `{ROOT}` `{HOME}` `{PILOT_HOME}` `{PROJECT}` `{MOCK}` `{GATEWAY}` `{TOKEN}`。
+字符串里可用 `{ROOT}` `{HOME}` `{PILOT_HOME}` `{PROJECT}` `{MOCK}` `{GATEWAY}` `{TOKEN}`。另有 `{SIDECAR}`：本侧 agent loop sidecar 的启动命令行（shell 写法，基线是 `node …/pilotdeck-agent-loop-sidecar.js`，Rust 是 `pilotdeck-agent-loop-sidecar`），两侧的值不同，只能放进不落盘、不进输出的地方，例如场景 `env` 里 `"BBX_SIDECAR": "{SIDECAR}"`，再让 `modules.agentLoop` 的 `module-stdio-v2` 绑定以 `command: /bin/sh`、`args: [-c, 'eval "exec $BBX_SIDECAR"']` 起它（见 `modules-tools-batch-sidecar-binding`）。
 
 ## 注入错误检查
 

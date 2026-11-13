@@ -1081,14 +1081,7 @@ impl SessionTools {
             .fork
             .as_ref()
             .map_or_else(|| recorder.clone(), |scope| scope.root_recorder.clone());
-        let external_loop = self.world.external_loop_binding
-            || crate::runtime::turn::operation::explicit_external(
-                self.env
-                    .get("PILOTDECK_AGENT_LOOP_TRANSPORT")
-                    .and_then(JsValue::as_string)
-                    .map(|value| String::from_utf16_lossy(value.units()))
-                    .as_deref(),
-            );
+        let external_loop = self.world.external_loop;
         // `composeToolPorts(externalPorts.tools, nativeToolPort)`
         // (AgentSessionRuntimeBundle.ts:156-206): an external `modules.tools`
         // binding is listed and routed ahead of the session's own tools.
@@ -2073,9 +2066,12 @@ pub(super) struct ExecutionWorld {
     /// `sandboxMode`, `ProjectExecutionWorldBundle.ts:61-65`): the fs, shell
     /// and code-runtime providers behind the builtin tools.
     sandbox: crate::runtime::tools::sandbox::Sandbox,
-    /// The session config binds `modules.agentLoop` to an external module
-    /// (`createAgentLoopBindingFactory`, AgentLoopDeploymentProfile.ts:107-127).
-    external_loop_binding: bool,
+    /// The session's loop runs as an external module: a `modules.agentLoop`
+    /// binding (`createAgentLoopBindingFactory`, AgentLoopDeploymentProfile.ts:
+    /// 107-127) or an explicit stdio / tcp deployment. The assembly's
+    /// deployment decision, the same one that marks (or not) the sidecar as
+    /// the in-process loop (`pilotdeck_transport::IN_PROCESS_LOOP_ENV`).
+    external_loop: bool,
 }
 impl ExecutionWorld {
     /// The world of a child (subagent) session: shared services, but its own
@@ -2111,7 +2107,7 @@ impl ExecutionWorld {
             excluded_tools: Vec::new(),
             invocation: None,
             sandbox: Default::default(),
-            external_loop_binding: false,
+            external_loop: false,
         }
     }
 }
@@ -2170,10 +2166,9 @@ impl SessionTools {
 
     /// An external `modules.tools` binding: its catalog is composed ahead
     /// of the session's tools, one module client per session.
-    /// The session's loop runs in an external module bound by
-    /// `modules.agentLoop`.
-    pub(super) fn with_external_loop_binding(mut self, external: bool) -> Self {
-        self.world.external_loop_binding = external;
+    /// The session's loop runs as an external module (see the field).
+    pub(super) fn with_external_loop(mut self, external: bool) -> Self {
+        self.world.external_loop = external;
         self
     }
 
