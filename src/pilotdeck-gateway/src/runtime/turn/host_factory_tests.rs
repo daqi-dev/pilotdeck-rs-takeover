@@ -1244,6 +1244,7 @@ struct PausedHostCleanup {
     registry: Arc<ProjectRuntimeRegistry>,
     runtime: Arc<ProjectRuntime>,
     release: Arc<Notify>,
+    disposal: Mutex<Option<tokio::task::JoinHandle<RuntimeResult>>>,
 }
 impl Drop for PausedHostCleanup {
     fn drop(&mut self) {
@@ -1288,6 +1289,7 @@ impl PausedHostCleanup {
             registry,
             runtime,
             release,
+            disposal: Mutex::new(None),
         };
         let mut turn = session
             .submit_turn_for_test(
@@ -1313,9 +1315,18 @@ impl PausedHostCleanup {
             Some(&"user_prompt_submitted".into())
         );
         drive_to_peer(turn.as_mut(), &pid_file, true).await;
-        session.dispose().await.unwrap();
-        drop(turn);
+        // Disposal now correctly joins the real external finalizer. Keep its
+        // waiter owned while this fixture deliberately holds handler.dispose;
+        // awaiting it here would require the later observer to release a gate
+        // before this constructor could return that observer its fixture.
+        let disposal = tokio::spawn(async move { session.dispose().await });
         bounded_liveness(entered.notified()).await;
+        assert!(
+            !disposal.is_finished(),
+            "real disposal waits for held handler cleanup"
+        );
+        *cleanup.disposal.lock().unwrap() = Some(disposal);
+        drop(turn);
         assert_peer_reaped(&pid_file).await;
         assert_eq!(cleanup.runtime.lease_count(), 1, "disposer owns the lease");
         cleanup
@@ -1323,6 +1334,16 @@ impl PausedHostCleanup {
 
     async fn finish(&self) {
         self.release.notify_one();
+        let disposal = self
+            .disposal
+            .lock()
+            .unwrap()
+            .take()
+            .expect("owned disposal waiter");
+        bounded_liveness(disposal)
+            .await
+            .expect("disposal task joined")
+            .expect("real disposal completed");
         wait_for_lease_release(&self.runtime).await.unwrap();
         assert_eq!(self.runtime.lease_count(), 0);
         bounded(self.registry.dispose()).await.unwrap();
@@ -1347,7 +1368,7 @@ async fn lease_wait_observes_delayed_host_cleanup() {
     let mut waiting = Box::pin(wait_for_lease_release(&cleanup.runtime));
     assert_pending(waiting.as_mut()).await;
     // The gate, not scheduler load, keeps the old instantaneous assertion at 1.
-    println!("#842: dispose returned, child reaped, gated lease_count=1; waiter Pending");
+    println!("#842: dispose pending, child reaped, gated lease_count=1; observer Pending");
     cleanup.release.notify_one();
     bounded(waiting).await.unwrap();
     assert_eq!(cleanup.runtime.lease_count(), 0);
@@ -2658,4 +2679,31 @@ async fn dispose_between_prepared_host_and_owner_install_never_starts_journal() 
     );
     assert_eq!(runtime.lease_count(), 0);
     bounded(registry.dispose()).await.unwrap();
+}
+
+#[tokio::test]
+async fn journal_owner_capability_follows_actual_deployment_without_connecting() {
+    for (deployment, expected) in [
+        (Deployment::Native, false),
+        (peer("success", None), true),
+        (
+            Deployment::Tcp {
+                host: "127.0.0.1".into(),
+                port: 9,
+                connect_timeout_ms: Some(1),
+            },
+            true,
+        ),
+    ] {
+        let scratch = Scratch::new();
+        let registry = registry(&scratch);
+        let factory = factory(registry.clone(), deployment, None);
+        let host = factory.create(&identity(), test_recorder()).await.unwrap();
+        assert_eq!(
+            host.operation_journal, expected,
+            "only actual SessionJournal attachment enables deferred ownership"
+        );
+        drop(host);
+        bounded(registry.dispose()).await.unwrap();
+    }
 }

@@ -508,6 +508,12 @@ impl TurnHostFactory {
             Err(error) => return Err(error),
         };
         let deployment = self.deployment.clone();
+        // Exactly the two branches below that attach SessionJournal own the
+        // deferred stream finalizer; the native branch has no journal port.
+        let operation_journal = matches!(
+            &deployment,
+            Deployment::Stdio { .. } | Deployment::Tcp { .. }
+        );
         let native_factory = self.native_factory.clone();
         let native_activity = self.native_activity.clone();
         let expected = self.expected_module_id.clone();
@@ -526,6 +532,7 @@ impl TurnHostFactory {
             .project_root()
             .to_path_buf();
         Ok(InteractionHost {
+            operation_journal,
             client: Box::pin(async move {
                 match deployment {
                     Deployment::Native => {

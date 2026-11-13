@@ -226,6 +226,7 @@ fn adapter_with_recorder(
         let lease = registry.acquire(None).expect("#741 notice factory lease");
         Box::pin(async move {
             Ok(InteractionHost {
+                operation_journal: false,
                 client: Box::pin(client(mode)),
                 lease,
                 router: router(&identity),
@@ -634,6 +635,7 @@ async fn host_drop_stream_immediately_resubmits_same_session_before_old_dispose(
             let lease = owner.acquire(None).unwrap();
             Box::pin(async move {
                 Ok(InteractionHost {
+                    operation_journal: false,
                     client: Box::pin(async move { Ok(client) }),
                     lease,
                     router: router(&identity),

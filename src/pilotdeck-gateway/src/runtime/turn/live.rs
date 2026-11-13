@@ -85,6 +85,7 @@ type PreparedHost = (
     Option<crate::runtime::project::interaction_events::TurnEvents>,
     Option<super::runner::PromptHooks>,
     Option<super::live_session::SessionLifecycle>,
+    bool,
 );
 type TurnHostFactory = dyn Fn(
         ExecutionIdentity,
@@ -113,6 +114,10 @@ fn null_payload_field(event: JsValue, field: &'static str) -> JsValue {
 /// observer and plan/todo ports retain per-turn state. InteractionTurn::bind
 /// only replaces the interaction handlers; it cannot sanitize these ports.
 pub struct InteractionHost {
+    /// Host-owned metadata for the actual client journal attachment, never
+    /// read from model/SDK/session configuration or sent in the wire payload.
+    #[doc(hidden)]
+    pub operation_journal: bool,
     pub client: HostFuture<HostClient>,
     pub lease: crate::runtime::project::RuntimeLease,
     pub router: crate::host::modules::ModuleRouter,
@@ -160,7 +165,7 @@ pub(super) struct SessionState {
     reload: Option<Arc<crate::runtime::session::factory::ReloadSource>>,
     reload_execution: Arc<std::sync::atomic::AtomicBool>,
     pub(super) disposed: bool,
-    external_loop: bool,
+    journal_owner_enabled: bool,
     #[cfg(test)]
     pub(super) owner_install_gate: Option<Arc<OwnerInstallGate>>,
     external_owner: Option<Arc<ExternalTurnControl>>,
@@ -213,7 +218,7 @@ impl LiveSessionAdapter {
                 let host = host_factory(recorder);
                 Box::pin(async move {
                     let (client, handler, lease) = host.await?;
-                    Ok((client, handler, lease, None, None, None, None))
+                    Ok((client, handler, lease, None, None, None, None, false))
                 })
             }),
             state: Arc::default(),
@@ -460,6 +465,7 @@ impl LiveSessionAdapter {
                 let host = factory(identity.clone(), recorder.clone(), signal.clone());
                 Box::pin(async move {
                     let mut host = host.await?;
+                    let operation_journal = host.operation_journal;
                     let cwd = host.input.permission.context.cwd.clone();
                     let transcript_path: JsString = recorder
                         .writer()
@@ -511,6 +517,7 @@ impl LiveSessionAdapter {
                         events,
                         prompt_hooks,
                         lifecycle,
+                        operation_journal,
                     ))
                 })
             }),
@@ -580,7 +587,7 @@ impl LiveSession for LiveSessionAdapter {
                     ));
                 }
             }
-            state.external_loop = !self.in_process_loop;
+            state.journal_owner_enabled = false;
             state.external_owner = None;
             state.active = Some(cancellation.clone());
             state.signal = signal.clone();
@@ -667,10 +674,20 @@ impl LiveSession for LiveSessionAdapter {
         let (session_sender, session_ready) = oneshot::channel();
         let session_id = identity.session_id.clone();
         let session_owner = active.clone();
+        let prepared_state = self.state.clone();
         let turn = LiveTurnStream {
             callback_cancel: Some(cancellation.clone()),
             execution: Some(Box::pin(async move {
-                let (client, inner, lease, manifest, interaction_events, prompt_hooks, lifecycle) = tokio::select! {
+                let (
+                    client,
+                    inner,
+                    lease,
+                    manifest,
+                    interaction_events,
+                    prompt_hooks,
+                    lifecycle,
+                    operation_journal,
+                ) = tokio::select! {
                     biased;
                     _ = cancellation.cancelled(), if !crate::mutants::on("gates-factory-ready-priority") => {
                         return Ok(ExecuteResult::Aborted { terminal: None });
@@ -679,6 +696,7 @@ impl LiveSession for LiveSessionAdapter {
                     // factory call lazy so a pre-cancel never creates resources.
                     host = async { host_factory(request.identity.clone(), recorder.clone(), signal).await } => host?,
                 };
+                prepared_state.lock().unwrap().journal_owner_enabled = operation_journal;
                 let session_steer = lifecycle
                     .as_ref()
                     .and_then(super::live_session::SessionLifecycle::steer);
@@ -1030,7 +1048,7 @@ impl LiveTurn for OwnedLiveTurn {
 }
 impl LiveTurnStream {
     pub(super) fn into_session_turn(self, state: &Arc<Mutex<SessionState>>) -> Box<dyn LiveTurn> {
-        if !state.lock().unwrap().external_loop {
+        if !state.lock().unwrap().journal_owner_enabled {
             return Box::new(self);
         }
         let cancellation = self
