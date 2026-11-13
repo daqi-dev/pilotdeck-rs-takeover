@@ -1,0 +1,593 @@
+{
+ "name": "cfg-builtin-property-keys",
+ "about": "配置里出现与 Object.prototype 成员同名的键（constructor、toString、valueOf、hasOwnProperty、isPrototypeOf、toLocaleString、__lookupGetter__、__proto__）：provider 名（catalog 查找抛 TypeError）、选择串里的 provider 段（agent.model / subagents.default / memory.model / router.scenarios.default / fallback / tokenSaver.judge / stats 的 baselineModel 与定价键，providers[x].models 抛 TypeError）、选择串里的模型段（memory.model / subagents.default / scenarios.default / 定价键照常通过）、自有的模型键与 alwaysOn 键（照常工作）、没有模型的同名 provider（被排除后照常）。每份配置起一次 server 并跑一轮，比启动输出、退出码和这一轮的帧。agent.model 的模型段同名（基线启动成功、每轮报 reading input）不在此场景，Rust 仍明确拒绝。",
+ "server": false,
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"T\"}"
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "Got it."
+   }
+  }
+ ],
+ "files": {
+  "cfgs/provider-constructor.yaml": "schemaVersion: 1\nagent:\n  model: constructor/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    constructor:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "cfgs/provider-tostring-extra.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    toString:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "cfgs/model-tostring.yaml": "schemaVersion: 1\nagent:\n  model: bbx/toString\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        toString:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "cfgs/model-valueof-extra.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        valueOf:\n          capabilities:\n            supportsToolUse: true\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "cfgs/agent-model-builtin-provider.yaml": "schemaVersion: 1\nagent:\n  model: hasOwnProperty/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "cfgs/subagent-default-builtin.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\n  subagents:\n    default: isPrototypeOf/x\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "cfgs/memory-model-builtin.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmemory:\n  enabled: false\n  model: toString/x\n",
+  "cfgs/router-default-builtin.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nrouter:\n  scenarios:\n    default: constructor/x\n",
+  "cfgs/router-fallback-builtin.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nrouter:\n  fallback:\n    default:\n      - valueOf/x\n",
+  "cfgs/router-judge-builtin.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nrouter:\n  tokenSaver:\n    judge: toLocaleString/x\n",
+  "cfgs/stats-baseline-object-builtin.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nrouter:\n  stats:\n    baselineModel:\n      provider: __lookupGetter__\n      model: m\n",
+  "cfgs/builtin-provider-no-models.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    constructor:\n      protocol: openai\n      url: {MOCK}/v1\n      models: {}\ntelemetry:\n  enabled: false\n",
+  "cfgs/memory-model-builtin-model.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmemory:\n  enabled: false\n  model: bbx/valueOf\n",
+  "cfgs/subagent-default-builtin-model.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\n  subagents:\n    default: bbx/toString\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "cfgs/stats-pricing-builtin.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nrouter:\n  stats:\n    modelPricing:\n      toString/x:\n        input: 1\n        output: 1\n",
+  "cfgs/stats-baseline-builtin.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nrouter:\n  stats:\n    baselineModel: constructor/x\n",
+  "cfgs/router-default-builtin-model.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nrouter:\n  scenarios:\n    default: bbx/toString\n",
+  "cfgs/stats-pricing-builtin-model.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nrouter:\n  stats:\n    modelPricing:\n      bbx/valueOf:\n        input: 1\n        output: 1\n",
+  "cfgs/always-on-builtin.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nalwaysOn:\n  constructor:\n    enabled: true\n",
+  "cfgs/always-on-project-builtin.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nalwaysOn:\n  projects:\n    /tmp/x:\n      toString: 1\n",
+  "cfgs/provider-proto.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    __proto__:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n"
+ },
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/provider-constructor.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-provider-constructor",
+      "channelKey": "test",
+      "message": "hi"
+     },
+     "timeout": 15000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/provider-tostring-extra.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-provider-tostring-extra",
+      "channelKey": "test",
+      "message": "hi"
+     },
+     "timeout": 15000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/model-tostring.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-model-tostring",
+      "channelKey": "test",
+      "message": "hi"
+     },
+     "timeout": 15000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/model-valueof-extra.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-model-valueof-extra",
+      "channelKey": "test",
+      "message": "hi"
+     },
+     "timeout": 15000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/agent-model-builtin-provider.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-agent-model-builtin-provider",
+      "channelKey": "test",
+      "message": "hi"
+     },
+     "timeout": 15000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/subagent-default-builtin.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-subagent-default-builtin",
+      "channelKey": "test",
+      "message": "hi"
+     },
+     "timeout": 15000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/memory-model-builtin.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-memory-model-builtin",
+      "channelKey": "test",
+      "message": "hi"
+     },
+     "timeout": 15000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/router-default-builtin.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-router-default-builtin",
+      "channelKey": "test",
+      "message": "hi"
+     },
+     "timeout": 15000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/router-fallback-builtin.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-router-fallback-builtin",
+      "channelKey": "test",
+      "message": "hi"
+     },
+     "timeout": 15000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/router-judge-builtin.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-router-judge-builtin",
+      "channelKey": "test",
+      "message": "hi"
+     },
+     "timeout": 15000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/stats-baseline-object-builtin.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-stats-baseline-object-builtin",
+      "channelKey": "test",
+      "message": "hi"
+     },
+     "timeout": 15000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/builtin-provider-no-models.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-builtin-provider-no-models",
+      "channelKey": "test",
+      "message": "hi"
+     },
+     "timeout": 15000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/memory-model-builtin-model.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-memory-model-builtin-model",
+      "channelKey": "test",
+      "message": "hi"
+     },
+     "timeout": 15000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/subagent-default-builtin-model.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-subagent-default-builtin-model",
+      "channelKey": "test",
+      "message": "hi"
+     },
+     "timeout": 15000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/stats-pricing-builtin.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-stats-pricing-builtin",
+      "channelKey": "test",
+      "message": "hi"
+     },
+     "timeout": 15000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/stats-baseline-builtin.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-stats-baseline-builtin",
+      "channelKey": "test",
+      "message": "hi"
+     },
+     "timeout": 15000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/router-default-builtin-model.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-router-default-builtin-model",
+      "channelKey": "test",
+      "message": "hi"
+     },
+     "timeout": 15000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/stats-pricing-builtin-model.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-stats-pricing-builtin-model",
+      "channelKey": "test",
+      "message": "hi"
+     },
+     "timeout": 15000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/always-on-builtin.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-always-on-builtin",
+      "channelKey": "test",
+      "message": "hi"
+     },
+     "timeout": 15000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/always-on-project-builtin.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-always-on-project-builtin",
+      "channelKey": "test",
+      "message": "hi"
+     },
+     "timeout": 15000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/provider-proto.yaml"
+   },
+   "timeout": 20000,
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-provider-proto",
+      "channelKey": "test",
+      "message": "hi"
+     },
+     "timeout": 15000
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  }
+ ]
+}

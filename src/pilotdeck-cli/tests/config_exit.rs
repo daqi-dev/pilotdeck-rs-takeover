@@ -20,7 +20,7 @@ fn staffdeck_binding_and_host_config_still_exit_two() {
         ),
         (
             "false",
-            "schemaVersion: 1\nagent: {model: constructor/m}\nmodel: {}\n",
+            "schemaVersion: 1\nagent: {model: test/constructor}\nmodel:\n  providers:\n    test: {protocol: openai, url: \"https://model.invalid/v1\", apiKey: k, models: {m: {}}}\n",
             "config requiring JavaScript host support",
         ),
     ] {

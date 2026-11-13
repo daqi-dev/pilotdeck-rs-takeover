@@ -3,7 +3,6 @@
 mod binding;
 pub mod changes;
 mod graph;
-mod host;
 mod model;
 mod modules;
 pub mod permission;
@@ -58,7 +57,7 @@ impl Error {
         }
     }
 }
-pub(super) struct Diagnostics(pub Vec<JsValue>);
+pub(super) struct Diagnostics(pub Vec<JsValue>, Option<Error>);
 impl Diagnostics {
     fn add(&mut self, code: &str, severity: &str, message: impl Into<DiagnosticText>, path: &str) {
         let mut d = JsObject::new();
@@ -77,7 +76,20 @@ impl Diagnostics {
     fn warn(&mut self, code: &str, msg: impl Into<DiagnosticText>, path: &str) {
         self.add(code, "warning", msg, path)
     }
-    fn check(&self) -> Result<(), Error> {
+    /// Records an exception the baseline throws in the middle of a section
+    /// parser (a `TypeError` from a JavaScript property lookup). The first one
+    /// wins and is reported before any fatal diagnostic, as the throw unwinds
+    /// `loadPilotConfig` before `throwConfigErrorIfFatal` runs.
+    fn throw(&mut self, error: Error) {
+        if self.1.is_none() {
+            self.1 = Some(error);
+        }
+    }
+    fn rethrow(&mut self) -> Result<(), Error> {
+        self.1.take().map_or(Ok(()), Err)
+    }
+    fn check(&mut self) -> Result<(), Error> {
+        self.rethrow()?;
         if let Some(d) = self.0.iter().find(|d| eq(field(d, "severity"), "fatal")) {
             let mut e = Error::new(&js_string(field(d, "code")), js_string(field(d, "message")));
             e.diagnostics = self.0.clone();
@@ -230,7 +242,7 @@ fn load_project_with_files_inner<F: Files>(
     snapshot_context: Option<(f64, JsString)>,
 ) -> Result<Config, Error> {
     let path = global_config_path(&metadata.home, env);
-    let mut d = Diagnostics(vec![]);
+    let mut d = Diagnostics(vec![], None);
     let mut raw = object([]);
     let mut source_graphs = vec![];
     let full_values = snapshot_context.is_some();
@@ -344,21 +356,15 @@ fn load_project_with_files_inner<F: Files>(
         }
     }
     d.check()?;
-    if host::required(&raw) {
-        let mut error = Error::new(
-            "JS_HOST_REQUIRED",
-            "Configuration depends on JavaScript host intrinsic state.",
-        );
-        error.requires_host = true;
-        return Err(error);
-    }
     let providers = model::parse(field(&raw, "model"), env, &mut d)?;
     let selection = sections::agent(field(&raw, "agent"), &providers, &mut d)?;
+    d.rethrow()?;
     sections::extension(field(&raw, "extension"), &mut d);
     sections::memory(field(&raw, "memory"), &providers, &mut d)?;
     sections::gateway(field(&raw, "gateway"), &mut d);
     sections::adapters(field(&raw, "adapters"), &mut d);
     let router_enabled = router::parse(field(&raw, "router"), &providers, &selection, &mut d);
+    d.rethrow()?;
     sections::always_on(field(&raw, "alwaysOn"), &mut d)?;
     sections::cron(field(&raw, "cron"), &mut d);
     sections::tools(field(&raw, "tools"), &mut d);

@@ -2,11 +2,13 @@
 //! `validateFormDialogSchema` for `request_user_form` input and
 //! `acceptsFormDialogAnswer` for the answer a renderer submits.
 //!
-//! Only the historical PilotDeck subset is ported. A schema that opts into
-//! standards-based validation (`$schema` = Draft 2020-12) is compiled by Ajv in
-//! the baseline; this host has no such validator and refuses those schemas.
-//! Patterns use the JavaScript-pattern translation of the MCP output-schema
-//! validator; a pattern it cannot express never matches an answer.
+//! A schema that opts into standards-based validation (`$schema` = Draft
+//! 2020-12) goes through [`super::form_dialog_2020`], the port of the
+//! baseline's Ajv 2020 compile and validation. The historical PilotDeck
+//! subset is ported here. Patterns use the JavaScript-pattern translation of
+//! the MCP output-schema validator; a pattern it cannot express never matches
+//! an answer.
+use super::form_dialog_2020::{self, Refusal};
 use super::{object, string, text};
 use crate::runtime::{mcp::output_schema::JsRegex, tools::ToolError};
 use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
@@ -158,9 +160,19 @@ pub fn validate_form_dialog_schema(value: &JsValue) -> Result<(), String> {
     }
     match present(schema, "$schema") {
         Some(JsValue::String(declared)) if declared.equals_str(FORM_DIALOG_DRAFT_2020_12) => {
-            return Err(format!(
-                "schema.$schema {FORM_DIALOG_DRAFT_2020_12} is not supported by this gateway."
-            ));
+            if let Some(path) = find_external_reference(value, "$".to_owned()) {
+                return Err(format!(
+                    "{path} must use a local # reference; Gateway form dialogs never fetch remote schemas."
+                ));
+            }
+            return match form_dialog_2020::compile(value) {
+                Ok(()) => Ok(()),
+                Err(Refusal::Ajv(message)) => Err(format!(
+                    "schema must be a valid local Draft 2020-12 JSON Schema: {}",
+                    format_schema_compile_error(&message)
+                )),
+                Err(Refusal::Unsupported(message)) => Err(message),
+            };
         }
         Some(_) => {
             return Err(format!(
@@ -177,6 +189,60 @@ pub fn validate_form_dialog_schema(value: &JsValue) -> Result<(), String> {
         Some(issue) => Err(issue),
         None => Ok(()),
     }
+}
+
+/// `findExternalReference`: the first `$ref`/`$dynamicRef`/`$recursiveRef`
+/// string anywhere in the value that does not start with `#`.
+fn find_external_reference(value: &JsValue, path: String) -> Option<String> {
+    match value {
+        JsValue::Array(items) => items
+            .iter()
+            .enumerate()
+            .find_map(|(index, item)| find_external_reference(item, format!("{path}[{index}]"))),
+        JsValue::Object(object) => object.own_entries().into_iter().find_map(|(key, child)| {
+            let child_path = format!("{path}.{}", text(key));
+            let reference_key = ["$ref", "$dynamicRef", "$recursiveRef"]
+                .iter()
+                .any(|name| key.equals_str(name));
+            match child {
+                JsValue::String(reference)
+                    if reference_key && reference.units().first() != Some(&u16::from(b'#')) =>
+                {
+                    Some(child_path)
+                }
+                _ => find_external_reference(child, child_path),
+            }
+        }),
+        _ => None,
+    }
+}
+
+/// `formatSchemaCompileError`: whitespace runs collapse to one space and the
+/// text stops after 1000 UTF-16 units.
+fn format_schema_compile_error(message: &str) -> String {
+    let mut collapsed = String::with_capacity(message.len());
+    let mut in_space = false;
+    for c in message.chars() {
+        if crate::runtime::tools::js_space(c) {
+            if !in_space {
+                collapsed.push(' ');
+            }
+            in_space = true;
+        } else {
+            collapsed.push(c);
+            in_space = false;
+        }
+    }
+    let mut units = 0;
+    let mut out = String::new();
+    for c in collapsed.chars() {
+        units += c.len_utf16();
+        if units > 1_000 {
+            break;
+        }
+        out.push(c);
+    }
+    out
 }
 
 fn validate_node(value: &JsValue, path: &str, depth: usize, nodes: &mut usize) -> Option<String> {
@@ -820,7 +886,7 @@ pub fn accepts_form_dialog_answer(schema: &JsValue, value: &JsValue) -> bool {
         .and_then(JsValue::as_string)
         .is_some_and(|declared| declared.equals_str(FORM_DIALOG_DRAFT_2020_12))
     {
-        return false;
+        return record(value).is_some() && form_dialog_2020::accepts(schema, value);
     }
     let empty = JsObject::new();
     let definitions = root.get("$defs").and_then(record).unwrap_or(&empty);
