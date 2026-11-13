@@ -1,0 +1,73 @@
+{
+  "name": "proto-dump-request",
+  "about": "调试开关 PILOTDECK_DUMP_REQUEST=1（model/streaming/streamModel.ts:196-203 流式、395-402 非流式）：每次发给 provider 之前把请求体按 JSON.stringify(body, null, 2) 写到 os.tmpdir()/pilotdeck_request_<毫秒>.json，并在服务进程 stdout 打一行 [model-debug] Request dumped to <路径> (model=<模型>)。用 serve 起服务比 stdout；TMPDIR 指到 proj/dumps 下，转储文件因此落进被比较的 project 树（文件名里的毫秒时间戳由比较器归一化）。一轮带工具调用（两次流式请求）加一次标题生成（非流式）。",
+  "server": false,
+  "files": {
+    "proj/dumps/.keep": "",
+    "proj/notes.txt": "dump me\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Dump run\"}"
+      }
+    },
+    {
+      "name": "after-tool",
+      "when": [
+        "dump-1:",
+        "\"tool_call_id\":\"call_d1\""
+      ],
+      "reply": {
+        "text": "Done."
+      }
+    },
+    {
+      "name": "dump-1",
+      "when": [
+        "dump-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_d1",
+          "name": "read_file",
+          "arguments": {
+            "path": "{PROJECT}/notes.txt"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "serve": [
+        "server"
+      ],
+      "env": {
+        "PILOTDECK_DUMP_REQUEST": "1",
+        "TMPDIR": "{PROJECT}/dumps"
+      },
+      "then": [
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-dump",
+            "channelKey": "test",
+            "message": "dump-1: read the notes"
+          },
+          "timeout": 20000
+        },
+        {
+          "sleep": 800
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    }
+  ]
+}
