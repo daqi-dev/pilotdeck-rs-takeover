@@ -242,7 +242,12 @@ const mock = http.createServer(async (req, res) => {
   // killSidecar: 信号名，发给当前的 sidecar 进程；cutProxy: true，断开 TCP 代理上现有的全部连接（代理继续监听）。
   if (reply.killSidecar && sidecarProc) { try { sidecarProc.child.kill(reply.killSidecar); } catch {} }
   // killServer: 信号名，发给 "server" 起的被测服务（用来在一轮进行中让 server 消失；只发信号，不等它退出）。
-  if (reply.killServer && server && server.exitCode === null && server.signalCode === null) { try { server.kill(reply.killServer); } catch {} }
+  // killServerDelayMs：收到请求后过这么久再发（缺省立刻）。立刻发时正撞上服务端在写落盘（例如基线的运行登记锁），
+  // 留下什么取决于两侧各自的写入时机；等服务端闲下来在等模型应答时再发，比的才是「server 消失」本身。
+  if (reply.killServer) {
+    const kill = () => { if (server && server.exitCode === null && server.signalCode === null) { try { server.kill(reply.killServer); } catch {} } };
+    if (reply.killServerDelayMs) setTimeout(kill, reply.killServerDelayMs); else kill();
+  }
   if (reply.cutProxy) { for (const s of proxySockets.splice(0)) s.destroy(); }
   if (reply.status) { res.writeHead(reply.status, { 'content-type': 'application/json' }); res.end(JSON.stringify(reply.body ?? {})); return; }
   // 应答的组成：文本（text 或分块的 chunks）、推理文本（reasoning）、零到多个工具调用（tool / tools；

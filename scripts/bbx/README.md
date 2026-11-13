@@ -93,7 +93,7 @@ node scripts/bbx/status-selftest.mjs                         # 自测（假产�
 
 `cli` 步骤可以带 `until` 与 `then`：stdout 或 stderr 里出现 `until` 时（进程还在不在都行）依次执行 `then` 里的步骤，然后照常等进程退出或超时；没等到 `until` 进程就结束了时 `then` 不执行，记成空数组。用来在一个不退出的 CLI 进程还连着 server 时做事，例如停掉 server。
 
-`{"stopServer": "SIGTERM"}`（值是信号名）给 `"server"` 起的被测服务发信号，等它退出，记下 `exitCode` 与 `signal`；15 秒不退就 SIGKILL 整个进程组，如实记成 SIGKILL。之后收尾不再停机。假 provider 的 `reply` 上写 `"killServer": "SIGKILL"` 则在命中这条规则时给 server 发这个信号（只发不等），用来让 server 在一轮进行中消失。
+`{"stopServer": "SIGTERM"}`（值是信号名）给 `"server"` 起的被测服务发信号，等它退出，记下 `exitCode` 与 `signal`；15 秒不退就 SIGKILL 整个进程组，如实记成 SIGKILL。之后收尾不再停机。假 provider 的 `reply` 上写 `"killServer": "SIGKILL"` 则在命中这条规则时给 server 发这个信号（只发不等），用来让 server 在一轮进行中消失；同时写 `"killServerDelayMs": n` 则收到请求 n 毫秒后再发（配合更长的 `delayMs`，让 server 在闲着等模型应答时消失，避开它正在写落盘的那一刻）。
 
 `cli` 和 `serve` 步骤可以带 `env`：盖在场景环境之上，值为 `null` 表示删掉该变量（例如去掉采集器默认给的 `PILOTDECK_GATEWAY_TOKEN`）。
 
