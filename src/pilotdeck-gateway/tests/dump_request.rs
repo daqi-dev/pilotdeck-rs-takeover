@@ -184,7 +184,15 @@ fn run_case(protocol: &str, enabled: Option<&str>) {
         let contents = std::fs::read_to_string(path)
             .unwrap_or_else(|error| panic!("read child-reported dump {path:?}: {error}"));
         assert_eq!(serde_json::from_str::<Value>(&contents).unwrap(), sent);
-        assert_eq!(contents, serde_json::to_string_pretty(&sent).unwrap());
+        // `JSON.stringify(body, null, 2)`: two-space indented, no trailing
+        // newline, layout only (the child reprints the sent body re-keyed, so
+        // key order is pinned by the bbx scenario env-dump-request-tmpdir).
+        assert!(contents.starts_with("{\n  \""), "{contents}");
+        assert!(!contents.ends_with('\n'));
+        assert_eq!(
+            serde_json::from_str::<Value>(&compact_json(&contents)).unwrap(),
+            sent
+        );
     } else {
         assert!(
             dumps.is_empty(),
@@ -794,4 +802,28 @@ async fn dump_child() {
     );
     assert_eq!(bodies[0]["dumpMarker"], marker);
     println!("SENT_BODY={}", bodies[0]);
+}
+
+/// The dump text with the layout whitespace (outside strings) removed.
+fn compact_json(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let (mut in_string, mut escaped) = (false, false);
+    for c in text.chars() {
+        if in_string {
+            out.push(c);
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+        } else if c == '"' {
+            in_string = true;
+            out.push(c);
+        } else if !c.is_whitespace() {
+            out.push(c);
+        }
+    }
+    out
 }
