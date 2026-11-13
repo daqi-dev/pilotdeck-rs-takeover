@@ -242,6 +242,8 @@ struct State {
     /// must end delivery without waiting for writes whose appends have not
     /// settled (#2498). `finish` sets `closed` alone, after its drain.
     hard_closed: bool,
+    /// Set by `cut_live`: appends that settle from now on are not delivered.
+    cut: bool,
 }
 struct Publication {
     state: Mutex<State>,
@@ -269,7 +271,7 @@ impl PublicationWrite {
         let mut state = lock(&publication.state);
         match result {
             Ok(()) => {
-                if !state.closed {
+                if !state.closed && !state.cut {
                     state.queue.push_back(event);
                 }
             }
@@ -492,6 +494,16 @@ impl TurnPublisher {
     /// `queue.close()` while the pending writes wait only in the pump's own
     /// `Promise.all`, never blocking delivery. The panic arm reaches this
     /// on its abort budget, where TS hangs (A7.2-TURN-PANIC-FINISH-001/-R2).
+    /// The first half of the TS timeout's `queue.close()`: from here on a
+    /// durable append that settles no longer reaches the live stream (TS
+    /// enqueues it only after its registry append, on a queue the timeout
+    /// has closed by then), while events are still recorded and appended,
+    /// and the consumer keeps waiting until `close_live`. Without a registry
+    /// TS enqueues synchronously, so nothing is cut.
+    pub fn cut_live(&self) {
+        let _pump = lock(&self.pump);
+        lock(&self.publication.state).cut = true;
+    }
     pub fn close_live(&self) {
         let _pump = lock(&self.pump);
         let mut state = lock(&self.publication.state);
