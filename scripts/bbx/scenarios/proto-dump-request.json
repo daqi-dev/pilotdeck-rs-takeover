@@ -77,6 +77,13 @@
       "paths": [
         "^\\$\\.tree\\..*/pilotdeck_request_<dump:\\d+>\\.json\\.mode$"
       ]
+    },
+    {
+      "id": "ledger-lock-dir-in-tmpdir",
+      "why": "基线 bug（会话损坏，见场景 session-two-writers-*）的修复带来的落盘：Rust 的跨进程单写者栅栏把锁文件放在 os.tmpdir() 下的 pilotdeck-ledger-locks-<uid>/ 里，锁文件只在持有时存在，空目录留下。本场景把 TMPDIR 指进了被比较的目录，所以看得到这个目录；只放过这个目录本身",
+      "paths": [
+        "^\\$\\.tree\\./proj/dumps/pilotdeck-ledger-locks-\\d+/$"
+      ]
     }
   ]
 }

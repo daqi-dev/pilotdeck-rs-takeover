@@ -8,37 +8,106 @@
   "provider": [
     {
       "name": "title",
-      "when": ["Generate a concise title"],
-      "reply": { "text": "{\"title\": \"Two writers\"}" }
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Two writers\"}"
+      }
     },
     {
       "name": "main",
-      "reply": { "text": "ok." }
+      "reply": {
+        "text": "ok."
+      }
     }
   ],
   "steps": [
     {
-      "serve": ["server"],
+      "serve": [
+        "server"
+      ],
       "then": [
-        { "ws": "submit_turn", "params": { "sessionKey": "s-two", "channelKey": "cli", "message": "a-1" } },
         {
-          "serve": ["server"],
-          "env": { "PILOTDECK_GATEWAY_PORT": "38413" },
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-two",
+            "channelKey": "cli",
+            "message": "a-1"
+          }
+        },
+        {
+          "serve": [
+            "server"
+          ],
+          "env": {
+            "PILOTDECK_GATEWAY_PORT": "38413"
+          },
           "then": [
-            { "cli": ["resume", "s-two", "b-1"], "env": { "PILOTDECK_GATEWAY_PORT": "38413" } }
+            {
+              "cli": [
+                "resume",
+                "s-two",
+                "b-1"
+              ],
+              "env": {
+                "PILOTDECK_GATEWAY_PORT": "38413"
+              }
+            }
           ]
         },
-        { "ws": "submit_turn", "params": { "sessionKey": "s-two", "channelKey": "cli", "message": "a-2" } },
-        { "disconnect": true }
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-two",
+            "channelKey": "cli",
+            "message": "a-2"
+          }
+        },
+        {
+          "disconnect": true
+        }
       ]
     },
     {
-      "serve": ["server"],
+      "serve": [
+        "server"
+      ],
       "then": [
-        { "connect": true },
-        { "ws": "read_session_messages", "params": { "sessionKey": "s-two" } },
-        { "ws": "submit_turn", "params": { "sessionKey": "s-two", "channelKey": "cli", "message": "a-3" } },
-        { "disconnect": true }
+        {
+          "connect": true
+        },
+        {
+          "ws": "read_session_messages",
+          "params": {
+            "sessionKey": "s-two"
+          }
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-two",
+            "channelKey": "cli",
+            "message": "a-3"
+          }
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    }
+  ],
+  "accepted": [
+    {
+      "id": "second-writer-rejected-not-corrupting",
+      "why": "基线 bug（会话损坏）：同一会话先后有两个进程写入时，基线每个进程用内存里的序号追加、不重读文件（JsonlSessionPersistence.ts:20-37、SessionRuntime.ts:64），序号重复，之后任何进程续这个会话都报「Session event sequence must increase strictly」，重启也恢复不了。Rust 用跨进程单写者栅栏拒绝第二个写者（对外是 gateway_submit_failed「Session writer is still draining; retry session recreation.」），会话文件完好、之后续写正常。从被拒那一步起两侧走向不同，所以放过的范围宽：被拒的那一步与其后步骤的输出、这个会话的文件与投影、运行记录、发给 provider 的请求。拿掉栅栏后这些路径大多不再有差异，比较器会把没命中的登记报为过期，场景照样判不一致；Rust 拒绝时的输出形状由单元测试守住，对拍看不出它被改坏",
+      "paths": [
+        "^\\$\\.steps\\[0\\]\\.then\\[1\\]\\.then\\[0\\]\\.cli\\.",
+        "^\\$\\.steps\\[1\\]\\.serve\\.",
+        "^\\$\\.steps\\[1\\]\\.then\\[[12]\\]\\.frames",
+        "^\\$\\.tree\\..*/chats/s-two\\.jsonl\\.",
+        "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.",
+        "^\\$\\.provider\\.main"
       ]
     }
   ]
