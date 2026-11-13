@@ -6,9 +6,9 @@
 //! (evidence/CORE01-reactive-source-expectations-independent-a6 §B, OPEN-5).
 use super::*;
 use crate::ports::{
-    BudgetStage, Cancellation, CompactionCommit, CompactionIntent, CompactionTrigger,
-    ExecutionHints, OutputLimitScope, RecoveryDecision, RequestProjection, Route,
-    RuntimeContextSurface, StreamChunk, StreamEvent,
+    BudgetStage, Cancellation, CompactionCommit, CompactionIntent, ExecutionHints,
+    OutputLimitScope, RecoveryDecision, RequestProjection, Route, RuntimeContextSurface,
+    StreamChunk, StreamEvent,
 };
 use crate::{ToolContent, ToolExecutionResult, ToolResultDisposition};
 use pilotdeck_protocol::model::{PreparedWireRequest, ProviderEcho, ToolCall};
@@ -499,7 +499,7 @@ impl TurnPreparationPort for Preparation {
             session_id: Some(parameters.input.session_id.clone()),
             turn_id: Some(parameters.input.turn_id.clone()),
             stage: BudgetStage::Recovery,
-            trigger: CompactionTrigger::Auto,
+            trigger: None,
             messages: parameters.messages.to_vec(),
             max_context_tokens: Some(
                 self.compaction_token_limits(parameters.config, parameters.target, false)

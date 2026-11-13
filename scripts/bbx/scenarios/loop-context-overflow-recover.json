@@ -1,0 +1,121 @@
+{
+  "name": "loop-context-overflow-recover",
+  "about": "provider 报上下文超长、恢复一次后成功（loop-model-errors 里没有这两种码：provider 一直回这类错误时 truncate_head_and_retry 没有次数上限，见 context/recovery/ContextOverflowRecovery.ts:66-74 与 agent/loop/AgentLoop.ts:1561-1575）。会话先有一轮正常对话（带标记 MARK1），第二轮的请求只要还带着 MARK1 就报错；恢复把历史压掉后请求里不再有 MARK1，provider 回正常文本。c-ptl：400「prompt is too long」→ model/errors/normalizeModelError.ts:146 prompt_too_long；c-ovf：400「maximum context length」→ 175 行 context_overflow；两者 recoverableViaCompact（75）→ ContextOverflowRecovery.decide 给 compact_and_retry（第一次）→ AgentLoop.ts:1476-1559 压缩（摘要请求带 internal-compaction-control）后 turn_continued(model_error) 重试。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Overflow\"}"
+      }
+    },
+    {
+      "name": "summary",
+      "when": [
+        "internal-compaction-control"
+      ],
+      "reply": {
+        "text": "<summary>Earlier the user said hello.</summary>"
+      }
+    },
+    {
+      "name": "ptl-error",
+      "when": [
+        "c-ptl second:",
+        "MARK1"
+      ],
+      "reply": {
+        "status": 400,
+        "body": {
+          "error": {
+            "message": "prompt is too long: 70000 tokens > 65536 maximum",
+            "type": "invalid_request_error"
+          }
+        }
+      }
+    },
+    {
+      "name": "ovf-error",
+      "when": [
+        "c-ovf second:",
+        "MARK1"
+      ],
+      "reply": {
+        "status": 400,
+        "body": {
+          "error": {
+            "message": "This model's maximum context length is 65536 tokens. Please reduce the length of the messages.",
+            "type": "invalid_request_error"
+          }
+        }
+      }
+    },
+    {
+      "name": "second-ok",
+      "when": [
+        "second:"
+      ],
+      "reply": {
+        "text": "Recovered after overflow."
+      }
+    },
+    {
+      "name": "first",
+      "when": [
+        "MARK1"
+      ],
+      "reply": {
+        "text": "Hello back."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ptl",
+        "channelKey": "test",
+        "message": "MARK1 hello"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ptl",
+        "channelKey": "test",
+        "message": "c-ptl second: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ovf",
+        "channelKey": "test",
+        "message": "MARK1 hello"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ovf",
+        "channelKey": "test",
+        "message": "c-ovf second: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-ptl"
+      }
+    }
+  ]
+}

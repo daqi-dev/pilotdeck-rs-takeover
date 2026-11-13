@@ -81,6 +81,12 @@ pub struct Handler {
     identity: Option<ContextRequestIdentity>,
     config: JsObject,
     signal: Option<Cancellation>,
+    /// The loop is the gateway's own built-in one, which the baseline runs
+    /// in-process: there is no sidecar dispatcher, so its prepared-request
+    /// contract (`dispatcher:337-339`) does not apply. In-process the
+    /// recovery-stage compaction (`AgentLoop.ts:1521-1544`) builds its budget
+    /// request without a prepared invocation and evaluates it unmaterialized.
+    in_process: bool,
 }
 impl Handler {
     pub fn new(
@@ -95,6 +101,7 @@ impl Handler {
             identity: Some(identity),
             config,
             signal,
+            in_process: false,
         }
     }
     /// An installed context module whose composition carried no execution port
@@ -113,7 +120,13 @@ impl Handler {
             identity: Some(identity),
             config,
             signal,
+            in_process: false,
         }
+    }
+    /// See the `in_process` field.
+    pub fn as_in_process(mut self) -> Self {
+        self.in_process = true;
+        self
     }
     /// Whether composition installed a context module. TS registers the
     /// handler only for an installed module (`dispatcher:190-195`); the
@@ -187,6 +200,7 @@ impl Handler {
             .as_ref()
             .and_then(|p| p.evaluate_request_budget.clone());
         let model = model.clone();
+        let in_process = self.in_process;
         Box::pin(async move {
             let name = operation?;
             if name.equals_str("try_auto_compact") {
@@ -263,7 +277,8 @@ impl Handler {
                             ));
                         }
                         let stage = get(&input.fields, "budgetStage");
-                        if model.materializer.is_some()
+                        if !in_process
+                            && model.materializer.is_some()
                             && !is(&stage, "pre_route")
                             && prepared.is_none()
                         {

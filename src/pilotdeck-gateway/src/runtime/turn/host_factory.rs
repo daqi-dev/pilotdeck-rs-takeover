@@ -459,11 +459,14 @@ impl TurnHostFactory {
             .acquire(self.project_root.as_deref())
             .map_err(|error| HostError::new(HostErrorKind::Protocol, error.message))?;
         let ports = (self.ports)(identity, recorder, signal);
-        let (router, input, lease) = match Self::assemble(lease, identity, ports).await {
+        let (mut router, input, lease) = match Self::assemble(lease, identity, ports).await {
             Ok(value) => value,
             // `assemble` owns (and therefore drops) the lease on error.
             Err(error) => return Err(error),
         };
+        if self.in_process_loop {
+            router.context = std::mem::take(&mut router.context).as_in_process();
+        }
         let expected = self.expected_module_id.clone();
         let limits = self.limits;
         let external = self.external_loop;
