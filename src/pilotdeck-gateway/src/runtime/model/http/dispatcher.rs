@@ -34,7 +34,13 @@ enum Source {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Mode {
     Direct,
-    Proxy { source: Source, url: String },
+    Proxy {
+        source: Source,
+        url: String,
+    },
+    /// A proxy was asked for but its URL is unusable: requests that would go
+    /// through it fail instead of going direct (see [`apply_proxy`]).
+    Refusing,
 }
 
 /// One installed dispatcher: what connections opened from now on use.
@@ -120,7 +126,7 @@ pub fn install_global_proxy(explicit_url: Option<&str>, lookup: &dyn Fn(&str) ->
         }) if *installed == source && *installed_url == url => return,
         _ => {}
     }
-    apply_proxy(&url, source, None, lookup);
+    apply_proxy(&url, source, None, lookup, false);
 }
 
 /// `reinstallGlobalProxy(proxy?.url, proxy?.noProxy)` (proxy.ts:92-102), the
@@ -130,7 +136,7 @@ pub fn install_global_proxy(explicit_url: Option<&str>, lookup: &dyn Fn(&str) ->
 pub fn reinstall_global_proxy(url: Option<&str>, extra_no_proxy: Option<&str>) {
     match url.filter(|url| !url.is_empty()) {
         None => apply_direct(true),
-        Some(url) => apply_proxy(url, Source::Config, extra_no_proxy, &process_env),
+        Some(url) => apply_proxy(url, Source::Config, extra_no_proxy, &process_env, true),
     }
 }
 
@@ -152,12 +158,25 @@ fn apply_direct(log_removal: bool) {
 }
 
 /// `applyGlobalProxy` (proxy.ts:122-147): a URL undici's agent rejects logs
-/// a warning and leaves the installed dispatcher as it was.
+/// the same warning as the baseline. What happens next deliberately differs
+/// from the baseline, which always leaves the installed dispatcher as it was
+/// (direct when nothing was installed): registered difference
+/// A6.5-MCP-PROXY-FALLBACK-001-R1/R2 (human-approved) — a configured proxy
+/// must not silently turn into direct traffic.
+/// - Startup (`reload == false`): a structurally invalid URL or unsupported
+///   protocol installs a refusing dispatcher; a URL that is fine except for
+///   its userinfo keeps the baseline (dispatcher untouched, i.e. direct). A
+///   refusing dispatcher does not block the later `proxy.url` install, as the
+///   baseline's failed env install does not.
+/// - Reload (`reload == true`): a working proxy already installed stays (as in
+///   the baseline); otherwise (direct, or already refusing) the dispatcher
+///   becomes refusing. A later valid URL or a removed `proxy` section recovers.
 fn apply_proxy(
     url: &str,
     source: Source,
     extra_no_proxy: Option<&str>,
     lookup: &dyn Fn(&str) -> Option<String>,
+    reload: bool,
 ) {
     let extra = extra_no_proxy.filter(|value| !value.is_empty());
     match ProxyConfig::for_install(url, extra, lookup) {
@@ -181,6 +200,21 @@ fn apply_proxy(
                 "[proxy] Failed to install global proxy ({url}): {}",
                 error.message()
             );
+            let refuse = if reload {
+                current()
+                    .proxy
+                    .as_ref()
+                    .is_none_or(|proxy| proxy.is_refusing())
+            } else {
+                matches!(error, super::ProxyParseError::Configuration(_))
+            };
+            if refuse {
+                install(
+                    &mut state(),
+                    Mode::Refusing,
+                    Some(ProxyConfig::refusing(extra, lookup)),
+                );
+            }
         }
     }
 }
@@ -296,6 +330,36 @@ mod tests {
         reinstall_global_proxy(None, None);
         assert!(current().proxy.is_none());
         assert!(current().generation > before);
+        // A-R1: an unusable URL with nothing installed refuses (the baseline
+        // stays direct), and a later valid URL recovers.
+        reinstall_global_proxy(Some("http://127.0.0.1:4/sub"), None);
+        assert!(current().proxy.as_ref().is_some_and(|p| p.is_refusing()));
+        reinstall_global_proxy(Some("http://u:%zz@127.0.0.1:4"), None);
+        assert!(current().proxy.as_ref().is_some_and(|p| p.is_refusing()));
+        reinstall_global_proxy(Some("http://127.0.0.1:5"), None);
+        assert_eq!(proxy_url().as_deref(), Some("http://127.0.0.1:5/"));
+    }
+
+    #[test]
+    fn startup_structural_errors_refuse_and_userinfo_errors_go_direct() {
+        // A structurally invalid env URL refuses, but does not block the
+        // server's `proxy.url` (the baseline's failed env install does not).
+        install_global_proxy(None, &env(&[("HTTPS_PROXY", "not a url")]));
+        let refusing = current();
+        assert!(refusing.proxy.as_ref().is_some_and(|p| p.is_refusing()));
+        let loopback: hyper::Uri = "http://127.0.0.1:1/".parse().unwrap();
+        let remote: hyper::Uri = "http://[::1]:1/".parse().unwrap();
+        assert!(!refusing.proxy.as_ref().unwrap().should_proxy(&loopback));
+        assert!(refusing.proxy.as_ref().unwrap().should_proxy(&remote));
+        install_global_proxy(Some("http://127.0.0.1:6"), &env(&[]));
+        assert_eq!(proxy_url().as_deref(), Some("http://127.0.0.1:6/"));
+    }
+
+    #[test]
+    fn startup_userinfo_only_errors_stay_direct() {
+        install_global_proxy(None, &env(&[]));
+        install_global_proxy(Some("http://u:%zz@127.0.0.1:7"), &env(&[]));
+        assert!(current().proxy.is_none());
     }
 
     #[test]

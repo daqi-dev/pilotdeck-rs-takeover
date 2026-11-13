@@ -1,6 +1,6 @@
 {
  "name": "hot-reload-proxy",
- "about": "配置热重载 · 代理（src/cli/pilotdeck.ts:148-151 → src/cli/proxy.ts:92-147 reinstallGlobalProxy）：server 运行中由模型的 bash 改写配置文件（ConfigStore 监视、去抖后重载）。第一段：起始 proxy.url=A（启动日志）→ 换成 B 并带 noProxy '[::1]:38417'（日志带 noProxy；之后模型请求新建到 B 的 CONNECT，[::1]:38417 的 HTTP hook 直连被拒）→ 删掉 proxy 段（[proxy] Global fetch proxy removed；模型请求直连被拒、错误事件）→ 恢复 A（新的 CONNECT）→ 只改无关键（不重装、隧道复用、没有新 CONNECT）→ 字符串写法的同一个 URL（规范化后 proxy 没变）。第二段：环境变量 HTTPS_PROXY=B 在启动时压过配置 A；热重载把 A 加 noProxy 写进去时配置压过环境变量；改成 undici 拒绝的 URL（带路径）只打警告、原来的代理照用；删掉 proxy 段后即使有环境变量也直连。每段比 serve 的 stdout / stderr、假代理按段收到的 CONNECT（目标、头）、模型与 hook 的结果。目标都是 [::1] 上的端口（没人监听，直连立刻被拒），代理是采集器在 127.0.0.1 上起的假代理，不外连。",
+ "about": "配置热重载 · 代理（src/cli/pilotdeck.ts:148-151 → src/cli/proxy.ts:92-147 reinstallGlobalProxy）：server 运行中由模型的 bash 改写配置文件（ConfigStore 监视、去抖后重载）。第一段：起始 proxy.url=A（启动日志）→ 换成 B 并带 noProxy '[::1]:38417'（日志带 noProxy；之后模型请求新建到 B 的 CONNECT，[::1]:38417 的 HTTP hook 直连被拒）→ 删掉 proxy 段（[proxy] Global fetch proxy removed；模型请求直连被拒、错误事件）→ 直连状态下改成 undici 拒绝的 URL（带路径；stderr 警告；基线继续直连，Rust 按已接受差异 invalid-proxy-fails-closed 拒绝）→ 恢复 A（新的 CONNECT）→ 只改无关键（不重装、隧道复用、没有新 CONNECT）→ 字符串写法的同一个 URL（规范化后 proxy 没变）。第二段：环境变量 HTTPS_PROXY=B 在启动时压过配置 A；热重载把 A 加 noProxy 写进去时配置压过环境变量；改成 undici 拒绝的 URL（带路径）只打警告、原来的代理照用；删掉 proxy 段后即使有环境变量也直连。每段比 serve 的 stdout / stderr、假代理按段收到的 CONNECT（目标、头）、模型与 hook 的结果。目标都是 [::1] 上的端口（没人监听，直连立刻被拒），代理是采集器在 127.0.0.1 上起的假代理，不外连。",
  "server": false,
  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    far:\n      protocol: openai\n      url: http://[::1]:38416/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nproxy:\n  url: http://127.0.0.1:38415\n",
  "files": {
@@ -67,6 +67,21 @@
    }
   },
   {
+   "name": "write-bad",
+   "when": [
+    "write bad:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_bad",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/bad.yaml {HOME}/.pilotdeck/pilotdeck.yaml"
+     }
+    }
+   }
+  },
+  {
    "name": "write-a",
    "when": [
     "write a:"
@@ -127,21 +142,6 @@
    }
   },
   {
-   "name": "write2-bad",
-   "when": [
-    "write2 bad:"
-   ],
-   "reply": {
-    "tool": {
-     "id": "call2_bad",
-     "name": "bash",
-     "arguments": {
-      "command": "cp {ROOT}/cfgs/bad.yaml {ROOT}/cfgs/live2.yaml"
-     }
-    }
-   }
-  },
-  {
    "name": "write2-none",
    "when": [
     "write2 none:"
@@ -152,6 +152,21 @@
      "name": "bash",
      "arguments": {
       "command": "cp {ROOT}/cfgs/none.yaml {ROOT}/cfgs/live2.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "write2-bad",
+   "when": [
+    "write2 bad:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call2_bad",
+     "name": "bash",
+     "arguments": {
+      "command": "(sleep 1; cp {ROOT}/cfgs/bad.yaml {ROOT}/cfgs/live2.yaml) >/dev/null 2>&1 &"
      }
     }
    }
@@ -339,6 +354,74 @@
       "sessionKey": "h3",
       "channelKey": "test",
       "message": "hook 3",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "w2b",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w2b",
+      "channelKey": "test",
+      "message": "write bad:"
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 1500
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "ws": "session_model_set",
+     "params": {
+      "sessionKey": "p3b",
+      "projectKey": "{PILOT_HOME}",
+      "selection": {
+       "mode": "model",
+       "provider": "far",
+       "model": "deterministic"
+      }
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p3b",
+      "channelKey": "test",
+      "message": "probe 3b"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h3b",
+      "channelKey": "test",
+      "message": "hook 3b",
       "sdkSessionConfig": {
        "hooks": {
         "url": "http://[::1]:38417/hooks",
@@ -712,7 +795,7 @@
      "params": {
       "sessionKey": "x2",
       "channelKey": "test",
-      "message": "write2 bad:"
+      "message": "write2 none:"
      },
      "timeout": 25000
     },
@@ -780,7 +863,7 @@
      "params": {
       "sessionKey": "x3",
       "channelKey": "test",
-      "message": "write2 none:"
+      "message": "write2 a-np:"
      },
      "timeout": 25000
     },
@@ -837,8 +920,101 @@
      "proxyLog": true
     },
     {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "x4",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "x4",
+      "channelKey": "test",
+      "message": "write2 bad:"
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 1500
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "sleep": 2000
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "ws": "session_model_set",
+     "params": {
+      "sessionKey": "p11",
+      "projectKey": "{PILOT_HOME}",
+      "selection": {
+       "mode": "model",
+       "provider": "far",
+       "model": "deterministic"
+      }
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p11",
+      "channelKey": "test",
+      "message": "probe 11"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h11",
+      "channelKey": "test",
+      "message": "hook 11",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
      "disconnect": true
     }
+   ]
+  }
+ ],
+ "accepted": [
+  {
+   "id": "invalid-proxy-fails-closed",
+   "why": "热重载时原本直连（上一步删掉了 proxy 段），新配置写了 undici 拒绝的地址（http://127.0.0.1:38418/sub）：基线 reinstallGlobalProxy 打 stderr 警告后保持直连（src/cli/proxy.ts:92-147），之后模型请求直连 [::1] 被拒，错误码 connection_refused。Rust 打同一行警告，但把进程级代理状态置为拒绝：本该走代理的请求明确失败，模型错误码 proxy_error（network_proxy_error），文案同为 fetch failed；之前有可用代理时的非法热重载（第二段）两侧都保留旧代理，照常比较。依据：已接受差异 A6.5-MCP-PROXY-FALLBACK-001-R1/R2（2026-10-25 人批：代理必须生效，非法或不支持时保留旧代理或明确失败；2026-10-31 登记）。只放过这一步之后 probe 3b 那轮模型请求的错误码及由它直接写下的会话记录、投影、运行登记。",
+   "paths": [
+    "^\\$\\.steps\\[0\\]\\.then\\[30\\]\\.frames\\[7\\](\\.|\\[|$)",
+    "^\\$\\.steps\\[0\\]\\.then\\[30\\]\\.frames\\[8\\](\\.|\\[|$)",
+    "^\\$\\.steps\\[0\\]\\.then\\[30\\]\\.frames\\[10\\](\\.|\\[|$)",
+    "^\\$\\.tree\\./home/\\.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-\\.pilotdeck/chats/p3b\\.jsonl\\.jsonl\\[14\\](\\.|\\[|$)",
+    "^\\$\\.tree\\./home/\\.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-\\.pilotdeck/chats/p3b\\.jsonl\\.jsonl\\[16\\](\\.|\\[|$)",
+    "^\\$\\.tree\\./home/\\.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-\\.pilotdeck/chats/p3b\\.jsonl\\.jsonl\\[18\\](\\.|\\[|$)",
+    "^\\$\\.tree\\./home/\\.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-\\.pilotdeck/chats/p3b\\.jsonl\\.projections\\.json\\.json\\.projections\\.agent-transcript\\.conversation\\.state\\.entries\\[2\\](\\.|\\[|$)",
+    "^\\$\\.tree\\./home/\\.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-\\.pilotdeck/chats/p3b\\.jsonl\\.projections\\.json\\.json\\.projections\\.web-history\\.agent-statuses\\.state\\[1\\](\\.|\\[|$)",
+    "^\\$\\.tree\\./home/\\.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-\\.pilotdeck/chats/p3b\\.jsonl\\.projections\\.json\\.json\\.projections\\.web-history\\.turn-errors\\.state\\.entries\\[0\\](\\.|\\[|$)",
+    "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.json\\.events\\.\u0000p3b\u0000<uuid:19>\\[7\\](\\.|\\[|$)",
+    "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.json\\.events\\.\u0000p3b\u0000<uuid:19>\\[8\\](\\.|\\[|$)"
    ]
   }
  ]

@@ -756,6 +756,49 @@ impl ProxyConfig {
         }
         let authorization = proxy_authorization(&proxy).map_err(|_| ProxyParseError::Userinfo)?;
         Self::structure(&proxy)?;
+        let (no_proxy, entries) = Self::no_proxy_entries(user_no_proxy, extra_no_proxy);
+        Ok(Self {
+            proxy: Some(proxy),
+            no_proxy,
+            entries,
+            authorization,
+        })
+    }
+
+    /// A dispatcher that refuses every request it would have sent through a
+    /// proxy (registered difference A6.5-MCP-PROXY-FALLBACK-001-R1): the
+    /// `noProxy` list (with `127.0.0.1` and `localhost`) is built as for a
+    /// working proxy, so those targets still connect directly; every other
+    /// target fails with "Invalid or unsupported proxy configuration; direct
+    /// connection refused" instead of silently going direct.
+    pub(crate) fn refusing(
+        extra_no_proxy: Option<&str>,
+        lookup: &dyn Fn(&str) -> Option<String>,
+    ) -> Self {
+        let user_no_proxy = PROXY_ENV_KEYS
+            .iter()
+            .skip(5)
+            .find_map(|&key| lookup(key).filter(|value| !value.is_empty()))
+            .unwrap_or_default();
+        let (no_proxy, entries) = Self::no_proxy_entries(&user_no_proxy, extra_no_proxy);
+        Self {
+            proxy: None,
+            no_proxy,
+            entries,
+            authorization: None,
+        }
+    }
+
+    /// Whether this is a [`Self::refusing`] dispatcher (no usable proxy).
+    pub(crate) fn is_refusing(&self) -> bool {
+        self.proxy.is_none()
+    }
+
+    /// `buildNoProxy` joined, and undici's parse of it.
+    fn no_proxy_entries(
+        user_no_proxy: &str,
+        extra_no_proxy: Option<&str>,
+    ) -> (String, Vec<NoProxyEntry>) {
         let no_proxy = [
             Some(user_no_proxy),
             extra_no_proxy,
@@ -800,12 +843,7 @@ impl ProxyConfig {
                 port: port.filter(|port| *port != 0),
             });
         }
-        Ok(Self {
-            proxy: Some(proxy),
-            no_proxy,
-            entries,
-            authorization,
-        })
+        (no_proxy, entries)
     }
 
     /// `EnvHttpProxyAgent.#shouldProxy` against a hyper URI.
@@ -1284,6 +1322,12 @@ fn cause_code(error: &(dyn std::error::Error + 'static)) -> Option<&'static str>
                 Some("UND_ERR_CONNECT_TIMEOUT")
             } else if cause.starts_with("getaddrinfo ENOTFOUND") {
                 Some("ENOTFOUND")
+            } else if cause.starts_with("Invalid or unsupported proxy configuration") {
+                // A refusing dispatcher (A6.5-MCP-PROXY-FALLBACK-001-R1, no
+                // baseline counterpart): classified as `network_proxy_error`
+                // (provider error code `proxy_error`), never as a timeout.
+                // The code itself stays internal; only the class is visible.
+                Some("ERR_PROXY_CONFIGURATION")
             } else {
                 None
             };
