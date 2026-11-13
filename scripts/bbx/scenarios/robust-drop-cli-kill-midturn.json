@@ -1,0 +1,101 @@
+{
+ "name": "robust-drop-cli-kill-midturn",
+ "about": "CLI run 进行中、模型还没回时被 SIGKILL（进程退出时内核对它的两条连接都发 FIN，不发 WS 关闭帧）：run 走 SDK 的 query（src/cli/sdkCli.ts:43-72；query 用自己的一条连接 packages/sdk/src/client.ts:3310 → :1160 transport.stream(\"submit_turn\")，另有一条客户端连接只用来 new_session），服务端路径与普通 WS 客户端相同，基线不中止这一轮：另一条先连上的观察连接看到 active_turn_snapshot 仍 active，由它 abort_turn 收尾（模型仍未回），会话记录落盘；观察连接上没有通知。基线依据：Node http.Server 的套接字允许半关闭（allowHalfOpen），升级后的 TextWebSocketConnection 只听 close / error，不听 end（src/gateway/server/websocket.ts:17-21）；收到关闭帧时它自己 end 掉套接字（websocket.ts:60-62、40-50），随后 close 触发 GatewayWsConnection.handleClose（src/gateway/server/GatewayWsConnection.ts:45、48-63）：对本连接发起且仍在跑的会话先 disconnectInteraction，没有挂起的询问（preserveTurn 为假，src/gateway/client/GatewayInteractionCoordinator.ts:86-95）就 abortTurn。只收到 FIN 时什么都不发生，直到服务端往这条连接写帧失败（对端已不在，回 RST，第二次写报 EPIPE）触发 error，才走同一个 handleClose。 停机：只用来 new_session 的那条连接此后再没被写过，基线 SIGTERM 停不下来（挂起 bug，已登记 accepted），Rust 正常退出。",
+ "server": false,
+ "env": {
+  "PILOTDECK_TOKEN": "{TOKEN}"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Drop run\"}"
+   }
+  },
+  {
+   "name": "slow",
+   "when": [
+    "slow-case:"
+   ],
+   "reply": {
+    "chunks": [
+     "late ",
+     "reply"
+    ],
+    "delayMs": 6000
+   }
+  }
+ ],
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 60000,
+   "then": [
+    {
+     "ws": "list_sessions",
+     "params": {}
+    },
+    {
+     "cli": [
+      "run",
+      "--channel",
+      "k01",
+      "slow-case: answer"
+     ],
+     "timeout": 3000,
+     "expectTimeout": true
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "ws": "list_sessions",
+     "params": {},
+     "save": {
+      "sk": "\"sessionId\":\"(k01:[^\"]+)\""
+     }
+    },
+    {
+     "ws": "active_turn_snapshot",
+     "params": {
+      "sessionKey": "{saved.sk}",
+      "includeEvents": false
+     }
+    },
+    {
+     "ws": "abort_turn",
+     "params": {
+      "sessionKey": "{saved.sk}"
+     }
+    },
+    {
+     "sleep": 3500
+    },
+    {
+     "ws": "read_session_messages",
+     "params": {
+      "sessionKey": "{saved.sk}"
+     }
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  }
+ ],
+ "accepted": [
+  {
+   "id": "stop-hangs-on-vanished-client",
+   "why": "基线挂起 bug：客户端不发关闭帧就消失（进程被强杀 / 只关 TCP）后，如果服务端此后没再往那条连接写过帧，它一直停在半开状态；SIGTERM 后 server.close() 等这条连接结束（src/gateway/server/GatewayServer.ts:184-186，websocket.ts:17-21 不听 end），进程永远退不出，采集器 15 秒后 SIGKILL。Rust 停机时把半开的连接当作已断开，正常退出（退出码 0，并照常打出停机时的 [telemetry] shutdown snapshot 行——基线正常停机时同样打这一行）。 跑过轮次时，正常停机还会把会话投影检查点（<会话>.jsonl.projections.json）推进到最后一条 session_metadata，基线被 SIGKILL 所以停在 turn_result；只放过检查点的位置字段（asOfSequence、anchor、isSnapshot 及原文指纹），投影内容照常比。",
+   "paths": [
+    "^\\$\\.steps\\[0\\]\\.serve\\.(exitCode|signal|stdout)$",
+    "/chats/[^/]+\\.jsonl\\.projections\\.json\\.(json\\.(asOfSequence|anchor\\.(sequence|entryId|parentEntryId|type)|projections\\.[^.]+\\.[^.]+\\.asOfSequence|projections\\.agent-transcript\\.metadata\\.state\\.isSnapshot)|raw\\.skeletons\\.[0-9a-f]+)$"
+   ]
+  }
+ ]
+}

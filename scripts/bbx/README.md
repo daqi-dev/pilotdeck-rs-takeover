@@ -53,7 +53,7 @@ node scripts/bbx/diff.mjs /tmp/a.json /tmp/b.json          # 两份基线互比�
 | `env` | 额外环境变量 |
 | `provider` | 假 provider 的应答规则，按顺序匹配请求体文本：`when` 全部包含、`unless` 全部不包含；`reply` 可以是 `{text}`、`{tool:{name,arguments}}`、`{status,body}`。规则里的字符串（含工具参数）可用下面的 `{ROOT}` 等占位符。请求按命中的规则名分组记录 |
 | `server` | `false` 表示不起服务（纯 CLI 场景） |
-| `steps` | 依次执行：`{ws, params, answer}`（`answer` 见下）、`{http: "GET /path", headers, body}`、`{cli: [参数...], stdin, cwd, env}`、`{serve: [参数...]}`（见下）、`{connect: true}`（重连；也可以给一个完整的 hello 帧）、`{disconnect: true}`（客户端主动断开）、`{sleep: 毫秒}`、`{sidecar: "start" / "stop"}` 与 `{tcpProxy: "start" / "cut"}`（见下） |
+| `steps` | 依次执行：`{ws, params, answer}`（`answer` 见下）、`{http: "GET /path", headers, body}`、`{cli: [参数...], stdin, cwd, env}`、`{serve: [参数...]}`（见下）、`{connect: true}`（重连；也可以给一个完整的 hello 帧）、`{disconnect: true}`（客户端发关闭帧断开；不发关闭帧的几种见下）、`{sleep: 毫秒}`、`{sidecar: "start" / "stop"}` 与 `{tcpProxy: "start" / "cut"}`（见下） |
 | 步骤的 `timeout` | `ws` / `http` / `cli` / `serve` 等待的毫秒数，缺省 30000 |
 | 步骤的 `expectTimeout` | `true` 表示这一步在基线上本来就会超时（如等一个采集器不回答的询问、命令常驻不退出）。只有声明了的超时不判 `INVALID`；连不上不能这样声明 |
 | `expectStartFailure` | `true` 表示 `"server"` 起的服务预期启动失败。`serve` / `cli` 步骤里进程自己退出是被比较的输出，不需要声明 |
@@ -65,7 +65,9 @@ node scripts/bbx/diff.mjs /tmp/a.json /tmp/b.json          # 两份基线互比�
 
 `cli` 和 `serve` 步骤可以带 `env`：盖在场景环境之上，值为 `null` 表示删掉该变量（例如去掉采集器默认给的 `PILOTDECK_GATEWAY_TOKEN`）。
 
-`serve` 步骤用来比常驻命令（`pilotdeck server`）自己的 stdout / stderr / 退出码，这些在 `"server"` 起的服务上属于不比较的 `serverLog`。它用 CLI 起一个进程，等 stdout 里出现 `until`（默认 `WebSocket: `），依次执行 `then` 里的步骤，然后发 `signal`（默认 `SIGTERM`）并等进程退出；15 秒不退就 SIGKILL，如实记成 `signal: "SIGKILL"`。进程没等到 `until` 就自己退出（启动失败）时不执行 `then`，照样记输出和退出码。这类场景通常写 `"server": false`；`then` 里的 `http` / `connect` 连的是固定端口 38411，所以被起的进程要监听在那里（采集器默认给了 `PILOTDECK_GATEWAY_PORT=38411`）。发信号前客户端若还连着，基线会一直等到它断开，需要比停机时先 `{disconnect: true}`。
+`serve` 步骤用来比常驻命令（`pilotdeck server`）自己的 stdout / stderr / 退出码，这些在 `"server"` 起的服务上属于不比较的 `serverLog`。它用 CLI 起一个进程，等 stdout 里出现 `until`（默认 `WebSocket: `），依次执行 `then` 里的步骤，然后发 `signal`（默认 `SIGTERM`）并等进程退出；15 秒不退就 SIGKILL，如实记成 `signal: "SIGKILL"`。进程没等到 `until` 就自己退出（启动失败）时不执行 `then`，照样记输出和退出码。这类场景通常写 `"server": false`；`then` 里的 `http` / `connect` 连的是固定端口 38411，所以被起的进程要监听在那里（采集器默认给了 `PILOTDECK_GATEWAY_PORT=38411`）。发信号前客户端若还连着，基线会一直等到它断开，需要比停机时先 `{disconnect: true}`。`then` 里的步骤同样可以 `save` 和引用 `{saved.名字}`。
+
+不发 WS 关闭帧的断开：`{disconnect: "destroy"}` 直接关掉底层 TCP（FIN，模拟客户端进程被杀），`{disconnect: "reset"}` 以 RST 断开（SO_LINGER 0），`{disconnect: "end"}` 只关写方向（半关闭：发 FIN 但照常接收服务端的帧，之后可以再 `destroy`；在那之前不要 `connect` 新连接，两条连接的帧会混在一起）。前两种结果里的 `close` 是客户端随后看到的关闭（1006）。采集器只在建 WS 连接期间、只对连向 gateway 端口的那次 `net.connect` 记下套接字，别的连接不受影响。注意基线对只收到 FIN 的连接不做任何处理（`src/gateway/server/websocket.ts:17-21` 不听 `end`），服务端此后没再写过它时停机会挂住，用 `serve` 起服务才能把这一点比进去。
 
 `sidecar` 步骤起停一个外部常驻的 agent loop sidecar（TCP 部署用）：基线是 `node dist/src/cli/pilotdeck-agent-loop-sidecar.js`，Rust 是 `pilotdeck-agent-loop-sidecar`。`{"sidecar": "start", "port": 38414, "env": {...}}` 用场景环境盖上步骤 `env` 起进程，等它在 `port` 上开始监听（进程没等到监听就退出时记下退出码、信号、stdout、stderr）；`{"sidecar": "stop", "signal": "SIGKILL"}` 给最近起的那个发信号（缺省 SIGTERM），等它退出并记下退出码、信号、stdout、stderr（15 秒不退就 SIGKILL）。场景结束时还在跑的由收尾按进程组杀掉，不记输出。sidecar 是否监听 TCP 由环境里的 `PILOTDECK_AGENT_LOOP_TCP_PORT` 决定，和 gateway 用同一套变量。
 

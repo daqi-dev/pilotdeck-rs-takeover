@@ -1,0 +1,73 @@
+{
+ "name": "robust-drop-close-frame-midturn",
+ "about": "普通 WS 客户端 submit_turn 后、模型还没回时发关闭帧断开：这一轮立刻被中止（run_get aborted / aborted_streaming，会话里没有助手回复），重连后 active_turn_snapshot 已结束，新连接上没有通知。基线依据：Node http.Server 的套接字允许半关闭（allowHalfOpen），升级后的 TextWebSocketConnection 只听 close / error，不听 end（src/gateway/server/websocket.ts:17-21）；收到关闭帧时它自己 end 掉套接字（websocket.ts:60-62、40-50），随后 close 触发 GatewayWsConnection.handleClose（src/gateway/server/GatewayWsConnection.ts:45、48-63）：对本连接发起且仍在跑的会话先 disconnectInteraction，没有挂起的询问（preserveTurn 为假，src/gateway/client/GatewayInteractionCoordinator.ts:86-95）就 abortTurn。只收到 FIN 时什么都不发生，直到服务端往这条连接写帧失败（对端已不在，回 RST，第二次写报 EPIPE）触发 error，才走同一个 handleClose。",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Drop run\"}"
+   }
+  },
+  {
+   "name": "slow",
+   "when": [
+    "slow-case:"
+   ],
+   "reply": {
+    "chunks": [
+     "late ",
+     "reply"
+    ],
+    "delayMs": 3500
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-drop",
+    "channelKey": "test",
+    "message": "slow-case: answer",
+    "runId": "run-drop"
+   },
+   "timeout": 1500,
+   "expectTimeout": true
+  },
+  {
+   "disconnect": true
+  },
+  {
+   "sleep": 300
+  },
+  {
+   "connect": true
+  },
+  {
+   "ws": "active_turn_snapshot",
+   "params": {
+    "sessionKey": "s-drop",
+    "includeEvents": false
+   }
+  },
+  {
+   "sleep": 4000
+  },
+  {
+   "ws": "run_get",
+   "params": {
+    "sessionKey": "s-drop",
+    "runId": "run-drop"
+   }
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-drop"
+   }
+  }
+ ]
+}

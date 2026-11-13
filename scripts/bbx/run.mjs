@@ -436,7 +436,17 @@ if (wantServer) {
 // ── WS 连接（惰性建立；一个场景一条连接，除非步骤要求重连）──
 // frames 是当前连接收到的帧，步骤从这里取自己的帧；allFrames 跨重连累积，收尾时从中取通知。
 let ws; let frames = []; let wake = []; const allFrames = [];
+// 不发关闭帧的断开（{disconnect: "destroy"} / {disconnect: "reset"}）要拿到 WS 底下的 TCP 套接字。
+// Node 自带的 WebSocket（undici）经 net.connect 建连：只在建连期间、只对连向 gateway 端口的那次调用记下套接字。
+let wsSocket = null; let captureWsSocket = false;
+const netConnect = net.connect;
+net.connect = function (...args) {
+  const socket = netConnect.apply(this, args);
+  if (captureWsSocket && Number(args[0]?.port) === GATEWAY_PORT) { wsSocket = socket; captureWsSocket = false; }
+  return socket;
+};
 const connect = async (hello) => {
+  wsSocket = null; captureWsSocket = true;
   ws = new WebSocket(`ws://127.0.0.1:${GATEWAY_PORT}/ws`);
   frames = [];
   const got = (f) => { frames.push(f); allFrames.push(f); wake.splice(0).forEach((w) => w()); };
@@ -444,6 +454,7 @@ const connect = async (hello) => {
   let closed = null;
   ws.onclose = (e) => { closed = { code: e.code, reason: e.reason }; got({ type: '__closed', ...closed }); };
   await new Promise((resolve) => { ws.onopen = resolve; ws.onerror = resolve; });
+  captureWsSocket = false;
   if (ws.readyState !== 1) return { connectFailed: true };
   ws.send(JSON.stringify(hello ?? { type: 'hello', protocolVersion: '1.2', clientName: 'test', clientVersion: '0.0.0', token: TOKEN }));
   return waitFrame((f) => f.type !== 'notification');
@@ -525,6 +536,22 @@ const sidecarStep = async (step) => {
 let requestSeq = 0;
 const runStep = async (step) => {
   if (step.sleep) { await sleep(step.sleep); return { slept: true }; }
+  if (step.disconnect === 'end') {
+    // 只关写方向（半关闭，发 FIN）：不发关闭帧、不再发请求，但照常接收服务端的帧。之后可以再
+    // {disconnect: "destroy"} 把这条连接彻底关掉；在那之前不要 connect 新连接（两条连接的帧会混在一起）。
+    if (!ws || ws.readyState > 1 || !wsSocket) return { disconnected: false, mode: step.disconnect };
+    wsSocket.end();
+    return { disconnected: true, mode: step.disconnect };
+  }
+  if (step.disconnect === 'destroy' || step.disconnect === 'reset') {
+    // 不发 WS 关闭帧，直接关掉底层 TCP：destroy 是普通关闭（FIN），reset 是 RST（SO_LINGER 0）。
+    // 客户端这边随后看到的关闭（undici 报 1006）照常记下。
+    if (!ws || ws.readyState > 1 || !wsSocket) return { disconnected: false, mode: step.disconnect };
+    const done = waitFrame((f) => f.type === '__closed', 5000);
+    if (step.disconnect === 'reset') wsSocket.resetAndDestroy(); else wsSocket.destroy();
+    const last = await done;
+    return { disconnected: true, mode: step.disconnect, close: last.type === '__closed' ? { code: last.code, reason: last.reason } : last };
+  }
   if (step.disconnect) {
     if (!ws || ws.readyState > 1) return { disconnected: false };
     const done = waitFrame((f) => f.type === '__closed', 5000);
@@ -602,7 +629,12 @@ const runStep = async (step) => {
     const then = [];
     if (reached) {
       await sleep(step.settleMs ?? 100);
-      for (const inner of step.then ?? []) then.push({ step: inner, ...(await runStep(inner)) });
+      // then 里的步骤同样支持 save / {saved.名字}（外层替换时还没存下的占位原样留着，这里逐步再换一次）。
+      for (const inner of step.then ?? []) {
+        const result = await runStep(withSaved(inner));
+        capture(inner.save, JSON.stringify(result));
+        then.push({ step: inner, ...result });
+      }
       child.kill(step.signal ?? 'SIGTERM');
     }
     const killer = setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }, reached ? 15000 : 0);
