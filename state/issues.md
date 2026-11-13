@@ -17,9 +17,9 @@
 | 问题 | 功能域 | 位置 / 依据 | 来源 | 状态 |
 |---|---|---|---|---|
 | `turn-steer-terminal`：轮次进行中插话（steer）后，会话文件里插话记录与本轮记录的先后与基线不同（Rust 的循环在 sidecar 里，落盘经宿主一跳）。macOS 与 cb8 都稳定差 33 处 | loop, session | 场景 `turn-steer-terminal`；cb8 验收（`6894f3dca`） | 审阅 | 待派（与 sidecar 进程内化一起评估） |
+| 子代理的 SubagentStart hook 被中止杀掉时，Rust 不写子代理自己的会话文件；基线照样写出 `turn_started` / descriptor / `accepted_input` / `turn_result`。`abort-hook-subagent-start`（稳定差 254 处）与 `abort-timeout-hook-subagent-start` 因此不一致 | agents, session | 场景同名 | 超时收尾与中止遗留的报告 | 在修（2026-11-14 派） |
+| 超时后 pump 停下时，Rust 把在途的工具 future 一起取消；基线在途的子代理继续在后台跑完、SubagentStop 照常开始（`abort-timeout-tool-agent`，基线 20/20） | agents, loop | 场景同名 | 超时收尾与中止遗留的报告 | 在修（同上一个子代理） |
 | Rust 的标题生成比基线晚约 55 ms 落盘（基线约 25 ms，Rust 约 75 ms，`turn-text` 等场景里都是）：`modules-tools-result-unknown-sidecar-binding` 因此标题记录与 `agent_loop_operation_started` 的先后和基线相反（基线 36/36，Rust 20/20 相反）。原因没查，怀疑每次请求新建 HTTP 客户端或没关 Nagle；可能与台账里「`submit_turn` 约 300 ms 对基线约 47 ms」同源 | model, session, modules | 记录的 createdAt；cb8 上的量测 | Linux 遗留差异的报告 | 在修（2026-11-14 派：查 Rust 每个模型请求的固定延迟） |
-| 轮次超时之后的收尾：基线超时后停止转发、客户端收到 `result_unknown`，但被中止的循环在后台继续收尾（hook 照跑、事件写进 `runs/registry.json`、会话记录照写、子代理按自己的期限结束）；Rust 超时时立刻关闭会话写入，这些都没有。16 个 `abort-timeout-*` 场景全部不一致 | loop, session, hooks | 矩阵文件第 4 节 | 中止语义审查（`specs/delivery/abort-matrix.md`） | 在修（2026-11-14 派；基线这一段依赖两个异步操作谁先完成，先两侧各量 20 次） |
-| `abort-model-stream`：Rust 读一个被中止过的会话的历史时，缺上一轮保留的流（两轮都复现，成因没查） | session, loop | 场景 `abort-model-stream` | 中止语义审查（`specs/delivery/abort-matrix.md`） | 在修（同上一个子代理） |
 | 配置里的 `proxy.url` 对 Rust 的模型、hook 等请求不生效：这些请求只读环境变量里的代理（`ProxyConfig::from_settings(None)`），启动时配置里写的代理也没用上；基线启动时与热重载时都会安装全局代理并打 `[proxy] Global fetch proxy → URL (noProxy: …)` / `[proxy] Global fetch proxy removed` | model, config | 无场景 | 配置热重载的报告 | 待派（要一个进程级、可替换的代理状态；启动与热重载两条入口一起做） |
 | 渠道的配置热重载没接：Rust 的 `NativeChannels::reload` 只管 feishu 与 weixin，没有订阅配置变化；基线重载后打 `[pilotdeck] Adapter hot-reload complete: …`（只有 `adapters.` 开头的子路径触发，整段新增不触发）。还没量 | channels, config | 基线 `ChannelAdapterBundle.ts:96` | 配置热重载的报告 | 待派（与「渠道配齐凭据时拒绝启动」的取舍一起，等人定之后做） |
 | `request_user_form` 遇到带 Draft 2020-12 声明的表单 schema 时工具报 Rust 自造的「not supported by this gateway」（G3）；模型写 schema 时常带这一行 | tools | `form_dialog.rs:160-164` | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 待派（先实测基线对这类 schema 的处理） |
@@ -57,8 +57,9 @@
 | 问题 | 功能域 | 位置 / 依据 | 来源 | 状态 |
 |---|---|---|---|---|
 | Rust sidecar 每帧单独写，Node 把同一轮里的几次写合并成一块；TS 宿主对一次读到几帧敏感，上游对拍工具里 14 个稳定场景因此记录先后不同（帧内容一致） | modules | `scripts/upstream-tests` 的 parity 组 | 上游 sidecar 测试 | 记为已知 |
+| Rust 比基线慢造成的次序差异（都不是靠延时能修的，要加快 Rust）：`abort-timeout-hook-stop-failure` 第二次重试越过 1500 ms 的超时（基线 20/20 在超时之前，Rust 运行记录 18/20、帧 13/20）；`abort-turn-finishing` 里中止在标题解绑之前就到了，标题被取消、下一轮重生成（基线 20/20 首轮写入，Rust 20/20 相反）；`abort-model-stream` 里 `tool_call_delta` 是否在中止前落盘（基线 20/20，Rust 18/20）；被中止的会话整体慢约 2.6 秒（场景因此改成每个会话紧跟着读，避开 30 秒的保留流期限） | loop, session, * | 场景同名 | 超时收尾与中止遗留的报告 | 随固定延迟排查与性能报告一起看 |
+| Rust 自定的两个 25 毫秒窗口：`TIMEOUT_REGISTRY_WINDOW`（超时期限到了之后等 25 ms 才把超时状态追加进运行记录，模仿基线写会话记录的 I/O 延迟；基线 20/20 的三行靠它对上）与 `ADVISORY_KILL_SETTLE`（被杀 hook 的完成帧）。基线没有这两个常数，机器慢时可能不够 | loop, hooks | `runtime/turn/` | 超时收尾与中止遗留的报告 | 记为已知（盲审时重点看；找到可等待的事件就换掉） |
 | `hook-cancelled`：被中止杀掉的 PreToolUse hook 来不来得及写第一行日志（`hooklog/pre-slow.jsonl`）两侧都不稳，但 Rust 写到的概率更高（基线 5/40，Rust 19/40）——疑似中止送到 hook 进程的链路比基线长 | hooks | cb8 上各 40 次 | Linux 遗留差异的报告 | 待派（先量中止到 SIGTERM 的延迟；基线自己不稳，届时声明最窄的 volatile） |
-| `abort-hook-subagent-start`：会话文件里标题记录的位置（Rust 更早落盘）；`abort-turn-finishing`：Rust 一轮更慢，中止落在标题生成解绑之前，标题被取消、下一轮重生成（基线这时已解绑）。两处都没有两侧各量 20 次 | session, loop | 场景同名 | 中止语义审查（`specs/delivery/abort-matrix.md`） | 在修（同上：先量） |
 | HTTP 传输字节，hyper 1.7.0 内部决定、应用代码碰不到的三处：400 / 431 应答多带 `content-length: 0`（`role.rs:463-481`）；HTTP/1.0 请求回 `HTTP/1.0` 状态行（`conn.rs:681-688`）；请求头写一半就半关闭时基线回 400、Rust 不回。`gw-http-raw-requests` 因此一直不一致（DIFF 4）。可行的办法是在 hyper 前加一层预读自己写原始字节（`user_dialog/http_store.rs` 的 HeaderGuard 已这样处理 431），改动面不小 | gw | 场景 `gw-http-raw-requests` | gw 缺口审查 | 等人定（加预读层对齐，或经人同意列入允许不一致的清单） |
 | 性能待查（调试构建）：`submit_turn` 约 300ms 对基线约 47ms；空闲 CPU 约 3% 对 0%；扩展监视在 3 万个文件的树下空闲 5.4% 对 1.9% | * | 审阅修复的测量脚本 | 审阅修复 | 性能报告时用发布构建重量 |
 
@@ -69,13 +70,13 @@
 | cb8 上并行跑全量时每轮 5–9 个场景偶发不一致，单独重跑一致（常见：`gap-tool-glob`、`gap-tool-grep`、`gap-permissions-json-rules`、`robust-large-message`、`loop-parallel-tools`、`loop-multi-tool`）。至少一部分的根因是上面的 `Keep-Alive` 差异 | * | cb8 验收 | 在查 |
 | cb8 上单槽位重跑偶发不一致（同一轮里另一次重跑与全量都一致）：`hook-post-tool-use-interrupt` 一次差 318 处，`abort-hook-advisory-late-50` 一次差 2 处（后者靠 25 毫秒的收尾窗口）。没有两侧各量 20 次 | hooks, loop | cb8 验收（`2bfa0c7a7`） | 待派（在 cb8 上量；基线稳定而 Rust 不稳就是产品差异） |
 | `[gateway:turn-timing]` 日志行两侧都是「耗时达到 200 毫秒才打」（基线 `InProcessGateway.ts:1629、1820`），所以它出不出现取决于机器快慢：`cli-entry-flags` 在 cb8 全量里 Rust 多打一行（`releaseMs` 218）。规则已定：比较器把这类行从 stdout 里摘出来不比（两侧各记条数供性能报告用） | cli, gw | cb8 验收（`809bc4cb8`） | 待派（下一批尺子修复） |
+| 7 个 `abort-timeout-*` 场景声明了 volatile（超时事件与被中止循环的即时反应在运行记录里的先后，基线自己 19/1 或 11/9；数字写在各场景说明里）；`abort-turn-finishing` 的 close 列基线自己不稳（末尾标题记录 3/20 有）还没声明 | loop | `abort.gen.mjs` 的 `TIMEOUT_ORDER` | 超时收尾与中止遗留的报告 | 记为已知 |
 | `abort-tool-bash-disconnect` 在 cb8 的 v20 全量里差 404 处（v19 里一致），没看原因 | loop, tools | cb8 验收（`809bc4cb8`） | 待派（与上面两个中止场景一起在 cb8 上量） |
 | `turn-steer-terminal`：场景已改回在 `model_request_started` 触发插话，差异如实露出（macOS 与 cb8 都稳定差 33 处）——Rust 经 sidecar 一跳落盘，插话记录与这一轮记录的先后与基线不同。属产品差异，见第 2 级 | loop | 审阅 | 已转第 2 级 |
 | 范围偏宽的放过：四个记忆场景放过整段 `state_json`；`hook-cancelled` 的 `accepted` 放过会话文件第 20–29 条和整份 `projections.json`；TCP 场景整值放过 `moduleInstanceId`（证明不了「新实例」）；子代理场景的用量正则只认字段名；`always-on-fire-git` 一次略过 256 处 | memory, hooks, modules, agents, auto | 审阅 | 在修（收窄） |
 | `scripts/upstream-tests/run.mjs` 的缺省运行包含 parity 组，而它在 Rust 上按设计有 14 个不过，所以退出码不能反映「计入的全过」；也还没在 Linux 上跑过 | modules | 主会话 | 待派 |
 | 基线停机偶发退出码 1（`gap-tool-grep` 自比 3 次里 2 次，疑似停机时触发未捕获异常的处理，`cli/pilotdeck.ts:266-274`）：频率和条件没量清，是否登记为基线 bug 未定 | gw | Linux 差异 | 待量（尺子第二批又见到 6 次：`gap-tool-glob`、`tool-agent-general`、`tool-execute-code`、`loop-multi-tool`） |
 | 基线停机不等运行记录写完（`shutdownCoordinator.ts:13-14`）：锁文件的两种表现已由规则 18 处理；「在途运行记录停在 `running`」只在 `tool-goal-permission` 声明了最窄的 volatile（依据是早先 30 次里 3 次，最近 120 次没复现）；临时文件从没复现，没处理。Rust 一侧 120 次全是终态、无残留 | session, hooks | 尺子第二批的报告 | 记为已知（别的场景出现同样表现时照此声明） |
-| `abort-hook-pre-tool`（`close_session` 列）与 `hook-cancelled` 是同一个基线 bug（被中止杀掉的 PreToolUse hook 不阻断，工具仍执行），还没登记；场景由 `abort.gen.mjs` 生成，登记要写在生成脚本里 | hooks | 场景同名 | 中止语义审查（`specs/delivery/abort-matrix.md`） | 在修（同上一个子代理：沿用 `aborted-hook-does-not-run-tool`，只放过 `ran-*.txt`） |
 | cb8 是共用机器：同机别人跑同一套测试时，固定端口的测试（18973、18990、28999）会失败。`6894f3dca` 的全量 nextest 因此 7754/7755，单独重跑通过 | channels | cb8 验收（`6894f3dca`） | 记为已知（第 5 条的 cb8 那一次要挑没人跑的时候，或以接手仓库的 CI 为准） |
 | Rust 调试构建的一轮比基线慢 4–8 倍（压缩一步约 0.5–0.8 秒），时间余量紧的场景在慢机器上会翻红 | * | Linux 差异 | 性能报告时看发布构建 |
 | `surface.json` 标为「不计」的项（第一组 28 项，第二组又有若干：TUI 本地命令、QQ 前缀、做不到的错误码等），理由是子代理写的，抽查五项成立；整张表要人过目（交付标准第 2 条） | * | 审阅 | 待整理 |
