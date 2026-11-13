@@ -231,6 +231,19 @@
     "auto.always-on-api": ["always_on_apply", "always_on_abort", "always_on_rerun_plan"]
   },
   "surfaceRules": [
+    { "dims": ["gw-behaviors"], "match": "^gw:ws\\.", "cap": "gw.ws-protocol" },
+    { "dims": ["gw-behaviors"], "match": "^gw:conn\\.", "cap": "gw.connections" },
+    { "dims": ["gw-behaviors"], "match": "^gw:http\\.", "cap": "gw.http" },
+    { "dims": ["gw-behaviors"], "match": "^gw:server\\.", "cap": "gw.server-entry" },
+    { "dims": ["gw-behaviors"], "match": "^gw:projects\\.", "cap": "gw.projects" },
+    { "dims": ["recovery-behaviors"], "match": "^recovery:", "cap": "session.recovery" },
+    { "dims": ["module-behaviors"], "match": "^mod:deploy\\.tcp-|^mod:sidecar\\.(entry|tcp-listen)$|^mod:client\\.(tcp-connect|reconnect)$", "cap": "modules.sidecar-tcp" },
+    { "dims": ["module-behaviors"], "match": "^mod:deploy\\.binding$", "cap": "modules.binding" },
+    { "dims": ["module-behaviors"], "match": "^mod:(deploy|sidecar|client)\\.", "cap": "modules.sidecar-stdio" },
+    { "dims": ["module-behaviors"], "match": "^mod:host\\.", "cap": "modules.host-http" },
+    { "dims": ["module-behaviors"], "match": "^mod:tools\\.", "cap": "modules.tools" },
+    { "dims": ["module-behaviors"], "match": "^mod:knowledge$", "cap": "modules.knowledge" },
+    { "dims": ["module-behaviors"], "match": "^mod:sop\\.", "cap": "modules.sop" },
     { "dims": ["config"], "match": "^(schemaVersion|pilot|<unknown-top-level>|agent|extension\\.<unknown>)$", "cap": "config.load" },
     { "dims": ["config"], "match": "^agent\\.(model|maxOutputTokens|thinking\\.)", "cap": "model.catalog" },
     { "dims": ["config"], "match": "^agent\\.sandboxMode$", "cap": "perm.sandbox" },
@@ -475,6 +488,11 @@
     { "dim": "env", "id": "env:OPENAI_API_KEY", "cap": "memory.config", "why": "基线里唯一的直接读取处是记忆核心的兜底（context/memory/edgeclaw-memory-core/src/service.ts:288）；作为目录 provider 的缺省变量另由 env:<catalog> 一类代表。" }
   ],
   "scenarioRules": [
+    { "match": "^gw-(ws-|crash-unmasked-)", "caps": ["gw.ws-protocol"] },
+    { "match": "^gw-conn-", "caps": ["gw.connections"] },
+    { "match": "^gw-(http-|crash-bad-request-|crash-api-web-)", "caps": ["gw.http"] },
+    { "match": "^gw-projects-", "caps": ["gw.projects"] },
+    { "match": "^recovery-", "caps": ["session.recovery"] },
     { "match": "^abort-", "caps": ["loop.steer-abort"] },
     { "match": "^agent-loop-sidecar-stdio", "caps": ["modules.sidecar-stdio"] },
     { "match": "^agent-loop-sidecar-tcp", "caps": ["modules.sidecar-tcp"] },
