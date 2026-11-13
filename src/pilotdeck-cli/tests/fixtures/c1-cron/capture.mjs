@@ -134,8 +134,14 @@ export async function startMock(spec, { port = PORT, record = () => {} } = {}) {
     state, port: server.address().port,
     async stop() {
       emit('mock-cleanup');
-      for (const socket of sockets) socket.destroy();
-      await new Promise(resolve => server.close(resolve));
+      const closed = [...sockets].map(socket => new Promise(resolve => {
+        socket.once('close', resolve);
+        socket.destroy();
+      }));
+      await Promise.all([
+        new Promise(resolve => server.close(resolve)),
+        ...closed,
+      ]);
     },
   };
 }

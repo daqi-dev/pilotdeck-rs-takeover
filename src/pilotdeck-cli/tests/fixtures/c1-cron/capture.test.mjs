@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
+import net from 'node:net';
+import { once } from 'node:events';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -127,4 +129,26 @@ test('real child without terminal output is a failure, even when timeout cleanup
   assert.equal(captured.boundary.phase, 'startup');
   assert.equal(captured.terminalAtMs, null);
   assert.throws(() => verifyCase(spec, 'ts', captured, state()));
+});
+
+// Upgraded sockets outlive server.close's callback on Node. A complete capture
+// must wait for their close events before result.json snapshots state.events.
+test('mock stop seals upgraded socket close before its snapshot can be written', async t => {
+  const journal = [];
+  const mock = await startMock(spec, { port: 0, record: event => journal.push(structuredClone(event)) });
+  const socket = net.connect(mock.port, '127.0.0.1');
+  t.after(() => socket.destroy());
+  await once(socket, 'connect');
+  socket.write('GET /ws HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: MDEyMzQ1Njc4OWFiY2RlZg==\r\nSec-WebSocket-Version: 13\r\n\r\n');
+  await once(socket, 'data');
+  const clientClosed = once(socket, 'close');
+  await mock.stop();
+  const sealed = structuredClone(mock.state);
+  assert.equal(sealed.openSockets, 0, 'all owned socket closes settled before stop returns');
+  assert.equal(sealed.events.at(-1).kind, 'ws-socket-closed');
+  assert.deepEqual(sealed.events, journal);
+  await clientClosed;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(mock.state, sealed, 'no close event may arrive after the capture snapshot');
+  assert.deepEqual(journal, sealed.events);
 });
