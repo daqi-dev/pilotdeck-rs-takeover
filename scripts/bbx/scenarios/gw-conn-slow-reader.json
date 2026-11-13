@@ -1,0 +1,14 @@
+{
+  "name": "gw-conn-slow-reader",
+  "about": "客户端停止读取期间连发 20000 个请求（每个应答约 2 KB，共约 40 MB）：基线 sendText 不看 socket.write 的返回值（websocket.ts:31-38），应答全部堆在进程里，不断开连接；恢复读取后 20000 个应答和之后一个请求的应答全部收到。帧太多，只比按类型与 id 分组的计数。",
+  "steps": [
+    {"raw": {"ws": true, "hello": true, "countFrames": true, "send": [
+      {"pauseRead": true},
+      {"frame": {"opcode": 1, "json": {"type": "request", "id": "burst", "method": "describe_server", "params": {}}}, "times": 20000},
+      {"wait": 8000},
+      {"resumeRead": true},
+      {"wait": 8000},
+      {"frame": {"opcode": 1, "json": {"type": "request", "id": "after", "method": "list_projects", "params": {}}}}
+    ], "readMs": 2000}}
+  ]
+}

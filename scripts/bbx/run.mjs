@@ -595,9 +595,14 @@ const parseHttpHead = (raw) => {
   return { status, headers, ...(i >= 0 && { body: text.slice(i + 4) }) };
 };
 const openRaw = (port) => new Promise((resolve) => {
-  const s = net.connect(port, '127.0.0.1'); const st = { s, buf: Buffer.alloc(0), ended: null, error: null, closed: false, wake: [] };
+  const s = net.connect(port, '127.0.0.1');
+  // 收到的块先攒着，用到 buf 时才拼（几十 MB 的应答逐块 concat 是平方级）。
+  let joined = Buffer.alloc(0); let pending = [];
+  const st = { s, ended: null, error: null, closed: false, wake: [],
+    get buf() { if (pending.length) { joined = Buffer.concat([joined, ...pending]); pending = []; } return joined; },
+    set buf(v) { joined = v; pending = []; } };
   const poke = () => st.wake.splice(0).forEach((w) => w());
-  s.on('data', (d) => { st.buf = Buffer.concat([st.buf, d]); poke(); });
+  s.on('data', (d) => { pending.push(d); poke(); });
   s.on('end', () => { st.ended = st.ended ?? 'fin'; poke(); });
   s.on('error', (e) => { st.error = e.code ?? String(e); poke(); });
   s.on('close', () => { st.closed = true; if (!st.ended && st.error) st.ended = 'reset'; poke(); resolve(st); });
@@ -631,6 +636,9 @@ const rawStep = async (spec) => {
   for (const item of spec.send ?? []) {
     if (st.closed) break;
     if (item.wait) { await rawWait(st, () => false, item.wait); continue; }
+    // pauseRead / resumeRead：停止从套接字读（字节留在内核缓冲里，服务端写不出去时就在它那边排队），之后恢复。
+    if (item.pauseRead) { st.s.pause(); continue; }
+    if (item.resumeRead) { st.s.resume(); continue; }
     const one = item.frame ? wsClientFrame(item.frame) : item.hex !== undefined ? Buffer.from(item.hex, 'hex')
       : Buffer.from(subst(item.prefix ?? '') + subst(item.text ?? '').repeat(item.repeat ?? 1) + subst(item.suffix ?? ''));
     // times：同样的字节连写 n 遍、一次写出（例如不等应答连发很多个请求帧）。
@@ -643,6 +651,12 @@ const rawStep = async (spec) => {
   await rawWait(st, () => false, spec.readMs ?? 1000);
   if (upgraded || (spec.ws && st.buf.length && !st.buf.subarray(0, 5).toString().startsWith('HTTP/'))) {
     const { frames, rest } = readServerFrames(st.buf); r.frames = frames; if (rest.length) r.trailingBytes = rest.length;
+    // countFrames：帧太多时只记按「类型:id」（关闭帧记码与原因，其余记 opcode）分组的计数和总数，次序不记。
+    if (spec.countFrames) {
+      const counts = {};
+      for (const f of frames) { const k = f.opcode === 8 ? `close:${f.code}:${f.reason}` : f.json ? `${f.json.type}:${f.json.id ?? ''}` : `opcode:${f.opcode}`; counts[k] = (counts[k] ?? 0) + 1; }
+      r.frames = { total: frames.length, counts };
+    }
   } else if (st.buf.length) r.http = parseHttpHead(st.buf.toString());
   r.serverClosed = st.closed ? (st.ended ?? 'close') : st.ended === 'fin' ? 'fin-half' : null;
   await rawClose(st, upgraded || / 101 /.test(r.http?.status ?? ''));

@@ -858,7 +858,16 @@ impl Drop for InputBuffer {
 }
 const MAX_OUTPUT_PAYLOAD: usize = MAX_INPUT_PAYLOAD;
 const MAX_OUTPUT_BYTES: usize = MAX_OUTPUT_PAYLOAD + frame::MAX_SERVER_HEADER_BYTES;
-const MAX_OUTPUT_FRAMES: usize = 64;
+// Per-connection output not yet written to the socket. TS has no bound (a
+// peer that stops reading makes Node buffer every reply in memory); ours is a
+// byte budget far above normal use: a frame is refused — and the connection
+// closed with 1009 "output limit exceeded" — only when it would push an
+// already non-empty queue past 64 MiB, so a lone frame up to
+// MAX_OUTPUT_PAYLOAD still goes out. There is no frame-count limit: the
+// channel holds as many frames as the byte budget can (each frame is charged
+// at least its header).
+const QUEUED_OUTPUT_LIMIT: usize = 64 * 1024 * 1024;
+const OUTPUT_FRAME_SLOTS: usize = QUEUED_OUTPUT_LIMIT / frame::MAX_SERVER_HEADER_BYTES + 1;
 const MAX_PENDING_REQUESTS: usize = 64;
 // TS has no flush timer. Bound our resource-safety difference with scheduling
 // slack plus one second per remaining MiB, including the in-flight frame.
@@ -889,7 +898,7 @@ impl Text {
         let slots = if crate::mutants::on("native-ws-output-slots") {
             65536
         } else {
-            MAX_OUTPUT_FRAMES
+            OUTPUT_FRAME_SLOTS
         };
         let bytes = if crate::mutants::on("native-ws-output-bytes") {
             1024 * MAX_OUTPUT_BYTES
@@ -955,7 +964,12 @@ impl Text {
             .len()
             .checked_add(frame::MAX_SERVER_HEADER_BYTES)
             .and_then(|n| u32::try_from(n).ok());
-        let permit = length.and_then(|n| self.bytes.clone().try_acquire_many_owned(n).ok());
+        let queued = MAX_OUTPUT_BYTES.saturating_sub(self.bytes.available_permits());
+        let within_budget =
+            queued == 0 || length.is_some_and(|n| queued + n as usize <= QUEUED_OUTPUT_LIMIT);
+        let permit = length
+            .filter(|_| within_budget)
+            .and_then(|n| self.bytes.clone().try_acquire_many_owned(n).ok());
         let slot = self.output.try_reserve();
         if let (Some(permit), Ok(slot), true) = (permit, slot, payload.len() <= max_payload) {
             slot.send(Output::Frame(frame::server_frame(opcode, payload), permit));
