@@ -26,6 +26,7 @@ pub(super) const WIRED_FIELDS: &[&str] = &[
     "planModeInstructions",
     "toolAliases",
     "outputFormat",
+    "forwardSubagentText",
     "outputStyle",
     "permissionMode",
     "additionalWorkingDirectories",
