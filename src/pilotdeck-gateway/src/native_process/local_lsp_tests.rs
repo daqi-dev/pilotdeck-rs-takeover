@@ -342,7 +342,15 @@ fn real_public_factory_survives_reload_with_old_generation_leased() {
         text.0.lock().unwrap()
     );
     assert!(submit("new").contains("selected provider result 2"));
-    assert!(submit("old").contains("selected provider result 1"));
+    assert_eq!(
+        disposed.load(Ordering::SeqCst),
+        0,
+        "the dirty old session retains its generation lease until recreation"
+    );
+    // GatewayRuntimeRefreshBundle marks cached sessions dirty after reload.
+    // SessionRouter recreates an old session against the current runtime on
+    // its next turn, then waits for the previous handle to release its lease.
+    assert!(submit("old").contains("selected provider result 2"));
     assert!(
         mock.requests
             .lock()
@@ -361,8 +369,8 @@ fn real_public_factory_survives_reload_with_old_generation_leased() {
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     assert_eq!(
         disposed.load(Ordering::SeqCst),
-        0,
-        "old and current generation leases both live"
+        1,
+        "dirty recreation releases the retired project generation exactly once"
     );
     gateway.runtime.block_on(connection.closed()).unwrap();
     gateway.shutdown(Duration::from_secs(5)).unwrap();
