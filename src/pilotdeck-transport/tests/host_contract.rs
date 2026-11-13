@@ -735,26 +735,91 @@ fn unknown_outcome_uses_bound_owner_identity_and_never_retries() {
     let mut h = host(vec![raw]);
     assert!(h.call(&control(), HostCall::TurnDrain).is_err());
     assert_eq!(h.into_exchange().calls.len(), 1);
-    let mut value = result("a");
-    if let JsValue::Object(o) = &mut value {
-        o.insert("type".into(), "error".into());
-        o.insert("error".into(),json(r#"{"code":"HOST_TRANSPORT_ERROR","message":"unknown","details":{"outcome":"result_unknown"}}"#));
+}
+
+fn nested_unknown_tool_result(id: &str) -> JsValue {
+    let mut value = json(
+        r#"{"type":"error","toolName":"read","error":{"code":"tool_execution_failed","message":"Module HTTP request could not be completed.","details":{"moduleCode":"MODULE_TRANSPORT_UNAVAILABLE","outcome":"result_unknown","retryability":"unsafe","extension":{"kept":true}}},"content":[{"type":"text","text":"Module HTTP request could not be completed."}],"startedAt":"a","completedAt":"b"}"#,
+    );
+    if let JsValue::Object(fields) = &mut value {
+        fields.insert("toolCallId".into(), id.into());
     }
+    value
+}
+
+#[test]
+fn single_nested_unknown_is_preserved_as_tool_error_without_replay() {
+    let expected = nested_unknown_tool_result("a");
+    let mut h = host(vec![response(expected.clone())]);
+    let HostReply::ToolResult(result) = h
+        .call(
+            &control(),
+            HostCall::ExecuteSingle {
+                call: invocation("a"),
+                hints: tools(),
+            },
+        )
+        .unwrap()
+    else {
+        panic!("nested unknown must remain a visible tool result")
+    };
+    assert_eq!(result.boundary.value(), &expected);
+    assert_eq!(h.into_exchange().calls.len(), 1);
+}
+
+#[test]
+fn batch_nested_unknown_preserves_all_ordered_results_without_replay() {
+    // Preserve the exact legacy fixture that previously expected escalation.
+    let mut first = result("a");
+    if let JsValue::Object(fields) = &mut first {
+        fields.insert("type".into(), "error".into());
+        fields.insert("error".into(), json(r#"{"code":"HOST_TRANSPORT_ERROR","message":"unknown","details":{"outcome":"result_unknown"}}"#));
+    }
+    let unknown = nested_unknown_tool_result("b");
+    let last = result("c");
     let mut h = host(vec![response(payload(
         "results",
-        JsValue::Array(vec![value]),
+        JsValue::Array(vec![first.clone(), unknown.clone(), last.clone()]),
     ))]);
-    assert!(matches!(
-        h.call(
+    let HostReply::ToolResults(results) = h
+        .call(
             &control(),
             HostCall::ExecuteBatch {
-                calls: vec![invocation("a")],
-                hints: tools()
-            }
-        ),
-        Err(PortError::AcceptedUnknown { .. })
-    ));
+                calls: vec![invocation("a"), invocation("b"), invocation("c")],
+                hints: tools(),
+            },
+        )
+        .unwrap()
+    else {
+        panic!("nested unknown must remain in the result batch")
+    };
+    assert_eq!(results.len(), 3);
+    for (actual, expected) in results.iter().zip([first, unknown, last]) {
+        assert_eq!(actual.boundary.value(), &expected);
+    }
     assert_eq!(h.into_exchange().calls.len(), 1);
+}
+
+#[test]
+fn top_level_unknown_still_fails_closed_for_single_and_batch() {
+    for call in [
+        HostCall::ExecuteSingle {
+            call: invocation("a"),
+            hints: tools(),
+        },
+        HostCall::ExecuteBatch {
+            calls: vec![invocation("a")],
+            hints: tools(),
+        },
+    ] {
+        let mut h = host(vec![json(
+            r#"{"kind":"response","messageId":"m","inReplyTo":"reply","ok":false,"outcome":"result_unknown","code":"RESULT_UNKNOWN"}"#,
+        )]);
+        assert!(
+            matches!(h.call(&control(), call), Err(PortError::AcceptedUnknown { identity, .. }) if *identity == owner())
+        );
+        assert_eq!(h.into_exchange().calls.len(), 1);
+    }
 }
 
 #[test]

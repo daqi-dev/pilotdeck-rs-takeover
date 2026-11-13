@@ -24,10 +24,175 @@ const TOOL_TEXT: &str = "remote lookup result from owned HTTP module";
 const SKILL_TEXT: &str = "# Approval Guide\nUse a citation for every approval.";
 const CONTEXT_TEXT: &str = "EXTERNAL-CONTEXT-SELECTED";
 
-struct Scratch(PathBuf);
+const FIVE_SLOT_CASE: &str =
+    "external_modules_five_slots_and_real_child_preserve_owner_and_durable_chain";
+const TOPOLOGY_ENV: [&str; 7] = [
+    "PDRS_EXTERNAL_MODULE_TRANSPORT",
+    "PDRS_EXTERNAL_MODULE_SIDECAR",
+    "PDRS_EXTERNAL_MODULE_SIDECAR_SHA256",
+    "PDRS_EXTERNAL_MODULE_TCP_ENDPOINT",
+    "PDRS_EXTERNAL_MODULE_KEEP_SUCCESS",
+    "PDRS_EXTERNAL_MODULE_STDIO_WRAPPER",
+    "PDRS_EXTERNAL_MODULE_STDIO_WRAPPER_SHA256",
+];
+struct SealedExecutable {
+    path: PathBuf,
+    sha256: String,
+}
+impl SealedExecutable {
+    fn read(path_key: &str, hash_key: &str) -> Option<Self> {
+        let path = std::env::var_os(path_key);
+        let hash = std::env::var(hash_key).ok();
+        if path.is_none() && hash.is_none() {
+            return None;
+        }
+        let path = PathBuf::from(path.unwrap_or_else(|| panic!("{path_key} is required")));
+        let sha256 = hash.unwrap_or_else(|| panic!("{hash_key} is required"));
+        assert!(path.is_absolute(), "{path_key} must be absolute");
+        assert_eq!(
+            std::fs::canonicalize(&path).unwrap(),
+            path,
+            "{path_key} must be canonical"
+        );
+        assert!(path.is_file(), "{path_key} must be a real file");
+        assert_ne!(
+            std::fs::canonicalize(std::env::current_exe().unwrap()).unwrap(),
+            path,
+            "the test binary is not a sidecar"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_ne!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o111,
+                0,
+                "{path_key} must be executable"
+            );
+        }
+        assert!(
+            sha256.len() == 64
+                && sha256
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+            "{hash_key} must be a lowercase SHA256"
+        );
+        let sealed = Self { path, sha256 };
+        sealed.verify();
+        Some(sealed)
+    }
+    fn verify(&self) {
+        use sha2::{Digest, Sha256};
+        let mut file = std::fs::File::open(&self.path).unwrap();
+        let mut hash = Sha256::new();
+        let mut chunk = [0; 65536];
+        loop {
+            let count = file.read(&mut chunk).unwrap();
+            if count == 0 {
+                break;
+            }
+            hash.update(&chunk[..count]);
+        }
+        assert_eq!(
+            format!("{:x}", hash.finalize()),
+            self.sha256,
+            "sealed executable changed: {}",
+            self.path.display()
+        );
+    }
+    fn receipt(&self) -> Value {
+        json!({"path":self.path,"sha256":self.sha256})
+    }
+}
+struct Topology {
+    transport: String,
+    sidecar: Option<SealedExecutable>,
+    wrapper: Option<SealedExecutable>,
+    endpoint: Option<SocketAddr>,
+    keep_success: bool,
+}
+impl Topology {
+    fn read() -> Self {
+        let transport =
+            std::env::var("PDRS_EXTERNAL_MODULE_TRANSPORT").unwrap_or_else(|_| "native".into());
+        assert!(
+            matches!(transport.as_str(), "native" | "stdio" | "tcp"),
+            "explicit test transport must be native, stdio or tcp"
+        );
+        let sidecar = SealedExecutable::read(
+            "PDRS_EXTERNAL_MODULE_SIDECAR",
+            "PDRS_EXTERNAL_MODULE_SIDECAR_SHA256",
+        );
+        let wrapper = SealedExecutable::read(
+            "PDRS_EXTERNAL_MODULE_STDIO_WRAPPER",
+            "PDRS_EXTERNAL_MODULE_STDIO_WRAPPER_SHA256",
+        );
+        let endpoint = std::env::var("PDRS_EXTERNAL_MODULE_TCP_ENDPOINT")
+            .ok()
+            .map(|s| {
+                let address: SocketAddr = s
+                    .parse()
+                    .expect("test TCP endpoint must be a numeric SocketAddr");
+                assert!(
+                    address.ip().is_loopback() && address.port() != 0,
+                    "test endpoint must be loopback and nonzero"
+                );
+                address
+            });
+        let keep_success = match std::env::var("PDRS_EXTERNAL_MODULE_KEEP_SUCCESS")
+            .ok()
+            .as_deref()
+        {
+            None | Some("0") => false,
+            Some("1") => true,
+            _ => panic!("KEEP_SUCCESS must be 0 or 1"),
+        };
+        match transport.as_str() {
+            "native" => assert!(
+                sidecar.is_none() && wrapper.is_none() && endpoint.is_none(),
+                "native test must not inherit external controls"
+            ),
+            "stdio" => {
+                assert!(sidecar.is_some(), "stdio requires a sealed real sidecar");
+                assert!(endpoint.is_none(), "stdio cannot inherit a TCP endpoint");
+            }
+            "tcp" => {
+                assert!(
+                    sidecar.is_some() && endpoint.is_some(),
+                    "TCP requires sealed sidecar identity and an owned endpoint"
+                );
+                assert!(wrapper.is_none(), "wrapper is stdio-only");
+            }
+            _ => unreachable!(),
+        }
+        Self {
+            transport,
+            sidecar,
+            wrapper,
+            endpoint,
+            keep_success,
+        }
+    }
+    fn verify(&self) {
+        if let Some(file) = &self.sidecar {
+            file.verify();
+        }
+        if let Some(file) = &self.wrapper {
+            file.verify();
+        }
+    }
+    fn receipt(&self) -> Value {
+        json!({"transport":self.transport,"sidecar":self.sidecar.as_ref().map(SealedExecutable::receipt),"stdioWrapper":self.wrapper.as_ref().map(SealedExecutable::receipt),"tcpEndpoint":self.endpoint.map(|a|a.to_string()),"keepSuccess":self.keep_success})
+    }
+}
+fn topology() -> &'static Topology {
+    static VALUE: std::sync::OnceLock<Topology> = std::sync::OnceLock::new();
+    VALUE.get_or_init(Topology::read)
+}
+
+struct Scratch(PathBuf, bool);
 impl Drop for Scratch {
     fn drop(&mut self) {
-        if thread::panicking() {
+        if thread::panicking() || self.1 {
             eprintln!("EXTERNAL_MODULE_E2E_PRESERVED_SCRATCH {}", self.0.display());
             return;
         }
@@ -39,6 +204,13 @@ impl Drop for Scratch {
 // also uses std::env::temp_dir(). Run the same test in an owned child rather than
 // mutating process-global environment while other Rust tests run concurrently.
 fn isolated(name: &str, body: fn(&Path)) {
+    let selected = topology();
+    if selected.transport != "native" {
+        assert_eq!(
+            name, FIVE_SLOT_CASE,
+            "external topology control only applies to the existing five-slot exact test"
+        );
+    }
     if std::env::var("PDRS_EXTERNAL_MODULE_CASE").ok().as_deref() == Some(name) {
         let root = PathBuf::from(std::env::var_os("PDRS_EXTERNAL_MODULE_ROOT").unwrap());
         assert!(root.is_absolute());
@@ -54,10 +226,14 @@ fn isolated(name: &str, body: fn(&Path)) {
             assert!(p.starts_with(&root), "{key} must be owned by this case");
         }
         body(&root);
+        selected.verify();
+        println!("EXTERNAL_MODULE_E2E_TOPOLOGY_FINAL {}", selected.receipt());
         return;
     }
-    let scratch =
-        Scratch(std::env::temp_dir().join(format!("pdrs-external-e2e-{}", uuid::Uuid::new_v4())));
+    let scratch = Scratch(
+        std::env::temp_dir().join(format!("pdrs-external-e2e-{}", uuid::Uuid::new_v4())),
+        selected.keep_success,
+    );
     for p in ["home/.pilotdeck", "tmp", "cache", "project"] {
         std::fs::create_dir_all(scratch.0.join(p)).unwrap();
     }
@@ -88,7 +264,16 @@ fn isolated(name: &str, body: fn(&Path)) {
             cmd.env(key, value);
         }
     }
+    for key in TOPOLOGY_ENV {
+        if let Some(value) = std::env::var_os(key) {
+            cmd.env(key, value);
+        }
+    }
     let mut child = cmd.spawn().unwrap();
+    eprintln!(
+        "EXTERNAL_MODULE_E2E_WORKER {}",
+        json!({"case":name,"workerPid":child.id(),"scratch":scratch.0,"topology":selected.receipt()})
+    );
     let started = Instant::now();
     let deadline = started + Duration::from_secs(60);
     let status = loop {
@@ -126,6 +311,7 @@ fn isolated(name: &str, body: fn(&Path)) {
     let stdout = std::fs::read_to_string(scratch.0.join("stdout.log")).unwrap();
     let stderr = std::fs::read_to_string(scratch.0.join("stderr.log")).unwrap();
     println!("{stdout}");
+    selected.verify();
     assert!(status.success(), "{name}: {status}\n{stderr}");
 }
 
@@ -386,7 +572,7 @@ fn serve(mut socket: TcpStream, state: &State) -> Result<(), String> {
                     json!({"result":{"hits":[{"id":"chunk-1","text":"Approval requires evidence.","citationId":"citation-1"}]}})
                 }
                 "context" => {
-                    json!({"result":{"messages":payload["input"]["messages"],"tools":payload["input"]["tools"],"systemPromptParts":[CONTEXT_TEXT],"diagnostics":[],"boundaries":[]}})
+                    json!({"result":{"messages":payload["input"]["messages"],"tools":payload["input"]["tools"],"systemPrompt":CONTEXT_TEXT,"systemPromptParts":[CONTEXT_TEXT],"diagnostics":[],"boundaries":[]}})
                 }
                 "tools" => {
                     if state.profile == Profile::HookUpdated {
@@ -636,7 +822,41 @@ impl Fixture {
         ] {
             env.insert(key.into(), value.to_string_lossy().into_owned());
         }
-        env.insert("PILOTDECK_AGENT_LOOP_TRANSPORT".into(), "native".into());
+        let selected = topology();
+        env.insert(
+            "PILOTDECK_AGENT_LOOP_TRANSPORT".into(),
+            selected.transport.clone(),
+        );
+        let sidecar = selected
+            .sidecar
+            .as_ref()
+            .map(|file| file.path.clone())
+            .unwrap_or_else(|| self.root.join("absent-sidecar-not-used"));
+        if selected.transport == "stdio" {
+            let command = selected
+                .wrapper
+                .as_ref()
+                .map(|file| &file.path)
+                .unwrap_or(&sidecar);
+            env.insert(
+                "PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND".into(),
+                command.to_string_lossy().into_owned(),
+            );
+        }
+        if let Some(address) = selected.endpoint {
+            env.insert(
+                "PILOTDECK_AGENT_LOOP_TCP_HOST".into(),
+                address.ip().to_string(),
+            );
+            env.insert(
+                "PILOTDECK_AGENT_LOOP_TCP_PORT".into(),
+                address.port().to_string(),
+            );
+            env.insert(
+                "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS".into(),
+                "2000".into(),
+            );
+        }
         // A hook decision remains first even when the ordinary gateway prompt
         // callback later times out. This is per-consumer private environment.
         if self.root.join("hook-permission-timeout").is_file() {
@@ -646,7 +866,7 @@ impl Fixture {
             pilot_home: self.pilot.clone(),
             project: self.project.clone(),
             os_home: Some(self.home.clone()),
-            sidecar: self.root.join("absent-sidecar-not-used"),
+            sidecar,
             env,
             builtin_skills_root: None,
             builtin_plugins_root: None,
@@ -806,7 +1026,7 @@ fn tool_names(request: &Value) -> BTreeSet<String> {
 fn evidence(case: &str, mock: &Mock, events: &[Value], transcripts: &[(PathBuf, Vec<Value>)]) {
     println!(
         "EXTERNAL_MODULE_E2E_RECEIPT {}",
-        json!({"case":case,"http":mock.receipt(),"events":events,"transcripts":transcripts.iter().map(|(p,r)|json!({"path":p,"rows":r})).collect::<Vec<_>>()})
+        json!({"case":case,"topology":topology().receipt(),"http":mock.receipt(),"events":events,"transcripts":transcripts.iter().map(|(p,r)|json!({"path":p,"rows":r})).collect::<Vec<_>>()})
     );
 }
 fn child_and_parent_wire(mock: &Mock) {
@@ -1376,12 +1596,29 @@ fn external_modules_shutdown_cancels_dispatched_http_wait_without_replay() {
             stopped.unwrap();
             m.state.stop.store(true, Ordering::SeqCst);
             assert_eq!(m.calls("tools", "").len(), 1);
-            assert!(
-                result.is_err()
-                    || events
-                        .iter()
-                        .any(|e| e["finishReason"] == "cancelled" || e["type"] == "turn_failed"),
-                "shutdown must not report pending remote execution as completed: {result:?} {events:?}"
+            assert_eq!(
+                result,
+                Ok(()),
+                "public submit pump drains the abort terminal"
+            );
+            let terminals: Vec<_> = events
+                .iter()
+                .filter(|event| event["type"] == "turn_completed")
+                .collect();
+            assert_eq!(terminals.len(), 1, "one public abort terminal");
+            assert_eq!(terminals[0]["finishReason"], "aborted_streaming");
+            assert_eq!(
+                terminals[0]["usage"],
+                json!({"inputTokens":17,"outputTokens":5,"totalTokens":22})
+            );
+            let run = terminals[0]["runId"]
+                .as_str()
+                .expect("abort belongs to a real run");
+            assert!(!run.is_empty());
+            assert_eq!(
+                m.calls("tools", "")[0].body["runId"],
+                run,
+                "dispatch and abort have the same owner"
             );
             assert!(
                 !events
@@ -1396,8 +1633,40 @@ fn external_modules_shutdown_cancels_dispatched_http_wait_without_replay() {
             );
             assert_eq!(m.wires().len(), before);
             let transcripts = f.all_transcripts();
+            let durable_terminals: Vec<_> = transcripts
+                .iter()
+                .flat_map(|(_, rows)| rows.iter())
+                .filter(|row| row["type"] == "turn_result" && row["turnId"] == run)
+                .collect();
+            assert_eq!(
+                durable_terminals.len(),
+                1,
+                "one durable terminal for the aborted run"
+            );
+            assert_eq!(durable_terminals[0]["turnId"], run);
+            assert_eq!(durable_terminals[0]["result"]["turnId"], run);
+            assert_eq!(durable_terminals[0]["sessionId"], "cancelled-http");
+            assert_eq!(
+                durable_terminals[0]["result"]["sessionId"],
+                "cancelled-http"
+            );
+            assert_eq!(durable_terminals[0]["result"]["type"], "aborted");
+            assert_eq!(
+                durable_terminals[0]["result"]["stopReason"],
+                "aborted_streaming"
+            );
+            assert_eq!(
+                durable_terminals[0]["result"]["usage"],
+                json!({"inputTokens":17,"outputTokens":5,"totalTokens":22})
+            );
             for (_, r) in &transcripts {
                 strict_chain(r);
+                assert!(
+                    !r.iter().any(|e| e["type"] == "turn_result"
+                        && e["result"]["type"] == "success"
+                        && e["result"]["stopReason"] == "completed"),
+                    "aborted dispatch cannot acquire a successful durable terminal"
+                );
                 assert!(
                     !r.iter()
                         .any(|e| e["type"] == "tool_result" && e["result"]["type"] == "success"),
