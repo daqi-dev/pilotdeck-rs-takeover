@@ -665,12 +665,9 @@ for (const [event, log] of [['PreModelRequest', 'pre-model'], ['InstructionsLoad
     ],
     accepted: [{
       id: 'aborted-hook-does-not-run-tool',
-      why: '基线把被中止杀掉的 PreToolUse hook（outcome cancelled）当作非阻断，用户中止这一轮之后仍然走权限并真的执行了工具（落盘里有 ran.txt，会话记录多出 permission_started / permission_completed）；Rust 中止后不执行工具',
+      why: '基线把被中止杀掉的 PreToolUse hook（outcome cancelled）当作非阻断，用户中止这一轮之后仍然走权限并真的执行了工具（落盘里有 ran.txt）：已中止的信号上 abort 监听器不会再触发，bash 跑完（commandRunner.ts:96-101）。Rust 同样走权限、会话记录与基线一致，但工具见到已中止的信号不再执行。只放过 ran.txt',
       paths: [
         '^\\$\\.tree\\./home/\\.pilotdeck/ran\\.txt$',
-        '/chats/s-cancel\\.jsonl\\.jsonl(\\.length|\\[2\\d\\].*)$',
-        '/chats/s-cancel\\.jsonl\\.(raw|projections\\.json)\\.',
-        '^\\$\\.steps\\[3\\]\\.frames\\[0\\]\\.result\\.session\\.fileSize$',
       ],
     }],
   };

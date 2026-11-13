@@ -571,13 +571,16 @@ async fn permission_wait_is_cancelled_once_and_foreign_permission_is_rejected() 
         .unwrap()
         .unwrap();
     signal.cancel();
-    assert!(
-        tokio::time::timeout(Duration::from_secs(2), request)
-            .await
-            .unwrap()
-            .unwrap()
-            .is_err()
-    );
+    // The turn's abort reaches the pending permission callback through the
+    // hook signal; like the baseline's callback executor, the dispatch then
+    // settles with a result (no allow decision) instead of rejecting, and the
+    // run stays bound for the aborted turn's unwinding.
+    let response = tokio::time::timeout(Duration::from_secs(2), request)
+        .await
+        .unwrap()
+        .unwrap()
+        .expect("an aborted permission callback settles the dispatch");
+    assert!(!format!("{:?}", response).contains("\"allow\""));
     turn.close();
     router.dispose().await.unwrap();
     tokio::time::timeout(Duration::from_secs(2), turn.wait_closed())

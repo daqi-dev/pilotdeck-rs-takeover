@@ -102,13 +102,9 @@
   "accepted": [
     {
       "id": "aborted-hook-does-not-run-tool",
-      "why": "基线把被中止杀掉的 PreToolUse hook（outcome cancelled）当作非阻断，用户中止这一轮之后仍然走权限并真的执行了工具（落盘里有 ran.txt，会话记录多出 permission_started / permission_completed）；Rust 中止后不执行工具。只放过它直接造成的：ran.txt、会话文件大小、会话记录条数与第 20–24 条（基线多两条 permission_* 记录，其后的 step_completed / turn_result / session_metadata 下标后移两位，比较器按下标比、无法对齐；2026-11-13 离线按后移对齐比过这三条内容一致）、原文指纹里那两条记录的行数与两个骨架、投影里随记录条数变化的位置字段（asOfSequence、anchor、entries 的 sequence / entryId / parentEntryId / index），投影的其余内容照比",
+      "why": "基线把被中止杀掉的 PreToolUse hook（outcome cancelled）当作非阻断，用户中止这一轮之后仍然走权限并真的执行了工具（落盘里有 ran.txt）：已中止的信号上 abort 监听器不会再触发，bash 跑完（commandRunner.ts:96-101）。Rust 同样走权限、会话记录与基线一致，但工具见到已中止的信号不再执行。只放过 ran.txt",
       "paths": [
-        "^\\$\\.tree\\./home/\\.pilotdeck/ran\\.txt$",
-        "/chats/s-cancel\\.jsonl\\.jsonl(\\.length|\\[2[0-4]\\].*)$",
-        "/chats/s-cancel\\.jsonl\\.raw\\.(lines|skeletons\\.(a4c5af485a97931e|c6658a01b2260ed9))$",
-        "/chats/s-cancel\\.jsonl\\.projections\\.json\\.json\\.(asOfSequence|anchor\\.(sequence|entryId|parentEntryId)|projections\\.[^.]+\\.[^.]+\\.asOfSequence|projections\\.agent-transcript\\.conversation\\.state\\.entries\\[\\d+\\]\\.(entry\\.(sequence|entryId|parentEntryId)|index))$",
-        "^\\$\\.steps\\[3\\]\\.frames\\[0\\]\\.result\\.session\\.fileSize$"
+        "^\\$\\.tree\\./home/\\.pilotdeck/ran\\.txt$"
       ]
     }
   ]
