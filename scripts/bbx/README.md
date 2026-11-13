@@ -41,6 +41,20 @@ node scripts/bbx/diff.mjs /tmp/a.json /tmp/b.json          # 两份基线互比�
 
 改 `diff.mjs` 之后先跑比较器自测：`node scripts/bbx/selftest.mjs`。它给比较器喂成对的小产物，检查每条归一化规则该抹的抹掉了、规则旁边「差一点」的改动仍然报差异。新增归一化规则时同时加这两类例子。
 
+## 进度总表
+
+功能清单的源头是 `features.json`：功能域 → 子能力两层，叶子是 `surface.json` 的表面项和 `scenarios/` 的场景，归属按里面的规则算（表面项取第一条命中的规则，场景取全部命中规则的并集，例外逐项覆盖，都不中的列为「归属不了」）。新增表面项或场景时多数会被现有规则接住；`status.mjs` 的「归属统计」和「归属不了」两处会显示漏网的。
+
+```sh
+node scripts/bbx/status.mjs                                  # 读 _build/bbx，写 state/status.md 与 state/out-of-scope.md
+node scripts/bbx/status.mjs --out /path/to/round --round-note '哪台机器、哪个检出' --out-label 'cb8:_build/bbx'
+node scripts/bbx/status.mjs --csv /tmp/status-csv            # 另导出 domains.csv / caps.csv / gaps.csv（UTF-8 带 BOM，不入库）
+node scripts/bbx/status.mjs --stdout --now 2026-01-01T00:00:00Z   # 只打印；--now 固定生成时间
+node scripts/bbx/status-selftest.mjs                         # 自测（假产物上的归属、计数、缺口清单、逐字节确定）
+```
+
+它只读产物、不跑对拍。一轮全量产物（约 500 MB 的基线采集）上约半分钟到一分钟，几乎全花在 573 个 `observe` 正则扫产物原文上，与 `coverage.mjs --surface` 同样的代价；没有产物时两三秒。除了产物，它还读 `state/issues.md`（「功能域」列）、`state/audits.md`（审阅记录）、`state/check-results.json`（四条命令与上游验收集的结果，手写，写明来源；缺哪项就显示「没有数据」）、`specs/delivery/README.md` 的「允许不一致的清单」，并扫 `src/` 的产品代码数占位和透明代理入口。表面项是否被碰到的判定与 `coverage.mjs --surface` 共用 `lib/surface.mjs`，同一产物目录上两者的数字相同（总表末尾有按维度的对照表）。
+
 ## 场景格式
 
 `scenarios/*.json`：

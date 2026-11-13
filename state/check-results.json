@@ -1,0 +1,26 @@
+{
+  "about": "scripts/bbx/status.mjs 读的检查结果。手写，只记命令的当次输出，每项写明日期、提交、机器和来源；没有的就删掉那一项，status.mjs 会显示「没有数据」。fmt / clippy / doctest 的取值写 pass 或 fail。",
+  "fourCommands": {
+    "date": "2026-11-13",
+    "commit": "fd84c0719",
+    "machine": "cb8（Linux aarch64）",
+    "fmt": "pass",
+    "clippy": "pass",
+    "nextest": { "result": "pass", "passed": 7837, "total": 7837 },
+    "doctest": "pass",
+    "source": "主会话 2026-11-13 的任务说明转述（cb8 上最近一次有效的四条命令结果）；原始日志在 cb8，本仓库里没有"
+  },
+  "upstreamTests": {
+    "date": "2026-11-13",
+    "commit": "3d7c9b2ef",
+    "machine": "本机 macOS（Linux 上还没跑过）",
+    "groups": {
+      "client": { "summary": "计入 28 个用例，指向 Rust 10 轮全过" },
+      "tcp": { "summary": "计入 3 个用例，10 轮全过" },
+      "deployment": { "summary": "计入 1 个用例，10 轮全过" },
+      "schema": { "summary": "Rust sidecar 发出的 1204 帧全部合法，宿主帧全部合法" },
+      "parity": { "summary": "基线自比稳定的 17 个场景里过 3 个（其余 14 个是跨通道先后，见台账第 4 级）" }
+    },
+    "source": "scripts/upstream-tests/README.md「指向 Rust 的结果（2026-11-13，macOS）」与主会话的任务说明"
+  }
+}

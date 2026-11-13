@@ -14,12 +14,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { baselineDir, verdictOf as verdictIn, scenarioNames, loadScenarioTexts, judgeItem } from './lib/surface.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '../..');
 const args = process.argv.slice(2);
 const outDir = args.includes('--out') ? args[args.indexOf('--out') + 1] : path.join(repo, '_build/bbx');
-const frames = fs.readFileSync(path.join(repo, 'resources/PilotDeck/src/gateway/protocol/frames.ts'), 'utf8');
+// 场景结论与表面项的判定在 lib/surface.mjs，与 status.mjs 共用。
+const frames = fs.readFileSync(path.join(baselineDir(repo), 'src/gateway/protocol/frames.ts'), 'utf8');
 const methods = [...frames.match(/WsGatewayMethod\s*=([^;]+);/s)[1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
 
 // 场景里所有 ws 调用（含 serve.then、answer 里的）。
@@ -31,17 +33,10 @@ const calls = (v, found = new Set()) => {
   }
   return found;
 };
-const verdictOf = (name) => {
-  const file = path.join(outDir, `${name}.diff.txt`);
-  if (!fs.existsSync(file)) return '未跑';
-  const raw = path.join(outDir, `${name}.ts.json`);
-  const failures = fs.existsSync(raw) ? (JSON.parse(fs.readFileSync(raw, 'utf8')).failures ?? []).filter((x) => !x.expected) : [];
-  if (failures.length) return 'INVALID';
-  return fs.readFileSync(file, 'utf8').trim().split('\n').pop().startsWith('SAME') ? 'SAME' : 'DIFF';
-};
+const verdictOf = (name) => verdictIn(outDir, name);
 
 const by = Object.fromEntries(methods.map((m) => [m, []]));
-const scenarios = fs.readdirSync(path.join(here, 'scenarios')).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5));
+const scenarios = scenarioNames(path.join(here, 'scenarios'));
 let same = 0;
 for (const name of scenarios) {
   const verdict = verdictOf(name);
@@ -63,11 +58,7 @@ for (const m of methods) groups[status(by[m])].push(m);
 if (args.includes('--surface')) {
   const want = args[args.indexOf('--surface') + 1];
   const surface = JSON.parse(fs.readFileSync(path.join(here, 'surface.json'), 'utf8'));
-  const matcher = (p) => { const m = /^\/(.+)\/([gimsuy]*)$/.exec(p); if (m) { const re = new RegExp(m[1], m[2].replace('g', '')); return (t) => re.test(t); } return (t) => t.includes(p); };
-  const texts = scenarios.map((name) => {
-    const art = path.join(outDir, `${name}.ts.json`);
-    return { name, verdict: verdictOf(name), scenario: fs.readFileSync(path.join(here, 'scenarios', `${name}.json`), 'utf8'), artifact: fs.existsSync(art) ? fs.readFileSync(art, 'utf8') : '' };
-  });
+  const texts = loadScenarioTexts(path.join(here, 'scenarios'), outDir, scenarios);
   console.log(`基线对外表面：${Object.keys(surface.dimensions).length} 个维度（场景 ${same}/${scenarios.length} SAME）`);
   // 项上的 skip 写明不计入的理由（基线里没有产生它的代码路径、只属于不在范围的部分等），
   // 这类项单列为「不计」，不算进没碰到；--surface <维度> 同样逐项列出理由。
@@ -75,12 +66,10 @@ if (args.includes('--surface')) {
   for (const [dim, { items }] of Object.entries(surface.dimensions)) {
     let ok = 0, diff = 0, skipped = 0; const missing = []; const skips = [];
     for (const item of items) {
-      if (item.skip) { skipped++; skips.push(`不计  \t${item.id}\t${item.where}\t${item.skip}`); continue; }
-      const probes = (item.probe ?? []).map(matcher);
-      const observe = item.observe ? new RegExp(item.observe) : null;
-      const hits = texts.filter((t) => probes.some((f) => f(t.scenario)) || (observe && observe.test(t.artifact)));
-      if (hits.some((t) => t.verdict === 'SAME')) ok++;
-      else { if (hits.length) diff++; missing.push(`${hits.length ? 'DIFF  ' : '未覆盖'}\t${item.id}\t${item.where}\t${item.note}`); }
+      const j = judgeItem(item, texts);
+      if (j.status === 'skip') { skipped++; skips.push(`不计  \t${item.id}\t${item.where}\t${item.skip}`); continue; }
+      if (j.status === 'same') ok++;
+      else { if (j.status === 'diff') diff++; missing.push(`${j.status === 'diff' ? 'DIFF  ' : '未覆盖'}\t${item.id}\t${item.where}\t${item.note}`); }
     }
     console.log(`${dim}\t${items.length}\t${ok}\t${diff}\t${items.length - ok - diff - skipped}\t${skipped}`);
     if (want === dim) for (const line of [...missing, ...skips]) console.log('  ' + line);
