@@ -53,7 +53,7 @@ node scripts/bbx/diff.mjs /tmp/a.json /tmp/b.json          # 两份基线互比�
 | `env` | 额外环境变量 |
 | `provider` | 假 provider 的应答规则，按顺序匹配请求体文本：`when` 全部包含、`unless` 全部不包含；`reply` 可以是 `{text}`、`{tool:{name,arguments}}`、`{status,body}`。规则里的字符串（含工具参数）可用下面的 `{ROOT}` 等占位符。请求按命中的规则名分组记录 |
 | `server` | `false` 表示不起服务（纯 CLI 场景） |
-| `steps` | 依次执行：`{ws, params, answer}`（`answer` 见下）、`{http: "GET /path", headers, body}`、`{cli: [参数...], stdin, cwd, env}`、`{serve: [参数...]}`（见下）、`{connect: true}`（重连；也可以给一个完整的 hello 帧）、`{disconnect: true}`（客户端主动断开）、`{sleep: 毫秒}` |
+| `steps` | 依次执行：`{ws, params, answer}`（`answer` 见下）、`{http: "GET /path", headers, body}`、`{cli: [参数...], stdin, cwd, env}`、`{serve: [参数...]}`（见下）、`{connect: true}`（重连；也可以给一个完整的 hello 帧）、`{disconnect: true}`（客户端主动断开）、`{sleep: 毫秒}`、`{sidecar: "start" / "stop"}` 与 `{tcpProxy: "start" / "cut"}`（见下） |
 | 步骤的 `timeout` | `ws` / `http` / `cli` / `serve` 等待的毫秒数，缺省 30000 |
 | 步骤的 `expectTimeout` | `true` 表示这一步在基线上本来就会超时（如等一个采集器不回答的询问、命令常驻不退出）。只有声明了的超时不判 `INVALID`；连不上不能这样声明 |
 | `expectStartFailure` | `true` 表示 `"server"` 起的服务预期启动失败。`serve` / `cli` 步骤里进程自己退出是被比较的输出，不需要声明 |
@@ -66,6 +66,10 @@ node scripts/bbx/diff.mjs /tmp/a.json /tmp/b.json          # 两份基线互比�
 `cli` 和 `serve` 步骤可以带 `env`：盖在场景环境之上，值为 `null` 表示删掉该变量（例如去掉采集器默认给的 `PILOTDECK_GATEWAY_TOKEN`）。
 
 `serve` 步骤用来比常驻命令（`pilotdeck server`）自己的 stdout / stderr / 退出码，这些在 `"server"` 起的服务上属于不比较的 `serverLog`。它用 CLI 起一个进程，等 stdout 里出现 `until`（默认 `WebSocket: `），依次执行 `then` 里的步骤，然后发 `signal`（默认 `SIGTERM`）并等进程退出；15 秒不退就 SIGKILL，如实记成 `signal: "SIGKILL"`。进程没等到 `until` 就自己退出（启动失败）时不执行 `then`，照样记输出和退出码。这类场景通常写 `"server": false`；`then` 里的 `http` / `connect` 连的是固定端口 38411，所以被起的进程要监听在那里（采集器默认给了 `PILOTDECK_GATEWAY_PORT=38411`）。发信号前客户端若还连着，基线会一直等到它断开，需要比停机时先 `{disconnect: true}`。
+
+`sidecar` 步骤起停一个外部常驻的 agent loop sidecar（TCP 部署用）：基线是 `node dist/src/cli/pilotdeck-agent-loop-sidecar.js`，Rust 是 `pilotdeck-agent-loop-sidecar`。`{"sidecar": "start", "port": 38414, "env": {...}}` 用场景环境盖上步骤 `env` 起进程，等它在 `port` 上开始监听（进程没等到监听就退出时记下退出码、信号、stdout、stderr）；`{"sidecar": "stop", "signal": "SIGKILL"}` 给最近起的那个发信号（缺省 SIGTERM），等它退出并记下退出码、信号、stdout、stderr（15 秒不退就 SIGKILL）。场景结束时还在跑的由收尾按进程组杀掉，不记输出。sidecar 是否监听 TCP 由环境里的 `PILOTDECK_AGENT_LOOP_TCP_PORT` 决定，和 gateway 用同一套变量。
+
+`tcpProxy` 步骤在采集器里起一个透明的 TCP 转发，用来在 sidecar 不退出的情况下断开它与 gateway 之间的连接：`{"tcpProxy": "start", "port": 38413, "target": 38414}`；`{"tcpProxy": "cut"}` 立刻断开现有的全部连接，结果里的 `live` 是断开前还连着的连接数（代理继续监听）。要在一轮进行中打断，在假 provider 的 `reply` 上写 `"cutProxy": true`（断开代理上的连接）或 `"killSidecar": "SIGKILL"`（给当前 sidecar 发信号）：命中这条规则时先做这件事，再照常应答（可配 `delayMs`）。
 
 假 provider 的 `reply` 除了 `{text}`、`{tool}`、`{status, body}` 之外还可以组合：`tools`（多个工具调用，可与 `text` 同时给）、工具上的 `rawArguments`（原样当参数字符串，用来回非法 JSON）、`reasoning`（推理文本）、`chunks`（文本分多块流式发出）、`finish`（覆盖结束原因，如 `length`）、`usage`、`delayMs`（先等一会儿再回）、`breakAfter: n`（流里发出 n 块后断开连接）、`hangAfter: n`（发出 n 块后挂住，`hangMs` 后断开）、`endAfter: n`（发出 n 块后正常结束响应，流里没有结束原因 / `[DONE]` / `message_stop`）。请求路径按协议分流：以 `/messages` 结尾按 Anthropic messages 的形状应答；以 `/responses` 结尾按 OpenAI Responses（`finish` 是响应的 `status`：`completed` / `incomplete` / `failed`，`failed` 的错误对象取 `reply.error`）；`…/models/<模型>:generateContent` 或 `:streamGenerateContent` 按 Google Gemini（`finish` 是 `finishReason`，缺省 `STOP`；推理文本是带 `thoughtSignature` 的 `thought` 部分；工具调用只有显式写了 `id` 才带 `functionCall.id`）；其余按 OpenAI chat completions。`usage` 一律按 chat 形状写（可带 `prompt_tokens_details.cached_tokens`、`completion_tokens_details.reasoning_tokens`），各协议自行换算。
 

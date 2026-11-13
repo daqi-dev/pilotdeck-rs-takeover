@@ -205,6 +205,10 @@ const mock = http.createServer(async (req, res) => {
   });
   capture(rule.save, raw);
   const reply = withSaved(rule.reply ?? {});
+  // 在一轮进行中打断外部 sidecar（见下面的 sidecar / tcpProxy 步骤）：先做这件事，再照常应答。
+  // killSidecar: 信号名，发给当前的 sidecar 进程；cutProxy: true，断开 TCP 代理上现有的全部连接（代理继续监听）。
+  if (reply.killSidecar && sidecarProc) { try { sidecarProc.child.kill(reply.killSidecar); } catch {} }
+  if (reply.cutProxy) { for (const s of proxySockets.splice(0)) s.destroy(); }
   if (reply.status) { res.writeHead(reply.status, { 'content-type': 'application/json' }); res.end(JSON.stringify(reply.body ?? {})); return; }
   // 应答的组成：文本（text 或分块的 chunks）、推理文本（reasoning）、零到多个工具调用（tool / tools；
   // rawArguments 原样当参数字符串，用来回非法 JSON）、结束原因（finish）。delayMs 先等一会儿再回；
@@ -406,6 +410,9 @@ const SIDES = {
     cli: [path.join(TARGET, 'pilotdeck')],
   },
 };
+// 外部常驻的 agent loop sidecar（TCP 部署用）：基线是 dist 里的 sidecar 入口，Rust 是独立的 sidecar 可执行文件。
+SIDES.ts.sidecar = ['node', path.join(BASELINE, 'dist/src/cli/pilotdeck-agent-loop-sidecar.js')];
+SIDES.rust.sidecar = [path.join(TARGET, 'pilotdeck-agent-loop-sidecar')];
 // volatile 原样带进产物：diff.mjs 从产物里读它（两侧相同，不会成为差异）。
 const out = { scenario: scenario.name, side, volatile: scenario.volatile ?? [], accepted: scenario.accepted ?? [], steps: [], notifications: [], provider: providerRequests };
 let server; let serverLog = '';
@@ -454,6 +461,66 @@ const stepEnv = (step) => {
   const merged = { ...env };
   for (const [k, v] of Object.entries(substDeep(step.env ?? {}))) { if (v === null) delete merged[k]; else merged[k] = v; }
   return merged;
+};
+// sidecar 步骤：{sidecar: "start", port, env} 起一个常驻的 agent loop sidecar 进程（环境是场景环境盖上步骤 env，
+// 在 port 上等它开始监听）；{sidecar: "stop", signal} 给最近起的那个发信号（缺省 SIGTERM），等它退出，
+// 记下退出码、信号、stdout、stderr（15 秒不退就 SIGKILL，如实记成 SIGKILL）。进程没等到监听就自己退出时，
+// start 同样记下这些。场景结束时还在跑的由收尾清理按进程组杀掉，不记输出。
+let sidecarProc = null;
+// tcpProxy 步骤：{tcpProxy: "start", port, target} 在 127.0.0.1:port 上起一个透明的 TCP 转发到 target，
+// 用来在 sidecar 进程不退出的情况下断开 gateway 与它之间的连接（假 provider 应答上的 cutProxy）；
+// {tcpProxy: "cut"} 立刻断开现有的全部连接。代理只转发字节，不记录也不改内容。
+const proxySockets = [];
+let proxyServer = null;
+const proxyStep = async (step) => {
+  if (step.tcpProxy === 'start') {
+    proxyServer = net.createServer((client) => {
+      const upstream = net.connect(step.target, '127.0.0.1');
+      proxySockets.push(client, upstream);
+      const drop = () => {
+        client.destroy(); upstream.destroy();
+        for (const s of [client, upstream]) { const i = proxySockets.indexOf(s); if (i >= 0) proxySockets.splice(i, 1); }
+      };
+      client.on('error', drop).on('close', drop); upstream.on('error', drop).on('close', drop);
+      client.pipe(upstream); upstream.pipe(client);
+    });
+    await new Promise((r) => proxyServer.listen(step.port, '127.0.0.1', r));
+    return { action: 'start' };
+  }
+  // live：断开前代理上还连着的 gateway 连接数（每条连接在代理两端各占一个套接字）。
+  if (step.tcpProxy === 'cut') { const live = proxySockets.length / 2; for (const s of proxySockets.splice(0)) s.destroy(); return { action: 'cut', live }; }
+  throw new Error(`unknown tcpProxy action: ${step.tcpProxy}`);
+};
+const sidecarStep = async (step) => {
+  if (step.sidecar === 'start') {
+    const [cmd, ...prefix] = SIDES[side].sidecar;
+    const child = spawn(cmd, prefix, { cwd: project, env: stepEnv(step), stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    children.push(child);
+    const record = { stdout: '', stderr: '', closed: new Promise((r) => child.on('close', (c, s) => r([c, s]))) };
+    child.stdout.on('data', (d) => { record.stdout += d; }); child.stderr.on('data', (d) => { record.stderr += d; });
+    sidecarProc = { child, record };
+    const t0 = Date.now();
+    let listening = false;
+    while (child.exitCode === null && child.signalCode === null && Date.now() - t0 < (step.timeout ?? STEP_TIMEOUT_MS)) {
+      if (await portOpen(step.port)) { listening = true; break; }
+      await sleep(50);
+    }
+    if (listening) return { action: 'start', listening };
+    if (child.exitCode === null && child.signalCode === null) return { action: 'start', listening, timedOut: true };
+    const [exitCode, signal] = await record.closed;
+    return { action: 'start', listening, exitCode, signal, stdout: record.stdout, stderr: record.stderr };
+  }
+  if (step.sidecar === 'stop') {
+    if (!sidecarProc) return { action: 'stop', running: false };
+    const { child, record } = sidecarProc;
+    sidecarProc = null;
+    if (child.exitCode === null && child.signalCode === null) child.kill(step.signal ?? 'SIGTERM');
+    const killer = setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }, 15000);
+    const [exitCode, signal] = await record.closed;
+    clearTimeout(killer);
+    return { action: 'stop', exitCode, signal, stdout: record.stdout, stderr: record.stderr };
+  }
+  throw new Error(`unknown sidecar action: ${step.sidecar}`);
 };
 let requestSeq = 0;
 const runStep = async (step) => {
@@ -543,6 +610,8 @@ const runStep = async (step) => {
     clearTimeout(killer);
     return { serve: { reached, exitCode, signal, stdout, stderr }, then, ...(timedOut && { timedOut }) };
   }
+  if (step.sidecar) return { sidecar: await sidecarStep(step) };
+  if (step.tcpProxy) return { tcpProxy: await proxyStep(step) };
   if (step.cli) {
     const [cmd, ...prefix] = SIDES[side].cli;
     const child = spawn(cmd, [...prefix, ...substDeep(step.cli)], { cwd: step.cwd ? subst(step.cwd) : project, env: stepEnv(step), stdio: ['pipe', 'pipe', 'pipe'] });
@@ -563,7 +632,7 @@ const failuresOf = (step, r, at) => {
   const t = (x) => x?.type === '__timeout';
   const httpTimeout = ['TimeoutError', 'AbortError'].includes(r.http?.error);
   const kinds = [];
-  if (r.timedOut || t(r.close) || t(r.hello) || (r.frames ?? []).some(t) || (r.answers ?? []).some((a) => a.frames.some(t)) || httpTimeout) kinds.push('timeout');
+  if (r.timedOut || r.sidecar?.timedOut || t(r.close) || t(r.hello) || (r.frames ?? []).some(t) || (r.answers ?? []).some((a) => a.frames.some(t)) || httpTimeout) kinds.push('timeout');
   if (r.hello?.connectFailed || (r.http?.error && !httpTimeout)) kinds.push('connect');
   return [...kinds.map((kind) => ({ at, kind, expected: kind === 'timeout' && step.expectTimeout === true })),
     ...(r.then ?? []).flatMap((x, i) => failuresOf(x.step, x, `${at}.then[${i}]`))];
