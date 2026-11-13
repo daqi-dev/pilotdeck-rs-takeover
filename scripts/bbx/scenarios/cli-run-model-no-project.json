@@ -1,6 +1,6 @@
 {
   "name": "cli-run-model-no-project",
-  "about": "run --model 不带 --project（src/cli/sdkCli.ts:43-68；packages/sdk/src/client.ts:1151、2001-2002 resolveModelOverride 在 options.projectKey 缺省时抛 validation_error「projectKey is required when options.model is set.」）：基线在 query 连接上 resume_session 之后、model_catalog_list 之前抛错，CLI 把错误打到 stderr，但 query 的 WebSocket 不关，进程不退出（与已知的「--project P --model <不存在>」同一条路径，疑似基线 bug，先照做）；server 因为这条连接迟迟等不到客户端断开，SIGTERM 后也不退，由采集器在 15 秒后 SIGKILL。用 serve 起服务，以便把停机表现也比进去。模型名存在与否、--json 都不影响。 现状：CLI 一侧（stderr 文案、不退出）与基线一致；server 一侧仍不一致——基线在客户端被强杀后 SIGTERM 也停不下来（同样见于已知的 --project P --model <不存在>，以及普通 run 在轮次中途被强杀的情形），Rust 照常停机，并在 stderr 多打一行 native WS connection: Connection reset by peer。疑似基线挂起 bug，是否照做待人决定，场景保持不一致。",
+  "about": "run --model 不带 --project（src/cli/sdkCli.ts:43-68；packages/sdk/src/client.ts:1151、2001-2002 resolveModelOverride 在 options.projectKey 缺省时抛 validation_error「projectKey is required when options.model is set.」）：基线在 query 连接上 resume_session 之后、model_catalog_list 之前抛错，CLI 把错误打到 stderr，但 query 的 WebSocket 不关，进程不退出（与已知的「--project P --model <不存在>」同一条路径，疑似基线 bug，先照做）；server 因为这条连接迟迟等不到客户端断开，SIGTERM 后也不退，由采集器在 15 秒后 SIGKILL。用 serve 起服务，以便把停机表现也比进去。模型名存在与否、--json 都不影响。 停机：两个 run 被采集器 SIGKILL 后，它们的连接只发了 FIN、服务端此后没再写过，基线停在半开状态，SIGTERM 后 server.close() 一直等（src/gateway/server/GatewayServer.ts:184-186，src/gateway/server/websocket.ts:17-21 不听 end），由 serve 在 15 秒后 SIGKILL。这是基线的挂起 bug，Rust 不照做、正常停机，登记为 accepted（stop-hangs-on-vanished-client）；同类现象见 robust-drop-*。",
   "server": false,
   "env": {
     "PILOTDECK_TOKEN": "{TOKEN}",
@@ -56,6 +56,15 @@
           "timeout": 6000,
           "expectTimeout": true
         }
+      ]
+    }
+  ],
+  "accepted": [
+    {
+      "id": "stop-hangs-on-vanished-client",
+      "why": "基线挂起 bug：客户端不发关闭帧就消失（进程被强杀 / 只关 TCP）后，如果服务端此后没再往那条连接写过帧，它一直停在半开状态；SIGTERM 后 server.close() 等这条连接结束（src/gateway/server/GatewayServer.ts:184-186，websocket.ts:17-21 不听 end），进程永远退不出，采集器 15 秒后 SIGKILL。Rust 停机时把半开的连接当作已断开，正常退出（退出码 0，并照常打出停机时的 [telemetry] shutdown snapshot 行——基线正常停机时同样打这一行）。",
+      "paths": [
+        "^\\$\\.steps\\[0\\]\\.serve\\.(exitCode|signal|stdout)$"
       ]
     }
   ]

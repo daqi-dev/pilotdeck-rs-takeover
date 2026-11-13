@@ -546,6 +546,9 @@ hooks:
   // 中止落在流进行中、hook 睡完之前。之后同一会话再跑一轮：hook 照常派发、跑完。
   // hook 进程收到 SIGTERM 后再活 300ms 才退出（term.mjs 包一层 hook.mjs）：被杀的 hook 的执行结果因此确定地落在
   // 中止的一轮收尾之后、不上这一轮的流。不包这层时它与被截断的 assistant_block 只差几毫秒，Rust 侧五次里有一次先后颠倒。
+  // 2026-11-12 量过（macOS，槽位 3）：不包这层，基线 40 次全是 assistant_block > hook 完成(cancelled) > turn_completed；
+  // Rust 40 次里 14 次 hook 完成排到 assistant_block 前面。基线里两者没有代码上的先后约束（被杀 hook 的完成要等子进程
+  // close，SubprocessPort.ts:137；截断的块走 sidecar 往返），只是 Node 一侧子进程收尾慢得多；Rust 侧还没对齐，先保留包装。
   // 两个事件各一个场景：同时杀两个 hook 时两条 hook_execution_completed 的先后取决于进程退出的先后，基线自比不稳。
   for (const [name, event, log] of [
     ['hook-model-request-cancelled', 'PreModelRequest', 'pre-model'],
@@ -576,6 +579,54 @@ hooks:
       settleMs: 500,
     };
   }
+}
+
+// 同上两类 hook，打断运行中轮次的是 dispose 而不是用户中止：基线 AgentSession.dispose 在轮次运行中时先
+// abort("session_closed")（src/agent/session/AgentSession.ts:274-281），中止的正是派发这两类事件时带的那个
+// 中止信号（sidecarDefaultModuleDispatcher.ts:378-391），所以 hook 进程同样被杀。两个入口：
+// close_session（InProcessGateway.closeSession → router.close，src/gateway/client/InProcessGateway.ts:2049-2054）；
+// 停机（PilotDeckServerShutdownBundle 先 closeServer 再 disposeGateway，src/cli/PilotDeckServerShutdownBundle.ts:30-38）。
+// 停机那一例：轮次先停在权限询问上，客户端发关闭帧断开（有挂起的询问，preserveTurn，这一轮不被中止），
+// 再发 SIGTERM；serve 之后多等 4 秒再采落盘，没被杀的 hook 会来得及写下 done 行。
+for (const [event, log] of [['PreModelRequest', 'pre-model'], ['InstructionsLoaded', 'instructions']]) {
+  const short = log === 'pre-model' ? 'model-request' : 'instructions-loaded';
+  const session = `s-${log}-dispose`;
+  const files = (sleep) => ({
+    ...plugin('bbx-model-dispose', { [event]: [{ hooks: [{ ...cmd(log, { sleep }), command: cmd(log, { sleep }).command.replace('hook.mjs', 'term.mjs') }] }] }),
+    'home/.pilotdeck/plugins/bbx-model-dispose/term.mjs': TERM_LATE,
+  });
+  scenarios[`hook-${short}-close-session`] = {
+    about: `${event} hook 执行中 close_session：会话 dispose 中止运行中的轮次，hook 进程被杀（hooklog 没有 done 行），与用户中止相同。`,
+    files: files(3000),
+    provider: [
+      TITLE,
+      { name: 'slow', when: ['slow-case:'], reply: { chunks: ['partial ', 'never sent'], delayMs: 800, hangAfter: 1, hangMs: 6000 } },
+    ],
+    steps: [
+      bypass(session),
+      submit(session, 'slow-case: answer slowly', { answer: [{
+        on: { type: 'assistant_text_delta' }, ws: 'close_session', params: { sessionKey: session }, count: 1,
+      }] }),
+      { sleep: 4000 },
+      read(session),
+    ],
+    settleMs: 500,
+  };
+  scenarios[`hook-${short}-server-stop`] = {
+    about: `${event} hook 执行中停机：轮次停在权限询问上、客户端发关闭帧断开（有挂起的询问，这一轮不被中止）后 SIGTERM，disposeGateway 中止运行中的轮次，hook 进程被杀（hooklog 没有 done 行）。`,
+    server: false,
+    files: files(5000),
+    provider: [TITLE, ...toolCase('stop-case', 'bash', { command: 'echo ran > ran.txt', description: 'stop case' })],
+    steps: [{
+      serve: ['server'], timeout: 60000,
+      then: [
+        { ...submit(session, 'stop-case: run the tool'), timeout: 1500, expectTimeout: true },
+        { disconnect: true },
+        { sleep: 300 },
+      ],
+    }],
+    settleMs: 4000,
+  };
 }
 
 // ── Elicitation / ElicitationResult：提问发出与得到回答时 ──

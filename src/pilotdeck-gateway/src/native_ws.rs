@@ -418,6 +418,7 @@ impl PhasedInner {
                             if let Err(error) =
                                 serve_socket(socket, host, token, version, input, http, grid_anchor, stop_http, stop_observed, close_notice)
                                 .await
+                                && !is_peer_gone(error.as_ref())
                             {
                                 // #2434: a best-effort console line, like TS's
                                 // `console.error` — an `eprintln!` here panics
@@ -986,6 +987,7 @@ async fn serve_socket(
     stop_observed: Arc<std::sync::atomic::AtomicUsize>,
     close_notice: watch::Receiver<bool>,
 ) -> Result<(), ProxyError> {
+    let server_stop = stop.clone();
     let (upgrade, upgraded) = oneshot::channel();
     let upgrade = Mutex::new(Some(upgrade));
     let upgrade_sender = &upgrade;
@@ -1042,7 +1044,16 @@ async fn serve_socket(
     };
     let socket = http_proxy::upgraded_stream::<TcpStream>(upgraded.await?)?;
     drop(lease);
-    transport_with_budget(socket, host, token, version, input, close_notice).await
+    transport_with_budget(
+        socket,
+        host,
+        token,
+        version,
+        input,
+        close_notice,
+        server_stop,
+    )
+    .await
 }
 
 // Poll the host completion futures directly: a finished host job must not
@@ -1158,6 +1169,7 @@ where
     // The never-firing close notice: the sender is held for the future's
     // lifetime so `changed()` below cannot resolve through a dropped sender.
     let (close_notice_tx, close_notice) = watch::channel(false);
+    let (stop_tx, stop) = watch::channel(false);
     let result = transport_with_budget(
         socket,
         host,
@@ -1165,9 +1177,11 @@ where
         version,
         Arc::new(Semaphore::new(MAX_TOTAL_INPUT_BYTES)),
         close_notice,
+        stop,
     )
     .await;
     drop(close_notice_tx);
+    drop(stop_tx);
     result
 }
 
@@ -1179,6 +1193,7 @@ async fn transport_with_budget<S>(
     version: String,
     input_budget: Arc<Semaphore>,
     mut close_notice: watch::Receiver<bool>,
+    mut server_stop: watch::Receiver<bool>,
 ) -> Result<(), ProxyError>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -1198,12 +1213,30 @@ where
     } else {
         MAX_INPUT_PAYLOAD as u64
     };
+    // TS serves the upgraded socket from Node's http server, whose sockets
+    // allow half-open; `TextWebSocketConnection` listens only for `close` and
+    // `error`, never `end` (src/gateway/server/websocket.ts:17-21). A peer FIN
+    // without a WS close frame therefore runs no close handling: the turn the
+    // connection started keeps running and its frames keep being written,
+    // until a write fails (the dead peer answers with RST) and the socket
+    // error closes the connection. `peer_eof` is that half-open state: stop
+    // reading, keep the writer, wait for it to fail or for the server to
+    // close the connection.
+    let mut peer_eof = false;
     let result: Result<(), ProxyError> = async {
         'read: loop {
             // TS handleData starts on each new data callback. A protocol close
             // ends that batch, but leaves buffered tail bytes for the next one.
-            let capacity = read_capacity(&text, buffered.decoder.buffer.len(), input.len());
-            if capacity == 0 {
+            let capacity = if peer_eof {
+                0
+            } else {
+                let capacity = read_capacity(&text, buffered.decoder.buffer.len(), input.len());
+                if capacity == 0 {
+                    break;
+                }
+                capacity
+            };
+            if peer_eof && writer_done {
                 break;
             }
             let count = tokio::select! {
@@ -1222,11 +1255,26 @@ where
                     text.close(1001, "server switching");
                     break;
                 }
-                read = reader.read(&mut input[..capacity]) => read?,
+                read = reader.read(&mut input[..capacity]), if !peer_eof => read?,
+                // The server stopped while this connection sits half-open.
+                // TS's server.close() would wait for it forever (the hang its
+                // `pilotdeck server` shows after a client is killed); a
+                // half-open peer is gone, so end it like a socket error.
+                _ = server_stop.wait_for(|stopped| *stopped), if peer_eof => break,
                 _ = reap_requests(&mut requests, true), if reap_completed && !requests.is_empty() => continue,
             };
             if count == 0 {
-                break;
+                // A server-side close (close frame queued, End) already ended
+                // the connection; only a bare peer FIN leaves it half-open.
+                if *text.closed.lock().expect("native text state") || text.closing.borrow().is_some() {
+                    break;
+                }
+                peer_eof = true;
+                // Nothing more will be read: an unfinished frame tail can
+                // never complete, so its input budget goes back now.
+                buffered.decoder = Decoder::default();
+                buffered.allocation = None;
+                continue;
             }
             if !buffered.append(&input[..count]) {
                 let code = if crate::mutants::on("ws-caps-input-close-code") { 1000 } else { 1009 };
@@ -1327,6 +1375,20 @@ where
     closed.map_err(request_error)?;
     Ok(())
 }
+/// A socket error that only says the peer went away (reset, broken pipe).
+/// TS swallows these: the upgraded socket's `error` listener just closes the
+/// connection (src/gateway/server/websocket.ts:20) and nothing is printed.
+fn is_peer_gone(error: &(dyn std::error::Error + Send + Sync + 'static)) -> bool {
+    error.downcast_ref::<std::io::Error>().is_some_and(|error| {
+        matches!(
+            error.kind(),
+            std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::BrokenPipe
+                | std::io::ErrorKind::ConnectionAborted
+        )
+    })
+}
+
 fn request_error(error: crate::runtime::connection::RequestError) -> std::io::Error {
     std::io::Error::other(String::from_utf16_lossy(error.message.units()))
 }

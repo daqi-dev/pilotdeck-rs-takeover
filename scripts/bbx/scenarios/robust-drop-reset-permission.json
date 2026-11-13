@@ -1,0 +1,124 @@
+{
+ "name": "robust-drop-reset-permission",
+ "about": "同 robust-drop-fin-permission，但以 RST 断开：基线立刻 handleClose，disconnectInteraction 见有挂起的询问，preserveTurn 为真，这一轮不中止（与发关闭帧相同），之后的表现与 FIN 一样。基线依据：Node http.Server 的套接字允许半关闭（allowHalfOpen），升级后的 TextWebSocketConnection 只听 close / error，不听 end（src/gateway/server/websocket.ts:17-21）；收到关闭帧时它自己 end 掉套接字（websocket.ts:60-62、40-50），随后 close 触发 GatewayWsConnection.handleClose（src/gateway/server/GatewayWsConnection.ts:45、48-63）：对本连接发起且仍在跑的会话先 disconnectInteraction，没有挂起的询问（preserveTurn 为假，src/gateway/client/GatewayInteractionCoordinator.ts:86-95）就 abortTurn。只收到 FIN 时什么都不发生，直到服务端往这条连接写帧失败（对端已不在，回 RST，第二次写报 EPIPE）触发 error，才走同一个 handleClose。",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Drop run\"}"
+   }
+  },
+  {
+   "name": "after-tool",
+   "when": [
+    "ask-case:",
+    "\"tool_call_id\":\"call_drop_1\""
+   ],
+   "reply": {
+    "text": "Done after permission."
+   }
+  },
+  {
+   "name": "ask",
+   "when": [
+    "ask-case:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_drop_1",
+     "name": "bash",
+     "arguments": {
+      "command": "echo needs-permission > made.txt"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-drop",
+    "channelKey": "test",
+    "message": "ask-case: run it",
+    "runId": "run-drop"
+   },
+   "timeout": 3000,
+   "expectTimeout": true,
+   "save": {
+    "rid": "\"requestId\":\"([^\"]+)\""
+   }
+  },
+  {
+   "disconnect": "reset"
+  },
+  {
+   "sleep": 500
+  },
+  {
+   "connect": true
+  },
+  {
+   "ws": "active_turn_snapshot",
+   "params": {
+    "sessionKey": "s-drop",
+    "includeEvents": false
+   }
+  },
+  {
+   "ws": "permission_list",
+   "params": {
+    "sessionKey": "s-drop"
+   }
+  },
+  {
+   "ws": "permission_decide",
+   "params": {
+    "sessionKey": "s-drop",
+    "requestId": "{saved.rid}",
+    "decision": "allow"
+   }
+  },
+  {
+   "sleep": 1500
+  },
+  {
+   "ws": "permission_list",
+   "params": {
+    "sessionKey": "s-drop"
+   }
+  },
+  {
+   "ws": "run_get",
+   "params": {
+    "sessionKey": "s-drop",
+    "runId": "run-drop"
+   }
+  },
+  {
+   "ws": "abort_turn",
+   "params": {
+    "sessionKey": "s-drop"
+   }
+  },
+  {
+   "sleep": 500
+  },
+  {
+   "ws": "run_get",
+   "params": {
+    "sessionKey": "s-drop",
+    "runId": "run-drop"
+   }
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-drop"
+   }
+  }
+ ]
+}
