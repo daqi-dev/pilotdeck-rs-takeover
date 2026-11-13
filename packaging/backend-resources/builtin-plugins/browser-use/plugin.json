@@ -1,5 +1,5 @@
 {
-  "name": "browser-use",
+  "name": "pilotdeck-browser-runtime",
   "version": "1.0.0",
   "description": "External Playwright MCP browser integration. Provision the optional service and browser separately.",
   "skills": "skills",

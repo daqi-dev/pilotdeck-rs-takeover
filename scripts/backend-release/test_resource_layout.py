@@ -20,7 +20,7 @@ class ResourceLayoutTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'explicit addon'):
             resource_contract(source / 'skills', source / 'builtin-plugins')
         full = resource_contract(source / 'skills', source / 'builtin-plugins', addon=True)
-        self.assertEqual(full['optionalAddonsIncluded'], ['browser-use', 'funasr'])
+        self.assertEqual(full['optionalAddonsIncluded'], ['pilotdeck-browser-runtime', 'funasr'])
         self.assertEqual(len(full['skillNames']), 32)
         self.assertEqual([p['name'] for p in full['plugins'] if not p['requiresNodeOnDiscovery']], ['windows-skills'])
         with tempfile.TemporaryDirectory() as temp:

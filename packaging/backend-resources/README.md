@@ -12,7 +12,7 @@
 - 技能迁移 helper：只接受显式单个源，拒绝覆盖或 symlink，复制后比对字节清单；源须在运行期间保持稳定。它不搜索用户目录、不替代正式 loader 验证。
 - SRT helper：把现有字幕转换为保留时标的结构化 transcript；不录音、不推断说话人、不伪造纪要。
 - FunASR MCP：独立 Node `.mjs` stdio 服务，真实调用单独源码构建的 SenseVoice CLI。受 project-root 路径约束，缺 runtime/model 报错，支持请求取消及等待实际子进程 close。测试仅使用临时 mock executable，不冒充声学识别。
-- browser-use plugin：通过现有宿主 marker 接入独立外部 Playwright MCP；没有伪造工具服务。实际依赖未提供时启动必须按真实错误报告。
+- pilotdeck-browser-runtime plugin（安装目录仍为browser-use）：通过现有宿主 marker 接入独立外部 Playwright MCP；没有伪造工具服务。实际依赖未提供时启动必须按真实错误报告。
 
 运行本地资源验证：
 
@@ -40,7 +40,7 @@ Node插件另用 scripts/backend-release/addon.py --plugin browser-use 或 --plu
 1. **装配。** 将候选 CLI 安装到独立 `bin/pilotdeck`，资源根位于相邻 `skills` 与 `builtin-plugins`；从包外工作目录启动，隔离 HOME/PILOT_HOME，禁止挂载 TS 参考树。也可使用现有 `PILOTDECK_BUNDLED_SKILLS_DIR`、`PILOTDECK_BUNDLED_PLUGINS_DIR` 先作定点检查。正式搬迁验收必须移除这两个 override。
 2. **发现/提示。** 对正式 `commands_list` 和 `skill_list` 使用仓库既有请求格式，断言32个skill名称全部出现、来源为builtin；查询windows-skills内的powershell-safe-invocation贡献。通过真实 skill prompt加载能力检查DOCX的 `{{SKILL_ROOT_SHELL}}` 已替换为搬迁后的安全引号路径，且按该路径运行helper成功。不能只对SKILL.md全文grep当加载成功。
 3. **优先级。** 在隔离project/global目录放同名测试skill，确认project > global > builtin；移除覆盖后builtin恢复。所有fixture均独立编写，不更改发行资源来制造成功。
-4. **禁用。** 设置 `extension.builtinPluginsEnabled` 分别禁用 browser-use/funasr/windows-skills，检查贡献和MCP子进程确实消失；恢复后重新发现。通过项目 `modules.skills.enabled: false` 检查技能路径按现有约定禁用。请依据现有wire fixture选择实际接口，不发明新字段。
+4. **禁用。** 设置 `extension.builtinPluginsEnabled` 分别禁用 pilotdeck-browser-runtime/funasr/windows-skills，检查贡献和MCP子进程确实消失；恢复后重新发现。通过项目 `modules.skills.enabled: false` 检查技能路径按现有约定禁用。请依据现有wire fixture选择实际接口，不发明新字段。
 5. **真实MCP边界。** 在隔离 runtime tree使用已测试mock SenseVoice executable，正式会话发现 `mcp__funasr__transcribe_audio` 并调用；校验mock transcript/segments和实际进程退出。缺失模型、audio symlink逃逸、取消以及stop时正在运行的调用均应返回对应失败并清理实际子进程。随后才安排已源码构建引擎和合许可模型的真实音频验收。
 6. **browser-use。** 记录独立Playwright MCP源码revision、lock、Node、browser身份和许可。`PILOTDECK_RUNTIME_ROOT` 可定位外部root下 `node_modules/@playwright/mcp/cli.js`。正式会话列出真正工具，打开localhost fixture、读snapshot、执行一次输入并观测DOM变化；缺依赖时不能用空tools成功代替。当前资源没有完成这个服务的离线发行。
 7. **负控。** 在独立资源副本改掉一个skill名称/删掉必须helper，真实loader/调用校验须失败；禁用插件副本却仍出现工具也必须失败。保留首次失败，恢复未改副本再验证。复制资源用于测试不等于复制参考树。

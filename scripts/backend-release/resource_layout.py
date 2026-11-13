@@ -3,7 +3,7 @@ import json
 from common import Path, inventory
 
 EXTERNAL = {
-    'browser-use': ['Node', 'pinned Playwright MCP runtime', 'browser executable'],
+    'pilotdeck-browser-runtime': ['Node', 'pinned Playwright MCP runtime', 'browser executable'],
     'funasr': ['Node', 'Python 3 on POSIX', 'source-built SenseVoice engine', 'licensed acoustic and VAD models'],
 }
 
@@ -22,8 +22,9 @@ def describe_plugins(root):
             raise ValueError(f'plugin directory lacks plugin.json: {directory.name}')
         value = json.loads(spec.read_text())
         name = value.get('name')
-        if name != directory.name or name in {p['name'] for p in plugins}:
-            raise ValueError('plugin name must match its unique directory name')
+        allowed_identity = name == directory.name or (directory.name, name) == ('browser-use', 'pilotdeck-browser-runtime')
+        if not isinstance(name, str) or not name.strip() or not allowed_identity or name in {p['name'] for p in plugins}:
+            raise ValueError('plugin name must match its unique directory name or the exact browser runtime addon identity')
         servers = value.get('mcpServers', {})
         if not isinstance(servers, dict):
             raise ValueError('mcpServers must be an object')
