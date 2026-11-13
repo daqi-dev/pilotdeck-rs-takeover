@@ -115,6 +115,8 @@ pub struct LiveSessionAdapter {
     maintenance: Option<Arc<MaintenanceFactory>>,
     /// See [`Self::with_operation_ledger`].
     operations: Option<Arc<super::operation::SessionOperations>>,
+    /// See [`Self::with_liveness`].
+    alive: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 /// Composes the session's context runtime outside a turn.
@@ -183,7 +185,15 @@ impl LiveSessionAdapter {
             state: Arc::default(),
             maintenance: None,
             operations: None,
+            alive: None,
         }
+    }
+
+    /// A flag this session clears when it is disposed, for state it leaves
+    /// in project-level resources (the events its maintenance carried).
+    pub(super) fn with_liveness(mut self, alive: Arc<std::sync::atomic::AtomicBool>) -> Self {
+        self.alive = Some(alive);
+        self
     }
 
     /// Install the maintenance composer behind manual compaction.
@@ -477,6 +487,7 @@ impl LiveSessionAdapter {
             state: Arc::default(),
             maintenance: None,
             operations: None,
+            alive: None,
         }
     }
 }
@@ -633,12 +644,17 @@ impl LiveSession for LiveSessionAdapter {
         let (session_sender, session_ready) = oneshot::channel();
         let session_id = identity.session_id.clone();
         let session_owner = active.clone();
+        // The baseline runs the gateway's own loop in-process: an abort after
+        // admission still reaches the loop, which reports it from its step-top
+        // check (AgentLoop.ts:597-614). Only an external loop's client skips
+        // execute for an already-aborted input (agentLoopSidecarClient.ts:330).
+        let in_process_loop = self.in_process_loop;
         let turn = LiveTurnStream {
             callback_cancel: Some(cancellation.clone()),
             execution: Some(Box::pin(async move {
                 let (client, inner, lease, manifest, interaction_events, prompt_hooks, lifecycle) = tokio::select! {
                     biased;
-                    _ = cancellation.cancelled(), if !crate::mutants::on("gates-factory-ready-priority") => {
+                    _ = cancellation.cancelled(), if !in_process_loop && !crate::mutants::on("gates-factory-ready-priority") => {
                         return Ok(ExecuteResult::Aborted { terminal: None });
                     }
                     // select constructs every branch before polling; keep the
@@ -752,7 +768,7 @@ impl LiveSession for LiveSessionAdapter {
                     .insert("messages".into(), JsValue::Array(messages));
                 let client = tokio::select! {
                     biased;
-                    _ = cancellation.cancelled() => return Ok(ExecuteResult::Aborted { terminal: None }),
+                    _ = cancellation.cancelled(), if !in_process_loop => return Ok(ExecuteResult::Aborted { terminal: None }),
                     client = client => client?,
                 };
                 if let Some(pending) = pending_host.take() {
@@ -821,18 +837,23 @@ impl LiveSession for LiveSessionAdapter {
 
     fn abort(&self, reason: &JsString) -> RuntimeResult {
         let mut state = self.state.lock().unwrap();
-        state.signal.abort();
+        // `AbortController.abort(reason)`: work that rejects with the signal's
+        // reason (a pending compaction summary, `throwIfAborted`) reports it.
+        state.signal.abort_with_reason(reason.clone());
         state.status = super::live_session::SessionStatus::Aborted;
         if let Some(cancellation) = &state.active {
             // Only a running turn's own abort signal: a finished turn's
             // advisory hooks outlive it and are not this abort's to kill.
-            state.user_abort.abort();
+            state.user_abort.abort_with_reason(reason.clone());
             cancellation.cancel(Some(reason.clone()));
         }
         Ok(())
     }
 
     fn dispose(&self) -> DisposeFuture<'_> {
+        if let Some(alive) = &self.alive {
+            alive.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
         let mut state = self.state.lock().unwrap();
         state.disposed = true;
         if let Some(tail) = &self.tail {
@@ -2376,13 +2397,14 @@ impl HostHandler for StreamHandler {
         }
         // `awaitCompactionWithEvents` (AgentLoop.ts:2860-2874): the events the
         // compaction buffered (compact_started / compact_completed) are drained
-        // when it settles, before the loop yields anything after it.
+        // when it settles, before the loop yields anything after it — also
+        // when it rejects (the drain precedes `throw result.error`).
         let this = self.share();
         Box::pin(async move {
-            let result = forwarded.await?;
+            let result = forwarded.await;
             this.forward(Box::pin(async { Ok(()) }), None, None, true, false, true)
                 .await?;
-            Ok(result)
+            result
         })
     }
 

@@ -4,7 +4,16 @@
 #[path = "common/baseline.rs"]
 mod baseline;
 use base64::Engine as _;
-use pilotdeck_gateway::host::Cancellation;
+use pilotdeck_gateway::host::{AbortSignal, Cancellation};
+
+/// The request's abort as the request handed it in: these tests pass a host
+/// `Cancellation`.
+fn host_cancellation(signal: &AbortSignal) -> &Cancellation {
+    match signal {
+        AbortSignal::Host(signal) => signal,
+        AbortSignal::Turn(_) => panic!("expected the request's host cancellation"),
+    }
+}
 use pilotdeck_gateway::host::modules::context::{ContextInput, ContextRuntime};
 use pilotdeck_gateway::runtime::context::{
     ContributedCommand, ContributedPrompt, ContributedSkill, ContributionContext,
@@ -238,6 +247,7 @@ fn text_provider(spec: &JsValue, abort_mode: &AbortMode) -> TextProvider {
             context
                 .abort
                 .as_ref()
+                .map(host_cancellation)
                 .expect("provider receives the request abort signal")
                 .cancel(None);
         }
@@ -441,6 +451,7 @@ async fn prepare_for_model_matches_real_ts() {
                                     context
                                         .abort
                                         .as_ref()
+                                        .map(host_cancellation)
                                         .expect(
                                             "variable provider receives the request abort signal",
                                         )

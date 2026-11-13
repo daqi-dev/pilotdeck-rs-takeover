@@ -278,7 +278,7 @@ fn abort_signal(scenario: &JsValue, pass: usize) -> Option<Cancellation> {
 fn input(scenario: &JsValue, signal: Option<Cancellation>) -> CompactionInput {
     let v = f(scenario, "input");
     let mut input = CompactionInput::new("manual", a(f(scenario, "messages")).to_vec());
-    input.signal = signal;
+    input.signal = signal.map(Into::into);
     if let JsValue::Array(entries) = f(scenario, "orderedInputEntries") {
         let mut ordered = JsObject::new();
         for entry in entries {

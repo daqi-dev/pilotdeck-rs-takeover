@@ -596,7 +596,7 @@ impl ExecutionServer {
             };
             // Catching a worker panic prevents a permanently running operation.
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                context.control.check()?;
+                crate::default_factory::requested_cancel_left_to_loop(context.control.check())?;
                 self.factory.execute(&work.request, &mut context)
             }));
             let terminal = match result {

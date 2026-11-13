@@ -200,6 +200,7 @@ fn run_case(protocol: &str, enabled: Option<&str>) {
             sent_text.map(compact_json_text).as_deref()
         );
         assert!(contents.starts_with("{\n  \""), "{contents}");
+        assert!(!contents.ends_with('\n'));
     } else {
         assert!(
             dumps.is_empty(),

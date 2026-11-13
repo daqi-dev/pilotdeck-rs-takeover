@@ -1997,6 +1997,64 @@ async fn provider_exchange(
 /// the pre-SDK `buildModelRequest` object TS serializes; the projection
 /// divergence is registered in the same entry. A failed write returns the
 /// `writeFileSync`-shaped error so callers can surface it like TS.
+/// `JSON.stringify(value, null, 2)` from `JSON.stringify(value)`'s compact
+/// text: a line break and two spaces per level after `{` / `[` and `,`, before
+/// a closing bracket, `": "` between key and value; `{}` / `[]` stay closed.
+/// String contents are copied as they are.
+fn indent_json(compact: &str) -> String {
+    let mut out = String::with_capacity(compact.len() * 2);
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut chars = compact.chars().peekable();
+    let newline = |out: &mut String, depth: usize| {
+        out.push('\n');
+        for _ in 0..depth {
+            out.push_str("  ");
+        }
+    };
+    while let Some(c) = chars.next() {
+        if in_string {
+            out.push(c);
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match c {
+            '"' => {
+                in_string = true;
+                out.push(c);
+            }
+            '{' | '[' => {
+                out.push(c);
+                if matches!(chars.peek(), Some('}' | ']')) {
+                    out.push(chars.next().unwrap_or(c));
+                } else {
+                    depth += 1;
+                    newline(&mut out, depth);
+                }
+            }
+            '}' | ']' => {
+                depth = depth.saturating_sub(1);
+                newline(&mut out, depth);
+                out.push(c);
+            }
+            ',' => {
+                out.push(c);
+                newline(&mut out, depth);
+            }
+            ':' => out.push_str(": "),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 fn dump_request_to_file(final_body: &JsValue, model: &JsValue) -> Result<(), DumpFailure> {
     // Model name for the log message. The Google path carries its model in
     // the URL, not in the outgoing JSON body, so callers pass it in.
@@ -2018,10 +2076,10 @@ fn dump_request_to_file(final_body: &JsValue, model: &JsValue) -> Result<(), Dum
     #[cfg(unix)]
     crate::ensure_sigxfsz_ignored();
 
-    // `JSON.stringify(body, null, 2)`: insertion-ordered keys, two-space
-    // indent (a `serde_json::Value` round trip would sort the keys).
+    // `JSON.stringify(body, null, 2)`: the compact text re-indented, so keys
+    // keep the body's own order.
     let json = match crate::js_value::json_stringify(final_body) {
-        Ok(Some(_)) => crate::runtime::memory::edgeclaw::llm::recall::pretty_json(final_body),
+        Ok(Some(compact)) => indent_json(&compact),
         _ => return Ok(()), // Failed to serialize; skip the dump.
     };
 

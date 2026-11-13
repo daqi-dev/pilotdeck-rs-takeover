@@ -192,10 +192,10 @@ fn tool_result_text(block: &JsValue) -> Result<JsString, String> {
 pub async fn build(
     resolver: &dyn MemoryResolver,
     mut input: MemoryRetrieveInput,
-    parent: Option<&Cancellation>,
+    parent: Option<&crate::host::AbortSignal>,
     timeout_ms: f64,
 ) -> (Option<String>, Vec<MemoryDiagnostic>) {
-    if parent.is_some_and(Cancellation::is_cancelled) {
+    if parent.is_some_and(crate::host::AbortSignal::is_cancelled) {
         return (None, Vec::new());
     }
     let controller = Cancellation::default();
@@ -229,7 +229,7 @@ pub async fn build(
     };
     // A provider can abort the parent and resolve in the same poll. TS's
     // forwarding listener has already aborted the child in that case.
-    if parent.is_some_and(Cancellation::is_cancelled) {
+    if parent.is_some_and(crate::host::AbortSignal::is_cancelled) {
         controller.cancel(None);
     }
     match result {
@@ -243,7 +243,7 @@ pub async fn build(
             (context, result.diagnostics)
         }
         Err(error) => {
-            if parent.is_some_and(Cancellation::is_cancelled) {
+            if parent.is_some_and(crate::host::AbortSignal::is_cancelled) {
                 return (None, Vec::new());
             }
             let message = if controller.is_cancelled() {

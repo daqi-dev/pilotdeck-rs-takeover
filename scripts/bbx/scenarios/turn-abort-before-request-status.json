@@ -1,6 +1,6 @@
 {
   "name": "turn-abort-before-request-status",
-  "about": "中止发生在模型请求之前时的 turn_aborted 状态（src/agent/loop/AgentLoop.ts:597-614：每步开头检测到 abortSignal 已触发就以 aborted_streaming 结束；394-397 createAbortStatus 只在中止原因的文字里含 timeout / cancel / abort 时发 agent_status:turn_aborted，3910-3914，detail.reason 是原因原文）。流式输出中途的中止走 860-886 的 catch，不发这个状态，所以这里让中止落在请求之前：插件的 UserPromptSubmit hook 睡 1.5 秒（src/agent/turn/TurnRunner.ts:226-238 在 input_accepted 之后派发），收到 input_accepted 时 abort_turn，hook 结束后循环第一步就看到已中止。c1 原因 user cancelled → 发状态；c2 原因 stop now → 不发；c3 不给原因（gateway 缺省 aborted，InProcessGateway.ts:2000）→ 发。 已知不一致（未修，见报告）：Rust 照 sidecar 客户端的做法（agentLoopSidecarClient.ts:330/593，已中止的输入不发 execute，直接合成 aborted 结果，runtime/turn/live.rs 的 ExecuteResult::Aborted{terminal:None}），内置循环因此不经过 597-614 那一步，不发 turn_aborted、也不落对应的 agent_status_message 记录。",
+  "about": "中止发生在模型请求之前时的 turn_aborted 状态（src/agent/loop/AgentLoop.ts:597-614：每步开头检测到 abortSignal 已触发就以 aborted_streaming 结束；394-397 createAbortStatus 只在中止原因的文字里含 timeout / cancel / abort 时发 agent_status:turn_aborted，3910-3914，detail.reason 是原因原文）。流式输出中途的中止走 860-886 的 catch，不发这个状态，所以这里让中止落在请求之前：插件的 UserPromptSubmit hook 睡 1.5 秒（src/agent/turn/TurnRunner.ts:226-238 在 input_accepted 之后派发），收到 input_accepted 时 abort_turn，hook 结束后循环第一步就看到已中止。c1 原因 user cancelled → 发状态；c2 原因 stop now → 不发；c3 不给原因（gateway 缺省 aborted，InProcessGateway.ts:2000）→ 发。 默认部署下 Rust 自己拉起的 sidecar 子进程对外等同于基线的进程内循环：已中止的输入照样发 execute，由循环的步首检查收尾（发 turn_aborted、turns 1）；显式外部 sidecar 部署见 turn-abort-before-request-sidecar-stdio。",
   "provider": [
     {
       "name": "title",

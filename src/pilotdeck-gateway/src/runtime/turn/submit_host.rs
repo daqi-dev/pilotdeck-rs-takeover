@@ -177,6 +177,10 @@ pub trait SubmitAdmission: Send + Sync {
         completion: &'a crate::runtime::session::TurnCompletionHandle,
     ) -> SubmitFuture<'a, Result<bool, SubmitError>>;
     fn reject_pending(&self, session: &JsString, reason: &str) -> Result<(), SubmitError>;
+    /// The admitted run's task budget `(totalUsd, spentUsd)` for its loop.
+    fn loop_task_budget(&self, _run: &JsString) -> Option<(f64, f64)> {
+        None
+    }
 }
 
 /// One release per acquired lease, keyed by (session, run): `finish_pump`
@@ -371,6 +375,12 @@ impl SubmitHost for GatewaySubmitHost {
                     {
                         fields.insert(key.into(), value.clone());
                     }
+                }
+                // `...(taskBudget ? { taskBudgetUsd, initialTaskBudgetSpentUsd }
+                // : {})` (InProcessGateway.ts:1555-1558).
+                if let Some((total, spent)) = self.admission.loop_task_budget(&run.run_id) {
+                    fields.insert("taskBudgetUsd".into(), JsValue::Number(total));
+                    fields.insert("initialTaskBudgetSpentUsd".into(), JsValue::Number(spent));
                 }
                 for (key, mode) in [
                     ("permissionMode", permission_mode),

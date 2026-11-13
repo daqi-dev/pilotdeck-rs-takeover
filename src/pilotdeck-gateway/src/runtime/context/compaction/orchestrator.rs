@@ -4,9 +4,7 @@ use super::{
     engine::{CompactionInput, CompactionResult, ProtectedTools, port::*},
     *,
 };
-use crate::host::{
-    Cancellation, HostError, HostFuture, ModuleError, modules::context::ContextInput,
-};
+use crate::host::{HostError, HostFuture, ModuleError, modules::context::ContextInput};
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -132,9 +130,8 @@ impl CompactionOrchestrator {
             value.turn_id = Some(string_field(&fields, "turnId").cloned().unwrap_or_default());
             value.signal = input
                 .abort_signal
-                .as_ref()
-                .and_then(|s| s.downcast_ref::<Cancellation>())
-                .cloned();
+                .as_deref()
+                .and_then(crate::host::AbortSignal::from_context);
             value
         };
         let result = summary

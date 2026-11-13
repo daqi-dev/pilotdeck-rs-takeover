@@ -1,6 +1,6 @@
 {
   "name": "env-dump-request-tmpdir",
-  "about": "PILOTDECK_DUMP_REQUEST=1 时每次流式模型请求前把请求体写到系统临时目录（model/streaming/streamModel.ts:196-203：os.tmpdir()/pilotdeck_request_<Date.now()>.json，JSON.stringify(body, null, 2)，不带换行结尾，并在 stdout 打一行 [model-debug]）。bbx 只采 home 与 proj 两棵树，所以把 TMPDIR 指到 {HOME}/tmp，让临时文件落进被比较的树里（文件名里的毫秒时间戳由 diff.mjs 归一化）。标题生成走非流式的 complete()（streamModel.ts:86-140），不写转储；一轮纯文本对话只有一次流式请求，因此只有一个转储文件。 已知不一致（不在本场景里修，待人定）：Rust 的转储按已登记的安全偏离 A6.4-MODEL-DUMP-SECURE-001（R1 记为 2026-10-25 人批）写成 pilotdeck_request_<ms>_<pid>_<序号>.json、权限 600、内容是实际发出的请求体（基线是 buildModelRequest 的输出，含 model、不含合并后的 extraBody）；另外 Rust 在临时目录里建 pilotdeck-ledger-locks-<uid>/ 放会话文件写入栅栏（storage/transcript.rs:530-575，基线没有这个目录）。",
+  "about": "PILOTDECK_DUMP_REQUEST=1 时每次流式模型请求前把请求体写到系统临时目录（model/streaming/streamModel.ts:196-203：os.tmpdir()/pilotdeck_request_<Date.now()>.json，JSON.stringify(body, null, 2)，不带换行结尾，并在 stdout 打一行 [model-debug]）。bbx 只采 home 与 proj 两棵树，所以把 TMPDIR 指到 {HOME}/tmp，让临时文件落进被比较的树里（文件名里的毫秒时间戳由 diff.mjs 归一化）。标题生成走非流式的 complete()（streamModel.ts:86-140），不写转储；一轮纯文本对话只有一次流式请求，因此只有一个转储文件。 已接受差异 dump-request-exclusive-private-file（基线 bug，安全）：基线用可预测的毫秒文件名、writeFileSync（跟随符号链接、截断既有文件、按 umask 建 0644）写进 os.tmpdir()；Linux 上 TMPDIR 未设时就是共享的 /tmp，整段对话（系统提示词、用户消息、工具定义）对本机其他用户可读。Rust 用 O_CREAT|O_EXCL、0600、文件名加进程号与序号。因为两侧文件名不同，比较器把两份文件当成各自缺失，转储正文在本场景里不比（正文与发给 provider 的请求体相同，后者照常比）。 另有一处未登记的差异：Rust 在临时目录下建 pilotdeck-ledger-locks-<uid>/（会话文件写入栅栏，基线没有），这里因 TMPDIR 指进 home 被采到。",
   "env": {
     "TMPDIR": "{HOME}/tmp",
     "PILOTDECK_DUMP_REQUEST": "1"
@@ -37,6 +37,16 @@
         "message": "dump-1: hello"
       },
       "timeout": 20000
+    }
+  ],
+  "accepted": [
+    {
+      "id": "dump-request-exclusive-private-file",
+      "why": "基线 bug（安全）：PILOTDECK_DUMP_REQUEST 的转储在共享临时目录里以可预测文件名、跟随符号链接、0644 写入整段对话；Rust 独占创建、0600、文件名加进程号与序号（A6.4-MODEL-DUMP-SECURE-001）",
+      "paths": [
+        "^\\$\\.tree\\./home/tmp/pilotdeck_request_<ms>\\.json$",
+        "^\\$\\.tree\\./home/tmp/pilotdeck_request_<ms>_[0-9]+_[0-9]+\\.json$"
+      ]
     }
   ]
 }

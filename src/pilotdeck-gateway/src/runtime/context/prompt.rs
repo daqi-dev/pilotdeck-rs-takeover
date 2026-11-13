@@ -490,7 +490,7 @@ pub struct ContributionContext {
     pub additional_working_directories: Vec<String>,
     /// TS `abortSignal`; `prepare_for_model` adopts the request's host
     /// [`crate::host::Cancellation`]. Providers see the same one-shot signal.
-    pub abort: Option<crate::host::Cancellation>,
+    pub abort: Option<crate::host::AbortSignal>,
 }
 impl ContributionContext {
     /// TS `context.abortSignal?.throwIfAborted()`.

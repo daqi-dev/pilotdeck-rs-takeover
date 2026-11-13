@@ -523,8 +523,16 @@ pub fn run_admitted_turn(
             );
         }
         if host.advertised("turn", "drain_steer") {
-            let HostReply::SteerMessages(steers) = host.call(control, HostCall::TurnDrain)? else {
-                return Err(wrong_reply("drain_steer"));
+            // The original drains steers without observing the abort; one that
+            // lands meanwhile is seen after createModelRequest (AgentLoop.ts:
+            // 624-680) and ends the turn like the step-top check.
+            let steers = match host.call(control, HostCall::TurnDrain) {
+                Ok(HostReply::SteerMessages(steers)) => steers,
+                Ok(_) => return Err(wrong_reply("drain_steer")),
+                Err(PortError::Cancelled {
+                    cause: CancelCause::Requested(reason),
+                }) => return Err(abort_reason_thrown(reason)),
+                Err(error) => return Err(error),
             };
             for mut steer in steers {
                 // The authenticated host mailbox returns already committed items;
@@ -548,7 +556,13 @@ pub fn run_admitted_turn(
             .0;
         let pre_route_step =
             match preparation.prepare_compaction(host, control, config, input, &state.messages) {
+                Err(PortError::Cancelled {
+                    cause: CancelCause::Requested(reason),
+                }) => return Err(abort_reason_thrown(reason)),
                 Ok(Some(intent)) => match host.call(control, HostCall::AutoCompact(intent)) {
+                    Err(PortError::Cancelled {
+                        cause: CancelCause::Requested(reason),
+                    }) => return Err(abort_reason_thrown(reason)),
                     Ok(HostReply::Compacted(compact)) => install_pre_route_compaction(
                         &compact.boundary,
                         &mut state,
@@ -600,6 +614,15 @@ pub fn run_admitted_turn(
                 }
             }
         };
+        // The original's createModelRequest snapshots the prompt contributions
+        // first, and that snapshot rejects an already-aborted turn with the
+        // abort reason (PromptContributionRegistry.ts:160 `throwIfAborted`).
+        if let Err(PortError::Cancelled {
+            cause: CancelCause::Requested(reason),
+        }) = control.check()
+        {
+            return Err(abort_reason_thrown(reason));
+        }
         let (request, hints) =
             match preparation.prepare(host, control, config, input, &state.messages) {
                 Ok(request) => request,
@@ -2638,6 +2661,22 @@ fn annotate_compaction_boundary(
     Ok(crate::ports::CompactBoundary {
         boundary: BoundarySnapshot::capture(&JsValue::Object(value)),
     })
+}
+/// An abort observed between the step-top check and the request's prompt
+/// snapshot (steer drain, pre-route compaction) reaches the original loop as
+/// the rejection `signal.throwIfAborted()` throws: the abort reason itself,
+/// so the turn fails with it rather than ending aborted. A reasonless abort
+/// throws the default `AbortError` text.
+fn abort_reason_thrown(reason: JsString) -> PortError {
+    let message = if reason.equals_str("host_abort") {
+        JsString::from("This operation was aborted")
+    } else {
+        reason
+    };
+    PortError::SourceException {
+        boundary: BoundarySnapshot::capture(&JsValue::String(message.clone())),
+        message,
+    }
 }
 #[allow(clippy::too_many_arguments)]
 fn finish_pre_model_abort(

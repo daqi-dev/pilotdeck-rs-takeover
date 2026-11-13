@@ -547,6 +547,54 @@ impl Cancellation {
     }
 }
 
+/// The `AbortSignal` a host module receives through a turn or command
+/// context: a maintenance command's own [`Cancellation`], or the turn's abort
+/// signal (the one `abort_turn` aborts, `input.abortSignal` in the baseline).
+/// Any other capability is not an abort signal.
+#[derive(Clone)]
+pub enum AbortSignal {
+    Host(Cancellation),
+    Turn(crate::runtime::network::Cancellation),
+}
+impl AbortSignal {
+    pub fn from_context(context: &(dyn std::any::Any + Send + Sync)) -> Option<Self> {
+        context
+            .downcast_ref::<Cancellation>()
+            .cloned()
+            .map(Self::Host)
+            .or_else(|| {
+                context
+                    .downcast_ref::<crate::runtime::network::Cancellation>()
+                    .cloned()
+                    .map(Self::Turn)
+            })
+    }
+    pub fn is_cancelled(&self) -> bool {
+        match self {
+            Self::Host(signal) => signal.is_cancelled(),
+            Self::Turn(signal) => signal.is_cancelled(),
+        }
+    }
+    /// `AbortSignal.reason`; a host cancel without one reads `host_abort`.
+    pub fn reason(&self) -> Option<JsString> {
+        match self {
+            Self::Host(signal) => signal.reason(),
+            Self::Turn(signal) => signal.reason(),
+        }
+    }
+    pub async fn cancelled(&self) {
+        match self {
+            Self::Host(signal) => signal.cancelled().await,
+            Self::Turn(signal) => signal.cancelled().await,
+        }
+    }
+}
+impl From<Cancellation> for AbortSignal {
+    fn from(signal: Cancellation) -> Self {
+        Self::Host(signal)
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Progress {
     stream_id: Option<JsString>,
@@ -566,6 +614,9 @@ pub struct HostClient {
     /// The loop is the baseline's external module (an explicit stdio or tcp
     /// deployment), whose client reads terminals with its own rules.
     pub(super) external_loop: bool,
+    /// The loop is the gateway's own built-in loop, which the baseline runs
+    /// in-process; see [`Self::as_in_process_loop`].
+    pub(super) in_process_loop: bool,
     #[cfg(test)]
     test_signals: tests::ExecutionSignals,
 }
@@ -645,6 +696,7 @@ impl HostClient {
                 reconnect_attempted: false,
                 reconnect_succeeded: false,
                 external_loop: false,
+                in_process_loop: false,
                 #[cfg(test)]
                 test_signals: tests::ExecutionSignals::default(),
             }),
@@ -672,6 +724,17 @@ impl HostClient {
     /// This connection runs the baseline's external loop module.
     pub fn as_external_loop(mut self) -> Self {
         self.external_loop = true;
+        self
+    }
+    /// This connection runs the gateway's own built-in loop. The baseline
+    /// runs that loop in-process, where an abort that lands before the first
+    /// model request still reaches the loop's own step-top check
+    /// (AgentLoop.ts:597-614: `turn_aborted` status, then the aborted
+    /// result). So an already-cancelled turn still sends execute and lets
+    /// the loop observe the cancel, instead of the external client's
+    /// "never send execute" shortcut (agentLoopSidecarClient.ts:330/593).
+    pub fn as_in_process_loop(mut self) -> Self {
+        self.in_process_loop = true;
         self
     }
     pub fn binding(&self) -> &SidecarBinding {

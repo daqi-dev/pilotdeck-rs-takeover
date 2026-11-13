@@ -52,6 +52,7 @@ mod session_archive;
 mod session_fork;
 mod session_overrides;
 mod session_replace;
+mod task_budget;
 // #1353 A8.5-pr2: the production switch faces over the real assembly.
 #[cfg(test)]
 mod settings_tests;

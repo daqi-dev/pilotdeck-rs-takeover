@@ -377,12 +377,16 @@ impl TurnHostFactory {
             });
         let factory = Arc::new(self);
         let maintenance_factory = factory.clone();
+        // Cleared when the session is disposed; see `InteractionEvents::carry`.
+        let session_alive = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let maintenance_alive = session_alive.clone();
         let maintenance: Arc<super::live::MaintenanceFactory> =
             Arc::new(move |identity, recorder, signal| {
                 let factory = maintenance_factory.clone();
+                let alive = maintenance_alive.clone();
                 Box::pin(async move {
                     factory
-                        .maintenance_context(&identity, recorder, signal)
+                        .maintenance_context(&identity, recorder, signal, Some(alive))
                         .await
                 })
             });
@@ -403,7 +407,8 @@ impl TurnHostFactory {
         } else {
             close_timeout
         })
-        .with_maintenance(maintenance);
+        .with_maintenance(maintenance)
+        .with_liveness(session_alive);
         let session = match agent_config {
             Some(config) => session.with_agent_config(config),
             None => session,
@@ -470,9 +475,12 @@ impl TurnHostFactory {
         let expected = self.expected_module_id.clone();
         let limits = self.limits;
         let external = self.external_loop;
+        let in_process = self.in_process_loop;
         let mark = move |client: HostClient| {
             if external {
                 client.as_external_loop()
+            } else if in_process {
+                client.as_in_process_loop()
             } else {
                 client
             }
@@ -784,6 +792,7 @@ impl TurnHostFactory {
         identity: &ExecutionIdentity,
         recorder: Arc<Recorder>,
         signal: crate::runtime::hooks::Cancellation,
+        session_alive: Option<Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<MaintenanceContext, HostError> {
         let lease = self
             .registry
@@ -815,7 +824,7 @@ impl TurnHostFactory {
                 .map(|events| {
                     Arc::new(move |event: JsValue| {
                         if let Some(event) = event.as_object() {
-                            let _ = events.carry(event.clone());
+                            let _ = events.carry(event.clone(), session_alive.clone());
                         }
                     }) as crate::runtime::context::compaction::engine::EventEmitter
                 });

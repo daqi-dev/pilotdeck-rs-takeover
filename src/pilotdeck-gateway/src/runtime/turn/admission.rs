@@ -119,6 +119,18 @@ pub trait SubmitTaskBudgetSnapshot: Send + Sync {
         session: &'a JsString,
         project: Option<&'a JsString>,
     ) -> SubmitFuture<'a, Result<JsValue, SubmitError>>;
+    /// `options.recordTaskBudgetSpend` (InProcessGateway.ts:1650-1657): a
+    /// `turn_completed` whose result carries `budget.taskBudgetUsd` settles
+    /// the turn's spend under its run id. Failures are the caller's to drop.
+    fn record<'a>(
+        &'a self,
+        _session: &'a JsString,
+        _project: Option<&'a JsString>,
+        _run: &'a JsString,
+        _turn_spent_usd: f64,
+    ) -> SubmitFuture<'a, ()> {
+        Box::pin(async {})
+    }
 }
 /// `options.clearRecoveredUserDialogs` (InProcessGateway.ts:1183-1191).
 pub trait SubmitDialogRecovery: Send + Sync {
@@ -189,6 +201,10 @@ impl DialogProjectKeys {
 pub struct GatewaySubmitAdmission {
     options: SubmitAdmissionOptions,
     dialog_project_keys: DialogProjectKeys,
+    /// The admission-time task-budget snapshot of each admitted run, handed
+    /// to its loop as `taskBudgetUsd` / `initialTaskBudgetSpentUsd`
+    /// (InProcessGateway.ts:1555-1558).
+    task_budgets: std::sync::Mutex<HashMap<JsString, (f64, f64)>>,
 }
 impl GatewaySubmitAdmission {
     pub fn new(options: SubmitAdmissionOptions) -> Self {
@@ -202,6 +218,7 @@ impl GatewaySubmitAdmission {
         Self {
             options,
             dialog_project_keys,
+            task_budgets: Default::default(),
         }
     }
     pub fn dialog_project_key(&self, session: &JsString) -> Option<JsValue> {
@@ -713,6 +730,12 @@ impl super::submit_host::SubmitAdmission for GatewaySubmitAdmission {
                     field(&budget, "totalUsd").as_number().unwrap_or(f64::NAN),
                     field(&budget, "spentUsd").as_number().unwrap_or(f64::NAN),
                 );
+                if spent < total {
+                    self.task_budgets
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .insert(run.run_id.clone(), (total, spent));
+                }
                 if spent >= total {
                     return Ok(vec![
                         with_hint(
@@ -789,10 +812,34 @@ impl super::submit_host::SubmitAdmission for GatewaySubmitAdmission {
     /// 7b; without them there is nothing to observe before projection.
     fn observe_event<'a>(
         &'a self,
-        _: &'a JsValue,
-        _: &'a JsValue,
+        input: &'a JsValue,
+        event: &'a JsValue,
     ) -> SubmitFuture<'a, Result<(), SubmitError>> {
-        Box::pin(async { Ok(()) })
+        Box::pin(async move {
+            // InProcessGateway.ts:1650-1657.
+            let budget = field(field(event, "result"), "budget");
+            if is(event, "type", "turn_completed")
+                && !matches!(field(budget, "taskBudgetUsd"), JsValue::Undefined)
+                && let Some(port) = self.options.task_budget.as_ref()
+                && let (Some(session), Some(run)) = (
+                    field(input, "sessionKey").as_string(),
+                    field(event, "turnId").as_string(),
+                )
+            {
+                let project = field(input, "projectKey").as_string();
+                let spent = field(budget, "turnSpentUsd")
+                    .as_number()
+                    .unwrap_or(f64::NAN);
+                port.record(session, project, run, spent).await;
+            }
+            Ok(())
+        })
+    }
+    fn loop_task_budget(&self, run: &JsString) -> Option<(f64, f64)> {
+        self.task_budgets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(run)
     }
     fn has_sdk_config(&self) -> bool {
         self.options.sdk_config.is_some()

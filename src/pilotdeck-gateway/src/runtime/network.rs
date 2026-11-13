@@ -1,6 +1,12 @@
 //! Node timer normalization and fetch event ordering shared by web, MCP and providers.
 use http_body_util::BodyExt;
-use std::{future::Future, pin::Pin, task::Poll, time::Duration};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{Arc, OnceLock},
+    task::Poll,
+    time::Duration,
+};
 use tokio::{sync::watch, time::Instant};
 
 /// Long transport timeout installed by TS `cli/proxy.ts` globally.
@@ -10,7 +16,11 @@ pub const UNDICI_BODY_TIMEOUT_MS: f64 = UNDICI_BODY_TIMEOUT.as_millis() as f64;
 /// Store this host-owned signal in ToolRuntimeContext.abort_signal. No timers
 /// or polling tasks are needed; watch retains cancellation before subscription.
 #[derive(Clone, Debug)]
-pub struct Cancellation(watch::Sender<Option<AbortEvent>>);
+pub struct Cancellation(
+    watch::Sender<Option<AbortEvent>>,
+    /// `AbortSignal.reason` when the abort named one.
+    Arc<OnceLock<pilotdeck_protocol::JsString>>,
+);
 
 #[derive(Clone, Copy, Debug)]
 struct AbortEvent {
@@ -20,7 +30,7 @@ struct AbortEvent {
 
 impl Default for Cancellation {
     fn default() -> Self {
-        Self(watch::channel(None).0)
+        Self(watch::channel(None).0, Arc::default())
     }
 }
 impl Cancellation {
@@ -33,6 +43,18 @@ impl Cancellation {
     }
     pub fn is_aborted(&self) -> bool {
         self.is_cancelled()
+    }
+    /// JS `AbortController.abort(reason)` in the current call stack. The
+    /// first abort wins; a later reason never replaces it.
+    pub fn abort_with_reason(&self, reason: pilotdeck_protocol::JsString) {
+        if !self.is_cancelled() {
+            let _ = self.1.set(reason);
+        }
+        self.cancel_synchronously();
+    }
+    /// The reason the abort named, if any (`AbortSignal.reason`).
+    pub fn reason(&self) -> Option<pilotdeck_protocol::JsString> {
+        self.1.get().cloned()
     }
 
     /// Record the first cancellation at the runtime clock's current instant.

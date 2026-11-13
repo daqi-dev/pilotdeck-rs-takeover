@@ -9,7 +9,10 @@ use crate::host::{HostError, ModuleError};
 use crate::runtime::cleanup_task::lock;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 
 #[derive(Default)]
 struct State {
@@ -19,7 +22,14 @@ struct State {
     /// Session events raised while the session has no current run (a manual
     /// compaction's maintenance turn). The baseline's session event buffer
     /// keeps them until the next turn drains it, under that turn's run.
-    carried: HashMap<JsString, Vec<JsObject>>,
+    carried: HashMap<JsString, Vec<Carried>>,
+}
+/// A carried event and, for one raised by a session's own maintenance, that
+/// session's liveness: the baseline buffer belongs to the session object, so
+/// a closed session's held events die with it and never reach a reopened one.
+struct Carried {
+    event: JsObject,
+    session_alive: Option<Arc<AtomicBool>>,
 }
 struct TurnState {
     identity: event::TurnIdentity,
@@ -54,7 +64,16 @@ impl InteractionEvents {
         let carried = state
             .carried
             .remove(&identity.session_id)
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|carried| {
+                carried
+                    .session_alive
+                    .as_ref()
+                    .is_none_or(|alive| alive.load(Ordering::SeqCst))
+            })
+            .map(|carried| carried.event)
+            .collect();
         let turn = Arc::new(Mutex::new(TurnState {
             identity: identity.clone(),
             run_id,
@@ -110,7 +129,11 @@ impl InteractionEvents {
 
     /// A session event raised outside any run: held for the session's next
     /// run (see `State::carried`).
-    pub fn carry(&self, event: JsObject) -> Result<(), HostError> {
+    pub fn carry(
+        &self,
+        event: JsObject,
+        session_alive: Option<Arc<AtomicBool>>,
+    ) -> Result<(), HostError> {
         let mut state = lock(&self.state);
         if state.closed {
             return Err(closed());
@@ -120,7 +143,10 @@ impl InteractionEvents {
                 ModuleError::new("Sidecar host event does not match the active turn.").into(),
             );
         };
-        state.carried.entry(session).or_default().push(event);
+        state.carried.entry(session).or_default().push(Carried {
+            event,
+            session_alive,
+        });
         Ok(())
     }
 
@@ -143,7 +169,10 @@ impl InteractionEvents {
                 .carried
                 .entry(parent_session.clone())
                 .or_default()
-                .push(event);
+                .push(Carried {
+                    event,
+                    session_alive: None,
+                });
             return Ok(());
         };
         let mut turn = lock(&turn);

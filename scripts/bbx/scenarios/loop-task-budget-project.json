@@ -1,0 +1,89 @@
+{
+  "about": "project 作用域的任务预算（ProjectRuntimeRegistry.ts:1408-1453 configureProjectTaskBudget、2222-2237 账本键）：同一项目的不同 SDK 会话共用一份账本（sessionKey 记成 *）；首次配置追加 configured 记录，之后 total 不同就回 SDK_PROJECT_TASK_BUDGET_TOTAL_CONFLICT「Project taskBudget.total is fixed at ...」。s-p1 一轮花 0.04 越过 0.03（轮内 task_budget），s-p2 是另一个会话、提交前就被拒，s-p3 用不同 total 配置被拒。PILOTDECK_SDK_TASK_BUDGET_LEDGER_COMPACT_AFTER_RECORDS=2 让账本在 configured + settled 两条之后压成一条 snapshot（1511-1540：写临时文件再改名）。只让一轮记账：snapshot 的 settledRunIds 按字符串排序，两个随机 run id 的先后两侧都随机，比较器按出现顺序编号 UUID，会时有时无地报差异。",
+  "env": {
+    "PILOTDECK_SDK_TASK_BUDGET_LEDGER_COMPACT_AFTER_RECORDS": "2"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Task budget\"}"
+      }
+    },
+    {
+      "name": "p",
+      "when": [
+        "tbp"
+      ],
+      "reply": {
+        "text": "Project.",
+        "usage": {
+          "prompt_tokens": 12,
+          "completion_tokens": 4,
+          "total_tokens": 16,
+          "cost": 0.04
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-p1",
+        "channelKey": "test",
+        "message": "tbp1: spend",
+        "sdkSessionConfig": {
+          "taskBudget": {
+            "total": 0.03,
+            "scope": "project"
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-p2",
+        "channelKey": "test",
+        "message": "tbp2: refused",
+        "sdkSessionConfig": {
+          "taskBudget": {
+            "total": 0.03,
+            "scope": "project"
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-p3",
+        "channelKey": "test",
+        "message": "tbp3: other total",
+        "sdkSessionConfig": {
+          "taskBudget": {
+            "total": 0.5,
+            "scope": "project"
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    }
+  ],
+  "name": "loop-task-budget-project"
+}

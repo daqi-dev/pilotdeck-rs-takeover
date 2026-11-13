@@ -1,0 +1,122 @@
+{
+  "name": "turn-abort-before-request-sidecar-stdio",
+  "about": "同 turn-abort-before-request-status，但显式部署外部 sidecar（PILOTDECK_AGENT_LOOP_TRANSPORT=stdio）：基线的 sidecar 客户端对已中止的输入不发 execute（src/agent/modules/transport/agentLoopSidecarClient.ts:330 run 开头、593 发 execute 前各查一次 abortSignal.aborted），直接合成 abortedResult（1434-1448：turns 0、键序 type/sessionId/turnId/stopReason/...），所以不发 turn_aborted 状态、也不落 agent_status_message。c1 user cancelled、c2 stop now、c3 不给原因。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Abort early\"}"
+      }
+    },
+    {
+      "name": "main",
+      "when": [
+        "ab-"
+      ],
+      "reply": {
+        "text": "Should not be requested."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ab-1",
+        "channelKey": "test",
+        "message": "ab-1: stream"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "input_accepted"
+          },
+          "ws": "abort_turn",
+          "params": {
+            "sessionKey": "s-ab-1",
+            "reason": "user cancelled"
+          },
+          "count": 1
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ab-2",
+        "channelKey": "test",
+        "message": "ab-2: stream"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "input_accepted"
+          },
+          "ws": "abort_turn",
+          "params": {
+            "sessionKey": "s-ab-2",
+            "reason": "stop now"
+          },
+          "count": 1
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ab-3",
+        "channelKey": "test",
+        "message": "ab-3: stream"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "input_accepted"
+          },
+          "ws": "abort_turn",
+          "params": {
+            "sessionKey": "s-ab-3"
+          },
+          "count": 1
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-ab-1"
+      }
+    }
+  ],
+  "files": {
+    "home/.pilotdeck/plugins/bbx-slow/plugin.json": {
+      "name": "bbx-slow",
+      "version": "0.1.0",
+      "description": "bbx slow prompt hook",
+      "hooks": {
+        "UserPromptSubmit": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "sleep 1.5"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "env": {
+    "PILOTDECK_AGENT_LOOP_TRANSPORT": "stdio"
+  }
+}

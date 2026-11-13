@@ -7,7 +7,7 @@ pub mod strip_multimedia;
 
 use super::*;
 use crate::host::{
-    Cancellation, HostError, HostFuture, ModuleError,
+    HostError, HostFuture, ModuleError,
     modules::model::{ModelExecution, PrepareInput, StreamInput},
 };
 pub use pilotdeck_protocol::compaction::{SUMMARY_END, SUMMARY_PREFIX};
@@ -85,7 +85,7 @@ pub struct CompactionInput {
     pub cache_reset: Option<bool>,
     pub attachments: Vec<JsValue>,
     pub hook_results: Vec<JsValue>,
-    pub signal: Option<Cancellation>,
+    pub signal: Option<crate::host::AbortSignal>,
     pub session_id: Option<JsString>,
     pub turn_id: Option<JsString>,
 }
@@ -795,11 +795,11 @@ fn failure(value: &str) -> HostError {
 /// placeholder. A default abort is Node's `DOMException("This operation was
 /// aborted", "AbortError")`; an explicit string reason is used verbatim, and
 /// the host's synthetic `host_abort` marker means "no reason given".
-fn abort_failure(signal: Option<&Cancellation>) -> HostError {
+fn abort_failure(signal: Option<&crate::host::AbortSignal>) -> HostError {
     // `host_abort` is the host's synthetic "no reason" marker. A real empty
     // string reason is distinct: `createAbortError` falls back to
     // "Operation aborted." because of its `... && reason` test.
-    let message = match signal.and_then(Cancellation::reason) {
+    let message = match signal.and_then(crate::host::AbortSignal::reason) {
         None => "This operation was aborted".to_string(),
         Some(reason) if reason.equals_str("host_abort") => "This operation was aborted".to_string(),
         Some(reason) if reason.units().is_empty() => "Operation aborted.".to_string(),

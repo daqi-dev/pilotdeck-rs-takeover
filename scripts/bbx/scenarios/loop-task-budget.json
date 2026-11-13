@@ -1,0 +1,162 @@
+{
+  "about": "Gateway 记账的任务预算（sdkSessionConfig.taskBudget，美元）：InProcessGateway.ts:1134-1181 提交前取 taskBudgetSnapshot（ProjectRuntimeRegistry.ts:1058-1072），spent >= total 时直接回 error agent_task_budget_reached（recoverable false、userHint）与 turn_completed finishReason task_budget，不发模型请求；否则把 taskBudgetUsd / initialTaskBudgetSpentUsd 交给循环（:1555-1557）。循环按 provider usage 的 cost 累计（AgentLoop.ts:370-377、977-1022），越过 total 时 agent_status task_budget_reached、error agent_task_budget_reached、stopReason task_budget。turn_completed 带 result.budget.taskBudgetUsd 时 recordTaskBudgetSpendForSdk 追加 settled 记录到 <pilotHome>/gateway/sdk-task-budget-ledger.jsonl（ProjectRuntimeRegistry.ts:1375-1406、1511-1513）。s-tb 每轮花 0.02、total 0.05：第一、二轮正常结束，第三轮累计 0.06 在轮内越线；重启后第四轮读回账本、提交前就拒绝；另一会话 s-tb2 有自己的账本照常。",
+  "server": false,
+  "files": {
+    "home/.pilotdeck/a.txt": "alpha\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Task budget\"}"
+      }
+    },
+    {
+      "name": "spend",
+      "when": [
+        "tb1:"
+      ],
+      "reply": {
+        "text": "One.",
+        "usage": {
+          "prompt_tokens": 12,
+          "completion_tokens": 4,
+          "total_tokens": 16,
+          "cost": 0.02
+        }
+      }
+    },
+    {
+      "name": "other",
+      "reply": {
+        "text": "Other.",
+        "usage": {
+          "prompt_tokens": 12,
+          "completion_tokens": 4,
+          "total_tokens": 16,
+          "cost": 0.001
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "serve": [
+        "server"
+      ],
+      "then": [
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-tb",
+            "channelKey": "test",
+            "message": "tb1: spend",
+            "sdkSessionConfig": {
+              "taskBudget": {
+                "total": 0.05
+              }
+            }
+          },
+          "timeout": 20000
+        },
+        {
+          "sleep": 300
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-tb",
+            "channelKey": "test",
+            "message": "tb2: spend more",
+            "sdkSessionConfig": {
+              "taskBudget": {
+                "total": 0.05
+              }
+            }
+          },
+          "timeout": 20000
+        },
+        {
+          "sleep": 300
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-tb",
+            "channelKey": "test",
+            "message": "tb3: refused",
+            "sdkSessionConfig": {
+              "taskBudget": {
+                "total": 0.05
+              }
+            }
+          },
+          "timeout": 20000
+        },
+        {
+          "sleep": 300
+        },
+        {
+          "ws": "read_session_messages",
+          "params": {
+            "sessionKey": "s-tb"
+          }
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    },
+    {
+      "serve": [
+        "server"
+      ],
+      "then": [
+        {
+          "connect": true
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-tb",
+            "channelKey": "test",
+            "message": "tb4: after restart",
+            "sdkSessionConfig": {
+              "taskBudget": {
+                "total": 0.05
+              }
+            }
+          },
+          "timeout": 20000
+        },
+        {
+          "sleep": 300
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-tb2",
+            "channelKey": "test",
+            "message": "tb5: another session",
+            "sdkSessionConfig": {
+              "taskBudget": {
+                "total": 0.05
+              }
+            }
+          },
+          "timeout": 20000
+        },
+        {
+          "sleep": 300
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    }
+  ],
+  "name": "loop-task-budget"
+}
