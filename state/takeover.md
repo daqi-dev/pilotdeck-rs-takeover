@@ -40,8 +40,8 @@ cb8 上 `9c11345cf` 的结果：fmt、clippy、文档测试通过；`nextest` 78
 已知没做的（有线索、没有一致的场景）：
 
 - CLI 的 `cron` 子命令连上 server 之后的分支、`run --model` 不带 `--project`：Rust 里是 `Todo`。基线每个 `cron` 子命令先探测写死的 `127.0.0.1:18789`，bbx 不占这个端口，所以现在没法对拍；方案未定。
-- `SubagentStart` / `SubagentStop` hook：输入与执行结果一致，WS 帧先后不同（基线把代理事件攒一批再发，Rust 立即发）。
-- `PreModelRequest` / `InstructionsLoaded` hook 在 Rust 里不随用户中止取消（基线会）；没有场景。
+- 被取消的 hook 的完成帧与截断的 assistant_block 的先后：基线 40 次全是「截断块在前」，Rust 40 次里 14 次相反（基线只是时延造成的稳定次序，没有代码约束）。两个 `hook-*-cancelled` 场景用 `term.mjs` 让 hook 晚 300ms 退出来避开；主会话定：让 Rust 固定成基线观察到的次序，待做。
+- 客户端只发 FIN 后，这一轮在第几帧写失败而中止取决于时序（基线约十来帧，Rust 约三四帧），短回复在基线里能跑完；没有场景。
 - 让缓存代际回到 1 的其他入口（MCP 设置变更、`apply_flag_settings`、配置热重载、空闲回收）没有场景。
 - 模型错误的 `details.raw` 是否落成 `{}` 按形状识别（`is_error_instance_raw`），以后改成按来源标记。
 - 受限沙箱模式下基线把 `grep` / `glob` / `edit_file` 的子进程也包进沙箱，Rust 没包；只在没有 Seatbelt 的平台上可见，本机验证不了。
@@ -129,6 +129,10 @@ cb8 的情况（2026-11-12）：Ubuntu 24.04、aarch64、20 核、119 GB；Rust 
 | PreToolUse hook 执行中用户中止这一轮 | hook 被杀后仍走权限并执行工具 | 不执行工具 | `aborted-hook-does-not-run-tool`（场景 `hook-cancelled`） |
 | sidecar 握手 | 无对应物 | 不设时限 | — |
 | 遥测上报到外部地址 | `telemetry.enabled` 时上报 | 不实现 | 待登记 |
+| 客户端不发关闭帧就消失（进程被强杀 / 只关 TCP），且服务端此后再没写过那条连接时停机 | SIGTERM 后 `server.close()` 一直等这条半开连接，进程退不出（`websocket.ts:17-21` 不听 end，`GatewayServer.ts:184-186`） | 停机时结束半开连接，正常退出 | `stop-hangs-on-vanished-client`（`cli-run-model-no-project`、`robust-drop-half-close-midturn`、`robust-drop-cli-kill-midturn`） |
+| wecom 保存的状态文件是 JSON 真值原始值（`"abc"`、`5`） | `WeComSessionMapper` 构造函数抛 TypeError，启动失败、退出码 1（`WeComSessionMapper.ts:27-31`） | 照常启动（与状态文件为假值 0 时基线自己的表现相同） | `wecom-primitive-state-crash`（`cfg-adapters-wecom-bad-state`） |
+| 断线后 sidecar 进程里的孤儿执行（TCP 部署） | 永远挂着 | 回收 | 未登记（gateway 一侧看不出差别） |
+| 显式时区名的解析（时间工具、cron、配置校验） | Node 自带 ICU 数据 | 内置 IANA 数据（`jiff-tzdb` 2025b），不读系统 tzdata；推翻旧决策卡「不内嵌 tzdata」，冻结账本 `A8.3-CRON-TZ-ALIAS-001` 已过时、待追加说明 | 场景 `*-legacy-zones`、`time-process-tz` |
 
 保持与基线一致的已知风险或怪异行为（人可以决定让 Rust 修掉）：
 
@@ -207,6 +211,13 @@ Rust 明确报错而不假装支持（文案是 Rust 自己的）：`update_sett
 |---|---|---|
 | `.github/workflows/ci.yml`、`pr-gate.yml`（文件留在原处，没删没改；它们只在 PR、push 到 `main`、merge queue 时触发，接手仓库只推 `dev/takeover`，所以不跑） | 四条构建测试命令；另有约 30 步守卫：负控装置自检、CI 配置守卫、冻结账本只追加、评审结果块格式、入口总账记账一致性 | `.github/workflows/takeover.yml` 只跑四条命令。对基线的一致性由本机的 `scripts/bbx` 验收。冻结账本我不改，所以只追加检查暂时没有对象；要动账本时手工跑对应的 `check_frozen.py` |
 | `tests/negative_anchor_selfcheck.rs` 的 `negative_fixture_anchors_and_checker_controls`（2026-11-11 标 `#[ignore]`，文件和那些 `.py` 还在） | 用文本匹配把产品语句钉在原位，防「测试假绿」 | `scripts/bbx` 对着基线验收。它让每次改产品代码都要同步 `.py`，并发时还会卡住。确认无影响后连同 `tests/fixtures/native-*/negative_controls.py` 一起删 |
+
+| `src/pilotdeck-regex-proto` 与 `rquickjs` 依赖、夹具 `regex-proto-budget/`（2026-11-12 删除） | 有界 JS RegExp 引擎原型，从没接入产品 | 无需替代 |
+| `src/*/tests/fixtures/**` 下的 Python 负控装置（377 个 `.py`、100 个只剩它们的夹具目录）、`tests/negative_anchor_selfcheck.rs`、`guard_includes_library_wiring`（2026-11-12 删除） | 按文本锚点把产品代码改坏，确认测试会变红 | `scripts/bbx` 对拍加注入错误检查。冻结的 gateway-parity 脚本实际加载的 `negative_process.py`、`negative_selection.py`、`same-json-surfaces/`、`session-domain-cleanup/` 保留 |
+| `scripts/` 顶层旧流程脚本 32 个及 `lib/`、`exp003`、`exp007`、`a8-5`、`fe-parity`、`parity-attrib`；`specs/negative-controls`、`specs/fe-parity`、`ui-rs`、`.claude/workflows`（2026-11-12 删除） | 多模型流水线的交付巡检、评审调度、PR 闸门、命名与清单守卫、前端探针 | 一个会话直接负责；验收靠 bbx 加四条命令；推送前手工跑 gitleaks；前端不在范围 |
+| `tests/native_witness.rs`、`native_stimulus_plan.rs`、`native_session_e2e.rs` 及夹具、`scripts/native-witness/`、两个示例探针（2026-11-12 删除） | 测 Linux strace 采集器本身 | bbx 对拍；产品里的 stimulus 接线还在，留给之后的批次 |
+
+清理时没删、与盘点不符的：`unsafe_boundary` 守卫（`pilotdeck-child-signals` 是 `deny` 加两处例外，守卫查的就是这条边界）；`ci.yml` / `pr-gate.yml`（冻结的 `gateway-parity/controls/prerequisites.py` 对 `ci.yml` 求哈希）；`timezones.json` 与 `tz-probe/`（冻结账本的复现证据）。被删的 `session-domain-lock-release/`、`parity-lock-release/` 夹具目录在 `specs/gateway-parity/FROZEN.md` 正文里被当证据提到过（不在哈希表里，冻结检查仍通过），需要时从 git 历史恢复。清理计划共 10 批（盘点报告在 2026-11-12 的会话里），已做 2、3、4；待做：1 透明代理、5 未接线产品代码（Slack、SMS 换启动桩、user-dialog HTTP 存储、记忆导出回滚）、6 stimulus 装置、7 回执宏、8 mutants、9 编译探测收尾。等人定：冻结表登记的旧对拍脚本退役、BlueBubbles、StaffDeck 审批与项目绑定。
 
 旧 workflow 没删的原因：仓库里有 Python 守卫和至少一个 Rust 测试会读 `ci.yml` 的内容。等 M7 精简测试时一起处理。
 
