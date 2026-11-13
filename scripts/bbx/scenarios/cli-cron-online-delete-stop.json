@@ -1,0 +1,261 @@
+{
+  "name": "cli-cron-online-delete-stop",
+  "about": "cron delete / stop 连上 server（src/cli/pilotdeck.ts:399-421）：任务 id 取 argv[1]（紧跟子命令的那个参数，哪怕它是 --task / --run / --stop-running 这样的旗标），没有时才看 --task；delete 带 stopRunning: argv.includes('--stop-running')；stop 的 --run 给 runId，任务 id 与 runId 都没有时打用法。覆盖删除成功、重复删除、不存在的任务、旗标被当成任务 id、停一个正在跑的一次性运行（run_now 触发、模型请求挂住）、停不在跑的任务。基线 CLI 连上 server 后 WebSocket 不关，输出完不退出（挂起，疑似基线 bug，见报告），这类步骤声明 expectTimeout；最后 stopServer SIGKILL：被杀掉的 CLI 只发 FIN 不发关闭帧，基线 server 的 WebSocket 不处理半关闭（src/gateway/server/websocket.ts:19-20 只听 close / error），SIGTERM 后 server.close() 永远等不完（另一处挂起，见报告），所以用 SIGKILL 统一收尾，停机行为不在这些场景里比。",
+  "gatewayPort": 18789,
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ncron:\n  enabled: true\n",
+  "files": {
+    "home/.pilotdeck/server-token": "bbx-token\n",
+    "home/.pilotdeck/projects/tmp-pdrs-bbx-root-proj/.cwd": "{PROJECT}\n"
+  },
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Cron\"}"
+      }
+    },
+    {
+      "name": "hang",
+      "when": [
+        "cron-turn: hang"
+      ],
+      "reply": {
+        "text": "Late.",
+        "delayMs": 15000
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "Cron ran."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "cron_create",
+      "params": {
+        "projectKey": "{PROJECT}",
+        "message": "first",
+        "schedule": {
+          "type": "cron",
+          "expression": "0 9 * * *"
+        }
+      },
+      "save": {
+        "t1": "taskId\\W+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
+      }
+    },
+    {
+      "ws": "cron_create",
+      "params": {
+        "projectKey": "{PROJECT}",
+        "message": "second",
+        "schedule": {
+          "type": "cron",
+          "expression": "0 10 * * *"
+        }
+      },
+      "save": {
+        "t2": "taskId\\W+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
+      }
+    },
+    {
+      "ws": "cron_create",
+      "params": {
+        "projectKey": "{PROJECT}",
+        "message": "cron-turn: hang",
+        "schedule": {
+          "type": "cron",
+          "expression": "0 11 * * *"
+        }
+      },
+      "save": {
+        "t3": "taskId\\W+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
+      }
+    },
+    {
+      "cli": [
+        "cron",
+        "delete",
+        "{saved.t1}"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "delete",
+        "{saved.t1}"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "delete",
+        "--task",
+        "{saved.t2}"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "delete",
+        "{saved.t2}",
+        "--stop-running"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "delete",
+        "no-such-task"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "delete"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "delete",
+        "--task"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "stop",
+        "{saved.t3}"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "stop",
+        "no-such-task"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "stop",
+        "--run",
+        "run-missing"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "stop",
+        "--task",
+        "{saved.t3}"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "stop"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "ws": "cron_run_now",
+      "params": {
+        "taskId": "{saved.t3}",
+        "projectKey": "{PROJECT}"
+      },
+      "save": {
+        "r": "runId\\W+([0-9a-f-]{36})",
+        "o": "taskId\\W+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
+      }
+    },
+    {
+      "sleep": 4000
+    },
+    {
+      "cli": [
+        "cron",
+        "list",
+        "--history"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "stop",
+        "{saved.o}"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "sleep": 1000
+    },
+    {
+      "cli": [
+        "cron",
+        "stop",
+        "{saved.o}"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "cron",
+        "list",
+        "--history"
+      ],
+      "timeout": 4000,
+      "expectTimeout": true
+    },
+    {
+      "stopServer": "SIGKILL"
+    }
+  ],
+  "accepted": [
+    {
+      "id": "cron-online-cli-never-exits",
+      "why": "基线 bug（挂起）：`pilotdeck cron <子命令>` 连上 18789 上的 server 后从不关闭 WebSocket（`src/cli/pilotdeck.ts:362-424`），结果或用法错误打印完进程仍一直挂着，只能被杀；场景里基线一侧的每个 cron 步骤都是超时后被 SIGKILL。Rust 打印完就关连接退出：成功为 0，用法错误与 server 回错误为 1（基线源码里设的退出码，`pilotdeck.ts:626-629`）。只放过步骤的超时标记、退出码和信号，stdout / stderr 与发给 server 的请求照常比",
+      "paths": [
+        "^\\$\\.steps\\[\\d+\\]\\.timedOut$",
+        "^\\$\\.steps\\[\\d+\\]\\.cli\\.(exitCode|signal)$"
+      ]
+    }
+  ]
+}

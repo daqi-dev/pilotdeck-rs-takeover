@@ -1,0 +1,46 @@
+{
+  "name": "cli-cron-online-gone-error",
+  "about": "cron create 被 server 回错误（非法 cron 表达式）后 server 消失：退出码 1（main().catch，pilotdeck.ts:626-629）。 场景先连上并完成输出，然后在 CLI 还挂着时 stopServer SIGKILL：连接被 server 一侧断开后基线 CLI 自己退出，这是唯一能看到它退出码的办法；之后再跑一次同一命令，server 已不在，走探测失败。",
+  "gatewayPort": 18789,
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ncron:\n  enabled: true\n",
+  "files": {
+    "home/.pilotdeck/server-token": "bbx-token\n"
+  },
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "steps": [
+    {
+      "cli": [
+        "cron",
+        "create",
+        "--session",
+        "s",
+        "--message",
+        "m",
+        "--cron",
+        "not a cron"
+      ],
+      "until": "Cron schedule does not produce",
+      "then": [
+        {
+          "stopServer": "SIGKILL"
+        }
+      ],
+      "timeout": 10000
+    },
+    {
+      "cli": [
+        "cron",
+        "create",
+        "--session",
+        "s",
+        "--message",
+        "m",
+        "--cron",
+        "not a cron"
+      ]
+    }
+  ]
+}

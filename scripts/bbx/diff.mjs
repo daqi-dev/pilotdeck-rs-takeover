@@ -43,6 +43,23 @@
 //      第一次出现的序号。保留「同一个实例 / 同一代连接 / 同一条流」的关系（例如重启后是不是新实例），
 //      前缀（模块名）和段数照比；格式不符的值不动
 //  15. sqlite 里 *_json 列的 JSON 文本先解析再比（不是抹值，是让差异落到内部字段路径上，见 embedJson）
+//  16. 记忆检索的随机轨迹 id：case_trace_<10 位十六进制>（edgeclaw-memory-core/src/service.ts:1041）→ case_trace_<case:N>，
+//      trace_<10 位十六进制>（core/retrieval/reasoning-loop.ts:58-60、312；步骤 id "<traceId>:step:K" 跟着变）→ trace_<trace:N>。
+//      两者都是 sha1(…:Math.random()) 的前 10 位，同一侧连跑两次也不同。N 是它在该侧第一次出现的序号，保留「同一个 id」
+//      的关系。只认这两个前缀，且前面不能紧挨字母、数字或下划线（index_trace_ 由内容和时间算出，dream_trace_ 未见到，都不抹）
+//  17. 会话文件大小 fileSize（SessionInfo.fileSize = stat 出的字节数，SessionList.ts:146、257；read_session_messages 的
+//      session、会话列表里都有）：数值里含着被上面规则抹掉的变长值的位数（例如 11 个 durationMs 从 8 变成 13 就多 11 字节）。
+//      两侧数值不同时，各自在落盘树里找这个会话的文件（…/<sessionId>.jsonl），按记录逐条累加字节数
+//      （JSON.stringify(记录) + 换行），找出「文件只写到第 K 条时正好是这个大小」的 K：两侧 K 相等就当作相同——
+//      那 K 条记录的内容由落盘树照常比（归一化之后），大小之差要么来自被归一化的值，要么来自落盘树里照常报出的
+//      内容差异，不需要在 fileSize 上再报一次。两侧 K 不等照报。
+//      有一侧拼不出 K（文件后来被整体改写、或会话文件不在树里）时退一步：两侧都大于 0、差值不超过该会话文件里
+//      最短一条记录字节数的一半、且不超过 64 字节才放过。少一条记录、大小是旧值、一侧为 0 都照报。
+//      放过的处数每次打印。只认对象里键名为 fileSize 的数值；CLI 输出文本里的 "fileSize": N 不处理
+//  18. 运行记录文件锁 runs/registry.json.lock 有没有不比：基线停机（SIGTERM → process.exit）可能打断在持锁写
+//      运行记录的过程中（锁在 RunRegistry.ts:115-116 建，withFileLock 的 finally 里 154 删），锁文件就留下来；tool-goal-permission
+//      基线连跑 30 次留下 9 次。只在一侧有、一侧没有时两侧都略过（并打印）；两侧都有时内容照比
+//      （残留锁对之后启动的影响由场景 robust-restart-registry-lock-leftover 单独比）
 // 数组按下标比。唯一的例外：元素全是带名字的对象（function.name 或 name，且名字不重复）的数组
 // 按名字对齐——缺的、多的各报一条，共有元素的相对顺序不同报一条，同名元素再逐字段比。
 // 这只改变差异的报法（少一个工具不再表现为后面所有工具都错位），不会让任何差异消失。
@@ -54,13 +71,10 @@
 // 过期检查：基线 vs Rust 比较时，场景登记的每条 accepted 正则一处都没命中，打印 STALE 并计 1 处差异；
 // volatile 正则一处都没命中只打印 STALE? 提示（基线这次没抖时本来就是 0）。--self（基线自比）不做这个检查。
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
-const args = process.argv.slice(2);
-const files = args.filter((a) => !a.startsWith('--'));
-const max = args.includes('--max') ? Number(args[args.indexOf('--max') + 1]) : 60;
-const quiet = args.includes('--quiet');
-const selfCompare = args.includes('--self');
-if (files.length < 2) { console.error('usage: diff.mjs <a.json> <b.json> [--max N] [--quiet] [--self]'); process.exit(2); }
+// 也可以 import（只用 diffArtifacts / IGNORED / ACCEPTED），这时不跑下面的命令行部分。
+const isMain = process.argv[1] && fileURLToPath(import.meta.url) === fs.realpathSync(process.argv[1]);
 
 // 不比较的顶层字段，以及原因。
 export const IGNORED = {
@@ -85,8 +99,8 @@ function normalizer() {
   const ids = new Map();
   const snaps = new Map();
   const snap = (id) => { if (!snaps.has(id)) snaps.set(id, snaps.size + 1); return `<snap:${snaps.get(id)}>`; };
-  // 规则 14：sidecar 身份的随机段按出现顺序编号。
-  const seq = { inst: new Map(), gen: new Map(), stream: new Map() };
+  // 规则 14：sidecar 身份的随机段按出现顺序编号；规则 16：记忆检索的随机轨迹 id 同样编号。
+  const seq = { inst: new Map(), gen: new Map(), stream: new Map(), case: new Map(), trace: new Map() };
   const tag = (kind, id) => { const m = seq[kind]; if (!m.has(id)) m.set(id, m.size + 1); return `<${kind}:${m.get(id)}>`; };
   const SIDECAR_ID = {
     moduleInstanceId: (x) => x.replace(/^(.+-instance-)([a-z0-9]+)$/, (_, pre, r) => pre + tag('inst', r)),
@@ -113,7 +127,9 @@ function normalizer() {
     .replace(/("durationMs":\s?)\d+/g, '$1<dur>')
     .replace(/(duration_ms: )\d+/g, '$1<dur>')
     .replace(/\bpid=\d+/g, 'pid=<pid>')
-    .replace(/(duration_seconds: )(\d+(?:\.\d+)?)/g, (_, k, n) => k + dur(n));
+    .replace(/(duration_seconds: )(\d+(?:\.\d+)?)/g, (_, k, n) => k + dur(n))
+    .replace(/(?<![A-Za-z0-9_])case_trace_([0-9a-f]{10})(?![0-9a-f])/g, (_, h) => 'case_trace_' + tag('case', h))
+    .replace(/(?<![A-Za-z0-9_])trace_([0-9a-f]{10})(?![0-9a-f])/g, (_, h) => 'trace_' + tag('trace', h));
   const walk = (v) => {
     if (typeof v === 'string') return Object.values(ACCEPTED).reduce((s, [, apply]) => apply(s), text(v));
     if (typeof v === 'number') return v > 1.6e12 && v < 2.0e12 ? (Number.isInteger(v) ? '<ms>' : '<ms.frac>') : v;
@@ -174,8 +190,53 @@ function embedJson(row) {
     row[col] = JSON.stringify(parsed) === v ? { '<json>': parsed } : { '<json>': parsed, '<raw>': v };
   }
 }
-function load(file) {
-  const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+// 规则 17：会话文件大小。两侧原始产物一起看（归一化之前），把能解释的 fileSize 差改成相同，返回放过的处数。
+const lineBytes = (r) => Buffer.byteLength(JSON.stringify(r)) + 1;
+function sessionFiles(raw, sessionId) {
+  return Object.entries(raw.tree ?? {}).filter(([k, e]) => k.endsWith(`/${sessionId}.jsonl`) && Array.isArray(e?.jsonl)).map(([, e]) => e);
+}
+// 文件只写到第 K 条记录时大小正好是 size 的 K（0 条即 0 字节）；拼不出返回 null。
+function recordsAtSize(files, size) {
+  for (const e of files) {
+    if (e.raw && (e.raw.lines !== e.jsonl.length || (e.jsonl.length && !e.raw.finalNewline))) continue;
+    let sum = 0;
+    if (sum === size) return 0;
+    for (let k = 0; k < e.jsonl.length; k++) { sum += lineBytes(e.jsonl[k]); if (sum === size) return k + 1; }
+  }
+  return null;
+}
+function settleFileSizes(rawA, rawB) {
+  const count = { records: 0, tolerance: 0 };
+  const visit = (a, b) => {
+    if (!a || !b || typeof a !== 'object' || typeof b !== 'object' || Array.isArray(a) !== Array.isArray(b)) return;
+    if (!Array.isArray(a) && typeof a.fileSize === 'number' && typeof b.fileSize === 'number' && a.fileSize !== b.fileSize
+      && typeof a.sessionId === 'string' && typeof b.sessionId === 'string') {
+      const fa = sessionFiles(rawA, a.sessionId), fb = sessionFiles(rawB, b.sessionId);
+      const ka = recordsAtSize(fa, a.fileSize), kb = recordsAtSize(fb, b.fileSize);
+      if (ka !== null && kb !== null) {
+        if (ka === kb) { b.fileSize = a.fileSize; count.records++; }
+      } else {
+        const lens = [...fa, ...fb].flatMap((e) => e.jsonl.map(lineBytes));
+        const tol = lens.length ? Math.min(64, Math.floor(Math.min(...lens) / 2)) : -1;
+        if (a.fileSize > 0 && b.fileSize > 0 && Math.abs(a.fileSize - b.fileSize) <= tol) { b.fileSize = a.fileSize; count.tolerance++; }
+      }
+    }
+    for (const k of Object.keys(a)) if (k !== 'tree' && k in b) visit(a[k], b[k]);
+  };
+  visit(rawA, rawB);
+  return count;
+}
+// 规则 18：运行记录文件锁只在一侧有时，两侧都略过。
+const REGISTRY_LOCK = /\/runs\/registry\.json\.lock$/;
+function settleRegistryLock(rawA, rawB) {
+  const dropped = [];
+  for (const k of new Set([...Object.keys(rawA.tree ?? {}), ...Object.keys(rawB.tree ?? {})])) {
+    if (!REGISTRY_LOCK.test(k) || (k in (rawA.tree ?? {})) === (k in (rawB.tree ?? {}))) continue;
+    delete rawA.tree?.[k]; delete rawB.tree?.[k]; dropped.push(k);
+  }
+  return dropped;
+}
+function load(raw) {
   for (const [name, entry] of Object.entries(raw.tree ?? {})) {
     if (name.endsWith('.jsonl') && Array.isArray(entry?.jsonl)) {
       const moved = settleTitleRecords(entry.jsonl);
@@ -227,29 +288,47 @@ function compare(a, b, at, outList) {
   for (const k of shared) compare(a[k], b[k], `${at}.${k}`, outList);
 }
 
-const [fa, fb] = files;
-const a = load(fa), b = load(fb);
-const scenarioVolatile = (JSON.parse(fs.readFileSync(fa, 'utf8')).volatile ?? []).map((p) => new RegExp(p));
-const all = [];
-compare(a, b, '$', all);
-const scenarioAccepted = (JSON.parse(fs.readFileSync(fa, 'utf8')).accepted ?? []).map((x) => ({ ...x, res: x.paths.map((p) => new RegExp(p)), hits: 0 }));
-const stable = all.filter((d) => !scenarioVolatile.some((re) => re.test(d.at)));
-const diffs = stable.filter((d) => !scenarioAccepted.some((x) => x.res.some((re) => re.test(d.at)) && ++x.hits));
-const unused = (res, list) => res.filter((re) => !list.some((d) => re.test(d.at)));
-const stale = selfCompare ? [] : [
-  ...unused(scenarioVolatile, all).map((re) => ({ tag: 'STALE?', what: `volatile ${re}` })),
-  ...scenarioAccepted.flatMap((x) => unused(x.res, stable).map((re) => ({ tag: 'STALE', what: `accepted ${x.id} ${re}` }))),
-];
-const count = diffs.length + stale.filter((x) => x.tag === 'STALE').length;
-if (!quiet) {
-  console.log(`bbx diff: ${fa}  vs  ${fb}`);
-  console.log(`  不比较的字段: ${Object.entries(IGNORED).map(([k, why]) => `${k}（${why}）`).join('；')}`);
-  console.log(`  已接受差异: ${Object.entries(ACCEPTED).map(([k, [why]]) => `${k}（${why}）`).join('；')}`);
-  if (scenarioVolatile.length) console.log(`  场景声明的不稳定路径: ${scenarioVolatile.map(String).join(' ')}（因此略过 ${all.length - stable.length} 处）`);
-  for (const x of scenarioAccepted) console.log(`  场景登记的已接受差异: ${x.id}（${x.why}）略过 ${x.hits} 处`);
-  for (const d of diffs.slice(0, max)) console.log(`  ${d.at}\n      a: ${show(d.a)}\n      b: ${show(d.b)}`);
-  if (diffs.length > max) console.log(`  … 另有 ${diffs.length - max} 处`);
-  for (const x of stale) console.log(`  ${x.tag} ${x.what}：一处都没命中${x.tag === 'STALE' ? '，计 1 处差异' : '（只提示）'}`);
+// 两份原始产物 → 全部差异（场景的 volatile / accepted 之前）与两条成对规则的记录。供下面的命令行和别的脚本用。
+export function diffArtifacts(rawA, rawB) {
+  const sizes = settleFileSizes(rawA, rawB);
+  const locks = settleRegistryLock(rawA, rawB);
+  const all = [];
+  const a = load(rawA), b = load(rawB);
+  compare(a, b, '$', all);
+  return { all, sizes, locks, a, b };
 }
-console.log(count ? `DIFF ${count}` : 'SAME');
-process.exit(count ? 1 : 0);
+function main() {
+  const args = process.argv.slice(2);
+  const files = args.filter((a) => !a.startsWith('--'));
+  const max = args.includes('--max') ? Number(args[args.indexOf('--max') + 1]) : 60;
+  const quiet = args.includes('--quiet');
+  const selfCompare = args.includes('--self');
+  if (files.length < 2) { console.error('usage: diff.mjs <a.json> <b.json> [--max N] [--quiet] [--self]'); process.exit(2); }
+  const [fa, fb] = files;
+  const scenarioVolatile = (JSON.parse(fs.readFileSync(fa, 'utf8')).volatile ?? []).map((p) => new RegExp(p));
+  const { all, sizes, locks } = diffArtifacts(JSON.parse(fs.readFileSync(fa, 'utf8')), JSON.parse(fs.readFileSync(fb, 'utf8')));
+  const scenarioAccepted = (JSON.parse(fs.readFileSync(fa, 'utf8')).accepted ?? []).map((x) => ({ ...x, res: x.paths.map((p) => new RegExp(p)), hits: 0 }));
+  const stable = all.filter((d) => !scenarioVolatile.some((re) => re.test(d.at)));
+  const diffs = stable.filter((d) => !scenarioAccepted.some((x) => x.res.some((re) => re.test(d.at)) && ++x.hits));
+  const unused = (res, list) => res.filter((re) => !list.some((d) => re.test(d.at)));
+  const stale = selfCompare ? [] : [
+    ...unused(scenarioVolatile, all).map((re) => ({ tag: 'STALE?', what: `volatile ${re}` })),
+    ...scenarioAccepted.flatMap((x) => unused(x.res, stable).map((re) => ({ tag: 'STALE', what: `accepted ${x.id} ${re}` }))),
+  ];
+  const count = diffs.length + stale.filter((x) => x.tag === 'STALE').length;
+  if (!quiet) {
+    console.log(`bbx diff: ${fa}  vs  ${fb}`);
+    console.log(`  不比较的字段: ${Object.entries(IGNORED).map(([k, why]) => `${k}（${why}）`).join('；')}`);
+    console.log(`  已接受差异: ${Object.entries(ACCEPTED).map(([k, [why]]) => `${k}（${why}）`).join('；')}`);
+    if (sizes.records || sizes.tolerance) console.log(`  会话文件大小 fileSize（规则 17）: 两侧写到同样条数的记录，放过 ${sizes.records} 处；拼不出条数、差值在固定容差内，放过 ${sizes.tolerance} 处`);
+    for (const k of locks) console.log(`  运行记录文件锁（规则 18）: ${k} 只在一侧有，两侧都略过`);
+    if (scenarioVolatile.length) console.log(`  场景声明的不稳定路径: ${scenarioVolatile.map(String).join(' ')}（因此略过 ${all.length - stable.length} 处）`);
+    for (const x of scenarioAccepted) console.log(`  场景登记的已接受差异: ${x.id}（${x.why}）略过 ${x.hits} 处`);
+    for (const d of diffs.slice(0, max)) console.log(`  ${d.at}\n      a: ${show(d.a)}\n      b: ${show(d.b)}`);
+    if (diffs.length > max) console.log(`  … 另有 ${diffs.length - max} 处`);
+    for (const x of stale) console.log(`  ${x.tag} ${x.what}：一处都没命中${x.tag === 'STALE' ? '，计 1 处差异' : '（只提示）'}`);
+  }
+  console.log(count ? `DIFF ${count}` : 'SAME');
+  process.exit(count ? 1 : 0);
+}
+if (isMain) main();

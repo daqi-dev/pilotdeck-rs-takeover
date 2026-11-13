@@ -1,0 +1,65 @@
+{
+  "name": "cli-default-online-gone",
+  "about": "默认对话在线时 server 在一轮中途消失：假 provider 收到这一轮的请求 1.5 秒后（server 闲着等应答时）给 server 发 SIGKILL，客户端的流以 Gateway WebSocket closed. 失败（GatewayWsClient.ts:92-107），异常一路抛出 CliChannel.start，由 main().catch 打到 stderr，后面的输入行不再处理；进程内 gateway 还在，进程不退出（expectTimeout）。之后再起一次，探测失败走 in-process 模式（运行登记里留着被打断的那一轮）。",
+  "gatewayPort": 18789,
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "files": {
+    "home/.pilotdeck/server-token": "bbx-token\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"CLI chat\"}"
+      }
+    },
+    {
+      "name": "gone",
+      "when": [
+        "case-gone:"
+      ],
+      "reply": {
+        "text": "never seen",
+        "killServer": "SIGKILL",
+        "killServerDelayMs": 1500,
+        "delayMs": 5000
+      }
+    },
+    {
+      "name": "text",
+      "when": [
+        "case-text:"
+      ],
+      "reply": {
+        "text": "Still here."
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "unexpected"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "cli": [],
+      "stdin": "case-text: first\ncase-gone: now\ncase-text: never sent\n",
+      "timeout": 15000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [],
+      "stdin": "case-text: after\n",
+      "timeout": 10000,
+      "expectTimeout": true
+    }
+  ]
+}

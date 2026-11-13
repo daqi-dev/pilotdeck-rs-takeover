@@ -22,12 +22,12 @@
 | 中止落在 hook 执行中时的差异（基线每次都稳定）：`UserPromptSubmit` 中止，Rust 少发 `turn_aborted` 状态、少落一条会话记录；`Stop` 中止，基线以 `completed` 结束、Rust 发 `turn_failed` 和 `error`；`SubagentStart` / `SubagentStop` 中止，Rust 缺 `subagent_started` / `subagent_completed`，且 `SubagentStop` 的完成帧次序不稳 | hooks, loop, agents | 临时场景在会话 scratchpad 的 `hook-order/sc/aw-*.json`，未入库 | hook 帧次序 | 在修（中止语义整块审查） |
 | `skills-extension-watch-symlink` 在 Linux 上稳定差 2 处：基线比 Rust 多打「Extensions changed」日志行（子代理对 Linux 上 `fs.watch` 的推断不对） | ext | cb8 验收（`9a5fb723b`）两次单独重跑与全量 | cb8 验收 | 在修（Linux 遗留子代理） |
 | `turn-steer-terminal`：轮次进行中插话（steer）后，会话文件里插话记录与本轮记录的先后与基线不同（Rust 的循环在 sidecar 里，落盘经宿主一跳）。macOS 与 cb8 都稳定差 33 处 | loop, session | 场景 `turn-steer-terminal`；cb8 验收（`6894f3dca`） | 审阅 | 待派（与 sidecar 进程内化一起评估） |
+| WS 与 HTTP 共用 64 条连接上限（Rust 独有，基线 1000 条同时在线全部正常、RSS 只多约 8 MB）：100 条并发时 37 条被重置，期间 `/health` 与 `/api/web` 也连不上 | gw | `native_ws.rs`；场景 `gw-conn-many-clients`；旧记录 `A7.2-NATIVE-WS-AGGREGATE-001`（未批准） | gw 缺口审查 | 在修（2026-11-13 定：去掉上限；先量两侧在描述符耗尽时的表现，Rust 不能比基线差） |
 
 ## 3 边角
 
 | 问题 | 功能域 | 位置 / 依据 | 来源 | 状态 |
 |---|---|---|---|---|
-| WS 连接上限 64 条（HTTP 与 WS 共用，满了直接关新连接，不回 503）是 Rust 独有的，基线没有上限；旧记录 `A7.2-NATIVE-WS-AGGREGATE-001` 标着「未批准」。主会话倾向去掉，先评估它与输入预算等内存保护的关系 | gw | `native_ws.rs` 的 `MAX_CONNECTIONS`（`4fb6c17d1` 引入） | 审阅修复 | 待派 |
 | sidecar 被取消时不立即释放挂起的模块调用：基线立刻拒绝挂起的调用、以 `cancelled` 结束；Rust 再等宿主回应最多 5 秒，等不到以 `result_unknown` 结束（宿主会回应时两边一样） | modules | `scripts/upstream-tests` 的 stdio 组有 1 例因此全红；基线 `agentLoopSidecarServer.ts` | 上游 sidecar 测试 | 待派 |
 | 非字符串 `workspaceCwd`：只在场景覆盖的两处模拟了基线的 TypeError，工具实际仍在项目根执行。场景没有工具调用所以看不到 | loop | `host/modules/lifecycle.rs:130-132`、`session/factory.rs:1309-1344`、`native_process/assembly.rs:835-846` | 审阅 | 文案已在 `c6a53a052` 对齐；「工具实际仍在项目根执行」这一半没有场景，待派 |
 | 进程本地时区的建模只对场景里的 11 个 `TZ` 值、只在 macOS 上有依据：`GMT` 的单点特判；POSIX 规则串不建模；`/etc/localtime` 是普通文件或多级链接；绝对路径 `TZ`；cron 缓存键用 Unicode 小写 | auto, tools | `pilotdeck-transport/src/system_clock.rs:220-310`、`runtime/cron/schedule.rs:161` | 审阅 | 待派（在 cb8 上量 Node） |
@@ -42,12 +42,18 @@
 | 被杀的 advisory hook 收到 SIGTERM 后若还活不到 1 秒，Rust 会把它的完成帧放上流，基线可能已结束这一轮；1 秒上限是 Rust 自定的，无场景，这个修复也没单独做注入错误检查 | hooks | `runtime/turn/coordinator` 的 `ADVISORY_KILL_SETTLE` | hook 帧次序 | 待派 |
 | sidecar 收到「请求方取消」恰好落在 factory 前或准备阶段的毫秒级窗口时：Rust 给干净的中止结果，基线 TS sidecar 给缺结果的 `cancelled` 终止帧（只在显式外部部署下可见） | modules | `pilotdeck-transport/src/server.rs`、`default_factory.rs` | 任务预算与中止差异 | 记为已知 |
 | 审阅第 3 级修复没做完的：子代理场景的用量正则没有加位置限定（只认字段名）；Google 协议分支的重试日志行没有对拍覆盖 | agents, model | `c6a53a052` 的报告 | 审阅 | 待派 |
+| 慢读客户端：Rust 在输出队列满 64 帧后以 1009 关闭连接（只送达 687 帧），基线 20001 帧全部送达 | gw | `native_ws.rs` 的输出队列；只有量测 | gw 缺口审查 | 在修（2026-11-13 定：帧数上限改成每连接 64 MiB 的字节上限，作为有意偏离登记） |
+| `runs/registry.json` 写坏时两侧都以 1 退出，但基线先打印监听地址与 telemetry 行、Rust 只打一行解析错误 | gw, session | 场景 `recovery-runs-registry-corrupt` | gw 缺口审查 | 在修（照基线对齐） |
+| 经项目内的符号链接写到项目外：基线只做字面检查（`projectFiles.ts:238`，只读了源码没运行）；Rust 的表现没量。Rust 也能写出去的话是第 1 级 | gw | 无场景 | gw 缺口审查 | 在修（先实测两侧；Rust 拒绝解析后越界的写入并登记） |
+| sidecar 原始协议（非 JSON 行、校验码、cancel / status 等）没有直接场景：应答的 messageId 带随机后缀，比较器还不归一化 | modules | `surface.json` 的 `modules` 两项没碰到 | gw 缺口审查 | 在修（有余力时；比较器按出现次序编号） |
+| 没有场景、只有量测或源码依据的 gw 行为：50 MiB 会话文件、超过 60 秒的过期锁（采集器控制不了 mtime）、文件索引 10 万项上限、TCP 连接超时、握手超时与 HTTP 缺省超时 | gw, session | `surface.json` 的 `gw-behaviors`、`recovery` 里没有 probe 的项 | gw 缺口审查 | 记为已知 |
 
 ## 4 时序与外观
 
 | 问题 | 功能域 | 位置 / 依据 | 来源 | 状态 |
 |---|---|---|---|---|
 | Rust sidecar 每帧单独写，Node 把同一轮里的几次写合并成一块；TS 宿主对一次读到几帧敏感，上游对拍工具里 14 个稳定场景因此记录先后不同（帧内容一致） | modules | `scripts/upstream-tests` 的 parity 组 | 上游 sidecar 测试 | 记为已知 |
+| HTTP 传输字节（hyper 与 Node 的差别）：400 / 431 应答多带 `content-length: 0`；HTTP/1.0 请求回 `HTTP/1.0` 状态行；请求头写一半就半关闭时基线回 400、Rust 不回。头名大小写与 chunk 长度的十六进制大小写按语义等价由采集器归一化 | gw | 场景 `gw-http-raw-requests`、`gw-conn-large-frame` | gw 缺口审查 | 在修（尽量在 Rust 里对齐；hyper 做不到的留着差异问人） |
 | 性能待查（调试构建）：`submit_turn` 约 300ms 对基线约 47ms；空闲 CPU 约 3% 对 0%；扩展监视在 3 万个文件的树下空闲 5.4% 对 1.9% | * | 审阅修复的测量脚本 | 审阅修复 | 性能报告时用发布构建重量 |
 
 ## 尺子本身的问题
@@ -58,11 +64,10 @@
 | `turn-steer-terminal`：场景已改回在 `model_request_started` 触发插话，差异如实露出（macOS 与 cb8 都稳定差 33 处）——Rust 经 sidecar 一跳落盘，插话记录与这一轮记录的先后与基线不同。属产品差异，见第 2 级 | loop | 审阅 | 已转第 2 级 |
 | 范围偏宽的放过：四个记忆场景放过整段 `state_json`；`hook-cancelled` 的 `accepted` 放过会话文件第 20–29 条和整份 `projections.json`；TCP 场景整值放过 `moduleInstanceId`（证明不了「新实例」）；子代理场景的用量正则只认字段名；`always-on-fire-git` 一次略过 256 处 | memory, hooks, modules, agents, auto | 审阅 | 在修（收窄） |
 | `scripts/upstream-tests/run.mjs` 的缺省运行包含 parity 组，而它在 Rust 上按设计有 14 个不过，所以退出码不能反映「计入的全过」；也还没在 Linux 上跑过 | modules | 主会话 | 待派 |
-| 耗时（`durationMs`）的位数漏进会话文件大小：`fileSize`、`resultBytes`、`content-length` 随之差几个字节。`gap-tool-grep` / `gap-tool-glob` 已各自声明 `volatile`，`gap-permissions-json-rules` 基线自比稳定所以不能声明、在慢机器上稳定差 11 字节。要在比较器层面定一条通用规则 | * | Linux 差异 | 在修（尺子子代理，2026-11-13 派）。规则已定：`fileSize` 两侧之差不超过会话文件里最短一条记录的一半且不超过 64 字节时放过，超过照常报 |
+| 耗时的位数漏进字节数：帧里的 `fileSize` 已由比较器规则 17 处理（按「文件写到第几条记录」对齐）。同一毛病还在工具结果的 `resultBytes` 与发给 provider 的 `content-length` 上（`loop-multi-tool` 5 次里 2 次因此差 4 处）；另有一批只为 `fileSize` 声明的 `volatile` 现在多余（`gap-tool-glob`、`gap-tool-grep`、`gap-agent-sandbox-workspace-write`、`sdk-config-forward-subagent-text`、`tool-agent-child-stream`，以及约 15 个长正则里的 `fileSize` 一项） | * | Linux 差异；尺子修复的报告 | 待派（规则已定：`resultBytes` 与 `content-length` 各自核对「等于本侧原文的字节数」，成立就不比数值；多余的声明先做基线自比再删） |
 | 基线停机偶发退出码 1（`gap-tool-grep` 自比 3 次里 2 次，疑似停机时触发未捕获异常的处理，`cli/pilotdeck.ts:266-274`）：频率和条件没量清，是否登记为基线 bug 未定 | gw | Linux 差异 | 待量 |
-| 落盘树里 `runs/registry.json.lock` 基线时有时无（`tool-goal-permission`、`tool-send-attachment-outside`、`loop-multi-tool` 偶发只差这 1 处） | session | cb8 验收 | 在修（尺子子代理：先量基线自比 30 次，再定是否列为不比较；同时查 Rust 与基线进程共用同一 home 时的互操作） |
-| 规则 15（sqlite 的 `*_json` 列先解析再比）让旧的 `volatile` 路径匹配不上：`slash-memory-capture-skip` 差 36 处（`caseId`、`traceId` 等标识）；别的场景可能也有匹配不到任何东西的死声明 | memory, * | cb8 验收（`6894f3dca`） | 在修（尺子子代理：标识按出现次序编号，列出死声明） |
-| `turn-abort-before-request-sidecar-stdio`：外置 sidecar 下请求前中止，基线把运行记录永远留在 `running`（基线 bug，Rust 落终态），待登记为已接受差异 | loop, modules | 任务预算与中止差异 | 在修（尺子子代理：先核实再登记最窄路径） |
+| 基线停机时运行记录有时停在 `running`（`tool-goal-permission` 基线连跑 30 次里 3 次：停机抢在终态写入之前），该场景因此偶发不一致 | session | 尺子修复的报告 | 待派（基线自己不稳，声明最窄的 volatile） |
+| 三处远程输入让基线崩溃或挂死（请求目标 `//[`、不加掩码的帧、`/api/web/projects/%E0/…`；前两处不需要鉴权）：基线 bug，Rust 不照做，三个 `gw-crash-*` 场景待登记 accepted。单帧超过 100 MiB 时 Rust 以 1009 关闭、基线接受但内存随帧长平方增长（300 MiB 一帧 60 秒无应答）：Rust 的上限保留，待登记为有意偏离 | gw | `GatewayServer.ts:95`、`websocket.ts:133`、`httpRouter.ts:60` | gw 缺口审查 | 在修（登记最窄路径；登记后列入「需要人过目的决定」） |
 | cb8 是共用机器：同机别人跑同一套测试时，固定端口的测试（18973、18990、28999）会失败。`6894f3dca` 的全量 nextest 因此 7754/7755，单独重跑通过 | channels | cb8 验收（`6894f3dca`） | 记为已知（第 5 条的 cb8 那一次要挑没人跑的时候，或以接手仓库的 CI 为准） |
 | Rust 调试构建的一轮比基线慢 4–8 倍（压缩一步约 0.5–0.8 秒），时间余量紧的场景在慢机器上会翻红 | * | Linux 差异 | 性能报告时看发布构建 |
 | `surface.json` 标为「不计」的项（第一组 28 项，第二组又有若干：TUI 本地命令、QQ 前缀、做不到的错误码等），理由是子代理写的，抽查五项成立；整张表要人过目（交付标准第 2 条） | * | 审阅 | 待整理 |

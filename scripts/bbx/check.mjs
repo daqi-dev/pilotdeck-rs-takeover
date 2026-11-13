@@ -7,7 +7,8 @@
 //           这个场景的对拍结论不能用。
 //   采集产物里有非预期的失败（启动失败、步骤超时、连不上；见 run.mjs 的 failuresOf）时判 INVALID，
 //   不管两侧是否相同。预期的超时由场景在步骤上声明 expectTimeout，预期的启动失败声明 expectStartFailure。
-// 退出码：0 全部 SAME，1 有 DIFF、INVALID 或采集失败。
+//   写了 "gatewayPort": 18789 的场景只在设了 BBX_ALLOW_18789=1 时采集，否则判 SKIPPED（不算 SAME 也不算失败）。
+// 退出码：0 除 SKIPPED 外全部 SAME，1 有 DIFF、INVALID 或采集失败。
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -34,7 +35,7 @@ if (slots) {
     let out = ''; child.stdout.on('data', (d) => { out += d; }); child.on('close', () => resolve(out));
   })));
   rows = results.flatMap((out) => out.split('\n').filter(Boolean).map((l) => JSON.parse(l))).sort((x, y) => (x[0] < y[0] ? -1 : 1));
-  bad = rows.filter((r) => r[1] !== 'SAME').length;
+  bad = rows.filter((r) => r[1] !== 'SAME' && r[1] !== 'SKIPPED').length;
 }
 for (const file of slots ? [] : scenarios) {
   const name = path.basename(file, '.json');
@@ -52,7 +53,11 @@ for (const file of slots ? [] : scenarios) {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, pause * 1000);
     }
   };
-  const runs = [collect(sideA, a), collect(sideB, b)];
+  // 退出码 6：场景要把 server 起在 18789 上而没有设 BBX_ALLOW_18789=1，采集器什么都没做。
+  // 记成 SKIPPED：不算 SAME，也不算失败，汇总行单独报个数。
+  const first = collect(sideA, a);
+  if (first.status === 6) { rows.push([name, 'SKIPPED', first.stderr.trim().split('\n').pop()]); continue; }
+  const runs = [first, collect(sideB, b)];
   const failed = runs.find((r) => r.status !== 0);
   if (failed) { bad++; rows.push([name, 'RUN FAILED', failed.stderr.trim().split('\n').pop()]); continue; }
   const d = node('diff.mjs', a, b, '--max', '400', ...(self ? ['--self'] : []));
@@ -68,5 +73,6 @@ for (const file of slots ? [] : scenarios) {
 if (process.env.BBX_CHECK_ROWS) { for (const r of rows) console.log(JSON.stringify(r)); process.exit(bad ? 1 : 0); }
 const width = Math.max(...rows.map((r) => r[0].length));
 for (const [name, verdict, note] of rows) console.log(`${name.padEnd(width)}  ${verdict.padEnd(10)}  ${note}`);
-console.log(`${self ? '基线自比' : '基线 vs Rust'}：${rows.length - bad}/${rows.length} SAME`);
+const skipped = rows.filter((r) => r[1] === 'SKIPPED').length;
+console.log(`${self ? '基线自比' : '基线 vs Rust'}：${rows.length - skipped - bad}/${rows.length - skipped} SAME${skipped ? `，另有 ${skipped} 个 SKIPPED（要占 18789，未设 BBX_ALLOW_18789=1）` : ''}`);
 process.exit(bad ? 1 : 0);

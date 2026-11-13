@@ -167,7 +167,6 @@
         "\\.projections\\.json\\.json\\.anchor\\.",
         "\\.projections\\.agent-transcript\\.metadata\\.state\\.(title|tag)$",
         "\\.result\\.messages\\[\\d+\\]\\.sequence$",
-        "\\.fileSize$",
         "\\.jsonl(\\.projections\\.json)?\\.raw\\.skeletons\\."
       ]
     }

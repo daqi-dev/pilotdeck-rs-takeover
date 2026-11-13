@@ -44,8 +44,6 @@ const slotText = (t) => {
   return SLOT ? local.replaceAll('pdrs-bbx', `pdrs-bb${SLOT}`).replaceAll('3841', `384${1 + SLOT}`) : local;
 };
 export const ROOT = slotText('/private/tmp/pdrs-bbx/root');
-const GATEWAY_PORT = 38411 + 10 * SLOT;
-const MOCK_PORT = 38412 + 10 * SLOT;
 const TOKEN = 'bbx-token';
 const STEP_TIMEOUT_MS = 30000;
 
@@ -55,6 +53,19 @@ if (!['ts', 'rust'].includes(side) || !scenarioPath || !outPath) {
   process.exit(2);
 }
 const scenario = JSON.parse(slotText(fs.readFileSync(scenarioPath, 'utf8')));
+// 基线 CLI 的 cron 子命令和默认对话的在线路径只探测写死的 127.0.0.1:18789（真实 PilotDeck 的默认端口），
+// 要对拍它们只能把被测 server 起在 18789 上。这必须显式选择：场景写 "gatewayPort": 18789，并且运行时设
+// BBX_ALLOW_18789=1。没设时这类场景什么都不做，退出码 6（check.mjs 记为 SKIPPED）。设了时仍然先确认 18789
+// 没有监听者（下面对所有场景都做的检查），再用一把跨槽位的全局锁串行化（18789 只有一个）。
+const PORT_18789 = scenario.gatewayPort !== undefined;
+if (PORT_18789 && scenario.gatewayPort !== 18789) {
+  console.error(`bbx: scenario gatewayPort may only be 18789, got ${JSON.stringify(scenario.gatewayPort)}`); process.exit(2);
+}
+if (PORT_18789 && process.env.BBX_ALLOW_18789 !== '1') {
+  console.error(`bbx: SKIPPED ${scenario.name}: it runs the server on port 18789; set BBX_ALLOW_18789=1 to run it`); process.exit(6);
+}
+const GATEWAY_PORT = PORT_18789 ? 18789 : 38411 + 10 * SLOT;
+const MOCK_PORT = 38412 + 10 * SLOT;
 const home = path.join(ROOT, 'home');
 const pilotHome = path.join(home, '.pilotdeck');
 const project = path.join(ROOT, 'proj');
@@ -123,20 +134,27 @@ if (side === 'rust' && process.env.BBX_ALLOW_STALE !== '1') {
 
 // ── 独占：同一时刻只允许一次采集（固定路径和端口的代价） ──
 fs.mkdirSync(path.dirname(ROOT), { recursive: true });
-const lock = path.join(path.dirname(ROOT), 'lock');
-try { fs.mkdirSync(lock); } catch {
-  const owner = Number(fs.readFileSync(path.join(lock, 'pid'), 'utf8').trim() || 0);
-  let alive = false; try { process.kill(owner, 0); alive = true; } catch {}
-  if (alive) { console.error(`bbx: another run holds ${lock} (pid ${owner})`); process.exit(3); }
-}
-fs.writeFileSync(path.join(lock, 'pid'), String(process.pid));
+// 锁是一个目录，里面的 pid 文件记持有者；持有者已经不在了的锁可以接过来。只删自己拿到的锁。
+const heldLocks = [];
+const takeLock = (lock) => {
+  try { fs.mkdirSync(lock); } catch {
+    let owner = 0; try { owner = Number(fs.readFileSync(path.join(lock, 'pid'), 'utf8').trim() || 0); } catch {}
+    let alive = false; try { process.kill(owner, 0); alive = true; } catch {}
+    if (alive) { console.error(`bbx: another run holds ${lock} (pid ${owner})`); process.exit(3); }
+  }
+  fs.writeFileSync(path.join(lock, 'pid'), String(process.pid));
+  heldLocks.push(lock);
+};
 const children = [];
 const cleanup = () => {
   for (const c of children) { try { process.kill(-c.pid, 'SIGKILL'); } catch {} }
-  try { fs.rmSync(lock, { recursive: true, force: true }); } catch {}
+  for (const lock of heldLocks) { try { fs.rmSync(lock, { recursive: true, force: true }); } catch {} }
 };
 process.on('exit', cleanup);
-for (const s of ['SIGINT', 'SIGTERM']) process.on(s, () => process.exit(130));
+for (const s of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(s, () => process.exit(130));
+takeLock(path.join(path.dirname(ROOT), 'lock'));
+// 18789 场景的全局锁：不随槽位变，所有槽位共用一把。
+if (PORT_18789) takeLock(path.join(TMP_BASE, 'pdrs-bbx-18789.lock'));
 
 const portFree = (port) => new Promise((resolve) => {
   const s = net.createServer().once('error', () => resolve(false))
@@ -152,14 +170,14 @@ const portOpen = (port) => new Promise((resolve) => {
 // 那里有人监听时一律拒跑，免得碰到本机正在运行的实例。用 lsof 看，不去连它。
 import { spawnSync } from 'node:child_process';
 // 没有 lsof 的机器（常见于 Linux）改用 ss；两个都没有就拒跑，不当作「没人监听」。
-const listening18789 = (() => {
+const listening18789 = () => {
   const lsof = spawnSync('lsof', ['-nP', '-iTCP:18789', '-sTCP:LISTEN'], { encoding: 'utf8' });
   if (!lsof.error) return lsof.stdout.trim() !== '';
   const ss = spawnSync('ss', ['-H', '-ltn', 'sport = :18789'], { encoding: 'utf8' });
   if (!ss.error && ss.status === 0) return ss.stdout.trim() !== '';
   console.error('bbx: neither lsof nor ss is usable; cannot check port 18789'); process.exit(5);
-})();
-if (listening18789) {
+};
+if (listening18789()) {
   console.error('bbx: something is listening on 18789 (a real PilotDeck?); refusing to run'); process.exit(5);
 }
 for (const p of [GATEWAY_PORT, MOCK_PORT]) {
@@ -231,6 +249,13 @@ const mock = http.createServer(async (req, res) => {
   // 在一轮进行中打断外部 sidecar（见下面的 sidecar / tcpProxy 步骤）：先做这件事，再照常应答。
   // killSidecar: 信号名，发给当前的 sidecar 进程；cutProxy: true，断开 TCP 代理上现有的全部连接（代理继续监听）。
   if (reply.killSidecar && sidecarProc) { try { sidecarProc.child.kill(reply.killSidecar); } catch {} }
+  // killServer: 信号名，发给 "server" 起的被测服务（用来在一轮进行中让 server 消失；只发信号，不等它退出）。
+  // killServerDelayMs：收到请求后过这么久再发（缺省立刻）。立刻发时正撞上服务端在写落盘（例如基线的运行登记锁），
+  // 留下什么取决于两侧各自的写入时机；等服务端闲下来在等模型应答时再发，比的才是「server 消失」本身。
+  if (reply.killServer) {
+    const kill = () => { if (server && server.exitCode === null && server.signalCode === null) { try { server.kill(reply.killServer); } catch {} } };
+    if (reply.killServerDelayMs) setTimeout(kill, reply.killServerDelayMs); else kill();
+  }
   if (reply.cutProxy) { for (const s of proxySockets.splice(0)) s.destroy(); }
   if (reply.status) { res.writeHead(reply.status, { 'content-type': 'application/json' }); res.end(JSON.stringify(reply.body ?? {})); return; }
   // 应答的组成：文本（text 或分块的 chunks）、推理文本（reasoning）、零到多个工具调用（tool / tools；
@@ -834,6 +859,19 @@ const runStep = async (step) => {
     return { serve: { reached, exitCode, signal, stdout, stderr }, then, ...(timedOut && { timedOut }) };
   }
   if (step.sidecar) return { sidecar: await sidecarStep(step) };
+  if (step.stopServer) {
+    // 给 "server" 起的被测服务发信号（stopServer 的值是信号名），等它退出，记下退出码和信号；15 秒不退就
+    // SIGKILL 整个进程组，如实记成 SIGKILL。之后收尾不再停机。
+    if (!server || server.exitCode !== null || server.signalCode !== null) {
+      return { stopServer: { running: false, exitCode: server?.exitCode ?? null, signal: server?.signalCode ?? null } };
+    }
+    const exited = new Promise((r) => server.once('exit', (code, sig) => r({ exitCode: code, signal: sig })));
+    server.kill(step.stopServer);
+    const killer = setTimeout(() => { try { process.kill(-server.pid, 'SIGKILL'); } catch {} }, 15000);
+    const result = await exited;
+    clearTimeout(killer);
+    return { stopServer: result };
+  }
   if (step.tcpProxy) return { tcpProxy: await proxyStep(step) };
   if (step.cli) {
     const [cmd, ...prefix] = SIDES[side].cli;
@@ -843,9 +881,21 @@ const runStep = async (step) => {
     child.stdin.end(step.stdin ?? '');
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, step.timeout ?? STEP_TIMEOUT_MS);
-    const [exitCode, signal] = await new Promise((r) => child.on('close', (c, s) => r([c, s])));
+    let ended = false;
+    const closed = new Promise((r) => child.on('close', (c, s) => { ended = true; r([c, s]); }));
+    // until / then：stdout 或 stderr 里出现 until 时（进程还在不在都行），依次执行 then 里的步骤，然后照常等进程退出。
+    // 进程没输出 until 就结束了（或超时）时 then 不执行，记成空数组。
+    let then;
+    if (step.until !== undefined) {
+      const until = subst(step.until);
+      const seen = () => stdout.includes(until) || stderr.includes(until);
+      while (!seen() && !ended) await sleep(20);
+      then = [];
+      if (seen()) for (const inner of step.then ?? []) then.push({ step: inner, ...(await runStep(inner)) });
+    }
+    const [exitCode, signal] = await closed;
     clearTimeout(timer);
-    return { cli: { exitCode, signal, stdout, stderr }, ...(timedOut && { timedOut }) };
+    return { cli: { exitCode, signal, stdout, stderr }, ...(then && { then }), ...(timedOut && { timedOut }) };
   }
   throw new Error(`unknown step: ${JSON.stringify(step)}`);
 };
@@ -879,11 +929,20 @@ if (ws) ws.close();
 await Promise.all(floodSockets.splice(0).map((st) => rawClose(st, true)));
 
 // ── 停机：SIGTERM，记退出码 ──
-if (server && server.exitCode === null) {
+if (server && server.exitCode === null && server.signalCode === null) {
   const exited = new Promise((r) => server.on('exit', (code, signal) => r({ code, signal })));
   server.kill('SIGTERM');
   out.shutdown = await Promise.race([exited, sleep(15000).then(() => ({ timeout: true }))]);
   if (out.shutdown.timeout) out.failures.push({ at: 'shutdown', kind: 'timeout', expected: false });
+}
+// 18789 场景：采集结束就把自己起的进程全部收掉，再确认 18789 上没有留下监听者；留下了记一处失败并大声说。
+if (PORT_18789) {
+  for (const c of children) { try { process.kill(-c.pid, 'SIGKILL'); } catch {} }
+  for (let i = 0; i < 50 && listening18789(); i++) await sleep(100);
+  if (listening18789()) {
+    out.failures.push({ at: 'release18789', kind: 'listener', expected: false });
+    console.error('bbx: WARNING: something is still listening on 18789 after the run');
+  }
 }
 mock.close(); mock.closeAllConnections();
 out.serverLog = serverLog;
