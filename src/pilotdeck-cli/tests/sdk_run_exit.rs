@@ -785,29 +785,6 @@ async fn run_duplicate_event_is_not_printed() {
     run_case(&input).await;
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn run_unimplemented_options_are_explicit() {
-    let _port = PORT.lock().await;
-    let _lease = ParityLock::acquire().await;
-    for (flags, gap) in [(
-        vec!["--model", "fixture/model"],
-        "pilotdeck run model without project (#123 P06/P08)",
-    )] {
-        let mut input = case("run--argv");
-        input["input"]["argv"]
-            .as_array_mut()
-            .expect("#1058 option argv")
-            .extend(flags.into_iter().map(|v| json!(v)));
-        input["stdout"] = json!("");
-        input["stderr"] = json!(format!(
-            "pilotdeck-rs TODO: {gap} is not implemented yet.\n"
-        ));
-        input["exit"] = json!(2);
-        input["connections"] = json!(0);
-        run_case(&input).await;
-    }
-}
-
 #[test]
 #[ignore = "requires Node v22.22.0 and pinned TS SDK; real blocking-stdin probes"]
 fn run_stdin_oracle_regenerates_identically() {

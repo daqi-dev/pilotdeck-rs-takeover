@@ -1,0 +1,142 @@
+{
+  "name": "hook-subagent-lifecycle",
+  "about": "SubagentStart / SubagentStop hook（一次性子代理）：hook 收到的输入与环境、matcher 按事件名匹配（按子代理类型写的 matcher 不跑），以及父会话 WS 流上 hook_execution 帧与子代理事件的先后。基线的子代理事件进宿主事件缓冲，只在 sidecar 来帧或 500ms 无帧时冲刷（agentLoopSidecarClient.ts:379-395），hook 执行帧直接发；SubagentStop hook 睡 1000ms，让子代理运行期间攒下的事件确定地落在 SubagentStop 的 started 与 completed 之间，subagent_completed 落在 completed 之后。",
+  "files": {
+    "home/.pilotdeck/plugins/bbx-sub/plugin.json": {
+      "name": "bbx-sub",
+      "version": "0.1.0",
+      "description": "bbx bbx-sub",
+      "hooks": {
+        "SubagentStart": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs substart 0 '' '' 0"
+              }
+            ]
+          },
+          {
+            "matcher": "explore",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs never 0 '' '' 0"
+              }
+            ]
+          },
+          {
+            "matcher": "SubagentStart",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs substart-matched 0 '' '' 0"
+              }
+            ]
+          }
+        ],
+        "SubagentStop": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs substop 0 '' '' 1000"
+              }
+            ]
+          },
+          {
+            "matcher": "explore",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs never 0 '' '' 0"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "home/.pilotdeck/plugins/bbx-sub/hook.mjs": "// bbx hook fixture: node hook.mjs <log> <exit> [stdout] [stderr] [sleepMs]\nimport fs from 'node:fs';\nconst [log, exit = '0', out = '', err = '', sleep = '0'] = process.argv.slice(2);\nconst dir = process.env.HOME + '/hooklog';\nconst append = (row) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(dir + '/' + log + '.jsonl', JSON.stringify(row) + '\\n'); };\nlet input = '';\nprocess.stdin.on('data', (d) => { input += d; });\nprocess.stdin.on('end', () => {\n  let parsed; try { parsed = JSON.parse(input); } catch { parsed = { raw: input }; }\n  const env = {};\n  for (const k of Object.keys(process.env).sort()) env[k] = /^PILOT/.test(k) && !/BUNDLED/.test(k) ? process.env[k] : true;\n  append({ argv: process.argv.slice(2), cwd: process.cwd(), input: parsed, env });\n  // exit \"@\": the behaviour is the JSON between HOOK<< and >> in the prompt (or the last assistant message).\n  let spec = { exit, out, err, sleep };\n  if (exit === '@') {\n    const m = /HOOK<<(.*?)>>/s.exec(String(parsed.prompt ?? parsed.lastAssistantMessage ?? ''));\n    spec = { exit: 0, out: '', err: '', sleep: 0, ...(m ? JSON.parse(m[1]) : {}) };\n  }\n  setTimeout(() => {\n    append({ argv: process.argv.slice(2), done: true });\n    if (spec.out) process.stdout.write(spec.out);\n    if (spec.err) process.stderr.write(spec.err);\n    process.exit(Number(spec.exit));\n  }, Number(spec.sleep));\n});\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Hook run\"}"
+      }
+    },
+    {
+      "name": "parent-after",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_parent\""
+      ],
+      "reply": {
+        "text": "Parent done."
+      }
+    },
+    {
+      "name": "child-after",
+      "when": [
+        "CHILD-HOOK-7",
+        "\"tool_call_id\":\"call_child\""
+      ],
+      "reply": {
+        "text": "Scope: looked.\nResult: nothing.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "child",
+      "when": [
+        "CHILD-HOOK-7"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_child",
+          "name": "glob",
+          "arguments": {
+            "pattern": "*.nothing"
+          }
+        }
+      }
+    },
+    {
+      "name": "parent",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_parent",
+          "name": "agent",
+          "arguments": {
+            "description": "Look around",
+            "prompt": "CHILD-HOOK-7: look for files.",
+            "subagentType": "Explorer"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-sub",
+        "channelKey": "test",
+        "message": "turn-1: delegate"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    }
+  ],
+  "volatile": [
+    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages|resultBytes|content-length)$"
+  ],
+  "volatileWhy": "子代理结果文本里带位数不定的耗时，token 估算随之变；基线自比已证明"
+}

@@ -1,0 +1,43 @@
+{
+  "name": "cli-update-usage",
+  "about": "update 子命令的参数校验分支（src/cli/pilotdeck.ts:302-305,351-360；src/runtime/updateCommand.ts；scripts/update-web.mjs:7-8）：参数里有 --check / --restart 以外的任何词时，更新脚本在做任何事之前报 Usage: update [--check] [--restart] 并以 1 退出；子进程的 stdout 和 stderr 都被转写到 CLI 的 stdout，CLI 退出码 1。只跑非法参数：合法参数会真的去 git fetch / 更新安装目录，不在 bbx 里跑。 现状不一致：基线在自己的安装目录里找到 scripts/update-web.mjs（runtime/updateCommand.ts:6-11 findUpdateRoot 从 dist 往上找），Rust 二进制所在目录往上没有这个更新脚本，于是走同一函数的另一个分支，stderr 打「Update failed: This installation does not include the Git Web updater. …」、退出码 1。差异来自安装布局而非参数处理，Rust 安装是否随带 Git Web 更新脚本待人决定。",
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "steps": [
+    {
+      "cli": [
+        "update",
+        "--bogus"
+      ]
+    },
+    {
+      "cli": [
+        "update",
+        "--check",
+        "--force"
+      ]
+    },
+    {
+      "cli": [
+        "update",
+        "now"
+      ]
+    },
+    {
+      "cli": [
+        "update",
+        "--restart",
+        "-y"
+      ]
+    },
+    {
+      "cli": [
+        "update",
+        "--help"
+      ]
+    }
+  ]
+}

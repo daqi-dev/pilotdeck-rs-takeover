@@ -1,0 +1,26 @@
+{
+  "name": "cli-cron-offline",
+  "about": "cron 子命令探测不到 server 时的表现（src/cli/pilotdeck.ts:362-368）：探测地址写死 http://127.0.0.1:18789（src/gateway/client/probeServer.ts:16，connectRemoteGatewayIfAvailable 不传 url），不看 PILOTDECK_GATEWAY_PORT / PILOTDECK_GATEWAY_URL / PILOTDECK_SDK_GATEWAY_URL，也不看令牌变量；探测失败时不论子命令和参数（list --history --limit、create 的 --session / --message / --once / --cron / --channel / --project / --timezone、delete 位置参数 / --task / --stop-running、stop 位置参数 / --run、缺参数、未知子命令）一律 stderr 一行、退出码 1，参数校验在探测之后。场景里 bbx 的 gateway 在 38411 上照常运行、令牌给齐，证明 cron 不会连到它。",
+  "env": {
+    "PILOTDECK_TOKEN": "{TOKEN}",
+    "PILOTDECK_SDK_AUTH_TOKEN": "{TOKEN}",
+    "PILOTDECK_GATEWAY_URL": "ws://127.0.0.1:38411/ws",
+    "PILOTDECK_SDK_GATEWAY_URL": "ws://127.0.0.1:38411/ws"
+  },
+  "steps": [
+    { "cli": ["cron", "list", "--history", "--limit", "5"] },
+    { "cli": ["cron", "list", "--limit", "abc"] },
+    { "cli": ["cron", "create", "--session", "cli:s1", "--message", "hello", "--once", "2030-01-01T00:00:00Z", "--channel", "web", "--project", "{PROJECT}", "--timezone", "Asia/Shanghai"] },
+    { "cli": ["cron", "create", "--session", "s1", "--message", "hello", "--cron", "*/5 * * * *"] },
+    { "cli": ["cron", "create", "--session", "s1", "--message", "hello"] },
+    { "cli": ["cron", "delete", "task-1", "--stop-running"] },
+    { "cli": ["cron", "delete", "--task", "task-1"] },
+    { "cli": ["cron", "delete"] },
+    { "cli": ["cron", "stop", "task-1"] },
+    { "cli": ["cron", "stop", "--run", "run-1"] },
+    { "cli": ["cron", "stop"] },
+    { "cli": ["cron", "bogus", "--help"] },
+    { "cli": ["cron", "list"], "env": { "PILOTDECK_GATEWAY_PORT": "38411" } },
+    { "ws": "cron_list", "params": {} }
+  ]
+}

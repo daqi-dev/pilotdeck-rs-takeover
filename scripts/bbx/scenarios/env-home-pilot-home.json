@@ -1,0 +1,144 @@
+{
+  "name": "env-home-pilot-home",
+  "about": "HOME 与 PILOT_HOME 决定的目录位置（pilot/paths.ts:20-22,98-108 resolvePilotHome / normalizeHomePath：PILOT_HOME 未设置时取 ~/.pilotdeck；恰为 ~ 时取 os.homedir()；~/ 开头时接在 homedir 后；其余一律 path.resolve，相对路径相对 cwd，空串因 ?? 不落到缺省、resolve(\"\") 即 cwd；~user 不展开；os.homedir() 跟随 HOME）。用 skills migrate --from cc 的 dry run 观察：Target 行是 <PilotHome>/skills，cc 来源取 <HOME>/.claude/skills。再用 HOME 指到 {HOME}/alt、PILOT_HOME 不设起一次 server：读 {HOME}/alt/.pilotdeck/pilotdeck.yaml、不给令牌变量时 server-token 写在那里；PILOT_HOME=~/ph 而那里没有配置时启动失败，比报错里的路径。所有目录都在 bbx 隔离根之内。 已知不稳（--self 证明）：生成的 server-token 是随机值，内容声明为 volatile（文件是否存在、权限照比）。",
+  "volatile": [
+    "^\\$\\.tree\\./home/alt/\\.pilotdeck/server-token\\.text$"
+  ],
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx",
+    "PILOTDECK_BUNDLED_SKILLS_DIR": "{ROOT}/bundled"
+  },
+  "files": {
+    "bundled/sample/SKILL.md": "---\nname: sample\ndescription: bbx bundled skill placeholder\n---\nbody\n",
+    "home/.claude/skills/default-home/SKILL.md": "---\nname: default-home\ndescription: default-home skill\n---\ndefault-home body\n",
+    "home/alt/.claude/skills/alt-home/SKILL.md": "---\nname: alt-home\ndescription: alt-home skill\n---\nalt-home body\n",
+    "home/alt/.pilotdeck/pilotdeck.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n"
+  },
+  "steps": [
+    {
+      "cli": [
+        "skills",
+        "migrate",
+        "--from",
+        "cc"
+      ],
+      "env": {}
+    },
+    {
+      "cli": [
+        "skills",
+        "migrate",
+        "--from",
+        "cc"
+      ],
+      "env": {
+        "PILOT_HOME": null
+      }
+    },
+    {
+      "cli": [
+        "skills",
+        "migrate",
+        "--from",
+        "cc"
+      ],
+      "env": {
+        "PILOT_HOME": null,
+        "HOME": "{HOME}/alt"
+      }
+    },
+    {
+      "cli": [
+        "skills",
+        "migrate",
+        "--from",
+        "cc"
+      ],
+      "env": {
+        "PILOT_HOME": "~",
+        "HOME": "{HOME}/alt"
+      }
+    },
+    {
+      "cli": [
+        "skills",
+        "migrate",
+        "--from",
+        "cc"
+      ],
+      "env": {
+        "PILOT_HOME": "~/ph",
+        "HOME": "{HOME}/alt"
+      }
+    },
+    {
+      "cli": [
+        "skills",
+        "migrate",
+        "--from",
+        "cc"
+      ],
+      "env": {
+        "PILOT_HOME": "~user/ph",
+        "HOME": "{HOME}/alt"
+      }
+    },
+    {
+      "cli": [
+        "skills",
+        "migrate",
+        "--from",
+        "cc"
+      ],
+      "env": {
+        "PILOT_HOME": "rel-home",
+        "HOME": "{HOME}/alt"
+      }
+    },
+    {
+      "cli": [
+        "skills",
+        "migrate",
+        "--from",
+        "cc"
+      ],
+      "env": {
+        "PILOT_HOME": "",
+        "HOME": "{HOME}/alt"
+      }
+    },
+    {
+      "cli": [
+        "skills",
+        "migrate",
+        "--from",
+        "cc"
+      ],
+      "env": {
+        "PILOT_HOME": "{HOME}/x/../alt/./p2/",
+        "HOME": "{HOME}/alt"
+      }
+    },
+    {
+      "serve": [
+        "server"
+      ],
+      "env": {
+        "PILOT_HOME": null,
+        "HOME": "{HOME}/alt",
+        "PILOTDECK_GATEWAY_TOKEN": null
+      }
+    },
+    {
+      "cli": [
+        "server"
+      ],
+      "env": {
+        "PILOT_HOME": "~/ph",
+        "HOME": "{HOME}/alt"
+      }
+    }
+  ]
+}

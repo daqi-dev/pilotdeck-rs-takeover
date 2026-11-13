@@ -1,0 +1,112 @@
+{
+  "name": "hook-model-request-cancelled",
+  "about": "PreModelRequest hook 执行中用户中止这一轮：hook 进程被杀（hooklog 没有 done 行）、中止的一轮照常收尾；同一会话下一轮的 hook 照常派发并跑完。",
+  "files": {
+    "home/.pilotdeck/plugins/bbx-model-cancel/plugin.json": {
+      "name": "bbx-model-cancel",
+      "version": "0.1.0",
+      "description": "bbx bbx-model-cancel",
+      "hooks": {
+        "PreModelRequest": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node term.mjs pre-model 0 '' '' 3000"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "home/.pilotdeck/plugins/bbx-model-cancel/hook.mjs": "// bbx hook fixture: node hook.mjs <log> <exit> [stdout] [stderr] [sleepMs]\nimport fs from 'node:fs';\nconst [log, exit = '0', out = '', err = '', sleep = '0'] = process.argv.slice(2);\nconst dir = process.env.HOME + '/hooklog';\nconst append = (row) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(dir + '/' + log + '.jsonl', JSON.stringify(row) + '\\n'); };\nlet input = '';\nprocess.stdin.on('data', (d) => { input += d; });\nprocess.stdin.on('end', () => {\n  let parsed; try { parsed = JSON.parse(input); } catch { parsed = { raw: input }; }\n  const env = {};\n  for (const k of Object.keys(process.env).sort()) env[k] = /^PILOT/.test(k) && !/BUNDLED/.test(k) ? process.env[k] : true;\n  append({ argv: process.argv.slice(2), cwd: process.cwd(), input: parsed, env });\n  // exit \"@\": the behaviour is the JSON between HOOK<< and >> in the prompt (or the last assistant message).\n  let spec = { exit, out, err, sleep };\n  if (exit === '@') {\n    const m = /HOOK<<(.*?)>>/s.exec(String(parsed.prompt ?? parsed.lastAssistantMessage ?? ''));\n    spec = { exit: 0, out: '', err: '', sleep: 0, ...(m ? JSON.parse(m[1]) : {}) };\n  }\n  setTimeout(() => {\n    append({ argv: process.argv.slice(2), done: true });\n    if (spec.out) process.stdout.write(spec.out);\n    if (spec.err) process.stderr.write(spec.err);\n    process.exit(Number(spec.exit));\n  }, Number(spec.sleep));\n});\n",
+    "home/.pilotdeck/plugins/bbx-model-cancel/term.mjs": "// bbx hook fixture: hook.mjs that outlives SIGTERM by 300ms\nprocess.on('SIGTERM', () => { setTimeout(() => process.exit(143), 300); });\nawait import('./hook.mjs');\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Hook run\"}"
+      }
+    },
+    {
+      "name": "next",
+      "when": [
+        "next-case:"
+      ],
+      "reply": {
+        "text": "next reply"
+      }
+    },
+    {
+      "name": "slow",
+      "when": [
+        "slow-case:"
+      ],
+      "reply": {
+        "chunks": [
+          "partial ",
+          "never sent"
+        ],
+        "delayMs": 800,
+        "hangAfter": 1,
+        "hangMs": 6000
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-pre-model-cancel",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-pre-model-cancel",
+        "channelKey": "test",
+        "message": "slow-case: answer slowly"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "assistant_text_delta"
+          },
+          "ws": "abort_turn",
+          "params": {
+            "sessionKey": "s-pre-model-cancel"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 4000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-pre-model-cancel",
+        "channelKey": "test",
+        "message": "next-case: answer"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 3800
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-pre-model-cancel"
+      }
+    }
+  ],
+  "settleMs": 500
+}

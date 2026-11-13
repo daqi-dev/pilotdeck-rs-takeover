@@ -1,0 +1,216 @@
+{
+  "name": "cli-sdk-args",
+  "about": "SDK 子命令（run / resume / sessions / settings）参数解析的边角，按 src/cli/sdkCli.ts 读出来的规则逐条比：readValue（:217-221）后面跟 -- 开头的词就当没给；positional（:204-215）跳过 VALUE_FLAGS 及其后一个词、跳过一切 -- 开头的词、保留单横线词；--json 与 --stream-json 同时给；位置参数全是空白时改读 stdin（:197-201，整段 trim，多行保留中间换行）；stdin 只有空白时报缺提示词；令牌来源 --auth-token > PILOTDECK_SDK_AUTH_TOKEN > PILOTDECK_TOKEN > <PILOT_HOME>/server-token（:185-189，?? 链，空串的 PILOTDECK_SDK_AUTH_TOKEN 不会落到下一级；--auth-token 给空串时落到环境）；server-token 文件内容 trim。每个 run 用不同的 --channel（同渠道多会话时落盘排序随 uuid 变，见 cli-run-resume）。 run --model 不带 --project 会挂住，见 cli-run-model-no-project。",
+  "env": {
+    "PILOTDECK_TOKEN": "{TOKEN}"
+  },
+  "files": {
+    "home/.pilotdeck/server-token": "  bbx-token  \n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Args\"}"
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "Reply from the mock."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "cli": [
+        "run",
+        "--channel",
+        "--json",
+        "channel value is a flag"
+      ]
+    },
+    {
+      "cli": [
+        "run",
+        "--channel",
+        "a04",
+        "-x",
+        "single",
+        "dash",
+        "kept"
+      ]
+    },
+    {
+      "cli": [
+        "run",
+        "--channel",
+        "a05",
+        "before",
+        "--unknown-flag",
+        "after"
+      ]
+    },
+    {
+      "cli": [
+        "run",
+        "--channel",
+        "a06",
+        "--json",
+        "--stream-json",
+        "both json flags"
+      ]
+    },
+    {
+      "cli": [
+        "run",
+        "--channel",
+        "a07",
+        "   "
+      ],
+      "stdin": "  from stdin\n  second line  \n\n"
+    },
+    {
+      "cli": [
+        "run",
+        "--channel",
+        "a08",
+        "positional wins"
+      ],
+      "stdin": "stdin ignored\n"
+    },
+    {
+      "cli": [
+        "run",
+        "--channel",
+        "a09"
+      ],
+      "stdin": "  \n\t\n"
+    },
+    {
+      "cli": [
+        "run",
+        "--channel",
+        "a10",
+        "--permission-mode",
+        "--json",
+        "permission value is a flag"
+      ]
+    },
+    {
+      "cli": [
+        "run",
+        "--channel",
+        "a11",
+        "sdk token wrong"
+      ],
+      "env": {
+        "PILOTDECK_SDK_AUTH_TOKEN": "wrong-token"
+      }
+    },
+    {
+      "cli": [
+        "run",
+        "--channel",
+        "a12",
+        "--auth-token",
+        "{TOKEN}",
+        "explicit beats sdk env"
+      ],
+      "env": {
+        "PILOTDECK_SDK_AUTH_TOKEN": "wrong-token"
+      }
+    },
+    {
+      "cli": [
+        "run",
+        "--channel",
+        "a13",
+        "empty sdk token"
+      ],
+      "env": {
+        "PILOTDECK_SDK_AUTH_TOKEN": ""
+      }
+    },
+    {
+      "cli": [
+        "run",
+        "--channel",
+        "a14",
+        "--auth-token",
+        "",
+        "empty flag falls to env"
+      ]
+    },
+    {
+      "cli": [
+        "run",
+        "--channel",
+        "a15",
+        "token from file"
+      ],
+      "env": {
+        "PILOTDECK_TOKEN": null
+      }
+    },
+    {
+      "cli": [
+        "sessions",
+        "list",
+        "--project",
+        "{ROOT}/nowhere",
+        "--channel",
+        "ignored"
+      ],
+      "env": {
+        "PILOTDECK_TOKEN": null,
+        "PILOT_HOME": "{ROOT}/no-token-home"
+      }
+    },
+    {
+      "cli": [
+        "sessions",
+        "messages",
+        "--project",
+        "{PROJECT}",
+        "s-missing"
+      ]
+    },
+    {
+      "cli": [
+        "sessions",
+        "messages",
+        "--json",
+        "s-missing"
+      ]
+    },
+    {
+      "cli": [
+        "settings",
+        "get",
+        "--gateway-url",
+        "ws://127.0.0.1:38411/ws",
+        "--auth-token",
+        "wrong-token"
+      ]
+    },
+    {
+      "cli": [
+        "settings",
+        "set",
+        "--json"
+      ]
+    },
+    {
+      "cli": [
+        "resume",
+        "--model",
+        "bbx/deterministic"
+      ],
+      "stdin": "x\n"
+    }
+  ]
+}

@@ -349,5 +349,83 @@ mod tests {
             )
             .is_empty()
         );
+        // The explicit browser proxy beats PROXY_FROM_ENV and the config; the
+        // config's noProxy only joins the bypass when the config is the source.
+        assert_eq!(
+            tail(
+                &env_of(&[
+                    ("PILOTDECK_BROWSER_PROXY_SERVER", " http://b:1 "),
+                    ("PILOTDECK_BROWSER_PROXY_FROM_ENV", "yes"),
+                    ("HTTPS_PROXY", "http://e:2"),
+                    ("NO_PROXY", "x.test"),
+                ]),
+                Some(&config)
+            ),
+            [
+                "--proxy-server",
+                "http://b:1",
+                "--proxy-bypass",
+                "x.test,localhost,127.0.0.1,host.docker.internal"
+            ]
+        );
+        // A blank lower-case variable is skipped, not taken as the proxy.
+        assert_eq!(
+            tail(
+                &env_of(&[
+                    ("PILOTDECK_BROWSER_PROXY_FROM_ENV", "ON"),
+                    ("https_proxy", " "),
+                    ("HTTPS_PROXY", "http://e:2"),
+                ]),
+                None
+            ),
+            [
+                "--proxy-server",
+                "http://e:2",
+                "--proxy-bypass",
+                "localhost,127.0.0.1,host.docker.internal"
+            ]
+        );
+    }
+
+    #[test]
+    fn prepare_touches_only_browser_use_stdio() {
+        let root = std::env::temp_dir().join(format!("pd-browser-use-{}", std::process::id()));
+        let stdio = |id: &str| McpServerSpec {
+            id: id.into(),
+            transport: McpTransportSpec::Stdio {
+                command: "node".into(),
+                args: Some(vec!["entry.js".into()]),
+                env: None,
+                cwd: None,
+                per_session: true,
+            },
+            call_timeout_ms: None,
+        };
+        let session_key = JsString::from("cli/s/");
+        let prepared = prepare_browser_use_specs(
+            vec![stdio("other"), stdio("browser-use")],
+            &BrowserUseSessionContext {
+                project_root: &root,
+                session_key: &session_key,
+                config_proxy: None,
+                env: &|_| None,
+            },
+        )
+        .expect("prepare");
+        assert_eq!(prepared[0], stdio("other"));
+        let McpTransportSpec::Stdio { args, cwd, .. } = &prepared[1].transport else {
+            panic!("stdio");
+        };
+        let out = root.join(".pilotdeck/browser_screenshots/cli-s");
+        assert!(out.is_dir());
+        assert_eq!(cwd.as_deref(), Some(out.to_str().unwrap()));
+        assert_eq!(
+            args.as_ref().unwrap()[1..3],
+            [
+                "--output-dir".to_owned(),
+                out.to_string_lossy().into_owned()
+            ]
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 }

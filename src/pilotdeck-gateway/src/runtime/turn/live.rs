@@ -48,9 +48,13 @@ type PreparedHost = (
     Option<super::runner::PromptHooks>,
     Option<super::live_session::SessionLifecycle>,
 );
+/// The third argument is the turn's signal (also cancelled when the turn's
+/// session hook scope is revoked at its end); the fourth fires only on a user
+/// abort or session close, like the baseline turn's `abortSignal`.
 type TurnHostFactory = dyn Fn(
         ExecutionIdentity,
         Arc<Recorder>,
+        crate::runtime::hooks::Cancellation,
         crate::runtime::hooks::Cancellation,
     ) -> HostFuture<PreparedHost>
     + Send
@@ -123,6 +127,9 @@ pub(super) struct SessionState {
     pub(super) disposed: bool,
     pub(super) active: Option<Cancellation>,
     pub(super) signal: crate::runtime::hooks::Cancellation,
+    /// The current turn's user-abort signal: aborted by `abort` and by a
+    /// `dispose` that interrupts a running turn, never by the turn's end.
+    pub(super) user_abort: crate::runtime::hooks::Cancellation,
     pub(super) status: super::live_session::SessionStatus,
     pub(super) current_turn_id: Option<JsString>,
     /// `AgentLoopSidecarClient.modelState` (agentLoopSidecarClient.ts:263):
@@ -160,7 +167,7 @@ impl LiveSessionAdapter {
             tail: None,
             recorder,
             history: Arc::new(history),
-            host_factory: Arc::new(move |_, recorder, _| {
+            host_factory: Arc::new(move |_, recorder, _, _| {
                 let host = host_factory(recorder);
                 Box::pin(async move {
                     let (client, handler, lease) = host.await?;
@@ -402,10 +409,11 @@ impl LiveSessionAdapter {
             tail: None,
             recorder,
             history: Arc::new(history),
-            host_factory: Arc::new(move |identity, recorder, signal| {
+            host_factory: Arc::new(move |identity, recorder, signal, user_abort| {
                 let host = factory(identity.clone(), recorder.clone(), signal.clone());
                 Box::pin(async move {
                     let mut host = host.await?;
+                    host.input.hook_wiring.advisory_signal = Some(user_abort);
                     let cwd = host.input.permission.context.cwd.clone();
                     let transcript_path: JsString = recorder
                         .writer()
@@ -511,6 +519,7 @@ impl LiveSession for LiveSessionAdapter {
         }
         let cancellation = Cancellation::default();
         let signal = crate::runtime::hooks::Cancellation::new();
+        let user_abort = crate::runtime::hooks::Cancellation::new();
         {
             let mut state = self.state.lock().unwrap();
             // #996: disposed-admission / active-admission drop the admission
@@ -529,6 +538,7 @@ impl LiveSession for LiveSessionAdapter {
             }
             state.active = Some(cancellation.clone());
             state.signal = signal.clone();
+            state.user_abort = user_abort.clone();
             state.status = super::live_session::SessionStatus::Running;
             state.current_turn_id = Some(request.identity.turn_id.clone());
             state.reload_execution = Arc::default();
@@ -625,7 +635,7 @@ impl LiveSession for LiveSessionAdapter {
                     }
                     // select constructs every branch before polling; keep the
                     // factory call lazy so a pre-cancel never creates resources.
-                    host = async { host_factory(request.identity.clone(), recorder.clone(), signal).await } => host?,
+                    host = async { host_factory(request.identity.clone(), recorder.clone(), signal, user_abort).await } => host?,
                 };
                 let session_steer = lifecycle
                     .as_ref()
@@ -798,6 +808,9 @@ impl LiveSession for LiveSessionAdapter {
         state.signal.abort();
         state.status = super::live_session::SessionStatus::Aborted;
         if let Some(cancellation) = &state.active {
+            // Only a running turn's own abort signal: a finished turn's
+            // advisory hooks outlive it and are not this abort's to kill.
+            state.user_abort.abort();
             cancellation.cancel(Some(reason.clone()));
         }
         Ok(())
@@ -815,6 +828,7 @@ impl LiveSession for LiveSessionAdapter {
             // (live-session/schemata.py). Off — the original abort.
             if !crate::mutants::on("dispose-loses-abort-signal") {
                 state.signal.abort();
+                state.user_abort.abort();
             }
             if let Some(cancellation) = &state.active {
                 cancellation.cancel(Some("session_closed".into()));

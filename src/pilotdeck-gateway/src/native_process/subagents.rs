@@ -789,9 +789,11 @@ impl Fork {
                 self.emit(forwarded);
             }
             // The child's tool runtime shares the parent's emitter in the
-            // baseline; here its lifecycle pair surfaces in the child's own
-            // stream and is handed on unchanged (child session id included).
-            "pre_tool_execute" | "post_tool_execute" => {
+            // baseline (ToolRuntime.ts:189, 337, 395, 424); here its
+            // lifecycle pair and its permission denials surface in the
+            // child's own stream and are handed on unchanged (child session
+            // id included).
+            "pre_tool_execute" | "post_tool_execute" | "permission_denied" => {
                 if let Some(fields) = event.as_object() {
                     self.emit(fields.clone());
                 }

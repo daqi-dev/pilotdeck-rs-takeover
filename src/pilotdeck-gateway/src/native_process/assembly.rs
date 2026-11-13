@@ -1060,7 +1060,7 @@ async fn start_assembly(
                                     config_proxy: snapshot
                                         .get("config")
                                         .and_then(|config| config.get("proxy")),
-                                    env: &|name| std::env::var(name).ok(),
+                                    env: &|name| env.get(name).cloned(),
                                 },
                             ),
                         })

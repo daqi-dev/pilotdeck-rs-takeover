@@ -1,0 +1,30 @@
+{
+  "name": "cli-entry-flags",
+  "about": "基线没有 --version / -V / version 之类的入口旗标（src/cli/pilotdeck.ts:30-349 只认 run|resume|sessions|settings|help|--help|-h|server|gateway|cron|update|skills|chat|tui）：这些词和别的未知旗标一样落进默认对话，被拼成提示词发给模型（CliChannel.ts:27-29 argv.join(\" \").trim()）；server 不认识的参数（--help、--version、多余的位置参数）一律忽略、照常启动。默认对话探测写死的 127.0.0.1:18789 失败后用进程内 gateway，处理完参数里的提示词后不退出，步骤声明 expectTimeout，比被杀之前的输出、发给 provider 的请求与落盘。",
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx",
+    "PILOTDECK_BUNDLED_SKILLS_DIR": "{ROOT}/bundled"
+  },
+  "files": {
+    "bundled/sample/SKILL.md": "---\nname: sample\ndescription: bbx bundled skill placeholder\n---\nbody\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-proj/.cwd": "{PROJECT}\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": ["Generate a concise title"],
+      "reply": { "text": "{\"title\": \"Flags\"}" }
+    }
+  ],
+  "steps": [
+    { "cli": ["--version"], "stdin": "", "timeout": 10000, "expectTimeout": true },
+    { "cli": ["-V"], "stdin": "", "timeout": 10000, "expectTimeout": true },
+    { "cli": ["version"], "stdin": "", "timeout": 10000, "expectTimeout": true },
+    { "cli": ["-v", "--verbose", "  padded  "], "stdin": "", "timeout": 10000, "expectTimeout": true },
+    { "cli": ["   "], "stdin": "", "timeout": 6000, "expectTimeout": true },
+    { "serve": ["server", "--help"] },
+    { "serve": ["server", "--version", "extra", "--bogus", "x"] }
+  ]
+}
