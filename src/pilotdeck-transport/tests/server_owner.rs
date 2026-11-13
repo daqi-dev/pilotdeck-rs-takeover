@@ -302,22 +302,49 @@ fn deadline_prioritizes_public_terminal_over_accepted_call_diagnostic() {
     close(io, handle);
 }
 #[test]
-fn duplicate_terminal_is_cached_without_reexecuting_factory() {
+fn repeated_execute_after_terminal_runs_again_under_the_same_operation() {
+    // agentLoopSidecarServer.ts:208-267 only refuses an operation that is
+    // still active; the baseline has no request-id cache, so the same execute
+    // after its terminal is accepted on a new stream and runs the factory
+    // again, while the operation snapshot keeps its first outcome.
     let (mut io, handle, calls) = setup(false);
     let request = execute(None);
     send(&mut io, &request);
-    let _ = read(&io);
+    let first = read(&io);
     let terminal = read(&io);
+    assert_eq!(field(&terminal, "final"), &JsValue::Bool(true));
     send(&mut io, &request);
-    assert_eq!(read(&io), terminal);
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
-    let conflicting = request.replace("\"payload\":{}", "\"payload\":{\"changed\":true}");
-    send(&mut io, &conflicting);
+    let second = read(&io);
+    assert_eq!(field(&second, "ok"), &JsValue::Bool(true));
+    assert_ne!(field(&second, "streamId"), field(&first, "streamId"));
+    let _ = read(&io);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    let changed = request
+        .replace("\"payload\":{}", "\"payload\":{\"changed\":true}")
+        .replace("\"requestId\":\"q\"", "\"requestId\":\"q2\"");
+    send(&mut io, &changed);
+    assert_eq!(field(&read(&io), "ok"), &JsValue::Bool(true));
+    let _ = read(&io);
+    send(
+        &mut io,
+        r#"{"kind":"request","messageId":"s","method":"status","requestId":"q2"}"#,
+    );
+    let status = read(&io);
+    assert_eq!(
+        field(field(&status, "payload"), "requestIds"),
+        &JsValue::Array(vec![JsValue::from("q"), JsValue::from("q2")])
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
+    // A different run under the finished operation is refused (the baseline
+    // crashes here instead, moduleRuntime.ts:30).
+    send(
+        &mut io,
+        &request.replace("\"runId\":\"r\"", "\"runId\":\"r2\""),
+    );
     assert_eq!(
         field(&read(&io), "code"),
-        &JsValue::from("REQUEST_IDENTITY_CONFLICT")
+        &JsValue::from("OPERATION_IDENTITY_MISMATCH")
     );
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
     close(io, handle);
 }
 #[test]

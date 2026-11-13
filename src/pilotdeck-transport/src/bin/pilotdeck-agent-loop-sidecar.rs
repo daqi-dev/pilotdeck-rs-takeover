@@ -1,7 +1,7 @@
 //! Native stdio entry point. stdout contains only Module2 NDJSON.
 use pilotdeck_protocol::admission::SidecarBinding;
 use pilotdeck_transport::default_factory::OriginalAgentFactory;
-use pilotdeck_transport::server::ExecutionServer;
+use pilotdeck_transport::server::{ExecutionServer, OperationRegistry};
 use pilotdeck_transport::stdio::ConnectionOwner;
 use pilotdeck_transport::system_clock::SystemExecutionClock;
 use std::io::{self, BufReader};
@@ -100,6 +100,9 @@ fn main() -> ExitCode {
         clock: clock.clone(),
         process_cwd,
     });
+    // One AgentLoopSidecarServer per process: every connection shares its
+    // operation table (agentLoopSidecarServer.ts:84-86).
+    let registry = OperationRegistry::default();
     let connection = move || {
         let binding = SidecarBinding {
             module_id: "pilotdeck-agent-loop".into(),
@@ -107,11 +110,12 @@ fn main() -> ExitCode {
             connection_generation: format!("{server_generation}-{}", token()).into(),
             capabilities_version: "1".into(),
         };
-        ExecutionServer::new(
+        ExecutionServer::with_registry(
             ConnectionOwner::new(binding, 64),
             factory.clone(),
             clock.clone(),
             32,
+            registry.clone(),
         )
     };
     if let Some(port) = tcp_port {
