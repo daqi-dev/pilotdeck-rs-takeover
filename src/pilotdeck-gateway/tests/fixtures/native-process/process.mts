@@ -134,11 +134,24 @@ try{
       assert.equal(toolFrame.event.finishReason,'completed','#1071 real tool turn completes');
       assert.ok(rows.some(r=>r.provider?.messages.some((m:any)=>m.role==='tool'&&JSON.stringify(m.content).includes('native tool fixture content'))),'#1071 actual read_file result reaches model');
       const cleanConfig=await readFile(join(process.home,'pilotdeck.yaml'),'utf8');
-      await appendFile(join(process.home,'pilotdeck.yaml'),'hooks:\n  PreToolUse:\n    - hooks: [{type: command, command: must-not-run}]\n');
-      ws.send(JSON.stringify({type:'request',id:'late-hooks',method:'submit_turn',params:{sessionKey:'late-hooks-session',runId:'late-hooks-run',projectKey:process.project,channelKey:'probe',message:'late hooks'}}));
-      let refused:any;do{refused=await next();}while(!refused.final);
-      assert.equal(refused.event.type,'error','#1071 refreshed hooks refused');
-      assert.equal(refused.event.code,'CAPABILITY_UNAVAILABLE','#1071 refreshed hooks error code');
+      // Fixed TS loadPilotConfig.ts:343–375 diagnoses this unknown top-level
+      // field and :195–210 excludes it from executable config. Plugin/SDK hooks
+      // are separate sources. The old refusal oracle contradicted that contract.
+      const hookMarker='unknown-top-level-hook-ran';const hookPath=join(process.project,hookMarker);
+      assert.ok(!(await readdir(process.project)).includes(hookMarker),'#1071 hook marker starts absent');
+      const hookCommand="printf unknown-hook-ran > '"+hookPath.replaceAll("'", `'"'"'`)+"'";
+      await appendFile(join(process.home,'pilotdeck.yaml'),'hooks:\n  PreToolUse:\n    - hooks: [{type: command, command: '+JSON.stringify(hookCommand)+'}]\n');
+      const beforeHooks=rows.filter(r=>r.provider?.stream===true).length;
+      ws.send(JSON.stringify({type:'request',id:'late-hooks',method:'submit_turn',params:{sessionKey:'late-hooks-session',runId:'late-hooks-run',projectKey:process.project,channelKey:'probe',message:'late hooks NATIVE_TOOL',allowedTools:['read_file']}}));
+      let refreshed:any;do{refreshed=await next();}while(refreshed.id!=='late-hooks'||!refreshed.final);
+      assert.equal(refreshed.event.type,'turn_completed','#1071 refreshed unknown hooks accepted');
+      assert.equal(refreshed.event.finishReason,'completed','#1071 refreshed unknown hooks turn completes');
+      const hookCalls=rows.filter(r=>r.provider?.stream===true).slice(beforeHooks);
+      assert.equal(hookCalls.length,2,'#1071 refreshed unknown hooks actual tool roundtrip');
+      assert.ok(hookCalls.some(r=>r.provider.messages.some((m:any)=>m.role==='tool'&&JSON.stringify(m.content).includes('native tool fixture content'))),'#1071 refreshed unknown hooks actual read_file receipt');
+      const markerAbsent=!(await readdir(process.project)).includes(hookMarker);
+      assert.ok(markerAbsent,'#1071 unknown top-level hook command has no file side effect');
+      rows.push({refreshedUnknownHooks:{requestId:'late-hooks',runId:'late-hooks-run',providerCalls:hookCalls.length,markerPath:hookPath,markerAbsent,terminal:refreshed.event}});
       await writeFile(join(process.home,'pilotdeck.yaml'),cleanConfig);
 
     }
@@ -178,7 +191,7 @@ try{
   // error, process failure or deadline remains an unclassified INVALID.
   if(error?.code==='ERR_ASSERTION'){
     const first=String(error.message).split('\n')[0];
-    if(['#1071 clean signal exit','#1071 refreshed hooks refused','#1071 readiness address carries a port','#1131 readiness reports the kernel-assigned port'].includes(first)) assertionFailure=first;
+    if(['#1071 clean signal exit','#1071 refreshed unknown hooks accepted','#1071 readiness address carries a port','#1131 readiness reports the kernel-assigned port'].includes(first)) assertionFailure=first;
   }
   throw error;
 }finally{

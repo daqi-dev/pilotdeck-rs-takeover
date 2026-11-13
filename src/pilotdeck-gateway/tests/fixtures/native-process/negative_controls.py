@@ -198,10 +198,14 @@ impl Clone for ReplacementCoordinator {
      '    let external = |binding: &JsValue| {',
      '    if snapshot.get("diagnostics").is_some_and(|v| matches!(v, JsValue::Array(rows) if rows.iter().any(|row| row.get("path") == Some(&"hooks".into())))) { return Err("mutated hook refusal".into()); }\n    let external = |binding: &JsValue| {',
      'native_process::tests::review::configured_hooks_section_is_not_refused', '#1071 config-file hooks section permits startup'),
-    ('refreshed-hooks', SERVICES,
-     'super::assembly::validate_profile(&self.options, &self.env)',
-     'async { Ok::<(), crate::ProxyError>(()) }',
-     'executable_native_and_a4', '#1071 executable refreshed hooks refused'),
+    # Retire the old guard-removal/refusal oracle: unknown top-level hooks are
+    # ignored, not an unavailable capability. Reintroduce the wrong refusal
+    # only when that diagnostic exists, so initial clean startup still reaches
+    # the positive late-refresh assertion and produces its exact nonce receipt.
+    ('refreshed-hooks', ASSEMBLY,
+     '    let external = |binding: &JsValue| {',
+     '    if snapshot.get("diagnostics").is_some_and(|v| matches!(v, JsValue::Array(rows) if rows.iter().any(|row| row.get("path") == Some(&"hooks".into()) && row.get("code") == Some(&"CONFIG_UNKNOWN_FIELD".into())))) { return Err("mutated refreshed unknown hooks refusal".into()); }\n    let external = |binding: &JsValue| {',
+     'executable_native_and_a4', '#1071 executable refreshed unknown hooks accepted'),
     ('cleanup-first-error', ASSEMBLY,
      'sessions.and(project)', 'project.and(sessions)',
      'native_process::tests::review::production_cleanup_matrix', '#1071 production cleanup returns first error'),
