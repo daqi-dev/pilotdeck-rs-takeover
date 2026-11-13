@@ -27,6 +27,42 @@ impl LifecyclePort for LifecycleRuntime {
     }
 }
 
+/// The turn's user-abort signal for the advisory events, with a count of the
+/// advisory dispatches still running under it.
+///
+/// The count lets the aborted turn wait for the advisory hooks its abort
+/// killed: their completion (outcome `cancelled`) belongs on the aborted
+/// turn's stream before its `turn_completed`, where the baseline always
+/// shows it (see `native_process::hooks::is_aborted_advisory_completion`).
+#[derive(Clone, Default)]
+pub struct AdvisorySignal {
+    pub signal: Cancellation,
+    in_flight: Arc<tokio::sync::watch::Sender<usize>>,
+}
+impl AdvisorySignal {
+    pub fn new(signal: Cancellation) -> Self {
+        Self {
+            signal,
+            in_flight: Arc::new(tokio::sync::watch::channel(0).0),
+        }
+    }
+    fn enter(&self) -> AdvisoryInFlight {
+        self.in_flight.send_modify(|count| *count += 1);
+        AdvisoryInFlight(self.in_flight.clone())
+    }
+    /// Resolves once no advisory dispatch under this signal is running.
+    pub async fn settled(&self) {
+        let mut count = self.in_flight.subscribe();
+        let _ = count.wait_for(|count| *count == 0).await;
+    }
+}
+struct AdvisoryInFlight(Arc<tokio::sync::watch::Sender<usize>>);
+impl Drop for AdvisoryInFlight {
+    fn drop(&mut self) {
+        self.0.send_modify(|count| *count = count.saturating_sub(1));
+    }
+}
+
 /// Ambient turn fields the dispatcher supplies to `lifecycle.dispatch`.
 #[derive(Clone)]
 pub struct Binding {
@@ -64,7 +100,7 @@ pub struct Handler {
     /// The turn's user-abort signal for the advisory events. `Binding::signal`
     /// is the bound turn runtime's own signal, which also fires when the turn
     /// simply ends; this one fires only on abort (or session close).
-    advisory_signal: Option<Cancellation>,
+    advisory_signal: Option<AdvisorySignal>,
 }
 impl Handler {
     pub fn new(runtime: LifecycleRuntime, binding: Binding) -> Self {
@@ -79,7 +115,7 @@ impl Handler {
     }
     /// Route the advisory events to `port`, answered without waiting, under
     /// the turn's abort `signal`.
-    pub fn set_advisory(&mut self, port: Arc<dyn LifecyclePort>, signal: Option<Cancellation>) {
+    pub fn set_advisory(&mut self, port: Arc<dyn LifecyclePort>, signal: Option<AdvisorySignal>) {
         self.advisory = Some(port);
         self.advisory_signal = signal;
     }
@@ -157,11 +193,16 @@ impl Handler {
                 // 383-389), so a user abort kills these hooks while a turn
                 // that simply ends does not.
                 let future = advisory.dispatch(LifecycleDispatchInput {
-                    signal: handler.advisory_signal.clone(),
+                    signal: handler
+                        .advisory_signal
+                        .as_ref()
+                        .map(|advisory| advisory.signal.clone()),
                     ..input
                 });
+                let in_flight = handler.advisory_signal.as_ref().map(AdvisorySignal::enter);
                 runtime.spawn(async move {
                     let _ = future.await;
+                    drop(in_flight);
                 });
                 let mut response = JsObject::new();
                 response.insert(
