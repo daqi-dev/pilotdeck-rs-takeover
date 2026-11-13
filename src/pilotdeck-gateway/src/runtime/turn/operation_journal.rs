@@ -246,7 +246,7 @@ impl SessionJournal {
             .await
             .map_err(|error| HostError::new(HostErrorKind::Protocol, error.to_string()))?
         });
-        Box::pin(async move { task.await.map_err(|error| journal_error(error))? })
+        Box::pin(async move { task.await.map_err(journal_error)? })
     }
 }
 fn journal_error(error: impl std::fmt::Display) -> HostError {
