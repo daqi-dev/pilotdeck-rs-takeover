@@ -1,0 +1,223 @@
+{
+  "name": "abort-hook-subagent-start-disconnect",
+  "about": "中止来源是客户端断开（GatewayWsConnection.ts:48-62：断开时对本连接在途的会话 abortTurn，原因 aborted）：SubagentStart hook 执行中先后以关闭帧、RST 断开，重连后看运行记录、父会话与子代理记录（子代理在已中止的信号上照样写出自己的会话文件）、下一轮。",
+  "files": {
+    "home/.pilotdeck/plugins/bbx-abort/plugin.json": {
+      "name": "bbx-abort",
+      "version": "0.1.0",
+      "description": "bbx bbx-abort",
+      "hooks": {
+        "SubagentStart": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "cat >/dev/null; sleep 3"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "home/.pilotdeck/plugins/bbx-abort/hook.mjs": "// bbx hook fixture: node hook.mjs <log> <exit> [stdout] [stderr] [sleepMs]\nimport fs from 'node:fs';\nconst [log, exit = '0', out = '', err = '', sleep = '0'] = process.argv.slice(2);\nconst dir = process.env.HOME + '/hooklog';\nconst append = (row) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(dir + '/' + log + '.jsonl', JSON.stringify(row) + '\\n'); };\nlet input = '';\nprocess.stdin.on('data', (d) => { input += d; });\nprocess.stdin.on('end', () => {\n  let parsed; try { parsed = JSON.parse(input); } catch { parsed = { raw: input }; }\n  const keep = {};\n  for (const k of ['hook_event_name', 'hookEventName', 'tool_name', 'toolName', 'error', 'isInterrupt', 'is_interrupt', 'prompt', 'reason', 'stopHookActive']) if (k in parsed) keep[k] = parsed[k];\n  append({ argv: process.argv.slice(2), input: keep });\n  setTimeout(() => {\n    append({ argv: process.argv.slice(2), done: true });\n    if (out) process.stdout.write(out);\n    if (err) process.stderr.write(err);\n    process.exit(Number(exit));\n  }, Number(sleep));\n});\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Abort run\"}"
+      }
+    },
+    {
+      "name": "child-sd-closeframe",
+      "when": [
+        "CHILD-sd-closeframe"
+      ],
+      "reply": {
+        "text": "Scope: x.\nResult: y.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "child-sd-reset",
+      "when": [
+        "CHILD-sd-reset"
+      ],
+      "reply": {
+        "text": "Scope: x.\nResult: y.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "next-sd-closeframe",
+      "when": [
+        "next-sd-closeframe:"
+      ],
+      "reply": {
+        "text": "Next sd-closeframe."
+      }
+    },
+    {
+      "name": "sd-closeframe-after",
+      "when": [
+        "sd-closeframe:",
+        "\"tool_call_id\":\"call_sd_closeframe\""
+      ],
+      "reply": {
+        "text": "Done sd-closeframe."
+      }
+    },
+    {
+      "name": "sd-closeframe",
+      "when": [
+        "sd-closeframe:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_sd_closeframe",
+          "name": "agent",
+          "arguments": {
+            "description": "Look",
+            "prompt": "CHILD-sd-closeframe: look.",
+            "subagent_type": "general-purpose"
+          }
+        }
+      }
+    },
+    {
+      "name": "next-sd-reset",
+      "when": [
+        "next-sd-reset:"
+      ],
+      "reply": {
+        "text": "Next sd-reset."
+      }
+    },
+    {
+      "name": "sd-reset-after",
+      "when": [
+        "sd-reset:",
+        "\"tool_call_id\":\"call_sd_reset\""
+      ],
+      "reply": {
+        "text": "Done sd-reset."
+      }
+    },
+    {
+      "name": "sd-reset",
+      "when": [
+        "sd-reset:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_sd_reset",
+          "name": "agent",
+          "arguments": {
+            "description": "Look",
+            "prompt": "CHILD-sd-reset: look.",
+            "subagent_type": "general-purpose"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-sd-closeframe",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-sd-closeframe",
+        "channelKey": "test",
+        "runId": "run-sd-closeframe",
+        "message": "sd-closeframe: go"
+      },
+      "timeout": 1200,
+      "expectTimeout": true
+    },
+    {
+      "disconnect": true
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "connect": true
+    },
+    {
+      "ws": "run_get",
+      "params": {
+        "runId": "run-sd-closeframe"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-sd-closeframe"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-sd-closeframe",
+        "channelKey": "test",
+        "message": "next-sd-closeframe: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-sd-reset",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-sd-reset",
+        "channelKey": "test",
+        "runId": "run-sd-reset",
+        "message": "sd-reset: go"
+      },
+      "timeout": 1200,
+      "expectTimeout": true
+    },
+    {
+      "disconnect": "reset"
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "connect": true
+    },
+    {
+      "ws": "run_get",
+      "params": {
+        "runId": "run-sd-reset"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-sd-reset"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-sd-reset",
+        "channelKey": "test",
+        "message": "next-sd-reset: again"
+      },
+      "timeout": 20000
+    }
+  ]
+}

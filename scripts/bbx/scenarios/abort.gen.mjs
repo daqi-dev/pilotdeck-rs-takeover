@@ -383,6 +383,29 @@ scenarios['abort-hook-stop-failure'] = {
     ...hookRow('sp', 'SubagentStop', null, { provider: sub }),
     volatile: subagentTimeoutVolatile('s-sp-timeout'),
   };
+  // 断开列（GatewayWsConnection.ts:48-62，原因 aborted，同 abort_turn）：SubagentStart hook 睡 3 秒，
+  // 提交后 1.2 秒以关闭帧 / RST 断开，重连后看运行记录、父会话与子代理记录、下一轮。
+  const steps = [];
+  const ss = [];
+  for (const [col, how] of [['closeframe', true], ['reset', 'reset']]) {
+    const s = `s-sd-${col}`;
+    const m = `sd-${col}`;
+    ss.push({ s, marker: m });
+    steps.push(bypass(s));
+    steps.push(submit(s, `${m}: go`, { runId: `run-${m}`, timeout: 1200, expectTimeout: true }));
+    steps.push({ disconnect: how });
+    steps.push({ sleep: 3500 });
+    steps.push({ connect: true });
+    steps.push({ ws: 'run_get', params: { runId: `run-${m}` } });
+    steps.push(read(s));
+    steps.push(submit(s, `next-${m}: again`));
+  }
+  scenarios['abort-hook-subagent-start-disconnect'] = {
+    about: '中止来源是客户端断开（GatewayWsConnection.ts:48-62：断开时对本连接在途的会话 abortTurn，原因 aborted）：SubagentStart hook 执行中先后以关闭帧、RST 断开，重连后看运行记录、父会话与子代理记录（子代理在已中止的信号上照样写出自己的会话文件）、下一轮。',
+    files: plugin('bbx-abort', { SubagentStart: [{ hooks: [{ type: 'command', command: 'cat >/dev/null; sleep 3' }] }] }),
+    provider: [TITLE, ...sub(ss)],
+    steps,
+  };
 }
 
 // ── 被杀的 advisory hook 晚退出（PreModelRequest，收到 SIGTERM 后再活 N 毫秒）──

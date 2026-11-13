@@ -1450,6 +1450,15 @@ impl SubmitHostServices for Services {
             }
         })
     }
+    fn hold_settlement(&self, run: &RunRef) -> Option<crate::storage::SettlementHold> {
+        super::assembly::live_recorder(&self.recorders, run.session())
+            .map(|(_, recorder)| recorder.writer().hold_settlement())
+    }
+    fn forks_settled(&self, run: &RunRef) -> Option<SubmitFuture<'static, ()>> {
+        super::assembly::live_recorder(&self.recorders, run.session()).map(|(_, recorder)| {
+            Box::pin(recorder.writer().forks_settled()) as SubmitFuture<'static, ()>
+        })
+    }
     fn record_failure<'a>(
         &'a self,
         run: &'a RunRef,

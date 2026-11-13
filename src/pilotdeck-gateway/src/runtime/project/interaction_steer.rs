@@ -449,10 +449,14 @@ impl SessionSteer {
             .run
             .as_ref()
             .is_some_and(|run| !matches!(&*run.done.borrow(), Some(Ok(_))))
-            || signal.is_cancelled()
         {
             return Err(stale());
         }
+        // An already-aborted signal still starts the run: the loop reports
+        // the abort from its own step-top check (AgentLoop.ts:597-614), and
+        // the run's cancelled `external` signal rejects every steer mutation
+        // (see `check`). A one-shot subagent forked after its parent's abort
+        // runs this way (SubAgentSession.ts:188-238).
         session.mailbox.start(turn_id.clone());
         router.turn.authorizations = router
             .turn

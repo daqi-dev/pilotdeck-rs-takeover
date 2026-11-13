@@ -860,6 +860,12 @@ impl SessionTools {
                     .get("canPrompt")
                     .filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined))
                     .cloned(),
+                operation_deadline: options
+                    .get("execution")
+                    .and_then(|execution| execution.get("operationDeadline"))
+                    // The gateway sets it as an ISO string (submit.rs).
+                    .filter(|value| value.as_string().is_some_and(|text| !text.is_empty()))
+                    .cloned(),
             };
             before_plan
         })
@@ -1131,16 +1137,29 @@ impl SessionTools {
                     ("sessionId", JsValue::String(identity.session_id.clone())),
                     ("turnId", JsValue::String(identity.turn_id.clone())),
                 ]);
-                // `canElicit: input.canElicit` (sidecarToolContext.ts:105):
-                // the tool runtime honours it only with an elicitation port.
-                if self
+                let turn = self
                     .turn_permission
                     .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .can_elicit
-                {
+                    .unwrap_or_else(|e| e.into_inner());
+                // `canElicit: input.canElicit` (sidecarToolContext.ts:105):
+                // the tool runtime honours it only with an elicitation port.
+                if turn.can_elicit {
                     input.insert("canElicit".into(), JsValue::Bool(true));
                 }
+                // The turn's `execution.operationDeadline` reaches the tool
+                // scheduler's execution context (sidecarToolContext.ts:168,
+                // toolSchedulerAdapter.ts), where it narrows the `agent`
+                // tool's subagent budget (executionDeadline.ts). A child loop
+                // runs without an execution context (SubAgentSession.ts:205).
+                if self.fork.is_none()
+                    && let Some(deadline) = &turn.operation_deadline
+                {
+                    input.insert(
+                        "execution".into(),
+                        JsValue::Object(value([("operationDeadline", deadline.clone())])),
+                    );
+                }
+                drop(turn);
                 input
             },
             checkpoint: self.binding.checkpoint.clone(),
@@ -1726,6 +1745,8 @@ struct TurnOptions {
     can_elicit: bool,
     /// `canPrompt`, when the turn gave one.
     can_prompt: Option<JsValue>,
+    /// `execution.operationDeadline`, when the turn has one.
+    operation_deadline: Option<JsValue>,
 }
 struct Tool(
     Arc<dyn capability::ToolDefinition>,
