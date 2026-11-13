@@ -83,7 +83,7 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
     // `telemetry.shutdown()` runs last in the bundle: flush (a no-op here, the
     // port never uploads) and persist the queue file.
     telemetry_queue.persist();
-    Ok(0)
+    Ok(u8::from(native_process::deferred_startup_failure()))
 }
 
 /// The builtin plugins directory. The baseline has no such setting: it scans

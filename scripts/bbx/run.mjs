@@ -17,6 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
+import { parseHttpHead, parseHttpResponses } from './lib/rawhttp.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const BASELINE = process.env.BBX_BASELINE || path.join(REPO, 'resources/PilotDeck');
@@ -219,6 +220,13 @@ for (const [index, [rel, content]] of seedFiles.entries()) {
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, typeof content === 'string' ? subst(content) : JSON.stringify(substDeep(content), null, 2) + '\n');
   fs.utimesSync(target, seedBase + index, seedBase + index);
+}
+// symlinks：{"相对根目录的链接路径": "链接内容"}，在种完文件之后建；链接内容同样替换占位符，只能放在根目录之下。
+for (const [rel, link] of Object.entries(scenario.symlinks ?? {})) {
+  const at = path.join(ROOT, rel);
+  if (!at.startsWith(ROOT + '/')) throw new Error(`symlink escapes root: ${rel}`);
+  fs.mkdirSync(path.dirname(at), { recursive: true });
+  fs.symlinkSync(subst(link), at);
 }
 
 // ── 假 provider（按请求路径分流：OpenAI chat completions、Anthropic messages、OpenAI Responses、Google Gemini）──
@@ -611,18 +619,15 @@ const readServerFrames = (buf) => {
   return { frames, rest: buf.subarray(off) };
 };
 // HTTP 应答头：状态行和头（小写名，去掉 date），正文原样。
-const parseHttpHead = (raw) => {
-  // 管线化时后一个应答整段落在正文里，它的 Date 行同样去掉。
-  const text = raw.replace(/^date: .*\r\n/gim, '');
-  const i = text.indexOf('\r\n\r\n'); const head = i < 0 ? text : text.slice(0, i);
-  const [status, ...lines] = head.split('\r\n');
-  const headers = Object.fromEntries(lines.map((l) => [l.slice(0, l.indexOf(':')).toLowerCase(), l.slice(l.indexOf(':') + 1).trim()]).filter(([k]) => k !== 'date'));
-  return { status, headers, ...(i >= 0 && { body: text.slice(i + 4) }) };
-};
 const openRaw = (port) => new Promise((resolve) => {
-  const s = net.connect(port, '127.0.0.1'); const st = { s, buf: Buffer.alloc(0), ended: null, error: null, closed: false, wake: [] };
+  const s = net.connect(port, '127.0.0.1');
+  // 收到的块先攒着，用到 buf 时才拼（几十 MB 的应答逐块 concat 是平方级）。
+  let joined = Buffer.alloc(0); let pending = [];
+  const st = { s, ended: null, error: null, closed: false, wake: [],
+    get buf() { if (pending.length) { joined = Buffer.concat([joined, ...pending]); pending = []; } return joined; },
+    set buf(v) { joined = v; pending = []; } };
   const poke = () => st.wake.splice(0).forEach((w) => w());
-  s.on('data', (d) => { st.buf = Buffer.concat([st.buf, d]); poke(); });
+  s.on('data', (d) => { pending.push(d); poke(); });
   s.on('end', () => { st.ended = st.ended ?? 'fin'; poke(); });
   s.on('error', (e) => { st.error = e.code ?? String(e); poke(); });
   s.on('close', () => { st.closed = true; if (!st.ended && st.error) st.ended = 'reset'; poke(); resolve(st); });
@@ -656,6 +661,9 @@ const rawStep = async (spec) => {
   for (const item of spec.send ?? []) {
     if (st.closed) break;
     if (item.wait) { await rawWait(st, () => false, item.wait); continue; }
+    // pauseRead / resumeRead：停止从套接字读（字节留在内核缓冲里，服务端写不出去时就在它那边排队），之后恢复。
+    if (item.pauseRead) { st.s.pause(); continue; }
+    if (item.resumeRead) { st.s.resume(); continue; }
     const one = item.frame ? wsClientFrame(item.frame) : item.hex !== undefined ? Buffer.from(item.hex, 'hex')
       : Buffer.from(subst(item.prefix ?? '') + subst(item.text ?? '').repeat(item.repeat ?? 1) + subst(item.suffix ?? ''));
     // times：同样的字节连写 n 遍、一次写出（例如不等应答连发很多个请求帧）。
@@ -668,7 +676,13 @@ const rawStep = async (spec) => {
   await rawWait(st, () => false, spec.readMs ?? 1000);
   if (upgraded || (spec.ws && st.buf.length && !st.buf.subarray(0, 5).toString().startsWith('HTTP/'))) {
     const { frames, rest } = readServerFrames(st.buf); r.frames = frames; if (rest.length) r.trailingBytes = rest.length;
-  } else if (st.buf.length) r.http = parseHttpHead(st.buf.toString());
+    // countFrames：帧太多时只记按「类型:id」（关闭帧记码与原因，其余记 opcode）分组的计数和总数，次序不记。
+    if (spec.countFrames) {
+      const counts = {};
+      for (const f of frames) { const k = f.opcode === 8 ? `close:${f.code}:${f.reason}` : f.json ? `${f.json.type}:${f.json.id ?? ''}` : `opcode:${f.opcode}`; counts[k] = (counts[k] ?? 0) + 1; }
+      r.frames = { total: frames.length, counts };
+    }
+  } else if (st.buf.length) r.http = parseHttpResponses(st.buf.toString('latin1'));
   r.serverClosed = st.closed ? (st.ended ?? 'close') : st.ended === 'fin' ? 'fin-half' : null;
   await rawClose(st, upgraded || / 101 /.test(r.http?.status ?? ''));
   return r;

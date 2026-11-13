@@ -1338,12 +1338,61 @@ async fn output_byte_budget_includes_inflight_and_recovers() {
     }
 }
 
+/// Frames that exactly fill the queued-output byte budget in
+/// `output_slot_budget_and_full_close`.
+const FILL_FRAMES: usize = 64;
+/// The TS fixture's frame count in `full_queue_eof_flushes_successfully`.
+const FIXTURE_FRAMES: usize = 64;
+
+/// A non-reading peer is cut off by bytes, not frame count: far more small
+/// frames than the old 64-frame queue fit and stay queued.
+#[tokio::test]
+async fn many_small_frames_queue_without_close() {
+    let (text, mut outgoing, _) = Text::channel();
+    for _ in 0..20_001 {
+        text.send_text("{\"type\":\"response\"}".into());
+    }
+    negative_assert!(
+        text.closing.borrow().is_none(),
+        "small frames under the byte budget never close"
+    );
+    let mut frames = 0;
+    while let Ok(Output::Frame(..)) = outgoing.try_recv() {
+        frames += 1;
+    }
+    negative_assert_eq!(frames, 20_001, "every small frame is queued");
+}
+
+/// A lone frame above the queued-output budget still goes out when nothing
+/// else is queued; behind other queued output it closes with 1009.
+#[tokio::test]
+async fn lone_large_frame_passes_queued_budget() {
+    let (text, mut outgoing, _) = Text::channel();
+    text.send_text("y".repeat(QUEUED_OUTPUT_LIMIT + 1));
+    negative_assert!(
+        text.closing.borrow().is_none(),
+        "a lone large frame is queued"
+    );
+    negative_assert!(
+        matches!(outgoing.try_recv(), Ok(Output::Frame(..))),
+        "a lone large frame is queued"
+    );
+    let (text, _outgoing, _) = Text::channel();
+    text.send_text("first".into());
+    text.send_text("y".repeat(QUEUED_OUTPUT_LIMIT));
+    negative_assert!(
+        text.closing.borrow().is_some(),
+        "a large frame behind queued output closes"
+    );
+}
+
 #[tokio::test]
 async fn output_slot_budget_and_full_close() {
     for close in [false, true] {
         let (text, mut outgoing, _) = Text::channel();
-        for _ in 0..MAX_OUTPUT_FRAMES {
-            text.send_text("x".into());
+        let fill = "x".repeat(QUEUED_OUTPUT_LIMIT / FILL_FRAMES - frame::MAX_SERVER_HEADER_BYTES);
+        for _ in 0..FILL_FRAMES {
+            text.send_text(fill.clone());
         }
         negative_assert!(
             text.closing.borrow().is_none(),
@@ -1358,7 +1407,7 @@ async fn output_slot_budget_and_full_close() {
             text.closing.borrow().is_some(),
             "#749 full output queue preserves close frame"
         );
-        for _ in 0..MAX_OUTPUT_FRAMES {
+        for _ in 0..FILL_FRAMES {
             negative_assert!(
                 matches!(outgoing.try_recv(), Ok(Output::Frame(..))),
                 "#749 full output queue preserves close frame"
@@ -2405,14 +2454,14 @@ async fn full_queue_eof_flushes_successfully() {
     negative_assert_eq!(
         expected,
         &json!({"before":{"completed":1,"finished":false},
-            "completed":MAX_OUTPUT_FRAMES,"finished":true,"destroyed":true}),
+            "completed":FIXTURE_FRAMES,"finished":true,"destroyed":true}),
         "#749 full queue EOF fixture lifecycle"
     );
     let (text, outgoing, closing) = Text::channel();
-    for _ in 0..MAX_OUTPUT_FRAMES {
+    for _ in 0..FIXTURE_FRAMES {
         text.send_text("queued".into());
     }
-    text.end(); // Writer has never been polled: the queue is exactly full.
+    text.end(); // Writer has never been polled: every frame is still queued.
     let (writer, mut peer) = tokio::io::duplex(16);
     let writing = write_output(writer, outgoing, closing);
     let reading = async {
@@ -2432,7 +2481,7 @@ async fn full_queue_eof_flushes_successfully() {
     );
     negative_assert_eq!(
         received,
-        frame::server_frame(1, b"queued").repeat(MAX_OUTPUT_FRAMES),
+        frame::server_frame(1, b"queued").repeat(FIXTURE_FRAMES),
         "#749 full queue EOF flushes successfully"
     );
     // Retaining Text (and its Sender) must not keep recv() alive after EOF.

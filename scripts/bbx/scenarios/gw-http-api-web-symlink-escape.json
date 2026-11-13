@@ -1,0 +1,141 @@
+{
+  "name": "gw-http-api-web-symlink-escape",
+  "about": "项目里指向项目外的符号链接（目录、文件、悬空链接）经 /api/web 的读、列目录、写，以及 WS 的 project_files_list / project_file_read。基线读取先 realpath 再判断是否在根内（projectFiles.ts:209-235），越界回 403 workspace_boundary；写入只做字面检查（resolveSafeWriting，238-251），mkdir 与 writeFile 跟随符号链接，于是能写到项目外。",
+  "accepted": [
+    {
+      "id": "gw-api-web-write-follows-symlink",
+      "why": "基线 bug（安全，需要 token）：/api/web/.../files/write 只对路径做字面检查（src/adapters/web/projectFiles.ts:238-251 resolveSafeWriting 不解析符号链接），随后的 mkdir 与 writeFile 跟随项目内指向项目外的符号链接（目录链接、文件链接、悬空链接），于是写到项目外、覆盖项目外的文件、在项目外建目录，都回 200 {\"ok\":true}；同一服务的读取先 realpath 再判断（209-235），越界回 403。Rust 对解析后落在项目根之外的写入回 403 {\"error\":{\"code\":\"workspace_boundary\",\"message\":\"Path escapes workspace root: <path>\"}}，与基线对字面越界（..）的拒绝同一形状，项目外不落盘。只放过这四次经符号链接的写入的应答与项目外的落盘。",
+      "paths": [
+        "^\\$\\.steps\\[[4-7]\\]\\.http\\.(status|body\\.ok|body\\.error)$",
+        "^\\$\\.tree\\./home/outside/(created-by-dangling\\.txt|sub/deeper\\.txt|written-through-dir\\.txt)$",
+        "^\\$\\.tree\\./home/outside/secret\\.txt\\.text$"
+      ]
+    }
+  ],
+  "files": {
+    "proj/inside.txt": "inside\n",
+    "home/outside/secret.txt": "outside secret\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-proj/.cwd": "{PROJECT}\n"
+  },
+  "symlinks": {
+    "proj/link-dir": "{HOME}/outside",
+    "proj/link-file": "{HOME}/outside/secret.txt",
+    "proj/dangling": "{HOME}/outside/created-by-dangling.txt"
+  },
+  "steps": [
+    {
+      "http": "GET /api/web/projects/%2Fprivate%2Ftmp%2Fpdrs-bbx%2Froot%2Fproj/files/read?path=link-file",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      }
+    },
+    {
+      "http": "GET /api/web/projects/%2Fprivate%2Ftmp%2Fpdrs-bbx%2Froot%2Fproj/files/read?path=link-dir/secret.txt",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      }
+    },
+    {
+      "http": "GET /api/web/projects/%2Fprivate%2Ftmp%2Fpdrs-bbx%2Froot%2Fproj/files/tree?path=link-dir",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      }
+    },
+    {
+      "http": "GET /api/web/projects/%2Fprivate%2Ftmp%2Fpdrs-bbx%2Froot%2Fproj/files/read?path=dangling",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      }
+    },
+    {
+      "http": "POST /api/web/projects/%2Fprivate%2Ftmp%2Fpdrs-bbx%2Froot%2Fproj/files/write",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "path": "link-dir/written-through-dir.txt",
+        "content": "escaped via dir link\n"
+      }
+    },
+    {
+      "http": "POST /api/web/projects/%2Fprivate%2Ftmp%2Fpdrs-bbx%2Froot%2Fproj/files/write",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "path": "link-file",
+        "content": "overwritten via file link\n"
+      }
+    },
+    {
+      "http": "POST /api/web/projects/%2Fprivate%2Ftmp%2Fpdrs-bbx%2Froot%2Fproj/files/write",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "path": "dangling",
+        "content": "created via dangling link\n"
+      }
+    },
+    {
+      "http": "POST /api/web/projects/%2Fprivate%2Ftmp%2Fpdrs-bbx%2Froot%2Fproj/files/write",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "path": "link-dir/sub/deeper.txt",
+        "content": "mkdir through dir link\n"
+      }
+    },
+    {
+      "http": "POST /api/web/projects/%2Fprivate%2Ftmp%2Fpdrs-bbx%2Froot%2Fproj/files/write",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "path": "../escape.txt",
+        "content": "literal escape\n"
+      }
+    },
+    {
+      "http": "POST /api/web/projects/%2Fprivate%2Ftmp%2Fpdrs-bbx%2Froot%2Fproj/files/write",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
+      },
+      "body": {
+        "path": "inside-new.txt",
+        "content": "ok\n"
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{PROJECT}"
+      }
+    },
+    {
+      "ws": "project_file_read",
+      "params": {
+        "projectKey": "{PROJECT}",
+        "path": "link-file"
+      }
+    },
+    {
+      "ws": "project_file_read",
+      "params": {
+        "projectKey": "{PROJECT}",
+        "path": "link-dir/secret.txt"
+      }
+    },
+    {
+      "ws": "project_file_read",
+      "params": {
+        "projectKey": "{PROJECT}",
+        "path": "dangling"
+      }
+    }
+  ],
+  "volatile": [
+    "\\.http\\.headers\\.date$"
+  ]
+}

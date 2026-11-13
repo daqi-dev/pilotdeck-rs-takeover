@@ -965,8 +965,8 @@ async fn defaults_are_applied_to_bound_server() {
             server.resources.connections.available_permits(),
             server.resources.input.available_permits()
         ),
-        (64, 256 * 1024 * 1024),
-        "#1079 default bind applies both resource limits"
+        (Semaphore::MAX_PERMITS, 256 * 1024 * 1024),
+        "default bind: no connection cap (TS has none), input budget applied"
     );
     drop(server);
     expect_ok(

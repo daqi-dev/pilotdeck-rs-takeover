@@ -1,16 +1,73 @@
 {
   "name": "gw-crash-unmasked-frame",
   "about": "疑似基线 bug（崩溃，握手前即可触发）：客户端发一个不加掩码的帧，websocket.ts:133-135 在 socket 的 data 回调里抛错，成为 uncaughtException，pilotdeck.ts:267-270 开始停机：不再接受新连接；出事的那条连接不被关闭，它的缓冲里那一帧一直解析失败，连关闭帧也处理不了，所以服务一直等它、收到 SIGTERM 也不退（serve 15 秒后 SIGKILL）。用 serve 起服务，比的是进程自己的退出方式和输出。保留为不一致，由主会话决定。环境里的 DOCKER_CONTAINER / COMMIT_HASH 让基线的遥测上下文不去跑 git。",
+  "accepted": [
+    {
+      "id": "gw-unmasked-frame-crash",
+      "why": "基线 bug（挂死，握手前即可触发）：客户端帧不加掩码时 websocket.ts:133-135 在 data 回调里抛错，成为 uncaughtException，pilotdeck.ts:267-270 开始停机，不再接受新连接；出事的连接不被关闭且再也解析不了任何帧，服务一直等它，SIGTERM 也不退（serve 15 秒后 SIGKILL，所以没有 telemetry 快照行）。Rust 按 RFC 6455 §7.4.1 回关闭帧 1002 并关掉这一条连接，服务照常。只放过进程的退出方式与停机输出、出事的连接的应答、之后那次探测。",
+      "paths": [
+        "^\\$\\.steps\\[0\\]\\.serve\\.(exitCode|signal|stdout)$",
+        "^\\$\\.steps\\[0\\]\\.then\\[1\\]\\.raw\\.",
+        "^\\$\\.steps\\[0\\]\\.then\\[3\\]\\.raw\\."
+      ]
+    }
+  ],
   "server": false,
-  "env": {"DOCKER_CONTAINER": "1", "COMMIT_HASH": "bbx"},
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
   "steps": [
-    {"serve": ["server"], "then": [
-      {"raw": {"send": [{"text": "GET /health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"}], "readMs": 1000}},
-      {"raw": {"ws": true, "send": [
-        {"frame": {"opcode": 1, "mask": false, "json": {"type": "hello", "protocolVersion": "1.2", "clientName": "test", "clientVersion": "0.0.0", "token": "{TOKEN}"}}}
-      ], "readMs": 1500}},
-      {"sleep": 1000},
-      {"raw": {"send": [{"text": "GET /health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"}], "readMs": 1000}}
-    ]}
+    {
+      "serve": [
+        "server"
+      ],
+      "then": [
+        {
+          "raw": {
+            "send": [
+              {
+                "text": "GET /health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+              }
+            ],
+            "readMs": 1000
+          }
+        },
+        {
+          "raw": {
+            "ws": true,
+            "send": [
+              {
+                "frame": {
+                  "opcode": 1,
+                  "mask": false,
+                  "json": {
+                    "type": "hello",
+                    "protocolVersion": "1.2",
+                    "clientName": "test",
+                    "clientVersion": "0.0.0",
+                    "token": "{TOKEN}"
+                  }
+                }
+              }
+            ],
+            "readMs": 1500
+          }
+        },
+        {
+          "sleep": 1000
+        },
+        {
+          "raw": {
+            "send": [
+              {
+                "text": "GET /health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+              }
+            ],
+            "readMs": 1000
+          }
+        }
+      ]
+    }
   ]
 }
