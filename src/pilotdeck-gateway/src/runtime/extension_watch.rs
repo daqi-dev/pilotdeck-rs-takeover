@@ -16,7 +16,8 @@
 //!   the config store's watcher (`config/store.rs`), this crate has no native
 //!   watcher dependency, so each watched path's tree is polled: a fingerprint
 //!   of every entry under it (type, length, modification time; symbolic links
-//!   are not followed, as `fs.watch` does not report changes behind them).
+//!   inside the tree are not followed, as `fs.watch` does not report changes
+//!   behind them, but a watched path that is itself a link is).
 //!   A change is therefore seen up to one poll interval late, and a change
 //!   that leaves every fingerprinted field as it was is not seen.
 //! * The polling runs on its own thread, never on an async worker, and no
@@ -68,6 +69,9 @@ struct WatchedPath {
     path: PathBuf,
     /// `None` until the watch thread has sampled the path once.
     fingerprint: Option<u64>,
+    /// Whether the path itself is followed when it is a symbolic link:
+    /// decided at the first sample (see `watch_thread`).
+    follow_root: bool,
 }
 
 struct ScopeRecord {
@@ -156,6 +160,7 @@ impl ExtensionWatchManager {
             .map(|path| WatchedPath {
                 path,
                 fingerprint: None,
+                follow_root: false,
             })
             .collect();
         state.scopes.push(ScopeRecord {
@@ -195,14 +200,14 @@ fn watched_paths(options: &ExtensionWatchOptions, scope: &ExtensionWatchScope) -
     }
 }
 
-/// The paths to sample, as `(scope index, path index, path)`: the ones never
-/// sampled yet (`initial`) or all the others.
-fn sample_list(state: &State, initial: bool) -> Vec<(usize, usize, PathBuf)> {
+/// The paths to sample, as `(scope index, path index, path, follow_root)`:
+/// the ones never sampled yet (`initial`) or all the others.
+fn sample_list(state: &State, initial: bool) -> Vec<(usize, usize, PathBuf, bool)> {
     let mut list = Vec::new();
     for (scope, record) in state.scopes.iter().enumerate() {
         for (index, watched) in record.paths.iter().enumerate() {
             if watched.fingerprint.is_none() == initial {
-                list.push((scope, index, watched.path.clone()));
+                list.push((scope, index, watched.path.clone(), watched.follow_root));
             }
         }
     }
@@ -224,22 +229,35 @@ fn watch_thread(shared: Weak<Shared>) {
             sample_list(&state, true)
         };
         if !initial.is_empty() {
-            let samples: Vec<u64> = initial
+            // `resolveExistingWatchTarget` (ExtensionWatchManager.ts:170-180)
+            // runs once, when the watcher is created: a path that exists then
+            // (`existsSync` follows links) is watched itself, through a link
+            // too; one that does not is watched from an ancestor, which never
+            // looks behind a link created there later.
+            let samples: Vec<(u64, bool)> = initial
                 .iter()
-                .map(|(_, _, path)| fingerprint(path))
+                .map(|(_, _, path, _)| {
+                    let follow = path.exists();
+                    (fingerprint(path, follow), follow)
+                })
                 .collect();
             let mut state = shared.lock();
-            for ((scope, index, _), sample) in initial.iter().zip(samples) {
-                state.scopes[*scope].paths[*index].fingerprint = Some(sample);
+            for ((scope, index, _, _), (sample, follow)) in initial.iter().zip(samples) {
+                let watched = &mut state.scopes[*scope].paths[*index];
+                watched.fingerprint = Some(sample);
+                watched.follow_root = follow;
             }
         }
         let started = Instant::now();
         if started >= next_poll {
             let list = sample_list(&shared.lock(), false);
-            let samples: Vec<u64> = list.iter().map(|(_, _, path)| fingerprint(path)).collect();
+            let samples: Vec<u64> = list
+                .iter()
+                .map(|(_, _, path, follow)| fingerprint(path, *follow))
+                .collect();
             let finished = Instant::now();
             let mut state = shared.lock();
-            for ((scope, index, path), sample) in list.into_iter().zip(samples) {
+            for ((scope, index, path, _), sample) in list.into_iter().zip(samples) {
                 let record = &mut state.scopes[scope];
                 let watched = &mut record.paths[index];
                 if watched.fingerprint != Some(sample) {
@@ -293,12 +311,24 @@ fn watch_thread(shared: Weak<Shared>) {
 
 /// Everything under `path` that a recursive watch would report a change
 /// of: each entry's relative name, type, length and modification time.
-fn fingerprint(path: &Path) -> u64 {
+/// With `follow_root` the watched path itself is followed when it is a
+/// symbolic link — the baseline's `fs.watch` on an existing linked path
+/// watches the link's target (measured on macOS: a write behind a linked
+/// `skills` / `plugins` / project `.pilotdeck/skills` is reported) — while
+/// links inside the tree never are (a write behind an inner linked directory
+/// is not reported).
+fn fingerprint(path: &Path, follow_root: bool) -> u64 {
     let mut hasher = DefaultHasher::new();
     let mut stack = vec![(path.to_path_buf(), PathBuf::new())];
     while let Some((absolute, relative)) = stack.pop() {
+        let root = follow_root && relative.as_os_str().is_empty();
         relative.hash(&mut hasher);
-        let Ok(metadata) = std::fs::symlink_metadata(&absolute) else {
+        let metadata = if root {
+            std::fs::metadata(&absolute)
+        } else {
+            std::fs::symlink_metadata(&absolute)
+        };
+        let Ok(metadata) = metadata else {
             0u8.hash(&mut hasher);
             continue;
         };
@@ -346,14 +376,47 @@ mod tests {
     fn fingerprint_sees_changes_under_the_path_only() {
         let root = temp_dir("fingerprint");
         let skills = root.join("skills");
-        let missing = fingerprint(&skills);
+        let missing = fingerprint(&skills, true);
         std::fs::create_dir_all(skills.join("a")).unwrap();
-        let created = fingerprint(&skills);
+        let created = fingerprint(&skills, true);
         assert_ne!(missing, created);
         std::fs::write(root.join("unrelated.txt"), "x").unwrap();
-        assert_eq!(created, fingerprint(&skills));
+        assert_eq!(created, fingerprint(&skills, true));
         std::fs::write(skills.join("a/SKILL.md"), "x").unwrap();
-        assert_ne!(created, fingerprint(&skills));
+        assert_ne!(created, fingerprint(&skills, true));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_watched_path_is_followed_but_inner_links_are_not() {
+        let root = temp_dir("links");
+        let elsewhere = root.join("elsewhere");
+        std::fs::create_dir_all(elsewhere.join("skills")).unwrap();
+        std::fs::create_dir_all(elsewhere.join("inner")).unwrap();
+        let skills = root.join("skills");
+        std::os::unix::fs::symlink(elsewhere.join("skills"), &skills).unwrap();
+        let before = fingerprint(&skills, true);
+        std::fs::create_dir_all(elsewhere.join("skills/new")).unwrap();
+        std::fs::write(elsewhere.join("skills/new/SKILL.md"), "x").unwrap();
+        let after = fingerprint(&skills, true);
+        assert_ne!(before, after, "a write behind a linked root is seen");
+        let unfollowed = fingerprint(&skills, false);
+        std::fs::write(elsewhere.join("skills/new/OTHER.md"), "x").unwrap();
+        assert_eq!(
+            unfollowed,
+            fingerprint(&skills, false),
+            "a link that appeared after the watch started is not followed"
+        );
+        std::os::unix::fs::symlink(elsewhere.join("inner"), elsewhere.join("skills/linked"))
+            .unwrap();
+        let linked = fingerprint(&skills, true);
+        std::fs::write(elsewhere.join("inner/SKILL.md"), "x").unwrap();
+        assert_eq!(
+            linked,
+            fingerprint(&skills, true),
+            "an inner link is not followed"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
