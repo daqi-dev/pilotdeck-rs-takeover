@@ -2,12 +2,12 @@
 
 > 本文件由 `node scripts/bbx/status.mjs` 生成，不要手改。改功能清单改 `scripts/bbx/features.json`，改问题改 `state/issues.md`，改审阅记录改 `state/audits.md`，改检查结果改 `state/check-results.json`，然后重新生成。
 
-- 生成时间：2026-11-13T15:09:25Z
-- 仓库提交：`2bfa0c7a7`（场景、表面清单、功能清单、台账都取自这个提交的工作区）
+- 生成时间：2026-11-13T16:25:30Z
+- 仓库提交：`809bc4cb8`（场景、表面清单、功能清单、台账都取自这个提交的工作区）
 - 对拍产物：`_build/bbx`
-- 产物来历（人给的说明）：cb8（Linux aarch64）上 verify.sh v19 的一轮全量对拍（槽位 5–8 并行），被测提交 2bfa0c7a7
-- 产物里的场景结果：573 个 `.diff.txt`；修改时间 2026-11-13T14:17:36.408Z 至 2026-11-13T15:01:19.524Z（UTC）；按小时：2026-11-13T14:00Z 569 个，2026-11-13T15:00Z 4 个
-- 采集平台（从 diff 文件头里的产物路径判断）：Linux 573 个
+- 产物来历（人给的说明）：cb8（Linux aarch64）上 verify.sh v20 的一轮全量对拍（槽位 5–8 并行），被测提交 809bc4cb8
+- 产物里的场景结果：575 个 `.diff.txt`；修改时间 2026-11-13T15:34:17.871Z 至 2026-11-13T16:17:56.905Z（UTC）；按小时：2026-11-13T15:00Z 326 个，2026-11-13T16:00Z 249 个
+- 采集平台（从 diff 文件头里的产物路径判断）：Linux 575 个
 - 产物里有、当前提交没有的场景 0 个；当前提交有、产物里没有的（记为「未跑」）0 个
 - 产物不记录被测提交号，也不记录是哪一轮；修改时间跨度大或分成几段时，可能混合了多轮。
 
@@ -15,11 +15,11 @@
 
 | 条 | 标准 | 现在（由数据算出） |
 |---|---|---|
-| 1 | 全量对拍稳定一致 | 场景 573 个：SAME 545，DIFF 27，INVALID 1，未跑 0。不是 SAME 的里属于允许清单 2 个、登记了 accepted 2 个、其余 24 个（逐个见下）。连续 3 轮稳定：需要连续 3 轮的产物，未提供 |
-| 2 | 表面覆盖完整 | 表面项 2113 个，范围内 2084 个：被 SAME 场景碰到 1972，只被有差异的场景碰到 10，没碰到 102；标为不计 29（理由表在 `state/out-of-scope.md`，待人过目） |
+| 1 | 全量对拍稳定一致 | 场景 575 个：SAME 551，DIFF 24，INVALID 0，未跑 0。不是 SAME 的里属于允许清单 2 个、登记了 accepted 0 个、其余 22 个（逐个见下）。连续 3 轮稳定：需要连续 3 轮的产物，未提供 |
+| 2 | 表面覆盖完整 | 表面项 2113 个，范围内 2084 个：被 SAME 场景碰到 1975，只被有差异的场景碰到 7，没碰到 102；标为不计 29（理由表在 `state/out-of-scope.md`，待人过目） |
 | 3 | 盲审收敛 | 审阅记录 10 次，其中类型为「盲审」的 1 次；16 个功能域里从没有过盲审或缺口审查的 0 个。各功能域最近一次见下表。「两次连续盲审覆盖全部区域且无 1、2 级新发现」：不满足 |
 | 4 | 原版界面可用 | 没有数据：需要 `scripts/ui-smoke` 的当次结果和人亲手使用的记录 |
-| 5 | 构建与测试全绿，没有占位 | 四条命令：2026-11-13 在 cb8（Linux aarch64） 上、提交 `4655aed5e`：fmt pass，clippy pass，nextest fail（7760/7761），文档测试 pass。`src/` 产品代码里 `unimplemented!` 0 处、`todo!` 0 处、`NOT_IMPLEMENTED` 0 处、`Failure::Todo` 15 处、自报未实现文案 18 处、宿主边界哨兵 27 处、原生档案缺口 42 处（共 102，逐条见下；`CAPABILITY_UNAVAILABLE`、返回固定空结果、空 match 分支没有机械判据，未统计，逐处定性见 `specs/delivery/placeholder-inventory.md`） |
+| 5 | 构建与测试全绿，没有占位 | 四条命令：2026-11-13 在 cb8（Linux aarch64） 上、提交 `2bfa0c7a7`：fmt pass，clippy pass，nextest pass（7763/7763），文档测试 pass。`src/` 产品代码里 `unimplemented!` 0 处、`todo!` 0 处、`NOT_IMPLEMENTED` 0 处、`Failure::Todo` 15 处、自报未实现文案 18 处、宿主边界哨兵 27 处、原生档案缺口 42 处（共 102，逐条见下；`CAPABILITY_UNAVAILABLE`、返回固定空结果、空 match 分支没有机械判据，未统计，逐处定性见 `specs/delivery/placeholder-inventory.md`） |
 | 6 | TS gateway 退役 | 透明代理入口的机械判据命中 0 处。进程树里没有 Node gateway 的证据：没有数据（需要全量对拍与界面冒烟期间的进程列表） |
 | 7 | 性能报告 | 没有数据：需要发布构建下两侧的启动耗时、每轮开销、内存、并发会话的测量 |
 | 8 | 真实使用 | 没有数据：需要人在最终组合上完成的真实任务记录 |
@@ -44,18 +44,14 @@
 | `abort-timeout-model-stream` | DIFF | 其余 | `loop.steer-abort` |
 | `abort-timeout-tool-agent` | DIFF | 其余 | `loop.steer-abort` |
 | `abort-timeout-tool-execute-code` | DIFF | 其余 | `loop.steer-abort` |
-| `abort-timeout-tool-mcp` | DIFF | 其余 | `loop.steer-abort` |
+| `abort-tool-bash-disconnect` | DIFF | 其余 | `loop.steer-abort` |
 | `abort-turn-finishing` | DIFF | 其余 | `loop.steer-abort` |
-| `cli-run-resume` | INVALID | 其余 | `cli.sdk-commands` |
+| `cli-entry-flags` | DIFF | 其余 | `cli.entry` |
 | `cli-update-usage` | DIFF | 其余 | `cli.setup-update` |
-| `env-dump-request-tmpdir` | DIFF | 场景登记了 accepted（登记以外仍有差异） | `model.transport` |
 | `gap-tool-read-file-vision` | DIFF | 允许不一致的清单 | `tools.files` |
 | `gw-http-raw-requests` | DIFF | 其余 | `gw.http` |
-| `loop-multi-tool` | DIFF | 其余 | `loop.tool-dispatch` |
 | `modules-tools-result-unknown-sidecar-binding` | DIFF | 其余 | `modules.tools` |
-| `proto-dump-request` | DIFF | 场景登记了 accepted（登记以外仍有差异） | `model.transport` |
-| `skills-extension-watch-symlink` | DIFF | 其余 | `ext.reload` |
-| `skills-session-snapshot-at-create` | DIFF | 其余 | `ext.reload` `ext.skills` |
+| `tool-agent-general` | DIFF | 其余 | `agents.oneshot` |
 | `tool-write-file-diagnostics` | DIFF | 允许不一致的清单 | `tools.files` |
 | `turn-steer-terminal` | DIFF | 其余 | `loop.steer-abort` |
 
@@ -178,24 +174,24 @@
 
 | 功能域 | 子能力 | 场景 | 一致 | 表面项 | 被碰到 | 只被有差异的碰到 | 没碰到 | 不计 | 问题 1/2/3/4/尺子 | 最近盲审 / 缺口审查 | 最近代码审阅 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `loop` 对话主干与 agent 循环 | 7 | 91 | 73 | 195 | 182 | 2 | 2 | 9 | 0/3/6/1/1 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
-| `model` 模型协议与路由 | 9 | 56 | 54 | 271 | 266 | 3 | 2 | 0 | 0/0/2/0/0 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
+| `loop` 对话主干与 agent 循环 | 7 | 91 | 74 | 195 | 182 | 2 | 2 | 9 | 0/3/6/1/2 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
+| `model` 模型协议与路由 | 9 | 56 | 56 | 271 | 269 | 0 | 2 | 0 | 0/1/2/0/0 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
 | `tools` 工具 | 9 | 75 | 73 | 295 | 286 | 0 | 8 | 1 | 0/1/2/0/0 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
 | `perm` 权限、沙箱、路径检查 | 6 | 65 | 65 | 55 | 53 | 0 | 2 | 0 | 0/0/1/0/0 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
 | `session` 会话存储、分叉、恢复、导出 | 8 | 53 | 53 | 206 | 198 | 0 | 2 | 6 | 0/4/3/1/1 | 2026-11-13（缺口审查） | 2026-11-11（代码审阅） |
 | `context` 上下文、压缩与缓存 | 5 | 36 | 36 | 61 | 59 | 0 | 0 | 2 | 0/0/1/0/1 | 2026-11-13（缺口审查） | — |
-| `agents` 子代理与后台任务 | 4 | 30 | 30 | 91 | 88 | 0 | 3 | 0 | 0/0/3/0/1 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
-| `hooks` hooks | 5 | 34 | 34 | 99 | 99 | 0 | 0 | 0 | 0/1/0/0/3 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
-| `ext` 插件、skills、MCP | 5 | 25 | 23 | 146 | 127 | 0 | 18 | 1 | 0/2/1/0/0 | 2026-11-11（盲审） | 2026-11-11（代码审阅） |
+| `agents` 子代理与后台任务 | 4 | 30 | 29 | 91 | 88 | 0 | 3 | 0 | 0/0/3/0/1 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
+| `hooks` hooks | 5 | 34 | 34 | 99 | 99 | 0 | 0 | 0 | 0/1/0/1/4 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
+| `ext` 插件、skills、MCP | 5 | 25 | 25 | 146 | 127 | 0 | 18 | 1 | 0/0/1/0/0 | 2026-11-11（盲审） | 2026-11-11（代码审阅） |
 | `memory` 记忆 | 4 | 8 | 8 | 35 | 34 | 0 | 0 | 1 | 0/0/2/0/1 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
 | `auto` cron 与 always-on | 5 | 24 | 24 | 123 | 123 | 0 | 0 | 0 | 0/1/1/0/1 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
 | `config` 设置、配置、热重载 | 7 | 24 | 24 | 86 | 82 | 0 | 2 | 2 | 0/1/4/0/0 | 2026-11-12（缺口审查） | — |
-| `modules` 外部能力模块与 sidecar 部署 | 7 | 44 | 43 | 117 | 103 | 0 | 10 | 4 | 0/0/5/1/3 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
+| `modules` 外部能力模块与 sidecar 部署 | 7 | 44 | 43 | 117 | 103 | 0 | 10 | 4 | 0/1/5/1/2 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
 | `gw` gateway 连接层 | 5 | 52 | 51 | 125 | 117 | 4 | 4 | 0 | 0/0/3/1/1 | 2026-11-13（缺口审查） | 2026-11-11（代码审阅） |
 | `channels` 渠道（只要求启动表现） | 4 | 12 | 12 | 125 | 84 | 0 | 38 | 3 | 0/1/0/0/1 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
-| `cli` CLI | 6 | 23 | 21 | 83 | 71 | 1 | 11 | 0 | 0/0/1/0/1 | 2026-11-12（缺口审查） | — |
+| `cli` CLI | 6 | 23 | 21 | 83 | 71 | 1 | 11 | 0 | 0/0/1/0/0 | 2026-11-12（缺口审查） | — |
 | 横跨（`*`） | | | | | | | | | 0/0/1/1/6 | | |
-| 归属不了 | | 20 | 20 | 0 | 0 | 0 | 0 | 0 | | | |
+| 归属不了 | | 22 | 22 | 0 | 0 | 0 | 0 | 0 | | | |
 
 一个场景可以属于几个子能力，所以各域场景数之和大于场景总数；表面项每项只属于一个子能力。
 
@@ -211,7 +207,7 @@
 | `loop.steer-abort` 插话与中止 | 52 | 35 | 30 | 25 | 2 | 0 | 3 | — | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） | `src/agent/session/SteerMailbox.ts` `src/agent/loop/AgentLoop.ts` |
 | `loop.continuation` 步进与终止 | 3 | 3 | 43 | 37 | 0 | 2 | 4 | parity | 2026-11-11（盲审） | — | `src/agent/loop/decideLoopContinuation.ts` `src/agent/policy/FailureGuard.ts` |
 | `loop.recovery` 循环层的异常恢复 | 21 | 21 | 28 | 27 | 0 | 0 | 1 | — | 2026-11-13（缺口审查） | — | `src/agent/loop/AgentLoop.ts` `src/agent/loop/outputTokenRetry.ts` `src/agent/loop/LargeFileRepair.ts` |
-| `loop.tool-dispatch` 工具调用的调度 | 4 | 3 | 6 | 6 | 0 | 0 | 0 | — | 2026-11-12（缺口审查） | — | `src/tool/scheduler/` `src/agent/loop/collectToolCalls.ts` `src/agent/loop/ensureToolResultPairing.ts` `src/agent/modules/capability/hostToolPort.ts` |
+| `loop.tool-dispatch` 工具调用的调度 | 4 | 4 | 6 | 6 | 0 | 0 | 0 | — | 2026-11-12（缺口审查） | — | `src/tool/scheduler/` `src/agent/loop/collectToolCalls.ts` `src/agent/loop/ensureToolResultPairing.ts` `src/agent/modules/capability/hostToolPort.ts` |
 | `loop.events` 事件流与轮次快照 | 4 | 4 | 28 | 27 | 0 | 0 | 1 | — | — | — | `src/gateway/client/GatewayAgentEventProjector.ts` `src/status/agentStatus.ts` |
 | `loop.runs` 运行记录 | 2 | 2 | 26 | 26 | 0 | 0 | 0 | — | — | — | `src/gateway/run/` |
 
@@ -225,7 +221,7 @@
 | `model.anthropic` Anthropic messages | 3 | 3 | 25 | 25 | 0 | 0 | 0 | — | — | — | `src/model/providers/anthropic/` |
 | `model.openai-responses` OpenAI Responses | 2 | 2 | 28 | 28 | 0 | 0 | 0 | — | — | — | `src/model/providers/openai-responses/` |
 | `model.google` Google Gemini | 2 | 2 | 13 | 12 | 0 | 1 | 0 | — | — | 2026-11-13（代码审阅） | `src/model/providers/google/` |
-| `model.transport` 公共请求层与错误 | 13 | 11 | 51 | 48 | 3 | 0 | 0 | — | 2026-11-13（缺口审查） | — | `src/model/streaming/` `src/model/providerEndpoint.ts` `src/model/errors/` `src/model/policy/` |
+| `model.transport` 公共请求层与错误 | 13 | 13 | 51 | 51 | 0 | 0 | 0 | — | 2026-11-13（缺口审查） | — | `src/model/streaming/` `src/model/providerEndpoint.ts` `src/model/errors/` `src/model/policy/` |
 | `model.catalog` 模型目录与会话模型 | 17 | 17 | 66 | 65 | 0 | 1 | 0 | — | 2026-11-13（缺口审查） | — | `src/model/config/` `src/model/catalog/` `src/model/thinking/` `src/gateway/dialog/modelCatalog.ts` |
 | `model.router` 路由 | 14 | 14 | 50 | 50 | 0 | 0 | 0 | — | 2026-11-12（缺口审查） | — | `src/router/` |
 | `model.usage` 用量 | 2 | 2 | 7 | 7 | 0 | 0 | 0 | — | — | — | `src/model/response/normalizeUsage.ts` `src/gateway/client/InProcessGateway.ts` |
@@ -293,7 +289,7 @@
 
 | 子能力 | 场景 | 一致 | 表面项 | 被碰到 | 只被有差异的碰到 | 没碰到 | 不计 | 上游验收集 | 最近盲审 / 缺口审查 | 最近代码审阅 | 基线位置 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `agents.oneshot` 一次性子代理 | 14 | 14 | 32 | 30 | 0 | 2 | 0 | — | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） | `src/agent/sub/OneShotSubagentPort.ts` `src/agent/sub/builtinSubagentTypes.ts` `src/agent/sub/SubAgentSession.ts` |
+| `agents.oneshot` 一次性子代理 | 14 | 13 | 32 | 30 | 0 | 2 | 0 | — | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） | `src/agent/sub/OneShotSubagentPort.ts` `src/agent/sub/builtinSubagentTypes.ts` `src/agent/sub/SubAgentSession.ts` |
 | `agents.background` 可续跑与后台子代理 | 7 | 7 | 7 | 7 | 0 | 0 | 0 | — | — | — | `src/agent/sub/BackgroundSubagentRuntime.ts` `src/agent/sub/SubagentContinuationManager.ts` |
 | `agents.sdk-defs` SDK 自定义子代理 | 4 | 4 | 18 | 18 | 0 | 0 | 0 | — | 2026-11-13（缺口审查） | — | `src/cli/SessionAgentConfigBundle.ts` `src/agent/sub/SubagentRuntimeComposition.ts` |
 | `agents.tasks` 后台 shell 任务 | 6 | 6 | 34 | 33 | 0 | 1 | 0 | — | — | — | `src/task/` `src/tool/builtin/taskTools.ts` |
@@ -317,10 +313,10 @@ hook 事件的派发时机、种类与来源、输出字段的处理、执行（
 | 子能力 | 场景 | 一致 | 表面项 | 被碰到 | 只被有差异的碰到 | 没碰到 | 不计 | 上游验收集 | 最近盲审 / 缺口审查 | 最近代码审阅 | 基线位置 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | `ext.plugins` 插件 | 4 | 4 | 30 | 12 | 0 | 17 | 1 | — | 2026-11-11（盲审） | — | `src/extension/plugins/` |
-| `ext.skills` skills | 11 | 10 | 49 | 49 | 0 | 0 | 0 | — | — | — | `src/extension/skills/` |
+| `ext.skills` skills | 11 | 11 | 49 | 49 | 0 | 0 | 0 | — | — | — | `src/extension/skills/` |
 | `ext.mcp` MCP | 11 | 11 | 37 | 36 | 0 | 1 | 0 | — | — | 2026-11-11（代码审阅） | `src/mcp/` |
 | `ext.commands` 命令 | 3 | 3 | 27 | 27 | 0 | 0 | 0 | — | — | — | `src/extension/contributions/CommandContribution.ts` |
-| `ext.reload` 扩展热更新 | 5 | 3 | 3 | 3 | 0 | 0 | 0 | — | — | — | `src/cli/ExtensionWatchManager.ts` `src/cli/GatewayRuntimeRefreshBundle.ts` |
+| `ext.reload` 扩展热更新 | 5 | 5 | 3 | 3 | 0 | 0 | 0 | — | — | — | `src/cli/ExtensionWatchManager.ts` `src/cli/GatewayRuntimeRefreshBundle.ts` |
 
 ### `memory` 记忆
 
@@ -402,9 +398,9 @@ pilotdeck 的子命令（server 归 gw.server-entry，sidecar 可执行文件归
 
 | 子能力 | 场景 | 一致 | 表面项 | 被碰到 | 只被有差异的碰到 | 没碰到 | 不计 | 上游验收集 | 最近盲审 / 缺口审查 | 最近代码审阅 | 基线位置 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `cli.entry` 入口与帮助 | 5 | 5 | 1 | 1 | 0 | 0 | 0 | — | 2026-11-12（缺口审查） | — | `src/cli/pilotdeck.ts` |
+| `cli.entry` 入口与帮助 | 5 | 4 | 1 | 1 | 0 | 0 | 0 | — | 2026-11-12（缺口审查） | — | `src/cli/pilotdeck.ts` |
 | `cli.default-chat` 默认对话与 tui | 2 | 2 | 17 | 6 | 0 | 11 | 0 | — | 2026-11-12（缺口审查） | — | `src/adapters/channel/cli/` `src/adapters/channel/tui/` |
-| `cli.sdk-commands` run / resume / sessions / settings | 9 | 8 | 27 | 27 | 0 | 0 | 0 | — | 2026-11-12（缺口审查） | — | `src/cli/sdkCli.ts` |
+| `cli.sdk-commands` run / resume / sessions / settings | 9 | 9 | 27 | 27 | 0 | 0 | 0 | — | 2026-11-12（缺口审查） | — | `src/cli/sdkCli.ts` |
 | `cli.cron` cron 子命令 | 1 | 1 | 17 | 17 | 0 | 0 | 0 | — | 2026-11-12（缺口审查） | — | `src/cli/pilotdeck.ts` |
 | `cli.skills-chat` skills migrate 与 chat search | 4 | 4 | 19 | 19 | 0 | 0 | 0 | — | 2026-11-12（缺口审查） | — | `src/extension/skills/migrateSkills.ts` `src/cli/commands/chatSearch.ts` |
 | `cli.setup-update` gateway setup 与 update | 3 | 2 | 2 | 1 | 1 | 0 | 0 | — | 2026-11-12（缺口审查） | — | `src/cli/commands/gatewaySetup.ts` `src/runtime/updateCommand.ts` |
@@ -426,16 +422,12 @@ pilotdeck 的子命令（server 归 gw.server-entry，sidecar 可执行文件归
   - 只被有差异的碰到（`turn-steer-terminal`）：`events` `event:steer_unapplied` — src/gateway/protocol/types.ts:575
   - 只被有差异的碰到（`turn-steer-terminal`）：`loop-behaviors` `loop:turn_continued:user_steer` — src/agent/protocol/state.ts:11
 
-#### `model` 模型协议与路由（5）
+#### `model` 模型协议与路由（2）
 
 - `model.catalog`
   - 没碰到：`env` `env:STAFFDECK_SOP_MANAGEMENT_API_KEY` — src/pilot/staffdeck/projectBinding.ts:245
 - `model.google`
   - 没碰到：`provider-protocols` `google.body.config.automaticFunctionCalling` — src/model/providers/google/request.ts:37
-- `model.transport`
-  - 只被有差异的碰到（`env-dump-request-tmpdir` `proto-dump-request`）：`env` `env:PILOTDECK_DUMP_REQUEST` — src/model/streaming/streamModel.ts:196
-  - 只被有差异的碰到（`env-dump-request-tmpdir` `proto-dump-request`）：`files` `tmp:pilotdeck_request_<ts>.json` — src/model/streaming/streamModel.ts:200
-  - 只被有差异的碰到（`env-dump-request-tmpdir` `proto-dump-request`）：`provider-protocols` `request:PILOTDECK_DUMP_REQUEST` — src/model/streaming/streamModel.ts:196
 
 #### `tools` 工具（8）
 
@@ -625,27 +617,29 @@ pilotdeck 的子命令（server 归 gw.server-entry，sidecar 可执行文件归
 - `loop-task-budget-project`（SAME）
 - `model-complete-retry-stderr`（SAME）
 - `params-submit-turn-cwd-type-tools`（SAME）
+- `session-two-writers-server-cli`（SAME）
+- `session-two-writers-servers`（SAME）
 
 ## 归属统计
 
 - 表面项 2113 个：按规则归属 2112，例外 1，归属不了 0。
-- 场景 573 个：按规则归属 396，例外 157，归属不了 20。
+- 场景 575 个：按规则归属 396，例外 157，归属不了 22。
 
 ## 与 `coverage.mjs --surface` 的对照
 
-两者用同一个判定（`scripts/bbx/lib/surface.mjs`）。对同一产物目录运行 `node scripts/bbx/coverage.mjs --surface --out <产物目录>` 应打印与下表相同的数字（场景 545/573 SAME）。
+两者用同一个判定（`scripts/bbx/lib/surface.mjs`）。对同一产物目录运行 `node scripts/bbx/coverage.mjs --surface --out <产物目录>` 应打印与下表相同的数字（场景 551/575 SAME）。
 
 | 维度 | 项数 | 被SAME场景碰到 | 只被有差异的场景碰到 | 没碰到 | 不计 |
 |---|---|---|---|---|---|
 | config | 275 | 275 | 0 | 0 | 0 |
 | project-config | 12 | 12 | 0 | 0 | 0 |
-| files | 84 | 71 | 1 | 0 | 12 |
-| env | 192 | 121 | 1 | 70 | 0 |
+| files | 84 | 72 | 0 | 0 | 12 |
+| env | 192 | 122 | 0 | 70 | 0 |
 | tools | 54 | 53 | 0 | 1 | 0 |
 | tool-params | 260 | 252 | 0 | 8 | 0 |
 | events | 88 | 80 | 1 | 0 | 7 |
 | records | 82 | 78 | 0 | 2 | 2 |
-| provider-protocols | 105 | 103 | 1 | 1 | 0 |
+| provider-protocols | 105 | 104 | 0 | 1 | 0 |
 | cli | 69 | 68 | 1 | 0 | 0 |
 | http | 23 | 23 | 0 | 0 | 0 |
 | ws-methods | 101 | 101 | 0 | 0 | 0 |
@@ -658,4 +652,4 @@ pilotdeck 的子命令（server 归 gw.server-entry，sidecar 可执行文件归
 | gw-behaviors | 75 | 68 | 4 | 3 | 0 |
 | recovery-behaviors | 13 | 12 | 0 | 1 | 0 |
 | module-behaviors | 19 | 16 | 0 | 2 | 1 |
-| 合计 | 2113 | 1972 | 10 | 102 | 29 |
+| 合计 | 2113 | 1975 | 7 | 102 | 29 |

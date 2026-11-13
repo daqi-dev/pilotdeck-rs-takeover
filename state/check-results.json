@@ -1,18 +1,18 @@
 {
   "about": "scripts/bbx/status.mjs 读的检查结果。手写，只记命令的当次输出，每项写明日期、提交、机器和来源；没有的就删掉那一项，status.mjs 会显示「没有数据」。fmt / clippy / doctest 的取值写 pass 或 fail。",
   "fourCommands": {
-    "date": "2026-11-13",
-    "commit": "2bfa0c7a7",
+    "date": "2026-11-14",
+    "commit": "809bc4cb8",
     "machine": "cb8（Linux aarch64）",
     "fmt": "pass",
     "clippy": "pass",
     "nextest": {
-      "result": "pass",
-      "passed": 7763,
-      "total": 7763
+      "result": "fail",
+      "passed": 7766,
+      "total": 7768
     },
     "doctest": "pass",
-    "source": "cb8 上 ~/ws/pdrs-takeover/logs/verify-v19.log（verify.sh 一条龙：构建、单独重跑、全量对拍、四条命令）"
+    "source": "cb8 上 ~/ws/pdrs-takeover/logs/verify-v20.log。nextest 失败的 2 个都是固定端口被同机别的进程占用（sms head_timeout_tests 的 18973、wecom_callback 的 18990；当时我们自己的另一个子代理也在 cb8 上跑测试）；上一个提交 2bfa0c7a7 在 verify-v19 里 7763/7763 全过"
   },
   "upstreamTests": {
     "date": "2026-11-13",
