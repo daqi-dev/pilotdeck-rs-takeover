@@ -2,7 +2,7 @@
 
 分级见 `specs/delivery/README.md`。只记还开着的；修掉并在 cb8 上验证后删行（历史在 git 里）。「来源」里的「审阅」指 2026-11-13 的独立代码审阅（只读、没有运行，结论是线索，修之前先复现）。
 
-最后更新：2026-11-13
+最后更新：2026-11-13（合并 Linux 差异、清理透明代理、表面缺口第二组之后）
 
 ## 1 安全与数据
 
@@ -16,10 +16,10 @@
 |---|---|---|---|
 | 扩展目录监视每 50ms 在异步线程上阻塞遍历并持锁；`registry.resolve` 要等这把锁。插件目录里有大树时占满一个核、拖慢所有请求 | `runtime/extension_watch.rs`、`runtime/project.rs` 的 `on_project_activated` | 审阅 | 在修 |
 | 被监视的路径本身是符号链接时不往下走，热更新可能静默失效（基线未实测） | `extension_watch.rs` 用 `symlink_metadata` | 审阅 | 在修 |
-| 模型请求的连接池不理会服务端的 `Keep-Alive` 提示：空闲连接被服务端关掉时多一次重试，基线（undici）不会 | `runtime/model/http.rs`；基线 `undici/lib/dispatcher/client-h1.js:644-658` | cb8 上的 Linux 差异子代理 | 在修（未提交） |
 | 请求发出前中止不发 `turn_aborted` 状态；压缩进行中中止时摘要请求不取消 | 场景 `turn-abort-before-request-status`、`compact-auto-aborted` | 表面缺口 | 在修 |
 | `submit_turn` 带 `taskBudget` 直接回 `CAPABILITY_UNAVAILABLE`（存储层有、没接线） | 场景 `loop-budget` 的说明 | 表面缺口 | 在修 |
-| Linux 上稳定不一致：`always-on-fire`、`always-on-fire-execfail`、`hook-sdk-file-changed`、`http-api-web`、`robust-restart-crash-leftovers`、`skills-session-snapshot-at-create` | cb8 全量对拍 | cb8 验收 | 在查 |
+| Linux 上稳定不一致：`skills-session-snapshot-at-create`（Rust 的系统提示词多约 40 个 token）。其余 5 个已在 `275ce32dc` 修掉（对拍根目录改成等长的 `/tmp/private`、场景余量），待 cb8 验收确认 | cb8 全量对拍 | cb8 验收 | 待派 |
+| 用户中止时，基线让在途的工具自己结束、跑完 `PostToolUseFailure` hook（`isInterrupt: true`）再发 `turn_completed`；Rust 直接丢掉在途的工具调用，hook 不跑 | 场景 `hook-post-tool-use-interrupt`；基线 `ToolRuntime.ts:418-423` | 表面缺口 | 待派（与中止差异一起） |
 
 ## 3 边角
 
@@ -34,6 +34,8 @@
 | sidecar 的 TCP 监听：accept 持续出错时空转；连接无上限、无读超时 | `bin/pilotdeck-agent-loop-sidecar.rs:153-166` | 审阅 | 在修 |
 | 客户端只发 FIN 后，这一轮在第几帧写失败而中止取决于时序（基线约十来帧，Rust 约三四帧） | 无场景 | 断开后续跑 | 记为已知 |
 | 显式 stdio 部署下 sidecar 在模块调用期间死掉；`module-stdio-v2` 绑定无场景；Rust sidecar 的 TCP 启动错误文案与基线不同；连接超时无场景 | — | sidecar TCP | 待派 |
+| 项目根目录的祖先建不出来时的报错文案：基线 `EACCES: permission denied, mkdir '/private'`，Rust 报 `open '<root>'` | `api_web/files.rs` 的写入路径；无场景 | Linux 差异 | 待派 |
+| 全局开启记忆时子代理 `memory: "disabled"` 不挂记忆、`seed_read_state` 带子代理字符串形式 MCP 引用：没有场景 | `native_process/sdk_config.rs`、`subagents.rs` | 表面缺口 | 待派 |
 | 记忆维护的实际抽取请求没有场景 | `runtime/memory/maintenance.rs` | 循环缺口 / 审阅 | 待派 |
 | 表面清单里没做完的：`agent_execution_rejected`、`agent_turn_discarded`、`permission_failed`、`agent_transcript_error`（后者判断做不到） | `coverage.mjs --surface` | 表面缺口 | 待派 |
 
@@ -52,7 +54,10 @@
 | `hook-*-close-session`、`hook-*-server-stop` 四个场景也用了 `term.mjs` 延迟退出的包装，没有去掉包装的测量 | 审阅 | 在修（随 hook 帧次序） |
 | `turn-steer-terminal` 把插话触发点从 `model_request_started` 挪到 `model_selection_changed`，正好绕开 Rust 经 sidecar 一跳落盘的次序不确定 | 审阅 | 待派（量两侧） |
 | 范围偏宽的放过：四个记忆场景放过整段 `state_json`；`hook-cancelled` 的 `accepted` 放过会话文件第 20–29 条和整份 `projections.json`；TCP 场景整值放过 `moduleInstanceId`（证明不了「新实例」）；子代理场景的用量正则只认字段名；`always-on-fire-git` 一次略过 256 处 | 审阅 | 待派（收窄） |
-| `surface.json` 有 28 项标为「不计」，理由是子代理写的，抽查五项成立；整张表要人过目（交付标准第 2 条） | 审阅 | 待整理 |
+| 耗时（`durationMs`）的位数漏进会话文件大小：`fileSize`、`resultBytes`、`content-length` 随之差几个字节。`gap-tool-grep` / `gap-tool-glob` 已各自声明 `volatile`，`gap-permissions-json-rules` 基线自比稳定所以不能声明、在慢机器上稳定差 11 字节。要在比较器层面定一条通用规则 | Linux 差异 | 待定规则（主会话） |
+| 基线停机偶发退出码 1（`gap-tool-grep` 自比 3 次里 2 次，疑似停机时触发未捕获异常的处理，`cli/pilotdeck.ts:266-274`）：频率和条件没量清，是否登记为基线 bug 未定 | Linux 差异 | 待量 |
+| Rust 调试构建的一轮比基线慢 4–8 倍（压缩一步约 0.5–0.8 秒），时间余量紧的场景在慢机器上会翻红 | Linux 差异 | 性能报告时看发布构建 |
+| `surface.json` 标为「不计」的项（第一组 28 项，第二组又有若干：TUI 本地命令、QQ 前缀、做不到的错误码等），理由是子代理写的，抽查五项成立；整张表要人过目（交付标准第 2 条） | 审阅 | 待整理 |
 | 约 35 个没有 `volatile` / `accepted` 的新场景，没有逐条核对说明与步骤是否对得上 | 审阅 | 待派 |
 
 ## 审阅读过、未发现问题的
@@ -66,5 +71,6 @@
 - 冻结表里登记的旧对拍脚本（`scripts/gateway-parity`、`ui-server-parity`、`exp008`、`a5-19`）是否退役。
 - BlueBubbles 渠道的生产实现（配了凭据会真的轮询，与基线一致）是否保留。
 - StaffDeck 的审批接口与项目绑定（设了环境变量才生效）是否收缩。
+- 请求转储（`PILOTDECK_DUMP_REQUEST`）：Rust 的文件名带进程号和序号、独占创建、权限 600，是上一轮登记的安全偏离（标着「AI 代批，待人复核」）；内容已与基线一致。场景 `env-dump-request-tmpdir`、`proto-dump-request` 现在不一致，是否登记由「任务预算与中止差异」子代理先用基线实测判断，再由主会话定。
 - `cli-update-usage`：Rust 的安装要不要带网页更新脚本（发布构建阶段定）。
 - 公开 agent 评测的两侧对比（人说之后再决定）。
