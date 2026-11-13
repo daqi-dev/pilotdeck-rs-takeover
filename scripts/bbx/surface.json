@@ -16215,88 +16215,78 @@
     {
      "id": "channel-command:/ask",
      "where": "src/adapters/channel/qq/QQChannel.ts:19",
-     "note": "QQ 渠道的触发前缀之一（缺省 triggerPrefixes）。",
+     "note": "QQ 渠道的触发前缀之一（缺省 triggerPrefixes）。 旧探测是裸子串 \"/ask\"，被 /chat/completions 之类的路径命中，属误报；改为只认消息正文以它开头。",
      "probe": [
-      "/ask"
+      "/\"(message|text|content)\": ?\"\\/ask(\\s|\\\\n|\")/"
      ]
     },
     {
      "id": "channel-command:/chat",
      "where": "src/adapters/channel/qq/QQChannel.ts:19",
-     "note": "QQ 渠道的触发前缀之一。",
+     "note": "QQ 渠道的触发前缀之一。 旧探测是裸子串 \"/chat\"，被 /chat/completions 之类的路径命中，属误报；改为只认消息正文以它开头。",
      "probe": [
-      "/chat"
+      "/\"(message|text|content)\": ?\"\\/chat(\\s|\\\\n|\")/"
      ]
     },
     {
      "id": "tui-command:/new",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:678",
-     "note": "TUI 本地命令：新会话（只在 pilotdeck tui 里，不发给 gateway）。",
-     "probe": [],
-     "observe": "/new"
+     "note": "TUI 本地命令：新会话（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/new\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
+     "probe": []
     },
     {
      "id": "tui-command:/sessions",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:687",
-     "note": "TUI 本地命令：会话列表（只在 pilotdeck tui 里，不发给 gateway）。",
-     "probe": [],
-     "observe": "/sessions"
+     "note": "TUI 本地命令：会话列表（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/sessions\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
+     "probe": []
     },
     {
      "id": "tui-command:/switch",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:688",
-     "note": "TUI 本地命令：切换会话（只在 pilotdeck tui 里，不发给 gateway）。",
-     "probe": [],
-     "observe": "/switch"
+     "note": "TUI 本地命令：切换会话（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/switch\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
+     "probe": []
     },
     {
      "id": "tui-command:/dashboard",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:689",
-     "note": "TUI 本地命令：仪表盘（只在 pilotdeck tui 里，不发给 gateway）。",
-     "probe": [],
-     "observe": "/dashboard"
+     "note": "TUI 本地命令：仪表盘（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/dashboard\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
+     "probe": []
     },
     {
      "id": "tui-command:/permissions",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:706",
-     "note": "TUI 本地命令：权限（只在 pilotdeck tui 里，不发给 gateway）。",
-     "probe": [],
-     "observe": "/permissions"
+     "note": "TUI 本地命令：权限（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/permissions\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
+     "probe": []
     },
     {
      "id": "tui-command:/mode",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:765",
-     "note": "TUI 本地命令：切换模式（只在 pilotdeck tui 里，不发给 gateway）。",
-     "probe": [],
-     "observe": "/mode"
+     "note": "TUI 本地命令：切换模式（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/mode\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
+     "probe": []
     },
     {
      "id": "tui-command:/view",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:787",
-     "note": "TUI 本地命令：查看（只在 pilotdeck tui 里，不发给 gateway）。",
-     "probe": [],
-     "observe": "/view"
+     "note": "TUI 本地命令：查看（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/view\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
+     "probe": []
     },
     {
      "id": "tui-command:/clear",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:806",
-     "note": "TUI 本地命令：清屏（只在 pilotdeck tui 里，不发给 gateway）。",
-     "probe": [],
-     "observe": "/clear"
+     "note": "TUI 本地命令：清屏（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/clear\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
+     "probe": []
     },
     {
      "id": "tui-command:/help",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:809",
-     "note": "TUI 本地命令：帮助（只在 pilotdeck tui 里，不发给 gateway）。",
-     "probe": [],
-     "observe": "/help"
+     "note": "TUI 本地命令：帮助（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/help\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
+     "probe": []
     },
     {
      "id": "tui-command:/exit",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:812",
-     "note": "TUI 本地命令：退出（只在 pilotdeck tui 里，不发给 gateway）。",
-     "probe": [],
-     "observe": "/exit"
+     "note": "TUI 本地命令：退出（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/exit\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
+     "probe": []
     }
    ]
   }
