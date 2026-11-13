@@ -2,10 +2,10 @@
 
 > 本文件由 `node scripts/bbx/status.mjs` 生成，不要手改。理由来自 `scripts/bbx/surface.json` 各项的 `skip` 字段；要改理由或改成计入，改那里再重新生成。
 
-- 生成时间：2026-11-13T11:38:45Z
-- 仓库提交：`6894f3dca`
+- 生成时间：2026-11-13T15:09:25Z
+- 仓库提交：`2bfa0c7a7`
 
-共 28 项，其中没有理由的 0 项。
+共 29 项，其中没有理由的 0 项。
 
 ## 没有理由的
 
@@ -68,13 +68,14 @@
 | files | `home:runtime/<purpose>/` | `config.env-paths` | src/pilot/writablePaths.ts:75 | CLI / server 里走不到：回落目录只由 ensureWritableDirectory 在首选目录不可写时用（src/pilot/writablePaths.ts:20-34、75-86）。两个调用方：计划文件管理器只在传了 pilotHome 且没传 storage 时才走它（src/tool/builtin/planFile.ts:26-46），唯一的构造点 src/cli/SessionPlanTodoBundle.ts:38-41 两样都不满足（缺省会话的计划目录实测是 <项目根>/.pilotdeck/plans）；resolveBrowserUseOutputDir（src/cli/createLocalGateway.ts:555-567）没有调用方，browser-use 实际用 BrowserUseSessionMcpSpecPreparer 的 <项目根>/.pilotdeck/browser_screenshots，建不了目录时整轮失败、不回落。 |
 | events | `event:config_changed` | `config.hot-reload` | src/gateway/protocol/types.ts:737 | GatewayEvent 联合里的成员（src/gateway/protocol/types.ts:737），基线没有任何地方以事件帧发出 type:"config_changed"；配置变化只走同名通知（notification:config_changed，src/cli/GatewayRuntimeRefreshBundle.ts:102）。 |
 
-## `modules` 外部能力模块与 sidecar 部署（3）
+## `modules` 外部能力模块与 sidecar 部署（4）
 
 | 维度 | 项 | 子能力 | 基线位置 | 不计的理由 |
 |---|---|---|---|---|
 | files | `home:auth.db` | `modules.sop` | src/cli/createLocalGateway.ts:778 | 不在范围：ui/server（阶段 B）的认证数据库；gateway 只为 StaffDeck 副本校验读其中的安装所有者（src/cli/createLocalGateway.ts:778）。 |
 | files | `home:sop/` | `modules.sop` | src/pilot/config/parseModulesConfig.ts:331 | 不在范围：SOP 模块（StaffDeck 工作流）的状态根，只在 modules.sop 配齐 endpoint / definitionsPath / defaultSopId 时出现（src/pilot/config/parseModulesConfig.ts:324-331），由 src/sop/staffdeck/ 下的 SopAgentLoop / StaffDeckSopControlPlane 使用，开启需要 StaffDeck 外部服务；StaffDeck 不做（2026-11-12 人定）。sop-disabled 等场景比的是模块未开启时的表现。 |
 | files | `home:staffdeck/project-bindings.json` | `modules.sop` | src/pilot/staffdeck/projectBinding.ts:18 | 不在范围：StaffDeck 项目绑定存储（src/pilot/staffdeck/projectBinding.ts:18），StaffDeck 不做（2026-11-12 人定）。 |
+| module-behaviors | `mod:sop.staffdeck-authority` | `modules.sop` | src/composition/nativeSopAuthority.ts | 不在范围：StaffDeck 不做（specs/delivery/README.md「不在范围」；2026-11-12 人定），只要求缺省与未开启时的表现，后者由 sop-disabled / cfg-modules-binding 覆盖。 |
 
 ## `channels` 渠道（只要求启动表现）（3）
 

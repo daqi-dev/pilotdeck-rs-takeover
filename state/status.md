@@ -2,12 +2,12 @@
 
 > 本文件由 `node scripts/bbx/status.mjs` 生成，不要手改。改功能清单改 `scripts/bbx/features.json`，改问题改 `state/issues.md`，改审阅记录改 `state/audits.md`，改检查结果改 `state/check-results.json`，然后重新生成。
 
-- 生成时间：2026-11-13T11:38:45Z
-- 仓库提交：`6894f3dca`（场景、表面清单、功能清单、台账都取自这个提交的工作区）
+- 生成时间：2026-11-13T15:09:25Z
+- 仓库提交：`2bfa0c7a7`（场景、表面清单、功能清单、台账都取自这个提交的工作区）
 - 对拍产物：`_build/bbx`
-- 产物来历（人给的说明）：cb8（Linux aarch64）上 verify.sh v17 的一轮全量对拍（槽位 5–8 并行），被测提交 6894f3dca
-- 产物里的场景结果：509 个 `.diff.txt`；修改时间 2026-11-13T10:57:51.546Z 至 2026-11-13T11:30:26.883Z（UTC）；按小时：2026-11-13T10:00Z 28 个，2026-11-13T11:00Z 481 个
-- 采集平台（从 diff 文件头里的产物路径判断）：Linux 509 个
+- 产物来历（人给的说明）：cb8（Linux aarch64）上 verify.sh v19 的一轮全量对拍（槽位 5–8 并行），被测提交 2bfa0c7a7
+- 产物里的场景结果：573 个 `.diff.txt`；修改时间 2026-11-13T14:17:36.408Z 至 2026-11-13T15:01:19.524Z（UTC）；按小时：2026-11-13T14:00Z 569 个，2026-11-13T15:00Z 4 个
+- 采集平台（从 diff 文件头里的产物路径判断）：Linux 573 个
 - 产物里有、当前提交没有的场景 0 个；当前提交有、产物里没有的（记为「未跑」）0 个
 - 产物不记录被测提交号，也不记录是哪一轮；修改时间跨度大或分成几段时，可能混合了多轮。
 
@@ -15,11 +15,11 @@
 
 | 条 | 标准 | 现在（由数据算出） |
 |---|---|---|
-| 1 | 全量对拍稳定一致 | 场景 509 个：SAME 491，DIFF 17，INVALID 1，未跑 0。不是 SAME 的里属于允许清单 2 个、登记了 accepted 3 个、其余 13 个（逐个见下）。连续 3 轮稳定：需要连续 3 轮的产物，未提供 |
-| 2 | 表面覆盖完整 | 表面项 2006 个，范围内 1978 个：被 SAME 场景碰到 1875，只被有差异的场景碰到 7，没碰到 96；标为不计 28（理由表在 `state/out-of-scope.md`，待人过目） |
-| 3 | 盲审收敛 | 审阅记录 9 次，其中类型为「盲审」的 1 次；16 个功能域里从没有过盲审或缺口审查的 2 个。各功能域最近一次见下表。「两次连续盲审覆盖全部区域且无 1、2 级新发现」：不满足 |
+| 1 | 全量对拍稳定一致 | 场景 573 个：SAME 545，DIFF 27，INVALID 1，未跑 0。不是 SAME 的里属于允许清单 2 个、登记了 accepted 2 个、其余 24 个（逐个见下）。连续 3 轮稳定：需要连续 3 轮的产物，未提供 |
+| 2 | 表面覆盖完整 | 表面项 2113 个，范围内 2084 个：被 SAME 场景碰到 1972，只被有差异的场景碰到 10，没碰到 102；标为不计 29（理由表在 `state/out-of-scope.md`，待人过目） |
+| 3 | 盲审收敛 | 审阅记录 10 次，其中类型为「盲审」的 1 次；16 个功能域里从没有过盲审或缺口审查的 0 个。各功能域最近一次见下表。「两次连续盲审覆盖全部区域且无 1、2 级新发现」：不满足 |
 | 4 | 原版界面可用 | 没有数据：需要 `scripts/ui-smoke` 的当次结果和人亲手使用的记录 |
-| 5 | 构建与测试全绿，没有占位 | 四条命令：2026-11-13 在 cb8（Linux aarch64） 上、提交 `5b1aec8cd`：fmt pass，clippy pass，nextest pass（7755/7755），文档测试 pass。`src/` 产品代码里 `unimplemented!` 0 处、`todo!` 0 处、`NOT_IMPLEMENTED` 0 处（共 0，逐条见下；空 match 分支与转发给 TS 的兜底没有机械判据，未统计） |
+| 5 | 构建与测试全绿，没有占位 | 四条命令：2026-11-13 在 cb8（Linux aarch64） 上、提交 `4655aed5e`：fmt pass，clippy pass，nextest fail（7760/7761），文档测试 pass。`src/` 产品代码里 `unimplemented!` 0 处、`todo!` 0 处、`NOT_IMPLEMENTED` 0 处、`Failure::Todo` 15 处、自报未实现文案 18 处、宿主边界哨兵 27 处、原生档案缺口 42 处（共 102，逐条见下；`CAPABILITY_UNAVAILABLE`、返回固定空结果、空 match 分支没有机械判据，未统计，逐处定性见 `specs/delivery/placeholder-inventory.md`） |
 | 6 | TS gateway 退役 | 透明代理入口的机械判据命中 0 处。进程树里没有 Node gateway 的证据：没有数据（需要全量对拍与界面冒烟期间的进程列表） |
 | 7 | 性能报告 | 没有数据：需要发布构建下两侧的启动耗时、每轮开销、内存、并发会话的测量 |
 | 8 | 真实使用 | 没有数据：需要人在最终组合上完成的真实任务记录 |
@@ -30,31 +30,141 @@
 
 | 场景 | 结论 | 归类 | 子能力 |
 |---|---|---|---|
+| `abort-hook-pre-tool` | DIFF | 其余 | `loop.steer-abort` |
+| `abort-hook-subagent-start` | DIFF | 其余 | `loop.steer-abort` |
+| `abort-model-stream` | DIFF | 其余 | `loop.steer-abort` |
+| `abort-timeout-hook-post-tool` | DIFF | 其余 | `loop.steer-abort` |
+| `abort-timeout-hook-post-tool-failure` | DIFF | 其余 | `loop.steer-abort` |
+| `abort-timeout-hook-pre-tool` | DIFF | 其余 | `loop.steer-abort` |
+| `abort-timeout-hook-stop` | DIFF | 其余 | `loop.steer-abort` |
+| `abort-timeout-hook-stop-failure` | DIFF | 其余 | `loop.steer-abort` |
+| `abort-timeout-hook-subagent-start` | DIFF | 其余 | `loop.steer-abort` |
+| `abort-timeout-hook-subagent-stop` | DIFF | 其余 | `loop.steer-abort` |
+| `abort-timeout-hook-user-prompt` | DIFF | 其余 | `loop.steer-abort` |
+| `abort-timeout-model-stream` | DIFF | 其余 | `loop.steer-abort` |
+| `abort-timeout-tool-agent` | DIFF | 其余 | `loop.steer-abort` |
+| `abort-timeout-tool-execute-code` | DIFF | 其余 | `loop.steer-abort` |
+| `abort-timeout-tool-mcp` | DIFF | 其余 | `loop.steer-abort` |
+| `abort-turn-finishing` | DIFF | 其余 | `loop.steer-abort` |
 | `cli-run-resume` | INVALID | 其余 | `cli.sdk-commands` |
 | `cli-update-usage` | DIFF | 其余 | `cli.setup-update` |
 | `env-dump-request-tmpdir` | DIFF | 场景登记了 accepted（登记以外仍有差异） | `model.transport` |
-| `gap-permissions-json-rules` | DIFF | 其余 | `perm.rules-file` |
 | `gap-tool-read-file-vision` | DIFF | 允许不一致的清单 | `tools.files` |
-| `hook-cancelled` | DIFF | 场景登记了 accepted（登记以外仍有差异） | `hooks.execution` `hooks.tool-events` |
-| `hook-instructions-loaded-server-stop` | DIFF | 其余 | `hooks.execution` `hooks.lifecycle-events` |
-| `hook-post-tool-use-interrupt` | DIFF | 其余 | `hooks.tool-events` `loop.steer-abort` |
+| `gw-http-raw-requests` | DIFF | 其余 | `gw.http` |
+| `loop-multi-tool` | DIFF | 其余 | `loop.tool-dispatch` |
 | `modules-tools-result-unknown-sidecar-binding` | DIFF | 其余 | `modules.tools` |
 | `proto-dump-request` | DIFF | 场景登记了 accepted（登记以外仍有差异） | `model.transport` |
 | `skills-extension-watch-symlink` | DIFF | 其余 | `ext.reload` |
 | `skills-session-snapshot-at-create` | DIFF | 其余 | `ext.reload` `ext.skills` |
-| `slash-memory-capture-skip` | DIFF | 其余 | `memory.capture-recall` |
-| `tool-goal-permission` | DIFF | 其余 | `perm.decision` `tools.state` |
-| `tool-send-attachment-outside` | DIFF | 其余 | `perm.decision` `perm.paths` `tools.files` |
 | `tool-write-file-diagnostics` | DIFF | 允许不一致的清单 | `tools.files` |
-| `turn-abort-before-request-sidecar-stdio` | DIFF | 其余 | `loop.steer-abort` |
 | `turn-steer-terminal` | DIFF | 其余 | `loop.steer-abort` |
 
 ### 第 5 条：占位的逐处位置
 
-判据：`src/` 下的 `.rs`，跳过 `target`、`tests`、`benches`、`examples`、`fixtures` 目录和 `tests.rs`、`*_tests.rs`、`test_*.rs` 一类文件名，跳过整行注释；HTTP 状态码 `StatusCode::NOT_IMPLEMENTED`（501）不算；文件内的 `#[cfg(test)]` 模块没有排除。
+判据：`src/` 下的 `.rs`，跳过 `target`、`tests`、`benches`、`examples`、`fixtures` 目录和 `tests.rs`、`*_tests.rs`、`test_*.rs` 一类文件名，跳过整行注释和顶层的 `#[cfg(test)] mod x { … }` 块；HTTP 状态码 `StatusCode::NOT_IMPLEMENTED`（501）不算。`Failure::Todo` 只数构造处（`Err(Failure::Todo(what))` 一类匹配分支不算）；自报未实现文案按已知措辞列举（见 `status.mjs` 的 `PLACEHOLDERS`），新措辞要补进去；宿主边界哨兵与原生档案缺口数的是命中行（含构造与转交处）。各处是缺口、一致还是环境性，见 `specs/delivery/placeholder-inventory.md`。
 
-（无）
-
+- `Failure::Todo`：`pilotdeck-cli/src/config.rs:19`
+- `Failure::Todo`：`pilotdeck-cli/src/config.rs:26`
+- `Failure::Todo`：`pilotdeck-cli/src/gateway_setup.rs:259`
+- `Failure::Todo`：`pilotdeck-cli/src/gateway_setup.rs:269`
+- `Failure::Todo`：`pilotdeck-cli/src/gateway_setup.rs:281`
+- `Failure::Todo`：`pilotdeck-cli/src/gateway_setup.rs:307`
+- `Failure::Todo`：`pilotdeck-cli/src/gateway_setup.rs:314`
+- `Failure::Todo`：`pilotdeck-cli/src/gateway_setup.rs:361`
+- `Failure::Todo`：`pilotdeck-cli/src/main.rs:141`
+- `Failure::Todo`：`pilotdeck-cli/src/main.rs:183`
+- `Failure::Todo`：`pilotdeck-cli/src/main.rs:202`
+- `Failure::Todo`：`pilotdeck-cli/src/paths.rs:65`
+- `Failure::Todo`：`pilotdeck-cli/src/skills.rs:29`
+- `Failure::Todo`：`pilotdeck-cli/src/skills.rs:256`
+- `Failure::Todo`：`pilotdeck-cli/src/skills_migrate.rs:123`
+- `自报未实现文案`：`pilotdeck-agent/src/turn.rs:4136`
+- `自报未实现文案`：`pilotdeck-gateway/src/channel/loader.rs:146`
+- `自报未实现文案`：`pilotdeck-gateway/src/channel/loader.rs:464`
+- `自报未实现文案`：`pilotdeck-gateway/src/native_process/assembly.rs:2373`
+- `自报未实现文案`：`pilotdeck-gateway/src/native_process/management.rs:33`
+- `自报未实现文案`：`pilotdeck-gateway/src/native_process/methods/metadata.rs:70`
+- `自报未实现文案`：`pilotdeck-gateway/src/native_process/methods/sop.rs:133`
+- `自报未实现文案`：`pilotdeck-gateway/src/native_process/services.rs:1161`
+- `自报未实现文案`：`pilotdeck-gateway/src/runtime/mcp/output_schema.rs:450`
+- `自报未实现文案`：`pilotdeck-gateway/src/runtime/mcp/output_schema.rs:2131`
+- `自报未实现文案`：`pilotdeck-gateway/src/runtime/mcp/output_schema.rs:2914`
+- `自报未实现文案`：`pilotdeck-gateway/src/runtime/project/factory.rs:644`
+- `自报未实现文案`：`pilotdeck-gateway/src/runtime/settings/local_settings.rs:342`
+- `自报未实现文案`：`pilotdeck-gateway/src/runtime/tools/builtin/form_dialog.rs:162`
+- `自报未实现文案`：`pilotdeck-gateway/src/storage/transcript_adapter.rs:490`
+- `自报未实现文案`：`pilotdeck-gateway/src/storage/transcript_adapter.rs:1564`
+- `自报未实现文案`：`pilotdeck-transport/src/bin/pilotdeck-agent-loop-sidecar.rs:33`
+- `自报未实现文案`：`pilotdeck-transport/src/default_factory.rs:1149`
+- `宿主边界哨兵`：`pilotdeck-gateway/src/config/binding.rs:27`
+- `宿主边界哨兵`：`pilotdeck-gateway/src/config/binding.rs:28`
+- `宿主边界哨兵`：`pilotdeck-gateway/src/config/graph.rs:344`
+- `宿主边界哨兵`：`pilotdeck-gateway/src/config/graph.rs:345`
+- `宿主边界哨兵`：`pilotdeck-gateway/src/config/mod.rs:349`
+- `宿主边界哨兵`：`pilotdeck-gateway/src/config/mod.rs:352`
+- `宿主边界哨兵`：`pilotdeck-gateway/src/config/mod.rs:510`
+- `宿主边界哨兵`：`pilotdeck-gateway/src/config/mod.rs:511`
+- `宿主边界哨兵`：`pilotdeck-gateway/src/native_archive.rs:285`
+- `宿主边界哨兵`：`pilotdeck-gateway/src/native_archive.rs:293`
+- `宿主边界哨兵`：`pilotdeck-gateway/src/native_archive.rs:574`
+- `宿主边界哨兵`：`pilotdeck-gateway/src/project_files.rs:82`
+- `宿主边界哨兵`：`pilotdeck-gateway/src/project_files.rs:836`
+- `宿主边界哨兵`：`pilotdeck-gateway/src/project_files.rs:965`
+- `宿主边界哨兵`：`pilotdeck-gateway/src/runtime/memory/edgeclaw/service/mod.rs:192`
+- `宿主边界哨兵`：`pilotdeck-gateway/src/runtime/memory/mod.rs:118`
+- `宿主边界哨兵`：`pilotdeck-gateway/src/runtime/memory/mod.rs:120`
+- `宿主边界哨兵`：`pilotdeck-gateway/src/runtime/snapshot.rs:104`
+- `宿主边界哨兵`：`pilotdeck-gateway/src/runtime/snapshot.rs:107`
+- `宿主边界哨兵`：`pilotdeck-gateway/src/session_model.rs:333`
+- `宿主边界哨兵`：`pilotdeck-gateway/src/session_model.rs:334`
+- `宿主边界哨兵`：`pilotdeck-gateway/src/session_model.rs:345`
+- `宿主边界哨兵`：`pilotdeck-gateway/src/session_model.rs:346`
+- `宿主边界哨兵`：`pilotdeck-gateway/src/skills/error.rs:163`
+- `宿主边界哨兵`：`pilotdeck-gateway/src/skills/error.rs:164`
+- `宿主边界哨兵`：`pilotdeck-gateway/src/skills/error.rs:173`
+- `宿主边界哨兵`：`pilotdeck-gateway/src/skills/error.rs:174`
+- `原生档案缺口`：`pilotdeck-agent/src/request_assembly.rs:96`
+- `原生档案缺口`：`pilotdeck-agent/src/request_assembly.rs:955`
+- `原生档案缺口`：`pilotdeck-agent/src/tool_context_policy.rs:125`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:148`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:154`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:161`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:168`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:176`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:228`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:243`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:254`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:1090`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:1174`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:1776`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:1865`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:1976`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:2054`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:2067`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:2075`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:2400`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:2546`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:2850`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:3260`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:3285`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:3432`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:3495`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:4251`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:4272`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:4580`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:4608`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:4747`
+- `原生档案缺口`：`pilotdeck-agent/src/turn.rs:4902`
+- `原生档案缺口`：`pilotdeck-transport/src/default_factory.rs:750`
+- `原生档案缺口`：`pilotdeck-transport/src/default_factory.rs:752`
+- `原生档案缺口`：`pilotdeck-transport/src/default_factory.rs:773`
+- `原生档案缺口`：`pilotdeck-transport/src/default_factory.rs:778`
+- `原生档案缺口`：`pilotdeck-transport/src/default_factory.rs:911`
+- `原生档案缺口`：`pilotdeck-transport/src/default_factory.rs:913`
+- `原生档案缺口`：`pilotdeck-transport/src/default_factory.rs:927`
+- `原生档案缺口`：`pilotdeck-transport/src/server.rs:449`
+- `原生档案缺口`：`pilotdeck-transport/src/system_clock.rs:371`
+- `原生档案缺口`：`pilotdeck-transport/src/system_clock.rs:432`
 
 ### 第 6 条：透明代理的判据
 
@@ -68,24 +178,24 @@
 
 | 功能域 | 子能力 | 场景 | 一致 | 表面项 | 被碰到 | 只被有差异的碰到 | 没碰到 | 不计 | 问题 1/2/3/4/尺子 | 最近盲审 / 缺口审查 | 最近代码审阅 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `loop` 对话主干与 agent 循环 | 7 | 55 | 52 | 195 | 182 | 2 | 2 | 9 | 0/4/3/0/1 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
-| `model` 模型协议与路由 | 9 | 56 | 54 | 271 | 266 | 3 | 2 | 0 | 0/0/1/1/0 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
-| `tools` 工具 | 9 | 75 | 71 | 295 | 286 | 0 | 8 | 1 | 0/0/1/0/0 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
-| `perm` 权限、沙箱、路径检查 | 6 | 65 | 62 | 55 | 53 | 0 | 2 | 0 | 0/0/1/0/0 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
-| `session` 会话存储、分叉、恢复、导出 | 8 | 51 | 51 | 193 | 186 | 0 | 1 | 6 | 0/1/0/0/0 | 2026-11-13（缺口审查） | 2026-11-11（代码审阅） |
-| `context` 上下文、压缩与缓存 | 5 | 36 | 36 | 61 | 59 | 0 | 0 | 2 | 0/1/0/0/1 | 2026-11-13（缺口审查） | — |
-| `agents` 子代理与后台任务 | 4 | 30 | 30 | 91 | 88 | 0 | 3 | 0 | 0/1/2/0/1 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
-| `hooks` hooks | 5 | 34 | 31 | 99 | 99 | 0 | 0 | 0 | 0/2/2/1/3 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
-| `ext` 插件、skills、MCP | 5 | 25 | 23 | 146 | 127 | 0 | 18 | 1 | 0/2/0/0/0 | 2026-11-11（盲审） | 2026-11-11（代码审阅） |
-| `memory` 记忆 | 4 | 8 | 7 | 35 | 33 | 1 | 0 | 1 | 0/0/2/0/1 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
-| `auto` cron 与 always-on | 5 | 24 | 24 | 123 | 123 | 0 | 0 | 0 | 0/0/1/0/1 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
-| `config` 设置、配置、热重载 | 7 | 24 | 24 | 86 | 82 | 0 | 2 | 2 | 0/0/1/0/0 | 2026-11-12（缺口审查） | — |
-| `modules` 外部能力模块与 sidecar 部署 | 7 | 44 | 43 | 98 | 87 | 0 | 8 | 3 | 0/0/5/1/2 | — | 2026-11-13（代码审阅） |
-| `gw` gateway 连接层 | 5 | 40 | 40 | 50 | 49 | 0 | 1 | 0 | 0/0/3/0/1 | — | 2026-11-11（代码审阅） |
-| `channels` 渠道（只要求启动表现） | 4 | 12 | 12 | 125 | 84 | 0 | 38 | 3 | 0/0/0/0/0 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
-| `cli` CLI | 6 | 23 | 21 | 83 | 71 | 1 | 11 | 0 | 0/0/0/0/1 | 2026-11-12（缺口审查） | — |
-| 横跨（`*`） | | | | | | | | | 0/0/0/1/7 | | |
-| 归属不了 | | 6 | 6 | 0 | 0 | 0 | 0 | 0 | | | |
+| `loop` 对话主干与 agent 循环 | 7 | 91 | 73 | 195 | 182 | 2 | 2 | 9 | 0/3/6/1/1 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
+| `model` 模型协议与路由 | 9 | 56 | 54 | 271 | 266 | 3 | 2 | 0 | 0/0/2/0/0 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
+| `tools` 工具 | 9 | 75 | 73 | 295 | 286 | 0 | 8 | 1 | 0/1/2/0/0 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
+| `perm` 权限、沙箱、路径检查 | 6 | 65 | 65 | 55 | 53 | 0 | 2 | 0 | 0/0/1/0/0 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
+| `session` 会话存储、分叉、恢复、导出 | 8 | 53 | 53 | 206 | 198 | 0 | 2 | 6 | 0/4/3/1/1 | 2026-11-13（缺口审查） | 2026-11-11（代码审阅） |
+| `context` 上下文、压缩与缓存 | 5 | 36 | 36 | 61 | 59 | 0 | 0 | 2 | 0/0/1/0/1 | 2026-11-13（缺口审查） | — |
+| `agents` 子代理与后台任务 | 4 | 30 | 30 | 91 | 88 | 0 | 3 | 0 | 0/0/3/0/1 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
+| `hooks` hooks | 5 | 34 | 34 | 99 | 99 | 0 | 0 | 0 | 0/1/0/0/3 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
+| `ext` 插件、skills、MCP | 5 | 25 | 23 | 146 | 127 | 0 | 18 | 1 | 0/2/1/0/0 | 2026-11-11（盲审） | 2026-11-11（代码审阅） |
+| `memory` 记忆 | 4 | 8 | 8 | 35 | 34 | 0 | 0 | 1 | 0/0/2/0/1 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
+| `auto` cron 与 always-on | 5 | 24 | 24 | 123 | 123 | 0 | 0 | 0 | 0/1/1/0/1 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
+| `config` 设置、配置、热重载 | 7 | 24 | 24 | 86 | 82 | 0 | 2 | 2 | 0/1/4/0/0 | 2026-11-12（缺口审查） | — |
+| `modules` 外部能力模块与 sidecar 部署 | 7 | 44 | 43 | 117 | 103 | 0 | 10 | 4 | 0/0/5/1/3 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
+| `gw` gateway 连接层 | 5 | 52 | 51 | 125 | 117 | 4 | 4 | 0 | 0/0/3/1/1 | 2026-11-13（缺口审查） | 2026-11-11（代码审阅） |
+| `channels` 渠道（只要求启动表现） | 4 | 12 | 12 | 125 | 84 | 0 | 38 | 3 | 0/1/0/0/1 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
+| `cli` CLI | 6 | 23 | 21 | 83 | 71 | 1 | 11 | 0 | 0/0/1/0/1 | 2026-11-12（缺口审查） | — |
+| 横跨（`*`） | | | | | | | | | 0/0/1/1/6 | | |
+| 归属不了 | | 20 | 20 | 0 | 0 | 0 | 0 | 0 | | | |
 
 一个场景可以属于几个子能力，所以各域场景数之和大于场景总数；表面项每项只属于一个子能力。
 
@@ -98,10 +208,10 @@
 | 子能力 | 场景 | 一致 | 表面项 | 被碰到 | 只被有差异的碰到 | 没碰到 | 不计 | 上游验收集 | 最近盲审 / 缺口审查 | 最近代码审阅 | 基线位置 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | `loop.submit` 轮次受理与每轮参数 | 8 | 8 | 34 | 34 | 0 | 0 | 0 | — | — | 2026-11-13（代码审阅） | `src/agent/turn/` `src/gateway/client/InProcessGateway.ts` |
-| `loop.steer-abort` 插话与中止 | 16 | 13 | 30 | 25 | 2 | 0 | 3 | — | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） | `src/agent/session/SteerMailbox.ts` `src/agent/loop/AgentLoop.ts` |
+| `loop.steer-abort` 插话与中止 | 52 | 35 | 30 | 25 | 2 | 0 | 3 | — | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） | `src/agent/session/SteerMailbox.ts` `src/agent/loop/AgentLoop.ts` |
 | `loop.continuation` 步进与终止 | 3 | 3 | 43 | 37 | 0 | 2 | 4 | parity | 2026-11-11（盲审） | — | `src/agent/loop/decideLoopContinuation.ts` `src/agent/policy/FailureGuard.ts` |
 | `loop.recovery` 循环层的异常恢复 | 21 | 21 | 28 | 27 | 0 | 0 | 1 | — | 2026-11-13（缺口审查） | — | `src/agent/loop/AgentLoop.ts` `src/agent/loop/outputTokenRetry.ts` `src/agent/loop/LargeFileRepair.ts` |
-| `loop.tool-dispatch` 工具调用的调度 | 4 | 4 | 6 | 6 | 0 | 0 | 0 | — | 2026-11-12（缺口审查） | — | `src/tool/scheduler/` `src/agent/loop/collectToolCalls.ts` `src/agent/loop/ensureToolResultPairing.ts` `src/agent/modules/capability/hostToolPort.ts` |
+| `loop.tool-dispatch` 工具调用的调度 | 4 | 3 | 6 | 6 | 0 | 0 | 0 | — | 2026-11-12（缺口审查） | — | `src/tool/scheduler/` `src/agent/loop/collectToolCalls.ts` `src/agent/loop/ensureToolResultPairing.ts` `src/agent/modules/capability/hostToolPort.ts` |
 | `loop.events` 事件流与轮次快照 | 4 | 4 | 28 | 27 | 0 | 0 | 1 | — | — | — | `src/gateway/client/GatewayAgentEventProjector.ts` `src/status/agentStatus.ts` |
 | `loop.runs` 运行记录 | 2 | 2 | 26 | 26 | 0 | 0 | 0 | — | — | — | `src/gateway/run/` |
 
@@ -127,13 +237,13 @@
 
 | 子能力 | 场景 | 一致 | 表面项 | 被碰到 | 只被有差异的碰到 | 没碰到 | 不计 | 上游验收集 | 最近盲审 / 缺口审查 | 最近代码审阅 | 基线位置 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `tools.files` 文件工具 | 13 | 10 | 43 | 43 | 0 | 0 | 0 | — | 2026-11-11（盲审） | — | `src/tool/builtin/readFile.ts` `src/tool/builtin/writeFile.ts` `src/tool/builtin/editFile.ts` `src/tool/builtin/sendAttachment.ts` |
+| `tools.files` 文件工具 | 13 | 11 | 43 | 43 | 0 | 0 | 0 | — | 2026-11-11（盲审） | — | `src/tool/builtin/readFile.ts` `src/tool/builtin/writeFile.ts` `src/tool/builtin/editFile.ts` `src/tool/builtin/sendAttachment.ts` |
 | `tools.search` 搜索工具 | 4 | 4 | 24 | 23 | 0 | 1 | 0 | — | 2026-11-11（盲审） | — | `src/tool/builtin/glob.ts` `src/tool/builtin/grep.ts` |
 | `tools.shell` bash | 4 | 4 | 15 | 13 | 0 | 2 | 0 | — | — | 2026-11-12（代码审阅） | `src/tool/builtin/` `src/runtime/commandShell.ts` |
 | `tools.execute-code` execute_code | 8 | 8 | 19 | 15 | 0 | 3 | 1 | — | — | 2026-11-11（代码审阅） | `src/tool/builtin/executeCode.ts` |
 | `tools.web` web 工具 | 13 | 13 | 37 | 36 | 0 | 1 | 0 | — | 2026-11-11（盲审） | — | `src/tool/builtin/webSearch.ts` `src/tool/builtin/additionalWebSearch.ts` `src/tool/builtin/webFetch.ts` |
 | `tools.interaction` 向用户提问与对话框 | 16 | 16 | 79 | 79 | 0 | 0 | 0 | — | — | 2026-11-11（代码审阅） | `src/tool/elicitation/` `src/tool/dialog/` `src/gateway/elicitation/` `src/gateway/user-dialog/` |
-| `tools.state` 计划、待办与目标 | 9 | 8 | 48 | 48 | 0 | 0 | 0 | — | 2026-11-13（缺口审查） | — | `src/plan-todo/` `src/goal/` `src/tool/builtin/` |
+| `tools.state` 计划、待办与目标 | 9 | 9 | 48 | 48 | 0 | 0 | 0 | — | 2026-11-13（缺口审查） | — | `src/plan-todo/` `src/goal/` `src/tool/builtin/` |
 | `tools.misc` 其他内建工具 | 4 | 4 | 9 | 9 | 0 | 0 | 0 | — | 2026-11-11（盲审） | 2026-11-13（代码审阅） | `src/tool/builtin/getCurrentTime.ts` `src/tool/builtin/lsp.ts` `src/lsp/` |
 | `tools.runtime` 工具运行时公共部分 | 5 | 5 | 21 | 20 | 0 | 1 | 0 | — | 2026-11-13（缺口审查） | — | `src/tool/registry/` `src/tool/execution/` `src/tool/protocol/` |
 
@@ -143,11 +253,11 @@
 
 | 子能力 | 场景 | 一致 | 表面项 | 被碰到 | 只被有差异的碰到 | 没碰到 | 不计 | 上游验收集 | 最近盲审 / 缺口审查 | 最近代码审阅 | 基线位置 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `perm.decision` 权限判定与询问 | 22 | 20 | 27 | 25 | 0 | 2 | 0 | — | — | 2026-11-13（代码审阅） | `src/permission/` `src/gateway/permission/` |
-| `perm.rules-file` permissions.json 与托管权限 | 3 | 2 | 6 | 6 | 0 | 0 | 0 | — | 2026-11-11（盲审） | 2026-11-13（代码审阅） | `src/permission/settings.ts` `src/agent/turn/permissionOverrides.ts` |
+| `perm.decision` 权限判定与询问 | 22 | 22 | 27 | 25 | 0 | 2 | 0 | — | — | 2026-11-13（代码审阅） | `src/permission/` `src/gateway/permission/` |
+| `perm.rules-file` permissions.json 与托管权限 | 3 | 3 | 6 | 6 | 0 | 0 | 0 | — | 2026-11-11（盲审） | 2026-11-13（代码审阅） | `src/permission/settings.ts` `src/agent/turn/permissionOverrides.ts` |
 | `perm.modes` 运行模式约束 | 7 | 7 | 7 | 7 | 0 | 0 | 0 | — | — | 2026-11-13（代码审阅） | `src/tool/planModeConstraints.ts` `src/tool/askModeConstraints.ts` |
 | `perm.sandbox` 沙箱模式 | 14 | 14 | 6 | 6 | 0 | 0 | 0 | — | 2026-11-11（盲审） | 2026-11-13（代码审阅） | `src/sandbox/` `src/tool/execution-world/` |
-| `perm.paths` 路径检查 | 7 | 6 | 4 | 4 | 0 | 0 | 0 | — | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） | `src/tool/builtin/filesystem/pathSafety.ts` `src/pilot/writablePaths.ts` |
+| `perm.paths` 路径检查 | 7 | 7 | 4 | 4 | 0 | 0 | 0 | — | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） | `src/tool/builtin/filesystem/pathSafety.ts` `src/pilot/writablePaths.ts` |
 | `perm.interaction` 交互 profile 与交互绑定 | 15 | 15 | 5 | 5 | 0 | 0 | 0 | — | 2026-11-11（盲审） | 2026-11-13（代码审阅） | `src/interaction/` |
 
 ### `session` 会话存储、分叉、恢复、导出
@@ -163,7 +273,7 @@
 | `session.export` 导出、恢复与归档 | 5 | 5 | 26 | 26 | 0 | 0 | 0 | — | — | — | `src/session/artifacts/` `src/gateway/storage/` |
 | `session.files` 文件历史、回退与快照 | 5 | 5 | 33 | 33 | 0 | 0 | 0 | — | — | — | `src/session/filesystem/` `src/storage/workspaceSnapshot.ts` |
 | `session.uploads` 上传与附件 | 5 | 5 | 15 | 15 | 0 | 0 | 0 | — | 2026-11-11（盲审） | — | `src/context/attachments/` `src/cli/GatewayUploadedAttachmentBundle.ts` |
-| `session.recovery` 崩溃与重启后的恢复 | 7 | 7 | 0 | 0 | 0 | 0 | 0 | — | — | 2026-11-11（代码审阅） | `src/session/resume/` `src/gateway/run/` |
+| `session.recovery` 崩溃与重启后的恢复 | 9 | 9 | 13 | 12 | 0 | 1 | 0 | — | 2026-11-13（缺口审查） | 2026-11-11（代码审阅） | `src/session/resume/` `src/gateway/run/` |
 
 ### `context` 上下文、压缩与缓存
 
@@ -194,11 +304,11 @@ hook 事件的派发时机、种类与来源、输出字段的处理、执行（
 
 | 子能力 | 场景 | 一致 | 表面项 | 被碰到 | 只被有差异的碰到 | 没碰到 | 不计 | 上游验收集 | 最近盲审 / 缺口审查 | 最近代码审阅 | 基线位置 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `hooks.lifecycle-events` 会话与轮次事件 | 15 | 14 | 25 | 25 | 0 | 0 | 0 | — | — | — | `src/extension/hooks/events/` `src/extension/hooks/protocol/events.ts` |
-| `hooks.tool-events` 工具相关事件 | 11 | 9 | 10 | 10 | 0 | 0 | 0 | — | 2026-11-13（缺口审查） | 2026-11-12（代码审阅） | `src/tool/execution/ToolRuntime.ts` `src/extension/hooks/events/` |
+| `hooks.lifecycle-events` 会话与轮次事件 | 15 | 15 | 25 | 25 | 0 | 0 | 0 | — | — | — | `src/extension/hooks/events/` `src/extension/hooks/protocol/events.ts` |
+| `hooks.tool-events` 工具相关事件 | 11 | 11 | 10 | 10 | 0 | 0 | 0 | — | 2026-11-13（缺口审查） | 2026-11-12（代码审阅） | `src/tool/execution/ToolRuntime.ts` `src/extension/hooks/events/` |
 | `hooks.types-sources` 种类、来源与配置 | 6 | 6 | 21 | 21 | 0 | 0 | 0 | — | — | — | `src/extension/hooks/config/` `src/extension/contributions/HookContribution.ts` |
 | `hooks.output` 输出字段的处理 | 5 | 5 | 23 | 23 | 0 | 0 | 0 | — | — | — | `src/extension/hooks/protocol/` |
-| `hooks.execution` 执行 | 13 | 11 | 20 | 20 | 0 | 0 | 0 | — | — | 2026-11-13（代码审阅） | `src/extension/hooks/execution/` `src/gateway/hooks/` |
+| `hooks.execution` 执行 | 13 | 13 | 20 | 20 | 0 | 0 | 0 | — | — | 2026-11-13（代码审阅） | `src/extension/hooks/execution/` `src/gateway/hooks/` |
 
 ### `ext` 插件、skills、MCP
 
@@ -219,7 +329,7 @@ memory 段、轮次中的捕获与检索、轮后维护、memory_* method。
 | 子能力 | 场景 | 一致 | 表面项 | 被碰到 | 只被有差异的碰到 | 没碰到 | 不计 | 上游验收集 | 最近盲审 / 缺口审查 | 最近代码审阅 | 基线位置 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | `memory.config` 记忆配置与模型 | 3 | 3 | 18 | 17 | 0 | 0 | 1 | — | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） | `src/context/memory/createEdgeClawMemoryProviderFromConfig.ts` `src/context/memory/edgeclaw-memory-core/` |
-| `memory.capture-recall` 捕获与检索 | 2 | 1 | 5 | 4 | 1 | 0 | 0 | — | 2026-11-13（缺口审查） | — | `src/context/memory/MemoryResolver.ts` `src/context/memory/MemoryAttachmentBuilder.ts` |
+| `memory.capture-recall` 捕获与检索 | 2 | 2 | 5 | 5 | 0 | 0 | 0 | — | 2026-11-13（缺口审查） | — | `src/context/memory/MemoryResolver.ts` `src/context/memory/MemoryAttachmentBuilder.ts` |
 | `memory.maintenance` 轮后维护 | 1 | 1 | 5 | 5 | 0 | 0 | 0 | — | 2026-11-12（缺口审查） | — | `src/cli/ProjectMemoryMaintenanceController.ts` |
 | `memory.methods` 记忆 method | 3 | 3 | 7 | 7 | 0 | 0 | 0 | — | — | — | `src/gateway/memoryDiagnostics.ts` `src/gateway/client/InProcessGateway.ts` |
 
@@ -255,13 +365,13 @@ modules 段的外部绑定、外部工具与知识库、agent 循环 sidecar 的
 
 | 子能力 | 场景 | 一致 | 表面项 | 被碰到 | 只被有差异的碰到 | 没碰到 | 不计 | 上游验收集 | 最近盲审 / 缺口审查 | 最近代码审阅 | 基线位置 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `modules.binding` modules 段与绑定 | 5 | 5 | 30 | 30 | 0 | 0 | 0 | — | — | 2026-11-13（代码审阅） | `src/pilot/config/parseModulesConfig.ts` `src/composition/` |
-| `modules.tools` 外部工具模块 | 13 | 12 | 2 | 2 | 0 | 0 | 0 | — | — | 2026-11-13（代码审阅） | `src/composition/runtimePorts.ts` `src/composition/HttpModuleClient.ts` `src/agent/modules/capability/hostToolPort.ts` |
-| `modules.knowledge` 知识库模块 | 2 | 2 | 4 | 4 | 0 | 0 | 0 | — | — | — | `src/composition/domainPorts.ts` |
-| `modules.sidecar-stdio` sidecar stdio 部署 | 9 | 9 | 7 | 7 | 0 | 0 | 0 | client deployment schema parity stdio | — | — | `src/agent/modules/transport/` `src/cli/AgentLoopDeploymentProfile.ts` `src/cli/pilotdeck-agent-loop-sidecar.ts` |
-| `modules.sidecar-tcp` sidecar TCP 部署 | 13 | 13 | 4 | 4 | 0 | 0 | 0 | tcp | — | 2026-11-13（代码审阅） | `src/agent/modules/transport/` `src/cli/pilotdeck-agent-loop-sidecar.ts` |
-| `modules.host-http` 公共 host 与审批 HTTP | 4 | 4 | 4 | 4 | 0 | 0 | 0 | — | — | — | `src/composition/publicHostHttpTransport.ts` `src/composition/publicApprovalHttpTransport.ts` `src/composition/activeRuntimeModelPorts.ts` |
-| `modules.sop` SOP | 4 | 4 | 47 | 36 | 0 | 8 | 3 | — | — | — | `src/sop/` `src/composition/nativeSopAuthority.ts` |
+| `modules.binding` modules 段与绑定 | 5 | 5 | 31 | 31 | 0 | 0 | 0 | — | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） | `src/pilot/config/parseModulesConfig.ts` `src/composition/` |
+| `modules.tools` 外部工具模块 | 13 | 12 | 3 | 3 | 0 | 0 | 0 | — | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） | `src/composition/runtimePorts.ts` `src/composition/HttpModuleClient.ts` `src/agent/modules/capability/hostToolPort.ts` |
+| `modules.knowledge` 知识库模块 | 2 | 2 | 5 | 5 | 0 | 0 | 0 | — | 2026-11-13（缺口审查） | — | `src/composition/domainPorts.ts` |
+| `modules.sidecar-stdio` sidecar stdio 部署 | 9 | 9 | 14 | 12 | 0 | 2 | 0 | client deployment schema parity stdio | 2026-11-13（缺口审查） | — | `src/agent/modules/transport/` `src/cli/AgentLoopDeploymentProfile.ts` `src/cli/pilotdeck-agent-loop-sidecar.ts` |
+| `modules.sidecar-tcp` sidecar TCP 部署 | 13 | 13 | 9 | 9 | 0 | 0 | 0 | tcp | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） | `src/agent/modules/transport/` `src/cli/pilotdeck-agent-loop-sidecar.ts` |
+| `modules.host-http` 公共 host 与审批 HTTP | 4 | 4 | 6 | 6 | 0 | 0 | 0 | — | 2026-11-13（缺口审查） | — | `src/composition/publicHostHttpTransport.ts` `src/composition/publicApprovalHttpTransport.ts` `src/composition/activeRuntimeModelPorts.ts` |
+| `modules.sop` SOP | 4 | 4 | 49 | 37 | 0 | 8 | 4 | — | 2026-11-13（缺口审查） | — | `src/sop/` `src/composition/nativeSopAuthority.ts` |
 
 ### `gw` gateway 连接层
 
@@ -269,11 +379,11 @@ pilotdeck server 的启停、WS 握手与帧、HTTP 路由、连接的健壮性�
 
 | 子能力 | 场景 | 一致 | 表面项 | 被碰到 | 只被有差异的碰到 | 没碰到 | 不计 | 上游验收集 | 最近盲审 / 缺口审查 | 最近代码审阅 | 基线位置 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `gw.server-entry` 服务启停 | 12 | 12 | 15 | 14 | 0 | 1 | 0 | — | — | — | `src/cli/pilotdeckServer.ts` `src/cli/PilotDeckServerShutdownBundle.ts` `src/gateway/server/authToken.ts` |
-| `gw.ws-protocol` WS 握手与帧 | 3 | 3 | 6 | 6 | 0 | 0 | 0 | — | — | 2026-11-11（代码审阅） | `src/gateway/server/GatewayWsConnection.ts` `src/gateway/protocol/` |
-| `gw.http` HTTP 路由 | 4 | 4 | 12 | 12 | 0 | 0 | 0 | — | — | 2026-11-11（代码审阅） | `src/gateway/server/GatewayServer.ts` `src/gateway/server/staticAssets.ts` `src/adapters/web/` |
-| `gw.connections` 连接健壮性 | 18 | 18 | 0 | 0 | 0 | 0 | 0 | — | — | 2026-11-11（代码审阅） | `src/gateway/server/websocket.ts` `src/gateway/server/GatewayServer.ts` |
-| `gw.projects` 项目路由与描述 | 5 | 5 | 17 | 17 | 0 | 0 | 0 | — | — | — | `src/cli/ProjectRuntimeRegistry.ts` `src/gateway/GatewaySessionCatalog.ts` |
+| `gw.server-entry` 服务启停 | 12 | 12 | 23 | 22 | 0 | 1 | 0 | — | 2026-11-13（缺口审查） | — | `src/cli/pilotdeckServer.ts` `src/cli/PilotDeckServerShutdownBundle.ts` `src/gateway/server/authToken.ts` |
+| `gw.ws-protocol` WS 握手与帧 | 6 | 6 | 36 | 36 | 0 | 0 | 0 | — | 2026-11-13（缺口审查） | 2026-11-11（代码审阅） | `src/gateway/server/GatewayWsConnection.ts` `src/gateway/protocol/` |
+| `gw.http` HTTP 路由 | 8 | 7 | 27 | 26 | 1 | 0 | 0 | — | 2026-11-13（缺口审查） | 2026-11-11（代码审阅） | `src/gateway/server/GatewayServer.ts` `src/gateway/server/staticAssets.ts` `src/adapters/web/` |
+| `gw.connections` 连接健壮性 | 22 | 22 | 14 | 9 | 3 | 2 | 0 | — | 2026-11-13（缺口审查） | 2026-11-11（代码审阅） | `src/gateway/server/websocket.ts` `src/gateway/server/GatewayServer.ts` |
+| `gw.projects` 项目路由与描述 | 6 | 6 | 25 | 24 | 0 | 1 | 0 | — | 2026-11-13（缺口审查） | — | `src/cli/ProjectRuntimeRegistry.ts` `src/gateway/GatewaySessionCatalog.ts` |
 
 ### `channels` 渠道（只要求启动表现）
 
@@ -349,8 +459,10 @@ pilotdeck 的子命令（server 归 gw.server-entry，sidecar 可执行文件归
   - 没碰到：`records` `transcript:permission_failed` — src/session/transcript/TranscriptEntry.ts:47
   - 没碰到：`tool-params` `*.error:permission_cancelled` — src/tool/execution/ToolRuntime.ts:346
 
-#### `session` 会话存储、分叉、恢复、导出（1）
+#### `session` 会话存储、分叉、恢复、导出（2）
 
+- `session.recovery`
+  - 没碰到：`recovery-behaviors` `recovery:transcript.too-large` — src/session/transcript/TranscriptReader.ts:19
 - `session.transcript`
   - 没碰到：`records` `transcript:agent_turn_discarded` — src/session/transcript/TranscriptEntry.ts:28
 
@@ -385,19 +497,17 @@ pilotdeck 的子命令（server 归 gw.server-entry，sidecar 可执行文件归
   - 没碰到：`env` `env:PLAYWRIGHT_BROWSERS_PATH` — src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs:45
   - 没碰到：`tools` `tool:<extension contribution>` — src/tool/registry/registerExtensionToolContributions.ts:17
 
-#### `memory` 记忆（1）
-
-- `memory.capture-recall`
-  - 只被有差异的碰到（`slash-memory-capture-skip`）：`slash-commands` `slash:<memory capture skip>` — src/context/memory/edgeclaw-memory-core/src/message-utils.ts:15
-
 #### `config` 设置、配置、热重载（2）
 
 - `config.env-paths`
   - 没碰到：`env` `env:PILOTDECK_RUNTIME_PROXY` — src/sandbox/nsjail/NsjailProvider.ts:571
   - 没碰到：`env` `env:PILOTDECK_RUNTIME_ROOT` — src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs:16
 
-#### `modules` 外部能力模块与 sidecar 部署（8）
+#### `modules` 外部能力模块与 sidecar 部署（10）
 
+- `modules.sidecar-stdio`
+  - 没碰到：`module-behaviors` `mod:sidecar.proto-control` — src/agent/modules/transport/agentLoopSidecarServer.ts:146
+  - 没碰到：`module-behaviors` `mod:sidecar.proto-errors` — src/agent/modules/transport/agentLoopSidecarServer.ts:112
 - `modules.sop`
   - 没碰到：`env` `env:DATABASE_PATH` — src/cli/createLocalGateway.ts:778
   - 没碰到：`env` `env:STAFFDECK_APPROVAL_USER_ID` — src/cli/createLocalGateway.ts:977
@@ -408,8 +518,18 @@ pilotdeck 的子命令（server 归 gw.server-entry，sidecar 可执行文件归
   - 没碰到：`env` `env:STAFFDECK_SOP_MANAGEMENT_CREDENTIAL_ID` — src/composition/nativeApprovalSessionResolver.ts:76
   - 没碰到：`env` `env:STAFFDECK_SOP_RUNTIME_ORIGIN` — src/pilot/staffdeck/projectBinding.ts:162
 
-#### `gw` gateway 连接层（1）
+#### `gw` gateway 连接层（8）
 
+- `gw.connections`
+  - 只被有差异的碰到（`gw-http-raw-requests`）：`gw-behaviors` `gw:conn.header-too-large` — node:http 缺省 maxHeaderSize
+  - 没碰到：`gw-behaviors` `gw:conn.http-timeouts` — src/gateway/server/GatewayServer.ts:64
+  - 只被有差异的碰到（`gw-http-raw-requests`）：`gw-behaviors` `gw:conn.keepalive-pipelining` — node:http
+  - 只被有差异的碰到（`gw-http-raw-requests`）：`gw-behaviors` `gw:conn.malformed-request` — node:http clientError 缺省处理
+  - 没碰到：`gw-behaviors` `gw:conn.no-handshake-timeout` — src/gateway/server/websocket.ts:17
+- `gw.http`
+  - 只被有差异的碰到（`gw-http-raw-requests`）：`gw-behaviors` `gw:http.url-parse` — src/gateway/server/GatewayServer.ts:95
+- `gw.projects`
+  - 没碰到：`gw-behaviors` `gw:projects.files-list-limits` — src/gateway/dialog/projectFiles.ts:71
 - `gw.server-entry`
   - 没碰到：`env` `env:PILOTDECK_MEMORY_DIAGNOSTICS` — src/gateway/memoryDiagnostics.ts:26
 
@@ -479,12 +599,26 @@ pilotdeck 的子命令（server 归 gw.server-entry，sidecar 可执行文件归
 
 ### 没审过的功能域
 
-没有任何盲审或缺口审查记录的（2）：`modules`、`gw`
+没有任何盲审或缺口审查记录的（0）：无
 
 没有任何代码审阅记录的（3）：`context`、`config`、`cli`
 
 ### 归属不了的场景
 
+- `cli-cron-online-auth`（SAME）
+- `cli-cron-online-create`（SAME）
+- `cli-cron-online-delete-stop`（SAME）
+- `cli-cron-online-disabled`（SAME）
+- `cli-cron-online-gone-error`（SAME）
+- `cli-cron-online-gone-ok`（SAME）
+- `cli-cron-online-gone-usage`（SAME）
+- `cli-cron-online-list`（SAME）
+- `cli-cron-online-usage`（SAME）
+- `cli-default-online-auth`（SAME）
+- `cli-default-online-gone`（SAME）
+- `cli-default-online-rebind`（SAME）
+- `cli-default-online-turns`（SAME）
+- `gw-crash-frame-length-overflow`（SAME）
 - `hook-advisory-abort-after-turn`（SAME）
 - `loop-task-budget`（SAME）
 - `loop-task-budget-invalid`（SAME）
@@ -494,12 +628,12 @@ pilotdeck 的子命令（server 归 gw.server-entry，sidecar 可执行文件归
 
 ## 归属统计
 
-- 表面项 2006 个：按规则归属 2005，例外 1，归属不了 0。
-- 场景 509 个：按规则归属 346，例外 157，归属不了 6。
+- 表面项 2113 个：按规则归属 2112，例外 1，归属不了 0。
+- 场景 573 个：按规则归属 396，例外 157，归属不了 20。
 
 ## 与 `coverage.mjs --surface` 的对照
 
-两者用同一个判定（`scripts/bbx/lib/surface.mjs`）。对同一产物目录运行 `node scripts/bbx/coverage.mjs --surface --out <产物目录>` 应打印与下表相同的数字（场景 491/509 SAME）。
+两者用同一个判定（`scripts/bbx/lib/surface.mjs`）。对同一产物目录运行 `node scripts/bbx/coverage.mjs --surface --out <产物目录>` 应打印与下表相同的数字（场景 545/573 SAME）。
 
 | 维度 | 项数 | 被SAME场景碰到 | 只被有差异的场景碰到 | 没碰到 | 不计 |
 |---|---|---|---|---|---|
@@ -520,5 +654,8 @@ pilotdeck 的子命令（server 归 gw.server-entry，sidecar 可执行文件归
 | hooks | 74 | 74 | 0 | 0 | 0 |
 | channels | 22 | 22 | 0 | 0 | 0 |
 | sdk-session-config | 75 | 75 | 0 | 0 | 0 |
-| slash-commands | 37 | 24 | 1 | 12 | 0 |
-| 合计 | 2006 | 1875 | 7 | 96 | 28 |
+| slash-commands | 37 | 25 | 0 | 12 | 0 |
+| gw-behaviors | 75 | 68 | 4 | 3 | 0 |
+| recovery-behaviors | 13 | 12 | 0 | 1 | 0 |
+| module-behaviors | 19 | 16 | 0 | 2 | 1 |
+| 合计 | 2113 | 1972 | 10 | 102 | 29 |
