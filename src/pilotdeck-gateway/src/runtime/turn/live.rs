@@ -34,7 +34,29 @@ use tokio::time::{Duration, Instant, sleep_until};
 pub type InputTransform =
     Arc<dyn Fn(super::runner::AgentInput) -> super::runner::AgentInput + Send + Sync>;
 
-type StatusReceipt = Option<oneshot::Sender<()>>;
+struct DeliveryReceipt {
+    status: Option<oneshot::Sender<()>>,
+    activity: Option<pilotdeck_transport::default_factory::NativeActivityDelivery>,
+}
+impl From<oneshot::Sender<()>> for DeliveryReceipt {
+    fn from(status: oneshot::Sender<()>) -> Self {
+        Self {
+            status: Some(status),
+            activity: None,
+        }
+    }
+}
+impl DeliveryReceipt {
+    fn send(mut self, value: ()) -> Result<(), ()> {
+        if let Some(activity) = self.activity.take() {
+            activity.commit();
+        }
+        self.status
+            .take()
+            .map_or(Ok(()), |status| status.send(value))
+    }
+}
+type StatusReceipt = Option<DeliveryReceipt>;
 type ForwardedEvent = (JsValue, bool, StatusReceipt, bool);
 
 pub type DurableMessagePredicate = Arc<dyn Fn(&ExecutionIdentity, &JsValue) -> bool + Send + Sync>;
@@ -100,6 +122,7 @@ pub struct InteractionHost {
 /// Production LiveSession backed by a fresh HostClient and handler for each turn.
 /// HostClient closes its process and disposes its handler after each execution.
 pub struct LiveSessionAdapter {
+    native_activity: Option<Arc<pilotdeck_transport::default_factory::NativeLoopActivity>>,
     host_factory: Arc<TurnHostFactory>,
     close_timeout: std::time::Duration,
     agent_config: Option<JsObject>,
@@ -167,6 +190,7 @@ impl LiveSessionAdapter {
         host_factory: impl Fn(Arc<Recorder>) -> HostFuture<TurnHost> + Send + Sync + 'static,
     ) -> Self {
         Self {
+            native_activity: None,
             close_timeout: crate::host::Limits::default().close_timeout,
             agent_config: None,
             permission_mode_source: None,
@@ -188,6 +212,14 @@ impl LiveSessionAdapter {
             state: Arc::default(),
             maintenance: None,
         }
+    }
+
+    pub(super) fn with_native_activity(
+        mut self,
+        activity: Option<Arc<pilotdeck_transport::default_factory::NativeLoopActivity>>,
+    ) -> Self {
+        self.native_activity = activity;
+        self
     }
 
     /// Bind the session's frozen input admission. Blocks remain unchanged in
@@ -405,6 +437,7 @@ impl LiveSessionAdapter {
         + 'static,
     ) -> Self {
         Self {
+            native_activity: None,
             close_timeout: crate::host::Limits::default().close_timeout,
             agent_config: None,
             permission_mode_source: None,
@@ -588,6 +621,7 @@ impl LiveSession for LiveSessionAdapter {
         let (recording_sender, recording_ready) = oneshot::channel();
         let (execute_ready, execute_wait) = oneshot::channel();
         let host_factory = self.host_factory.clone();
+        let native_activity = self.native_activity.clone();
         let close_timeout = self.close_timeout;
         let recorder = self.recorder.clone();
         let identity = request.identity.clone();
@@ -706,6 +740,7 @@ impl LiveSession for LiveSessionAdapter {
                         .insert("permissionContext".into(), JsValue::Object(context));
                 }
                 let handler = Arc::new(StreamHandler {
+                    native_activity,
                     inner,
                     events,
                     integrity: hook_integrity,
@@ -1059,6 +1094,9 @@ impl LiveTurn for LiveTurnStream {
                     // TurnRunner ignores loop artifact snapshots; its collector owns final artifacts.
                     if event.get("type") == Some(&"file_artifacts".into()) {
                         self.delivered.observe_source(&event, wire)?;
+                        if let Some(receipt) = receipt {
+                            let _ = receipt.send(());
+                        }
                         continue;
                     }
                     if nested_prompt {
@@ -1711,6 +1749,7 @@ impl LiveTurnStream {
 /// semantics when wrapped (the wrapper never silently skips it), and either
 /// rejection fails the receive path before application and ACK.
 struct StreamHandler {
+    native_activity: Option<Arc<pilotdeck_transport::default_factory::NativeLoopActivity>>,
     inner: Arc<dyn HostHandler>,
     events: mpsc::Sender<ForwardedEvent>,
     integrity: Arc<StreamIntegrity>,
@@ -1737,6 +1776,7 @@ impl Drop for DeliveryWait {
 }
 
 struct Delivery {
+    activity: Option<pilotdeck_transport::default_factory::NativeActivityDelivery>,
     previous: Option<DeliveryWait>,
     done: Option<tokio::sync::oneshot::Sender<Option<DeliveryWait>>>,
 }
@@ -2023,6 +2063,7 @@ impl Forwarding {
     fn reserve(&mut self) -> Delivery {
         let (done, next) = tokio::sync::oneshot::channel();
         Delivery {
+            activity: None,
             previous: self.tail.replace(DeliveryWait(next)),
             done: Some(done),
         }
@@ -2055,6 +2096,7 @@ impl StreamHandler {
     /// callback settles.
     fn share(&self) -> Self {
         Self {
+            native_activity: self.native_activity.clone(),
             inner: self.inner.clone(),
             events: self.events.clone(),
             integrity: self.integrity.clone(),
@@ -2189,6 +2231,7 @@ impl StreamHandler {
         // One send chain across module and wire callbacks: concurrent futures
         // cannot interleave batches or overtake an earlier callback's payload.
         let mut delivery = delivery.unwrap_or_else(|| state.reserve());
+        let activity_delivery = delivery.activity.take();
         let deadline = state.deadline();
         drop(state);
         let events = self.events.clone();
@@ -2217,6 +2260,7 @@ impl StreamHandler {
                         bound_module.as_ref(),
                     );
                 }
+                let mut activity_delivery = activity_delivery;
                 for (event, wire, nested_prompt) in buffered
                     .into_iter()
                     .map(|e| (JsValue::Object(e.event), false, e.nested_prompt))
@@ -2246,6 +2290,15 @@ impl StreamHandler {
                         (Some(send), Some(receive))
                     } else {
                         (None, None)
+                    };
+                    let activity = if wire { activity_delivery.take() } else { None };
+                    let receipt = if receipt.is_some() || activity.is_some() {
+                        Some(DeliveryReceipt {
+                            status: receipt,
+                            activity,
+                        })
+                    } else {
+                        None
                     };
                     {
                         let error = integrity.host_error.lock().unwrap();
@@ -2409,6 +2462,17 @@ impl HostHandler for StreamHandler {
 
     fn observe_loop_completion(&self, payload: &JsValue) {
         self.inner.observe_loop_completion(payload);
+        // The host decoder validates but deliberately suppresses the loop's
+        // non-authoritative terminal instead of calling event(). This existing
+        // source callback is its synchronous delivery, independent of the later
+        // execution-final packet and without adding a public terminal event.
+        if let Some(delivery) = self
+            .native_activity
+            .as_ref()
+            .and_then(|source| source.claim())
+        {
+            delivery.commit();
+        }
         *self.integrity.loop_completed.lock().unwrap() =
             payload.get("result").and_then(|r| r.get("type")) == Some(&"success".into());
     }
@@ -2424,7 +2488,13 @@ impl HostHandler for StreamHandler {
             .map_err(|error| HostError::new(HostErrorKind::Protocol, error.message))?;
         let inner = self.inner.validate_event(payload)?;
         let key = Arc::new(());
-        let slot = state.reserve();
+        let mut slot = state.reserve();
+        if payload.get("final") != Some(&JsValue::Bool(true)) {
+            slot.activity = self
+                .native_activity
+                .as_ref()
+                .and_then(|source| source.claim());
+        }
         state.wire.push_back((key.clone(), slot));
         let ordinal = state.wire_next;
         state.wire_next += 1;

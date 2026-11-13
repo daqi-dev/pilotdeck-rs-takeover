@@ -421,7 +421,7 @@ async fn progress_message_text_is_not_a_canonical_message() {
     .expect("#748 progress fixture parses");
     let (receipt, mut acknowledged) = oneshot::channel();
     let received = turn
-        .record_event(event.clone(), false, true, Some(receipt))
+        .record_event(event.clone(), false, true, Some(receipt.into()))
         .await;
     crate::negative_assert!(
         received
@@ -444,6 +444,7 @@ async fn next_streams_payloads_with_backpressure_and_projects_final_once() {
     let (tx, rx) = mpsc::channel(1);
     let inner = Arc::new(Handler::default());
     let handler = Arc::new(StreamHandler {
+        native_activity: None,
         inner: inner.clone(),
         events: tx,
         integrity: Arc::new(StreamIntegrity::new()),
@@ -511,6 +512,7 @@ async fn event_queued_in_the_completing_poll_precedes_execution_error() {
 async fn failed_handler_event_is_not_published() {
     let (tx, rx) = mpsc::channel(1);
     let handler = Arc::new(StreamHandler {
+        native_activity: None,
         inner: Arc::new(Handler {
             fail_event: true,
             ..Handler::default()
@@ -600,6 +602,7 @@ async fn event_after_the_authoritative_terminal_fails_closed() {
     let accepted =
         parse_json(r#"{"type":"model_event","sessionId":"session","turnId":"turn"}"#).unwrap();
     let handler = Arc::new(StreamHandler {
+        native_activity: None,
         inner: Arc::new(Handler::default()),
         events: tx,
         integrity: Arc::new(StreamIntegrity::new()),
@@ -1487,6 +1490,7 @@ async fn events_after_a_violation_settle_to_none_even_when_buffered() {
     // to None.
     let (tx, rx) = mpsc::channel(1);
     let handler = Arc::new(StreamHandler {
+        native_activity: None,
         inner: Arc::new(Handler::default()),
         events: tx,
         integrity: Arc::new(StreamIntegrity::new()),
@@ -2419,6 +2423,7 @@ fn buffered_handler(
     let inner = Arc::new(Handler::default());
     let (events, receiver) = mpsc::channel(capacity);
     let handler = Arc::new(StreamHandler {
+        native_activity: None,
         inner: inner.clone(),
         events,
         integrity: Arc::new(StreamIntegrity::new()),
@@ -2734,6 +2739,7 @@ async fn final_event_payload_shape_is_left_to_inner_handler() {
     // The exemption must still apply the terminal through the inner handler.
     let (events, mut receiver) = mpsc::channel(4);
     let handler = StreamHandler {
+        native_activity: None,
         inner: Arc::new(Handler {
             fail_event: true,
             ..Handler::default()
@@ -2785,6 +2791,7 @@ async fn aborted_execution_releases_validated_wire_reservations() {
     });
     let (events, mut rx) = mpsc::channel(16);
     let handler = Arc::new(StreamHandler {
+        native_activity: None,
         inner: inner.clone(),
         events,
         integrity: Arc::new(StreamIntegrity::new()),
@@ -4769,7 +4776,7 @@ async fn bound_malformed_durable_messages_fail_before_yield_and_persist_terminal
                 parse_json(raw).expect("#748 bad wire JSON"),
                 false,
                 true,
-                Some(receipt)
+                Some(receipt.into())
             )
             .await
             .expect("#748 bad wire handled")
@@ -4934,7 +4941,7 @@ async fn wire_durable_messages_match_ts_yield_before_callback() {
             ]);
             let (receipt, mut ack) = oneshot::channel();
             let delivered = turn
-                .record_event(event, false, true, Some(receipt))
+                .record_event(event, false, true, Some(receipt.into()))
                 .await
                 .expect("#748 durable event delivery");
             crate::negative_assert!(
@@ -5010,6 +5017,7 @@ async fn nested_session_prompt_keeps_provenance_without_parent_durable_message()
     let integrity = Arc::new(StreamIntegrity::new());
     *integrity.module_id.lock().unwrap() = Some("native".into());
     let handler = StreamHandler {
+        native_activity: None,
         inner: Arc::new(Nested(turn_events)),
         events: sender,
         integrity: integrity.clone(),
@@ -5145,7 +5153,8 @@ async fn selected_durable_observer_commits_before_visibility_and_survives_cancel
         let event = parse_json(r#"{"type":"assistant_message","message":{"role":"assistant","content":[{"type":"text","text":"sop reply"}]}}"#).unwrap();
         let (receipt, mut ack) = oneshot::channel();
         if failure == "none" {
-            let mut delivery = Box::pin(turn.record_event(event, false, true, Some(receipt)));
+            let mut delivery =
+                Box::pin(turn.record_event(event, false, true, Some(receipt.into())));
             tokio::select! {
                 _ = entered.notified() => {},
                 result = &mut delivery => panic!("reply escaped pending observer: {result:?}"),
@@ -5167,7 +5176,7 @@ async fn selected_durable_observer_commits_before_visibility_and_survives_cancel
             );
         } else {
             assert!(
-                turn.record_event(event, false, true, Some(receipt))
+                turn.record_event(event, false, true, Some(receipt.into()))
                     .await
                     .unwrap()
                     .is_none()
@@ -5212,6 +5221,7 @@ async fn module_call_waits_for_exactly_the_preceding_wire_events() {
     }
     let (tx, _rx) = mpsc::channel(1);
     let handler = Arc::new(StreamHandler {
+        native_activity: None,
         inner: Arc::new(BarrierProbe),
         events: tx,
         integrity: Arc::new(StreamIntegrity::new()),

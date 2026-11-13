@@ -303,6 +303,10 @@ pub trait TurnPreparationPort {
     }
 }
 pub trait TurnEventPort {
+    /// Source-only child event buffer at the loop's tool/compaction pump boundary.
+    /// Presentation events continue through their original host ports.
+    fn drain_owned_activity(&mut self) {}
+
     fn emit(&mut self, event: BoundarySnapshot) -> PortResult<()>;
     /// Already accepted model data and its final aborted partial reply remain
     /// publishable after user cancellation. Transport owns retirement/backpressure.
@@ -1322,7 +1326,7 @@ pub fn run_admitted_turn(
                     let outcome = match run_recovery_compaction(
                         &mut state,
                         host,
-                        preparation,
+                        (&mut *preparation, &mut *events),
                         control,
                         config,
                         input,
@@ -1802,6 +1806,7 @@ pub fn run_admitted_turn(
                 ))
             })()
         };
+        events.drain_owned_activity();
         let batch = match execution {
             Ok(batch) => batch,
             Err(error) if is_deadline_unknown(&error, control) => {
@@ -2359,10 +2364,9 @@ fn run_routed_compaction(
     let Some(intent) = intent else {
         return Ok(CompactionStep::Snapshot(None));
     };
-    let compact = match host
-        .call(control, HostCall::AutoCompact(intent))
-        .map_err(Advisory)?
-    {
+    let response = host.call(control, HostCall::AutoCompact(intent));
+    events.drain_owned_activity();
+    let compact = match response.map_err(Advisory)? {
         HostReply::Compacted(compact) => compact.boundary,
         HostReply::CompactedBoundaryOnly(compact) => compact,
         _ => return Err(Fatal(wrong_reply("routed try_auto_compact"))),
@@ -2421,6 +2425,7 @@ fn run_routed_compaction(
             };
             control.check().map_err(Fatal)?;
         }
+        events.drain_owned_activity();
         emit_event(
             events,
             &mut state.timeline,
@@ -2475,10 +2480,12 @@ fn install_pre_route_compaction(
     input: &TurnInput,
     control: &CallControl,
 ) -> PortResult<CompactionStep> {
+    events.drain_owned_activity();
     if is_compacted_reply(compact) {
         if !install_compaction_replacement(compact, state, host, preparation, control)? {
             return Ok(CompactionStep::Snapshot(None));
         }
+        events.drain_owned_activity();
         emit_event(
             events,
             &mut state.timeline,
@@ -2581,12 +2588,13 @@ enum RecoveryCompactionOutcome {
 fn run_recovery_compaction(
     state: &mut TurnExecutionState,
     host: &mut dyn HostPort,
-    preparation: &mut dyn TurnPreparationPort,
+    ports: (&mut dyn TurnPreparationPort, &mut dyn TurnEventPort),
     control: &CallControl,
     config: &TurnRuntimeConfig,
     input: &TurnInput,
     target: &Route,
 ) -> PortResult<RecoveryCompactionOutcome> {
+    let (preparation, events) = ports;
     use RecoveryCompactionOutcome::{Emergency, Replaced, Truncate};
     // A:1512 `ctx?.tryAutoCompact` absent -> A:1568-1571.
     if !host.advertised("context", "try_auto_compact") {
@@ -2609,7 +2617,9 @@ fn run_recovery_compaction(
         Err(error) if known_compaction_advisory(&error) => return Ok(Truncate),
         Err(error) => return Err(error),
     };
-    let compact = match host.call(control, HostCall::AutoCompact(intent)) {
+    let response = host.call(control, HostCall::AutoCompact(intent));
+    events.drain_owned_activity();
+    let compact = match response {
         Ok(HostReply::Compacted(compact)) => compact.boundary,
         Ok(HostReply::CompactedBoundaryOnly(compact)) => compact,
         Ok(_) => return Err(wrong_reply("try_auto_compact")),
@@ -2627,6 +2637,7 @@ fn run_recovery_compaction(
     if !install_compaction_replacement(&compact, state, host, preparation, control)? {
         return Ok(Truncate);
     }
+    events.drain_owned_activity();
     if compact.value().get("error").is_some_and(wire_truthy) {
         return Ok(Emergency(compact));
     }

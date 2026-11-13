@@ -224,6 +224,7 @@ pub struct TurnHostFactory {
     lease_supplier: Option<GenerationLeaseSupplier>,
     deployment: Deployment,
     native_factory: Option<Arc<dyn pilotdeck_transport::server::ExecutionFactory>>,
+    native_activity: Option<Arc<pilotdeck_transport::default_factory::NativeLoopActivity>>,
     port_decorators: Option<HostPortDecorators>,
     durable_message_observer: Option<super::live::DurableMessageObserver>,
     limits: Limits,
@@ -277,6 +278,7 @@ impl TurnHostFactory {
             in_process_loop: matches!(deployment, Deployment::Native),
             deployment,
             native_factory: None,
+            native_activity: None,
             port_decorators: None,
             durable_message_observer: None,
             limits,
@@ -312,6 +314,19 @@ impl TurnHostFactory {
         factory: Arc<dyn pilotdeck_transport::server::ExecutionFactory>,
     ) -> Self {
         self.native_factory = Some(factory);
+        self.native_activity = None;
+        self
+    }
+
+    /// Only the built-in native factory has an owned loop source. Opaque
+    /// native extensions and external deployments keep LegacyMerged activity.
+    pub(crate) fn with_default_native_activity(
+        mut self,
+        activity: Arc<pilotdeck_transport::default_factory::NativeLoopActivity>,
+    ) -> Self {
+        if matches!(self.deployment, Deployment::Native) && self.native_factory.is_none() {
+            self.native_activity = Some(activity);
+        }
         self
     }
 
@@ -398,6 +413,7 @@ impl TurnHostFactory {
         let input_transform = self.input_transform.take();
         let in_process_loop = self.in_process_loop;
         let durable_message_observer = self.durable_message_observer.clone();
+        let native_activity = self.native_activity.clone();
         let factory = Arc::new(self);
         let maintenance_factory = factory.clone();
         let maintenance: Arc<super::live::MaintenanceFactory> =
@@ -426,7 +442,8 @@ impl TurnHostFactory {
         } else {
             close_timeout
         })
-        .with_maintenance(maintenance);
+        .with_maintenance(maintenance)
+        .with_native_activity(native_activity);
         let session = match durable_message_observer {
             Some(observer) => session.with_durable_message_observer(observer),
             None => session,
@@ -488,6 +505,7 @@ impl TurnHostFactory {
         };
         let deployment = self.deployment.clone();
         let native_factory = self.native_factory.clone();
+        let native_activity = self.native_activity.clone();
         let expected = self.expected_module_id.clone();
         let limits = self.limits;
         let cwd = lease
@@ -506,18 +524,35 @@ impl TurnHostFactory {
         Ok(InteractionHost {
             client: Box::pin(async move {
                 match deployment {
-                    Deployment::Native => match native_factory {
-                        Some(factory) => {
-                            HostClient::native_with_factory(
-                                &cwd,
-                                expected.as_ref(),
-                                limits,
-                                factory,
-                            )
-                            .await
+                    Deployment::Native => {
+                        match native_factory {
+                            Some(factory) => {
+                                HostClient::native_with_factory(
+                                    &cwd,
+                                    expected.as_ref(),
+                                    limits,
+                                    factory,
+                                )
+                                .await
+                            }
+                            None => match native_activity {
+                                Some(activity) => {
+                                    let factory = pilotdeck_transport::default_factory::OriginalAgentFactory {
+                                    clock: Arc::new(pilotdeck_transport::system_clock::SystemExecutionClock),
+                                    process_cwd: cwd.to_string_lossy().as_ref().into(),
+                                }.observed(activity);
+                                    HostClient::native_with_factory(
+                                        &cwd,
+                                        expected.as_ref(),
+                                        limits,
+                                        Arc::new(factory),
+                                    )
+                                    .await
+                                }
+                                None => HostClient::native(&cwd, expected.as_ref(), limits).await,
+                            },
                         }
-                        None => HostClient::native(&cwd, expected.as_ref(), limits).await,
-                    },
+                    }
                     Deployment::Stdio {
                         command,
                         args,

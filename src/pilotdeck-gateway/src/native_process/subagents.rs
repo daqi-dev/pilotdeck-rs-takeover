@@ -601,6 +601,16 @@ fn filter_parent_system(prompt: &str, definition: &SubagentDefinition) -> String
 /// OneShotSubagentPort caps the first 64 AgentLoop events. The live-session
 /// adapter also yields session preflight events; they must not consume that
 /// loop activity budget (SubAgentSession.runNative iterates the loop directly).
+fn owns_native_loop_activity(
+    deployment: &crate::runtime::turn::host_factory::Deployment,
+    custom_factory: bool,
+) -> bool {
+    matches!(
+        deployment,
+        crate::runtime::turn::host_factory::Deployment::Native
+    ) && !custom_factory
+}
+
 fn collect_observer_activity(activity: &mut Vec<JsValue>, event: &JsValue) {
     let kind = event.get("type").and_then(JsValue::as_string);
     if kind.is_some_and(|kind| {
@@ -1028,6 +1038,13 @@ impl Fork {
             }
             None => (Vec::new(), None),
         };
+        // Opaque native factories and external children retain the legacy
+        // merged activity contract; only our owned native loop exposes sources.
+        let native_activity = owns_native_loop_activity(
+            &self.runtime.selection.deployment,
+            self.runtime.native_factory.is_some(),
+        )
+        .then(|| Arc::new(pilotdeck_transport::default_factory::NativeLoopActivity::default()));
         let hooks = super::hooks::SessionHookCleanup::default();
         let tools: SessionTools = self
             .seed
@@ -1045,7 +1062,8 @@ impl Fork {
                     root_recorder: self.parent.recorder.clone(),
                 },
             )
-            .with_fork_mcp_tools(fork_mcp_tools);
+            .with_fork_mcp_tools(fork_mcp_tools)
+            .with_native_activity(native_activity.clone());
         let tools = tools
             .with_subagents(
                 self.runtime
@@ -1065,20 +1083,23 @@ impl Fork {
             .runtime
             .bind_extensions(&project, child_session)
             .map_err(|error| fail(&error))?;
-        let session = self
-            .runtime
-            .configure_factory(
-                TurnHostFactory::new_with_signal(
-                    self.runtime.registry.clone(),
-                    self.runtime.selection.deployment.clone(),
-                    self.runtime.limits,
-                    self.runtime.selection.expected_module_id.clone(),
-                    move |identity, recorder, signal| tools.turn(identity, recorder, signal),
-                )
-                .with_agent_config(config)
-                .with_lease_supplier(generation.supplier())
-                .for_project(project),
+        let factory = self.runtime.configure_factory(
+            TurnHostFactory::new_with_signal(
+                self.runtime.registry.clone(),
+                self.runtime.selection.deployment.clone(),
+                self.runtime.limits,
+                self.runtime.selection.expected_module_id.clone(),
+                move |identity, recorder, signal| tools.turn(identity, recorder, signal),
             )
+            .with_agent_config(config)
+            .with_lease_supplier(generation.supplier())
+            .for_project(project),
+        );
+        let factory = match &native_activity {
+            Some(activity) => factory.with_default_native_activity(activity.clone()),
+            None => factory,
+        };
+        let session = factory
             .into_live_session(storage.recorder.clone(), Vec::new)
             .as_sidechain();
         let session = ChildSession::new(Arc::new(session), generation, child_extensions, hooks)
@@ -1122,7 +1143,9 @@ impl Fork {
                 Step::Next(Err(error)) => break Some(fail(&error.message)),
             };
             let kind = event.get("type").and_then(JsValue::as_string).map(text);
-            collect_observer_activity(activity, &event);
+            if native_activity.is_none() {
+                collect_observer_activity(activity, &event);
+            }
             match kind.as_deref() {
                 // The descriptor is the entry right after `turn_started`,
                 // before the first visible child input
@@ -1171,6 +1194,9 @@ impl Fork {
             self.forward(&event, &request.subagent_id, &definition);
         };
         drop(turn);
+        if let Some(source) = &native_activity {
+            *activity = source.finish();
+        }
         session
             .dispose()
             .await
@@ -1681,3 +1707,7 @@ mod tests {
         assert!(child.get("maxContextTokens").is_none());
     }
 }
+
+#[cfg(test)]
+#[path = "observer_source_tests.rs"]
+mod observer_source_tests;

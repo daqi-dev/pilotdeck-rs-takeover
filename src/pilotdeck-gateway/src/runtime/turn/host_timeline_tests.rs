@@ -147,6 +147,7 @@ async fn replay_case(case: &JsValue, name: &str) {
         .lock()
         .expect("#1220 timeline: module lock") = Some("fixture".into());
     let handler = Arc::new(StreamHandler {
+        native_activity: None,
         inner: inner.clone(),
         events,
         integrity: integrity.clone(),

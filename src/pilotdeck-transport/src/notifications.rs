@@ -22,6 +22,7 @@ struct EventQueue {
     outstanding: Arc<AtomicUsize>,
 }
 pub(crate) struct InstructionBridge {
+    activity: Option<Arc<crate::default_factory::NativeLoopActivity>>,
     lifecycle: BoundExchange,
     lifecycle_pending: Vec<PendingExchange>,
     methods: AdvertisedMethods,
@@ -114,6 +115,7 @@ impl InstructionBridge {
             (None, None)
         };
         Ok(Self {
+            activity: None,
             lifecycle,
             lifecycle_pending: Vec::new(),
             methods,
@@ -123,6 +125,13 @@ impl InstructionBridge {
             event_finish,
             event_finish_deadline,
         })
+    }
+    pub(crate) fn with_activity(
+        mut self,
+        activity: Option<Arc<crate::default_factory::NativeLoopActivity>>,
+    ) -> Self {
+        self.activity = activity;
+        self
     }
     pub(crate) fn notice(&mut self, input: &TurnInput, has_system_prompt: bool) -> PortResult<()> {
         let mut detail = JsObject::new();
@@ -141,15 +150,18 @@ impl InstructionBridge {
             deadline: Some(std::time::Instant::now() + std::time::Duration::from_secs(5)),
         };
         self.queue_lifecycle("InstructionsLoaded", detail, &accepted)?;
+        let mut event = JsObject::new();
+        event.insert("type".into(), "instructions_loaded".into());
+        event.insert(
+            "sessionId".into(),
+            JsValue::String(input.session_id.clone()),
+        );
+        event.insert("turnId".into(), JsValue::String(input.turn_id.clone()));
+        event.insert("hasSystemPrompt".into(), JsValue::Bool(has_system_prompt));
+        if let Some(activity) = &self.activity {
+            activity.emit_owned(JsValue::Object(event.clone()));
+        }
         if let Some(queue) = &self.events {
-            let mut event = JsObject::new();
-            event.insert("type".into(), "instructions_loaded".into());
-            event.insert(
-                "sessionId".into(),
-                JsValue::String(input.session_id.clone()),
-            );
-            event.insert("turnId".into(), JsValue::String(input.turn_id.clone()));
-            event.insert("hasSystemPrompt".into(), JsValue::Bool(has_system_prompt));
             let mut payload = JsObject::new();
             payload.insert("operation".into(), "emit".into());
             payload.insert("event".into(), JsValue::Object(event));

@@ -27,6 +27,203 @@ pub struct OriginalAgentFactory {
     pub clock: Arc<dyn ExecutionClock>,
     pub process_cwd: JsString,
 }
+/// Per-execution observer source for the owned native loop. It never changes
+/// the presentation stream. Tickets represent occurrences, including equal
+/// payloads, and commit only after admission and delivery have both succeeded.
+#[derive(Default)]
+pub struct NativeLoopActivity(Mutex<ActivityState>);
+#[derive(Default)]
+struct ActivityState {
+    owned: Vec<JsValue>,
+    pending: std::collections::VecDeque<Arc<Mutex<ActivityOccurrence>>>,
+    ordered: std::collections::VecDeque<Arc<Mutex<ActivityOccurrence>>>,
+    committed: Vec<JsValue>,
+    closed: bool,
+}
+struct ActivityOccurrence {
+    events: Vec<JsValue>,
+    admitted: bool,
+    delivered: bool,
+    discarded: bool,
+}
+pub struct NativeActivityAdmission {
+    source: Arc<NativeLoopActivity>,
+    occurrence: Arc<Mutex<ActivityOccurrence>>,
+    settled: bool,
+}
+pub struct NativeActivityDelivery {
+    source: Arc<NativeLoopActivity>,
+    occurrence: Arc<Mutex<ActivityOccurrence>>,
+    settled: bool,
+}
+impl NativeLoopActivity {
+    pub fn emit_owned(&self, event: JsValue) {
+        let mut state = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        if !state.closed && state.owned.len() < 64 {
+            state.owned.push(event);
+        }
+    }
+    fn drain_owned(&self) {
+        // This is the loop's source-only yield port, not a presentation-wire
+        // callback. Synchronous delivery into this owned sink accepts this
+        // occurrence independently of any subsequent wire event or ACK.
+        let mut state = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        let events = std::mem::take(&mut state.owned);
+        if !state.closed && !events.is_empty() {
+            state
+                .ordered
+                .push_back(Arc::new(Mutex::new(ActivityOccurrence {
+                    events,
+                    admitted: true,
+                    delivered: true,
+                    discarded: false,
+                })));
+        }
+        drop(state);
+        self.settle();
+    }
+    fn stage(self: &Arc<Self>, event: JsValue) -> NativeActivityAdmission {
+        let mut state = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        let events = vec![event];
+        let occurrence = Arc::new(Mutex::new(ActivityOccurrence {
+            events,
+            admitted: false,
+            delivered: false,
+            discarded: state.closed,
+        }));
+        state.pending.push_back(occurrence.clone());
+        state.ordered.push_back(occurrence.clone());
+        NativeActivityAdmission {
+            source: self.clone(),
+            occurrence,
+            settled: false,
+        }
+    }
+    /// Claim the next occurrence at synchronous, ordered wire callback capture.
+    /// No event name, value or identity comparison is involved.
+    pub fn claim(self: &Arc<Self>) -> Option<NativeActivityDelivery> {
+        let mut state = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        while state.pending.front().is_some_and(|occurrence| {
+            occurrence
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .discarded
+        }) {
+            state.pending.pop_front();
+        }
+        state
+            .pending
+            .pop_front()
+            .map(|occurrence| NativeActivityDelivery {
+                source: self.clone(),
+                occurrence,
+                settled: false,
+            })
+    }
+    fn settle(&self) {
+        let mut state = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        while let Some(front) = state.ordered.front() {
+            let occurrence = front.lock().unwrap_or_else(|p| p.into_inner());
+            if !occurrence.discarded && !(occurrence.admitted && occurrence.delivered) {
+                break;
+            }
+            if !state.closed && !occurrence.discarded {
+                let events = occurrence.events.clone();
+                drop(occurrence);
+                let remaining = 64usize.saturating_sub(state.committed.len());
+                state.committed.extend(events.into_iter().take(remaining));
+            } else {
+                drop(occurrence);
+            }
+            state.ordered.pop_front();
+        }
+    }
+    pub fn finish(&self) -> Vec<JsValue> {
+        self.settle();
+        let mut state = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        state.closed = true;
+        state.owned.clear();
+        // Closing discards unsettled wire deliveries, but a later owned
+        // source yield may already have independently completed. Preserve
+        // those settled occurrences in order instead of discarding the suffix.
+        while let Some(occurrence) = state.ordered.pop_front() {
+            let mut occurrence = occurrence.lock().unwrap_or_else(|p| p.into_inner());
+            if !occurrence.discarded && occurrence.admitted && occurrence.delivered {
+                let remaining = 64usize.saturating_sub(state.committed.len());
+                state
+                    .committed
+                    .extend(occurrence.events.iter().take(remaining).cloned());
+            }
+            occurrence.discarded = true;
+        }
+        state.pending.clear();
+        std::mem::take(&mut state.committed)
+    }
+}
+impl NativeActivityAdmission {
+    fn admit(mut self) {
+        self.occurrence
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .admitted = true;
+        self.settled = true;
+        self.source.settle();
+    }
+}
+impl Drop for NativeActivityAdmission {
+    fn drop(&mut self) {
+        if !self.settled {
+            self.occurrence
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .discarded = true;
+            self.source.settle();
+        }
+    }
+}
+impl NativeActivityDelivery {
+    pub fn commit(mut self) {
+        self.occurrence
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .delivered = true;
+        self.settled = true;
+        self.source.settle();
+    }
+}
+impl Drop for NativeActivityDelivery {
+    fn drop(&mut self) {
+        if !self.settled {
+            self.occurrence
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .discarded = true;
+            self.source.settle();
+        }
+    }
+}
+pub struct ObservedOriginalAgentFactory {
+    factory: OriginalAgentFactory,
+    activity: Arc<NativeLoopActivity>,
+}
+impl OriginalAgentFactory {
+    pub fn observed(self, activity: Arc<NativeLoopActivity>) -> ObservedOriginalAgentFactory {
+        ObservedOriginalAgentFactory {
+            factory: self,
+            activity,
+        }
+    }
+}
+impl ExecutionFactory for ObservedOriginalAgentFactory {
+    fn execute(
+        &self,
+        request: &ExecuteRequest,
+        context: &mut ExecutionContext,
+    ) -> PortResult<ExecutionTerminal> {
+        self.factory
+            .execute_observed(request, context, Some(self.activity.clone()))
+    }
+}
 /// IO composition only: final context capture cannot run while an accepted
 /// advisory notice is still uncertain. Domain policy and the host remain owned
 /// by their original ports; this wrapper supplies no model or Session state.
@@ -770,8 +967,14 @@ impl TurnPreparationPort for Preparation {
 struct EventSink<'a> {
     context: &'a mut ExecutionContext,
     notifications: Arc<Mutex<InstructionBridge>>,
+    activity: Option<Arc<NativeLoopActivity>>,
 }
 impl TurnEventPort for EventSink<'_> {
+    fn drain_owned_activity(&mut self) {
+        if let Some(activity) = &self.activity {
+            activity.drain_owned();
+        }
+    }
     fn emit(&mut self, boundary: BoundarySnapshot) -> PortResult<()> {
         self.publish(boundary, false)
     }
@@ -821,12 +1024,22 @@ impl EventSink<'_> {
         }
         let mut name: Vec<u16> = "agent.".encode_utf16().collect();
         name.extend_from_slice(kind.units());
-        if accepted {
+        let admission = self
+            .activity
+            .as_ref()
+            .map(|activity| activity.stage(JsValue::Object(payload.clone())));
+        let result = if accepted {
             self.context
                 .emit_accepted(JsString::from_utf16(name), payload)
         } else {
             self.context.emit(JsString::from_utf16(name), payload)
+        };
+        if result.is_ok()
+            && let Some(admission) = admission
+        {
+            admission.admit();
         }
+        result
     }
 }
 impl ExecutionFactory for OriginalAgentFactory {
@@ -834,6 +1047,16 @@ impl ExecutionFactory for OriginalAgentFactory {
         &self,
         request: &ExecuteRequest,
         context: &mut ExecutionContext,
+    ) -> PortResult<ExecutionTerminal> {
+        self.execute_observed(request, context, None)
+    }
+}
+impl OriginalAgentFactory {
+    fn execute_observed(
+        &self,
+        request: &ExecuteRequest,
+        context: &mut ExecutionContext,
+        activity: Option<Arc<NativeLoopActivity>>,
     ) -> PortResult<ExecutionTerminal> {
         context.control.check()?;
         let mut decoded = OriginalFactoryPayloadDecoder
@@ -968,12 +1191,15 @@ impl ExecutionFactory for OriginalAgentFactory {
                 .and_then(JsValue::as_string)
                 .cloned(),
         };
-        let notifications = Arc::new(Mutex::new(InstructionBridge::new(
-            context.exchange(identity.clone())?,
-            context.exchange(identity.clone())?,
-            decoded.methods.clone(),
-            context.control.clone(),
-        )?));
+        let notifications = Arc::new(Mutex::new(
+            InstructionBridge::new(
+                context.exchange(identity.clone())?,
+                context.exchange(identity.clone())?,
+                decoded.methods.clone(),
+                context.control.clone(),
+            )?
+            .with_activity(activity.clone()),
+        ));
         let mut preparation = Preparation {
             state,
             model_state,
@@ -1031,6 +1257,7 @@ impl ExecutionFactory for OriginalAgentFactory {
         let mut events = EventSink {
             context,
             notifications: notifications.clone(),
+            activity,
         };
         let mut host = NotificationFencedHost {
             host,
@@ -1243,3 +1470,7 @@ mod calibration_lookup_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "default_factory/activity_tests.rs"]
+mod activity_tests;

@@ -62,6 +62,7 @@ pub(super) fn session_tool_results_dir(project: &Path, session_id: &JsString) ->
 }
 
 pub struct SessionTools {
+    native_activity: Option<Arc<pilotdeck_transport::default_factory::NativeLoopActivity>>,
     /// The session's project root: `resolve(projectKey ?? fallbackProjectRoot)`
     /// for the key the session was created under.
     project: PathBuf,
@@ -300,6 +301,7 @@ impl ForkSeed {
             world,
             goal: Arc::default(),
             events: self.events,
+            native_activity: None,
             subagents: self.subagents,
             fork: Some(scope),
             continuation: self.continuation,
@@ -365,6 +367,7 @@ impl SessionTools {
             goal: Arc::default(),
             plan_files: self.plan_files.clone(),
             events: self.events.clone(),
+            native_activity: None,
             subagents: self.subagents.clone(),
             fork: None,
             continuation: self.continuation.clone(),
@@ -441,6 +444,7 @@ impl SessionTools {
             goal: Arc::default(),
             plan_files,
             events: None,
+            native_activity: None,
             subagents: None,
             fork: None,
             continuation: None,
@@ -549,6 +553,14 @@ impl SessionTools {
         parent: super::continuations::ParentRef,
     ) -> Self {
         self.continuation = Some(parent);
+        self
+    }
+
+    pub(super) fn with_native_activity(
+        mut self,
+        activity: Option<Arc<pilotdeck_transport::default_factory::NativeLoopActivity>>,
+    ) -> Self {
+        self.native_activity = activity;
         self
     }
 
@@ -1151,11 +1163,15 @@ impl SessionTools {
         );
         let tool_ports = ToolContextPorts {
             // Root-side progress has the current session/turn identity gate.
-            // A forked child's composition has no eventEmitter, as in the baseline.
+            // Default native children own a loop-local progress sink. Their
+            // tool lifecycle emitter remains the parent's presentation buffer.
             event_emitter: match (&self.fork, self.events.clone()) {
                 (None, Some(events)) => Some(Arc::new(move |event| {
                     let _ = events.emit_current(event);
                 }) as EventSink),
+                (Some(_), _) => self.native_activity.clone().map(|activity| {
+                    Arc::new(move |event| activity.emit_owned(JsValue::Object(event))) as EventSink
+                }),
                 _ => None,
             },
             clock: Some(Arc::new(|| JsValue::String(SystemExecutionClock.now_iso()))),
@@ -1253,8 +1269,8 @@ impl SessionTools {
                 session: identity.session_id.clone(),
                 cwd: self.project.to_string_lossy().into_owned().into(),
             })),
-            // The engine's `eventEmitter` is the session's event buffer; a
-            // forked child's composition carries none.
+            // Root compaction keeps its presentation buffer. Owned native
+            // children use the loop-local source sink; LegacyMerged stays unchanged.
             events: match (&self.fork, self.events.clone()) {
                 (None, Some(events)) => Some(Arc::new(move |event: JsValue| {
                     if let Some(event) = event.as_object() {
@@ -1262,6 +1278,10 @@ impl SessionTools {
                     }
                 })
                     as crate::runtime::context::compaction::engine::EventEmitter),
+                (Some(_), _) => self.native_activity.clone().map(|activity| {
+                    Arc::new(move |event| activity.emit_owned(event))
+                        as crate::runtime::context::compaction::engine::EventEmitter
+                }),
                 _ => None,
             },
             cooldown: self.compaction_cooldown.clone(),
