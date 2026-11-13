@@ -1,0 +1,1317 @@
+{
+ "name": "cfg-proxy-routing",
+ "about": "启动时的进程级代理（src/cli/proxy.ts installGlobalProxy、buildNoProxy，undici EnvHttpProxyAgent 的 noProxy 匹配）实际怎么路由：每次起一个 server，发一轮模型请求（[::1]:38416）和两个 HTTP hook（0.0.0.0:38417、[::1]:38417），看假代理收到哪些 CONNECT、直连的被拒成什么样。覆盖：只有配置 proxy.url；HTTPS_PROXY 压过配置；HTTP_PROXY 与 HTTPS_PROXY 同时有时用 HTTPS_PROXY（http 目标也用它）；只有 http_proxy；配置里的 noProxy 在启动时不生效；NO_PROXY 的 *（不绕过，因为总会拼上 127.0.0.1,localhost）、精确主机、*. 与 . 前缀的后缀匹配、带端口（相同 / 不同）、空白分隔；no_proxy 优先于 NO_PROXY、空的 no_proxy 落到 NO_PROXY；URL 里的用户名密码成为 Proxy-Authorization（百分号解码）；代理连不上（错误事件）、代理对 CONNECT 回 407（错误事件、重试次数）、配置里 undici 拒绝的 URL（stderr 警告、直连）。",
+ "server": false,
+ "config": null,
+ "files": {
+  "cfgs/a.yaml": "schemaVersion: 1\nagent:\n  model: far/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    far:\n      protocol: openai\n      url: http://[::1]:38416/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nproxy:\n  url: http://127.0.0.1:38415\n",
+  "cfgs/a-noproxy.yaml": "schemaVersion: 1\nagent:\n  model: far/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    far:\n      protocol: openai\n      url: http://[::1]:38416/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nproxy:\n  url: http://127.0.0.1:38415\n  noProxy: '[::1],0.0.0.0'\n",
+  "cfgs/dead.yaml": "schemaVersion: 1\nagent:\n  model: far/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    far:\n      protocol: openai\n      url: http://[::1]:38416/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nproxy:\n  url: http://127.0.0.1:38419\n",
+  "cfgs/refuse.yaml": "schemaVersion: 1\nagent:\n  model: far/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    far:\n      protocol: openai\n      url: http://[::1]:38416/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nproxy:\n  url: http://127.0.0.1:38414\n",
+  "cfgs/auth.yaml": "schemaVersion: 1\nagent:\n  model: far/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    far:\n      protocol: openai\n      url: http://[::1]:38416/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nproxy:\n  url: http://us%20er:p%40ss@127.0.0.1:38415\n",
+  "cfgs/invalid.yaml": "schemaVersion: 1\nagent:\n  model: far/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    far:\n      protocol: openai\n      url: http://[::1]:38416/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nproxy:\n  url: not a url\n",
+  "cfgs/none.yaml": "schemaVersion: 1\nagent:\n  model: far/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    far:\n      protocol: openai\n      url: http://[::1]:38416/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n"
+ },
+ "httpProxies": {
+  "A": 38415,
+  "B": 38418,
+  "C": {
+   "port": 38414,
+   "status": 407
+  }
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Proxy\"}"
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "hi."
+   }
+  }
+ ],
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 60000,
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/a.yaml"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p",
+      "channelKey": "test",
+      "message": "probe"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h0",
+      "channelKey": "test",
+      "message": "hook h0",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://0.0.0.0:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h6",
+      "channelKey": "test",
+      "message": "hook h6",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 60000,
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/a.yaml",
+    "HTTPS_PROXY": "http://127.0.0.1:38418"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p",
+      "channelKey": "test",
+      "message": "probe"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h0",
+      "channelKey": "test",
+      "message": "hook h0",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://0.0.0.0:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h6",
+      "channelKey": "test",
+      "message": "hook h6",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 60000,
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/a.yaml",
+    "HTTP_PROXY": "http://127.0.0.1:38418",
+    "HTTPS_PROXY": "http://127.0.0.1:38415"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p",
+      "channelKey": "test",
+      "message": "probe"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h0",
+      "channelKey": "test",
+      "message": "hook h0",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://0.0.0.0:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h6",
+      "channelKey": "test",
+      "message": "hook h6",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 60000,
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/none.yaml",
+    "http_proxy": "http://127.0.0.1:38415"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p",
+      "channelKey": "test",
+      "message": "probe"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h0",
+      "channelKey": "test",
+      "message": "hook h0",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://0.0.0.0:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h6",
+      "channelKey": "test",
+      "message": "hook h6",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 60000,
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/a-noproxy.yaml"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p",
+      "channelKey": "test",
+      "message": "probe"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h0",
+      "channelKey": "test",
+      "message": "hook h0",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://0.0.0.0:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h6",
+      "channelKey": "test",
+      "message": "hook h6",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 60000,
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/a.yaml",
+    "NO_PROXY": "*"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p",
+      "channelKey": "test",
+      "message": "probe"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h0",
+      "channelKey": "test",
+      "message": "hook h0",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://0.0.0.0:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h6",
+      "channelKey": "test",
+      "message": "hook h6",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 60000,
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/a.yaml",
+    "NO_PROXY": "0.0.0.0"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p",
+      "channelKey": "test",
+      "message": "probe"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h0",
+      "channelKey": "test",
+      "message": "hook h0",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://0.0.0.0:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h6",
+      "channelKey": "test",
+      "message": "hook h6",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 60000,
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/a.yaml",
+    "NO_PROXY": "*.0.0"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p",
+      "channelKey": "test",
+      "message": "probe"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h0",
+      "channelKey": "test",
+      "message": "hook h0",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://0.0.0.0:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h6",
+      "channelKey": "test",
+      "message": "hook h6",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 60000,
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/a.yaml",
+    "NO_PROXY": ".0.0.0"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p",
+      "channelKey": "test",
+      "message": "probe"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h0",
+      "channelKey": "test",
+      "message": "hook h0",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://0.0.0.0:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h6",
+      "channelKey": "test",
+      "message": "hook h6",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 60000,
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/a.yaml",
+    "NO_PROXY": "0.0.0.0:38417"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p",
+      "channelKey": "test",
+      "message": "probe"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h0",
+      "channelKey": "test",
+      "message": "hook h0",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://0.0.0.0:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h6",
+      "channelKey": "test",
+      "message": "hook h6",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 60000,
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/a.yaml",
+    "NO_PROXY": "0.0.0.0:1"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p",
+      "channelKey": "test",
+      "message": "probe"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h0",
+      "channelKey": "test",
+      "message": "hook h0",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://0.0.0.0:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h6",
+      "channelKey": "test",
+      "message": "hook h6",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 60000,
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/a.yaml",
+    "NO_PROXY": " [::1]\t0.0.0.0 "
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p",
+      "channelKey": "test",
+      "message": "probe"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h0",
+      "channelKey": "test",
+      "message": "hook h0",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://0.0.0.0:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h6",
+      "channelKey": "test",
+      "message": "hook h6",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 60000,
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/a.yaml",
+    "no_proxy": "[::1]",
+    "NO_PROXY": "0.0.0.0"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p",
+      "channelKey": "test",
+      "message": "probe"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h0",
+      "channelKey": "test",
+      "message": "hook h0",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://0.0.0.0:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h6",
+      "channelKey": "test",
+      "message": "hook h6",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 60000,
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/a.yaml",
+    "no_proxy": "",
+    "NO_PROXY": "0.0.0.0"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p",
+      "channelKey": "test",
+      "message": "probe"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h0",
+      "channelKey": "test",
+      "message": "hook h0",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://0.0.0.0:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h6",
+      "channelKey": "test",
+      "message": "hook h6",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 60000,
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/auth.yaml"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p",
+      "channelKey": "test",
+      "message": "probe"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h0",
+      "channelKey": "test",
+      "message": "hook h0",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://0.0.0.0:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h6",
+      "channelKey": "test",
+      "message": "hook h6",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 60000,
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/dead.yaml"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p",
+      "channelKey": "test",
+      "message": "probe"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h0",
+      "channelKey": "test",
+      "message": "hook h0",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://0.0.0.0:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h6",
+      "channelKey": "test",
+      "message": "hook h6",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 60000,
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/refuse.yaml"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p",
+      "channelKey": "test",
+      "message": "probe"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h0",
+      "channelKey": "test",
+      "message": "hook h0",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://0.0.0.0:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h6",
+      "channelKey": "test",
+      "message": "hook h6",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 60000,
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/invalid.yaml"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p",
+      "channelKey": "test",
+      "message": "probe"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h0",
+      "channelKey": "test",
+      "message": "hook h0",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://0.0.0.0:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h6",
+      "channelKey": "test",
+      "message": "hook h6",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  }
+ ]
+}

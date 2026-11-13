@@ -1,0 +1,211 @@
+{
+ "name": "cfg-proxy-outbound",
+ "about": "配置里的 proxy.url 在启动时装成进程级代理（src/cli/pilotdeck.ts:48-50 → src/cli/proxy.ts:122-147），之后哪些出站请求走它：每类请求用 [::1] 上不同的目标端口（各自一条隧道，假代理的 CONNECT 记录里分得清），按段取代理记录。模型请求与标题请求（[::1]:38416）、MCP 的 http 传输（mcp.json，[::1]:38418，首轮时握手，假 provider 回的不是 JSON-RPC，握手失败的 stderr 照比）、web_fetch（http 升级成 https，0.0.0.0:38410，经代理的 TLS 握手对着明文失败）、web_search 的 custom 端点（[::1]:38419）、sdkSessionConfig 的 HTTP hook（[::1]:38417）都走代理，CONNECT 的头（host / connection / proxy-connection）照比；bash 子进程的环境里没有因此多出代理变量。启动日志在 stdout、监听地址行之前。",
+ "server": false,
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: http://[::1]:38416/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nproxy:\n  url: http://127.0.0.1:38415\ntools:\n  webSearch:\n    enabled: true\n    provider: custom\n    endpoint: http://[::1]:38419/search\n    customProvider:\n      name: BBX Search\n      method: POST\n      auth: none\n      queryParam: q\n      resultsPath: choices\n      titleField: finish_reason\n      urlField: index\n      snippetField: message.content\n",
+ "files": {
+  "home/.pilotdeck/mcp.json": {
+   "mcpServers": {
+    "remote": {
+     "type": "http",
+     "url": "http://[::1]:38418/mcp"
+    }
+   }
+  }
+ },
+ "httpProxies": {
+  "A": 38415
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Proxy\"}"
+   }
+  },
+  {
+   "name": "after",
+   "when": [
+    "tool_call_id"
+   ],
+   "reply": {
+    "text": "done."
+   }
+  },
+  {
+   "name": "fetch",
+   "when": [
+    "do fetch"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_f",
+     "name": "web_fetch",
+     "arguments": {
+      "url": "http://0.0.0.0:38410/page",
+      "mode": "raw"
+     }
+    }
+   }
+  },
+  {
+   "name": "search",
+   "when": [
+    "do search"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_s",
+     "name": "web_search",
+     "arguments": {
+      "query": "bbx"
+     }
+    }
+   }
+  },
+  {
+   "name": "env",
+   "when": [
+    "do env"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_e",
+     "name": "bash",
+     "arguments": {
+      "command": "env | grep -i proxy | sort; echo end"
+     }
+    }
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "hi."
+   }
+  }
+ ],
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 120000,
+   "then": [
+    {
+     "sleep": 1000
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "s1",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s1",
+      "channelKey": "test",
+      "message": "hello"
+     },
+     "timeout": 20000
+    },
+    {
+     "sleep": 500
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "s2",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s2",
+      "channelKey": "test",
+      "message": "do fetch"
+     },
+     "timeout": 20000
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "s3",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s3",
+      "channelKey": "test",
+      "message": "do search"
+     },
+     "timeout": 20000
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "s4",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s4",
+      "channelKey": "test",
+      "message": "do env"
+     },
+     "timeout": 20000
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s5",
+      "channelKey": "test",
+      "message": "hook turn",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 20000
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  }
+ ]
+}

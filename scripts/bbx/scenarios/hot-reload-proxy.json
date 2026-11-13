@@ -1,0 +1,845 @@
+{
+ "name": "hot-reload-proxy",
+ "about": "配置热重载 · 代理（src/cli/pilotdeck.ts:148-151 → src/cli/proxy.ts:92-147 reinstallGlobalProxy）：server 运行中由模型的 bash 改写配置文件（ConfigStore 监视、去抖后重载）。第一段：起始 proxy.url=A（启动日志）→ 换成 B 并带 noProxy '[::1]:38417'（日志带 noProxy；之后模型请求新建到 B 的 CONNECT，[::1]:38417 的 HTTP hook 直连被拒）→ 删掉 proxy 段（[proxy] Global fetch proxy removed；模型请求直连被拒、错误事件）→ 恢复 A（新的 CONNECT）→ 只改无关键（不重装、隧道复用、没有新 CONNECT）→ 字符串写法的同一个 URL（规范化后 proxy 没变）。第二段：环境变量 HTTPS_PROXY=B 在启动时压过配置 A；热重载把 A 加 noProxy 写进去时配置压过环境变量；改成 undici 拒绝的 URL（带路径）只打警告、原来的代理照用；删掉 proxy 段后即使有环境变量也直连。每段比 serve 的 stdout / stderr、假代理按段收到的 CONNECT（目标、头）、模型与 hook 的结果。目标都是 [::1] 上的端口（没人监听，直连立刻被拒），代理是采集器在 127.0.0.1 上起的假代理，不外连。",
+ "server": false,
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    far:\n      protocol: openai\n      url: http://[::1]:38416/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nproxy:\n  url: http://127.0.0.1:38415\n",
+ "files": {
+  "cfgs/b.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    far:\n      protocol: openai\n      url: http://[::1]:38416/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nproxy:\n  url: http://127.0.0.1:38418\n  noProxy: '[::1]:38417'\n",
+  "cfgs/none.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    far:\n      protocol: openai\n      url: http://[::1]:38416/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "cfgs/a.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    far:\n      protocol: openai\n      url: http://[::1]:38416/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nproxy:\n  url: http://127.0.0.1:38415\n",
+  "cfgs/a-other.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 4096\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    far:\n      protocol: openai\n      url: http://[::1]:38416/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nproxy:\n  url: http://127.0.0.1:38415\n",
+  "cfgs/str.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    far:\n      protocol: openai\n      url: http://[::1]:38416/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nproxy: http://127.0.0.1:38415\n",
+  "cfgs/a-np.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    far:\n      protocol: openai\n      url: http://[::1]:38416/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nproxy:\n  url: http://127.0.0.1:38415\n  noProxy: '[::1]:38417'\n",
+  "cfgs/bad.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    far:\n      protocol: openai\n      url: http://[::1]:38416/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nproxy:\n  url: http://127.0.0.1:38418/sub\n",
+  "cfgs/live2.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    far:\n      protocol: openai\n      url: http://[::1]:38416/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nproxy:\n  url: http://127.0.0.1:38415\n"
+ },
+ "httpProxies": {
+  "A": 38415,
+  "B": 38418
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Proxy\"}"
+   }
+  },
+  {
+   "name": "after",
+   "when": [
+    "tool_call_id"
+   ],
+   "reply": {
+    "text": "done."
+   }
+  },
+  {
+   "name": "write-b",
+   "when": [
+    "write b:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_b",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/b.yaml {HOME}/.pilotdeck/pilotdeck.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "write-none",
+   "when": [
+    "write none:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_none",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/none.yaml {HOME}/.pilotdeck/pilotdeck.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "write-a",
+   "when": [
+    "write a:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_a",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/a.yaml {HOME}/.pilotdeck/pilotdeck.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "write-a-other",
+   "when": [
+    "write a-other:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_a_other",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/a-other.yaml {HOME}/.pilotdeck/pilotdeck.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "write-str",
+   "when": [
+    "write str:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_str",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/str.yaml {HOME}/.pilotdeck/pilotdeck.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "write2-a-np",
+   "when": [
+    "write2 a-np:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call2_a_np",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/a-np.yaml {ROOT}/cfgs/live2.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "write2-bad",
+   "when": [
+    "write2 bad:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call2_bad",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/bad.yaml {ROOT}/cfgs/live2.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "write2-none",
+   "when": [
+    "write2 none:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call2_none",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/none.yaml {ROOT}/cfgs/live2.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "hi."
+   }
+  }
+ ],
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 240000,
+   "then": [
+    {
+     "sleep": 500
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "ws": "session_model_set",
+     "params": {
+      "sessionKey": "p1",
+      "projectKey": "{PILOT_HOME}",
+      "selection": {
+       "mode": "model",
+       "provider": "far",
+       "model": "deterministic"
+      }
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p1",
+      "channelKey": "test",
+      "message": "probe 1"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h1",
+      "channelKey": "test",
+      "message": "hook 1",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "w1",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w1",
+      "channelKey": "test",
+      "message": "write b:"
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 1500
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "ws": "session_model_set",
+     "params": {
+      "sessionKey": "p2",
+      "projectKey": "{PILOT_HOME}",
+      "selection": {
+       "mode": "model",
+       "provider": "far",
+       "model": "deterministic"
+      }
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p2",
+      "channelKey": "test",
+      "message": "probe 2"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h2",
+      "channelKey": "test",
+      "message": "hook 2",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "w2",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w2",
+      "channelKey": "test",
+      "message": "write none:"
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 1500
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "ws": "session_model_set",
+     "params": {
+      "sessionKey": "p3",
+      "projectKey": "{PILOT_HOME}",
+      "selection": {
+       "mode": "model",
+       "provider": "far",
+       "model": "deterministic"
+      }
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p3",
+      "channelKey": "test",
+      "message": "probe 3"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h3",
+      "channelKey": "test",
+      "message": "hook 3",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "w3",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w3",
+      "channelKey": "test",
+      "message": "write a:"
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 1500
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "ws": "session_model_set",
+     "params": {
+      "sessionKey": "p4",
+      "projectKey": "{PILOT_HOME}",
+      "selection": {
+       "mode": "model",
+       "provider": "far",
+       "model": "deterministic"
+      }
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p4",
+      "channelKey": "test",
+      "message": "probe 4"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h4",
+      "channelKey": "test",
+      "message": "hook 4",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "w4",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w4",
+      "channelKey": "test",
+      "message": "write a-other:"
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 1500
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "ws": "session_model_set",
+     "params": {
+      "sessionKey": "p5",
+      "projectKey": "{PILOT_HOME}",
+      "selection": {
+       "mode": "model",
+       "provider": "far",
+       "model": "deterministic"
+      }
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p5",
+      "channelKey": "test",
+      "message": "probe 5"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h5",
+      "channelKey": "test",
+      "message": "hook 5",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "w5",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w5",
+      "channelKey": "test",
+      "message": "write str:"
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 1500
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "ws": "session_model_set",
+     "params": {
+      "sessionKey": "p6",
+      "projectKey": "{PILOT_HOME}",
+      "selection": {
+       "mode": "model",
+       "provider": "far",
+       "model": "deterministic"
+      }
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p6",
+      "channelKey": "test",
+      "message": "probe 6"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h6",
+      "channelKey": "test",
+      "message": "hook 6",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 240000,
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/live2.yaml",
+    "HTTPS_PROXY": "http://127.0.0.1:38418"
+   },
+   "then": [
+    {
+     "connect": true
+    },
+    {
+     "sleep": 500
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "ws": "session_model_set",
+     "params": {
+      "sessionKey": "p7",
+      "projectKey": "{PILOT_HOME}",
+      "selection": {
+       "mode": "model",
+       "provider": "far",
+       "model": "deterministic"
+      }
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p7",
+      "channelKey": "test",
+      "message": "probe 7"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h7",
+      "channelKey": "test",
+      "message": "hook 7",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "x1",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "x1",
+      "channelKey": "test",
+      "message": "write2 a-np:"
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 1500
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "ws": "session_model_set",
+     "params": {
+      "sessionKey": "p8",
+      "projectKey": "{PILOT_HOME}",
+      "selection": {
+       "mode": "model",
+       "provider": "far",
+       "model": "deterministic"
+      }
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p8",
+      "channelKey": "test",
+      "message": "probe 8"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h8",
+      "channelKey": "test",
+      "message": "hook 8",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "x2",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "x2",
+      "channelKey": "test",
+      "message": "write2 bad:"
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 1500
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "ws": "session_model_set",
+     "params": {
+      "sessionKey": "p9",
+      "projectKey": "{PILOT_HOME}",
+      "selection": {
+       "mode": "model",
+       "provider": "far",
+       "model": "deterministic"
+      }
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p9",
+      "channelKey": "test",
+      "message": "probe 9"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h9",
+      "channelKey": "test",
+      "message": "hook 9",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "x3",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "x3",
+      "channelKey": "test",
+      "message": "write2 none:"
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 1500
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "ws": "session_model_set",
+     "params": {
+      "sessionKey": "p10",
+      "projectKey": "{PILOT_HOME}",
+      "selection": {
+       "mode": "model",
+       "provider": "far",
+       "model": "deterministic"
+      }
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "p10",
+      "channelKey": "test",
+      "message": "probe 10"
+     },
+     "timeout": 25000
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "h10",
+      "channelKey": "test",
+      "message": "hook 10",
+      "sdkSessionConfig": {
+       "hooks": {
+        "url": "http://[::1]:38417/hooks",
+        "events": {
+         "UserPromptSubmit": [
+          {}
+         ]
+        }
+       }
+      }
+     },
+     "timeout": 25000
+    },
+    {
+     "sleep": 300
+    },
+    {
+     "proxyLog": true
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  }
+ ]
+}

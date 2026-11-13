@@ -228,6 +228,27 @@ const collectorCases = [];
   const check = run('check.mjs', ['--out', out, scenarioFile('needs-18789-c', 18789)]);
   collectorCases.push(['check.mjs 记 SKIPPED、退出码 0', check.status === 0 && /needs-18789-c\s+SKIPPED/.test(check.stdout)]);
   collectorCases.push(['汇总行报出跳过个数', /0\/0 SAME，另有 1 个 SKIPPED/.test(check.stdout)]);
+  // 假 HTTP 代理（httpProxies）：真跑一次采集（不起被测进程，只用 raw 步骤当客户端），所以用调用方的槽位。
+  const proxyFile = path.join(dir, 'proxy-selftest.json');
+  fs.writeFileSync(proxyFile, JSON.stringify({ name: 'proxy-selftest', server: false, settleMs: 0,
+    httpProxies: { P: 38415, R: { port: 38416, status: 407 } },
+    steps: [
+      { raw: { port: 38415, readMs: 1500, send: [{ text: 'CONNECT [::1]:38412 HTTP/1.1\r\nhost: [::1]:38412\r\n\r\n' }, { wait: 200 },
+        { text: 'POST /v1/chat/completions HTTP/1.1\r\nhost: [::1]:38412\r\ncontent-type: application/json\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{}' }] } },
+      { proxyLog: true },
+      { raw: { port: 38415, readMs: 500, send: [{ text: 'CONNECT example.com:443 HTTP/1.1\r\nhost: example.com:443\r\n\r\n' }] } },
+      { raw: { port: 38416, readMs: 500, send: [{ text: 'CONNECT [::1]:38412 HTTP/1.1\r\n\r\n' }] } },
+    ] }));
+  const slot = process.env.BBX_SLOT || '0';
+  const proxyRun = run('run.mjs', ['ts', proxyFile, path.join(out, 'proxy.json')], { BBX_SLOT: slot });
+  let got = null; try { got = JSON.parse(fs.readFileSync(path.join(out, 'proxy.json'), 'utf8')); } catch {}
+  const mockPort = String(38412 + 10 * Number(slot));
+  collectorCases.push(['假代理：采集跑完', proxyRun.status === 0 && got !== null]);
+  collectorCases.push(['假代理：CONNECT 记下目标与头，按段取出', got?.steps[1]?.proxyLog?.P?.length === 1 && got.steps[1].proxyLog.P[0].method === 'CONNECT'
+    && got.steps[1].proxyLog.P[0].target === `[::1]:${mockPort}` && got.steps[1].proxyLog.P[0].headers.host === `[::1]:${mockPort}`]);
+  collectorCases.push(['假代理：隧道接到假 provider', got?.steps[0]?.raw?.http?.status === 'HTTP/1.1 200 Connection Established' && (got?.provider?.default ?? []).length === 1]);
+  collectorCases.push(['假代理：非本机目标回 502、不外连', / 502 /.test(got?.steps[2]?.raw?.http?.status ?? '') && got?.proxies?.P?.[0]?.target === 'example.com:443']);
+  collectorCases.push(['假代理：写了 status 的代理拒绝 CONNECT', / 407 /.test(got?.steps[3]?.raw?.http?.status ?? '') && got?.proxies?.R?.length === 1]);
 }
 for (const [name, ok] of collectorCases) if (!ok) { bad++; console.log(`不符合预期  采集器：${name}`); }
 fs.rmSync(dir, { recursive: true, force: true });
