@@ -544,11 +544,11 @@ hooks:
   // 中止即杀 hook 进程（hooklog 没有 done 行）。模型 0.8 秒后才吐第一块文本然后挂住，收到这块文本就中止：
   // 那时 hook 进程已经起来并记下开始行（立刻中止的话进程可能还没起来，开始行有无取决于时机），
   // 中止落在流进行中、hook 睡完之前。之后同一会话再跑一轮：hook 照常派发、跑完。
-  // hook 进程收到 SIGTERM 后再活 300ms 才退出（term.mjs 包一层 hook.mjs）：被杀的 hook 的执行结果因此确定地落在
-  // 中止的一轮收尾之后、不上这一轮的流。不包这层时它与被截断的 assistant_block 只差几毫秒，Rust 侧五次里有一次先后颠倒。
-  // 2026-11-12 量过（macOS，槽位 3）：不包这层，基线 40 次全是 assistant_block > hook 完成(cancelled) > turn_completed；
-  // Rust 40 次里 14 次 hook 完成排到 assistant_block 前面。基线里两者没有代码上的先后约束（被杀 hook 的完成要等子进程
-  // close，SubprocessPort.ts:137；截断的块走 sidecar 往返），只是 Node 一侧子进程收尾慢得多；Rust 侧还没对齐，先保留包装。
+  // 被杀的 hook 的执行结果（outcome cancelled）上这一轮的流。基线里它与被截断的 assistant_block 没有代码上的先后约束
+  // （被杀 hook 的完成要等子进程 close，SubprocessPort.ts:85 / 137；截断的块走 sidecar 往返），只是 Node 一侧子进程收尾慢，
+  // 次序稳定：2026-11-12 量过（macOS），基线 40 次全是 assistant_block > hook 完成(cancelled) > turn_completed。
+  // Rust 把这两类被中止杀掉的 hook 的完成帧暂存到这一轮发终止事件之前（TurnEventCoordinator::emit_before_terminal），
+  // 固定成同样的次序。以前用 term.mjs 让 hook 晚 300ms 退出、把完成帧挤出这一轮的流来回避，现在去掉了。
   // 两个事件各一个场景：同时杀两个 hook 时两条 hook_execution_completed 的先后取决于进程退出的先后，基线自比不稳。
   for (const [name, event, log] of [
     ['hook-model-request-cancelled', 'PreModelRequest', 'pre-model'],
@@ -558,8 +558,7 @@ hooks:
     scenarios[name] = {
       about: `${event} hook 执行中用户中止这一轮：hook 进程被杀（hooklog 没有 done 行）、中止的一轮照常收尾；同一会话下一轮的 hook 照常派发并跑完。`,
       files: {
-        ...plugin('bbx-model-cancel', { [event]: [{ hooks: [{ ...cmd(log, { sleep: 3000 }), command: cmd(log, { sleep: 3000 }).command.replace('hook.mjs', 'term.mjs') }] }] }),
-        'home/.pilotdeck/plugins/bbx-model-cancel/term.mjs': TERM_LATE,
+        ...plugin('bbx-model-cancel', { [event]: [{ hooks: [cmd(log, { sleep: 3000 })] }] }),
       },
       provider: [
         TITLE,
