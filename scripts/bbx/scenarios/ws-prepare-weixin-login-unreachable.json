@@ -1,0 +1,27 @@
+{
+  "name": "ws-prepare-weixin-login-unreachable",
+  "about": "prepare_weixin_login（gateway/server/GatewayWsConnection.ts:528-536 → cli/pilotdeck.ts:235-246 的回调 → ChannelAdapterBundle.hotStartWeixin → pilotdeckServer.ts hotStartChannel/replaceChannel → WeixinChannel.start）。没有凭据时 start 走扫码登录（weixin-ilink 的 loginWithQR 连 https://ilinkai.weixin.qq.com），会产生对外网络请求，不跑。这里只比「渠道不可用」：home/.pilotdeck/weixin-credentials.json 里放齐 baseUrl / botToken / accountId（WeixinChannel.ts:978-990 的必填三项），baseUrl 指向本机不可连的 127.0.0.1:1，start 走带凭据的轮询分支（:164-167、:189-201），轮询连不上只在本机重试（:390-399），不碰微信服务器。比较两次调用的应答（第二次替换前一个实例，replaceChannel :154-189）与落盘（渠道运行状态、凭据文件）。",
+  "files": {
+    "home/.pilotdeck/weixin-credentials.json": {
+      "baseUrl": "http://127.0.0.1:1",
+      "botToken": "bbx-fake-token",
+      "accountId": "bbx-account"
+    }
+  },
+  "steps": [
+    {
+      "ws": "prepare_weixin_login",
+      "params": {}
+    },
+    {
+      "sleep": 1500
+    },
+    {
+      "ws": "prepare_weixin_login",
+      "params": {}
+    },
+    {
+      "sleep": 1500
+    }
+  ]
+}
