@@ -11,6 +11,9 @@
 //! chains every reload on one promise (`reloadChain`), so reloads run one at
 //! a time in publication order — here one task drains a queue.
 //!
+//! A reload whose `changedPaths` touch `proxy` reinstalls the process-wide
+//! fetch dispatcher from the new `proxy` section (see `reinstall_proxy`).
+//!
 //! The other branches of the same TS listener:
 //! - `telemetry.*` → `telemetry.setEnabled(...)`: no visible output (the
 //!   sender only starts or stops its flush timer, sender.ts:43-60), and this
@@ -25,6 +28,7 @@ use super::automation::{
 };
 use crate::config::store::{ConfigStore, ReloadEvent, Subscription};
 use crate::runtime::always_on::AlwaysOnConfig;
+use crate::runtime::model::http::{ProxySettings, dispatcher};
 use crate::switch::CronStopHandle;
 
 /// Which listener branches one change set takes (pilotdeck.ts:138-147).
@@ -82,6 +86,23 @@ pub(super) fn complete_line(branches: Branches, always_on: bool, cron: bool) -> 
     )
 }
 
+/// The `proxyChanged` branch (pilotdeck.ts:148-151):
+/// `reinstallGlobalProxy(proxy?.url, proxy?.noProxy)` on the next
+/// snapshot's normalized `proxy` section, before the automation branches and
+/// outside their queue (TS does not chain it on `reloadChain`).
+fn reinstall_proxy(snapshot: &JsValue) {
+    let settings = snapshot
+        .get("config")
+        .and_then(|config| config.get("proxy"))
+        .and_then(ProxySettings::from_config);
+    dispatcher::reinstall_global_proxy(
+        settings.as_ref().map(|settings| settings.url.as_str()),
+        settings
+            .as_ref()
+            .and_then(|settings| settings.no_proxy.as_deref()),
+    );
+}
+
 struct Job {
     branches: Branches,
     snapshot: Arc<JsValue>,
@@ -120,6 +141,9 @@ pub(super) fn subscribe(
         }
     });
     store.subscribe(Arc::new(move |event: &ReloadEvent| {
+        if touches(&event.changed_paths, "proxy") {
+            reinstall_proxy(&event.next_snapshot);
+        }
         let branches = classify(&event.changed_paths);
         if !branches.always_on && !branches.cron {
             return;

@@ -2,12 +2,9 @@
 //! ProjectMcpRuntimeBundle.ts (mcp/runtime/ProjectMcpRuntimeProvider.ts:
 //! options assembly) and ProjectExecutionWorldBundle.ts.
 use super::*;
-use crate::runtime::{
-    mcp::{
-        registry::{BuiltinMcpPaths, ProjectMcpRuntimeProvider, ProjectMcpRuntimeProviderOptions},
-        sdk::SystemEnvironment,
-    },
-    model::http::ProxySettings,
+use crate::runtime::mcp::{
+    registry::{BuiltinMcpPaths, ProjectMcpRuntimeProvider, ProjectMcpRuntimeProviderOptions},
+    sdk::SystemEnvironment,
 };
 use std::{any::Any, sync::Arc};
 
@@ -71,20 +68,6 @@ impl ResourceFamilySource for McpFamilySource {
     fn stage(&self, context: &StageContext, sink: &mut StageSink<'_>) -> RuntimeResult {
         let project_root = context.project_root();
         let pilot_home = context.pilot_home();
-        let snapshot = context.snapshot();
-
-        let proxy_settings = snapshot
-            .get("config")
-            .and_then(|c| c.get("proxy"))
-            .and_then(|v| v.get("url"))
-            .and_then(|u| u.as_string())
-            .filter(|url| !url.is_empty())
-            .map(|url| ProxySettings {
-                url: String::from_utf16_lossy(url.units()),
-                no_proxy: None,
-                ..ProxySettings::default()
-            });
-
         let options = ProjectMcpRuntimeProviderOptions {
             project_root: project_root
                 .to_str()
@@ -95,7 +78,11 @@ impl ResourceFamilySource for McpFamilySource {
                 .ok_or_else(|| RuntimeError::new("MCP: pilot home is not valid UTF-8"))?
                 .to_owned(),
             create_runtime: None,
-            proxy: proxy_settings,
+            // MCP HTTP transports `fetch` through the process-wide dispatcher
+            // (`network/fetch.ts`), so `proxy.url` reaches them through
+            // `runtime::model::http::dispatcher` — including hot reloads —
+            // rather than through per-project settings.
+            proxy: None,
             on_diagnostic: Some(project_diagnostic_sink(&project_root)),
             environment: Arc::new(SystemEnvironment),
             builtin_paths: self.builtin_paths.clone(),

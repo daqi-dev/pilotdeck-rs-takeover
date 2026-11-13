@@ -1255,11 +1255,15 @@ pub struct HttpHookOptions {
     pub signal: Option<Cancellation>,
 }
 
+type HookClient = hyper_util::client::legacy::Client<
+    ConnectDeadline<hyper_rustls::HttpsConnector<crate::runtime::model::http::ProxyConnect>>,
+    http_body_util::Full<bytes::Bytes>,
+>;
+
 pub struct HttpHookExecutor {
-    client: hyper_util::client::legacy::Client<
-        ConnectDeadline<hyper_rustls::HttpsConnector<crate::runtime::model::http::ProxyConnect>>,
-        http_body_util::Full<bytes::Bytes>,
-    >,
+    /// `fetch` through the process-wide dispatcher (`HttpHookExecutor.ts`
+    /// defaults to the global `fetch`).
+    client: Arc<crate::runtime::model::http::dispatcher::DispatchedClient<HookClient>>,
     /// undici `headersTimeout` (per dispatch, so per redirect hop) and
     /// `bodyTimeout` (idle gap between body frames). Tests inject a shorter
     /// value; production keeps the TS value.
@@ -1279,8 +1283,24 @@ impl Default for HttpHookExecutor {
 }
 impl HttpHookExecutor {
     pub fn new() -> Self {
-        // All default HTTP clients share the bundled and explicit extra CAs.
-        Self::with_config(crate::runtime::model::http::webpki_client_config())
+        // TS hooks call the global `fetch`: one dispatcher, one connection
+        // pool for the whole process, so a later hook (any session) reuses an
+        // idle connection or proxy tunnel (`hot-reload-proxy` measures this).
+        // Every default executor therefore shares one client.
+        static SHARED: std::sync::OnceLock<
+            Arc<crate::runtime::model::http::dispatcher::DispatchedClient<HookClient>>,
+        > = std::sync::OnceLock::new();
+        let shared = SHARED
+            .get_or_init(|| {
+                // All default HTTP clients share the bundled and explicit extra CAs.
+                Self::with_config(crate::runtime::model::http::webpki_client_config()).client
+            })
+            .clone();
+        Self {
+            client: shared,
+            timeout: HTTP_TIMEOUT,
+            body_limit: crate::fetch_redirect::MAX_STRING_LENGTH,
+        }
     }
     /// Trust exactly `roots` (tests use the fixture's throwaway CA).
     pub fn with_roots(roots: rustls::RootCertStore) -> Self {
@@ -1304,16 +1324,19 @@ impl HttpHookExecutor {
         // The model connector's TCP-only 10 s connect timeout stays as is;
         // this hook-local wrapper adds undici's whole-connect deadline
         // (TCP + TLS handshake) without changing the shared transport.
-        let connector = ConnectDeadline::new(
-            crate::runtime::model::http::proxy_https_connector(
-                config,
-                crate::runtime::model::http::ProxyConfig::from_settings(None),
-            ),
-            connect_timeout,
+        let client = Arc::new(
+            crate::runtime::model::http::dispatcher::DispatchedClient::global(move |proxy| {
+                let connector = ConnectDeadline::new(
+                    crate::runtime::model::http::shared_proxy_https_connector(
+                        config.clone(),
+                        proxy,
+                    ),
+                    connect_timeout,
+                );
+                hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
+                    .build(connector)
+            }),
         );
-        let client =
-            hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
-                .build(connector);
         Self {
             client,
             timeout: HTTP_TIMEOUT,
@@ -1337,7 +1360,7 @@ impl HttpHookExecutor {
         }
     }
     async fn execute_inner(&self, options: HttpHookOptions) -> Result<ExecutionResult, JsString> {
-        let client = self.client.clone();
+        let (client, _) = self.client.get();
         self.execute_with(options, move |request| {
             let client = client.clone();
             crate::runtime::network::ExchangeFuture::io(async move {

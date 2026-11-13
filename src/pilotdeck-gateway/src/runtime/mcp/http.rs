@@ -37,7 +37,8 @@ use super::wire::{Wire, frame_text, lock};
 use crate::runtime::{
     model::http::{
         BodyFailure, ConnectDeadline, ModelBody, ProxyConfig, ProxyConnect, ProxyError,
-        ProxySettings, encoding, proxy_https_connector, retry_after_header_ms,
+        ProxySettings, dispatcher::DispatchedClient, encoding, retry_after_header_ms,
+        shared_proxy_https_connector,
     },
     network::{Exchange, ExchangeFuture, delay, exchange_continuing, node_timer_duration},
     tools::ToolCancellation,
@@ -99,10 +100,11 @@ pub(super) struct HttpLink {
     headers: Vec<(String, String)>,
     post_timeout_ms: f64,
     get_timeout_ms: f64,
-    client: HttpClient,
-    /// The active proxy, if any; the connector is already built from it. Used
-    /// to reproduce undici's per-dispatch `Proxy-Authorization` refusal.
-    proxy: Option<ProxyConfig>,
+    /// The client for the dispatcher in force, with that dispatcher's proxy
+    /// (also used to reproduce undici's per-dispatch `Proxy-Authorization`
+    /// refusal). Follows the process-wide dispatcher unless the link was made
+    /// with explicit proxy settings.
+    dispatch: DispatchedClient<HttpClient>,
     state: Mutex<LinkState>,
     aborted: ToolCancellation,
 }
@@ -212,16 +214,44 @@ fn reject_proxy_authorization(
     ))
 }
 
+/// The header block `networkFetch` (undici's own `fetch`, `network/fetch.ts`)
+/// puts on the wire for the SDK's `Headers` object: the caller's headers in
+/// the `Headers` iteration order (sorted by name) inside undici's block
+/// (`host`, `connection`, ..., the Fetch defaults). Observed from the baseline
+/// on the streamable transport's POST (`cfg-proxy-outbound`).
+fn undici_wire_request(mut request: Request<Full<Bytes>>) -> Request<Full<Bytes>> {
+    let mut caller: Vec<_> = request
+        .headers()
+        .iter()
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect();
+    caller.sort_by(|left, right| left.0.as_str().cmp(right.0.as_str()));
+    let mut sorted = hyper::HeaderMap::with_capacity(caller.len());
+    for (name, value) in caller {
+        sorted.append(name, value);
+    }
+    *request.headers_mut() = fetch_redirect::undici_wire_headers(request.uri(), &sorted);
+    request
+}
+
 /// One `fetch` attempt; the response headers are awaited, not the body.
+/// `undici` selects `networkFetch`'s wire headers (the streamable transport);
+/// otherwise the request goes out with the caller's headers as they are.
 async fn fetch_once(
     client: &HttpClient,
     proxy: Option<&ProxyConfig>,
+    undici: bool,
     method: Method,
     url: &Url,
     headers: &HeaderList,
     body: Option<String>,
 ) -> Result<hyper::Response<ModelBody>, McpClientError> {
     fetch_with(method, url, headers, body, |request| async move {
+        let request = if undici {
+            undici_wire_request(request)
+        } else {
+            request
+        };
         // Checked per redirect hop: every hop is a new dispatch, and a hop
         // that routes through the proxy must not carry caller credentials.
         reject_proxy_authorization(proxy, &request)?;
@@ -752,26 +782,34 @@ async fn network_fetch(
                 body.clone(),
             );
             let proxy = proxy.cloned();
+            let undici = matches!(mode, Fetch::Network { .. });
             ExchangeFuture::io(async move {
-                fetch_once(&client, proxy.as_ref(), method, &url, &headers, body)
-                    .await
-                    .map_err(|error| {
-                        // fetch_once carries socket classification metadata in an
-                        // SDK-shaped error. Network mode must normalize this raw
-                        // fetch failure only after the await/cancellation race.
-                        // Plain keeps its existing bare-fetch projection.
-                        if matches!(mode, Fetch::Network { .. })
-                            && error.name() == "NetworkFetchError"
-                        {
-                            McpClientError::with_code(
-                                "TypeError",
-                                error.code().cloned().unwrap(),
-                                error.message().into(),
-                            )
-                        } else {
-                            error
-                        }
-                    })
+                fetch_once(
+                    &client,
+                    proxy.as_ref(),
+                    undici,
+                    method,
+                    &url,
+                    &headers,
+                    body,
+                )
+                .await
+                .map_err(|error| {
+                    // fetch_once carries socket classification metadata in an
+                    // SDK-shaped error. Network mode must normalize this raw
+                    // fetch failure only after the await/cancellation race.
+                    // Plain keeps its existing bare-fetch projection.
+                    if matches!(mode, Fetch::Network { .. }) && error.name() == "NetworkFetchError"
+                    {
+                        McpClientError::with_code(
+                            "TypeError",
+                            error.code().cloned().unwrap(),
+                            error.message().into(),
+                        )
+                    } else {
+                        error
+                    }
+                })
             })
         },
     )
@@ -1250,19 +1288,26 @@ impl HttpLink {
         config: rustls::ClientConfig,
         proxy: Option<&ProxySettings>,
     ) -> Self {
-        let proxy = ProxyConfig::from_settings(proxy);
-        let connector = ConnectDeadline::new(
-            proxy_https_connector(config, proxy.clone()),
-            MCP_CONNECT_TIMEOUT,
-        );
+        let build = move |proxy: Option<Arc<ProxyConfig>>| {
+            Client::builder(TokioExecutor::new()).build(ConnectDeadline::new(
+                shared_proxy_https_connector(config.clone(), proxy),
+                MCP_CONNECT_TIMEOUT,
+            ))
+        };
+        let dispatch = match proxy {
+            // Explicit settings pin the link to them (test seam).
+            Some(settings) => {
+                DispatchedClient::pinned(ProxyConfig::from_settings(Some(settings)), build)
+            }
+            None => DispatchedClient::global(build),
+        };
         Self {
             kind,
             url,
             headers,
             post_timeout_ms,
             get_timeout_ms,
-            client: Client::builder(TokioExecutor::new()).build(connector),
-            proxy,
+            dispatch,
             state: Mutex::new(LinkState::default()),
             aborted: ToolCancellation::default(),
         }
@@ -1343,9 +1388,10 @@ impl HttpLink {
         headers.set("content-type", "application/json");
         headers.set("accept", "application/json, text/event-stream");
         let body = frame_text(&message)?;
+        let (client, proxy) = self.dispatch.get();
         let response = network_fetch(
-            &self.client,
-            self.proxy.as_ref(),
+            &client,
+            proxy.as_deref(),
             Method::POST,
             &self.url,
             &headers,
@@ -1435,9 +1481,10 @@ impl HttpLink {
         headers.set("content-type", "application/json");
         let body = frame_text(&message)?;
         // Global `fetch`: no timeout, no retry; aborted with the transport.
+        let (client, proxy) = self.dispatch.get();
         let response = network_fetch(
-            &self.client,
-            self.proxy.as_ref(),
+            &client,
+            proxy.as_deref(),
             Method::POST,
             &endpoint,
             &headers,
@@ -1566,9 +1613,10 @@ async fn start_sse(
     if let Some(token) = resumption.as_deref().filter(|token| !token.is_empty()) {
         headers.set("last-event-id", token);
     }
+    let (client, proxy) = link.dispatch.get();
     let response = network_fetch(
-        &link.client,
-        link.proxy.as_ref(),
+        &client,
+        proxy.as_deref(),
         Method::GET,
         &link.url,
         &headers,
@@ -1718,9 +1766,10 @@ async fn event_source(wire: Weak<Wire>, ready: oneshot::Sender<Result<(), McpCli
         }
         let mut headers = link.common_headers();
         headers.set("Accept", "text/event-stream");
+        let (client, proxy) = link.dispatch.get();
         let fetched = network_fetch(
-            &link.client,
-            link.proxy.as_ref(),
+            &client,
+            proxy.as_deref(),
             Method::GET,
             &link.url,
             &headers,
