@@ -85,6 +85,34 @@ tcp 的 7 个与 deployment 的 4 个 TCP 用例在进程内起 `AgentLoopSideca
   `agentLoopSidecarServer.ts` 的 `callModule` 把调用对象整个展开进帧，序列化成空对象。与基线自己的类型（`protocol.ts` 的 module call 类型没有这个字段）
   和 schema（`moduleCallRequest` 的 `additionalProperties: false`）矛盾。client 组里基线 604 个 module_call 帧有 326 个这样。Rust 不发这个字段；需要人定是否登记为已接受差异。
 
+## 指向 Rust 的结果（2026-11-13，macOS）
+
+- client 28/28、tcp 3/3、deployment 1/1：10 轮全过（另有 3 轮的整套运行）。
+- schema：Rust sidecar 发出的 1204 帧全部合法，宿主帧全部合法，自检 7/7。修之前 Rust 的 604 个 module_call 帧全部不合法（顶层多了 `operation`），已修。
+- stdio（附加）：6/6，20 轮全过（修之前「截止已过的 execute 被拒」20 次红 6 次、「超时 cancel 判 result_unknown」20 次全红，已修）。
+- parity：17 个稳定场景里 3 轮都只过 3 个（`auto_compact`、`sidecar_continuable_followup_live`、`sidecar_continuable_followup_cold`）。
+  其余 14 个的差异都是跨通道的先后（`context.budget` 或 `model.request` 在 trace 里的位置），sidecar 发出的帧序与基线一致。
+  把**基线自己的 sidecar** 隔一层转录垫片再跑（`lib/tee-sidecar.mjs`，只多一次逐行转发），这 14 个里 13 个出现**完全相同**的差异路径、
+  第 14 个（`sidecar_one_shot_parent_close_after_admission`）出现同类的先后差异，`deadline` 同样多出那两处先后。
+  所以这些差异来自宿主对「一个读块里有几帧」的敏感（Node 把同一轮里的两次写合并成一块，Rust 每帧单独写并 flush），不是帧内容或帧序。
+  只有 Rust 才有的：`deadline` 在 3 轮里有 1 轮多一条 durable.status（`gateway_submit_failed`：「AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.」），未查。
+
+## 已知但未修的 Rust 差异
+
+- **取消释放挂起的模块调用**：基线 `agentLoopSidecarServer.ts` 的 `callModule` 在 abort 时立即删除挂起的调用并以 `SidecarAbortError` 拒绝，
+  执行随即以 `agent.execute.cancelled`（result `aborted`）结束；Rust 对已发出的调用在取消后再等宿主回应最多 5 秒（`stdio.rs` 的 reconciliation grace），
+  等不到就以 `agent.execute.result_unknown`（`RESULT_UNKNOWN`）结束。宿主会回应时（parity、bbx 的中止场景）两边结果一样；
+  宿主不回应时不同。stdio 组的「sidecar abort releases a pending module call」因此 20 次全红。改动涉及 Rust 有意设计的「已接受调用的不确定性」机制，没有动。
+
 ## 注入错误检查
 
-见报告；做法是改坏 Rust 的一处、重建、跑对应组确认变红、还原。
+改坏 Rust 的一处、重建、跑对应组、还原：
+
+| 注入 | 结果 |
+|---|---|
+| 握手回应 `protocolVersion` 改成 `2.1` | client / tcp / deployment 计入的用例全红 |
+| `cancelled` 终态改成 `canceled` | deployment 的 stdio 中止用例红，其余组不受影响 |
+| 事件帧 `streamId` 改名 `stream_id` | client 28 全红、tcp 2 红、deployment 1 红 |
+| `completed` 终态改成 `complete` | parity 的 `sidecar_continuable_followup_live` 红（oracle 报 terminal.outcome 不符）；`auto_compact` 不受影响（它的终态本来就是 failed） |
+
+schema 组另有内建自检（见上）。
