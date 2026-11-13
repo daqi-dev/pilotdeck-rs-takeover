@@ -143,3 +143,15 @@ T1 八个固定写后诊断场景另有 `syntaxDiagnostics` 正向谓词，验�
 ### SDK 真实信号取消的具名 bug 策略
 
 `c1-sdk-cancel-resume` 仅在同 binary 的完整八路原始 wire 证据重验成功后，使用 `sdkSignalAbortOrder` 对第1 serve 的 stdout footer/stderr 逐值接受已授权差异。运行前必须设置绝对 `BBX_SDK_SIGNAL_WIRE_DIR` 和 `BBX_SDK_SIGNAL_WIRE_RECEIPT`；`inputIdentity` 保存原始文件及收据哈希，缺证据为 INVALID。TS 自比仍保留原 DIFF，其他字段不忽略。完整命令、两层证据边界与严格负控见 [SDK signal 策略](sdk-signal-policy.md)。
+
+### 已批准的后台 observer 生命周期窗口与 memory 两个有限子组
+
+2026-11-13 用户明确批准三组精确边界：observer started/completion 的两个已验证窗口、memory 四处请求字节派生值、memory 六处采集 headers 对象键序。它们不是新校准的随机 volatile，也不代表全部 SDK 子代理差异已接受。规则逐叶打印 `COMPATIBILITY-VALUE`、实际路径、两侧原值及理由；原 capture 不改。
+
+`observer-lifecycle-policy.mjs` 仅接受固定 SHA 的 `agent03-sdk-fork` 和 memory lifecycle 原场景。先核同 worker/reviewer、完整四次 assistant 活动摘要/最终报告、实际 provider 参数、child/parent durable 链、projection、真实 WS/registry/history 及 run 内连续 seq。reviewer started 只能位于 agent tool_result 前，或紧随该 tool_result 与 step_completed 后，不能越过其他事件；completion 的 text/block/completed 必须完整且有序，属于首轮 W0 或同 session 紧接 W1 的真实 drain 窗口。固定源码的 session buffer 链与同 producer 的 durable/terminal/新 run/原始帧共同作证，不伪造隐藏 tap；没有同 exact TS 反向自比实证的限制仍保留。
+
+这项规则只配对已经证明的实体和实际路径，不排序或删除原事件数组。非目标值继续比较，不能把整个 array/record 标作已接受。若某个已验证跨窗口记录在普通逐下标报告里表现为整对象多出，比较器只在此具名合同内将它展开为 `.<type>`、对象键全集/次序、数组长度与每个叶值，再逐叶核对唯一实际 counterpart；打印 `LIFECYCLE-LEAF-EXPANSION`，未证明的未知字段、类型或叶仍报 DIFF。原整记录差异仍可从原件复算。已有标题 FLOAT_OVER 规则不扩大；仅六类强 UUID 实体用于目标证明，其他首次出现别名连锁仍保留。参见 `specs/gateway-parity/diffs/H1-OBSERVER-LIFECYCLE-WINDOWS-001.md`。
+
+`observer-memory-policy.mjs` 仅接受原 memory 具名场景的四个已验证长度/bytes 叶，以及 `memory-gate[0..2]`、`memory-selector[0..2]` 六个 headers 对象的键序叶。请求真实 body 的 UTF8 字节数、唯一 agent 报告 duration、headers 全部键值、请求身份与数量均须通过；不忽略 body、任意 header 或原始 wire。参见 `D1-SDK-MEMORY-DERIVED-001.md` 与 `D1-SDK-MEMORY-HEADER-ORDER-001.md`。fork 原 `sdkAgent03DerivedValues` 仍按原范围独立执行，memory trace/hash、其他数值、provider 请求键序和 model_selection 键序均未因此批准。
+
+`fixtures/observer-lifecycle-policy/paired-contract.json` 是明确删减无关大字段的合成结构测试数据，不是实际采集、构建来源或正式通过证明。正式实现还独立复用了原两场完整 capture 控制；旧 8a/ccc 的真实缺最后 assistant 摘要原件仍在专属摘要门被拒，不能用新生命周期规则遮住旧产品 bug。

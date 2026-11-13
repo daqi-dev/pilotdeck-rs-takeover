@@ -43,6 +43,8 @@
 // 过期检查：基线 vs Rust 比较时，场景登记的每条 accepted 正则一处都没命中，打印 STALE 并计 1 处差异；
 // volatile 正则一处都没命中只打印 STALE? 提示（基线这次没抖时本来就是 0）。--self（基线自比）不做这个检查。
 import fs from 'node:fs';
+import { observerMemoryPaths } from './observer-memory-policy.mjs';
+import { observerLifecyclePaths } from './observer-lifecycle-policy.mjs';
 import { discoveryPrefixPair } from './ao-discovery-prefix-policy.mjs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -81,8 +83,7 @@ const dur = () => '<dur>';
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const ISO = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g;
 
-function normalizer(prefixes = new WeakMap()) {
-  const ids = new Map();
+function normalizer(prefixes = new WeakMap(), ids = new Map()) {
   const snaps = new Map();
   const snap = (id) => { if (!snaps.has(id)) snaps.set(id, snaps.size + 1); return `<snap:${snaps.get(id)}>`; };
   // Remove the already ignored timing line before it can allocate UUID aliases.
@@ -150,7 +151,7 @@ function resettleProjections(v, moved) {
 // 记录的集合和每条内容照比。
 const UNORDERED_JSONL = /\/always-on\/projects\/[^/]+\/events\.jsonl$/;
 const orderKey = (r) => JSON.stringify(r).replace(UUID, 'U').replace(ISO, 'T').replace(/\d{13}(\.\d+)?/g, 'M');
-function load(input, prefixes) {
+function load(input, prefixes, aliases) {
   let raw = input;
   for (const entry of raw.volatilePolicies ?? []) {
     if (isDeepStrictEqual(entry, { policy: 'sdkAgent03DerivedValues' })) {
@@ -166,7 +167,7 @@ function load(input, prefixes) {
     if (UNORDERED_JSONL.test(name) && Array.isArray(entry?.jsonl)) entry.jsonl.sort((x, y) => (orderKey(x) < orderKey(y) ? -1 : orderKey(x) > orderKey(y) ? 1 : 0));
   }
   for (const k of Object.keys(IGNORED)) delete raw[k];
-  return normalizer(prefixes)(raw);
+  return normalizer(prefixes, aliases)(raw);
 }
 
 const show = (v) => { const s = JSON.stringify(v); return s === undefined ? '(absent)' : s.length > 200 ? s.slice(0, 200) + `… (${s.length} chars)` : s; };
@@ -212,11 +213,21 @@ const inputs = [fa, fb].map(file => JSON.parse(fs.readFileSync(file, 'utf8')));
 let prefixes;
 try { prefixes = discoveryPrefixPair(inputs[0], inputs[1], value => normalizer()(value)); }
 catch (error) { console.error(`INVALID AO discovery UUID prefix: ${error.message}`); process.exit(2); }
-const a = load(inputs[0], prefixes[0]), b = load(inputs[1], prefixes[1]);
+const uuidAliases = [new Map(), new Map()];
+const a = load(inputs[0], prefixes[0], uuidAliases[0]), b = load(inputs[1], prefixes[1], uuidAliases[1]);
 const scenarioVolatile = (JSON.parse(fs.readFileSync(fa, 'utf8')).volatile ?? []).map((p) => new RegExp(p));
 const all = [];
 compare(a, b, '$', all);
 const raw = files.slice(0, 2).map((file) => JSON.parse(fs.readFileSync(file, 'utf8')));
+const compatibilityValues = new Map();
+let observerLifecycle;
+try {
+  observerLifecycle = observerLifecyclePaths(raw[0], raw[1], a, b, uuidAliases[0], uuidAliases[1], all);
+  if (observerLifecycle.expandedDifferences) all.splice(0, all.length, ...observerLifecycle.expandedDifferences);
+  for (const [at, reason] of observerLifecycle) compatibilityValues.set(at, { policy: 'observerLifecycleWindows', reason });
+  for (const [at, reason] of observerMemoryPaths(raw[0], raw[1], a, b)) compatibilityValues.set(at, { policy: 'observerMemoryApproved', reason });
+} catch (error) { console.error(`INVALID observer lifecycle evidence: ${error.message}`); process.exit(2); }
+
 // A declared time policy accepts only individually validated values. The raw
 // captures remain immutable, and every accepted URL is printed below.
 if (!isDeepStrictEqual(raw[0].volatilePolicies ?? [], raw[1].volatilePolicies ?? [])) throw Error('volatile value policy mismatch');
@@ -261,7 +272,7 @@ for (const entry of scenarioAccepted) if (entry.policy) {
   entry.checked = syntaxAcceptedPaths(a, b, entry.config, (text) => tokenizer.encode(text).length, selfCompare ? ['ts', 'ts'] : ['ts', 'rust'], raw);
 }
 const regexStable = all.filter((d) => !scenarioVolatile.some((re) => re.test(d.at)));
-const stable = regexStable.filter((d) => !timeValues.has(d.at));
+const stable = regexStable.filter((d) => !timeValues.has(d.at) && !compatibilityValues.has(d.at));
 const acceptedValues = [];
 const diffs = stable.filter((d) => !scenarioAccepted.some((x) => {
   const reason = x.checked?.get(d.at);
@@ -283,6 +294,8 @@ if (!quiet) {
   if (scenarioVolatile.length) console.log(`  场景声明的不稳定路径: ${scenarioVolatile.map(String).join(' ')}（因此略过 ${all.length - regexStable.length} 处）`);
   for (const d of regexStable.filter((d) => timeValues.has(d.at))) console.log(`  VOLATILE-VALUE ${timePolicies.get(d.at)} ${d.at}: ${timeValues.get(d.at)}\n      raw a: ${show(d.a)}\n      raw b: ${show(d.b)}`);
   for (const x of scenarioAccepted) console.log(`  场景登记的已接受差异: ${x.id}（${x.why}）略过 ${x.hits} 处`);
+  for (const original of observerLifecycle?.wholeRecordDifferences ?? []) console.log(`  LIFECYCLE-LEAF-EXPANSION ${original.at}: original extra record retained in capture; typed leaves are independently compared`);
+  for (const d of regexStable.filter(d => compatibilityValues.has(d.at))) { const value = compatibilityValues.get(d.at); console.log(`  COMPATIBILITY-VALUE ${value.policy} ${d.at}: ${value.reason}\n      raw a: ${show(d.a)}\n      raw b: ${show(d.b)}`); }
   for (const d of acceptedValues) console.log(`  ACCEPTED ${d.id} ${d.at}: ${d.reason}\n      raw a: ${show(d.a)}\n      raw b: ${show(d.b)}`);
   for (const d of diffs.slice(0, max)) console.log(`  ${d.at}\n      a: ${show(d.a)}\n      b: ${show(d.b)}`);
   if (diffs.length > max) console.log(`  … 另有 ${diffs.length - max} 处`);
