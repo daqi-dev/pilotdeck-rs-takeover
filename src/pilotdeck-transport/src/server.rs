@@ -968,8 +968,10 @@ impl ExecutionServer {
                 .operations
                 .values()
                 .any(|op| {
-                    matches!(op.cancellation.cause(), Some(CancelCause::Requested(_)))
-                        && !op.terminal_published
+                    matches!(
+                        op.cancellation.cause(),
+                        Some(CancelCause::Requested(_) | CancelCause::Deadline)
+                    ) && !op.terminal_published
                 });
             if !pending || self.owner.is_closed() || Instant::now() >= until {
                 break;
