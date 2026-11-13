@@ -4,7 +4,7 @@
 
 「功能域」列填 `scripts/bbx/features.json` 里功能域的短标识（`domains[].id`），一个问题涉及几个域就用逗号分开，横跨全部的填 `*`；`scripts/bbx/status.mjs` 按这一列统计各域开着的问题（状态为 `—` 的占位行不计）。
 
-最后更新：2026-11-13（cb8 上 `6894f3dca` 的 v17 验收之后）
+最后更新：2026-11-14（合并 gw 缺口审查、cron 在线路径、尺子修复、占位盘点、中止语义审查之后；cb8 的 v18 验收结果还没取回）
 
 ## 1 安全与数据
 
@@ -17,12 +17,12 @@
 | 问题 | 功能域 | 位置 / 依据 | 来源 | 状态 |
 |---|---|---|---|---|
 | Linux 上稳定不一致：`skills-session-snapshot-at-create`（Rust 的系统提示词多约 40 个 token）。其余 5 个已在 `275ce32dc` 修掉（对拍根目录改成等长的 `/tmp/private`、场景余量），待 cb8 验收确认 | ext | cb8 全量对拍 | cb8 验收 | 在修（Linux 遗留子代理，2026-11-13 派） |
-| 用户中止时，基线让在途的工具自己结束、跑完 `PostToolUseFailure` hook（`isInterrupt: true`）再发 `turn_completed`；Rust 直接丢掉在途的工具调用，hook 不跑 | hooks, loop | 场景 `hook-post-tool-use-interrupt`；基线 `ToolRuntime.ts:418-423` | 表面缺口 | 在修（中止语义整块审查） |
 | 会话写入锁目录 `pilotdeck-ledger-locks-<uid>/` 建在共享临时目录（基线没有跨进程写入栅栏）：别的用户可抢先建同名目录让会话写入失败；`TMPDIR` 为空串时落到当前目录。这道栅栏是 Rust 独有的对外行为（拿不到锁时报 `Session operation ledger is locked.`），是否站得住取决于基线在两个写者下会不会损坏会话。两个转储场景因它各剩 1 处差异 | session | `storage/transcript.rs:460-607`；场景 `env-dump-request-tmpdir`、`proto-dump-request` | 任务预算与中止差异 | 在修（2026-11-13 派）。规则已定：先量基线（两个 server 共用 home；server 与离线 CLI 同写一个会话）。基线不损坏→删掉跨进程栅栏；基线损坏→保留并登记，锁目录优先 `XDG_RUNTIME_DIR`、目录准备不出来时退回无栅栏。不挪到 `PILOT_HOME`（会让每个场景的落盘树多一个目录） |
-| 中止落在 hook 执行中时的差异（基线每次都稳定）：`UserPromptSubmit` 中止，Rust 少发 `turn_aborted` 状态、少落一条会话记录；`Stop` 中止，基线以 `completed` 结束、Rust 发 `turn_failed` 和 `error`；`SubagentStart` / `SubagentStop` 中止，Rust 缺 `subagent_started` / `subagent_completed`，且 `SubagentStop` 的完成帧次序不稳 | hooks, loop, agents | 临时场景在会话 scratchpad 的 `hook-order/sc/aw-*.json`，未入库 | hook 帧次序 | 在修（中止语义整块审查） |
 | `skills-extension-watch-symlink` 在 Linux 上稳定差 2 处：基线比 Rust 多打「Extensions changed」日志行（子代理对 Linux 上 `fs.watch` 的推断不对） | ext | cb8 验收（`9a5fb723b`）两次单独重跑与全量 | cb8 验收 | 在修（Linux 遗留子代理） |
 | `turn-steer-terminal`：轮次进行中插话（steer）后，会话文件里插话记录与本轮记录的先后与基线不同（Rust 的循环在 sidecar 里，落盘经宿主一跳）。macOS 与 cb8 都稳定差 33 处 | loop, session | 场景 `turn-steer-terminal`；cb8 验收（`6894f3dca`） | 审阅 | 待派（与 sidecar 进程内化一起评估） |
 | WS 与 HTTP 共用 64 条连接上限（Rust 独有，基线 1000 条同时在线全部正常、RSS 只多约 8 MB）：100 条并发时 37 条被重置，期间 `/health` 与 `/api/web` 也连不上 | gw | `native_ws.rs`；场景 `gw-conn-many-clients`；旧记录 `A7.2-NATIVE-WS-AGGREGATE-001`（未批准） | gw 缺口审查 | 在修（2026-11-13 定：去掉上限；先量两侧在描述符耗尽时的表现，Rust 不能比基线差） |
+| 轮次超时之后的收尾：基线超时后停止转发、客户端收到 `result_unknown`，但被中止的循环在后台继续收尾（hook 照跑、事件写进 `runs/registry.json`、会话记录照写、子代理按自己的期限结束）；Rust 超时时立刻关闭会话写入，这些都没有。16 个 `abort-timeout-*` 场景全部不一致 | loop, session, hooks | 矩阵文件第 4 节 | 中止语义审查（`specs/delivery/abort-matrix.md`） | 在修（2026-11-14 派；基线这一段依赖两个异步操作谁先完成，先两侧各量 20 次） |
+| `abort-model-stream`：Rust 读一个被中止过的会话的历史时，缺上一轮保留的流（两轮都复现，成因没查） | session, loop | 场景 `abort-model-stream` | 中止语义审查（`specs/delivery/abort-matrix.md`） | 在修（同上一个子代理） |
 | 配置热重载的子系统部分整块没有（G1）：服务运行中改了 `cron` / `alwaysOn` / `proxy` / `adapters` / `telemetry` 的配置（含界面改设置），基线重启对应子系统并打日志，Rust 静默不生效，要重启。`assembly/automation.rs` 的 `reload` 已写好但只有测试调用 | config, auto, channels | `native_process/assembly.rs:1998`；基线 `pilotdeck.ts:132-206`；无场景 | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 在修（2026-11-13 派） |
 | `request_user_form` 遇到带 Draft 2020-12 声明的表单 schema 时工具报 Rust 自造的「not supported by this gateway」（G3）；模型写 schema 时常带这一行 | tools | `form_dialog.rs:160-164` | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 待派（先实测基线对这类 schema 的处理） |
 
@@ -41,9 +41,9 @@
 | 表面清单里没做完的：`agent_execution_rejected`、`agent_turn_discarded`、`permission_failed`、`agent_transcript_error`（后者判断做不到） | loop, perm | `coverage.mjs --surface` | 表面缺口 | 待派 |
 | 任务预算没做的：`projectRetentionMs` 到期清理无场景；组织策略的 `maxTaskBudgetUsd` 上限没接；预算与子代理、压缩摘要费用的关系没查 | loop, config | `native_process/task_budget.rs`；基线 `ProjectRuntimeRegistry.ts:1058-1072` | 任务预算 | 待派 |
 | 请求转储在带 `extraBody` 或 Google 协议时，Rust 转储的是实际发出的请求体，与基线不同；无场景 | model | `runtime/model/http.rs` | 任务预算与中止差异 | 待派 |
-| 被杀的 advisory hook 收到 SIGTERM 后若还活不到 1 秒，Rust 会把它的完成帧放上流，基线可能已结束这一轮；1 秒上限是 Rust 自定的，无场景，这个修复也没单独做注入错误检查 | hooks | `runtime/turn/coordinator` 的 `ADVISORY_KILL_SETTLE` | hook 帧次序 | 待派 |
 | sidecar 收到「请求方取消」恰好落在 factory 前或准备阶段的毫秒级窗口时：Rust 给干净的中止结果，基线 TS sidecar 给缺结果的 `cancelled` 终止帧（只在显式外部部署下可见） | modules | `pilotdeck-transport/src/server.rs`、`default_factory.rs` | 任务预算与中止差异 | 记为已知 |
 | 审阅第 3 级修复没做完的：子代理场景的用量正则没有加位置限定（只认字段名）；Google 协议分支的重试日志行没有对拍覆盖 | agents, model | `c6a53a052` 的报告 | 审阅 | 待派 |
+| 中止矩阵里没有场景的格子：上下文准备中、续写 / 恢复间隙（没有可观察的触发帧）；web 工具（采集器没有慢速本机端点）；后台子代理；工具调用参数传到一半。检查点之间的其余段落没有逐段审查 | loop, tools, agents | 矩阵文件 | 中止语义审查（`specs/delivery/abort-matrix.md`） | 记为已知 |
 | `sdkSessionConfig` 的三种合法写法被拒（G2）：`plugins`、基线会忽略的未知键、同时给 `skills` 列表和 `agents`；请求带基线没有的 `sdkConfig` 字段、畸形的 `uploadedAttachments` 引用、method 名含孤立代理项时回 Rust 自造的拒绝（G11） | config, loop, session | `sdk_config.rs:1365-1391` | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 待派 |
 | `modules.skills` / `modelProvider` / `context` 配了外部模块绑定时 server 拒绝启动（G4） | modules | 文案 `Native isolated profile does not yet support configured module bindings.` | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 待派 |
 | `gateway setup` 里只写本地 yaml、不联网的三步输出 `TODO`（G5） | cli | `gateway_setup.rs:269,307,361` | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 待派（联网的三步等人定范围） |
@@ -61,6 +61,7 @@
 | 问题 | 功能域 | 位置 / 依据 | 来源 | 状态 |
 |---|---|---|---|---|
 | Rust sidecar 每帧单独写，Node 把同一轮里的几次写合并成一块；TS 宿主对一次读到几帧敏感，上游对拍工具里 14 个稳定场景因此记录先后不同（帧内容一致） | modules | `scripts/upstream-tests` 的 parity 组 | 上游 sidecar 测试 | 记为已知 |
+| `abort-hook-subagent-start`：会话文件里标题记录的位置（Rust 更早落盘）；`abort-turn-finishing`：Rust 一轮更慢，中止落在标题生成解绑之前，标题被取消、下一轮重生成（基线这时已解绑）。两处都没有两侧各量 20 次 | session, loop | 场景同名 | 中止语义审查（`specs/delivery/abort-matrix.md`） | 在修（同上：先量） |
 | HTTP 传输字节（hyper 与 Node 的差别）：400 / 431 应答多带 `content-length: 0`；HTTP/1.0 请求回 `HTTP/1.0` 状态行；请求头写一半就半关闭时基线回 400、Rust 不回。头名大小写与 chunk 长度的十六进制大小写按语义等价由采集器归一化 | gw | 场景 `gw-http-raw-requests`、`gw-conn-large-frame` | gw 缺口审查 | 在修（尽量在 Rust 里对齐；hyper 做不到的留着差异问人） |
 | 性能待查（调试构建）：`submit_turn` 约 300ms 对基线约 47ms；空闲 CPU 约 3% 对 0%；扩展监视在 3 万个文件的树下空闲 5.4% 对 1.9% | * | 审阅修复的测量脚本 | 审阅修复 | 性能报告时用发布构建重量 |
 
@@ -76,6 +77,7 @@
 | 基线停机偶发退出码 1（`gap-tool-grep` 自比 3 次里 2 次，疑似停机时触发未捕获异常的处理，`cli/pilotdeck.ts:266-274`）：频率和条件没量清，是否登记为基线 bug 未定 | gw | Linux 差异 | 待量 |
 | 基线停机时运行记录有时停在 `running`（`tool-goal-permission` 基线连跑 30 次里 3 次：停机抢在终态写入之前），该场景因此偶发不一致 | session | 尺子修复的报告 | 待派（基线自己不稳，声明最窄的 volatile） |
 | 三处远程输入让基线崩溃或挂死（请求目标 `//[`、不加掩码的帧、`/api/web/projects/%E0/…`；前两处不需要鉴权）：基线 bug，Rust 不照做，三个 `gw-crash-*` 场景待登记 accepted。单帧超过 100 MiB 时 Rust 以 1009 关闭、基线接受但内存随帧长平方增长（300 MiB 一帧 60 秒无应答）：Rust 的上限保留，待登记为有意偏离 | gw | `GatewayServer.ts:95`、`websocket.ts:133`、`httpRouter.ts:60` | gw 缺口审查 | 在修（登记最窄路径；登记后列入「需要人过目的决定」） |
+| `abort-hook-pre-tool`（`close_session` 列）与 `hook-cancelled` 是同一个基线 bug（被中止杀掉的 PreToolUse hook 不阻断，工具仍执行），还没登记；场景由 `abort.gen.mjs` 生成，登记要写在生成脚本里 | hooks | 场景同名 | 中止语义审查（`specs/delivery/abort-matrix.md`） | 在修（同上一个子代理：沿用 `aborted-hook-does-not-run-tool`，只放过 `ran-*.txt`） |
 | cb8 是共用机器：同机别人跑同一套测试时，固定端口的测试（18973、18990、28999）会失败。`6894f3dca` 的全量 nextest 因此 7754/7755，单独重跑通过 | channels | cb8 验收（`6894f3dca`） | 记为已知（第 5 条的 cb8 那一次要挑没人跑的时候，或以接手仓库的 CI 为准） |
 | Rust 调试构建的一轮比基线慢 4–8 倍（压缩一步约 0.5–0.8 秒），时间余量紧的场景在慢机器上会翻红 | * | Linux 差异 | 性能报告时看发布构建 |
 | `surface.json` 标为「不计」的项（第一组 28 项，第二组又有若干：TUI 本地命令、QQ 前缀、做不到的错误码等），理由是子代理写的，抽查五项成立；整张表要人过目（交付标准第 2 条） | * | 审阅 | 待整理 |
