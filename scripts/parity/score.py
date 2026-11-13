@@ -275,7 +275,14 @@ def calibrate_pool(directories, inputs):
     return captures, records, registration
 
 
-def score(ts_directories, rust_directories, reference_pool=None, *, paired_only=False, reference_registration=None):
+def parentclose_admission(score_module, ts_directories, cancel_pool, cancel_lock, parent_pool, parent_lock):
+    if cancel_lock is None or parent_pool is None or parent_lock is None:
+        raise ValueError('both independent reference pools and registration locks are required')
+    policy = _load('parentclose_policy_candidate',Path(__file__).with_name('parentclose_policy.py'))
+    return policy.validate_ts(score_module,ts_directories,parent_pool,None,cancel_pool,parent_lock=parent_lock)
+
+
+def score(ts_directories, rust_directories, reference_pool=None, *, paired_only=False, reference_registration=None, parentclose_reference_pool=None, parentclose_reference_registration=None):
     inputs = Inputs()
     try:
         catalog = G.scenario_catalog()
@@ -297,6 +304,19 @@ def score(ts_directories, rust_directories, reference_pool=None, *, paired_only=
                 pinned = json.loads(Path(reference_registration).read_text())
                 if pinned.get('TS_calibration') != registration:
                     raise ValueError('recomputed TS classes/trace sha256 differ from pinned reference registration')
+        parent_policy = _load('parentclose_policy_candidate', Path(__file__).with_name('parentclose_policy.py'))
+        parent_evidence = None
+        if not paired_only:
+            parent_evidence = parentclose_admission(sys.modules[__name__],ts_directories,reference_pool,reference_registration,parentclose_reference_pool,parentclose_reference_registration)
+            if parent_evidence is not None:
+                parent_captures,parent_records,parent_registration = parent_policy.calibrate(sys.modules[__name__],parentclose_reference_pool,inputs)
+                if parent_registration != parent_evidence['parentclose_registration']:
+                    raise ValueError('parent reference pool changed after locked TS admission')
+                # Capture the independently verified lock in the public flat closure too.
+                for path, expected in parent_evidence['input_sha256'].items():
+                    if G.sha256(Path(path)) != expected:
+                        raise ValueError('parent admission input changed: ' + path)
+                    inputs.hashes[path] = expected
         # Policy and classes above are fixed without consulting Rust.
         ts = [inputs.capture(d, 'ts', catalog) for d in ts_directories]
         require_ts_source([root for root, _ in pool] + [root for root, _, _ in ts], inputs)
@@ -326,7 +346,11 @@ def score(ts_directories, rust_directories, reference_pool=None, *, paired_only=
                 pair = compact(G.compare_records(
                     sid, G.load_aligned(G.artifact_dir(ts[i][0]) / f'{sid}.pilotdeck-current-sidecar.jsonl'),
                     records, catalog[sid]))
-                if sid in registration:
+                if parent_evidence is not None and sid == parent_policy.SID:
+                    checked = parent_policy.compare(sys.modules[__name__],capture[0],parent_records,parent_registration,'rust')
+                    if round_refusal or pair_reason:checked=refused(round_refusal or pair_reason)
+                    runs.append({'run':i+1,**checked,'paired':pair})
+                elif sid in registration:
                     pool_contexts = [inputs.dates[str(root)][sid] for root, _ in pool]
                     reason = next((reason for j, context in enumerate(pool_contexts)
                                    if (reason := date_mismatch(context, rust_date, f'Rust run {i + 1} / TS reference {j + 1}'))), None)
@@ -350,7 +374,7 @@ def score(ts_directories, rust_directories, reference_pool=None, *, paired_only=
                                  'paired': pair, 'date_context': {'ts': ts_date, 'rust': rust_date}})
             refused_runs = [r['run'] for r in runs if r['verdict'] == 'REFUSED']
             failed = [r['run'] for r in runs if r['verdict'] == 'FAIL']
-            multimodal = sid in registration
+            multimodal = sid in registration or (parent_evidence is not None and sid == parent_policy.SID)
             scenarios[sid] = {'verdict': 'REFUSED' if refused_runs else 'FAIL' if failed else 'PASS',
                 'counted': sid not in excluded,
                 'policy': 'TS_reference_set' if multimodal else 'paired_i_to_i',
@@ -367,7 +391,7 @@ def score(ts_directories, rust_directories, reference_pool=None, *, paired_only=
                   'reason': f'date context precondition failed for {refused_scenarios}' if refused_scenarios else None,
                   'excluded_original_unstable': sorted(excluded),
                   'registration_status': '待批（方案 B 人已批准；登记待协调者评审冻结）',
-                  'TS_reference_pool': [str(root) for root, _ in pool], 'TS_calibration': registration,
+                  'parentclose_supplement': parent_evidence, 'TS_reference_pool': [str(root) for root, _ in pool], 'TS_calibration': registration,
                   'per_scenario': scenarios}
     except (OSError, ValueError, TypeError, KeyError, AttributeError, IndexError, OverflowError) as error:
         result = {'valid_score': False, 'verdict': 'REFUSED', 'score': None, 'reason': str(error)}
@@ -375,7 +399,7 @@ def score(ts_directories, rust_directories, reference_pool=None, *, paired_only=
     result['date_context'] = inputs.dates
     result['capture_source_sha256'] = {root: {key: ledger.get(key) for key in SOURCE_KEYS}
                                        for root, ledger in inputs.ledgers.items()}
-    result['code_sha256'] = {str(p): G.sha256(p) for p in (Path(__file__), Path(G.__file__))}
+    result['code_sha256'] = {str(p): G.sha256(p) for p in (Path(__file__), Path(G.__file__),Path(__file__).with_name('parentclose_policy.py'),Path(__file__).with_name('parentclose_oracle.py'))}
     result['original_sha256'] = {name: G.sha256(G.TOOLS / name) for name in ('trace.py', 'scenarios.json')}
     return result
 
@@ -386,13 +410,15 @@ def main():
     parser.add_argument('--rust', nargs='+', required=True, type=Path, metavar='DIR')
     parser.add_argument('--reference-pool', nargs='+', type=Path, metavar='TS_DIR')
     parser.add_argument('--reference-registration', type=Path, help='verify recomputed TS calibration against a pinned TS-only JSON report')
+    parser.add_argument('--parentclose-reference-pool', nargs='+', type=Path)
+    parser.add_argument('--parentclose-reference-registration', type=Path)
     parser.add_argument('--paired-only', action='store_true', help='replay the old paired policy, without reference calibration')
     parser.add_argument('--json', type=Path)
     args = parser.parse_args()
-    if args.paired_only and (args.reference_pool is not None or args.reference_registration is not None):
+    if args.paired_only and any(x is not None for x in (args.reference_pool,args.reference_registration,args.parentclose_reference_pool,args.parentclose_reference_registration)):
         parser.error('--paired-only cannot be combined with reference pool/registration')
     result = score(args.ts, args.rust, args.reference_pool, paired_only=args.paired_only,
-                   reference_registration=args.reference_registration)
+                   reference_registration=args.reference_registration,parentclose_reference_pool=args.parentclose_reference_pool,parentclose_reference_registration=args.parentclose_reference_registration)
     data = json.dumps(result, ensure_ascii=False, indent=2) + '\n'
     if args.json:
         G.write_result_exclusive(args.json, data)

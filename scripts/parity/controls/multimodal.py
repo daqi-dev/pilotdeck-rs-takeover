@@ -60,6 +60,13 @@ S = _load('score', _HERE.parent / 'score.py')
 
 
 def run_controls(source):
+    # Isolate the unchanged cancel policy in its original synthetic fixtures.
+    # Parent admission is tested separately with real captures, never bypassed by CLI.
+    with patch.object(S, 'parentclose_admission', return_value=None):
+        return run_cancel_controls(source)
+
+
+def run_cancel_controls(source):
     catalog = G.scenario_catalog()
     source = G.artifact_dir(source)
     originals = {sid: [json.loads(line) for line in G.jsonl_lines((source / f'{sid}.pilotdeck-current-sidecar.jsonl').read_text())]

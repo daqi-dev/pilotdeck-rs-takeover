@@ -101,6 +101,7 @@ def check_self_comparison(path):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--self-compare', type=Path, default=G.WORKTREE / '_tmp/self-compare.json')
+    ap.add_argument('--parentclose-supplement', type=Path, required=True)
     ap.add_argument('--control-source', type=Path, default=DEFAULT_SOURCE)
     ap.add_argument('--json', type=Path, default=G.WORKTREE / '_tmp/ruler-check.json')
     args = ap.parse_args()
@@ -109,8 +110,9 @@ def main():
     except (OSError, ValueError, TypeError, AttributeError, KeyError) as error:
         controls = {'ok': False, 'negative_controls': False, 'both_broken': False, 'error': str(error)}
     self_status = check_self_comparison(args.self_compare)
+    supplement_status = check_parentclose_supplement(args.self_compare,args.parentclose_supplement)
     frozen = check_frozen()
-    result = {'self_compare': self_status['ok'], 'negative_controls': controls['negative_controls'],
+    result = {'parentclose_supplement':supplement_status,'self_compare': self_status['ok'] and supplement_status['ok'], 'negative_controls': controls['negative_controls'],
               'both_broken': controls['both_broken'], 'independent_review': independent_review(), 'S_size': self_status['S_size'],
               'positive_controls': controls.get('positive_controls', False),
               'frozen_hashes': frozen['ok'], 'fully_frozen': frozen['fully_registered'],
@@ -121,6 +123,52 @@ def main():
     print(json.dumps(result, ensure_ascii=False))
     # Pending independent review never becomes an overall acceptance PASS.
     return 2 if result['machine_checks_pass'] else 1
+
+
+
+
+def check_parentclose_supplement(original_self_path, supplement_path):
+    """Independent recomputation; S and the ten original TS pairs remain unchanged."""
+    try:
+        original = check_self_comparison(original_self_path)
+        if not original['ok'] or original['S_size'] != 52:
+            raise ValueError('original S52 proof invalid')
+        claim = json.loads(Path(supplement_path).read_text())
+        original_raw = json.loads(Path(original_self_path).read_text())
+        expected_ts = [(Path(original_raw['source']) / f'r{i}').resolve() for i in range(1,6)]
+        if [Path(p).resolve() for p in claim['ts_directories']] != expected_ts:
+            raise ValueError('supplement TS directories differ from original self round')
+        catalog = G.scenario_catalog()
+        for directory in expected_ts:
+            for sid in catalog:
+                trace = (G.artifact_dir(directory) / f'{sid}.pilotdeck-current-sidecar.jsonl').resolve()
+                expected = original_raw['input_sha256'].get(str(trace))
+                if not expected or G.sha256(trace) != expected:
+                    raise ValueError('supplement original 53-trace binding mismatch: ' + str(trace))
+        here = Path(__file__).resolve().parent
+        score = _load('parentclose_ruler_score', here / 'score.py')
+        score.G.WORKTREE = G.WORKTREE
+        policy = _load('parentclose_ruler_policy', here / 'parentclose_policy.py')
+        actual = policy.validate_ts(score, claim['ts_directories'], claim['parentclose_reference_pool'], None,
+                                   claim['cancel_reference_pool'], parent_lock=claim['parentclose_reference_registration'])
+        independent = score.Inputs()
+        _, _, cancel_registration = score.calibrate_pool(claim['cancel_reference_pool'], independent)
+        cancel_lock = Path(claim['cancel_reference_registration'])
+        if json.loads(cancel_lock.read_text()).get('TS_calibration') != cancel_registration:
+            raise ValueError('cancel registration lock mismatch')
+        for path, expected in claim['input_sha256'].items():
+            if G.sha256(Path(path)) != expected:
+                raise ValueError('supplement input hash mismatch: ' + path)
+        if actual != claim['recomputed_TS_evidence']:
+            raise ValueError('supplement independent recomputation mismatch')
+        source = json.loads(Path(original_self_path).read_text())
+        if source['excluded'] != [policy.SID] or policy.SID in source['S']:
+            raise ValueError('original S52 exclusion changed')
+        return {'ok': True, 'original_S_size': 52, 'supplemental_scenarios': [policy.SID],
+                'TS_checks': len(actual['ts_checks']), 'counted_catalog_size': 53,
+                'note': 'supplemental class admission; original pairwise S remains 52'}
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, IndexError) as error:
+        return {'ok': False, 'error': str(error)}
 
 
 if __name__ == '__main__':
