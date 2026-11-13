@@ -189,7 +189,7 @@ impl ConnectionOwner {
         Ok(BoundExchange {
             owner: self.clone(),
             identity,
-            plan_todo_sequence: Arc::default(),
+            scope: Arc::default(),
         })
     }
     /// Reader never waits for output capacity. Controls change cancellation/state
@@ -446,16 +446,116 @@ fn unknown(identity: &ExecutionIdentity) -> PortError {
         last_applied_sequence: None,
     }
 }
+/// What every host call of one execution shares.
+#[derive(Debug, Default)]
+pub(crate) struct ExecutionScope {
+    /// hostPlanTodoPort.ts:62 numbers its requests per port, and the default
+    /// factory builds one port per execution.
+    plan_todo_sequence: AtomicU64,
+    /// `moduleFailures` (agentLoopSidecarServer.ts:83, 472-484): the last
+    /// failed host reply of the execution, cleared by a later success.
+    module_failure: Mutex<Option<JsObject>>,
+}
+impl ExecutionScope {
+    pub(crate) fn module_failure(&self) -> Option<JsObject> {
+        self.module_failure
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+    /// callModule's bookkeeping after a reply (466-484). An explicit unknown
+    /// and a capability's terminal failure are thrown before it; ports that
+    /// pass `recordFailure: false` skip it (model close_stream,
+    /// hostModelInvokerPort.ts:187; every context operation but
+    /// prepare_for_model, hostContextRuntime.ts:50; event emit,
+    /// hostAgentEventBridge.ts:42).
+    fn record(&self, module: &str, operation: &str, response: &JsValue) {
+        let recorded = match module {
+            "model" => operation != "close_stream",
+            "context" => operation == "prepare_for_model",
+            "event" => false,
+            _ => true,
+        };
+        let text = |key: &str| response.get(key).and_then(JsValue::as_string);
+        let ok = response.get("ok") == Some(&JsValue::Bool(true));
+        let explicit_unknown = !ok
+            && text("outcome").is_some_and(|o| o.equals_str("result_unknown"))
+            && text("code").is_some_and(|c| c.equals_str("RESULT_UNKNOWN"));
+        let capability_terminal = module == "capability"
+            && !ok
+            && response.get("final") == Some(&JsValue::Bool(true))
+            && text("outcome").is_some_and(|o| o.equals_str("failed"));
+        if !recorded || explicit_unknown || capability_terminal {
+            return;
+        }
+        let mut failure = self
+            .module_failure
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if ok {
+            *failure = None;
+            return;
+        }
+        let code = text("code").filter(|code| !code.is_empty());
+        let mut record = JsObject::new();
+        if let Some(code) = code {
+            record.insert("code".into(), JsValue::String(code.clone()));
+        }
+        // String(result.error?.message ?? result.code ?? "Module call failed.")
+        let message = match response.get("error").and_then(|error| error.get("message")) {
+            Some(value) if !matches!(value, JsValue::Undefined | JsValue::Null) => js_string(value),
+            _ => match response.get("code") {
+                Some(value) if !matches!(value, JsValue::Undefined | JsValue::Null) => {
+                    js_string(value)
+                }
+                _ => "Module call failed.".into(),
+            },
+        };
+        record.insert("message".into(), JsValue::String(message));
+        *failure = Some(record);
+    }
+}
+/// JS `String(value)` for a wire value.
+fn js_string(value: &JsValue) -> JsString {
+    match value {
+        JsValue::String(text) => text.clone(),
+        JsValue::Undefined => "undefined".into(),
+        JsValue::Null => "null".into(),
+        JsValue::Bool(true) => "true".into(),
+        JsValue::Bool(false) => "false".into(),
+        JsValue::Number(n) if n.is_nan() => "NaN".into(),
+        JsValue::Number(n) if n.is_infinite() => {
+            if *n > 0.0 { "Infinity" } else { "-Infinity" }.into()
+        }
+        JsValue::Number(_) => stringify_json(value)
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+            .as_str()
+            .into(),
+        JsValue::Object(_) => "[object Object]".into(),
+        JsValue::Array(items) => {
+            let mut units = Vec::new();
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    units.push(u16::from(b','));
+                }
+                if !matches!(item, JsValue::Undefined | JsValue::Null) {
+                    units.extend_from_slice(js_string(item).units());
+                }
+            }
+            JsString::from_utf16(units)
+        }
+    }
+}
 pub struct BoundExchange {
     owner: ConnectionOwner,
     identity: ExecutionIdentity,
-    /// hostPlanTodoPort.ts:62 numbers its requests per port, and the default
-    /// factory builds one port per execution: the execution shares this.
-    plan_todo_sequence: Arc<AtomicU64>,
+    scope: Arc<ExecutionScope>,
 }
 impl BoundExchange {
-    pub(crate) fn with_plan_todo_sequence(mut self, sequence: Arc<AtomicU64>) -> Self {
-        self.plan_todo_sequence = sequence;
+    pub(crate) fn with_scope(mut self, scope: Arc<ExecutionScope>) -> Self {
+        self.scope = scope;
         self
     }
     /// The request id each baseline host port gives its call (a prefix naming
@@ -486,7 +586,11 @@ impl BoundExchange {
             }
             ("model", _) => "model".to_owned(),
             ("capability", "plan_todo") => {
-                let sequence = self.plan_todo_sequence.fetch_add(1, Ordering::Relaxed) + 1;
+                let sequence = self
+                    .scope
+                    .plan_todo_sequence
+                    .fetch_add(1, Ordering::Relaxed)
+                    + 1;
                 return format!("plan-todo-{}-{sequence}", random_token()).into();
             }
             ("capability", "list_tools") => "tool-catalog".to_owned(),
@@ -644,6 +748,9 @@ impl BoundExchange {
             owner: self.owner.clone(),
             identity,
             message_id,
+            module,
+            operation,
+            scope: self.scope.clone(),
         })
     }
 }
@@ -653,8 +760,17 @@ pub(crate) struct PendingExchange {
     owner: ConnectionOwner,
     identity: ExecutionIdentity,
     message_id: JsString,
+    module: &'static str,
+    operation: &'static str,
+    scope: Arc<ExecutionScope>,
 }
 impl PendingExchange {
+    pub(crate) fn wait(self, control: &CallControl) -> PortResult<HostExchangeResponse> {
+        let (module, operation, scope) = (self.module, self.operation, self.scope.clone());
+        let response = self.wait_reply(control)?;
+        scope.record(module, operation, response.boundary.value());
+        Ok(response)
+    }
     pub(crate) fn is_ready(&self) -> bool {
         let state = self.owner.0.state.lock().unwrap_or_else(|p| p.into_inner());
         state.closed
@@ -664,11 +780,12 @@ impl PendingExchange {
                     || record.phase == DispatchPhase::InvalidReply
             })
     }
-    pub(crate) fn wait(self, control: &CallControl) -> PortResult<HostExchangeResponse> {
+    fn wait_reply(self, control: &CallControl) -> PortResult<HostExchangeResponse> {
         let Self {
             owner,
             identity,
             message_id,
+            ..
         } = self;
         owner.0.wake_registered(control);
         let mut reconciliation_deadline = None;

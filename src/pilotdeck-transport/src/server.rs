@@ -11,7 +11,6 @@ use pilotdeck_protocol::wire::{EnvelopeRef, MessageRef, RequestBodyRef, RequestR
 use pilotdeck_protocol::{JsObject, JsString, JsValue, MODULE_PROTOCOL_VERSION, parse_json};
 use std::collections::{HashMap, VecDeque};
 use std::io::{self, BufRead, Write};
-use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -58,7 +57,7 @@ pub struct ExecutionContext {
     stream_id: JsString,
     sequence: Arc<Mutex<f64>>,
     identities: Mutex<Vec<ExecutionIdentity>>,
-    plan_todo_sequence: Arc<AtomicU64>,
+    scope: Arc<crate::stdio::ExecutionScope>,
     pub control: CallControl,
 }
 impl ExecutionContext {
@@ -96,7 +95,7 @@ impl ExecutionContext {
         let exchange = self
             .owner
             .bound_exchange(identity.clone())?
-            .with_plan_todo_sequence(self.plan_todo_sequence.clone());
+            .with_scope(self.scope.clone());
         let mut identities = self.identities.lock().unwrap_or_else(|p| p.into_inner());
         if !identities.contains(&identity) {
             identities.push(identity);
@@ -766,7 +765,7 @@ impl ExecutionServer {
                 stream_id: work.stream_id.clone(),
                 sequence: work.sequence,
                 identities: Mutex::new(Vec::new()),
-                plan_todo_sequence: Arc::default(),
+                scope: Arc::default(),
                 control: work.control,
             };
             // Catching a worker panic prevents a permanently running operation.
@@ -775,7 +774,7 @@ impl ExecutionServer {
                 self.factory.execute(&work.request, &mut context)
             }));
             let terminal = match result {
-                Ok(Ok(terminal)) => terminal,
+                Ok(Ok(terminal)) => with_module_failure(terminal, context.scope.module_failure()),
                 Ok(Err(error)) => failure_terminal(error),
                 Err(_) => failure_terminal(PortError::InvalidResponse {
                     message: "Execution worker panicked.".into(),
@@ -943,7 +942,7 @@ impl ExecutionServer {
                 stream_id: op.stream_id.clone(),
                 sequence: op.sequence.clone(),
                 identities: Mutex::new(Vec::new()),
-                plan_todo_sequence: Arc::default(),
+                scope: Arc::default(),
                 control: CallControl {
                     cancellation: op.cancellation.clone(),
                     deadline: None,
@@ -1242,6 +1241,42 @@ fn phase_name(phase: OperationPhase) -> &'static str {
         OperationPhase::Resolving => "resolving",
     }
 }
+/// The loop's own result for an `error` run carries the execution's last
+/// host-module failure (agentLoopSidecarServer.ts:303-339): as
+/// `payload.moduleFailure` right after `messages`, and as the terminal error
+/// when the result names none.
+fn with_module_failure(
+    mut terminal: ExecutionTerminal,
+    failure: Option<JsObject>,
+) -> ExecutionTerminal {
+    let Some(failure) = failure else {
+        return terminal;
+    };
+    let errored = terminal
+        .payload
+        .get("result")
+        .and_then(|result| result.get("type"))
+        .and_then(JsValue::as_string)
+        .is_some_and(|kind| kind.equals_str("error"));
+    if !errored {
+        return terminal;
+    }
+    let mut payload = JsObject::new();
+    for (key, value) in std::mem::take(&mut terminal.payload).entries() {
+        payload.insert(key.clone(), value.clone());
+        if key.equals_str("messages") {
+            payload.insert("moduleFailure".into(), JsValue::Object(failure.clone()));
+        }
+    }
+    if payload.get("moduleFailure").is_none() {
+        payload.insert("moduleFailure".into(), JsValue::Object(failure.clone()));
+    }
+    terminal.payload = payload;
+    if terminal.error.is_none() {
+        terminal.error = Some(failure);
+    }
+    terminal
+}
 pub(crate) fn failure_terminal(error: PortError) -> ExecutionTerminal {
     let accepted_call = if let PortError::AcceptedUnknown {
         identity,
@@ -1425,6 +1460,35 @@ fn js_whitespace(c: char) -> bool {
 mod known_terminal_error_tests {
     use super::*;
     use pilotdeck_protocol::model::BoundarySnapshot;
+
+    #[test]
+    fn module_failure_follows_messages_only_for_an_error_result() {
+        let failure = object([
+            ("code", "PROVIDER_DOWN".into()),
+            ("message", "provider down".into()),
+        ]);
+        let terminal = |kind: &str| ExecutionTerminal {
+            outcome: ModuleOutcome::Failed,
+            payload: object([
+                ("result", JsValue::Object(object([("type", kind.into())]))),
+                ("messages", JsValue::Array(vec![])),
+                ("seedState", JsValue::Object(JsObject::new())),
+            ]),
+            error: None,
+        };
+        let errored = with_module_failure(terminal("error"), Some(failure.clone()));
+        let keys: Vec<_> = errored
+            .payload
+            .entries()
+            .iter()
+            .map(|(key, _)| key.to_utf8().unwrap())
+            .collect();
+        assert_eq!(keys, ["result", "messages", "moduleFailure", "seedState"]);
+        assert_eq!(errored.error, Some(failure.clone()));
+        let max_turns = with_module_failure(terminal("max_turns"), Some(failure));
+        assert!(max_turns.payload.get("moduleFailure").is_none());
+        assert!(max_turns.error.is_none());
+    }
 
     #[test]
     fn constructed_terminal_error_code_sets_outer_unknown_without_fabricating_acceptance() {
