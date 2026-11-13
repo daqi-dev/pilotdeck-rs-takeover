@@ -61,6 +61,26 @@ w('audits.md', [
 w('checks.json', {});
 w('delivery.md', '# x\n\n## 允许不一致的清单\n\n| 场景 | 原因 | 定于 |\n|---|---|---|\n| `zzz` | r | d |\n');
 w('src/crate/src/lib.rs', 'fn a() { todo!() }\n// todo!() 注释里的不算\nconst X: &str = "dist/src/cli/pilotdeck.js";\n');
+// 第 5 条的四类新判据：构造处算、匹配分支与定义不算、注释不算、顶层 #[cfg(test)] mod 块不算。
+w('src/cli/src/main.rs', [
+  'fn a() -> R { Err(Failure::Todo("pilotdeck tui")) }', // 1：构造
+  '    Err(Failure::Todo(what)) => 2,', // 匹配分支，不算
+  'fn b() { let _ = Failure::Todo(', // 3：跨行构造
+  '    "x"); }',
+  '// Failure::Todo("注释里的不算")',
+  'const M: &str = "Rust candidate does not yet support the X profile.";', // 6：自报未实现文案
+  'fn c() { e("JS_HOST_REQUIRED"); x.requires_host = true; }', // 7：宿主边界哨兵（一行算一处）
+  'fn d() { y.requires_host = false; }', // 不算
+  'fn profile_gap(p: &str) {}', // 定义不算
+  'fn f() { profile_gap("open x"); gap("y"); }', // 10：原生档案缺口
+  'fn g() { h("NODE22_DATE_LOCAL_LEAP_PROFILE_UNSUPPORTED: z"); i("CONFIG_X_PROFILE_INVALID"); }', // 11：前一个算
+  '#[cfg(test)]',
+  'mod tests {',
+  '    fn t() { Err(Failure::Todo("测试里的不算")); requires_host: true; profile_gap("t"); }',
+  '}',
+  'fn after() { Err(Failure::Todo("测试块之后照常算")) }', // 16
+  '',
+].join('\n'));
 w('src/crate/src/tests.rs', 'fn t() { todo!() }\n');
 w('src/crate/tests/it.rs', 'fn t() { unimplemented!() }\n');
 
@@ -89,6 +109,10 @@ check('第 1 条：b-two 归为登记了 accepted', /\| `b-two` \| DIFF \| 场�
 check('第 1 条：c-three 归属不了', /\| `c-three` \| 未跑 \| 其余 \| 归属不了 \|/.test(status));
 check('第 2 条：8 项，范围内 6，碰到 3（foo、observed、special），只被差异碰到 1（bar），没碰到 2，不计 2', has('表面项 8 个，范围内 6 个：被 SAME 场景碰到 3，只被有差异的场景碰到 1，没碰到 2；标为不计 2'));
 check('第 5 条：todo! 只数产品文件里非注释的 1 处，tests.rs 与 tests/ 不算', has('`unimplemented!` 0 处、`todo!` 1 处') && has('`todo!`：`crate/src/lib.rs:1`'));
+check('第 5 条：Failure::Todo 只数构造处 3 处（跳过匹配分支、注释、测试块）', has('`Failure::Todo` 3 处') && has('`Failure::Todo`：`cli/src/main.rs:1`') && has('`Failure::Todo`：`cli/src/main.rs:3`') && has('`Failure::Todo`：`cli/src/main.rs:16`') && !has('`cli/src/main.rs:2`') && !has('`cli/src/main.rs:14`'));
+check('第 5 条：自报未实现文案 1 处、宿主边界哨兵 1 处（false 不算）', has('自报未实现文案 1 处') && has('`自报未实现文案`：`cli/src/main.rs:6`') && has('宿主边界哨兵 1 处') && has('`宿主边界哨兵`：`cli/src/main.rs:7`'));
+check('第 5 条：原生档案缺口 2 处（定义与 *_PROFILE_INVALID 不算）', has('原生档案缺口 2 处') && has('`原生档案缺口`：`cli/src/main.rs:10`') && has('`原生档案缺口`：`cli/src/main.rs:11`') && !has('`cli/src/main.rs:9`'));
+check('第 5 条：总数 8（todo! 1 + 新判据 7）', has('（共 8，'));
 check('第 6 条：透明代理判据命中 1 处', has('命中 1 处') && has('`crate/src/lib.rs:3`'));
 check('第 5 条：没有检查结果时写没有数据', has('四条命令：没有数据'));
 check('按功能域：x 的场景 2（a、b）一致 1，表面项 3（foo、baz、special）', /\| `x` 域 X \| 2 \| 2 \| 1 \| 3 \| 2 \| 0 \| 1 \| 0 \|/.test(status));
