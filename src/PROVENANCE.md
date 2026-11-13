@@ -438,6 +438,10 @@ Unicode 数据改为 AGPL 授权。
 
 ## #1265：pilotdeck-regex-proto 与 rquickjs 0.14.0（2026-11-07）
 
+> 2026-11-12：原型 crate 无依赖方，已从 workspace 删除；`rquickjs`、`rquickjs-core`、
+> `rquickjs-sys`、`relative-path` 及其独占的 `hashbrown 0.17.1` / `allocator-api2` /
+> `equivalent` 随之从 `src/Cargo.lock` 移除。下文保留为历史记录。
+
 人批 #1264 选 C 的原型 crate（不接生产）：`pilotdeck-regex-proto` 以
 非默认 feature `regex-proto` 独占启用 `rquickjs`，默认 workspace 构建
 不解析、不下载、不编译 rquickjs（`cargo build --workspace` 全程零
