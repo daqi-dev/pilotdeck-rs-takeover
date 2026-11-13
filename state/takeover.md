@@ -20,6 +20,8 @@ cb8 上 `9c11345cf` 的结果：fmt、clippy、文档测试通过；`nextest` 78
 
 在途的子代理（都基于 `7388b0131`）：零散差异与扩展目录监视；hooks 帧次序 / 中止取消、缓存代际、子代理里的权限询问；CLI 与环境变量缺口审查；cb8 上的 Linux 差异。
 
+待并入台账（2026-11-13，任务预算与中止差异分支合并后）：会话写入锁目录 `pilotdeck-ledger-locks-<uid>/` 建在共享临时目录（`storage/transcript.rs:530-578`，基线没有跨进程写入栅栏），别的用户可抢先建同名目录让会话写入失败——定为第 2 级，要挪到 `PILOT_HOME` 下，两个转储场景因它各剩 1 处差异；`compact-auto` 的主会话从来不触发压缩（假 provider 报的 `prompt_tokens` 让估算值很低），场景名不副实，属于尺子的问题；任务预算没做的：`projectRetentionMs` 到期清理无场景、组织策略的 `maxTaskBudgetUsd` 上限没接、预算与子代理和压缩摘要费用的关系没查；转储在带 `extraBody` 或 Google 协议时 Rust 转储的是实际发出的请求体、与基线不同，无场景。
+
 待并入台账的中止类差异（2026-11-13，hook 帧次序子代理用临时场景量出，场景在会话 scratchpad 的 `hook-order/sc/aw-*.json`，未入库）：在 `UserPromptSubmit` hook 执行中中止，Rust 少发 `turn_aborted` 状态、少落一条会话记录；在 `Stop` hook 执行中中止，基线以 `completed` 结束、Rust 发 `turn_failed` 和 `error`；在 `SubagentStart` / `SubagentStop` 执行中中止，Rust 缺 `subagent_started` / `subagent_completed`，且 `SubagentStop` 的完成帧次序不稳（基线 10/10 稳定）。另：被杀的 advisory hook 收到 SIGTERM 后若还活不到 1 秒，Rust 会把它的完成帧放上流而基线可能已结束这一轮（1 秒上限是 Rust 自定的，无场景）。
 
 合并后记下的待办：显式 stdio 部署下外部工具失败时的结果形状；fork 子代理会话不挂外部工具是否与基线一致；批次被拒路径不写 `tool_result` 账本记录；进程本地时区仍读系统 tzdata；时间工具默认时区回显（基线回 ICU 规范名）；Slack Socket Mode 实现已从生产流程摘掉、代码待删；记忆维护的实际抽取没有场景。
@@ -138,6 +140,8 @@ cb8 的情况（2026-11-12）：Ubuntu 24.04、aarch64、20 核、119 GB；Rust 
 | 客户端不发关闭帧就消失（进程被强杀 / 只关 TCP），且服务端此后再没写过那条连接时停机 | SIGTERM 后 `server.close()` 一直等这条半开连接，进程退不出（`websocket.ts:17-21` 不听 end，`GatewayServer.ts:184-186`） | 停机时结束半开连接，正常退出 | `stop-hangs-on-vanished-client`（`cli-run-model-no-project`、`robust-drop-half-close-midturn`、`robust-drop-cli-kill-midturn`） |
 | wecom 保存的状态文件是 JSON 真值原始值（`"abc"`、`5`） | `WeComSessionMapper` 构造函数抛 TypeError，启动失败、退出码 1（`WeComSessionMapper.ts:27-31`） | 照常启动（与状态文件为假值 0 时基线自己的表现相同） | `wecom-primitive-state-crash`（`cfg-adapters-wecom-bad-state`） |
 | sidecar 发给宿主的模块调用帧里的 `abortSignal` 字段 | 帧里带 `"abortSignal":{}`（`hostModelInvokerPort.ts:101` 把 AbortSignal 放进调用对象），与基线自己的类型和协议 schema 矛盾：基线 1204 帧里 326 帧因此不合法 | 不发这个字段，全部帧合法 | 未登记在场景里（bbx 不记录 sidecar 帧）；由 `scripts/upstream-tests` 的 schema 组体现 |
+| `PILOTDECK_DUMP_REQUEST` 的请求转储文件 | 写进 `os.tmpdir()`（可能是共享的 `/tmp`），文件名 `pilotdeck_request_<毫秒>.json` 可预测，`writeFileSync` 跟随符号链接并截断，权限 644，内容是整段对话 | 独占创建、权限 600、文件名加进程号与序号；内容与基线逐字相同 | `dump-request-exclusive-private-file`（`env-dump-request-tmpdir`、`proto-dump-request`；只放过权限，比较器把两种文件名对齐后正文照常比） |
+| 显式外部 sidecar 部署下，请求发出前就中止 | 不发 `turn_completed`，WS 流以「Gateway stream ended without a terminal result.」结束，`runs/registry.json` 里这次运行永远停在 `running` | 发 `turn_completed`（aborted） | 待登记（场景 `turn-abort-before-request-sidecar-stdio` 现在不一致） |
 | 断线后 sidecar 进程里的孤儿执行（TCP 部署） | 永远挂着 | 回收 | 未登记（gateway 一侧看不出差别） |
 | 显式时区名的解析（时间工具、cron、配置校验） | Node 自带 ICU 数据 | 内置 IANA 数据（`jiff-tzdb` 2025b），不读系统 tzdata；推翻旧决策卡「不内嵌 tzdata」，冻结账本 `A8.3-CRON-TZ-ALIAS-001` 已过时、待追加说明 | 场景 `*-legacy-zones`、`time-process-tz` |
 

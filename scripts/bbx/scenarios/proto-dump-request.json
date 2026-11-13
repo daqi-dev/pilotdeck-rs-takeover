@@ -69,5 +69,14 @@
         }
       ]
     }
+  ],
+  "accepted": [
+    {
+      "id": "dump-request-exclusive-private-file",
+      "why": "基线 bug（安全）：PILOTDECK_DUMP_REQUEST 的转储在可能共享的临时目录里以可预测文件名、跟随符号链接、0644 写入整段对话；Rust 独占创建、0600、文件名加进程号与序号（比较器把两种文件名编成同一个 <dump:N>，正文照常比）",
+      "paths": [
+        "^\\$\\.tree\\..*/pilotdeck_request_<dump:\\d+>\\.json\\.mode$"
+      ]
+    }
   ]
 }
