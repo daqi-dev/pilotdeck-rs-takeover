@@ -1,6 +1,6 @@
 {
   "name": "hook-sdk-file-changed",
-  "about": "sdkSessionConfig.hooks 里的 FileChanged（SessionInteractionBundle.ts:181-216 单独的 hook 运行时，经 fileUpdateNotifier.didSave 派发；ToolRuntime.ts:516-537 先等它再派发会话自己的 FileChanged）：write_file 新建、read_file 后 edit_file 修改各一次。比较发给 hook URL 的请求（event / matcher 序号、请求体 filePath / absolutePath / root / changeType，matcher 按相对路径匹配）、hook 回 block / 500 时没有效果（工具结果与后续照常，不出 warning）、includeHookEvents 时的帧。",
+  "about": "sdkSessionConfig.hooks 里的 FileChanged（SessionInteractionBundle.ts:181-216 单独的 hook 运行时，经 fileUpdateNotifier.didSave 派发；ToolRuntime.ts:516-537 先等它再派发会话自己的 FileChanged）：write_file 新建、read_file 后 edit_file 修改各一次。比较发给 hook URL 的请求（event / matcher 序号、请求体 filePath / absolutePath / root / changeType，matcher 按相对路径匹配）、hook 回 block / 500 时没有效果（工具结果与后续照常，不出 warning）、includeHookEvents 时的帧。标题应答推迟 5 秒，让标题记录总落在整轮之后（这一轮有四步，Rust 调试构建在 Linux 上要 2.6 秒，原先推迟 1.5 秒时标题落进了第 2 步中间）。",
   "files": {
     "proj/existing.txt": "old line\n"
   },
@@ -12,7 +12,7 @@
       ],
       "reply": {
         "text": "{\"title\": \"File hook\"}",
-        "delayMs": 1500
+        "delayMs": 5000
       }
     },
     {
@@ -151,7 +151,7 @@
       "timeout": 30000
     },
     {
-      "sleep": 2500
+      "sleep": 6000
     }
   ]
 }
