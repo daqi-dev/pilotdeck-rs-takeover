@@ -312,6 +312,7 @@ impl PlanDirectory {
     }
 }
 
+#[derive(Clone)]
 pub struct ToolRuntimeContext {
     pub fields: JsObject,
     pub files: ToolFileState,

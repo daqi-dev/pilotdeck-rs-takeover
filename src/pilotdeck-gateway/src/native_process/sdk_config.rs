@@ -27,6 +27,7 @@ pub(super) const WIRED_FIELDS: &[&str] = &[
     "toolAliases",
     "outputFormat",
     "forwardSubagentText",
+    "agentProgressSummaries",
     "outputStyle",
     "permissionMode",
     "additionalWorkingDirectories",
@@ -725,6 +726,11 @@ pub(super) fn apply_prompt_fields(agent: &mut JsObject, config: Option<&JsValue>
     // stop once a structured output exists (AgentLoop.ts:2192-2207).
     if present(config, "outputFormat").is_some_and(truthy) {
         agent.insert("stopOnStructuredOutput".into(), JsValue::Bool(true));
+    }
+    // SessionAgentConfigBundle.ts:131: only a literal `true` turns on the
+    // tool progress events (AgentLoop.ts:2770-2784).
+    if config.get("agentProgressSummaries") == Some(&JsValue::Bool(true)) {
+        agent.insert("includeToolProgress".into(), JsValue::Bool(true));
     }
 }
 

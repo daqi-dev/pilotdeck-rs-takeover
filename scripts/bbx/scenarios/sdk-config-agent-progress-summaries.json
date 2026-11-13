@@ -1,0 +1,104 @@
+{
+  "name": "sdk-config-agent-progress-summaries",
+  "about": "sdkSessionConfig.agentProgressSummaries=true 时运行中工具的进度以 tool_progress 事件发出（src/cli/SessionAgentConfigBundle.ts:131 → includeToolProgress；src/agent/loop/AgentLoop.ts:2770-2784 给工具上下文接 progress；src/tool/builtin/bash.ts:125-140 每块 stdout / stderr 发一次，message 是「stdout: N bytes」，metadata 带 stream / chunk / byteCount，toolCallId 是空串；投影 GatewayAgentEventProjector.ts:131-139，不落转录）。bash 只输出一行、一块。同一会话不带配置的对照轮次不发。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Progress\"}"
+      }
+    },
+    {
+      "name": "p-after",
+      "when": [
+        "p-1:",
+        "\"tool_call_id\":\"call_p\""
+      ],
+      "reply": {
+        "text": "Done."
+      }
+    },
+    {
+      "name": "p",
+      "when": [
+        "p-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_p",
+          "name": "bash",
+          "arguments": {
+            "command": "echo progress-line",
+            "description": "echo"
+          }
+        }
+      }
+    },
+    {
+      "name": "q-after",
+      "when": [
+        "q-1:",
+        "\"tool_call_id\":\"call_q\""
+      ],
+      "reply": {
+        "text": "Done."
+      }
+    },
+    {
+      "name": "q",
+      "when": [
+        "q-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_q",
+          "name": "bash",
+          "arguments": {
+            "command": "echo progress-line",
+            "description": "echo"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-prog",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-prog",
+        "channelKey": "test",
+        "message": "p-1: run",
+        "sdkSessionConfig": {
+          "agentProgressSummaries": true
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-noprog",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-noprog",
+        "channelKey": "test",
+        "message": "q-1: run"
+      },
+      "timeout": 20000
+    }
+  ]
+}

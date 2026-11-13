@@ -598,6 +598,29 @@ impl ToolRuntime {
             execution
                 .fields
                 .insert("currentPermissionDecision".into(), decision);
+            // ToolRuntime.ts:367-376: the execute context's `progress` fills
+            // an empty toolCallId / toolName with this call's id and tool.
+            if let Some(progress) = execution.host.progress.clone() {
+                let (id, tool_name) = (call.id.clone(), name.clone());
+                let mut host = (*execution.host).clone();
+                host.progress = Some(Arc::new(move |mut event: JsObject| {
+                    let empty = |value: Option<&JsValue>| match value {
+                        None | Some(JsValue::Undefined | JsValue::Null) => true,
+                        Some(JsValue::String(text)) => text.is_empty(),
+                        Some(JsValue::Bool(flag)) => !flag,
+                        Some(JsValue::Number(number)) => *number == 0.0 || number.is_nan(),
+                        Some(_) => false,
+                    };
+                    if empty(event.get("toolCallId")) {
+                        event.insert("toolCallId".into(), JsValue::String(id.clone()));
+                    }
+                    if empty(event.get("toolName")) {
+                        event.insert("toolName".into(), JsValue::String(tool_name.clone()));
+                    }
+                    progress(event)
+                }));
+                execution.host = Arc::new(host);
+            }
             execution.file_saved = match &self.lifecycle {
                 Some(lifecycle) => Some(file_changed_notifier(
                     lifecycle.clone(),
