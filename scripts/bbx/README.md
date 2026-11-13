@@ -64,6 +64,7 @@ node scripts/bbx/status-selftest.mjs                         # 自测（假产�
 | `name` / `about` | 名字和它想证明什么 |
 | `config` | `pilotdeck.yaml` 的内容；省略用默认（指向假 provider）；`null` 表示不写配置文件 |
 | `files` | 初始文件，键是相对根目录的路径（`home/.pilotdeck/...`、`proj/...`），值是字符串或 JSON |
+| `symlinks` | 种完 `files` 之后建的符号链接：键是相对根目录的链接路径，值是链接内容（可用 `{ROOT}` 等占位符；链接本身必须在根目录之下，指向哪里不限） |
 | `env` | 额外环境变量 |
 | `provider` | 假 provider 的应答规则，按顺序匹配请求体文本：`when` 全部包含、`unless` 全部不包含；`reply` 可以是 `{text}`、`{tool:{name,arguments}}`、`{status,body}`。规则里的字符串（含工具参数）可用下面的 `{ROOT}` 等占位符。请求按命中的规则名分组记录 |
 | `server` | `false` 表示不起服务（纯 CLI 场景） |

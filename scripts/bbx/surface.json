@@ -16566,7 +16566,10 @@
     {
      "id": "gw:ws.length-overflow-crash",
      "where": "src/gateway/server/websocket.ts:126",
-     "note": "疑似基线 bug：64 位长度超过 Number.MAX_SAFE_INTEGER 时同样在 data 回调里抛错，进程停机。场景没有单独覆盖（与不加掩码同一条路径）。"
+     "note": "基线 bug：64 位长度超过 Number.MAX_SAFE_INTEGER 时在 data 回调里抛错，进程停机且等出事的连接（挂死）。Rust 回 1009 关闭这一条；场景 gw-crash-frame-length-overflow 登记了已接受差异。",
+     "probe": [
+      "81ff7fffffffffffffff"
+     ]
     },
     {
      "id": "gw:conn.no-connection-limit",
@@ -16597,7 +16600,10 @@
     {
      "id": "gw:conn.no-backpressure",
      "where": "src/gateway/server/websocket.ts:37",
-     "note": "sendText 不看 socket.write 的返回值：客户端不读时应答堆在进程内存里，不断开连接（量测：2 万个请求不读，RSS 涨约 66 MB，连接保持，恢复读取后 20001 帧全部收到）。慢读需要客户端停读，采集器的 raw 步骤一直在读，场景没有覆盖；量测记录在审查报告。"
+     "note": "sendText 不看 socket.write 的返回值：客户端不读时应答堆在进程内存里，不断开连接（场景 gw-conn-slow-reader：停读期间 20000 个约 2 KB 的应答，恢复读取后全部收到）。Rust 每连接排队字节上限 64 MiB（有意偏离），这个规模内一致。",
+     "probe": [
+      "\"pauseRead\""
+     ]
     },
     {
      "id": "gw:conn.close-aborts-turns",
@@ -16765,7 +16771,10 @@
     {
      "id": "gw:http.api-web-write-symlink",
      "where": "src/adapters/web/projectFiles.ts:238",
-     "note": "疑似基线 bug（安全）：写入只做字面检查不解析符号链接，项目内指向外部的符号链接可被写穿。采集器不能种符号链接，场景没有覆盖。"
+     "note": "基线 bug（安全）：写入只做字面检查不解析符号链接，项目内指向项目外的目录 / 文件 / 悬空链接都能写穿（实测四种都回 200 并落到项目外）。Rust 拒绝，形状同字面越界的 403；场景 gw-http-api-web-symlink-escape 登记了已接受差异。",
+     "probe": [
+      "\"symlinks\""
+     ]
     },
     {
      "id": "gw:http.api-web-body",

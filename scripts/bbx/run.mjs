@@ -203,6 +203,13 @@ for (const [index, [rel, content]] of seedFiles.entries()) {
   fs.writeFileSync(target, typeof content === 'string' ? subst(content) : JSON.stringify(substDeep(content), null, 2) + '\n');
   fs.utimesSync(target, seedBase + index, seedBase + index);
 }
+// symlinks：{"相对根目录的链接路径": "链接内容"}，在种完文件之后建；链接内容同样替换占位符，只能放在根目录之下。
+for (const [rel, link] of Object.entries(scenario.symlinks ?? {})) {
+  const at = path.join(ROOT, rel);
+  if (!at.startsWith(ROOT + '/')) throw new Error(`symlink escapes root: ${rel}`);
+  fs.mkdirSync(path.dirname(at), { recursive: true });
+  fs.symlinkSync(subst(link), at);
+}
 
 // ── 假 provider（按请求路径分流：OpenAI chat completions、Anthropic messages、OpenAI Responses、Google Gemini）──
 // 规则按顺序匹配请求体的 JSON 文本：when（全部包含）/ unless（全部不包含）。
