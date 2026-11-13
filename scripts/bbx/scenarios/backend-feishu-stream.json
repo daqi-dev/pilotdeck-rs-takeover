@@ -1,6 +1,6 @@
 {
   "name": "backend-feishu-stream",
-  "about": "Private wrapper required: Linux network-none, runtime CA, local Axios absoluteURL/CONNECT proxy and real binary WS. Ordinary enabled Feishu config receives wrong event + reversed fragments + duplicate, drives real model and actual Open API reply. Independent formal WS observer runs builtin bash to await mock reply receipt without sleep. Normal protocol first; does not claim adapter stop cleanup. TS self and actual wrongreply negative required, not yet run.",
+  "about": "Private wrapper required: Linux network-none, runtime CA, local Axios absoluteURL/CONNECT proxy and real binary WS. Ordinary enabled Feishu config receives wrong event + reversed fragments + duplicate, drives real model and actual Open API reply. Independent formal WS observer runs builtin bash to await mock reply receipt without sleep. Normal protocol first; does not claim adapter stop cleanup. TS self and actual wrongreply negative required, not yet run. Channel injection additionally waits for the real observer builtin control GET, so observer-initial capture causally precedes channel provider insertion; no arbitrary object sorting.",
   "env": {
     "HTTPS_PROXY": "http://127.0.0.1:38413",
     "https_proxy": "http://127.0.0.1:38413",

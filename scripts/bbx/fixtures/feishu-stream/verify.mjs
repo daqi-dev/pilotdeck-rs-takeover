@@ -53,6 +53,9 @@ function validate(a,receipt,raw){
  assert.ok(!JSON.stringify(facts.outbound).includes('FEISHU-STREAM-ACTUAL-NEGATIVE'),'wrong actual reply is rejected');
  const durable=Object.values(a.tree).flatMap(v=>Array.isArray(v.jsonl)?v.jsonl:[]).filter(r=>r.type==='accepted_input'&&r.sessionId==='feishu:chat=feishu-local-chat:general');
  assert.equal(durable.length,1,'wrong and duplicate stream events do not persist input');assert.equal(text(durable[0].messages[0].content),'FEISHU-STREAM-BEGIN');
+ const observerGate=raw.findIndex(r=>r.kind==='control'&&r.method==='GET'&&r.path==='/await-reply'),firstInjection=raw.findIndex(r=>r.kind==='ws-send'),pingGate=raw.findIndex(r=>r.kind==='ws-receive'&&r.opcode===2&&decode(Buffer.from(r.base64,'base64')).method===0);
+ assert.ok(observerGate>=0&&pingGate>=0&&firstInjection>observerGate&&firstInjection>pingGate,'real observer tool request and real WS ping must both precede channel injection');
+ const providerKeys=Object.keys(a.provider);assert.ok(providerKeys.indexOf('observer-initial')<providerKeys.indexOf('channel')&&providerKeys.indexOf('channel')<providerKeys.indexOf('observer-final'),'causal provider insertion order');
  assert.equal(raw.filter(r=>r.kind==='mockError').length,0,'no hidden fixture protocol errors');
 }
 try{
@@ -60,7 +63,8 @@ try{
  assert.equal(receipt.artifact.sha256,hash(bytes),'capture bytes unchanged');assert.equal(receipt.raw.sha256,hash(rawBytes),'raw mock trace unchanged');validate(a,receipt,raw);
  if(process.argv.includes('--self-test')){
   const faults=[v=>delete v.provider.channel,v=>v.provider.channel[0].body.messages.filter(m=>m.role==='user').at(-1).content='WRONG',v=>{const f=Object.entries(v.tree).find(([name])=>name.endsWith('/feishu-stream-witness/facts.json'))[1].json;f.ack=[]},v=>{const f=Object.entries(v.tree).find(([name])=>name.endsWith('/feishu-stream-witness/facts.json'))[1].json;f.outbound=[]}];
-  for(const mutate of faults){const copy=structuredClone(a);mutate(copy);assert.throws(()=>validate(copy,receipt,raw))}console.log('4 corruption controls rejected');
+  for(const mutate of faults){const copy=structuredClone(a);mutate(copy);assert.throws(()=>validate(copy,receipt,raw))}
+  const missingGate=raw.filter(r=>!(r.kind==='control'&&r.path==='/await-reply'));assert.throws(()=>validate(a,receipt,missingGate),'missing real observer barrier rejected');console.log('5 corruption controls rejected');
  }
  console.log('Feishu formal stream strict PASS');
 }catch(error){console.error(error.stack);process.exitCode=1}

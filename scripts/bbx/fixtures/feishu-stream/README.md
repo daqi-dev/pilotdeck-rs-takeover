@@ -26,7 +26,7 @@ node scripts/bbx/diff.mjs /evidence/feishu-ts-first.json /evidence/feishu-ts-sec
 
 ## 因果链与严格验证
 
-1. 正式 `adapters.feishu.enabled=true/connectionMode=stream` 启动真实 SDK/native endpoint 与 WS；mock 收到第一个实际 protobuf ping 才注入消息。
+1. 正式 `adapters.feishu.enabled=true/connectionMode=stream` 启动真实 SDK/native endpoint 与 WS；mock 同时收到第一个实际 protobuf ping 和 observer builtin 的实际控制 GET 后才注入消息。控制 GET 只能发生在 observer-initial 模型请求已被采集、工具调用已执行之后，固定 observer-initial → channel → observer-final 的真实因果顺序。
 2. 依次发送错误 event_type、正确事件的逆序双片、相同 message_id 的完整重复。只有正确正文 `FEISHU-STREAM-BEGIN` 可以成为模型请求与 durable accepted_input。
 3. 真实 provider 回 `FEISHU-STREAM-DONE`；真实渠道调用 token/reaction/send Open API，mock 只接受已注册路径与本地 token。
 4. 独立正式 WS observer 通过实际 builtin bash 运行 probe，等待 mock **已收到包含最终正文的 create/edit 请求** 后才返回 receipt。控制请求不是 sleep，也不以“connected”日志或最终 tree 的存在制造成功。随后正式 read_session_messages 必须读到相同输入和回复。
@@ -43,7 +43,7 @@ node scripts/bbx/fixtures/feishu-stream/capture.mjs ts /evidence/feishu-wrongrep
 node scripts/bbx/fixtures/feishu-stream/verify.mjs /evidence/feishu-wrongreply.json
 ```
 
-该变体只把 provider `channel` 的真实回复改成 `FEISHU-STREAM-ACTUAL-NEGATIVE`，实际渠道仍应发送并被 probe 观察，capture 应能正常结束；strict 固定期待正常出站正文，必须拒绝。`--self-test` 另有四项结构 corruption，不能替代真实 wrongreply capture。
+该变体只把 provider `channel` 的真实回复改成 `FEISHU-STREAM-ACTUAL-NEGATIVE`，实际渠道仍应发送并被 probe 观察，capture 应能正常结束；strict 固定期待正常出站正文，必须拒绝。`--self-test` 另有五项结构 corruption，不能替代真实 wrongreply capture。
 
 ## 尚未闭合与停止专项
 
@@ -60,3 +60,9 @@ node scripts/bbx/fixtures/feishu-stream/verify.mjs /evidence/feishu-wrongreply.j
 局部非产品复算：`node scripts/bbx/fixtures/feishu-stream/mock.mjs --self-test-drain`。它建立真实 HTTP upgrade socket 与一个被明确 gate 持有的 async HTTP handler，证明只看到 socket close 不能提前封存；释放 handler 后 close 才返回，raw 指纹保持不再变化。移除 receipt drain await 的独立故障 copy 必须在“handler 未完成却已返回”的断言处 exit1。原始完整正式 TS 四件套仍需在新候选重采；局部测试不替代它。
 
 同轮原证另显示 DELETE reaction 请求具有真实空 body，mock 按 JSON-or-raw 保存 `{raw:""}`。strict 的 HTTP 字节重建现使用相同的精确表示，不再对空字节盲目 JSON.parse；仍完整比较 DELETE 的方法、路径、授权和空 body，不忽略该请求。该修正只读诊断旧 raw/facts，不回写旧证据或制造正式通过。
+
+## 第二轮并发首差与真实注入 barrier
+
+`aae46b71` 两轮真实 TS capture、strict 和实际 wrongreply 负控均有效，但 self 首差为 provider 对象键首次插入顺序：channel 与 observer-initial 原本互相独立，可能先后颠倒。首差证据不回写。
+
+现在 mock 必须同时获得真实 WS ping 和 observer builtin 发出的 GET /await-reply 才注入渠道消息，两个到达顺序均允许；发送动作仅执行一次。observer-initial 的真实请求已经被采集器记录后才可能产生 builtin GET，因此不靠 sleep、对象排序或公共比较器豁免就能固定顺序。strict 从原始 raw 核对两个 gate 都早于第一注入，并检查三个实际 provider 键的因果先后；缺少真实控制 gate 的 corruption 必须拒绝。仍需新候选 TS self 重采，不能把旧 capture 排序后算通过。

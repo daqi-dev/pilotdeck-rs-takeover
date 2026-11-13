@@ -39,7 +39,7 @@ export async function startMock({root,caDir,proxyPort,wsPort,tlsPort,rawPath,var
  if(!['normal','wrongreply'].includes(variant))throw Error('unknown fixture variant');
  const sourceHashes=Object.fromEntries(['mock.mjs','wire.mjs'].map(name=>[name,hash(fs.readFileSync(new URL(name,import.meta.url)))]));
  const state={fixture:'feishu-stream-v1',sourceHashes,variant,endpoint:[],upgrade:[],sent:[],ping:[],ack:[],outbound:[]};
- const drain=closeBarrier(),waiters=new Set();let injected=false,replyObserved=false;
+ const drain=closeBarrier(),waiters=new Set();let injected=false,replyObserved=false,observerReady=false,pingReady=false,pendingInject;
  let sealed=false;
  const raw=record=>{if(sealed)throw Error('mock raw append after drain seal');fs.appendFileSync(rawPath,JSON.stringify(record)+'\n')};
  const save=()=>{const dir=path.join(root,'home/.pilotdeck/feishu-stream-witness');fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(path.join(dir,'facts.json'),JSON.stringify(state,null,2)+'\n',{mode:0o600})};
@@ -81,6 +81,9 @@ export async function startMock({root,caDir,proxyPort,wsPort,tlsPort,rawPath,var
  const ws=http.createServer((req,res)=>{
   raw({kind:'control',method:req.method,path:req.url});
   if(req.method!=='GET'||req.url!=='/await-reply')return sendJson(res,{error:'unregistered control'},404);
+  // This real request is issued by the observer's actual builtin tool, after
+  // observer-initial has already been captured. It is not a timer/readiness log.
+  observerReady=true;if(pingReady)pendingInject?.();
   if(replyObserved)return sendJson(res,{marker:'FEISHU-STREAM-REPLY-OBSERVED',replyCount:state.outbound.filter(r=>r.path.startsWith('/open-apis/im/v1/messages?')).length});
   waiters.add(res);res.once('close',()=>waiters.delete(res));
  });
@@ -92,7 +95,7 @@ export async function startMock({root,caDir,proxyPort,wsPort,tlsPort,rawPath,var
   socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
   function send(frame){raw({kind:'ws-send',base64:encode(frame).toString('base64')});socket.write(websocket(2,encode(frame)))}
   function inject(){
-   if(injected)return;injected=true;
+   if(injected||!observerReady||!pingReady)return;injected=true;
    const event=(type,id,text)=>Buffer.from(JSON.stringify({schema:'2.0',header:{event_type:type,event_id:'feishu-header-shared'},event:{message:{message_id:id,chat_id:'feishu-local-chat',message_type:'text',content:JSON.stringify({text})}}}));
    const frame=(payload,id,sum,seq)=>({seq:9,log:17,service:42,method:1,headers:[['type','event'],['message_id',id],['sum',String(sum)],['seq',String(seq)]],payload});
    const correct=event('im.message.receive_v1','feishu-local-message','FEISHU-STREAM-BEGIN');const middle=Math.floor(correct.length/2);
@@ -104,7 +107,7 @@ export async function startMock({root,caDir,proxyPort,wsPort,tlsPort,rawPath,var
     raw({kind:'ws-receive',opcode,base64:body.toString('base64')});
     if(opcode===8){socket.end(websocket(8,body));return}if(opcode===9){socket.write(websocket(10,body));return}if(opcode!==2)throw Error('nonbinary Lark frame');
     const frame=decode(body);
-    if(frame.method===0){state.ping.push(frame);save();inject();return}
+    if(frame.method===0){state.ping.push(frame);save();pingReady=true;pendingInject=inject;if(observerReady)inject();return}
     const duration=frame.headers.find(([key])=>key==='biz_rt');if(!duration||!/^-[0-9]+$|^[0-9]+$/.test(duration[1]))throw Error('missing numeric biz_rt');
     state.ack.push({...frame,headers:frame.headers.filter(([key])=>key!=='biz_rt'),durationMs:Number(duration[1])});save();
    }catch(error){raw({kind:'mockError',message:error.message});socket.destroy()}
