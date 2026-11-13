@@ -7,6 +7,7 @@
 import nodeTest from 'node:test';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { appendFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { exclusionFor } from './manifest.mjs';
@@ -23,7 +24,7 @@ const baselineSidecarJs = join(baseline, 'dist/src/cli/pilotdeck-agent-loop-side
 const touchFile = env.PDRS_UT_TOUCH_FILE;
 const transcriptFile = env.PDRS_UT_TRANSCRIPT_FILE;
 
-const { createStdioAgentLoopSidecarConnectionFactory } = await import(
+const { createStdioAgentLoopSidecarConnectionFactory, AgentLoopSidecarServer } = await import(
   pathToFileURL(join(baseline, 'dist/src/agent/index.js')).href);
 
 const current = new AsyncLocalStorage();
@@ -74,6 +75,31 @@ export function sidecarArgs() {
 export function stdioDeploymentEnv() {
   touch('deployment');
   return target === 'rust' ? { PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND: rustBin } : {};
+}
+
+/**
+ * 替换 sidecar.spec 里的 `new AgentLoopSidecarServer(factory, options)`：返回一个只有 serve(input, output)
+ * 的对象，serve 拉起外部 sidecar 子进程，把用例写进 input 的 NDJSON 原样送进子进程的 stdin，子进程 stdout
+ * 原样写回 output，子进程退出时 resolve。factory 与 options 在外部进程上无从注入，所以只有「factory 不会被
+ * 调用」或「factory 就是生产的 createSidecarExecution」的用例计入（其余在 manifest 里整例剔除）。
+ * PDRS_UT_TARGET=inprocess 时仍构造上游原来的进程内 server（只用来对照）。
+ */
+export function sidecarServer(factory, options) {
+  if (target === 'inprocess') return new AgentLoopSidecarServer(factory, options);
+  return {
+    serve(input, output) {
+      touch('server');
+      const child = spawn(target === 'rust' ? rustBin : process.execPath, target === 'rust' ? [] : [baselineSidecarJs], {
+        stdio: ['pipe', 'pipe', 'inherit'],
+      });
+      input.pipe(child.stdin);
+      child.stdout.pipe(output);
+      return new Promise((resolvePromise, reject) => {
+        child.once('error', reject);
+        child.once('close', () => resolvePromise());
+      });
+    },
+  };
 }
 
 /** 上游用 process.cwd() 指基线仓库根；这里换成 run.mjs 准备的隔离根目录。 */

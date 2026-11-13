@@ -23,6 +23,10 @@ export const GROUPS = {
     source: 'dist/tests/cli/local-gateway-agent-loop-deployment.spec.js',
     about: 'createLocalGateway 选中 stdio / TCP 部署的端到端用例',
   },
+  stdio: {
+    source: 'dist/tests/agent/modules/sidecar.spec.js',
+    about: 'sidecar server 的 NDJSON 进出：用例直接往 stdin 写帧、从 stdout 读帧，改成驱动外部子进程',
+  },
 };
 
 // 经过被测 sidecar 的用例（计入候选）。由基线外部进程的一次全绿运行里「碰到 sidecar」的记录得出，
@@ -67,16 +71,86 @@ export const SIDECAR_TESTS = {
   deployment: [
     "local Gateway abort cancels a stdio sidecar agent-tool child through the host one-shot subagent port",
   ],
+  // sidecar.spec 的用例都自带 factory；换成外部进程后跑的是生产的默认 factory（createSidecarExecution），
+  // 用例写进 stdin 的帧和对 stdout 的断言不变。只计入「指向基线外部进程 20 次全过」的这几例：
+  // factory 不会被调用（capabilities / 截止已过的 execute），或者断言只看协议层的回应与终态。
+  stdio: [
+    "sidecar capabilities do not advertise unsupported stream resume",
+    "sidecar status returns the live snapshot of an accepted execution",
+    "default sidecar server preserves a host model preparation through AgentLoop request normalization",
+    "sidecar abort releases a pending module call",
+    "sidecar classifies a matching host timeout cancel as result_unknown",
+    "sidecar rejects an execute whose deadline expires before it starts",
+  ],
 };
 
+const STDIO_CUSTOM_FACTORY = '用例自带的 factory 决定了执行的结果（固定的 loop 结果、受控的门、伪造的模块调用），'
+  + '外部进程里只能是生产的默认 factory，断言针对的行为在外部进程上不存在；指向基线外部进程 20 次全红';
+
 export const EXCLUSIONS = [
-  // 由 run.mjs 的实测结果填写，见 README「剔除的用例」。
+  { group: 'stdio', kind: 'inprocess', name: 'sidecar assigns a distinct default module instance id to each process instance',
+    reason: '断言读的是进程内 server 对象的 moduleInstanceId 属性，并注入了确定性 uuid' },
+  { group: 'stdio', kind: 'inprocess', name: 'resumable sidecar rebinds a live stream without replaying an applied event',
+    reason: `给 server 传了自定义 capabilities（开启 resume）与确定性 uuid；${STDIO_CUSTOM_FACTORY}` },
+  { group: 'stdio', kind: 'inprocess', name: 'sidecar resume replays a pending module call and fences a stale host response',
+    reason: `给 server 传了自定义 capabilities（开启 resume）与确定性 uuid；${STDIO_CUSTOM_FACTORY}` },
+  { group: 'stdio', kind: 'inprocess', name: 'sidecar server round-trips host module calls and emits one terminal event',
+    reason: `给 server 传了自定义 moduleId；${STDIO_CUSTOM_FACTORY}` },
+  { group: 'stdio', kind: 'inprocess', name: 'sidecar retry keeps operation identity and clears a recovered module failure',
+    reason: `factory 内计数（spy）；${STDIO_CUSTOM_FACTORY}` },
+  { group: 'stdio', kind: 'inprocess', name: 'sidecar terminal preserves the AgentLoop error instead of replacing it with a host failure', reason: STDIO_CUSTOM_FACTORY },
+  { group: 'stdio', kind: 'inprocess', name: 'sidecar emits result_unknown when a capability acknowledgement is fenced', reason: STDIO_CUSTOM_FACTORY },
+  { group: 'stdio', kind: 'inprocess', name: 'sidecar does not continue after a host capability result_unknown response', reason: STDIO_CUSTOM_FACTORY },
+  { group: 'stdio', kind: 'inprocess', name: 'sidecar preserves a terminal host capability failure without another model turn', reason: STDIO_CUSTOM_FACTORY },
+  { group: 'stdio', kind: 'inprocess', name: 'sidecar fences stale cancel and duplicate execute against the active operation identity',
+    reason: `断言 factoryCalls === 1（进程内 spy）；${STDIO_CUSTOM_FACTORY}` },
+  { group: 'stdio', kind: 'inprocess', name: 'sidecar maps max_turns to a failed protocol outcome with the original result', reason: STDIO_CUSTOM_FACTORY },
+  { group: 'stdio', kind: 'inprocess', name: 'sidecar supplies the canonical max_turns code when the result has no error', reason: STDIO_CUSTOM_FACTORY },
+  { group: 'stdio', kind: 'inprocess', name: 'sidecar resolves an active deadline as result_unknown for the host operation owner', reason: STDIO_CUSTOM_FACTORY },
 ];
 
 // 对拍工具（tools/agent-loop-parity，53 个 PilotDeck 场景）里不计入的场景：
 // 基线自比（TS 原生循环 vs 基线 sidecar）不能每轮都过的，见 README「parity」。
+// 2026-11-13 macOS 上 6 轮基线自比：17 个场景每轮都过，下列 36 个不是（26 个 6 轮全红，10 个时红时绿）。
+// 失败几乎都是 trace 里跨通道事件的先后（agent.status、context.budget 相对 model.request 的位置），
+// 取决于 sidecar 进程与宿主之间的时序，而不是语义。
 export const PARITY_EXCLUSIONS = [
-  // 由基线自比的实测结果填写。
+  { scenarioId: "single_tool", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 0 轮' },
+  { scenarioId: "multiple_tool", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 0 轮' },
+  { scenarioId: "tool_error", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 0 轮' },
+  { scenarioId: "permission_denial", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 0 轮' },
+  { scenarioId: "checkpoint_resume", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 2 轮' },
+  { scenarioId: "permission_allow", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 0 轮' },
+  { scenarioId: "permission_ask_approve", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 0 轮' },
+  { scenarioId: "permission_ask_deny", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 0 轮' },
+  { scenarioId: "multi_tool_ordered", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 0 轮' },
+  { scenarioId: "multi_tool_mixed_permission", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 2 轮' },
+  { scenarioId: "multi_tool_mixed_error", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 0 轮' },
+  { scenarioId: "large_tool_result", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 0 轮' },
+  { scenarioId: "tool_retryable_error", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 0 轮' },
+  { scenarioId: "tool_non_retryable_error", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 0 轮' },
+  { scenarioId: "model_retryable_error", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 5 轮' },
+  { scenarioId: "malformed_model_response", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 5 轮' },
+  { scenarioId: "stream_interruption", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 5 轮' },
+  { scenarioId: "multimodal_image_and_text", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 4 轮' },
+  { scenarioId: "allowed_read_files", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 0 轮' },
+  { scenarioId: "denied_read_files", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 0 轮' },
+  { scenarioId: "write_snapshot_resume", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 3 轮' },
+  { scenarioId: "plan_mode_host_policy", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 1 轮' },
+  { scenarioId: "plan_mode_bypass_host_policy", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 0 轮' },
+  { scenarioId: "sidecar_budget_limit", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 0 轮' },
+  { scenarioId: "sidecar_elicitation_execution", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 0 轮' },
+  { scenarioId: "sidecar_sdk_tool_progress", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 0 轮' },
+  { scenarioId: "sidecar_live_steer", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 0 轮' },
+  { scenarioId: "sidecar_durable_compaction", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 0 轮' },
+  { scenarioId: "sidecar_full_request_compaction_budget", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 0 轮' },
+  { scenarioId: "sidecar_projected_request_compaction_budget", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 0 轮' },
+  { scenarioId: "sidecar_seed_read_state", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 0 轮' },
+  { scenarioId: "sidecar_live_model_stream", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 1 轮' },
+  { scenarioId: "sidecar_model_metadata", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 5 轮' },
+  { scenarioId: "sidecar_parent_close_after_admission", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 0 轮' },
+  { scenarioId: "sidecar_one_shot_subagent_success", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 0 轮' },
+  { scenarioId: "sidecar_one_shot_subagent_failure", reason: '基线自比（TS 原生 vs 基线 sidecar）6 轮只过 0 轮' },
 ];
 
 // 基线 sidecar 自己发出的、违反基线 schema 的帧（疑似基线 bug，Rust 不照做）。

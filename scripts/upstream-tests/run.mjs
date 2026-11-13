@@ -7,7 +7,7 @@
 //
 // 选项：
 //   --target rust|baseline|inprocess  被测 sidecar（缺省 rust）；inprocess 只对 node 组有意义，是上游原样的进程内对照
-//   --group  逗号分隔：client,tcp,deployment,stdio,parity,schema（缺省全部）
+//   --group  逗号分隔：client,tcp,deployment,schema,parity（缺省这五组）；stdio 是附加组，需显式指定
 //   --repeat N   每组重复 N 轮（缺省 1）；表里的「通过」是每一轮都通过的用例数
 //   --out DIR    运行产物目录（缺省 PDRS_UT_OUT，再缺省 <repo>/_build/upstream-tests）
 //   --verbose    把 node --test 的失败输出直接打出来
@@ -22,9 +22,11 @@ import { loadValidator, validateFrames, selfCheck } from './lib/schema.mjs';
 import { runParityRound, parityScenarioIds } from './lib/parity.mjs';
 
 const ALL_GROUPS = ['client', 'tcp', 'deployment', 'stdio', 'parity', 'schema'];
+// stdio（sidecar.spec 改驱动子进程）是附加组，不在缺省验收集里，要显式 --group stdio。
+const DEFAULT_GROUPS = ['client', 'tcp', 'deployment', 'schema', 'parity'];
 
 function parseArgs(argv) {
-  const options = { target: 'rust', groups: ALL_GROUPS, repeat: 1, out: undefined, verbose: false };
+  const options = { target: 'rust', groups: DEFAULT_GROUPS, repeat: 1, out: undefined, verbose: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     const value = () => { const v = argv[++i]; if (v === undefined) throw new Error(`${arg} needs a value`); return v; };
