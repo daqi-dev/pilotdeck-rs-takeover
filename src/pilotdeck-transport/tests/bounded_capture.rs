@@ -394,8 +394,11 @@ fn run_pending(capture: Capture, requested: bool, tool: bool) {
                 .as_string()
                 .unwrap()
                 .clone();
+            // The operation name travels only in payload.operation
+            // (agentLoopSidecarServer.ts callModule; protocol v2 schema).
             let operation = request
-                .get("operation")
+                .get("payload")
+                .and_then(|payload| payload.get("operation"))
                 .unwrap()
                 .as_string()
                 .unwrap()
@@ -849,7 +852,9 @@ fn run_loop_top_without_capture_ack(deadline: bool) {
     let bytes = received.recv_timeout(Duration::from_secs(1)).unwrap();
     let request = json(std::str::from_utf8(&bytes).unwrap());
     assert_eq!(
-        request.get("operation"),
+        request
+            .get("payload")
+            .and_then(|payload| payload.get("operation")),
         Some(&JsValue::from("capture_turn"))
     );
     let id = request.get("messageId").unwrap().as_string().unwrap();
@@ -965,7 +970,9 @@ fn run_loop_top_with_replied_prior_and_stalled_writer(deadline: bool) {
         let bytes = received.recv_timeout(Duration::from_secs(1)).unwrap();
         let request = json(std::str::from_utf8(&bytes).unwrap());
         assert_eq!(
-            request.get("operation"),
+            request
+                .get("payload")
+                .and_then(|payload| payload.get("operation")),
             Some(&JsValue::from("stream_next"))
         );
         let id = request
@@ -989,7 +996,13 @@ fn run_loop_top_with_replied_prior_and_stalled_writer(deadline: bool) {
             "model",
             "stream_next",
             CallEffect::SideEffect,
-            JsObject::new(),
+            // Production payloads carry the operation name (host_operations.rs
+            // payload()); the envelope itself has none.
+            {
+                let mut payload = JsObject::new();
+                payload.insert("operation".into(), "stream_next".into());
+                payload
+            },
         )
         .unwrap();
     let (received, prior_id) = peer.join().unwrap();

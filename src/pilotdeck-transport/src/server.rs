@@ -15,6 +15,10 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
+/// Upper bound for [`ExecutionServer::settle_on_input_end`]: the original
+/// publishes these synchronously, so this only absorbs thread scheduling.
+const INPUT_END_SETTLE: Duration = Duration::from_secs(1);
+
 /// Implementations must declare their actual original-engine date profile.
 /// Strings with an unsupported engine-valid form must not silently mean no deadline.
 pub trait ExecutionClock: Send + Sync + 'static {
@@ -220,6 +224,8 @@ struct Operation {
     sequence: Arc<Mutex<f64>>,
     cancellation: Cancellation,
     cancel_requested: bool,
+    /// The worker has handed this operation's final event to the connection.
+    terminal_published: bool,
     deadline: Option<Instant>,
     timer: Option<thread::JoinHandle<()>>,
     phase: OperationPhase,
@@ -529,6 +535,7 @@ impl ExecutionServer {
                 sequence: sequence.clone(),
                 cancellation: cancellation.clone(),
                 cancel_requested: false,
+                terminal_published: false,
                 deadline,
                 timer,
                 phase: if expired {
@@ -669,6 +676,16 @@ impl ExecutionServer {
             if self.owner.publish(&cleanup, &final_event).is_err() {
                 self.retire();
             }
+            if let Some(op) = self
+                .state
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .operations
+                .get_mut(&work.request.operation_id)
+            {
+                op.terminal_published = true;
+            }
+            self.ready.notify();
             if terminal.outcome != ModuleOutcome::ResultUnknown {
                 for identity in context
                     .identities
@@ -680,6 +697,34 @@ impl ExecutionServer {
                 }
             }
         }
+    }
+    /// The input reached its end. agentLoopSidecarServer.ts serve() handles each
+    /// line to completion, and a matching cancel aborts the execution
+    /// synchronously, so an execution that settles on its abort alone has
+    /// already published its terminal by the time the end of input is read;
+    /// everything sent before that is flushed. Only sends attempted after the
+    /// end are dropped. Mirror that: give executions whose cancel was already
+    /// accepted a bounded chance to publish, let the writer drain what is queued,
+    /// and only then retire the connection.
+    fn settle_on_input_end(&self) {
+        let until = Instant::now()
+            .checked_add(INPUT_END_SETTLE)
+            .unwrap_or_else(Instant::now);
+        loop {
+            let generation = self.ready.generation();
+            let pending = self
+                .state
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .operations
+                .values()
+                .any(|op| op.cancel_requested && !op.terminal_published);
+            if !pending || self.owner.is_closed() || Instant::now() >= until {
+                break;
+            }
+            self.ready.wait(generation, Some(until));
+        }
+        self.owner.wait_drained(until);
     }
     pub fn retire(&self) {
         self.owner.close();
@@ -750,7 +795,11 @@ impl ExecutionServer {
             while !reader_server.owner.is_closed() {
                 bytes.clear();
                 match input.read_until(b'\n', &mut bytes) {
-                    Ok(0) | Err(_) => break,
+                    Ok(0) => {
+                        reader_server.settle_on_input_end();
+                        break;
+                    }
+                    Err(_) => break,
                     Ok(_) => {}
                 }
                 if bytes.last() == Some(&b'\n') {

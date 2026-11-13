@@ -104,7 +104,7 @@ fn run(tool: bool, requested: bool) {
             events.push(message);
             continue;
         }
-        let operation = label(&message, "operation");
+        let operation = label(field(&message, "payload"), "operation");
         calls.push(operation.clone());
         match operation.as_str() {
             "try_auto_compact" => reply(
