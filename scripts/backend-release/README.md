@@ -141,3 +141,16 @@ assemble在复制前验证版本/PCRE2 JIT/target/实际binSHA、执行权限、
 上例ENTRY必须由`ripgrep_component.distribution_identity(prefix,relative)`生成的真实对象代替：普通文件为path/type=file/sha256，目录为path/type=directory/inventorySha256（sorted-key compactJSON的common.inventory摘要）。source按rg/PCRE2/SLJIT明确声明，含SLJIT子模块的PCRE源archive可被两source role引用。三source commit与Cargo.lock的已知SHA固定；actual Cargo.lock也必须匹配。许可证按固定源原文本摘要核验（rg可MIT或UNLICENSE之一，PCRE2 LICENCE与SLJIT LICENSE分别保留）。vendor必须真实随包，目录或tar源码归档须含Cargo checksum manifests；validator只读tar目录，不解包。
 
 这些结构校验不认证任意不可信构建；真正source build仍由固定checkout、原始成功命令/日志、版本/链接与独立审查支持。首版只检查三份hash文件的缺陷与首测原证保留；新版增加且仅增加重复证据、exit1但hash正确、缺vendor三个对应负控。当前30项包装回归通过，其中fake测试明确mock source/license pin与架构，不能称真实离线重建成功。真实供应prefix另须通过同validator后才能组包。
+
+### ripgrep vendor 的无损布局收敛
+
+`compact_ripgrep.py` 是显式的新 prefix 转换，不修改输入或改变默认 assemble/verify 行为。原 prefix 必须先通过现有源码构建记录、许可、七类证据、固定锁和 exact inventory 校验，并同时拥有展开 vendor 与 `share/source/registry-vendor-source.tar.gz`。转换逐 tar 成员核对所有展开文件的路径、内容 SHA、大小和可执行位，拒绝路径逃逸、重复成员、符号/硬链接及特殊文件；不会解包归档。
+
+```sh
+python3 scripts/backend-release/compact_ripgrep.py \
+  --input /absolute/validated-ripgrep-prefix \
+  --out /absolute/NEW-ripgrep-prefix \
+  --target aarch64-apple-darwin
+```
+
+新 prefix 仅省去重复的展开 vendor，保留原 tar、锁、source pins、许可、recipe 与全部原始构建证据；原 vendor role 已指向该 tar 时保持原 role 不变。`share/compaction/` 保留原 build record 和逐文件覆盖证明。新 build record 仅在原 role 为目录时将其指向原 tar，并重算 exact inventory，随后再次运行原组件校验。输出路径已存在即拒绝，不覆盖旧组件或发行包。新 prefix 必须作为新的组件身份参与后续 assemble、verify 与搬移验收，不能沿用旧包 hash，也不能把源码层从完整体积指标中剔除。本转换不宣称已达到 full 体积目标。
