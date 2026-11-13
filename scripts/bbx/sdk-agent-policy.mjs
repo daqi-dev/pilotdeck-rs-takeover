@@ -108,13 +108,6 @@ const REGISTRY_PATH = '/home/.pilotdeck/runs/registry.json';
 const DERIVED_FIELDS = ['used','displayUsed','localEstimateTokens','usageTokens','calibrationEstimatedInputTokens','ratio','breakdown.total','breakdown.messages'];
 const get = (object, path) => path.split('.').reduce((x, part) => x?.[part], object);
 const prefix = '$.tree.' + PARENT_PATH;
-function addFields(map, path, object, fields = DERIVED_FIELDS) {
-  for (const field of fields) {
-    const value = get(object, field);
-    insist(typeof value === 'number' && Number.isFinite(value), `missing derived value ${path}.${field}`);
-    map.set(`${path}.${field}`, value);
-  }
-}
 function sameEvent(actual, expected, label) {
   insist(isDeepStrictEqual(actual, expected), `${label} must equal its durable budget event`);
 }
@@ -153,76 +146,161 @@ function assertProvider(a) {
   const starts = events.filter(e=>e.event==='subagent_started');
   insist(starts.length===1 && typeof starts[0].detail.subagentId === 'string', 'observer start');
   const ordered = events.filter(e=>e.detail.subagentId===starts[0].detail.subagentId);
-  const i = ordered.findIndex(e=>e.event==='subagent_started'), j = ordered.findIndex(e=>e.event==='subagent_text_delta'&&e.detail.text==='AG03-OBSERVER-REPORT'), k = ordered.findIndex(e=>e.event==='subagent_completed'&&e.detail.success===true);
-  insist(i>=0 && j>i && k>j, 'observer ordered report');
+  insist(ordered.length===3&&events.length===3,'observer exact lifecycle count');
+  const i=unique(ordered,e=>e.event==='subagent_started','observer started').index;
+  const j=unique(ordered,e=>e.event==='subagent_text_delta'&&e.detail.text==='AG03-OBSERVER-REPORT','observer report').index;
+  const k=unique(ordered,e=>e.event==='subagent_completed'&&e.detail.success===true,'observer completed').index;
+  insist(i<j&&j<k,'observer ordered report');
+  for(const step of a.steps){
+    const own=(step.frames??[]).filter(f=>f.event?.type==='agent_status'&&f.event.detail?.subagentType==='reviewer');
+    if(!own.length)continue;
+    const started=unique(step.frames,f=>f.event?.type==='turn_started','observer delivery turn');
+    insist(step.step?.ws==='submit_turn'&&step.step.params?.sessionKey==='agent03-parent'&&own.every(f=>f.event.runId===started.value.event.runId),'observer delivery run');
+  }
+  const done=unique(a.tree?.[PARENT_PATH]?.jsonl??[],r=>r.type==='subagent_completed'&&r.subagentId===starts[0].detail.subagentId,'observer durable completion').value;
+  insist(ordered[k].detail.durationMs===done.durationMs,'observer completion payload');
   return report;
 }
 
+const unique = (items, predicate, label) => {
+  const found = items.map((value,index)=>({value,index})).filter(x=>predicate(x.value,x.index));
+  insist(found.length===1, `unique ${label}`); return found[0];
+};
+const stepFrames = (a,index) => { const frames=a.steps[index]?.frames; insist(Array.isArray(frames), 'step frames'); return frames; };
+const budgetRow = row => row?.type==='agent_status_message' && row.event==='context_budget';
+// Bind identity before looking at token values. Observer records may interleave
+// with the parent branch; neither their removal nor array reordering is needed.
+export function sdkAgentAssociations(a) {
+  const rows=a.tree?.[PARENT_PATH]?.jsonl;
+  insist(Array.isArray(rows)&&rows.length>56&&rows.every(row=>row.sessionId==='agent03-parent'),'parent transcript');
+  const begin=unique(a.steps??[],s=>s.step?.ws==='submit_turn'&&s.step.params?.sessionKey==='agent03-parent'&&s.step.params.message==='AG03-PARENT-BEGIN','parent begin step');
+  const check=unique(a.steps??[],s=>s.step?.ws==='submit_turn'&&s.step.params?.sessionKey==='agent03-parent'&&s.step.params.message==='AG03-PARENT-CHECK','parent check step');
+  insist(begin.index<check.index,'parent step order');
+  const parentSubmits=a.steps.filter(s=>s.step?.ws==='submit_turn'&&s.step.params?.sessionKey==='agent03-parent');
+  insist(parentSubmits.length===2,'parent submit count');
+  const turns=[begin,check].map((step,ordinal)=>{
+    const started=unique(stepFrames(a,step.index),f=>f.event?.type==='turn_started','parent turn_started');
+    const run=started.value.event.runId;
+    insist(typeof run==='string'&&run.length>0,'parent run');
+    const input=unique(rows,r=>r.type==='accepted_input'&&r.turnId===run,'parent accepted input');
+    const text=input.value.messages?.flatMap(m=>m.content??[]).filter(b=>b.type==='text').map(b=>b.text).join('');
+    insist(text===step.value.step.params.message,'accepted input/step association');
+    unique(rows,r=>r.type==='turn_started'&&r.turnId===run,'durable parent turn_started');
+    return {name:ordinal===0?'begin':'check',stepIndex:step.index,run};
+  });
+  insist(turns[0].run!==turns[1].run,'distinct parent runs');
+  const requests=turns.flatMap((turn,ordinal)=>(ordinal===0?[1,2]:[1]).map(step=>{
+    const request=unique(rows,r=>r.type==='model_request'&&r.turnId===turn.run&&r.step===step,`${turn.name} model request step ${step}`);
+    const started=unique(rows,r=>r.type==='step_started'&&r.turnId===turn.run&&r.step===step,`${turn.name} step_started ${step}`);
+    insist(started.index<request.index,'request after its step');
+    const budget=unique(rows,(r,index)=>budgetRow(r)&&r.turnId===turn.run&&index>started.index&&index<request.index,`${turn.name} step ${step} preceding budget`);
+    insist(budget.value.detail?.runId===turn.run,'budget run association');
+    const usage=unique(rows,r=>r.type==='model_stream_event'&&r.turnId===turn.run&&r.step===step&&r.event?.type==='usage',`${turn.name} step ${step} usage`);
+    const complete=unique(rows,r=>r.type==='step_completed'&&r.turnId===turn.run&&r.step===step,`${turn.name} step ${step} completed`);
+    insist(request.index<usage.index&&usage.index<complete.index,'usage belongs to completed request');
+    insist(isDeepStrictEqual(usage.value.event.usage,{inputTokens:12,outputTokens:4,totalTokens:16}),'actual model usage');
+    return {...turn,step,request,budget,usage};
+  }));
+  insist(rows.filter(r=>r.type==='model_request').length===3&&rows.filter(budgetRow).length===3&&rows.filter(r=>r.type==='step_started').length===3&&rows.filter(r=>r.type==='model_stream_event'&&r.event?.type==='usage').length===3,'complete parent request/budget/usage membership');
+  insist(requests.every((r,i)=>i===0||requests[i-1].usage.index<r.request.index),'request/calibration causal order');
+  const historyStep=unique(a.steps??[],s=>s.step?.ws==='read_session_messages'&&s.step.params?.sessionKey==='agent03-parent','parent history step');
+  const historyFrame=unique(stepFrames(a,historyStep.index),f=>f.type==='response','parent history response');
+  const history=historyFrame.value.result; insist(history?.session?.sessionId==='agent03-parent','history session');
+  return {rows,turns,requests,history,historyPath:`$.steps[${historyStep.index}].frames[${historyFrame.index}].result`};
+}
 function derivedValues(a, normalized, count) {
   insist(a?.scenario==='agent03-sdk-fork' && a.evidence?.scenario?.sha256===SCENARIO_SHA && a.evidence?.inputs?.ts?.commit==='cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85' && Array.isArray(a.failures) && !a.failures.some(x=>!x.expected), 'capture identity or failures');
-  const report = assertProvider(a);
-  const rows = a.tree?.[PARENT_PATH]?.jsonl;
-  insist(Array.isArray(rows) && rows.length > 56, 'parent transcript');
-  const history = a.steps?.[6]?.frames?.[0]?.result;
-  insist(history?.session?.sessionId==='agent03-parent', 'history session');
+  const report=assertProvider(a), bindings=sdkAgentAssociations(a), {rows,turns,requests,history,historyPath}=bindings;
+  sdkAgentOrderChildTree(a,{policy:'sdkAgent03DerivedValues'});
   validateCanonicalJsonlWitness(rows,a.evidence?.persistedFiles?.[PARENT_PATH],history.session.fileSize);
-  const previous = canonicalBreakdown(rows[10]?.request,count);
-  insist(isDeepStrictEqual(previous,rows[9]?.detail?.breakdown) && rows[9]?.detail?.localEstimateTokens===previous.total, 'initial request estimate');
-  const events=[];
-  for (const [i, index] of [32,51].entries()) {
-    const entry=rows[index], request=rows[index+1];
-    insist(entry?.type==='agent_status_message' && entry.event==='context_budget' && entry.sessionId==='agent03-parent' && request?.type==='model_request' && request.sessionId===entry.sessionId && request.turnId===entry.turnId && entry.detail?.runId===entry.turnId, 'budget request association');
-    const blocks=request.request?.messages?.flatMap(m=>m.content??[]).filter(b=>b.type==='tool_result'&&b.toolCallId==='ag03-agent');
-    insist(blocks?.length===1 && blocks[0].content?.every(x=>x.type==='text') && blocks[0].content.map(x=>x.text).join('\n')===report, 'canonical agent result');
-    const breakdown=canonicalBreakdown(request.request,count);
-    const usage=rows[i===0?15:37];
-    insist(usage?.type==='model_stream_event' && usage.event?.type==='usage' && usage.event.usage?.inputTokens===12 && usage.turnId===rows[32].turnId && usage.step===i+1, 'calibration usage source');
-    validateBudget(entry.detail,breakdown,{actual:usage.event.usage.inputTokens,estimated:i===0?previous.total:events[0].localEstimateTokens});
-    events.push(entry.detail);
+  const estimates=requests.map(r=>canonicalBreakdown(r.request.value.request,count));
+  for(const [i,binding] of requests.entries()){
+    const event=binding.budget.value.detail,breakdown=estimates[i];
+    if(i===0){
+      const initial={type:'context_budget',used:breakdown.total,displayUsed:breakdown.total,localEstimateTokens:breakdown.total,estimateSource:'estimator',total:65536,totalContextTokens:65536,maxContextTokens:57344,effectiveTotal:57344,effectiveContextTokens:57344,maxOutputTokens:8192,reservedOutputTokens:8192,warningRatio:0.8,blockingRatio:0.9,ratio:breakdown.total/57344,state:'ok',source:'local',exact:false,breakdown,runId:binding.run};
+      insist(isDeepStrictEqual(event,initial),'initial canonical request estimate');
+    }else{
+      const blocks=binding.request.value.request?.messages?.flatMap(m=>m.content??[]).filter(b=>b.type==='tool_result'&&b.toolCallId==='ag03-agent');
+      insist(blocks?.length===1&&blocks[0].content?.every(x=>x.type==='text')&&blocks[0].content.map(x=>x.text).join('\n')===report,'canonical agent result');
+      validateBudget(event,breakdown,{actual:requests[i-1].usage.value.event.usage.inputTokens,estimated:estimates[i-1].total});
+    }
   }
-  const m=new Map();
-  const completed=a.steps?.[0]?.frames?.[24]?.event;
-  insist(completed?.type==='tool_call_finished' && completed.toolCallId==='ag03-agent' && completed.toolName==='agent' && completed.ok===true
-    && completed.resultPreview===report && completed.resultBytes===Buffer.byteLength(report,'utf8')
-    && isDeepStrictEqual(completed.data,JSON.parse(report.slice(PREFIX.length))) && completed.runId===events[0].runId, 'agent report byte count');
-  const nrun=normalized?.steps?.[0]?.frames?.[28]?.event?.runId;
-  const nregistry=normalized?.tree?.[REGISTRY_PATH]?.json?.events?.[`\0agent03-parent\0${nrun}`];
-  const registryEvent=a.tree?.[REGISTRY_PATH]?.json?.events?.[`\0agent03-parent\0${events[0].runId}`]?.[24]?.event;
-  sameEvent(registryEvent,completed,'agent result registry');
-  insist(nregistry?.[24]?.event?.resultBytes===completed.resultBytes, 'normalized agent result registry');
-  m.set('$.steps[0].frames[24].event.resultBytes',completed.resultBytes);
-  m.set(`$.tree.${REGISTRY_PATH}.json.events.\0agent03-parent\0${nrun}[24].event.resultBytes`,completed.resultBytes);
-  for (const name of ['parent-after','parent-check']) {
-    const request=a.provider[name][0], length=request.headers?.['content-length'];
-    insist(request.method==='POST' && request.headers?.['content-type']==='application/json' && typeof length==='string'
-      && /^[1-9][0-9]*$/.test(length) && Number(length)===Buffer.byteLength(JSON.stringify(request.body),'utf8'), 'model request byte count');
-    m.set(`$.provider.${name}[0].headers.content-length`,length);
+  const m=new Map(),semantic=new Map();
+  const put=(key,path,value)=>{insist(!semantic.has(key)&&!m.has(path),'unique derived binding');semantic.set(key,{path,value});m.set(path,value)};
+  const fields=(key,path,object,names=DERIVED_FIELDS)=>{for(const name of names){const value=get(object,name);insist(typeof value==='number'&&Number.isFinite(value),`missing derived value ${path}.${name}`);put(`${key}:${name}`,`${path}.${name}`,value)}};
+  const registry=a.tree?.[REGISTRY_PATH]?.json?.events,normalizedRegistry=normalized?.tree?.[REGISTRY_PATH]?.json?.events;
+  const projections=a.tree?.[PARENT_PATH+'.projections.json']?.json?.projections;
+  insist(projections&&Array.isArray(projections['web-history.agent-statuses']?.state),'status projections');
+  const statuses=projections['web-history.agent-statuses'].state;
+  insist(statuses.filter(budgetRow).length===3&&history.messages?.filter(r=>r.payload?.event==='context_budget').length===3,'budget projection membership');
+  for(const turn of turns){
+    const own=requests.filter(r=>r.run===turn.run);
+    const ws=stepFrames(a,turn.stepIndex).map((value,index)=>({value,index})).filter(x=>x.value.event?.type==='context_budget');
+    const bucket=registry?.[`\0agent03-parent\0${turn.run}`];insist(Array.isArray(bucket),'registry run association');
+    const regs=bucket.map((value,index)=>({value,index})).filter(x=>x.value.event?.type==='context_budget');
+    insist(ws.length===own.length&&regs.length===own.length,'budget WS/registry count');
+    for(const [ordinal,binding] of own.entries()){
+      const event=binding.budget.value.detail,frame=ws[ordinal],reg=regs[ordinal];
+      sameEvent(frame.value.event,event,'frame');sameEvent(reg.value.event,event,'registry');
+      const hist=unique(history.messages,r=>r.payload?.event==='context_budget'&&r.turnId===binding.run&&r.sequence===binding.budget.value.sequence,'history budget identity');
+      insist(hist.value.id===binding.budget.value.entryId,'history durable entry');sameEvent(hist.value.payload.detail,event,'history');
+      const projection=unique(statuses,r=>budgetRow(r)&&r.turnId===binding.run&&r.sequence===binding.budget.value.sequence,'status projection identity');
+      sameEvent(projection.value,binding.budget.value,'status projection durable row');
+      const nframe=normalized?.steps?.[turn.stepIndex]?.frames?.[frame.index]?.event;
+      insist(nframe?.type==='context_budget'&&typeof nframe.runId==='string','normalized frame identity');
+      insist(DERIVED_FIELDS.every(field=>get(nframe,field)===get(event,field)),'normalized derived values unchanged');
+      const nkey=`\0agent03-parent\0${nframe.runId}`,nreg=normalizedRegistry?.[nkey]?.[reg.index]?.event;
+      sameEvent(nreg,nframe,'normalized registry budget');
+      if(binding===requests[0])continue;
+      const semanticKey=`${turn.name}:${binding.step}`;
+      fields(semanticKey+':ws',`$.steps[${turn.stepIndex}].frames[${frame.index}].event`,event);
+      fields(semanticKey+':history',`${historyPath}.messages[${hist.index}].payload.detail`,event);
+      fields(semanticKey+':durable',`${prefix}.jsonl[${binding.budget.index}].detail`,event);
+      fields(semanticKey+':projection',`${prefix}.projections.json.json.projections.web-history.agent-statuses.state[${projection.index}].detail`,event);
+      fields(semanticKey+':registry',`$.tree.${REGISTRY_PATH}.json.events.${nkey}[${reg.index}].event`,event);
+    }
   }
-  for (const [i, event] of events.entries()) {
-    const frame = a.steps?.[i===0?0:3]?.frames?.[i===0?28:6]?.event;
-    const detail = history.messages?.[i===0?4:7]?.payload?.detail;
-    const projections = a.tree?.[PARENT_PATH+'.projections.json']?.json?.projections;
-    const projected = projections?.['web-history.agent-statuses']?.state?.[i+1]?.detail;
-    sameEvent(frame,event,'frame'); sameEvent(detail,event,'history'); sameEvent(projected,event,'projection');
-    for (const path of [`$.steps[${i===0?0:3}].frames[${i===0?28:6}].event`, `$.steps[6].frames[0].result.messages[${i===0?4:7}].payload.detail`, `${prefix}.jsonl[${i===0?32:51}].detail`, `${prefix}.projections.json.json.projections.web-history.agent-statuses.state[${i+1}].detail`]) addFields(m,path,event);
-    const normalizedEvent=normalized?.steps?.[i===0?0:3]?.frames?.[i===0?28:6]?.event;
-    const regs=normalized?.tree?.[REGISTRY_PATH]?.json?.events;
-    const registry=Object.entries(regs??{}).filter(([key])=>key===`\0agent03-parent\0${normalizedEvent?.runId}`);
-    insist(registry.length===1, 'normalized registry run association');
-    const index=i===0?28:6;
-    insist(DERIVED_FIELDS.every(field => get(registry[0][1]?.[index]?.event,field)===get(event,field)), 'normalized registry projection');
-    const originalRegistry=a.tree?.[REGISTRY_PATH]?.json?.events?.[`\0agent03-parent\0${event.runId}`]?.[index]?.event;
-    sameEvent(originalRegistry,event,'registry');
-    addFields(m,`$.tree.${REGISTRY_PATH}.json.events.${registry[0][0]}[${index}].event`,event);
+  insist(a.steps.flatMap(s=>s.frames??[]).filter(f=>f.event?.type==='tool_call_finished'&&f.event.toolCallId==='ag03-agent').length===1,'unique worker finished across deliveries');
+  const firstTurn=turns[0],finished=unique(stepFrames(a,firstTurn.stepIndex),f=>f.event?.type==='tool_call_finished'&&f.event.toolCallId==='ag03-agent','worker tool finished');
+  const completed=finished.value.event;
+  insist(completed.toolName==='agent'&&completed.ok===true&&completed.resultPreview===report&&completed.resultBytes===Buffer.byteLength(report,'utf8')&&isDeepStrictEqual(completed.data,JSON.parse(report.slice(PREFIX.length)))&&completed.runId===firstTurn.run,'agent report byte count');
+  const result=unique(rows,r=>r.type==='tool_result'&&r.turnId===firstTurn.run&&r.result?.toolCallId==='ag03-agent','durable worker result');
+  insist(result.value.step===1&&isDeepStrictEqual(result.value.result.data,completed.data),'durable worker business data');
+  insist(rows.filter(r=>r.type==='tool_result'&&r.result?.toolCallId==='ag03-agent').length===1&&result.value.result.type==='success'&&result.value.result.toolName==='agent'&&isDeepStrictEqual(result.value.result.content,[{type:'text',text:PREFIX.trimEnd()},{type:'json',value:completed.data}]),'durable worker result content');
+  const message=unique(rows,r=>r.type==='tool_result_message'&&r.turnId===firstTurn.run&&r.message?.content?.some(b=>b.type==='tool_result'&&b.toolCallId==='ag03-agent'),'durable worker message');
+  const block=unique(message.value.message.content,b=>b.type==='tool_result'&&b.toolCallId==='ag03-agent','worker result block').value;
+  insist(block.content.every(b=>b.type==='text')&&block.content.map(b=>b.text).join('\n')===report&&isDeepStrictEqual(block.raw,result.value.result),'worker message/raw result association');
+  const conversation=projections['agent-transcript.conversation']?.state?.entries;
+  insist(Array.isArray(conversation),'conversation projection');
+  const projectedResult=unique(conversation,r=>r.entry?.entryId===message.value.entryId,'projected worker message');
+  insist(projectedResult.value.index===message.index&&isDeepStrictEqual(projectedResult.value.entry,message.value),'worker conversation projection');
+  const historyResult=unique(history.messages,r=>r.kind==='tool_result'&&r.toolCallId==='ag03-agent','worker history result').value;
+  insist(historyResult.turnId===firstTurn.run&&historyResult.sequence===message.value.sequence&&historyResult.ok===true&&historyResult.toolName==='agent'&&historyResult.text===report,'worker history projection');
+  const detail=unique(stepFrames(a,firstTurn.stepIndex),f=>f.event?.type==='tool_result_detail_available'&&f.event.toolCallId==='ag03-agent','worker WS detail');
+  insist(detail.value.event.fullText===report&&detail.value.event.runId===firstTurn.run,'worker WS report detail');
+
+  const regs=registry[`\0agent03-parent\0${firstTurn.run}`],regFinished=unique(regs,f=>f.event?.type==='tool_call_finished'&&f.event.toolCallId==='ag03-agent','registry worker result');sameEvent(regFinished.value.event,completed,'agent result registry');
+  const registryDetail=unique(regs,f=>f.event?.type==='tool_result_detail_available'&&f.event.toolCallId==='ag03-agent','worker registry detail');sameEvent(registryDetail.value.event,detail.value.event,'worker registry report detail');
+  const ncompleted=normalized?.steps?.[firstTurn.stepIndex]?.frames?.[finished.index]?.event,nkey=`\0agent03-parent\0${ncompleted?.runId}`;
+  sameEvent(normalizedRegistry?.[nkey]?.[regFinished.index]?.event,ncompleted,'normalized agent result registry');
+  insist(ncompleted?.resultBytes===completed.resultBytes,'normalized report byte count');
+  put('worker:ws:resultBytes',`$.steps[${firstTurn.stepIndex}].frames[${finished.index}].event.resultBytes`,completed.resultBytes);
+  put('worker:registry:resultBytes',`$.tree.${REGISTRY_PATH}.json.events.${nkey}[${regFinished.index}].event.resultBytes`,completed.resultBytes);
+  for(const name of ['parent-after','parent-check']){
+    const request=a.provider[name][0],length=request.headers?.['content-length'];
+    insist(request.method==='POST'&&request.headers?.['content-type']==='application/json'&&typeof length==='string'&&/^[1-9][0-9]*$/.test(length)&&Number(length)===Buffer.byteLength(JSON.stringify(request.body),'utf8'),'model request byte count');
+    put(`provider:${name}:content-length`,`$.provider.${name}[0].headers.content-length`,length);
   }
-  sameEvent(history.stream?.events?.[6],events[1],'history stream');
-  addFields(m,'$.steps[6].frames[0].result.stream.events[6]',events[1]);
-  const expectedUsage={used:events[1].used,displayUsed:events[1].displayUsed,total:65536,effectiveTotal:57344,reservedOutputTokens:8192,state:'ok',ratio:events[1].ratio,source:'history',exact:true};
-  const projectionUsage=a.tree[PARENT_PATH+'.projections.json'].json.projections['web-history.token-usage'].state.latestContextBudget;
-  insist(projectionUsage.index===51 && isDeepStrictEqual(history.tokenUsage,expectedUsage) && isDeepStrictEqual(projectionUsage.usage,expectedUsage), 'token usage projection');
-  for (const p of ['$.steps[6].frames[0].result.tokenUsage',`${prefix}.projections.json.json.projections.web-history.token-usage.state.latestContextBudget.usage`]) addFields(m,p,expectedUsage,['used','displayUsed','ratio']);
-  m.set('$.steps[6].frames[0].result.session.fileSize',history.session.fileSize);
-  return m;
+  const last=requests.at(-1),event=last.budget.value.detail;
+  insist(history.stream?.sessionKey==='agent03-parent'&&history.stream.runId===last.run,'history stream run');
+  const stream=unique(history.stream.events,e=>e.type==='context_budget'&&e.runId===last.run,'history stream budget');sameEvent(stream.value,event,'history stream');fields('last:history-stream',`${historyPath}.stream.events[${stream.index}]`,event);
+  const expectedUsage={used:event.used,displayUsed:event.displayUsed,total:65536,effectiveTotal:57344,reservedOutputTokens:8192,state:'ok',ratio:event.ratio,source:'history',exact:true};
+  const usage=projections['web-history.token-usage']?.state?.latestContextBudget;
+  insist(usage?.index===last.budget.index&&isDeepStrictEqual(history.tokenUsage,expectedUsage)&&isDeepStrictEqual(usage.usage,expectedUsage),'token usage projection');
+  fields('last:history-usage',`${historyPath}.tokenUsage`,expectedUsage,['used','displayUsed','ratio']);
+  fields('last:projection-usage',`${prefix}.projections.json.json.projections.web-history.token-usage.state.latestContextBudget.usage`,expectedUsage,['used','displayUsed','ratio']);
+  put('history:fileSize',`${historyPath}.session.fileSize`,history.session.fileSize);
+  return {values:m,semantic,bindings};
 }
 
 // normalized captures must be the exact output of diff.mjs's own normalizer,
@@ -241,14 +319,18 @@ export async function sdkAgentDerivedPaths(left,right,normalizedLeft,normalizedR
     };
     insist(isDeepStrictEqual(comparable(left),comparable(right)), `model ${name} body differs outside report`);
   }
-  for (const index of [10,33,52]) {
-    const a = comparableRequest(left.tree?.[PARENT_PATH]?.jsonl?.[index]?.request);
-    const b = comparableRequest(right.tree?.[PARENT_PATH]?.jsonl?.[index]?.request);
-    insist(isDeepStrictEqual(a,b), `canonical token inputs differ outside validated worker result at ${index}`);
+  const a=derivedValues(left,normalizedLeft,count),b=derivedValues(right,normalizedRight,count);
+  for(const [i,binding] of a.bindings.requests.entries()){
+    const other=b.bindings.requests[i];
+    insist(binding.name===other.name&&binding.step===other.step&&isDeepStrictEqual(comparableRequest(binding.request.value.request),comparableRequest(other.request.value.request)),`canonical token inputs differ outside validated worker result at ${binding.name}/${binding.step}`);
   }
-  const a=derivedValues(left,normalizedLeft,count), b=derivedValues(right,normalizedRight,count);
   const out=new Map();
-  for (const [path,value] of a) if (b.has(path) && value!==b.get(path)) out.set(path,'sdkAgent03DerivedValues: validated canonical request, calibration and exact projection');
+  for(const [key,binding] of a.semantic){
+    const other=b.semantic.get(key);insist(other,'derived semantic binding missing');
+    // Preserve both original array paths. An independently interleaved observer
+    // remains an ordinary structural DIFF, never an excuse to hide row/index changes.
+    if(binding.path===other.path&&binding.value!==other.value)out.set(binding.path,'sdkAgent03DerivedValues: validated canonical request, calibration and exact projection');
+  }
   return out;
 }
 
@@ -295,7 +377,7 @@ export function sdkAgentOrderChildTree(raw, declaration) {
     const start=starts[0],done=completed[0],id=start.subagentId;
     insist(typeof id==='string'&&new RegExp(`^${UUID}$`).test(id)&&done.subagentId===id&&emitted[0].detail.subagentId===id
       &&start.sessionId==='agent03-parent'&&done.sessionId===start.sessionId&&start.turnId===done.turnId&&emitted[0].runId===start.turnId
-      &&start.sequence<done.sequence && done.errored===false && start.subagentSessionId===`/tmp/pdrs-bbx/root/home/.pilotdeck::sub::${id}`
+      &&parent.indexOf(start)<parent.indexOf(done)&&start.sequence<done.sequence && done.errored===false && start.subagentSessionId===`/tmp/pdrs-bbx/root/home/.pilotdeck::sub::${id}`
       &&start.transcriptRelativePath===`agent03-parent/subagents/${id}.jsonl`, `${role} references`);
     if(role==='worker') insist(id===worker && emitted[0].detail.toolCallId==='ag03-agent' && start.promptPreview==='AG03-CHILD-DIRECTIVE', 'worker report identity');
     else insist(start.promptPreview?.includes('Observed agent: worker') && done.summaryPreview==='AG03-OBSERVER-REPORT', 'reviewer identity');
