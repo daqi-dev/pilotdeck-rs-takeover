@@ -6,6 +6,8 @@
 
 ## 现在在哪
 
+**交付标准在 `specs/delivery/README.md`（2026-11-12 人认可的八条）。** 进度按那八条逐条对照，以命令输出为准。
+
 **2026-11-12 晚的最新状态（下面的旧数字以此为准）**：`9c11345cf` 已推送，含五个合并：OpenAI Responses / Google 协议（假 provider 加两种形状，Google 修 4 处）、WS 参数 3 处差异与渠道启动表现、循环行为缺口（12 个场景，修记忆维护调度与记忆请求头顺序）、时区名改用内置数据（`jiff-tzdb`，推翻旧决策卡「不内嵌 tzdata」，账本 `A8.3-CRON-TZ-ALIAS-001` 已过时、待追加说明）、`modules.tools` 接线。
 
 验收挪到 cb8（Linux）：`~/ws/pdrs-takeover/verify.sh <标签> [场景…]` 一条龙（构建、单独重跑、全量对拍、四条命令），先 `git push ssh://cb8/~/ws/pdrs-takeover/pilotdeck-rs HEAD:refs/heads/from-mac`。环境在 `~/ws/pdrs-takeover/env.sh`：Node 必须是 `~/opt` 下的 v22.22.0（默认的 v22.22.1 会让每个带模型请求的场景不一致）、`LANG=en_US.UTF-8`、`umask 022`、不设 `CARGO_BUILD_JOBS`；`cargo-nextest` 0.9.150 从源码装。bbx 根目录按平台取（Linux 是 `/tmp/pdrs-bbN`）。
@@ -177,6 +179,7 @@ Rust 明确报错而不假装支持（文案是 Rust 自己的）：`update_sett
 7. StaffDeck（SOP authority、审批、多用户隔离等）这一期不做。
 8. 第二台机器是 `cb8`（ssh 主机名，本机解析到 10.99.0.2）。用途：安静环境下的全量对拍与四条命令、占用 18789 端口对拍 CLI 的 `cron`、验证 Linux 行为。2026-11-12 下午从本机 ssh 连接超时，还没用上。
 9. PDF 按页渲染、写后语法诊断由主会话定：不移植。它们不是基线 bug，所以不登记 `accepted`，两个场景保持不一致、在全量结果里可见。
+10. 「这8条标准我认可，您写成正式文件吧」——交付标准八条写入 `specs/delivery/README.md`。`intent.md` 尚未同步，是否由我同步人没有说；公开 agent 评测的两侧对比是否加、用哪个模型和预算，人没有答复。
 
 ## 做过的决定
 
