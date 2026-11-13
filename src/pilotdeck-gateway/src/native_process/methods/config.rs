@@ -777,6 +777,11 @@ impl Requests {
             let port = super::super::sdk_config::NativeSdkSessionConfig {
                 options: self.options.clone(),
                 overrides: self.session_overrides.clone(),
+                mcp: std::sync::Arc::new({
+                    let table = std::sync::OnceLock::new();
+                    let _ = table.set(self.mcp.config().clone());
+                    table
+                }),
                 project: self.project.clone(),
             };
             let submit_error = |error: crate::runtime::turn::submit::SubmitError| RequestError {

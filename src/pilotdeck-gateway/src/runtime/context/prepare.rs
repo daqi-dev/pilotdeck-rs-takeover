@@ -146,6 +146,20 @@ pub struct SessionContextState {
     /// the session itself is recreated. The outer `None` is "not taken yet".
     #[allow(clippy::type_complexity)]
     extension: Mutex<Option<Option<Arc<dyn ExtensionResolver>>>>,
+    /// Set on the state of a forked child that composes its own context
+    /// runtime instead of running on the parent's (`createContext`,
+    /// ProjectSessionRuntimeBundle.ts:567-597).
+    scoped: Option<ScopedContext>,
+}
+
+/// What a forked child's own context runtime differs in
+/// (ProjectSessionRuntimeBundle.ts:567-597): extensions are listed although
+/// the child runs on a custom system prompt
+/// (`includeExtensionsWithCustomSystemPrompt: true`), and a definition with
+/// `memory: "disabled"` composes no memory resolver.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScopedContext {
+    pub memory_disabled: bool,
 }
 impl Default for SessionContextState {
     fn default() -> Self {
@@ -159,7 +173,25 @@ impl SessionContextState {
             time: Mutex::new(HashMap::new()),
             cache_sessions: Mutex::new(HashSet::new()),
             extension: Mutex::new(None),
+            scoped: None,
         }
+    }
+    /// A fresh state for a forked child's own context runtime: the project's
+    /// prompt-cache coordinator (`promptCacheCoordinator:
+    /// runtime.promptCacheCoordinator`) and this session's contribution
+    /// snapshot (`contributions`), nothing else carried over.
+    pub fn scoped_child(&self, scoped: ScopedContext) -> Self {
+        Self {
+            prompt_cache_coordinator: self.prompt_cache_coordinator.clone(),
+            time: Mutex::new(HashMap::new()),
+            cache_sessions: Mutex::new(HashSet::new()),
+            extension: Mutex::new(self.session_extension()),
+            scoped: Some(scoped),
+        }
+    }
+    /// `Some` for a forked child's own context runtime.
+    pub fn scoped_context(&self) -> Option<ScopedContext> {
+        self.scoped
     }
     /// The contribution snapshot taken by the session's first composition,
     /// if any.

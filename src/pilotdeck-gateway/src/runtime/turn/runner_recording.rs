@@ -13,10 +13,14 @@ impl TurnInput {
             ])],
             AgentInput::Blocks(content) => content.clone(),
         };
-        vec![super::object([
-            ("role", "user".into()),
-            ("content", JsValue::Array(content)),
-        ])]
+        self.prefix
+            .iter()
+            .cloned()
+            .chain([super::object([
+                ("role", "user".into()),
+                ("content", JsValue::Array(content)),
+            ])])
+            .collect()
     }
 
     pub fn loop_messages(&self) -> Vec<JsValue> {
@@ -76,8 +80,14 @@ impl TurnInput {
         {
             metadata.insert("allowPlanModeTools".into(), value.clone());
         }
+        // Host-owned, like `syntheticMessages`: only a subagent fork sets it.
+        let prefix = match options.get("prefixMessages") {
+            Some(JsValue::Array(messages)) => messages.clone(),
+            _ => Vec::new(),
+        };
         Ok(Self {
             input,
+            prefix,
             history,
             synthetic,
             metadata: (!metadata.is_empty()).then_some(metadata),

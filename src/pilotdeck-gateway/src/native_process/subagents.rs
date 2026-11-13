@@ -166,6 +166,7 @@ impl SubagentRuntime {
                 ForkScope {
                     definition,
                     root_recorder: storage.recorder.clone(),
+                    mcp_tools: Vec::new(),
                 },
             )
             .with_continuation_parent(parent);
@@ -325,6 +326,9 @@ pub(super) struct ForkScope {
     /// The root session's recorder: where a nested fork's parent-side
     /// references and sidechain go.
     pub(super) root_recorder: Arc<Recorder>,
+    /// The definition's own MCP tools (`attachDefinitionMcpTools`), already
+    /// filtered by its allow and deny lists; they replace a same-name tool.
+    pub(super) mcp_tools: Vec<Arc<crate::runtime::mcp::bridge::McpBridgeTool>>,
 }
 
 impl ForkScope {
@@ -425,6 +429,55 @@ struct Fork {
 
 fn text(value: &JsString) -> String {
     String::from_utf16_lossy(value.units())
+}
+
+/// `toSubagentMcpServerSpec` (SubAgentSession.ts:384-415).
+fn subagent_mcp_server_spec(
+    id: &str,
+    config: &JsValue,
+) -> crate::runtime::mcp::protocol::McpServerSpec {
+    use crate::runtime::mcp::protocol::{McpServerSpec, McpTransportSpec};
+    let string = |key: &str| config.get(key).and_then(JsValue::as_string).map(text);
+    let pairs = |key: &str| match config.get(key) {
+        Some(JsValue::Object(map)) => Some(
+            map.entries()
+                .iter()
+                .filter_map(|(name, value)| Some((text(name), value.as_string().map(text)?)))
+                .collect::<Vec<_>>(),
+        ),
+        _ => None,
+    };
+    let call_timeout_ms = config.get("timeout").and_then(JsValue::as_number);
+    let kind = string("type");
+    let transport = match kind.as_deref() {
+        Some("stdio") => McpTransportSpec::Stdio {
+            command: string("command").unwrap_or_default(),
+            args: match config.get("args") {
+                Some(JsValue::Array(args)) if !args.is_empty() => Some(
+                    args.iter()
+                        .map(|arg| arg.as_string().map(text).unwrap_or_default())
+                        .collect(),
+                ),
+                _ => None,
+            },
+            env: pairs("env"),
+            cwd: string("cwd").filter(|cwd| !cwd.is_empty()),
+            per_session: false,
+        },
+        Some("sse") => McpTransportSpec::Sse {
+            url: string("url").unwrap_or_default(),
+            headers: pairs("headers"),
+        },
+        _ => McpTransportSpec::StreamableHttp {
+            url: string("url").unwrap_or_default(),
+            headers: pairs("headers"),
+        },
+    };
+    McpServerSpec {
+        id: id.to_owned(),
+        transport,
+        call_timeout_ms,
+    }
 }
 
 fn object<const N: usize>(entries: [(&str, JsValue); N]) -> JsObject {
@@ -859,6 +912,81 @@ impl Fork {
     ) -> Result<ChildOutcome, JsString> {
         let started = Instant::now();
         let fail = |error: &dyn std::fmt::Display| JsString::from(error.to_string());
+        let config = child_config(&self.parent.config, &definition, &request.subagent_id);
+        // `attachDefinitionMcpTools` (SubAgentSession.ts:293-313): only this
+        // definition's endpoints, started for the fork and stopped with it.
+        let definition_mcp = if definition.mcp_servers.is_empty() {
+            None
+        } else {
+            let specs = definition
+                .mcp_servers
+                .iter()
+                .map(|(id, config)| subagent_mcp_server_spec(id, config))
+                .collect();
+            let runtime: Arc<crate::runtime::mcp::runtime::McpRuntime> = Arc::new(
+                crate::runtime::mcp::runtime::McpRuntime::new(specs, Default::default()),
+            );
+            runtime.start().await;
+            let port: Arc<dyn crate::runtime::mcp::runtime::McpRuntimePort> = runtime.clone();
+            match crate::runtime::mcp::bridge::create_mcp_tool_definitions_from_runtime(
+                port,
+                Default::default(),
+            )
+            .await
+            {
+                Ok(tools) => Some((runtime, tools)),
+                Err(error) => {
+                    runtime.stop().await;
+                    return Err(fail(&error.to_string()));
+                }
+            }
+        };
+        let mcp_tools = definition_mcp
+            .as_ref()
+            .map(|(_, tools)| {
+                let wildcard = definition.allowed_tools.iter().any(|name| name == "*");
+                tools
+                    .iter()
+                    .filter(|tool| {
+                        let name = String::from_utf16_lossy(tool.spec().wire_name.units());
+                        (wildcard || definition.allowed_tools.contains(&name))
+                            && !definition.disallowed_tools.contains(&name)
+                    })
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        let outcome = self
+            .run_child_with(
+                request,
+                definition,
+                storage,
+                child_session,
+                context,
+                config,
+                mcp_tools,
+                started,
+            )
+            .await;
+        if let Some((runtime, _)) = definition_mcp {
+            runtime.stop().await;
+        }
+        outcome
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn run_child_with(
+        &self,
+        request: &ForkRequest,
+        definition: Arc<SubagentDefinition>,
+        storage: &FactoryStorage,
+        child_session: &JsString,
+        context: &ToolRunContext,
+        config: JsObject,
+        mcp_tools: Vec<Arc<crate::runtime::mcp::bridge::McpBridgeTool>>,
+        started: Instant,
+    ) -> Result<ChildOutcome, JsString> {
+        let fail = |error: &dyn std::fmt::Display| JsString::from(error.to_string());
         let checkpoint = HostToolCheckpoint::new(
             Some(&SeedState {
                 allowed_read_files: None,
@@ -868,7 +996,6 @@ impl Fork {
             &[],
         )
         .map_err(|error: HostError| fail(&error.message))?;
-        let config = child_config(&self.parent.config, &definition, &request.subagent_id);
         let tools: SessionTools = self.seed.clone().child(
             SessionBinding {
                 context: self.seed.context.clone(),
@@ -880,6 +1007,7 @@ impl Fork {
             ForkScope {
                 definition: definition.clone(),
                 root_recorder: self.parent.recorder.clone(),
+                mcp_tools,
             },
         );
         let session = TurnHostFactory::new_with_signal(
@@ -894,6 +1022,28 @@ impl Fork {
         .into_live_session(storage.recorder.clone(), Vec::new)
         .as_sidechain();
         let turn_id = JsString::from(format!("{}-t0", text(&request.subagent_id)));
+        // `buildForkedMessages(directive, definition.initialPrompt)`: a
+        // non-blank initial prompt, trimmed, is its own user message ahead of
+        // the directive.
+        let prefix: Vec<JsValue> = definition
+            .initial_prompt
+            .as_deref()
+            .map(str::trim)
+            .filter(|prompt| !prompt.is_empty())
+            .map(|prompt| {
+                JsValue::Object(object([
+                    ("role", "user".into()),
+                    (
+                        "content",
+                        JsValue::Array(vec![JsValue::Object(object([
+                            ("type", "text".into()),
+                            ("text", prompt.into()),
+                        ]))]),
+                    ),
+                ]))
+            })
+            .into_iter()
+            .collect();
         let mut turn = session
             .submit(
                 JsValue::Object(object([
@@ -903,6 +1053,7 @@ impl Fork {
                 JsValue::Object(object([
                     ("sessionId", JsValue::String(child_session.clone())),
                     ("turnId", JsValue::String(turn_id.clone())),
+                    ("prefixMessages", JsValue::Array(prefix)),
                     // The child loop runs without an execution context, so
                     // its run id is `${sessionId}:${turnId}`
                     // (AgentLoop.ts:538-540).

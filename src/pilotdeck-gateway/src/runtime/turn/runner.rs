@@ -42,6 +42,9 @@ pub enum AgentInput {
 #[derive(Clone)]
 pub struct TurnInput {
     pub input: AgentInput,
+    /// User messages accepted ahead of the input in the same entry: a
+    /// subagent definition's `initialPrompt` (buildForkedMessages.ts:18-24).
+    pub prefix: Vec<JsValue>,
     pub history: Vec<JsValue>,
     pub synthetic: Vec<JsValue>,
     pub metadata: Option<JsObject>,

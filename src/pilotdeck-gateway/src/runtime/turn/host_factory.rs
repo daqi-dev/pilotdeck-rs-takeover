@@ -705,6 +705,9 @@ async fn session_context_runtime(
     // assembly freezes them into the session state then) and kept until the
     // session is recreated, so a skill written later is not listed until a
     // reload marks the session dirty. A state nobody froze takes them here.
+    let scoped = session_state
+        .as_ref()
+        .and_then(|state| state.scoped_context());
     let extension = match session_state
         .as_ref()
         .and_then(|state| state.session_extension())
@@ -735,6 +738,8 @@ async fn session_context_runtime(
                         },
                     ),
                     session_state,
+                    memory_disabled: scoped.is_some_and(|scoped| scoped.memory_disabled),
+                    include_extensions_with_custom_system_prompt: scoped.is_some(),
                     ..Default::default()
                 },
             )

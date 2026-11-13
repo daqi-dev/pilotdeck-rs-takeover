@@ -312,6 +312,7 @@ async fn blocks_empty() {
         input: AgentInput::Blocks(vec![]),
         history: vec![],
         synthetic: vec![],
+        prefix: vec![],
         metadata: None,
     };
     let (runner, accepted) = runner

@@ -1,0 +1,447 @@
+{
+  "name": "sdk-config-agents-extras",
+  "about": "sdkSessionConfig 里没有场景碰到的四个字段。agents.<name>.initialPrompt：toSdkSubagentDefinitions 原样带过去（cli/SessionAgentConfigBundle.ts:231），子代理首条消息前插一条去掉首尾空白的用户消息（agent/sub/buildForkedMessages.ts:18-24）。agents.<name>.memory=disabled：子代理另建一份上下文运行时、不挂记忆解析器（cli/ProjectSessionRuntimeBundle.ts:568,595）。agents.<name>.mcpServers：对象形式在子代理里单独起 MCP 服务、按 tools 允许列表过滤后注册（agent/sub/SubAgentSession.ts:293-313）；字符串形式引用 set_mcp_servers 设的会话 MCP（cli/ProjectRuntimeRegistry.ts:2162-2200），引用不存在报 SDK_AGENT_MCP_REFERENCE_NOT_FOUND、引用被关掉的报 SDK_AGENT_MCP_REFERENCE_DISABLED、同名重复报 INVALID_MCP_SERVER。sandbox.process=deny：屏蔽 shell / mcp / custom 类工具和 execute_code、agent、task_*（cli/ProjectSessionRuntimeBundle.ts:808-826），非 deny 的取值被校验拒绝（gateway/client/InProcessGateway.ts:3275-3290）。每个会话只起一个子代理（同一会话两个子代理时 subagents/ 下两个随机 UUID 文件名的先后不定，基线自比不稳）。比较子代理与父轮的模型请求（消息、工具集）、事件与落盘。",
+  "files": {
+    "home/.pilotdeck/mcp/echo-server.mjs": "// bbx fixture: minimal MCP stdio server (newline-delimited JSON-RPC 2.0).\n// argv[2] labels the instance so each configured server answers differently.\nimport readline from 'node:readline';\nconst label = process.argv[2] ?? 'unlabelled';\nconst send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');\nconst tool = {\n  name: 'echo',\n  description: 'Echo the given text back, prefixed with the server label (' + label + ').',\n  inputSchema: {\n    type: 'object',\n    properties: { text: { type: 'string', description: 'Text to echo.' } },\n    required: ['text'],\n    additionalProperties: false,\n  },\n};\nreadline.createInterface({ input: process.stdin }).on('line', (line) => {\n  let request;\n  try { request = JSON.parse(line); } catch { return; }\n  if (request.id === undefined) return; // notification\n  if (request.method === 'initialize') {\n    send({ jsonrpc: '2.0', id: request.id, result: {\n      protocolVersion: request.params?.protocolVersion ?? '2024-11-05',\n      capabilities: { tools: {} },\n      serverInfo: { name: 'bbx-echo-' + label, version: '1.0.0' },\n    } });\n  } else if (request.method === 'tools/list') {\n    send({ jsonrpc: '2.0', id: request.id, result: { tools: [tool] } });\n  } else if (request.method === 'tools/call') {\n    const text = String(request.params?.arguments?.text ?? '');\n    send({ jsonrpc: '2.0', id: request.id, result: { content: [{ type: 'text', text: 'echo[' + label + ']: ' + text }] } });\n  } else if (request.method === 'ping') {\n    send({ jsonrpc: '2.0', id: request.id, result: {} });\n  } else {\n    send({ jsonrpc: '2.0', id: request.id, error: { code: -32601, message: 'Method not found: ' + request.method } });\n  }\n});\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Agents extras\"}"
+      }
+    },
+    {
+      "name": "parent-after-2",
+      "when": [
+        "turn-2:",
+        "\"tool_call_id\":\"call_p2\""
+      ],
+      "reply": {
+        "text": "Done 2."
+      }
+    },
+    {
+      "name": "parent-2",
+      "when": [
+        "turn-2:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_p2",
+          "name": "agent",
+          "arguments": {
+            "description": "Be picky",
+            "prompt": "CHILD-P: look around.",
+            "subagent_type": "picky"
+          }
+        }
+      }
+    },
+    {
+      "name": "parent-after-1",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_p1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "parent-after-3",
+      "when": [
+        "turn-3:",
+        "\"tool_call_id\":\"call_p3\""
+      ],
+      "reply": {
+        "text": "Done 3."
+      }
+    },
+    {
+      "name": "child-h-after",
+      "when": [
+        "CHILD-H:",
+        "\"tool_call_id\":\"call_ch\""
+      ],
+      "reply": {
+        "text": "Scope: echoed.\nResult: echo worked.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "child-h",
+      "when": [
+        "CHILD-H:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_ch",
+          "name": "mcp__agmcp__echo",
+          "arguments": {
+            "text": "from helper"
+          }
+        }
+      }
+    },
+    {
+      "name": "child-p",
+      "when": [
+        "CHILD-P:"
+      ],
+      "reply": {
+        "text": "Scope: picky.\nResult: nothing to do.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "child-r-after",
+      "when": [
+        "CHILD-R:",
+        "\"tool_call_id\":\"call_cr\""
+      ],
+      "reply": {
+        "text": "Scope: referenced.\nResult: echo worked.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "child-r",
+      "when": [
+        "CHILD-R:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_cr",
+          "name": "mcp__bbx-sdk__echo",
+          "arguments": {
+            "text": "from ref"
+          }
+        }
+      }
+    },
+    {
+      "name": "parent-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_p1",
+          "name": "agent",
+          "arguments": {
+            "description": "Echo it",
+            "prompt": "CHILD-H: echo something.",
+            "subagent_type": "helper"
+          }
+        }
+      }
+    },
+    {
+      "name": "parent-3",
+      "when": [
+        "turn-3:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_p3",
+          "name": "agent",
+          "arguments": {
+            "description": "Use ref",
+            "prompt": "CHILD-R: echo via ref.",
+            "subagent_type": "refd"
+          }
+        }
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "ok"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-ag",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ag",
+        "channelKey": "test",
+        "message": "turn-1: delegate an echo",
+        "sdkSessionConfig": {
+          "agents": {
+            "helper": {
+              "description": "Echoes through its own MCP server.",
+              "prompt": "HELPER-SUFFIX: use the echo tool.",
+              "initialPrompt": "  INITIAL-CONTEXT: the notes live in notes.md  \n",
+              "memory": "disabled",
+              "mcpServers": {
+                "agmcp": {
+                  "type": "stdio",
+                  "command": "node",
+                  "args": [
+                    "{PILOT_HOME}/mcp/echo-server.mjs",
+                    "agent"
+                  ]
+                }
+              }
+            },
+            "picky": {
+              "description": "Only reads files.",
+              "prompt": "PICKY-SUFFIX: read only.",
+              "tools": [
+                "read_file"
+              ],
+              "initialPrompt": "   ",
+              "memory": "inherit",
+              "mcpServers": {
+                "agmcp": {
+                  "type": "stdio",
+                  "command": "node",
+                  "args": [
+                    "{PILOT_HOME}/mcp/echo-server.mjs",
+                    "picky"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-ag2",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ag2",
+        "channelKey": "test",
+        "message": "turn-2: delegate to picky",
+        "sdkSessionConfig": {
+          "agents": {
+            "helper": {
+              "description": "Echoes through its own MCP server.",
+              "prompt": "HELPER-SUFFIX: use the echo tool.",
+              "initialPrompt": "  INITIAL-CONTEXT: the notes live in notes.md  \n",
+              "memory": "disabled",
+              "mcpServers": {
+                "agmcp": {
+                  "type": "stdio",
+                  "command": "node",
+                  "args": [
+                    "{PILOT_HOME}/mcp/echo-server.mjs",
+                    "agent"
+                  ]
+                }
+              }
+            },
+            "picky": {
+              "description": "Only reads files.",
+              "prompt": "PICKY-SUFFIX: read only.",
+              "tools": [
+                "read_file"
+              ],
+              "initialPrompt": "   ",
+              "memory": "inherit",
+              "mcpServers": {
+                "agmcp": {
+                  "type": "stdio",
+                  "command": "node",
+                  "args": [
+                    "{PILOT_HOME}/mcp/echo-server.mjs",
+                    "picky"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ref-missing",
+        "channelKey": "test",
+        "message": "plain: missing ref",
+        "sdkSessionConfig": {
+          "agents": {
+            "refd": {
+              "description": "Uses a session MCP server.",
+              "prompt": "REF-SUFFIX.",
+              "mcpServers": [
+                "ghost"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ref-dup",
+        "channelKey": "test",
+        "message": "plain: duplicate",
+        "sdkSessionConfig": {
+          "agents": {
+            "refd": {
+              "description": "Uses a session MCP server.",
+              "prompt": "REF-SUFFIX.",
+              "mcpServers": [
+                {
+                  "dup": {
+                    "type": "stdio",
+                    "command": "node",
+                    "args": [
+                      "{PILOT_HOME}/mcp/echo-server.mjs",
+                      "a"
+                    ]
+                  }
+                },
+                {
+                  "dup": {
+                    "type": "stdio",
+                    "command": "node",
+                    "args": [
+                      "{PILOT_HOME}/mcp/echo-server.mjs",
+                      "b"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "ws": "set_mcp_servers",
+      "params": {
+        "sessionKey": "s-ref",
+        "servers": {
+          "bbx-sdk": {
+            "type": "stdio",
+            "command": "node",
+            "args": [
+              "{PILOT_HOME}/mcp/echo-server.mjs",
+              "sdk"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-ref",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ref",
+        "channelKey": "test",
+        "message": "turn-3: delegate via ref",
+        "sdkSessionConfig": {
+          "agents": {
+            "refd": {
+              "description": "Uses a session MCP server.",
+              "prompt": "REF-SUFFIX.",
+              "mcpServers": [
+                "bbx-sdk"
+              ]
+            }
+          }
+        }
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "mcp_server_toggle",
+      "params": {
+        "sessionKey": "s-ref",
+        "serverName": "bbx-sdk",
+        "enabled": false
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ref",
+        "channelKey": "test",
+        "message": "plain: disabled ref",
+        "sdkSessionConfig": {
+          "agents": {
+            "refd": {
+              "description": "Uses a session MCP server.",
+              "prompt": "REF-SUFFIX.",
+              "mcpServers": [
+                "bbx-sdk"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-sb-bad",
+        "channelKey": "test",
+        "message": "plain: bad sandbox",
+        "sdkSessionConfig": {
+          "sandbox": {
+            "process": "allow"
+          }
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-sb",
+        "channelKey": "test",
+        "message": "plain: process denied",
+        "sdkSessionConfig": {
+          "sandbox": {
+            "type": "tool_policy",
+            "process": "deny"
+          }
+        }
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 500
+    }
+  ],
+  "volatile": [
+    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages|resultBytes|content-length)$"
+  ],
+  "volatileWhy": "子代理结果里带位数不定的耗时（durationMs），父轮上下文的 token 估算与字节数随之差 1；基线自比 3 次中 3 次出现（s-ref 那一轮），与 sdk-config-agents 同一组路径"
+}
