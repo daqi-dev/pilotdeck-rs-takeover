@@ -555,6 +555,10 @@ async fn start_assembly(
     // both writers (the three selector methods on `Requests`) and the reader
     // (the prepare closure composing each session's agent config).
     let session_overrides: Arc<super::SessionOverrides> = Arc::default();
+    session_overrides.set_task_budget_compact_after(
+        env.get("PILOTDECK_SDK_TASK_BUDGET_LEDGER_COMPACT_AFTER_RECORDS")
+            .map(String::as_str),
+    );
     let dialog_project_keys = session_overrides.dialog_project_keys().clone();
     let prepare_overrides = session_overrides.clone();
     let evict_session_overrides = session_overrides.clone();
@@ -1735,6 +1739,10 @@ async fn start_assembly(
                 })),
                 model_assertion: Some(project_admission.clone()),
                 dialog_recovery: Some(project_admission),
+                task_budget: Some(Arc::new(super::task_budget::NativeTaskBudget {
+                    options: options.clone(),
+                    overrides: session_overrides.clone(),
+                })),
                 ..SubmitAdmissionOptions::new(replacement.clone())
             };
             // U7 global settings (#1320): `createPilotConfigStoreSync` +
@@ -2607,12 +2615,13 @@ fn dispose_ephemeral_sessions(
         return;
     }
     let projects = overrides.sdk_config_sessions();
-    let mut ledger = crate::storage::TaskBudgetStore::new(pilot_home, None);
     for (session, root) in roots {
         let _ = std::fs::remove_dir_all(&root);
         if let Some((_, project)) = projects.iter().find(|(key, _)| *key == session) {
             let project: JsString = project.to_string_lossy().as_ref().into();
-            let _ = ledger.clear_session(&project, &session);
+            let _ = overrides.with_task_budget(pilot_home, |ledger| {
+                ledger.clear_session(&project, &session)
+            });
         }
     }
 }

@@ -51,6 +51,12 @@ pub struct SessionOverrides {
     /// `dialogProjectKeys` (InProcessGateway.ts:551), shared with the submit
     /// admission and the `user_dialog_changed` broadcast.
     dialog_project_keys: crate::runtime::turn::admission::DialogProjectKeys,
+    /// The registry's SDK task-budget ledger (`sdkTaskBudgetLedgers` and its
+    /// JSONL file, ProjectRuntimeRegistry.ts:262-265): one store per gateway
+    /// process, so its first load is cached and its record count drives
+    /// compaction, like the baseline's single registry.
+    task_budget: std::sync::Mutex<Option<crate::storage::TaskBudgetStore>>,
+    task_budget_compact_after: std::sync::Mutex<Option<usize>>,
 }
 
 /// A session's SDK `ConfigChange` dispatch, given `{ changedPaths,
@@ -58,6 +64,46 @@ pub struct SessionOverrides {
 pub type ConfigChangeHandler = std::sync::Arc<dyn Fn(&JsValue) + Send + Sync>;
 
 impl SessionOverrides {
+    /// `PILOTDECK_SDK_TASK_BUDGET_LEDGER_COMPACT_AFTER_RECORDS`
+    /// (`readPositiveIntegerEnv`, ProjectRuntimeRegistry.ts:281-283): a
+    /// trimmed decimal integer prefix that is a positive safe integer;
+    /// anything else keeps the default.
+    pub fn set_task_budget_compact_after(&self, value: Option<&str>) {
+        let parsed = value.and_then(|value| {
+            let value = value.trim();
+            let sign = usize::from(value.starts_with(['+', '-']));
+            let digits = value[sign..].bytes().take_while(u8::is_ascii_digit).count();
+            if digits == 0 || value.starts_with('-') {
+                return None;
+            }
+            value[sign..sign + digits]
+                .parse::<u64>()
+                .ok()
+                .filter(|n| *n > 0 && *n <= 9_007_199_254_740_991)
+                .map(|n| n as usize)
+        });
+        *self
+            .task_budget_compact_after
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = parsed;
+    }
+
+    /// Run `f` on the gateway's task-budget store under `pilot_home`.
+    pub fn with_task_budget<R>(
+        &self,
+        pilot_home: &std::path::Path,
+        f: impl FnOnce(&mut crate::storage::TaskBudgetStore) -> R,
+    ) -> R {
+        let compact_after = *self
+            .task_budget_compact_after
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut store = self.task_budget.lock().unwrap_or_else(|e| e.into_inner());
+        let store = store
+            .get_or_insert_with(|| crate::storage::TaskBudgetStore::new(pilot_home, compact_after));
+        f(store)
+    }
+
     /// The gateway's `dialogProjectKeys` map.
     pub fn dialog_project_keys(&self) -> &crate::runtime::turn::admission::DialogProjectKeys {
         &self.dialog_project_keys

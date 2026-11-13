@@ -20,6 +20,7 @@ use std::sync::Arc;
 
 /// The `sdkSessionConfig` fields whose effect the native session composes.
 pub(super) const WIRED_FIELDS: &[&str] = &[
+    "taskBudget",
     "userDialogKinds",
     "systemPrompt",
     "appendSystemPrompt",
@@ -1494,6 +1495,34 @@ impl NativeSdkSessionConfig {
                     &resolved.0,
                     &resolved.1,
                 )?;
+            }
+            // `configureProjectTaskBudget(runtime.projectRoot, sessionKey,
+            // next.taskBudget)` (ProjectRuntimeRegistry.ts:1016, 1408-1453).
+            if let Some(budget) = config.get("taskBudget").filter(|b| !b.is_undefined())
+                && budget
+                    .get("scope")
+                    .and_then(JsValue::as_string)
+                    .is_some_and(|scope| scope.equals_str("project"))
+            {
+                let total = budget
+                    .get("total")
+                    .and_then(JsValue::as_number)
+                    .unwrap_or(f64::NAN);
+                let retention = budget
+                    .get("projectRetentionMs")
+                    .and_then(JsValue::as_number);
+                let project_root: JsString = root.to_string_lossy().as_ref().into();
+                self.overrides
+                    .with_task_budget(&self.options.home, |ledger| {
+                        ledger.configure_project(
+                            &project_root,
+                            session,
+                            total,
+                            retention,
+                            super::task_budget::now_ms(),
+                        )
+                    })
+                    .map_err(super::task_budget::submit_error)?;
             }
             self.overrides.set_sdk_config(session, config.clone());
             self.overrides.mark_sdk_config(session, root);

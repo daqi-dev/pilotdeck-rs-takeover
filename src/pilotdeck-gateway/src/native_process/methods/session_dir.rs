@@ -330,8 +330,11 @@ impl Requests {
                     .session_project(&JsValue::String(key.clone()))
             });
         if let Some(root) = sdk_project {
-            let _ = crate::storage::TaskBudgetStore::new(&self.options.home, None)
-                .clear_session(&root, &key);
+            let _ = self
+                .session_overrides
+                .with_task_budget(&self.options.home, |ledger| {
+                    ledger.clear_session(&root, &key)
+                });
         }
         self.mcp
             .config()
