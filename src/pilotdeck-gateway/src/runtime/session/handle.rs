@@ -107,6 +107,8 @@ struct Progress {
     state: HandleState,
     activity: bool,
     maintenance: bool,
+    /// The running manual compaction's abort (`maintenanceController`).
+    maintenance_cancel: Option<crate::host::Cancellation>,
     cancelled: Option<JsString>,
     disposal: Option<watch::Receiver<Option<RuntimeResult>>>,
     recreation_started: bool,
@@ -265,6 +267,7 @@ impl LiveSessionHandle {
                 state: HandleState::Active,
                 activity: false,
                 maintenance: false,
+                maintenance_cancel: None,
                 cancelled: None,
                 disposal: None,
                 recreation_started: false,
@@ -367,7 +370,10 @@ impl LiveSessionHandle {
         cancel: crate::host::Cancellation,
     ) -> Result<JsValue, RuntimeError> {
         let _activity = self.begin_maintenance()?;
-        self.0.session.compact(turn, cancel).await
+        self.0.progress.lock().unwrap().maintenance_cancel = Some(cancel.clone());
+        let result = self.0.session.compact(turn, cancel).await;
+        self.0.progress.lock().unwrap().maintenance_cancel = None;
+        result
     }
 
     /// Admission is reserved before invoking host code, with no synchronous
@@ -487,11 +493,16 @@ impl Inner {
         }
         progress.state = HandleState::Draining;
         let active = progress.activity && !progress.maintenance;
-        // `finishDispose` (AgentHandle.ts:260-269) aborts a reserved
-        // maintenance task's controller as well as an active run.
-        let abort = active || progress.maintenance;
-        if abort {
+        if active || progress.maintenance {
             progress.cancelled.get_or_insert_with(|| reason.clone());
+        }
+        // `if (this.maintenanceReserved) this.maintenanceController?.abort(reason)`
+        // (AgentHandle.ts:260-262): the maintenance task's own abort, not a
+        // session abort.
+        if progress.maintenance
+            && let Some(cancel) = &progress.maintenance_cancel
+        {
+            cancel.cancel(Some(reason.clone()));
         }
         let (result, completion) = watch::channel(None);
         progress.disposal = Some(completion.clone());
@@ -572,7 +583,7 @@ impl Inner {
                 let _writer_guard = session.disposal_guard();
                 // session.abort() is outside the progress lock (no poison risk).
                 // Called before the drain wait so the session can begin cancellation.
-                let abort_error = if abort {
+                let abort_error = if active {
                     // Like TS AgentHandle.finishDispose, an abort failure does not
                     // skip the active-run drain or the ordinary resource disposer.
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
