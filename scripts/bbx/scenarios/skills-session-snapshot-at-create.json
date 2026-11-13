@@ -1,6 +1,6 @@
 {
   "name": "skills-session-snapshot-at-create",
-  "about": "会话的插件贡献（技能清单）在建会话时取（ProjectSessionRuntimeBundle.ts:246-263），不是在会话第一轮时取：先用 skill_import symlink 把 import-src/link-skill 链进用户技能目录并等扩展监视触发的作废消停，再由 seed_read_state 建出会话 s-a（此时清单里有 link-skill）；之后另一个会话用 bash 把链接目标里的 SKILL.md 改名（目标不在任何被监视的目录下，不触发扩展监视，discoverLocalPlugins.ts:51-58 不再认它是技能），s-a 的第一轮仍列出 link-skill，新建的 s-b 第一轮不再列出。",
+  "about": "会话的插件贡献（技能清单）在建会话时取（ProjectSessionRuntimeBundle.ts:246-263），不是在会话第一轮时取：先用 skill_import symlink 把 import-src/link-skill 链进用户技能目录并等扩展监视触发的作废消停，再由 seed_read_state 建出会话 s-a（此时清单里有 link-skill）；之后另一个会话用 bash 把链接目标里的 SKILL.md 改名（目标不在任何被监视的目录下，不触发扩展监视，discoverLocalPlugins.ts:51-58 不再认它是技能），s-a 的第一轮仍列出 link-skill，新建的 s-b 第一轮不再列出。以上是 macOS 上的表现；Linux 上（cb8 实测）基线的递归监视给树内链接 link-skill 也挂了 inotify（Node 22 internal/fs/recursive_watch.js），改名会触发全局作废，s-a 的第一轮也不再列出 link-skill。",
   "files": {
     "home/.pilotdeck/seed.txt": "seed\n",
     "proj/import-src/link-skill/SKILL.md": "---\nname: link-skill\ndescription: A linked skill that later loses its SKILL.md.\n---\n\n# link skill\n"

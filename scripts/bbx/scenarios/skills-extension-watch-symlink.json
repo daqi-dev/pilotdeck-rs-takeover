@@ -1,6 +1,6 @@
 {
   "name": "skills-extension-watch-symlink",
-  "about": "被监视的扩展路径本身是符号链接时的热更新（ExtensionWatchManager.ts:109-131、170-188）。第一次起服务时 <pilotHome>/skills 还不存在，基线从最近的已存在祖先递归监视；这一轮用 bash 把 skills 建成指向 home/elsewhere/gskills 的链接、在 gskills 里再建一个指向 home/elsewhere/inner 的子目录链接、把 alpha 项目的 .pilotdeck/skills 建成指向 home/elsewhere/pskills 的链接（链接本身出现会被报告一次）。重启后这些路径在监视开始时已存在：基线的 fs.watch 直接监视链接（macOS 上实测会跟到链接背后的目录），于是往 gskills 里写技能打 Extensions changed（全局），往 pskills 里写打项目那一行，之后的轮次看到新技能；往树内子目录链接背后（inner）写不报告。第一次起服务期间，链接建好之后往 gskills 写也不报告（祖先监视不跟链接）。Linux 上的推断（未实测）：Node 22 的递归监视在 Linux 上逐目录 inotify，根路径的 inotify_add_watch 跟随链接、遍历子目录时不跟随，结论应相同。",
+  "about": "被监视的扩展路径本身是符号链接时的热更新（ExtensionWatchManager.ts:109-131、170-188）。第一次起服务时 <pilotHome>/skills 还不存在，基线从最近的已存在祖先递归监视；这一轮用 bash 把 skills 建成指向 home/elsewhere/gskills 的链接、在 gskills 里再建一个指向 home/elsewhere/inner 的子目录链接、把 alpha 项目的 .pilotdeck/skills 建成指向 home/elsewhere/pskills 的链接（链接本身出现会被报告一次）。重启后这些路径在监视开始时已存在：基线的 fs.watch 直接监视链接（macOS 上实测会跟到链接背后的目录），于是往 gskills 里写技能打 Extensions changed（全局），往 pskills 里写打项目那一行，之后的轮次看到新技能；往树内子目录链接背后（inner）写不报告。第一次起服务期间，链接建好之后往 gskills 写也不报告（祖先监视不跟链接）。Linux 上（cb8 实测）不同：Node 22 在 Linux 上没有原生递归监视，逐个条目各挂一个 inotify（internal/fs/recursive_watch.js），树内的链接也被跟到目标及其直接子项一层，于是第一次起服务期间往 gskills 建 early-global 目录、第二次往 inner 写 SKILL.md 都各多报告一次全局的 Extensions changed。",
   "server": false,
   "files": {
     "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",

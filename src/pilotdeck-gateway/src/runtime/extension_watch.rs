@@ -15,9 +15,16 @@
 //!   existing ancestor filtered back to the path (:109-131, :170-188). Like
 //!   the config store's watcher (`config/store.rs`), this crate has no native
 //!   watcher dependency, so each watched path's tree is polled: a fingerprint
-//!   of every entry under it (type, length, modification time; symbolic links
-//!   inside the tree are not followed, as `fs.watch` does not report changes
-//!   behind them, but a watched path that is itself a link is).
+//!   of every entry under it (type, length, modification time; a watched
+//!   path that is itself a link is followed). What lies behind a symbolic
+//!   link inside the tree depends on the platform, as the baseline's
+//!   recursive `fs.watch` does: on macOS (FSEvents) a change behind it is
+//!   not reported; on Linux Node 22 has no native recursive watch and
+//!   watches every entry it finds with its own inotify watch
+//!   (`internal/fs/recursive_watch.js`, `#watchFolder` / `#watchFile`),
+//!   which for a link follows it and covers the target and its direct
+//!   children, but does not walk further below it. `link_target_sample`
+//!   gives the Linux side that one level.
 //!   A change is therefore seen up to one poll interval late, and a change
 //!   that leaves every fingerprinted field as it was is not seen.
 //! * The polling runs on its own thread, never on an async worker, and no
@@ -316,7 +323,8 @@ fn watch_thread(shared: Weak<Shared>) {
 /// watches the link's target (measured on macOS: a write behind a linked
 /// `skills` / `plugins` / project `.pilotdeck/skills` is reported) — while
 /// links inside the tree never are (a write behind an inner linked directory
-/// is not reported).
+/// is not reported on macOS; on Linux one level behind it is, see
+/// `link_target_sample`).
 fn fingerprint(path: &Path, follow_root: bool) -> u64 {
     let mut hasher = DefaultHasher::new();
     let mut stack = vec![(path.to_path_buf(), PathBuf::new())];
@@ -341,6 +349,10 @@ fn fingerprint(path: &Path, follow_root: bool) -> u64 {
             .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|time| time.as_nanos())
             .hash(&mut hasher);
+        #[cfg(target_os = "linux")]
+        if file_type.is_symlink() {
+            link_target_sample(&absolute, &mut hasher);
+        }
         if file_type.is_dir()
             && let Ok(entries) = std::fs::read_dir(&absolute)
         {
@@ -356,6 +368,58 @@ fn fingerprint(path: &Path, follow_root: bool) -> u64 {
         }
     }
     hasher.finish()
+}
+
+/// Linux only: what the baseline's per-entry inotify watch on a symbolic
+/// link inside a watched tree reports a change of. `fs.watch(link)` follows
+/// the link; for a directory it reports entries appearing, disappearing or
+/// being renamed in it and writes to the files directly in it, but nothing
+/// further down (a file written in a subdirectory of the target is not
+/// seen, though the subdirectory being created is); for a file, writes to
+/// it. The link's own entries are not walked on (`#watchFolder` skips
+/// links), so links found here are not followed again.
+#[cfg(target_os = "linux")]
+fn link_target_sample(link: &Path, hasher: &mut DefaultHasher) {
+    fn file_sample(metadata: &std::fs::Metadata, hasher: &mut DefaultHasher) {
+        metadata.len().hash(hasher);
+        metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|time| time.as_nanos())
+            .hash(hasher);
+    }
+    let Ok(target) = std::fs::metadata(link) else {
+        0u8.hash(hasher);
+        return;
+    };
+    1u8.hash(hasher);
+    if !target.is_dir() {
+        file_sample(&target, hasher);
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(link) else {
+        return;
+    };
+    let mut children: Vec<_> = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| (entry.file_name(), entry.path()))
+        .collect();
+    children.sort();
+    for (name, path) in children {
+        name.hash(hasher);
+        let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+            0u8.hash(hasher);
+            continue;
+        };
+        let file_type = metadata.file_type();
+        (file_type.is_dir(), file_type.is_symlink()).hash(hasher);
+        // A directory's own modification time moves with its contents,
+        // which this watch does not see.
+        if !file_type.is_dir() {
+            file_sample(&metadata, hasher);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -389,7 +453,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn a_linked_watched_path_is_followed_but_inner_links_are_not() {
+    fn a_linked_watched_path_is_followed_inner_links_per_platform() {
         let root = temp_dir("links");
         let elsewhere = root.join("elsewhere");
         std::fs::create_dir_all(elsewhere.join("skills")).unwrap();
@@ -406,17 +470,58 @@ mod tests {
         assert_eq!(
             unfollowed,
             fingerprint(&skills, false),
-            "a link that appeared after the watch started is not followed"
+            "a write two levels behind a link watched from an ancestor is not seen"
         );
         std::os::unix::fs::symlink(elsewhere.join("inner"), elsewhere.join("skills/linked"))
             .unwrap();
         let linked = fingerprint(&skills, true);
         std::fs::write(elsewhere.join("inner/SKILL.md"), "x").unwrap();
+        if cfg!(target_os = "linux") {
+            assert_ne!(
+                linked,
+                fingerprint(&skills, true),
+                "Linux: a write directly behind an inner link is seen"
+            );
+        } else {
+            assert_eq!(
+                linked,
+                fingerprint(&skills, true),
+                "an inner link is not followed"
+            );
+        }
+        std::fs::create_dir_all(elsewhere.join("inner/deep")).unwrap();
+        let deep = fingerprint(&skills, true);
+        std::fs::write(elsewhere.join("inner/deep/SKILL.md"), "x").unwrap();
         assert_eq!(
-            linked,
+            deep,
             fingerprint(&skills, true),
-            "an inner link is not followed"
+            "a write two levels behind an inner link is not seen"
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Linux: a link that appears under a path watched from its ancestor is
+    /// followed one level, as Node's per-entry inotify watch does.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_follows_a_link_found_under_an_ancestor_watch_one_level() {
+        let root = temp_dir("ancestor-link");
+        let target = root.join("target");
+        std::fs::create_dir_all(&target).unwrap();
+        let skills = root.join("skills");
+        std::os::unix::fs::symlink(&target, &skills).unwrap();
+        let before = fingerprint(&skills, false);
+        std::fs::create_dir_all(target.join("early")).unwrap();
+        let created = fingerprint(&skills, false);
+        assert_ne!(before, created, "a new entry behind the link is seen");
+        std::fs::write(target.join("early/SKILL.md"), "x").unwrap();
+        assert_eq!(
+            created,
+            fingerprint(&skills, false),
+            "a write in a subdirectory behind the link is not seen"
+        );
+        std::fs::write(target.join("NOTES.txt"), "x").unwrap();
+        assert_ne!(created, fingerprint(&skills, false));
         let _ = std::fs::remove_dir_all(&root);
     }
 
