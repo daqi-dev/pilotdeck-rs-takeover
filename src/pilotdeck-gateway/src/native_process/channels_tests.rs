@@ -2547,6 +2547,12 @@ async fn sms_listener_isolation(case: SmsStartupCase) {
         0,
         "port zero returns actual bound address"
     );
+    if !same_port {
+        assert_ne!(
+            actual_address, sms_address,
+            "independent SMS listener must not alias Gateway"
+        );
+    }
     let gateway_address = actual_address;
     let (stop, stopping) = tokio::sync::oneshot::channel();
     let serving = tokio::spawn(server.run(
