@@ -85,6 +85,6 @@
   ],
   "volatile": [
     "control\\.sqlite\\.sqlite\\.tables\\.l0_sessions\\[\\d+\\]\\.l0_index_id$",
-    "control\\.sqlite\\.sqlite\\.tables\\.pipeline_state\\[0\\]\\.state_json$"
+    "control\\.sqlite\\.sqlite\\.tables\\.pipeline_state\\[0\\]\\.state_json\\.<json>\\[\\d+\\]\\.(caseId|retrieval\\.trace\\.traceId|retrieval\\.trace\\.steps\\[\\d+\\]\\.stepId)$"
   ]
 }

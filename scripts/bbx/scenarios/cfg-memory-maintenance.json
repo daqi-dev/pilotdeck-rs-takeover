@@ -3,7 +3,7 @@
   "about": "轮次结束后的记忆维护（gateway/client/InProcessGateway.ts:1850 afterTurnCompleted → cli/GatewayRuntimeRefreshBundle.ts:113-132 memoryMaintenance.schedule(projectKey ?? projectRoot) → cli/ProjectMemoryMaintenanceController.ts runDueScheduledMaintenance(\"scheduled\")）。submit_turn 带 projectKey（已登记的 work/alpha），维护落在会话所在项目的记忆库上；memory.model 指向假 provider 上单独的模型 bbx/memo：检索路由请求发给它（非流式、response_format json_object），一轮之后维护还不到建索引的时候，只写出 MEMORY.md。比较发给 provider 的请求与记忆库落盘。 维护在 pipeline_state 里写 autoIndexAnchorAt。已知不稳（--self 证明）：l0_index_id（<session>_<时间散列>_raw）与 recentCaseTraces 的整段 JSON（caseId / traceId 随机；按 state_key 排序后在第 2 行），声明为 volatile。",
   "volatile": [
     "control\\.sqlite\\.sqlite\\.tables\\.l0_sessions\\[\\d+\\]\\.l0_index_id$",
-    "control\\.sqlite\\.sqlite\\.tables\\.pipeline_state\\[1\\]\\.state_json$"
+    "control\\.sqlite\\.sqlite\\.tables\\.pipeline_state\\[1\\]\\.state_json\\.<json>\\[\\d+\\]\\.(caseId|retrieval\\.trace\\.traceId|retrieval\\.trace\\.steps\\[\\d+\\]\\.stepId)$"
   ],
   "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n        memo:\n          capabilities:\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmemory:\n  enabled: true\n  model: bbx/memo\n",
   "files": {
