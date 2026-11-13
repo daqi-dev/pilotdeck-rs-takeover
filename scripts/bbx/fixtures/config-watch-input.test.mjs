@@ -50,3 +50,15 @@ test('run project encoded placeholder encodes one URL segment and preserves lega
 
 test('redacted top hash remains unchanged while owned source byte hash proves rewrite',async()=>{const f=fixture();try{const r=await externalConfigRewrite(f.options);assert.equal(r.receipt.beforeSnapshot.contentHash,r.receipt.afterSnapshot.contentHash);assert.notEqual(r.receipt.beforeSnapshot.sourceHash,r.receipt.afterSnapshot.sourceHash);assert.equal(verifyConfigWatchInput(artifact(f,r)),true);}finally{f.close();}});
 test('actual expired TS observation is recorded without collector timeout; Rust still fails',async()=>{const f=fixture('no-event');try{const r=await externalConfigRewrite(f.options);assert.equal(r.timedOut,true);const {receipt,...result}=r;const ts=configWatchStepResult('ts',result,receipt,0);assert.equal(ts.timedOut,undefined);assert.equal(ts.externalConfigRewrite.observationExpired,true);assert.equal(ts.externalConfigRewrite.observed,false);assert.equal(receipt.notification,null);assert.equal(configWatchStepResult('rust',result,receipt,0).timedOut,true);for(const change of [x=>x.durationMs=0,x=>x.written=false,x=>x.rpc.push({}),x=>{x.observationFrames.push({type:'notification',name:'config_changed',payload:{changedPaths:['agent.maxOutputTokens']}});x.observedFrameCount++;}]){const broken=structuredClone(receipt);change(broken);assert.equal(configWatchStepResult('ts',result,broken,0).timedOut,true);}}finally{f.close();}});
+
+test('actual runStep allocation path keeps public IDs stable after one or two internal probes',async()=>{
+ const source=fs.readFileSync(new URL('../run.mjs',import.meta.url),'utf8');
+ const allocation=source.slice(source.indexOf('let requestSeq = 0;'),source.indexOf('const runStep = async'));
+ // Execute the actual runner WS branch with a fake transport, not a copied
+ // allocation expression. This includes the id passed to ws.send/waitFrame.
+ const branch=source.slice(source.indexOf('  if (step.ws) {'),source.indexOf('  if (step.http) {'));
+ assert.ok(branch.includes('const id = nextRequestId(internalId);'));
+ const factory=(code)=>new Function(code+`;return async(count)=>{const sent=[],frames=[];const ws={send(text){const r=JSON.parse(text);sent.push(r.id);frames.push({id:r.id,type:'response',ok:true});}};const substDeep=x=>x;const waitFrame=async p=>frames.findLast(p);const fillEvent=x=>x;const run=async(step,internalId)=>{${branch}};await run({ws:'resolve_settings',params:{}});for(let i=1;i<=count;i++)await run({ws:'resolve_settings',params:{}},'bbx-config-watch:step27:snapshot'+i);await run({ws:'submit_turn',params:{}});return sent;}`)();
+ for(const count of[1,2]){const sent=await factory(allocation)(count);assert.equal(sent[0],'q1');assert.equal(sent.at(-1),'q2');assert.equal(new Set(sent).size,sent.length);assert.deepEqual(sent.slice(1,-1),Array.from({length:count},(_,i)=>'bbx-config-watch:step27:snapshot'+(i+1)));}
+ const broken=allocation.replace('return internalId;','return `q${++requestSeq}`;');assert.notEqual((await factory(broken)(2)).at(-1),'q2','old shared-counter mutation must be detected');
+});

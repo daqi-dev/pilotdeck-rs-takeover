@@ -368,13 +368,22 @@ const stepEnv = (step) => {
   return merged;
 };
 let requestSeq = 0;
-const runStep = async (step) => {
+const nextRequestId = (internalId) => {
+  if (internalId !== undefined) {
+    if (!/^bbx-config-watch:step27:snapshot[1-9][0-9]*$/.test(internalId)) throw Error('invalid internal config-watch request ID');
+    return internalId;
+  }
+  return `q${++requestSeq}`;
+};
+const runStep = async (step, internalId) => {
+  if (internalId !== undefined && (scenario.name !== 'settings-update' || out.steps.length !== 27 || step.ws !== 'resolve_settings' || JSON.stringify(step.params) !== '{}' || Object.keys(step).length !== 2)) throw Error('internal ID is reserved for the exact read-only config-watch probe');
   if (step.externalConfigRewrite) {
+    let snapshotSeq = 0;
     const { receipt, ...result } = await externalConfigRewrite({
       scene: scenario.name, input: step.externalConfigRewrite, pilotHome, ownedRoot: ROOT,
       resolveSettings: async () => {
         const request = { ws: 'resolve_settings', params: {} };
-        return { step: request, ...await runStep(request) };
+        return { step: request, ...await runStep(request, `bbx-config-watch:step${out.steps.length}:snapshot${++snapshotSeq}`) };
       },
       readFrames: () => allFrames, timeoutMs: STEP_TIMEOUT_MS,
     });
@@ -395,7 +404,7 @@ const runStep = async (step) => {
   if (step.ws) {
     let hello; if (!ws) hello = await connect();
     if (hello?.connectFailed) return { hello };
-    const id = `q${++requestSeq}`;
+    const id = nextRequestId(internalId);
     ws.send(JSON.stringify({ type: 'request', id, method: step.ws, params: substDeep(step.params ?? {}) }));
     // answer：收集本步骤的帧期间，遇到匹配的事件就按模板发一个请求（见 README）。
     // 每条规则最多应答 count 次（缺省不限）；一个事件只由第一条还有余量的匹配规则应答。
