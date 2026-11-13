@@ -238,11 +238,17 @@ const rules = [...substDeep(scenario.provider ?? []), { name: 'default', reply: 
 const providerRequests = {};
 const mock = http.createServer(async (req, res) => {
   const parts = []; for await (const p of req) parts.push(p);
-  const raw = Buffer.concat(parts).toString('utf8');
+  const bytes = Buffer.concat(parts);
+  const raw = bytes.toString('utf8');
   let body = null; try { body = JSON.parse(raw); } catch {}
   const rule = rules.find((r) => (r.when ?? []).every((s) => raw.includes(s)) && (r.unless ?? []).every((s) => !raw.includes(s)));
+  // 请求头 content-length 在这里就核对：等于实际收到的请求体字节数记 true，否则 false；没有这个头不记。
+  // 比较器的规则 19 在两侧都是 true 时不比这个头的数值（数值里含着被归一化的变长值的位数）。
+  const declared = req.headers['content-length'];
   (providerRequests[rule.name] ??= []).push({
-    method: req.method, url: req.url, headers: req.headers, body: body ?? { raw },
+    method: req.method, url: req.url, headers: req.headers,
+    ...(declared === undefined ? {} : { 'content-length-ok': /^\d+$/.test(declared) && Number(declared) === bytes.length }),
+    body: body ?? { raw },
   });
   capture(rule.save, raw);
   const reply = withSaved(rule.reply ?? {});
@@ -674,7 +680,13 @@ const rawStep = async (spec) => {
     if (item.end) st.s.end();
   }
   await rawWait(st, () => false, spec.readMs ?? 1000);
-  if (upgraded || (spec.ws && st.buf.length && !st.buf.subarray(0, 5).toString().startsWith('HTTP/'))) {
+  // lines：对方说的是按行分隔的 JSON（agent loop sidecar 的原始协议），收到的字节按换行切开，
+  // 每行能解析成 JSON 的记解析结果，否则记原文；最后一段没有换行结尾的另记 partial。
+  if (spec.lines) {
+    const text = st.buf.toString('utf8'); const parts = text.split('\n'); const tail = parts.pop();
+    r.lines = parts.map((l) => { try { return JSON.parse(l); } catch { return { text: l }; } });
+    if (tail) r.partial = tail;
+  } else if (upgraded || (spec.ws && st.buf.length && !st.buf.subarray(0, 5).toString().startsWith('HTTP/'))) {
     const { frames, rest } = readServerFrames(st.buf); r.frames = frames; if (rest.length) r.trailingBytes = rest.length;
     // countFrames：帧太多时只记按「类型:id」（关闭帧记码与原因，其余记 opcode）分组的计数和总数，次序不记。
     if (spec.countFrames) {
@@ -684,7 +696,7 @@ const rawStep = async (spec) => {
     }
   } else if (st.buf.length) r.http = parseHttpResponses(st.buf.toString('latin1'));
   r.serverClosed = st.closed ? (st.ended ?? 'close') : st.ended === 'fin' ? 'fin-half' : null;
-  await rawClose(st, upgraded || / 101 /.test(r.http?.status ?? ''));
+  await rawClose(st, !spec.lines && (upgraded || / 101 /.test(r.http?.status ?? '')));
   return r;
 };
 // 收尾：升级过、还开着的连接先发关闭帧等服务端关（最多 1 秒），再断开。基线对只收到 FIN 的 WS 连接

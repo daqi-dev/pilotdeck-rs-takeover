@@ -46,7 +46,33 @@ const sized = (recs, { size = bytes(recs), sizeAt, file = true, rewritten = fals
 const LOCK = '/home/.pilotdeck/runs/registry.json.lock';
 const withLock = (text) => art([], { tree: text === undefined ? {} : { [LOCK]: { mode: '644', text } } });
 const memState = (caseId, traceId, extra = 'x') => sql({ state_key: 'recentCaseTraces', state_json: JSON.stringify([{ caseId, note: extra, retrieval: { trace: { traceId, steps: [{ stepId: `${traceId}:step:1` }, { stepId: `${traceId}:step:2` }] } } }]) });
+// 规则 19：工具结果原文（会话文件里的 tool_result 记录）加一帧带 resultBytes 的 tool_call_finished。
+const toolRec = (id, content, turnId = 't1') => ({ type: 'tool_result', turnId, result: { type: 'success', toolCallId: id, toolName: 'bash', content } });
+const finished = (id, bytes, turnId = 't1') => ({ type: 'event', event: { type: 'tool_call_finished', toolCallId: id, toolName: 'bash', resultBytes: bytes, timeline: { turnId } } });
+const withResult = (text, { bytes = Buffer.byteLength(text), recs = [toolRec('c1', [{ type: 'text', text }])], turnId = 't1' } = {}) =>
+  art([{ step: { ws: 'submit_turn' }, frames: [finished('c1', bytes, turnId)] }], { tree: { '/home/x/chats/s.jsonl': { mode: '644', jsonl: recs } } });
+const DUR6 = 'exit_code: 1\n- duration_ms: 6', DUR12 = 'exit_code: 1\n- duration_ms: 12';
+const toProvider = (len, ok, extra = {}) => art([], { provider: { m: [{ method: 'POST', url: '/v1/chat/completions', headers: { 'content-type': 'application/json', 'content-length': String(len), ...extra },
+  ...(ok === undefined ? {} : { 'content-length-ok': ok }), body: { messages: [{ role: 'tool', content: `- duration_ms: ${len}` }] } }] } });
 const cases = [
+  ['resultBytes：两侧各自等于本侧原文字节数（耗时位数不同）', withResult(DUR6), withResult(DUR12), 'SAME'],
+  ['resultBytes：一侧不等于本侧原文字节数', withResult(DUR6), withResult(DUR12, { bytes: Buffer.byteLength(DUR12) + 1 }), 'DIFF'],
+  ['resultBytes：一侧找不到原文', withResult(DUR6), withResult(DUR12, { recs: [] }), 'DIFF'],
+  ['resultBytes：两侧核对通过但原文内容不同', withResult(DUR6), withResult('exit_code: 2\n- duration_ms: 12'), 'DIFF'],
+  ['resultBytes：同一个调用 id 在两轮里各有原文，按轮次挑出', withResult(DUR6, { recs: [toolRec('c1', [{ type: 'text', text: 'other' }], 't0'), toolRec('c1', [{ type: 'text', text: DUR6 }])] }),
+    withResult(DUR12, { recs: [toolRec('c1', [{ type: 'text', text: 'other' }], 't0'), toolRec('c1', [{ type: 'text', text: DUR12 }])] }), 'SAME'],
+  ['resultBytes：同一个调用 id 有两份大小不同的原文、分不出轮次', withResult(DUR6, { recs: [toolRec('c1', [{ type: 'text', text: 'other' }], 't0'), toolRec('c1', [{ type: 'text', text: DUR6 }], 't2')] }),
+    withResult(DUR12, { recs: [toolRec('c1', [{ type: 'text', text: 'other' }], 't0'), toolRec('c1', [{ type: 'text', text: DUR12 }], 't2')] }), 'DIFF'],
+  ['resultBytes：多段内容按换行拼接、json 段按 JSON.stringify', withResult('', { bytes: Buffer.byteLength('a\n{"durationMs":6}'), recs: [toolRec('c1', [{ type: 'text', text: 'a' }, { type: 'json', value: { durationMs: 6 } }])] }),
+    withResult('', { bytes: Buffer.byteLength('a\n{"durationMs":12}'), recs: [toolRec('c1', [{ type: 'text', text: 'a' }, { type: 'json', value: { durationMs: 12 } }])] }), 'SAME'],
+  ['resultBytes：多段内容拼接时少算了换行', withResult('', { bytes: Buffer.byteLength('a\n{"durationMs":6}'), recs: [toolRec('c1', [{ type: 'text', text: 'a' }, { type: 'json', value: { durationMs: 6 } }])] }),
+    withResult('', { bytes: Buffer.byteLength('a{"durationMs":123}'), recs: [toolRec('c1', [{ type: 'text', text: 'a' }, { type: 'json', value: { durationMs: 123 } }])] }), 'DIFF'],
+  ['resultBytes：一侧变成了字符串', withResult(DUR6), withResult(DUR12, { bytes: String(Buffer.byteLength(DUR12)) }), 'DIFF'],
+  ['content-length：两侧都核对通过、数值不同', toProvider(9, true), toProvider(10, true), 'SAME'],
+  ['content-length：一侧核对不通过', toProvider(9, true), toProvider(10, false), 'DIFF'],
+  ['content-length：两侧都没有核对记录（旧产物）照比', toProvider(9), toProvider(10), 'DIFF'],
+  ['content-length：核对通过，旁边的头不同照报', toProvider(9, true), toProvider(10, true, { 'x-extra': '1' }), 'DIFF'],
+
   // [说明, a, b, 期望, diff.mjs 额外参数]
   ['相同', frame({ a: 1 }), frame({ a: 1 }), 'SAME'],
   ['值不同', frame({ a: 1 }), frame({ a: 2 }), 'DIFF'],
@@ -105,6 +131,14 @@ const cases = [
   ['实例 id 的模块名不同', frame({ moduleInstanceId: 'm-instance-aaa' }), frame({ moduleInstanceId: 'n-instance-aaa' }), 'DIFF'],
   ['同一条流对两条流', frame({ a: { streamId: 'stream-x1' }, b: { streamId: 'stream-x1' } }), frame({ a: { streamId: 'stream-y1' }, b: { streamId: 'stream-y2' } }), 'DIFF'],
   ['别的键里的同形字符串不抹', frame({ id: 'stream-x1' }), frame({ id: 'stream-y1' }), 'DIFF'],
+  ['sidecar 应答的 messageId 随机段', frame({ lines: [{ kind: 'response', messageId: 'hello-k3j2h1g0f9', inReplyTo: 'c1' }, { kind: 'error', messageId: 'parse-0abcz12' }] }),
+    frame({ lines: [{ kind: 'response', messageId: 'hello-p9o8i7u6y5t', inReplyTo: 'c1' }, { kind: 'error', messageId: 'parse-zz91' }] }), 'SAME'],
+  ['sidecar messageId 的前缀不同', frame({ messageId: 'cancel-k3j2h1g0f9' }), frame({ messageId: 'status-k3j2h1g0f9' }), 'DIFF'],
+  ['sidecar messageId 两条同 id 对两条不同 id', frame({ a: { messageId: 'ack-aaa1' }, b: { messageId: 'ack-aaa1' } }), frame({ a: { messageId: 'ack-bbb1' }, b: { messageId: 'ack-bbb2' } }), 'DIFF'],
+  ['sidecar messageId 多段写法不抹', frame({ messageId: 'cancel-m-instance-aaa-g1-1' }), frame({ messageId: 'cancel-m-instance-bbb-g1-1' }), 'DIFF'],
+  ['sidecar messageId 段数不同', frame({ messageId: 'cancel-k3j2h1g0f9' }), frame({ messageId: 'cancel-k3j2-h1g0f9' }), 'DIFF'],
+  ['名单外前缀的 messageId 不抹', frame({ messageId: 'msg-k3j2h1g0f9' }), frame({ messageId: 'msg-p9o8i7u6y5t' }), 'DIFF'],
+  ['inReplyTo 不抹', frame({ inReplyTo: 'hello-k3j2h1g0f9' }), frame({ inReplyTo: 'hello-p9o8i7u6y5t' }), 'DIFF'],
   ['sqlite 的 _json 单元格按内部字段放过', sql({ k: 'a', state_json: '{"x":1,"caseId":"r1"}' }, ['\\.state_json\\.<json>\\.caseId$']), sql({ k: 'a', state_json: '{"x":1,"caseId":"r2"}' }, ['\\.state_json\\.<json>\\.caseId$']), 'SAME'],
   ['sqlite 的 _json 单元格里别的字段照比', sql({ k: 'a', state_json: '{"x":1,"caseId":"r1"}' }, ['\\.state_json\\.<json>\\.caseId$']), sql({ k: 'a', state_json: '{"x":2,"caseId":"r2"}' }, ['\\.state_json\\.<json>\\.caseId$']), 'DIFF'],
   ['sqlite 的 _json 单元格写法不同', sql({ k: 'a', state_json: '{"x":1}' }), sql({ k: 'a', state_json: '{ "x": 1 }' }), 'DIFF'],
@@ -130,7 +164,11 @@ const cases = [
   ['fileSize：树里没有这个会话文件', sized(sessRecs(8), { file: false }), sized(sessRecs(13), { file: false, size: bytes(sessRecs(13)) }), 'DIFF'],
   ['运行记录锁只在一侧有', withLock('{"pid":1,"acquiredAt":"2026-01-01T00:00:00.000Z"}'), withLock(undefined), 'SAME'],
   ['运行记录锁两侧都有、内容不同', withLock('{"pid":1,"acquiredAt":"2026-01-01T00:00:00.000Z"}'), withLock('{"pid":2,"acquiredAt":"2026-01-01T00:00:00.000Z","x":1}'), 'DIFF'],
-  ['别的锁文件只在一侧有', art([], { tree: { '/home/.pilotdeck/other.json.lock': { mode: '644', text: 'x' } } }), art([]), 'DIFF'],
+  ['运行记录锁两侧都有、只有进程号和时间不同', withLock('{"pid":2590424,"acquiredAt":"2026-11-13T14:34:03.564Z"}'), withLock('{"pid":2602906,"acquiredAt":"2026-11-13T14:36:58.195Z"}'), 'SAME'],
+  ['运行记录锁两侧都有、一侧还没写进内容', withLock('{"pid":2590424,"acquiredAt":"2026-11-13T14:34:03.564Z"}'), withLock(''), 'DIFF'],
+  ['运行记录锁两侧都有、一侧进程号不是数字', withLock('{"pid":2590424,"acquiredAt":"2026-11-13T14:34:03.564Z"}'), withLock('{"pid":"2602906","acquiredAt":"2026-11-13T14:36:58.195Z"}'), 'DIFF'],
+  ['别的锁文件里的进程号照比', art([], { tree: { '/home/.pilotdeck/other.json.lock': { mode: '644', text: '{"pid":1}' } } }), art([], { tree: { '/home/.pilotdeck/other.json.lock': { mode: '644', text: '{"pid":2}' } } }), 'DIFF'],
+  ['别的锁文件只在一侧有',art([], { tree: { '/home/.pilotdeck/other.json.lock': { mode: '644', text: 'x' } } }), art([]), 'DIFF'],
   ['created 之外的 10 位整数', frame({ startedAt: 1794495673 }), frame({ startedAt: 1794495675 }), 'DIFF'],
   ['created 一侧不是时间戳', frame({ created: 1794495673 }), frame({ created: 12 }), 'DIFF'],
   ['警告之外的 stderr', frame({ stderr: '(node:1) ExperimentalWarning: x\n(Use `node --trace-warnings ...` to show where the warning was created)\nreal\n' }), frame({ stderr: 'other\n' }), 'DIFF'],

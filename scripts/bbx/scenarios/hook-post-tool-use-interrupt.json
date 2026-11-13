@@ -240,7 +240,7 @@
     }
   ],
   "volatile": [
-    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages|resultBytes|content-length)$"
+    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|breakdown\\.total|breakdown\\.messages)$"
   ],
   "volatileWhy": "工具结果文本里带位数不定的进程号（同 tool-task）"
 }

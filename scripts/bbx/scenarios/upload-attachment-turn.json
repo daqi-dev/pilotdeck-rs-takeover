@@ -259,7 +259,7 @@
     }
   ],
   "volatile": [
-    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages|resultBytes|content-length)$"
+    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|breakdown\\.total|breakdown\\.messages)$"
   ],
   "volatileWhy": "附件的租约路径里带随机 UUID 并进了消息文本，token 估算随之变；基线自比已证明"
 }

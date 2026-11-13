@@ -441,7 +441,7 @@
     }
   ],
   "volatile": [
-    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages|resultBytes|content-length)$"
+    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|breakdown\\.total|breakdown\\.messages)$"
   ],
   "volatileWhy": "子代理结果里带位数不定的耗时（durationMs），父轮上下文的 token 估算与字节数随之差 1；基线自比 3 次中 3 次出现（s-ref 那一轮），与 sdk-config-agents 同一组路径"
 }

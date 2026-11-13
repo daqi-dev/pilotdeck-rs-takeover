@@ -17094,12 +17094,18 @@
     {
      "id": "mod:sidecar.proto-errors",
      "where": "src/agent/modules/transport/agentLoopSidecarServer.ts:112",
-     "note": "sidecar 收到非 JSON 行回 error INVALID_JSON，形状不对回 validateModuleMessage 的码（INVALID_KIND、MISSING_MESSAGE_ID、MISSING_EXECUTE_FIELD 等），继续读下一行；空行跳过。场景没有直接覆盖：应答的 messageId 带 Math.random 的随机后缀，比较器没有归一化，要主会话决定是否声明 volatile。"
+     "note": "sidecar 收到非 JSON 行回 error INVALID_JSON，形状不对回 validateModuleMessage 的码（INVALID_KIND、MISSING_MESSAGE_ID、MISSING_EXECUTE_FIELD 等），继续读下一行；空行跳过。sidecar-raw-protocol 直接对 tcp 部署的 sidecar 发这些行（应答 messageId 的随机后缀由 diff.mjs 第 20 条编号）。",
+     "probe": [
+      "\"name\": \"sidecar-raw-protocol\""
+     ]
     },
     {
      "id": "mod:sidecar.proto-control",
      "where": "src/agent/modules/transport/agentLoopSidecarServer.ts:146",
-     "note": "hello / capabilities 回握手应答；收到 module_call 回 UNEXPECTED_MODULE_CALL；cancel 身份不配回 UNKNOWN_OPERATION / OPERATION_IDENTITY_MISMATCH；status 不认识回 UNKNOWN_REQUEST；重复 execute 回 OPERATION_ALREADY_ACTIVE；截止时间已过回 DEADLINE_EXCEEDED。场景只经宿主间接碰到正常路径（同上，随机 messageId）。"
+     "note": "hello / capabilities 回握手应答；收到 module_call 回 UNEXPECTED_MODULE_CALL；cancel 身份不配回 UNKNOWN_OPERATION / OPERATION_IDENTITY_MISMATCH；status 不认识回 UNKNOWN_REQUEST；重复 execute 回 OPERATION_ALREADY_ACTIVE；截止时间已过回 DEADLINE_EXCEEDED。sidecar-raw-protocol 直接碰到 hello / capabilities / UNEXPECTED_MODULE_CALL / UNKNOWN_OPERATION / UNKNOWN_REQUEST；OPERATION_IDENTITY_MISMATCH、OPERATION_ALREADY_ACTIVE、DEADLINE_EXCEEDED 要先有一个在跑的 execute，仍只经宿主间接碰到。",
+     "probe": [
+      "\"name\": \"sidecar-raw-protocol\""
+     ]
     },
     {
      "id": "mod:client.handshake",

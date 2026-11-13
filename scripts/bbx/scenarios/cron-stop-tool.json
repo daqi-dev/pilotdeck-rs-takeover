@@ -415,6 +415,6 @@
   }
  ],
  "volatile": [
-  "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages|resultBytes|content-length)$"
+  "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|breakdown\\.total|breakdown\\.messages)$"
  ]
 }

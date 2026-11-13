@@ -58,8 +58,25 @@
 //      放过的处数每次打印。只认对象里键名为 fileSize 的数值；CLI 输出文本里的 "fileSize": N 不处理
 //  18. 运行记录文件锁 runs/registry.json.lock 有没有不比：基线停机（SIGTERM → process.exit）可能打断在持锁写
 //      运行记录的过程中（锁在 RunRegistry.ts:115-116 建，withFileLock 的 finally 里 154 删），锁文件就留下来；tool-goal-permission
-//      基线连跑 30 次留下 9 次。只在一侧有、一侧没有时两侧都略过（并打印）；两侧都有时内容照比
+//      基线连跑 30 次留下 9 次。只在一侧有、一侧没有时两侧都略过（并打印）；两侧都有时内容照比，只把内容里的
+//      持锁进程号 "pid":<n> 换成 "pid":<pid>（两侧都留下锁时进程号必然不同；时间戳由第 2 条抹）
 //      （残留锁对之后启动的影响由场景 robust-restart-registry-lock-leftover 单独比）
+//  19. 各自核对：两个由别的内容算出来的字节数，数值里含着被上面规则抹掉的变长值的位数（例如工具结果文本里
+//      "duration_ms: 6" 变成 "duration_ms: 12"），不设容差，改成每侧拿本侧产物核对，两侧都核对通过才不比数值：
+//      a. resultBytes（tool_call_finished 事件与 subagent_tool_result 的 detail；帧、读回的事件流、运行记录里都有）：
+//         基线算法是 Buffer.byteLength(result.content.map(contentToText).join("\n"))（GatewayAgentEventProjector.ts:141-145、
+//         412-427；contentToText 在 tool/protocol/result.ts:43-58）。本侧产物里找同一个 toolCallId（有 toolName 时
+//         toolName 也要相同；能分出轮次时只看同一轮）的工具结果原文（带 toolCallId、toolName、content 数组的对象，
+//         例如会话文件里的 tool_result 记录），按这个算法算出的字节数唯一且等于 resultBytes，这一侧就算核对通过。
+//         找不到原文、原文有几份大小不同、算出来不相等的一侧不算通过，照旧比数值。
+//      b. 发给假 provider 的请求头 content-length：采集器收到请求时核对它是否等于实际收到的请求体字节数，记在
+//         请求记录的 'content-length-ok'（true / false；这个字段本身照常比）。两侧都是 true 时不比头的数值。
+//      不比数值时类型照比；内容本身（工具结果文本、请求体）照常比。不比数值且两侧数值确实不同的处数每次打印
+//  20. agent loop sidecar 原始协议里应答帧的 messageId：基线是 "<前缀>-<Math.random().toString(36).slice(2)>"
+//      （agentLoopSidecarServer.ts:647-649；前缀是 nextId 的全部调用和 handshake 的 hello / capabilities）。键名为 messageId、
+//      前缀在这张名单里、后面只有一段小写字母数字的值，随机段换成 <msg:N>，N 是它在该侧第一次出现的序号（与第 14 条同样的写法，
+//      保留「同一个 id」的关系）。前缀、段数照比；别的格式（包括多段的）不动。
+//      inReplyTo 指向的是客户端发的 messageId（场景写死），不抹
 // 数组按下标比。唯一的例外：元素全是带名字的对象（function.name 或 name，且名字不重复）的数组
 // 按名字对齐——缺的、多的各报一条，共有元素的相对顺序不同报一条，同名元素再逐字段比。
 // 这只改变差异的报法（少一个工具不再表现为后面所有工具都错位），不会让任何差异消失。
@@ -95,18 +112,22 @@ const dur = () => '<dur>';
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const ISO = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g;
 
+// 规则 20 只认基线 sidecar 用过的前缀（agentLoopSidecarServer.ts 里 nextId 的全部调用，加上 handshake 的 hello / capabilities）。
+const SIDECAR_MESSAGE_ID = /^(hello|capabilities|parse|validation|module-call|cancel|status|resume|ack|accepted|event|final|failed|unknown|result-unknown|execute-rejected|deadline|stream)-([a-z0-9]+)$/;
 function normalizer() {
   const ids = new Map();
   const snaps = new Map();
   const snap = (id) => { if (!snaps.has(id)) snaps.set(id, snaps.size + 1); return `<snap:${snaps.get(id)}>`; };
   // 规则 14：sidecar 身份的随机段按出现顺序编号；规则 16：记忆检索的随机轨迹 id 同样编号。
-  const seq = { inst: new Map(), gen: new Map(), stream: new Map(), case: new Map(), trace: new Map() };
+  const seq = { inst: new Map(), gen: new Map(), stream: new Map(), case: new Map(), trace: new Map(), msg: new Map() };
   const tag = (kind, id) => { const m = seq[kind]; if (!m.has(id)) m.set(id, m.size + 1); return `<${kind}:${m.get(id)}>`; };
   const SIDECAR_ID = {
     moduleInstanceId: (x) => x.replace(/^(.+-instance-)([a-z0-9]+)$/, (_, pre, r) => pre + tag('inst', r)),
     connectionGeneration: (x) => x.replace(/^(.+-instance-)([a-z0-9]+)((?:-[a-z0-9]+)+)$/, (_, pre, r, rest) =>
       pre + tag('inst', r) + rest.split('-').slice(1).map((g) => '-' + tag('gen', g)).join('')),
     streamId: (x) => x.replace(/^stream-([a-z0-9]+)$/, (_, r) => 'stream-' + tag('stream', r)),
+    // 规则 20：sidecar 应答帧的 messageId（agentLoopSidecarServer.ts:647-649 nextId = `${prefix}-${Math.random().toString(36).slice(2)}`）。
+    messageId: (x) => x.replace(SIDECAR_MESSAGE_ID, (_, pre, r) => pre + '-' + tag('msg', r)),
   };
   // turn-timing 行先删再给 UUID 编号：行里的 UUID 参与编号的话，一侧多打一行就会让后面所有序号错位。
   const dumps = new Map();
@@ -226,12 +247,65 @@ function settleFileSizes(rawA, rawB) {
   visit(rawA, rawB);
   return count;
 }
+// 规则 19：各自核对。一侧的值能由本侧产物里的东西算出来时，在这个对象上记一个标记 SELF_CHECKED（列出核对过的键）；
+// compare 在两侧对象都标了同一个键时不比它的数值（类型照比）。标记本身不参与比较。
+const SELF_CHECKED = '<self-checked>';
+const markChecked = (obj, key) => { obj[SELF_CHECKED] = [...(obj[SELF_CHECKED] ?? []), key]; };
+// 基线 tool/protocol/result.ts:43-58 的 contentToText；认不出的内容项返回 null（不核对）。
+function contentText(c) {
+  if (!c || typeof c !== 'object') return null;
+  if (c.type === 'text' && typeof c.text === 'string') return c.text;
+  if (c.type === 'json' && 'value' in c) return JSON.stringify(c.value);
+  if (c.type === 'image' && typeof c.data === 'string') return `[Image: ${c.mimeType}, ${c.data.length} base64 characters]`;
+  if (c.type === 'pdf' && typeof c.data === 'string') return `[PDF: ${c.mimeType}, ${c.data.length} base64 characters${c.pages ? `, ${c.pages} pages` : ''}]`;
+  if (c.type === 'file' && typeof c.path === 'string') return `[File: ${c.path}${c.mimeType ? `, ${c.mimeType}` : ''}${c.description ? `, ${c.description}` : ''}]`;
+  return null;
+}
+function markSelfChecked(raw) {
+  // 工具结果原文：形如 PilotDeckToolResult 的对象（toolCallId、toolName、content 数组都在），按 toolCallId 收集，
+  // 带上它所在的轮次（最近一层祖先的 turnId）。resultBytes 的算法是 GatewayAgentEventProjector.ts:141-145、412-427：
+  // Buffer.byteLength(content.map(contentToText).join("\n"))。
+  const results = new Map(), holders = [];
+  const visit = (v, turnId) => {
+    if (Array.isArray(v)) { for (const x of v) visit(x, turnId); return; }
+    if (!v || typeof v !== 'object') return;
+    const t = typeof v.turnId === 'string' ? v.turnId : turnId;
+    if (typeof v.toolCallId === 'string' && typeof v.toolName === 'string' && Array.isArray(v.content)) {
+      const parts = v.content.map(contentText);
+      if (!parts.includes(null)) {
+        if (!results.has(v.toolCallId)) results.set(v.toolCallId, []);
+        results.get(v.toolCallId).push({ toolName: v.toolName, turnId: t, bytes: Buffer.byteLength(parts.join('\n')) });
+      }
+    }
+    if (typeof v.resultBytes === 'number' && typeof v.toolCallId === 'string') holders.push([v, typeof v.timeline?.turnId === 'string' ? v.timeline.turnId : t]);
+    for (const x of Object.values(v)) visit(x, t);
+  };
+  visit(raw, undefined);
+  for (const [v, turnId] of holders) {
+    let cands = (results.get(v.toolCallId) ?? []).filter((c) => typeof v.toolName !== 'string' || c.toolName === v.toolName);
+    if (turnId && cands.some((c) => c.turnId === turnId)) cands = cands.filter((c) => c.turnId === turnId);
+    const sizes = new Set(cands.map((c) => c.bytes));
+    // 同一个调用 id 在本侧有几份不同的原文（例如 call_bbx_1 在不同轮里复用、又分不出轮次）时不核对，照比数值。
+    if (sizes.size === 1 && sizes.has(v.resultBytes)) markChecked(v, 'resultBytes');
+  }
+  // 发给假 provider 的请求：采集器收到时核对过 content-length（记在 'content-length-ok'）。
+  for (const list of Object.values(raw.provider ?? {})) {
+    for (const r of Array.isArray(list) ? list : []) if (r && r['content-length-ok'] === true && r.headers && typeof r.headers === 'object') markChecked(r.headers, 'content-length');
+  }
+}
+let selfChecked = 0;
+
 // 规则 18：运行记录文件锁只在一侧有时，两侧都略过。
 const REGISTRY_LOCK = /\/runs\/registry\.json\.lock$/;
 function settleRegistryLock(rawA, rawB) {
   const dropped = [];
   for (const k of new Set([...Object.keys(rawA.tree ?? {}), ...Object.keys(rawB.tree ?? {})])) {
-    if (!REGISTRY_LOCK.test(k) || (k in (rawA.tree ?? {})) === (k in (rawB.tree ?? {}))) continue;
+    if (!REGISTRY_LOCK.test(k)) continue;
+    if ((k in (rawA.tree ?? {})) === (k in (rawB.tree ?? {}))) {
+      // 两侧都有：锁文件内容 {"pid":<持锁进程号>,"acquiredAt":…}（RunRegistry.ts:116）里的进程号归一化，其余照比。
+      for (const e of [rawA.tree?.[k], rawB.tree?.[k]]) if (e && typeof e.text === 'string') e.text = e.text.replace(/("pid":)\d+(?=[,}])/g, '$1<pid>');
+      continue;
+    }
     delete rawA.tree?.[k]; delete rawB.tree?.[k]; dropped.push(k);
   }
   return dropped;
@@ -280,22 +354,29 @@ function compare(a, b, at, outList) {
     return;
   }
   // 键的顺序也是可观察的（JSON 序列化顺序），单独报一条，再按键比值。
-  const ka = Object.keys(a), kb = Object.keys(b);
+  const ka = Object.keys(a).filter((k) => k !== SELF_CHECKED), kb = Object.keys(b).filter((k) => k !== SELF_CHECKED);
+  // 规则 19：两侧都各自核对过的键只比类型，不比数值。
+  const checked = Array.isArray(a[SELF_CHECKED]) && Array.isArray(b[SELF_CHECKED]) ? a[SELF_CHECKED].filter((k) => b[SELF_CHECKED].includes(k)) : [];
   const shared = ka.filter((k) => k in b);
   if (JSON.stringify(shared) !== JSON.stringify(kb.filter((k) => k in a))) outList.push({ at: at + '.<key order>', a: shared, b: kb.filter((k) => k in a) });
   for (const k of ka) if (!(k in b)) outList.push({ at: `${at}.${k}`, a: a[k], b: undefined });
   for (const k of kb) if (!(k in a)) outList.push({ at: `${at}.${k}`, a: undefined, b: b[k] });
-  for (const k of shared) compare(a[k], b[k], `${at}.${k}`, outList);
+  for (const k of shared) {
+    if (checked.includes(k) && typeof a[k] === typeof b[k] && (typeof a[k] === 'number' || typeof a[k] === 'string')) { if (a[k] !== b[k]) selfChecked++; continue; }
+    compare(a[k], b[k], `${at}.${k}`, outList);
+  }
 }
 
 // 两份原始产物 → 全部差异（场景的 volatile / accepted 之前）与两条成对规则的记录。供下面的命令行和别的脚本用。
 export function diffArtifacts(rawA, rawB) {
   const sizes = settleFileSizes(rawA, rawB);
   const locks = settleRegistryLock(rawA, rawB);
+  markSelfChecked(rawA); markSelfChecked(rawB);
   const all = [];
   const a = load(rawA), b = load(rawB);
+  selfChecked = 0;
   compare(a, b, '$', all);
-  return { all, sizes, locks, a, b };
+  return { all, sizes, locks, checked: selfChecked, a, b };
 }
 function main() {
   const args = process.argv.slice(2);
@@ -306,7 +387,7 @@ function main() {
   if (files.length < 2) { console.error('usage: diff.mjs <a.json> <b.json> [--max N] [--quiet] [--self]'); process.exit(2); }
   const [fa, fb] = files;
   const scenarioVolatile = (JSON.parse(fs.readFileSync(fa, 'utf8')).volatile ?? []).map((p) => new RegExp(p));
-  const { all, sizes, locks } = diffArtifacts(JSON.parse(fs.readFileSync(fa, 'utf8')), JSON.parse(fs.readFileSync(fb, 'utf8')));
+  const { all, sizes, locks, checked } = diffArtifacts(JSON.parse(fs.readFileSync(fa, 'utf8')), JSON.parse(fs.readFileSync(fb, 'utf8')));
   const scenarioAccepted = (JSON.parse(fs.readFileSync(fa, 'utf8')).accepted ?? []).map((x) => ({ ...x, res: x.paths.map((p) => new RegExp(p)), hits: 0 }));
   const stable = all.filter((d) => !scenarioVolatile.some((re) => re.test(d.at)));
   const diffs = stable.filter((d) => !scenarioAccepted.some((x) => x.res.some((re) => re.test(d.at)) && ++x.hits));
@@ -321,6 +402,7 @@ function main() {
     console.log(`  不比较的字段: ${Object.entries(IGNORED).map(([k, why]) => `${k}（${why}）`).join('；')}`);
     console.log(`  已接受差异: ${Object.entries(ACCEPTED).map(([k, [why]]) => `${k}（${why}）`).join('；')}`);
     if (sizes.records || sizes.tolerance) console.log(`  会话文件大小 fileSize（规则 17）: 两侧写到同样条数的记录，放过 ${sizes.records} 处；拼不出条数、差值在固定容差内，放过 ${sizes.tolerance} 处`);
+    if (checked) console.log(`  resultBytes / content-length（规则 19）: 两侧各自核对通过、数值不同，不比数值 ${checked} 处`);
     for (const k of locks) console.log(`  运行记录文件锁（规则 18）: ${k} 只在一侧有，两侧都略过`);
     if (scenarioVolatile.length) console.log(`  场景声明的不稳定路径: ${scenarioVolatile.map(String).join(' ')}（因此略过 ${all.length - stable.length} 处）`);
     for (const x of scenarioAccepted) console.log(`  场景登记的已接受差异: ${x.id}（${x.why}）略过 ${x.hits} 处`);
