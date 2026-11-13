@@ -1579,21 +1579,25 @@ pub fn run_admitted_turn(
             let can_steer = input
                 .max_turns
                 .is_none_or(|max| max == 0.0 || state.turn_count < max);
+            // AgentLoop.ts:1866-1882: the terminal steer drain and its
+            // application read no abort signal; an abort that lands after the
+            // final assistant message is seen next at the loop top (after a
+            // drained steer) or never (the Stop path below).
             if can_steer && host.advertised("turn", "drain_or_close_steer") {
                 let HostReply::SteerDrain(drain) =
-                    host.call(control, HostCall::TurnDrainOrClose)?
+                    host.call(&unchecked_control(control), HostCall::TurnDrainOrClose)?
                 else {
                     return Err(wrong_reply("drain_or_close_steer"));
                 };
                 if !drain.messages.is_empty() {
                     for mut steer in drain.messages {
-                        control.check()?;
                         annotate_message(&mut state.timeline, &mut steer.message)?;
                         state.messages.push(steer.message.clone());
-                        emit_event(
+                        emit_unchecked_event(
                             events,
                             &mut state.timeline,
                             input,
+                            control,
                             TurnEvent::SteerApplied {
                                 item_id: steer.item_id,
                                 message: steer.message,
@@ -1601,10 +1605,11 @@ pub fn run_admitted_turn(
                         )?;
                     }
                     state.turn_count += 1.0;
-                    emit_event(
+                    emit_unchecked_event(
                         events,
                         &mut state.timeline,
                         input,
+                        control,
                         TurnEvent::Continued {
                             reason: TurnContinueReason::UserSteer,
                         },
@@ -3923,13 +3928,21 @@ fn unchecked_control(control: &CallControl) -> CallControl {
     if user_abort_requested(control) {
         fresh_capture_cleanup(control)
     } else {
-        control.clone()
+        // A user abort arriving during the call must not fail it either:
+        // the same deadline, a scope only retirement and transport loss
+        // reach.
+        CallControl {
+            cancellation: control.cancellation.cleanup_scope(),
+            deadline: control.deadline,
+        }
     }
 }
 
 /// [`emit_event`] for a stretch without an abort check (see
 /// [`unchecked_control`]): after a user abort the event still goes out, on
-/// the accepted-delivery path.
+/// the accepted-delivery path. So does an event whose publication a user
+/// abort may overtake (the abort arriving while it is being delivered):
+/// only a deadline or a hard stop already observed keeps the checked path.
 fn emit_unchecked_event(
     events: &mut dyn TurnEventPort,
     timeline: &mut TurnTimeline,
@@ -3937,7 +3950,7 @@ fn emit_unchecked_event(
     control: &CallControl,
     event: TurnEvent,
 ) -> PortResult<()> {
-    if user_abort_requested(control) {
+    if user_abort_requested(control) || control.check().is_ok() {
         emit_accepted_event(events, timeline, input, event)
     } else {
         emit_event(events, timeline, input, event)
