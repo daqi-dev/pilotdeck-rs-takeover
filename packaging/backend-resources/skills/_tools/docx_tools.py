@@ -14,6 +14,7 @@ import time
 from urllib.parse import unquote
 from pathlib import Path, PurePosixPath
 import signal
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -31,9 +32,10 @@ NAMESPACES = weakref.WeakKeyDictionary()
 REBOUND_ROOTS = weakref.WeakSet()
 
 class DocxError(Exception):
-    def __init__(self, message, code='invalid-docx', status='error'):
+    def __init__(self, message, code='invalid-docx', status='error', details=None):
         super().__init__(message)
         self.code, self.status = code, status
+        self.details = details or {}
 
 def q(name):
     return '{' + W + '}' + name
@@ -707,6 +709,36 @@ def decode_png(path):
             pixels[index] = value & 255
     return width, height, channels, pixels
 
+def baseline_png_resolution(path):
+    """Preserve fixed PyMuPDF matrix-render PNG metadata (96 DPI), not a new layout DPI."""
+    import struct
+    import zlib
+    data = Path(path).read_bytes()
+    result, offset, found = bytearray(data[:8]), 8, False
+    while offset + 12 <= len(data):
+        length = struct.unpack('>I', data[offset:offset + 4])[0]
+        kind = data[offset + 4:offset + 8]
+        end = offset + 12 + length
+        if end > len(data):
+            raise DocxError('Truncated PNG chunk', 'invalid-render-image')
+        value = data[offset + 8:offset + 8 + length]
+        if zlib.crc32(kind + value) & 0xffffffff != struct.unpack('>I', data[offset + 8 + length:end])[0]:
+            raise DocxError('Invalid PNG checksum', 'invalid-render-image')
+        if kind == b'pHYs':
+            value = struct.pack('>IIB', 3780, 3780, 1)
+            found = True
+            result.extend(struct.pack('>I', len(value)) + kind + value + struct.pack('>I', zlib.crc32(kind + value) & 0xffffffff))
+        else:
+            result.extend(data[offset:end])
+        offset = end
+    if offset != len(data):
+        raise DocxError('Invalid PNG trailing bytes', 'invalid-render-image')
+    if not found:
+        value = struct.pack('>IIB', 3780, 3780, 1)
+        chunk = struct.pack('>I', len(value)) + b'pHYs' + value + struct.pack('>I', zlib.crc32(b'pHYs' + value) & 0xffffffff)
+        result[33:33] = chunk
+    Path(path).write_bytes(result)
+
 def is_cjk(value):
     return len(value) == 1 and any(lo <= ord(value) <= hi for lo, hi in ((0x3400, 0x4dbf), (0x4e00, 0x9fff), (0xf900, 0xfaff)))
 
@@ -743,7 +775,7 @@ def page_cjk_coverage(page, image, scale):
                 painted += 1
     return {'characters': total, 'visible_characters': painted, 'ratio': round(painted / total, 4) if total else None}
 
-def check_cjk_pages(structured, images, dpi):
+def check_cjk_pages(structured, images, dpi, profile_seed='minimal-cjk-registry'):
     pages = list(xml(Path(structured).read_bytes()).iter('page'))
     if len(pages) != len(images):
         raise DocxError('Text/raster page count mismatch', 'invalid-stext')
@@ -755,15 +787,41 @@ def check_cjk_pages(structured, images, dpi):
         text.append({'page': number, 'characters': sum(len(''.join(c.get('c', '') for c in line.iter('char'))) + 1 for line in page.iter('line') if any(True for _ in line.iter('char')))})
     failed = [p for p in coverage if p['characters'] >= 8 and p['ratio'] is not None and p['ratio'] < 0.7]
     if failed:
-        raise DocxError('Rendered PDF text exists but CJK glyphs are not visibly painted: ' + json.dumps(failed), 'render-cjk-glyphs-missing')
+        raise DocxError('Rendered PDF text exists but CJK glyphs are not visibly painted', 'render-cjk-glyphs-missing', details={'backend': 'LibreOffice', 'profile_seed': profile_seed, 'pages': failed})
     return coverage, text
+
+def seed_profile(profile):
+    user = profile / 'user'
+    for directory in ('autocorr', 'config', 'pack', 'temp'):
+        (user / directory).mkdir(parents=True, exist_ok=True)
+    caller_home = Path.home()
+    candidates = [caller_home / 'Library/Application Support/LibreOffice/4/user', caller_home / '.config/libreoffice/4/user']
+    appdata = os.environ.get('APPDATA', '').strip()
+    if appdata:
+        candidates.append(Path(appdata) / 'LibreOffice/4/user')
+    for source in candidates:
+        registry = source / 'registrymodifications.xcu'
+        if registry.is_file():
+            shutil.copyfile(registry, user / registry.name)
+            for directory in ('config', 'pack'):
+                if (source / directory).is_dir():
+                    shutil.copytree(source / directory, user / directory, dirs_exist_ok=True)
+            return 'user-font-config'
+    oor = 'http://openoffice.org/2001/registry'
+    registry = ET.Element('{' + oor + '}items')
+    item = ET.SubElement(registry, 'item', {'{' + oor + '}path': '/org.openoffice.Office.Common/I18N/CJK'})
+    for name in ('AsianTypography', 'CJKFont'):
+        prop = ET.SubElement(item, 'prop', {'{' + oor + '}name': name, '{' + oor + '}op': 'fuse'})
+        ET.SubElement(prop, 'value').text = 'true'
+    (user / 'registrymodifications.xcu').write_bytes(encode(registry))
+    return 'minimal-cjk-registry'
 
 def render(args):
     source_bytes = Path(args.input).read_bytes()
-    source_parts = load(args.input, source_bytes)
-    for value in (args.soffice, args.pdftoppm, args.mutool):
+    load(args.input, source_bytes)
+    for value in (args.soffice, args.mutool):
         if not value or not Path(value).is_absolute() or not os.access(value, os.X_OK):
-            raise DocxError('Supply executable absolute --soffice, --pdf-renderer and --mutool paths', 'renderer-unavailable', 'blocked')
+            raise DocxError('Supply executable absolute --soffice and --pdf-renderer (MuPDF) paths', 'renderer-unavailable', 'blocked')
     if not 72 <= args.dpi <= 300 or not 1 <= args.timeout <= 1800:
         raise DocxError('dpi/timeout out of range', 'invalid-render-options')
     render_root = Path(args.out_dir).resolve()
@@ -785,16 +843,7 @@ def render(args):
         home.mkdir()
         render_env = dict(os.environ, HOME=str(home), PILOT_HOME=str(home / 'pilot'), TMPDIR=str(work))
         profile = work / 'profile'
-        user = profile / 'user'
-        for directory in ('autocorr', 'config', 'pack', 'temp'):
-            (user / directory).mkdir(parents=True, exist_ok=True)
-        oor = 'http://openoffice.org/2001/registry'
-        registry = ET.Element('{' + oor + '}items')
-        item = ET.SubElement(registry, 'item', {'{' + oor + '}path': '/org.openoffice.Office.Common/I18N/CJK'})
-        for name in ('AsianTypography', 'CJKFont'):
-            prop = ET.SubElement(item, 'prop', {'{' + oor + '}name': name, '{' + oor + '}op': 'fuse'})
-            ET.SubElement(prop, 'value').text = 'true'
-        (user / 'registrymodifications.xcu').write_bytes(encode(registry))
+        profile_seed = seed_profile(profile)
         if args.font_dir:
             config = ET.Element('fontconfig')
             for directory in args.font_dir:
@@ -811,23 +860,37 @@ def render(args):
             raise DocxError('Renderer did not produce a PDF', 'renderer-output-missing')
         pages = work / 'pages'
         pages.mkdir()
-        owned_command([args.pdftoppm, '-png', '-r', str(args.dpi), str(pdf), str(pages / 'page')], args.timeout, work, render_env)
+        owned_command([args.mutool, 'draw', '-q', '-F', 'png', '-c', 'rgb', '-A', '8', '-r', str(args.dpi), '-o', str(pages / 'page-%d.png'), str(pdf)], args.timeout, work, render_env)
         images = sorted(pages.glob('page-*.png'), key=lambda p: int(p.stem.rsplit('-', 1)[-1]))
         if not images or any(not p.read_bytes().startswith(b'\x89PNG\r\n\x1a\n') for p in images):
             raise DocxError('Renderer did not produce PNG pages', 'renderer-output-missing')
+        for image in images:
+            baseline_png_resolution(image)
         coverage, page_text = [], []
         if not args.mutool or not Path(args.mutool).is_absolute() or not os.access(args.mutool, os.X_OK):
             raise DocxError('Rendering text/glyph checks require an executable absolute --mutool path', 'glyph-checker-unavailable', 'blocked')
         structured = work / 'text.xml'
         owned_command([args.mutool, 'draw', '-F', 'stext', '-o', str(structured), str(pdf)], args.timeout, work, render_env)
-        coverage, page_text = check_cjk_pages(structured, images, args.dpi)
-        expected_cjk = sum(is_cjk(c) for node in xml(source_parts['word/document.xml']).iter(q('t')) for c in (node.text or ''))
-        if expected_cjk >= 8 and sum(p['characters'] for p in coverage) == 0:
-            raise DocxError('Source contains CJK but rendered PDF has no CJK text', 'render-cjk-text-missing')
         names = ['page-' + str(number) + '.png' for number in range(1, len(images) + 1)]
+        try:
+            coverage, page_text = check_cjk_pages(structured, images, args.dpi, profile_seed)
+        except DocxError as error:
+            if error.code == 'render-cjk-glyphs-missing':
+                # Fixed baseline retains the painted pages for diagnosing its failure.
+                for image, name in zip(images, names):
+                    os.replace(image, output / name)
+            raise
         for image, name in zip(images, names):
             os.replace(image, output / name)
-    return {'status': 'ok', 'input': str(Path(args.input).resolve()), 'revision': revision, 'render_root': str(render_root), 'out_dir': str(output), 'pages': len(images), 'images': [str(output / name) for name in names], 'page_text': page_text, 'cjk_glyph_coverage': coverage, 'text_characters': sum(p['characters'] for p in page_text), 'dpi': args.dpi, 'libreoffice_profile_seed': 'minimal-cjk-registry'}
+    return {'status': 'ok', 'input': str(Path(args.input).resolve()), 'revision': revision, 'render_root': str(render_root), 'out_dir': str(output), 'pages': len(images), 'images': [str(output / name) for name in names], 'page_text': page_text, 'cjk_glyph_coverage': coverage, 'text_characters': sum(p['characters'] for p in page_text), 'dpi': args.dpi, 'libreoffice_profile_seed': profile_seed}
+
+class RendererPathAction(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        previous = getattr(namespace, '_explicit_renderer', None)
+        if previous is not None and Path(previous).resolve() != Path(values).resolve():
+            parser.error('--pdf-renderer and --mutool name the same MuPDF executable; conflicting paths are invalid')
+        namespace._explicit_renderer = values
+        setattr(namespace, self.dest, values)
 
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
@@ -858,9 +921,8 @@ def parser():
         if name == 'render':
             sub.add_argument('--out-dir', required=True)
             sub.add_argument('--soffice', default=os.environ.get('PILOTDECK_SOFFICE') or os.environ.get('DOCX_SKILL_SOFFICE'))
-            sub.add_argument('--mutool', default=os.environ.get('PILOTDECK_MUTOOL'))
+            sub.add_argument('--pdf-renderer', '--mutool', dest='mutool', action=RendererPathAction, default=os.environ.get('PILOTDECK_PDF_RENDERER') or os.environ.get('PILOTDECK_MUTOOL'))
             sub.add_argument('--font-dir', action='append', default=[])
-            sub.add_argument('--pdf-renderer', '--pdftoppm', dest='pdftoppm', default=os.environ.get('PILOTDECK_PDF_RENDERER') or os.environ.get('PILOTDECK_PDFTOPPM'))
             sub.add_argument('--dpi', type=int, default=150)
             sub.add_argument('--timeout', type=int, default=180)
     commands.add_parser('self-test')
@@ -978,7 +1040,7 @@ def main():
         print(json.dumps(execute(args), ensure_ascii=False, indent=2))
         return 0
     except (DocxError, OSError, ValueError) as error:
-        print(json.dumps({'status': getattr(error, 'status', 'error'), 'code': getattr(error, 'code', 'io-error'), 'error': str(error), 'command': args.command}), file=sys.stderr)
+        print(json.dumps({'status': getattr(error, 'status', 'error'), 'code': getattr(error, 'code', 'io-error'), 'error': str(error), 'details': getattr(error, 'details', {}), 'command': args.command}), file=sys.stderr)
         return 3
 
 if __name__ == '__main__':

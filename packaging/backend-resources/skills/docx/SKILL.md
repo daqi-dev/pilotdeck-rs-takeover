@@ -8,7 +8,7 @@ description: "Create, inspect, review, redact metadata, finalize revisions and r
 Inspect the document before editing and keep intermediates in `PILOTDECK_WORK_DIR` when supplied. The independently authored Python standard-library helper works directly on DOCX ZIP/XML. Inspection includes paragraph/run styles, nested tables, sections, headers and footers, fields, revisions and package feature inventories; incomplete semantic coverage is reported explicitly. It preserves unrelated package member bytes and run properties during supported text replacements. It does not supply a full Word layout engine or OOXML schema validator.
 
 ```sh
-DOCX="{{SKILL_ROOT_SHELL}}/scripts/docx_cli.py"
+DOCX={{SKILL_ROOT_SHELL}}/scripts/docx_cli.py
 python3 "$DOCX" inspect --input "$INPUT" --out "$WORK/inspection.json"
 python3 "$DOCX" validate --input "$INPUT"
 python3 "$DOCX" annotate --input "$INPUT" --spec "$WORK/review.json" --out "$WORK/review.docx"
@@ -29,11 +29,10 @@ Render with explicit externally provisioned executables:
 
 ```sh
 python3 "$DOCX" render --input "$WORK/final.docx" --out-dir "$WORK/pages" \
-  --soffice "$PILOTDECK_SOFFICE" --pdf-renderer "$PILOTDECK_PDF_RENDERER" \
-  --mutool "$PILOTDECK_MUTOOL" --dpi 150 --timeout 180
+  --soffice "$PILOTDECK_SOFFICE" --pdf-renderer "$PILOTDECK_MUTOOL" --dpi 150 --timeout 180
 ```
 
-`PILOTDECK_SOFFICE` and `PILOTDECK_PDF_RENDERER` may supply the executable paths without flags; the PDF renderer is `pdftoppm`. Rendering needs LibreOffice, Poppler and appropriate fonts. Rendering text and glyph checks also require a source-built MuPDF `mutool` supplied through `PILOTDECK_MUTOOL` or `--mutool`; missing it blocks rendering. The helper compares character boxes with actual PNG pixels and rejects pages with at least eight CJK characters when fewer than 70% are visibly painted. Use repeatable `--font-dir` paths for separately supplied font directories when the renderer needs them. These engines and fonts are not bundled by this skill. Missing engines, a failed conversion, timeout or missing PDF/PNG pages return an error and do not publish new page images. Successful pages are written beneath the input SHA-256 prefix directory under `--out-dir`. Current owned process-group cleanup requires POSIX. Open every generated page before making visual claims. The CJK paint check detects missing paint, not every incorrect glyph or pagination error. PNG output still needs visual review.
+`--soffice` supplies LibreOffice; `--pdf-renderer` supplies the source-built MuPDF **mutool** executable for both PNG rendering and text/glyph checks. `--mutool` is an exact alias for that same parameter; conflicting explicit paths are rejected. `PILOTDECK_SOFFICE` and `PILOTDECK_PDF_RENDERER` provide defaults, with `PILOTDECK_MUTOOL` as the renderer fallback when the canonical variable is absent. These are native-resource supply parameters; the fixed baseline did not expose these flags. DOCX requires the MuPDF CLI, so a Poppler `pdftoppm` path is not interchangeable. When another skill uses a different renderer in the shared environment, pass the DOCX MuPDF path explicitly. Rendering needs LibreOffice, MuPDF and appropriate fonts. Missing engines block rendering. The helper compares character boxes with actual PNG pixels and rejects pages with at least eight CJK characters when fewer than 70% are visibly painted. Use repeatable `--font-dir` paths for separately supplied font directories when the renderer needs them. The isolated renderer profile uses the caller’s existing LibreOffice registry/config/pack font configuration when present, otherwise a minimal CJK configuration. These engines and fonts are not bundled by this skill. Missing engines, a failed conversion, timeout or missing PDF/PNG pages return an error. As in the fixed baseline, a failed CJK paint check retains the rendered PNGs for diagnosis while returning an error; these files are not a successful delivery. Successful pages are written beneath the input SHA-256 prefix directory under `--out-dir`. Current owned process-group cleanup requires POSIX. Open every generated page before making visual claims. The CJK paint check detects missing paint, not every incorrect glyph or pagination error. PNG output still needs visual review.
 
 Publish the exact candidate atomically, preserving a supplied source by default:
 

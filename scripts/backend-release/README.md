@@ -72,3 +72,24 @@ python3 scripts/backend-release/addon.py \
 附加归档不含核心二进制，也不声称附带Node、Chrome、ASR引擎/模型或独立装配runtime。它只归档显式选择的plugin资源和许可；需按manifest补齐实际外部依赖后显式安装builtin-plugins内容，发现后插件会默认启用。browser公开依赖的独立离线装配方法见其runtime/README.md；该输出与资源归档不同，需单独记录与最终搬迁验证。ASR依赖也须独立记录来源、模型许可、平台与推理证据。不得用宿主绝对路径或复制核心binary冒充包内供给。
 
 封存d0验证：空builtin root、拒Node PATH的普通native turn零Node尝试；当前browser/funasr root相同turn触发两次Node启动，即使turn最终完成仍不符合零Node合同。原始证据`_tmp/20261113-core-no-node/`。最终same-SHA发行须从包外、无资源override、无TS参考目录重验；本轮轻量脚本测试不替代该验收。
+
+## 明确身份的 extension runtime 供应包
+
+`runtime-bundle.py`与上述resource addon分开。它仅接受已存在、已取证的runtime，不运行下载、npm安装、源码构建或模型获取；包内不包含核心CLI、Node、Chrome或Python。build前检查至少8GiB空闲，归档压缩以nice+10运行。
+
+先`record --kind browser|funasr --input ROOT --identity NEW.json --os OS --arch ARCH --minimum-os VALUE --receipt FILE ... --recipe FILE ...`生成精确身份；至少一个实体receipt和一个源码recipe必须提供。record只记录事实，并不等于审阅通过。审阅者核对source/lock/license/platform/receipt后，以独立核准的SHA运行：
+
+```sh
+python3 scripts/backend-release/runtime-bundle.py build \
+  --kind browser --input /absolute/existing-runtime \
+  --identity /absolute/reviewed-identity.json --identity-sha256 REVIEWED_SHA256 \
+  --out /absolute/NEW-runtime-bundle --source-date-epoch 0
+```
+
+browser载荷位于`runtime/browser/`，含实际node_modules、package/lock/sources、公开依赖LICENSE/NOTICE与原装配manifest。保留现有协议，显式设置`PILOTDECK_RUNTIME_ROOT=<moved-package>/runtime/browser`。相邻自动探测未在此合同中承诺。Node及所选Chrome是独立外部工具，headless/channel仍由显式plugin配置决定。
+
+FunASR载荷位于`pilot-home/funasr/`。用户显式选择安装至`PILOT_HOME/funasr`，保留现有`runtime/v0.2.0/darwin-arm64/llama-funasr-sensevoice`与`models/{sensevoice-small-q8,fsmn-vad}.gguf`路径。安装不得覆盖已有用户目录；先在全新隔离PILOT_HOME验证再决定安装。此脚本不替用户写home、不修改plugin启用设置。当前native身份由Mach-O直接解析为darwin/arm64、minOS26.6.0，禁止把旧macOS声明填低；Windows与其他native格式当前不支持此供应脚本的native身份核验。Node、Python3、macOS系统framework依然外部。包内包括引擎/模型、源锁、模型来源与许可、原生依赖许可、实际构建/声学receipt和可复现源码recipe，原始记录的历史pending字段不被篡改，后续收据分别附带。
+
+两个供应包均有独立manifest、runtime-identity、exact-file清单、checksum与archive摘要，可由现有verify.py校验。来源receipt与recipe实体归档在provenance中，不要求安装机器访问旧_tmp路径；这些raw历史文本中的主机路径仅是证据，不是加载映射。外部核准的identity SHA与包内去主机输入路径的identity副本用途不同，二者不混用。
+
+本轮实际供应包在`_tmp/20261113-core-no-node/{browser-runtime-bundle,funasr-runtime-bundle-second}/`：移动解压verify分别199/34payload项通过；移动browser runtime真实stdio catalog23工具并自然退出。移动ASR引擎与原引擎`--help`均exit1，除可执行路径外实际usage字节相同；首个driver误期望exit0的失败保留。未重跑搬迁后声学/Chrome/正式loader，不把这些轻量probe称为最终same-binary发行验证。

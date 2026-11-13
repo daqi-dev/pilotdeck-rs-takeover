@@ -143,34 +143,32 @@
       "resource": "skills/docx/SKILL.md",
       "authorship": "independently authored; baseline observed for capability inventory only",
       "externalDependencies": [
-        "Python 3.10+ for supplied inspector when applicable",
-        "format-specific editing/rendering tools as described in SKILL.md"
+        "Python3 and python-docx/lxml/Pillow as required by helper",
+        "explicit LibreOffice executable and caller fonts/profile supply",
+        "explicit --pdf-renderer MuPDF (same-value --mutool alias accepted); pdftoppm not current DOCX renderer"
       ],
       "remaining": [
-        "fixed render_docx full PyMuPDF/fitz comparison remains unverified; E0 source build in progress",
-        "advanced Word compatibility, Windows owned execution, final loader and moved package pending",
-        "LibreOffice/MuPDF/font supply is external and is not assumed included in full package"
+        "ZIP total expansion limit 128 MiB differs from baseline total512 MiB/member128 MiB; prefix rebinding and AlternateContent edits rejected",
+        "Windows owned execution unavailable",
+        "final same-binary loader and moved distribution journey pending; external LibreOffice/MuPDF/fonts supply not assumed included"
       ],
       "implementedHelpers": [
-        "inspect/filter/compare/deliver command wrappers",
-        "atomic delivery and concurrent source-save protection",
-        "LibreOffice/MuPDF render with CJK visible-glyph detection"
+        "inspect/filter/compare/deliver wrappers with atomic publication and concurrent source-save protection",
+        "immutable source/revision rendering via LibreOffice and explicitly supplied MuPDF renderer",
+        "caller LO profile registry/config/pack seeding with isolated generated cache",
+        "full fixed baseline render parity on Linux, including error details and final PNG bytes"
       ],
       "evidence": [
         {
-          "path": "_tmp/20261113-docx-tools/final-render-second/results.json",
-          "sha256": "0bcb4809dd925d5234f95e5793fb01b955f71253d66d6e7f3e06e8502cb2ae98"
+          "path": "_tmp/20261113-docx-full-render-oracle/final-identity.json",
+          "sha256": "8a7d4ae4ff0a8be1e9a6faab3988f98ad281f9bb204e863146d0334ba1f1747b"
         },
         {
-          "path": "_tmp/20261113-docx-tools/snapshot-render/results.json",
-          "sha256": "b95b068e146d14f54adff7fa5633158483eceebeb7e08c0bb20549e850d7de52"
-        },
-        {
-          "path": "_tmp/20261113-docx-tools/snapshot-render/final-source-sha256.json",
-          "sha256": "111b2b0a0f4ba76069ef23af0cd2a11f20b5e82e6f7934b6cfa28a306dd5a403"
+          "path": "_tmp/20261113-docx-full-render-oracle/cb8-evidence/docx-render-parity-20261113-freeze-first/final-receipt.json",
+          "sha256": "d20d385f2e09fd3aa5c51e697e63547e66f5ddf73a225d1ec6eaf628c9919500"
         }
       ],
-      "verificationBoundary": "current helper ea293696c06005d51417fdf8b07966388cc136497cd3d23a31f1bf03cc8e0fee: 19 wrapper tests, seven rejected mutants, real immutable snapshot input SHA equals revision, normal CJK 14/14 visible and missing-glyph exit3, six leaders reaped, independent Email review passed"
+      "verificationBoundary": "final frozen helper b2a6b27c2751ca5c80084aafdddfe82190ad6ef6b33401f39c5cff95bd5b49de: 21 local tests; inspect/compare/deliver nine rows twice; full fixed render nine rows twice on same Linux host with exact JSON/error details/PDF raw bbox+embedded fonts+pixels/final PNG bytes; seven local mutants and valid-PNG pixel mutant rejected; 72 engines and36 workers reaped. Historical macOS receipts remain historical, not reassigned to final hash."
     },
     "find-skills": {
       "state": "待验证",
@@ -636,6 +634,29 @@
     ],
     "loaderDefaultUnchanged": true,
     "externalRuntimesIncludedInResourceSourceTree": false,
-    "finalPackageVerified": false
+    "finalPackageVerified": false,
+    "runtimeSupply": {
+      "state": "identified independent runtime archives assembled and relocated inventory verified; final installation pending",
+      "browser": "exact public runtime payload, Node/Chrome external, explicit existing PILOTDECK_RUNTIME_ROOT mapping",
+      "funasr": "source-built engine and locked models/licenses/recipes under PILOT_HOME/funasr mapping, Node/Python/system frameworks external, darwin-arm64 minimum macOS26.6",
+      "evidence": [
+        {
+          "path": "_tmp/20261113-core-no-node/browser-runtime-bundle/moved-verify.json",
+          "sha256": "5b2c9a5b836eaca144e22f39bd2ed07123a7ebd067df4dcb003b826ae052dcd5"
+        },
+        {
+          "path": "_tmp/20261113-core-no-node/funasr-runtime-bundle-second/moved-verify.json",
+          "sha256": "84a66572e4c7003677ed088db2e4e4c6ca7f90acf57a5d0c7d64ee73b3052af6"
+        },
+        {
+          "path": "_tmp/20261113-core-no-node/browser-moved-catalog/manifest.json",
+          "sha256": "ec252ecadf2bd72848011019eaa92293cb84bcbeff4538c4f0c1cd82c8f1595a"
+        },
+        {
+          "path": "_tmp/20261113-core-no-node/funasr-runtime-bundle-second/moved-native-usage-compare.json",
+          "sha256": "71ef3cd7120f66e6aaec5bc55a9b3bbf0557560a7a8f243c6569ac4d83a4540c"
+        }
+      ]
+    }
   }
 }

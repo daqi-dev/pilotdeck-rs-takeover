@@ -36,6 +36,10 @@ class DocxToolsTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
+        from unittest.mock import patch
+        home = self.root / 'home'; home.mkdir()
+        environment = patch.dict(os.environ, {'HOME': str(home), 'PILOT_HOME': str(home / 'pilot'), 'PILOTDECK_WORK_DIR': '', 'APPDATA': ''})
+        environment.start(); self.addCleanup(environment.stop)
         self.source = self.root / 'source.docx'
         self.original = fixture(self.source)
         self.source_bytes = self.source.read_bytes()
@@ -266,6 +270,17 @@ class DocxToolsTests(unittest.TestCase):
         import hashlib
         import struct
         import zlib
+        parts = docx.load(self.source)
+        tree = docx.xml(parts['word/document.xml'])
+        hidden = docx.ET.SubElement(docx.ET.SubElement(tree.find(docx.q('body')), docx.q('p')), docx.q('r'))
+        docx.ET.SubElement(docx.ET.SubElement(hidden, docx.q('rPr')), docx.q('vanish'))
+        docx.ET.SubElement(hidden, docx.q('t')).text = '中文字符实际渲染测试正确显示'
+        parts['word/document.xml'] = docx.encode(tree)
+        import io
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, 'w') as archive:
+            for name, value in parts.items(): archive.writestr(name, value)
+        self.source_bytes = buffer.getvalue(); self.source.write_bytes(self.source_bytes)
         args = docx.parser().parse_args(['render', '--input', str(self.source), '--out-dir', str(self.root / 'render-root'), '--soffice', sys.executable, '--pdf-renderer', sys.executable, '--mutool', sys.executable])
         def chunk(kind, value):
             return struct.pack('>I', len(value)) + kind + value + struct.pack('>I', zlib.crc32(kind + value) & 0xffffffff)
@@ -279,8 +294,8 @@ class DocxToolsTests(unittest.TestCase):
                 self.assertNotEqual(Path(argv[-1]).resolve(), self.source.resolve())
                 self.assertEqual(Path(argv[-1]).read_bytes(), self.source_bytes)
                 (Path(cwd) / 'source.pdf').write_bytes(b'%PDF-FAKE-UNIT-TRANSPORT')
-            elif '-png' in argv:
-                Path(argv[-1] + '-01.png').write_bytes(png)
+            elif '-F' in argv and argv[argv.index('-F') + 1] == 'png':
+                Path(argv[argv.index('-o') + 1].replace('%d', '1')).write_bytes(png)
             else:
                 Path(argv[argv.index('-o') + 1]).write_text('<document><page><line bbox="0 0 1 1"><font><char c="A"/></font></line><line bbox="0 0 1 1"><font><char c="B"/></font></line></page></document>')
         real = docx.owned_command; docx.owned_command = engine
@@ -295,6 +310,7 @@ class DocxToolsTests(unittest.TestCase):
         self.assertEqual(result['images'], [str(expected_dir / 'page-1.png')])
         self.assertEqual(result['page_text'], [{'page': 1, 'characters': 4}])
         self.assertEqual(result['text_characters'], 4)
+        self.assertIn(b'pHYs' + struct.pack('>IIB', 3780, 3780, 1), Path(result['images'][0]).read_bytes())
         self.assertEqual(len(commands), 3)
         self.assertEqual(self.source.read_bytes(), b'CONCURRENT-SOURCE-SAVE')
 
@@ -317,6 +333,29 @@ class DocxToolsTests(unittest.TestCase):
         self.assertEqual(self.source.read_bytes(), new_source)
         backups = list((work / 'docx' / 'recovery').glob('*.docx'))
         self.assertEqual(backups[0].read_bytes(), self.source_bytes)
+
+    def test_renderer_alias_is_one_typed_program_not_two_engines(self):
+        parser = docx.parser()
+        values = parser.parse_args(['render', '--input', 'input.docx', '--out-dir', 'pages', '--pdf-renderer', sys.executable, '--mutool', sys.executable])
+        self.assertEqual(values.mutool, sys.executable)
+        import contextlib
+        import io
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            parser.parse_args(['render', '--input', 'input.docx', '--out-dir', 'pages', '--pdf-renderer', sys.executable, '--mutool', '/different-engine'])
+
+    def test_generated_caller_profile_and_font_caches_seed_isolated_render(self):
+        source = Path(os.environ['HOME']) / '.config/libreoffice/4/user'
+        source.mkdir(parents=True)
+        registry = b'<oor:items xmlns:oor="http://openoffice.org/2001/registry"/>'
+        (source / 'registrymodifications.xcu').write_bytes(registry)
+        for name in ('config', 'pack'):
+            (source / name).mkdir(); (source / name / 'marker').write_text('generated ' + name)
+        profile = self.root / 'isolated-profile'
+        self.assertEqual(docx.seed_profile(profile), 'user-font-config')
+        self.assertEqual((profile / 'user/registrymodifications.xcu').read_bytes(), registry)
+        for name in ('config', 'pack'):
+            self.assertEqual((profile / 'user' / name / 'marker').read_text(), 'generated ' + name)
+        self.assertEqual((source / 'registrymodifications.xcu').read_bytes(), registry)
 
     def test_render_missing_engine_is_not_success(self):
         args = docx.parser().parse_args(['render', '--input', str(self.source), '--out-dir', str(self.root / 'pages'), '--soffice', '/nonexistent', '--pdf-renderer', '/nonexistent', '--mutool', '/nonexistent'])

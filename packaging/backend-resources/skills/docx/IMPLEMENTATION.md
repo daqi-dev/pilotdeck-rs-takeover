@@ -1,40 +1,39 @@
-# 独立 DOCX helper 实现与边界
+# 独立 DOCX helper：冻结交接
 
-固定参考：PilotDeck cc7c4e6，`skills/docx/scripts/docx_cli.py`及docxlib，源码只读理解、未复制。新实现为`../_tools/docx_tools.py`，技能内`scripts/docx_cli.py`定位该自有helper。没有新增Python包依赖，没有改artifact_build或全局资源manifest。以下为2026-11-13第二批状态，第一批13tests/英文PNG证据保留。
+2026-11-13，按根要求停止新增边界专项，交全局 E2E。当前 helper SHA256：`b2a6b27c2751ca5c80084aafdddfe82190ad6ef6b33401f39c5cff95bd5b49de`。源码固定后完成下列验证；文档不把历史候选成绩移到新 hash。仅独占 DOCX 五文件及根授权新增的源替换差异条目；未改 artifact_build、全局资源 manifest、Rust 或冻结标准。
 
-| 固定CLI能力 | 当前独立实现与实际验证 |
+固定参考是 `PilotDeck@cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85` 的 `skills/docx/scripts/docx_cli.py` / docxlib；只读理解、未复制源码。实现为标准库 Python ZIP/XML helper，LibreOffice/MuPDF 是外部执行器。PyMuPDF 仅用于独立 oracle，不是产品 helper 的 Python 依赖。
+
+## 当前能力与精确限制
+
+| 能力 | 当前实现 |
 |---|---|
-| inspect / validate | metadata；paragraph/style/alignment/run格式；headings；嵌套/水平垂直合并表格；继承header/footer；sections尺寸边距；comments；分part修订计数；fields；图片数/外链；macro/active/signature/embedding/chart/diagram/customXML/schema/content-control/textbox/notes/altChunk/math/protection完整字段；coverage limitations；validation errors/warnings/expanded_bytes/xml_parts。固定基线实际Python入口丰富fixture完整JSON一致，不只是字段存在 |
-| inspect filters | summary/search/location/max-items及query matches/returned/truncated，headings筛选与tables省略；4种实际基线过滤对照一致 |
-| annotate | main story段落批注OPC完整部件；单run非空文本生成真实删除/插入修订，复制rPr并保留旁侧内容；occurrence约束；跨run、复杂run拒绝，基线自身也不承诺跨run自动redline。修订文档inspect实际对照一致 |
-| finalize | accept/reject run插入删除，覆盖Word story XML，转换delText，移除trackRevisions；删除comments/markers/relationships/types。move/property/表格复杂修订拒绝，不丢弃后假成功 |
-| sanitize | 清core作者等四字段、custom properties及其OPC引用、rsid属性；可删comment；保留正文、revision作者及嵌入物，不宣称全隐私清理 |
-| compare | count before/after、coverage、field multiset增删、metadata与package feature变化、统一文本diff，实际基线完整JSON一致；不是单独part字节比较替代 |
-| deliver | 原字节atomic no-clobber；候选字节快照再次验证；输出字节核对；源默认保护、显式替换及digest recovery；workdir路径约束；非替换源在发布前快照hash、发布后重新读hash，变化明确source-changed-during-delivery；替换源增加临时写fsync之后、replace之前的身份与内容复核，阻止备份后的并发新保存丢失。测试在真实atomic publication边界写入源变化，必须失败；禁用检查的独立副本被断言拒绝 |
-| render / CJK | 显式LibreOffice→PDF、pdftoppm→PNG；CJK另用源码构建MuPDF mutool stext逐字符quad+标准库PNG解码，ink阈值<245、3%面积、页面至少8CJK且paint ratio<0.7时报render-cjk-glyphs-missing。独立HOME/PILOT_HOME/profile；显式font dirs可用，不读用户LO profile；POSIX timeout/cancel killgroup+wait；失败不发布pages |
-| self-test | 19项自生成文档测试；技能wrapper同19项。7个独立负控分别破坏inspect count、compare field变化、source-race检查、CJK空白检测、render hash布局、source replacement precommit、恢复live-render-input，全被实际断言拒绝 |
+| inspect / validate | metadata、paragraph/style/alignment/run格式、headings、嵌套及合并表格、header/footer继承、sections尺寸边距、comments、分part修订计数、fields、图片/外链、package features及coverage、结构错误/警告。不是完整OOXML schema或任意嵌入物语义解释 |
+| inspect filters / compare | summary/search/location/max-items及query；各类before/after计数、field multiset增删、metadata/features变化、统一文本diff。完整字段已通过实际固定入口对照 |
+| annotate / finalize | main-story段落批注、单run真实del/ins修订及rPr保留；接受/拒绝修订、去comment/引用/OPC部件。跨run、复杂run、move/property/表格复杂修订不伪造成功；与固定基线支持范围及明确拒绝边界对照 |
+| sanitize | 清core四字段、自定义属性及其关系、rsid属性，可去comment；不声称清除正文、修订作者和嵌入物中的全部隐私 |
+| deliver | 原字节快照再次验证及atomic no-clobber；普通源交付后hash复核；显式源替换及digest recovery。替换源在fsync后precommit复核身份/内容，保留被发现的并发新保存；最后检查到replace不是强CAS |
+| render | 一次不可变源快照用于校验、revision和私有0600 source.docx→LO。源码构建MuPDF `draw -F png -c rgb -A8`负责PNG，stext负责文本/quad；保固定matrix-render实际PNG 96DPI元数据。调用者LO registry/config/pack存在时seed到独立profile，否则minimal CJK。字段、hash子目录、自然page-N文件名、文本换行计数、CJK统计及错误details匹配已验用例 |
+| CJK | 保固定字符范围、ink<245/3%面积、至少8CJK且paint ratio<0.7的失败阈值；native零高quad用line纵框表达缺paint。合法隐藏CJK不额外拒绝。错误返回同时保留固定基线的诊断PNG；有paint不等于字形语义正确，仍需目视 |
+| 资源所有权 | POSIX独立进程组、超时/取消kill并wait、日志上限；Windows renderer owner明确unsupported。21项本地测试包括真实held子进程取消及reap先于返回 |
 
-## 固定基线特征证据
+`--pdf-renderer`明确要求MuPDF mutool；`--mutool`是同一个供给参数的别名，冲突路径拒绝。`PILOTDECK_PDF_RENDERER`是默认，缺省时再用`PILOTDECK_MUTOOL`。不把Poppler CLI当作MuPDF二选一；固定基线原本没有这些原生供给flags。其他技能若需要pdftoppm，应按技能显式传入相应执行器，不能假设一个全局值适用所有Office工具。
 
-`_tmp/20261113-docx-tools/completion/`仅过程证据，不入库。oracle直接调用只读固定资源的Python `inspect_docx/filter_inspection/compare_docx`，设置dont_write_bytecode，不写参考目录。使用自造DOCX，丰富正常inspect、4种filter、修订inspect、compare共7格，双轮完整JSON一致且稳定；另扩充foot/endnote、nonstandard customXML schema、chart/diagram/embedding/ActiveX、content-control/textbox/altChunk/math/保护字段的第8格也与基线完整JSON一致；第9格普通deliver完整返回JSON也一致。可复现入口为现有test_docx_tools.py --baseline-root <固定参考根>；显式oracle依赖参考环境已有的python-docx/lxml，默认测试不增加这些依赖。首比发现header关系namespace/UI样式别名问题，修正后才计通过；扩大features首比也抓到missing content type应warning而非error，已对齐。未把实际入口探测换成自写mock oracle。
+## 最终验证身份
 
-第一批现存LibreOffice 26.8.0.3 arm64、pdftoppm 26.06.0，自造DOCX→批注修订→accept/remove comments→真实PNG，打开可见加粗Hello new world。首次两次OPC namespace加载失败原始日志仍在`_tmp/20261113-docx-tools/`；修默认namespace后成功。
+- 本机标准库回归 **21/21**；显式固定参考inspect/filter/revision/compare/普通deliver oracle **9格双轮完整JSON相同**。入口：`test_docx_tools.py --baseline-root <固定参考根>`，只在显式oracle中使用参考环境已有python-docx/lxml；默认helper不新增包依赖。
+- cb8同机完整实际render oracle **9格×2轮严格通过**：英文、中文、两页表格、72DPI、300DPI、Latin-only fallback、实际无ink CJK错误、合法hidden CJK、隔离生成caller LO profile。两边使用同一输入、系统LibreOffice、同字体配置、同DPI及source-built MuPDF/PyMuPDF 1.27.0。只归一各自输出根，未放宽数值/bbox/像素。
+- 每格完整返回或错误code/message/details、实际PDF文本/逐字bbox/字体嵌入hash/像素、最终PNG像素及文件bytes一致；两轮稳定。错误格严格失败并保留一致诊断PNG。**72个engine leader和36个worker均已回收**。
+- 同一比较器对有效PNG仅改一个像素的独立副本必须exit1；本地7个独立变异分别破坏inspect/compare、源变化检查、源替换precommit、CJK、hash布局、活输入快照，均被拒绝。未改判分标准。
+- 原始render证据本机副本：`_tmp/20261113-docx-full-render-oracle/cb8-evidence/docx-render-parity-20261113-freeze-{first,second}/`。`first/final-receipt.json`、`comparisons.json`、`runs.json`、各格PDF/PNG/rawdict及negative原件齐备。中文及两页三个页面已打开目视检查。
+- E0提供oracle环境：source-built CPython 3.12.3、PyMuPDF/MuPDF 1.27.0固定未发布commit ccdefb3；完整source/recipe/module/wheel/smoke身份见`source-runtime-receipt.json`（原件SHA256 `2a847bfcacbbf72529001d86189326d2cf99e19f60c84295f862470044bb9108`）。这是被记录的实际依赖环境，不假称基线精确锁了该版本。
 
-第二批`cjk/`真实引擎证明：不供给系统字体时PDF有13个CJK记录但0paint，helper exit3且无成功目录；显式`--font-dir /System/Library/Fonts --font-dir /Library/Fonts`后14CJK/14paint/ratio1，真实PNG打开可读“中文字符实际渲染测试，正确显示。 English 123”。未安装/复制字体。标准库测试另验证白图失败、黑图成功及缺字零高quad不得从分母消失。MuPDF使用源码构建1.27.0，arm64 SHA e4a5126d6c5dadc8dc2554bcded4793cd876bee583d07b429388eee7132dd830，由统一原生组件作者提供。
+## 已保留的首败及修复
 
-## 精确边界与发行待项
+早期13/19测试和macOS英文/中文实际PNG只对应当时hash，原件保留。其后修复了：OPC根namespace被LO拒绝；header关系及style别名/特殊文本；missing content type应warning；render活源与revision错绑（Email独审反例与修后复验均保留）；Poppler最终PNG像素差异（改同源MuPDF）；CJK失败诊断PNG落盘差异；自加source-CJK存在性断言误拒合法hidden文本（删除）；caller profile_seed分支。上述普通差异按固定行为修正，未登记成豁免。第一轮driver猜测29字符失败、实际stext36及初次负控漏带oracle.py的装置失败也保留，不当产品通过证据。
 
-- inspect/compare本批实现并验证上述完整字段合同，不等于对所有畸形DOCX或所有OOXML schema完成穷尽验证。标准库能保留QName-only namespace声明和XML comments；实际修改的XML若重绑定同一prefix，明确unsupported，避免破坏命名空间；只读inspect允许该输入。AlternateContent分支编辑也未承诺。
-- CJK保留基线范围与阈值，但bbox来源是MuPDF sttext，而非未安装的PyMuPDF。缺字zero-height quad使用line纵向范围计算空paint；另外源含至少8CJK而PDF完全无CJK记录会失败。这两条防漏检行为须由根在差异账本确认，不冒称逐像素与fitz完全相同。无需PyMuPDF包。此检查不识别所有错误字形、语义或布局，最终仍需打开页面。
-- render普通合同已改为revision[:16]子目录及固定input/revision/render_root/out_dir/pages/images/page_text/cjk_glyph_coverage/text_characters/dpi/libreoffice_profile_seed字段，page-N自然顺序且每非空文本line计换行。合同单测明确使用注入engine；随后第二批当时helper hash 8c80b125cee9c549359b04488d93b6d6996caca8cc297787471f01296017343a又经真实引擎复跑，前后hash不变。final-render-second/results.json记录正常CJK hash目录/profile/字段、14/14paint、8个实际stext文字line（28字符+8换行=36）与缺字体exit3/0paint/无PNG，两分支共6个准确engine leader PID均已reap。PNG与上一轮逐字节相同，已打开检查。现存Python和本任务有限venv/site-packages查找未见fitz；完整固定render入口对拍仍单列待依赖，不能据MuPDF的36自行声称fitz相同。
-- 固定baseline replace-source丢数据已实际复现：completion/baseline-race/result.json记录真实deliver_docx在recovery已建、真实os.replace前保存有效新DOCX仍status ok，新源被candidate覆盖且backup仅含旧源。当前precommit修复经根明确授权新增specs/gateway-parity/diffs/D1-DOCX-DELIVERY-RACE-001.md，严格不含CJK/renderer差异；检查到replace之间仍有非协作写者窗口，未声称POSIX强CAS。
-- 当前render owned process-group仅POSIX；Windows明确unsupported，未虚称已验证Windows owner。
-- 发行仍需统一供给LibreOffice及动态库、Poppler/pdftoppm及依赖、源码构建MuPDF、适当字体与许可/可搬迁布局。现存本机引擎/系统字体成功不表示full包已内置。最终Rust loader、搬迁包、跨平台验证由root/D1统一进行。
+唯一新增窄差异为 `specs/gateway-parity/diffs/D1-DOCX-DELIVERY-RACE-001.md`：固定真实deliver在backup后覆盖并发有效新保存仍success，recovery不含新版本；当前precommit修复按根明确授权登记。它不包含renderer、CJK、字体或普通helper差异。
 
-## 第三批：render 不可变输入修复
+## 全局 E2E 接续
 
-Email只读审查原件`_tmp/20261113-docx-render-review/first0-*/results.json`实证第二批renderer先hash旧源、LO仍读活source，边界新保存后report revision与实际引擎输入不一致。现一次读取immutable bytes，load(input, bytes)、revision、私有0600 work/source.docx、expected_cjk全用同一快照；活source之后保存不影响本次渲染，也不会被还原。
-
-当前helper SHA256为`ea293696c06005d51417fdf8b07966388cc136497cd3d23a31f1bf03cc8e0fee`。增强现有render合同测试，在engine边界把原source改为非ZIP新保存，仍要求实际argv私有文件字节等于旧快照、revision同源、render成功并保留新源。wrapper19/19通过；独立副本恢复活source作为engine argv，断言exit1（snapshot-negative.log）。原先六负控也用修后源码重新执行，均exit1。Email独立读取实际argv[-1]复验passed，证据fixed-first0-b1abwb58/results.json，未覆盖原件。
-
-最小真实复验在`_tmp/20261113-docx-tools/snapshot-render/results.json`：helper前后同hash；两个分支实际LO输入都为私有source.docx且input SHA==revision；正常CJK14/14、36个提取字符统计、hash子目录/profile保持，缺glyph仍exit3且无PNG；六个准确engine PID均reaped。PNG仍SHA80670557b606b3c56c4f1cffc960c8bdc766b3e8a2d60d0cd6090db3d4a5f353，与已打开的正常图逐字节一致。完整fixed render对拍继续等Native源码构建fitz依赖，不把这次修复实证扩大为完整parity。首次新增负控启动遇ENOSPC已报根，未运行；盘余恢复后才补执行成功，未删他人文件。
+这次是独立资源及固定入口行为验证，不等于正式Rust loader→模型选择技能→完整创建/编辑/渲染/交付旅程已验，也不等于搬迁发行包已供应引擎/字体。当前完整render对照在Linux同机完成；此前macOS候选做过实际渲染，当前同源MuPDF最终hash未另开新的Mac专项。Windows owner仍未实现。已有读取边界也保留为未闭合：当前总展开上限128MiB，固定参考是总512MiB/单member128MiB；修改带namespace prefix重绑定或AlternateContent仍明确拒绝，未声称覆盖这些输入。按根要求本批不再扩这些边界专项。LibreOffice、MuPDF、适当字体及许可证/可搬迁布局须由统一发行提供。已停止扩边界，后续由全局E2E实际首败驱动精准修复，不以本文件宣称所有Office特性或全部后端完成。
