@@ -1667,11 +1667,25 @@ pub fn run_admitted_turn(
                     });
                 }
             }
-            if source_assembled
+            // A:1912 / 3860-3865 createFinishReasonStatus: only for non-blank
+            // assistant text. `unknown` reaches here when the stream completed
+            // without a message_end (an OpenAI `[DONE]` after an empty
+            // finish_reason); a message_end with `unknown` took the recovery
+            // branch above (A:1104).
+            let finish_status = match source_assembled
                 .value()
                 .get("finishReason")
                 .and_then(JsValue::as_string)
-                .is_some_and(|reason| reason.equals_str("content_filter"))
+            {
+                Some(reason) if reason.equals_str("content_filter") => {
+                    Some(("content_filter_stop", content_filter_status()))
+                }
+                Some(reason) if reason.equals_str("unknown") => {
+                    Some(("unknown_finish_reason", unknown_finish_reason_status()))
+                }
+                _ => None,
+            };
+            if let Some((event, detail)) = finish_status
                 && message_text(message.boundary.value())?
                     .units()
                     .iter()
@@ -1683,8 +1697,8 @@ pub fn run_admitted_turn(
                     input,
                     TurnEvent::AgentStatus {
                         text: None,
-                        event: "content_filter_stop".into(),
-                        detail: content_filter_status(),
+                        event: event.into(),
+                        detail,
                     },
                 )?;
             }
@@ -4384,6 +4398,40 @@ fn i18n(key: &str) -> JsValue {
 
 fn source_whitespace(unit: u16) -> bool {
     matches!(unit,0x0009..=0x000d|0x0020|0x00a0|0x1680|0x2000..=0x200a|0x2028|0x2029|0x202f|0x205f|0x3000|0xfeff)
+}
+/// A:3824-3838 createUnknownFinishReasonStatus.
+fn unknown_finish_reason_status() -> BoundarySnapshot {
+    let mut detail = JsObject::new();
+    for (name, value) in [
+        (
+            "message",
+            JsValue::from(
+                "The model stream ended without a normal finish reason, so the response may be incomplete.",
+            ),
+        ),
+        (
+            "messageI18n",
+            i18n("chat:agentStatus.unknownFinishReason.message"),
+        ),
+        ("code", JsValue::from("unknown_finish_reason")),
+        ("severity", JsValue::from("warning")),
+        ("visible", JsValue::Bool(true)),
+        (
+            "userHint",
+            JsValue::from(
+                "Retry the turn; if it repeats, check provider API status/logs for stream finish reasons and verify the selected provider/model in Settings → Model Provider.",
+            ),
+        ),
+        (
+            "userHintI18n",
+            i18n("chat:agentStatus.unknownFinishReason.hint"),
+        ),
+        ("scope", JsValue::from("turn")),
+        ("source", JsValue::from("agent")),
+    ] {
+        detail.insert(name.into(), value);
+    }
+    BoundarySnapshot::capture(&JsValue::Object(detail))
 }
 fn content_filter_status() -> BoundarySnapshot {
     let mut detail = JsObject::new();

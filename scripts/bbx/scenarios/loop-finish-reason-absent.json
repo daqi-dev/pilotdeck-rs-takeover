@@ -1,0 +1,64 @@
+{
+  "name": "loop-finish-reason-absent",
+  "about": "OpenAI 流有正文、发了 [DONE] 但最后一块的 finish_reason 是空串：model/providers/openai/stream.ts:105 只在 finish_reason 为真时发 message_end，model/streaming/streamModel.ts:283-285 的 [DONE] 照样算完成标记，所以不报不完整；assembleModelMessage.ts:122 把缺失的结束原因记成 unknown 且 hasMessageEnd=false，于是 agent/loop/AgentLoop.ts:1104 的未知结束原因恢复不进（它要求有 message_end），轮次照常完成，1912 createFinishReasonStatus 因正文非空发 agent_status:unknown_finish_reason（3824-3838，severity warning）。a1：纯文本；a2：只有空白正文（3861 的 trim 为空，不发状态）。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Absent\"}"
+      }
+    },
+    {
+      "name": "a1",
+      "when": [
+        "a1:"
+      ],
+      "reply": {
+        "text": "Partial answer without a finish reason.",
+        "finish": ""
+      }
+    },
+    {
+      "name": "a2",
+      "when": [
+        "a2:"
+      ],
+      "reply": {
+        "text": "   ",
+        "finish": ""
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-a1",
+        "channelKey": "test",
+        "message": "a1: go"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-a2",
+        "channelKey": "test",
+        "message": "a2: go"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-a1"
+      }
+    }
+  ]
+}
