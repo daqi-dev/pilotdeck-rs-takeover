@@ -1205,7 +1205,13 @@ impl SessionTools {
                         },
                     ))) as capability::RuntimeContext
                 }),
-            file_history: Some(self.file_history.clone()),
+            // Nor a file history sink: the child's dependencies omit
+            // `fileHistory` (SubagentRuntimeComposition.ts:102-130), so a
+            // child's writes record no file snapshots.
+            file_history: self
+                .fork
+                .is_none()
+                .then(|| self.file_history.clone() as capability::RuntimeContext),
             // The live mode: `enter_plan_mode` / `exit_plan_mode` switch it
             // between two tool batches of one turn.
             permission_mode: Some({

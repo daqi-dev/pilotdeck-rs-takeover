@@ -1,0 +1,125 @@
+{
+ "name": "hook-file-changed-warning-subagent",
+ "about": "照 hook-file-changed-warning，换成 general-purpose 子代理里写文件：子代理的 ToolRuntime 用父会话的事件出口（SubagentRuntimeComposition.ts:75-80），FileChanged hook 拦截 / 出错时 ToolRuntime.ts:591 发的 warning 照样投影成父会话流里的 agent_status:warning（GatewayAgentEventProjector.ts:369），夹在 subagent_status 之间。子代理的依赖里没有 fileHistory（SubagentRuntimeComposition.ts:102-130），子代理写文件不在任何会话文件里记 file_snapshot_recorded。已知不稳：子代理工具结果里带随机 UUID，本地分词器给它的 token 数逐次不同，基线自比时父会话第二次模型请求前的 context_budget 估算值（第 2 步第 21 帧、会话文件第 31 条、投影与 runs/registry 里的同一份）不同，按位置声明为 volatile。",
+ "volatile": [
+  "^\\$\\.steps\\[1\\]\\.frames\\[21\\]\\.event\\.(used|displayUsed|localEstimateTokens|usageTokens|ratio|breakdown\\.(total|messages))$",
+  "^\\$\\.tree\\..*/chats/s-sw1\\.jsonl\\.jsonl\\[31\\]\\.detail\\.(used|displayUsed|localEstimateTokens|usageTokens|ratio|breakdown\\.(total|messages))$",
+  "^\\$\\.tree\\..*/chats/s-sw1\\.jsonl\\.projections\\.json\\.json\\.projections\\.web-history\\.agent-statuses\\.state\\[1\\]\\.detail\\.(used|displayUsed|localEstimateTokens|usageTokens|ratio|breakdown\\.(total|messages))$",
+  "^\\$\\.tree\\..*/chats/s-sw1\\.jsonl\\.projections\\.json\\.json\\.projections\\.web-history\\.token-usage\\.state\\.latestContextBudget\\.usage\\.(used|displayUsed|ratio)$",
+  "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.json\\.events\\..s-sw1.<uuid:\\d+>\\[21\\]\\.event\\.(used|displayUsed|localEstimateTokens|usageTokens|ratio|breakdown\\.(total|messages))$"
+ ],
+ "files": {
+  "home/.pilotdeck/plugins/bbx-fc/plugin.json": {
+   "name": "bbx-fc",
+   "version": "0.1.0",
+   "description": "bbx file-changed hooks",
+   "hooks": {
+    "FileChanged": [
+     {
+      "hooks": [
+       {
+        "type": "command",
+        "command": "node fc.mjs block"
+       },
+       {
+        "type": "command",
+        "command": "node fc.mjs err"
+       },
+       {
+        "type": "command",
+        "command": "node fc.mjs two"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "home/.pilotdeck/plugins/bbx-fc/fc.mjs": "let input = '';\nprocess.stdin.on('data', (d) => { input += d; });\nprocess.stdin.on('end', () => {\n  const mode = process.argv[2];\n  if (mode === 'block') { process.stdout.write(JSON.stringify({ decision: 'block', reason: 'file hook blocks' }) + '\\n'); process.exit(0); }\n  if (mode === 'err') { process.stderr.write('file hook failed\\n'); process.exit(1); }\n  if (mode === 'two') { process.stderr.write('file hook exit two\\n'); process.exit(2); }\n  process.exit(0);\n});\n",
+  "proj/existing.txt": "old line\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Subagent file hook\"}"
+   }
+  },
+  {
+   "name": "child-after",
+   "when": [
+    "You are a subagent of PilotDeck",
+    "CHILD-W1",
+    "\"tool_call_id\":\"call_cw1\""
+   ],
+   "reply": {
+    "text": "Scope: wrote the file.\nResult: done.\nKey files: created.txt\nFiles changed: created.txt\nIssues: none"
+   }
+  },
+  {
+   "name": "child",
+   "when": [
+    "You are a subagent of PilotDeck",
+    "CHILD-W1"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_cw1",
+     "name": "write_file",
+     "arguments": {
+      "file_path": "{PROJECT}/created.txt",
+      "content": "fresh\n"
+     }
+    }
+   }
+  },
+  {
+   "name": "parent-after",
+   "when": [
+    "sw1:",
+    "\"tool_call_id\":\"call_sw1\""
+   ],
+   "reply": {
+    "text": "parent done"
+   }
+  },
+  {
+   "name": "parent",
+   "when": [
+    "sw1:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_sw1",
+     "name": "agent",
+     "arguments": {
+      "description": "Write a file",
+      "prompt": "CHILD-W1: create created.txt.",
+      "subagent_type": "general-purpose"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "set_permission_mode",
+   "params": {
+    "sessionKey": "s-sw1",
+    "mode": "bypassPermissions"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-sw1",
+    "channelKey": "test",
+    "message": "sw1: delegate a write",
+    "cwd": "{PROJECT}"
+   },
+   "timeout": 30000
+  }
+ ]
+}
