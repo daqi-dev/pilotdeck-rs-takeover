@@ -430,6 +430,7 @@ fn ports(
         context_identity: ContextRequestIdentity::new(turn_binding.clone(), tool_ports.clone()),
         context_config: config,
         tool_execution: runtime,
+        tool_checkpoint: turn_binding.checkpoint.clone(),
         tool_context: Arc::new(CapabilityContext {
             builder: ToolContextBuilder::new(turn_binding, tool_ports, true),
             plan_todo: None,

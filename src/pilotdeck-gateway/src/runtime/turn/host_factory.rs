@@ -181,6 +181,9 @@ pub struct SessionPorts {
     pub include_extensions_with_custom_system_prompt: bool,
     pub tool_execution: Arc<dyn capability::ToolExecution>,
     pub tool_context: Arc<dyn capability::ToolContext>,
+    /// The exact session checkpoint used by `tool_context` and tool execution.
+    /// Steer offers remain turn-owned; only durable application grants paths.
+    pub tool_checkpoint: crate::host::modules::tool_context::HostToolCheckpoint,
     pub tool_observer: Arc<dyn capability::CapabilityResultObserver>,
     /// `modules.planTodo` resolved handle for this session.
     pub plan_todo: Option<Arc<dyn capability::PlanTodoHandler>>,
@@ -611,6 +614,7 @@ impl TurnHostFactory {
             include_extensions_with_custom_system_prompt,
             tool_execution,
             tool_context,
+            tool_checkpoint,
             tool_observer,
             plan_todo,
             turn,
@@ -750,6 +754,8 @@ impl TurnHostFactory {
             capability = capability.with_plan_todo(plan);
         }
         result.capability = capability;
+        result.turn.authorizations =
+            Some(crate::host::modules::tool_context::SteerAuthorizations::new(tool_checkpoint));
         // `InteractionTurn::bind` revokes stale authorizations and then installs
         // these session-owned callbacks for the current turn.
         interaction.turn_ports = turn;

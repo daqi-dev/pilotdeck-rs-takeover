@@ -1340,6 +1340,7 @@ impl SessionTools {
             context_identity: ContextRequestIdentity::new(binding.clone(), tool_ports.clone()),
             context_config: config,
             tool_execution: execution,
+            tool_checkpoint: binding.checkpoint.clone(),
             tool_context: Arc::new(CapabilityContext {
                 builder: ToolContextBuilder::new(binding, tool_ports, true),
                 plan_todo: Some(Arc::new(crate::runtime::plan_todo::PlanTodoSessions(

@@ -471,6 +471,7 @@ fn ports_with_tool_results_dir(
         context_config: JsObject::new(),
         tool_execution: Arc::new(Tools(vec![])),
         tool_context: Arc::new(ToolContext),
+        tool_checkpoint: HostToolCheckpoint::default(),
         tool_observer: Arc::new(Observer),
         plan_todo: None,
         turn: turn::Ports::default(),
@@ -2298,4 +2299,258 @@ async fn frozen_input_transform_reaches_both_durable_input_and_model_messages_on
     );
     session.dispose().await.unwrap();
     bounded_liveness(registry.dispose()).await.unwrap();
+}
+
+// These regressions enter the production factory composition. Supplying an
+// authorization table by hand here would conceal the missing assembly edge.
+type SteerTestRecord = Arc<dyn Fn(JsValue) -> HostFuture<()> + Send + Sync>;
+async fn factory_steer_checkpoint_turn(
+    registry: &ProjectRuntimeRegistry,
+    id: &ExecutionIdentity,
+    checkpoint: HostToolCheckpoint,
+    cwd: &Path,
+    record: Option<SteerTestRecord>,
+) -> (
+    Arc<InteractionTurn>,
+    crate::host::modules::tool_context::ToolContextBuilder,
+    Cancellation,
+) {
+    use crate::host::modules::tool_context::{CapabilityContext, ToolContextBuilder};
+    let mut session = ports(None);
+    let config =
+        parse_json(&serde_json::json!({"cwd":cwd,"permissionMode":"default","env":{}}).to_string())
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .clone();
+    let binding = TurnBinding {
+        config: config.clone(),
+        input: parse_json(&serde_json::json!({"sessionId":text(&JsValue::String(id.session_id.clone())),"turnId":text(&JsValue::String(id.turn_id.clone()))}).to_string()).unwrap().as_object().unwrap().clone(),
+        checkpoint: checkpoint.clone(),
+        abort_signal: None,
+        environment: Arc::new(NoEnvironment),
+    };
+    let builder = ToolContextBuilder::new(binding.clone(), ToolContextPorts::default(), false);
+    session.context_identity = ContextRequestIdentity::new(binding, ToolContextPorts::default());
+    session.context_config = config;
+    session.tool_context = Arc::new(CapabilityContext {
+        builder: builder.clone(),
+        plan_todo: None,
+    });
+    session.tool_checkpoint = checkpoint;
+    if let Some(record) = record {
+        session.interaction.record_message = Some(record);
+    }
+    let signal = session.interaction.signal.clone();
+    let (router, input, lease) =
+        TurnHostFactory::assemble(registry.acquire(None).unwrap(), id, session)
+            .await
+            .unwrap();
+    assert!(
+        router.turn.authorizations.is_some(),
+        "production factory must publish a checkpoint-backed authorization table"
+    );
+    let turn = InteractionTurn::bind(lease, id, router, input)
+        .await
+        .unwrap();
+    (Arc::new(turn), builder, signal)
+}
+fn factory_steer_item(id: &str, path: &Path) -> crate::runtime::steer::SteerMessage {
+    crate::runtime::steer::SteerMessage {
+        item_id: id.into(),
+        message: parse_json(&serde_json::json!({"role":"user","content":"registered steer","metadata":{"queueItemId":id,"purpose":"mid_turn_steer"}}).to_string()).unwrap(),
+        allowed_read_files: Some(vec![path.to_string_lossy().as_ref().into()]),
+    }
+}
+async fn factory_steer_offer(
+    turn: &InteractionTurn,
+    item: crate::runtime::steer::SteerMessage,
+) -> JsValue {
+    assert!(
+        turn.ports()
+            .steer
+            .unwrap()
+            .enqueue(item.clone())
+            .await
+            .unwrap()
+            .accepted
+    );
+    let drained = turn
+        .module_call(
+            parse_json(r#"{"module":"turn","payload":{"operation":"drain_steer"}}"#).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(array(drained.get("messages").unwrap()).len(), 1);
+    parse_json(&serde_json::json!({"payload":{"type":"steer_applied","itemId":text(&JsValue::String(item.item_id)),"message":serde_json::from_str::<serde_json::Value>(&stringify_json(&item.message).unwrap().unwrap()).unwrap()}}).to_string()).unwrap()
+}
+fn factory_steer_tool_context(
+    builder: &crate::host::modules::tool_context::ToolContextBuilder,
+) -> crate::runtime::tools::ToolRunContext {
+    crate::runtime::tools::ToolRunContext::new(Arc::new(
+        builder
+            .tool_runtime_context(&JsValue::Undefined, None, false)
+            .unwrap(),
+    ))
+}
+async fn factory_steer_read_permission(
+    builder: &crate::host::modules::tool_context::ToolContextBuilder,
+    path: &Path,
+) -> String {
+    let input = parse_json(&serde_json::json!({"file_path":path}).to_string()).unwrap();
+    let context: capability::RuntimeContext = Arc::new(factory_steer_tool_context(builder));
+    let tool = crate::runtime::tools::builtin::read_file::ReadFileTool::new();
+    let permission = capability::ToolDefinition::check_runtime_permissions(&tool, &input, &context)
+        .unwrap()
+        .await
+        .unwrap()
+        .unwrap();
+    text(permission.get("type").unwrap())
+}
+
+#[tokio::test]
+async fn production_factory_steer_grants_exact_registered_file_after_durable_apply() {
+    use crate::runtime::tools::ExecutableTool;
+    let scratch = Scratch::new();
+    let registry = registry(&scratch);
+    let cwd = scratch.0.join("project");
+    let file = scratch.0.join("registered.txt");
+    let sibling = scratch.0.join("sibling.txt");
+    std::fs::write(&file, "REGISTERED-STEER-READ\n").unwrap();
+    std::fs::write(&sibling, "NOT-REGISTERED\n").unwrap();
+    let entered = Arc::new(tokio::sync::Semaphore::new(0));
+    let release = Arc::new(tokio::sync::Semaphore::new(0));
+    let (seen, gate) = (entered.clone(), release.clone());
+    let record: SteerTestRecord = Arc::new(move |_| {
+        let (seen, gate) = (seen.clone(), gate.clone());
+        Box::pin(async move {
+            seen.add_permits(1);
+            gate.acquire().await.unwrap().forget();
+            Ok(())
+        })
+    });
+    let checkpoint = HostToolCheckpoint::default();
+    let (turn, builder, _) = factory_steer_checkpoint_turn(
+        &registry,
+        &identity(),
+        checkpoint.clone(),
+        &cwd,
+        Some(record),
+    )
+    .await;
+    assert_eq!(factory_steer_read_permission(&builder, &file).await, "ask");
+    let applied = factory_steer_offer(&turn, factory_steer_item("registered", &file)).await;
+    assert_eq!(
+        factory_steer_read_permission(&builder, &file).await,
+        "ask",
+        "offer/drain alone cannot authorize read"
+    );
+    let writing = tokio::spawn(turn.event(applied));
+    bounded(entered.acquire()).await.unwrap().forget();
+    assert_eq!(
+        factory_steer_read_permission(&builder, &file).await,
+        "ask",
+        "in-flight durable write cannot authorize read"
+    );
+    release.add_permits(1);
+    writing.await.unwrap().unwrap();
+    assert_eq!(
+        factory_steer_read_permission(&builder, &file).await,
+        "passthrough"
+    );
+    assert_eq!(
+        factory_steer_read_permission(&builder, &sibling).await,
+        "ask",
+        "grant is a file, not its parent directory"
+    );
+    let tool = crate::runtime::tools::builtin::read_file::ReadFileTool::new();
+    let input = parse_json(&serde_json::json!({"file_path":file}).to_string()).unwrap();
+    let read = tool
+        .execute(input, factory_steer_tool_context(&builder))
+        .await
+        .unwrap();
+    assert!(
+        stringify_json(&JsValue::Array(read.content))
+            .unwrap()
+            .unwrap()
+            .contains("REGISTERED-STEER-READ")
+    );
+    let mut other = identity();
+    other.session_id = "other-session".into();
+    let (other_turn, other_builder, _) =
+        factory_steer_checkpoint_turn(&registry, &other, HostToolCheckpoint::default(), &cwd, None)
+            .await;
+    assert_eq!(
+        factory_steer_read_permission(&other_builder, &file).await,
+        "ask",
+        "a different session cannot reuse the checkpoint grant"
+    );
+    other_turn.dispose().await.unwrap();
+    turn.dispose().await.unwrap();
+    registry.dispose().await.unwrap();
+}
+
+#[tokio::test]
+async fn production_factory_steer_unapplied_offer_does_not_cross_turns() {
+    let scratch = Scratch::new();
+    let registry = registry(&scratch);
+    let cwd = scratch.0.join("project");
+    let old_file = scratch.0.join("old.txt");
+    let next_file = scratch.0.join("next.txt");
+    std::fs::write(&old_file, "OLD\n").unwrap();
+    std::fs::write(&next_file, "NEXT\n").unwrap();
+    let checkpoint = HostToolCheckpoint::default();
+    let (old, builder, cancel) =
+        factory_steer_checkpoint_turn(&registry, &identity(), checkpoint.clone(), &cwd, None).await;
+    let stale = factory_steer_offer(&old, factory_steer_item("same-item", &old_file)).await;
+    cancel.cancel();
+    assert!(
+        old.event(stale.clone()).await.is_err(),
+        "cancelled current turn cannot apply its drained offer"
+    );
+    old.dispose().await.unwrap();
+    assert!(
+        old.event(stale.clone()).await.is_err(),
+        "closed turn cannot apply its drained offer"
+    );
+    assert_eq!(
+        factory_steer_read_permission(&builder, &old_file).await,
+        "ask"
+    );
+    let mut next_id = identity();
+    next_id.turn_id = "next-turn".into();
+    next_id.run_id = "next-run".into();
+    let (next, next_builder, _) =
+        factory_steer_checkpoint_turn(&registry, &next_id, checkpoint.clone(), &cwd, None).await;
+    assert!(
+        next.event(stale).await.is_err(),
+        "same textual item ID is not authority in a replacement turn"
+    );
+    let apply = factory_steer_offer(&next, factory_steer_item("same-item", &next_file)).await;
+    next.event(apply).await.unwrap();
+    assert_eq!(
+        factory_steer_read_permission(&next_builder, &next_file).await,
+        "passthrough"
+    );
+    assert_eq!(
+        factory_steer_read_permission(&next_builder, &old_file).await,
+        "ask"
+    );
+    next.dispose().await.unwrap();
+    let mut later_id = next_id;
+    later_id.turn_id = "later-turn".into();
+    later_id.run_id = "later-run".into();
+    let (later, later_builder, _) =
+        factory_steer_checkpoint_turn(&registry, &later_id, checkpoint, &cwd, None).await;
+    assert_eq!(
+        factory_steer_read_permission(&later_builder, &next_file).await,
+        "passthrough",
+        "legitimately applied file grants are session state in the baseline"
+    );
+    assert_eq!(
+        factory_steer_read_permission(&later_builder, &old_file).await,
+        "ask"
+    );
+    later.dispose().await.unwrap();
+    registry.dispose().await.unwrap();
 }
