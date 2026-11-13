@@ -6560,30 +6560,30 @@
     {
      "id": "execute_code.error:invalid_rpc",
      "where": "src/tool/builtin/executeCode.ts:589",
-     "note": "工具 execute_code 可能返回的错误码 invalid_rpc（结果里 isError + 错误码 / 消息）。",
+     "note": "工具 execute_code 可能返回的错误码 invalid_rpc（结果里 isError + 错误码 / 消息）。 RPC 应答在脚本里被打印出来，产物里是 Python 字典的写法（'code': 'invalid_rpc'）或 JSON，observe 两种都认。",
      "probe": [],
-     "observe": "\"invalid_rpc\""
+     "observe": "['\"]code['\"]: ?['\"]invalid_rpc['\"]"
     },
     {
      "id": "execute_code.error:invalid_rpc_token",
      "where": "src/tool/builtin/executeCode.ts:595",
-     "note": "工具 execute_code 可能返回的错误码 invalid_rpc_token（结果里 isError + 错误码 / 消息）。",
+     "note": "工具 execute_code 可能返回的错误码 invalid_rpc_token（结果里 isError + 错误码 / 消息）。 RPC 应答在脚本里被打印出来，产物里是 Python 字典的写法（'code': 'invalid_rpc_token'）或 JSON，observe 两种都认。",
      "probe": [],
-     "observe": "\"invalid_rpc_token\""
+     "observe": "['\"]code['\"]: ?['\"]invalid_rpc_token['\"]"
     },
     {
      "id": "execute_code.error:tool_not_allowed",
      "where": "src/tool/builtin/executeCode.ts:598",
-     "note": "工具 execute_code 可能返回的错误码 tool_not_allowed（结果里 isError + 错误码 / 消息）。",
+     "note": "工具 execute_code 可能返回的错误码 tool_not_allowed（结果里 isError + 错误码 / 消息）。 RPC 应答在脚本里被打印出来，产物里是 Python 字典的写法（'code': 'tool_not_allowed'）或 JSON，observe 两种都认。",
      "probe": [],
-     "observe": "\"tool_not_allowed\""
+     "observe": "['\"]code['\"]: ?['\"]tool_not_allowed['\"]"
     },
     {
      "id": "execute_code.error:tool_call_limit_reached",
      "where": "src/tool/builtin/executeCode.ts:603",
-     "note": "工具 execute_code 可能返回的错误码 tool_call_limit_reached（结果里 isError + 错误码 / 消息）。",
+     "note": "工具 execute_code 可能返回的错误码 tool_call_limit_reached（结果里 isError + 错误码 / 消息）。 RPC 应答在脚本里被打印出来，产物里是 Python 字典的写法（'code': 'tool_call_limit_reached'）或 JSON，observe 两种都认。",
      "probe": [],
-     "observe": "\"tool_call_limit_reached\""
+     "observe": "['\"]code['\"]: ?['\"]tool_call_limit_reached['\"]"
     },
     {
      "id": "<pathSafety>.error:invalid_tool_input",
@@ -16187,7 +16187,8 @@
      "note": "IM 渠道的 /new：开新会话（各渠道 SessionMapper 处理）；commands_list 里被过滤掉不显示。",
      "probe": [
       "/\"message\": ?\"\\/new(\\s|\\\\n|\")/",
-      "/\"text\": ?\"\\/new(\\s|\\\\n|\")/"
+      "/\"text\": ?\"\\/new(\\s|\\\\n|\")/",
+      "/\"content\": ?\"\\/new(\\s|\\\\n|\")/"
      ]
     },
     {
