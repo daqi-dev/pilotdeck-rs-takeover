@@ -1,6 +1,6 @@
 {
  "name": "sidecar-raw-protocol",
- "about": "直接对 agent loop sidecar（tcp 部署，PILOTDECK_AGENT_LOOP_TCP_PORT）说原始协议，不经 gateway：AgentLoopSidecarServer.serve（src/agent/modules/transport/agentLoopSidecarServer.ts:106-200）逐行读，非 JSON 行回 error INVALID_JSON（114-123），校验不过回 validateModuleMessage 的码（protocol.ts:264-354，124-133）；hello / capabilities 回握手（488-505）；对方发来的 module_call 回 UNEXPECTED_MODULE_CALL（158-169）；不认识的 operation 的 cancel 回 UNKNOWN_OPERATION（170-193）；不认识的 requestId 的 status 回 UNKNOWN_REQUEST（507-520）；空行、response、event 不回。应答帧 messageId 的随机段按 diff.mjs 第 20 条编号，moduleInstanceId / connectionGeneration 按第 14 条。",
+ "about": "直接对 agent loop sidecar（tcp 部署，PILOTDECK_AGENT_LOOP_TCP_PORT）说原始协议，不经 gateway：AgentLoopSidecarServer.serve（src/agent/modules/transport/agentLoopSidecarServer.ts:106-200）逐行读，非 JSON 行回 error INVALID_JSON（114-123），校验不过回 validateModuleMessage 的码（protocol.ts:264-354，124-133）；hello / capabilities 回握手（488-505）；对方发来的 module_call 回 UNEXPECTED_MODULE_CALL（158-169）；不认识的 operation 的 cancel 回 UNKNOWN_OPERATION（170-193）；不认识的 requestId 的 status 回 UNKNOWN_REQUEST（507-520）；空行、response、event 不回。半截行加半关闭的情形见 sidecar-raw-half-line-eof。应答帧 messageId 的随机段按 diff.mjs 第 20 条编号，moduleInstanceId / connectionGeneration 按第 14 条。",
  "server": false,
  "env": { "PILOTDECK_AGENT_LOOP_TCP_PORT": "38414" },
  "steps": [
@@ -14,9 +14,6 @@
     { "text": "{\"kind\":\"request\",\"messageId\":\"c11\",\"method\":\"execute\",\"runId\":\"run-1\",\"operationId\":\"op-1\"}\n{\"kind\":\"request\",\"messageId\":\"c12\",\"method\":\"ack\",\"streamId\":\"s-1\"}\n{\"kind\":\"request\",\"messageId\":\"c13\",\"method\":\"resume\",\"streamId\":\"s-1\"}\n" },
     { "text": "{\"kind\":\"response\",\"inReplyTo\":\"zz\",\"ok\":true}\n{\"kind\":\"response\"}\n{\"kind\":\"error\",\"messageId\":\"e1\",\"code\":\"X\",\"message\":\"m\",\"retryability\":\"safe\"}\n{\"kind\":\"error\",\"messageId\":\"e2\"}\n" },
     { "text": "{\"kind\":\"event\",\"eventType\":\"x\",\"streamId\":\"s\",\"runId\":\"r\",\"operationId\":\"o\",\"requestId\":\"q\",\"sequence\":1,\"final\":false,\"payload\":{}}\n{\"kind\":\"event\"}\n{\"kind\":\"request\",\"messageId\":\"c14\",\"method\":\"hello\",\"payload\":{}}\n" }
-  ] } },
-  { "raw": { "port": 38414, "lines": true, "readMs": 1000, "send": [
-    { "text": "{\"kind\":\"request\",\"messageId\":\"d1\",\"method\":\"hello\",\"payload\":{}}\n{\"kind\":\"request\",\"messageId\":\"d2\",\"method\":\"hel" , "end": true }
   ] } },
   { "sidecar": "stop" }
  ]
