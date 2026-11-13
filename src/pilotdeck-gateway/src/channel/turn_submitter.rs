@@ -59,6 +59,15 @@ impl TurnGateway for SubmitterTurnGateway {
             if let Some(enabled) = request.allow_plan_mode_tools {
                 fields.insert("allowPlanModeTools".into(), JsValue::Bool(enabled));
             }
+            if let Some(mode) = request.mode {
+                fields.insert("mode".into(), JsValue::String(mode));
+            }
+            if let Some(mode) = request.base_permission_mode {
+                fields.insert("basePermissionMode".into(), JsValue::String(mode));
+            }
+            if let Some(timeout) = request.timeout_ms {
+                fields.insert("timeoutMs".into(), JsValue::Number(timeout));
+            }
             if let Some(messages) = request.synthetic_messages {
                 fields.insert("syntheticMessages".into(), JsValue::Array(messages));
             }

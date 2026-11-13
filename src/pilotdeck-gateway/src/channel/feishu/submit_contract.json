@@ -1,0 +1,142 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sources": {
+    "src/adapters/channel/feishu/FeishuChannel.ts": "20e0ea6e2d2ed8b10a3effdd8352283cbf0ad25e0d126fa617e6c40e93babddf",
+    "src/adapters/channel/feishu/FeishuSessionMapper.ts": "029983b55827555cc1ff0ab319fc9671a0c8e6f57137a6de9dc684498914abb5",
+    "dist/src/adapters/channel/feishu/FeishuChannel.js": "33835039c537c32e306ff15643afb834f6d6e484b120f8a25f3ce6dbb5b992d7",
+    "dist/src/adapters/channel/feishu/FeishuSessionMapper.js": "b9c6f9d801e805f5d83f5bab3b42f7f11a2a875746910ff084a53c86e08211ef"
+  },
+  "results": [
+    {
+      "input": {
+        "name": "default"
+      },
+      "request": {
+        "sessionKey": "feishu:chat=local-chat:general",
+        "channelKey": "feishu",
+        "message": "CONTRACT-INBOUND",
+        "allowPlanModeTools": false,
+        "timeoutMs": 600000
+      }
+    },
+    {
+      "input": {
+        "name": "constructor-default",
+        "mode": "default"
+      },
+      "request": {
+        "sessionKey": "feishu:chat=local-chat:general",
+        "channelKey": "feishu",
+        "message": "CONTRACT-INBOUND",
+        "allowPlanModeTools": false,
+        "mode": "default",
+        "basePermissionMode": "default",
+        "timeoutMs": 600000
+      }
+    },
+    {
+      "input": {
+        "name": "constructor-bypass",
+        "mode": "bypassPermissions"
+      },
+      "request": {
+        "sessionKey": "feishu:chat=local-chat:general",
+        "channelKey": "feishu",
+        "message": "CONTRACT-INBOUND",
+        "allowPlanModeTools": false,
+        "mode": "bypassPermissions",
+        "basePermissionMode": "bypassPermissions",
+        "timeoutMs": 600000
+      }
+    },
+    {
+      "input": {
+        "name": "config-bypass",
+        "configMode": "bypassPermissions"
+      },
+      "request": {
+        "sessionKey": "feishu:chat=local-chat:general",
+        "channelKey": "feishu",
+        "message": "CONTRACT-INBOUND",
+        "allowPlanModeTools": false,
+        "mode": "bypassPermissions",
+        "basePermissionMode": "bypassPermissions",
+        "timeoutMs": 600000
+      }
+    },
+    {
+      "input": {
+        "name": "constructor-overrides-config",
+        "mode": "default",
+        "configMode": "bypassPermissions"
+      },
+      "request": {
+        "sessionKey": "feishu:chat=local-chat:general",
+        "channelKey": "feishu",
+        "message": "CONTRACT-INBOUND",
+        "allowPlanModeTools": false,
+        "mode": "default",
+        "basePermissionMode": "default",
+        "timeoutMs": 600000
+      }
+    },
+    {
+      "input": {
+        "name": "empty-constructor-is-not-config-fallback",
+        "mode": "",
+        "configMode": "bypassPermissions"
+      },
+      "request": {
+        "sessionKey": "feishu:chat=local-chat:general",
+        "channelKey": "feishu",
+        "message": "CONTRACT-INBOUND",
+        "allowPlanModeTools": false,
+        "timeoutMs": 600000
+      }
+    },
+    {
+      "input": {
+        "name": "mapped-project",
+        "project": "project-fixture"
+      },
+      "request": {
+        "sessionKey": "feishu:chat=local-chat:general",
+        "channelKey": "feishu",
+        "message": "CONTRACT-INBOUND",
+        "allowPlanModeTools": false,
+        "timeoutMs": 600000,
+        "projectKey": "project-fixture"
+      }
+    },
+    {
+      "input": {
+        "name": "empty-project-is-omitted",
+        "project": ""
+      },
+      "request": {
+        "sessionKey": "feishu:chat=local-chat:general",
+        "channelKey": "feishu",
+        "message": "CONTRACT-INBOUND",
+        "allowPlanModeTools": false,
+        "timeoutMs": 600000
+      }
+    },
+    {
+      "input": {
+        "name": "mapped-project-and-config-mode",
+        "project": "project-fixture",
+        "configMode": "bypassPermissions"
+      },
+      "request": {
+        "sessionKey": "feishu:chat=local-chat:general",
+        "channelKey": "feishu",
+        "message": "CONTRACT-INBOUND",
+        "allowPlanModeTools": false,
+        "mode": "bypassPermissions",
+        "basePermissionMode": "bypassPermissions",
+        "timeoutMs": 600000,
+        "projectKey": "project-fixture"
+      }
+    }
+  ]
+}

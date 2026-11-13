@@ -47,6 +47,13 @@ impl<H: HostPort> HostPort for NotificationFencedHost<H> {
         }
         self.host.call(control, call)
     }
+    fn call_parallel(
+        &mut self,
+        control: &CallControl,
+        calls: Vec<HostCall>,
+    ) -> PortResult<Vec<HostReply>> {
+        self.host.call_parallel(control, calls)
+    }
 }
 struct ProductionTurnClock(Arc<dyn ExecutionClock>);
 impl TurnClock for ProductionTurnClock {
@@ -229,6 +236,13 @@ impl RequestPreparationObserver for InstructionObserver<'_> {
     }
 }
 impl TurnPreparationPort for Preparation {
+    fn tool_concurrency_safe(&self, name: &JsString) -> bool {
+        self.state
+            .tools
+            .iter()
+            .find(|tool| &tool.name == name)
+            .is_some_and(|tool| tool.concurrency_safe)
+    }
     fn finish_pending_effects(&mut self) -> PortResult<()> {
         self.notifications
             .lock()

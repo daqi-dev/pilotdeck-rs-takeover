@@ -1999,6 +1999,78 @@ fn transport_failure_tool_result<E: HostExchange>(
     ]));
     a::tool_result(&result)
 }
+fn single_truthy(value: &JsValue) -> bool {
+    match value {
+        JsValue::Undefined | JsValue::Null | JsValue::Bool(false) => false,
+        JsValue::Number(number) => *number != 0.0 && !number.is_nan(),
+        JsValue::String(string) => !string.is_empty(),
+        _ => true,
+    }
+}
+fn module_failure_tool_result<E: HostExchange>(
+    exchange: &E,
+    tool: &ToolInvocation,
+    response: &JsValue,
+) -> PortResult<pilotdeck_agent::ToolExecutionResult> {
+    let code_value = response.get("code");
+    let code = code_value
+        .and_then(JsValue::as_string)
+        .filter(|value| {
+            [
+                "tool_not_found",
+                "tool_unavailable",
+                "invalid_tool_input",
+                "permission_denied",
+                "permission_cancelled",
+                "permission_required",
+                "tool_execution_failed",
+                "tool_aborted",
+                "tool_timeout",
+                "result_too_large",
+                "path_not_allowed",
+                "file_not_found",
+                "file_conflict",
+                "unsupported_tool",
+                "setup_required",
+                "plan_mode_violation",
+                "ask_mode_violation",
+            ]
+            .iter()
+            .any(|known| value.equals_str(known))
+        })
+        .cloned()
+        .unwrap_or_else(|| "tool_execution_failed".into());
+    let message = nullish(response.get("error").and_then(|error| error.get("message")))
+        .map(js_string)
+        .transpose()?
+        .unwrap_or_else(|| "Capability module failed.".into());
+    let mut details = JsObject::new();
+    if let Some(value) = code_value.filter(|value| single_truthy(value)) {
+        details.insert("moduleCode".into(), value.clone());
+    }
+    if let Some(value) = response.get("error").filter(|value| single_truthy(value)) {
+        details.insert("moduleError".into(), value.clone());
+    }
+    let mut error = obj([("code", s(&code)), ("message", s(&message))]);
+    if !details.entries().is_empty() {
+        error.insert("details".into(), JsValue::Object(details));
+    }
+    a::tool_result(&JsValue::Object(obj([
+        ("type", "error".into()),
+        ("toolCallId", s(&tool.tool_call_id)),
+        ("toolName", s(&tool.name)),
+        ("error", JsValue::Object(error)),
+        (
+            "content",
+            JsValue::Array(vec![JsValue::Object(obj([
+                ("type", "text".into()),
+                ("text", s(&message)),
+            ]))]),
+        ),
+        ("startedAt", s(&exchange.wall_now_iso())),
+        ("completedAt", s(&exchange.wall_now_iso())),
+    ])))
+}
 // Original stock hostToolPort validates a shallow completed batch before
 // typed domain projection. These are known consumer exceptions, not lost ACKs.
 fn batch_consumer_exception(response: &JsValue, calls: &[ToolInvocation]) -> Option<JsString> {
@@ -2028,6 +2100,48 @@ fn batch_consumer_exception(response: &JsValue, calls: &[ToolInvocation]) -> Opt
     }
     None
 }
+pub(crate) fn call_parallel<E: HostExchange>(
+    exchange: &mut E,
+    methods: &AdvertisedMethods,
+    control: &CallControl,
+    calls: Vec<HostCall>,
+) -> PortResult<Vec<HostReply>> {
+    control.check()?;
+    let mut requests = Vec::with_capacity(calls.len());
+    for call in &calls {
+        let (module, operation) = call.method();
+        if !methods.supports(module, operation) {
+            return Err(PortError::NotAdvertised { module, operation });
+        }
+        requests.push((module, operation, call.effect(), payload(call)));
+    }
+    let responses = exchange.exchange_parallel(control, requests)?;
+    if responses.len() != calls.len() {
+        return Err(a::invalid("parallel host exchange result count mismatch"));
+    }
+    let mut replies = Vec::with_capacity(calls.len());
+    let mut failure = None;
+    for (call, response) in calls.into_iter().zip(responses) {
+        match settle_dispatch(exchange, methods, control, call, response) {
+            Ok(reply) => replies.push(reply),
+            Err(error) => {
+                // A sibling's accepted side effect is stronger than a known
+                // ordinary error: retain it as the returned reconciliation cause.
+                if failure.is_none()
+                    || (matches!(error, PortError::AcceptedUnknown { .. })
+                        && !matches!(failure, Some(PortError::AcceptedUnknown { .. })))
+                {
+                    failure = Some(error);
+                }
+            }
+        }
+    }
+    if let Some(error) = failure {
+        Err(error)
+    } else {
+        Ok(replies)
+    }
+}
 pub(crate) fn call<E: HostExchange>(
     exchange: &mut E,
     methods: &AdvertisedMethods,
@@ -2039,7 +2153,45 @@ pub(crate) fn call<E: HostExchange>(
     if !methods.supports(module, operation) {
         return Err(PortError::NotAdvertised { module, operation });
     }
-    let exchanged = exchange.exchange(control, module, operation, call.effect(), payload(&call))?;
+    let exchanged = exchange.exchange(control, module, operation, call.effect(), payload(&call));
+    settle_dispatch(exchange, methods, control, call, exchanged)
+}
+fn settle_dispatch<E: HostExchange>(
+    exchange: &mut E,
+    methods: &AdvertisedMethods,
+    control: &CallControl,
+    call: HostCall,
+    response: PortResult<crate::HostExchangeResponse>,
+) -> PortResult<HostReply> {
+    match response {
+        Ok(response) => settle(exchange, methods, control, call, response),
+        Err(PortError::TransportBeforeDispatch { message })
+            if matches!(call, HostCall::ExecuteSingle { .. }) =>
+        {
+            control.check()?;
+            let HostCall::ExecuteSingle { call, .. } = call else {
+                unreachable!()
+            };
+            transport_failure_tool_result(
+                exchange,
+                &call,
+                &message,
+                &"MODULE_TRANSPORT_UNAVAILABLE".into(),
+            )
+            .map(Box::new)
+            .map(HostReply::ToolResult)
+        }
+        Err(error) => Err(error),
+    }
+}
+fn settle<E: HostExchange>(
+    exchange: &mut E,
+    methods: &AdvertisedMethods,
+    control: &CallControl,
+    call: HostCall,
+    exchanged: crate::HostExchangeResponse,
+) -> PortResult<HostReply> {
+    let (module, _) = call.method();
     let response = exchanged.boundary.value();
     let unresolved = || PortError::AcceptedUnknown {
         identity: Box::new(exchanged.identity.clone()),
@@ -2086,6 +2238,16 @@ pub(crate) fn call<E: HostExchange>(
                 .and_then(JsValue::as_number)
                 .filter(|n| n.is_finite() && *n >= 0.0 && n.fract() == 0.0),
         });
+    }
+    if matches!(&call, HostCall::ExecuteSingle { .. }) {
+        // The TS single consumer checks its abort signal after awaiting the
+        // host reply, before returning a result or invoking any observer.
+        control.check()?;
+        if exchanged.cancelled_before_response {
+            return Err(PortError::Cancelled {
+                cause: CancelCause::Requested("tool_cancelled".into()),
+            });
+        }
     }
     if matches!(&call, HostCall::ExecuteBatch { .. })
         && let Some(cause @ (CancelCause::OwnerRetired | CancelCause::TransportClosed)) =
@@ -2318,6 +2480,11 @@ pub(crate) fn call<E: HostExchange>(
                 message,
                 boundary: exchanged.boundary.clone(),
             });
+        }
+        if let HostCall::ExecuteSingle { call, .. } = &call {
+            return module_failure_tool_result(exchange, call, response)
+                .map(Box::new)
+                .map(HostReply::ToolResult);
         }
         return Err(failure(response, &call)?);
     }

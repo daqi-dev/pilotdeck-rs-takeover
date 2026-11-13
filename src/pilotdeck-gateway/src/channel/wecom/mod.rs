@@ -804,6 +804,7 @@ impl Shared {
                 ("purpose", JsValue::from("wecom_deliverable_hint")),
             ])]),
             project_key: mapped.project_key,
+            ..Default::default()
         };
         let mut reply = Vec::new();
         let result=async {

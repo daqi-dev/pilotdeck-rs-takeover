@@ -790,3 +790,80 @@ fn string_coercion_errors_keep_their_class() {
     );
     assert_eq!(string_coercible(&JsValue::from("1")), Ok(()));
 }
+
+#[test]
+fn intrinsic_own_model_selection_matches_fixed_ts_full_config() {
+    let oracle = parse_json(include_str!(
+        "../../tests/fixtures/config/intrinsic-selection/oracle.json"
+    ))
+    .unwrap();
+    let JsValue::Array(cases) = field(&oracle, "cases") else {
+        panic!("cases")
+    };
+    assert_eq!(cases.len(), 503);
+    let mut exercised = 0;
+    for case in cases {
+        let key = field(case, "key").as_string().unwrap();
+        let _own = field(case, "own").as_bool().unwrap();
+        let site = text(field(case, "site")).unwrap();
+        let raw = field(case, "config");
+        let metadata = Metadata {
+            home: PathBuf::from("<PILOT_HOME>"),
+            cwd: PathBuf::from("/offline"),
+            files: FixtureFiles {
+                data: stringify_json(raw).unwrap().unwrap().into_bytes(),
+                kind: None,
+            },
+        };
+        let result = super::load_project_with_files_inner(
+            &metadata,
+            &Env::new(),
+            None,
+            Some((1.0, "2026-01-01T00:00:00.000Z".into())),
+        );
+        let expected = field(case, "result");
+        if field(expected, "ok") == &JsValue::Bool(false) {
+            let error = match result {
+                Ok(_) => panic!("TS oracle rejects config"),
+                Err(error) => error,
+            };
+            assert!(!error.requires_host, "unexpected host gap: {site}/{key:?}");
+            if let Some(code) = field(expected, "code").as_string() {
+                assert_eq!(
+                    error.code,
+                    text(&JsValue::String(code.clone())).unwrap(),
+                    "{site}/{key:?}"
+                );
+            }
+            assert_eq!(
+                error.name,
+                text(field(expected, "name")).unwrap(),
+                "{site}/{key:?}"
+            );
+            assert_eq!(
+                error.message,
+                field(expected, "message").as_string().unwrap().clone(),
+                "{site}/{key:?}"
+            );
+        } else {
+            let config = result.unwrap_or_else(|error| panic!("{site}/{key:?}: {error:?}"));
+            let snapshot = config.snapshot.unwrap();
+            let mut actual = JsObject::new();
+            actual.insert("ok".into(), JsValue::Bool(true));
+            actual.insert("diagnostics".into(), JsValue::Array(config.diagnostics));
+            for name in ["model", "agent", "memory", "router"] {
+                let value = field(field(&snapshot, "config"), name);
+                if !value.is_undefined() {
+                    actual.insert(name.into(), value.clone());
+                }
+            }
+            assert_eq!(
+                encode(&canonical(&JsValue::Object(actual))),
+                encode(&canonical(expected)),
+                "{site}/{key:?}"
+            );
+        }
+        exercised += 1;
+    }
+    assert_eq!(exercised, 503);
+}

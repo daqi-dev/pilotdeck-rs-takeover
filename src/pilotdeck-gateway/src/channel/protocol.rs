@@ -88,6 +88,9 @@ pub struct TurnRequest {
     pub message: JsString,
     pub attachments: Option<Vec<JsValue>>,
     pub allow_plan_mode_tools: Option<bool>,
+    pub mode: Option<JsString>,
+    pub base_permission_mode: Option<JsString>,
+    pub timeout_ms: Option<f64>,
     pub synthetic_messages: Option<Vec<JsValue>>,
     pub project_key: Option<JsString>,
 }
@@ -100,6 +103,9 @@ impl Default for TurnRequest {
             message: "".into(),
             attachments: None,
             allow_plan_mode_tools: None,
+            mode: None,
+            base_permission_mode: None,
+            timeout_ms: None,
             synthetic_messages: None,
             project_key: None,
         }

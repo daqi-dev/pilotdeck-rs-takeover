@@ -344,21 +344,13 @@ fn load_project_with_files_inner<F: Files>(
         }
     }
     d.check()?;
-    if host::required(&raw) {
-        let mut error = Error::new(
-            "JS_HOST_REQUIRED",
-            "Configuration depends on JavaScript host intrinsic state.",
-        );
-        error.requires_host = true;
-        return Err(error);
-    }
     let providers = model::parse(field(&raw, "model"), env, &mut d)?;
     let selection = sections::agent(field(&raw, "agent"), &providers, &mut d)?;
     sections::extension(field(&raw, "extension"), &mut d);
     sections::memory(field(&raw, "memory"), &providers, &mut d)?;
     sections::gateway(field(&raw, "gateway"), &mut d);
     sections::adapters(field(&raw, "adapters"), &mut d);
-    let router_enabled = router::parse(field(&raw, "router"), &providers, &selection, &mut d);
+    let router_enabled = router::parse(field(&raw, "router"), &providers, &selection, &mut d)?;
     sections::always_on(field(&raw, "alwaysOn"), &mut d)?;
     sections::cron(field(&raw, "cron"), &mut d);
     sections::tools(field(&raw, "tools"), &mut d);

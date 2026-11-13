@@ -219,10 +219,7 @@ struct Batch {
 struct QueuedTurn {
     session_key: String,
     message: String,
-    /// Registered diff A8.3-CH-FEISHU-006: TS forwards `projectKey` with
-    /// `submitTurn`, the A7 `TurnRequest` port has no such field, so the turn
-    /// carries it until the port grows one.
-    #[allow(dead_code)]
+    /// The mapper-selected project is forwarded only when truthy in TS.
     project_key: Option<String>,
     message_id: Option<String>,
     generation: u64,
@@ -1080,11 +1077,25 @@ impl Runtime {
             _ => None,
         };
         let mut live = LiveReplyBuffer::new();
+        let permission_mode = self
+            .options()
+            .permission_mode
+            .filter(|mode| !mode.is_empty())
+            .map(JsString::from);
         match gateway
             .submit(TurnRequest {
                 session_key: JsString::from(turn.session_key.as_str()),
                 channel_key: self.key.clone(),
                 message: JsString::from(turn.message.as_str()),
+                allow_plan_mode_tools: Some(false),
+                mode: permission_mode.clone(),
+                base_permission_mode: permission_mode,
+                timeout_ms: Some(600_000.0),
+                project_key: turn
+                    .project_key
+                    .as_deref()
+                    .filter(|project| !project.is_empty())
+                    .map(JsString::from),
                 ..Default::default()
             })
             .await

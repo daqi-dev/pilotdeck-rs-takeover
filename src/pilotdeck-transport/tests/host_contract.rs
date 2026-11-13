@@ -2735,3 +2735,135 @@ fn ack_first_failure_only_rechecks_abort_when_the_stdio_consumer_throws() {
         }
     }
 }
+
+#[test]
+fn single_capability_failure_is_a_tool_result_with_original_error_details() {
+    let response = json(
+        r#"{"kind":"response","messageId":"m","inReplyTo":"reply","ok":false,"code":"FIXTURE_DENIED","error":{"code":"FIXTURE_DENIED","message":"fixture rejected"}}"#,
+    );
+    let mut host = host(vec![response]);
+    let HostReply::ToolResult(result) = host
+        .call(
+            &control(),
+            HostCall::ExecuteSingle {
+                call: invocation("a"),
+                hints: tools(),
+            },
+        )
+        .unwrap()
+    else {
+        panic!("single failure must be an ordinary tool result")
+    };
+    let value = result.boundary.value();
+    assert_eq!(value.get("type"), Some(&JsValue::from("error")));
+    assert_eq!(value.get("toolCallId"), Some(&JsValue::from("a")));
+    let error = value.get("error").unwrap();
+    assert_eq!(
+        error.get("code"),
+        Some(&JsValue::from("tool_execution_failed"))
+    );
+    assert_eq!(
+        error.get("message"),
+        Some(&JsValue::from("fixture rejected"))
+    );
+    assert_eq!(
+        error.get("details").unwrap().get("moduleCode"),
+        Some(&JsValue::from("FIXTURE_DENIED"))
+    );
+    assert_eq!(
+        error
+            .get("details")
+            .unwrap()
+            .get("moduleError")
+            .unwrap()
+            .get("message"),
+        Some(&JsValue::from("fixture rejected"))
+    );
+}
+
+#[test]
+fn single_ack_after_cancel_never_becomes_a_tool_result() {
+    struct CancelFirst;
+    impl HostExchange for CancelFirst {
+        fn exchange(
+            &mut self,
+            _: &CallControl,
+            _: &'static str,
+            _: &'static str,
+            _: CallEffect,
+            _: JsObject,
+        ) -> PortResult<HostExchangeResponse> {
+            Ok(HostExchangeResponse {
+                identity: owner(),
+                cancelled_before_response: true,
+                boundary: BoundarySnapshot::capture(&response(result("a"))),
+            })
+        }
+    }
+    let mut host = RemoteHost::new(
+        CancelFirst,
+        AdvertisedMethods {
+            modules: vec![("capability".into(), vec!["execute".into()])],
+        },
+    );
+    assert!(matches!(
+        host.call(
+            &control(),
+            HostCall::ExecuteSingle {
+                call: invocation("a"),
+                hints: tools()
+            }
+        ),
+        Err(PortError::Cancelled { .. })
+    ));
+}
+
+#[test]
+fn parallel_unknown_sibling_outranks_a_prior_known_failure() {
+    struct Mixed;
+    impl HostExchange for Mixed {
+        fn exchange(
+            &mut self,
+            _: &CallControl,
+            _: &'static str,
+            _: &'static str,
+            _: CallEffect,
+            _: JsObject,
+        ) -> PortResult<HostExchangeResponse> {
+            unreachable!()
+        }
+        fn exchange_parallel(
+            &mut self,
+            _: &CallControl,
+            _: Vec<HostExchangeRequest>,
+        ) -> PortResult<Vec<PortResult<HostExchangeResponse>>> {
+            Ok(vec![
+                Err(PortError::KnownConsumerException {
+                    message: "known".into(),
+                    boundary: BoundarySnapshot::capture(&JsValue::Null),
+                }),
+                Err(PortError::AcceptedUnknown {
+                    identity: Box::new(owner()),
+                    last_applied_sequence: None,
+                }),
+            ])
+        }
+    }
+    let mut host = RemoteHost::new(
+        Mixed,
+        AdvertisedMethods {
+            modules: vec![("capability".into(), vec!["execute".into()])],
+        },
+    );
+    let calls = ["a", "b"]
+        .into_iter()
+        .map(|id| HostCall::ExecuteSingle {
+            call: invocation(id),
+            hints: tools(),
+        })
+        .collect();
+    assert!(matches!(
+        host.call_parallel(&control(), calls),
+        Err(PortError::AcceptedUnknown { .. })
+    ));
+}

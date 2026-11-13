@@ -683,3 +683,101 @@ async fn fragment_count_4096_preserves_connection_4097_rejects_without_ack_or_di
     http_task.abort();
     let _ = http_task.await;
 }
+
+#[tokio::test]
+async fn submitted_request_matches_nine_actual_fixed_ts_config_mapper_cases() {
+    let fixture: Value = serde_json::from_str(include_str!("submit_contract.json")).unwrap();
+    assert_eq!(
+        fixture["baseline"],
+        "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85"
+    );
+    let cases = fixture["results"].as_array().unwrap();
+    assert_eq!(cases.len(), 9);
+    assert_eq!(fixture["sources"].as_object().unwrap().len(), 4);
+    for case in cases {
+        let input = &case["input"];
+        let name = input["name"].as_str().unwrap();
+        let saved = json!({"activeByChatId":{},"projectByChatId":input.get("project").map(|value|json!({"local-chat":value})).unwrap_or(json!({}))});
+        let saved = pilotdeck_protocol::parse_json(&saved.to_string()).unwrap();
+        let options = FeishuOptions {
+            connection_mode: "webhook".into(),
+            permission_mode: input.get("mode").and_then(Value::as_str).map(str::to_owned),
+            ..Default::default()
+        };
+        let channel = FeishuChannel::build(
+            options,
+            no_interaction(),
+            None,
+            Arc::new(SystemClock),
+            Arc::new(|| JsString::from("unused-uuid")),
+            Some(&saved),
+            None,
+        )
+        .with_network(Arc::new(super::super::network::ChannelNetwork::default()));
+        let config = json!({"adapters":{"feishu":input.get("configMode").map(|mode|json!({"permissionMode":mode})).unwrap_or(json!({}))}});
+        let (turns, mut received) = mpsc::unbounded_channel();
+        let handle = channel
+            .start(ChannelStartDeps {
+                turn_gateway: Some(Arc::new(Gateway(turns))),
+                config: Some(Arc::new(
+                    pilotdeck_protocol::parse_json(&config.to_string()).unwrap(),
+                )),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        channel.runtime.handle_stream_event(&json!({"message":{"chat_id":"local-chat","message_type":"text","content":"{\"text\":\"CONTRACT-INBOUND\"}"}}));
+        let request = timeout(Duration::from_secs(3), received.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            request.attachments.is_none(),
+            "{name}: text input has no attachments"
+        );
+        assert!(
+            request.synthetic_messages.is_none(),
+            "{name}: no synthetic messages invented"
+        );
+        let mut actual = json!({"sessionKey":String::from_utf16_lossy(request.session_key.units()),"channelKey":request.channel_key.to_string(),"message":String::from_utf16_lossy(request.message.units())});
+        let fields = actual.as_object_mut().unwrap();
+        if let Some(value) = request.allow_plan_mode_tools {
+            fields.insert("allowPlanModeTools".into(), json!(value));
+        }
+        if let Some(value) = request.timeout_ms {
+            fields.insert("timeoutMs".into(), json!(value));
+        }
+        if let Some(value) = request.mode {
+            fields.insert(
+                "mode".into(),
+                json!(String::from_utf16_lossy(value.units())),
+            );
+        }
+        if let Some(value) = request.base_permission_mode {
+            fields.insert(
+                "basePermissionMode".into(),
+                json!(String::from_utf16_lossy(value.units())),
+            );
+        }
+        if let Some(value) = request.project_key {
+            fields.insert(
+                "projectKey".into(),
+                json!(String::from_utf16_lossy(value.units())),
+            );
+        }
+        // JSON numbers from TS and Rust have identical numeric value even when
+        // serde represents the constructed f64 as 600000.0 internally.
+        let expected = &case["request"];
+        assert_eq!(
+            actual["timeoutMs"].as_f64(),
+            expected["timeoutMs"].as_f64(),
+            "{name}: explicit timeout"
+        );
+        actual["timeoutMs"] = expected["timeoutMs"].clone();
+        assert_eq!(&actual, expected, "actual fixed TS submit inputs: {name}");
+        timeout(Duration::from_secs(3), handle.stop("contract captured"))
+            .await
+            .unwrap()
+            .unwrap();
+    }
+}

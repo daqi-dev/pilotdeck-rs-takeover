@@ -1170,6 +1170,17 @@ pub enum HostReply {
 pub trait HostPort: Send {
     fn advertised(&self, module: &str, operation: &str) -> bool;
     fn call(&mut self, control: &CallControl, call: HostCall) -> PortResult<HostReply>;
+    /// Admit all calls before waiting; implementations without concurrent
+    /// ownership must reject rather than simulate concurrency serially.
+    fn call_parallel(
+        &mut self,
+        _control: &CallControl,
+        _calls: Vec<HostCall>,
+    ) -> PortResult<Vec<HostReply>> {
+        Err(PortError::InvalidResponse {
+            message: "parallel host calls are unavailable".into(),
+        })
+    }
 }
 
 #[cfg(test)]

@@ -71,7 +71,7 @@ fn selection(
     let p = JsString::from_utf16(s.units()[..i].to_vec());
     let m = JsString::from_utf16(s.units()[i + 1..].to_vec());
     if let Some(provider) = providers.iter().find(|provider| provider.id == p) {
-        if !provider.models.iter().any(|model| model.id == m) {
+        if !provider.has_model_reference(&m) {
             d.fatal(
                 "CONFIG_AGENT_MODEL_NOT_FOUND",
                 format!(
@@ -187,7 +187,7 @@ pub(super) fn agent(
                 .as_string()
                 .is_some_and(|s| trim(s).equals_str("inherit"))
         {
-            subagent_ref(def, providers, d);
+            subagent_ref(def, providers, d)?;
         }
         immediate_number(
             field(sub, "maxDepth"),
@@ -219,7 +219,7 @@ pub(super) fn agent(
     d.check()?;
     Ok(chosen)
 }
-fn subagent_ref(v: &JsValue, p: &[Provider], d: &mut Diagnostics) {
+fn subagent_ref(v: &JsValue, p: &[Provider], d: &mut Diagnostics) -> Result<(), Error> {
     let path = "agent.subagents.default";
     let Some(s) = v.as_string().map(trim).filter(|s| !s.is_empty()) else {
         d.warn(
@@ -229,7 +229,7 @@ fn subagent_ref(v: &JsValue, p: &[Provider], d: &mut Diagnostics) {
             ),
             path,
         );
-        return;
+        return Ok(());
     };
     let Some(i) = s
         .units()
@@ -242,15 +242,17 @@ fn subagent_ref(v: &JsValue, p: &[Provider], d: &mut Diagnostics) {
             format!("{path} must use provider/model format. Inheriting agent.model instead."),
             path,
         );
-        return;
+        return Ok(());
     };
     let a = JsString::from_utf16(s.units()[..i].to_vec());
     let b = JsString::from_utf16(s.units()[i + 1..].to_vec());
     let at = js_string(&JsValue::String(a.clone()));
     if let Some(p) = p.iter().find(|p| p.id == a) {
-        if !p.models.iter().any(|m| m.id == b) {
+        if !p.has_model_reference(&b) {
             d.warn("CONFIG_AGENT_SUBAGENT_MODEL_NOT_FOUND",format!("{path} references unknown model {} for provider {at}. Inheriting agent.model instead.",js_string(&JsValue::String(b))),path);
         }
+    } else if let Some(error) = super::host::inherited_provider_error(&a, &b) {
+        return Err(error);
     } else {
         d.warn(
             "CONFIG_AGENT_SUBAGENT_PROVIDER_NOT_FOUND",
@@ -258,6 +260,7 @@ fn subagent_ref(v: &JsValue, p: &[Provider], d: &mut Diagnostics) {
             path,
         );
     }
+    Ok(())
 }
 pub(super) fn extension(raw: &JsValue, d: &mut Diagnostics) {
     if !shape(
@@ -362,7 +365,7 @@ pub(super) fn memory(raw: &JsValue, p: &[Provider], d: &mut Diagnostics) -> Resu
         let b = JsString::from_utf16(s.units()[i + 1..].to_vec());
         let at = js_string(&JsValue::String(a.clone()));
         if let Some(p) = p.iter().find(|p| p.id == a) {
-            if !p.models.iter().any(|m| m.id == b) {
+            if !p.has_model_reference(&b) {
                 d.warn(
                     "CONFIG_MEMORY_MODEL_NOT_FOUND",
                     format!(
@@ -372,6 +375,8 @@ pub(super) fn memory(raw: &JsValue, p: &[Provider], d: &mut Diagnostics) -> Resu
                     "memory.model",
                 );
             }
+        } else if let Some(error) = super::host::inherited_provider_error(&a, &b) {
+            return Err(error);
         } else {
             d.warn(
                 "CONFIG_MEMORY_MODEL_PROVIDER_NOT_FOUND",

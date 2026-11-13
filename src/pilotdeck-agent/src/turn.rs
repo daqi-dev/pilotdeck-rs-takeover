@@ -142,6 +142,11 @@ pub struct TurnAssembly {
     pub has_message_end: bool,
 }
 pub trait TurnPreparationPort {
+    /// Concurrency is decided from the current host tool catalog, not from
+    /// the model's tool-call payload. Missing tools are sequential.
+    fn tool_concurrency_safe(&self, _name: &JsString) -> bool {
+        false
+    }
     /// Tool-call typed admission occurs only when the owning turn dispatches
     /// tools, after all pre-emission recovery gates have declined the response.
     fn project_tool_calls(&self, _calls: &[BoundarySnapshot]) -> PortResult<Vec<ToolCall>> {
@@ -1709,11 +1714,6 @@ pub fn run_admitted_turn(
                 messages: state.messages,
             });
         }
-        if !host.advertised("capability", "execute_batch") {
-            return Err(profile_gap(
-                "single-tool dispatch/permission fallback profile",
-            ));
-        }
         let admitted_tool_calls = preparation.project_tool_calls(&source_tool_calls)?;
         emit_event(
             events,
@@ -1740,7 +1740,7 @@ pub fn run_admitted_turn(
                 .context_extensions
                 .insert("outputTruncated".into(), JsValue::Bool(true));
         }
-        let calls = admitted_tool_calls
+        let calls: Vec<ToolInvocation> = admitted_tool_calls
             .iter()
             .map(|call| ToolInvocation {
                 tool_call_id: call.id.clone(),
@@ -1748,13 +1748,61 @@ pub fn run_admitted_turn(
                 arguments: call.input.clone(),
             })
             .collect();
-        let batch = match host.call(
-            control,
-            HostCall::ExecuteBatch {
-                calls,
-                hints: tool_hints.clone(),
-            },
-        ) {
+        let execution = if host.advertised("capability", "execute_batch") {
+            host.call(
+                control,
+                HostCall::ExecuteBatch {
+                    calls,
+                    hints: tool_hints.clone(),
+                },
+            )
+        } else {
+            (|| -> PortResult<HostReply> {
+                let mut concurrent = Vec::new();
+                let mut sequential = Vec::new();
+                for (index, call) in calls.into_iter().enumerate() {
+                    if preparation.tool_concurrency_safe(&call.name) {
+                        concurrent.push((index, call));
+                    } else {
+                        sequential.push((index, call));
+                    }
+                }
+                let mut slots = vec![None; admitted_tool_calls.len()];
+                if !concurrent.is_empty() {
+                    let operations = concurrent
+                        .iter()
+                        .map(|(_, call)| HostCall::ExecuteSingle {
+                            call: call.clone(),
+                            hints: tool_hints.clone(),
+                        })
+                        .collect();
+                    let responses = if concurrent.len() == 1 {
+                        vec![host.call(control, concurrent_call(&concurrent[0].1, tool_hints))?]
+                    } else {
+                        host.call_parallel(control, operations)?
+                    };
+                    if responses.len() != concurrent.len() {
+                        return Err(profile_gap("single-tool concurrent reply count"));
+                    }
+                    for ((index, _), response) in concurrent.into_iter().zip(responses) {
+                        slots[index] = Some(single_tool_result(response)?);
+                    }
+                }
+                for (index, call) in sequential {
+                    control.check()?;
+                    slots[index] = Some(single_tool_result(
+                        host.call(control, concurrent_call(&call, tool_hints))?,
+                    )?);
+                }
+                Ok(HostReply::ToolResults(
+                    slots
+                        .into_iter()
+                        .map(|slot| slot.expect("each tool has a result"))
+                        .collect(),
+                ))
+            })()
+        };
+        let batch = match execution {
             Ok(batch) => batch,
             Err(error) if is_deadline_unknown(&error, control) => {
                 let _ = finish_aborted_after_tools(
@@ -4004,6 +4052,21 @@ fn known_compaction_advisory(error: &PortError) -> bool {
             .and_then(JsValue::as_string)
             .is_some_and(|code| code.equals_str("COMPACTION_BUDGET_CONTRACT_INVALID")),
         _ => true,
+    }
+}
+fn concurrent_call(call: &ToolInvocation, hints: &ToolHints) -> HostCall {
+    HostCall::ExecuteSingle {
+        call: call.clone(),
+        hints: hints.clone(),
+    }
+}
+fn single_tool_result(reply: HostReply) -> PortResult<ToolExecutionResult> {
+    match reply {
+        HostReply::ToolResult(result) => Ok(*result),
+        HostReply::ToolResultBoundaryOnly(_) => {
+            Err(profile_gap("open single-tool result projection"))
+        }
+        _ => Err(profile_gap("single-tool result reply")),
     }
 }
 fn profile_gap(profile: &str) -> PortError {

@@ -480,7 +480,7 @@ fn agent(raw: &JsValue, providers: &[Provider], selection: &(JsString, JsString)
             && let Some((provider, model)) = split_ref(default)
             && providers
                 .iter()
-                .any(|p| p.id == provider && p.models.iter().any(|m| m.id == model))
+                .any(|p| p.id == provider && p.has_model_reference(&model))
         {
             let mut d = obj();
             let id = default.as_string().map(trim).unwrap_or_default();
@@ -1818,7 +1818,7 @@ fn ref_valid(v: &JsValue, providers: &[Provider]) -> Option<(JsString, JsString)
     let p = JsString::from_utf16(s.units()[..i].to_vec());
     let m = JsString::from_utf16(s.units()[i + 1..].to_vec());
     let provider = providers.iter().find(|x| x.id == p)?;
-    provider.models.iter().any(|x| x.id == m).then_some((p, m))
+    provider.has_model_reference(&m).then_some((p, m))
 }
 fn reference(v: &JsValue, providers: &[Provider]) -> Option<JsValue> {
     let (p, m) = ref_valid(v, providers)?;

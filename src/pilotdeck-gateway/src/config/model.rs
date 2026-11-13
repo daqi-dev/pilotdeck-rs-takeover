@@ -8,6 +8,14 @@ pub(crate) struct Provider {
     pub speed_mapping: bool,
     pub models: Vec<Model>,
 }
+impl Provider {
+    /// `models[id]` on the plain parsed JS catalog also sees the built-in
+    /// Object prototype names. This models reference truthiness only; it
+    /// never adds synthetic models or treats a JS function as model data.
+    pub(super) fn has_model_reference(&self, id: &JsString) -> bool {
+        self.models.iter().any(|model| model.id == *id) || builtin_property(id)
+    }
+}
 pub(crate) struct Model {
     pub id: JsString,
     pub display_name: JsString,

@@ -1,7 +1,7 @@
 //! Concurrent connection owner for Module2.0 NDJSON. No provider or Session IO.
 //! The input reader resolves calls/controls; an independent writer performs IO.
 //! EOF retires this connection. This owner never advertises process reconnect.
-use crate::{HostExchange, HostExchangeResponse};
+use crate::{HostExchange, HostExchangeRequest, HostExchangeResponse};
 use pilotdeck_agent::ports::{CallControl, ExecutionIdentity, PortError, PortResult, WakeSignal};
 use pilotdeck_protocol::admission::{CallEffect, SidecarBinding};
 use pilotdeck_protocol::model::BoundarySnapshot;
@@ -950,6 +950,31 @@ fn known_uncertainty(state: &State, identity: &ExecutionIdentity) -> Option<Port
         })
 }
 impl HostExchange for BoundExchange {
+    fn exchange_parallel(
+        &mut self,
+        control: &CallControl,
+        calls: Vec<HostExchangeRequest>,
+    ) -> PortResult<Vec<PortResult<HostExchangeResponse>>> {
+        let mut pending = Vec::with_capacity(calls.len());
+        let mut failure: Option<PortError> = None;
+        for (module, operation, effect, payload) in calls {
+            if let Some(error) = &failure {
+                pending.push(Err(error.clone()));
+                continue;
+            }
+            match self.start(control, module, operation, effect, payload) {
+                Ok(call) => pending.push(Ok(call)),
+                Err(error) => {
+                    failure = Some(error.clone());
+                    pending.push(Err(error));
+                }
+            }
+        }
+        Ok(pending
+            .into_iter()
+            .map(|item| item.and_then(|call| call.wait(control)))
+            .collect())
+    }
     fn exchange(
         &mut self,
         control: &CallControl,
@@ -1946,6 +1971,120 @@ mod reconciliation_tests {
             },
             exchange,
         )
+    }
+    #[test]
+    fn parallel_exchange_sends_both_before_reverse_responses_and_keeps_slots() {
+        let (owner, control, mut exchange) = fixture();
+        let (sent, received) = mpsc::channel();
+        let writer_owner = owner.clone();
+        let writer = std::thread::spawn(move || {
+            writer_owner.drive_writer(Recorder {
+                bytes: Vec::new(),
+                sent,
+            })
+        });
+        let worker = std::thread::spawn(move || {
+            exchange
+                .exchange_parallel(
+                    &control,
+                    vec![
+                        (
+                            "capability",
+                            "execute",
+                            CallEffect::SideEffect,
+                            JsObject::new(),
+                        ),
+                        (
+                            "capability",
+                            "execute",
+                            CallEffect::SideEffect,
+                            JsObject::new(),
+                        ),
+                    ],
+                )
+                .unwrap()
+        });
+        let first = wire_id(&received.recv_timeout(Duration::from_secs(2)).unwrap());
+        let second = wire_id(&received.recv_timeout(Duration::from_secs(2)).unwrap());
+        assert_ne!(first, second);
+        assert_eq!(
+            owner.receive_response(&ack(&second)),
+            ResponseDisposition::Completed
+        );
+        assert_eq!(
+            owner.receive_response(&ack(&first)),
+            ResponseDisposition::Completed
+        );
+        let values = worker.join().unwrap();
+        assert_eq!(values.len(), 2);
+        for (value, expected) in values.into_iter().zip([first, second]) {
+            let value = value.unwrap();
+            assert_eq!(
+                value
+                    .boundary
+                    .value()
+                    .get("inReplyTo")
+                    .and_then(JsValue::as_string),
+                Some(&expected)
+            );
+        }
+        owner.close();
+        writer.join().unwrap().unwrap();
+    }
+    #[test]
+    fn parallel_cancellation_retains_every_dispatched_identity() {
+        let (owner, control, mut exchange) = fixture();
+        let cancellation = control.cancellation.clone();
+        let (sent, received) = mpsc::channel();
+        let writer_owner = owner.clone();
+        let writer = std::thread::spawn(move || {
+            writer_owner.drive_writer(Recorder {
+                bytes: Vec::new(),
+                sent,
+            })
+        });
+        let worker = std::thread::spawn(move || {
+            exchange
+                .exchange_parallel(
+                    &control,
+                    vec![
+                        (
+                            "capability",
+                            "execute",
+                            CallEffect::SideEffect,
+                            JsObject::new(),
+                        ),
+                        (
+                            "capability",
+                            "execute",
+                            CallEffect::SideEffect,
+                            JsObject::new(),
+                        ),
+                    ],
+                )
+                .unwrap()
+        });
+        let first = wire_id(&received.recv_timeout(Duration::from_secs(2)).unwrap());
+        let second = wire_id(&received.recv_timeout(Duration::from_secs(2)).unwrap());
+        assert!(cancellation.cancel_with_reconciliation_deadline(
+            CancelCause::Requested("cancel".into()),
+            Instant::now()
+        ));
+        let values = worker.join().unwrap();
+        assert_eq!(values.len(), 2);
+        assert!(
+            values
+                .iter()
+                .all(|value| matches!(value, Err(PortError::AcceptedUnknown { .. })))
+        );
+        for id in [first, second] {
+            let record = owner
+                .call_record(&id)
+                .expect("dispatched call must retain responsibility");
+            assert_eq!(record.phase, DispatchPhase::Unresolved);
+        }
+        owner.close();
+        writer.join().unwrap().unwrap();
     }
     fn wire_id(wire: &[u8]) -> JsString {
         pilotdeck_protocol::parse_json(std::str::from_utf8(wire).unwrap())

@@ -1,4 +1,4 @@
-use super::{Diagnostics, model::Provider, value::*};
+use super::{Diagnostics, Error, model::Provider, value::*};
 use pilotdeck_protocol::{JsString, JsValue};
 fn shape(v: &JsValue, d: &mut Diagnostics, code: &str, msg: &str, path: &str) -> bool {
     if v.is_undefined() {
@@ -15,14 +15,14 @@ fn reference(
     path: &str,
     p: &[Provider],
     d: &mut Diagnostics,
-) -> Option<(JsString, JsString)> {
+) -> Result<Option<(JsString, JsString)>, Error> {
     let Some(s) = v.as_string().filter(|s| !s.is_empty()) else {
         d.fatal(
             "ROUTER_REF_INVALID",
             format!("{path} must be a non-empty provider/model string."),
             path,
         );
-        return None;
+        return Ok(None);
     };
     let Some(i) = s
         .units()
@@ -38,20 +38,23 @@ fn reference(
             ),
             path,
         );
-        return None;
+        return Ok(None);
     };
     let a = JsString::from_utf16(s.units()[..i].to_vec());
     let b = JsString::from_utf16(s.units()[i + 1..].to_vec());
     let at = js_string(&JsValue::String(a.clone()));
     let Some(p) = p.iter().find(|p| p.id == a) else {
+        if let Some(error) = super::host::inherited_provider_error(&a, &b) {
+            return Err(error);
+        }
         d.fatal(
             "ROUTER_REF_PROVIDER_NOT_FOUND",
             format!("{path} references unknown provider {at}."),
             path,
         );
-        return None;
+        return Ok(None);
     };
-    if !p.models.iter().any(|m| m.id == b) {
+    if !p.has_model_reference(&b) {
         d.fatal(
             "ROUTER_REF_MODEL_NOT_FOUND",
             format!(
@@ -60,9 +63,9 @@ fn reference(
             ),
             path,
         );
-        return None;
+        return Ok(None);
     }
-    Some((a, b))
+    Ok(Some((a, b)))
 }
 fn bool_enabled(v: &JsValue, d: &mut Diagnostics, code: &str, msg: &str, path: &str) -> bool {
     if !v.is_undefined() && v.as_bool().is_none() {
@@ -75,7 +78,7 @@ pub(super) fn parse(
     p: &[Provider],
     agent: &(JsString, JsString),
     d: &mut Diagnostics,
-) -> bool {
+) -> Result<bool, Error> {
     if !shape(
         raw,
         d,
@@ -83,7 +86,7 @@ pub(super) fn parse(
         "router config must be an object.",
         "router",
     ) {
-        return false;
+        return Ok(false);
     }
     if !bool_enabled(
         field(raw, "enabled"),
@@ -92,7 +95,7 @@ pub(super) fn parse(
         "router.enabled must be a boolean.",
         "router.enabled",
     ) {
-        return false;
+        return Ok(false);
     }
     let scenarios = field(raw, "scenarios");
     let mut default = None;
@@ -108,7 +111,7 @@ pub(super) fn parse(
             "router.scenarios.default",
             p,
             d,
-        );
+        )?;
     }
     let fallback = field(raw, "fallback");
     if shape(
@@ -141,7 +144,7 @@ pub(super) fn parse(
             }
             if let JsValue::Array(a) = v {
                 for (i, v) in a.iter().enumerate() {
-                    reference(v, &format!("{path}[{i}]"), p, d);
+                    reference(v, &format!("{path}[{i}]"), p, d)?;
                 }
             } else {
                 d.fatal(
@@ -202,9 +205,9 @@ pub(super) fn parse(
             }
         }
     }
-    let tiers = token_saver(field(raw, "tokenSaver"), p, d);
+    let tiers = token_saver(field(raw, "tokenSaver"), p, d)?;
     auto_orchestrate(field(raw, "autoOrchestrate"), &tiers, d);
-    stats(field(raw, "stats"), p, d);
+    stats(field(raw, "stats"), p, d)?;
     let custom = field(raw, "customRouter");
     if !custom.is_undefined()
         && (!record(custom)
@@ -231,9 +234,9 @@ pub(super) fn parse(
         );
         d.warn("CONFIG_MODEL_CONFLICT",format!("agent.model ({current}) and router.scenarios.default ({previous}) disagree. Using agent.model and overriding router.scenarios.default at runtime. Update the yaml to silence this warning."),"agent.model");
     }
-    true
+    Ok(true)
 }
-fn token_saver(raw: &JsValue, p: &[Provider], d: &mut Diagnostics) -> Vec<JsString> {
+fn token_saver(raw: &JsValue, p: &[Provider], d: &mut Diagnostics) -> Result<Vec<JsString>, Error> {
     if !shape(
         raw,
         d,
@@ -241,7 +244,7 @@ fn token_saver(raw: &JsValue, p: &[Provider], d: &mut Diagnostics) -> Vec<JsStri
         "router.tokenSaver must be an object.",
         "router.tokenSaver",
     ) {
-        return vec![];
+        return Ok(vec![]);
     }
     if !bool_enabled(
         field(raw, "enabled"),
@@ -250,10 +253,10 @@ fn token_saver(raw: &JsValue, p: &[Provider], d: &mut Diagnostics) -> Vec<JsStri
         "tokenSaver.enabled must be a boolean.",
         "router.tokenSaver.enabled",
     ) {
-        return vec![];
+        return Ok(vec![]);
     }
-    if reference(field(raw, "judge"), "router.tokenSaver.judge", p, d).is_none() {
-        return vec![];
+    if reference(field(raw, "judge"), "router.tokenSaver.judge", p, d)?.is_none() {
+        return Ok(vec![]);
     }
     let tiers = field(raw, "tiers");
     if !record(tiers) || entries(tiers).is_empty() {
@@ -262,7 +265,7 @@ fn token_saver(raw: &JsValue, p: &[Provider], d: &mut Diagnostics) -> Vec<JsStri
             "router.tokenSaver.tiers must be a non-empty object.",
             "router.tokenSaver.tiers",
         );
-        return vec![];
+        return Ok(vec![]);
     }
     let mut names = vec![];
     for (name, body) in entries(tiers) {
@@ -281,12 +284,12 @@ fn token_saver(raw: &JsValue, p: &[Provider], d: &mut Diagnostics) -> Vec<JsStri
             );
             continue;
         }
-        if reference(field(body, "model"), &format!("{path}.model"), p, d).is_some() {
+        if reference(field(body, "model"), &format!("{path}.model"), p, d)?.is_some() {
             names.push(name.clone());
         }
     }
     if names.is_empty() {
-        return names;
+        return Ok(names);
     }
     if let Some(default) = field(raw, "defaultTier").as_string()
         && !names.contains(default)
@@ -350,7 +353,7 @@ fn token_saver(raw: &JsValue, p: &[Provider], d: &mut Diagnostics) -> Vec<JsStri
             );
         }
     }
-    names
+    Ok(names)
 }
 fn auto_orchestrate(raw: &JsValue, tiers: &[JsString], d: &mut Diagnostics) {
     if !shape(
@@ -426,7 +429,7 @@ fn auto_orchestrate(raw: &JsValue, tiers: &[JsString], d: &mut Diagnostics) {
         );
     }
 }
-fn stats(raw: &JsValue, p: &[Provider], d: &mut Diagnostics) {
+fn stats(raw: &JsValue, p: &[Provider], d: &mut Diagnostics) -> Result<(), Error> {
     if !shape(
         raw,
         d,
@@ -434,7 +437,7 @@ fn stats(raw: &JsValue, p: &[Provider], d: &mut Diagnostics) {
         "router.stats must be an object.",
         "router.stats",
     ) {
-        return;
+        return Ok(());
     }
     bool_enabled(
         field(raw, "enabled"),
@@ -474,7 +477,7 @@ fn stats(raw: &JsValue, p: &[Provider], d: &mut Diagnostics) {
                 );
                 continue;
             }
-            if reference(&JsValue::String(key.clone()), &path, p, d).is_none() {
+            if reference(&JsValue::String(key.clone()), &path, p, d)?.is_none() {
                 continue;
             }
             for key in ["input", "output", "cacheRead"] {
@@ -501,7 +504,7 @@ fn stats(raw: &JsValue, p: &[Provider], d: &mut Diagnostics) {
     let path = "router.stats.baselineModel";
     if !baseline.is_undefined() {
         if baseline.as_string().is_some() {
-            reference(baseline, path, p, d);
+            reference(baseline, path, p, d)?;
         } else if record(baseline)
             && field(baseline, "provider").as_string().is_some()
             && field(baseline, "model").as_string().is_some()
@@ -512,7 +515,7 @@ fn stats(raw: &JsValue, p: &[Provider], d: &mut Diagnostics) {
                 let mut units = a.units().to_vec();
                 units.push(47);
                 units.extend(b.units());
-                reference(&JsValue::String(JsString::from_utf16(units)), path, p, d);
+                reference(&JsValue::String(JsString::from_utf16(units)), path, p, d)?;
             } else {
                 d.fatal(
                     "ROUTER_REF_INVALID",
@@ -528,4 +531,5 @@ fn stats(raw: &JsValue, p: &[Provider], d: &mut Diagnostics) {
             );
         }
     }
+    Ok(())
 }

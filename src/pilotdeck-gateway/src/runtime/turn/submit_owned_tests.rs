@@ -469,6 +469,9 @@ async fn channel_bridge_preserves_optional_fields_for_both_submission_modes() {
                 message: "hello".into(),
                 attachments: present.then(|| attachments.clone()),
                 allow_plan_mode_tools: present.then_some(false),
+                mode: present.then(|| "bypassPermissions".into()),
+                base_permission_mode: present.then(|| "default".into()),
+                timeout_ms: present.then_some(if case == 2 { 0.0 } else { 600_000.0 }),
                 synthetic_messages: present
                     .then(|| vec![js(&json!({"text":"hint", "purpose":"fixture"}))]),
                 project_key: present.then(|| "project-fixture".into()),
@@ -499,12 +502,27 @@ async fn channel_bridge_preserves_optional_fields_for_both_submission_modes() {
                     fields.get("projectKey"),
                     Some(&JsValue::from("project-fixture"))
                 );
+                assert_eq!(
+                    fields.get("mode"),
+                    Some(&JsValue::from("bypassPermissions"))
+                );
+                assert_eq!(
+                    fields.get("basePermissionMode"),
+                    Some(&JsValue::from("default"))
+                );
+                assert_eq!(
+                    fields.get("timeoutMs"),
+                    Some(&JsValue::Number(if case == 2 { 0.0 } else { 600_000.0 }))
+                );
             } else {
                 for key in [
                     "attachments",
                     "allowPlanModeTools",
                     "syntheticMessages",
                     "projectKey",
+                    "mode",
+                    "basePermissionMode",
+                    "timeoutMs",
                 ] {
                     assert!(fields.get(key).is_none(), "unexpected {key}");
                 }

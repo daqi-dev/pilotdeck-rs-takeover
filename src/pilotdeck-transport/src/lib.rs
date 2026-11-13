@@ -1,6 +1,6 @@
 //! Module2.0 transport adapters, distinct from Gateway1.2 and host policy.
 use pilotdeck_agent::ports::{
-    CallControl, ExecutionIdentity, HostCall, HostPort, HostReply, PortResult,
+    CallControl, ExecutionIdentity, HostCall, HostPort, HostReply, PortError, PortResult,
 };
 use pilotdeck_agent::{CapturedModelEvent, ProjectedMessage, ToolExecutionResult};
 use pilotdeck_protocol::admission::CallEffect;
@@ -35,6 +35,8 @@ pub struct HostExchangeResponse {
 /// Bound exchange shell owns correlated IDs, cancellation, exact request cache
 /// and acceptance state. Adapter receives a complete ModuleResponse boundary.
 /// It never gives host authority to an arbitrary payload identity.
+pub type HostExchangeRequest = (&'static str, &'static str, CallEffect, JsObject);
+
 pub trait HostExchange: Send {
     /// SDK module-failure results use two independent wall-clock samples per
     /// tool, rather than the AgentLoop's single missing-result timestamp.
@@ -49,6 +51,15 @@ pub trait HostExchange: Send {
         effect: CallEffect,
         payload: JsObject,
     ) -> PortResult<HostExchangeResponse>;
+    fn exchange_parallel(
+        &mut self,
+        _control: &CallControl,
+        _calls: Vec<HostExchangeRequest>,
+    ) -> PortResult<Vec<PortResult<HostExchangeResponse>>> {
+        Err(PortError::InvalidResponse {
+            message: "parallel host exchanges are unavailable".into(),
+        })
+    }
 }
 #[derive(Debug, Clone)]
 pub struct AdvertisedMethods {
@@ -81,6 +92,13 @@ impl<E: HostExchange> HostPort for RemoteHost<E> {
     }
     fn call(&mut self, control: &CallControl, call: HostCall) -> PortResult<HostReply> {
         host_operations::call(&mut self.exchange, &self.methods, control, call)
+    }
+    fn call_parallel(
+        &mut self,
+        control: &CallControl,
+        calls: Vec<HostCall>,
+    ) -> PortResult<Vec<HostReply>> {
+        host_operations::call_parallel(&mut self.exchange, &self.methods, control, calls)
     }
 }
 /// Consumer admission retains the full admitted value with its typed view.
