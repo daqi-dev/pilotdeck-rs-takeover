@@ -352,7 +352,7 @@ mod tests {
                 !source.is_aborted(),
                 "scope revocation must not abort borrowed source"
             );
-            let mut closing = session.0.wait_closed();
+            let mut closing = Box::pin(session.0.wait_closed());
             assert!(
                 std::future::poll_fn(|cx| std::task::Poll::Ready(closing.as_mut().poll(cx)))
                     .await
