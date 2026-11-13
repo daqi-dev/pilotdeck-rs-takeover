@@ -1,0 +1,186 @@
+{
+  "name": "always-on-fire-git",
+  "about": "always-on 在 git 仓库项目上自己触发一轮：workspace 轮次 auto 选 git worktree（src/always-on/runtime/AlwaysOnRuntime.ts:431-445 先登记 GitWorktreeProvider，priority 1；src/always-on/workspace/GitWorktreeProvider.ts:24-31 项目是有 HEAD 的仓库才适用）。prepare（32-74）在 ~/.pilotdeck/always-on/worktrees/<projectId>/<runId> 用 git worktree add -b always-on/<runId> 建工作区，并经 onWorktreeCreated 广播 worktree_created 通知（src/cli/pilotdeck.ts:76-78）；收尾 dispose（86-106）先广播 worktree_removed，再 worktree remove --force 并删分支。仓库放在不采集的 {ROOT}/tmp/repo（.git 里有 index 的 stat 信息，不稳），README 与项目登记（projects/<id>/.cwd，写法同 always-on-fire）由 files 种进去，仓库项目里的会话先跑一轮 bash 先 git init / commit（GIT_* 环境变量固定作者与时间，提交号稳定）；tickIntervalMinutes 0.2（第一跳在启动 12 秒后，src/always-on/runtime/DiscoveryScheduler.ts:75-89），之后同 always-on-fire：discovery → workspace → execute（在工作区 write_file）→ report。比较通知、发给 provider 的请求与落盘。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nalwaysOn:\n  trigger:\n    tickIntervalMinutes: 0.2\n  projects:\n    {ROOT}/tmp/repo:\n      enabled: true\n",
+  "env": {
+    "GIT_AUTHOR_NAME": "bbx",
+    "GIT_AUTHOR_EMAIL": "bbx@example.invalid",
+    "GIT_COMMITTER_NAME": "bbx",
+    "GIT_COMMITTER_EMAIL": "bbx@example.invalid",
+    "GIT_AUTHOR_DATE": "2026-01-01T00:00:00Z",
+    "GIT_COMMITTER_DATE": "2026-01-01T00:00:00Z",
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_CONFIG_GLOBAL": "/dev/null"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"AO\"}"
+      }
+    },
+    {
+      "name": "discovery-done",
+      "when": [
+        "autonomous Always-On discovery",
+        "call_bbx_plan"
+      ],
+      "reply": {
+        "text": "Plan saved."
+      }
+    },
+    {
+      "name": "discovery",
+      "when": [
+        "autonomous Always-On discovery"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_plan",
+          "name": "always_on_discovery_plan",
+          "arguments": {
+            "title": " Add more docs ",
+            "summary": "Add a second line to README.",
+            "rationale": "The README is too short.",
+            "dedupeKey": "",
+            "content": "# Add more docs\n\n> Always-On Discovery Plan\n> id: plan_fixed\n> sourceRunId: run-fixed\n> createdAt: 2026-01-01T00:00:00.000Z\n> projectRoot: {ROOT}/tmp/repo\n> dedupeKey: docs\n\n## Summary\nAdd a second line to README.\n\n## Rationale\nThe README is too short.\n\n## Context Signals\n- README has one line\n\n## Proposed Change\nAppend a line to README.md.\n\n## Execution Steps\n1. Append \"more docs\" to README.md.\n\n## Verification\n- README.md contains \"more docs\"\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "workspace-done",
+      "when": [
+        "preparing an isolated workspace",
+        "call_bbx_ws"
+      ],
+      "reply": {
+        "text": "workspace ready"
+      }
+    },
+    {
+      "name": "workspace",
+      "when": [
+        "preparing an isolated workspace"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_ws",
+          "name": "always_on_prepare_workspace",
+          "arguments": {
+            "strategy": "auto"
+          }
+        }
+      }
+    },
+    {
+      "name": "execute-done",
+      "when": [
+        "executing an Always-On discovery plan",
+        "call_bbx_exec"
+      ],
+      "reply": {
+        "text": "Executed the plan."
+      }
+    },
+    {
+      "name": "execute",
+      "when": [
+        "executing an Always-On discovery plan"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_exec",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "NOTES.md",
+            "content": "more docs\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "report-done",
+      "when": [
+        "writing a work report",
+        "call_bbx_report"
+      ],
+      "reply": {
+        "text": "Report saved."
+      }
+    },
+    {
+      "name": "report",
+      "when": [
+        "writing a work report"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_report",
+          "name": "always_on_report",
+          "arguments": {
+            "content": "# Docs report\n\n## Plan Reference\nplan_fixed\n\n## Steps Performed\n1. Appended a line.\n\n## Notes\n- ok\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "init-after",
+      "when": [
+        "gitinit-1:",
+        "\"tool_call_id\":\"call_git\""
+      ],
+      "reply": {
+        "text": "Repo ready."
+      }
+    },
+    {
+      "name": "init",
+      "when": [
+        "gitinit-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_git",
+          "name": "bash",
+          "arguments": {
+            "command": "cd {ROOT}/tmp/repo && git init -q && git checkout -q -b main && git add README.md && git commit -q -m init && git rev-parse HEAD",
+            "description": "init repo"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-git",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-git",
+        "channelKey": "test",
+        "projectKey": "{ROOT}/tmp/repo",
+        "message": "gitinit-1: prepare the repo"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 30000
+    }
+  ],
+  "volatile": [
+    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.system|breakdown\\.total|breakdown\\.messages|resultBytes|content-length)$"
+  ],
+  "files": {
+    "tmp/repo/README.md": "alpha\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-tmp-repo/.cwd": "{ROOT}/tmp/repo\n"
+  }
+}
