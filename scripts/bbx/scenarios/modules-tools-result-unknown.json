@@ -1,7 +1,7 @@
 {
  "name": "modules-tools-result-unknown",
  "about": "modules.tools 外部模块回 ok:false + outcome:result_unknown（hostToolPort.ts:283-285, 309-318）：工具端口抛 RESULT_UNKNOWN，基线的进程内 AgentLoop 把它当终止性工具错误（AgentLoop.ts:3899-3907），整轮以 agent_invalid_state 失败、消息是模块给的 message。",
- "volatile": ["^\\$\\.provider\\.m-[a-z0-9-]+\\[\\d+\\]\\.(body\\.requestId|headers\\.content-length)$"],
+ "volatile": ["^\\$\\.provider\\.m-[a-z0-9-]+\\[\\d+\\]\\.body\\.requestId$"],
  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  tools:\n    enabled: true\n    implementationId: bbx.tools\n    contract: pilotdeck.tools/v1\n    transport: module-http-v2\n    endpoint: {MOCK}/tools\n    timeoutMs: 1500\n    methods:\n      - execute\n    catalog:\n      - name: bbx_echo\n        description: Echo text through the external capability module.\n        inputSchema:\n          type: object\n          properties:\n            text:\n              type: string\n          required:\n            - text\n",
  "provider": [
   {

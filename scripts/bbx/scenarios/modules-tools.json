@@ -1,7 +1,7 @@
 {
  "name": "modules-tools",
  "about": "modules.tools 绑到外部能力模块（parseModulesConfig.ts:120-190，runtimePorts.ts:33-138，hostToolPort.ts:136-330，HttpModuleClient.ts）：catalog 里的工具和宿主工具一起发给模型；调用经 HTTP 模块客户端先 GET 清单、再 POST module:capability 的 module_call（每个会话一个客户端）。外部工具不过宿主的权限判定与输入校验：默认模式下 permissions.json 的 disallowedTools 命中、plan 模式都照常执行且不发权限询问，缺必填参数也照发。覆盖：成功、模块回结构化失败（未知 code 与已知工具错误码）、payload 无 type、inReplyTo 不符、成功应答带失败字段、HTTP 500、HTTP 503 带结构化失败、超时（timeoutMs）、应答不是对象、CANCELLED（宿主抛出取消）、payload 本身是错误结果。",
- "volatile": ["^\\$\\.provider\\.m-[a-z0-9-]+\\[\\d+\\]\\.(body\\.requestId|headers\\.content-length)$"],
+ "volatile": ["^\\$\\.provider\\.m-[a-z0-9-]+\\[\\d+\\]\\.body\\.requestId$"],
  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  tools:\n    enabled: true\n    implementationId: bbx.tools\n    contract: pilotdeck.tools/v1\n    transport: module-http-v2\n    endpoint: {MOCK}/tools\n    timeoutMs: 1500\n    methods:\n      - execute\n    catalog:\n      - name: bbx_echo\n        description: Echo text through the external capability module.\n        inputSchema:\n          type: object\n          properties:\n            text:\n              type: string\n          required:\n            - text\n",
  "files": {
   "home/.pilotdeck/permissions.json": {
