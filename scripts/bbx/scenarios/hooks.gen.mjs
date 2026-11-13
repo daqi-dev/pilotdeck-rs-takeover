@@ -578,6 +578,54 @@ hooks:
   }
 }
 
+// 同上两类 hook，打断运行中轮次的是 dispose 而不是用户中止：基线 AgentSession.dispose 在轮次运行中时先
+// abort("session_closed")（src/agent/session/AgentSession.ts:274-281），中止的正是派发这两类事件时带的那个
+// 中止信号（sidecarDefaultModuleDispatcher.ts:378-391），所以 hook 进程同样被杀。两个入口：
+// close_session（InProcessGateway.closeSession → router.close，src/gateway/client/InProcessGateway.ts:2049-2054）；
+// 停机（PilotDeckServerShutdownBundle 先 closeServer 再 disposeGateway，src/cli/PilotDeckServerShutdownBundle.ts:30-38）。
+// 停机那一例：轮次先停在权限询问上，客户端发关闭帧断开（有挂起的询问，preserveTurn，这一轮不被中止），
+// 再发 SIGTERM；serve 之后多等 4 秒再采落盘，没被杀的 hook 会来得及写下 done 行。
+for (const [event, log] of [['PreModelRequest', 'pre-model'], ['InstructionsLoaded', 'instructions']]) {
+  const short = log === 'pre-model' ? 'model-request' : 'instructions-loaded';
+  const session = `s-${log}-dispose`;
+  const files = (sleep) => ({
+    ...plugin('bbx-model-dispose', { [event]: [{ hooks: [{ ...cmd(log, { sleep }), command: cmd(log, { sleep }).command.replace('hook.mjs', 'term.mjs') }] }] }),
+    'home/.pilotdeck/plugins/bbx-model-dispose/term.mjs': TERM_LATE,
+  });
+  scenarios[`hook-${short}-close-session`] = {
+    about: `${event} hook 执行中 close_session：会话 dispose 中止运行中的轮次，hook 进程被杀（hooklog 没有 done 行），与用户中止相同。`,
+    files: files(3000),
+    provider: [
+      TITLE,
+      { name: 'slow', when: ['slow-case:'], reply: { chunks: ['partial ', 'never sent'], delayMs: 800, hangAfter: 1, hangMs: 6000 } },
+    ],
+    steps: [
+      bypass(session),
+      submit(session, 'slow-case: answer slowly', { answer: [{
+        on: { type: 'assistant_text_delta' }, ws: 'close_session', params: { sessionKey: session }, count: 1,
+      }] }),
+      { sleep: 4000 },
+      read(session),
+    ],
+    settleMs: 500,
+  };
+  scenarios[`hook-${short}-server-stop`] = {
+    about: `${event} hook 执行中停机：轮次停在权限询问上、客户端发关闭帧断开（有挂起的询问，这一轮不被中止）后 SIGTERM，disposeGateway 中止运行中的轮次，hook 进程被杀（hooklog 没有 done 行）。`,
+    server: false,
+    files: files(5000),
+    provider: [TITLE, ...toolCase('stop-case', 'bash', { command: 'echo ran > ran.txt', description: 'stop case' })],
+    steps: [{
+      serve: ['server'], timeout: 60000,
+      then: [
+        { ...submit(session, 'stop-case: run the tool'), timeout: 1500, expectTimeout: true },
+        { disconnect: true },
+        { sleep: 300 },
+      ],
+    }],
+    settleMs: 4000,
+  };
+}
+
 // ── Elicitation / ElicitationResult：提问发出与得到回答时 ──
 {
   const hooks = {
