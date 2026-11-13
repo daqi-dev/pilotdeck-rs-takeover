@@ -517,7 +517,12 @@ impl LiveSession for LiveSessionAdapter {
             .and_then(|execution| execution.get("runId"))
             .and_then(JsValue::as_string)
             .map(|run| {
-                JsString::from_utf16("timeout:".encode_utf16().chain(run.units().iter().copied()).collect())
+                JsString::from_utf16(
+                    "timeout:"
+                        .encode_utf16()
+                        .chain(run.units().iter().copied())
+                        .collect(),
+                )
             });
         if let Some(config) = &self.agent_config {
             let mut config = config.clone();
@@ -1129,10 +1134,7 @@ impl LiveTurn for LiveTurnStream {
                     Some(Err(error))
                         if error.kind == HostErrorKind::ResultUnknown
                             && self.timeout_reason.is_some()
-                            && self
-                                .callback_cancel
-                                .as_ref()
-                                .and_then(Cancellation::reason)
+                            && self.callback_cancel.as_ref().and_then(Cancellation::reason)
                                 == self.timeout_reason =>
                     {
                         self.release();
