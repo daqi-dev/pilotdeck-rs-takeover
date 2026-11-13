@@ -1016,6 +1016,32 @@ async fn concurrent_connections() {
     b.close().await;
     finish(stop, task).await;
 }
+/// A peer FIN without a WS close frame leaves the connection half-open, like
+/// TS's upgraded socket on Node's half-open http server (websocket.ts:17-21
+/// listens for close / error only): the in-flight request still answers on
+/// it, and a server stop ends it instead of waiting forever.
+#[tokio::test]
+async fn peer_fin_keeps_connection_half_open_until_stop() {
+    let requests = Arc::new(Requests::default());
+    requests.hold.store(true, Ordering::SeqCst);
+    let (address, stop, task) = start(requests.clone(), DEADLINE).await;
+    let mut client = Client::connect(address).await;
+    client.hello().await;
+    timeout(DEADLINE, requests.entered.notified())
+        .await
+        .expect("hello entered");
+    client.socket.shutdown().await.expect("client FIN");
+    // Let the transport read the EOF before the answer exists (only makes the
+    // check sharper: an EOF-as-close transport would drop the answer).
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    requests.release.notify_one();
+    assert_eq!(
+        client.json().await["type"],
+        "hello_ok",
+        "the request answers on the half-open connection"
+    );
+    finish(stop, task).await;
+}
 #[tokio::test]
 async fn pending_request_and_disconnect() {
     for disconnect in [false, true] {
@@ -1396,10 +1422,12 @@ async fn writer_deadline_releases_socket_before_stuck_business() {
                 .await
                 .expect("#749 fill writer without reading");
         }
+        // A WS close frame starts the closing deadline. (A bare peer FIN no
+        // longer does: TS keeps that socket half-open, websocket.ts:17-21.)
         client
-            .shutdown()
+            .write_all(&frame::client_frame(0x88, 0, b""))
             .await
-            .expect("#749 writer peer half-close");
+            .expect("#749 writer peer close frame");
         crate::test_negative_receipt::expect_ok(
             timeout(CLOSE_BUDGET + Duration::from_secs(105), dropped).await,
             "#749 writer deadline releases socket despite held business",
@@ -1782,7 +1810,16 @@ async fn read_continues_under_writer_backpressure() {
         2,
         "#749 second request reached host"
     );
-    client.shutdown().await.expect("#749 backpressure EOF");
+    // End with a WS close frame, then FIN: a bare FIN leaves the connection
+    // half-open like TS (websocket.ts:17-21), so it would not end the transport.
+    client
+        .write_all(&frame::client_frame(0x88, 0, b""))
+        .await
+        .expect("#749 backpressure close");
+    client
+        .shutdown()
+        .await
+        .expect("#749 backpressure close FIN");
     let mut output = vec![];
     // #1891 fix-r1: response bytes (see RESPONSE_LIVENESS).
     timeout(RESPONSE_LIVENESS, client.read_to_end(&mut output))
@@ -2298,7 +2335,16 @@ async fn completed_writes_and_requests_release_capacity() {
             "#749 completed writes and requests release capacity"
         );
     }
-    client.shutdown().await.expect("#749 capacity peer EOF");
+    // A WS close frame then FIN ends the transport; a bare FIN would leave
+    // it half-open like TS (websocket.ts:17-21).
+    client
+        .write_all(&frame::client_frame(0x88, 0, b""))
+        .await
+        .expect("#749 capacity peer close");
+    client
+        .shutdown()
+        .await
+        .expect("#749 capacity peer close FIN");
     timeout(DEADLINE, task)
         .await
         .expect("#749 capacity task bound")

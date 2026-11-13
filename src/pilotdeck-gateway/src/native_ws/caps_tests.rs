@@ -102,6 +102,16 @@ async fn remaining(budget: &Semaphore, value: usize, assertion: &str) {
         assertion,
     );
 }
+/// The peer vanishes with a reset. A plain drop only sends FIN, which TS (and
+/// now this transport) treat as half-open, not as a close
+/// (src/gateway/server/websocket.ts:17-21); a reset is a socket error, which
+/// closes the connection at once.
+fn vanish(stream: TcpStream) {
+    socket2::SockRef::from(&stream)
+        .set_linger(Some(Duration::ZERO))
+        .expect("#1079 linger 0 for reset");
+    drop(stream);
+}
 async fn tcp(address: SocketAddr) -> TcpStream {
     expect_ok(
         timeout(DEADLINE, TcpStream::connect(address)).await,
@@ -351,8 +361,8 @@ async fn connection_cap_covers_handshakes_and_recovers() {
     .await;
     let replacement = upgrade(running.address).await;
     remaining(&running.connections, 0, CAP_ASSERT).await;
-    drop(second);
-    drop(replacement);
+    vanish(second);
+    vanish(replacement);
     drop(invalid);
     drop(excess);
     remaining(
@@ -509,7 +519,7 @@ async fn aggregate_overload_isolated_from_existing_peers() {
         0,
         "#1079 rejection leaves predecessors intact"
     );
-    drop(first);
+    vanish(first);
     remaining(&running.input, 16, "#1079 peer EOF returns input budget").await;
     let mut replacement = upgrade(running.address).await;
     write(&mut replacement, &small_frame(9, b"ok")).await;
@@ -518,9 +528,9 @@ async fn aggregate_overload_isolated_from_existing_peers() {
         (10, b"ok".to_vec()),
         "#1079 released aggregate budget serves successor"
     );
-    drop(second);
-    drop(excess);
-    drop(replacement);
+    vanish(second);
+    vanish(excess);
+    vanish(replacement);
     remaining(&running.connections, 4, "#1079 all clients reaped").await;
     remaining(&running.input, 32, "#1079 all input refunded").await;
     finish(running).await;
@@ -546,7 +556,7 @@ async fn eof_releases_input_before_pending_business() {
         "#1079 pending business still reads input",
     )
     .await;
-    drop(client);
+    vanish(client);
     remaining(
         &running.input,
         256 - hello.len(),
@@ -572,7 +582,7 @@ async fn eof_releases_input_before_pending_business() {
         "#1079 completed business returns input",
     )
     .await;
-    drop(successor);
+    vanish(successor);
     remaining(
         &running.connections,
         2,
@@ -882,7 +892,7 @@ async fn completed_records_reaped_before_next_accept() {
     for _ in 0..4 {
         let client = upgrade(running.address).await;
         remaining(&running.connections, 0, "#1079 churn connection accepted").await;
-        drop(client);
+        vanish(client);
         remaining(&running.connections, 1, "#1079 churn connection finished").await;
     }
     negative_assert_eq!(
