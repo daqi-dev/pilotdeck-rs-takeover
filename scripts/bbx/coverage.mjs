@@ -69,18 +69,21 @@ if (args.includes('--surface')) {
     return { name, verdict: verdictOf(name), scenario: fs.readFileSync(path.join(here, 'scenarios', `${name}.json`), 'utf8'), artifact: fs.existsSync(art) ? fs.readFileSync(art, 'utf8') : '' };
   });
   console.log(`基线对外表面：${Object.keys(surface.dimensions).length} 个维度（场景 ${same}/${scenarios.length} SAME）`);
-  console.log('维度\t项数\t被SAME场景碰到\t只被有差异的场景碰到\t没碰到');
+  // 项上的 skip 写明不计入的理由（基线里没有产生它的代码路径、只属于不在范围的部分等），
+  // 这类项单列为「不计」，不算进没碰到；--surface <维度> 同样逐项列出理由。
+  console.log('维度\t项数\t被SAME场景碰到\t只被有差异的场景碰到\t没碰到\t不计');
   for (const [dim, { items }] of Object.entries(surface.dimensions)) {
-    let ok = 0, diff = 0; const missing = [];
+    let ok = 0, diff = 0, skipped = 0; const missing = []; const skips = [];
     for (const item of items) {
+      if (item.skip) { skipped++; skips.push(`不计  \t${item.id}\t${item.where}\t${item.skip}`); continue; }
       const probes = (item.probe ?? []).map(matcher);
       const observe = item.observe ? new RegExp(item.observe) : null;
       const hits = texts.filter((t) => probes.some((f) => f(t.scenario)) || (observe && observe.test(t.artifact)));
       if (hits.some((t) => t.verdict === 'SAME')) ok++;
       else { if (hits.length) diff++; missing.push(`${hits.length ? 'DIFF  ' : '未覆盖'}\t${item.id}\t${item.where}\t${item.note}`); }
     }
-    console.log(`${dim}\t${items.length}\t${ok}\t${diff}\t${items.length - ok - diff}`);
-    if (want === dim) for (const line of missing) console.log('  ' + line);
+    console.log(`${dim}\t${items.length}\t${ok}\t${diff}\t${items.length - ok - diff - skipped}\t${skipped}`);
+    if (want === dim) for (const line of [...missing, ...skips]) console.log('  ' + line);
   }
   process.exit(0);
 }
