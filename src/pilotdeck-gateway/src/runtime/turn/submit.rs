@@ -302,6 +302,19 @@ pub trait SubmitHost: Send + Sync {
         run: &'a RunRef,
         status: &'a JsValue,
     ) -> SubmitFuture<'a, Result<(), SubmitError>>;
+    /// Hold the session transcript's settlement for the timeout status
+    /// record: later appends queued on the writer (an aborted `agent` fork's
+    /// `subagent_completed`) resume only once the timeout's run events were
+    /// appended, as behind the baseline's FIFO writer. `None` without a live
+    /// writer.
+    fn hold_settlement(&self, _run: &RunRef) -> Option<crate::storage::SettlementHold> {
+        None
+    }
+    /// Resolves once the session's in-flight `agent` forks reached their
+    /// `SubagentStop` dispatch (`TranscriptWriter::fork_in_flight`).
+    fn forks_settled(&self, _run: &RunRef) -> Option<SubmitFuture<'static, ()>> {
+        None
+    }
     fn reject_pending(&self, session: &JsString, reason: &str) -> Result<(), SubmitError>;
     fn release_claim(&self, session: &JsString, run: &JsString);
     fn after_turn(&self, run: &RunRef) -> Result<(), SubmitError>;
@@ -775,6 +788,14 @@ impl TurnSubmitter {
                     let message = format!("Turn exceeded the {}ms timeout.", crate::js_value::number_string(ms));
                     let hint = "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.";
                     let _ = self.host.reject_pending(run.session(), "turn_timeout");
+                    // The timeout status record goes to the head of the
+                    // session writer's queue: appends the abort causes after
+                    // it settle only once its run events are appended below.
+                    let mut hold = if owns_terminal {
+                        self.host.hold_settlement(&run)
+                    } else {
+                        None
+                    };
                     if owns_terminal {
                         // The timeout ends forwarding to the client; the aborted
                         // loop's events are still recorded until the turn's sink
@@ -817,6 +838,7 @@ impl TurnSubmitter {
                             let mut event = error_event(&run, "turn_timeout", &message, false);
                             set(&mut event, "userHint", hint.into());
                             publisher.gateway_event(event);
+                            drop(hold.take());
                         })
                         .await;
                         // The transcript stays open: like the baseline, the
@@ -825,6 +847,15 @@ impl TurnSubmitter {
                         // and the session's disposal closes the writer once
                         // that run has ended (AgentHandle.finishDispose waits
                         // for no active run before onDispose).
+                    }
+                    drop(hold);
+                    // The turn's `agent` forks, aborted with it, still report
+                    // their `SubagentStop` start into this run before the
+                    // sink goes (see `TranscriptWriter::fork_in_flight`).
+                    if owns_terminal
+                        && let Some(forks) = self.host.forks_settled(&run)
+                    {
+                        let _ = tokio::time::timeout(self.abort_budget(), forks).await;
                     }
                     // The settlement lets a worker that observed the timeout
                     // drain and finish (which closes delivery itself).

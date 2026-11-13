@@ -24,9 +24,9 @@ pub use run_registry::{
 // wait derives from it rather than duplicating the 30 s.
 pub(crate) use run_registry::FILE_LOCK_TIMEOUT;
 pub use transcript_adapter::{
-    AdapterError, AdapterResult, AsyncTranscriptAdapter, Clock, JsonlTranscriptStore, ProjectKey,
-    SessionStorage, SessionStorageInput, StoreResult, StoredSession, SubagentHandle,
-    SubagentReferences, TranscriptKey, TranscriptStore, TranscriptWriter,
+    AdapterError, AdapterResult, AsyncTranscriptAdapter, Clock, ForkInFlight, JsonlTranscriptStore,
+    ProjectKey, SessionStorage, SessionStorageInput, SettlementHold, StoreResult, StoredSession,
+    SubagentHandle, SubagentReferences, TranscriptKey, TranscriptStore, TranscriptWriter,
     project_subagent_references, sanitize_session_id,
 };
 

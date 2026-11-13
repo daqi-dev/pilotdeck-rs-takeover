@@ -859,6 +859,7 @@ impl Fork {
     async fn record_parent(&self, draft: JsObject) -> Result<(), JsString> {
         let recorder = self.parent.recorder.clone();
         let (session, turn) = (self.session.clone(), self.turn.clone());
+        let writer = recorder.writer().clone();
         tokio::task::spawn_blocking(move || {
             recorder
                 .writer()
@@ -866,7 +867,11 @@ impl Fork {
         })
         .await
         .map_err(|error| JsString::from(error.to_string()))?
-        .map_err(|error| JsString::from(error.to_string()))
+        .map_err(|error| JsString::from(error.to_string()))?;
+        // Queued behind a held record (a timeout status), the append
+        // settles only after it (`TranscriptWriter::hold_settlement`).
+        writer.settled().await;
+        Ok(())
     }
 
     async fn record_completed(
@@ -910,6 +915,7 @@ impl Fork {
         storage: &FactoryStorage,
         child_session: &JsString,
         context: &ToolRunContext,
+        deadline: tokio::time::Instant,
     ) -> Result<ChildOutcome, JsString> {
         let started = Instant::now();
         let fail = |error: &dyn std::fmt::Display| JsString::from(error.to_string());
@@ -967,6 +973,7 @@ impl Fork {
                 config,
                 mcp_tools,
                 started,
+                deadline,
             )
             .await;
         if let Some((runtime, _)) = definition_mcp {
@@ -986,6 +993,7 @@ impl Fork {
         config: JsObject,
         mcp_tools: Vec<Arc<crate::runtime::mcp::bridge::McpBridgeTool>>,
         started: Instant,
+        deadline: tokio::time::Instant,
     ) -> Result<ChildOutcome, JsString> {
         let fail = |error: &dyn std::fmt::Display| JsString::from(error.to_string());
         let checkpoint = HostToolCheckpoint::new(
@@ -1067,9 +1075,9 @@ impl Fork {
                 ])),
             )
             .map_err(|error| fail(&error.message))?;
-        let timeout = tokio::time::sleep(std::time::Duration::from_millis(
-            request.timeout_ms.max(0.0) as u64,
-        ));
+        // The fork's own timer runs from the fork's start
+        // (`composeAbortSignal`, OneShotSubagentPort.ts:111), not from here.
+        let timeout = tokio::time::sleep_until(deadline);
         tokio::pin!(timeout);
         let mut timed_out = false;
         let mut aborted = false;
@@ -1078,10 +1086,13 @@ impl Fork {
         let failure = loop {
             // `composeAbortSignal`: the parent's abort and the fork's own
             // timeout both abort the child, which then runs to its terminal.
+            // The first one aborts; the timer keeps running after a parent
+            // abort and still marks the fork timed out (`timedOut()` is read
+            // only once the child returned).
             let step = tokio::select! {
                 biased;
                 _ = context.cancelled(), if !aborted && !timed_out => Step::ParentAborted,
-                _ = &mut timeout, if !aborted && !timed_out => Step::TimedOut,
+                _ = &mut timeout, if !timed_out => Step::TimedOut,
                 next = turn.next() => Step::Next(next),
             };
             let event: JsValue = match step {
@@ -1092,7 +1103,10 @@ impl Fork {
                 }
                 Step::TimedOut => {
                     timed_out = true;
-                    let _ = session.abort(&"subagent_timeout".into());
+                    if !aborted {
+                        aborted = true;
+                        let _ = session.abort(&"subagent_timeout".into());
+                    }
                     continue;
                 }
                 Step::Next(Ok(Some(event))) => event,
@@ -1149,7 +1163,7 @@ impl Fork {
         };
         drop(turn);
         let _ = session.dispose().await;
-        if timed_out {
+        if timed_out || tokio::time::Instant::now() >= deadline {
             return Err(format!("Subagent timed out after {}ms.", request.timeout_ms).into());
         }
         if let Some(failure) = failure {
@@ -1198,7 +1212,7 @@ impl Fork {
             }
             _ => {}
         }
-        if aborted {
+        if context.is_aborted() {
             return Err("Subagent aborted before completion.".into());
         }
         Ok(ChildOutcome {
@@ -1233,7 +1247,28 @@ impl Fork {
         request: ForkRequest,
         context: ToolRunContext,
     ) -> Result<ForkReport, JsString> {
-        self.run_reporting_start(request, context, None).await
+        let in_flight = Some(self.parent.recorder.writer().fork_in_flight());
+        self.run_reporting_start(request, context, None, in_flight)
+            .await
+    }
+
+    /// `dispatchSubagentLifecycle("SubagentStop")`, releasing the fork's
+    /// in-flight mark once the dispatch has started.
+    async fn stop_lifecycle(
+        &self,
+        context: &ToolRunContext,
+        payload: JsObject,
+        in_flight: &mut Option<crate::storage::ForkInFlight>,
+    ) -> Result<(), JsString> {
+        let dispatch = self.lifecycle("SubagentStop", context, payload);
+        tokio::pin!(dispatch);
+        let first =
+            std::future::poll_fn(|cx| std::task::Poll::Ready(dispatch.as_mut().poll(cx))).await;
+        in_flight.take();
+        match first {
+            std::task::Poll::Ready(result) => result,
+            std::task::Poll::Pending => dispatch.await,
+        }
     }
 
     /// [`Self::run`], signalling `started` once the parent-side
@@ -1243,7 +1278,10 @@ impl Fork {
         request: ForkRequest,
         context: ToolRunContext,
         started: Option<tokio::sync::oneshot::Sender<()>>,
+        mut in_flight: Option<crate::storage::ForkInFlight>,
     ) -> Result<ForkReport, JsString> {
+        let deadline = tokio::time::Instant::now()
+            + std::time::Duration::from_millis(request.timeout_ms.max(0.0) as u64);
         let definition = definitions_from_config(&self.parent.config)
             .into_iter()
             .find(|definition| definition.id == text(&request.definition_id))
@@ -1321,6 +1359,7 @@ impl Fork {
                 &storage,
                 &child_session,
                 &context,
+                deadline,
             )
             .await;
         // A parent completion never advertises a child whose storage has not
@@ -1339,14 +1378,14 @@ impl Fork {
                 let markdown = JsString::from(outcome.markdown.as_str());
                 self.record_completed(&request.subagent_id, &definition, &markdown, Some(&outcome))
                     .await?;
-                self.lifecycle(
-                    "SubagentStop",
+                self.stop_lifecycle(
                     &context,
                     object([
                         ("subagentId", JsValue::String(request.subagent_id.clone())),
                         ("subagentType", definition.id.as_str().into()),
                         ("success", JsValue::Bool(true)),
                     ]),
+                    &mut in_flight,
                 )
                 .await?;
                 self.emit(completed(true, None, outcome.duration_ms));
@@ -1373,14 +1412,14 @@ impl Fork {
                     }
                 };
                 let failure = match self
-                    .lifecycle(
-                        "SubagentStop",
+                    .stop_lifecycle(
                         &context,
                         object([
                             ("subagentId", JsValue::String(request.subagent_id.clone())),
                             ("subagentType", definition.id.as_str().into()),
                             ("success", JsValue::Bool(false)),
                         ]),
+                        &mut in_flight,
                     )
                     .await
                 {
@@ -1410,8 +1449,16 @@ impl SubagentFork for Fork {
             .map(|definition| definition.id.as_str().into())
             .collect()
     }
+    /// The fork is a promise in the baseline: a parent that stops awaiting
+    /// it (the timed-out turn's pump returning the loop) does not stop it.
+    /// It ends on its own: the parent's abort or its own timer aborts the
+    /// child, which runs to its terminal and dispatches `SubagentStop`.
     fn fork(&self, request: ForkRequest, context: ToolRunContext) -> ForkFuture {
-        Box::pin(self.clone().run(request, context))
+        let task = tokio::spawn(self.clone().run(request, context));
+        Box::pin(async move {
+            task.await
+                .unwrap_or_else(|error| Err(JsString::from(error.to_string())))
+        })
     }
     fn is_background_definition(&self, id: &JsString) -> bool {
         definitions_from_config(&self.parent.config)
@@ -1459,7 +1506,7 @@ impl SubagentFork for Fork {
                 run: Box::new(move |signal| {
                     Box::pin(async move {
                         let context = detached_context(&context, signal);
-                        fork.run_reporting_start(request, context, Some(started))
+                        fork.run_reporting_start(request, context, Some(started), None)
                             .await
                             .map(|_| ())
                     })

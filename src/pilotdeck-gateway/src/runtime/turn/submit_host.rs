@@ -100,6 +100,19 @@ pub trait SubmitHostServices: Send + Sync {
         run: &'a RunRef,
         status: &'a JsValue,
     ) -> SubmitFuture<'a, Result<(), SubmitError>>;
+    /// Hold the session transcript's settlement for the timeout status
+    /// record: later appends queued on the writer (an aborted `agent` fork's
+    /// `subagent_completed`) resume only once the timeout's run events were
+    /// appended, as behind the baseline's FIFO writer. `None` without a live
+    /// writer.
+    fn hold_settlement(&self, _run: &RunRef) -> Option<crate::storage::SettlementHold> {
+        None
+    }
+    /// Resolves once the session's in-flight `agent` forks reached their
+    /// `SubagentStop` dispatch (`TranscriptWriter::fork_in_flight`).
+    fn forks_settled(&self, _run: &RunRef) -> Option<SubmitFuture<'static, ()>> {
+        None
+    }
     /// `afterTurnCompleted` (InProcessGateway.ts:1850).
     fn after_turn(&self, run: &RunRef) -> Result<(), SubmitError>;
     /// The wall clock used for operation deadlines.
@@ -453,6 +466,12 @@ impl SubmitHost for GatewaySubmitHost {
         status: &'a JsValue,
     ) -> SubmitFuture<'a, Result<(), SubmitError>> {
         self.services.record_failure(run, status)
+    }
+    fn hold_settlement(&self, run: &RunRef) -> Option<crate::storage::SettlementHold> {
+        self.services.hold_settlement(run)
+    }
+    fn forks_settled(&self, run: &RunRef) -> Option<SubmitFuture<'static, ()>> {
+        self.services.forks_settled(run)
     }
     fn finish_pump<'a>(&'a self, run: &'a RunRef) -> SubmitFuture<'a, Result<(), SubmitError>> {
         // Removal before release is the exactly-once guard: repeated or

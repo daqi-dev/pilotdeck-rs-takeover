@@ -631,8 +631,28 @@ pub struct TranscriptWriter {
     /// append is rejected at write time instead of forking the sequence chain
     /// under the factory's replacement writer.
     retired: AtomicBool,
+    /// Outstanding [`SettlementHold`]s; see [`TranscriptWriter::hold_settlement`].
+    holds: tokio::sync::watch::Sender<usize>,
+    /// Outstanding [`ForkInFlight`]s; see [`TranscriptWriter::fork_in_flight`].
+    forks: tokio::sync::watch::Sender<usize>,
     #[cfg(test)]
     pub(crate) test_sources: Mutex<Option<(RecorderClock, RecorderUuid)>>,
+}
+/// Keeps the writer's later appends from settling, see
+/// [`TranscriptWriter::hold_settlement`]. Released on drop.
+pub struct SettlementHold(tokio::sync::watch::Sender<usize>);
+impl Drop for SettlementHold {
+    fn drop(&mut self) {
+        self.0.send_modify(|holds| *holds -= 1);
+    }
+}
+/// One `agent` fork of this session that has not yet reached its
+/// `SubagentStop` dispatch. Released on drop.
+pub struct ForkInFlight(tokio::sync::watch::Sender<usize>);
+impl Drop for ForkInFlight {
+    fn drop(&mut self) {
+        self.0.send_modify(|forks| *forks -= 1);
+    }
 }
 pub struct SubagentHandle {
     pub subagent_id: JsString,
@@ -649,12 +669,52 @@ impl TranscriptWriter {
             test_sources: Mutex::new(None),
             closed: AtomicBool::new(false),
             retired: AtomicBool::new(false),
+            holds: tokio::sync::watch::channel(0).0,
+            forks: tokio::sync::watch::channel(0).0,
             inner: Mutex::new(WriterInner {
                 sequence: 0,
                 last_entry_id: None,
                 entry_ids: HashSet::new(),
                 recorder_domain: DomainState::default(),
             }),
+        }
+    }
+    /// The baseline's writer is one FIFO tail (`JsonlTranscriptWriter`): an
+    /// append queued behind a record settles only after that record did, and
+    /// a caller that acts on the earlier record's settlement (the gateway
+    /// timeout appending its run events once its status record is durable,
+    /// InProcessGateway.ts:1405-1431) acts before any later append's caller
+    /// resumes. A holder that stands for such a record keeps later
+    /// [`Self::settled`] waiters parked until it drops the hold.
+    pub fn hold_settlement(&self) -> SettlementHold {
+        self.holds.send_modify(|holds| *holds += 1);
+        SettlementHold(self.holds.clone())
+    }
+    /// Resolves once no [`SettlementHold`] is outstanding: an append that
+    /// was queued behind a held record is settled only from here on.
+    pub fn settled(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
+        let mut holds = self.holds.subscribe();
+        async move {
+            let _ = holds.wait_for(|holds| *holds == 0).await;
+        }
+    }
+    /// An `agent` fork of this session runs until it reaches its
+    /// `SubagentStop` dispatch. The baseline's aborted fork unwinds (abort,
+    /// sidechain teardown, parent completion record, `SubagentStop` start)
+    /// within the timed-out turn's own registry appends, so its hook events
+    /// still reach the turn's run (InProcessGateway.ts:1795-1815 keeps the
+    /// sink until those appends settle). Rust's fork unwinds through the
+    /// loop host and is slower; the timeout releases the turn's sink only
+    /// once its forks got there (bounded by the abort budget).
+    pub fn fork_in_flight(&self) -> ForkInFlight {
+        self.forks.send_modify(|forks| *forks += 1);
+        ForkInFlight(self.forks.clone())
+    }
+    /// Resolves once no [`ForkInFlight`] is outstanding.
+    pub fn forks_settled(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
+        let mut forks = self.forks.subscribe();
+        async move {
+            let _ = forks.wait_for(|forks| *forks == 0).await;
         }
     }
     /// Standalone recorder convenience constructor; integrations inject their
