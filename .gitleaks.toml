@@ -1,5 +1,5 @@
 # gitleaks 配置：继承默认规则，按值放行已知非密钥。
-# 10 条值级条目（8 条哈希 + 1 条 RFC 6455 nonce + 1 条 A8.3 测试 aesKey 字面量）用 regexTarget="secret" + ^…$ 精确放行；
+# 11 条值级条目（8 条哈希 + 2 条 WebSocket 握手 nonce + 1 条 A8.3 测试 aesKey 字面量）用 regexTarget="secret" + ^…$ 精确放行；
 # 5 条 PEM 片段条目是唯一例外，只用 match 子串语义——判据是「解码后真是私钥 DER 的开头」
 # （SEQUENCE + INTEGER 版本号 0/1 + AlgorithmIdentifier/私钥 OCTET STRING），不是按值的形状或前缀分桶，
 # 所以大写 hex / 128-hex / 带前缀的 sha256:… / 普通长 base64 都进不了这个桶。
@@ -116,3 +116,8 @@ regexes = [
   '''^EBESExQVFhcYGRobHB0eHw==$''',
   '''^MDAwMTAyMDMwNDA1MDYwNzA4MDkwYTBiMGMwZDBlMGY=$''',
 ]
+
+[[allowlists]]
+description = "scripts/bbx/run.mjs 的 raw 步骤手拼 WebSocket 升级请求时用的固定 Sec-WebSocket-Key（\"bbx-raw-key-0000\" 的 base64，可用 printf bbx-raw-key-0000 | base64 复算），是握手 nonce 不是凭据；值级精确放行"
+regexTarget = "secret"
+regexes = ['''^YmJ4LXJhdy1rZXktMDAwMA==$''']
