@@ -224,6 +224,8 @@ Rust 明确报错而不假装支持（文案是 Rust 自己的）：`update_sett
 
 ## 已知的坑
 
+- **推送前的 gitleaks 要看退出码，不能接管道**（2026-11-14 的一次失误）：`gitleaks … | tail -1 && git push …` 里 `&&` 看的是 `tail` 的退出码，gitleaks 报了 1 处命中，推送照样发生了（`991283d50..2bfa0c7a7`）。那处命中事后核对是 bbx `raw` 步骤里固定的 WebSocket 握手 nonce（`bbx-raw-key-0000` 的 base64），不是密钥，已按值加进 `.gitleaks.toml`。正确写法：`gitleaks git --log-opts="takeover/dev/takeover..<提交>" --no-banner >/dev/null 2>&1 && git push takeover <提交>:dev/takeover`；有命中先用 `-v --redact=80` 看是什么。
+
 - bbx 的 `ws` 步骤支持 `answer`：收集帧期间遇到匹配事件就按模板发请求（`{event.字段}` 引用触发事件），用于应答 `permission_request` / `elicitation_request`。说明在 `scripts/bbx/README.md`。
 - 重新构建后第一次起 Rust 二进制明显变慢，3 秒超时的场景会假失败。重建后先跑一次 `node scripts/bbx/check.mjs turn-text` 预热再跑全量。
 - 基线里第一层子代理的 `subagentDepth` 是 2（`OneShotSubagentPort.ts:155-159` 与 `SubagentRuntimeComposition.ts:59` 各加一次），所以 `maxDepth: 2` 时子代理拿不到 `agent` 工具，要 3 才能嵌套。与工具描述不符，但不属于崩溃或丢数据，Rust 照基线做（`tool-agent-nested`）。
