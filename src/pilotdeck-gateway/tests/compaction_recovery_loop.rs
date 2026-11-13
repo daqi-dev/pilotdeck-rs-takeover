@@ -449,7 +449,8 @@ fn actual_turn_recovers_and_retries_through_native_context() {
                 ));
                 continue;
             }
-            let operation = s(f(&message, "operation"));
+            // 操作名只在 payload.operation 里（基线的 module_call 帧没有顶层 operation）。
+            let operation = s(f(f(&message, "payload"), "operation"));
             let payload = match operation.as_str() {
                 "prepare_for_model"
                 | "try_auto_compact"
