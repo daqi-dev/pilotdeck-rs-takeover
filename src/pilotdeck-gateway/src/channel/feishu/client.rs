@@ -56,7 +56,7 @@ pub(crate) struct ApiClient {
     app_id: String,
     app_secret: String,
     base: String,
-    http: HttpClient,
+    http: FeishuHttp,
     clock: Arc<dyn Clock>,
     log: Log,
     token: Mutex<Option<CachedToken>>,
@@ -74,11 +74,22 @@ impl ApiClient {
             app_id,
             app_secret,
             base,
-            http: HttpClient::new(),
+            http: FeishuHttp {
+                legacy: HttpClient::new(),
+                network: None,
+            },
             clock,
             log,
             token: Mutex::new(None),
         }
+    }
+
+    pub(super) fn with_network(
+        mut self,
+        network: Arc<crate::channel::network::ChannelNetwork>,
+    ) -> Self {
+        self.http.network = Some(network);
+        self
     }
 
     fn has_credentials(&self) -> bool {
@@ -534,5 +545,90 @@ fn display(value: Option<&JsValue>) -> String {
         Some(JsValue::Array(_)) | Some(JsValue::Object(_)) => value
             .and_then(|value| crate::js_value::display(value).ok())
             .unwrap_or_else(|| "undefined".into()),
+    }
+}
+
+struct FeishuHttp {
+    legacy: HttpClient,
+    network: Option<Arc<crate::channel::network::ChannelNetwork>>,
+}
+impl FeishuHttp {
+    async fn request(
+        &self,
+        method: &str,
+        url: &str,
+        content_type: Option<&str>,
+        body: &str,
+        timeout: Duration,
+    ) -> Result<crate::channel::http_client::HttpResponse, String> {
+        self.send(method, url, content_type, None, body, timeout)
+            .await
+    }
+    async fn request_bearer(
+        &self,
+        method: &str,
+        url: &str,
+        content_type: Option<&str>,
+        bearer: &str,
+        body: &str,
+        timeout: Duration,
+    ) -> Result<crate::channel::http_client::HttpResponse, String> {
+        self.send(method, url, content_type, Some(bearer), body, timeout)
+            .await
+    }
+    async fn send(
+        &self,
+        method: &str,
+        url: &str,
+        content_type: Option<&str>,
+        bearer: Option<&str>,
+        body: &str,
+        timeout: Duration,
+    ) -> Result<crate::channel::http_client::HttpResponse, String> {
+        use crate::runtime::model::http::ModelHttpTransport;
+        use http_body_util::BodyExt;
+        let Some(network) = &self.network else {
+            return if let Some(bearer) = bearer {
+                self.legacy
+                    .request_bearer(method, url, content_type, bearer, body, timeout)
+                    .await
+            } else {
+                self.legacy
+                    .request(method, url, content_type, body, timeout)
+                    .await
+            };
+        };
+        let mut request = hyper::Request::builder().method(method).uri(url);
+        if let Some(value) = content_type {
+            request = request.header("Content-Type", value);
+        }
+        if let Some(value) = bearer {
+            request = request.header("Authorization", format!("Bearer {value}"));
+        }
+        let request = request
+            .body(http_body_util::Full::new(bytes::Bytes::from(
+                body.to_owned(),
+            )))
+            .map_err(|e| e.to_string())?;
+        tokio::time::timeout(timeout, async {
+            let response = network
+                .send(request)
+                .await
+                .map_err(|failure| format!("TypeError: {}", failure.message))?;
+            let status = response.status();
+            let body = response
+                .into_body()
+                .collect()
+                .await
+                .map_err(|e| e.to_string())?
+                .to_bytes();
+            Ok(crate::channel::http_client::HttpResponse {
+                status: status.as_u16(),
+                status_text: status.canonical_reason().unwrap_or(""),
+                body,
+            })
+        })
+        .await
+        .map_err(|_| "TimeoutError: The operation was aborted due to timeout".to_owned())?
     }
 }

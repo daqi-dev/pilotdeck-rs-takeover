@@ -1517,14 +1517,51 @@ fn metadata_reduce_supported(entry: &JsValue) -> AdapterResult<()> {
 /// never runs for those turn results. Message entries are still read there (the
 /// `metadata?.compactReplacement` probe runs before the flag), so only the
 /// `turn_result` arm is skipped.
-fn list_conversation_entry_supported(entry: &JsValue, before_boundary: bool) -> AdapterResult<()> {
+fn list_conversation_entry_supported(
+    entry: &JsValue,
+    before_boundary: bool,
+    completed_turn: bool,
+) -> AdapterResult<()> {
     let kind = lossy_value(field(entry, "type"));
     let ok = match kind.as_str() {
         "accepted_input" => {
-            matches!(field(entry, "messages"), JsValue::Array(m) if m.iter().all(message_supported))
+            if let JsValue::Array(messages) = field(entry, "messages") {
+                if !before_boundary {
+                    for message in messages {
+                        if nullish(message) {
+                            return Err(cannot_read(message, "content"));
+                        }
+                        if let JsValue::Array(blocks) = field(message, "content") {
+                            for block in blocks {
+                                if nullish(block) {
+                                    return Err(cannot_read(block, "type"));
+                                }
+                                if is_str(field(block, "type"), "tool_result") {
+                                    let content = field(block, "content");
+                                    if nullish(content) {
+                                        return Err(cannot_read(content, "map"));
+                                    }
+                                    if !matches!(content, JsValue::Array(_)) {
+                                        return Err(AdapterError::Type(
+                                            "tr.content.map is not a function".into(),
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                true
+            } else {
+                false
+            }
         }
         "assistant_message" | "tool_result_message" | "durable_message" => {
-            message_supported(field(entry, "message"))
+            let message = field(entry, "message");
+            if nullish(message) {
+                return Err(cannot_read(message, "metadata"));
+            }
+            !completed_turn || before_boundary || message_supported(message)
         }
         "turn_result" => {
             // Conversation finalize (cloneTurnResult) reads the result:
@@ -1908,7 +1945,11 @@ fn project_session_info(
     let last_boundary = last_compact_boundary_index(&transcript.entries)?;
     for (index, entry) in transcript.entries.iter().enumerate() {
         let before_boundary = last_boundary != -1 && (index as isize) < last_boundary;
-        list_conversation_entry_supported(entry, before_boundary)?;
+        let completed_turn = transcript.entries.iter().any(|candidate| {
+            is_str(field(candidate, "type"), "turn_result")
+                && same_value_zero(field(candidate, "turnId"), field(entry, "turnId"))
+        });
+        list_conversation_entry_supported(entry, before_boundary, completed_turn)?;
     }
     for entry in &transcript.entries {
         turn_summary_supported(entry)?;
@@ -1947,17 +1988,33 @@ fn project_session_info(
             && let JsValue::Array(messages) = field(entry, "messages")
         {
             for message in messages {
-                if let JsValue::Array(blocks) = field(message, "content") {
-                    for block in blocks {
-                        if field(block, "type")
-                            .as_string()
-                            .is_some_and(|t| t.equals_str("text"))
-                            && let Some(text) = field(block, "text").as_string()
-                        {
-                            let trimmed = js_trim_units(text.units());
-                            if !trimmed.is_empty() {
-                                prompts.push(JsString::from_utf16(trimmed.to_vec()));
-                            }
+                if nullish(message) {
+                    return Err(cannot_read(message, "content"));
+                }
+                let content = field(message, "content");
+                let blocks: &[JsValue] = match content {
+                    JsValue::Array(blocks) => blocks,
+                    value => std::slice::from_ref(value),
+                };
+                for block in blocks {
+                    if nullish(block) {
+                        return Err(cannot_read(block, "type"));
+                    }
+                    if is_str(field(block, "type"), "text")
+                        && field(block, "text").as_string().is_none()
+                    {
+                        return Err(AdapterError::Type(
+                            "block.text.trim is not a function".into(),
+                        ));
+                    }
+                    if field(block, "type")
+                        .as_string()
+                        .is_some_and(|t| t.equals_str("text"))
+                        && let Some(text) = field(block, "text").as_string()
+                    {
+                        let trimmed = js_trim_units(text.units());
+                        if !trimmed.is_empty() {
+                            prompts.push(JsString::from_utf16(trimmed.to_vec()));
                         }
                     }
                 }
@@ -2533,5 +2590,74 @@ mod coercion_depth_tests {
                 ]),
             ),
         ])
+    }
+}
+
+#[cfg(test)]
+mod list_shape_resume_tests {
+    use super::*;
+
+    fn run(second: &str) -> AdapterResult<Option<JsValue>> {
+        let first = parse_json(r#"{"type":"accepted_input","createdAt":"2026-01-01T00:00:00Z","sessionId":"s","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}"#).unwrap();
+        let entry = parse_json(second).unwrap();
+        project_session_info(
+            &StoredSession {
+                session_id: "s".into(),
+                last_modified: 1.0,
+                file_size: None,
+            },
+            &TranscriptRead {
+                entries: vec![first, entry],
+                diagnostics: vec![],
+            },
+        )
+    }
+
+    #[test]
+    fn incomplete_assistant_and_string_content_follow_observed_lazy_reads() {
+        for entry in [
+            r#"{"type":"assistant_message","message":42}"#,
+            r#"{"type":"assistant_message","message":{"content":[{"type":"text","text":42}]}}"#,
+            r#"{"type":"assistant_message","message":{"content":[null]}}"#,
+            r#"{"type":"accepted_input","messages":[{"content":"hello"}]}"#,
+            r#"{"type":"accepted_input","messages":[{"content":["hello"]}]}"#,
+        ] {
+            let info = run(entry)
+                .unwrap()
+                .expect("first prompt still projects session");
+            assert!(is_str(field(&info, "summary"), "hello"), "{entry}");
+        }
+    }
+
+    #[test]
+    fn malformed_values_fail_at_the_observed_property_read() {
+        for (entry, expected) in [
+            (
+                r#"{"type":"accepted_input","messages":[null]}"#,
+                "Cannot read properties of null (reading 'content')",
+            ),
+            (
+                r#"{"type":"accepted_input","messages":[42]}"#,
+                "Cannot read properties of undefined (reading 'type')",
+            ),
+            (
+                r#"{"type":"accepted_input","messages":[{"content":[null]}]}"#,
+                "Cannot read properties of null (reading 'type')",
+            ),
+            (
+                r#"{"type":"accepted_input","messages":[{"content":[{"type":"text","text":42}]}]}"#,
+                "block.text.trim is not a function",
+            ),
+            (
+                r#"{"type":"accepted_input","messages":[{"content":[{"type":"tool_result","content":42}]}]}"#,
+                "tr.content.map is not a function",
+            ),
+            (
+                r#"{"type":"assistant_message","message":null}"#,
+                "Cannot read properties of null (reading 'metadata')",
+            ),
+        ] {
+            assert_eq!(run(entry).unwrap_err().to_string(), expected, "{entry}");
+        }
     }
 }

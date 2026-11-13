@@ -5,8 +5,8 @@
 //! batching, the `ImChatSessionState` queue/generation, the A7 submit path
 //! and the Lark Open API outbound surface.
 //!
-//! Out of scope for this unit, each registered in the gateway-parity diff
-//! ledger: the Lark WS (`connectionMode: "stream"`) transport, attachment
+//! Remaining historical gaps registered in the gateway-parity diff
+//! ledger: attachment
 //! download/upload, the centralized system-command registry, `abortTurn` (the
 //! A7 port has no abort), and the streaming live-reply controller (a turn
 //! emits its final text once instead of editing a live message).
@@ -30,11 +30,16 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
 
 mod client;
 mod crypto;
+mod lifecycle;
 mod mapper;
 mod parse;
 mod render;
+mod stream;
+#[cfg(test)]
+mod stream_tests;
 #[cfg(test)]
 mod tests;
+mod wire;
 
 use client::{ApiClient, Log, SendResult};
 use mapper::{FeishuCommand, FeishuSessionMapper};
@@ -347,6 +352,12 @@ struct Runtime {
     slot: Option<Arc<FeishuWebhookSlot>>,
     /// `options.onStateChange` (ChannelAdapterBundle.createFeishu).
     on_state_change: Option<StateChange>,
+    network: Mutex<Arc<super::network::ChannelNetwork>>,
+    stream: Mutex<Option<Arc<stream::StreamOwner>>>,
+    owned: std::sync::atomic::AtomicBool,
+    lifecycle: Mutex<lifecycle::Lifecycle>,
+    stopped: tokio::sync::watch::Sender<bool>,
+    cleanup: Mutex<Option<lifecycle::CleanupReceipt>>,
 }
 
 impl Runtime {
@@ -379,13 +390,18 @@ impl Runtime {
             self.merge_config(config);
         }
         let options = self.options();
-        let api = Arc::new(ApiClient::new(
+        let api = ApiClient::new(
             options.app_id.clone(),
             options.app_secret.clone(),
             options.base_url.clone(),
             self.clock.clone(),
             self.logger.fn_handle(),
-        ));
+        );
+        let api = Arc::new(if self.owned.load(std::sync::atomic::Ordering::Acquire) {
+            api.with_network(self.network.lock().expect("feishu network").clone())
+        } else {
+            api
+        });
         *self.api.lock().expect("#1329 api mutex") = Some(api);
 
         // `pilotdeckServer.startAndTrack` publishes the active channel after
@@ -402,12 +418,27 @@ impl Runtime {
                  Configure adapters.feishu.appId/appSecret in pilotdeck.yaml.",
             );
         } else if options.connection_mode == "stream" {
-            // The Lark WS SDK is not ported; this is the TS fallback line for
-            // a WS start that did not come up.
+            // The fixed SDK start returns after scheduling its connection loop.
+            // Actual readiness is established by endpoint/WS traffic, never this log.
+            if options.app_id.starts_with("cli_")
+                && options.app_id.len() == 20
+                && options.app_id[4..].bytes().all(|b| b.is_ascii_hexdigit())
+            {
+                let network = self.network.lock().expect("feishu network").clone();
+                let owner = stream::StreamOwner::start(self.clone(), options.clone(), network);
+                *self.stream.lock().expect("feishu stream owner") = Some(owner);
+            } else {
+                self.log(
+                    "error",
+                    &format!("feishu: invalid appId: {}", options.app_id),
+                );
+            }
             self.log(
-                "warn",
-                "feishu: stream mode failed to start; falling back to webhook-only \
-                 (set adapters.feishu.connectionMode: webhook in pilotdeck.yaml to silence this).",
+                "info",
+                &format!(
+                    "feishu: stream mode connected (appId={})",
+                    mask_app_id(&options.app_id)
+                ),
             );
         } else {
             self.log(
@@ -500,6 +531,56 @@ impl Runtime {
         }
     }
 
+    /// Stream dispatch bypasses the webhook verification/decryption gate, as
+    /// SDK EventDispatcher.invoke(..., {needCheck:false}) does in the baseline.
+    fn handle_stream_event(self: &Arc<Self>, raw: &serde_json::Value) {
+        self.log("info", "feishu: ★ im.message.receive_v1 fired");
+        let message = raw
+            .get("message")
+            .or_else(|| raw.get("event").and_then(|e| e.get("message")));
+        let Some(message) = message else {
+            return;
+        };
+        let kind = message
+            .get("message_type")
+            .and_then(serde_json::Value::as_str);
+        if !parse::is_supported_type(kind) {
+            return;
+        }
+        let Some(chat_id) = message
+            .get("chat_id")
+            .and_then(serde_json::Value::as_str)
+            .filter(|v| !v.is_empty())
+        else {
+            return;
+        };
+        let Some(content) = message.get("content").and_then(serde_json::Value::as_str) else {
+            return;
+        };
+        let message_id = message
+            .get("message_id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned);
+        let event_id = message_id
+            .clone()
+            .unwrap_or_else(|| format!("stream:{chat_id}:{}", self.clock.now_ms()));
+        {
+            let mut state = self.state.lock().expect("feishu stream dedupe");
+            if !state.seen.remember(event_id.clone()) {
+                return;
+            }
+        }
+
+        self.enqueue_inbound(InboundMessage {
+            chat_id: chat_id.into(),
+            text: parse::extract_message_text(kind, Some(content)),
+            event_id,
+            message_id,
+            message_type: kind.map(str::to_owned),
+            content: Some(content.into()),
+        });
+    }
+
     // ----- inbound pipeline ------------------------------------------------
 
     fn enqueue_inbound(self: &Arc<Self>, input: InboundMessage) {
@@ -544,7 +625,7 @@ impl Runtime {
         let runtime = self.clone();
         let timer_chat = chat_id.clone();
         let timer_batch = batch.id;
-        tokio::spawn(async move {
+        self.spawn_task(async move {
             tokio::time::sleep(Duration::from_millis(delay)).await;
             runtime
                 .drain_inbound_batch(&timer_chat, timer_batch, timer_seq)
@@ -561,7 +642,7 @@ impl Runtime {
         if self.interaction.elicitation_pending(&chat_id) {
             let runtime = self.clone();
             let text = input.text.clone();
-            tokio::spawn(async move {
+            self.spawn_task(async move {
                 if let Err(error) = runtime.answer_pending_elicitation(&chat_id, &text).await {
                     runtime.log(
                         "error",
@@ -590,7 +671,7 @@ impl Runtime {
         };
         let runtime = self.clone();
         let text = input.text.clone();
-        tokio::spawn(async move {
+        self.spawn_task(async move {
             if let Err(error) = runtime.answer_pending_permission(&chat_id, &text).await {
                 runtime.log(
                     "error",
@@ -1012,72 +1093,103 @@ impl Runtime {
                 self.log("error", &format!("feishu: submitTurn error: {error}"));
                 live.handle_submit_failure("Failed to process this message. Please retry.");
             }
-            Ok(mut events) => loop {
-                match events.next().await {
-                    Ok(None) => break,
-                    Err(error) => {
-                        self.log("error", &format!("feishu: submitTurn error: {error}"));
-                        live.handle_submit_failure("Failed to process this message. Please retry.");
-                        break;
-                    }
-                    Ok(Some(event)) => {
-                        if !self.is_current(chat_id, turn.generation) {
+            Ok(events) => {
+                let owned = self.owned.load(std::sync::atomic::Ordering::Acquire);
+                let stream = Arc::new(tokio::sync::Mutex::new(Some(events)));
+                if owned {
+                    self.lifecycle
+                        .lock()
+                        .expect("feishu lifecycle")
+                        .streams
+                        .push(stream.clone());
+                }
+                let mut guard = stream.lock().await;
+                let events = guard.as_mut().expect("new feishu stream");
+                let mut completed = false;
+                loop {
+                    match events.next().await {
+                        Ok(None) => {
+                            completed = true;
                             break;
                         }
-                        match event_kind(&event).as_str() {
-                            "turn_started" => {
-                                let run_id = event
-                                    .get("runId")
-                                    .and_then(JsValue::as_string)
-                                    .map(|value| String::from_utf16_lossy(value.units()));
-                                self.set_active_run(
-                                    chat_id,
-                                    ActiveRun {
-                                        session_key: turn.session_key.clone(),
-                                        run_id,
-                                        generation: turn.generation,
-                                    },
-                                );
-                                live.handle_event(&event);
+                        Err(error) => {
+                            self.log("error", &format!("feishu: submitTurn error: {error}"));
+                            live.handle_submit_failure(
+                                "Failed to process this message. Please retry.",
+                            );
+                            break;
+                        }
+                        Ok(Some(event)) => {
+                            if !self.is_current(chat_id, turn.generation) {
+                                break;
                             }
-                            "elicitation_request" => {
-                                let question = self.interaction.elicitation_capture(
-                                    chat_id,
-                                    &turn.session_key,
-                                    &event,
-                                );
-                                live.handle_event(&event);
-                                self.send(chat_id, &question).await;
-                            }
-                            "permission_request" => {
-                                let question = self.interaction.permission_capture(
-                                    chat_id,
-                                    &turn.session_key,
-                                    &event,
-                                );
-                                live.handle_event(&event);
-                                if let Some(question) = question {
-                                    let delivered = self.send(chat_id, &question).await;
-                                    self.interaction.permission_confirm_initial(
+                            match event_kind(&event).as_str() {
+                                "turn_started" => {
+                                    let run_id = event
+                                        .get("runId")
+                                        .and_then(JsValue::as_string)
+                                        .map(|value| String::from_utf16_lossy(value.units()));
+                                    self.set_active_run(
                                         chat_id,
-                                        delivered,
-                                        request_id(&event).as_deref(),
+                                        ActiveRun {
+                                            session_key: turn.session_key.clone(),
+                                            run_id,
+                                            generation: turn.generation,
+                                        },
                                     );
+                                    live.handle_event(&event);
                                 }
-                            }
-                            "assistant_attachment" => {
-                                // The attachment itself is out of scope; the
-                                // controller still flushes the text it has.
-                                if !js_trim(&live.text).is_empty() {
-                                    self.send_final(chat_id, turn.generation, &live.text).await;
+                                "elicitation_request" => {
+                                    let question = self.interaction.elicitation_capture(
+                                        chat_id,
+                                        &turn.session_key,
+                                        &event,
+                                    );
+                                    live.handle_event(&event);
+                                    self.send(chat_id, &question).await;
                                 }
-                                live.text.clear();
+                                "permission_request" => {
+                                    let question = self.interaction.permission_capture(
+                                        chat_id,
+                                        &turn.session_key,
+                                        &event,
+                                    );
+                                    live.handle_event(&event);
+                                    if let Some(question) = question {
+                                        let delivered = self.send(chat_id, &question).await;
+                                        self.interaction.permission_confirm_initial(
+                                            chat_id,
+                                            delivered,
+                                            request_id(&event).as_deref(),
+                                        );
+                                    }
+                                }
+                                "assistant_attachment" => {
+                                    // The attachment itself is out of scope; the
+                                    // controller still flushes the text it has.
+                                    if !js_trim(&live.text).is_empty() {
+                                        self.send_final(chat_id, turn.generation, &live.text).await;
+                                    }
+                                    live.text.clear();
+                                }
+                                _ => live.handle_event(&event),
                             }
-                            _ => live.handle_event(&event),
                         }
                     }
                 }
-            },
+                // A naturally exhausted generator has no remaining turn owner.
+                // Interrupted/failed generators remain registered for stop/retry.
+                if completed {
+                    *guard = None;
+                }
+                if owned && completed {
+                    self.lifecycle
+                        .lock()
+                        .expect("feishu lifecycle")
+                        .streams
+                        .retain(|s| !Arc::ptr_eq(s, &stream));
+                }
+            }
         }
         // A turn that a `/new` (or a later turn) superseded while it was still
         // streaming: the buffered text — including the synthesized
@@ -1244,6 +1356,15 @@ impl FeishuChannel {
         )
     }
 
+    /// Native bundle shares the current proxy/CA dispatcher with all channels.
+    pub(crate) fn with_network(self, network: Arc<super::network::ChannelNetwork>) -> Self {
+        *self.runtime.network.lock().expect("feishu network") = network;
+        self.runtime
+            .owned
+            .store(true, std::sync::atomic::Ordering::Release);
+        self
+    }
+
     /// The parity seams: a deterministic clock, session-key uuid and slot.
     #[cfg(test)]
     pub(crate) fn with_seams(
@@ -1277,6 +1398,12 @@ impl FeishuChannel {
             active_chats: Arc::new(Mutex::new(HashSet::new())),
             slot,
             on_state_change,
+            network: Mutex::new(Arc::new(super::network::ChannelNetwork::default())),
+            stream: Mutex::new(None),
+            owned: std::sync::atomic::AtomicBool::new(false),
+            lifecycle: Mutex::new(lifecycle::Lifecycle::default()),
+            stopped: tokio::sync::watch::channel(false).0,
+            cleanup: Mutex::new(None),
         });
         // `activeFeishu = options.feishu` at GatewayServer construction: the
         // route answers on this runtime before `start()` runs.
@@ -1314,7 +1441,8 @@ impl ChannelAdapter for FeishuChannel {
         let runtime = self.runtime.clone();
         let key = self.key.clone();
         let delivery = delivery.clone();
-        Box::pin(async move {
+        let owner = runtime.clone();
+        let work = async move {
             let send = {
                 let runtime = runtime.clone();
                 move |chat_id: JsString, text: JsString| {
@@ -1327,7 +1455,16 @@ impl ChannelAdapter for FeishuChannel {
                 }
             };
             deliver_chat_cron_result(&delivery, &key, send).await
-        })
+        };
+        if owner.owned.load(std::sync::atomic::Ordering::Acquire) {
+            let (sender, receipt) = tokio::sync::oneshot::channel();
+            owner.spawn_task(async move {
+                let _ = sender.send(work.await);
+            });
+            Box::pin(async move { receipt.await.unwrap_or(false) })
+        } else {
+            Box::pin(work)
+        }
     }
 }
 
@@ -1339,7 +1476,22 @@ impl ChannelHandle for FeishuHandle {
     fn stop(&self, reason: &str) -> BoxFuture<Result<(), ChannelError>> {
         let reason = reason.to_owned();
         let runtime = self.runtime.clone();
+        let owned_cleanup = runtime
+            .owned
+            .load(std::sync::atomic::Ordering::Acquire)
+            .then(|| runtime.stop_owned());
+        let cleanup = runtime
+            .stream
+            .lock()
+            .expect("feishu stream owner")
+            .as_ref()
+            .map(|owner| owner.stop());
         Box::pin(async move {
+            if let Some(cleanup) = owned_cleanup {
+                cleanup.await?;
+            } else if let Some(cleanup) = cleanup {
+                cleanup.await?;
+            }
             runtime.log("info", &format!("feishu: stopping ({reason})"));
             // `pilotdeckServer.stopRunningChannel`: the active channel is
             // cleared for every stop but a hot reload, whose replacement is

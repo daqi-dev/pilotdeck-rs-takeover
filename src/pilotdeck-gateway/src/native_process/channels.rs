@@ -656,13 +656,16 @@ impl NativeChannels {
         let state = self.state.clone();
         let on_state_change =
             Arc::new(move |value: JsValue| state.save(feishu_key().as_js(), value));
-        Arc::new(FeishuChannel::for_assembly(
-            self.configured_feishu_options(config),
-            helper_interaction(self.interaction_responder.clone()),
-            self.feishu_slot.clone(),
-            saved.as_ref(),
-            Some(on_state_change),
-        ))
+        Arc::new(
+            FeishuChannel::for_assembly(
+                self.configured_feishu_options(config),
+                helper_interaction(self.interaction_responder.clone()),
+                self.feishu_slot.clone(),
+                saved.as_ref(),
+                Some(on_state_change),
+            )
+            .with_network(self.network.clone()),
+        )
     }
 
     /// `createFeishu`'s constructor argument: the `adapters.feishu` settings
