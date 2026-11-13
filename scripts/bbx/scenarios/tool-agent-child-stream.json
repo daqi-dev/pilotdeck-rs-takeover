@@ -1,0 +1,129 @@
+{
+  "name": "tool-agent-child-stream",
+  "about": "子代理模型流里的推理文本与流内错误怎样投影给父会话（agent/sub/SubAgentSession.ts:315-333 forwardActivity 把子代理的 model_event 包成 subagent_model_event；gateway/client/GatewayAgentEventProjector.ts:540-560 mapSubagentModelEvent：thinking_delta → agent_status:subagent_thinking_delta，error → agent_status:subagent_model_error）。turn-1：explore 子代理的回复带推理文本（reasoning）再给报告；turn-2：子代理的模型请求回 400（model/streaming/streamModel.ts:225-249 不可重试时 yield {type:error}），子代理以错误结束，父轮拿到工具错误结果后继续。 已知不稳：成功的子代理工具结果里带随机 UUID（subagentSessionId、transcriptRelativePath），本地分词器给它的 token 数逐次不同，基线自比时 s-child-1 收尾的 context_budget 估算值（used / displayUsed / usageTokens / localEstimateTokens / ratio / breakdown.total / breakdown.messages）不同，这些数值也写进会话文件，read_session_messages 回的 session.fileSize 随之差几个字节；两者声明为 volatile。子代理工具结果文本里还有 durationMs（diff.mjs 只抹数值不抹位数），它的位数随机器快慢变（两位或三位），工具结果的 resultBytes 和下一次模型请求的 content-length 随之差一个字节，同样声明（与 tool-agent 等同类场景一致）。",
+  "volatile": [
+    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|breakdown\\.total|breakdown\\.messages)$",
+    "\\.session\\.fileSize$",
+    "\\.resultBytes$",
+    "^\\$\\.provider\\.turn-1-after-tool\\[0\\]\\.headers\\.content-length$"
+  ],
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Tool run\"}"
+      }
+    },
+    {
+      "name": "child-think",
+      "when": [
+        "You are a subagent of PilotDeck",
+        "CHILD-THINK-1"
+      ],
+      "reply": {
+        "reasoning": "Considering which files to count.",
+        "text": "Scope: counted files.\nResult: there are 0 files.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "child-fail",
+      "when": [
+        "You are a subagent of PilotDeck",
+        "CHILD-FAIL-2"
+      ],
+      "reply": {
+        "status": 400,
+        "body": {
+          "error": {
+            "message": "bbx child model rejected",
+            "type": "invalid_request_error"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-1-after-tool",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_bbx_1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "turn-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_1",
+          "name": "agent",
+          "arguments": {
+            "description": "Count the files",
+            "prompt": "CHILD-THINK-1: report how many files exist.",
+            "subagent_type": "explore"
+          }
+        }
+      }
+    },
+    {
+      "name": "turn-2-after-tool",
+      "when": [
+        "turn-2:",
+        "\"tool_call_id\":\"call_bbx_2\""
+      ],
+      "reply": {
+        "text": "Done 2."
+      }
+    },
+    {
+      "name": "turn-2",
+      "when": [
+        "turn-2:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_bbx_2",
+          "name": "agent",
+          "arguments": {
+            "description": "Will fail",
+            "prompt": "CHILD-FAIL-2: this request is rejected.",
+            "subagent_type": "explore"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-child-1",
+        "channelKey": "test",
+        "message": "turn-1: run the tool"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-child-2",
+        "channelKey": "test",
+        "message": "turn-2: run the tool"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-child-1"
+      }
+    }
+  ]
+}

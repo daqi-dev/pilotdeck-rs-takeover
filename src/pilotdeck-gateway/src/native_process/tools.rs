@@ -1225,6 +1225,14 @@ impl SessionTools {
                     },
                 )
             }),
+            // AgentLoop.ts:2770-2784: with `includeToolProgress` the tool
+            // context's `progress` emits `tool_progress` through the loop's
+            // event emitter, the same buffer as the runtime's warnings.
+            event_emitter: self.events.clone().map(|events| {
+                Arc::new(move |event| {
+                    let _ = events.emit_current(event);
+                }) as EventSink
+            }),
             ..Default::default()
         };
         // `TurnRunner`'s `onCompactPersisted` (TurnRunner.ts:338-374): the

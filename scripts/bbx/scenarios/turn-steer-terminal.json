@@ -1,0 +1,120 @@
+{
+  "name": "turn-steer-terminal",
+  "about": "插话落在本轮的收尾阶段。s1：模型这一次本该收尾（纯文本，延迟 1.5 秒），收尾前发现邮箱里有插话（src/agent/loop/AgentLoop.ts:1862-1882），把插话并入、发 turn_continued（reason user_steer）再请求一次；插话在收到 model_selection_changed 时发出（它在请求真正发出之后；挂在更早的 model_request_started / context_budget 上时，Rust 的 model_request 记录要经 sidecar 一跳才落盘，与插话记录的先后取决于应答快慢）。s2：maxTurns=1，模型调 bash sleep 2，sleep 期间（tool_call_started 时）插话；工具批之后 2211-2230 的 maxTurns 检查先于下一次请求前取插话（399），轮次以 max_turns 结束，插话一直没被取出，src/agent/turn/TurnRunner.ts:158-173 closeSteerMailbox 把它作为 steer_unapplied（reason turn_ended）发出。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Steer end\"}"
+      }
+    },
+    {
+      "name": "s1-steered",
+      "when": [
+        "st-1:",
+        "steer-1: also add a closing line"
+      ],
+      "reply": {
+        "text": "Answer with the closing line."
+      }
+    },
+    {
+      "name": "s1",
+      "when": [
+        "st-1:"
+      ],
+      "reply": {
+        "text": "First answer.",
+        "delayMs": 1500
+      }
+    },
+    {
+      "name": "s2",
+      "when": [
+        "st-2:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_st2",
+          "name": "bash",
+          "arguments": {
+            "command": "sleep 2; echo slept",
+            "description": "sleep"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-st-1",
+        "channelKey": "test",
+        "runId": "run-st-1",
+        "message": "st-1: answer"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "model_selection_changed"
+          },
+          "ws": "steer_turn",
+          "params": {
+            "sessionKey": "s-st-1",
+            "runId": "run-st-1",
+            "itemId": "item-1",
+            "message": "steer-1: also add a closing line"
+          },
+          "count": 1
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-st-2",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-st-2",
+        "channelKey": "test",
+        "runId": "run-st-2",
+        "message": "st-2: answer",
+        "maxTurns": 1
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started"
+          },
+          "ws": "steer_turn",
+          "params": {
+            "sessionKey": "s-st-2",
+            "runId": "run-st-2",
+            "itemId": "item-2",
+            "message": "steer-2: never applied"
+          },
+          "count": 1
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-st-1"
+      }
+    }
+  ]
+}

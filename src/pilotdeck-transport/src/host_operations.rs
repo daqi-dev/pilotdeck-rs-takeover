@@ -270,15 +270,15 @@ fn compact_input(v: &CompactionIntent) -> JsValue {
         BudgetStage::Routed => "routed",
         BudgetStage::Recovery => "recovery",
     };
-    let trigger = match v.trigger {
-        CompactionTrigger::Auto => "auto",
-        CompactionTrigger::Reactive => "reactive",
-        CompactionTrigger::Manual => "manual",
-    };
-    let mut o = obj([
-        ("messages", messages(&v.messages)),
-        ("trigger", JsValue::from(trigger)),
-    ]);
+    let mut o = obj([("messages", messages(&v.messages))]);
+    if let Some(trigger) = v.trigger {
+        let trigger = match trigger {
+            CompactionTrigger::Auto => "auto",
+            CompactionTrigger::Reactive => "reactive",
+            CompactionTrigger::Manual => "manual",
+        };
+        put(&mut o, "trigger", JsValue::from(trigger));
+    }
     opt(&mut o, "sessionId", v.session_id.as_ref(), s);
     opt(&mut o, "turnId", v.turn_id.as_ref(), s);
     for (k, value) in [

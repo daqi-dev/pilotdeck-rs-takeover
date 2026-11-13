@@ -450,7 +450,7 @@ fn compact() -> CompactionIntent {
         session_id: Some("s".into()),
         turn_id: Some("t".into()),
         stage: BudgetStage::Recovery,
-        trigger: CompactionTrigger::Reactive,
+        trigger: Some(CompactionTrigger::Reactive),
         messages: vec![],
         max_context_tokens: Some(100.0),
         reserved_output_tokens: None,

@@ -1,0 +1,42 @@
+{
+  "name": "env-dump-request-tmpdir",
+  "about": "PILOTDECK_DUMP_REQUEST=1 时每次流式模型请求前把请求体写到系统临时目录（model/streaming/streamModel.ts:196-203：os.tmpdir()/pilotdeck_request_<Date.now()>.json，JSON.stringify(body, null, 2)，不带换行结尾，并在 stdout 打一行 [model-debug]）。bbx 只采 home 与 proj 两棵树，所以把 TMPDIR 指到 {HOME}/tmp，让临时文件落进被比较的树里（文件名里的毫秒时间戳由 diff.mjs 归一化）。标题生成走非流式的 complete()（streamModel.ts:86-140），不写转储；一轮纯文本对话只有一次流式请求，因此只有一个转储文件。 已知不一致（不在本场景里修，待人定）：Rust 的转储按已登记的安全偏离 A6.4-MODEL-DUMP-SECURE-001（R1 记为 2026-10-25 人批）写成 pilotdeck_request_<ms>_<pid>_<序号>.json、权限 600、内容是实际发出的请求体（基线是 buildModelRequest 的输出，含 model、不含合并后的 extraBody）；另外 Rust 在临时目录里建 pilotdeck-ledger-locks-<uid>/ 放会话文件写入栅栏（storage/transcript.rs:530-575，基线没有这个目录）。",
+  "env": {
+    "TMPDIR": "{HOME}/tmp",
+    "PILOTDECK_DUMP_REQUEST": "1"
+  },
+  "files": {
+    "home/tmp/.keep": ""
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Dump\"}"
+      }
+    },
+    {
+      "name": "main",
+      "when": [
+        "dump-1:"
+      ],
+      "reply": {
+        "text": "Dumped."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-dump",
+        "channelKey": "test",
+        "message": "dump-1: hello"
+      },
+      "timeout": 20000
+    }
+  ]
+}

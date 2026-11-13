@@ -1,6 +1,6 @@
 {
  "baseline": "cc7c4e6",
- "probeSyntax": "probe 里的每个字符串默认按子串在场景文件原文（JSON 文本，含转义）里查找；整串符合 ^/(.+)/([gimsuy]*)$ 的（以 / 开头、以 / 加可选标志结尾，如 /x/i）按 JavaScript 正则匹配，例如 \"/feishu/webhook\" 的结尾不是合法标志，仍按子串处理。observe 是在采集产物（_build/bbx/<场景>.<侧>.json）原文里找它的正则。where 是相对基线仓库根（resources/PilotDeck/）的「文件:行号」。",
+ "probeSyntax": "probe 里的每个字符串默认按子串在场景文件原文（JSON 文本，含转义）里查找；整串符合 ^/(.+)/([gimsuy]*)$ 的（以 / 开头、以 / 加可选标志结尾，如 /x/i）按 JavaScript 正则匹配，例如 \"/feishu/webhook\" 的结尾不是合法标志，仍按子串处理。observe 是在采集产物（_build/bbx/<场景>.<侧>.json）原文里找它的正则。where 是相对基线仓库根（resources/PilotDeck/）的「文件:行号」。 skip（可选）写明这一项不计入覆盖的理由（基线里没有产生它的代码路径、只在不在范围的部分出现、CLI / server 走不到等，带文件行号），coverage.mjs 把它单列为「不计」。",
  "dimensions": {
   "config": {
    "about": "全局配置文件 <PilotHome>/pilotdeck.yaml（PILOTDECK_CONFIG_PATH 可改路径）的全部键，到叶子键。来源：src/pilot/config/loadPilotConfig.ts 的 validateTopLevel 允许名单与各段 parse 函数（parseAgent、parseExtension、parseProxyConfig、parseTelemetryConfig）、src/model/config/parseModelConfig.ts + src/model/thinking/settings.ts（model 段）、src/pilot/config/parseMemoryConfig.ts / parseGatewayConfig.ts（gateway 与 adapters）/ parseToolsConfig.ts / parseModulesConfig.ts / parseRunPolicyConfig.ts、src/router/config/parseRouterConfig.ts、src/always-on/config/parseAlwaysOnConfig.ts、src/cron/config/parseCronConfig.ts；webui.* 来自 ui/server（gateway 只容忍）。交叉核对：每个 parse 函数里的 raw.xxx 读取与「未知键」允许名单逐个对过；grep 了直接读 YAML 的其它位置（sdkSessionSettings.ts、updateLocalSettings.ts、gatewaySetup.ts、dialog/commands.ts、SkillManager.ts）——前两者只读 agent 子集，见 sdk-session-config。动态键用 <provider>/<model>/<plugin>/<tier>/<root>/<slot>/<platform>/<tool> 表示。probe 是启发式：特异键名用「键:」；通用键名用「父键:…叶子键:」的正则，可能误报；不写 config 的场景用采集器的缺省配置，这些缺省键（schemaVersion、agent.model、model.providers… 等）不会被计入。可能遗漏：adapters.<platform>.extra 内部的平台特定键（由各渠道实现读取，见 channels 维度）；modules 的外部 catalog 子字段只在 note 里列出。",
@@ -2428,7 +2428,8 @@
       ".restore.tmp",
       ".replace.tmp"
      ],
-     "observe": "\\.(fork|restore|replace|rollback)\\.tmp"
+     "observe": "\\.(fork|restore|replace|rollback)\\.tmp",
+     "skip": "只在一次调用内部存在：fork / restore / replace 先写 .<id>.<uuid>.fork.tmp 等临时文件再原子改名（src/session/fork/NodeProjectSessionForkPort.ts:187 起），调用返回时已不存在；session-fork* / session-restore / session-replace-* 场景比较结束后的整棵树，Rust 若留下临时文件会以多出的文件报差异，所以「不留下」已经在比。文件名含随机 UUID，中途也无法稳定观察。"
     },
     {
      "id": "home:projects/<projectId>/plans/",
@@ -2446,7 +2447,8 @@
      "probe": [
       "/\\.pilotdeck\\/runtime\\//"
      ],
-     "observe": "\\.pilotdeck/runtime/"
+     "observe": "\\.pilotdeck/runtime/",
+     "skip": "CLI / server 里走不到：回落目录只由 ensureWritableDirectory 在首选目录不可写时用（src/pilot/writablePaths.ts:20-34、75-86）。两个调用方：计划文件管理器只在传了 pilotHome 且没传 storage 时才走它（src/tool/builtin/planFile.ts:26-46），唯一的构造点 src/cli/SessionPlanTodoBundle.ts:38-41 两样都不满足（缺省会话的计划目录实测是 <项目根>/.pilotdeck/plans）；resolveBrowserUseOutputDir（src/cli/createLocalGateway.ts:555-567）没有调用方，browser-use 实际用 BrowserUseSessionMcpSpecPreparer 的 <项目根>/.pilotdeck/browser_screenshots，建不了目录时整轮失败、不回落。"
     },
     {
      "id": "home:runs/registry.json",
@@ -2731,7 +2733,8 @@
      "probe": [
       "matrix-bot-storage.json"
      ],
-     "observe": "matrix-bot-storage\\.json"
+     "observe": "matrix-bot-storage\\.json",
+     "skip": "不在范围：Matrix 渠道生产实现的同步状态（src/adapters/channel/matrix/MatrixChannel.ts:54），要连上真实 Matrix 服务器才会写。"
     },
     {
      "id": "home:im-attachments/",
@@ -2740,7 +2743,8 @@
      "probe": [
       "im-attachments"
      ],
-     "observe": "im-attachments/"
+     "observe": "im-attachments/",
+     "skip": "不在范围：飞书 / 微信渠道收到附件时的落盘目录（src/adapters/channel/feishu/FeishuChannel.ts:167），要渠道真实收到消息。"
     },
     {
      "id": "home:browser_screenshots/<projectId>/<sessionId>/",
@@ -2758,7 +2762,8 @@
      "probe": [
       "playwright-browsers"
      ],
-     "observe": "playwright-browsers"
+     "observe": "playwright-browsers",
+     "skip": "做不到（需要真实外部服务）：browser-use 插件安装脚本下载浏览器的目录（src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs:51），安装要联网下载。"
     },
     {
      "id": "home:funasr/",
@@ -2786,7 +2791,8 @@
       "project-bindings.json",
       "sops.json"
      ],
-     "observe": "staffdeck/"
+     "observe": "staffdeck/",
+     "skip": "不在范围：StaffDeck 项目绑定存储（src/pilot/staffdeck/projectBinding.ts:18），StaffDeck 不做（2026-11-12 人定）。"
     },
     {
      "id": "home:sop/",
@@ -2795,7 +2801,8 @@
      "probe": [
       "/\\.pilotdeck\\/sop\\//"
      ],
-     "observe": "\\.pilotdeck/sop/"
+     "observe": "\\.pilotdeck/sop/",
+     "skip": "不在范围：SOP 模块（StaffDeck 工作流）的状态根，只在 modules.sop 配齐 endpoint / definitionsPath / defaultSopId 时出现（src/pilot/config/parseModulesConfig.ts:324-331），由 src/sop/staffdeck/ 下的 SopAgentLoop / StaffDeckSopControlPlane 使用，开启需要 StaffDeck 外部服务；StaffDeck 不做（2026-11-12 人定）。sop-disabled 等场景比的是模块未开启时的表现。"
     },
     {
      "id": "home:auth.db",
@@ -2805,7 +2812,8 @@
       "auth.db",
       "DATABASE_PATH"
      ],
-     "observe": "auth\\.db"
+     "observe": "auth\\.db",
+     "skip": "不在范围：ui/server（阶段 B）的认证数据库；gateway 只为 StaffDeck 副本校验读其中的安装所有者（src/cli/createLocalGateway.ts:778）。"
     },
     {
      "id": "project:.pilotdeck/pilotdeck.yaml",
@@ -2982,7 +2990,8 @@
       ".pilotdeck/spill",
       ".pilotdeck/artifact"
      ],
-     "observe": "\\.pilotdeck/(control|spill|artifact)/"
+     "observe": "\\.pilotdeck/(control|spill|artifact)/",
+     "skip": "CLI / server 里走不到：只在配置了 sessionExecutionProvider 与 sessionExecutionStorageRoot 时建（src/cli/ProjectRuntimeResourcesBundle.ts:276-331），这两个选项只能由嵌入方传给 createLocalGateway，pilotdeck CLI 的任何入口都不传（grep sessionExecutionProvider 只有 createLocalGateway / ProjectRuntime* / LocalGateway* 的转发）。"
     },
     {
      "id": "storage:<PILOTDECK_STORAGE_ROOT>/workspaces/<ws>/sessions/<s>/llm/invocations.jsonl",
@@ -3023,14 +3032,16 @@
      "where": "src/gateway/client/GatewayToolResultArtifactStore.ts:32",
      "note": "GatewayToolResultArtifactStore 的缺省根（gateway 实际传 pilotdeck-tool-output/<pid>）。",
      "probe": [],
-     "observe": "pilotdeck-tool-results"
+     "observe": "pilotdeck-tool-results",
+     "skip": "CLI / server 里走不到：缺省根 tmpdir()/pilotdeck-tool-results 只在不给 rootDir 时用（src/gateway/client/GatewayToolResultArtifactStore.ts:32）。createLocalGateway 总是传 tmpdir()/pilotdeck-tool-output/<pid>（src/cli/createLocalGateway.ts:924-926，即 tmp:pilotdeck-tool-output 一项）；不传的只有测试用的 mapAgentEvent 门面（GatewayAgentEventProjector.ts:50-70）和没有调用方的 createGateway（src/gateway/Gateway.ts:45-70）。"
     },
     {
      "id": "tmp:pilotdeck_execution_*/",
      "where": "src/tool/execution-world/NodeExecutionWorkspacePort.ts:11",
      "note": "execute_code 等的临时执行工作区（mkdtemp，用完清理）。",
      "probe": [],
-     "observe": "pilotdeck_execution_"
+     "observe": "pilotdeck_execution_",
+     "skip": "CLI / server 里走不到：缺省前缀 pilotdeck_execution_ 只在调用方不给 prefix 时用（src/tool/execution-world/NodeExecutionWorkspacePort.ts:11）；唯一的调用方 execute_code 总是传 pilotdeck_execute_code_（src/tool/builtin/executeCode.ts:424-425），那个目录由 tool-execute-code* 场景覆盖（diff.mjs 第 7 条归一化它的随机后缀）。"
     },
     {
      "id": "tmp:pilotdeck-sdk-ephemeral-*/",
@@ -3075,7 +3086,8 @@
      "probe": [
       ".edgeclaw"
      ],
-     "observe": "\\.edgeclaw"
+     "observe": "\\.edgeclaw",
+     "skip": "CLI / server 里走不到：记忆核心只在 rootDir 为空时才用 ~/.edgeclaw/memory（src/context/memory/edgeclaw-memory-core/src/service.ts:169-171、619），唯一的构造点 src/context/memory/createEdgeClawMemoryProviderFromConfig.ts:50-57 传 cfg.rootDir，而 src/pilot/config/parseMemoryConfig.ts:71 总给它缺省值，配置写空串时 230-237 直接报 CONFIG_MEMORY_VALUE_INVALID。"
     }
    ]
   },
@@ -7104,8 +7116,11 @@
     {
      "id": "frame:hello",
      "where": "src/gateway/protocol/frames.ts:6",
-     "note": "客户端握手帧：protocolVersion、clientName（cli|tui|web|feishu|sdk|test）、clientVersion、token。",
-     "probe": [],
+     "note": "客户端握手帧：protocolVersion、clientName（cli|tui|web|feishu|sdk|test）、clientVersion、token。是客户端发出的输入，采集器每次建连都发（scripts/bbx/run.mjs connect），但产物不记录发出的帧，所以按场景里的 ws / connect 步骤算碰到。",
+     "probe": [
+      "\"ws\":",
+      "\"connect\":"
+     ],
      "observe": "\"type\": ?\"hello\""
     },
     {
@@ -7118,8 +7133,10 @@
     {
      "id": "frame:request",
      "where": "src/gateway/protocol/frames.ts:125",
-     "note": "客户端请求帧：id、method（ws-methods 之一）、params。",
-     "probe": [],
+     "note": "客户端请求帧：id、method（ws-methods 之一）、params。是客户端发出的输入，采集器每个 ws 步骤都发（scripts/bbx/run.mjs 的 ws 步骤），产物不记录发出的帧，所以按场景里的 ws 步骤算碰到。",
+     "probe": [
+      "\"ws\":"
+     ],
      "observe": "\"type\": ?\"request\""
     },
     {
@@ -7197,7 +7214,8 @@
      "where": "src/gateway/protocol/types.ts:588",
      "note": "助手流结束标记。",
      "probe": [],
-     "observe": "\"type\": ?\"assistant_stream_end\""
+     "observe": "\"type\": ?\"assistant_stream_end\"",
+     "skip": "基线没有产生它的代码路径：GatewayEvent 联合成员（src/gateway/protocol/types.ts:588），全仓库没有任何地方发出 type:\"assistant_stream_end\"（grep 只有这一处类型声明）。"
     },
     {
      "id": "event:assistant_text_delta",
@@ -7358,21 +7376,24 @@
      "where": "src/gateway/protocol/types.ts:737",
      "note": "配置变化事件（同名通知见 notification:config_changed）。",
      "probe": [],
-     "observe": "\"type\": ?\"config_changed\""
+     "observe": "\"type\": ?\"config_changed\"",
+     "skip": "GatewayEvent 联合里的成员（src/gateway/protocol/types.ts:737），基线没有任何地方以事件帧发出 type:\"config_changed\"；配置变化只走同名通知（notification:config_changed，src/cli/GatewayRuntimeRefreshBundle.ts:102）。"
     },
     {
      "id": "event:worktree_created",
      "where": "src/gateway/protocol/types.ts:738",
      "note": "worktree 创建（同名通知）。",
      "probe": [],
-     "observe": "\"type\": ?\"worktree_created\""
+     "observe": "\"type\": ?\"worktree_created\"",
+     "skip": "GatewayEvent 联合里的成员（src/gateway/protocol/types.ts:738），基线没有任何地方以事件帧发出；worktree 创建只走同名通知（notification:worktree_created，src/cli/pilotdeck.ts:76-78 deferredBroadcast）。"
     },
     {
      "id": "event:worktree_removed",
      "where": "src/gateway/protocol/types.ts:739",
      "note": "worktree 删除（同名通知）。",
      "probe": [],
-     "observe": "\"type\": ?\"worktree_removed\""
+     "observe": "\"type\": ?\"worktree_removed\"",
+     "skip": "GatewayEvent 联合里的成员（src/gateway/protocol/types.ts:739），基线没有任何地方以事件帧发出；worktree 删除只走同名通知（notification:worktree_removed，src/cli/pilotdeck.ts:79-81）。"
     },
     {
      "id": "event:context_budget",
@@ -7421,7 +7442,8 @@
      "where": "src/gateway/client/GatewayAgentEventProjector.ts:254",
      "note": "模型恢复失败。",
      "probe": [],
-     "observe": "\"event\": ?\"model_recovery_failed\""
+     "observe": "\"event\": ?\"model_recovery_failed\"",
+     "skip": "基线没有产生它的代码路径：投影器有这个 case（src/gateway/client/GatewayAgentEventProjector.ts:251-262），但 AgentEvent 的 model_recovery_failed（src/agent/protocol/events.ts:102）在全仓库没有任何发出点（grep type: \"model_recovery_failed\" 只有类型声明与投影 case）。"
     },
     {
      "id": "agent_status:compact_started",
@@ -7673,7 +7695,8 @@
      "where": "src/adapters/channel/feishu/FeishuChannel.ts:630",
      "note": "IM 渠道提交失败（飞书、微信）。",
      "probe": [],
-     "observe": "\"event\": ?\"channel_submit_failed\""
+     "observe": "\"event\": ?\"channel_submit_failed\"",
+     "skip": "不在范围：只由飞书 / 微信等 IM 渠道的生产实现发出（src/adapters/channel/feishu/FeishuChannel.ts:630），触发需要渠道真实收到消息；渠道只对齐启动表现（2026-11-12 人定）。"
     },
     {
      "id": "notification:config_changed",
@@ -7708,7 +7731,8 @@
      "where": "src/cli/pilotdeck.ts:80",
      "note": "worktree 删除时广播。",
      "probe": [],
-     "observe": "\"name\": ?\"worktree_removed\""
+     "observe": "\"name\": ?\"worktree_removed\"",
+     "skip": "基线没有产生它的代码路径：只在 GitWorktreeProvider.dispose 里广播（src/always-on/workspace/GitWorktreeProvider.ts:86-88 onWorktreeRemoved → src/cli/pilotdeck.ts:79-81），而 WorkspaceProvider 的 dispose 在全仓库没有调用方（grep \"dispose(\" 只有各 provider 的定义），工作区建好后一直保留。always-on-fire-git 证明 worktree_created 会发、工作区留在 always-on/worktrees 下。"
     },
     {
      "id": "notification:always-on:turn-event",
@@ -8107,7 +8131,8 @@
      "probe": [
       "microcompact_boundary"
      ],
-     "observe": "microcompact_boundary"
+     "observe": "microcompact_boundary",
+     "skip": "基线没有产生它的代码路径：control_boundary 的 subtype 联合成员（src/session/transcript/TranscriptEntry.ts:404），全仓库没有写出 microcompact_boundary 的地方（grep 实查，微压缩不落边界记录），也没有读取方按它分支。"
     },
     {
      "id": "transcript:session_metadata.title",
@@ -8205,7 +8230,8 @@
      "where": "src/session/transcript/TranscriptEntry.ts:415",
      "note": "session_metadata.metadata.staffDeckAdmission。",
      "probe": [],
-     "observe": "\\\\?\"staffDeckAdmission\\\\?\":"
+     "observe": "\\\\?\"staffDeckAdmission\\\\?\":",
+     "skip": "不在范围：只由 StaffDeck 的会话准入写出（src/cli/ProjectSessionFactory.ts:138 sessionAdmission），StaffDeck 不做（2026-11-12 人定）。"
     },
     {
      "id": "transcript:session_metadata.updatedAt",
@@ -14208,70 +14234,71 @@
      "where": "src/agent/protocol/result.ts:11",
      "note": "AgentStopReason 取值 completed（即 turn_completed.finishReason）。",
      "probe": [],
-     "observe": "\"finishReason\": ?\"completed\""
+     "observe": "\"(finishReason|stopReason)\": ?\"completed\""
     },
     {
      "id": "loop:stopReason:max_turns",
      "where": "src/agent/protocol/result.ts:12",
      "note": "AgentStopReason 取值 max_turns（即 turn_completed.finishReason）。",
      "probe": [],
-     "observe": "\"finishReason\": ?\"max_turns\""
+     "observe": "\"(finishReason|stopReason)\": ?\"max_turns\""
     },
     {
      "id": "loop:stopReason:max_budget",
      "where": "src/agent/protocol/result.ts:13",
      "note": "AgentStopReason 取值 max_budget（即 turn_completed.finishReason）。",
      "probe": [],
-     "observe": "\"finishReason\": ?\"max_budget\""
+     "observe": "\"(finishReason|stopReason)\": ?\"max_budget\""
     },
     {
      "id": "loop:stopReason:task_budget",
      "where": "src/agent/protocol/result.ts:14",
      "note": "AgentStopReason 取值 task_budget（即 turn_completed.finishReason）。",
      "probe": [],
-     "observe": "\"finishReason\": ?\"task_budget\""
+     "observe": "\"(finishReason|stopReason)\": ?\"task_budget\""
     },
     {
      "id": "loop:stopReason:aborted_streaming",
      "where": "src/agent/protocol/result.ts:15",
      "note": "AgentStopReason 取值 aborted_streaming（即 turn_completed.finishReason）。",
      "probe": [],
-     "observe": "\"finishReason\": ?\"aborted_streaming\""
+     "observe": "\"(finishReason|stopReason)\": ?\"aborted_streaming\""
     },
     {
      "id": "loop:stopReason:aborted_tools",
      "where": "src/agent/protocol/result.ts:16",
      "note": "AgentStopReason 取值 aborted_tools（即 turn_completed.finishReason）。类型里有，但 AgentLoop 里没有任何分支产生它。",
      "probe": [],
-     "observe": "\"finishReason\": ?\"aborted_tools\""
+     "observe": "\"(finishReason|stopReason)\": ?\"aborted_tools\""
     },
     {
      "id": "loop:stopReason:model_error",
      "where": "src/agent/protocol/result.ts:17",
      "note": "AgentStopReason 取值 model_error（即 turn_completed.finishReason）。",
      "probe": [],
-     "observe": "\"finishReason\": ?\"model_error\""
+     "observe": "\"(finishReason|stopReason)\": ?\"model_error\""
     },
     {
      "id": "loop:stopReason:prompt_too_long",
      "where": "src/agent/protocol/result.ts:18",
      "note": "AgentStopReason 取值 prompt_too_long（即 turn_completed.finishReason）。",
      "probe": [],
-     "observe": "\"finishReason\": ?\"prompt_too_long\""
+     "observe": "\"(finishReason|stopReason)\": ?\"prompt_too_long\""
     },
     {
      "id": "loop:stopReason:tool_error",
      "where": "src/agent/protocol/result.ts:19",
      "note": "AgentStopReason 取值 tool_error（即 turn_completed.finishReason）。",
      "probe": [],
-     "observe": "\"finishReason\": ?\"tool_error\""
+     "observe": "\"(finishReason|stopReason)\": ?\"tool_error\""
     },
     {
      "id": "loop:stopReason:unsupported_recovery",
      "where": "src/agent/protocol/result.ts:20",
      "note": "AgentStopReason 取值 unsupported_recovery（即 turn_completed.finishReason）。类型里有，但 AgentLoop 里没有任何分支产生它。",
      "probe": [],
-     "observe": "\"finishReason\": ?\"unsupported_recovery\""
+     "observe": "\"(finishReason|stopReason)\": ?\"unsupported_recovery\"",
+     "skip": "基线没有产生它的代码路径：AgentStopReason 联合里的取值（src/agent/protocol/result.ts:20），全仓库除这一处类型声明外没有任何地方写出 \"unsupported_recovery\"（grep 实查）。"
     },
     {
      "id": "loop:turn_continued:next_turn",
@@ -14292,21 +14319,24 @@
      "where": "src/agent/protocol/state.ts:7",
      "note": "turn_continued.reason 取值 max_turns（agent_status turn_continued 的 detail.reason）。类型里有，但循环里不以此为 reason 发 turn_continued。",
      "probe": [],
-     "observe": "\"reason\": ?\"max_turns\""
+     "observe": "\"reason\": ?\"max_turns\"",
+     "skip": "基线没有产生它的代码路径：AgentLoopTransitionReason 联合成员（src/agent/protocol/state.ts:4-11），AgentLoop 发出的 turn_continued 只用 next_turn、model_error、auto_compact、user_steer 四种（src/agent/loop/AgentLoop.ts 全部 type:\"turn_continued\" 处 grep 实查），max_turns 在 max_turns / 中止路径上是 stopReason，不是转移原因。"
     },
     {
      "id": "loop:turn_continued:aborted_streaming",
      "where": "src/agent/protocol/state.ts:8",
      "note": "turn_continued.reason 取值 aborted_streaming（agent_status turn_continued 的 detail.reason）。类型里有，但循环里不以此为 reason 发 turn_continued。",
      "probe": [],
-     "observe": "\"reason\": ?\"aborted_streaming\""
+     "observe": "\"reason\": ?\"aborted_streaming\"",
+     "skip": "基线没有产生它的代码路径：AgentLoopTransitionReason 联合成员（src/agent/protocol/state.ts:4-11），AgentLoop 发出的 turn_continued 只用 next_turn、model_error、auto_compact、user_steer 四种（src/agent/loop/AgentLoop.ts 全部 type:\"turn_continued\" 处 grep 实查），aborted_streaming 在 max_turns / 中止路径上是 stopReason，不是转移原因。"
     },
     {
      "id": "loop:turn_continued:aborted_tools",
      "where": "src/agent/protocol/state.ts:9",
      "note": "turn_continued.reason 取值 aborted_tools（agent_status turn_continued 的 detail.reason）。类型里有，但循环里不以此为 reason 发 turn_continued。",
      "probe": [],
-     "observe": "\"reason\": ?\"aborted_tools\""
+     "observe": "\"reason\": ?\"aborted_tools\"",
+     "skip": "基线没有产生它的代码路径：AgentLoopTransitionReason 联合成员（src/agent/protocol/state.ts:4-11），AgentLoop 发出的 turn_continued 只用 next_turn、model_error、auto_compact、user_steer 四种（src/agent/loop/AgentLoop.ts 全部 type:\"turn_continued\" 处 grep 实查），aborted_tools 在 max_turns / 中止路径上是 stopReason，不是转移原因。"
     },
     {
      "id": "loop:turn_continued:auto_compact",
@@ -14327,7 +14357,8 @@
      "where": "src/agent/protocol/errors.ts:2",
      "note": "AgentErrorCode agent_aborted（turn_result.errors[].code / error 事件 code）。",
      "probe": [],
-     "observe": "agent_aborted"
+     "observe": "agent_aborted",
+     "skip": "基线没有产生它的代码路径：只有投影器的 session_aborted 分支写出这个码（src/gateway/client/GatewayAgentEventProjector.ts:263-269），而 AgentEvent session_aborted（src/agent/protocol/events.ts:149）在全仓库没有发出点（grep 只有类型、投影、遥测与 InProcessGateway.ts:1643 的读取）；TurnRunner.ts:476 只是按这个码选 stopReason。"
     },
     {
      "id": "loop:agentError:agent_max_turns_reached",
@@ -14362,7 +14393,8 @@
      "where": "src/agent/protocol/errors.ts:7",
      "note": "AgentErrorCode agent_model_capability_error（turn_result.errors[].code / error 事件 code）。",
      "probe": [],
-     "observe": "agent_model_capability_error"
+     "observe": "agent_model_capability_error",
+     "skip": "基线没有产生它的代码路径：AgentErrorCode 联合里的取值（src/agent/protocol/errors.ts:7），全仓库没有任何 agentError(\"agent_model_capability_error\", …) 或同名字面量的写出点（grep 实查）。"
     },
     {
      "id": "loop:agentError:agent_prompt_too_long",
@@ -14383,7 +14415,8 @@
      "where": "src/agent/protocol/errors.ts:10",
      "note": "AgentErrorCode agent_tool_result_pairing_failed（turn_result.errors[].code / error 事件 code）。",
      "probe": [],
-     "observe": "agent_tool_result_pairing_failed"
+     "observe": "agent_tool_result_pairing_failed",
+     "skip": "基线没有产生它的代码路径：AgentErrorCode 联合里的取值（src/agent/protocol/errors.ts:10），ensureToolResultPairing 只做修补不报这个码，全仓库没有它的写出点（grep 实查）。"
     },
     {
      "id": "loop:agentError:agent_transcript_error",

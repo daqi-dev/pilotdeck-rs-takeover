@@ -1,0 +1,52 @@
+{
+  "name": "loop-repaired-tool-call-exhausted",
+  "about": "工具参数 JSON 被截断、jsonrepair 补全后（hasRepairedToolCalls）且结束原因是 tool_calls（归一成 tool_call；length 时 OpenAI 流解析直接报 max_output_reached 走流中断恢复，不到这里）：src/agent/loop/AgentLoop.ts:1168-1260 不执行补全出来的调用，先试一次输出上限翻倍（Phase A，token_cap_adjusted reason max-output-retry-bump），再最多 50 次续写提示（Phase B，MAX_OUTPUT_RECOVERY_LIMIT=50，456-478），仍旧截断就以 agent_model_error（Recovered tool call still looked repaired/truncated…）结束并发 agent_status:tool_call_recovery_exhausted（3641-3660，detail.attempts=50、reason repaired_truncated_tool_calls）。工具用 read_file（不是写文件类，LargeFileRepair.recoverFromRepairedTruncation 不接管）。provider 每次都回同一个截断参数。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "files": {
+    "home/.pilotdeck/a.txt": "alpha\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Repair\"}"
+      }
+    },
+    {
+      "name": "cut",
+      "when": [
+        "rx-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_rx",
+          "name": "read_file",
+          "rawArguments": "{\"file_path\": \"a.txt"
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-rx",
+        "channelKey": "test",
+        "message": "rx-1: read it"
+      },
+      "timeout": 120000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-rx"
+      }
+    }
+  ]
+}

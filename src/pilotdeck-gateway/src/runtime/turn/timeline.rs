@@ -483,12 +483,38 @@ fn model_event_tool_call_end(event: &JsObject) -> bool {
 /// without a revision bump; a new block allocates one and bumps the revision
 /// like any other located event. The module-owned marking stays with the
 /// caller's existing `mark_module_message`, which is its TS equivalent.
-pub(crate) fn project_terminal_message(timeline: &mut TurnTimeline, message: &mut JsObject) {
+///
+/// `located_only` is the built-in loop the baseline runs in-process: there is
+/// no terminal projection, and a final-message block carries a coordinate only
+/// if the loop's own timeline located it (`TurnTimeline.message` on a durable
+/// or emitted message). A block the loop never emitted — the response the
+/// repaired-tool-call gate refuses, AgentLoop.ts:1168-1260 — stays without
+/// one, so only blocks that arrive with a child coordinate are re-positioned.
+pub(crate) fn project_terminal_message(
+    timeline: &mut TurnTimeline,
+    message: &mut JsObject,
+    located_only: bool,
+) {
+    let located: Vec<bool> = match message.get("content") {
+        Some(JsValue::Array(blocks)) => blocks
+            .iter()
+            .map(|block| {
+                block
+                    .as_object()
+                    .and_then(|fields| fields.get("timeline"))
+                    .is_some_and(|timeline| !timeline.is_undefined())
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
     let mut projected = strip_message(message);
     let queue_item_id = queue_item_id(&projected);
     if let Some(JsValue::Array(blocks)) = projected.get("content") {
         let mut blocks = blocks.clone();
-        for block in &mut blocks {
+        for (index, block) in blocks.iter_mut().enumerate() {
+            if located_only && !located.get(index).copied().unwrap_or(false) {
+                continue;
+            }
             let Some(fields) = block.as_object() else {
                 continue;
             };

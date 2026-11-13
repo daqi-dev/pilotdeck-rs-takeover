@@ -269,7 +269,7 @@ fn budget_projection_omits_only_unsupplied_preview_slot_while_normal_keeps_it() 
                     session_id: Some("s".into()),
                     turn_id: Some("t".into()),
                     stage: BudgetStage::PreRoute,
-                    trigger: CompactionTrigger::Auto,
+                    trigger: Some(CompactionTrigger::Auto),
                     messages: vec![],
                     max_context_tokens: None,
                     reserved_output_tokens: None,

@@ -722,7 +722,10 @@ pub struct CompactionIntent {
     pub session_id: Option<JsString>,
     pub turn_id: Option<JsString>,
     pub stage: BudgetStage,
-    pub trigger: CompactionTrigger,
+    /// `None` leaves the field off the wire, like AgentLoop's own calls
+    /// (AgentLoop.ts:631, 751, 1516): the durable runtime then derives it
+    /// from `allowFallbackOnFailure` (durableContextRuntime.ts:72).
+    pub trigger: Option<CompactionTrigger>,
     pub messages: Vec<ProjectedMessage>,
     pub max_context_tokens: Option<f64>,
     pub reserved_output_tokens: Option<f64>,

@@ -18,6 +18,8 @@
 //                        位数本身逐次不同。取整和打印的写法由 Rust 侧单元测试负责
 //   7. 基线 execute_code 的两处随机路径段：mkdtemp 目录 pilotdeck_execute_code_XXXXXX 的随机后缀 → <tmp>，
 //      工具输出溢出目录 pilotdeck-tool-output/<进程号>/ → <pid>。只认这两个固定前缀
+//      同类的还有 PILOTDECK_DUMP_REQUEST 的转储文件名 pilotdeck_request_<毫秒>.json → pilotdeck_request_<ms>.json
+//      （上面第 3 条因为紧跟着「.」不抹它；只认这个前缀和后缀）
 //   9. 工作区快照：快照 id 由随机的轮次 id 散列得来（键 snapshotId，以及路径段 /snapshots/<64 位十六进制>）
 //      → <snap:N>，N 是它在该侧第一次出现的序号；快照恢复用的 mkdtemp 目录 .pilotdeck-restore-XXXXXX → <tmp>
 //   8. 标题记录的落点：会话 .jsonl 里由 provider 生成标题的那条 session_metadata 记录（metadata.titleSource
@@ -80,6 +82,7 @@ function normalizer() {
   }).replace(ISO, '<iso>').replace(/\(node:\d+\)/g, '(node:<pid>)')
     .replace(/(?<![\da-fA-F.])1[6-9]\d{11}(?![\da-fA-F.])/g, '<ms>')
     .replace(/pilotdeck_execute_code_[A-Za-z0-9]{6}/g, 'pilotdeck_execute_code_<tmp>')
+    .replace(/(pilotdeck_request_)1[6-9]\d{11}(\.json)/g, '$1<ms>$2')
     .replace(/\.pilotdeck-restore-[A-Za-z0-9]{6}/g, '.pilotdeck-restore-<tmp>')
     .replace(/(\/snapshots\/)([0-9a-f]{64})/g, (_, pre, id) => pre + snap(id))
     .replace(/(pilotdeck-tool-output\/)\d+\//g, '$1<pid>/')
