@@ -1,0 +1,313 @@
+{
+ "name": "params-submit-turn-cwd-type-tools",
+ "about": "submit_turn 带非字符串 workspaceCwd（数字 5、true、对象）时模型依次调 bash（相对路径写文件）、read_file、write_file（绝对路径）、glob。基线每个工具都在构造工具上下文时失败：sidecarToolContext.ts:124 的 buildTurnEnvironment 先 path.resolve(config.cwd)（TurnEnvironment.ts:15），抛 ERR_INVALID_ARG_TYPE「The \"paths[0]\" argument must be of type string. Received …」，工具结果是 TOOL_ERROR[tool_execution_failed][<工具>][environment_issue]，不弹权限询问，没有任何文件被写出（proj 下只有初始的 seed.txt）；模型答完后这一轮照 params-submit-turn-cwd-type 的路径以 turn_failed / agent_invalid_state 结束。",
+ "files": {
+  "proj/seed.txt": "seed line\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Cwd tools\"}"
+   }
+  },
+  {
+   "name": "num-5",
+   "when": [
+    "cwdtool-num:",
+    "\"tool_call_id\":\"call_num4\""
+   ],
+   "reply": {
+    "text": "done num"
+   }
+  },
+  {
+   "name": "num-4",
+   "when": [
+    "cwdtool-num:",
+    "\"tool_call_id\":\"call_num3\""
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_num4",
+     "name": "glob",
+     "arguments": {
+      "pattern": "*.txt"
+     }
+    }
+   }
+  },
+  {
+   "name": "num-3",
+   "when": [
+    "cwdtool-num:",
+    "\"tool_call_id\":\"call_num2\""
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_num3",
+     "name": "write_file",
+     "arguments": {
+      "file_path": "{PROJECT}/w-num.txt",
+      "content": "x\n"
+     }
+    }
+   }
+  },
+  {
+   "name": "num-2",
+   "when": [
+    "cwdtool-num:",
+    "\"tool_call_id\":\"call_num1\""
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_num2",
+     "name": "read_file",
+     "arguments": {
+      "file_path": "{PROJECT}/seed.txt"
+     }
+    }
+   }
+  },
+  {
+   "name": "num-1",
+   "when": [
+    "cwdtool-num:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_num1",
+     "name": "bash",
+     "arguments": {
+      "command": "echo hi > b-num.txt; echo ran"
+     }
+    }
+   }
+  },
+  {
+   "name": "true-5",
+   "when": [
+    "cwdtool-true:",
+    "\"tool_call_id\":\"call_true4\""
+   ],
+   "reply": {
+    "text": "done true"
+   }
+  },
+  {
+   "name": "true-4",
+   "when": [
+    "cwdtool-true:",
+    "\"tool_call_id\":\"call_true3\""
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_true4",
+     "name": "glob",
+     "arguments": {
+      "pattern": "*.txt"
+     }
+    }
+   }
+  },
+  {
+   "name": "true-3",
+   "when": [
+    "cwdtool-true:",
+    "\"tool_call_id\":\"call_true2\""
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_true3",
+     "name": "write_file",
+     "arguments": {
+      "file_path": "{PROJECT}/w-true.txt",
+      "content": "x\n"
+     }
+    }
+   }
+  },
+  {
+   "name": "true-2",
+   "when": [
+    "cwdtool-true:",
+    "\"tool_call_id\":\"call_true1\""
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_true2",
+     "name": "read_file",
+     "arguments": {
+      "file_path": "{PROJECT}/seed.txt"
+     }
+    }
+   }
+  },
+  {
+   "name": "true-1",
+   "when": [
+    "cwdtool-true:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_true1",
+     "name": "bash",
+     "arguments": {
+      "command": "echo hi > b-true.txt; echo ran"
+     }
+    }
+   }
+  },
+  {
+   "name": "obj-5",
+   "when": [
+    "cwdtool-obj:",
+    "\"tool_call_id\":\"call_obj4\""
+   ],
+   "reply": {
+    "text": "done obj"
+   }
+  },
+  {
+   "name": "obj-4",
+   "when": [
+    "cwdtool-obj:",
+    "\"tool_call_id\":\"call_obj3\""
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_obj4",
+     "name": "glob",
+     "arguments": {
+      "pattern": "*.txt"
+     }
+    }
+   }
+  },
+  {
+   "name": "obj-3",
+   "when": [
+    "cwdtool-obj:",
+    "\"tool_call_id\":\"call_obj2\""
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_obj3",
+     "name": "write_file",
+     "arguments": {
+      "file_path": "{PROJECT}/w-obj.txt",
+      "content": "x\n"
+     }
+    }
+   }
+  },
+  {
+   "name": "obj-2",
+   "when": [
+    "cwdtool-obj:",
+    "\"tool_call_id\":\"call_obj1\""
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_obj2",
+     "name": "read_file",
+     "arguments": {
+      "file_path": "{PROJECT}/seed.txt"
+     }
+    }
+   }
+  },
+  {
+   "name": "obj-1",
+   "when": [
+    "cwdtool-obj:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_obj1",
+     "name": "bash",
+     "arguments": {
+      "command": "echo hi > b-obj.txt; echo ran"
+     }
+    }
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-num",
+    "channelKey": "test",
+    "message": "cwdtool-num: run tools",
+    "workspaceCwd": 5
+   },
+   "timeout": 30000,
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-num",
+      "requestId": "{event.requestId}",
+      "decision": "allow"
+     }
+    }
+   ]
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-true",
+    "channelKey": "test",
+    "message": "cwdtool-true: run tools",
+    "workspaceCwd": true
+   },
+   "timeout": 30000,
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-true",
+      "requestId": "{event.requestId}",
+      "decision": "allow"
+     }
+    }
+   ]
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-obj",
+    "channelKey": "test",
+    "message": "cwdtool-obj: run tools",
+    "workspaceCwd": {
+     "a": 1
+    }
+   },
+   "timeout": 30000,
+   "answer": [
+    {
+     "on": {
+      "type": "permission_request"
+     },
+     "ws": "permission_decide",
+     "params": {
+      "sessionKey": "s-obj",
+      "requestId": "{event.requestId}",
+      "decision": "allow"
+     }
+    }
+   ]
+  }
+ ]
+}
