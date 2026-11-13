@@ -62,7 +62,7 @@ function runDiff(mutate) {
  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }
 test('formal CLI maps only proven leaves, preserves alias residuals and reports typed expansion', () => {
- const r = runDiff(); assert.equal(r.status, 1, r.stderr); assert.match(r.stdout, /COMPATIBILITY-VALUE observerLifecycleWindows/); assert.match(r.stdout, /LIFECYCLE-LEAF-EXPANSION/); assert.match(r.stdout, /^  \$[^\n]*\.blockId\n/m); assert.match(r.stdout, /DIFF/);
+ const r = runDiff(); assert.equal(r.status, 1, r.stderr); assert.match(r.stdout, /COMPATIBILITY-VALUE observerLifecycleWindows/); assert.match(r.stdout, /LIFECYCLE-LEAF-EXPANSION/); assert.match(r.stdout, /^  \$[^\n]*\.entryId\n/m); assert.match(r.stdout, /DIFF/);
 });
 test('unknown field in an extra non-target record remains a leaf DIFF', () => {
  const r = runDiff(([ts]) => { ts.steps[3].frames.at(-1).unapprovedField = 'MUST-STAY-DIFF'; });
@@ -100,4 +100,9 @@ test('nested missing non-target object preserves extra keys, array length, type 
  assert.equal(r.status, 1, r.stderr);
  for (const suffix of ['event.breakdown.unknownNested.<key order>', 'event.breakdown.unknownNested.list.length', 'event.breakdown.unknownNested.list[0]', 'event.breakdown.unknownNested.list[1]', 'event.breakdown.messages']) assert.ok(r.stdout.includes(suffix), suffix);
  assert.match(r.stdout, /UNAPPROVED-NESTED-TYPE/);
+});
+test('spawn plus stdout pipe drains a large proof report through its final verdict', () => {
+ const r = runDiff(); assert.equal(r.error, undefined); assert.equal(r.signal, null); assert.equal(r.status, 1, r.stderr);
+ assert.ok(Buffer.byteLength(r.stdout) > 128 * 1024, 'genuine pipe backpressure-sized proof report');
+ assert.match(r.stdout.trimEnd(), /\nDIFF \d+$/); assert.equal(r.stderr, '');
 });

@@ -155,3 +155,9 @@ T1 八个固定写后诊断场景另有 `syntaxDiagnostics` 正向谓词，验�
 `observer-memory-policy.mjs` 仅接受原 memory 具名场景的四个已验证长度/bytes 叶，以及 `memory-gate[0..2]`、`memory-selector[0..2]` 六个 headers 对象的键序叶。请求真实 body 的 UTF8 字节数、唯一 agent 报告 duration、headers 全部键值、请求身份与数量均须通过；不忽略 body、任意 header 或原始 wire。参见 `D1-SDK-MEMORY-DERIVED-001.md` 与 `D1-SDK-MEMORY-HEADER-ORDER-001.md`。fork 原 `sdkAgent03DerivedValues` 仍按原范围独立执行，memory trace/hash、其他数值、provider 请求键序和 model_selection 键序均未因此批准。
 
 `fixtures/observer-lifecycle-policy/paired-contract.json` 是明确删减无关大字段的合成结构测试数据，不是实际采集、构建来源或正式通过证明。正式实现还独立复用了原两场完整 capture 控制；旧 8a/ccc 的真实缺最后 assistant 摘要原件仍在专属摘要门被拒，不能用新生命周期规则遮住旧产品 bug。
+
+`observer-uuid-policy.mjs` 是同一完整 UUID 引用关系的归一实现修复，不是新增差异许可。仅上述两个固定场景在完整 lifecycle 验证后，配对八个真实实体：parent W0/W1、second session run、worker/reviewer、reviewer block，以及由 actual delta/block、run/timeline、durable assistant_message 和 terminal.finalMessage 共同证明的 parent 两轮最终 block。UUID 与实体双向唯一；当前 raw、normalized view 和实际 aliases 表的哈希、强锚位置和全引用次数在一次调用内绑定，不接受外部拼装的 proof。伪造表、字面 alias 欺骗、多对一或新 token 碰撞均 INVALID。
+
+这一步只在 normalized 副本中重标八个已证别名。未证明的编号不重新分配，所有数组位置、非 UUID 值和对象键插入顺序保持原样；未知 entry/operation 等继续差异。逐项打印 `UUID-ENTITY` 便于审查实际关系，不把新可见的 provider/context/history/存储指纹差异包进来。私有原型与旧正式263/214结果保留，正式冻结后另记新比较。
+
+比较器末尾使用 `process.exitCode` 自然排空 stdout/stderr pipe，保持0/1退出语义。大型逐叶报告的真实spawn+pipe控制要求超过128KiB且完整保留最后 `DIFF N`；它只证明报告收口，不替代任何产品、工具供给或实际副作用断言。旧缺末尾verdict或工具缺失证据不得据此回算通过。

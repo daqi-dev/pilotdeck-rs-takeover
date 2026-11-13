@@ -114,7 +114,7 @@ export function inputIdentity() {
     baselineDist: treeHash(path.join(baseline, 'dist')),
     baselineLock: fs.existsSync(path.join(baseline, 'pnpm-lock.yaml')) ? fileHash(path.join(baseline, 'pnpm-lock.yaml')) : null,
     baselineEntry: fs.existsSync(path.join(baseline, 'dist/src/cli/pilotdeck.js')) ? fileHash(path.join(baseline, 'dist/src/cli/pilotdeck.js')) : null,
-    harness: Object.fromEntries(['check.mjs', 'run.mjs', 'diff.mjs', 'evidence.mjs', 'mock-support.mjs', 'syntax-policy.mjs', 'native-identity.mjs', 'serve-persisted-event.mjs', 'channel-poll-policy.mjs', 'sdk-agent-policy.mjs', 'sdk-signal-policy.mjs', 'ao-discovery-prefix-policy.mjs', 'observer-lifecycle-policy.mjs', 'observer-memory-policy.mjs'].map((name) => [name, fileHash(path.join(here, name))])),
+    harness: Object.fromEntries(['check.mjs', 'run.mjs', 'diff.mjs', 'evidence.mjs', 'mock-support.mjs', 'syntax-policy.mjs', 'native-identity.mjs', 'serve-persisted-event.mjs', 'channel-poll-policy.mjs', 'sdk-agent-policy.mjs', 'sdk-signal-policy.mjs', 'ao-discovery-prefix-policy.mjs', 'observer-lifecycle-policy.mjs', 'observer-memory-policy.mjs', 'observer-uuid-policy.mjs'].map((name) => [name, fileHash(path.join(here, name))])),
     tools: { node: process.version, executable: fileHash(process.execPath), rust: command('rustc', ['--version'], repo), pnpm: command('pnpm', ['--version'], baseline) },
     platform: { os: process.platform, arch: process.arch, release: os.release() },
   };

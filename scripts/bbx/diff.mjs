@@ -43,6 +43,7 @@
 // 过期检查：基线 vs Rust 比较时，场景登记的每条 accepted 正则一处都没命中，打印 STALE 并计 1 处差异；
 // volatile 正则一处都没命中只打印 STALE? 提示（基线这次没抖时本来就是 0）。--self（基线自比）不做这个检查。
 import fs from 'node:fs';
+import { observerUuidViews } from './observer-uuid-policy.mjs';
 import { observerMemoryPaths } from './observer-memory-policy.mjs';
 import { observerLifecyclePaths } from './observer-lifecycle-policy.mjs';
 import { discoveryPrefixPair } from './ao-discovery-prefix-policy.mjs';
@@ -214,11 +215,18 @@ let prefixes;
 try { prefixes = discoveryPrefixPair(inputs[0], inputs[1], value => normalizer()(value)); }
 catch (error) { console.error(`INVALID AO discovery UUID prefix: ${error.message}`); process.exit(2); }
 const uuidAliases = [new Map(), new Map()];
-const a = load(inputs[0], prefixes[0], uuidAliases[0]), b = load(inputs[1], prefixes[1], uuidAliases[1]);
+let a = load(inputs[0], prefixes[0], uuidAliases[0]), b = load(inputs[1], prefixes[1], uuidAliases[1]);
+const raw = files.slice(0, 2).map((file) => JSON.parse(fs.readFileSync(file, 'utf8')));
+let uuidEntities;
+try {
+  uuidEntities = observerUuidViews(raw[0], raw[1], a, b, uuidAliases[0], uuidAliases[1]);
+  [a, b] = uuidEntities.views;
+  [uuidAliases[0], uuidAliases[1]] = uuidEntities.aliases;
+} catch (error) { console.error(`INVALID observer lifecycle evidence (UUID binding): ${error.message}`); process.exit(2); }
 const scenarioVolatile = (JSON.parse(fs.readFileSync(fa, 'utf8')).volatile ?? []).map((p) => new RegExp(p));
 const all = [];
 compare(a, b, '$', all);
-const raw = files.slice(0, 2).map((file) => JSON.parse(fs.readFileSync(file, 'utf8')));
+
 const compatibilityValues = new Map();
 let observerLifecycle;
 try {
@@ -294,6 +302,7 @@ if (!quiet) {
   if (scenarioVolatile.length) console.log(`  场景声明的不稳定路径: ${scenarioVolatile.map(String).join(' ')}（因此略过 ${all.length - regexStable.length} 处）`);
   for (const d of regexStable.filter((d) => timeValues.has(d.at))) console.log(`  VOLATILE-VALUE ${timePolicies.get(d.at)} ${d.at}: ${timeValues.get(d.at)}\n      raw a: ${show(d.a)}\n      raw b: ${show(d.b)}`);
   for (const x of scenarioAccepted) console.log(`  场景登记的已接受差异: ${x.id}（${x.why}）略过 ${x.hits} 处`);
+  for (const entity of uuidEntities?.entityTokens ?? []) console.log(`  UUID-ENTITY ${entity.entity}: ${entity.left} ↔ ${entity.right} → ${entity.token}`);
   for (const original of observerLifecycle?.wholeRecordDifferences ?? []) console.log(`  LIFECYCLE-LEAF-EXPANSION ${original.at}: original extra record retained in capture; typed leaves are independently compared`);
   for (const d of regexStable.filter(d => compatibilityValues.has(d.at))) { const value = compatibilityValues.get(d.at); console.log(`  COMPATIBILITY-VALUE ${value.policy} ${d.at}: ${value.reason}\n      raw a: ${show(d.a)}\n      raw b: ${show(d.b)}`); }
   for (const d of acceptedValues) console.log(`  ACCEPTED ${d.id} ${d.at}: ${d.reason}\n      raw a: ${show(d.a)}\n      raw b: ${show(d.b)}`);
@@ -302,4 +311,5 @@ if (!quiet) {
   for (const x of stale) console.log(`  ${x.tag} ${x.what}：一处都没命中${x.tag === 'STALE' ? '，计 1 处差异' : '（只提示）'}`);
 }
 console.log(count ? `DIFF ${count}` : 'SAME');
-process.exit(count ? 1 : 0);
+// Let stdout/stderr pipes drain the complete per-leaf proof report.
+process.exitCode = count ? 1 : 0;
