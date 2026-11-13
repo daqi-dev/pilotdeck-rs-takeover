@@ -1,0 +1,9 @@
+# 固定 settings-update 原件
+
+这里是三份已存在的合成业务、本地mock真实捕获的逐字压缩副本，不是新产品执行。经审阅的公共policy在代码中固定压缩与解压字节SHA和有界长度；manifest.json仅供人读，不能授予权限。
+
+来源：产品d67705eece5a035b9f689809bf5b4088755ebcb8、TS cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85、harness 644a8d80a45916bbe7a0b0ee93ff6e331a9dbf98。closure.json.br包含恰30个固定harness源文件，包括采集driver、场景、watch helper与normalizer。它们是采集来源证据，不是第二套运行时实现；当前复用的watch helper及normalizer必须继续匹配sealed源哈希。
+
+original-public644.diff.txt保留原实际DIFF2报告；original-normalized-diff3.json另行保存旧场景accepted过滤之前的三个值差异。新三叶许可仅来自root决定与精确公共policy，不来自旧A6.3声明或可编辑manifest。
+
+细则见specs/gateway-parity/diffs/A7-CONFIG-WATCH-EXACT-CAPTURE-001.md。运行时不使用Git或私有捕获目录，不改写任何原件。

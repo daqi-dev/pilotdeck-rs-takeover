@@ -10,6 +10,7 @@ import { syntaxContract } from './syntax-policy.mjs';
 import { acceptedPositiveContract } from './accepted-positive-policy.mjs';
 import { cliShutdownEvidence } from './cli-shutdown-policy.mjs';
 import { verifyConfigWatchInput } from './fixtures/config-watch-input.mjs';
+import { validateConfigWatchExactArtifact } from './config-watch-exact-policy.mjs';
 import { nativeDependencyIdentity } from './native-identity.mjs';
 import { validatePersistedRunTriggers } from './serve-persisted-event.mjs';
 import { channelPollContract } from './channel-poll-policy.mjs';
@@ -202,6 +203,7 @@ export function imageAttachmentsMatch(actual, expected) {
 export function validateArtifact(artifact, scenario, expected) {
   const errors = [];
   const evidence = artifact.evidence;
+  try { validateConfigWatchExactArtifact(artifact); } catch (error) { errors.push(`fixed settings exact evidence: ${error.message}`); }
   if (!evidence || evidence.schema !== 1 || evidence.runId !== expected.runId || evidence.side !== expected.side
     || !isDeepStrictEqual(evidence.scenario, expected.scenario) || !isDeepStrictEqual(evidence.inputs, expected.inputs)) errors.push('artifact identity mismatch');
   if (!Array.isArray(artifact.failures)) errors.push('missing failures collection');

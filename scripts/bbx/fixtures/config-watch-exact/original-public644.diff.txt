@@ -1,0 +1,11 @@
+bbx diff: /home/clawbox-08/ws/pilotdeck-rs-cc2c/logs/d67705ee-watch-first/container/run/pair/settings-update.ts.json  vs  /home/clawbox-08/ws/pilotdeck-rs-cc2c/logs/d67705ee-watch-first/container/run/pair/settings-update.rust.json
+  不比较的字段: side（采集侧标记）；evidence（运行身份和必需断言，由 check.mjs 逐侧严格核验，不作行为归一化）；startMs（启动耗时，性能指标，单独报告）；serverLog（服务进程自己的日志输出；CLI 子命令的 stdout/stderr 在 steps 里照常比较）；failures（超时 / 连不上的汇总，由 check.mjs 判 INVALID；对应的输出在 steps 里照常比较）
+  已接受差异: node-runtime-warning（Node 运行时自己打到 stderr 的 ExperimentalWarning 及其提示行（基线用了 node:sqlite）；Rust 进程没有这个运行时）
+  场景登记的已接受差异: config-watch-survives-rewrite（基线对配置文件本身调 fs.watch，update_settings 原子替换文件后监视的是已删除的旧文件，之后改配置不再热重载（版本号少跳一次）；Rust 保持持续监视）略过 1 处
+  $.steps[27].externalConfigRewrite.observationExpired
+      a: true
+      b: (absent)
+  $.steps[27].externalConfigRewrite.observed
+      a: false
+      b: true
+DIFF 2

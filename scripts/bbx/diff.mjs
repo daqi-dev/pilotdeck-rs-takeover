@@ -51,6 +51,7 @@ import {durationFileSizePaths} from './duration-file-size-policy.mjs';
 import {feishuStopAcceptedPaths} from './feishu-stop-policy.mjs';
 import {diagnosticsAcceptedPaths} from './diagnostics-policy.mjs';
 import {memoryTreeOrderPaths} from './memory-tree-order-policy.mjs';
+import {configWatchExactAcceptedPaths} from './config-watch-exact-policy.mjs';
 export {IGNORED,ACCEPTED} from './normalization.mjs';
 import { observerUuidViews } from './observer-uuid-policy.mjs';
 import { observerMemoryPaths } from './observer-memory-policy.mjs';
@@ -93,6 +94,7 @@ const all = [];
 compare(a, b, '$', all);
 
 const compatibilityValues = new Map();
+let configWatchExact = new Map();
 let observerLifecycle;
 try {
   observerLifecycle = observerLifecyclePaths(raw[0], raw[1], a, b, uuidAliases[0], uuidAliases[1], all);
@@ -100,7 +102,9 @@ try {
   for (const [at, reason] of observerLifecycle) compatibilityValues.set(at, { policy: 'observerLifecycleWindows', reason });
   for (const [at, reason] of observerMemoryPaths(raw[0], raw[1], a, b)) compatibilityValues.set(at, { policy: 'observerMemoryApproved', reason });
   const baselineRoot = process.env.BBX_BASELINE || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../resources/PilotDeck');
+  configWatchExact = configWatchExactAcceptedPaths(fa, fb, {self: selfCompare, expectedRaw: raw});
   for (const [policy, paths] of [
+    ['fixedConfigWatchExactApproved', configWatchExact],
     ['observerSupplementApproved', observerSupplementPaths(raw[0], raw[1], baselineRoot)],
     ['observerSameIdLinks', observerIdLinkPaths(raw[0], raw[1], baselineRoot)],
     ['observerMemorySchemaApproved', observerMemoryWitnessPaths(raw[0], raw[1], baselineRoot)],
@@ -188,7 +192,9 @@ const diffs = stable.filter((d) => !scenarioAccepted.some((x) => {
 const unused = (res, list) => res.filter((re) => !list.some((d) => re.test(d.at)));
 const stale = selfCompare ? [] : [
   ...unused(scenarioVolatile, all).map((re) => ({ tag: 'STALE?', what: `volatile ${re}` })),
-  ...scenarioAccepted.flatMap((x) => unused(x.res, stable).map((re) => ({ tag: 'STALE', what: `accepted ${x.id} ${re}` }))),
+  // A sealed exact policy independently consumes the old version leaf. Keep the
+  // legacy declaration unchanged without counting that same leaf as stale.
+  ...scenarioAccepted.flatMap((x) => unused(x.res, [...stable, ...regexStable.filter(d => configWatchExact.has(d.at))]).map((re) => ({ tag: 'STALE', what: `accepted ${x.id} ${re}` }))),
 ];
 const count = diffs.length + stale.filter((x) => x.tag === 'STALE').length;
 if (!quiet) {

@@ -1,0 +1,16 @@
+[
+  {
+    "at": "$.steps[25].frames[0].result.version",
+    "a": 9,
+    "b": 10
+  },
+  {
+    "at": "$.steps[27].externalConfigRewrite.observationExpired",
+    "a": true
+  },
+  {
+    "at": "$.steps[27].externalConfigRewrite.observed",
+    "a": false,
+    "b": true
+  }
+]

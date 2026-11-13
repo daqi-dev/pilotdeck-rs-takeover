@@ -189,3 +189,11 @@ C 组 `diagnostics-policy.mjs` 只处理具名诊断场景中的三个固定文�
 用户单独批准后，`memory-tree-order-policy.mjs` 仅对已审两份 sealed TS 原件的 self 比较许可一个 `$.tree.<key order>` 叶。原件字节 SHA 和原 644 closure receipt SHA 在代码中固定；压缩 closure 在有界解压前核固定压缩 SHA，解压后再核字节 SHA，不能由 fixture manifest 或调用方见证替换。runtime 无开发机绝对 `_tmp` 依赖。完整生命周期见证重新执行；27 键中索引5–8必须是实际 worker/reviewer transcript 与其 projection 两个整组的两种已观察排列，其余23键名称及顺序完全不变，固定 raw SHA 同时保护全部内容和归属。只返回该精确键序叶，不排序或改写对象。pair、未来原件、其他树、额外排列均不适用；原公共644 self DIFF1及原输入保留。
 
 `fixtures/memory-tree-order/` 的压缩原件是已有真实采集的逐字副本，用于便携离线控制，不能冒新产品采集或未来输入许可。`node --test scripts/bbx/memory-tree-order-policy.test.mjs` 包含真实公共CLI self SAME、无self保持DIFF1，以及内容、键名、缺键、外scope、其他键序、归属、未观察排列、未来/Rust、交换原件、篡改固定见证拒绝控制。本次不修改 aggregate 或 FROZEN；登记见 `specs/parity/diffs/D1-MEMORY-SEALED-TREE-ORDER-001.md`。
+
+### 固定 settings watch 三原件的三个精确叶
+
+主协调依2026-11-14用户自主决策授权明确接受固定d677/644原件的三叶，见 `specs/gateway-parity/diffs/A7-CONFIG-WATCH-EXACT-CAPTURE-001.md` 与 `state/decisions-20261114.md` 对应决定。`config-watch-exact-policy.mjs` 仅原TS1→Rust pair，TS2为强制sealed见证：step25.version必须为number9/9/10；step27.observationExpired必须为TS=true/Rust不存在，observed必须TS=false/Rust=true。self、第三原件替代第一、反向及未来输入均无许可。旧场景regex不改，本条独立接受9/10，不冒称旧A6.3已批准；9/10在后续外写之前，不能由外写解释。
+
+`fixtures/config-watch-exact/` 保存三份既有真实raw的逐字压缩副本、固定30文件644采集闭包、原公共strict DIFF2及绕旧accepted的DIFF3。代码内固定压缩/解压SHA和有界大小，重读实际输入并与sealed字节及调用者raw有序内容一致，再重验真实写入、通知完整内容/归属/顺序、source/snapshot/version、下一请求/usage/durable/public ids与其余所有原值；可替换manifest仅供人读，不授予权限。runtime不依赖Git或开发机 `_tmp`。公共输出逐叶打印 `COMPATIBILITY-VALUE fixedConfigWatchExactApproved`；固定策略消费的旧version叶不再被重复计STALE，其它规则不变。
+
+`node --test scripts/bbx/config-watch-exact-policy.test.mjs` 明确区分37底层语义、39输入身份、1 helper+manifest替换、20额外version语义负控及2直接正控，再单列额外seal/归属控制与真实公共CLI self/pair/改值拒绝/无Git执行。原FAIL不覆盖，便携原件不是新采集，公共迁移独审与冻结完成前不能冒称正式总验收通过。
