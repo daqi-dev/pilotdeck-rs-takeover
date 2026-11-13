@@ -1,8 +1,9 @@
-//! Shared constants of the native entry's executable-level tests: the ones
-//! `tests/mode_routing.rs` (the entry's routing switch, #1354) and
-//! `tests/switch_e2e.rs` (the switch machine behind the same entry, #1353)
-//! both observe on the real `pilotdeck-gateway` child. One spelling per
-//! product fact; role-specific budgets stay in their own files.
+//! Shared constants of the native entry's executable-level tests, observed
+//! on the real `pilotdeck-gateway` child by `tests/switch_e2e.rs` (the switch
+//! machine behind the entry, #1353) and `tests/native_process.rs`. The
+//! routing sibling `tests/mode_routing.rs` was removed with the transparent
+//! proxy (2026-11-12). One spelling per product fact; role-specific budgets
+//! stay in their own files.
 //!
 //! `tests/native_process.rs` keeps its own advertisement spellings: its
 //! advertisement literals are needle-pinned by the frozen
@@ -46,12 +47,9 @@ pub const ADVERTISEMENT_BUDGET: Duration = Duration::from_secs(120);
 /// the `--drain-ms` budget) bound a hung face first.
 pub const SWITCH_DEADLINE: Duration = Duration::from_secs(60);
 /// The child prints a handful of lines; evidence retained past this bound is
-/// dropped. The two consumers spell the bound differently (#2511 item 2): the
-/// switch e2e read `take`s the stream itself, so its read stops at the bound
-/// (its child is bounded by `kill_on_drop` and the switch deadline anyway),
-/// while mode_routing keeps draining past the bound and bounds only
-/// retention — a stopped read there would block a chatty child on a full
-/// pipe.
+/// dropped. The switch e2e read `take`s the stream itself, so its read stops
+/// at the bound (its child is bounded by `kill_on_drop` and the switch
+/// deadline anyway).
 pub const STDERR_LIMIT: u64 = 64 * 1024;
 /// The machine's S2 opening line (`eprintln!("native stopping")` in
 /// `src/native_process.rs`): the positive evidence that the SIGTERM really

@@ -1,6 +1,7 @@
 //! Queued nonempty chunks cap reads; byte counters follow actual ReadBuf fills.
 use super::*;
 use crate::frame::client_frame;
+use hyper::StatusCode;
 use std::{
     collections::VecDeque,
     future::Future,
@@ -11,6 +12,17 @@ use tokio::{
     sync::oneshot,
     time::{Duration, timeout},
 };
+
+/// The connection serving under test without the native listener's
+/// lifecycle options (no stop, no headersTimeout, no checker grid).
+async fn serve<S, F, Fut>(stream: S, handler: F) -> Result<(), hyper::Error>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    F: Fn(Request<Incoming>, Option<ReadLease>) -> Fut,
+    Fut: Future<Output = Result<Response<Body>, std::io::Error>>,
+{
+    serve_connection_configured(stream, handler, false, None, None, None, None).await
+}
 
 const REQUEST: &[u8] = b"GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: key\r\n\r\n";
 
@@ -211,7 +223,6 @@ async fn boundary_stream(
     duplicate: bool,
 ) -> Result<(), StreamMismatch> {
     let (io, mut client) = tokio::io::duplex(4096);
-    let (upstream, mut host) = tokio::io::duplex(4096);
     let bytes_read = Arc::new(AtomicUsize::new(0));
     let after = client_frame(0x81, 127, b"post101 frame preserved once");
     let mut reads = VecDeque::new();
@@ -236,7 +247,7 @@ async fn boundary_stream(
     let upgrade_tx = Mutex::new(Some(upgrade_tx));
     let (release_tx, release_rx) = oneshot::channel();
     let release_rx = Mutex::new(Some(release_rx));
-    let mut server = Box::pin(serve_connection_with(io, move |mut request, lease| {
+    let mut server = Box::pin(serve(io, move |mut request, lease| {
         assert!(lease.is_some());
         let upgraded = hyper::upgrade::on(&mut request);
         upgrade_tx
@@ -270,7 +281,10 @@ async fn boundary_stream(
     let server = tokio::spawn(server);
     let upgraded = upgrade.await.unwrap();
     drop(lease);
-    let pair = tokio::spawn(pair_upgraded::<Scripted, _>(upgraded, upstream));
+    // The raw post-101 stream the native WS transport takes over
+    // (`upgraded_stream`, as `native_ws` calls it): every byte the client
+    // sends after the HTTP head must arrive exactly once, in order.
+    let mut stream = upgraded_stream::<Scripted>(upgraded).unwrap();
     let mut headers = Vec::new();
     while !headers.ends_with(b"\r\n\r\n") {
         headers.push(client.read_u8().await.unwrap());
@@ -284,20 +298,19 @@ async fn boundary_stream(
     // The negative waits for its actual injected bytes before terminating. This
     // is a causal hit barrier, not the verdict: both paths still read through EOF.
     let mut actual = vec![0; prefix_len + if duplicate { later.len() } else { 0 }];
-    host.read_exact(&mut actual).await.unwrap();
+    stream.read_exact(&mut actual).await.unwrap();
     let expected = [later, after].concat();
-    // Preserve the original upstream-FIN termination path. Once the production
-    // pair is reaped its owned writer is dropped, giving this reader real EOF.
-    host.shutdown().await.unwrap();
+    // Client FIN ends the raw stream; whatever else it still carries counts.
+    client.shutdown().await.unwrap();
+    stream.read_to_end(&mut actual).await.unwrap();
+    drop(stream);
     let mut output = Vec::new();
     client.read_to_end(&mut output).await.unwrap();
     assert!(
         output.is_empty(),
         "no duplicate/local response for opaque frames"
     );
-    pair.await.unwrap().unwrap();
     server.await.unwrap().unwrap();
-    host.read_to_end(&mut actual).await.unwrap();
     if actual != expected {
         return Err(StreamMismatch {
             code: "UPSTREAM_FULL_STREAM_MISMATCH",
@@ -348,122 +361,13 @@ async fn pre101_reads_survive_and_only_initial_head_is_discarded() {
 }
 
 #[tokio::test]
-async fn failed_production_upgrade_releases_gate_for_next_http_request() {
-    use hyper_util::{client::legacy::Client, rt::TokioExecutor};
-    timeout(Duration::from_secs(3), async {
-        let (server_io, client_io) = tokio::io::duplex(4096);
-        let proxy = Arc::new(Proxy {
-            upstream: "invalid upstream".into(),
-            client: Client::builder(TokioExecutor::new()).build_http(),
-        });
-        let server = tokio::spawn(proxy.serve_connection(server_io));
-        let (mut sender, connection) =
-            hyper::client::conn::http1::handshake(TokioIo::new(client_io))
-                .await
-                .unwrap();
-        let connection = tokio::spawn(connection);
-        let upgrade = Request::builder()
-            .uri("/ws")
-            .header(header::HOST, "localhost")
-            .header(header::CONNECTION, "Upgrade")
-            .header(header::UPGRADE, "websocket")
-            .header(header::SEC_WEBSOCKET_KEY, "key")
-            .body(Full::new(Bytes::new()))
-            .unwrap();
-        let response = sender.send_request(upgrade).await.unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
-        assert_eq!(
-            response.into_body().collect().await.unwrap().to_bytes(),
-            "upstream websocket unavailable"
-        );
-        let ordinary = Request::builder()
-            .uri("/health")
-            .header(header::HOST, "localhost")
-            .body(Full::new(Bytes::new()))
-            .unwrap();
-        let response = sender.send_request(ordinary).await.unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        assert_eq!(
-            response.into_body().collect().await.unwrap().to_bytes(),
-            "invalid request URI"
-        );
-        drop(sender);
-        connection.await.unwrap().unwrap();
-        server.await.unwrap().unwrap();
-    })
-    .await
-    .expect("failed upgrade keepalive must not stay gated");
-}
-
-// C1: a legal upgrade awaiting its host response may pause only its own
-// connection. The same production Proxy must serve B before A is released.
-#[tokio::test]
-async fn pending_production_upgrade_does_not_pause_another_connection() {
-    use hyper_util::{client::legacy::Client, rt::TokioExecutor};
-    timeout(Duration::from_secs(3), async {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let proxy = Arc::new(Proxy {
-            upstream: format!("http://{}", listener.local_addr().unwrap()),
-            client: Client::builder(TokioExecutor::new()).build_http(),
-        });
-        let (seen_tx, seen_rx) = oneshot::channel();
-        let (release_tx, mut release_rx) = oneshot::channel();
-        let mut tasks = tokio::task::JoinSet::new();
-        tasks.spawn(async move {
-            let (mut a, _) = listener.accept().await.unwrap();
-            let mut request = Vec::new();
-            while !request.ends_with(b"\r\n\r\n") {
-                request.push(a.read_u8().await.unwrap());
-            }
-            assert!(request.starts_with(b"GET /ws HTTP/1.1\r\n"));
-            seen_tx.send(()).unwrap();
-            let (mut b, _) = listener.accept().await.unwrap();
-            let mut request = Vec::new();
-            while !request.ends_with(b"\r\n\r\n") {
-                request.push(b.read_u8().await.unwrap());
-            }
-            assert!(request.starts_with(b"GET /health HTTP/1.1\r\n"));
-            assert!(matches!(release_rx.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
-            b.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\nhealthy").await.unwrap();
-            b.shutdown().await.unwrap();
-            release_rx.await.unwrap();
-            a.write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
-            a.shutdown().await.unwrap();
-        });
-        let (a_server, mut a_client) = tokio::io::duplex(4096);
-        let a_proxy = proxy.clone();
-        tasks.spawn(async move { a_proxy.serve_connection(a_server).await.unwrap() });
-        a_client.write_all(b"GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAAAA==\r\n\r\n").await.unwrap();
-        seen_rx.await.unwrap();
-        let (b_server, mut b_client) = tokio::io::duplex(4096);
-        tasks.spawn(async move { proxy.serve_connection(b_server).await.unwrap() });
-        b_client.write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").await.unwrap();
-        let mut response = String::new();
-        b_client.read_to_string(&mut response).await.unwrap();
-        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
-        assert!(response.ends_with("healthy"), "{response}");
-        a_client.shutdown().await.unwrap();
-        release_tx.send(()).unwrap();
-        let mut response = String::new();
-        a_client.read_to_string(&mut response).await.unwrap();
-        assert!(response.starts_with("HTTP/1.1 502"), "{response}");
-        while let Some(result) = tasks.join_next().await {
-            result.unwrap();
-        }
-    }).await.expect("connection B must complete while connection A still awaits its host handshake");
-}
-
-#[tokio::test]
 async fn empty_and_incomplete_http_eof_finish_without_gating() {
-    use hyper_util::{client::legacy::Client, rt::TokioExecutor};
     timeout(Duration::from_secs(3), async {
         for input in [&[][..], &REQUEST[..20]] {
             let (server_io, mut client) = tokio::io::duplex(4096);
-            let proxy = Arc::new(Proxy {
-                upstream: "invalid upstream".into(),
-                client: Client::builder(TokioExecutor::new()).build_http(),
-            });
-            let server = tokio::spawn(proxy.serve_connection(server_io));
+            let server = tokio::spawn(serve(server_io, |_request, _lease| async {
+                unreachable!("no complete request head reaches the handler")
+            }));
             client.write_all(input).await.unwrap();
             client.shutdown().await.unwrap();
             let result = server.await.unwrap();
@@ -623,7 +527,7 @@ async fn blocked_failure_wakes_hyper_and_serves_already_available_next_request()
         };
         let (release_tx, release_rx) = oneshot::channel();
         let release_rx = Mutex::new(Some(release_rx));
-        let mut server = Box::pin(serve_connection_with(io, move |request, lease| {
+        let mut server = Box::pin(serve(io, move |request, lease| {
             let release = if request.uri().path() == "/ws" {
                 assert!(lease.is_some());
                 Some(release_rx.lock().unwrap().take().unwrap())
@@ -671,7 +575,6 @@ async fn blocked_failure_wakes_hyper_and_serves_already_available_next_request()
 async fn upgrade_after_client_halfclose_preserves_pending_frame_then_ends() {
     timeout(Duration::from_secs(3), async {
         let (io, mut client) = tokio::io::duplex(4096);
-        let (upstream, mut host) = tokio::io::duplex(4096);
         let bytes_read = Arc::new(AtomicUsize::new(0));
         let frame = client_frame(0x81, 126, b"frame before FIN");
         let io = Scripted {
@@ -683,7 +586,7 @@ async fn upgrade_after_client_halfclose_preserves_pending_frame_then_ends() {
         let upgrade_tx = Mutex::new(Some(upgrade_tx));
         let (release_tx, release_rx) = oneshot::channel();
         let release_rx = Mutex::new(Some(release_rx));
-        let mut server = Box::pin(serve_connection_with(io, move |mut request, lease| {
+        let mut server = Box::pin(serve(io, move |mut request, lease| {
             let upgraded = hyper::upgrade::on(&mut request);
             upgrade_tx
                 .lock()
@@ -713,15 +616,15 @@ async fn upgrade_after_client_halfclose_preserves_pending_frame_then_ends() {
         let server = tokio::spawn(server);
         let upgraded = upgraded.await.unwrap();
         drop(lease);
-        let pair = tokio::spawn(pair_upgraded::<Scripted, _>(upgraded, upstream));
+        let mut stream = upgraded_stream::<Scripted>(upgraded).unwrap();
         let mut actual = Vec::new();
-        host.read_to_end(&mut actual).await.unwrap();
+        stream.read_to_end(&mut actual).await.unwrap();
         assert_eq!(actual, frame);
         assert_eq!(
             bytes_read.load(Ordering::SeqCst),
             REQUEST.len() + frame.len()
         );
-        pair.await.unwrap().unwrap();
+        drop(stream);
         let mut response = String::new();
         client.read_to_string(&mut response).await.unwrap();
         assert!(response.starts_with("HTTP/1.1 101"));
@@ -741,116 +644,6 @@ async fn initial_partial_frame_suffix_is_not_rejoined_with_discarded_prefix() {
     })
     .await
     .expect("initial head prefix must never be restored");
-}
-
-// Pre-registered candidate boundary: after a real upstream handshake rejection,
-// invalid initial WS head yields HTTP 400 and termination; a complete ordinary
-// HTTP request in the same initial read is forwarded successfully afterward.
-#[tokio::test]
-async fn production_failure_with_initial_head_terminates_or_recovers_as_http() {
-    use hyper_util::{client::legacy::Client, rt::TokioExecutor};
-    timeout(Duration::from_secs(3), async {
-        for valid_http_head in [false, true] {
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let origin = format!("http://{}", listener.local_addr().unwrap());
-            let host = tokio::spawn(async move {
-                let (mut stream, _) = listener.accept().await.unwrap();
-                let mut headers = Vec::new();
-                while !headers.ends_with(b"\r\n\r\n") {
-                    headers.push(stream.read_u8().await.unwrap());
-                }
-                assert!(headers.starts_with(b"GET /ws HTTP/1.1\r\n"));
-                stream.write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
-                stream.shutdown().await.unwrap();
-                if valid_http_head {
-                    let (mut stream, _) = listener.accept().await.unwrap();
-                    let mut headers = Vec::new();
-                    while !headers.ends_with(b"\r\n\r\n") {
-                        headers.push(stream.read_u8().await.unwrap());
-                    }
-                    assert!(headers.starts_with(b"GET /health HTTP/1.1\r\n"));
-                    stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\nhealthy").await.unwrap();
-                    stream.shutdown().await.unwrap();
-                }
-            });
-            let (io, mut client) = tokio::io::duplex(4096);
-            let bytes_read = Arc::new(AtomicUsize::new(0));
-            let trailing = if valid_http_head {
-                b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n".to_vec()
-            } else {
-                client_frame(0x81, 126, b"invalid HTTP head")
-            };
-            let initial = [REQUEST, trailing.as_slice()].concat();
-            let initial_bytes = initial.len();
-            let io = Scripted { io, reads: [initial].into(), bytes_read: bytes_read.clone() };
-            let proxy = Arc::new(Proxy {
-                upstream: origin,
-                client: Client::builder(TokioExecutor::new()).build_http(),
-            });
-            let server = tokio::spawn(proxy.serve_connection(io));
-            let mut response = String::new();
-            client.read_to_string(&mut response).await.unwrap();
-            assert!(response.starts_with("HTTP/1.1 502"), "{response}");
-            assert_eq!(response.matches("HTTP/1.1 502").count(), 1);
-            // This fixture assumes Hyper's HTTP buffer accepts the entire initial chunk,
-            // including trailing; revisit this control if Hyper's buffering changes.
-            assert_eq!(bytes_read.load(Ordering::SeqCst), initial_bytes);
-            let result = server.await.unwrap();
-            if valid_http_head {
-                assert_eq!(response.matches("HTTP/1.1 200").count(), 1, "{response}");
-                assert!(response.ends_with("healthy"));
-                result.unwrap();
-            } else {
-                assert_eq!(response.matches("HTTP/1.1 400").count(), 1, "{response}");
-                assert!(result.unwrap_err().is_parse());
-            }
-            host.await.unwrap();
-        }
-    }).await.expect("initial head plus failed upgrade must terminate or serve the next HTTP request");
-}
-
-#[tokio::test]
-async fn production_ws_get_without_token_and_post_upgrade_route_explicitly() {
-    use hyper_util::{client::legacy::Client, rt::TokioExecutor};
-    timeout(Duration::from_secs(3), async {
-        for (method, upgrade, expected) in [
-            (hyper::Method::GET, false, StatusCode::BAD_REQUEST),
-            (hyper::Method::POST, true, StatusCode::BAD_GATEWAY),
-        ] {
-            let (server_io, client_io) = tokio::io::duplex(4096);
-            let proxy = Arc::new(Proxy {
-                upstream: "invalid upstream".into(),
-                client: Client::builder(TokioExecutor::new()).build_http(),
-            });
-            let server = tokio::spawn(proxy.serve_connection(server_io));
-            let (mut sender, connection) =
-                hyper::client::conn::http1::handshake(TokioIo::new(client_io))
-                    .await
-                    .unwrap();
-            let connection = tokio::spawn(connection);
-            let mut request = Request::builder()
-                .method(method)
-                .uri("/ws")
-                .header(header::HOST, "localhost")
-                .header(header::UPGRADE, "websocket");
-            if upgrade {
-                request = request
-                    .header(header::CONNECTION, "Upgrade")
-                    .header(header::SEC_WEBSOCKET_KEY, "key");
-            }
-            let response = sender
-                .send_request(request.body(Full::new(Bytes::new())).unwrap())
-                .await
-                .unwrap();
-            assert_eq!(response.status(), expected);
-            response.into_body().collect().await.unwrap();
-            drop(sender);
-            connection.await.unwrap().unwrap();
-            server.await.unwrap().unwrap();
-        }
-    })
-    .await
-    .expect("explicit /ws method and token routing");
 }
 
 #[tokio::test(start_paused = true)]

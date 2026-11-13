@@ -88,18 +88,6 @@ fn explicit_options_and_environment() {
     }
     let scratch = Scratch::new();
     let options = Options::parse(scratch.args()).expect("#1071 valid isolated options");
-    negative_assert!(
-        native_requested(Some(std::ffi::OsStr::new("--native"))),
-        "#1071 explicit native switch"
-    );
-    for first in [
-        None,
-        Some(std::ffi::OsStr::new("native")),
-        Some(std::ffi::OsStr::new("--native=true")),
-        Some(std::ffi::OsStr::new("--help")),
-    ] {
-        negative_assert!(!native_requested(first), "#1071 A4 remains default");
-    }
     for (key, bad) in [
         ("--home", "relative"),
         ("--listen", "0.0.0.0:0"),
@@ -143,8 +131,7 @@ fn explicit_options_and_environment() {
         // state; the isolated process must drop them, not inherit them.
         ("PILOTDECK_STORAGE_ROOT".into(), "outside".into()),
         ("PILOTDECK_SNAPSHOT_ROOT".into(), "outside".into()),
-        // #1354: the mode item is entry scope — this process already
-        // consumed it for its own routing.
+        // The removed transparent-proxy entry's mode item; still dropped.
         ("PILOTDECK_GATEWAY_MODE".into(), "native".into()),
     ]);
     let env = options.environment(inherited);
@@ -170,9 +157,8 @@ fn explicit_options_and_environment() {
     ] {
         negative_assert!(!env.contains_key(key), "#1071 inherited authority removed");
     }
-    // #1354 entry-scope mode item not inherited: the routing switch must not
-    // sink into the native subtree's environment — a descendant re-executing
-    // the gateway would otherwise silently inherit a native routing.
+    // The removed transparent-proxy entry's mode item is still not
+    // inherited (unchanged native environment).
     negative_assert!(
         !env.contains_key("PILOTDECK_GATEWAY_MODE"),
         "#1354 entry-scope mode item not inherited"
@@ -1548,45 +1534,6 @@ fn tool_policy_and_turn_environment() {
             .is_err(),
         "#1071 invalid turn base refused"
     );
-}
-
-// #1354: the main entry's default routing switch as a formal config item.
-// Unset keeps the production default — proxy mode, #1303 option A — `proxy`
-// states it explicitly, `native` is the only other routing, and every other
-// value — the empty string and non-UTF-8 bytes included — fails closed, the
-// #1369 shape.
-#[test]
-fn gateway_mode_config_matrix() {
-    negative_assert!(
-        matches!(gateway_mode(None), Ok(false)),
-        "#1354 unset gateway mode keeps the proxy default (#1303 A)"
-    );
-    negative_assert_eq!(
-        gateway_mode(Some(std::ffi::OsStr::new("proxy"))).ok(),
-        Some(false),
-        "#1354 explicit proxy mode"
-    );
-    negative_assert_eq!(
-        gateway_mode(Some(std::ffi::OsStr::new("native"))).ok(),
-        Some(true),
-        "#1354 explicit native mode"
-    );
-    for value in [
-        "", " ", "PROXY", "Native", "native ", " native", "true", "1", "proxy\n",
-    ] {
-        negative_assert!(
-            gateway_mode(Some(std::ffi::OsStr::new(value))).is_err(),
-            "#1354 invalid gateway mode {value:?} rejected"
-        );
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::OsStrExt;
-        negative_assert!(
-            gateway_mode(Some(std::ffi::OsStr::from_bytes(b"native\xff"))).is_err(),
-            "#1354 non-UTF-8 gateway mode rejected"
-        );
-    }
 }
 
 // #1369: the controlled registry switch. Unset keeps the production default

@@ -1322,6 +1322,93 @@ fn cjk_matrix_worker() {
     crate::test_process::receipt(&format!("cjk-files-{index}"));
 }
 
+/// The `catalog-mixed` Node response of row 0 (`LANG=C`), asked twice
+/// against the same catalog: once with the recorded Unicode query (the Node
+/// response byte for byte) and once with the ASCII query `z`, whose expected
+/// response is the recorded Node response filtered to the two `z` / `Z`
+/// items in their recorded order, every other field unchanged. Moved here
+/// from the removed transparent-proxy pairing tests, which replayed the same
+/// two requests through the proxy; the local route below is the one the
+/// native metadata methods call.
+#[test]
+fn mixed_catalog_ascii_and_unicode_queries_match_node() {
+    crate::test_process::run_cases(
+        "project_files::tests::mixed_catalog_worker",
+        vec![("mixed-catalog".into(), vec![("LANG".into(), "C".into())])],
+    );
+}
+#[test]
+#[ignore = "only launched by mixed catalog parent"]
+fn mixed_catalog_worker() {
+    use crate::metadata::object;
+    use pilotdeck_protocol::JsValue;
+    let fixture = cjk_fixture();
+    let row = &fixture["rows"][0];
+    let case = row["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["tag"] == "catalog-mixed")
+        .unwrap();
+    let mut metadata = snapshot_metadata(row);
+    metadata
+        .files
+        .files
+        .get_mut(&metadata.home.join("pilotdeck.yaml"))
+        .unwrap()["base64"] = STANDARD
+        .encode(row["yamls"]["mixed"].as_str().unwrap())
+        .into();
+    let oracle = parse(case["response"].as_str().unwrap().as_bytes()).unwrap();
+    let result = oracle.get("result").unwrap();
+    let JsValue::Array(items) = result.get("items").unwrap() else {
+        panic!("items")
+    };
+    let items = items
+        .iter()
+        .filter(|item| {
+            crate::metadata::text_field(item, "id")
+                .is_some_and(|id| matches!(id.as_str(), "parity/z" | "parity/Z"))
+        })
+        .cloned()
+        .collect();
+    let ascii_expected = pilotdeck_protocol::stringify_json(&object([
+        ("type", "response".into()),
+        ("id", "ascii".into()),
+        ("ok", JsValue::Bool(true)),
+        (
+            "result",
+            object([
+                ("items", JsValue::Array(items)),
+                (
+                    "defaultSelection",
+                    result.get("defaultSelection").unwrap().clone(),
+                ),
+                ("router", result.get("router").unwrap().clone()),
+            ]),
+        ),
+    ]))
+    .unwrap()
+    .unwrap();
+    for (request, expected) in [
+        (
+            r#"{"type":"request","id":"ascii","method":"model_catalog_list","params":{"query":"z"}}"#,
+            ascii_expected.as_str(),
+        ),
+        (
+            case["request"].as_str().unwrap(),
+            case["response"].as_str().unwrap(),
+        ),
+    ] {
+        let Route::LocalResponse(bytes) =
+            route_with_metadata(&parse(request.as_bytes()).unwrap(), Some(&metadata))
+        else {
+            panic!("mixed catalog request forwarded: {request}");
+        };
+        assert_eq!(bytes, expected.as_bytes(), "{request}");
+    }
+    crate::test_process::receipt("mixed-catalog");
+}
+
 pub(crate) fn round6() -> Value {
     serde_json::from_str(include_str!(
         "../../tests/fixtures/project-files/io-errors-round6.json"

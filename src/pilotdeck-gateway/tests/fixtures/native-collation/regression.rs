@@ -4,13 +4,10 @@ use std::{
     collections::BTreeMap,
     io,
     path::{Path, PathBuf},
-    time::Duration,
 };
-use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
 
 const MATRIX: &str = include_str!("../surrogate-collation-matrix/oracle.json");
 const BASE: &str = "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: https://example.invalid/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n        alternate: {}\n";
-const DEADLINE: Duration = Duration::from_secs(5);
 
 fn field<'a>(v: &'a JsValue, key: &str) -> &'a JsValue {
     v.get(key).expect("#132 fixture field exists")
@@ -206,13 +203,6 @@ fn native_comparator_matches_node_all_pairs() {
     );
 }
 
-async fn write(io: &mut DuplexStream, bytes: &[u8]) {
-    tokio::time::timeout(DEADLINE, io.write_all(bytes))
-        .await
-        .expect("#132 pairing write deadline")
-        .expect("#132 pairing write");
-}
-
 #[test]
 fn preserving_identical_strength_keeps_normalization_and_ignorables() {
     use icu_collator::options::{CollatorOptions, Strength};
@@ -238,93 +228,4 @@ fn preserving_identical_strength_keeps_normalization_and_ignorables() {
         std::cmp::Ordering::Equal,
         "#132 identical canonical equivalence across merge separator"
     );
-}
-async fn read(io: &mut DuplexStream, expected: &[u8]) {
-    let mut actual = vec![0; expected.len()];
-    tokio::time::timeout(DEADLINE, io.read_exact(&mut actual))
-        .await
-        .expect("#132 pairing response deadline: residual host boundary")
-        .expect("#132 pairing read");
-    assert_eq!(
-        actual, expected,
-        "#132 pairing wire bytes / zero business upstream"
-    );
-}
-
-#[test]
-fn matrix_pairing_has_zero_business_upstream() {
-    let matrix = matrix();
-    crate::test_process::run_cases(
-        "pairing::native_collation_tests::matrix_pairing_worker",
-        array(field(&matrix, "locales"))
-            .iter()
-            .map(|row| {
-                let lang = text(field(row, "lang"));
-                (
-                    lang.clone(),
-                    vec![
-                        ("LANG".into(), lang),
-                        ("PILOT_HOME".into(), "/fixture/home".into()),
-                    ],
-                )
-            })
-            .collect(),
-    );
-}
-
-#[tokio::test]
-#[ignore = "#132 locale-isolated worker; exercised by the parent test"]
-async fn matrix_pairing_worker() {
-    let lang = std::env::var("LANG").expect("#132 worker locale");
-    let matrix = matrix();
-    let row = array(field(&matrix, "locales"))
-        .iter()
-        .find(|row| text(field(row, "lang")) == lang)
-        .expect("#132 recorded locale");
-    let cases = array(field(row, "cases"));
-    assert_eq!(cases.len(), 20, "#132 worker full locale row");
-    for case in cases {
-        let (mut client, downstream) = tokio::io::duplex(1024 * 1024);
-        let (upstream, mut observer) = tokio::io::duplex(1024 * 1024);
-        let task = tokio::spawn(super::run_with_metadata(
-            downstream,
-            upstream,
-            Some(metadata(case)),
-        ));
-        let hello = crate::frame::client_frame(0x81, 126, br#"{"type":"hello","protocolVersion":"1.2","clientName":"web","clientVersion":"1","token":"fixture"}"#);
-        write(&mut client, &hello).await;
-        read(&mut observer, &hello).await;
-        let hello_ok = crate::frame::server_frame(1, br#"{"type":"hello_ok","protocolVersion":"1.2","serverVersion":"fixture","serverInfo":{},"interactionBinding":{"connectionId":"ts-owned","generation":1}}"#);
-        write(&mut observer, &hello_ok).await;
-        read(&mut client, &hello_ok).await;
-        let request =
-            crate::frame::client_frame(0x81, 127, text(field(case, "request")).as_bytes());
-        let expected = crate::frame::server_frame(1, text(field(case, "response")).as_bytes());
-        write(&mut client, &request).await;
-        read(&mut client, &expected).await;
-        // A causal fence: the next upstream bytes must be this unrelated
-        // forwarded method, never any of the locally answered business frame.
-        let fence = crate::frame::client_frame(
-            0x81,
-            127,
-            br#"{"type":"request","id":"132-fence","method":"describe_server"}"#,
-        );
-        write(&mut client, &fence).await;
-        read(&mut observer, &fence).await;
-        observer.shutdown().await.expect("#132 observer shutdown");
-        // A timed-out JoinHandle must be aborted and awaited: dropping it
-        // detaches and leaves the pairing task holding the sockets.
-        let mut task = task;
-        match tokio::time::timeout(DEADLINE, &mut task).await {
-            Ok(result) => result
-                .expect("#132 pairing task join")
-                .expect("#132 pairing task result"),
-            Err(_) => {
-                task.abort();
-                let _ = task.await; // Also handles completion racing with abort.
-                panic!("#132 pairing task deadline");
-            }
-        }
-    }
-    crate::test_process::receipt(&lang);
 }
