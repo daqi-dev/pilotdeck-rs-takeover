@@ -1,0 +1,11 @@
+{
+  "name": "gw-conn-pipelined-requests",
+  "about": "一条连接上不等应答连发 200 个请求（同一个 id，一次写出）：基线每条消息各自 void handleMessage 并发处理（GatewayWsConnection.ts:44），不限在途请求数，sendText 也不看写缓冲（websocket.ts:31-38），200 个应答全部发回，连接保持；之后同一连接上的请求照常应答。",
+  "steps": [
+    {"raw": {"ws": true, "hello": true, "send": [
+      {"frame": {"opcode": 1, "json": {"type": "request", "id": "burst", "method": "list_projects", "params": {}}}, "times": 200},
+      {"wait": 2000},
+      {"frame": {"opcode": 1, "json": {"type": "request", "id": "after-burst", "method": "list_projects", "params": {}}}}
+    ], "readMs": 1500}}
+  ]
+}

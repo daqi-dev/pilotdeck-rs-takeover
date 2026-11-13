@@ -7,7 +7,7 @@
 - **被测对象是真进程**：基线是 `node dist/src/cli/pilotdeck.js server --port N`，Rust 是编译出来的 `pilotdeck server --port N`，参数和环境变量两侧相同。采集器不 import 任何一侧的代码。
 - **输入完全相同**：两侧先后在同一个固定路径 `/private/tmp/pdrs-bbx/root`（非 macOS 上是等长的 `/tmp/private/pdrs-bbx/root`，让由路径派生的文本与 macOS 等长，避免截断点、token 估算随平台移动；场景里写死的路径、项目目录名 `private-tmp-pdrs-bbx`、百分号编码的写法读入时一并替换）的干净目录里跑，同样的配置文件、同样的初始文件、同样的环境变量、同样的端口、同一个假 provider、同样的步骤。路径和端口因此不需要归一化。
 - **记录的是原样输出**：WS 帧（重连前后各条连接上的通知都保留）、HTTP 响应（状态、头、体）、CLI 的 stdout / stderr / 退出码、假 provider 收到的请求（方法、路径、头、体）、结束后 home 和 project 下的全部文件、停机退出码。落盘文件：文本文件比全文和权限；非 UTF-8 文件比长度、sha256 和权限；`.json` / `.jsonl` 比解析结果，另比一份原文指纹（行数、是否以换行结尾、每行排版骨架的哈希计数），缩进、空格、换行、转义写法、数字写法（`1` 与 `1.0`）的差异因此也会报出来。
-- **归一化规则都写在 `diff.mjs` 开头**，每条都是「基线自己连跑两次也会变」的东西：UUID、时间戳、进程号、请求指纹、耗时、两处随机路径段、会话文件里标题记录的落点、调试开关 PILOTDECK_DUMP_REQUEST 写的转储文件名。场景还可以声明 `volatile`（基线自比已证明不稳的路径）和 `accepted`（基线自身的 bug，Rust 不照做），两者每次比较都会打印略过了几处。基线 vs Rust 时，`accepted` 里某条正则一处都没命中会报 `STALE` 并计 1 处差异（过期的豁免让场景变红）；`volatile` 一处没命中只提示 `STALE?`。不比较的字段只有四个（采集侧标记、启动耗时、服务进程日志、失败汇总；失败汇总由 `check.mjs` 单独判定）。
+- **归一化规则都写在 `diff.mjs` 开头**，每条都是「基线自己连跑两次也会变」的东西：UUID、时间戳、进程号、请求指纹、耗时、两处随机路径段、会话文件里标题记录的落点、调试开关 PILOTDECK_DUMP_REQUEST 写的转储文件名、sidecar 的随机身份、记忆检索的随机轨迹 id（`case_trace_` / `trace_` 后的 10 位十六进制，按出现次序编号）。另有两条成对规则：帧里的会话文件大小 `fileSize` 两侧不同时，各自在落盘树里找出「会话文件写到第 K 条记录时正好是这个大小」的 K，K 相等就当作相同（拼不出 K 时退到固定容差：都大于 0、差值不超过最短一条记录的一半且不超过 64 字节）；`runs/registry.json.lock` 只在一侧有时两侧都略过（基线停机可能打断在持锁写入中，30 次留下 9 次）。两条规则放过的处数每次打印。场景还可以声明 `volatile`（基线自比已证明不稳的路径）和 `accepted`（基线自身的 bug，Rust 不照做），两者每次比较都会打印略过了几处。基线 vs Rust 时，`accepted` 里某条正则一处都没命中会报 `STALE` 并计 1 处差异（过期的豁免让场景变红）；`volatile` 一处没命中只提示 `STALE?`。不比较的字段只有四个（采集侧标记、启动耗时、服务进程日志、失败汇总；失败汇总由 `check.mjs` 单独判定）。
 - **失败不算一致**：启动失败、步骤超时（含被采集器杀掉的 `cli` / `serve`、`disconnect` 等不到关闭）、连不上、停机等不到退出，都记进产物的 `failures`。只要有未声明为预期的失败，`check.mjs` 就判 `INVALID`，两侧失败得一模一样也不行。
 - **二进制是新的**：跑 Rust 侧之前，`run.mjs` 检查 `src/target/debug/pilotdeck`（和 `pilotdeck-agent-loop-sidecar`）不比 `src/` 下（不含 `target/`）的 `Cargo.toml`、`Cargo.lock` 和它依赖的 `.rs`（cargo 依赖清单 `<二进制>.d` 里列的；没有清单就看全部 `.rs`）旧，旧了拒跑。`BBX_ALLOW_STALE=1` 跳过，`BBX_SRC` 可指定源码目录（默认 `BBX_TARGET` 往上两级）。
 - **自检**：`check.mjs --self` 让基线跑两次互相比。必须 SAME，否则该场景不稳定，结论不能用。
@@ -27,7 +27,7 @@ node scripts/bbx/check.mjs                   # 基线 vs Rust，全部场景
 node scripts/bbx/check.mjs turn-text         # 只跑一个场景
 ```
 
-产物默认在 `_build/bbx/`：每个场景两侧各一份原始采集 `<场景>.<侧>.json` 和一份差异 `<场景>.diff.txt`。`--out DIR` 可改位置。每个场景的判定是 `SAME`、`DIFF N`、`INVALID`（有非预期的失败，括号里是差异结论和失败位置）或 `RUN FAILED`（采集器没跑完，例如锁被占、二进制比源码旧）。退出码 0 表示全部 SAME。
+产物默认在 `_build/bbx/`：每个场景两侧各一份原始采集 `<场景>.<侧>.json` 和一份差异 `<场景>.diff.txt`。`--out DIR` 可改位置。每个场景的判定是 `SAME`、`DIFF N`、`INVALID`（有非预期的失败，括号里是差异结论和失败位置）、`RUN FAILED`（采集器没跑完，例如锁被占、二进制比源码旧）或 `SKIPPED`（要占 18789 而没设 `BBX_ALLOW_18789=1`，见下）。退出码 0 表示除 SKIPPED 外全部 SAME。
 
 单步使用：
 
@@ -39,7 +39,20 @@ node scripts/bbx/diff.mjs /tmp/a.json /tmp/b.json          # 两份基线互比�
 
 采集在一个槽位里是独占的（固定目录和端口；缺省槽位用 `/private/tmp/pdrs-bbx` 和 38411–38414），`check.mjs` 遇到锁会排队等。要并行跑，给每个并行方一个不同的槽位：`BBX_SLOT=1 node scripts/bbx/check.mjs`（1–8）。槽位只把目录名和端口换成等长的另一套，场景里写死的同名路径和端口读入时一并替换；两侧在同一槽位里跑，结论不受影响，但不同槽位的采集产物不要互相比。
 
-改 `diff.mjs` 之后先跑比较器自测：`node scripts/bbx/selftest.mjs`。它给比较器喂成对的小产物，检查每条归一化规则该抹的抹掉了、规则旁边「差一点」的改动仍然报差异。新增归一化规则时同时加这两类例子。
+### 占用 18789 的场景
+
+基线 CLI 的 `cron` 子命令和默认对话（不带子命令的 `pilotdeck`）只探测写死的 `127.0.0.1:18789`（`src/gateway/client/probeServer.ts:16`），不看端口变量；它们连上 server 之后的路径只能把被测 server 起在 18789 上才能对拍。18789 是真实 PilotDeck 的默认端口，所以这要显式选择，两道都要有：
+
+- 场景写 `"gatewayPort": 18789`（只接受这个值）。这时 `"server"` 起的服务、`{GATEWAY}`、采集器给的 `PILOTDECK_GATEWAY_PORT` 都换成 18789；假 provider 仍在槽位端口上。
+- 运行时设 `BBX_ALLOW_18789=1`。没设时 `run.mjs` 在拿锁、查端口、起任何进程之前就以退出码 6 退出，不写产物；`check.mjs` 把它记成 `SKIPPED`（不算 SAME 也不算失败），汇总行写出跳过了几个。
+
+设了变量时的保护：仍然先查 18789 有没有监听者，有就拒跑（与其他场景相同）；除了槽位锁，还要拿一把所有槽位共用的锁 `/tmp/pdrs-bbx-18789.lock`（macOS 上是 `/private/tmp/...`），拿不到时退出码 3，`check.mjs` 照常排队，所以并行槽位里的这类场景自动串行；采集结束后把自己起的进程按进程组杀掉，再确认 18789 上没有留下监听者，留下了记一处失败（`release18789`，判 INVALID）并在 stderr 报警。采集器异常退出（未捕获异常、SIGINT / SIGTERM / SIGHUP）时同样按进程组杀掉子进程、释放锁；只有采集器自己被 SIGKILL 时做不到，下一次运行会因 18789 上有监听者而拒跑，需要人按进程号收拾。
+
+服务端令牌：采集器给 server 的令牌在环境变量里，基线这时不写 `server-token` 文件，而探测要求这个文件存在且非空，所以这类场景要在 `files` 里放 `home/.pilotdeck/server-token`。
+
+收尾：基线 CLI 连上 server 后从不关连接，`cli` 步骤只能等超时被 SIGKILL；被杀的客户端只留下半关闭的套接字，基线 server 不处理（`src/gateway/server/websocket.ts:19-20` 只听 `close` / `error`），之后 SIGTERM 停机永远等不完。所以 `cli-cron-online-*` / `cli-default-online-*` 以 `{"stopServer": "SIGKILL"}` 收尾，停机行为不在这些场景里比（这是基线 server 的一处挂起，Rust 的 server 在同样情况下正常退出，两边的差别要另行决定）。
+
+改 `diff.mjs` 之后先跑比较器自测：`node scripts/bbx/selftest.mjs`（也检查上面「没设变量就跳过」的几条）。它给比较器喂成对的小产物，检查每条归一化规则该抹的抹掉了、规则旁边「差一点」的改动仍然报差异。新增归一化规则时同时加这两类例子。
 
 ## 进度总表
 
@@ -67,21 +80,30 @@ node scripts/bbx/status-selftest.mjs                         # 自测（假产�
 | `env` | 额外环境变量 |
 | `provider` | 假 provider 的应答规则，按顺序匹配请求体文本：`when` 全部包含、`unless` 全部不包含；`reply` 可以是 `{text}`、`{tool:{name,arguments}}`、`{status,body}`。规则里的字符串（含工具参数）可用下面的 `{ROOT}` 等占位符。请求按命中的规则名分组记录 |
 | `server` | `false` 表示不起服务（纯 CLI 场景） |
-| `steps` | 依次执行：`{ws, params, answer}`（`answer` 见下）、`{http: "GET /path", headers, body}`、`{cli: [参数...], stdin, cwd, env}`、`{serve: [参数...]}`（见下）、`{connect: true}`（重连；也可以给一个完整的 hello 帧）、`{disconnect: true}`（客户端发关闭帧断开；不发关闭帧的几种见下）、`{sleep: 毫秒}`、`{sidecar: "start" / "stop"}` 与 `{tcpProxy: "start" / "cut"}`（见下） |
+| `steps` | 依次执行：`{ws, params, answer}`（`answer` 见下）、`{http: "GET /path", headers, body}`、`{cli: [参数...], stdin, cwd, env}`、`{serve: [参数...]}`（见下）、`{connect: true}`（重连；也可以给一个完整的 hello 帧）、`{disconnect: true}`（客户端发关闭帧断开；不发关闭帧的几种见下）、`{sleep: 毫秒}`、`{sidecar: "start" / "stop"}` 与 `{tcpProxy: "start" / "cut"}`、`{stopServer: 信号}`（见下） |
 | 步骤的 `timeout` | `ws` / `http` / `cli` / `serve` 等待的毫秒数，缺省 30000 |
 | 步骤的 `expectTimeout` | `true` 表示这一步在基线上本来就会超时（如等一个采集器不回答的询问、命令常驻不退出）。只有声明了的超时不判 `INVALID`；连不上不能这样声明 |
 | `expectStartFailure` | `true` 表示 `"server"` 起的服务预期启动失败。`serve` / `cli` 步骤里进程自己退出是被比较的输出，不需要声明 |
 | `settleMs` | 最后一步之后、收尾前等待的毫秒数，缺省 300 |
+| `gatewayPort` | 只能是 `18789`：把被测 server 起在 18789 上，要求 `BBX_ALLOW_18789=1`，否则 SKIPPED（见上面「占用 18789 的场景」） |
 | `volatile` | 该场景里确认不稳定的差异路径（正则）。会被略过并打印。用之前先用 `--self` 证明它确实不稳定 |
 | `accepted` | 已接受差异 `[{id, why, paths: [正则]}]`，只用于基线自身的 bug（Rust 有意不照做）。命中的差异略过并打印条数；基线 vs Rust 时某条正则一处都没命中报 `STALE`，计 1 处差异 |
 
 `ws` 步骤可以带 `answer`，用来在这一步等待期间应答服务端发来的询问（权限询问、提问）：`"answer": [{"on": {"type": "permission_request"}, "ws": "permission_decide", "params": {"sessionKey": "s", "requestId": "{event.requestId}", "decision": "allow"}, "count": 1}]`。收集该步骤的帧时，每遇到一个属于本步骤、且 `on` 里各字段都与事件相等的事件帧，就用第一条还有余量的规则发一个请求；`params` 里的 `{event.字段}` 换成触发事件的字段值，`count` 是该规则最多应答几次（缺省不限）。发出的请求和它收到的帧记在该步骤的 `answers` 里，照常比较。两侧用的是同一段采集代码。
+
+`cli` 步骤可以带 `until` 与 `then`：stdout 或 stderr 里出现 `until` 时（进程还在不在都行）依次执行 `then` 里的步骤，然后照常等进程退出或超时；没等到 `until` 进程就结束了时 `then` 不执行，记成空数组。用来在一个不退出的 CLI 进程还连着 server 时做事，例如停掉 server。
+
+`{"stopServer": "SIGTERM"}`（值是信号名）给 `"server"` 起的被测服务发信号，等它退出，记下 `exitCode` 与 `signal`；15 秒不退就 SIGKILL 整个进程组，如实记成 SIGKILL。之后收尾不再停机。假 provider 的 `reply` 上写 `"killServer": "SIGKILL"` 则在命中这条规则时给 server 发这个信号（只发不等），用来让 server 在一轮进行中消失；同时写 `"killServerDelayMs": n` 则收到请求 n 毫秒后再发（配合更长的 `delayMs`，让 server 在闲着等模型应答时消失，避开它正在写落盘的那一刻）。
 
 `cli` 和 `serve` 步骤可以带 `env`：盖在场景环境之上，值为 `null` 表示删掉该变量（例如去掉采集器默认给的 `PILOTDECK_GATEWAY_TOKEN`）。
 
 `serve` 步骤用来比常驻命令（`pilotdeck server`）自己的 stdout / stderr / 退出码，这些在 `"server"` 起的服务上属于不比较的 `serverLog`。它用 CLI 起一个进程，等 stdout 里出现 `until`（默认 `WebSocket: `），依次执行 `then` 里的步骤，然后发 `signal`（默认 `SIGTERM`）并等进程退出；15 秒不退就 SIGKILL，如实记成 `signal: "SIGKILL"`。进程没等到 `until` 就自己退出（启动失败）时不执行 `then`，照样记输出和退出码。这类场景通常写 `"server": false`；`then` 里的 `http` / `connect` 连的是固定端口 38411，所以被起的进程要监听在那里（采集器默认给了 `PILOTDECK_GATEWAY_PORT=38411`）。发信号前客户端若还连着，基线会一直等到它断开，需要比停机时先 `{disconnect: true}`。`then` 里的步骤同样可以 `save` 和引用 `{saved.名字}`。
 
 不发 WS 关闭帧的断开：`{disconnect: "destroy"}` 直接关掉底层 TCP（FIN，模拟客户端进程被杀），`{disconnect: "reset"}` 以 RST 断开（SO_LINGER 0），`{disconnect: "end"}` 只关写方向（半关闭：发 FIN 但照常接收服务端的帧，之后可以再 `destroy`；在那之前不要 `connect` 新连接，两条连接的帧会混在一起）。`{vanish: N}` 另建 N 条 WS 连接（与场景的主连接无关，逐条依次建），每条 hello 并等到第一帧非通知的应答后直接关掉 TCP（FIN），模拟 N 个客户端进程被杀；结果是 `{opened, replies}`（`replies` 按应答帧的 `type` 计数，`__timeout` 计为超时失败，`connectFailed` 计为连不上），这些连接上的帧不进步骤结果和通知。前两种结果里的 `close` 是客户端随后看到的关闭（1006）。采集器只在建 WS 连接期间、只对连向 gateway 端口的那次 `net.connect` 记下套接字，别的连接不受影响。注意基线对只收到 FIN 的连接不做任何处理（`src/gateway/server/websocket.ts:17-21` 不听 `end`），服务端此后没再写过它时停机会挂住，用 `serve` 起服务才能把这一点比进去。
+
+`raw` 步骤自己开一条 TCP 连接写原始字节，用来发浏览器式客户端发不出的输入（非法帧、超大帧、不升级的握手、半截请求行）：`{"raw": {"port": 38411, "ws": true | {"path", "method", "headers"}, "hello": true, "send": [...], "readMs": 1000}}`。`port` 缺省是 gateway 端口；`ws` 先发 WS 升级请求（头可以覆盖，值为 `null` 表示不发这个头），`hello` 在 101 之后发缺省 hello 并等第一帧。`send` 里依次是 `{"text": "…"}`（可带 `prefix` / `repeat` / `suffix` 拼大串）、`{"hex": "…"}`、`{"frame": {opcode, text | json | hex, prefix, repeat, suffix, fin, rsv, mask, length}}`（客户端帧，缺省 FIN=1、加固定掩码；`mask: false` 不加掩码，`length` 改声明的长度）、`{"wait": 毫秒}`；任一项可带 `splitAt: n`（先写前 n 字节，停 200 毫秒再写其余）和 `end: true`（写完半关闭）。写完后读到服务端关闭或 `readMs` 到时为止。结果：`upgrade`（状态行和头，去掉 `date`）、升级了的记 `frames`（每帧的 fin / rsv / opcode / masked，文本能解析成 JSON 的记解析结果，超过 4 KiB 的文本只记长度和 sha256，关闭帧记 code / reason），没升级的记 `http`（状态行、头、正文原文），`serverClosed`（`fin` / `reset` / `close`，没关是 `null`，只收到 FIN 是 `fin-half`），连不上记 `refused`。这一步不产生 `failures`：连不上、服务端没应答都是被比较的输出，所以服务进程挂掉之后的探测用它，不用 `http`。
+
+`flood` 步骤同时另开很多条 WS 连接：`{"flood": N}` 并发建 N 条连接，等 101 后各发 hello，等每条拿到第一帧或被关（5 秒），结果按结局计数（`tally`：`hello_ok`、关闭帧以外的 `closed-before-upgrade:fin` 之类）。连接一直保持到 `{"flood": "release"}` 或场景结束（停机前统一关掉），这期间的其他步骤照常跑，用来比连接很多时服务端是否还接受、还应答。
 
 `sidecar` 步骤起停一个外部常驻的 agent loop sidecar（TCP 部署用）：基线是 `node dist/src/cli/pilotdeck-agent-loop-sidecar.js`，Rust 是 `pilotdeck-agent-loop-sidecar`。`{"sidecar": "start", "port": 38414, "env": {...}}` 用场景环境盖上步骤 `env` 起进程，等它在 `port` 上开始监听（进程没等到监听就退出时记下退出码、信号、stdout、stderr）；`{"sidecar": "stop", "signal": "SIGKILL"}` 给最近起的那个发信号（缺省 SIGTERM），等它退出并记下退出码、信号、stdout、stderr（15 秒不退就 SIGKILL）。场景结束时还在跑的由收尾按进程组杀掉，不记输出。sidecar 是否监听 TCP 由环境里的 `PILOTDECK_AGENT_LOOP_TCP_PORT` 决定，和 gateway 用同一套变量。
 
@@ -110,7 +132,7 @@ node scripts/bbx/status-selftest.mjs                         # 自测（假产�
 
 - **协议帧和 HTTP 体按解析结果比，不比原始字节**：WS 帧、HTTP 响应体、发给 provider 的请求体都先 `JSON.parse` 再比，键的顺序会比，但空格、转义写法、数字写法（`1` 与 `1.0`）看不到。原文指纹只做在落盘的 `.json` / `.jsonl` 上。
 - **时序与并发**：只比每一步结束后收集到的内容，帧之间的时间间隔、超时的具体时长、并发请求的交错、竞态都不在覆盖内；`expectTimeout` 只说明「两侧这一步都在等」，不说明等多久会怎样。需要单独设计场景或用单元测试。
-- **归一化抹掉的写法**：ISO 时间整体换成 `<iso>`，小数位数（毫秒 / 微秒）、`Z` 与 `+00:00` 的差异看不到；耗时只比有无不比数值和位数；UUID 只比「同一个 id」的关系，不比大小写和版本位。
+- **归一化抹掉的写法**：ISO 时间整体换成 `<iso>`，小数位数（毫秒 / 微秒）、`Z` 与 `+00:00` 的差异看不到；耗时只比有无不比数值和位数；UUID 只比「同一个 id」的关系，不比大小写和版本位。会话文件大小 `fileSize` 只看「写到第几条记录」，字节数本身的差由落盘树里那些记录的比较负责；CLI 输出文本里的 `"fileSize": N` 不在这条规则里。运行记录文件锁只在两侧都有时比内容，有没有不比。
 - **原文指纹的粒度**：只比每行骨架的计数，不比行的先后（先后由解析结果比）；字符串里只看转义序列，不看普通字符；文件里的字符串长度和数字的位数不在指纹里（它们的值由解析结果比）。
 - **落盘范围**：只采 `home` 和 `proj` 两棵树；`TMPDIR`（`{ROOT}/tmp`）和其他位置的文件不比。`serverLog`（`"server"` 起的服务进程自己的输出）不比。
 - **未声明的失败只判 INVALID，不判谁对**：一侧超时一侧不超时时，差异照常在 `steps` 里报，但场景整体是 INVALID，要先修场景（或确认是 Rust 的挂起）再看差异。

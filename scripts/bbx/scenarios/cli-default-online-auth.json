@@ -1,0 +1,154 @@
+{
+  "name": "cli-default-online-auth",
+  "about": "默认对话探测到 server 但令牌不对（server 4003 auth_failed 关连接）、令牌文件为空：握手失败当作没有 server，stderr 打 [pilotdeck] gateway server unavailable; using in-process mode. 后走进程内 gateway（CliChannel.ts:36-46）。基线在输入结束后不退出（已知、Rust 照做），步骤都声明 expectTimeout；",
+  "gatewayPort": 18789,
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "files": {
+    "home/.pilotdeck/server-token": "not-the-token\n",
+    "alt/blank/.pilotdeck/server-token": "\n",
+    "alt/blank/.pilotdeck/pilotdeck.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"CLI chat\"}"
+      }
+    },
+    {
+      "name": "e400",
+      "when": [
+        "case-400:"
+      ],
+      "reply": {
+        "status": 400,
+        "body": {
+          "error": {
+            "message": "bad request from mock",
+            "type": "invalid_request_error"
+          }
+        }
+      }
+    },
+    {
+      "name": "bash-after-tool",
+      "when": [
+        "case-bash:",
+        "\"tool_call_id\":\"call_cli_bash\""
+      ],
+      "reply": {
+        "text": "Bash step done."
+      }
+    },
+    {
+      "name": "bash",
+      "when": [
+        "case-bash:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_cli_bash",
+          "name": "bash",
+          "arguments": {
+            "command": "echo from-bash"
+          }
+        }
+      }
+    },
+    {
+      "name": "read-after-tool",
+      "when": [
+        "case-read:",
+        "\"tool_call_id\":\"call_cli_read\""
+      ],
+      "reply": {
+        "text": "The note was read."
+      }
+    },
+    {
+      "name": "read",
+      "when": [
+        "case-read:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_cli_read",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "note.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "think",
+      "when": [
+        "case-think:"
+      ],
+      "reply": {
+        "reasoning": "pondering",
+        "chunks": [
+          "Thought ",
+          "done."
+        ]
+      }
+    },
+    {
+      "name": "text",
+      "when": [
+        "case-text:"
+      ],
+      "reply": {
+        "text": "Hello from the mock.\nSecond line."
+      }
+    },
+    {
+      "name": "argv",
+      "when": [
+        "case-argv: from arguments"
+      ],
+      "reply": {
+        "text": "Argument turn answered."
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "unexpected"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "cli": [
+        "case-argv:",
+        "from",
+        "arguments"
+      ],
+      "timeout": 10000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [],
+      "stdin": "case-text: hi\n",
+      "timeout": 10000,
+      "expectTimeout": true
+    },
+    {
+      "cli": [],
+      "stdin": "case-text: blank token\n",
+      "env": {
+        "PILOT_HOME": "{ROOT}/alt/blank/.pilotdeck"
+      },
+      "timeout": 10000,
+      "expectTimeout": true
+    }
+  ]
+}

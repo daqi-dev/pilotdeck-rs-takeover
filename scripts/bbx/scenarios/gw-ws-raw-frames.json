@@ -1,0 +1,24 @@
+{
+  "name": "gw-ws-raw-frames",
+  "about": "握手后的 WS 帧层（基线自己写的帧解析 src/gateway/server/websocket.ts:52-148，不用 ws 库）：ping 原样回 pong（64-67）；二进制帧、客户端 pong、孤立的续帧一律不理（68-73 只认 0x1）；RSV 位不检查；FIN=0 的单个文本帧照整条消息处理（107-148 不看 FIN）；非法 UTF-8 按替换字符解码后照常处理（69）；一帧拆成两次写入照常拼上（53-58）；客户端关闭帧带 4321 时服务端回 1000、原因为空并结束连接（60-63、40-50）。",
+  "steps": [
+    {"raw": {"ws": true, "hello": true, "send": [
+      {"frame": {"opcode": 9, "text": "ping-payload"}},
+      {"wait": 300},
+      {"frame": {"opcode": 2, "json": {"type": "request", "id": "bin-1", "method": "describe_server", "params": {}}}},
+      {"frame": {"opcode": 10, "text": "unsolicited-pong"}},
+      {"frame": {"opcode": 0, "text": "orphan-continuation"}},
+      {"wait": 300},
+      {"frame": {"opcode": 1, "rsv": 4, "json": {"type": "request", "id": "rsv-1", "method": "describe_server", "params": {}}}},
+      {"wait": 500},
+      {"frame": {"opcode": 1, "fin": false, "json": {"type": "request", "id": "nonfinal-1", "method": "describe_server", "params": {}}}},
+      {"wait": 500},
+      {"frame": {"opcode": 1, "hex": "7b2274797065223a2272657175657374222c226964223a2275fffe222c226d6574686f64223a2264657363726962655f736572766572222c22706172616d73223a7b7d7d"}},
+      {"wait": 500},
+      {"frame": {"opcode": 1, "json": {"type": "request", "id": "split-1", "method": "describe_server", "params": {}}}, "splitAt": 7}
+    ], "readMs": 1500}},
+    {"raw": {"ws": true, "hello": true, "send": [
+      {"frame": {"opcode": 8, "hex": "10e1627965"}}
+    ], "readMs": 1500}}
+  ]
+}

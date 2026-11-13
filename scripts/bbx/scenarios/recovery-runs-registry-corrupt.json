@@ -1,0 +1,15 @@
+{
+  "name": "recovery-runs-registry-corrupt",
+  "about": "上一个进程把 runs/registry.json 写坏（截断成不是 JSON）后重启。基线 FileRunRegistry 在构造时就跑启动恢复（src/gateway/run/RunRegistry.ts:61-66、158-182），refreshFromDisk 解析失败抛错（93-108 只放过 ENOENT），这个被拒绝的 ready 没有人接，成为 unhandledRejection，pilotdeck.ts:271-274 停机：服务先打印监听地址，随即打印 telemetry 快照行并以 1 退出（疑似基线 bug：一份写坏的运行记录让服务起不来；不要自己定，保持不一致）。用 serve 起服务，比进程自己的输出与退出码、之后连不连得上、坏文件是否被改写。环境里的 DOCKER_CONTAINER / COMMIT_HASH 让基线的遥测上下文不去跑 git。",
+  "server": false,
+  "env": {"DOCKER_CONTAINER": "1", "COMMIT_HASH": "bbx"},
+  "files": {
+    "home/.pilotdeck/runs/registry.json": "{\"schemaVersion\": 1, \"records\": [ truncated"
+  },
+  "steps": [
+    {"serve": ["server"], "then": [
+      {"sleep": 1500},
+      {"raw": {"send": [{"text": "GET /health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"}], "readMs": 1000}}
+    ]}
+  ]
+}

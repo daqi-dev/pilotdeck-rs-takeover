@@ -1,12 +1,16 @@
 //! The default command: `createLocalGateway({ projectRoot: process.cwd() })`
 //! then `new CliChannel({ argv }).start(...)` (src/cli/pilotdeck.ts:346-348,
-//! src/adapters/channel/cli/CliChannel.ts). The gateway runs in this process;
-//! each prompt is one `submitTurn`, rendered to stdout as it streams.
+//! src/adapters/channel/cli/CliChannel.ts). With a server at the fixed probe
+//! address each prompt goes to it over WebSocket; otherwise the gateway runs in
+//! this process. Each prompt is one `submitTurn`, rendered to stdout as it
+//! streams.
 use super::paths::{self, Env};
-use super::{Failure, config, probe, server, skills, stderr_line, stdout_line};
+use super::remote_gateway::{self, RemoteGateway};
+use super::{Failure, config, server, skills, stderr_line, stdout_line};
 use pilotdeck_gateway::channel::cli;
 use pilotdeck_gateway::native_process::{LocalGateway, LocalOptions};
 use pilotdeck_protocol::{JsObject, JsValue};
+use std::cell::RefCell;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -39,18 +43,18 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
         builtin_plugins_root: server::builtin_plugins_root(env, cwd, exe_dir),
     })
     .map_err(|error| Failure::Error(error.to_string()))?;
-    // resolveGateway: the fixed-address probe comes after the local gateway
-    // exists. A reachable server would take every turn over WebSocket; its
-    // address cannot be pointed at an isolated server, so that branch is not
-    // ported.
-    if probe::probe_gateway_server(env, cwd).is_some() {
-        return Err(Failure::Todo(
-            "the default CliChannel against a running server",
-        ));
-    }
-    write_stderr("[pilotdeck] gateway server unavailable; using in-process mode.\n");
+    // resolveGateway: the fixed-address probe and hello come after the local
+    // gateway exists; a reachable server takes every turn over WebSocket.
+    let target = match remote_gateway::connect_if_available(env, cwd) {
+        Some(remote) => Target::Remote(Box::new(RefCell::new(remote))),
+        None => {
+            write_stderr("[pilotdeck] gateway server unavailable; using in-process mode.\n");
+            Target::Local
+        }
+    };
     let channel = Channel {
         gateway,
+        target,
         session_key: cli::default_session_key(&cwd.to_string_lossy()),
     };
     let prompt = paths::js_trim(&argv.join(" ")).to_owned();
@@ -63,9 +67,10 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
     if let Err(message) = outcome {
         stderr_line(&message);
     }
-    // The baseline's in-process gateway keeps its event loop alive, so the
-    // command never exits on its own once the input is done: it waits until
-    // it is killed. Keep the gateway (and its sessions) up the same way.
+    // The baseline's in-process gateway keeps its event loop alive (and a
+    // server connection, once made, is never closed), so the command never
+    // exits on its own once the input is done: it waits until it is killed.
+    // Keep the gateway (and its sessions) up the same way.
     loop {
         std::thread::park();
     }
@@ -73,7 +78,15 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
 
 struct Channel {
     gateway: LocalGateway,
+    target: Target,
     session_key: String,
+}
+
+/// The gateway `resolveGateway` picked: the server's, or the fallback one
+/// created in this process.
+enum Target {
+    Remote(Box<RefCell<RemoteGateway>>),
+    Local,
 }
 
 impl Channel {
@@ -121,6 +134,13 @@ impl Channel {
         );
         input.insert("message".into(), JsValue::String(message.into()));
         input.insert("canPrompt".into(), JsValue::Bool(false));
+        if let Target::Remote(remote) = &self.target {
+            return remote.borrow_mut().submit_turn(input, |event| {
+                if let Some(text) = cli::render_event(event) {
+                    write_stdout(&text);
+                }
+            });
+        }
         self.gateway.submit_turn(
             JsValue::Object(input),
             Arc::new(|event| {

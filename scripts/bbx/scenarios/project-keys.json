@@ -271,7 +271,6 @@
         "\\.projections\\.json\\.json\\..*(asOfSequence|\\.sequence|\\.index)$",
         "\\.projections\\.json\\.json\\.anchor\\.",
         "\\.projections\\.agent-transcript\\.metadata\\.state\\.(title|tag)$",
-        "\\.fileSize$",
         "\\.jsonl(\\.projections\\.json)?\\.raw\\.skeletons\\."
       ]
     }
