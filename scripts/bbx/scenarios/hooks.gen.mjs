@@ -53,11 +53,6 @@ const plugin = (name, hooks, where = 'home/.pilotdeck/plugins') => ({
   [`${where}/${name}/hook.mjs`]: HOOK_SCRIPT,
 });
 
-// 收到 SIGTERM 后 300ms 才退出，其余行为与 hook.mjs 相同（参数照传）。
-const TERM_LATE = `// bbx hook fixture: hook.mjs that outlives SIGTERM by 300ms
-process.on('SIGTERM', () => { setTimeout(() => process.exit(143), 300); });
-await import('./hook.mjs');
-`;
 const TITLE = { name: 'title', when: ['Generate a concise title'], reply: { text: '{"title": "Hook run"}' } };
 // 每个用例一个会话：消息里带标记，模型先发一次工具调用，拿到结果后回一句话。
 const toolCase = (marker, tool, args, id = `call_${marker.replace(/-/g, '_')}`) => [
@@ -548,7 +543,7 @@ hooks:
   // （被杀 hook 的完成要等子进程 close，SubprocessPort.ts:85 / 137；截断的块走 sidecar 往返），只是 Node 一侧子进程收尾慢，
   // 次序稳定：2026-11-12 量过（macOS），基线 40 次全是 assistant_block > hook 完成(cancelled) > turn_completed。
   // Rust 把这两类被中止杀掉的 hook 的完成帧暂存到这一轮发终止事件之前（TurnEventCoordinator::emit_before_terminal），
-  // 固定成同样的次序。以前用 term.mjs 让 hook 晚 300ms 退出、把完成帧挤出这一轮的流来回避，现在去掉了。
+  // 固定成同样的次序。以前用 term.mjs（收到 SIGTERM 后晚 300ms 退出）把完成帧挤出这一轮的流来回避，现在去掉了。
   // 两个事件各一个场景：同时杀两个 hook 时两条 hook_execution_completed 的先后取决于进程退出的先后，基线自比不稳。
   for (const [name, event, log] of [
     ['hook-model-request-cancelled', 'PreModelRequest', 'pre-model'],
@@ -587,12 +582,14 @@ hooks:
 // 停机（PilotDeckServerShutdownBundle 先 closeServer 再 disposeGateway，src/cli/PilotDeckServerShutdownBundle.ts:30-38）。
 // 停机那一例：轮次先停在权限询问上，客户端发关闭帧断开（有挂起的询问，preserveTurn，这一轮不被中止），
 // 再发 SIGTERM；serve 之后多等 4 秒再采落盘，没被杀的 hook 会来得及写下 done 行。
+// close_session 那一例里被杀 hook 的完成帧(cancelled)同样在截断块之后、turn_completed 之前上流（与用户中止同一处理）。
+// 2026-11-13 量过（macOS）：去掉 term.mjs 包装后，close_session 两例基线对 Rust 各 20 次全部一致；停机两例客户端已断开、
+// 帧里没有完成帧，各 20 次一致（其中一次 Rust 侧 1.5 秒内没走到权限询问，负载下的超时，单独重跑 3 次一致）。
 for (const [event, log] of [['PreModelRequest', 'pre-model'], ['InstructionsLoaded', 'instructions']]) {
   const short = log === 'pre-model' ? 'model-request' : 'instructions-loaded';
   const session = `s-${log}-dispose`;
   const files = (sleep) => ({
-    ...plugin('bbx-model-dispose', { [event]: [{ hooks: [{ ...cmd(log, { sleep }), command: cmd(log, { sleep }).command.replace('hook.mjs', 'term.mjs') }] }] }),
-    'home/.pilotdeck/plugins/bbx-model-dispose/term.mjs': TERM_LATE,
+    ...plugin('bbx-model-dispose', { [event]: [{ hooks: [cmd(log, { sleep })] }] }),
   });
   scenarios[`hook-${short}-close-session`] = {
     about: `${event} hook 执行中 close_session：会话 dispose 中止运行中的轮次，hook 进程被杀（hooklog 没有 done 行），与用户中止相同。`,
