@@ -1,0 +1,61 @@
+{
+  "name": "gw-conn-large-frame",
+  "about": "大帧与大请求体：基线的帧解析不设帧长上限（websocket.ts:107-148 只拒绝超过 Number.MAX_SAFE_INTEGER 的长度），一条约 16 MiB 的请求帧（describe_server 带一个大字段）照常应答，之后同一连接照常；/api/web/.../files/write 的请求体也不限大小（httpRouter.ts:132-143），约 4 MiB 的写入照常 200 并落盘，读回时超过 1 MiB 只给元数据（projectFiles.ts:162-170）。",
+  "steps": [
+    {
+      "raw": {
+        "ws": true,
+        "hello": true,
+        "send": [
+          {
+            "frame": {
+              "opcode": 1,
+              "prefix": "{\"type\":\"request\",\"id\":\"big-1\",\"method\":\"describe_server\",\"params\":{\"pad\":\"",
+              "text": "0123456789abcdef",
+              "repeat": 1048576,
+              "suffix": "\"}}"
+            }
+          },
+          {
+            "wait": 200
+          },
+          {
+            "frame": {
+              "opcode": 1,
+              "json": {
+                "type": "request",
+                "id": "after-1",
+                "method": "list_sessions",
+                "params": {}
+              }
+            }
+          }
+        ],
+        "readMs": 4000
+      }
+    },
+    {
+      "raw": {
+        "send": [
+          {
+            "prefix": "POST /api/web/projects/%2Fprivate%2Ftmp%2Fpdrs-bbx%2Froot%2Fproj/files/write HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\nContent-Length: 4194335\r\nConnection: close\r\n\r\n{\"path\":\"big.txt\",\"content\":\"",
+            "text": "y",
+            "repeat": 4194304,
+            "suffix": "\"}"
+          }
+        ],
+        "readMs": 3000
+      }
+    },
+    {
+      "raw": {
+        "send": [
+          {
+            "text": "GET /api/web/projects/%2Fprivate%2Ftmp%2Fpdrs-bbx%2Froot%2Fproj/files/read?path=big.txt HTTP/1.1\r\nHost: x\r\nauthorization: Bearer {TOKEN}\r\nConnection: close\r\n\r\n"
+          }
+        ],
+        "readMs": 1500
+      }
+    }
+  ]
+}

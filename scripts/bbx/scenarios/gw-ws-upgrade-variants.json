@@ -1,0 +1,186 @@
+{
+  "name": "gw-ws-upgrade-variants",
+  "about": "WS 升级请求的各种写法（src/gateway/server/GatewayServer.ts:137-172 handleUpgrade）：路径不是 /ws 或缺 Sec-WebSocket-Key 时直接断开、不回任何字节（145-153）；Upgrade 头的值、方法、Sec-WebSocket-Version 都不检查，带查询串照常升级，请求的子协议不回显（154-163 只回 Accept）；跟升级请求挤在同一段里的 hello 被丢掉（67 不读 upgrade 事件的 head），所以没有 hello_ok；hello 与第一个请求连发（不等 hello_ok）时请求照常应答（GatewayWsConnection.ts:108 在等 describeServer 之前就置 authed）；第二个 hello 关 4002 invalid_frame；request 的 id 不是字符串关 4002 invalid_frame（630-637）；分成两帧的消息（FIN=0 + 续帧）第一段按整条消息解析失败，关 4002 invalid_json。",
+  "steps": [
+    {
+      "raw": {
+        "ws": {
+          "path": "/wsx"
+        },
+        "readMs": 800
+      }
+    },
+    {
+      "raw": {
+        "ws": {
+          "headers": {
+            "Sec-WebSocket-Key": null
+          }
+        },
+        "readMs": 800
+      }
+    },
+    {
+      "raw": {
+        "ws": {
+          "headers": {
+            "Upgrade": "not-websocket"
+          }
+        },
+        "hello": true,
+        "readMs": 800
+      }
+    },
+    {
+      "raw": {
+        "ws": {
+          "method": "POST",
+          "headers": {
+            "Content-Length": "0"
+          }
+        },
+        "hello": true,
+        "readMs": 800
+      }
+    },
+    {
+      "raw": {
+        "ws": {
+          "path": "/ws?client=bbx&x=1",
+          "headers": {
+            "Sec-WebSocket-Version": "8",
+            "Sec-WebSocket-Protocol": "chat, superchat",
+            "Origin": "http://evil.example"
+          }
+        },
+        "hello": true,
+        "readMs": 800
+      }
+    },
+    {
+      "raw": {
+        "ws": {
+          "headers": {
+            "Connection": "keep-alive, Upgrade"
+          }
+        },
+        "hello": true,
+        "readMs": 800
+      }
+    },
+    {
+      "raw": {
+        "send": [
+          {
+            "hex": "474554202f777320485454502f312e310d0a486f73743a203132372e302e302e310d0a557067726164653a20776562736f636b65740d0a436f6e6e656374696f6e3a20557067726164650d0a5365632d576562536f636b65742d4b65793a20596d4a344c584a68647931725a586b744d4441774d413d3d0d0a5365632d576562536f636b65742d56657273696f6e3a2031330d0a0d0a81e8123456786916220162517442305c33147e5b745430442417665b35177e62330a615d3916300e74493c06745430573a11775a22367359335a2816221d6140745430573a11775a222e774625117d5a7442300478483c04745430403913775a7442305634003f403913775a7405"
+          }
+        ],
+        "readMs": 1000
+      }
+    },
+    {
+      "raw": {
+        "ws": true,
+        "send": [
+          {
+            "frame": {
+              "opcode": 1,
+              "json": {
+                "type": "hello",
+                "protocolVersion": "1.2",
+                "clientName": "test",
+                "clientVersion": "0.0.0",
+                "token": "{TOKEN}"
+              }
+            }
+          },
+          {
+            "frame": {
+              "opcode": 1,
+              "json": {
+                "type": "request",
+                "id": "pipelined-1",
+                "method": "describe_server",
+                "params": {}
+              }
+            }
+          }
+        ],
+        "readMs": 1500
+      }
+    },
+    {
+      "raw": {
+        "ws": true,
+        "hello": true,
+        "send": [
+          {
+            "frame": {
+              "opcode": 1,
+              "json": {
+                "type": "hello",
+                "protocolVersion": "1.2",
+                "clientName": "test",
+                "clientVersion": "0.0.0",
+                "token": "{TOKEN}"
+              }
+            }
+          }
+        ],
+        "readMs": 1000
+      }
+    },
+    {
+      "raw": {
+        "ws": true,
+        "hello": true,
+        "send": [
+          {
+            "frame": {
+              "opcode": 1,
+              "json": {
+                "type": "request",
+                "id": 7,
+                "method": "describe_server",
+                "params": {}
+              }
+            }
+          }
+        ],
+        "readMs": 1000
+      }
+    },
+    {
+      "raw": {
+        "ws": true,
+        "hello": true,
+        "send": [
+          {
+            "frame": {
+              "opcode": 1,
+              "fin": false,
+              "text": "{\"type\":\"request\","
+            }
+          },
+          {
+            "frame": {
+              "opcode": 0,
+              "text": "\"id\":\"frag-1\",\"method\":\"describe_server\",\"params\":{}}"
+            }
+          }
+        ],
+        "readMs": 1000
+      }
+    },
+    {
+      "raw": {
+        "send": [
+          {
+            "text": "GET /health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+          }
+        ],
+        "readMs": 1500
+      }
+    }
+  ]
+}

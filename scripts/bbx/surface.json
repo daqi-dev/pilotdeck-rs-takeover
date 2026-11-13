@@ -16382,18 +16382,14 @@
      "where": "src/gateway/server/GatewayWsConnection.ts:100",
      "note": "protocolVersion 不等于 \"1.2\"：关闭 4001 protocol_mismatch（先于 token 检查）。",
      "probe": [
-      "\"protocolVersion\":\"1.1\""
+      "/\"protocolVersion\": ?\"1\\.1\"/"
      ]
     },
     {
      "id": "gw:ws.auth-failed",
      "where": "src/gateway/server/GatewayWsConnection.ts:104",
      "note": "token 不对：关闭 4003 auth_failed。",
-     "probe": [
-      "\"token\": \"wrong",
-      "\"token\":\"wrong",
-      "auth_failed"
-     ]
+     "observe": "auth_failed"
     },
     {
      "id": "gw:ws.hello-ok",
@@ -16442,7 +16438,7 @@
      "where": "src/gateway/server/GatewayWsConnection.ts:573",
      "note": "未知 method：response ok:false，error.code gateway_request_failed，message「Unknown gateway method X.」。",
      "probe": [
-      "\"ws\":\"no_such_method\""
+      "/\"ws\": ?\"no_such_method\"/"
      ]
     },
     {
@@ -16689,7 +16685,7 @@
      "where": "src/gateway/server/GatewayServer.ts:98",
      "note": "/health 任意方法、忽略查询串、200 {\"ok\":true}；尾斜杠与大小写不同都 404；百分号编码不解码。",
      "probe": [
-      "\"http\":\"GET /health\""
+      "/\"http\": ?\"GET /health/"
      ]
     },
     {

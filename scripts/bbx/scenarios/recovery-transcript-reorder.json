@@ -1,0 +1,61 @@
+{
+  "name": "recovery-transcript-reorder",
+  "about": "会话文件里的记录次序乱了、换行是 CRLF、夹着一条合法 JSON 但形状不对的记录（模拟手工拼接或别的写入方留下的文件）：基线读会话时按 /\\r?\\n/ 切行（src/session/transcript/TranscriptReader.ts:51），形状不对的记 transcript_entry_invalid 后跳过（60-68），其余按 sequence 再按 createdAt 排序（81-84）；续写时接着最大的 sequence（JsonlTranscriptWriter.ts:84-86），文件末尾已有换行时不再补（JsonlSessionPersistence.ts:47-63）。另读一个不存在的会话。比 read_session_messages、续一轮时发给 provider 的历史、最终落盘。",
+  "files": {
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-order.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s-order\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":1,\"createdAt\":\"2026-11-01T00:00:01.000Z\",\"entryId\":\"s-order-e-1\",\"parentEntryId\":null}\r\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"first question\"}]}],\"metadata\":{\"permissionMode\":\"default\",\"runMode\":\"agent\",\"basePermissionMode\":\"default\",\"allowPlanModeTools\":false},\"sessionId\":\"s-order\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":2,\"createdAt\":\"2026-11-01T00:00:02.000Z\",\"entryId\":\"s-order-e-2\",\"parentEntryId\":\"s-order-e-1\"}\r\n{\"type\":\"session_metadata\",\"metadata\":{\"firstPrompt\":\"first question\",\"lastPrompt\":\"first question\",\"title\":\"Fixture title\",\"updatedAt\":\"2026-11-01T00:00:03.000Z\"},\"sessionId\":\"s-order\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":3,\"createdAt\":\"2026-11-01T00:00:03.000Z\",\"entryId\":\"s-order-e-3\",\"parentEntryId\":\"s-order-e-2\"}\r\n{\"type\":\"assistant_message\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"first answer\"}],\"metadata\":{\"model\":\"deterministic\"}},\"sessionId\":\"s-order\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":5,\"createdAt\":\"2026-11-01T00:00:05.000Z\",\"entryId\":\"s-order-e-5\",\"parentEntryId\":\"s-order-e-4\"}\r\n{\"type\":\"not_a_known_entry\",\"note\":\"valid json, wrong shape\"}\r\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s-order\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":4,\"createdAt\":\"2026-11-01T00:00:04.000Z\",\"entryId\":\"s-order-e-4\",\"parentEntryId\":\"s-order-e-3\"}\r\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"stopReason\":\"completed\",\"usage\":{\"inputTokens\":12,\"outputTokens\":4,\"totalTokens\":16},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-11-01T00:00:01.000Z\",\"finalMessage\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"first answer\"}],\"metadata\":{\"model\":\"deterministic\"}},\"sessionId\":\"s-order\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"completedAt\":\"2026-11-01T00:00:07.000Z\"},\"sessionId\":\"s-order\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":7,\"createdAt\":\"2026-11-01T00:00:07.000Z\",\"entryId\":\"s-order-e-7\",\"parentEntryId\":\"s-order-e-6\"}\r\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s-order\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":6,\"createdAt\":\"2026-11-01T00:00:06.000Z\",\"entryId\":\"s-order-e-6\",\"parentEntryId\":\"s-order-e-5\"}\r\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Recovery run\"}"
+      }
+    },
+    {
+      "name": "turn-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "list_sessions",
+      "params": {}
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-order"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-missing"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-order",
+        "channelKey": "test",
+        "message": "turn-1: continue after reorder",
+        "runId": "run-bbx-1"
+      },
+      "timeout": 15000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-order"
+      }
+    }
+  ]
+}

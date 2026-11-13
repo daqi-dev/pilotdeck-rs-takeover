@@ -1,0 +1,60 @@
+{
+  "name": "gw-conn-many-clients",
+  "about": "同时连着很多客户端：基线对连接数没有上限（GatewayServer.ts:62-71 用 node:http 缺省选项，没设 maxConnections；连接只放进一个 Set，170-171），100 条同时在线的 WS 连接都能握手拿到 hello_ok，期间 /health、/api/web 和已有连接上的请求照常应答，放掉之后照常。",
+  "steps": [
+    {
+      "ws": "describe_server",
+      "params": {}
+    },
+    {
+      "flood": 100
+    },
+    {
+      "raw": {
+        "send": [
+          {
+            "text": "GET /health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+          }
+        ],
+        "readMs": 1500
+      }
+    },
+    {
+      "raw": {
+        "send": [
+          {
+            "text": "GET /api/web/projects HTTP/1.1\r\nHost: x\r\nauthorization: Bearer {TOKEN}\r\nConnection: close\r\n\r\n"
+          }
+        ],
+        "readMs": 1500
+      }
+    },
+    {
+      "ws": "list_sessions",
+      "params": {}
+    },
+    {
+      "ws": "describe_server",
+      "params": {}
+    },
+    {
+      "flood": "release"
+    },
+    {
+      "flood": 30
+    },
+    {
+      "raw": {
+        "send": [
+          {
+            "text": "GET /health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+          }
+        ],
+        "readMs": 1500
+      }
+    },
+    {
+      "flood": "release"
+    }
+  ]
+}

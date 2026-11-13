@@ -1,0 +1,14 @@
+{
+  "name": "gw-http-raw-requests",
+  "about": "fetch 发不出来的 HTTP 请求（基线是 node:http 的 createServer 缺省选项，GatewayServer.ts:64；路由按 new URL(request.url, base).pathname 取，95）：请求头超过 16 KiB 回 431；不是 HTTP 的字节回 400；绝对形式的请求目标 http://host/health 取其路径；//health 被当成协议相对 URL，路径变成 /，落到 404；同一连接上连发两个请求（keep-alive 管线化）两个都应答；请求头写一半就半关闭；HTTP/1.0 请求。",
+  "steps": [
+    {"raw": {"send": [{"prefix": "GET /health HTTP/1.1\r\nHost: x\r\nX-Big: ", "text": "a", "repeat": 20000, "suffix": "\r\n\r\n"}], "readMs": 1000}},
+    {"raw": {"send": [{"text": "HELLO THERE\r\n\r\n"}], "readMs": 1000}},
+    {"raw": {"send": [{"text": "GET http://elsewhere.example/health HTTP/1.1\r\nHost: elsewhere.example\r\nConnection: close\r\n\r\n"}], "readMs": 1000}},
+    {"raw": {"send": [{"text": "GET //health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"}], "readMs": 1000}},
+    {"raw": {"send": [{"text": "GET /health HTTP/1.1\r\nHost: x\r\n\r\nGET /nope HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"}], "readMs": 1000}},
+    {"raw": {"send": [{"text": "GET /health HTTP/1.1\r\nHost: x\r\n", "end": true}], "readMs": 1000}},
+    {"raw": {"send": [{"text": "GET /health HTTP/1.0\r\n\r\n"}], "readMs": 1000}},
+    {"http": "GET /health"}
+  ]
+}

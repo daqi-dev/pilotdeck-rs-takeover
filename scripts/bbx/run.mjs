@@ -586,7 +586,9 @@ const readServerFrames = (buf) => {
   return { frames, rest: buf.subarray(off) };
 };
 // HTTP 应答头：状态行和头（小写名，去掉 date），正文原样。
-const parseHttpHead = (text) => {
+const parseHttpHead = (raw) => {
+  // 管线化时后一个应答整段落在正文里，它的 Date 行同样去掉。
+  const text = raw.replace(/^date: .*\r\n/gim, '');
   const i = text.indexOf('\r\n\r\n'); const head = i < 0 ? text : text.slice(0, i);
   const [status, ...lines] = head.split('\r\n');
   const headers = Object.fromEntries(lines.map((l) => [l.slice(0, l.indexOf(':')).toLowerCase(), l.slice(l.indexOf(':') + 1).trim()]).filter(([k]) => k !== 'date'));
@@ -643,14 +645,24 @@ const rawStep = async (spec) => {
     const { frames, rest } = readServerFrames(st.buf); r.frames = frames; if (rest.length) r.trailingBytes = rest.length;
   } else if (st.buf.length) r.http = parseHttpHead(st.buf.toString());
   r.serverClosed = st.closed ? (st.ended ?? 'close') : st.ended === 'fin' ? 'fin-half' : null;
-  st.s.destroy();
+  await rawClose(st, upgraded || / 101 /.test(r.http?.status ?? ''));
   return r;
+};
+// 收尾：升级过、还开着的连接先发关闭帧等服务端关（最多 1 秒），再断开。基线对只收到 FIN 的 WS 连接
+// 不做处理（websocket.ts 不听 end），直接断开会让它停机时一直等这条连接（见上面 disconnect 的说明）。
+// 收尾这段的往来不记录。
+const rawClose = async (st, upgraded) => {
+  if (upgraded && !st.closed) {
+    st.s.write(wsClientFrame({ opcode: 8, hex: '03e8' }));
+    await rawWait(st, () => false, 1000);
+  }
+  st.s.destroy();
 };
 // flood：{flood: N} 同时另开 N 条 WS 连接（升级 + hello），等每条拿到第一帧或被关（5 秒），连接保持到
 // {flood: "release"} 或场景结束；结果按结局计数。用来比连接很多时服务端是否照常接受、照常服务别的请求。
 const floodSockets = [];
 const floodStep = async (step) => {
-  if (step.flood === 'release') { const n = floodSockets.length; for (const st of floodSockets.splice(0)) st.s.destroy(); return { released: n }; }
+  if (step.flood === 'release') { const all = floodSockets.splice(0); await Promise.all(all.map((st) => rawClose(st, true))); return { released: all.length }; }
   const all = await Promise.all(Array.from({ length: step.flood }, () => openRaw(GATEWAY_PORT)));
   // 先等 101 再发 hello：跟升级请求挤在同一段里的字节基线不读（GatewayServer.ts:67 丢掉 upgrade 事件的 head）。
   for (const st of all) if (!st.closed) st.s.write(upgradeRequest(true));
@@ -850,7 +862,7 @@ out.failures = [
 out.notifications = allFrames.filter((f) => f.type === 'notification');
 out.unsolicited = allFrames.filter((f) => !['notification', 'hello_ok', 'response', 'event', '__closed'].includes(f.type));
 if (ws) ws.close();
-for (const st of floodSockets.splice(0)) st.s.destroy();
+await Promise.all(floodSockets.splice(0).map((st) => rawClose(st, true)));
 
 // ── 停机：SIGTERM，记退出码 ──
 if (server && server.exitCode === null) {
