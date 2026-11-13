@@ -139,41 +139,98 @@ pub(crate) fn create_directories_at(
     relative: &Path,
     mode: rustix::fs::Mode,
 ) -> io::Result<()> {
+    create_directories_at_traced(root, relative, mode).map_err(|failure| failure.error)
+}
+
+/// Diagnostic context for the same descriptor walker. The raw error is never
+/// altered: memory and other existing callers retain their previous contract.
+#[cfg(unix)]
+#[derive(Debug)]
+pub(crate) struct DirectoryCreateFailure {
+    pub(crate) error: io::Error,
+    pub(crate) syscall: &'static str,
+    pub(crate) component: PathBuf,
+    pub(crate) readonly_missing: bool,
+}
+
+#[cfg(unix)]
+pub(crate) fn create_directories_at_traced(
+    root: &File,
+    relative: &Path,
+    mode: rustix::fs::Mode,
+) -> std::result::Result<(), DirectoryCreateFailure> {
     use rustix::fs::{AtFlags, FileType, Mode, mkdirat, openat, statat};
     let components: Vec<_> = relative.components().collect();
-    let mut parent = root.try_clone()?;
+    let mut parent = root.try_clone().map_err(|error| DirectoryCreateFailure {
+        error,
+        syscall: "open",
+        component: PathBuf::new(),
+        readonly_missing: false,
+    })?;
+    let mut component_path = PathBuf::new();
     for (index, component) in components.iter().enumerate() {
         let Component::Normal(name) = component else {
-            return Err(io::Error::from_raw_os_error(libc::EACCES));
+            return Err(DirectoryCreateFailure {
+                error: io::Error::from_raw_os_error(libc::EACCES),
+                syscall: "open",
+                component: component_path,
+                readonly_missing: false,
+            });
         };
         let name: &std::ffi::OsStr = name;
+        component_path.push(name);
         let open = || openat(&parent, name, directory_flags(), Mode::empty());
         let opened = match open() {
             Err(rustix::io::Errno::NOENT) => {
                 match mkdirat(&parent, name, mode) {
                     Ok(()) | Err(rustix::io::Errno::EXIST) => {}
-                    Err(error) => return Err(error.into()),
+                    Err(error) => {
+                        // Fixed Node22 recursive mkdir reports ENOENT for an
+                        // EROFS creation whose component still does not exist.
+                        // Keep the raw error for existing callers; only the
+                        // API diagnostic adapter consumes this measured fact.
+                        let readonly_missing = error == rustix::io::Errno::ROFS
+                            && matches!(
+                                statat(&parent, name, AtFlags::SYMLINK_NOFOLLOW),
+                                Err(rustix::io::Errno::NOENT)
+                            );
+                        return Err(DirectoryCreateFailure {
+                            error: error.into(),
+                            syscall: "mkdir",
+                            component: component_path,
+                            readonly_missing,
+                        });
+                    }
                 }
                 open()
             }
             result => result,
         };
-        parent = File::from(opened.map_err(|error| {
-            // Distinguish a refused link from Node's ordinary non-directory
-            // errors. statat also stays on the pinned parent, even in a race.
-            if matches!(error, rustix::io::Errno::NOTDIR | rustix::io::Errno::LOOP)
-                && let Ok(stat) = statat(&parent, name, AtFlags::SYMLINK_NOFOLLOW)
-            {
-                let kind = FileType::from_raw_mode(stat.st_mode);
-                if kind == FileType::Symlink {
-                    return io::Error::new(io::ErrorKind::PermissionDenied, NoFollowLoop);
-                }
-                if kind != FileType::Directory && index + 1 == components.len() {
-                    return io::Error::from_raw_os_error(libc::EEXIST);
-                }
-            }
-            checked_open_error(error.into())
-        })?);
+        parent = File::from(
+            opened
+                .map_err(|error| {
+                    // Distinguish a refused link from Node's ordinary non-directory
+                    // errors. statat also stays on the pinned parent, even in a race.
+                    if matches!(error, rustix::io::Errno::NOTDIR | rustix::io::Errno::LOOP)
+                        && let Ok(stat) = statat(&parent, name, AtFlags::SYMLINK_NOFOLLOW)
+                    {
+                        let kind = FileType::from_raw_mode(stat.st_mode);
+                        if kind == FileType::Symlink {
+                            return io::Error::new(io::ErrorKind::PermissionDenied, NoFollowLoop);
+                        }
+                        if kind != FileType::Directory && index + 1 == components.len() {
+                            return io::Error::from_raw_os_error(libc::EEXIST);
+                        }
+                    }
+                    checked_open_error(error.into())
+                })
+                .map_err(|error| DirectoryCreateFailure {
+                    error,
+                    syscall: "open",
+                    component: component_path.clone(),
+                    readonly_missing: false,
+                })?,
+        );
     }
     Ok(())
 }

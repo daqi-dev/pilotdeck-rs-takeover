@@ -80,17 +80,32 @@ impl Document {
         }
         native_component::run(command, Some(self.0.clone()), limit, TIMEOUT)
             .await
-            .map_err(|error| component_error(mode, error))
+            .map_err(|error| component_error(mode, page, error))
     }
 }
 
-fn component_error(mode: &str, error: native_component::Error) -> Error {
-    match error {
-        native_component::Error::Exited {
-            code: Some(1),
-            message,
-        } if mode == "count" => Error::ParseFailed(message),
-        error => Error::from(error),
+// The private component reserves 3 only for the successful-open/count
+// `requested > pages` branch. Diagnostic text is never used as a discriminator.
+const PAGE_OUT_OF_RANGE_EXIT: i32 = 3;
+fn component_error(mode: &str, page: Option<u32>, error: native_component::Error) -> Error {
+    match (mode, page, error) {
+        (
+            "render",
+            Some(page),
+            native_component::Error::Exited {
+                code: Some(PAGE_OUT_OF_RANGE_EXIT),
+                ..
+            },
+        ) if page > 0 => Error::Failed(format!("invalid page number: {page}")),
+        (
+            "count",
+            _,
+            native_component::Error::Exited {
+                code: Some(1),
+                message,
+            },
+        ) => Error::ParseFailed(message),
+        (_, _, error) => Error::from(error),
     }
 }
 
@@ -108,6 +123,7 @@ mod tests {
         ] {
             let error = component_error(
                 mode,
+                None,
                 native_component::Error::Exited {
                     code,
                     message: "original error".into(),
@@ -117,16 +133,84 @@ mod tests {
             assert_eq!(error.to_string(), "original error");
         }
         assert!(matches!(
-            component_error("count", native_component::Error::Cancelled),
+            component_error("count", None, native_component::Error::Cancelled),
             Error::Failed(_)
         ));
         assert!(matches!(
             component_error(
                 "count",
+                None,
                 native_component::Error::Failed("permission denied".into())
             ),
             Error::Failed(_)
         ));
+    }
+    #[test]
+    fn render_typed_invalid_page_restores_baseline_message() {
+        for page in [1, 2, 12] {
+            let error = component_error(
+                "render",
+                Some(page),
+                native_component::Error::Exited {
+                    code: Some(PAGE_OUT_OF_RANGE_EXIT),
+                    message: "repair warnings\nPDF page is out of range.".into(),
+                },
+            );
+            assert_eq!(error.to_string(), format!("invalid page number: {page}"));
+            assert!(matches!(error, Error::Failed(_)));
+        }
+    }
+    #[test]
+    fn similar_text_other_exits_and_missing_or_zero_pages_are_not_reclassified() {
+        for (mode, page, code) in [
+            ("render", Some(1), Some(1)),
+            ("render", Some(1), Some(2)),
+            ("render", Some(1), Some(127)),
+            ("render", Some(1), None),
+            ("render", None, Some(3)),
+            ("render", Some(0), Some(3)),
+            ("count", Some(1), Some(3)),
+            ("text", Some(1), Some(3)),
+        ] {
+            let original = "open/parse/IO/raster error; PDF page is out of range.";
+            let error = component_error(
+                mode,
+                page,
+                native_component::Error::Exited {
+                    code,
+                    message: original.into(),
+                },
+            );
+            assert_eq!(error.to_string(), original, "{mode}/{page:?}/{code:?}");
+            assert!(matches!(error, Error::Failed(_)));
+        }
+    }
+    #[test]
+    fn render_non_exit_failure_categories_keep_their_original_meaning() {
+        for (source, expected) in [
+            (native_component::Error::Unavailable, UNAVAILABLE),
+            (
+                native_component::Error::Timeout,
+                "PDF operation exceeded its 30 second time limit.",
+            ),
+            (
+                native_component::Error::TooLarge,
+                "PDF operation exceeded its output size limit.",
+            ),
+            (
+                native_component::Error::Cancelled,
+                "PDF operation was cancelled.",
+            ),
+            (
+                native_component::Error::Failed("permission denied".into()),
+                "permission denied",
+            ),
+        ] {
+            assert_eq!(
+                component_error("render", Some(1), source).to_string(),
+                expected
+            );
+        }
     }
     #[test]
     fn document_snapshot_is_private_and_released() {

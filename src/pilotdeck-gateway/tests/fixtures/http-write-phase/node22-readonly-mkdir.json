@@ -1,0 +1,330 @@
+{
+  "schema": 1,
+  "kind": "readonly-stdlib-mkdir-characterization-not-product",
+  "runtime": {
+    "binary": "/home/clawbox-08/ws/pilotdeck-rs-cc2c/tools/node/bin/node",
+    "binarySha": "a4d7700efa08668fdab4d9f6f0ca8167809a9d72445d7c16f6c342fd78633608",
+    "versions": {
+      "node": "22.22.0",
+      "acorn": "8.15.0",
+      "ada": "2.9.2",
+      "amaro": "1.1.4",
+      "ares": "1.34.6",
+      "brotli": "1.1.0",
+      "cjs_module_lexer": "2.1.0",
+      "cldr": "47.0",
+      "icu": "77.1",
+      "llhttp": "9.3.0",
+      "modules": "127",
+      "napi": "10",
+      "nbytes": "0.1.1",
+      "ncrypto": "0.0.1",
+      "nghttp2": "1.64.0",
+      "openssl": "3.5.4",
+      "simdjson": "3.13.0",
+      "simdutf": "6.4.2",
+      "sqlite": "3.50.4",
+      "tz": "2025b",
+      "undici": "6.23.0",
+      "unicode": "16.0",
+      "uv": "1.51.0",
+      "uvwasi": "0.0.23",
+      "v8": "12.4.254.21-node.33",
+      "zlib": "1.3.1-470d3a2",
+      "zstd": "1.5.7"
+    },
+    "uid": 1000,
+    "cwd": "/home/clawbox-08/ws/pilotdeck-rs-cc2c/harness/eb575d93-p1",
+    "home": "/tmp/isolated-node-home",
+    "pilotHome": "/tmp/isolated-node-home/.pilotdeck"
+  },
+  "source": {
+    "path": "/home/clawbox-08/ws/pilotdeck-rs-cc2c/baseline/PilotDeck/src/adapters/web/projectFiles.ts",
+    "sha256": "81cc146796c2fca00e45e158b0d420055fbef2a5824f785659559cc8a3b5d7a9",
+    "fixedCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+    "phase": "resolveSafeWriting lexical -> mkdir(dirname(target),recursive) -> writeFile; independent stdlib operations"
+  },
+  "rootMount": "4020 870 0:72 / / ro,relatime - overlay overlay rw,lowerdir=/var/lib/docker/overlay2/l/MX6CLHKISZ7CFNVGUYYGZKLBRE:/var/lib/docker/overlay2/l/4ZMZGCC5QF25UPUB25UAXZXRLY,upperdir=/var/lib/docker/overlay2/89b8866e21336334a6a56cc176e0dbb55a692d4345a31889f735681e54b0fee6/diff,workdir=/var/lib/docker/overlay2/89b8866e21336334a6a56cc176e0dbb55a692d4345a31889f735681e54b0fee6/work,nouserxattr",
+  "observations": [
+    {
+      "label": "lstat:/private",
+      "ok": false,
+      "error": {
+        "name": "Error",
+        "code": "ENOENT",
+        "errno": -2,
+        "syscall": "lstat",
+        "path": "/private",
+        "message": "ENOENT: no such file or directory, lstat '/private'"
+      }
+    },
+    {
+      "label": "mkdir-direct:/private",
+      "ok": false,
+      "error": {
+        "name": "Error",
+        "code": "EROFS",
+        "errno": -30,
+        "syscall": "mkdir",
+        "path": "/private",
+        "message": "EROFS: read-only file system, mkdir '/private'"
+      }
+    },
+    {
+      "label": "mkdir-recursive:/private",
+      "ok": false,
+      "error": {
+        "name": "Error",
+        "code": "ENOENT",
+        "errno": -2,
+        "syscall": "mkdir",
+        "path": "/private",
+        "message": "ENOENT: no such file or directory, mkdir '/private'"
+      }
+    },
+    {
+      "label": "lstat:/private/tmp",
+      "ok": false,
+      "error": {
+        "name": "Error",
+        "code": "ENOENT",
+        "errno": -2,
+        "syscall": "lstat",
+        "path": "/private/tmp",
+        "message": "ENOENT: no such file or directory, lstat '/private/tmp'"
+      }
+    },
+    {
+      "label": "mkdir-direct:/private/tmp",
+      "ok": false,
+      "error": {
+        "name": "Error",
+        "code": "ENOENT",
+        "errno": -2,
+        "syscall": "mkdir",
+        "path": "/private/tmp",
+        "message": "ENOENT: no such file or directory, mkdir '/private/tmp'"
+      }
+    },
+    {
+      "label": "mkdir-recursive:/private/tmp",
+      "ok": false,
+      "error": {
+        "name": "Error",
+        "code": "ENOENT",
+        "errno": -2,
+        "syscall": "mkdir",
+        "path": "/private",
+        "message": "ENOENT: no such file or directory, mkdir '/private'"
+      }
+    },
+    {
+      "label": "lstat:/private/tmp/pdrs-bbx",
+      "ok": false,
+      "error": {
+        "name": "Error",
+        "code": "ENOENT",
+        "errno": -2,
+        "syscall": "lstat",
+        "path": "/private/tmp/pdrs-bbx",
+        "message": "ENOENT: no such file or directory, lstat '/private/tmp/pdrs-bbx'"
+      }
+    },
+    {
+      "label": "mkdir-direct:/private/tmp/pdrs-bbx",
+      "ok": false,
+      "error": {
+        "name": "Error",
+        "code": "ENOENT",
+        "errno": -2,
+        "syscall": "mkdir",
+        "path": "/private/tmp/pdrs-bbx",
+        "message": "ENOENT: no such file or directory, mkdir '/private/tmp/pdrs-bbx'"
+      }
+    },
+    {
+      "label": "mkdir-recursive:/private/tmp/pdrs-bbx",
+      "ok": false,
+      "error": {
+        "name": "Error",
+        "code": "ENOENT",
+        "errno": -2,
+        "syscall": "mkdir",
+        "path": "/private",
+        "message": "ENOENT: no such file or directory, mkdir '/private'"
+      }
+    },
+    {
+      "label": "lstat:/private/tmp/pdrs-bbx/root",
+      "ok": false,
+      "error": {
+        "name": "Error",
+        "code": "ENOENT",
+        "errno": -2,
+        "syscall": "lstat",
+        "path": "/private/tmp/pdrs-bbx/root",
+        "message": "ENOENT: no such file or directory, lstat '/private/tmp/pdrs-bbx/root'"
+      }
+    },
+    {
+      "label": "mkdir-direct:/private/tmp/pdrs-bbx/root",
+      "ok": false,
+      "error": {
+        "name": "Error",
+        "code": "ENOENT",
+        "errno": -2,
+        "syscall": "mkdir",
+        "path": "/private/tmp/pdrs-bbx/root",
+        "message": "ENOENT: no such file or directory, mkdir '/private/tmp/pdrs-bbx/root'"
+      }
+    },
+    {
+      "label": "mkdir-recursive:/private/tmp/pdrs-bbx/root",
+      "ok": false,
+      "error": {
+        "name": "Error",
+        "code": "ENOENT",
+        "errno": -2,
+        "syscall": "mkdir",
+        "path": "/private",
+        "message": "ENOENT: no such file or directory, mkdir '/private'"
+      }
+    },
+    {
+      "label": "lstat:/private/tmp/pdrs-bbx/root/proj",
+      "ok": false,
+      "error": {
+        "name": "Error",
+        "code": "ENOENT",
+        "errno": -2,
+        "syscall": "lstat",
+        "path": "/private/tmp/pdrs-bbx/root/proj",
+        "message": "ENOENT: no such file or directory, lstat '/private/tmp/pdrs-bbx/root/proj'"
+      }
+    },
+    {
+      "label": "mkdir-direct:/private/tmp/pdrs-bbx/root/proj",
+      "ok": false,
+      "error": {
+        "name": "Error",
+        "code": "ENOENT",
+        "errno": -2,
+        "syscall": "mkdir",
+        "path": "/private/tmp/pdrs-bbx/root/proj",
+        "message": "ENOENT: no such file or directory, mkdir '/private/tmp/pdrs-bbx/root/proj'"
+      }
+    },
+    {
+      "label": "mkdir-recursive:/private/tmp/pdrs-bbx/root/proj",
+      "ok": false,
+      "error": {
+        "name": "Error",
+        "code": "ENOENT",
+        "errno": -2,
+        "syscall": "mkdir",
+        "path": "/private",
+        "message": "ENOENT: no such file or directory, mkdir '/private'"
+      }
+    },
+    {
+      "label": "lstat:/private/tmp/pdrs-bbx/root/proj/new",
+      "ok": false,
+      "error": {
+        "name": "Error",
+        "code": "ENOENT",
+        "errno": -2,
+        "syscall": "lstat",
+        "path": "/private/tmp/pdrs-bbx/root/proj/new",
+        "message": "ENOENT: no such file or directory, lstat '/private/tmp/pdrs-bbx/root/proj/new'"
+      }
+    },
+    {
+      "label": "mkdir-direct:/private/tmp/pdrs-bbx/root/proj/new",
+      "ok": false,
+      "error": {
+        "name": "Error",
+        "code": "ENOENT",
+        "errno": -2,
+        "syscall": "mkdir",
+        "path": "/private/tmp/pdrs-bbx/root/proj/new",
+        "message": "ENOENT: no such file or directory, mkdir '/private/tmp/pdrs-bbx/root/proj/new'"
+      }
+    },
+    {
+      "label": "mkdir-recursive:/private/tmp/pdrs-bbx/root/proj/new",
+      "ok": false,
+      "error": {
+        "name": "Error",
+        "code": "ENOENT",
+        "errno": -2,
+        "syscall": "mkdir",
+        "path": "/private",
+        "message": "ENOENT: no such file or directory, mkdir '/private'"
+      }
+    },
+    {
+      "label": "fixed-write-phases:new/w.txt",
+      "ok": false,
+      "error": {
+        "name": "Error",
+        "code": "ENOENT",
+        "errno": -2,
+        "syscall": "mkdir",
+        "path": "/private",
+        "message": "ENOENT: no such file or directory, mkdir '/private'"
+      },
+      "phase": "mkdir",
+      "wrote": false
+    },
+    {
+      "label": "fixed-write-phases:b64.bin",
+      "ok": false,
+      "error": {
+        "name": "Error",
+        "code": "ENOENT",
+        "errno": -2,
+        "syscall": "mkdir",
+        "path": "/private",
+        "message": "ENOENT: no such file or directory, mkdir '/private'"
+      },
+      "phase": "mkdir",
+      "wrote": false
+    },
+    {
+      "label": "fixed-write-phases:plain.txt",
+      "ok": false,
+      "error": {
+        "name": "Error",
+        "code": "ENOENT",
+        "errno": -2,
+        "syscall": "mkdir",
+        "path": "/private",
+        "message": "ENOENT: no such file or directory, mkdir '/private'"
+      },
+      "phase": "mkdir",
+      "wrote": false
+    },
+    {
+      "label": "fixed-write-phases:sub",
+      "ok": false,
+      "error": {
+        "name": "Error",
+        "code": "ENOENT",
+        "errno": -2,
+        "syscall": "mkdir",
+        "path": "/private",
+        "message": "ENOENT: no such file or directory, mkdir '/private'"
+      },
+      "phase": "mkdir",
+      "wrote": false
+    }
+  ],
+  "writableControl": {
+    "label": "writable-missing-root",
+    "ok": true,
+    "value": {
+      "content": "control"
+    }
+  },
+  "complete": true
+}

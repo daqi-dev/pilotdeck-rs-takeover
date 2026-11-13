@@ -9,6 +9,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Private host/component contract; see CONTRACT.md. */
+enum { PDF_PAGE_OUT_OF_RANGE = 3 };
+
 int main(int argc, char **argv)
 {
     fz_context *ctx;
@@ -49,18 +52,24 @@ int main(int argc, char **argv)
         if (strcmp(argv[1], "count") == 0) {
             fz_write_printf(ctx, output, "%d\n", pages);
         } else if (render) {
-            if (requested > pages) fz_throw(ctx, FZ_ERROR_ARGUMENT, "PDF page is out of range.");
-            page = fz_load_page(ctx, document, (int)requested - 1);
-            fz_matrix matrix = fz_scale(100.0f / 72.0f, 100.0f / 72.0f);
-            fz_rect box = fz_transform_rect(fz_bound_page(ctx, page), matrix);
-            double width = ceil(box.x1) - floor(box.x0);
-            double height = ceil(box.y1) - floor(box.y0);
-            /* The store limit is a cache limit, not a pixmap allocation limit. */
-            if (!isfinite(width) || !isfinite(height) || width < 1 || height < 1 ||
-                width > 32768 || height > 32768 || width * height > 32000000)
-                fz_throw(ctx, FZ_ERROR_ARGUMENT, "PDF page raster exceeds the native component pixel limit.");
-            pixmap = fz_new_pixmap_from_page(ctx, page, matrix, fz_device_rgb(ctx), 0);
-            fz_write_pixmap_as_jpeg(ctx, output, pixmap, 80, 0);
+            if (requested > pages) {
+                /* Open/count succeeded. Preserve this exact semantic without
+                 * classifying unrelated MuPDF argument/parse/IO errors. */
+                fprintf(stderr, "PDF page is out of range.\n");
+                status = PDF_PAGE_OUT_OF_RANGE;
+            } else {
+                page = fz_load_page(ctx, document, (int)requested - 1);
+                fz_matrix matrix = fz_scale(100.0f / 72.0f, 100.0f / 72.0f);
+                fz_rect box = fz_transform_rect(fz_bound_page(ctx, page), matrix);
+                double width = ceil(box.x1) - floor(box.x0);
+                double height = ceil(box.y1) - floor(box.y0);
+                /* The store limit is a cache limit, not a pixmap allocation limit. */
+                if (!isfinite(width) || !isfinite(height) || width < 1 || height < 1 ||
+                    width > 32768 || height > 32768 || width * height > 32000000)
+                    fz_throw(ctx, FZ_ERROR_ARGUMENT, "PDF page raster exceeds the native component pixel limit.");
+                pixmap = fz_new_pixmap_from_page(ctx, page, matrix, fz_device_rgb(ctx), 0);
+                fz_write_pixmap_as_jpeg(ctx, output, pixmap, 80, 0);
+            }
         } else {
             for (int index = 0; index < pages; ++index) {
                 if (index) fz_write_byte(ctx, output, '\n');

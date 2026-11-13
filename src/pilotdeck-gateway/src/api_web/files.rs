@@ -541,16 +541,10 @@ impl ProjectFileService {
     /// cannot be opened keeps the Node diagnostic on the root path.
     #[cfg(unix)]
     fn root_beneath(&self, relative: &str) -> Result<fs::File, FilesError> {
-        let pinned = match crate::project_files::open_directory_beneath(&self.root, &self.root) {
-            // TS `writeFile` runs `mkdir(dirname(target), {recursive: true})`
-            // first, so a project root that does not exist yet is created and
-            // the write succeeds instead of answering ENOENT (the `path: "."`
-            // spelling on a missing root is #2456's separate cell in
-            // `write_root_itself`).
-            Err(error) if error.kind() == io::ErrorKind::NotFound => self.created_root(),
-            other => other,
-        };
-        pinned.map_err(|error| self.root_open_refusal(relative, error))
+        match crate::project_files::open_directory_beneath(&self.root, &self.root) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => self.created_root(relative),
+            other => other.map_err(|error| self.root_open_refusal(relative, error)),
+        }
     }
 
     /// The root-open refusal mapping `root_beneath` answers: a NOFOLLOW
@@ -577,25 +571,54 @@ impl ProjectFileService {
     /// write) out of the workspace. A rename that substitutes a *real*
     /// directory still resolves by path, exactly as Node does.
     #[cfg(unix)]
-    fn created_root(&self) -> io::Result<fs::File> {
+    fn created_root(&self, relative: &str) -> Result<fs::File, FilesError> {
         // Deterministic boundary-probe seam: the missing-root open has already
         // failed, so a test may swap an ancestor before the pin below.
         #[cfg(test)]
         test_hook::notify("create-root");
         let ancestor = deepest_existing(&self.root);
-        let pinned = crate::project_files::open_directory_beneath(&ancestor, &ancestor)?;
-        let tail = self
-            .root
-            .strip_prefix(&ancestor)
-            .map_err(|_| io::Error::from_raw_os_error(libc::EACCES))?;
+        let pinned = crate::project_files::open_directory_beneath(&ancestor, &ancestor)
+            .map_err(|error| self.root_open_refusal(relative, error))?;
+        let tail = self.root.strip_prefix(&ancestor).map_err(|_| {
+            self.root_open_refusal(relative, io::Error::from_raw_os_error(libc::EACCES))
+        })?;
         if !tail.as_os_str().is_empty() {
-            crate::project_files::create_directories_at(
+            crate::project_files::create_directories_at_traced(
                 &pinned,
                 tail,
                 rustix::fs::Mode::from_raw_mode(0o777),
-            )?;
+            )
+            .map_err(|failure| self.root_creation_refusal(relative, &ancestor, failure))?;
         }
         crate::project_files::open_directory_beneath(&self.root, &self.root)
+            .map_err(|error| self.root_open_refusal(relative, error))
+    }
+
+    /// Preserve the failed operation and first component. Only the measured
+    /// recursive-mkdir EROFS + still-missing case selects Node's ENOENT; the
+    /// descriptor walker retains its raw error for every other caller.
+    #[cfg(unix)]
+    fn root_creation_refusal(
+        &self,
+        relative: &str,
+        ancestor: &Path,
+        failure: crate::project_files::DirectoryCreateFailure,
+    ) -> FilesError {
+        if failure.syscall == "mkdir"
+            && failure.error.raw_os_error() == Some(libc::EROFS)
+            && failure.readonly_missing
+        {
+            return self.refusal(
+                "mkdir",
+                relative,
+                &ancestor.join(failure.component),
+                io::Error::from_raw_os_error(libc::ENOENT),
+            );
+        }
+        // Other recursive-mkdir errno/path selection has not been measured
+        // by this fix. Preserve the existing diagnostic, including boundary
+        // refusals, rather than extrapolating from the readonly-root case.
+        self.root_open_refusal(relative, failure.error)
     }
 
     /// The target below the root when the #1675 descriptor walk is armed. The
@@ -1056,5 +1079,112 @@ mod tests {
                 "#1348 node base64 low-byte decode of {units:04x?}"
             );
         }
+    }
+    /// E0 fixed Node22 / readonly-root observation, not a synthetic errno oracle.
+    #[cfg(unix)]
+    #[test]
+    fn missing_root_mkdir_diagnostic_matches_locked_node_observations() {
+        use super::{FilesError, ProjectFileService};
+        use crate::project_files::DirectoryCreateFailure;
+        let oracle: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/http-write-phase/node22-readonly-mkdir.json"
+        ))
+        .expect("locked Node observation JSON");
+        let service = ProjectFileService::new("/private/tmp/pdrs-bbx/root/proj");
+        let observations = oracle["observations"].as_array().expect("observations");
+        let direct = observations
+            .iter()
+            .find(|row| row["label"] == "mkdir-direct:/private")
+            .expect("direct control");
+        assert_eq!(direct["error"]["code"], "EROFS");
+        let writes: Vec<_> = observations
+            .iter()
+            .filter(|row| {
+                row["label"]
+                    .as_str()
+                    .is_some_and(|label| label.starts_with("fixed-write-phases:"))
+            })
+            .collect();
+        assert_eq!(writes.len(), 4, "all four actual write observations");
+        for row in writes {
+            assert_eq!(row["phase"], "mkdir");
+            assert_eq!(row["wrote"], false);
+            let failure = DirectoryCreateFailure {
+                error: std::io::Error::from_raw_os_error(libc::EROFS),
+                syscall: "mkdir",
+                component: std::path::PathBuf::from("private"),
+                readonly_missing: true,
+            };
+            let FilesError::Message(message) =
+                service.root_creation_refusal("new/w.txt", std::path::Path::new("/"), failure)
+            else {
+                panic!("ordinary mkdir error");
+            };
+            assert_eq!(
+                message,
+                row["error"]["message"].as_str().expect("actual Node error")
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recursive_mkdir_errno_selection_does_not_remap_other_failures() {
+        use super::{FilesError, ProjectFileService};
+        let service = ProjectFileService::new("/fixture/root");
+        for (errno, syscall, missing, expected) in [
+            (libc::EROFS, "mkdir", false, "EROFS"),
+            (libc::EROFS, "open", true, "EROFS"),
+            (libc::EACCES, "mkdir", true, "EACCES"),
+        ] {
+            let failure = crate::project_files::DirectoryCreateFailure {
+                error: std::io::Error::from_raw_os_error(errno),
+                syscall,
+                component: std::path::PathBuf::from("first"),
+                readonly_missing: missing,
+            };
+            let FilesError::Message(message) =
+                service.root_creation_refusal("leaf", std::path::Path::new("/fixture"), failure)
+            else {
+                panic!("ordinary failure");
+            };
+            let detail = if expected == "EROFS" {
+                "read-only file system"
+            } else {
+                "permission denied"
+            };
+            assert_eq!(
+                message,
+                format!("{expected}: {detail}, open '/fixture/root'")
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn traced_directory_walk_preserves_success_and_nofollow_refusal() {
+        use crate::project_files::{
+            create_directories_at, create_directories_at_traced, nofollow_loop,
+        };
+        use std::{fs, path::Path};
+        let root = std::env::temp_dir().join(format!("pdrs-http-traced-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root).expect("isolated fixture");
+        let pinned = fs::File::open(&root).expect("pin fixture");
+        let mode = rustix::fs::Mode::from_raw_mode(0o700);
+        create_directories_at_traced(&pinned, Path::new("one/two"), mode).expect("traced success");
+        create_directories_at(&pinned, Path::new("one/two"), mode)
+            .expect("old helper existing success");
+        std::os::unix::fs::symlink("one", root.join("link")).expect("isolated link");
+        let traced = create_directories_at_traced(&pinned, Path::new("link/two"), mode)
+            .expect_err("traced refuses link");
+        let old = create_directories_at(&pinned, Path::new("link/two"), mode)
+            .expect_err("old refuses link");
+        assert_eq!(traced.syscall, "open");
+        assert_eq!(traced.component, Path::new("link"));
+        assert!(nofollow_loop(&traced.error));
+        assert!(nofollow_loop(&old));
+        assert_eq!(traced.error.kind(), old.kind());
+        drop(pinned);
+        fs::remove_dir_all(root).expect("cleanup isolated fixture");
     }
 }
