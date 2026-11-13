@@ -25,6 +25,7 @@ pub(super) const WIRED_FIELDS: &[&str] = &[
     "appendSystemPrompt",
     "planModeInstructions",
     "toolAliases",
+    "outputFormat",
     "outputStyle",
     "permissionMode",
     "additionalWorkingDirectories",
@@ -718,6 +719,11 @@ pub(super) fn apply_prompt_fields(agent: &mut JsObject, config: Option<&JsValue>
     }
     if let Some(aliases) = present(config, "toolAliases").filter(|aliases| truthy(aliases)) {
         agent.insert("toolAliases".into(), aliases.clone());
+    }
+    // SessionAgentConfigBundle.ts:140: an output format only makes the loop
+    // stop once a structured output exists (AgentLoop.ts:2192-2207).
+    if present(config, "outputFormat").is_some_and(truthy) {
+        agent.insert("stopOnStructuredOutput".into(), JsValue::Bool(true));
     }
 }
 

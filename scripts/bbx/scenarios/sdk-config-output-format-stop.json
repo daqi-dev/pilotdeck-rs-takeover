@@ -1,0 +1,118 @@
+{
+  "name": "sdk-config-output-format-stop",
+  "about": "sdkSessionConfig.outputFormat（json_schema）让循环在拿到结构化输出后立刻收尾（src/cli/SessionAgentConfigBundle.ts:140 outputFormat → stopOnStructuredOutput:true；src/agent/loop/AgentLoop.ts:2192-2207：工具批执行完、structuredOutput 已有值时不再请求模型，发 agent_status:structured_output_completed（3793-3805），轮次以 completed 结束，投影先发 structured_output 事件再发 turn_completed，GatewayAgentEventProjector.ts:563-567）。o1：模型调 structured_output 后本该再请求一次，这里不会；o2：同一会话没有 outputFormat 时照常再请求一次。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Format\"}"
+      }
+    },
+    {
+      "name": "o2-after",
+      "when": [
+        "o2:",
+        "\"tool_call_id\":\"call_o2\""
+      ],
+      "reply": {
+        "text": "Second request happened."
+      }
+    },
+    {
+      "name": "o2",
+      "when": [
+        "o2:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_o2",
+          "name": "structured_output",
+          "arguments": {
+            "value": {
+              "answer": 2
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "o1-after",
+      "when": [
+        "o1:",
+        "\"tool_call_id\":\"call_o1\""
+      ],
+      "reply": {
+        "text": "Should not be requested."
+      }
+    },
+    {
+      "name": "o1",
+      "when": [
+        "o1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_o1",
+          "name": "structured_output",
+          "arguments": {
+            "value": {
+              "answer": 42,
+              "items": [
+                "a",
+                "b"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-fmt",
+        "channelKey": "test",
+        "message": "o1: answer in json",
+        "sdkSessionConfig": {
+          "outputFormat": {
+            "type": "json_schema",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "answer": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "answer"
+              ]
+            }
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-plain",
+        "channelKey": "test",
+        "message": "o2: answer in json"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-fmt"
+      }
+    }
+  ]
+}
