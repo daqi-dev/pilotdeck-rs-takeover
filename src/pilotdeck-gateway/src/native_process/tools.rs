@@ -62,6 +62,7 @@ pub(super) fn session_tool_results_dir(project: &Path, session_id: &JsString) ->
 }
 
 pub struct SessionTools {
+    external_modules: super::external_modules::Selection,
     native_activity: Option<Arc<pilotdeck_transport::default_factory::NativeLoopActivity>>,
     /// The session's project root: `resolve(projectKey ?? fallbackProjectRoot)`
     /// for the key the session was created under.
@@ -193,6 +194,7 @@ fn session_file_history(
 /// services, under its own binding, config and tool scope.
 #[derive(Clone)]
 pub(super) struct ForkSeed {
+    external_modules: super::external_modules::Selection,
     project: PathBuf,
     env: JsObject,
     /// The parent session's context: the child inherits its tool allow and
@@ -274,8 +276,20 @@ impl ForkSeed {
         let mut world = self.world;
         let skills =
             child_skill_selection(&config, &scope.definition, world.skills_filter.as_deref());
+        let raw_skills = child_raw_skill_selection(
+            &config,
+            &scope.definition,
+            world.raw_skills_filter.as_deref(),
+        );
         world.scope_child_skills(skills, scope.definition.observer_run);
+        if let Some(skills) = raw_skills {
+            if !scope.definition.observer_run {
+                world.raw_prompt_skills_filter = Some(skills.clone());
+            }
+            world.raw_skills_filter = Some(skills);
+        }
         SessionTools {
+            external_modules: self.external_modules.for_child(),
             plan_files: Arc::new(crate::runtime::plan_todo::SessionPlanFiles::new(
                 &self.project,
             )),
@@ -326,6 +340,14 @@ impl ForkSeed {
     }
 }
 impl SessionTools {
+    pub(super) fn with_external_modules(
+        mut self,
+        modules: super::external_modules::Selection,
+    ) -> Self {
+        self.external_modules = modules;
+        self
+    }
+
     /// A SOP node shares this generation's services and tool definitions, but
     /// owns its recorder, context and permission transitions. Its hooks and
     /// prompt answerer are rebound by the node's ordinary session assembly.
@@ -339,6 +361,7 @@ impl SessionTools {
             .clone();
         let file_history = Arc::new(session_file_history(&binding));
         Self {
+            external_modules: self.external_modules.clone(),
             project: self.project.clone(),
             env: self.env.clone(),
             binding,
@@ -424,6 +447,7 @@ impl SessionTools {
         let mut world = ExecutionWorld::new();
         world.invocation = invocation_audit(options, env, &project);
         Ok(Self {
+            external_modules: Default::default(),
             project,
             env: env_object(env),
             binding,
@@ -566,6 +590,7 @@ impl SessionTools {
 
     fn fork_seed(&self) -> ForkSeed {
         ForkSeed {
+            external_modules: self.external_modules.clone(),
             project: self.project.clone(),
             env: self.env.clone(),
             context: self.binding.context.clone(),
@@ -1068,6 +1093,56 @@ impl SessionTools {
         }
         let (subagent_depth, max_subagent_depth) = super::subagents::depths(&self.config);
         let tools = self.session_registry(&config);
+        let mut domain_error = None;
+        if let Some((module, skills)) = &self.external_modules.skill_runtime {
+            let skills = skills
+                .iter()
+                .filter(|skill| {
+                    self.world
+                        .raw_skills_filter
+                        .as_ref()
+                        .is_none_or(|names| names.contains(&skill.name))
+                })
+                .cloned()
+                .collect();
+            let tool = super::external_modules::domain::ExternalReadSkillTool::new(
+                module.clone(),
+                Some(self.project.to_string_lossy().into_owned().into()),
+                skills,
+            );
+            if let Err(error) = tools.register(Arc::new(tool)) {
+                domain_error = Some(error);
+            }
+        }
+        if let (Some(module), Some(scope)) = (
+            &self.external_modules.knowledge_runtime,
+            &self.external_modules.knowledge_scope,
+        ) {
+            let tool =
+                super::external_modules::domain::KnowledgeQueryTool::new(module.clone(), scope);
+            if let Err(error) = tools.register(Arc::new(tool)) {
+                domain_error = Some(error);
+            }
+        }
+        for name in &self.world.excluded_tools {
+            let _ = tools.unregister(name);
+        }
+        if self.world.sdk_sandbox.is_some()
+            && let Ok(catalog) = tools.list_all()
+        {
+            for tool in catalog {
+                let fields = tool.fields();
+                if let Some(name) = fields.get("name").and_then(JsValue::as_string)
+                    && !super::sdk_sandbox::tool_allowed(
+                        self.world.sdk_sandbox.as_ref(),
+                        name,
+                        fields.get("kind").and_then(JsValue::as_string),
+                    )
+                {
+                    let _ = tools.unregister(name);
+                }
+            }
+        }
         // `collectDeferredTools` (ProjectSessionRuntimeBundle.ts:348-370):
         // checked when the session is prepared, so it cannot fail here.
         if let Some((requested, revealed)) = &self.world.deferred {
@@ -1082,6 +1157,7 @@ impl SessionTools {
         };
         // `createDurableToolPort`: the batch's calls and results are session
         // events around the scheduler's execution.
+        let native_catalog = tools.list();
         let runtime = ToolRuntime::new(tools, self.permission.clone(), SchedulerMode::Concurrent)
             .with_lifecycle(self.tool_hooks.clone());
         let runtime = match self.events.clone() {
@@ -1112,8 +1188,109 @@ impl SessionTools {
             .fork
             .as_ref()
             .map_or_else(|| recorder.clone(), |scope| scope.root_recorder.clone());
+        let native: Arc<dyn capability::ToolExecution> = Arc::new(runtime);
+        let (inner, tool_selection_error) = if let Some(client) = &self.external_modules.tools {
+            let catalog =
+                self.external_modules
+                    .tool_catalog
+                    .iter()
+                    .filter(|descriptor| {
+                        let Some(name) = descriptor.get("name").and_then(JsValue::as_string) else {
+                            return false;
+                        };
+                        let default_kind: JsString = "custom".into();
+                        if self
+                            .binding
+                            .context
+                            .allowed_tools
+                            .as_ref()
+                            .is_some_and(|allowed| !allowed.contains(name))
+                            || self
+                                .binding
+                                .context
+                                .disallowed_tools
+                                .as_ref()
+                                .is_some_and(|denied| denied.contains(name))
+                            || self.world.excluded_tools.contains(name)
+                            || self
+                                .world
+                                .managed_tools
+                                .as_ref()
+                                .is_some_and(|policy| managed_tool_blocked(policy, name))
+                            || !super::sdk_sandbox::tool_allowed(
+                                self.world.sdk_sandbox.as_ref(),
+                                name,
+                                descriptor
+                                    .get("kind")
+                                    .and_then(JsValue::as_string)
+                                    .or(Some(&default_kind)),
+                            )
+                        {
+                            return false;
+                        }
+                        if let Some(scope) = &self.fork {
+                            let allowed = &scope.definition.allowed_tools;
+                            if scope
+                                .definition
+                                .disallowed_tools
+                                .iter()
+                                .any(|entry| name.equals_str(entry))
+                                || (!allowed.iter().any(|entry| entry == "*")
+                                    && !allowed.iter().any(|entry| name.equals_str(entry)))
+                            {
+                                return false;
+                            }
+                            if let Some(JsValue::Array(required)) =
+                                descriptor.get("requiredRuntimeCapabilities")
+                                && required.iter().filter_map(JsValue::as_string).any(
+                                    |capability| {
+                                        subagent_depth >= max_subagent_depth
+                                            || !capability.equals_str("subagent_fork")
+                                    },
+                                )
+                            {
+                                return false;
+                            }
+                        }
+                        true
+                    })
+                    .cloned()
+                    .collect();
+            let external = super::external_modules::tools::ExternalToolExecution::new(
+                client.clone(),
+                catalog,
+                identity.clone(),
+                signal.clone(),
+                self.external_modules.tool_sequence.clone(),
+            );
+            let external_catalog = external.catalog();
+            let batch = client.binding().supports("execute_batch");
+            let external = super::external_modules::tools::permission_aware_tool_port(
+                Arc::new(external),
+                self.permission.clone(),
+                batch,
+            );
+            let selected = native_catalog.and_then(|catalog| {
+                super::external_modules::tools::compose_tool_ports_with_catalogs(
+                    external,
+                    external_catalog,
+                    native.clone(),
+                    catalog
+                        .into_iter()
+                        .map(|tool| tool as Arc<dyn capability::ToolDefinition>)
+                        .collect(),
+                )
+            });
+            match selected {
+                Ok(selected) => (selected, None),
+                Err(error) => (native.clone(), Some(error)),
+            }
+        } else {
+            (native, None)
+        };
+        let tool_selection_error = domain_error.or(tool_selection_error);
         let execution = Arc::new(DurableTools {
-            inner: Arc::new(runtime),
+            inner,
             recorder: recorder.clone(),
             projection: self.binding.projection.clone(),
             session: identity.session_id.clone(),
@@ -1287,6 +1464,29 @@ impl SessionTools {
             cooldown: self.compaction_cooldown.clone(),
         };
         SessionPorts {
+            external_skills: self
+                .external_modules
+                .skill_runtime
+                .as_ref()
+                .map(|(_, skills)| {
+                    skills
+                        .iter()
+                        .filter(|skill| {
+                            self.world
+                                .raw_prompt_skills_filter
+                                .as_ref()
+                                .is_none_or(|names| names.contains(&skill.name))
+                        })
+                        .map(|skill| crate::runtime::context::RawContributedSkill {
+                            name: skill.name.clone(),
+                            description: skill.description.clone(),
+                            path: skill.path.clone(),
+                        })
+                        .collect()
+                }),
+            selected_model: self.external_modules.model.as_ref().map(|client| {
+                super::external_modules::model::ports(client.clone(), signal.clone())
+            }),
             skills: self.world.prompt_skills.clone(),
             include_extensions_with_custom_system_prompt: self
                 .fork
@@ -1337,9 +1537,17 @@ impl SessionTools {
             recorder: None,
             tool_results_dir: session_tool_results_dir(&self.project, &identity.session_id),
             context_runtime: None,
+            selected_context: self.external_modules.context.as_ref().map(|client| {
+                super::external_modules::context::context_runtime(
+                    client.clone(),
+                    identity.session_id.clone(),
+                    Some(signal.clone()),
+                )
+            }),
             context_identity: ContextRequestIdentity::new(binding.clone(), tool_ports.clone()),
             context_config: config,
             tool_execution: execution,
+            tool_selection_error,
             tool_checkpoint: binding.checkpoint.clone(),
             tool_context: Arc::new(CapabilityContext {
                 builder: ToolContextBuilder::new(binding, tool_ports, true),
@@ -1414,7 +1622,7 @@ impl SessionTools {
 /// `tool_call` entries before the batch runs and `tool_result` entries (which
 /// close the step) after it, unless the turn was aborted meanwhile.
 struct DurableTools {
-    inner: Arc<ToolRuntime>,
+    inner: Arc<dyn capability::ToolExecution>,
     recorder: Arc<Recorder>,
     projection: Arc<crate::runtime::session::factory::SessionProjection>,
     session: JsString,
@@ -2101,6 +2309,8 @@ pub(super) struct ExecutionWorld {
     /// `sdkSessionConfig.skills`: the session's skills restricted to these
     /// names (`filterSessionSkills`), for `read_skill` and the prompt.
     skills_filter: Option<Vec<String>>,
+    raw_skills_filter: Option<Vec<JsString>>,
+    raw_prompt_skills_filter: Option<Vec<JsString>>,
     // Prompt discovery remains inherited for read-only observers even though
     // their executable read_skill scope is empty.
     prompt_skills: Option<Vec<String>>,
@@ -2153,6 +2363,32 @@ fn child_skill_selection(
         })
 }
 
+fn child_raw_skill_selection(
+    config: &JsObject,
+    definition: &builtin::agent::SubagentDefinition,
+    parent: Option<&[JsString]>,
+) -> Option<Vec<JsString>> {
+    if definition.observer_run {
+        return Some(Vec::new());
+    }
+    config
+        .get("subagentDefinitions")
+        .and_then(|definitions| definitions.get(&definition.id))
+        .and_then(|definition| definition.get("skills"))
+        .or_else(|| config.get("sdkSkills"))
+        .and_then(|skills| match skills {
+            JsValue::Array(skills) => Some(
+                skills
+                    .iter()
+                    .filter_map(JsValue::as_string)
+                    .filter(|name| parent.is_none_or(|allowed| allowed.contains(name)))
+                    .cloned()
+                    .collect(),
+            ),
+            _ => None,
+        })
+}
+
 /// Match createContext's exact scoped-child condition. Inherited parent SDK
 /// skill selection alone does not request a new scoped context.
 fn scoped_child_context(
@@ -2189,6 +2425,8 @@ impl ExecutionWorld {
             deferred: None,
             skills: None,
             skills_filter: None,
+            raw_skills_filter: None,
+            raw_prompt_skills_filter: None,
             prompt_skills: None,
             plugin_contributions: None,
             managed_tools: None,
@@ -2266,6 +2504,12 @@ impl SessionTools {
         self.world.prompt_skills = skills.clone();
         self.world.skills_filter = skills;
         self.world.managed_tools = managed_tools;
+        self
+    }
+
+    pub(super) fn with_sdk_skill_ids(mut self, skills: Option<Vec<JsString>>) -> Self {
+        self.world.raw_prompt_skills_filter = skills.clone();
+        self.world.raw_skills_filter = skills;
         self
     }
 
@@ -2738,6 +2982,33 @@ mod tests {
             SdkMcpProjectResolver, SdkMcpSessionPlugins, SystemEnvironment,
         },
     };
+
+    #[test]
+    fn child_external_skill_filter_preserves_utf16_and_parent_scope() {
+        let first = JsString::from_utf16(vec![0xd800]);
+        let second = JsString::from_utf16(vec![0xd801]);
+        let mut definition = JsObject::new();
+        definition.insert(
+            "skills".into(),
+            JsValue::Array(vec![
+                JsValue::String(first.clone()),
+                JsValue::String(second.clone()),
+            ]),
+        );
+        let mut definitions = JsObject::new();
+        definitions.insert("worker".into(), JsValue::Object(definition));
+        let mut config = JsObject::new();
+        config.insert("subagentDefinitions".into(), JsValue::Object(definitions));
+        let worker = builtin::agent::SubagentDefinition {
+            id: "worker".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            child_raw_skill_selection(&config, &worker, Some(std::slice::from_ref(&second))),
+            Some(vec![second])
+        );
+        assert_ne!(first, JsString::from("\u{fffd}"));
+    }
 
     #[test]
     fn scoped_child_prompt_discovery_preserves_observer_tool_isolation() {

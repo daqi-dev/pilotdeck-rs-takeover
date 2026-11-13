@@ -1,5 +1,5 @@
 use super::{Diagnostics, Env, model::credential, value::*};
-use pilotdeck_protocol::JsValue;
+use pilotdeck_protocol::{JsString, JsValue};
 use std::{collections::HashSet, sync::OnceLock};
 /// Core module slots, in the baseline order. The snapshot projection
 /// (`snapshot::modules`) iterates the same list.
@@ -286,7 +286,14 @@ fn core(slot: &str, v: &JsValue, d: &mut Diagnostics) -> Option<bool> {
         }
         return Some(false);
     }
-    let implementation = nonempty(field(v, "implementationId"));
+    let implementation = if slot == "agentLoop" {
+        nonempty(field(v, "implementationId")).map(JsString::from)
+    } else {
+        field(v, "implementationId")
+            .as_string()
+            .map(trim)
+            .filter(|value| !value.is_empty())
+    };
     let c = nonempty(field(v, "contract"));
     let t = nonempty(field(v, "transport"));
     let ep = nonempty(field(v, "endpoint"));
@@ -449,8 +456,14 @@ fn core(slot: &str, v: &JsValue, d: &mut Diagnostics) -> Option<bool> {
     {
         for (i, tool) in a.iter().enumerate() {
             if !record(tool)
-                || nonempty(field(tool, "name")).is_none()
-                || nonempty(field(tool, "description")).is_none()
+                || field(tool, "name")
+                    .as_string()
+                    .map(trim)
+                    .is_none_or(|value| value.is_empty())
+                || field(tool, "description")
+                    .as_string()
+                    .map(trim)
+                    .is_none_or(|value| value.is_empty())
                 || !record(field(tool, "inputSchema"))
             {
                 d.fatal(
@@ -485,7 +498,9 @@ fn core(slot: &str, v: &JsValue, d: &mut Diagnostics) -> Option<bool> {
             .as_deref()
             .map(encode_component)
             .map(|id| format!("/api/v1/agents/{id}/knowledge-module/v2/module/call"));
-        if implementation.as_deref() != Some("staffdeck.knowledge")
+        if implementation
+            .as_ref()
+            .is_none_or(|value| !value.equals_str("staffdeck.knowledge"))
             || manifest != "/api/v1/knowledge-module/module-manifest"
             || expected.as_deref() != Some(call.as_str())
             || nonempty(field(v, "tenantId")).is_some()
@@ -689,6 +704,149 @@ fn sop(v: &JsValue, env: &Env, d: &mut Diagnostics) {
             "SOP_MODULE_MANIFEST_PATH_INVALID",
             "modules.sop.manifestPath must start with '/'.",
             "modules.sop.manifestPath",
+        );
+    }
+}
+
+#[cfg(test)]
+mod external_tool_loading_tests {
+    use super::*;
+    use crate::config::{Error, load_snapshot};
+    use std::path::PathBuf;
+
+    struct Scratch(PathBuf);
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    /// Exercise parsing, validation, normalization and snapshot projection through
+    /// the same public filesystem entry used by the native gateway.
+    fn load_tools(implementation: &str, catalog: &str, methods: &str) -> Result<JsValue, Error> {
+        let root = Scratch(std::env::temp_dir().join(format!(
+            "pdrs-external-tool-config-{}",
+            uuid::Uuid::new_v4()
+        )));
+        std::fs::create_dir_all(&root.0).unwrap();
+        let yaml = format!(
+            r#"schemaVersion: 1
+agent:
+  model: test/test
+model:
+  providers:
+    test:
+      protocol: openai
+      url: http://127.0.0.1:1
+      apiKey: test-only
+      models:
+        test: {{}}
+modules:
+  tools:
+    enabled: true
+    implementationId: {implementation}
+    contract: pilotdeck.tools/v1
+    transport: module-http-v2
+    endpoint: http://127.0.0.1:1
+    methods: {methods}
+    catalog: {catalog}
+"#
+        );
+        std::fs::write(root.0.join("pilotdeck.yaml"), yaml).unwrap();
+        let env = Env::from([(
+            "PILOT_HOME".to_owned(),
+            root.0.to_string_lossy().into_owned(),
+        )]);
+        load_snapshot(
+            &root.0,
+            &root.0,
+            &env,
+            None,
+            1.0,
+            "1970-01-01T00:00:00.000Z",
+        )
+    }
+    fn binding(snapshot: &JsValue) -> &JsValue {
+        snapshot
+            .get("config")
+            .unwrap()
+            .get("modules")
+            .unwrap()
+            .get("tools")
+            .expect("validated external tools must survive snapshot projection")
+    }
+    fn has_diagnostic(error: &Error, code: &str) -> bool {
+        error.diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .get("code")
+                .and_then(JsValue::as_string)
+                .is_some_and(|actual| actual.equals_str(code))
+        })
+    }
+
+    #[test]
+    fn public_load_snapshot_preserves_distinct_utf16_implementation_and_catalog_identity() {
+        let catalog = r#"[{name: " \uD800\t", description: "\n\uDFFF ", inputSchema: {type: object}, readOnly: true}, {name: " ordinary ", description: " description ", inputSchema: {type: object}}]"#;
+        let mut identities = Vec::new();
+        for (implementation, expected) in [(r#"" \uD800 ""#, 0xd800), (r#"" \uDFFF ""#, 0xdfff)] {
+            let snapshot = load_tools(implementation, catalog, "[execute]")
+                .expect("public loader must accept nonempty UTF-16 identities like fixed TS");
+            let binding = binding(&snapshot);
+            let implementation = binding
+                .get("implementationId")
+                .unwrap()
+                .as_string()
+                .unwrap();
+            assert_eq!(implementation.units(), &[expected]);
+            identities.push(implementation.clone());
+            let JsValue::Array(tools) = binding.get("tools").unwrap() else {
+                panic!("expected normalized catalog");
+            };
+            assert_eq!(tools.len(), 2);
+            assert_eq!(
+                tools[0].get("name").unwrap().as_string().unwrap().units(),
+                &[0xd800]
+            );
+            assert_eq!(
+                tools[0]
+                    .get("description")
+                    .unwrap()
+                    .as_string()
+                    .unwrap()
+                    .units(),
+                &[0xdfff]
+            );
+            assert_eq!(tools[0].get("readOnly"), Some(&JsValue::Bool(true)));
+            assert_eq!(tools[1].get("name"), Some(&"ordinary".into()));
+            assert_eq!(tools[1].get("description"), Some(&"description".into()));
+        }
+        assert_ne!(
+            identities[0], identities[1],
+            "distinct protocol identities must not collapse through replacement text"
+        );
+    }
+
+    #[test]
+    fn public_load_snapshot_still_rejects_invalid_catalog_identity_and_unsupported_methods() {
+        let invalid_catalog = r#"[{name: " \t ", description: text, inputSchema: {}}, {name: name, description: "\n", inputSchema: {}}, {name: 42, description: text, inputSchema: {}}, {name: name, description: false, inputSchema: {}}, {name: name, description: text, inputSchema: null}]"#;
+        let error = load_tools("example.tools", invalid_catalog, "[execute]").unwrap_err();
+        assert_eq!(
+            error
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.get("code")
+                    == Some(&"MODULE_TOOL_CATALOG_INVALID".into()))
+                .count(),
+            5
+        );
+        let catalog = "[{name: remote, description: text, inputSchema: {}}]";
+        for implementation in [r#"" \t ""#, "42"] {
+            let error = load_tools(implementation, catalog, "[execute]").unwrap_err();
+            assert!(has_diagnostic(&error, "MODULE_IMPLEMENTATION_ID_INVALID"));
+        }
+        let error = load_tools("example.tools", catalog, r#"[execute, "\uD800"]"#).unwrap_err();
+        assert!(
+            has_diagnostic(&error, "MODULE_CONTRACT_UNSUPPORTED"),
+            "UTF-16 identity preservation must not expand the fixed method allowlist: {error:?}"
         );
     }
 }

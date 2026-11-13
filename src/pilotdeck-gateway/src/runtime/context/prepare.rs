@@ -477,7 +477,7 @@ impl DefaultContextRuntime {
         }
         let request_messages = apply_date_updates(&messages, &date_updates);
 
-        let prompt = self.inner.assembler.assemble(
+        let (prompt, prompt_parts) = self.inner.assembler.assemble_js(
             &input.cwd,
             &input.provider,
             &input.model,
@@ -494,15 +494,18 @@ impl DefaultContextRuntime {
         )?;
         let mut parts = if has_complete_contribution {
             contributed_sections
+                .into_iter()
+                .map(JsString::from)
+                .collect::<Vec<_>>()
         } else {
-            let mut parts = prompt.parts;
-            parts.extend(contributed_sections);
+            let mut parts = prompt_parts;
+            parts.extend(contributed_sections.into_iter().map(JsString::from));
             parts
         };
 
         if input.surface == RuntimeContextSurface::SystemPrompt {
             for context in &registered_runtime_contexts {
-                parts.push(context.text.clone());
+                parts.push(context.text.clone().into());
             }
         }
         let mut runtime_contexts = vec![(
@@ -540,7 +543,7 @@ impl DefaultContextRuntime {
             .await;
             if let Some(text) = attachment {
                 if input.surface == RuntimeContextSurface::SystemPrompt {
-                    parts.push(text.clone());
+                    parts.push(text.clone().into());
                 }
                 runtime_contexts.push(("pilotdeck:memory:0:0".into(), text));
             }
@@ -576,7 +579,7 @@ impl DefaultContextRuntime {
                             .join("\n\n");
                         parts.push(format!(
                             "<project-instructions>\nProject instructions are shown below. Adhere to these instructions. IMPORTANT: These instructions OVERRIDE any default behavior.\n\n{blocks}\n</project-instructions>"
-                        ));
+                        ).into());
                     }
                     instruction_layers = Some(layers);
                 }
@@ -587,7 +590,14 @@ impl DefaultContextRuntime {
                 }),
             }
         }
-        let joined = parts.join("\n\n");
+        let mut joined_units = Vec::new();
+        for (index, part) in parts.iter().enumerate() {
+            if index != 0 {
+                joined_units.extend("\n\n".encode_utf16());
+            }
+            joined_units.extend_from_slice(part.units());
+        }
+        let joined = JsString::from_utf16(joined_units);
         let runtime_context_messages =
             build_runtime_context_messages(&runtime_contexts, input.surface);
         let projected_messages =
@@ -606,12 +616,12 @@ impl DefaultContextRuntime {
                     .unwrap()
                     .insert(session_id.clone());
             }
-            self.inner.session.prompt_cache_coordinator.create_plan(
+            self.inner.session.prompt_cache_coordinator.create_plan_js(
                 input.session_id.clone(),
                 super::cache::CachePlanInput {
                     provider: fields.get("provider").unwrap_or(&UNDEFINED),
                     model: fields.get("model").unwrap_or(&UNDEFINED),
-                    system_prompt: &joined,
+                    system_prompt: "",
                     tools: &effective_tools,
                     messages: &projected_messages,
                     enabled: fields
@@ -621,6 +631,7 @@ impl DefaultContextRuntime {
                         && fields.get("supportsPromptCache").and_then(JsValue::as_bool)
                             == Some(true),
                 },
+                &joined,
                 !input.preview_only,
             )?
         };
@@ -685,15 +696,10 @@ impl DefaultContextRuntime {
         let tool_count = effective_tools.len();
         let mut result = object(vec![
             ("messages", JsValue::Array(projected_messages)),
-            ("systemPrompt", JsValue::String(joined.into())),
+            ("systemPrompt", JsValue::String(joined)),
             (
                 "systemPromptParts",
-                JsValue::Array(
-                    parts
-                        .into_iter()
-                        .map(|part| JsValue::String(part.into()))
-                        .collect(),
-                ),
+                JsValue::Array(parts.into_iter().map(JsValue::String).collect()),
             ),
             ("tools", JsValue::Array(effective_tools)),
             (
@@ -1630,6 +1636,90 @@ fn system_now() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct RawSkills(std::sync::atomic::AtomicU16);
+    impl super::super::prompt::ExtensionResolver for RawSkills {
+        fn list_raw_skills(&self) -> Vec<super::super::prompt::RawContributedSkill> {
+            let unit = self.0.load(std::sync::atomic::Ordering::Relaxed);
+            vec![super::super::prompt::RawContributedSkill {
+                name: JsString::from_utf16(vec![b'n' as u16, unit]),
+                path: JsString::from_utf16(vec![b'/' as u16, unit]),
+                description: Some(JsString::from_utf16(vec![b'd' as u16, unit])),
+            }]
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_skill_code_units_reach_prepared_request_and_cache_identity() {
+        let skills = Arc::new(RawSkills(std::sync::atomic::AtomicU16::new(0xd800)));
+        let runtime = DefaultContextRuntime::new(Options {
+            extension: Some(skills.clone()),
+            now: Some(Arc::new(|| 0.0)),
+            locale: Some("en-US".into()),
+            ..Options::default()
+        });
+        let mut input = cache_input("hello");
+        input
+            .fields
+            .insert("customSystemPrompt".into(), JsValue::Undefined);
+        let first = runtime.prepare_for_model(input).await.unwrap();
+        let body = first
+            .get("systemPrompt")
+            .and_then(JsValue::as_string)
+            .unwrap();
+        assert!(
+            body.units()
+                .windows(2)
+                .any(|pair| pair == [b'n' as u16, 0xd800])
+        );
+        assert!(
+            body.units()
+                .windows(2)
+                .any(|pair| pair == [b'/' as u16, 0xd800])
+        );
+        let Some(JsValue::Array(parts)) = first.get("systemPromptParts") else {
+            panic!("missing prompt parts");
+        };
+        assert!(parts.iter().filter_map(JsValue::as_string).any(|part| {
+            part.units()
+                .windows(2)
+                .any(|pair| pair == [b'n' as u16, 0xd800])
+        }));
+
+        let generation = |v: &JsValue| {
+            v.get("cachePlan")
+                .unwrap()
+                .get("generation")
+                .unwrap()
+                .as_number()
+                .unwrap()
+        };
+        assert_eq!(generation(&first), 1.0);
+        let mut input = cache_input("hello");
+        input
+            .fields
+            .insert("customSystemPrompt".into(), JsValue::Undefined);
+        let same = runtime.prepare_for_model(input).await.unwrap();
+        assert_eq!(generation(&same), 1.0);
+        skills.0.store(0xd801, std::sync::atomic::Ordering::Relaxed);
+        let mut input = cache_input("hello");
+        input
+            .fields
+            .insert("customSystemPrompt".into(), JsValue::Undefined);
+        let changed = runtime.prepare_for_model(input).await.unwrap();
+        assert_eq!(generation(&changed), 2.0);
+        let changed_body = changed
+            .get("systemPrompt")
+            .and_then(JsValue::as_string)
+            .unwrap();
+        assert!(
+            changed_body
+                .units()
+                .windows(2)
+                .any(|pair| pair == [b'n' as u16, 0xd801])
+        );
+        assert_ne!(body, changed_body);
+    }
 
     fn cache_input(text: &str) -> ContextInput {
         let message = |text: &str| {

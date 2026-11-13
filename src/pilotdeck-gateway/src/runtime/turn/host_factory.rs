@@ -168,6 +168,8 @@ fn optional_positive_integer(value: Option<&str>) -> Result<Option<u64>, String>
 pub struct SessionPorts {
     /// `options` for the router model adapter (`RouterModelPortOptions`).
     pub model: crate::host::modules::model_port::RouterModelPortOptions,
+    /// External model selection, already bound to this turn's cancellation.
+    pub selected_model: Option<crate::host::modules::model_port::ComposedPorts>,
     /// Durable model recorder; `None` keeps the model port non-durable.
     pub recorder: Option<crate::host::modules::model_port::DurableRecorder>,
     /// Session tool-results directory (`ProjectSessionRuntimeBundle.ts:520`).
@@ -175,11 +177,15 @@ pub struct SessionPorts {
     /// A caller-supplied context runtime; production leaves this `None` and the
     /// lease's `ContextStorageResources` composes the session runtime.
     pub context_runtime: Option<Arc<dyn context::ContextRuntime>>,
+    /// An external context is constructed for this turn and may reject an
+    /// invalid method declaration before the host begins the turn.
+    pub selected_context: Option<Result<Arc<dyn context::ContextRuntime>, HostError>>,
     /// `modules.context.requestIdentity`; turn-bound by the session.
     pub context_identity: crate::host::modules::tool_context::ContextRequestIdentity,
     pub context_config: JsObject,
     pub include_extensions_with_custom_system_prompt: bool,
     pub tool_execution: Arc<dyn capability::ToolExecution>,
+    pub tool_selection_error: Option<HostError>,
     pub tool_context: Arc<dyn capability::ToolContext>,
     /// The exact session checkpoint used by `tool_context` and tool execution.
     /// Steer offers remain turn-owned; only durable application grants paths.
@@ -196,6 +202,8 @@ pub struct SessionPorts {
     pub compaction: CompactionPorts,
     /// `sdkSessionConfig.skills`: the prompt lists only these skills.
     pub skills: Option<Vec<String>>,
+    /// External skill contributions override only the native skill list.
+    pub external_skills: Option<Vec<crate::runtime::context::RawContributedSkill>>,
     pub plugin_contributions: Option<crate::runtime::plugins::PluginSessionContributionSnapshot>,
     /// The session's context-runtime state (cache generations, prompt-time
     /// anchors) that the baseline keeps for the live session's lifetime.
@@ -498,15 +506,20 @@ impl TurnHostFactory {
         let lease = self.acquire_lease()?;
         let journal_writer = recorder.writer().clone();
         let ports = (self.ports)(identity, recorder, signal);
+        let native_external_context =
+            matches!(&self.deployment, Deployment::Native) && ports.selected_context.is_some();
         let assembled = match &self.port_decorators {
             Some(decorators) => Self::assemble_decorated(lease, identity, ports, decorators).await,
             None => Self::assemble(lease, identity, ports).await,
         };
-        let (router, input, lease) = match assembled {
+        let (mut router, input, lease) = match assembled {
             Ok(value) => value,
             // `assemble` owns (and therefore drops) the lease on error.
             Err(error) => return Err(error),
         };
+        router
+            .context
+            .set_native_external_budget_projection(native_external_context);
         let deployment = self.deployment.clone();
         // Exactly the two branches below that attach SessionJournal own the
         // deferred stream finalizer; the native branch has no journal port.
@@ -623,13 +636,16 @@ impl TurnHostFactory {
     ) -> Result<(ModuleRouter, InteractionTurnInput, RuntimeLease), HostError> {
         let SessionPorts {
             model,
+            selected_model,
             recorder,
             tool_results_dir,
             context_runtime,
+            selected_context,
             context_identity,
             context_config,
             include_extensions_with_custom_system_prompt,
             tool_execution,
+            tool_selection_error,
             tool_context,
             tool_checkpoint,
             tool_observer,
@@ -638,9 +654,13 @@ impl TurnHostFactory {
             mut interaction,
             compaction,
             skills,
+            external_skills,
             plugin_contributions,
             context_state,
         } = ports;
+        if let Some(error) = tool_selection_error {
+            return Err(error);
+        }
         let context = lease
             .runtime()
             .resources()
@@ -681,13 +701,29 @@ impl TurnHostFactory {
             model.project_path.clone(),
             identity.session_id.clone(),
         );
-        let mut model_ports = model_port::ports(
-            router.router.clone(),
-            router.model_config.clone(),
-            recorder,
-            model,
-            &turn_context.session_id,
-        );
+        let mut model_ports = match selected_model {
+            Some(mut selected) => {
+                let native_metadata = model_port::metadata_port(
+                    router.router.clone(),
+                    router.model_config.clone(),
+                    model,
+                );
+                selected.execution = model_port::sticky_execution(
+                    model_port::durable_execution(selected.execution, recorder),
+                    router.router.as_ref(),
+                    &turn_context.session_id,
+                );
+                selected.metadata = Some(native_metadata);
+                selected
+            }
+            None => model_port::ports(
+                router.router.clone(),
+                router.model_config.clone(),
+                recorder,
+                model,
+                &turn_context.session_id,
+            ),
+        };
         if let Some(decorate) = &decorators.model {
             model_ports.execution = decorate(identity, model_ports.execution);
         }
@@ -722,7 +758,7 @@ impl TurnHostFactory {
                 signal: Some(signal.clone()),
             };
         }
-        let context_runtime = match context_runtime {
+        let context_runtime = match selected_context.transpose()?.or(context_runtime) {
             Some(runtime) => Some(runtime),
             None => Some(
                 session_context_runtime(
@@ -733,6 +769,7 @@ impl TurnHostFactory {
                         compaction_model,
                         include_extensions_with_custom_system_prompt,
                         skills: skills.as_deref(),
+                        external_skills: external_skills.as_deref(),
                         plugin_contributions: plugin_contributions.as_ref(),
                         session_state: context_state,
                         memory_disabled: context_config.get("subagentMemoryDisabled")
@@ -794,6 +831,7 @@ struct SessionContextInputs<'a> {
     compaction: CompactionPorts,
     compaction_model: Arc<dyn crate::host::modules::model::ModelExecution>,
     skills: Option<&'a [String]>,
+    external_skills: Option<&'a [crate::runtime::context::RawContributedSkill]>,
     plugin_contributions: Option<&'a crate::runtime::plugins::PluginSessionContributionSnapshot>,
     session_state: Option<Arc<crate::runtime::context::SessionContextState>>,
     memory_disabled: bool,
@@ -809,6 +847,7 @@ async fn session_context_runtime(
         compaction,
         compaction_model,
         skills,
+        external_skills,
         plugin_contributions,
         session_state,
         memory_disabled,
@@ -847,6 +886,13 @@ async fn session_context_runtime(
     let extension = session_extension(context, skills, plugin_contributions)
         .await
         .map_err(|error| session_error(error.to_string()))?;
+    let extension: Option<Arc<dyn context_runtime::ExtensionResolver>> = match external_skills {
+        Some(skills) => Some(Arc::new(ExternalSkillExtension {
+            inner: extension,
+            skills: skills.to_vec(),
+        })),
+        None => extension,
+    };
     Ok(Arc::new(
         storage
             .create_session_with_options(
@@ -883,6 +929,16 @@ pub struct MaintenanceContext {
         Option<super::interaction::TurnHooksSink>,
     )>,
     pub lease: RuntimeLease,
+}
+#[cfg(test)]
+impl MaintenanceContext {
+    pub(super) fn for_test(runtime: Arc<dyn context::ContextRuntime>, lease: RuntimeLease) -> Self {
+        Self {
+            runtime,
+            hooks: None,
+            lease,
+        }
+    }
 }
 impl Drop for MaintenanceContext {
     fn drop(&mut self) {
@@ -938,7 +994,11 @@ impl TurnHostFactory {
                     }) as crate::runtime::context::compaction::engine::EventEmitter
                 });
         }
-        if let Some(runtime) = ports.context_runtime {
+        if let Some(runtime) = ports
+            .selected_context
+            .transpose()?
+            .or(ports.context_runtime)
+        {
             return Ok(MaintenanceContext {
                 runtime,
                 hooks: None,
@@ -1013,6 +1073,7 @@ impl TurnHostFactory {
                 compaction_model,
                 include_extensions_with_custom_system_prompt: false,
                 skills: ports.skills.as_deref(),
+                external_skills: ports.external_skills.as_deref(),
                 plugin_contributions: ports.plugin_contributions.as_ref(),
                 session_state: ports.context_state,
                 memory_disabled: ports.context_config.get("subagentMemoryDisabled")
@@ -1132,6 +1193,30 @@ struct PluginExtension {
     commands: Vec<context_runtime::ContributedCommand>,
     skills: Vec<context_runtime::ContributedSkill>,
     mcp_instructions: Vec<context_runtime::McpServerInstruction>,
+}
+struct ExternalSkillExtension {
+    inner: Option<Arc<dyn context_runtime::ExtensionResolver>>,
+    skills: Vec<crate::runtime::context::RawContributedSkill>,
+}
+impl context_runtime::ExtensionResolver for ExternalSkillExtension {
+    fn list_commands(&self) -> Vec<context_runtime::ContributedCommand> {
+        self.inner
+            .as_ref()
+            .map_or_else(Vec::new, |inner| inner.list_commands())
+    }
+    fn list_raw_skills(&self) -> Vec<crate::runtime::context::RawContributedSkill> {
+        self.skills.clone()
+    }
+    fn list_mcp_instructions(&self) -> Vec<context_runtime::McpServerInstruction> {
+        self.inner
+            .as_ref()
+            .map_or_else(Vec::new, |inner| inner.list_mcp_instructions())
+    }
+    fn list_prompt_contributions(&self) -> Vec<context_runtime::ContributedPrompt> {
+        self.inner
+            .as_ref()
+            .map_or_else(Vec::new, |inner| inner.list_prompt_contributions())
+    }
 }
 impl context_runtime::ExtensionResolver for PluginExtension {
     fn list_commands(&self) -> Vec<context_runtime::ContributedCommand> {

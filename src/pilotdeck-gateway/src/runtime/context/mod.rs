@@ -19,6 +19,7 @@ pub use prompt::{
     ContributedSkill, ContributionContext, ContributionRegistration, DynamicTextProvider,
     ExtensionResolver, McpServerInstruction, NullExtensionResolver, PromptAssembler,
     PromptContributionRegistry, PromptContributionSnapshot, PromptResult, PromptSections,
-    ProviderFuture, RuntimeContextContribution, SectionContribution, SnapshotOptions, TextProvider,
-    VariableProvider, render_prompt_contribution_sections, render_prompt_runtime_context_sections,
+    ProviderFuture, RawContributedSkill, RuntimeContextContribution, SectionContribution,
+    SnapshotOptions, TextProvider, VariableProvider, render_prompt_contribution_sections,
+    render_prompt_runtime_context_sections,
 };

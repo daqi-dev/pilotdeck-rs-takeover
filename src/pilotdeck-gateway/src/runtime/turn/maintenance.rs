@@ -15,6 +15,10 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use pilotdeck_transport::{server::ExecutionClock, system_clock::SystemExecutionClock};
 use std::sync::Arc;
 
+#[cfg(test)]
+#[path = "maintenance_external_tests.rs"]
+mod external_tests;
+
 static UNDEFINED: JsValue = JsValue::Undefined;
 fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
     value.get(key).unwrap_or(&UNDEFINED)
@@ -47,6 +51,7 @@ struct Compacted {
 
 enum Outcome {
     Skipped,
+    Unavailable,
     Compacted(Box<Compacted>),
 }
 
@@ -66,7 +71,40 @@ pub(super) async fn compact(
     recorder
         .start_turn(&session, &turn)
         .map_err(|error| RuntimeError::new(recorder_message(error)))?;
-    let outcome = run(&recorder, &session, &turn, messages, &context, &cancel).await;
+    let outcome = if context
+        .runtime
+        .supports(crate::host::modules::context::Operation::TryAutoCompact)
+    {
+        run(&recorder, &session, &turn, messages, &context, &cancel).await
+    } else {
+        let operation = recorder
+            .next_compaction_operation_id()
+            .map_err(|error| RuntimeError::new(recorder_message(error)))?;
+        let count = JsValue::Number(messages.len() as f64);
+        recorder
+            .record_compaction_started(
+                &session,
+                &turn,
+                &object([
+                    ("operationId", JsValue::String(operation.clone())),
+                    ("trigger", "manual".into()),
+                    ("messageCount", count.clone()),
+                ]),
+            )
+            .map_err(|error| RuntimeError::new(recorder_message(error)))?;
+        recorder
+            .record_compaction_completed(
+                &session,
+                &turn,
+                &object([
+                    ("operationId", JsValue::String(operation)),
+                    ("status", "skipped".into()),
+                    ("messageCount", count),
+                ]),
+            )
+            .map_err(|error| RuntimeError::new(recorder_message(error)))?;
+        Ok(Outcome::Unavailable)
+    };
     let completed_at = clock.now_iso();
     let terminal = |kind: &str, stop: &str, usage: JsValue| {
         object([
@@ -82,12 +120,20 @@ pub(super) async fn compact(
         ])
     };
     let (result, reply) = match outcome {
-        Ok(Outcome::Skipped) => (
+        Ok(skipped @ (Outcome::Skipped | Outcome::Unavailable)) => (
             terminal("success", "completed", JsValue::Object(JsObject::new())),
             object([
                 ("type", "skipped".into()),
                 ("turnId", JsValue::String(turn.clone())),
-                ("reason", "no_compactable_history".into()),
+                (
+                    "reason",
+                    if matches!(skipped, Outcome::Unavailable) {
+                        "unavailable"
+                    } else {
+                        "no_compactable_history"
+                    }
+                    .into(),
+                ),
                 ("usage", JsValue::Object(JsObject::new())),
             ]),
         ),

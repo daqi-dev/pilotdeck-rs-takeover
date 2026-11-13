@@ -1,6 +1,9 @@
 //! Context dispatch and request-level compaction budgeting (TS dispatcher:308-376).
 //! Runtime implementations must use cooperative futures, like the budget ports.
 mod durable;
+#[cfg(test)]
+#[path = "context_projection_tests.rs"]
+mod projection_tests;
 mod request;
 use super::{budget, model, tool_context::ContextRequestIdentity, wire};
 use crate::host::{HostError, HostFuture, JsObject, JsValue, ModuleError};
@@ -81,6 +84,7 @@ pub struct Handler {
     identity: Option<ContextRequestIdentity>,
     config: JsObject,
     signal: Option<Cancellation>,
+    native_external_budget_projection: bool,
 }
 impl Handler {
     pub fn new(
@@ -95,6 +99,7 @@ impl Handler {
             identity: Some(identity),
             config,
             signal,
+            native_external_budget_projection: false,
         }
     }
     /// An installed context module whose composition carried no execution port
@@ -113,6 +118,7 @@ impl Handler {
             identity: Some(identity),
             config,
             signal,
+            native_external_budget_projection: false,
         }
     }
     /// Whether composition installed a context module. TS registers the
@@ -137,6 +143,11 @@ impl Handler {
     pub fn with_recorder(mut self, recorder: Arc<crate::storage::recorder::Recorder>) -> Self {
         self.recorder = Some(recorder);
         self
+    }
+    /// Host-selected native execution of an external context has no outer
+    /// sidecar dispatcher; its budget request crosses the outbound adapter.
+    pub(crate) fn set_native_external_budget_projection(&mut self, enabled: bool) {
+        self.native_external_budget_projection = enabled;
     }
     pub fn methods(&self) -> Vec<&'static str> {
         self.runtime.as_ref().map_or_else(Vec::new, |runtime| {
@@ -182,6 +193,7 @@ impl Handler {
         let signal = self.signal.clone();
         let runtime = self.runtime.clone();
         let recorder = self.recorder.clone();
+        let native_external_budget_projection = self.native_external_budget_projection;
         let budget = budget
             .ports
             .as_ref()
@@ -294,7 +306,11 @@ impl Handler {
                             port,
                         }));
                     }
-                    remove(&mut input.fields, "budgetRequest");
+                    if native_external_budget_projection {
+                        remove(&mut input.fields, "budgetPreparationId");
+                    } else {
+                        remove(&mut input.fields, "budgetRequest");
+                    }
                 }
             }
             let operation = OPERATIONS.into_iter().find(|op| name.equals_str(op.name()));

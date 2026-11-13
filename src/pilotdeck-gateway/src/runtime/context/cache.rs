@@ -228,6 +228,17 @@ impl PromptCacheCoordinator {
         input: CachePlanInput<'_>,
         commit: bool,
     ) -> Result<Option<JsValue>, HostError> {
+        let system_prompt = JsString::from(input.system_prompt);
+        self.create_plan_js(session_id, input, &system_prompt, commit)
+    }
+
+    pub fn create_plan_js(
+        &self,
+        session_id: Option<JsString>,
+        input: CachePlanInput<'_>,
+        system_prompt: &JsString,
+        commit: bool,
+    ) -> Result<Option<JsValue>, HostError> {
         // Disabled committed calls still consume a pending reset; enabled
         // calls compute the fingerprint before mutating coordinator state.
         if !input.enabled {
@@ -243,7 +254,7 @@ impl PromptCacheCoordinator {
             &self.locale,
             input.provider,
             input.model,
-            &JsValue::String(input.system_prompt.into()),
+            &JsValue::String(system_prompt.clone()),
             input.tools,
             input.messages,
             // The runtime entry keeps its pre-merge depth behavior: the
@@ -271,7 +282,7 @@ impl PromptCacheCoordinator {
         Ok(Some(object(vec![
             ("provider", input.provider.clone()),
             ("model", input.model.clone()),
-            ("system", JsValue::Bool(!input.system_prompt.is_empty())),
+            ("system", JsValue::Bool(!system_prompt.is_empty())),
             ("tools", JsValue::Bool(false)),
             (
                 "messages",

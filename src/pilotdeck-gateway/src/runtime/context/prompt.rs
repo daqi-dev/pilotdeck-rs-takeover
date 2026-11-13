@@ -26,6 +26,13 @@ pub struct ContributedSkill {
     /// Absolute path to the SKILL.md selected by the extension generation.
     pub path: String,
 }
+/// Skill fields obtained from a JavaScript module, retaining every UTF-16 unit.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RawContributedSkill {
+    pub name: JsString,
+    pub description: Option<JsString>,
+    pub path: JsString,
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct McpServerInstruction {
     pub server_name: String,
@@ -46,6 +53,9 @@ pub trait ExtensionResolver: Send + Sync {
         Vec::new()
     }
     fn list_skills(&self) -> Vec<ContributedSkill> {
+        Vec::new()
+    }
+    fn list_raw_skills(&self) -> Vec<RawContributedSkill> {
         Vec::new()
     }
     fn list_mcp_instructions(&self) -> Vec<McpServerInstruction> {
@@ -158,6 +168,71 @@ impl PromptAssembler {
             joined,
             sections,
         })
+    }
+
+    /// Assemble the same prompt while preserving remote JavaScript skill strings.
+    #[allow(clippy::too_many_arguments)]
+    pub fn assemble_js(
+        &self,
+        cwd: &str,
+        provider: &str,
+        model: &str,
+        permission_mode: &str,
+        run_mode: Option<&str>,
+        additional_working_directories: &[String],
+        tools: &[JsValue],
+        custom_system_prompt: Option<&str>,
+        use_custom_system_prompt: bool,
+        append_system_prompt: Option<&str>,
+        include_extensions_with_custom_system_prompt: bool,
+        include_user_context_in_system_prompt: bool,
+        timestamp_ms: f64,
+    ) -> Result<(PromptResult, Vec<JsString>), HostError> {
+        let prompt = self.assemble(
+            cwd,
+            provider,
+            model,
+            permission_mode,
+            run_mode,
+            additional_working_directories,
+            tools,
+            custom_system_prompt,
+            use_custom_system_prompt,
+            append_system_prompt,
+            include_extensions_with_custom_system_prompt,
+            include_user_context_in_system_prompt,
+            timestamp_ms,
+        )?;
+        let mut parts: Vec<JsString> = prompt.parts.iter().map(|s| s.as_str().into()).collect();
+        let raw = self.extension.list_raw_skills();
+        if !raw.is_empty()
+            && (!use_custom_system_prompt || include_extensions_with_custom_system_prompt)
+        {
+            let old = prompt
+                .sections
+                .system_context
+                .iter()
+                .find(|s| s.starts_with("<available-skills>"));
+            let skills = self.extension.list_skills();
+            let block = format_skills_js(&skills, &raw);
+            if let Some(old) = old {
+                // The skills block is an entire section, not text substitution.
+                let append = append_system_prompt.is_some_and(|s| !js_trim(s).is_empty());
+                let section_start =
+                    parts.len() - usize::from(append) - prompt.sections.system_context.len();
+                let offset = prompt
+                    .sections
+                    .system_context
+                    .iter()
+                    .position(|part| part == old)
+                    .expect("skills section");
+                parts[section_start + offset] = block;
+            } else {
+                let append = append_system_prompt.is_some_and(|s| !js_trim(s).is_empty());
+                parts.insert(parts.len() - usize::from(append), block);
+            }
+        }
+        Ok((prompt, parts))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -420,6 +495,30 @@ fn format_skills(skills: &[ContributedSkill]) -> String {
     }
     lines.push("</available-skills>".into());
     lines.join("\n")
+}
+
+fn format_skills_js(skills: &[ContributedSkill], raw: &[RawContributedSkill]) -> JsString {
+    let base = format_skills(skills);
+    let mut units: Vec<u16> = base
+        .strip_suffix("</available-skills>")
+        .unwrap()
+        .encode_utf16()
+        .collect();
+    for skill in raw {
+        units.extend("- ".encode_utf16());
+        units.extend_from_slice(skill.name.units());
+        if let Some(description) = &skill.description
+            && !description.is_empty()
+        {
+            units.extend(" — ".encode_utf16());
+            units.extend_from_slice(description.units());
+        }
+        units.extend(" (file: ".encode_utf16());
+        units.extend_from_slice(skill.path.units());
+        units.extend(")\n".encode_utf16());
+    }
+    units.extend("</available-skills>".encode_utf16());
+    JsString::from_utf16(units)
 }
 
 pub(crate) fn escape_xml_attribute(value: &str) -> String {

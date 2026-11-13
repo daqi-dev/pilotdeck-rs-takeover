@@ -2497,17 +2497,18 @@ fn tool_catalog(value: Option<&JsValue>) -> Option<Vec<JsValue>> {
         let Some(t) = raw.as_object() else {
             continue;
         };
-        let (Some(name), Some(description)) =
-            (nonempty(t.get("name")), nonempty(t.get("description")))
-        else {
+        let (Some(name), Some(description)) = (
+            nonempty_js(t.get("name")),
+            nonempty_js(t.get("description")),
+        ) else {
             continue;
         };
         let Some(input) = t.get("inputSchema").and_then(|v| v.as_object()) else {
             continue;
         };
         let mut o = obj();
-        put(&mut o, "name", string(&name));
-        put(&mut o, "description", string(&description));
+        put(&mut o, "name", JsValue::String(name));
+        put(&mut o, "description", JsValue::String(description));
         put(&mut o, "inputSchema", JsValue::Object(input.clone()));
         if let Some(v) = t.get("kind").and_then(|v| v.as_string()) {
             put(&mut o, "kind", JsValue::String(v.clone()));
@@ -2793,4 +2794,52 @@ fn sop_module(value: Option<&JsValue>, home: &Path, env: &Env) -> Option<JsValue
         put(&mut out, "frontendModule", JsValue::String(v));
     }
     Some(JsValue::Object(out))
+}
+
+#[cfg(test)]
+mod external_tool_catalog_tests {
+    use super::*;
+    use pilotdeck_protocol::parse_json;
+
+    /// TS parseModulesConfig.ts:392–394,451–471 trims JavaScript strings
+    /// without converting their UTF-16 content through a Unicode scalar string.
+    #[test]
+    fn modules_snapshot_preserves_trimmed_tool_names_and_descriptions_with_lone_surrogates() {
+        let raw = parse_json(r#"{"modules":{"tools":{"enabled":true,"implementationId":"example.tools","contract":"pilotdeck.tools/v1","transport":"module-http-v2","endpoint":"http://localhost:1","methods":["execute"],"catalog":[{"name":" \ud800\t","description":"\n\udfff ","inputSchema":{"type":"object"},"kind":"custom","readOnly":true},{"name":" ordinary ","description":" description ","inputSchema":{"type":"object"}}]}}}"#).unwrap();
+        let snapshot = modules(&raw, Path::new("/isolated-test-home"), &Env::default()).unwrap();
+        let binding = snapshot
+            .get("tools")
+            .expect("external binding must remain visible");
+        let JsValue::Array(tools) = binding.get("tools").unwrap() else {
+            panic!("expected normalized static catalog");
+        };
+        assert_eq!(
+            tools.len(),
+            2,
+            "a lone surrogate must not discard the descriptor or binding"
+        );
+        assert_eq!(
+            tools[0].get("name").unwrap().as_string().unwrap().units(),
+            &[0xd800]
+        );
+        assert_eq!(
+            tools[0]
+                .get("description")
+                .unwrap()
+                .as_string()
+                .unwrap()
+                .units(),
+            &[0xdfff]
+        );
+        assert_eq!(tools[0].get("kind"), Some(&"custom".into()));
+        assert_eq!(tools[0].get("readOnly"), Some(&JsValue::Bool(true)));
+        assert_eq!(tools[1].get("name"), Some(&"ordinary".into()));
+        assert_eq!(tools[1].get("description"), Some(&"description".into()));
+    }
+
+    #[test]
+    fn tool_catalog_still_rejects_empty_non_string_and_missing_schema_entries() {
+        let raw = parse_json(r#"[{"name":" \t ","description":"description","inputSchema":{}},{"name":"name","description":"\n","inputSchema":{}},{"name":42,"description":"description","inputSchema":{}},{"name":"name","description":false,"inputSchema":{}},{"name":"name","description":"description","inputSchema":null}]"#).unwrap();
+        assert_eq!(tool_catalog(Some(&raw)).unwrap().len(), 0);
+    }
 }

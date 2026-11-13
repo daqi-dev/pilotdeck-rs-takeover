@@ -793,6 +793,13 @@ async fn start_assembly_resources(
                             .cloned()
                     });
                 let snapshot = staged.snapshot();
+                let mut external_modules =
+                    super::external_modules::Selection::from_snapshot(&snapshot, &env)
+                        .map_err(|error| RuntimeError::new(error.to_string()))?;
+                external_modules
+                    .load_skills(&project_root)
+                    .await
+                    .map_err(|error| RuntimeError::new(error.to_string()))?;
                 // Config and SDK plugin selection are committed under one lock.
                 let (sdk_config, sdk_plugins) =
                     session_overrides.sdk_snapshot(&context.session_key);
@@ -1389,6 +1396,7 @@ async fn start_assembly_resources(
                             lsp,
                             session_mcp,
                         )?
+                        .with_external_modules(external_modules.clone())
                         .with_extra_tools(extra_tools, excluded_tools)
                         .with_sandbox(profile.sandbox_mode)
                         .with_interaction(profile.interaction, can_prompt_override)
@@ -1409,6 +1417,9 @@ async fn start_assembly_resources(
                                 })
                                 .cloned(),
                         )
+                        .with_sdk_skill_ids(super::sdk_config::session_skill_ids(
+                            sdk_config.as_ref(),
+                        ))
                         .with_permission_mode_source(permission_source.clone())
                         .with_continuation_parent(continuation_parent.parent_ref())
                         .with_hooks(
@@ -1442,7 +1453,11 @@ async fn start_assembly_resources(
                             None => ports,
                         };
                         let ports = match plugin_runtime {
-                            Some(plugins) if !skills_disabled => ports.with_skills(plugins),
+                            Some(plugins)
+                                if !skills_disabled && external_modules.skill_runtime.is_none() =>
+                            {
+                                ports.with_skills(plugins)
+                            }
                             Some(_) => ports,
                             None => ports,
                         };
@@ -2800,15 +2815,7 @@ pub(super) fn register_project_at(
     publish?;
     Ok(())
 }
-/// This entry's currently supported profile is a text main agent with native
-/// read tools. Refuse configured integrations before admitting a turn instead
-/// of silently dropping their tools/hooks or launching an implicit helper.
-/// What the native host still refuses to start with: configured hooks and
-/// module bindings, neither of which it serves yet (the baseline has no such
-/// refusal). MCP servers, plugins, skills and the `agent.subagents` section
-/// are served — see `session_mcp_tools`, the plugin runtime and
-/// `subagents::compose_subagents_section` — and are no longer refused.
-/// Plugins that contribute hooks stay refused with the config-level hooks.
+/// Reject the explicitly deferred authenticated StaffDeck knowledge binding.
 pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(), ProxyError> {
     use crate::runtime::project::ConfigSource;
     let snapshot = crate::runtime::project::NativeConfigSource::new(
@@ -2818,31 +2825,15 @@ pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(),
         None,
     )
     .load(&options.project)?;
-    // A top-level `hooks` section is no hook source: the baseline's loader
-    // reports it as an unknown field and starts without it
-    // (loadPilotConfig.ts:343-375). Plugin and SDK session hooks are served
-    // (`native_process/hooks.rs`).
-    // `modules`: a built-in binding (`provider: pilotdeck`) and a disabled
-    // `skills` / `knowledge` slot need no outside service and are served.
-    // A protocol binding (an external module process or endpoint) and the
-    // StaffDeck `sop` module are not served yet.
-    let external = |binding: &JsValue| {
-        binding
-            .as_object()
-            .is_some_and(|binding| binding.contains_key("implementationId"))
-    };
     if snapshot
         .get("config")
         .and_then(|v| v.get("modules"))
-        .and_then(JsValue::as_object)
-        .is_some_and(|modules| {
-            modules.own_entries().iter().any(|(slot, binding)| {
-                !slot.equals_str("sop") && !slot.equals_str("agentLoop") && external(binding)
-            })
-        })
+        .and_then(|modules| modules.get("knowledge"))
+        .and_then(|knowledge| knowledge.get("credentialEnv"))
+        .is_some_and(|value| !matches!(value, JsValue::Undefined | JsValue::Null))
     {
         return Err(
-            "Native isolated profile does not yet support configured module bindings.".into(),
+            "Native isolated profile does not yet support authenticated StaffDeck knowledge bindings.".into(),
         );
     }
     Ok(())

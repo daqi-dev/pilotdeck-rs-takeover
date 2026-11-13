@@ -130,6 +130,43 @@ pub struct ComposedPorts {
     pub materializer: Option<Arc<dyn RequestMaterializer>>,
 }
 
+/// Apply the session recorder after choosing a model execution port.
+pub fn durable_execution(
+    inner: Arc<dyn ModelExecution>,
+    recorder: Option<DurableRecorder>,
+) -> Arc<dyn ModelExecution> {
+    match recorder {
+        Some(durable) => Arc::new(DurableModelExecution {
+            inner,
+            recorder: durable.recorder,
+            recording_session_id: durable.recording_session_id,
+        }),
+        None => inner,
+    }
+}
+
+/// Bind the host router's session sticky state to a selected model port.
+pub fn sticky_execution(
+    execution: Arc<dyn ModelExecution>,
+    router: &RouterRuntime,
+    session_id: &JsString,
+) -> Arc<dyn ModelExecution> {
+    with_sticky(execution, sticky_route(router, session_id))
+}
+
+/// Host configuration metadata, independently of the selected executor.
+pub fn metadata_port(
+    router: Arc<RouterRuntime>,
+    model_config: JsValue,
+    options: RouterModelPortOptions,
+) -> Arc<dyn ModelMetadata> {
+    Arc::new(RouterModelPort {
+        router,
+        model_config,
+        options,
+    })
+}
+
 pub fn ports(
     router: Arc<RouterRuntime>,
     model_config: JsValue,
@@ -142,15 +179,7 @@ pub fn ports(
         model_config,
         options,
     });
-    let execution: Arc<dyn ModelExecution> = recorder
-        .map(|durable| {
-            Arc::new(DurableModelExecution {
-                inner: port.clone(),
-                recorder: durable.recorder,
-                recording_session_id: durable.recording_session_id,
-            }) as Arc<dyn ModelExecution>
-        })
-        .unwrap_or_else(|| port.clone());
+    let execution = durable_execution(port.clone(), recorder);
     ComposedPorts {
         execution: with_sticky(execution, sticky_route(router.as_ref(), session_id)),
         metadata: Some(port.clone()),

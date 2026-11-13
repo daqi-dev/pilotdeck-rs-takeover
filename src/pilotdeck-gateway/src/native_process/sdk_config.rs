@@ -746,21 +746,22 @@ pub(super) fn apply_prompt_fields(agent: &mut JsObject, config: Option<&JsValue>
 /// one; duplicates collapse.
 fn resolve_session_skills(
     requested: &[JsValue],
-    available: &[String],
-) -> Result<Vec<String>, SubmitError> {
-    let mut resolved: Vec<String> = Vec::new();
-    for requested in requested {
-        let requested = requested.as_string().map(text).unwrap_or_default();
-        let exact: Vec<&String> = available
+    available: &[JsString],
+) -> Result<Vec<JsString>, SubmitError> {
+    let mut resolved = Vec::new();
+    for item in requested {
+        let requested = item.as_string().cloned().unwrap_or_default();
+        let exact: Vec<&JsString> = available
             .iter()
             .filter(|name| **name == requested)
             .collect();
-        let suffix = format!(":{requested}");
+        let mut suffix = vec![u16::from(b':')];
+        suffix.extend_from_slice(requested.units());
         let candidates = if exact.is_empty() {
             available
                 .iter()
-                .filter(|name| name.ends_with(&suffix))
-                .collect()
+                .filter(|name| name.units().ends_with(&suffix))
+                .collect::<Vec<_>>()
         } else {
             exact
         };
@@ -768,7 +769,10 @@ fn resolve_session_skills(
             [] => {
                 return Err(err(
                     "SDK_SKILL_NOT_FOUND",
-                    format!("SDK session skill is not available in this project: {requested}"),
+                    format!(
+                        "SDK session skill is not available in this project: {}",
+                        text(&requested)
+                    ),
                 ));
             }
             [name] => {
@@ -780,13 +784,27 @@ fn resolve_session_skills(
                 return Err(err(
                     "SDK_SKILL_AMBIGUOUS",
                     format!(
-                        "SDK session skill is ambiguous; use its fully-qualified name: {requested}"
+                        "SDK session skill is ambiguous; use its fully-qualified name: {}",
+                        text(&requested)
                     ),
                 ));
             }
         }
     }
     Ok(resolved)
+}
+
+pub(super) fn session_skill_ids(config: Option<&JsValue>) -> Option<Vec<JsString>> {
+    match config.and_then(|config| config.get("skills")) {
+        Some(JsValue::Array(names)) => Some(
+            names
+                .iter()
+                .filter_map(JsValue::as_string)
+                .cloned()
+                .collect(),
+        ),
+        _ => None,
+    }
 }
 
 /// `sdkSessionConfig.skills` as the stored (resolved) name list.
@@ -960,7 +978,7 @@ fn validate_selector_policy(
 fn resolve_agent_skills(
     agents: &JsObject,
     parent: Option<&JsValue>,
-    available: &[String],
+    available: &[JsString],
 ) -> Result<JsObject, SubmitError> {
     let mut resolved = agents.clone();
     let parent = match parent {
@@ -977,14 +995,14 @@ fn resolve_agent_skills(
                 names
                     .iter()
                     .filter_map(JsValue::as_string)
-                    .map(text)
+                    .cloned()
                     .collect()
             }),
             Some(JsValue::String(all)) if all.equals_str("all") => parent.map(|names| {
                 names
                     .iter()
                     .filter_map(JsValue::as_string)
-                    .map(text)
+                    .cloned()
                     .collect()
             }),
             _ => None,
@@ -992,16 +1010,16 @@ fn resolve_agent_skills(
         if let Some(selected) = selected {
             if let Some(parent) = parent {
                 for name in &selected {
-                    if !parent.iter().any(|allowed| {
-                        allowed
-                            .as_string()
-                            .is_some_and(|allowed| text(allowed) == *name)
-                    }) {
+                    if !parent
+                        .iter()
+                        .any(|allowed| allowed.as_string().is_some_and(|allowed| allowed == name))
+                    {
                         return Err(err(
                             "SDK_AGENT_SKILL_OUT_OF_SCOPE",
                             format!(
-                                "Agent {} skill is not visible to the parent SDK session: {name}",
-                                text(id)
+                                "Agent {} skill is not visible to the parent SDK session: {}",
+                                text(id),
+                                text(name)
                             ),
                         ));
                     }
@@ -1010,7 +1028,7 @@ fn resolve_agent_skills(
             let mut definition = definition.clone();
             definition.insert(
                 "skills".into(),
-                JsValue::Array(selected.iter().map(|name| name.as_str().into()).collect()),
+                JsValue::Array(selected.iter().cloned().map(JsValue::String).collect()),
             );
             resolved.insert(id.clone(), JsValue::Object(definition));
         }
@@ -1453,8 +1471,13 @@ impl SubmitSdkSessionConfig for NativeSdkSessionConfig {
                     plugins: Vec::new(),
                 },
             };
-            let available = match &plugin_runtime {
-                Some(runtime) => prepared.skill_names(runtime).await,
+            let available: Vec<JsString> = match &plugin_runtime {
+                Some(runtime) => prepared
+                    .skill_names(runtime)
+                    .await
+                    .into_iter()
+                    .map(JsString::from)
+                    .collect(),
                 None => Vec::new(),
             };
             let mut next = config.clone();
@@ -1465,7 +1488,7 @@ impl SubmitSdkSessionConfig for NativeSdkSessionConfig {
                 if let JsValue::Object(fields) = &mut next {
                     fields.insert(
                         "skills".into(),
-                        JsValue::Array(resolved.iter().map(|name| name.as_str().into()).collect()),
+                        JsValue::Array(resolved.iter().cloned().map(JsValue::String).collect()),
                     );
                 }
             }
@@ -1595,6 +1618,35 @@ impl SubmitSdkSessionConfig for NativeSdkSessionConfig {
 mod scope_tests {
     use super::*;
     #[test]
+    fn sdk_skills_resolve_and_filter_by_utf16_units() {
+        let a = JsString::from_utf16(vec![b'x' as u16, b':' as u16, 0xd800]);
+        let b = JsString::from_utf16(vec![b'x' as u16, b':' as u16, 0xd801]);
+        let available = vec![a.clone(), b.clone()];
+        let request = JsValue::String(JsString::from_utf16(vec![0xd800]));
+        assert_eq!(
+            resolve_session_skills(&[request], &available).unwrap(),
+            vec![a.clone()]
+        );
+        let missing = JsValue::String(JsString::from_utf16(vec![0xd802]));
+        assert_eq!(
+            resolve_session_skills(&[missing], &available)
+                .unwrap_err()
+                .code,
+            "SDK_SKILL_NOT_FOUND"
+        );
+        let mut config = JsObject::new();
+        config.insert(
+            "skills".into(),
+            JsValue::Array(vec![JsValue::String(b.clone())]),
+        );
+        assert_eq!(
+            session_skill_ids(Some(&JsValue::Object(config))),
+            Some(vec![b])
+        );
+        assert_ne!(a, available[1]);
+    }
+
+    #[test]
     fn sdk_child_skill_scopes_match_executed_fixed_ts_resolver() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
             "../../tests/fixtures/h1-sdk-scopes/expected.json"
@@ -1613,7 +1665,7 @@ mod scope_tests {
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|name| name.as_str().unwrap().to_owned())
+                .map(|name| JsString::from(name.as_str().unwrap()))
                 .collect::<Vec<_>>();
             let result =
                 resolve_agent_skills(agents.as_object().unwrap(), Some(&parent), &available);
