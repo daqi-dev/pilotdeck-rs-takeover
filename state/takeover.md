@@ -6,6 +6,8 @@
 
 ## 现在在哪
 
+**进度总表是 `state/status.md`**（由 `node scripts/bbx/status.mjs` 生成，按八条标准和 16 个功能域；功能清单在 `scripts/bbx/features.json`，审阅记录在 `state/audits.md`，不在范围的表面项在 `state/out-of-scope.md`，四条命令与上游验收集的当次结果手写在 `state/check-results.json`）。每次 cb8 验收通过后重新生成再推送。
+
 **还开着的问题按级别记在 `state/issues.md`**（2026-11-13 起；含独立代码审阅的发现）。
 
 **交付标准在 `specs/delivery/README.md`（2026-11-12 人认可的八条）。** 进度按那八条逐条对照，以命令输出为准。
@@ -19,10 +21,6 @@ cb8 上 `9c11345cf` 的结果：fmt、clippy、文档测试通过；`nextest` 78
 本机磁盘：主检出的 `src/target` 涨到过 183 GB，已删；全量 `nextest` 以后在 cb8 跑，本机只做子代理各自的构建。人许可并行 4、6 个或更多子代理（硬件和我管得过来为限）。
 
 在途的子代理（都基于 `7388b0131`）：零散差异与扩展目录监视；hooks 帧次序 / 中止取消、缓存代际、子代理里的权限询问；CLI 与环境变量缺口审查；cb8 上的 Linux 差异。
-
-待并入台账（2026-11-13，任务预算与中止差异分支合并后）：会话写入锁目录 `pilotdeck-ledger-locks-<uid>/` 建在共享临时目录（`storage/transcript.rs:530-578`，基线没有跨进程写入栅栏），别的用户可抢先建同名目录让会话写入失败——定为第 2 级，要挪到 `PILOT_HOME` 下，两个转储场景因它各剩 1 处差异；`compact-auto` 的主会话从来不触发压缩（假 provider 报的 `prompt_tokens` 让估算值很低），场景名不副实，属于尺子的问题；任务预算没做的：`projectRetentionMs` 到期清理无场景、组织策略的 `maxTaskBudgetUsd` 上限没接、预算与子代理和压缩摘要费用的关系没查；转储在带 `extraBody` 或 Google 协议时 Rust 转储的是实际发出的请求体、与基线不同，无场景。
-
-待并入台账的中止类差异（2026-11-13，hook 帧次序子代理用临时场景量出，场景在会话 scratchpad 的 `hook-order/sc/aw-*.json`，未入库）：在 `UserPromptSubmit` hook 执行中中止，Rust 少发 `turn_aborted` 状态、少落一条会话记录；在 `Stop` hook 执行中中止，基线以 `completed` 结束、Rust 发 `turn_failed` 和 `error`；在 `SubagentStart` / `SubagentStop` 执行中中止，Rust 缺 `subagent_started` / `subagent_completed`，且 `SubagentStop` 的完成帧次序不稳（基线 10/10 稳定）。另：被杀的 advisory hook 收到 SIGTERM 后若还活不到 1 秒，Rust 会把它的完成帧放上流而基线可能已结束这一轮（1 秒上限是 Rust 自定的，无场景）。
 
 合并后记下的待办：显式 stdio 部署下外部工具失败时的结果形状；fork 子代理会话不挂外部工具是否与基线一致；批次被拒路径不写 `tool_result` 账本记录；进程本地时区仍读系统 tzdata；时间工具默认时区回显（基线回 ICU 规范名）；Slack Socket Mode 实现已从生产流程摘掉、代码待删；记忆维护的实际抽取没有场景。
 

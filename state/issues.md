@@ -4,7 +4,7 @@
 
 「功能域」列填 `scripts/bbx/features.json` 里功能域的短标识（`domains[].id`），一个问题涉及几个域就用逗号分开，横跨全部的填 `*`；`scripts/bbx/status.mjs` 按这一列统计各域开着的问题（状态为 `—` 的占位行不计）。
 
-最后更新：2026-11-13（合并 Linux 差异、清理透明代理、表面缺口第二组之后）
+最后更新：2026-11-13（合并到任务预算与中止差异、功能域清单之后）
 
 ## 1 安全与数据
 
@@ -16,10 +16,13 @@
 
 | 问题 | 功能域 | 位置 / 依据 | 来源 | 状态 |
 |---|---|---|---|---|
-| 请求发出前中止不发 `turn_aborted` 状态；压缩进行中中止时摘要请求不取消 | loop, context | 场景 `turn-abort-before-request-status`、`compact-auto-aborted` | 表面缺口 | 在修 |
-| `submit_turn` 带 `taskBudget` 直接回 `CAPABILITY_UNAVAILABLE`（存储层有、没接线） | loop | 场景 `loop-budget` 的说明 | 表面缺口 | 在修 |
+| （已在 `fd5f1dd01` 修掉，待 cb8 验收确认）请求发出前中止不发 `turn_aborted` 状态；压缩进行中中止时摘要请求不取消 | loop, context | 场景 `turn-abort-before-request-status`、`compact-auto-aborted` | 表面缺口 | 在修 |
+| （主体已在 `fd5f1dd01` 接上，待 cb8 验收确认；没做的见第 3 级）`submit_turn` 带 `taskBudget` 直接回 `CAPABILITY_UNAVAILABLE` | loop | 场景 `loop-budget` 的说明 | 表面缺口 | 在修 |
 | Linux 上稳定不一致：`skills-session-snapshot-at-create`（Rust 的系统提示词多约 40 个 token）。其余 5 个已在 `275ce32dc` 修掉（对拍根目录改成等长的 `/tmp/private`、场景余量），待 cb8 验收确认 | ext | cb8 全量对拍 | cb8 验收 | 待派 |
 | 用户中止时，基线让在途的工具自己结束、跑完 `PostToolUseFailure` hook（`isInterrupt: true`）再发 `turn_completed`；Rust 直接丢掉在途的工具调用，hook 不跑 | hooks, loop | 场景 `hook-post-tool-use-interrupt`；基线 `ToolRuntime.ts:418-423` | 表面缺口 | 待派（与中止差异一起） |
+| 会话写入锁目录 `pilotdeck-ledger-locks-<uid>/` 建在共享临时目录（基线没有跨进程写入栅栏）：别的用户可抢先建同名目录让会话写入失败；`TMPDIR` 为空串时落到当前目录。要挪到 `PILOT_HOME` 下。两个转储场景因它各剩 1 处差异 | session | `storage/transcript.rs:530-578`；场景 `env-dump-request-tmpdir`、`proto-dump-request` | 任务预算与中止差异 | 待派 |
+| 中止落在 hook 执行中时的差异（基线每次都稳定）：`UserPromptSubmit` 中止，Rust 少发 `turn_aborted` 状态、少落一条会话记录；`Stop` 中止，基线以 `completed` 结束、Rust 发 `turn_failed` 和 `error`；`SubagentStart` / `SubagentStop` 中止，Rust 缺 `subagent_started` / `subagent_completed`，且 `SubagentStop` 的完成帧次序不稳 | hooks, loop, agents | 临时场景在会话 scratchpad 的 `hook-order/sc/aw-*.json`，未入库 | hook 帧次序 | 待派（中止整块盲审） |
+| `skills-extension-watch-symlink` 在 Linux 上稳定差 2 处：基线比 Rust 多打「Extensions changed」日志行（子代理对 Linux 上 `fs.watch` 的推断不对） | ext | cb8 验收（`9a5fb723b`）两次单独重跑与全量 | cb8 验收 | 待派（在 cb8 上量基线） |
 
 ## 3 边角
 
@@ -39,6 +42,10 @@
 | 全局开启记忆时子代理 `memory: "disabled"` 不挂记忆、`seed_read_state` 带子代理字符串形式 MCP 引用：没有场景 | agents, memory | `native_process/sdk_config.rs`、`subagents.rs` | 表面缺口 | 待派 |
 | 记忆维护的实际抽取请求没有场景 | memory | `runtime/memory/maintenance.rs` | 循环缺口 / 审阅 | 待派 |
 | 表面清单里没做完的：`agent_execution_rejected`、`agent_turn_discarded`、`permission_failed`、`agent_transcript_error`（后者判断做不到） | loop, perm | `coverage.mjs --surface` | 表面缺口 | 待派 |
+| 任务预算没做的：`projectRetentionMs` 到期清理无场景；组织策略的 `maxTaskBudgetUsd` 上限没接；预算与子代理、压缩摘要费用的关系没查 | loop, config | `native_process/task_budget.rs`；基线 `ProjectRuntimeRegistry.ts:1058-1072` | 任务预算 | 待派 |
+| 请求转储在带 `extraBody` 或 Google 协议时，Rust 转储的是实际发出的请求体，与基线不同；无场景 | model | `runtime/model/http.rs` | 任务预算与中止差异 | 待派 |
+| 被杀的 advisory hook 收到 SIGTERM 后若还活不到 1 秒，Rust 会把它的完成帧放上流，基线可能已结束这一轮；1 秒上限是 Rust 自定的，无场景，这个修复也没单独做注入错误检查 | hooks | `runtime/turn/coordinator` 的 `ADVISORY_KILL_SETTLE` | hook 帧次序 | 待派 |
+| sidecar 收到「请求方取消」恰好落在 factory 前或准备阶段的毫秒级窗口时：Rust 给干净的中止结果，基线 TS sidecar 给缺结果的 `cancelled` 终止帧（只在显式外部部署下可见） | modules | `pilotdeck-transport/src/server.rs`、`default_factory.rs` | 任务预算与中止差异 | 记为已知 |
 
 ## 4 时序与外观
 
@@ -63,6 +70,9 @@
 | Rust 调试构建的一轮比基线慢 4–8 倍（压缩一步约 0.5–0.8 秒），时间余量紧的场景在慢机器上会翻红 | * | Linux 差异 | 性能报告时看发布构建 |
 | `surface.json` 标为「不计」的项（第一组 28 项，第二组又有若干：TUI 本地命令、QQ 前缀、做不到的错误码等），理由是子代理写的，抽查五项成立；整张表要人过目（交付标准第 2 条） | * | 审阅 | 待整理 |
 | 约 35 个没有 `volatile` / `accepted` 的新场景，没有逐条核对说明与步骤是否对得上 | * | 审阅 | 待派 |
+| `compact-auto` 的主会话从来不触发压缩（假 provider 报的 `prompt_tokens 12` 让校准后的估算值很低），场景说明与实际不符。要查还有多少场景「一致只是因为没测到它声称测的东西」 | context, * | 任务预算与中止差异 | 待派（场景说明与实际触发行为的核对） |
+| 两个 `hook-*-server-stop` 场景在 cb8 上两次单独重跑各差 1 处，全量里一致；`cli-run-resume` 在 cb8 全量里出现过一次 INVALID | hooks, cli | cb8 验收（`9a5fb723b`） | 待量 |
+| 子代理只跑自己改过的 crate 的测试，漏掉了下游：sidecar 帧去掉顶层 `operation` 后 gateway 的 `compaction_recovery_loop` 测试失败，到 cb8 全量才发现。通用说明要加一条：改跨 crate 的协议或类型时跑下游 crate 的测试 | * | cb8 验收 | 待改通用说明 |
 
 ## 审阅读过、未发现问题的
 
