@@ -898,7 +898,7 @@ async fn scoped_child_custom_prompt_retains_environment_and_selected_skill_disco
         .as_any()
         .downcast_ref::<ContextStorageResources>()
         .unwrap();
-    for (include, names) in [
+    for (include_extensions, names) in [
         (false, vec!["alpha", "beta"]),
         (true, vec!["alpha"]),
         (true, vec!["alpha", "beta"]),
@@ -908,7 +908,7 @@ async fn scoped_child_custom_prompt_retains_environment_and_selected_skill_disco
                 scratch.0.join("scoped-prompt-spill"),
                 SessionContextOptions {
                     memory_disabled: true,
-                    include_extensions_with_custom_system_prompt: include,
+                    include_extensions_with_custom_system_prompt: include_extensions,
                     extension: Some(Arc::new(Skills(names.clone()))),
                     ..Default::default()
                 },
@@ -925,15 +925,21 @@ async fn scoped_child_custom_prompt_retains_environment_and_selected_skill_disco
             .unwrap();
         let prompt = text_field(&result, "systemPrompt");
         assert!(prompt.contains("CHILD-CUSTOM-SYSTEM"));
-        assert_eq!(prompt.contains("<environment>\nnow: "), include);
-        assert_eq!(prompt.contains("<available-skills>"), include);
-        assert_eq!(prompt.contains("alpha description"), include);
-        assert_eq!(prompt.contains("/isolated/skills/alpha/SKILL.md"), include);
+        assert_eq!(prompt.contains("<environment>\nnow: "), include_extensions);
+        assert_eq!(prompt.contains("<available-skills>"), include_extensions);
+        assert_eq!(prompt.contains("alpha description"), include_extensions);
+        assert_eq!(
+            prompt.contains("/isolated/skills/alpha/SKILL.md"),
+            include_extensions
+        );
         assert_eq!(
             prompt.contains("beta description"),
-            include && names.contains(&"beta")
+            include_extensions && names.contains(&"beta")
         );
-        assert_eq!(prompt.contains("Use the read_skill tool"), include);
+        assert_eq!(
+            prompt.contains("Use the read_skill tool"),
+            include_extensions
+        );
         assert_no_memory(&result);
     }
     assert!(
