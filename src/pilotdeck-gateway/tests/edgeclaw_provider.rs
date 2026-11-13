@@ -396,8 +396,13 @@ async fn observe(spec: &Value) -> Value {
                 let timeout = if op["timeout"] == true { 1234.0 } else { 0.0 };
                 let pre_aborted = parent.is_cancelled();
                 building = Some(tokio::spawn(async move {
-                    let (attachment, diagnostics) =
-                        memory::build(resolver.as_ref(), input, Some(&parent), timeout).await;
+                    let (attachment, diagnostics) = memory::build(
+                        resolver.as_ref(),
+                        input,
+                        Some(&parent.clone().into()),
+                        timeout,
+                    )
+                    .await;
                     let attachments = attachment
                         .into_iter()
                         .map(|text| json!({"role":"user","content":[{"type":"text","text":text}]}))
@@ -615,7 +620,7 @@ async fn direct_builder_lifecycle(timeout: bool) {
         memory::build(
             builder_provider.as_ref(),
             retrieve_input("q1", "s1", Cancellation::default()),
-            Some(&builder_parent),
+            Some(&builder_parent.clone().into()),
             if timeout { 1234.0 } else { 0.0 },
         )
         .await
