@@ -247,11 +247,6 @@ pub struct HostError {
     /// A [`HostErrorKind::LoopFailure`]'s `modelState`: what the loop had
     /// recorded before it failed, kept for the session's next turn.
     pub model_state: Option<Box<JsValue>>,
-    /// An external loop's failure worded as the baseline client throws it
-    /// (the TCP connection's own errors, tcpAgentLoopSidecarConnection.ts;
-    /// the handshake's module identity check), which the turn reports
-    /// verbatim.
-    pub transport_message: Option<String>,
 }
 
 /// How a sidecar child process ended (TS `ExitStatus`,
@@ -262,6 +257,11 @@ pub enum SidecarExit {
     StartFailed(String),
     Code(Option<i32>),
     Signal(String),
+    /// Not a process end: an external loop's failure worded as the
+    /// baseline client throws it (the TCP connection's own errors,
+    /// tcpAgentLoopSidecarConnection.ts; the handshake's module identity
+    /// check), which the turn reports verbatim.
+    Reported(String),
 }
 impl SidecarExit {
     fn from_status(status: std::process::ExitStatus) -> Self {
@@ -312,7 +312,6 @@ impl HostError {
             diagnostic: String::new(),
             exit: None,
             model_state: None,
-            transport_message: None,
         }
     }
     fn protocol(message: impl Into<String>) -> Self {
@@ -822,7 +821,7 @@ async fn handshake(
                     String::from_utf16_lossy(expected.units()),
                 );
                 let mut error = HostError::protocol(message.clone());
-                error.transport_message = Some(message);
+                error.exit = Some(Box::new(SidecarExit::Reported(message)));
                 return Err(error);
             }
             // TS client:814-820: generation may change, the stream owner may not.

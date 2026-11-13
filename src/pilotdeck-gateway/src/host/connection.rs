@@ -80,7 +80,7 @@ impl Link {
 pub(super) fn tcp_error(message: impl Into<String>) -> HostError {
     let message = message.into();
     let mut error = HostError::new(HostErrorKind::Disconnected, message.clone());
-    error.transport_message = Some(message);
+    error.exit = Some(Box::new(super::SidecarExit::Reported(message)));
     error
 }
 

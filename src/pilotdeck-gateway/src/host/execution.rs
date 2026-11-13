@@ -477,7 +477,7 @@ pub(super) async fn run(
                                     || error.message == NO_TERMINAL_RESULT) => {
                                 progress.last_applied_sequence.store(next_sequence.to_bits(), Ordering::SeqCst);
                                 let mut error = HostError::protocol(NO_TERMINAL_RESULT);
-                                error.transport_message = Some(NO_TERMINAL_RESULT.into());
+                                error.exit = Some(Box::new(SidecarExit::Reported(NO_TERMINAL_RESULT.into())));
                                 return Err(error);
                             }
                             result => result?,

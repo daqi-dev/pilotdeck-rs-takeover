@@ -907,7 +907,7 @@ impl Fork {
                     (
                         "runId",
                         JsValue::String(
-                            format!("{}:{}", text(&child_session), text(&turn_id)).into(),
+                            format!("{}:{}", text(child_session), text(&turn_id)).into(),
                         ),
                     ),
                 ])),
