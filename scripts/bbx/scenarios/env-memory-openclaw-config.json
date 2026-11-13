@@ -1,0 +1,90 @@
+{
+  "name": "env-memory-openclaw-config",
+  "about": "记忆模型请求从 ~/.openclaw/openclaw.json 取地址、密钥、协议和头（context/memory/edgeclaw-memory-core/src/service.ts:112 OPENCLAW_CONFIG_PATH=homedir()/.openclaw/openclaw.json；179-260 resolveOpenClawModelConfig：models.providers 里按 agents.defaults.model.primary 选 provider 和 model，baseUrl 先取模型再取 provider，apiKey 取 provider，api 先模型后 provider，headers 合并 provider 与模型；262-300 buildLlmConfig 只在 provider/model 与 OpenClaw 选中的一致时才用这些值，且排在配置与 EDGECLAW_MEMORY_* 之后、OPENAI_* 之前）。memory.model 是配置里没有的 ghost/mem-model（resolveMemoryLlm 因此不给 url 与 apiKey，见 env-memory-llm-fallback），openclaw.json 的 primary 也是 ghost/mem-model，于是记忆请求发到 openclaw.json 里的 {MOCK}/claw，按 openai-completions 形状，带 claw-key 与两个自定义头。HOME 是隔离的 {ROOT}/home。比发给 provider 的请求。 已知不稳（--self 证明，与 env-memory-llm-fallback、cfg-memory-capture 同一原因）：记忆库 l0_sessions 的 l0_index_id 与 pipeline_state 的 state_json（随机 caseId / traceId），声明为 volatile。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmemory:\n  enabled: true\n  provider: edgeclaw\n  model: ghost/mem-model\n",
+  "files": {
+    "home/.openclaw/openclaw.json": {
+      "agents": {
+        "defaults": {
+          "model": {
+            "primary": "ghost/mem-model"
+          }
+        }
+      },
+      "models": {
+        "providers": {
+          "other": {
+            "baseUrl": "http://127.0.0.1:9/never",
+            "models": [
+              {
+                "id": "x"
+              }
+            ]
+          },
+          "ghost": {
+            "baseUrl": "{MOCK}/claw-provider",
+            "apiKey": "claw-key",
+            "api": "openai-responses",
+            "headers": {
+              "X-Claw-Provider": "p"
+            },
+            "models": [
+              {
+                "id": "mem-model",
+                "baseUrl": "{MOCK}/claw",
+                "api": "openai-completions",
+                "headers": {
+                  "X-Claw-Model": "m"
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Memory claw\"}"
+      }
+    },
+    {
+      "name": "mem-claw",
+      "when": [
+        "\"model\":\"mem-model\""
+      ],
+      "reply": {
+        "text": "{}"
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "Noted."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-claw",
+        "channelKey": "test",
+        "message": "claw1: I prefer tabs over spaces in every project."
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 1500
+    }
+  ],
+  "volatile": [
+    "control\\.sqlite\\.sqlite\\.tables\\.l0_sessions\\[\\d+\\]\\.l0_index_id$",
+    "control\\.sqlite\\.sqlite\\.tables\\.pipeline_state\\[0\\]\\.state_json$"
+  ]
+}
