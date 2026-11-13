@@ -243,7 +243,8 @@ function missingLeaves(value, at, left, out) {
  } else put(value);
 }
 /** Individually proven original diff paths only; no record/array exemption.
- * Extra array records are expanded to typed leaves for this named contract,
+ * Extra records and missing nested containers with a proved counterpart are
+ * expanded to typed leaves for this named contract,
  * preserving the original record difference separately in wholeRecordDifferences.
  */
 export function observerLifecyclePaths(rawA, rawB, a, b, aliasesA, aliasesB, differences) {
@@ -347,7 +348,7 @@ export function observerLifecyclePaths(rawA, rawB, a, b, aliasesA, aliasesB, dif
  projectionPairs(project[0], project[1], `$.tree.${proof.left.parentPath}.projections.json.json`, `$.tree.${proof.right.parentPath}.projections.json.json`);
  const expanded = [], originals = [];
  for (const d of differences) {
-  if ((d.a === undefined || d.b === undefined) && (d.a ?? d.b) && typeof (d.a ?? d.b) === 'object' && (nodeRoots[0].has(d.at) || nodeRoots[1].has(d.at))) {
+  if ((d.a === undefined || d.b === undefined) && (d.a ?? d.b) && typeof (d.a ?? d.b) === 'object' && (nodeRoots[0].has(d.at) || nodeRoots[1].has(d.at) || (d.a !== undefined && sideLeaves[0].has(d.at + '.<type>')) || (d.b !== undefined && sideLeaves[1].has(d.at + '.<type>')))) {
    originals.push(d); missingLeaves(d.a ?? d.b, d.at, d.a !== undefined, expanded);
   } else expanded.push(d);
  }

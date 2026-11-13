@@ -86,3 +86,18 @@ test('existing extra-record payload value type change is not hidden by its lifec
  const r = runDiff(([ts]) => { ts.steps[3].frames.at(-1).event.usage = ['UNAPPROVED-TYPE']; });
  assert.equal(r.status, 1, r.stderr); assert.match(r.stdout, /\.event\.usage\.<type>/); assert.match(r.stdout, /UNAPPROVED-TYPE/);
 });
+test('proved nested missing observer detail and timeline expand and accept only proved leaves', () => {
+ const r = runDiff(); assert.equal(r.status, 1, r.stderr);
+ for (const suffix of ['event.detail.subagentId', 'event.detail.text', 'event.timeline.version']) assert.match(r.stdout, new RegExp('COMPATIBILITY-VALUE observerLifecycleWindows \\$\\.steps\\[0\\]\\.frames\\[27\\]\\.' + suffix.replaceAll('.', '\\.')));
+ assert.doesNotMatch(r.stdout, /^  \$\.steps\[0\]\.frames\[27\]\.event\.(?:detail|timeline)\n/m);
+});
+test('nested missing non-target object preserves extra keys, array length, type and leaf values', () => {
+ const r = runDiff(([ts]) => {
+  const frames = ts.steps[0].frames, i = frames.findLastIndex(f => f.event.type === 'context_budget');
+  const key = '\0agent03-parent\0' + frames[0].event.runId;
+  for (const e of [frames[i].event, reg(ts).events[key][i].event]) { e.breakdown.unknownNested = { list: [17, 18] }; e.breakdown.messages = 'UNAPPROVED-NESTED-TYPE'; }
+ });
+ assert.equal(r.status, 1, r.stderr);
+ for (const suffix of ['event.breakdown.unknownNested.<key order>', 'event.breakdown.unknownNested.list.length', 'event.breakdown.unknownNested.list[0]', 'event.breakdown.unknownNested.list[1]', 'event.breakdown.messages']) assert.ok(r.stdout.includes(suffix), suffix);
+ assert.match(r.stdout, /UNAPPROVED-NESTED-TYPE/);
+});
