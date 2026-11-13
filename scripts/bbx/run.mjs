@@ -20,6 +20,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import { inputIdentity, scenarioIdentity, assertionResults } from './evidence.mjs';
+import { componentSupplyEnvironment, componentSupplyIdentity } from './component-supply.mjs';
 import { matchesProviderRule, writeSeedFile } from './mock-support.mjs';
 import { observePersistedRunEvent, trackProviderResponse, validateTrigger } from './serve-persisted-event.mjs';
 
@@ -293,7 +294,18 @@ const env = {
   // 内置插件目录：基线固定用自己安装位置下的这一处（loadBuiltinPlugins.ts），不认这个变量；
   // Rust 没有随二进制带插件，靠它指到基线那份。
   PILOTDECK_BUNDLED_PLUGINS_DIR: path.join(BASELINE, 'dist/src/extension/plugins/builtin'),
+  ...componentSupplyEnvironment(process.env),
   ...substDeep(scenario.env ?? {}),
+};
+// A scenario may explicitly disable one of these common supply bindings.
+for (const variable of ['PILOTDECK_RIPGREP_PATH', 'PILOTDECK_PDF_TOOL', 'PILOTDECK_IMAGE_TOOL']) {
+  if (env[variable] === null) delete env[variable];
+}
+// Side-local deployment evidence, outside the shared inputIdentity contract.
+// Record the selected variables AFTER scenario/step overrides at each spawn.
+const recordComponentSupply = (kind, selected, stepIndex = null) => {
+  (evidence.componentSupply ??= []).push({ kind, stepIndex, paths: componentSupplyIdentity(selected) });
+  return selected;
 };
 const SIDES = {
   ts: {
@@ -311,7 +323,7 @@ let server; let serverLog = '';
 const wantServer = scenario.server !== false;
 if (wantServer) {
   const [cmd, ...args] = SIDES[side].server;
-  server = spawn(cmd, args, { cwd: project, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+  server = spawn(cmd, args, { cwd: project, env: recordComponentSupply('server', env), stdio: ['ignore', 'pipe', 'pipe'], detached: true });
   children.push(server);
   server.stdout.on('data', (d) => { serverLog += d; });
   server.stderr.on('data', (d) => { serverLog += d; });
@@ -421,7 +433,7 @@ const runStep = async (step) => {
     if (condition !== undefined) { validateTrigger(condition); if (step.until !== undefined) throw Error('serve cannot combine until and untilPersistedRunEvent'); }
     const [cmd, ...prefix] = SIDES[side].cli;
     const child = spawn(cmd, [...prefix, ...substDeep(step.serve)], {
-      cwd: step.cwd ? subst(step.cwd) : project, env: stepEnv(step), stdio: ['ignore', 'pipe', 'pipe'], detached: true,
+      cwd: step.cwd ? subst(step.cwd) : project, env: recordComponentSupply('serve', stepEnv(step), out.steps.length), stdio: ['ignore', 'pipe', 'pipe'], detached: true,
     });
     children.push(child);
     let stdout = '', stderr = '';
@@ -464,7 +476,7 @@ const runStep = async (step) => {
   }
   if (step.cli) {
     const [cmd, ...prefix] = SIDES[side].cli;
-    const child = spawn(cmd, [...prefix, ...substDeep(step.cli)], { cwd: step.cwd ? subst(step.cwd) : project, env: stepEnv(step), stdio: ['pipe', 'pipe', 'pipe'], detached: true });
+    const child = spawn(cmd, [...prefix, ...substDeep(step.cli)], { cwd: step.cwd ? subst(step.cwd) : project, env: recordComponentSupply('cli', stepEnv(step), out.steps.length), stdio: ['pipe', 'pipe', 'pipe'], detached: true });
     children.push(child);
     let stdout = '', stderr = '';
     child.stdout.on('data', (d) => { stdout += d; }); child.stderr.on('data', (d) => { stderr += d; });
@@ -576,9 +588,9 @@ const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) =
 });
 out.tree = Object.fromEntries([...walk(home), ...walk(project)].map(([p, v]) => [p.slice(ROOT.length), v]));
 fs.mkdirSync(path.dirname(path.resolve(outPath)), { recursive: true });
+out.evidence = evidence;
 evidence.assertions = assertionResults(scenario.assertions, out, side);
 for (const assertion of evidence.assertions) if (!assertion.skipped && !assertion.passed) out.failures.push({ at: `assertions.${assertion.id}`, kind: 'assertion', expected: false });
-out.evidence = evidence;
 fs.writeFileSync(outPath, JSON.stringify(out, null, 1) + '\n');
 console.error(`bbx: ${side} ${scenario.name}: ${out.startFailure ? 'START FAILED' : `${out.steps.length} steps`} -> ${outPath}`);
 process.exit(0);

@@ -1,4 +1,6 @@
 {
+  "accepted": [{"id":"D1-CLI-SHUTDOWN-001","why":"固定七步CLI任务/EOF完成后的关闭挂起修复及129→130尾metadata checkpoint","policy":"cliShutdownCompleted","assertions":["cli-shutdown-completed-positive"]}],
+  "assertions": [{"id":"cli-shutdown-completed-positive","path":"/steps","cliShutdownCompleted":true}],
   "name": "cli-entry-default",
   "about": "不带子命令 / 未知子命令走 CliChannel：探测写死的 127.0.0.1:18789（src/gateway/client/probeServer.ts:16，无法改指）失败后用进程内 gateway。stdin 为 EOF、一行、多行含空行、带参数时的输出、退出与落盘。",
   "server": false,

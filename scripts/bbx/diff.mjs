@@ -50,6 +50,7 @@ import { discoveryPrefixPair } from './ao-discovery-prefix-policy.mjs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { cliShutdownAcceptedPaths } from './cli-shutdown-policy.mjs';
 import { syntaxAcceptedPaths } from './syntax-policy.mjs';
 import { isDeepStrictEqual } from 'node:util';
 import { channelPollVolatilePaths } from './channel-poll-policy.mjs';
@@ -260,8 +261,27 @@ if (!selfCompare && raw.some(artifact => artifact.scenario === 'c1-sdk-cancel-re
       && isDeepStrictEqual(artifact.accepted ?? [], sdkSignalScenario.accepted ?? []))) throw Error('required named scenario accepted declaration is missing or changed');
   } catch (error) { console.error(`INVALID SDK signal evidence: ${error.message}`); process.exit(2); }
 }
-const scenarioAccepted = (raw[0].accepted ?? []).map((x) => ({ ...x, res: (x.paths ?? []).map((p) => new RegExp(p)), hits: 0 }));
+// Named CLI policy is bound to the trusted scene and this comparator's own load.
+// Old immutable raw captures predate the declaration; their exact scene hash is
+// separately proven by the policy. Self comparisons never apply this exception.
+let cliShutdownEntry;
+if (!selfCompare && ['cli-entry-default','cli-survey-offline-nontui','cli-default-turns'].includes(raw[0].scenario)) {
+  try {
+    const scene = JSON.parse(fs.readFileSync(new URL(`./scenarios/${raw[0].scenario}.json`, import.meta.url), 'utf8'));
+    const expected = [{id:'D1-CLI-SHUTDOWN-001',why:'固定七步CLI任务/EOF完成后的关闭挂起修复及129→130尾metadata checkpoint',policy:'cliShutdownCompleted',assertions:['cli-shutdown-completed-positive']}];
+    if (!isDeepStrictEqual(scene.accepted, expected)) throw Error('required CLI shutdown scene declaration changed');
+    for (const artifact of raw) if (!isDeepStrictEqual(artifact.accepted ?? [], []) && !isDeepStrictEqual(artifact.accepted, expected)) throw Error('invalid CLI shutdown artifact declaration');
+    cliShutdownEntry = {...expected[0], res: [], hits: 0, checked: cliShutdownAcceptedPaths(raw[0], raw[1], value => load(value, new WeakMap(), new Map()))};
+  } catch (error) { console.error(`INVALID CLI shutdown evidence: ${error.message}`); process.exit(2); }
+}
+const scenarioAccepted = (cliShutdownEntry ? [] : (raw[0].accepted ?? [])).map((x) => ({ ...x, res: (x.paths ?? []).map((p) => new RegExp(p)), hits: 0 }));
+if (cliShutdownEntry) scenarioAccepted.push(cliShutdownEntry);
 for (const entry of scenarioAccepted) if (entry.policy) {
+  if (entry.policy === 'cliShutdownCompleted') {
+    if (entry === cliShutdownEntry) continue;
+    if (selfCompare) { entry.checked = new Map(); continue; }
+    throw Error('unbound CLI shutdown policy');
+  }
   if (['sdkSignalAbortOrder','sdkSignalTerminalObservation'].includes(entry.policy)) {
     if (!sdkSignalAcceptedEntry(entry) || !isDeepStrictEqual(raw[0].accepted ?? [], raw[1].accepted ?? [])) throw Error('invalid SDK signal accepted declaration');
     if (selfCompare) { entry.checked = new Map(); continue; }

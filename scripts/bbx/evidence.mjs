@@ -7,6 +7,8 @@ import { spawnSync } from 'node:child_process';
 import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { syntaxContract } from './syntax-policy.mjs';
+import { acceptedPositiveContract } from './accepted-positive-policy.mjs';
+import { cliShutdownEvidence } from './cli-shutdown-policy.mjs';
 import { nativeDependencyIdentity } from './native-identity.mjs';
 import { validatePersistedRunTriggers } from './serve-persisted-event.mjs';
 import { channelPollContract } from './channel-poll-policy.mjs';
@@ -114,7 +116,7 @@ export function inputIdentity() {
     baselineDist: treeHash(path.join(baseline, 'dist')),
     baselineLock: fs.existsSync(path.join(baseline, 'pnpm-lock.yaml')) ? fileHash(path.join(baseline, 'pnpm-lock.yaml')) : null,
     baselineEntry: fs.existsSync(path.join(baseline, 'dist/src/cli/pilotdeck.js')) ? fileHash(path.join(baseline, 'dist/src/cli/pilotdeck.js')) : null,
-    harness: Object.fromEntries(['check.mjs', 'run.mjs', 'diff.mjs', 'evidence.mjs', 'mock-support.mjs', 'syntax-policy.mjs', 'native-identity.mjs', 'serve-persisted-event.mjs', 'channel-poll-policy.mjs', 'sdk-agent-policy.mjs', 'sdk-signal-policy.mjs', 'ao-discovery-prefix-policy.mjs', 'observer-lifecycle-policy.mjs', 'observer-memory-policy.mjs', 'observer-uuid-policy.mjs'].map((name) => [name, fileHash(path.join(here, name))])),
+    harness: Object.fromEntries(['check.mjs', 'run.mjs', 'diff.mjs', 'evidence.mjs', 'mock-support.mjs', 'syntax-policy.mjs', 'native-identity.mjs', 'serve-persisted-event.mjs', 'channel-poll-policy.mjs', 'sdk-agent-policy.mjs', 'sdk-signal-policy.mjs', 'ao-discovery-prefix-policy.mjs', 'observer-lifecycle-policy.mjs', 'observer-memory-policy.mjs', 'observer-uuid-policy.mjs', 'component-supply.mjs', 'accepted-positive-policy.mjs', 'cli-shutdown-policy.mjs'].map((name) => [name, fileHash(path.join(here, name))])),
     tools: { node: process.version, executable: fileHash(process.execPath), rust: command('rustc', ['--version'], repo), pnpm: command('pnpm', ['--version'], baseline) },
     platform: { os: process.platform, arch: process.arch, release: os.release() },
   };
@@ -152,6 +154,18 @@ export function assertionResults(assertions, artifact, side) {
     if ('includes' in a) checks.push(typeof actual === 'string' && actual.includes(a.includes));
     if ('matches' in a) checks.push(typeof actual === 'string' && new RegExp(a.matches).test(actual));
     if ('imageAttachments' in a) checks.push(imageAttachmentsMatch(actual, a.imageAttachments));
+    if ('acceptedPositive' in a) {
+      try {
+        if (a.path !== '/steps') throw Error('accepted positive contracts require /steps');
+        acceptedPositiveContract(artifact, a.acceptedPositive); checks.push(true);
+      } catch { checks.push(false); }
+    }
+    if ('cliShutdownCompleted' in a) {
+      try {
+        if (a.path !== '/steps' || a.cliShutdownCompleted !== true) throw Error('invalid CLI shutdown contract');
+        cliShutdownEvidence(artifact); checks.push(true);
+      } catch { checks.push(false); }
+    }
     if ('syntaxDiagnostics' in a) {
       try { syntaxContract(artifact, a.syntaxDiagnostics, side); checks.push(true); } catch { checks.push(false); }
     }

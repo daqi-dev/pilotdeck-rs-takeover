@@ -1,4 +1,6 @@
 {
+  "accepted": [{"id":"D1-CLI-SHUTDOWN-001","why":"固定七步CLI任务/EOF完成后的关闭挂起修复及129→130尾metadata checkpoint","policy":"cliShutdownCompleted","assertions":["cli-shutdown-completed-positive"]}],
+  "assertions": [{"id":"cli-shutdown-completed-positive","path":"/steps","cliShutdownCompleted":true}],
   "name": "cli-default-turns",
   "about": "不带子命令的默认对话（CliChannel + 进程内 gateway）在已登记为项目的目录里真的跑通：先用参数直接给一句话（第一轮，生成标题），再起一个进程从 stdin 读多行连续多轮续同一会话（纯文本、空行与首尾空白、\\r\\n 行尾、读文件工具、bash、末行无换行且 provider 报 400）。基线在输入结束后不退出，步骤都声明 expectTimeout；比较被杀之前的 stdout / stderr、发给 provider 的请求，以及会话文件、runs/registry.json、router/events.jsonl。",
   "server": false,

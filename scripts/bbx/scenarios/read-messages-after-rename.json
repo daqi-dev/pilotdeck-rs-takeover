@@ -169,7 +169,23 @@
         "\\.result\\.messages\\[\\d+\\]\\.sequence$",
         "\\.fileSize$",
         "\\.jsonl(\\.projections\\.json)?\\.raw\\.skeletons\\."
+      ],
+      "assertions": [
+        "positive-read-messages-after-rename"
       ]
+    }
+  ],
+  "assertions": [
+    {
+      "id": "positive-read-messages-after-rename",
+      "sides": [
+        "rust"
+      ],
+      "path": "/steps",
+      "acceptedPositive": {
+        "scene": "read-messages-after-rename",
+        "id": "rename-record-chain"
+      }
     }
   ]
 }

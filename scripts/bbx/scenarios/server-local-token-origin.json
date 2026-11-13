@@ -10,6 +10,22 @@
       "why": "基线自身的安全问题：回环监听上 /auth/local-token 不看 Host / Origin（GatewayServer.ts:103-112），恶意网页经 DNS 重绑定同源读到 token。Rust 对外部 Origin（含 null）按基线对非回环监听的既有形式回 404 not found",
       "paths": [
         "^\\$\\.steps\\[[23]\\]\\.http\\.(status|body|headers\\.content-type)$"
+      ],
+      "assertions": [
+        "local-token-step0-status",
+        "local-token-step0-body",
+        "local-token-step0-headers-content-type",
+        "local-token-step1-status",
+        "local-token-step1-body",
+        "local-token-step1-headers-content-type",
+        "local-token-step2-status",
+        "local-token-step2-body",
+        "local-token-step2-headers-content-type",
+        "local-token-step3-status",
+        "local-token-step3-body",
+        "local-token-step3-headers-content-type",
+        "local-token-step4-status",
+        "local-token-step4-body"
       ]
     }
   ],
@@ -39,6 +55,126 @@
       "http": "GET /health",
       "headers": {
         "origin": "http://evil.example:38411"
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "id": "local-token-step0-status",
+      "sides": [
+        "rust"
+      ],
+      "path": "/steps/0/http/status",
+      "equals": 200
+    },
+    {
+      "id": "local-token-step0-body",
+      "sides": [
+        "rust"
+      ],
+      "path": "/steps/0/http/body",
+      "equals": {
+        "token": "bbx-token"
+      }
+    },
+    {
+      "id": "local-token-step0-headers-content-type",
+      "sides": [
+        "rust"
+      ],
+      "path": "/steps/0/http/headers/content-type",
+      "equals": "application/json"
+    },
+    {
+      "id": "local-token-step1-status",
+      "sides": [
+        "rust"
+      ],
+      "path": "/steps/1/http/status",
+      "equals": 200
+    },
+    {
+      "id": "local-token-step1-body",
+      "sides": [
+        "rust"
+      ],
+      "path": "/steps/1/http/body",
+      "equals": {
+        "token": "bbx-token"
+      }
+    },
+    {
+      "id": "local-token-step1-headers-content-type",
+      "sides": [
+        "rust"
+      ],
+      "path": "/steps/1/http/headers/content-type",
+      "equals": "application/json"
+    },
+    {
+      "id": "local-token-step2-status",
+      "sides": [
+        "rust"
+      ],
+      "path": "/steps/2/http/status",
+      "equals": 404
+    },
+    {
+      "id": "local-token-step2-body",
+      "sides": [
+        "rust"
+      ],
+      "path": "/steps/2/http/body",
+      "equals": "not found"
+    },
+    {
+      "id": "local-token-step2-headers-content-type",
+      "sides": [
+        "rust"
+      ],
+      "path": "/steps/2/http/headers/content-type",
+      "equals": "text/plain; charset=utf-8"
+    },
+    {
+      "id": "local-token-step3-status",
+      "sides": [
+        "rust"
+      ],
+      "path": "/steps/3/http/status",
+      "equals": 404
+    },
+    {
+      "id": "local-token-step3-body",
+      "sides": [
+        "rust"
+      ],
+      "path": "/steps/3/http/body",
+      "equals": "not found"
+    },
+    {
+      "id": "local-token-step3-headers-content-type",
+      "sides": [
+        "rust"
+      ],
+      "path": "/steps/3/http/headers/content-type",
+      "equals": "text/plain; charset=utf-8"
+    },
+    {
+      "id": "local-token-step4-status",
+      "sides": [
+        "rust"
+      ],
+      "path": "/steps/4/http/status",
+      "equals": 200
+    },
+    {
+      "id": "local-token-step4-body",
+      "sides": [
+        "rust"
+      ],
+      "path": "/steps/4/http/body",
+      "equals": {
+        "ok": true
       }
     }
   ]

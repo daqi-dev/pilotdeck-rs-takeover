@@ -263,7 +263,23 @@
         "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json",
         "^\\$\\.provider\\.turn-3",
         "^\\$\\.steps\\[\\d+\\]\\.frames\\[\\d+\\]\\..*\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages)$"
+      ],
+      "assertions": [
+        "positive-robust-restart-crash-leftovers"
       ]
+    }
+  ],
+  "assertions": [
+    {
+      "id": "positive-robust-restart-crash-leftovers",
+      "sides": [
+        "rust"
+      ],
+      "path": "/steps",
+      "acceptedPositive": {
+        "scene": "robust-restart-crash-leftovers",
+        "id": "dialog-recovery-keeps-history"
+      }
     }
   ]
 }
