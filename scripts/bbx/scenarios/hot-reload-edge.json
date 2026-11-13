@@ -1,0 +1,216 @@
+{
+ "name": "hot-reload-edge",
+ "about": "配置热重载 · 边界（src/cli/pilotdeck.ts:136-191，PilotConfigStore.ts:60-130）：cron 段已开（UTC）时，同一条命令里连写两次（不间隔：去抖合并成一次；间隔 1 秒：两次重载）。每步之后 cron_create 看缺省时区，比 serve 的 stdout / stderr 与 config_changed 通知。",
+ "server": false,
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ncron:\n  enabled: true\n",
+ "files": {
+  "home/work/alpha/README.md": "alpha\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+  "home/.pilotdeck/cron/projects/private-tmp-pdrs-bbx-root-home-work-alpha/tasks.json": {
+   "schemaVersion": 1,
+   "tasks": [
+    {
+     "schemaVersion": 1,
+     "taskId": "task-once",
+     "message": "auto-once-msg",
+     "status": "scheduled",
+     "sessionKey": "cron:task-once",
+     "channelKey": "cron",
+     "projectKey": "{HOME}/work/alpha",
+     "timezone": "UTC",
+     "originSessionKey": "origin-s",
+     "originChannelKey": "web",
+     "createdAt": "2026-01-01T00:00:00.000Z",
+     "updatedAt": "2026-01-01T00:00:00.000Z",
+     "revision": 0,
+     "schedule": {
+      "type": "once",
+      "runAt": "2000-01-01T00:00:00.000Z"
+     },
+     "nextRunAt": "2000-01-01T00:00:00.000Z"
+    },
+    {
+     "schemaVersion": 1,
+     "taskId": "task-later",
+     "message": "later-msg",
+     "status": "scheduled",
+     "sessionKey": "cron:task-later",
+     "channelKey": "cron",
+     "projectKey": "{HOME}/work/alpha",
+     "timezone": "UTC",
+     "originSessionKey": "origin-s",
+     "originChannelKey": "web",
+     "createdAt": "2026-01-01T00:00:00.000Z",
+     "updatedAt": "2026-01-01T00:00:00.000Z",
+     "revision": 0,
+     "schedule": {
+      "type": "once",
+      "runAt": "2099-01-01T00:00:00.000Z"
+     },
+     "nextRunAt": "2099-01-01T00:00:00.000Z"
+    }
+   ]
+  },
+  "cfgs/c1.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ncron:\n  enabled: false\n",
+  "cfgs/c2.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ncron:\n  enabled: true\n  timezone: Asia/Shanghai\n",
+  "cfgs/c3.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 4096\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ncron:\n  enabled: true\n  timezone: Asia/Shanghai\n",
+  "cfgs/c4.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 4096\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ncron:\n  enabled: true\n  timezone: Asia/Tokyo\n",
+  "cfgs/c5.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "cfgs/e5a.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ncron:\n  enabled: true\n  timezone: Asia/Tokyo\n",
+  "cfgs/e5b.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ncron:\n  enabled: true\n  timezone: Asia/Shanghai\n",
+  "cfgs/e6a.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ncron:\n  enabled: false\n",
+  "cfgs/e6b.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ncron:\n  enabled: true\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Hot reload\"}"
+   }
+  },
+  {
+   "name": "e5-after",
+   "when": [
+    "write e5:",
+    "\"tool_call_id\":\"call_e5\""
+   ],
+   "reply": {
+    "text": "Wrote e5."
+   }
+  },
+  {
+   "name": "e5",
+   "when": [
+    "write e5:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_e5",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/e5a.yaml {HOME}/.pilotdeck/pilotdeck.yaml && cp {ROOT}/cfgs/e5b.yaml {HOME}/.pilotdeck/pilotdeck.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "e6-after",
+   "when": [
+    "write e6:",
+    "\"tool_call_id\":\"call_e6\""
+   ],
+   "reply": {
+    "text": "Wrote e6."
+   }
+  },
+  {
+   "name": "e6",
+   "when": [
+    "write e6:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_e6",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/e6a.yaml {HOME}/.pilotdeck/pilotdeck.yaml && sleep 1 && cp {ROOT}/cfgs/e6b.yaml {HOME}/.pilotdeck/pilotdeck.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 120000,
+   "then": [
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/alpha",
+      "message": "before doubles",
+      "schedule": {
+       "type": "cron",
+       "expression": "30 8 * * *"
+      }
+     }
+    },
+    {
+     "sleep": 3000
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "w-e5",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w-e5",
+      "channelKey": "test",
+      "message": "write e5: config"
+     }
+    },
+    {
+     "sleep": 1500
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/alpha",
+      "message": "after fast double",
+      "schedule": {
+       "type": "cron",
+       "expression": "30 8 * * *"
+      }
+     }
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "w-e6",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w-e6",
+      "channelKey": "test",
+      "message": "write e6: config"
+     }
+    },
+    {
+     "sleep": 2500
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/alpha",
+      "message": "after slow double",
+      "schedule": {
+       "type": "cron",
+       "expression": "30 8 * * *"
+      }
+     }
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  }
+ ]
+}
