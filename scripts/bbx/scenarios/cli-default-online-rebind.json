@@ -1,6 +1,6 @@
 {
   "name": "cli-default-online-rebind",
-  "about": "同一目录先后两个默认对话进程（同一 sessionKey）：第一个进程被杀（不发关闭帧，只留下半关闭的套接字）后，基线 server 没察觉这条连接已断（src/gateway/server/websocket.ts:19-20 不听 end），会话仍挂着这条连接的可重连交互绑定，第二个进程的每一轮都被拒：[error:interaction_reconnect_required]。对照：bbx 的 WS 客户端正常关闭后再起进程，照常应答。疑似基线 bug 的连带表现（见报告），Rust server 察觉断开、照常应答，场景保持不一致。基线在输入结束后不退出（已知、Rust 照做），步骤都声明 expectTimeout；最后 stopServer SIGKILL：被杀掉的 CLI 只发 FIN 不发关闭帧，基线 server 的 WebSocket 不处理半关闭（src/gateway/server/websocket.ts:19-20 只听 close / error），SIGTERM 后 server.close() 永远等不完（另一处挂起，见报告），所以用 SIGKILL 统一收尾，停机行为不在这些场景里比。",
+  "about": "同一目录先后两个默认对话进程（同一 sessionKey）：第一个进程被杀（不发关闭帧，只留下半关闭的套接字）后，基线 server 不认这条连接已断（src/gateway/server/websocket.ts:19-20 不听 end），会话仍挂着这条连接的可重连交互绑定，第二个进程的每一轮都被拒：[error:interaction_reconnect_required]。对照：bbx 的 WS 客户端发关闭帧断开后再起进程，照常应答。Rust server 对半关闭的处理已照基线（robust-drop-fin-* 场景），两侧一致；这是基线 server 不处理半关闭的连带表现，是否算基线 bug 由人决定。基线在输入结束后不退出（已知、Rust 照做），步骤都声明 expectTimeout；最后 stopServer SIGKILL：基线 server 在客户端被杀后 SIGTERM 停机等不完，停机行为不在这里比。",
   "gatewayPort": 18789,
   "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
   "env": {
