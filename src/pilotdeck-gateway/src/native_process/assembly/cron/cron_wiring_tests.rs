@@ -286,6 +286,7 @@ async fn a_stopped_manager_rejects_the_six_management_methods() {
             .expect("#1353 assembly start");
     let handle = switch_handles
         .cron
+        .get()
         .expect("#1353 the configured manager has a stop handle");
     let text = Arc::new(Text::default());
     let connection = host.connect(text.clone(), "token".into(), "fixture".into());

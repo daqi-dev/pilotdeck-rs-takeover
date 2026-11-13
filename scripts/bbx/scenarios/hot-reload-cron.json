@@ -1,0 +1,424 @@
+{
+ "name": "hot-reload-cron",
+ "about": "配置热重载 · cron（src/cli/pilotdeck.ts:136-191，ProjectAutomationBundle.ts:191-257）：server 运行中由模型的 write_file 改写 pilotdeck.yaml（等同手改文件，ConfigStore 监视文件、250ms 去抖后重载）。起始无 cron 段 → cron.enabled=false → enabled=true 且 timezone=Asia/Shanghai（过期任务被触发）→ 只改无关键 agent.maxOutputTokens（不重载子系统）→ 只改 cron.timezone=Asia/Tokyo → 删掉 cron 段。每次改动后比 cron_list / cron_create（缺省时区）和 serve 的 stdout / stderr（[pilotdeck] Subsystem hot-reload complete: cron=started|stopped 与 [cron] 日志行）。",
+ "server": false,
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+ "files": {
+  "home/work/alpha/README.md": "alpha\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+  "home/.pilotdeck/cron/projects/private-tmp-pdrs-bbx-root-home-work-alpha/tasks.json": {
+   "schemaVersion": 1,
+   "tasks": [
+    {
+     "schemaVersion": 1,
+     "taskId": "task-once",
+     "message": "auto-once-msg",
+     "status": "scheduled",
+     "sessionKey": "cron:task-once",
+     "channelKey": "cron",
+     "projectKey": "{HOME}/work/alpha",
+     "timezone": "UTC",
+     "originSessionKey": "origin-s",
+     "originChannelKey": "web",
+     "createdAt": "2026-01-01T00:00:00.000Z",
+     "updatedAt": "2026-01-01T00:00:00.000Z",
+     "revision": 0,
+     "schedule": {
+      "type": "once",
+      "runAt": "2000-01-01T00:00:00.000Z"
+     },
+     "nextRunAt": "2000-01-01T00:00:00.000Z"
+    },
+    {
+     "schemaVersion": 1,
+     "taskId": "task-later",
+     "message": "later-msg",
+     "status": "scheduled",
+     "sessionKey": "cron:task-later",
+     "channelKey": "cron",
+     "projectKey": "{HOME}/work/alpha",
+     "timezone": "UTC",
+     "originSessionKey": "origin-s",
+     "originChannelKey": "web",
+     "createdAt": "2026-01-01T00:00:00.000Z",
+     "updatedAt": "2026-01-01T00:00:00.000Z",
+     "revision": 0,
+     "schedule": {
+      "type": "once",
+      "runAt": "2099-01-01T00:00:00.000Z"
+     },
+     "nextRunAt": "2099-01-01T00:00:00.000Z"
+    }
+   ]
+  },
+  "cfgs/c1.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ncron:\n  enabled: false\n",
+  "cfgs/c2.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ncron:\n  enabled: true\n  timezone: Asia/Shanghai\n",
+  "cfgs/c3.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 4096\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ncron:\n  enabled: true\n  timezone: Asia/Shanghai\n",
+  "cfgs/c4.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 4096\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\ncron:\n  enabled: true\n  timezone: Asia/Tokyo\n",
+  "cfgs/c5.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Hot reload\"}"
+   }
+  },
+  {
+   "name": "c1-after",
+   "when": [
+    "write c1:",
+    "\"tool_call_id\":\"call_c1\""
+   ],
+   "reply": {
+    "text": "Wrote c1."
+   }
+  },
+  {
+   "name": "c1",
+   "when": [
+    "write c1:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_c1",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/c1.yaml {HOME}/.pilotdeck/pilotdeck.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "c2-after",
+   "when": [
+    "write c2:",
+    "\"tool_call_id\":\"call_c2\""
+   ],
+   "reply": {
+    "text": "Wrote c2."
+   }
+  },
+  {
+   "name": "c2",
+   "when": [
+    "write c2:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_c2",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/c2.yaml {HOME}/.pilotdeck/pilotdeck.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "c3-after",
+   "when": [
+    "write c3:",
+    "\"tool_call_id\":\"call_c3\""
+   ],
+   "reply": {
+    "text": "Wrote c3."
+   }
+  },
+  {
+   "name": "c3",
+   "when": [
+    "write c3:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_c3",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/c3.yaml {HOME}/.pilotdeck/pilotdeck.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "c4-after",
+   "when": [
+    "write c4:",
+    "\"tool_call_id\":\"call_c4\""
+   ],
+   "reply": {
+    "text": "Wrote c4."
+   }
+  },
+  {
+   "name": "c4",
+   "when": [
+    "write c4:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_c4",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/c4.yaml {HOME}/.pilotdeck/pilotdeck.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "c5-after",
+   "when": [
+    "write c5:",
+    "\"tool_call_id\":\"call_c5\""
+   ],
+   "reply": {
+    "text": "Wrote c5."
+   }
+  },
+  {
+   "name": "c5",
+   "when": [
+    "write c5:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_c5",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/c5.yaml {HOME}/.pilotdeck/pilotdeck.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "once",
+   "when": [
+    "auto-once-msg"
+   ],
+   "reply": {
+    "text": "Once fired."
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 120000,
+   "then": [
+    {
+     "ws": "cron_list",
+     "params": {
+      "projectKey": "{HOME}/work/alpha",
+      "includeHistory": true
+     }
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "w-c1",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w-c1",
+      "channelKey": "test",
+      "message": "write c1: config"
+     }
+    },
+    {
+     "sleep": 1500
+    },
+    {
+     "ws": "cron_list",
+     "params": {
+      "projectKey": "{HOME}/work/alpha",
+      "includeHistory": true
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/alpha",
+      "message": "while disabled",
+      "schedule": {
+       "type": "cron",
+       "expression": "30 8 * * *"
+      }
+     }
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "w-c2",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w-c2",
+      "channelKey": "test",
+      "message": "write c2: config"
+     }
+    },
+    {
+     "sleep": 1500
+    },
+    {
+     "ws": "cron_list",
+     "params": {
+      "projectKey": "{HOME}/work/alpha",
+      "includeHistory": true
+     }
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/alpha",
+      "message": "tz after enable",
+      "schedule": {
+       "type": "cron",
+       "expression": "30 8 * * *"
+      }
+     }
+    },
+    {
+     "sleep": 3000
+    },
+    {
+     "ws": "cron_list",
+     "params": {
+      "projectKey": "{HOME}/work/alpha",
+      "includeHistory": true
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w-c1",
+      "channelKey": "test",
+      "message": "plain turn on an old session"
+     }
+    },
+    {
+     "disconnect": true
+    },
+    {
+     "connect": true
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "w-c3",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w-c3",
+      "channelKey": "test",
+      "message": "write c3: config"
+     }
+    },
+    {
+     "sleep": 1500
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/alpha",
+      "message": "tz after unrelated",
+      "schedule": {
+       "type": "cron",
+       "expression": "30 8 * * *"
+      }
+     }
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "w-c4",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w-c4",
+      "channelKey": "test",
+      "message": "write c4: config"
+     }
+    },
+    {
+     "sleep": 1500
+    },
+    {
+     "ws": "cron_create",
+     "params": {
+      "projectKey": "{HOME}/work/alpha",
+      "message": "tz after tokyo",
+      "schedule": {
+       "type": "cron",
+       "expression": "30 8 * * *"
+      }
+     }
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "w-c5",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w-c5",
+      "channelKey": "test",
+      "message": "write c5: config"
+     }
+    },
+    {
+     "sleep": 1500
+    },
+    {
+     "ws": "cron_list",
+     "params": {
+      "projectKey": "{HOME}/work/alpha",
+      "includeHistory": true
+     }
+    },
+    {
+     "disconnect": true
+    },
+    {
+     "connect": true
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w-c2",
+      "channelKey": "test",
+      "message": "plain turn after removal"
+     }
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  }
+ ]
+}

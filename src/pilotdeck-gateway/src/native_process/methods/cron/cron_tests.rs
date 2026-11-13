@@ -54,10 +54,12 @@ async fn route(
 
 #[tokio::test]
 async fn all_six_cron_names_route_to_the_cron_family() {
-    let (scratch, mut requests) =
+    let (scratch, requests) =
         std::panic::catch_unwind(crate::native_process::management_tests::setup)
             .expect("#1326 fixture setup");
-    requests.cron = Some(configured_manager(&requests.options.home));
+    requests
+        .cron
+        .set(Some(configured_manager(&requests.options.home)));
 
     let created = route(
         &requests,
@@ -171,7 +173,7 @@ async fn unconfigured_cron_answers_the_require_cron_gate() {
         std::panic::catch_unwind(crate::native_process::management_tests::setup)
             .expect("#1326 fixture setup");
     negative_assert!(
-        requests.cron.is_none(),
+        requests.cron.get().is_none(),
         "#1326 the shared fixture models the unconfigured runtime"
     );
 
@@ -230,10 +232,12 @@ async fn unconfigured_cron_answers_the_require_cron_gate() {
 /// arm keeps the structured code (the gate test above carries that arm).
 #[tokio::test]
 async fn cron_error_envelope_matches_the_ws_connection_arms() {
-    let (scratch, mut requests) =
+    let (scratch, requests) =
         std::panic::catch_unwind(crate::native_process::management_tests::setup)
             .expect("#1326 fixture setup");
-    requests.cron = Some(configured_manager(&requests.options.home));
+    requests
+        .cron
+        .set(Some(configured_manager(&requests.options.home)));
 
     // Plain Error: `requireProjectKey`'s own message (CronManager.ts:115).
     let missing = route(&requests, "cron_create", &json(r#"{}"#))
@@ -323,10 +327,12 @@ async fn cron_error_envelope_matches_the_ws_connection_arms() {
 async fn cron_request_dispatches_off_the_async_worker() {
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    let (scratch, mut requests) =
+    let (scratch, requests) =
         std::panic::catch_unwind(crate::native_process::management_tests::setup)
             .expect("#1326 fixture setup");
-    requests.cron = Some(configured_manager(&requests.options.home));
+    requests
+        .cron
+        .set(Some(configured_manager(&requests.options.home)));
 
     let sibling_ran = Arc::new(AtomicBool::new(false));
     let sibling_flag = Arc::clone(&sibling_ran);

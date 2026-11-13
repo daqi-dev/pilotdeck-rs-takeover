@@ -1,0 +1,286 @@
+{
+ "name": "hot-reload-always-on",
+ "about": "配置热重载 · alwaysOn（src/cli/pilotdeck.ts:136-191，ProjectAutomationBundle.ts:191-257、287-288）：server 运行中改写 pilotdeck.yaml。起始无 alwaysOn 段 → 开 alpha 项目（tickIntervalMinutes=1、dailyBudget=0：场景期间调度器不跳、不发请求）→ 改 language → 关掉项目 → 删掉段。比 always-on 控制方法的返回与 serve 的 stdout / stderr（Subsystem hot-reload complete: always-on=started|stopped 与 [always-on] 日志行）。",
+ "server": false,
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+ "files": {
+  "home/work/alpha/README.md": "alpha\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+  "cfgs/a1.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nalwaysOn:\n  trigger:\n    tickIntervalMinutes: 1\n    dailyBudget: 0\n  projects:\n    {HOME}/work/alpha:\n      enabled: true\n",
+  "cfgs/a2.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nalwaysOn:\n  language: zh-CN\n  trigger:\n    tickIntervalMinutes: 1\n    dailyBudget: 0\n  projects:\n    {HOME}/work/alpha:\n      enabled: true\n",
+  "cfgs/a3.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nalwaysOn:\n  trigger:\n    tickIntervalMinutes: 1\n    dailyBudget: 0\n  projects:\n    {HOME}/work/alpha:\n      enabled: false\n",
+  "cfgs/a4.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Hot reload\"}"
+   }
+  },
+  {
+   "name": "a1-after",
+   "when": [
+    "write a1:",
+    "\"tool_call_id\":\"call_a1\""
+   ],
+   "reply": {
+    "text": "Wrote a1."
+   }
+  },
+  {
+   "name": "a1",
+   "when": [
+    "write a1:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_a1",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/a1.yaml {HOME}/.pilotdeck/pilotdeck.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "a2-after",
+   "when": [
+    "write a2:",
+    "\"tool_call_id\":\"call_a2\""
+   ],
+   "reply": {
+    "text": "Wrote a2."
+   }
+  },
+  {
+   "name": "a2",
+   "when": [
+    "write a2:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_a2",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/a2.yaml {HOME}/.pilotdeck/pilotdeck.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "a3-after",
+   "when": [
+    "write a3:",
+    "\"tool_call_id\":\"call_a3\""
+   ],
+   "reply": {
+    "text": "Wrote a3."
+   }
+  },
+  {
+   "name": "a3",
+   "when": [
+    "write a3:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_a3",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/a3.yaml {HOME}/.pilotdeck/pilotdeck.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "a4-after",
+   "when": [
+    "write a4:",
+    "\"tool_call_id\":\"call_a4\""
+   ],
+   "reply": {
+    "text": "Wrote a4."
+   }
+  },
+  {
+   "name": "a4",
+   "when": [
+    "write a4:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_a4",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/a4.yaml {HOME}/.pilotdeck/pilotdeck.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 120000,
+   "then": [
+    {
+     "ws": "always_on_rerun_plan",
+     "params": {
+      "projectKey": "{HOME}/work/alpha",
+      "planId": "plan-nope"
+     }
+    },
+    {
+     "ws": "always_on_abort",
+     "params": {
+      "projectKey": "{HOME}/work/alpha",
+      "sessionKey": "always-on/execute:project=x:run=nope"
+     }
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "w-a1",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w-a1",
+      "channelKey": "test",
+      "message": "write a1: config"
+     }
+    },
+    {
+     "sleep": 2500
+    },
+    {
+     "ws": "always_on_rerun_plan",
+     "params": {
+      "projectKey": "{HOME}/work/alpha",
+      "planId": "plan-nope"
+     }
+    },
+    {
+     "ws": "always_on_abort",
+     "params": {
+      "projectKey": "{HOME}/work/alpha",
+      "sessionKey": "always-on/execute:project=x:run=nope"
+     }
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "w-a2",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w-a2",
+      "channelKey": "test",
+      "message": "write a2: config"
+     }
+    },
+    {
+     "sleep": 2500
+    },
+    {
+     "ws": "always_on_rerun_plan",
+     "params": {
+      "projectKey": "{HOME}/work/alpha",
+      "planId": "plan-nope"
+     }
+    },
+    {
+     "ws": "always_on_abort",
+     "params": {
+      "projectKey": "{HOME}/work/alpha",
+      "sessionKey": "always-on/execute:project=x:run=nope"
+     }
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "w-a3",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w-a3",
+      "channelKey": "test",
+      "message": "write a3: config"
+     }
+    },
+    {
+     "sleep": 2500
+    },
+    {
+     "ws": "always_on_rerun_plan",
+     "params": {
+      "projectKey": "{HOME}/work/alpha",
+      "planId": "plan-nope"
+     }
+    },
+    {
+     "ws": "always_on_abort",
+     "params": {
+      "projectKey": "{HOME}/work/alpha",
+      "sessionKey": "always-on/execute:project=x:run=nope"
+     }
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "w-a4",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w-a4",
+      "channelKey": "test",
+      "message": "write a4: config"
+     }
+    },
+    {
+     "sleep": 2500
+    },
+    {
+     "ws": "always_on_rerun_plan",
+     "params": {
+      "projectKey": "{HOME}/work/alpha",
+      "planId": "plan-nope"
+     }
+    },
+    {
+     "ws": "always_on_abort",
+     "params": {
+      "projectKey": "{HOME}/work/alpha",
+      "sessionKey": "always-on/execute:project=x:run=nope"
+     }
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  }
+ ]
+}

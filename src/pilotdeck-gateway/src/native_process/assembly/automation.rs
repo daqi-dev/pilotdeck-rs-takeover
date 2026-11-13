@@ -20,11 +20,11 @@
 //! One deliberate deviation, asserted by the b-series replay: TS publishes a
 //! **standalone fallback control** when no Always-On provider exists
 //! (`createFallbackAlwaysOnControl`, :378-391), whose `applyCycle` submits
-//! turns through the agent gateway (`createApplyHandler`). That apply path
-//! is the fire pipeline this port leaves behind its seam
-//! (`runtime/always_on/fire.rs`), so the port publishes `None` instead — the
-//! gateway keeps answering the #1313 `not_configured` envelopes when no
-//! manager is configured, which is the honest state of the embedding. The
+//! turns through the agent gateway (`createApplyHandler`). The port
+//! publishes `always_on_control: None` instead and hands the fallback's
+//! input (the generation's `alwaysOn` section) in `SubsystemUpdate::fallback`;
+//! the native consumer builds its standalone apply facade from it and keeps
+//! answering the #1313 `not_configured` envelopes for the other methods. The
 //! golden "fallback-factory" log lines are filtered by the replay and the
 //! b9/b11 records assert the deviation directly.
 //!
@@ -170,15 +170,59 @@ pub(crate) trait ProjectAutomationProvider: Send + Sync {
 
 /// `SubsystemUpdate` (createLocalGateway.ts:548-553) as the port publishes
 /// it. `always_on_control` is `None` where TS publishes the standalone
-/// fallback — see the module docs for that deviation.
-// The shipping consumer is the assembly's documented no-op
-// `update_subsystems` (this embedding has no hot reload); the b-series
-// replays read all three fields.
-#[cfg_attr(not(test), allow(dead_code))]
+/// fallback; `fallback` then carries what TS builds that fallback from
+/// (`createFallbackAlwaysOnControl(generation.config)`, :364, 378-391), so
+/// the consumer can rebuild its standalone apply facade from the
+/// generation's own config. Both are `None` on `unpublish` (:368-375).
 pub(crate) struct SubsystemUpdate {
+    /// `[...alwaysOn.getTools(), ...cron.getTools()]`. The native process
+    /// composes session tools from the published managers themselves (the
+    /// session prepare reads them per session), so only the b-series
+    /// replays read the name list.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub extra_tools: Vec<JsString>,
     pub cron: Option<Arc<dyn ProjectAutomationProvider>>,
     pub always_on_control: Option<Arc<dyn ProjectAutomationProvider>>,
+    pub fallback: Option<FallbackAlwaysOn>,
+}
+
+/// The input of TS `createFallbackAlwaysOnControl` (:378-391): the
+/// generation's `alwaysOn` section, which may exist with no enabled project.
+#[derive(Clone)]
+pub(crate) struct FallbackAlwaysOn {
+    pub config: Option<AlwaysOnConfig>,
+}
+
+/// A consumer-side publication slot: the value the latest
+/// `updateSubsystems` handed over (`gateway.setCronController` /
+/// `setAlwaysOnControl`, createLocalGateway.ts:1559-1566). Readers take the
+/// current value per call, so a hot reload swaps it under them.
+pub(crate) struct Published<T: ?Sized>(Arc<std::sync::RwLock<Option<Arc<T>>>>);
+
+impl<T: ?Sized> Published<T> {
+    pub(crate) fn new(value: Option<Arc<T>>) -> Self {
+        Self(Arc::new(std::sync::RwLock::new(value)))
+    }
+
+    pub(crate) fn get(&self) -> Option<Arc<T>> {
+        self.0.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    pub(crate) fn set(&self, value: Option<Arc<T>>) {
+        *self.0.write().unwrap_or_else(|e| e.into_inner()) = value;
+    }
+}
+
+impl<T: ?Sized> Clone for Published<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<T: ?Sized> Default for Published<T> {
+    fn default() -> Self {
+        Self::new(None)
+    }
 }
 
 /// `ProjectAutomationAttachment` (:63-67): the one turn facade plus the
@@ -198,10 +242,9 @@ pub(crate) struct ProjectAutomationConfig {
     pub cron: Option<JsValue>,
 }
 
-/// `ProjectAutomationReloadInput` (:75-79). Constructed by the reload
-/// tests; no production caller exists until this embedding grows a
-/// config-change trigger.
-#[cfg_attr(not(test), allow(dead_code))]
+/// `ProjectAutomationReloadInput` (:75-79). The server's config
+/// subscription (`hot_reload`, src/cli/pilotdeck.ts:136-191) builds one per
+/// published change that touches `alwaysOn` or `cron`.
 pub(crate) struct ProjectAutomationReloadInput {
     pub config: ProjectAutomationConfig,
     pub always_on_changed: bool,
@@ -243,9 +286,8 @@ pub(crate) type CronFactory = Arc<
 /// two optional providers.
 #[derive(Clone)]
 struct Generation {
-    // Written by every stage; read only by the reload restore path
-    // (`stage(&previous.config, ...)`), which no production caller drives.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Read by the reload restore path (`stage(&previous.config, ...)`) and
+    /// by the fallback control's publication.
     config: ProjectAutomationConfig,
     always_on: Option<Arc<dyn ProjectAutomationProvider>>,
     cron: Option<Arc<dyn ProjectAutomationProvider>>,
@@ -275,10 +317,7 @@ pub(crate) struct ProjectAutomationBundleOptions {
 }
 
 /// `ProjectAutomationBundle` (:131-412). The three factory fields feed the
-/// reload ladder's re-staging (`stage`); `new` stages its first generation
-/// from its own options instead, so outside the reload tests nothing reads
-/// them.
-#[cfg_attr(not(test), allow(dead_code))]
+/// reload ladder's re-staging (`stage`).
 pub(crate) struct ProjectAutomationBundle {
     make_always_on: AlwaysOnFactory,
     make_cron: CronFactory,
@@ -377,9 +416,7 @@ impl ProjectAutomationBundle {
     }
 
     // `new` stages its first generation from its own options; `stage` itself
-    // is the reload ladder's re-staging entry, which only the reload tests
-    // drive until this embedding grows a config-change trigger.
-    #[cfg_attr(not(test), allow(dead_code))]
+    // is the reload ladder's re-staging entry.
     fn stage(
         &self,
         config: &ProjectAutomationConfig,
@@ -493,8 +530,10 @@ impl ProjectAutomationBundle {
         }
     }
 
-    /// `publishGeneration` (:358-365) — minus the TS fallback control (see
-    /// the module docs).
+    /// `publishGeneration` (:358-365). Where TS publishes the fallback
+    /// control (`generation.alwaysOn ?? createFallbackAlwaysOnControl(
+    /// generation.config)`), the port hands the consumer the fallback's
+    /// input instead (see the module docs).
     fn publish_generation(generation: &Generation, attachment: &ProjectAutomationAttachment) {
         let mut extra_tools = Vec::new();
         if let Some(always_on) = &generation.always_on {
@@ -507,6 +546,9 @@ impl ProjectAutomationBundle {
             extra_tools,
             cron: generation.cron.clone(),
             always_on_control: generation.always_on.clone(),
+            fallback: generation.always_on.is_none().then(|| FallbackAlwaysOn {
+                config: generation.config.always_on.clone(),
+            }),
         });
     }
 
@@ -516,6 +558,7 @@ impl ProjectAutomationBundle {
             extra_tools: Vec::new(),
             cron: None,
             always_on_control: None,
+            fallback: None,
         });
     }
 
@@ -545,10 +588,7 @@ impl ProjectAutomationBundle {
     }
 
     /// `reload` (:191-257). See the module docs for the failure ladder.
-    /// No production caller exists yet — this embedding has no config
-    /// hot-reload (the assembly's `update_subsystems` is a documented
-    /// no-op) — so the b-series reload replays are the only driver.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Driven by the server's config subscription (`hot_reload`).
     pub(crate) async fn reload(
         &self,
         input: ProjectAutomationReloadInput,
