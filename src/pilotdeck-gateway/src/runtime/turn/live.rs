@@ -810,12 +810,14 @@ impl LiveSession for LiveSessionAdapter {
 
     fn abort(&self, reason: &JsString) -> RuntimeResult {
         let mut state = self.state.lock().unwrap();
-        state.signal.abort();
+        // `AbortController.abort(reason)`: work that rejects with the signal's
+        // reason (a pending compaction summary, `throwIfAborted`) reports it.
+        state.signal.abort_with_reason(reason.clone());
         state.status = super::live_session::SessionStatus::Aborted;
         if let Some(cancellation) = &state.active {
             // Only a running turn's own abort signal: a finished turn's
             // advisory hooks outlive it and are not this abort's to kill.
-            state.user_abort.abort();
+            state.user_abort.abort_with_reason(reason.clone());
             cancellation.cancel(Some(reason.clone()));
         }
         Ok(())
@@ -2365,13 +2367,14 @@ impl HostHandler for StreamHandler {
         }
         // `awaitCompactionWithEvents` (AgentLoop.ts:2860-2874): the events the
         // compaction buffered (compact_started / compact_completed) are drained
-        // when it settles, before the loop yields anything after it.
+        // when it settles, before the loop yields anything after it — also
+        // when it rejects (the drain precedes `throw result.error`).
         let this = self.share();
         Box::pin(async move {
-            let result = forwarded.await?;
+            let result = forwarded.await;
             this.forward(Box::pin(async { Ok(()) }), None, None, true, false, true)
                 .await?;
-            Ok(result)
+            result
         })
     }
 

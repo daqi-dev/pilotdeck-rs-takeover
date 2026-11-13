@@ -325,7 +325,7 @@ impl DefaultContextRuntime {
     async fn prepare(
         &self,
         fields: JsObject,
-        abort: Option<Cancellation>,
+        abort: Option<crate::host::AbortSignal>,
     ) -> Result<JsValue, HostError> {
         let input = PrepareInput::parse(&fields, self.inner.runtime_context_surface)?;
         let Projection {
@@ -541,7 +541,9 @@ impl DefaultContextRuntime {
         // TS returns the partial context after an aborted memory retrieval,
         // before instruction discovery, cache planning or prompt-time commit.
         let memory_aborted = self.inner.memory_resolver.is_some()
-            && abort.as_ref().is_some_and(Cancellation::is_cancelled);
+            && abort
+                .as_ref()
+                .is_some_and(crate::host::AbortSignal::is_cancelled);
         let mut instruction_layers: Option<Vec<Layer>> = None;
         if !memory_aborted && let Some(discovery) = self.inner.instruction_discovery.clone() {
             let result = tokio::task::spawn_blocking(move || discovery.discover())
@@ -893,9 +895,8 @@ impl ContextRuntime for DefaultContextRuntime {
         // ignored, exactly like an `AbortSignal` that is never aborted.
         let abort = input
             .abort_signal
-            .as_ref()
-            .and_then(|signal| signal.downcast_ref::<Cancellation>())
-            .cloned();
+            .as_deref()
+            .and_then(crate::host::AbortSignal::from_context);
         Box::pin(async move { runtime.prepare(input.fields, abort).await })
     }
 }

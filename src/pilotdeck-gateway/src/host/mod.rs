@@ -547,6 +547,54 @@ impl Cancellation {
     }
 }
 
+/// The `AbortSignal` a host module receives through a turn or command
+/// context: a maintenance command's own [`Cancellation`], or the turn's abort
+/// signal (the one `abort_turn` aborts, `input.abortSignal` in the baseline).
+/// Any other capability is not an abort signal.
+#[derive(Clone)]
+pub enum AbortSignal {
+    Host(Cancellation),
+    Turn(crate::runtime::network::Cancellation),
+}
+impl AbortSignal {
+    pub fn from_context(context: &(dyn std::any::Any + Send + Sync)) -> Option<Self> {
+        context
+            .downcast_ref::<Cancellation>()
+            .cloned()
+            .map(Self::Host)
+            .or_else(|| {
+                context
+                    .downcast_ref::<crate::runtime::network::Cancellation>()
+                    .cloned()
+                    .map(Self::Turn)
+            })
+    }
+    pub fn is_cancelled(&self) -> bool {
+        match self {
+            Self::Host(signal) => signal.is_cancelled(),
+            Self::Turn(signal) => signal.is_cancelled(),
+        }
+    }
+    /// `AbortSignal.reason`; a host cancel without one reads `host_abort`.
+    pub fn reason(&self) -> Option<JsString> {
+        match self {
+            Self::Host(signal) => signal.reason(),
+            Self::Turn(signal) => signal.reason(),
+        }
+    }
+    pub async fn cancelled(&self) {
+        match self {
+            Self::Host(signal) => signal.cancelled().await,
+            Self::Turn(signal) => signal.cancelled().await,
+        }
+    }
+}
+impl From<Cancellation> for AbortSignal {
+    fn from(signal: Cancellation) -> Self {
+        Self::Host(signal)
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Progress {
     stream_id: Option<JsString>,
