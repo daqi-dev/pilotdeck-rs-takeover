@@ -54,5 +54,11 @@
     {
       "disconnect": true
     }
-  ]
+  ],
+  "volatile": [
+    "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.json\\.records\\[0\\]\\.(state|result|revision|lastSeq)$",
+    "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.json\\.events\\.\\u0000s-bbx-1\\u0000<uuid:\\d+>(\\.length|\\[9\\])$",
+    "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.raw\\.skeletons\\.[0-9a-f]+$"
+  ],
+  "volatileWhy": "基线停机不等运行记录写完（cli/shutdownCoordinator.ts:13-14 在 stop() 之后直接 process.exit）：断开后这一轮被中止，turn_completed（aborted_streaming）写进 runs/registry.json 的那次 persist 可能正好被停机打断，记录停在 running（revision 10 / lastSeq 9，事件流少第 10 条 turn_completed，registry.json 的排版骨架随之不同）。只放过这一条在途运行记录（records[0]，s-bbx-1）的 state / result / revision / lastSeq、它的事件流条数与第 10 条、registry.json 原文骨架；别的字段照比。次数：cb8 上基线单侧采集 30 次里 3 次（2026-11-13 早些时候，tmp-ruler/lock30 的 ts.20 / 25 / 27），本轮再采 40 次（20 对自比）0 次；同样 40 次 Rust 全部是终态 aborted、无锁文件无临时文件。没见到临时文件 registry.json.<pid>.<ms>.<hex>.tmp 留下，不为它声明。"
 }

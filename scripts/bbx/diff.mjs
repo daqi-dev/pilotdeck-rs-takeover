@@ -58,7 +58,8 @@
 //      放过的处数每次打印。只认对象里键名为 fileSize 的数值；CLI 输出文本里的 "fileSize": N 不处理
 //  18. 运行记录文件锁 runs/registry.json.lock 有没有不比：基线停机（SIGTERM → process.exit）可能打断在持锁写
 //      运行记录的过程中（锁在 RunRegistry.ts:115-116 建，withFileLock 的 finally 里 154 删），锁文件就留下来；tool-goal-permission
-//      基线连跑 30 次留下 9 次。只在一侧有、一侧没有时两侧都略过（并打印）；两侧都有时内容照比
+//      基线连跑 30 次留下 9 次。只在一侧有、一侧没有时两侧都略过（并打印）；两侧都有时内容照比，只把内容里的
+//      持锁进程号 "pid":<n> 换成 "pid":<pid>（两侧都留下锁时进程号必然不同；时间戳由第 2 条抹）
 //      （残留锁对之后启动的影响由场景 robust-restart-registry-lock-leftover 单独比）
 //  19. 各自核对：两个由别的内容算出来的字节数，数值里含着被上面规则抹掉的变长值的位数（例如工具结果文本里
 //      "duration_ms: 6" 变成 "duration_ms: 12"），不设容差，改成每侧拿本侧产物核对，两侧都核对通过才不比数值：
@@ -290,7 +291,12 @@ const REGISTRY_LOCK = /\/runs\/registry\.json\.lock$/;
 function settleRegistryLock(rawA, rawB) {
   const dropped = [];
   for (const k of new Set([...Object.keys(rawA.tree ?? {}), ...Object.keys(rawB.tree ?? {})])) {
-    if (!REGISTRY_LOCK.test(k) || (k in (rawA.tree ?? {})) === (k in (rawB.tree ?? {}))) continue;
+    if (!REGISTRY_LOCK.test(k)) continue;
+    if ((k in (rawA.tree ?? {})) === (k in (rawB.tree ?? {}))) {
+      // 两侧都有：锁文件内容 {"pid":<持锁进程号>,"acquiredAt":…}（RunRegistry.ts:116）里的进程号归一化，其余照比。
+      for (const e of [rawA.tree?.[k], rawB.tree?.[k]]) if (e && typeof e.text === 'string') e.text = e.text.replace(/("pid":)\d+(?=[,}])/g, '$1<pid>');
+      continue;
+    }
     delete rawA.tree?.[k]; delete rawB.tree?.[k]; dropped.push(k);
   }
   return dropped;
