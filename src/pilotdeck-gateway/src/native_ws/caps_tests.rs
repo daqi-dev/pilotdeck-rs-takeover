@@ -383,7 +383,7 @@ async fn connection_cap_covers_handshakes_and_recovers() {
 async fn peer_fin_returns_slot_and_input() {
     let running = start(2, 64, Arc::default()).await;
     let mut first = upgrade(running.address).await;
-    let mut second = upgrade(running.address).await;
+    let second = upgrade(running.address).await;
     write(&mut first, &partial()).await;
     remaining(&running.connections, 0, CAP_ASSERT).await;
     remaining(&running.input, 48, "#1079 partial frame charges input").await;
