@@ -9,6 +9,20 @@ import {encode,decode,websocket,websocketReader} from './wire.mjs';
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const origin='https://open.feishu.cn';
 import {closeBarrier} from '../feishu-stream/mock.mjs';
+// HTTP upgrade sockets inherit allowHalfOpen:true. A real EOF must finish
+// this protocol peer's writable half (as ws.socketOnEnd does), not fabricate
+// a stopped result. Only the subsequent actual close invokes onClosed.
+export function observeOriginalSocket(socket,raw,onClosed){
+ let remoteEof=false;
+ socket.on('end',()=>{
+  remoteEof=true;
+  raw({kind:'ws-eof',identity:'feishu-original-socket-1',readableEnded:socket.readableEnded,writableEnded:socket.writableEnded,destroyed:socket.destroyed});
+  socket.end();
+ });
+ socket.on('finish',()=>raw({kind:'ws-write-finish',identity:'feishu-original-socket-1',afterRemoteEof:remoteEof}));
+ socket.on('close',()=>{raw({kind:'ws-close',identity:'feishu-original-socket-1'});onClosed()});
+}
+
 export async function startMock({root,caDir,proxyPort,wsPort,tlsPort,rawPath,onFinalReply,variant='normal'}){
  if(!['normal','wrong-nonce'].includes(variant))throw Error('unknown fixture variant');
  const sourceHashes=Object.fromEntries(['mock.mjs','wire.mjs','../feishu-stream/mock.mjs'].map(name=>[name,hash(fs.readFileSync(new URL(name,import.meta.url)))]));
@@ -101,7 +115,7 @@ export async function startMock({root,caDir,proxyPort,wsPort,tlsPort,rawPath,onF
     state.ack.push({...frame,headers:frame.headers.filter(([key])=>key!=='biz_rt'),durationMs:Number(duration[1])});save();
    }catch(error){raw({kind:'mockError',message:error.message});socket.destroy()}
   });
-  socket.on('data',read);socket.on('error',()=>{});socket.on('close',()=>{originalClosed=true;raw({kind:'ws-close',identity:'feishu-original-socket-1'});if(probe&&!probe.finished)probe.finish(false)});if(head.length)read(head);
+  socket.on('data',read);socket.on('error',()=>{});observeOriginalSocket(socket,raw,()=>{originalClosed=true;if(probe&&!probe.finished)probe.finish(false)});if(head.length)read(head);
  });
  for(const server of [tls,proxy,ws])server.on('connection',track);
  await Promise.all([[tls,tlsPort],[proxy,proxyPort],[ws,wsPort]].map(([server,port])=>new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',resolve)})));

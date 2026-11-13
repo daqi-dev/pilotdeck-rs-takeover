@@ -12,6 +12,15 @@ const hash=b=>createHash('sha256').update(b).digest('hex');
 const text=v=>typeof v==='string'?v:Array.isArray(v)?v.filter(b=>b.type==='text').map(b=>b.text??'').join(''):'';
 const only=(rows,label)=>{assert.equal(rows?.length,1,label);return rows[0]};
 function httpBody(base64){const value=Buffer.from(base64,'base64').toString();try{return JSON.parse(value)}catch{return {raw:value}}}
+export function assertRustCloseCause(raw){
+ const identity='feishu-original-socket-1';
+ const index=kind=>{const found=raw.map((row,i)=>[row,i]).filter(([row])=>row.kind===kind&&row.identity===identity);assert.equal(found.length,1,'one actual '+kind);return found[0][1]};
+ const disable=raw.findIndex(row=>row.kind==='config-disable'),eof=index('ws-eof'),finish=index('ws-write-finish'),closed=index('ws-close'),probe=raw.findIndex(row=>row.kind==='probe-result');
+ assert.deepEqual(raw[eof],{kind:'ws-eof',identity,readableEnded:true,writableEnded:false,destroyed:false},'actual EOF state before peer write-half completion');
+ assert.deepEqual(raw[finish],{kind:'ws-write-finish',identity,afterRemoteEof:true},'actual finish follows remote EOF');
+ assert.ok(disable>=0&&disable<eof&&eof<finish&&finish<closed&&closed<probe,'disable → real EOF → peer finish → real close → successful dead receipt');
+}
+
 function validate(a,receipt,raw){
  assert.equal(a.scenario,scene.name);assert.deepEqual(a.failures,[]);assert.ok(['ts','rust'].includes(a.side));assert.equal(a.evidence.side,a.side);
  const tail=raw.at(-1);assert.equal(tail?.kind,'mock-drain-complete','raw sealed only after actual mock drain');assert.deepEqual(tail,{kind:'mock-drain-complete',...receipt.mockDrain});assert.equal(tail.listeners,3);assert.ok(tail.acceptedSockets>0);assert.equal(tail.closedSockets,tail.acceptedSockets);assert.equal(tail.socketsRemaining,0);assert.equal(tail.handlersRemaining,0);assert.equal(tail.httpHandlersStarted,tail.httpHandlersCompleted);
@@ -68,18 +77,26 @@ function validate(a,receipt,raw){
  if(expectedAlive){
   assert.ok(ping>control&&ping<probeIndex);const nonce=raw[ping].base64;assert.equal(Buffer.from(nonce,'base64').length,24);
   const pong=raw.findIndex((r,i)=>i>ping&&r.kind==='ws-receive'&&r.opcode===10&&r.base64===nonce);assert.ok(pong>ping&&pong<probeIndex,'actual exact nonce Pong after completed stop proves leak');assert.ok(close>probeIndex,'eventual whole-process close cannot stand in for adapter stop');
- }else{assert.ok(close>disableIndex&&close<probeIndex,'old exact socket closed before stop probe succeeds');assert.ok(!raw.slice(control,probeIndex).some(r=>r.kind==='ws-receive'&&r.opcode===10),'no leaked live socket Pong');}
+ }else{assertRustCloseCause(raw);assert.ok(close>disableIndex&&close<probeIndex,'old exact socket closed before stop probe succeeds');assert.ok(!raw.slice(control,probeIndex).some(r=>r.kind==='ws-receive'&&r.opcode===10),'no leaked live socket Pong');}
  assert.equal(raw.filter(r=>r.kind==='probe-timeout').length,0,'timeout is failure, not a dead-socket witness');
  const providerKeys=Object.keys(a.provider);assert.ok(providerKeys.indexOf('channel')<providerKeys.indexOf('observer-initial')&&providerKeys.indexOf('observer-initial')<providerKeys.indexOf('observer-final'),'normal turn completes before post-stop observer');
  assert.equal(raw.filter(r=>r.kind==='mockError').length,0,'no hidden fixture protocol errors');
 }
+if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
 try{
  const artifactPath=process.argv[2];const bytes=fs.readFileSync(artifactPath),a=JSON.parse(bytes),receipt=JSON.parse(fs.readFileSync(artifactPath+'.receipt.json')),rawBytes=fs.readFileSync(artifactPath+'.mock-raw.jsonl'),raw=rawBytes.toString().split('\n').filter(Boolean).map(JSON.parse);
  assert.equal(receipt.artifact.sha256,hash(bytes),'capture bytes unchanged');assert.equal(receipt.raw.sha256,hash(rawBytes),'raw mock trace unchanged');validate(a,receipt,raw);
  if(process.argv.includes('--self-test')){
   const faults=[v=>delete v.provider.channel,v=>{v.steps[0].serve.stdout='missing reload completion'},v=>{const f=Object.entries(v.tree).find(([name])=>name.endsWith('/feishu-stop-witness/facts.json'))[1].json;f.probe.alive=!f.probe.alive},v=>{const f=Object.entries(v.tree).find(([name])=>name.endsWith('/feishu-stop-witness/facts.json'))[1].json;f.probe.identity='different-socket'}];
   for(const mutate of faults){const copy=structuredClone(a);mutate(copy);assert.throws(()=>validate(copy,receipt,raw))}
-  const noProbe=raw.filter(r=>r.kind!=='probe-result');assert.throws(()=>validate(a,receipt,noProbe));console.log('5 stop corruption controls rejected');
+  const noProbe=raw.filter(r=>r.kind!=='probe-result');assert.throws(()=>validate(a,receipt,noProbe));
+  if(a.side==='rust'){
+   for(const kind of ['ws-eof','ws-write-finish'])assert.throws(()=>validate(a,receipt,raw.filter(row=>row.kind!==kind)),'missing '+kind+' rejected');
+   const reordered=structuredClone(raw),eof=reordered.findIndex(row=>row.kind==='ws-eof'),finish=reordered.findIndex(row=>row.kind==='ws-write-finish');[reordered[eof],reordered[finish]]=[reordered[finish],reordered[eof]];assert.throws(()=>validate(a,receipt,reordered),'finish before EOF rejected');
+   console.log('8 stop corruption controls rejected (5 shared + 3 Rust EOF cause)');
+  }else console.log('5 stop corruption controls rejected (TS exact nonce Pong preserved)');
  }
  console.log('Feishu formal stop strict PASS');
 }catch(error){console.error(error.stack);process.exitCode=1}
+
+}
