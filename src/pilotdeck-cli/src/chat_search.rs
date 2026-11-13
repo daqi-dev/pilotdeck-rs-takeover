@@ -425,28 +425,28 @@ fn when(text: &str, _env: &Env) -> String {
     if text.is_empty() {
         return "unknown time".into();
     }
-    use chrono::{Datelike, TimeZone, Timelike};
-    use pilotdeck_transport::system_clock::parse_node22_date;
+    use pilotdeck_transport::system_clock::{civil_from_days, host_offset_at, parse_node22_date};
     let Ok(Some(ms)) = parse_node22_date(&text.into()) else {
         return text.into();
     };
-    let Some(parts) = chrono::Local.timestamp_millis_opt(ms as i64).single() else {
+    // `toLocaleString` in the process zone, as Node sets it up from `TZ`.
+    let Some(offset) = host_offset_at(ms as i64) else {
         return text.into();
     };
+    let local = ms as i64 + i64::from(offset) * 1000;
+    let (_, month, day) = civil_from_days(local.div_euclid(86_400_000));
+    let minutes = local.rem_euclid(86_400_000) / 60_000;
+    let (hour, minute) = (minutes / 60, minutes % 60);
     let months = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ];
     format!(
         "{} {}, {:02}:{:02} {}",
-        months[parts.month() as usize - 1],
-        parts.day(),
-        if parts.hour() % 12 == 0 {
-            12
-        } else {
-            parts.hour() % 12
-        },
-        parts.minute(),
-        if parts.hour() < 12 { "AM" } else { "PM" }
+        months[month as usize - 1],
+        day,
+        if hour % 12 == 0 { 12 } else { hour % 12 },
+        minute,
+        if hour < 12 { "AM" } else { "PM" }
     )
 }
 

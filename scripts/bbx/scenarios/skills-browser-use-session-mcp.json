@@ -1,0 +1,81 @@
+{
+ "name": "skills-browser-use-session-mcp",
+ "about": "内置插件 browser-use 的会话级 MCP（@playwright/mcp，基线 node_modules 自带）。启用条件：内置插件没被 extension.builtinPluginsEnabled 关掉，且内置 skills 目录（PILOTDECK_BUNDLED_SKILLS_DIR）里没有同名的 browser-use skill——同为 builtin 来源、同名的 skill 在插件表里排在后面，把插件顶掉（extension/plugins/runtime/PluginRuntime.ts:497-553、PluginRegistry.ts:60-76；bbx 默认指向基线自带的 skills 目录，里面有 browser-use，所以别的场景看不到它）。会话建工具时（cli/SessionMcpRuntimeBundle.ts:79-81）BrowserUseSessionMcpSpecPreparer（cli/BrowserUseSessionMcpSpecPreparer.ts:40-57）建 <projectRoot>/.pilotdeck/browser_screenshots/<sanitizeSessionIdForPath(sessionKey)>/ 当进程 cwd 和 --output-dir，并按 buildBrowserUseArgs（cli/createLocalGateway.ts:1729-1813）追加超时与代理参数；建目录失败（路径上有同名文件）时整轮以 gateway_submit_failed 和 Node 的 ENOTDIR 文案失败。比较发给模型的工具清单（23 个 mcp__browser-use__*）与系统提示词、目录落盘、失败轮次的帧与会话记录。不调用浏览器工具（要真起 Chromium，各机器装没装不一样）；参数本身只在 Rust 单元测试里比。",
+ "env": {
+  "PILOTDECK_BUNDLED_SKILLS_DIR": "{ROOT}/bundled"
+ },
+ "files": {
+  "bundled/demo/SKILL.md": "---\nname: demo\ndescription: demo skill\n---\nbody\n",
+  "home/work/alpha/README.md": "alpha\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+  "home/work/blocked/.pilotdeck/browser_screenshots": "not a directory\n",
+  "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-blocked/.cwd": "{HOME}/work/blocked\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"x\"}"
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "web/one//two/",
+    "channelKey": "test",
+    "message": "first"
+   }
+  },
+  {
+   "sleep": 1500
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-two",
+    "channelKey": "test",
+    "message": "second",
+    "projectKey": "{HOME}/work/alpha"
+   }
+  },
+  {
+   "sleep": 1500
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-blocked",
+    "channelKey": "test",
+    "message": "third",
+    "projectKey": "{HOME}/work/blocked"
+   }
+  },
+  {
+   "sleep": 1500
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-blocked",
+    "projectKey": "{HOME}/work/blocked"
+   }
+  },
+  {
+   "ws": "mcp_server_status",
+   "params": {
+    "sessionKey": "s-two"
+   }
+  }
+ ]
+}

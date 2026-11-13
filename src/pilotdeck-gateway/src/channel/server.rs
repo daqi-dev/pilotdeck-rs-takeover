@@ -93,20 +93,31 @@ impl ChannelServer {
     }
 
     pub fn start_channels(&self, channels: Vec<Arc<dyn ChannelAdapter>>) {
+        // A channel whose start never suspends settles within the same
+        // microtask round as the others like it, so their outcome lines keep
+        // startup order; they are reported from one task, in that order.
+        let mut immediate = Vec::new();
         for channel in channels {
             let key = channel.channel_key().clone();
+            let synchronous = !self.0.state.lock().expect("channel state").closing
+                && channel.start_prelude(&self.0.deps);
             let operation = self.hot_start_channel(channel);
+            if synchronous {
+                immediate.push((key, operation));
+                continue;
+            }
             let inner = self.0.clone();
             tokio::spawn(async move {
-                match operation.await {
-                    Ok(()) => inner.log(
-                        "info",
-                        &format!("[adapters] channel {key} startup task completed"),
-                    ),
-                    Err(error) => inner.log(
-                        "error",
-                        &format!("[adapters] channel {key} start failed: {}", error.message()),
-                    ),
+                let outcome = operation.await;
+                inner.log_startup_outcome(&key, outcome);
+            });
+        }
+        if !immediate.is_empty() {
+            let inner = self.0.clone();
+            tokio::spawn(async move {
+                for (key, operation) in immediate {
+                    let outcome = operation.await;
+                    inner.log_startup_outcome(&key, outcome);
                 }
             });
         }
@@ -249,6 +260,19 @@ impl Inner {
     fn log(&self, level: &str, text: &str) {
         if let Some(log) = &self.deps.log {
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| log(level, text)));
+        }
+    }
+    /// `startChannelInBackground`'s settle lines (pilotdeckServer.ts:274-281).
+    fn log_startup_outcome(&self, key: &ChannelKey, outcome: Result<(), ChannelError>) {
+        match outcome {
+            Ok(()) => self.log(
+                "info",
+                &format!("[adapters] channel {key} startup task completed"),
+            ),
+            Err(error) => self.log(
+                "error",
+                &format!("[adapters] channel {key} start failed: {}", error.message()),
+            ),
         }
     }
     // Queue under the state lock at each linearization point. Callbacks run

@@ -358,6 +358,30 @@ impl NativeChannels {
         )
     }
 
+    /// ChannelAdapterBundle.createQQ / createWeCom (`settings?.enabled !==
+    /// true` builds nothing, ChannelAdapterBundle.ts:157-183). Neither channel
+    /// is implemented in Rust: what is built is the baseline's start without
+    /// usable credentials — one log line and a no-op handle
+    /// (`loader::bundle_unavailable_start`). A config with credentials was
+    /// refused before startup (`loader::reject_unmigrated_channels`), so it
+    /// never reaches here; nothing is built for it.
+    pub fn create_startup_bundle_unavailable(&self, key: &str) -> Option<Arc<dyn ChannelAdapter>> {
+        let settings = self.config.get("adapters")?.get(key)?;
+        if !matches!(settings.get("enabled"), Some(JsValue::Bool(true))) {
+            return None;
+        }
+        match crate::channel::loader::bundle_unavailable_start(
+            key,
+            settings,
+            &crate::channel::loader::process_env,
+        )? {
+            crate::channel::loader::UnavailableStart::Logged { level, line } => Some(Arc::new(
+                crate::channel::unavailable::UnavailableChannel::logging(key, level, line),
+            )),
+            _ => None,
+        }
+    }
+
     /// ChannelAdapterBundle.makeFeishu: mapper from the persisted state,
     /// `onStateChange` persisting back through the debounce, and the active
     /// slot published at construction (TS assigns `activeFeishu` before

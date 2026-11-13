@@ -129,20 +129,209 @@ pub fn parse_node22_date_with_local(
 /// repointed), so caching here would pin a stale offset with no
 /// invalidation signal.
 pub fn resolve_local(wall: i64) -> Result<i64, JsString> {
-    let bytes = system_tzif().ok_or_else(|| JsString::from(
-        "NODE22_DATE_LOCAL_SYSTEM_TZIF_UNSUPPORTED: no readable safe system TZif establishes the offset for this valid local date."
-    ))?;
-    resolve_tzif_local(wall, &bytes)
+    match host_zone().rules {
+        HostRules::Zone(zone) => resolve_zone_local(wall, zone.as_ref()),
+        HostRules::Fixed(seconds) => Ok(wall - i64::from(seconds) * 1000),
+        HostRules::System(tz) => {
+            let bytes = system_tzif_path(tz.as_deref())
+                .and_then(|path| bounded_zone_read(&path))
+                .ok_or_else(|| JsString::from(
+                    "NODE22_DATE_LOCAL_SYSTEM_TZIF_UNSUPPORTED: no readable safe system TZif establishes the offset for this valid local date."
+                ))?;
+            resolve_tzif_local(wall, &bytes)
+        }
+    }
 }
 
-// Read only the explicitly admitted system timezone sources on this Unix
-// target. Custom TZ paths/POSIX environment rules require a separate profile;
-// don't read arbitrary host/user files or silently guess UTC on lookup failure.
-fn system_tzif() -> Option<Vec<u8>> {
-    let path = system_tzif_path(std::env::var_os("TZ").as_deref())?;
-    bounded_zone_read(&path)
+/// The process time zone as Node v22.22.0 sets it up from `TZ` (ICU's host
+/// detection on top of the C library): the rules local dates use and the
+/// identifier `Intl.DateTimeFormat().resolvedOptions().timeZone` reports.
+pub struct HostZone {
+    pub rules: HostRules,
+    /// `resolvedOptions().timeZone`; `None` where Node reports `undefined`.
+    /// Not meaningful for [`HostRules::System`] (see [`host_zone_name`]).
+    pub name: Option<String>,
 }
+
+pub enum HostRules {
+    /// An identifier ICU knows: its rules from the bundled data, never the
+    /// host's zoneinfo tree.
+    Zone(tz::TimeZone),
+    /// A fixed offset in seconds east of UTC: ICU's fallback zone built from
+    /// the C library's standard offset.
+    Fixed(i32),
+    /// The host's own setting: `TZ` unset (`None`), a value Node resolves
+    /// through `/etc/localtime` (also `None`), or a POSIX rule string this
+    /// model does not cover (`Some`, read through the system path as
+    /// before).
+    System(Option<std::ffi::OsString>),
+}
+
+/// How Node v22.22.0 (ICU 77.1) sets up its local time zone from `TZ`,
+/// measured for every tzdb 2025b name and ICU-only identifier, against
+/// `getTimezoneOffset()` and `resolvedOptions().timeZone`:
+///
+/// - unset: the host default (`/etc/localtime`);
+/// - one leading `:` is ignored; the empty string is ICU's unknown zone:
+///   UTC offsets, reported as `Etc/Unknown`;
+/// - an identifier ICU knows, spelled exactly (`US/Pacific`, `Asia/Kolkata`,
+///   `Etc/GMT-14`): that zone's rules from ICU's own data, whether or not the
+///   host has the file (Ubuntu ships the `backward` links only in
+///   `tzdata-legacy`); reported by its ICU canonical name, except that `GMT`
+///   reports `+00:00`;
+/// - a three- or four-letter identifier is kept only when the C library's
+///   standard offset for it equals the zone's: the C library knows no file
+///   for ICU-only ones like `PST` (offset 0, still reported as
+///   `America/Los_Angeles`), and knows `EST` only where the host has it;
+/// - the `SystemV/*DT` identifiers fall back to `/etc/localtime`;
+/// - any other value without digits (`garbage`, a wrongly cased name) is a
+///   fixed zone at the C library's standard offset — the host file's when it
+///   resolves (a case-insensitive file system finds `us/pacific`), else 0 —
+///   reported as `undefined`;
+/// - POSIX rule strings (`JST-9`, `EST5EDT,M3.2.0,M11.1.0`, `<+0330>-3:30`)
+///   mix the C library's rule and `/etc/localtime` in ways this model does
+///   not reproduce; they keep the system path.
+pub fn host_zone() -> HostZone {
+    host_zone_for(std::env::var_os("TZ"))
+}
+
+/// [`host_zone`] for an explicit `TZ` value.
+pub fn host_zone_for(tz: Option<std::ffi::OsString>) -> HostZone {
+    let Some(raw) = tz else {
+        return HostZone {
+            rules: HostRules::System(None),
+            name: None,
+        };
+    };
+    let Some(value) = raw.to_str() else {
+        return HostZone {
+            rules: HostRules::System(Some(raw)),
+            name: None,
+        };
+    };
+    let id = value.strip_prefix(':').unwrap_or(value);
+    if id.is_empty() {
+        return HostZone {
+            rules: HostRules::Fixed(0),
+            name: Some("Etc/Unknown".into()),
+        };
+    }
+    use named_zone::ExactZone;
+    let canonical = |id: &str| {
+        Some(if id == "GMT" {
+            "+00:00".to_string()
+        } else {
+            named_zone::icu_canonical(id).to_string()
+        })
+    };
+    match named_zone::exact_zone(id) {
+        Some(ExactZone::SystemV { daylight: true }) => HostZone {
+            rules: HostRules::System(None),
+            name: None,
+        },
+        Some(kind) => {
+            let Some(zone) = named_zone::named_zone(id) else {
+                return HostZone {
+                    rules: HostRules::System(Some(raw.clone())),
+                    name: None,
+                };
+            };
+            let short = (3..=4).contains(&id.len());
+            if short {
+                // The C library's standard offset for the identifier: the
+                // host file's when it has one (then the same tzdb zone),
+                // otherwise UTC.
+                let libc_standard = match kind {
+                    ExactZone::Tzdb if host_zone_file(id).is_some() => {
+                        named_zone::standard_offset(&zone)
+                    }
+                    _ => 0,
+                };
+                if libc_standard != named_zone::standard_offset(&zone) {
+                    return HostZone {
+                        rules: HostRules::Fixed(libc_standard),
+                        name: canonical(id),
+                    };
+                }
+            }
+            HostZone {
+                rules: HostRules::Zone(zone),
+                name: canonical(id),
+            }
+        }
+        None if id.bytes().any(|byte| byte.is_ascii_digit() || byte == b',') => HostZone {
+            rules: HostRules::System(Some(raw.clone())),
+            name: None,
+        },
+        None => HostZone {
+            rules: HostRules::Fixed(
+                host_zone_file(id).map_or(0, |zone| named_zone::standard_offset(&zone)),
+            ),
+            name: None,
+        },
+    }
+}
+
+/// The host's zone file for `id` as the C library would open it
+/// (`/usr/share/zoneinfo/<id>`), when it exists and parses.
+fn host_zone_file(id: &str) -> Option<tz::TimeZone> {
+    let path = system_tzif_path(Some(std::ffi::OsStr::new(id)))?;
+    tz::TimeZone::from_tz_data(&bounded_zone_read(&path)?).ok()
+}
+
+/// `Intl.DateTimeFormat().resolvedOptions().timeZone` (`undefined` as
+/// `None`). For a host-default zone it is the ICU canonical name of the
+/// zone `/etc/localtime` links to, else of `/etc/timezone`'s content.
+#[allow(dead_code)] // called from the gateway; flagged dead in the test-only #[path] include
+pub fn host_zone_name() -> Option<String> {
+    let zone = host_zone();
+    match zone.rules {
+        HostRules::System(None) => {
+            let linked = ["/etc/localtime", "/usr/local/etc/localtime"]
+                .iter()
+                .find_map(|path| {
+                    let target = std::fs::read_link(path).ok()?;
+                    let target = target.to_string_lossy();
+                    let index = target.find("zoneinfo/")?;
+                    Some(target[index + "zoneinfo/".len()..].to_owned())
+                })
+                .or_else(|| {
+                    let contents = std::fs::read_to_string("/etc/timezone").ok()?;
+                    let name = contents.trim();
+                    (!name.is_empty()).then(|| name.to_owned())
+                })?;
+            Some(match named_zone::exact_zone(&linked) {
+                Some(_) => named_zone::icu_canonical(&linked).to_string(),
+                None => linked,
+            })
+        }
+        _ => zone.name,
+    }
+}
+
+/// The process zone's UTC offset (seconds east) at `epoch_ms`, as local date
+/// formatting uses it; `None` when the host data cannot answer.
+#[allow(dead_code)] // called from the CLI; flagged dead in the test-only #[path] include
+pub fn host_offset_at(epoch_ms: i64) -> Option<i32> {
+    let at = |zone: tz::TimeZoneRef<'_>| {
+        zone.find_local_time_type(epoch_ms.div_euclid(1000))
+            .ok()
+            .map(|kind| kind.ut_offset())
+    };
+    match host_zone().rules {
+        HostRules::Zone(zone) => at(zone.as_ref()),
+        HostRules::Fixed(seconds) => Some(seconds),
+        HostRules::System(tz) => {
+            let bytes = bounded_zone_read(&system_tzif_path(tz.as_deref())?)?;
+            at(tz::TimeZone::from_tz_data(&bytes).ok()?.as_ref())
+        }
+    }
+}
+
 /// Safe process-TZ path selection shared with conservative stats retention.
+/// Only the explicitly admitted system timezone sources on this Unix target
+/// are read: custom TZ paths and POSIX rule strings have no path here, so
+/// nothing reads arbitrary host files or silently guesses UTC.
 pub fn system_tzif_path(tz: Option<&std::ffi::OsStr>) -> Option<std::path::PathBuf> {
     match tz {
         None => Some(std::path::PathBuf::from("/etc/localtime")),

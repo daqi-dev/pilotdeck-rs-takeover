@@ -1343,3 +1343,64 @@ fn offset_admission_rejects_multibyte_bodies_without_panicking() {
         );
     }
 }
+
+/// The process zone Node v22.22.0 (ICU 77.1) sets up from `TZ`, measured
+/// with `getTimezoneOffset()` and `resolvedOptions().timeZone` (bbx
+/// `time-process-tz`). Only values whose Node result does not depend on the
+/// host are pinned here.
+#[test]
+fn host_zone_follows_node_for_portable_tz_values() {
+    use system_clock::{HostRules, host_zone_for};
+    // 2026-01-15T12:00Z and 2026-07-15T12:00Z.
+    let samples = [1_768_478_400_i64, 1_784_116_800];
+    let offsets = |rules: &HostRules| -> Vec<i32> {
+        samples
+            .iter()
+            .map(|at| match rules {
+                HostRules::Zone(zone) => {
+                    zone.as_ref().find_local_time_type(*at).unwrap().ut_offset()
+                }
+                HostRules::Fixed(seconds) => *seconds,
+                HostRules::System(_) => panic!("not a modelled zone"),
+            })
+            .collect()
+    };
+    let cases: [(&str, Option<&str>, [i32; 2]); 10] = [
+        (
+            "US/Pacific",
+            Some("America/Los_Angeles"),
+            [-28_800, -25_200],
+        ),
+        (
+            ":US/Pacific",
+            Some("America/Los_Angeles"),
+            [-28_800, -25_200],
+        ),
+        ("Asia/Kolkata", Some("Asia/Calcutta"), [19_800, 19_800]),
+        ("Europe/Kyiv", Some("Europe/Kiev"), [7_200, 10_800]),
+        ("Etc/GMT-14", Some("Etc/GMT-14"), [50_400, 50_400]),
+        ("UTC", Some("UTC"), [0, 0]),
+        ("GMT", Some("+00:00"), [0, 0]),
+        // ICU-only three-letter IDs: the C library has no such zone, so ICU
+        // keeps a fixed zone at its offset (0) under the canonical name.
+        ("PST", Some("America/Los_Angeles"), [0, 0]),
+        ("", Some("Etc/Unknown"), [0, 0]),
+        ("garbage", None, [0, 0]),
+    ];
+    for (tz, name, expected) in cases {
+        let zone = host_zone_for(Some(tz.into()));
+        assert_eq!(zone.name.as_deref(), name, "{tz:?} name");
+        assert_eq!(offsets(&zone.rules), expected, "{tz:?} offsets");
+    }
+    // Node falls back to /etc/localtime for these, and leaves POSIX rule
+    // strings to the C library: the host path.
+    assert!(matches!(
+        host_zone_for(Some("SystemV/EST5EDT".into())).rules,
+        HostRules::System(None)
+    ));
+    assert!(matches!(host_zone_for(None).rules, HostRules::System(None)));
+    assert!(matches!(
+        host_zone_for(Some("JST-9".into())).rules,
+        HostRules::System(Some(_))
+    ));
+}

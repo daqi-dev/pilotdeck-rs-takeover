@@ -1,0 +1,44 @@
+{
+ "name": "cfg-adapters-wecom-bad-state",
+ "about": "疑似基线 bug，待人定：wecom enabled 且保存的映射状态 <PILOT_HOME>/channels/wecom.state.json 是能解析的 JSON 真值原始值（\"abc\"、5）时，ChannelAdapterBundle.createWeCom 把它交给 new WeComSessionMapper(saved)（cli/ChannelAdapterBundle.ts:176-182），构造函数里 this.state.projectByScopeKey ??= {}（adapters/channel/wecom/WeComSessionMapper.ts:27-31）在严格模式下抛 TypeError，server 启动失败、退出码 1、stderr 打 \"Cannot create property ...\"。假值（0）走 saved ? ... : undefined，照常启动。Rust 不读 wecom 的状态文件，照常启动；保留不一致，等人决定照做还是登记为基线 bug。",
+ "server": false,
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+ "files": {
+  "cfgs/wecom.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  wecom:\n    enabled: true\n",
+  "home/alt1/channels/wecom.state.json": "\"abc\"\n",
+  "home/alt2/channels/wecom.state.json": "5\n",
+  "home/alt3/channels/wecom.state.json": "0\n"
+ },
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/wecom.yaml",
+    "PILOT_HOME": "{ROOT}/home/alt1"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/wecom.yaml",
+    "PILOT_HOME": "{ROOT}/home/alt2"
+   },
+   "timeout": 20000
+  },
+  {
+   "serve": [
+    "server"
+   ],
+   "env": {
+    "PILOTDECK_CONFIG_PATH": "{ROOT}/cfgs/wecom.yaml",
+    "PILOT_HOME": "{ROOT}/home/alt3"
+   },
+   "timeout": 20000
+  }
+ ]
+}

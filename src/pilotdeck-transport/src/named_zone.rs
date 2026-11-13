@@ -118,6 +118,67 @@ pub fn is_named_zone(name: &str) -> bool {
     lookup(name).is_some()
 }
 
+/// What kind of zone identifier `name` is when spelled exactly (ICU's host
+/// time-zone detection matches identifiers case-sensitively, unlike the
+/// `timeZone` option).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExactZone {
+    /// A tzdb name or link (`US/Pacific`, `Asia/Calcutta`, `EST`, `UTC`).
+    Tzdb,
+    /// One of ICU's three-letter (or retired) identifiers with no tzdb entry
+    /// (`PST`, `IST`, `US/Pacific-New`).
+    IcuOnly,
+    /// An ICU `SystemV/*` zone; `daylight` for the `…DT` ones.
+    SystemV { daylight: bool },
+}
+
+/// `name`'s kind when it is spelled exactly as ICU spells the identifier.
+#[allow(dead_code)] // used through system_clock; flagged dead in the test-only #[path] include
+pub fn exact_zone(name: &str) -> Option<ExactZone> {
+    if let Some(&(_, _, daylight)) = SYSTEM_V.iter().find(|(id, ..)| *id == name) {
+        return Some(ExactZone::SystemV { daylight });
+    }
+    if ICU_ONLY_ALIASES.iter().any(|(alias, _)| *alias == name) {
+        return Some(ExactZone::IcuOnly);
+    }
+    let (stored, _) = jiff_tzdb::get(name)?;
+    (stored == name && stored != "Factory").then_some(ExactZone::Tzdb)
+}
+
+/// ICU's canonical identifier for a zone name it accepts (what
+/// `resolvedOptions().timeZone` reports for it), exact spelling.
+#[allow(dead_code)] // used through system_clock; flagged dead in the test-only #[path] include
+pub fn icu_canonical(name: &str) -> &str {
+    ICU_CANONICAL
+        .iter()
+        .find(|(alias, _)| *alias == name)
+        .map_or(name, |(_, canonical)| canonical)
+}
+
+/// The zone's standard (non-daylight) UTC offset in seconds going forward:
+/// the recurring rule's, else the last standard local time type's.
+#[allow(dead_code)] // used through system_clock; flagged dead in the test-only #[path] include
+pub fn standard_offset(zone: &tz::TimeZone) -> i32 {
+    use tz::timezone::TransitionRule;
+    match zone.as_ref().extra_rule() {
+        Some(TransitionRule::Fixed(rule)) => rule.ut_offset(),
+        Some(TransitionRule::Alternate(rule)) => rule.std().ut_offset(),
+        None => {
+            let zone = zone.as_ref();
+            let types = zone.local_time_types();
+            let last = zone
+                .transitions()
+                .last()
+                .map_or(0, |transition| transition.local_time_type_index());
+            types
+                .get(last)
+                .filter(|kind| !kind.is_dst())
+                .or_else(|| types.iter().rev().find(|kind| !kind.is_dst()))
+                .map_or(0, |kind| kind.ut_offset())
+        }
+    }
+}
+
 /// The zone's rules, or `None` when ICU would reject the name.
 pub fn named_zone(name: &str) -> Option<tz::TimeZone> {
     match lookup(name)? {
@@ -187,3 +248,193 @@ fn last_sunday_of(year: i32, month: i32) -> i64 {
     // 1970-01-01 was a Thursday; weekday 0 is Sunday.
     last_day - (last_day + 4).rem_euclid(7)
 }
+
+/// `resolvedOptions().timeZone` for every zone name whose ICU canonical
+/// identifier is not the name itself, as Node v22.22.0 (ICU 77.1, tz 2025b)
+/// reports it for `new Intl.DateTimeFormat("en-US", { timeZone: name })`.
+/// Measured over every name [`named_zone`] accepts (the 597 tzdb 2025b names
+/// plus the ICU-only identifiers above); the rest canonicalize to
+/// themselves. CLDR keeps canonical identifiers stable across ICU releases
+/// (it never renamed `Asia/Calcutta` to `Asia/Kolkata`), so the table
+/// changes only when a later ICU learns new zones.
+const ICU_CANONICAL: &[(&str, &str)] = &[
+    ("ACT", "Australia/Darwin"),
+    ("AET", "Australia/Sydney"),
+    ("AGT", "America/Buenos_Aires"),
+    ("ART", "Africa/Cairo"),
+    ("AST", "America/Anchorage"),
+    ("Africa/Asmara", "Africa/Asmera"),
+    ("Africa/Timbuktu", "Africa/Bamako"),
+    ("America/Argentina/Buenos_Aires", "America/Buenos_Aires"),
+    ("America/Argentina/Catamarca", "America/Catamarca"),
+    ("America/Argentina/ComodRivadavia", "America/Catamarca"),
+    ("America/Argentina/Cordoba", "America/Cordoba"),
+    ("America/Argentina/Jujuy", "America/Jujuy"),
+    ("America/Argentina/Mendoza", "America/Mendoza"),
+    ("America/Atikokan", "America/Coral_Harbour"),
+    ("America/Atka", "America/Adak"),
+    ("America/Ensenada", "America/Tijuana"),
+    ("America/Fort_Wayne", "America/Indianapolis"),
+    ("America/Indiana/Indianapolis", "America/Indianapolis"),
+    ("America/Kentucky/Louisville", "America/Louisville"),
+    ("America/Knox_IN", "America/Indiana/Knox"),
+    ("America/Montreal", "America/Toronto"),
+    ("America/Nipigon", "America/Toronto"),
+    ("America/Nuuk", "America/Godthab"),
+    ("America/Pangnirtung", "America/Iqaluit"),
+    ("America/Porto_Acre", "America/Rio_Branco"),
+    ("America/Rainy_River", "America/Winnipeg"),
+    ("America/Rosario", "America/Cordoba"),
+    ("America/Santa_Isabel", "America/Tijuana"),
+    ("America/Shiprock", "America/Denver"),
+    ("America/Thunder_Bay", "America/Toronto"),
+    ("America/Virgin", "America/St_Thomas"),
+    ("America/Yellowknife", "America/Edmonton"),
+    ("Antarctica/South_Pole", "Antarctica/McMurdo"),
+    ("Asia/Ashkhabad", "Asia/Ashgabat"),
+    ("Asia/Choibalsan", "Asia/Ulaanbaatar"),
+    ("Asia/Chongqing", "Asia/Shanghai"),
+    ("Asia/Chungking", "Asia/Shanghai"),
+    ("Asia/Dacca", "Asia/Dhaka"),
+    ("Asia/Harbin", "Asia/Shanghai"),
+    ("Asia/Ho_Chi_Minh", "Asia/Saigon"),
+    ("Asia/Istanbul", "Europe/Istanbul"),
+    ("Asia/Kashgar", "Asia/Urumqi"),
+    ("Asia/Kathmandu", "Asia/Katmandu"),
+    ("Asia/Kolkata", "Asia/Calcutta"),
+    ("Asia/Macao", "Asia/Macau"),
+    ("Asia/Tel_Aviv", "Asia/Jerusalem"),
+    ("Asia/Thimbu", "Asia/Thimphu"),
+    ("Asia/Ujung_Pandang", "Asia/Makassar"),
+    ("Asia/Ulan_Bator", "Asia/Ulaanbaatar"),
+    ("Asia/Yangon", "Asia/Rangoon"),
+    ("Atlantic/Faroe", "Atlantic/Faeroe"),
+    ("Atlantic/Jan_Mayen", "Arctic/Longyearbyen"),
+    ("Australia/ACT", "Australia/Sydney"),
+    ("Australia/Canberra", "Australia/Sydney"),
+    ("Australia/Currie", "Australia/Hobart"),
+    ("Australia/LHI", "Australia/Lord_Howe"),
+    ("Australia/NSW", "Australia/Sydney"),
+    ("Australia/North", "Australia/Darwin"),
+    ("Australia/Queensland", "Australia/Brisbane"),
+    ("Australia/South", "Australia/Adelaide"),
+    ("Australia/Tasmania", "Australia/Hobart"),
+    ("Australia/Victoria", "Australia/Melbourne"),
+    ("Australia/West", "Australia/Perth"),
+    ("Australia/Yancowinna", "Australia/Broken_Hill"),
+    ("BET", "America/Sao_Paulo"),
+    ("BST", "Asia/Dhaka"),
+    ("Brazil/Acre", "America/Rio_Branco"),
+    ("Brazil/DeNoronha", "America/Noronha"),
+    ("Brazil/East", "America/Sao_Paulo"),
+    ("Brazil/West", "America/Manaus"),
+    ("CAT", "Africa/Maputo"),
+    ("CET", "Europe/Brussels"),
+    ("CNT", "America/St_Johns"),
+    ("CST", "America/Chicago"),
+    ("CST6CDT", "America/Chicago"),
+    ("CTT", "Asia/Shanghai"),
+    ("Canada/Atlantic", "America/Halifax"),
+    ("Canada/Central", "America/Winnipeg"),
+    ("Canada/East-Saskatchewan", "America/Regina"),
+    ("Canada/Eastern", "America/Toronto"),
+    ("Canada/Mountain", "America/Edmonton"),
+    ("Canada/Newfoundland", "America/St_Johns"),
+    ("Canada/Pacific", "America/Vancouver"),
+    ("Canada/Saskatchewan", "America/Regina"),
+    ("Canada/Yukon", "America/Whitehorse"),
+    ("Chile/Continental", "America/Santiago"),
+    ("Chile/EasterIsland", "Pacific/Easter"),
+    ("Cuba", "America/Havana"),
+    ("EAT", "Africa/Nairobi"),
+    ("ECT", "Europe/Paris"),
+    ("EET", "Europe/Athens"),
+    ("EST", "America/Panama"),
+    ("EST5EDT", "America/New_York"),
+    ("Egypt", "Africa/Cairo"),
+    ("Eire", "Europe/Dublin"),
+    ("Etc/GMT", "UTC"),
+    ("Etc/GMT+0", "UTC"),
+    ("Etc/GMT-0", "UTC"),
+    ("Etc/GMT0", "UTC"),
+    ("Etc/Greenwich", "UTC"),
+    ("Etc/UCT", "UTC"),
+    ("Etc/UTC", "UTC"),
+    ("Etc/Universal", "UTC"),
+    ("Etc/Zulu", "UTC"),
+    ("Europe/Belfast", "Europe/London"),
+    ("Europe/Kyiv", "Europe/Kiev"),
+    ("Europe/Nicosia", "Asia/Nicosia"),
+    ("Europe/Tiraspol", "Europe/Chisinau"),
+    ("Europe/Uzhgorod", "Europe/Kiev"),
+    ("Europe/Zaporozhye", "Europe/Kiev"),
+    ("GB", "Europe/London"),
+    ("GB-Eire", "Europe/London"),
+    ("GMT", "UTC"),
+    ("GMT+0", "UTC"),
+    ("GMT-0", "UTC"),
+    ("GMT0", "UTC"),
+    ("Greenwich", "UTC"),
+    ("HST", "Pacific/Honolulu"),
+    ("Hongkong", "Asia/Hong_Kong"),
+    ("IET", "America/Indianapolis"),
+    ("IST", "Asia/Calcutta"),
+    ("Iceland", "Atlantic/Reykjavik"),
+    ("Iran", "Asia/Tehran"),
+    ("Israel", "Asia/Jerusalem"),
+    ("JST", "Asia/Tokyo"),
+    ("Jamaica", "America/Jamaica"),
+    ("Japan", "Asia/Tokyo"),
+    ("Kwajalein", "Pacific/Kwajalein"),
+    ("Libya", "Africa/Tripoli"),
+    ("MET", "Europe/Brussels"),
+    ("MIT", "Pacific/Apia"),
+    ("MST", "America/Phoenix"),
+    ("MST7MDT", "America/Denver"),
+    ("Mexico/BajaNorte", "America/Tijuana"),
+    ("Mexico/BajaSur", "America/Mazatlan"),
+    ("Mexico/General", "America/Mexico_City"),
+    ("NET", "Asia/Yerevan"),
+    ("NST", "Pacific/Auckland"),
+    ("NZ", "Pacific/Auckland"),
+    ("NZ-CHAT", "Pacific/Chatham"),
+    ("Navajo", "America/Denver"),
+    ("PLT", "Asia/Karachi"),
+    ("PNT", "America/Phoenix"),
+    ("PRC", "Asia/Shanghai"),
+    ("PRT", "America/Puerto_Rico"),
+    ("PST", "America/Los_Angeles"),
+    ("PST8PDT", "America/Los_Angeles"),
+    ("Pacific/Chuuk", "Pacific/Truk"),
+    ("Pacific/Johnston", "Pacific/Honolulu"),
+    ("Pacific/Kanton", "Pacific/Enderbury"),
+    ("Pacific/Pohnpei", "Pacific/Ponape"),
+    ("Pacific/Samoa", "Pacific/Pago_Pago"),
+    ("Pacific/Yap", "Pacific/Truk"),
+    ("Poland", "Europe/Warsaw"),
+    ("Portugal", "Europe/Lisbon"),
+    ("ROC", "Asia/Taipei"),
+    ("ROK", "Asia/Seoul"),
+    ("SST", "Pacific/Guadalcanal"),
+    ("Singapore", "Asia/Singapore"),
+    ("Turkey", "Europe/Istanbul"),
+    ("UCT", "UTC"),
+    ("US/Alaska", "America/Anchorage"),
+    ("US/Aleutian", "America/Adak"),
+    ("US/Arizona", "America/Phoenix"),
+    ("US/Central", "America/Chicago"),
+    ("US/East-Indiana", "America/Indianapolis"),
+    ("US/Eastern", "America/New_York"),
+    ("US/Hawaii", "Pacific/Honolulu"),
+    ("US/Indiana-Starke", "America/Indiana/Knox"),
+    ("US/Michigan", "America/Detroit"),
+    ("US/Mountain", "America/Denver"),
+    ("US/Pacific", "America/Los_Angeles"),
+    ("US/Pacific-New", "America/Los_Angeles"),
+    ("US/Samoa", "Pacific/Pago_Pago"),
+    ("Universal", "UTC"),
+    ("VST", "Asia/Saigon"),
+    ("W-SU", "Europe/Moscow"),
+    ("WET", "Europe/Lisbon"),
+    ("Zulu", "UTC"),
+];

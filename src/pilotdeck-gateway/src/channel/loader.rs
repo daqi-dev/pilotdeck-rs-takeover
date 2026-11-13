@@ -36,9 +36,9 @@ pub const CHANNEL_LOADER_KEYS: [&str; 15] = [
 /// The 12 channel config keys without a Rust implementation (#1302 B,
 /// #1386). The set is ten `CHANNEL_LOADER_KEYS` members plus `qq` and
 /// `wecom`, which TS builds through `ChannelAdapterBundle` instead of the
-/// loader table. Enabling `qq` / `wecom` aborts native startup; a loader key
-/// aborts it only when the baseline would get past its first start check
-/// ([`unavailable_start`]). The order is
+/// loader table. Any of them aborts native startup only when the baseline
+/// would get past its first start check ([`unavailable_start`],
+/// [`bundle_unavailable_start`]). The order is
 /// deterministic — reverse `CHANNEL_LOADER_KEYS` order, then `qq`, then
 /// `wecom`; the first enabled key in this order is the one reported. Reverse
 /// order on purpose: a table that repeats `CHANNEL_LOADER_KEYS`'s own
@@ -127,10 +127,14 @@ pub fn reject_unmigrated_channels_with_env(
         if !rejects_enabled(key, cfg) {
             continue;
         }
+        if let Some(UnavailableStart::Logged { .. }) = bundle_unavailable_start(key, cfg, env) {
+            continue;
+        }
         if CHANNEL_LOADER_KEYS.contains(key) {
             let options = build_options(key, cfg, &LoadEnabledChannelsOptions { pilot_home: None });
             if let Some(
                 UnavailableStart::Line(_)
+                | UnavailableStart::Logged { .. }
                 | UnavailableStart::ConstructorTypeError(_)
                 | UnavailableStart::StartTypeError(_),
             ) = unavailable_start(key, &options, env)
@@ -158,6 +162,9 @@ pub enum UnavailableStart {
     /// The baseline's start logs this line through `logger.error` and returns
     /// a no-op handle; the process keeps running.
     Line(&'static str),
+    /// Like [`Self::Line`], with the line built from the options and the
+    /// logger level spelled out (`info` goes to stdout, the rest to stderr).
+    Logged { level: &'static str, line: String },
     /// The constructor throws a `TypeError` with this message on an option
     /// of the wrong type: `loadEnabledChannels` logs `[adapters] Failed to
     /// load channel "<key>": TypeError: <message>` and moves on
@@ -214,7 +221,7 @@ pub fn unavailable_start(
     options: &JsObject,
     env: &EnvLookupFn,
 ) -> Option<UnavailableStart> {
-    use UnavailableStart::{ConstructorTypeError, Line, StartTypeError, Unsupported};
+    use UnavailableStart::{ConstructorTypeError, Line, Logged, StartTypeError, Unsupported};
     let undefined = JsValue::Undefined;
     let is_string = |value: &JsValue| matches!(value, JsValue::String(_));
     let option = |name: &str| options.get(name).unwrap_or(&undefined).clone();
@@ -249,10 +256,20 @@ pub fn unavailable_start(
                 Line(
                     "mattermost: serverUrl and token are required (MATTERMOST_URL, MATTERMOST_TOKEN)",
                 )
-            } else if !is_string(&server_url) {
-                StartTypeError("this.serverUrl.replace is not a function")
+            } else if let JsValue::String(server_url) = &server_url {
+                // The token check is `fetch(apiBase + "/users/me")` (:68-74,
+                // :289-290): a fetch that rejects before any connection is
+                // logged and start returns a no-op handle.
+                match mattermost_token_check_failure(&String::from_utf16_lossy(server_url.units()))
+                {
+                    Some(error) => Logged {
+                        level: "error",
+                        line: format!("mattermost: token check failed: {error}"),
+                    },
+                    None => Unsupported,
+                }
             } else {
-                Unsupported
+                StartTypeError("this.serverUrl.replace is not a function")
             })
         }
         // SignalChannel.ts:83-87 constructor (`normalizeBaseUrl` calls
@@ -295,10 +312,134 @@ pub fn unavailable_start(
             let url = either("url", "HASS_URL", "http://127.0.0.1:8123".into());
             Some(if !truthy(&token) {
                 Line("homeassistant: HASS_TOKEN not set")
-            } else if !is_string(&url) {
-                StartTypeError("base.startsWith is not a function")
+            } else if let JsValue::String(url) = &url {
+                // `new URL(...)` (:36) runs inside the auth promise's
+                // executor, so an unparsable URL rejects start with its
+                // TypeError before any socket opens.
+                let url = String::from_utf16_lossy(url.units());
+                let base = if url.starts_with("http") {
+                    url
+                } else {
+                    format!("http://{url}")
+                };
+                if url::Url::parse(&base).is_err() {
+                    StartTypeError("Invalid URL")
+                } else {
+                    Unsupported
+                }
             } else {
-                Unsupported
+                StartTypeError("base.startsWith is not a function")
+            })
+        }
+        _ => None,
+    }
+}
+
+/// `${e}` of the rejection MattermostChannel's token check
+/// (`fetch(apiBase + "/users/me")`) settles with before any connection is
+/// made, as Node's fetch reports it: an unparsable URL, a URL carrying
+/// credentials, or a scheme fetch does not serve. `None` when the request
+/// would go out (http, https) or be answered locally (`data:`); the baseline
+/// follows either with a real connection.
+fn mattermost_token_check_failure(server_url: &str) -> Option<String> {
+    // `this.serverUrl.replace(/\/$/, "")`: one trailing slash.
+    let api_base = server_url.strip_suffix('/').unwrap_or(server_url);
+    let target = format!("{api_base}/users/me");
+    let Ok(parsed) = url::Url::parse(&target) else {
+        return Some(format!("TypeError: Failed to parse URL from {target}"));
+    };
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Some(format!(
+            "TypeError: Request cannot be constructed from a URL that includes credentials: {target}"
+        ));
+    }
+    match parsed.scheme() {
+        "http" | "https" | "data" => None,
+        _ => Some("TypeError: fetch failed".to_string()),
+    }
+}
+
+/// How `ChannelAdapterBundle`'s `qq` / `wecom` channel starts from its parsed
+/// settings (`cfg`, the snapshot's `adapters.<key>`, read when `enabled ===
+/// true`) and this environment. Neither channel has a Rust implementation:
+/// without usable credentials the baseline's start logs one line and returns
+/// a no-op handle ([`UnavailableStart::Logged`]); with them it connects
+/// ([`UnavailableStart::Unsupported`], refused at startup). `None` for any
+/// other key.
+pub fn bundle_unavailable_start(
+    key: &str,
+    cfg: &JsValue,
+    env: &EnvLookupFn,
+) -> Option<UnavailableStart> {
+    // `a ?? b ?? ... ?? ""`.
+    let coalesce = |values: [JsValue; 4]| {
+        values
+            .into_iter()
+            .find(|value| !nullish(value))
+            .unwrap_or_else(|| "".into())
+    };
+    let env_value = |name: &str| env(name).map(JsValue::String).unwrap_or_else(undefined);
+    match key {
+        // QQChannel.ts:40-43 constructor (`options.appId ??
+        // process.env.QQ_BOT_APPID ?? ""`), :55-58 start (`logger.info`).
+        "qq" => {
+            let app_id = coalesce([
+                field(cfg, "appId"),
+                env_value("QQ_BOT_APPID"),
+                undefined(),
+                undefined(),
+            ]);
+            let secret = coalesce([
+                field(cfg, "clientSecret"),
+                env_value("QQ_BOT_SECRET"),
+                undefined(),
+                undefined(),
+            ]);
+            Some(if !js_truthy(Some(&app_id)) || !js_truthy(Some(&secret)) {
+                UnavailableStart::Logged {
+                    level: "info",
+                    line: "qq: QQ_BOT_APPID or QQ_BOT_SECRET not set, QQ channel disabled."
+                        .to_string(),
+                }
+            } else {
+                UnavailableStart::Unsupported
+            })
+        }
+        // WeComChannel.ts:200-206 constructor: `String(options.botKey ??
+        // ex.bot_id ?? ex.botId ?? process.env.WECOM_BOT_ID ?? "").trim()`
+        // (`botKey` is the settings' `token`, ChannelAdapterBundle.ts:177)
+        // and `String(ex.botSecret ?? ex.secret ?? process.env.WECOM_SECRET
+        // ?? "").trim()`, `ex` being `{}` unless `extra` is an object;
+        // :245-248 start (`logger.error`).
+        "wecom" => {
+            let bot_id = coalesce([
+                field(cfg, "token"),
+                extra_field(cfg, "bot_id"),
+                extra_field(cfg, "botId"),
+                env_value("WECOM_BOT_ID"),
+            ]);
+            let secret = coalesce([
+                extra_field(cfg, "botSecret"),
+                extra_field(cfg, "secret"),
+                env_value("WECOM_SECRET"),
+                undefined(),
+            ]);
+            // A value `String` throws on (an object with its own `toString`)
+            // makes the baseline constructor throw and the server fail to
+            // start: that is not a one-line start.
+            let blank = |value: &JsValue| {
+                crate::js_value::to_string_units_checked(value).map(|units| {
+                    crate::metadata::js_trim(&String::from_utf16_lossy(&units)).is_empty()
+                })
+            };
+            Some(match (blank(&bot_id), blank(&secret)) {
+                (Ok(id_blank), Ok(secret_blank)) if id_blank || secret_blank => {
+                    UnavailableStart::Logged {
+                        level: "error",
+                        line: "wecom: botKey (bot_id) and secret are required".to_string(),
+                    }
+                }
+                _ => UnavailableStart::Unsupported,
             })
         }
         _ => None,

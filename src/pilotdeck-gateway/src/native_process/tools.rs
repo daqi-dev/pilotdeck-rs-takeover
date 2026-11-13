@@ -2494,12 +2494,9 @@ pub struct SessionMcpToolsOptions<'a> {
     /// `onDiagnostic`; production writes to stderr.
     pub on_diagnostic: Option<McpDiagnosticSink>,
     /// `preparePerSessionSpecs` (ProjectRuntimeRegistry.ts:345-351): the
-    /// browser-use spec preparation, with the gateway environment it reads.
-    /// `None` passes the per-session specs through unchanged.
-    pub browser_use: Option<(
-        crate::runtime::mcp::browser_use::BrowserUsePreparation,
-        crate::config::Env,
-    )>,
+    /// browser-use output directory and flags. `None` passes the specs
+    /// through unchanged.
+    pub browser_use: Option<crate::runtime::mcp::browser_use::BrowserUseSessionContext<'a>>,
 }
 
 /// #1433: `SessionMcpRuntimeBundle.compose()` — build one session's MCP tool
@@ -2559,18 +2556,21 @@ pub async fn session_mcp_tools(
         diagnostic(limit_diagnostic(), None);
         return Ok((tools, release));
     }
-    // `preparePerSessionSpecs` runs after the capacity pre-check and before
-    // the runtime is created (SessionMcpRuntimeBundle.ts:79-81); a failure
-    // to create the output directory fails the composition like the TS
-    // `mkdirSync` throw.
+    // SessionMcpRuntimeBundle.ts:79-81: prepared after the cap check, before
+    // the runtime exists; a failure (the output directory cannot be made)
+    // rejects the whole composition.
+    // The shared lease was handed to the session's resources before this
+    // point, so the failure releases it.
     let specs = match &options.browser_use {
-        Some((preparation, env)) => preparation
-            .prepare(
-                specs,
-                &crate::storage::sanitize_session_id(options.session_key),
-                &|name| env.get(name).cloned(),
-            )
-            .map_err(|error| RuntimeError::new(error.to_string()))?,
+        Some(context) => {
+            match crate::runtime::mcp::browser_use::prepare_browser_use_specs(specs, context) {
+                Ok(specs) => specs,
+                Err(error) => {
+                    let _ = release.release().await;
+                    return Err(error);
+                }
+            }
+        }
         None => specs,
     };
     let runtime = options.provider.create_runtime(specs);

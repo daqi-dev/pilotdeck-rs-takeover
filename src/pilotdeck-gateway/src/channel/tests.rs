@@ -1228,8 +1228,9 @@ async fn stop_prefix_can_reenter_close() {
 }
 
 // #1386 A8.3 (#1302 B): the channels without a Rust implementation refuse
-// native startup — `qq` / `wecom` whenever enabled, the loader-table keys only
-// when the baseline would get past its first start check (its SDKs are never
+// native startup — only when the baseline would get past its first start check
+// (`qq` / `wecom` once usable credentials are present; for the loader-table
+// keys, its SDKs are never
 // installed, so the six SDK channels are never refused; the four credential
 // channels are refused once credentials are present) — through
 // `reject_unmigrated_channels`, the seam production assembly calls
@@ -1303,6 +1304,8 @@ fn connecting_cfg(key: &str, enabled: &str) -> String {
         "whatsapp" => r#","extra":{"bridgePath":"/bridge"}"#,
         "homeassistant" => r#","token":"t""#,
         "telegram" | "discord" | "slack" => r#","token":"t""#,
+        "qq" => r#","appId":"a","clientSecret":"b""#,
+        "wecom" => r#","token":"t","extra":{"secret":"s"}"#,
         _ => "",
     };
     format!("\"{key}\":{{\"enabled\":{enabled}{rest}}}")
@@ -1502,7 +1505,17 @@ fn credential_channels_without_credentials_are_not_refused() {
             _ => &["HASS_TOKEN"],
         };
         let vars = env_var.to_vec();
-        let env = move |name: &str| vars.contains(&name).then(|| JsString::from("x"));
+        // A server URL fetch can parse: an unparsable one fails the token
+        // check before any connection (`unusable_urls_fail_before_connecting`).
+        let env = move |name: &str| {
+            vars.contains(&name).then(|| {
+                JsString::from(if name == "MATTERMOST_URL" {
+                    "http://127.0.0.1:9"
+                } else {
+                    "x"
+                })
+            })
+        };
         crate::negative_assert!(
             reject_unmigrated_channels_with_env(Some(&bare), &env).is_err(),
             "environment credentials make the channel connect, so it is refused"
@@ -1580,6 +1593,184 @@ fn rejects_unmigrated_qq() {
 #[test]
 fn rejects_unmigrated_wecom() {
     assert_rejects_unmigrated("wecom");
+}
+
+// The bundle keys without usable credentials: the baseline's start logs one
+// line (qq through `logger.info`, wecom through `logger.error`) and the
+// gateway keeps running (QQChannel.ts:55-58, WeComChannel.ts:245-248; bbx
+// `cfg-adapters-bundle-nocreds`). The settings here are the parsed snapshot's
+// (non-string `appId` / `token` are already dropped).
+#[test]
+fn bundle_channels_without_credentials_start_with_one_line() {
+    let qq_line = "qq: QQ_BOT_APPID or QQ_BOT_SECRET not set, QQ channel disabled.";
+    let wecom_line = "wecom: botKey (bot_id) and secret are required";
+    let env_with = |vars: &'static [(&'static str, &'static str)]| {
+        move |name: &str| {
+            vars.iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| JsString::from(*value))
+        }
+    };
+    type Vars = &'static [(&'static str, &'static str)];
+    type Case<'a> = (&'a str, &'a str, Vars, Option<(&'a str, &'a str)>);
+    let cases: [Case; 12] = [
+        ("qq", r#"{"enabled":true}"#, &[], Some(("info", qq_line))),
+        (
+            "qq",
+            r#"{"enabled":true,"appId":"a"}"#,
+            &[],
+            Some(("info", qq_line)),
+        ),
+        // `""` is not nullish: the environment is not consulted.
+        (
+            "qq",
+            r#"{"enabled":true,"appId":""}"#,
+            &[("QQ_BOT_APPID", "a"), ("QQ_BOT_SECRET", "b")],
+            Some(("info", qq_line)),
+        ),
+        (
+            "qq",
+            r#"{"enabled":true}"#,
+            &[("QQ_BOT_APPID", "a")],
+            Some(("info", qq_line)),
+        ),
+        (
+            "qq",
+            r#"{"enabled":true}"#,
+            &[("QQ_BOT_APPID", "a"), ("QQ_BOT_SECRET", "b")],
+            None,
+        ),
+        (
+            "wecom",
+            r#"{"enabled":true}"#,
+            &[],
+            Some(("error", wecom_line)),
+        ),
+        // `String([])` and `String([null])` are empty, `String(" ")` trims empty.
+        (
+            "wecom",
+            r#"{"enabled":true,"extra":{"bot_id":[],"secret":"s"}}"#,
+            &[],
+            Some(("error", wecom_line)),
+        ),
+        (
+            "wecom",
+            r#"{"enabled":true,"token":"t","extra":{"secret":[null]}}"#,
+            &[],
+            Some(("error", wecom_line)),
+        ),
+        (
+            "wecom",
+            r#"{"enabled":true,"token":"t","extra":{"botSecret":null,"secret":" "}}"#,
+            &[("WECOM_SECRET", "z")],
+            Some(("error", wecom_line)),
+        ),
+        (
+            "wecom",
+            r#"{"enabled":true,"extra":{"bot_id":5,"secret":"s"}}"#,
+            &[],
+            None,
+        ),
+        // `[" ", null]` is `" ,"`: not blank.
+        (
+            "wecom",
+            r#"{"enabled":true,"token":"t","extra":{"secret":[" ",null]}}"#,
+            &[],
+            None,
+        ),
+        (
+            "wecom",
+            r#"{"enabled":true}"#,
+            &[("WECOM_BOT_ID", "x"), ("WECOM_SECRET", "y")],
+            None,
+        ),
+    ];
+    for (key, cfg, vars, expected) in cases {
+        let cfg = adapters_config(cfg);
+        let env = env_with(vars);
+        let start = crate::channel::loader::bundle_unavailable_start(key, &cfg, &env);
+        match expected {
+            Some((level, line)) => assert_eq!(
+                start,
+                Some(UnavailableStart::Logged {
+                    level,
+                    line: line.to_string()
+                }),
+                "{key} {cfg:?}"
+            ),
+            None => assert_eq!(start, Some(UnavailableStart::Unsupported), "{key} {cfg:?}"),
+        }
+        let adapters = JsValue::Object({
+            let mut adapters = pilotdeck_protocol::JsObject::new();
+            adapters.insert(key.into(), cfg.clone());
+            adapters
+        });
+        assert_eq!(
+            reject_unmigrated_channels_with_env(Some(&adapters), &env).is_ok(),
+            expected.is_some(),
+            "{key} {cfg:?}: refused exactly when the baseline would connect"
+        );
+    }
+}
+
+// A credential channel whose URL the baseline cannot use fails before any
+// connection: homeassistant's `new URL` rejects start (`start failed: Invalid
+// URL`), mattermost's token-check `fetch` rejects and start logs it.
+#[test]
+fn unusable_urls_fail_before_connecting() {
+    let homeassistant = |url: &str| {
+        let mut options = pilotdeck_protocol::JsObject::new();
+        options.insert("url".into(), JsValue::String(url.into()));
+        options.insert("token".into(), JsValue::String("t".into()));
+        unavailable_start("homeassistant", &options, &no_env)
+    };
+    for bad in ["http://bad host", "ha.local:port", "http://"] {
+        assert_eq!(
+            homeassistant(bad),
+            Some(UnavailableStart::StartTypeError("Invalid URL")),
+            "{bad}"
+        );
+    }
+    for good in ["http://127.0.0.1:9", "ha.local:8123", "ftp://x"] {
+        assert_eq!(
+            homeassistant(good),
+            Some(UnavailableStart::Unsupported),
+            "{good}"
+        );
+    }
+    let mattermost = |url: &str| {
+        let mut options = pilotdeck_protocol::JsObject::new();
+        options.insert("token".into(), JsValue::String("t".into()));
+        options.insert("serverUrl".into(), JsValue::String(url.into()));
+        unavailable_start("mattermost", &options, &no_env)
+    };
+    let logged = |error: &str| {
+        Some(UnavailableStart::Logged {
+            level: "error",
+            line: format!("mattermost: token check failed: {error}"),
+        })
+    };
+    assert_eq!(
+        mattermost("not a url/"),
+        logged("TypeError: Failed to parse URL from not a url/users/me")
+    );
+    assert_eq!(
+        mattermost("HTTP://u:p@H.invalid"),
+        logged(
+            "TypeError: Request cannot be constructed from a URL that includes credentials: HTTP://u:p@H.invalid/users/me"
+        )
+    );
+    assert_eq!(
+        mattermost("ftp://h.invalid"),
+        logged("TypeError: fetch failed")
+    );
+    for connecting in ["http://127.0.0.1:9", "https://m.example/", "data:,x"] {
+        assert_eq!(
+            mattermost(connecting),
+            Some(UnavailableStart::Unsupported),
+            "{connecting}"
+        );
+    }
 }
 
 // #1579 P1: the frozen TS baseline gates these 11 keys with two different

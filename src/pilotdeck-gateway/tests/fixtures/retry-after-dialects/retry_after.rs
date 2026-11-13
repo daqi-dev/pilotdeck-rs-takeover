@@ -270,9 +270,15 @@ fn retry_after_dialect_zone_child() {
         let wall = "Sun Nov  6 08:49:37 1994";
         let ungated = pilotdeck_transport::system_clock::parse_node22_date(&JsString::from(wall));
         if zone == ":/nonexistent" {
-            assert!(
-                ungated.is_err(),
-                "#360-2 TZ={zone} must stay an unreadable path, got {ungated:?}"
+            // Node v22.22.0 parses the wall time at offset 0 here
+            // (`new Date("Sun Nov  6 08:49:37 1994")` is 784111777000): an
+            // identifier neither ICU nor the C library resolves is a fixed
+            // zone at offset 0 (`system_clock::host_zone`). The production
+            // entry below still fail-closes it through the allowlist.
+            assert_eq!(
+                ungated,
+                Ok(Some(784_111_777_000.0)),
+                "#360-2 TZ={zone} parses at offset 0 like Node"
             );
         } else {
             let parsed = ungated.unwrap_or_else(|error| {
