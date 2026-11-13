@@ -788,9 +788,15 @@ impl LiveSession for LiveSessionAdapter {
                 // The advisory hooks a user abort killed finish on the aborted
                 // turn's stream, before its terminal, as in the baseline: give
                 // their kill a bounded moment to land.
+                // The window is measured from the abort itself (the kill), not
+                // from when the loop finished unwinding.
                 if advisory_settled.signal.is_aborted() {
-                    let _ = tokio::time::timeout(ADVISORY_KILL_SETTLE, advisory_settled.settled())
-                        .await;
+                    let deadline = advisory_settled
+                        .signal
+                        .cancelled_at()
+                        .unwrap_or_else(tokio::time::Instant::now)
+                        + ADVISORY_KILL_SETTLE;
+                    let _ = tokio::time::timeout_at(deadline, advisory_settled.settled()).await;
                 }
                 result
             })),
