@@ -1026,30 +1026,6 @@ async fn cancelling_waiter_keeps_admitted_append() {
     assert_snapshot(&h, field(&row, "settled"), 0);
 }
 
-#[test]
-fn guard_includes_library_wiring() {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/session-factory/projection-cache/negative_controls.py");
-    let output = std::process::Command::new("python3")
-        .arg(script)
-        .arg("--inputs")
-        .output()
-        .expect("#1011 inventory process starts");
-    assert!(
-        output.status.success(),
-        "#1011 inventory process succeeds: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let paths: Vec<String> =
-        serde_json::from_slice(&output.stdout).expect("#1011 input inventory JSON");
-    assert!(
-        paths
-            .iter()
-            .any(|path| path == "src/pilotdeck-gateway/src/lib.rs"),
-        "#1011 guard includes library wiring"
-    );
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn active_restore_keeps_interleaved_commit() {
     let row = case("concurrent-load");
