@@ -2,17 +2,17 @@
   "about": "scripts/bbx/status.mjs 读的检查结果。手写，只记命令的当次输出，每项写明日期、提交、机器和来源；没有的就删掉那一项，status.mjs 会显示「没有数据」。fmt / clippy / doctest 的取值写 pass 或 fail。",
   "fourCommands": {
     "date": "2026-11-13",
-    "commit": "5b1aec8cd",
+    "commit": "6894f3dca",
     "machine": "cb8（Linux aarch64）",
     "fmt": "pass",
     "clippy": "pass",
     "nextest": {
-      "result": "pass",
-      "passed": 7755,
+      "result": "fail",
+      "passed": 7754,
       "total": 7755
     },
     "doctest": "pass",
-    "source": "cb8 上 ~/ws/pdrs-takeover/logs/verify-v16.log（verify.sh 一条龙：构建、单独重跑、全量对拍、四条命令）"
+    "source": "cb8 上 ~/ws/pdrs-takeover/logs/verify-v17.log。nextest 失败的 1 个是 channel::sms::head_timeout_tests::the_uninjected_head_deadline_is_nodes_sixty_seconds：固定端口 18973 当时被同机别的进程占用（测试自己的报错文案），同一提交随后单独重跑该模块 8/8 通过；上一个提交 5b1aec8cd 在 verify-v16 里 7755/7755 全过"
   },
   "upstreamTests": {
     "date": "2026-11-13",
