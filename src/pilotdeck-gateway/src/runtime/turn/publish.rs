@@ -406,7 +406,7 @@ impl Publication {
 pub struct TurnPublisher {
     publication: Arc<Publication>,
     coordinator: Arc<TurnEventCoordinator>,
-    _registration: TurnSinkRegistration,
+    registration: TurnSinkRegistration,
     /// Serializes every host synchronous segment: pump, external emit, finish
     /// and consumer cleanup. The owned sink only enqueues; no I/O is awaited.
     pump: Mutex<()>,
@@ -436,7 +436,7 @@ impl TurnPublisher {
         Self {
             publication,
             coordinator,
-            _registration: registration,
+            registration,
             pump: Mutex::new(()),
         }
     }
@@ -511,7 +511,11 @@ impl TurnPublisher {
                 state.finishing = true;
                 std::mem::take(&mut state.deferred)
             };
-            for event in deferred {
+            // Events emitted through `emit_before_terminal` while the turn
+            // ran: after everything the turn published, before its terminal.
+            let session = self.publication.run.session();
+            let held = self.coordinator.release_held(session, &self.registration);
+            for event in held.into_iter().chain(deferred) {
                 self.coordinator
                     .record(self.publication.run.session(), &event);
                 self.publication.enqueue(event);

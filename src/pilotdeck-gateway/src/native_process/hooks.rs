@@ -155,7 +155,36 @@ fn sdk_hook_url(url: &JsString, event: &JsString, matcher: usize) -> JsString {
 pub(super) struct GatewayHookProjection {
     pub session: JsString,
     pub emit: GatewayEmitSlot,
+    /// The sink for events held until the active turn publishes its terminal
+    /// (`TurnEventCoordinator::emit_before_terminal`).
+    pub emit_before_terminal: GatewayEmitSlot,
     pub sdk: bool,
+}
+
+/// Whether a transition is the completion of an advisory hook
+/// (`PreModelRequest` / `InstructionsLoaded`) that the turn's abort killed.
+///
+/// The baseline dispatches these two without awaiting them, under the turn's
+/// abort signal (AgentLoop.ts:699-702, 2281-2283;
+/// sidecarDefaultModuleDispatcher.ts:383-389), so a user abort kills the hook
+/// while the loop is streaming. Nothing orders the hook's completion against
+/// the aborted turn's own events there, but the order on the wire is stable:
+/// the completion waits for the child's `close` (SubprocessPort.ts:85, 137)
+/// while the truncated block comes back over the sidecar first, so the
+/// baseline emits the truncated `assistant_block`, then this completion, then
+/// `turn_completed`. Here the kill and the turn's abort handling race, so the
+/// completion is held until the turn has published everything but its
+/// terminal.
+fn is_aborted_advisory_completion(event: &JsObject) -> bool {
+    let is = |key: &str, value: &str| {
+        event
+            .get(key)
+            .and_then(JsValue::as_string)
+            .is_some_and(|field| field.equals_str(value))
+    };
+    is("type", "response")
+        && is("outcome", "cancelled")
+        && (is("hookEvent", "PreModelRequest") || is("hookEvent", "InstructionsLoaded"))
 }
 impl HookExecutionEventHandler for GatewayHookProjection {
     fn handle(&self, event: &JsObject) {
@@ -219,7 +248,12 @@ impl HookExecutionEventHandler for GatewayHookProjection {
             );
             projected.insert("detail".into(), JsValue::Object(detail));
         }
-        if let Some(emit) = self.emit.get() {
+        let emit = if is_aborted_advisory_completion(event) {
+            &self.emit_before_terminal
+        } else {
+            &self.emit
+        };
+        if let Some(emit) = emit.get() {
             emit(&self.session, JsValue::Object(projected));
         }
     }

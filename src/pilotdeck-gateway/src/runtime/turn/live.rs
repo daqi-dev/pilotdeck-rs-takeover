@@ -51,11 +51,17 @@ type PreparedHost = (
 /// The third argument is the turn's signal (also cancelled when the turn's
 /// session hook scope is revoked at its end); the fourth fires only on a user
 /// abort or session close, like the baseline turn's `abortSignal`.
+/// How long an aborted turn waits for the advisory hooks its abort killed
+/// (`AdvisorySignal::settled`) before publishing its terminal. A killed hook
+/// ends within milliseconds; a hook that outlives SIGTERM past this bound
+/// completes after the turn, off its stream.
+const ADVISORY_KILL_SETTLE: std::time::Duration = std::time::Duration::from_millis(1000);
+
 type TurnHostFactory = dyn Fn(
         ExecutionIdentity,
         Arc<Recorder>,
         crate::runtime::hooks::Cancellation,
-        crate::runtime::hooks::Cancellation,
+        crate::host::modules::lifecycle::AdvisorySignal,
     ) -> HostFuture<PreparedHost>
     + Send
     + Sync;
@@ -520,6 +526,8 @@ impl LiveSession for LiveSessionAdapter {
         let cancellation = Cancellation::default();
         let signal = crate::runtime::hooks::Cancellation::new();
         let user_abort = crate::runtime::hooks::Cancellation::new();
+        let advisory = crate::host::modules::lifecycle::AdvisorySignal::new(user_abort.clone());
+        let advisory_settled = advisory.clone();
         {
             let mut state = self.state.lock().unwrap();
             // #996: disposed-admission / active-admission drop the admission
@@ -635,7 +643,7 @@ impl LiveSession for LiveSessionAdapter {
                     }
                     // select constructs every branch before polling; keep the
                     // factory call lazy so a pre-cancel never creates resources.
-                    host = async { host_factory(request.identity.clone(), recorder.clone(), signal, user_abort).await } => host?,
+                    host = async { host_factory(request.identity.clone(), recorder.clone(), signal, advisory).await } => host?,
                 };
                 let session_steer = lifecycle
                     .as_ref()
@@ -751,12 +759,20 @@ impl LiveSession for LiveSessionAdapter {
                     pending.handoff();
                 }
                 let identity = request.identity.clone();
-                handler
+                let result = handler
                     .with_pump(
                         client.execute_cancellable(request, handler.clone(), cancellation),
                         identity,
                     )
-                    .await
+                    .await;
+                // The advisory hooks a user abort killed finish on the aborted
+                // turn's stream, before its terminal, as in the baseline: give
+                // their kill a bounded moment to land.
+                if advisory_settled.signal.is_aborted() {
+                    let _ = tokio::time::timeout(ADVISORY_KILL_SETTLE, advisory_settled.settled())
+                        .await;
+                }
+                result
             })),
             result: None,
             events: receiver,

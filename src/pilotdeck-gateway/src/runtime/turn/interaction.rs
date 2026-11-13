@@ -79,7 +79,7 @@ pub struct HookWiring {
     pub advisory: Option<Arc<dyn lifecycle::LifecyclePort>>,
     /// The turn's user-abort signal the advisory events run under. Unlike
     /// the input's `signal`, it does not fire when the turn simply ends.
-    pub advisory_signal: Option<Cancellation>,
+    pub advisory_signal: Option<lifecycle::AdvisorySignal>,
 }
 #[derive(Clone, Default)]
 pub struct InteractionPorts {

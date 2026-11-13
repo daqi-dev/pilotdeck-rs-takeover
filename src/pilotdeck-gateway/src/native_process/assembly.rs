@@ -474,6 +474,9 @@ async fn start_assembly(
     // built after the session factory, so it is published into this slot.
     // The project runtimes' background task completions use the same sink.
     let gateway_emit: super::permission_prompt::GatewayEmitSlot = Arc::default();
+    // The same sink for events the active turn holds until it publishes its
+    // terminal (`TurnEventCoordinator::emit_before_terminal`).
+    let gateway_emit_before_terminal: super::permission_prompt::GatewayEmitSlot = Arc::default();
     // `router.activeTurnRunId(sessionKey)`, published once the session owner
     // exists, for the router's retry-progress projection.
     let active_run: ActiveRunSlot = Arc::default();
@@ -565,6 +568,7 @@ async fn start_assembly(
     let prepare_recorders = recorders.clone();
     let prepare_interactions = interactions.clone();
     let prepare_gateway_emit = gateway_emit.clone();
+    let prepare_gateway_emit_before_terminal = gateway_emit_before_terminal.clone();
     let prepare_permission_rule_sets = permission_rule_sets.clone();
     // Forward reference so the prepare closure can call sync_permission_rules
     // after lease acquire (mirrors ProjectRuntimeRegistry.ts:305-308).
@@ -628,6 +632,7 @@ async fn start_assembly(
             let recorders = prepare_recorders.clone();
             let interactions = prepare_interactions.clone();
             let gateway_emit = prepare_gateway_emit.clone();
+            let gateway_emit_before_terminal = prepare_gateway_emit_before_terminal.clone();
             let async_hooks = prepare_async_hooks.clone();
             let permission_rule_sets = prepare_permission_rule_sets.clone();
             let mcp_config_handle = prepare_mcp_config.clone();
@@ -1226,6 +1231,7 @@ async fn start_assembly(
                         .with_hooks(
                             hook_settings.clone(),
                             gateway_emit.clone(),
+                            gateway_emit_before_terminal.clone(),
                             include_hook_events,
                             sdk_hooks.then(|| async_hooks.clone()),
                         )
@@ -1678,9 +1684,15 @@ async fn start_assembly(
             // disposal: once the stop has begun, the facade delivers nothing.
             let emit_disposed = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let release_disposed = emit_disposed.clone();
+            let held_disposed = emit_disposed.clone();
             let _ = gateway_emit.set(Arc::new(move |session, event| {
                 !emit_disposed.load(std::sync::atomic::Ordering::SeqCst)
                     && emit_coordinator.emit(session, &event)
+            }));
+            let held_coordinator = coordinator.clone();
+            let _ = gateway_emit_before_terminal.set(Arc::new(move |session, event| {
+                !held_disposed.load(std::sync::atomic::Ordering::SeqCst)
+                    && held_coordinator.emit_before_terminal(session, &event)
             }));
             let mut owner_options = SessionOwnerOptions::new(build_factory);
             (
