@@ -2742,7 +2742,7 @@ async fn google_stream_invocation_audit_records_sdk_bodies_and_settles_each_atte
     let request_text = String::from_utf16_lossy(request_body.units());
     assert_eq!(
         request_text,
-        r#"{"model":"m","contents":[],"config":{"maxOutputTokens":8,"automaticFunctionCalling":{"disable":true},"abortSignal":{}}}"#
+        r#"{"model":"m","contents":[{"parts":[{"text":""}],"role":"user"}],"config":{"maxOutputTokens":8,"automaticFunctionCalling":{"disable":true},"abortSignal":{}}}"#
     );
     let response_text = String::from_utf16_lossy(
         field(&records[0], "responseBody")
@@ -2800,7 +2800,7 @@ async fn google_stream_invocation_audit_records_sdk_bodies_and_settles_each_atte
     let raw = String::from_utf16_lossy(field(&last, "requestBody").as_string().unwrap().units());
     assert_eq!(
         raw,
-        r#"{"model":"m","contents":[],"config":{"maxOutputTokens":8,"automaticFunctionCalling":{"disable":true},"abortSignal":{}},"temperature":0.25,"generationConfig":{"temperature":0.5}}"#
+        r#"{"model":"m","contents":[{"parts":[{"text":""}],"role":"user"}],"config":{"maxOutputTokens":8,"automaticFunctionCalling":{"disable":true},"abortSignal":{}},"temperature":0.25,"generationConfig":{"temperature":0.5}}"#
     );
     // The SDK appends a received chunk before streamGuard rejects duration.
     let mut guarded_config = config.clone();
