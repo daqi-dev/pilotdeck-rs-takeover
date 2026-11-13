@@ -139,6 +139,29 @@ const cases = [
   ['sidecar messageId 段数不同', frame({ messageId: 'cancel-k3j2h1g0f9' }), frame({ messageId: 'cancel-k3j2-h1g0f9' }), 'DIFF'],
   ['名单外前缀的 messageId 不抹', frame({ messageId: 'msg-k3j2h1g0f9' }), frame({ messageId: 'msg-p9o8i7u6y5t' }), 'DIFF'],
   ['inReplyTo 不抹', frame({ inReplyTo: 'hello-k3j2h1g0f9' }), frame({ inReplyTo: 'hello-p9o8i7u6y5t' }), 'DIFF'],
+  // 规则 21：module_call 的 requestId / preparationId。
+  ['module_call 标识的随机段（各端口前缀、准备序号、plan-todo 序号）', frame({ lines: [
+    { method: 'module_call', requestId: 'model-prepare-k3j2h1g0f9' }, { method: 'module_call', requestId: 'model-sbkjwlh96f', payload: { preparationId: 'prepared-furx5a156x-1' } },
+    { method: 'module_call', requestId: 'context-prepare_for_model-a1b2' }, { requestId: 'tool-batch-zz9' }, { requestId: 'tool-q1' }, { requestId: 'permission-decide-0p' },
+    { requestId: 'lifecycle-dispatch-x1' }, { requestId: 'turn-drain_steer-y1' }, { requestId: 'budget-estimate_usage_cost-z1' }, { requestId: 'agent-event-w1' },
+    { requestId: 'tool-catalog-v1' }, { requestId: 'model-stream-next-u1', payload: { preparationId: 'prepared-furx5a156x-1' } }, { requestId: 'plan-todo-t1-2' }] }),
+  frame({ lines: [
+    { method: 'module_call', requestId: 'model-prepare-p9o8i7u6y5t' }, { method: 'module_call', requestId: 'model-w3k0cw1l8hn', payload: { preparationId: 'prepared-9y9iqgabqdj-1' } },
+    { method: 'module_call', requestId: 'context-prepare_for_model-c3d4e5' }, { requestId: 'tool-batch-aa1' }, { requestId: 'tool-q2' }, { requestId: 'permission-decide-1q' },
+    { requestId: 'lifecycle-dispatch-x2' }, { requestId: 'turn-drain_steer-y2' }, { requestId: 'budget-estimate_usage_cost-z2' }, { requestId: 'agent-event-w2' },
+    { requestId: 'tool-catalog-v2' }, { requestId: 'model-stream-next-u2', payload: { preparationId: 'prepared-9y9iqgabqdj-1' } }, { requestId: 'plan-todo-t2-2' }] }), 'SAME'],
+  ['应答回带的 requestId 与请求对得上', frame({ a: { requestId: 'tool-abc1' }, b: { acceptedCall: { requestId: 'tool-abc1' } } }), frame({ a: { requestId: 'tool-xyz9' }, b: { acceptedCall: { requestId: 'tool-xyz9' } } }), 'SAME'],
+  ['应答回带的 requestId 指向别的请求', frame({ a: { requestId: 'tool-abc1' }, b: { acceptedCall: { requestId: 'tool-abc1' } } }), frame({ a: { requestId: 'tool-xyz9' }, b: { acceptedCall: { requestId: 'tool-xyz8' } } }), 'DIFF'],
+  ['续取用了另一个准备', frame({ a: { preparationId: 'prepared-aa-1' }, b: { preparationId: 'prepared-aa-1' } }), frame({ a: { preparationId: 'prepared-bb-1' }, b: { preparationId: 'prepared-cc-1' } }), 'DIFF'],
+  ['module_call requestId 的端口前缀不同', frame({ requestId: 'model-k3j2h1g0f9' }), frame({ requestId: 'model-prepare-k3j2h1g0f9' }), 'DIFF'],
+  ['module_call requestId 的操作名不同', frame({ requestId: 'context-prepare_for_model-a1' }), frame({ requestId: 'context-capture_turn-a1' }), 'DIFF'],
+  ['preparationId 的序号不同', frame({ preparationId: 'prepared-aa-1' }), frame({ preparationId: 'prepared-bb-2' }), 'DIFF'],
+  ['plan-todo 的序号不同', frame({ requestId: 'plan-todo-aa-1' }), frame({ requestId: 'plan-todo-bb-2' }), 'DIFF'],
+  ['preparationId 一侧是 UUID 形状', frame({ preparationId: 'prepared-aa-1' }), frame({ preparationId: U1 }), 'DIFF'],
+  ['model-metadata 的 requestId 没有随机段，不抹', frame({ requestId: 'model-metadata-p-m' }), frame({ requestId: 'model-metadata-p-n' }), 'DIFF'],
+  ['名单外前缀的 requestId 不抹', frame({ requestId: 'rq-k3j2h1g0f9' }), frame({ requestId: 'rq-p9o8i7u6y5t' }), 'DIFF'],
+  ['别的键里的端口前缀形状不抹', frame({ id: 'model-k3j2h1g0f9' }), frame({ id: 'model-p9o8i7u6y5t' }), 'DIFF'],
+  ['requestId 的随机段多一段', frame({ requestId: 'tool-abc' }), frame({ requestId: 'tool-ab-c' }), 'DIFF'],
   ['sqlite 的 _json 单元格按内部字段放过', sql({ k: 'a', state_json: '{"x":1,"caseId":"r1"}' }, ['\\.state_json\\.<json>\\.caseId$']), sql({ k: 'a', state_json: '{"x":1,"caseId":"r2"}' }, ['\\.state_json\\.<json>\\.caseId$']), 'SAME'],
   ['sqlite 的 _json 单元格里别的字段照比', sql({ k: 'a', state_json: '{"x":1,"caseId":"r1"}' }, ['\\.state_json\\.<json>\\.caseId$']), sql({ k: 'a', state_json: '{"x":2,"caseId":"r2"}' }, ['\\.state_json\\.<json>\\.caseId$']), 'DIFF'],
   ['sqlite 的 _json 单元格写法不同', sql({ k: 'a', state_json: '{"x":1}' }), sql({ k: 'a', state_json: '{ "x": 1 }' }), 'DIFF'],
@@ -189,6 +212,11 @@ const cases = [
   ['别的 jsonl 文件里记录换位照报', art([], { tree: { '/home/.pilotdeck/other/events.jsonl': { mode: '644', jsonl: [{ phase: 'a' }, { phase: 'b' }] } } }), art([], { tree: { '/home/.pilotdeck/other/events.jsonl': { mode: '644', jsonl: [{ phase: 'b' }, { phase: 'a' }] } } }), 'DIFF'],
   ['计时行有无与数值', frame({ stdout: 'listening\n[gateway:turn-timing] {"totalMs":250}\nbye\n' }), frame({ stdout: 'listening\nbye\n' }), 'SAME'],
   ['计时行之外的输出', frame({ stdout: 'listening\n[gateway:turn-timing] {"totalMs":250}\nbye\n' }), frame({ stdout: 'listening\nBYE\n' }), 'DIFF'],
+  ['CLI stdout 末尾没有换行的计时行', art([{ step: { cli: [] }, cli: { stdout: 'hi\n[gateway:turn-timing] {"sessionKey":"s","phase":"released","releaseMs":231}', stderr: '' } }]), art([{ step: { cli: [] }, cli: { stdout: 'hi\n', stderr: '' } }]), 'SAME'],
+  ['stderr 里两侧各多一行不同阶段的计时行', art([{ step: { cli: [] }, cli: { stdout: '', stderr: 'a\n[gateway:turn-timing] {"phase":"accepted","totalMs":201}\nb\n' } }]), art([{ step: { cli: [] }, cli: { stdout: '', stderr: 'a\nb\n[gateway:turn-timing] not json at all\n' } }]), 'SAME'],
+  ['计时行前缀不在行首不摘', frame({ stdout: 'x [gateway:turn-timing] {"totalMs":250}\n' }), frame({ stdout: 'x\n' }), 'DIFF'],
+  ['别的 [gateway: 行照比', frame({ stdout: '[gateway:turn-timings] {"totalMs":250}\n' }), frame({ stdout: '' }), 'DIFF'],
+  ['计时行前缀少了空格不摘', frame({ stdout: '[gateway:turn-timing]{"totalMs":250}\n' }), frame({ stdout: '' }), 'DIFF'],
   ['标题换位连带的投影位置字段', withProj([rec('accepted_input'), title, rec('step_started'), rec('model_request')]), withProj([rec('accepted_input'), rec('step_started'), title, rec('model_request')]), 'SAME'],
   ['投影里别的字段不同照报', withProj([rec('accepted_input'), title, rec('step_started'), rec('model_request')]), withProj([rec('accepted_input'), rec('step_started'), title, rec('model_request')], 'other'), 'DIFF'],
   ['volatile 路径被略过', art([{ step: {}, frames: [{ used: 1 }] }], { volatile: ['\\.used$'] }), art([{ step: {}, frames: [{ used: 2 }] }], { volatile: ['\\.used$'] }), 'SAME'],
@@ -249,6 +277,13 @@ const collectorCases = [];
   collectorCases.push(['假代理：隧道接到假 provider', got?.steps[0]?.raw?.http?.status === 'HTTP/1.1 200 Connection Established' && (got?.provider?.default ?? []).length === 1]);
   collectorCases.push(['假代理：非本机目标回 502、不外连', / 502 /.test(got?.steps[2]?.raw?.http?.status ?? '') && got?.proxies?.P?.[0]?.target === 'example.com:443']);
   collectorCases.push(['假代理：写了 status 的代理拒绝 CONNECT', / 407 /.test(got?.steps[3]?.raw?.http?.status ?? '') && got?.proxies?.R?.length === 1]);
+}
+// 规则 11 的计数：差异报告头部写出每侧摘掉的行数。
+{
+  fs.writeFileSync(path.join(dir, 'a.json'), JSON.stringify(frame({ stdout: '[gateway:turn-timing] {"totalMs":250}\nok\n[gateway:turn-timing] {"releaseMs":300}' })));
+  fs.writeFileSync(path.join(dir, 'b.json'), JSON.stringify(frame({ stdout: 'ok\n' })));
+  const r = spawnSync(process.execPath, [path.join(here, 'diff.mjs'), path.join(dir, 'a.json'), path.join(dir, 'b.json')], { encoding: 'utf8' });
+  collectorCases.push(['比较器：报告头部写出两侧摘掉的计时行数', /摘掉 a 侧 2 行、b 侧 0 行/.test(r.stdout) && /SAME$/.test(r.stdout.trim())]);
 }
 for (const [name, ok] of collectorCases) if (!ok) { bad++; console.log(`不符合预期  采集器：${name}`); }
 fs.rmSync(dir, { recursive: true, force: true });

@@ -1,0 +1,165 @@
+{
+ "name": "sidecar-raw-stdio-cancel-pending",
+ "about": "stdio 部署：宿主收到 model module_call 后不回应，过一会儿 cancel。基线 callModule 在 abort 时立即删除挂起的调用并以 SidecarAbortError 拒绝（agentLoopSidecarServer.ts:446-457），循环以 aborted 结束：先推 agent.turn_completed（result aborted），再发 cancelled 终止帧（358-375 的 catch 不走，走 302 的 moduleOutcomeFromAgentResult），status 是 cancelled、cancelRequested true。之后宿主再回那条调用的应答（pendingCalls 里已经没有，137-143 不回）、再 cancel 一次（UNKNOWN_OPERATION）。(2) 带 requestId 的 cancel 同样。写完关闭 stdin，进程正常退出。",
+ "server": false,
+ "steps": [
+  {
+   "sidecar": "stdio",
+   "readMs": 3000,
+   "send": [
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x1",
+      "method": "execute",
+      "runId": "run-1",
+      "operationId": "op-1",
+      "requestId": "rq-1",
+      "payload": {}
+     }
+    },
+    {
+     "until": {
+      "text": "\"method\":\"module_call\""
+     },
+     "timeout": 8000,
+     "save": {
+      "m1Msg": "\"messageId\":\"([^\"]+)\"",
+      "m1Req": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "wait": 300
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "c1",
+      "method": "cancel",
+      "runId": "run-1",
+      "operationId": "op-1",
+      "reason": "user"
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-1\",\"final\":true"
+     },
+     "timeout": 10000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "s1",
+      "method": "status",
+      "requestId": "rq-1"
+     }
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-m1",
+      "inReplyTo": "{saved.m1Msg}",
+      "requestId": "{saved.m1Req}",
+      "ok": true,
+      "payload": {
+       "events": [
+        {
+         "type": "request_started",
+         "provider": "default",
+         "model": "default"
+        },
+        {
+         "type": "message_start",
+         "role": "assistant"
+        },
+        {
+         "type": "text_delta",
+         "text": "too late"
+        },
+        {
+         "type": "message_end",
+         "finishReason": "stop"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "wait": 300
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "c1b",
+      "method": "cancel",
+      "runId": "run-1",
+      "operationId": "op-1",
+      "reason": "user"
+     }
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "s1b",
+      "method": "status",
+      "requestId": "rq-1"
+     }
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x2",
+      "method": "execute",
+      "runId": "run-2",
+      "operationId": "op-2",
+      "requestId": "rq-2",
+      "payload": {}
+     }
+    },
+    {
+     "until": {
+      "text": "\"method\":\"module_call\""
+     },
+     "timeout": 8000,
+     "save": {
+      "m2Msg": "\"messageId\":\"([^\"]+)\"",
+      "m2Req": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "wait": 300
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "c2",
+      "method": "cancel",
+      "runId": "run-2",
+      "operationId": "op-2",
+      "reason": "user",
+      "requestId": "rq-2"
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-2\",\"final\":true"
+     },
+     "timeout": 10000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "s2",
+      "method": "status",
+      "requestId": "rq-2"
+     }
+    },
+    {
+     "text": "",
+     "end": true
+    }
+   ]
+  }
+ ]
+}

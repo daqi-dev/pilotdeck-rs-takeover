@@ -133,7 +133,15 @@ fn main() -> ExitCode {
         io::stdout(),
         Duration::from_secs(5),
     );
-    if report.complete() {
+    if report.stalled {
+        // pilotdeck-agent-loop-sidecar.ts:29 awaits sidecar.serve(), which
+        // awaits every execution (agentLoopSidecarServer.ts:205). With input
+        // ended and an execution pending on a host reply that can no longer
+        // come, Node's event loop empties and the process ends with exit code
+        // 13 (unsettled top-level await). Node's warning on stderr names its
+        // own script location and is not reproduced.
+        ExitCode::from(13)
+    } else if report.complete() {
         ExitCode::SUCCESS
     } else {
         // The OS process is the final supervisor for a stuck input/output/host

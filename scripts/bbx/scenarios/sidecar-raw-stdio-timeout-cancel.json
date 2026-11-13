@@ -1,0 +1,162 @@
+{
+ "name": "sidecar-raw-stdio-timeout-cancel",
+ "about": "stdio 部署：宿主以超时取消一次挂在宿主调用上的执行（reason 是 \"timeout:<runId>\"）。基线 cancel 分支看到这个原因就把 deadlineExceeded 记为 true（agentLoopSidecarServer.ts:178-180），不看执行带没带截止时间；abort 释放挂起的调用（446-457），循环结束后发 result_unknown 终止帧，code / error 是 DEADLINE_EXCEEDED（297-301、402-411），status 是 resolving。(1) 不带截止时间；(2) 带一个很远的 operationDeadline；(3) reason 是别的 runId 的 timeout:（只当普通取消）。写完关闭 stdin，进程正常退出。",
+ "server": false,
+ "steps": [
+  {
+   "sidecar": "stdio",
+   "readMs": 3000,
+   "send": [
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x1",
+      "method": "execute",
+      "runId": "run-1",
+      "operationId": "op-1",
+      "requestId": "rq-1",
+      "payload": {}
+     }
+    },
+    {
+     "until": {
+      "text": "\"method\":\"module_call\""
+     },
+     "timeout": 8000,
+     "save": {
+      "m1Msg": "\"messageId\":\"([^\"]+)\"",
+      "m1Req": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "wait": 300
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "c1",
+      "method": "cancel",
+      "runId": "run-1",
+      "operationId": "op-1",
+      "reason": "timeout:run-1"
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-1\",\"final\":true"
+     },
+     "timeout": 10000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "s1",
+      "method": "status",
+      "requestId": "rq-1"
+     }
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x2",
+      "method": "execute",
+      "runId": "run-2",
+      "operationId": "op-2",
+      "requestId": "rq-2",
+      "operationDeadline": "2999-01-01T00:00:00.000Z",
+      "payload": {}
+     }
+    },
+    {
+     "until": {
+      "text": "\"method\":\"module_call\""
+     },
+     "timeout": 8000,
+     "save": {
+      "m2Msg": "\"messageId\":\"([^\"]+)\"",
+      "m2Req": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "wait": 300
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "c2",
+      "method": "cancel",
+      "runId": "run-2",
+      "operationId": "op-2",
+      "reason": "timeout:run-2"
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-2\",\"final\":true"
+     },
+     "timeout": 10000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "s2",
+      "method": "status",
+      "requestId": "rq-2"
+     }
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x3",
+      "method": "execute",
+      "runId": "run-3",
+      "operationId": "op-3",
+      "requestId": "rq-3",
+      "payload": {}
+     }
+    },
+    {
+     "until": {
+      "text": "\"method\":\"module_call\""
+     },
+     "timeout": 8000,
+     "save": {
+      "m3Msg": "\"messageId\":\"([^\"]+)\"",
+      "m3Req": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "wait": 300
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "c3",
+      "method": "cancel",
+      "runId": "run-3",
+      "operationId": "op-3",
+      "reason": "timeout:run-1"
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-3\",\"final\":true"
+     },
+     "timeout": 10000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "s3",
+      "method": "status",
+      "requestId": "rq-3"
+     }
+    },
+    {
+     "text": "",
+     "end": true
+    }
+   ]
+  }
+ ]
+}

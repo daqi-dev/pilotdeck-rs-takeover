@@ -27,8 +27,10 @@
 //      照常报差异。挪的是内容，位置上的 sequence / entryId / parentEntryId / createdAt 不动（基线里它们也只随位置变）；
 //      同一会话的投影检查点里抄下来的这些位置字段跟着改
 //  10. always-on 的 events.jsonl 不比记录先后（基线不等待地追加，先后随机），只比记录集合与内容
-//  11. 服务进程 stdout 里的 "[gateway:turn-timing] {…}" 行整行去掉：它只在某一步耗时超过 200ms 时才打印，
-//      打不打、数值多少都随机器快慢变
+//  11. 以 "[gateway:turn-timing] " 开头的行整行去掉（连同行尾换行；最后一行没有换行也算），两侧都去：它只在某一步耗时
+//      达到 200ms 时才打印（基线 InProcessGateway.ts:1629、1820，console.info 到 stdout；Rust runtime/turn/submit.rs），
+//      打不打、数值多少都随机器快慢变。对产物里全部字符串做（CLI / serve 的 stdout、stderr 都在其中），不看行的其余内容；
+//      行中间出现这段文字、别的 "[gateway:" 行照比。每侧摘掉的行数在差异报告头部打印。基线没有别的「达到阈值才打」的日志
 //  12. 秒级时间戳      → <sec>（只认键名 created：apiServer 渠道的 OpenAI 兼容响应里 Math.floor(Date.now()/1000)，
 //      1.6e9 ~ 2.0e9 之间的整数；SSE 正文文本里的 "created":<10 位整数> 同样处理）。别的键名的 10 位整数照原样比
 //  13. 请求转储文件名  → pilotdeck_request_<dump:N>.json（PILOTDECK_DUMP_REQUEST=1 时 streamModel.ts:196-203 写的
@@ -77,6 +79,17 @@
 //      前缀在这张名单里、后面只有一段小写字母数字的值，随机段换成 <msg:N>，N 是它在该侧第一次出现的序号（与第 14 条同样的写法，
 //      保留「同一个 id」的关系）。前缀、段数照比；别的格式（包括多段的）不动。
 //      inReplyTo 指向的是客户端发的 messageId（场景写死），不抹
+//  21. agent loop sidecar 发给宿主的 module_call 的标识（宿主一侧的各个端口各自起名，随机段都是
+//      Math.random().toString(36).slice(2)）：键名为 requestId、形如 "<端口前缀>-<随机段>" 的值，前缀只认基线端口用过的
+//      model / model-prepare / model-materialize / model-stream-next / model-close-stream（hostModelInvokerPort.ts:99、128、161、185、198）、
+//      context-<操作>（hostContextRuntime.ts:48）、turn-<操作>（hostTurnCallbacks.ts:36）、budget-<操作>（hostModelBudgetPort.ts:37）、
+//      lifecycle-dispatch（hostLifecycleRuntime.ts:42）、agent-event（hostAgentEventBridge.ts:40）、tool / tool-catalog / tool-batch
+//      （hostToolPort.ts:163、190、242）、permission-decide（hostPermissionDecisionPort.ts:33），<操作> 是小写字母和下划线；
+//      另有 plan-todo-<随机段>-<序号>（hostPlanTodoPort.ts:62）。键名为 preparationId、形如 "prepared-<随机段>-<序号>" 的值
+//      （hostModelInvokerPort.ts:73）。只把随机段换成 <call:N>，N 是它在该侧第一次出现的序号（同一个值在这一侧各处出现编号相同，
+//      所以「应答引用的是不是那个请求」「流式续取用的是不是同一个准备」照常比）；前缀、操作名、序号照比。
+//      model-metadata-<provider>-<model>（pilotdeck-agent-loop-default-factory.ts:344）没有随机段，不抹；别的形状（例如 UUID 形状的
+//      preparationId）不动，照原样比
 // 数组按下标比。唯一的例外：元素全是带名字的对象（function.name 或 name，且名字不重复）的数组
 // 按名字对齐——缺的、多的各报一条，共有元素的相对顺序不同报一条，同名元素再逐字段比。
 // 这只改变差异的报法（少一个工具不再表现为后面所有工具都错位），不会让任何差异消失。
@@ -114,12 +127,15 @@ const ISO = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/
 
 // 规则 20 只认基线 sidecar 用过的前缀（agentLoopSidecarServer.ts 里 nextId 的全部调用，加上 handshake 的 hello / capabilities）。
 const SIDECAR_MESSAGE_ID = /^(hello|capabilities|parse|validation|module-call|cancel|status|resume|ack|accepted|event|final|failed|unknown|result-unknown|execute-rejected|deadline|stream)-([a-z0-9]+)$/;
+// 规则 21：module_call 的 requestId 与 preparationId。
+const SIDECAR_CALL_ID = /^(model(?:-prepare|-materialize|-stream-next|-close-stream)?|context-[a-z_]+|turn-[a-z_]+|budget-[a-z_]+|lifecycle-dispatch|agent-event|tool(?:-catalog|-batch)?|permission-decide)-([a-z0-9]+)$/;
+const SIDECAR_SEQUENCED_ID = /^(plan-todo|prepared)-([a-z0-9]+)-(\d+)$/;
 function normalizer() {
   const ids = new Map();
   const snaps = new Map();
   const snap = (id) => { if (!snaps.has(id)) snaps.set(id, snaps.size + 1); return `<snap:${snaps.get(id)}>`; };
   // 规则 14：sidecar 身份的随机段按出现顺序编号；规则 16：记忆检索的随机轨迹 id 同样编号。
-  const seq = { inst: new Map(), gen: new Map(), stream: new Map(), case: new Map(), trace: new Map(), msg: new Map() };
+  const seq = { inst: new Map(), gen: new Map(), stream: new Map(), case: new Map(), trace: new Map(), msg: new Map(), call: new Map() };
   const tag = (kind, id) => { const m = seq[kind]; if (!m.has(id)) m.set(id, m.size + 1); return `<${kind}:${m.get(id)}>`; };
   const SIDECAR_ID = {
     moduleInstanceId: (x) => x.replace(/^(.+-instance-)([a-z0-9]+)$/, (_, pre, r) => pre + tag('inst', r)),
@@ -128,10 +144,15 @@ function normalizer() {
     streamId: (x) => x.replace(/^stream-([a-z0-9]+)$/, (_, r) => 'stream-' + tag('stream', r)),
     // 规则 20：sidecar 应答帧的 messageId（agentLoopSidecarServer.ts:647-649 nextId = `${prefix}-${Math.random().toString(36).slice(2)}`）。
     messageId: (x) => x.replace(SIDECAR_MESSAGE_ID, (_, pre, r) => pre + '-' + tag('msg', r)),
+    // 规则 21：module_call 的 requestId（plan-todo 带序号）与 preparationId（hostModelInvokerPort.ts:73）。
+    requestId: (x) => x.replace(SIDECAR_CALL_ID, (_, pre, r) => pre + '-' + tag('call', r))
+      .replace(SIDECAR_SEQUENCED_ID, (all, pre, r, n) => pre === 'plan-todo' ? `${pre}-${tag('call', r)}-${n}` : all),
+    preparationId: (x) => x.replace(SIDECAR_SEQUENCED_ID, (all, pre, r, n) => pre === 'prepared' ? `${pre}-${tag('call', r)}-${n}` : all),
   };
   // turn-timing 行先删再给 UUID 编号：行里的 UUID 参与编号的话，一侧多打一行就会让后面所有序号错位。
   const dumps = new Map();
-  const text = (s) => s.replace(/^\[gateway:turn-timing\] \{.*\}\n/gm, '').replace(/pilotdeck_request_(1[6-9]\d{11}(?:_\d+_\d+)?)\.json/g, (_, ms) => {
+  const stripTiming = (s) => s.replace(/^\[gateway:turn-timing\] [^\n]*(?:\n|$)/gm, () => { walk.timing++; return ''; });
+  const text = (s) => stripTiming(s).replace(/pilotdeck_request_(1[6-9]\d{11}(?:_\d+_\d+)?)\.json/g, (_, ms) => {
     if (!dumps.has(ms)) dumps.set(ms, dumps.size + 1);
     return `pilotdeck_request_<dump:${dumps.get(ms)}>.json`;
   }).replace(UUID, (u) => {
@@ -160,6 +181,7 @@ function normalizer() {
     }
     return v;
   };
+  walk.timing = 0;
   return walk;
 }
 
@@ -321,8 +343,12 @@ function load(raw) {
     if (entry?.sqlite?.tables) for (const rows of Object.values(entry.sqlite.tables)) for (const row of rows) embedJson(row);
   }
   for (const k of Object.keys(IGNORED)) delete raw[k];
-  return normalizer()(raw);
+  const walk = normalizer();
+  const out = walk(raw);
+  timingLines.push(walk.timing);
+  return out;
 }
+let timingLines = [];
 
 const show = (v) => { const s = JSON.stringify(v); return s === undefined ? '(absent)' : s.length > 200 ? s.slice(0, 200) + `… (${s.length} chars)` : s; };
 // 数组元素的名字表；不是「全部元素都有不重复的名字」就返回 null。
@@ -373,10 +399,12 @@ export function diffArtifacts(rawA, rawB) {
   const locks = settleRegistryLock(rawA, rawB);
   markSelfChecked(rawA); markSelfChecked(rawB);
   const all = [];
+  timingLines = [];
   const a = load(rawA), b = load(rawB);
+  const timing = timingLines;
   selfChecked = 0;
   compare(a, b, '$', all);
-  return { all, sizes, locks, checked: selfChecked, a, b };
+  return { all, sizes, locks, checked: selfChecked, timing, a, b };
 }
 function main() {
   const args = process.argv.slice(2);
@@ -387,7 +415,7 @@ function main() {
   if (files.length < 2) { console.error('usage: diff.mjs <a.json> <b.json> [--max N] [--quiet] [--self]'); process.exit(2); }
   const [fa, fb] = files;
   const scenarioVolatile = (JSON.parse(fs.readFileSync(fa, 'utf8')).volatile ?? []).map((p) => new RegExp(p));
-  const { all, sizes, locks, checked } = diffArtifacts(JSON.parse(fs.readFileSync(fa, 'utf8')), JSON.parse(fs.readFileSync(fb, 'utf8')));
+  const { all, sizes, locks, checked, timing } = diffArtifacts(JSON.parse(fs.readFileSync(fa, 'utf8')), JSON.parse(fs.readFileSync(fb, 'utf8')));
   const scenarioAccepted = (JSON.parse(fs.readFileSync(fa, 'utf8')).accepted ?? []).map((x) => ({ ...x, res: x.paths.map((p) => new RegExp(p)), hits: 0 }));
   const stable = all.filter((d) => !scenarioVolatile.some((re) => re.test(d.at)));
   const diffs = stable.filter((d) => !scenarioAccepted.some((x) => x.res.some((re) => re.test(d.at)) && ++x.hits));
@@ -402,6 +430,7 @@ function main() {
     console.log(`  不比较的字段: ${Object.entries(IGNORED).map(([k, why]) => `${k}（${why}）`).join('；')}`);
     console.log(`  已接受差异: ${Object.entries(ACCEPTED).map(([k, [why]]) => `${k}（${why}）`).join('；')}`);
     if (sizes.records || sizes.tolerance) console.log(`  会话文件大小 fileSize（规则 17）: 两侧写到同样条数的记录，放过 ${sizes.records} 处；拼不出条数、差值在固定容差内，放过 ${sizes.tolerance} 处`);
+    if (timing[0] || timing[1]) console.log(`  耗时日志行 [gateway:turn-timing]（规则 11）: 摘掉 a 侧 ${timing[0]} 行、b 侧 ${timing[1]} 行`);
     if (checked) console.log(`  resultBytes / content-length（规则 19）: 两侧各自核对通过、数值不同，不比数值 ${checked} 处`);
     for (const k of locks) console.log(`  运行记录文件锁（规则 18）: ${k} 只在一侧有，两侧都略过`);
     if (scenarioVolatile.length) console.log(`  场景声明的不稳定路径: ${scenarioVolatile.map(String).join(' ')}（因此略过 ${all.length - stable.length} 处）`);

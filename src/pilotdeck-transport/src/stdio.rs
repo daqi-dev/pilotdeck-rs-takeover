@@ -70,6 +70,62 @@ struct Inner {
     state: Mutex<State>,
     wake: Arc<WakeSignal>,
     queue_capacity: usize,
+    turns: Turns,
+    /// Executions waiting on this closed connection for a settlement only
+    /// their abort can bring.
+    parked: AtomicU64,
+}
+/// Executions of one connection take turns between their outputs, the way
+/// the baseline's single event loop interleaves them: each execution runs
+/// until it has written one frame (an event or a module call), then lets the
+/// next waiting execution run; one waiting for a host reply is out of the
+/// queue until the reply is in. With one execution it never waits. Only the
+/// threads that [`ConnectionOwner::run_in_turns`] runs take part.
+#[derive(Debug, Default)]
+struct Turns {
+    state: Mutex<TurnQueue>,
+    changed: std::sync::Condvar,
+}
+#[derive(Debug, Default)]
+struct TurnQueue {
+    holder: Option<u64>,
+    waiting: VecDeque<u64>,
+    next: u64,
+}
+thread_local! {
+    static TURN: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+impl Turns {
+    fn wait_for(&self, ticket: u64) {
+        let mut queue = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        queue.waiting.push_back(ticket);
+        while queue.holder.is_some() || queue.waiting.front() != Some(&ticket) {
+            queue = self.changed.wait(queue).unwrap_or_else(|p| p.into_inner());
+        }
+        queue.waiting.pop_front();
+        queue.holder = Some(ticket);
+    }
+    fn release(&self, ticket: u64) {
+        let mut queue = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if queue.holder == Some(ticket) {
+            queue.holder = None;
+        }
+        drop(queue);
+        self.changed.notify_all();
+    }
+    /// After one written frame: let every execution already waiting go first.
+    fn pass(&self, ticket: u64) {
+        let others = !self
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .waiting
+            .is_empty();
+        if others {
+            self.release(ticket);
+            self.wait_for(ticket);
+        }
+    }
 }
 /// Clone is a handle to this exact connection, not a new generation.
 #[derive(Debug, Clone)]
@@ -88,10 +144,63 @@ impl ConnectionOwner {
             state: Mutex::new(State::default()),
             wake: Arc::new(WakeSignal::default()),
             queue_capacity: queue_capacity.max(1),
+            turns: Turns::default(),
+            parked: AtomicU64::new(0),
         }))
     }
     pub fn binding(&self) -> &SidecarBinding {
         &self.0.binding
+    }
+    /// Runs one execution of this connection in turns with the others (see
+    /// [`Turns`]).
+    pub(crate) fn run_in_turns<T>(&self, run: impl FnOnce() -> T) -> T {
+        let ticket = {
+            let mut queue = self.0.turns.state.lock().unwrap_or_else(|p| p.into_inner());
+            queue.next += 1;
+            queue.next
+        };
+        self.0.turns.wait_for(ticket);
+        TURN.with(|turn| turn.set(Some(ticket)));
+        struct Leave<'a>(&'a Turns, u64);
+        impl Drop for Leave<'_> {
+            fn drop(&mut self) {
+                TURN.with(|turn| turn.set(None));
+                self.0.release(self.1);
+            }
+        }
+        let _leave = Leave(&self.0.turns, ticket);
+        run()
+    }
+    /// How many executions wait on this closed connection for their abort.
+    pub(crate) fn parked(&self) -> u64 {
+        self.0.parked.load(Ordering::SeqCst)
+    }
+    fn park<T>(&self, wait: impl FnOnce() -> T) -> T {
+        struct Unpark<'a>(&'a AtomicU64);
+        impl Drop for Unpark<'_> {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+        self.0.parked.fetch_add(1, Ordering::SeqCst);
+        let _unpark = Unpark(&self.0.parked);
+        wait()
+    }
+    fn pass_turn(&self) {
+        if let Some(ticket) = TURN.with(std::cell::Cell::get) {
+            self.0.turns.pass(ticket);
+        }
+    }
+    /// Out of the turn queue while `wait` blocks (a host reply), back at its
+    /// end afterwards.
+    fn outside_turns<T>(&self, wait: impl FnOnce() -> T) -> T {
+        let Some(ticket) = TURN.with(std::cell::Cell::get) else {
+            return wait();
+        };
+        self.0.turns.release(ticket);
+        let result = wait();
+        self.0.turns.wait_for(ticket);
+        result
     }
     /// `nextId(prefix)` (agentLoopSidecarServer.ts:647-649): `${prefix}-${uuid()}`
     /// with the baseline sidecar's default id source,
@@ -250,6 +359,12 @@ impl ConnectionOwner {
             control.check()?;
             let mut state = self.0.state.lock().unwrap_or_else(|p| p.into_inner());
             if state.closed {
+                // The baseline's external loop keeps running an execution
+                // whose connection is gone; its stream events have nowhere to
+                // go and are dropped (agentLoopSidecarServer.ts:573-576).
+                if crate::factory_payload::external_deployment() {
+                    return Ok(());
+                }
                 return Err(before(closed()));
             }
             if state.data.len() < self.0.queue_capacity {
@@ -259,6 +374,7 @@ impl ConnectionOwner {
                 });
                 drop(state);
                 self.0.wake.notify();
+                self.pass_turn();
                 return Ok(());
             }
             drop(state);
@@ -703,6 +819,16 @@ impl BoundExchange {
             }
             control.check()?;
             if state.closed {
+                if crate::factory_payload::external_deployment() {
+                    // callModule (agentLoopSidecarServer.ts:446-465): the
+                    // call stays pending when it cannot be sent and settles
+                    // only on the execution's abort.
+                    drop(state);
+                    let owner = self.owner.clone();
+                    return Err(
+                        owner.outside_turns(|| owner.park(|| parked_until_cancelled(control)))
+                    );
+                }
                 return Err(before(closed()));
             }
             if state.data.len() < self.owner.0.queue_capacity {
@@ -767,7 +893,8 @@ pub(crate) struct PendingExchange {
 impl PendingExchange {
     pub(crate) fn wait(self, control: &CallControl) -> PortResult<HostExchangeResponse> {
         let (module, operation, scope) = (self.module, self.operation, self.scope.clone());
-        let response = self.wait_reply(control)?;
+        let owner = self.owner.clone();
+        let response = owner.outside_turns(|| self.wait_reply(control))?;
         scope.record(module, operation, response.boundary.value());
         Ok(response)
     }
@@ -888,6 +1015,27 @@ impl PendingExchange {
                         | pilotdeck_agent::ports::CancelCause::TransportClosed,
                 })
             );
+            // The baseline's external loop module (agentLoopSidecarServer.ts
+            // callModule, 446-457) releases a pending call the moment its
+            // execution is aborted: the abort listener deletes the pending
+            // entry and rejects with SidecarAbortError, so the loop ends on
+            // its abort and a later host reply is ignored (137-143). No
+            // reconciliation wait, no accepted-call uncertainty.
+            if dispatched
+                && !invalid
+                && matches!(
+                    cancellation,
+                    Some(PortError::Cancelled {
+                        cause: pilotdeck_agent::ports::CancelCause::Requested(_),
+                    })
+                )
+                && crate::factory_payload::external_deployment()
+            {
+                state.calls.remove(&message_id);
+                drop(state);
+                owner.0.wake.notify();
+                return Err(cancellation.expect("matched cancellation"));
+            }
             if dispatched && cancellation.is_some() && !deadline_exceeded {
                 // Reconcile only this already-dispatched identity. Cancellation
                 // cannot prove its outcome; a later valid ACK can settle it.
@@ -905,8 +1053,11 @@ impl PendingExchange {
             }
             let reconciliation_expired = reconciliation_deadline
                 .is_some_and(|deadline| std::time::Instant::now() >= deadline);
+            // A reply can no longer arrive on a closed connection, but the
+            // baseline's external loop still waits for its abort (above).
+            let gone = state.closed && !crate::factory_payload::external_deployment();
             if invalid
-                || state.closed
+                || gone
                 || hard_stopped
                 || deadline_exceeded
                 || reconciliation_expired
@@ -940,12 +1091,33 @@ impl PendingExchange {
                 }
                 return Err(cancellation.unwrap_or_else(|| before(closed())));
             }
+            let parked = state.closed;
             drop(state);
-            owner
-                .0
-                .wake
-                .wait(generation, reconciliation_deadline.or(control.deadline));
+            let wait = || {
+                owner
+                    .0
+                    .wake
+                    .wait(generation, reconciliation_deadline.or(control.deadline))
+            };
+            if parked {
+                owner.park(wait);
+            } else {
+                wait();
+            }
         }
+    }
+}
+/// Blocks until the execution is cancelled (or its deadline passes) and
+/// returns that cancellation.
+fn parked_until_cancelled(control: &CallControl) -> PortError {
+    loop {
+        if let Err(error) = control.check() {
+            return error;
+        }
+        let until = control
+            .deadline
+            .unwrap_or_else(|| Instant::now() + std::time::Duration::from_secs(3600));
+        control.cancellation.wait_until(until);
     }
 }
 fn same_execution(a: &ExecutionIdentity, b: &ExecutionIdentity) -> bool {
@@ -1124,6 +1296,9 @@ fn known_uncertainty(state: &State, identity: &ExecutionIdentity) -> Option<Port
         })
 }
 impl HostExchange for BoundExchange {
+    fn bound_identity(&self) -> Option<ExecutionIdentity> {
+        Some(self.identity.clone())
+    }
     fn exchange(
         &mut self,
         control: &CallControl,

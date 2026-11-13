@@ -1,0 +1,177 @@
+{
+ "name": "sidecar-raw-stdio-model",
+ "about": "stdio 部署上一次完整的 execute，场景扮演宿主应答 sidecar 发来的 model module_call（hostModelInvokerPort.ts:194-213，requestId model-<随机>、payload.preparationId prepared-<随机>-<序号>；diff.mjs 规则 21）：(1) 宿主回成功的事件流（ok: true, payload.events），比 sidecar 推出的 agent.* 事件、completed 终止帧（payload.result / messages / seedState / modelState）与之后的 status；(2) 宿主回失败（ok: false + code + error.message），callModule 记下 moduleFailure（agentLoopSidecarServer.ts:472-484），终止帧是 failed，带 code、error 与 payload.moduleFailure；(3) 宿主回的 payload 没有 events 数组（INVALID_MODEL_RESPONSE）。每一步等到上一条终止帧再发下一条 execute。写完关闭 stdin，进程正常退出。",
+ "server": false,
+ "steps": [
+  {
+   "sidecar": "stdio",
+   "readMs": 4000,
+   "send": [
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x1",
+      "method": "execute",
+      "runId": "run-1",
+      "operationId": "op-1",
+      "requestId": "rq-1",
+      "payload": {}
+     }
+    },
+    {
+     "until": {
+      "text": "\"method\":\"module_call\""
+     },
+     "timeout": 8000,
+     "save": {
+      "m1Msg": "\"messageId\":\"([^\"]+)\"",
+      "m1Req": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-m1",
+      "inReplyTo": "{saved.m1Msg}",
+      "requestId": "{saved.m1Req}",
+      "ok": true,
+      "payload": {
+       "events": [
+        {
+         "type": "request_started",
+         "provider": "default",
+         "model": "default"
+        },
+        {
+         "type": "message_start",
+         "role": "assistant"
+        },
+        {
+         "type": "text_delta",
+         "text": "hi from host"
+        },
+        {
+         "type": "message_end",
+         "finishReason": "stop"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-1\",\"final\":true"
+     },
+     "timeout": 10000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "s1",
+      "method": "status",
+      "requestId": "rq-1"
+     }
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x2",
+      "method": "execute",
+      "runId": "run-2",
+      "operationId": "op-2",
+      "requestId": "rq-2",
+      "payload": {}
+     }
+    },
+    {
+     "until": {
+      "text": "\"method\":\"module_call\""
+     },
+     "timeout": 8000,
+     "save": {
+      "m2Msg": "\"messageId\":\"([^\"]+)\"",
+      "m2Req": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-m2",
+      "inReplyTo": "{saved.m2Msg}",
+      "requestId": "{saved.m2Req}",
+      "ok": false,
+      "code": "PROVIDER_DOWN",
+      "error": {
+       "message": "provider down"
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-2\",\"final\":true"
+     },
+     "timeout": 10000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "s2",
+      "method": "status",
+      "requestId": "rq-2"
+     }
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x3",
+      "method": "execute",
+      "runId": "run-3",
+      "operationId": "op-3",
+      "requestId": "rq-3",
+      "payload": {}
+     }
+    },
+    {
+     "until": {
+      "text": "\"method\":\"module_call\""
+     },
+     "timeout": 8000,
+     "save": {
+      "m3Msg": "\"messageId\":\"([^\"]+)\"",
+      "m3Req": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-m3",
+      "inReplyTo": "{saved.m3Msg}",
+      "requestId": "{saved.m3Req}",
+      "ok": true,
+      "payload": {
+       "nothing": true
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-3\",\"final\":true"
+     },
+     "timeout": 10000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "s3",
+      "method": "status",
+      "requestId": "rq-3"
+     }
+    },
+    {
+     "text": "",
+     "end": true
+    }
+   ]
+  }
+ ]
+}

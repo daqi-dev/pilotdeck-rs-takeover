@@ -1,0 +1,17 @@
+{
+ "name": "sidecar-raw-stdio-half-line-eof",
+ "about": "stdio 部署：一个完整的 hello 之后写半行再关闭 stdin。readline 在输入结束时把半行当最后一行交出（agentLoopSidecarServer.ts:108-123），JSON.parse 失败回 INVALID_JSON；stdio 的输出端没有随输入结束而关闭（与 TCP 的 sidecar-raw-half-line-eof 不同），所以这一行照常写出，进程正常退出。",
+ "server": false,
+ "steps": [
+  {
+   "sidecar": "stdio",
+   "send": [
+    {
+     "text": "{\"kind\":\"request\",\"messageId\":\"d1\",\"method\":\"hello\",\"payload\":{}}\n{\"kind\":\"request\",\"messageId\":\"d2\",\"method\":\"hel",
+     "end": true
+    }
+   ],
+   "readMs": 4000
+  }
+ ]
+}

@@ -1,0 +1,92 @@
+{
+ "name": "sidecar-raw-stdio-execute-terminal",
+ "about": "stdio 部署上不需要宿主模块的 execute 路径（同 sidecar-raw-execute-terminal）：载荷让默认工厂立即失败时回 accepted 再发失败终止帧；已过期的截止时间回 DEADLINE_EXCEEDED；解析不了的截止时间当作没有；之后 status 的快照、终止后 cancel 回 UNKNOWN_OPERATION、同一身份重发 execute 照常再跑、同一 requestId 换 operation。写完关闭 stdin，进程正常退出。",
+ "server": false,
+ "steps": [
+  {
+   "sidecar": "stdio",
+   "send": [
+    {
+     "text": "{\"kind\":\"request\",\"messageId\":\"x1\",\"method\":\"execute\",\"runId\":\"run-1\",\"operationId\":\"op-1\",\"requestId\":\"rq-1\",\"payload\":{\"seedState\":\"bad\"}}\n"
+    },
+    {
+     "wait": 600
+    },
+    {
+     "text": "{\"kind\":\"request\",\"messageId\":\"s1\",\"method\":\"status\",\"requestId\":\"rq-1\"}\n{\"kind\":\"request\",\"messageId\":\"c1\",\"method\":\"cancel\",\"runId\":\"run-1\",\"operationId\":\"op-1\",\"reason\":\"user\",\"requestId\":\"rq-1\"}\n"
+    },
+    {
+     "text": "{\"kind\":\"request\",\"messageId\":\"x2\",\"method\":\"execute\",\"runId\":\"run-1\",\"operationId\":\"op-1\",\"requestId\":\"rq-1\",\"payload\":{\"seedState\":\"bad\"}}\n"
+    },
+    {
+     "wait": 600
+    },
+    {
+     "text": "{\"kind\":\"request\",\"messageId\":\"x3\",\"method\":\"execute\",\"runId\":\"run-2\",\"operationId\":\"op-2\",\"requestId\":\"rq-1\",\"payload\":{\"seedState\":\"bad\"}}\n"
+    },
+    {
+     "wait": 600
+    },
+    {
+     "text": "{\"kind\":\"request\",\"messageId\":\"x3b\",\"method\":\"execute\",\"runId\":\"run-1\",\"operationId\":\"op-1\",\"requestId\":\"rq-3\",\"payload\":{\"modelState\":5}}\n"
+    },
+    {
+     "wait": 600
+    },
+    {
+     "text": "{\"kind\":\"request\",\"messageId\":\"s2\",\"method\":\"status\",\"requestId\":\"rq-1\"}\n{\"kind\":\"request\",\"messageId\":\"s3\",\"method\":\"status\",\"requestId\":\"rq-3\"}\n{\"kind\":\"request\",\"messageId\":\"s4\",\"method\":\"status\",\"requestId\":\"rq-4\"}\n"
+    },
+    {
+     "text": "{\"kind\":\"request\",\"messageId\":\"x5\",\"method\":\"execute\",\"runId\":\"run-5\",\"operationId\":\"op-5\",\"requestId\":\"rq-5\",\"payload\":{},\"operationDeadline\":\"2000-01-01T00:00:00.000Z\"}\n"
+    },
+    {
+     "wait": 300
+    },
+    {
+     "text": "{\"kind\":\"request\",\"messageId\":\"s5\",\"method\":\"status\",\"requestId\":\"rq-5\"}\n{\"kind\":\"request\",\"messageId\":\"c5\",\"method\":\"cancel\",\"runId\":\"run-5\",\"operationId\":\"op-5\",\"reason\":\"user\"}\n"
+    },
+    {
+     "text": "{\"kind\":\"request\",\"messageId\":\"x6\",\"method\":\"execute\",\"runId\":\"run-5\",\"operationId\":\"op-5\",\"requestId\":\"rq-5\",\"payload\":{},\"operationDeadline\":\"2000-01-01T00:00:00.000Z\"}\n"
+    },
+    {
+     "wait": 300
+    },
+    {
+     "text": "{\"kind\":\"request\",\"messageId\":\"x7\",\"method\":\"execute\",\"runId\":\"run-7\",\"operationId\":\"op-7\",\"requestId\":\"rq-7\",\"payload\":{},\"attemptDeadline\":\"2000-01-01\",\"idempotencyKey\":\"k\",\"sessionId\":\"sess\",\"turnId\":\"turn\"}\n"
+    },
+    {
+     "wait": 300
+    },
+    {
+     "text": "{\"kind\":\"request\",\"messageId\":\"x8\",\"method\":\"execute\",\"runId\":\"run-8\",\"operationId\":\"op-8\",\"requestId\":\"rq-8\",\"payload\":{\"seedState\":\"bad\"},\"operationDeadline\":\"garbage\"}\n"
+    },
+    {
+     "wait": 600
+    },
+    {
+     "text": "{\"kind\":\"request\",\"messageId\":\"x9\",\"method\":\"execute\",\"runId\":\"run-9\",\"operationId\":\"op-9\",\"requestId\":\"rq-9\",\"payload\":{\"seedState\":\"bad\"},\"operationDeadline\":\"Jan 1 2000\"}\n"
+    },
+    {
+     "wait": 600
+    },
+    {
+     "text": "{\"kind\":\"request\",\"messageId\":\"x10\",\"method\":\"execute\",\"runId\":\"run-10\",\"operationId\":\"op-10\",\"requestId\":\"rq-10\",\"payload\":{\"seedState\":\"bad\"},\"operationDeadline\":\"\"}\n"
+    },
+    {
+     "wait": 600
+    },
+    {
+     "text": "{\"kind\":\"request\",\"messageId\":\"x11\",\"method\":\"execute\",\"runId\":\"run-11\",\"operationId\":\"op-11\",\"requestId\":\"rq-11\",\"payload\":{\"seedState\":\"bad\"},\"operationDeadline\":\"2000-01-01T00:00:00+05:00\",\"attemptDeadline\":\"2999-01-01T00:00:00Z\"}\n"
+    },
+    {
+     "wait": 600
+    },
+    {
+     "text": "{\"kind\":\"request\",\"messageId\":\"s11\",\"method\":\"status\",\"requestId\":\"rq-11\"}\n{\"kind\":\"request\",\"messageId\":\"s7\",\"method\":\"status\",\"requestId\":\"rq-7\"}\n{\"kind\":\"request\",\"messageId\":\"s9\",\"method\":\"status\",\"requestId\":\"rq-9\"}\n",
+     "end": true
+    }
+   ],
+   "readMs": 4000
+  }
+ ]
+}

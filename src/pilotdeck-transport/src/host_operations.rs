@@ -2109,7 +2109,36 @@ pub(crate) fn call<E: HostExchange>(
     if !methods.supports(module, operation) {
         return Err(PortError::NotAdvertised { module, operation });
     }
-    let exchanged = exchange.exchange(control, module, operation, call.effect(), payload(&call))?;
+    let exchanged =
+        match exchange.exchange(control, module, operation, call.effect(), payload(&call)) {
+            Ok(exchanged) => exchanged,
+            // The baseline's external loop module rejects a pending tool call the
+            // moment its execution is aborted; its capability port turns that
+            // into `onAbort("tool_cancelled")` and the thrown "Tool execution
+            // cancelled." (hostToolPort.ts:199-203, 251-256).
+            Err(PortError::Cancelled {
+                cause: CancelCause::Requested(_),
+            }) if crate::factory_payload::external_deployment()
+                && matches!(
+                    &call,
+                    HostCall::ExecuteBatch { .. } | HostCall::ExecuteSingle { .. }
+                ) =>
+            {
+                if let (HostCall::ExecuteBatch { .. }, Some(identity)) =
+                    (&call, exchange.bound_identity())
+                {
+                    return Ok(HostReply::ToolBatchRejected {
+                        message: "Tool execution cancelled.".into(),
+                        boundary: BoundarySnapshot::capture(&JsValue::Undefined),
+                        identity: Box::new(identity),
+                    });
+                }
+                return Err(PortError::Cancelled {
+                    cause: CancelCause::Requested("tool_cancelled".into()),
+                });
+            }
+            Err(error) => return Err(error),
+        };
     let response = exchanged.boundary.value();
     let unresolved = || PortError::AcceptedUnknown {
         identity: Box::new(exchanged.identity.clone()),
@@ -2433,6 +2462,35 @@ pub(crate) fn call<E: HostExchange>(
         return Err(admission_error(a::invalid(
             "Advertised model metadata callback requires prepare metadata",
         )));
+    }
+    // In the baseline's external loop module, a successful model reply
+    // without its events is the model port's own INVALID_MODEL_RESPONSE Error
+    // (hostModelInvokerPort.ts:208-212, 171-174, 221-223), which the loop
+    // handles like any failed model request. The gateway's own in-process
+    // loop keeps treating a malformed accepted reply as an unknown outcome.
+    let events = response.get("payload").and_then(|p| p.get("events"));
+    let malformed_model_reply = match &call {
+        _ if !crate::factory_payload::external_deployment() => None,
+        HostCall::ModelEagerStream { .. } if !matches!(events, Some(JsValue::Array(_))) => {
+            Some("Model module response must contain canonical events.")
+        }
+        HostCall::ModelPull { .. }
+            if !matches!(events, Some(JsValue::Array(_)))
+                || !matches!(
+                    response.get("payload").and_then(|p| p.get("done")),
+                    Some(JsValue::Bool(_))
+                ) =>
+        {
+            Some("Model stream_next response must contain events and done.")
+        }
+        _ => None,
+    };
+    if let Some(message) = malformed_model_reply {
+        return Err(PortError::HostFailure {
+            code: "INVALID_MODEL_RESPONSE".into(),
+            message: message.into(),
+            boundary: exchanged.boundary.clone(),
+        });
     }
     let reply = reply(response, &call).map_err(admission_error)?;
     if !call.accepts(&reply) {
