@@ -1,7 +1,6 @@
 {
  "name": "agent-loop-sidecar-tcp-restart",
  "about": "PILOTDECK_AGENT_LOOP_TRANSPORT=tcp，两轮之间断开与 sidecar 重启：gateway 每轮新建一条连接、轮末关闭（agentLoopSidecarClient.ts:355-362、425），两轮之间代理上没有连着的连接；第一轮后 sidecar 被 SIGKILL 再重启（新实例、新 moduleInstanceId），第二轮照常执行，不需要重启 gateway，也没有任何重连或恢复记录。比较帧、会话记录（两组 agent_loop_operation_*）、provider 请求、代理上的连接数与 sidecar 进程的退出。",
- "volatile": ["\\.jsonl\\[\\d+\\]\\.binding\\.(moduleInstanceId|connectionGeneration)$", "\\.jsonl\\[\\d+\\]\\.streamId$"],
  "env": {
   "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
   "PILOTDECK_AGENT_LOOP_TCP_PORT": "38413"

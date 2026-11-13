@@ -1,7 +1,6 @@
 {
  "name": "agent-loop-sidecar-tcp-cut",
  "about": "PILOTDECK_AGENT_LOOP_TRANSPORT=tcp，gateway 经采集器的 TCP 代理连 sidecar；一轮进行中（宿主正替 sidecar 发模型请求时）代理断开连接，sidecar 进程不退出。基线客户端串行处理消息（agentLoopSidecarClient.ts:544-579，module_call 在 :572 等宿主执行完再写回），模型请求结束后写回应答时发现套接字已关（tcpAgentLoopSidecarConnection.ts:75-80），不重连（:895-904，默认 sidecar 不支持续传），按传输中断记 result_unknown 终态，轮次失败。同一会话下一轮新建连接、同一个 sidecar 实例照常执行。比较帧、会话记录、provider 请求、代理断开时还连着的连接数与 sidecar 进程的退出。",
- "volatile": ["\\.jsonl\\[\\d+\\]\\.binding\\.(moduleInstanceId|connectionGeneration)$", "\\.jsonl\\[\\d+\\]\\.streamId$"],
  "env": {
   "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
   "PILOTDECK_AGENT_LOOP_TCP_PORT": "38413"

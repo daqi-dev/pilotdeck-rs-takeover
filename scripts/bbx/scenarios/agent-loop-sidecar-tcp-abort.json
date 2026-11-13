@@ -1,10 +1,6 @@
 {
  "name": "agent-loop-sidecar-tcp-abort",
  "about": "PILOTDECK_AGENT_LOOP_TRANSPORT=tcp 下中止一轮（与 agent-loop-sidecar-stdio-abort 相同的输入）：a 模型流式输出中 abort_turn；b bash 工具执行中 abort_turn；随后 a 的会话再提交一轮。宿主经 TCP 向 sidecar 发 cancel（agentLoopSidecarClient.ts:931-958），sidecar 以 cancelled 收尾（agentLoopSidecarServer.ts:169-192、358），常驻 sidecar 不因中止退出。",
- "volatile": [
-  "\\.jsonl\\[\\d+\\]\\.binding\\.(moduleInstanceId|connectionGeneration)$",
-  "\\.jsonl\\[\\d+\\]\\.streamId$"
- ],
  "env": {
   "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
   "PILOTDECK_AGENT_LOOP_TCP_PORT": "38414"

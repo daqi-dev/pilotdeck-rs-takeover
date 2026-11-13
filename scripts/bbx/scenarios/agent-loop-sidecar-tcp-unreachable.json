@@ -1,7 +1,6 @@
 {
  "name": "agent-loop-sidecar-tcp-unreachable",
  "about": "PILOTDECK_AGENT_LOOP_TRANSPORT=tcp 但端口上没有 sidecar：启动只解析配置不连（AgentLoopDeploymentProfile.ts:52-58、createLocalGateway.ts:623-627），服务照常起来；每轮在 connect 时失败（tcpAgentLoopSidecarConnection.ts:135-161 的 Failed to connect to sidecar TCP server.），execute 没发出，不写 agent_loop_operation_* 记录，没有重试。同一会话失败后再提交一次；之后把 sidecar 起起来，同一会话第三次提交成功（不需要重启 gateway）。标题请求延迟 1.5 秒，让标题记录稳定落在失败记录之后。",
- "volatile": ["\\.jsonl\\[\\d+\\]\\.binding\\.(moduleInstanceId|connectionGeneration)$", "\\.jsonl\\[\\d+\\]\\.streamId$"],
  "env": {
   "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
   "PILOTDECK_AGENT_LOOP_TCP_PORT": "38414"

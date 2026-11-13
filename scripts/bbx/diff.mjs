@@ -34,6 +34,12 @@
 //  13. 请求转储文件名  → pilotdeck_request_<dump:N>.json（PILOTDECK_DUMP_REQUEST=1 时 streamModel.ts:196-203 写的
 //      os.tmpdir()/pilotdeck_request_<Date.now()>.json；文件名里的毫秒后面紧跟 ".json"，第 3 条不抹）。N 是它在该侧
 //      第一次出现的序号，保留「同一个文件」的关系，两个文件不会被抹成同一个键
+//  14. agent loop sidecar 的随机身份（agentLoopSidecarServer.ts:101-102、621；moduleRuntime 的 streamId）：
+//      键名为 moduleInstanceId 的 "<模块>-instance-<随机>"、connectionGeneration 的 "<实例>-<随机>-<随机>…"、
+//      streamId 的 "stream-<随机>"，随机段（小写字母数字）各自换成 <inst:N> / <gen:N> / <stream:N>，N 是它在该侧
+//      第一次出现的序号。保留「同一个实例 / 同一代连接 / 同一条流」的关系（例如重启后是不是新实例），
+//      前缀（模块名）和段数照比；格式不符的值不动
+//  15. sqlite 里 *_json 列的 JSON 文本先解析再比（不是抹值，是让差异落到内部字段路径上，见 embedJson）
 // 数组按下标比。唯一的例外：元素全是带名字的对象（function.name 或 name，且名字不重复）的数组
 // 按名字对齐——缺的、多的各报一条，共有元素的相对顺序不同报一条，同名元素再逐字段比。
 // 这只改变差异的报法（少一个工具不再表现为后面所有工具都错位），不会让任何差异消失。
@@ -76,6 +82,15 @@ function normalizer() {
   const ids = new Map();
   const snaps = new Map();
   const snap = (id) => { if (!snaps.has(id)) snaps.set(id, snaps.size + 1); return `<snap:${snaps.get(id)}>`; };
+  // 规则 14：sidecar 身份的随机段按出现顺序编号。
+  const seq = { inst: new Map(), gen: new Map(), stream: new Map() };
+  const tag = (kind, id) => { const m = seq[kind]; if (!m.has(id)) m.set(id, m.size + 1); return `<${kind}:${m.get(id)}>`; };
+  const SIDECAR_ID = {
+    moduleInstanceId: (x) => x.replace(/^(.+-instance-)([a-z0-9]+)$/, (_, pre, r) => pre + tag('inst', r)),
+    connectionGeneration: (x) => x.replace(/^(.+-instance-)([a-z0-9]+)((?:-[a-z0-9]+)+)$/, (_, pre, r, rest) =>
+      pre + tag('inst', r) + rest.split('-').slice(1).map((g) => '-' + tag('gen', g)).join('')),
+    streamId: (x) => x.replace(/^stream-([a-z0-9]+)$/, (_, r) => 'stream-' + tag('stream', r)),
+  };
   // turn-timing 行先删再给 UUID 编号：行里的 UUID 参与编号的话，一侧多打一行就会让后面所有序号错位。
   const dumps = new Map();
   const text = (s) => s.replace(/^\[gateway:turn-timing\] \{.*\}\n/gm, '').replace(/pilotdeck_request_(1[6-9]\d{11})\.json/g, (_, ms) => {
@@ -101,7 +116,7 @@ function normalizer() {
     if (typeof v === 'number') return v > 1.6e12 && v < 2.0e12 ? (Number.isInteger(v) ? '<ms>' : '<ms.frac>') : v;
     if (Array.isArray(v)) return v.map(walk);
     if (v && typeof v === 'object') {
-      return Object.fromEntries(Object.entries(v).map(([k, x]) => [text(k), PID_KEYS.includes(k) && Number.isInteger(x) ? '<pid>' : DURATION_KEYS.includes(k) && typeof x === 'number' ? dur(x) : k === 'snapshotId' && /^[0-9a-f]{64}$/.test(x) ? snap(x) : k === 'requestFingerprint' && typeof x === 'string' ? '<fingerprint>' : k === 'created' && Number.isInteger(x) && x > 1.6e9 && x < 2.0e9 ? '<sec>' : walk(x)]));
+      return Object.fromEntries(Object.entries(v).map(([k, x]) => [text(k), PID_KEYS.includes(k) && Number.isInteger(x) ? '<pid>' : DURATION_KEYS.includes(k) && typeof x === 'number' ? dur(x) : k === 'snapshotId' && /^[0-9a-f]{64}$/.test(x) ? snap(x) : k === 'requestFingerprint' && typeof x === 'string' ? '<fingerprint>' : k === 'created' && Number.isInteger(x) && x > 1.6e9 && x < 2.0e9 ? '<sec>' : Object.hasOwn(SIDECAR_ID, k) && typeof x === 'string' ? walk(SIDECAR_ID[k](x)) : walk(x)]));
     }
     return v;
   };
@@ -144,6 +159,18 @@ function resettleProjections(v, moved) {
 // 记录的集合和每条内容照比。
 const UNORDERED_JSONL = /\/always-on\/projects\/[^/]+\/events\.jsonl$/;
 const orderKey = (r) => JSON.stringify(r).replace(UUID, 'U').replace(ISO, 'T').replace(/\d{13}(\.\d+)?/g, 'M');
+// 规则 15：sqlite 里列名以 _json 结尾、内容是 JSON 对象 / 数组的文本单元格，先解析再比，差异落到内部的
+// 字段路径上（…state_json.<json>.recentCaseTraces[0].caseId），场景因此能只放过真正随机的子字段。
+// 文本的写法不丢：与 JSON.stringify(解析结果) 逐字相同时记成 {"<json>": 解析结果}，否则另带原文
+// {"<json>": …, "<raw>": 原文}，原文照整串比。
+function embedJson(row) {
+  for (const [col, v] of Object.entries(row)) {
+    if (!/_json$/.test(col) || typeof v !== 'string') continue;
+    let parsed; try { parsed = JSON.parse(v); } catch { continue; }
+    if (!parsed || typeof parsed !== 'object') continue;
+    row[col] = JSON.stringify(parsed) === v ? { '<json>': parsed } : { '<json>': parsed, '<raw>': v };
+  }
+}
 function load(file) {
   const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
   for (const [name, entry] of Object.entries(raw.tree ?? {})) {
@@ -153,6 +180,7 @@ function load(file) {
       if (moved.size && projections?.json) resettleProjections(projections.json, moved);
     }
     if (UNORDERED_JSONL.test(name) && Array.isArray(entry?.jsonl)) entry.jsonl.sort((x, y) => (orderKey(x) < orderKey(y) ? -1 : orderKey(x) > orderKey(y) ? 1 : 0));
+    if (entry?.sqlite?.tables) for (const rows of Object.values(entry.sqlite.tables)) for (const row of rows) embedJson(row);
   }
   for (const k of Object.keys(IGNORED)) delete raw[k];
   return normalizer()(raw);
