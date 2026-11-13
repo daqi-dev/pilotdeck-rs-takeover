@@ -16,10 +16,8 @@
 
 | 问题 | 功能域 | 位置 / 依据 | 来源 | 状态 |
 |---|---|---|---|---|
-| Linux 上稳定不一致：`skills-session-snapshot-at-create`（Rust 的系统提示词多约 40 个 token）。其余 5 个已在 `275ce32dc` 修掉（对拍根目录改成等长的 `/tmp/private`、场景余量），待 cb8 验收确认 | ext | cb8 全量对拍 | cb8 验收 | 在修（Linux 遗留子代理，2026-11-13 派） |
-| 会话写入锁目录 `pilotdeck-ledger-locks-<uid>/` 建在共享临时目录（基线没有跨进程写入栅栏）：别的用户可抢先建同名目录让会话写入失败；`TMPDIR` 为空串时落到当前目录。这道栅栏是 Rust 独有的对外行为（拿不到锁时报 `Session operation ledger is locked.`），是否站得住取决于基线在两个写者下会不会损坏会话。两个转储场景因它各剩 1 处差异 | session | `storage/transcript.rs:460-607`；场景 `env-dump-request-tmpdir`、`proto-dump-request` | 任务预算与中止差异 | 在修（2026-11-13 派）。规则已定：先量基线（两个 server 共用 home；server 与离线 CLI 同写一个会话）。基线不损坏→删掉跨进程栅栏；基线损坏→保留并登记，锁目录优先 `XDG_RUNTIME_DIR`、目录准备不出来时退回无栅栏。不挪到 `PILOT_HOME`（会让每个场景的落盘树多一个目录） |
-| `skills-extension-watch-symlink` 在 Linux 上稳定差 2 处：基线比 Rust 多打「Extensions changed」日志行（子代理对 Linux 上 `fs.watch` 的推断不对） | ext | cb8 验收（`9a5fb723b`）两次单独重跑与全量 | cb8 验收 | 在修（Linux 遗留子代理） |
 | `turn-steer-terminal`：轮次进行中插话（steer）后，会话文件里插话记录与本轮记录的先后与基线不同（Rust 的循环在 sidecar 里，落盘经宿主一跳）。macOS 与 cb8 都稳定差 33 处 | loop, session | 场景 `turn-steer-terminal`；cb8 验收（`6894f3dca`） | 审阅 | 待派（与 sidecar 进程内化一起评估） |
+| Rust 的标题生成比基线晚约 55 ms 落盘（基线约 25 ms，Rust 约 75 ms，`turn-text` 等场景里都是）：`modules-tools-result-unknown-sidecar-binding` 因此标题记录与 `agent_loop_operation_started` 的先后和基线相反（基线 36/36，Rust 20/20 相反）。原因没查，怀疑每次请求新建 HTTP 客户端或没关 Nagle；可能与台账里「`submit_turn` 约 300 ms 对基线约 47 ms」同源 | model, session, modules | 记录的 createdAt；cb8 上的量测 | Linux 遗留差异的报告 | 在修（2026-11-14 派：查 Rust 每个模型请求的固定延迟） |
 | 轮次超时之后的收尾：基线超时后停止转发、客户端收到 `result_unknown`，但被中止的循环在后台继续收尾（hook 照跑、事件写进 `runs/registry.json`、会话记录照写、子代理按自己的期限结束）；Rust 超时时立刻关闭会话写入，这些都没有。16 个 `abort-timeout-*` 场景全部不一致 | loop, session, hooks | 矩阵文件第 4 节 | 中止语义审查（`specs/delivery/abort-matrix.md`） | 在修（2026-11-14 派；基线这一段依赖两个异步操作谁先完成，先两侧各量 20 次） |
 | `abort-model-stream`：Rust 读一个被中止过的会话的历史时，缺上一轮保留的流（两轮都复现，成因没查） | session, loop | 场景 `abort-model-stream` | 中止语义审查（`specs/delivery/abort-matrix.md`） | 在修（同上一个子代理） |
 | 配置热重载的子系统部分整块没有（G1）：服务运行中改了 `cron` / `alwaysOn` / `proxy` / `adapters` / `telemetry` 的配置（含界面改设置），基线重启对应子系统并打日志，Rust 静默不生效，要重启。`assembly/automation.rs` 的 `reload` 已写好但只有测试调用 | config, auto, channels | `native_process/assembly.rs:1998`；基线 `pilotdeck.ts:132-206`；无场景 | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 在修（2026-11-13 派） |
@@ -57,6 +55,7 @@
 | 问题 | 功能域 | 位置 / 依据 | 来源 | 状态 |
 |---|---|---|---|---|
 | Rust sidecar 每帧单独写，Node 把同一轮里的几次写合并成一块；TS 宿主对一次读到几帧敏感，上游对拍工具里 14 个稳定场景因此记录先后不同（帧内容一致） | modules | `scripts/upstream-tests` 的 parity 组 | 上游 sidecar 测试 | 记为已知 |
+| `hook-cancelled`：被中止杀掉的 PreToolUse hook 来不来得及写第一行日志（`hooklog/pre-slow.jsonl`）两侧都不稳，但 Rust 写到的概率更高（基线 5/40，Rust 19/40）——疑似中止送到 hook 进程的链路比基线长 | hooks | cb8 上各 40 次 | Linux 遗留差异的报告 | 待派（先量中止到 SIGTERM 的延迟；基线自己不稳，届时声明最窄的 volatile） |
 | `abort-hook-subagent-start`：会话文件里标题记录的位置（Rust 更早落盘）；`abort-turn-finishing`：Rust 一轮更慢，中止落在标题生成解绑之前，标题被取消、下一轮重生成（基线这时已解绑）。两处都没有两侧各量 20 次 | session, loop | 场景同名 | 中止语义审查（`specs/delivery/abort-matrix.md`） | 在修（同上：先量） |
 | HTTP 传输字节，hyper 1.7.0 内部决定、应用代码碰不到的三处：400 / 431 应答多带 `content-length: 0`（`role.rs:463-481`）；HTTP/1.0 请求回 `HTTP/1.0` 状态行（`conn.rs:681-688`）；请求头写一半就半关闭时基线回 400、Rust 不回。`gw-http-raw-requests` 因此一直不一致（DIFF 4）。可行的办法是在 hyper 前加一层预读自己写原始字节（`user_dialog/http_store.rs` 的 HeaderGuard 已这样处理 431），改动面不小 | gw | 场景 `gw-http-raw-requests` | gw 缺口审查 | 等人定（加预读层对齐，或经人同意列入允许不一致的清单） |
 | 性能待查（调试构建）：`submit_turn` 约 300ms 对基线约 47ms；空闲 CPU 约 3% 对 0%；扩展监视在 3 万个文件的树下空闲 5.4% 对 1.9% | * | 审阅修复的测量脚本 | 审阅修复 | 性能报告时用发布构建重量 |
@@ -71,14 +70,13 @@
 | `scripts/upstream-tests/run.mjs` 的缺省运行包含 parity 组，而它在 Rust 上按设计有 14 个不过，所以退出码不能反映「计入的全过」；也还没在 Linux 上跑过 | modules | 主会话 | 待派 |
 | 耗时的位数漏进字节数：帧里的 `fileSize` 已由比较器规则 17 处理（按「文件写到第几条记录」对齐）。同一毛病还在工具结果的 `resultBytes` 与发给 provider 的 `content-length` 上（`loop-multi-tool` 5 次里 2 次因此差 4 处）；另有一批只为 `fileSize` 声明的 `volatile` 现在多余（`gap-tool-glob`、`gap-tool-grep`、`gap-agent-sandbox-workspace-write`、`sdk-config-forward-subagent-text`、`tool-agent-child-stream`，以及约 15 个长正则里的 `fileSize` 一项） | * | Linux 差异；尺子修复的报告 | 待派（规则已定：`resultBytes` 与 `content-length` 各自核对「等于本侧原文的字节数」，成立就不比数值；多余的声明先做基线自比再删） |
 | 基线停机偶发退出码 1（`gap-tool-grep` 自比 3 次里 2 次，疑似停机时触发未捕获异常的处理，`cli/pilotdeck.ts:266-274`）：频率和条件没量清，是否登记为基线 bug 未定 | gw | Linux 差异 | 待量 |
-| 基线停机时运行记录有时停在 `running`（`tool-goal-permission` 基线连跑 30 次里 3 次：停机抢在终态写入之前），该场景因此偶发不一致 | session | 尺子修复的报告 | 待派（基线自己不稳，声明最窄的 volatile） |
+| 基线停机不等运行记录写完（`shutdownCoordinator.ts:13-14` 在 stop 之后直接 `process.exit`）：`runs/registry.json` 的在途写入随机丢失，三种表现——只留下锁文件（规则 18 已处理）；两侧都留锁文件但进程号不同（规则 18 管不到）；留下 `.tmp` 文件、记录停在 `running`（Rust 是终态）。`tool-goal-permission` 30 次里 3 次，两个 `hook-*-server-stop` 在 cb8 上基线自比 10 次里 3 次和 5 次 | session, hooks | 尺子修复与 Linux 遗留差异的报告 | 在修（2026-11-14 派：尺子第二批） |
 | `abort-hook-pre-tool`（`close_session` 列）与 `hook-cancelled` 是同一个基线 bug（被中止杀掉的 PreToolUse hook 不阻断，工具仍执行），还没登记；场景由 `abort.gen.mjs` 生成，登记要写在生成脚本里 | hooks | 场景同名 | 中止语义审查（`specs/delivery/abort-matrix.md`） | 在修（同上一个子代理：沿用 `aborted-hook-does-not-run-tool`，只放过 `ran-*.txt`） |
 | cb8 是共用机器：同机别人跑同一套测试时，固定端口的测试（18973、18990、28999）会失败。`6894f3dca` 的全量 nextest 因此 7754/7755，单独重跑通过 | channels | cb8 验收（`6894f3dca`） | 记为已知（第 5 条的 cb8 那一次要挑没人跑的时候，或以接手仓库的 CI 为准） |
 | Rust 调试构建的一轮比基线慢 4–8 倍（压缩一步约 0.5–0.8 秒），时间余量紧的场景在慢机器上会翻红 | * | Linux 差异 | 性能报告时看发布构建 |
 | `surface.json` 标为「不计」的项（第一组 28 项，第二组又有若干：TUI 本地命令、QQ 前缀、做不到的错误码等），理由是子代理写的，抽查五项成立；整张表要人过目（交付标准第 2 条） | * | 审阅 | 待整理 |
 | 约 35 个没有 `volatile` / `accepted` 的新场景，没有逐条核对说明与步骤是否对得上 | * | 审阅 | 待派 |
 | `compact-auto` 的主会话从来不触发压缩（假 provider 报的 `prompt_tokens 12` 让校准后的估算值很低），场景说明与实际不符。要查还有多少场景「一致只是因为没测到它声称测的东西」 | context, * | 任务预算与中止差异 | 待派（场景说明与实际触发行为的核对） |
-| cb8 上的遗留（macOS 上一致）：两个 `hook-*-server-stop` 单槽位重跑稳定差 1 处（6 次），四槽位全量里有时一致、有时差 178 处（基线 10 帧、Rust 6 帧）；`cli-run-resume` 连续四轮 INVALID（基线一侧第 16 步连接失败）；`hook-cancelled` 登记范围之外还剩 `hooklog/pre-slow.jsonl`（基线没有、Rust 有）；`modules-tools-result-unknown-sidecar-binding` 标题记录与另一条记录的先后偶发相反 | hooks, cli, modules | cb8 验收（`6894f3dca`） | 在修（Linux 遗留子代理：先各量 20 次分清是谁不稳） |
 
 ## 审阅读过、未发现问题的
 

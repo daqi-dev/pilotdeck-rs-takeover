@@ -127,6 +127,7 @@ cb8 的情况（2026-11-12）：Ubuntu 24.04、aarch64、20 核、119 GB；Rust 
 | 经项目内的符号链接写文件（`/api/web` 写入、建目录） | 只做字面检查，四种写法都回 200 并写到项目外，包括覆盖项目外已有的文件（`projectFiles.ts:238`） | 回 403 `workspace_boundary`（与对 `..` 的拒绝同形），项目外不落盘。读取两侧一致，都拒绝 | 场景 `gw-http-api-web-symlink-escape` 的 `accepted` |
 | WS 每连接排队待写的字节 | 无上限：客户端不读时把应答堆在进程内存里（`websocket.ts:31-38` 不看 `socket.write` 的返回值） | 上限 64 MiB：队列非空、再加一帧会超过时以 1009「output limit exceeded」关闭这一条连接；空队列时单帧照发。场景 `gw-conn-slow-reader`（停读期间 20000 个约 2 KB 的应答）两侧一致 | 未登记在场景里（正常使用达不到） |
 | WS 单帧负载 | 不设上限，但缓冲按帧长平方增长：64 MiB 一帧 RSS 约 4.4 GB；300 MiB 一帧 60 秒无应答、RSS 约 14 GB | 上限 100 MiB，超过以 1009「frame too large」关闭这一条连接 | 未登记在场景里（只有量测） |
+| 同一会话先后有两个进程写入（两个 server 共用 home；或 server 载入会话后离线 CLI 续写同一会话） | 两边都「成功」，但各用内存里的序号追加（`SessionRuntime.ts:64`），序号重复；之后任何进程续这个会话都报「Session event sequence must increase strictly」，重启也恢复不了 | 跨进程单写者栅栏拒绝第二个写者：WS 上 `gateway_submit_failed`「Session writer is still draining; retry session recreation.」，改名回 `SESSION_WRITER_BUSY`。server 在会话存活期间一直持有栅栏，所以两轮之间用离线 CLI 续同一会话也会被拒。锁文件在 `os.tmpdir()/pilotdeck-ledger-locks-<uid>/`（Linux 上优先 `XDG_RUNTIME_DIR`），目录准备不出来时退回无栅栏 | `second-writer-rejected-not-corrupting`（两个 `session-two-writers-*` 场景，放过范围宽）；`ledger-lock-dir-in-tmpdir`（两个转储场景） |
 | 断线后 sidecar 进程里的孤儿执行（TCP 部署） | 永远挂着 | 回收 | 未登记（gateway 一侧看不出差别） |
 | 显式时区名的解析（时间工具、cron、配置校验） | Node 自带 ICU 数据 | 内置 IANA 数据（`jiff-tzdb` 2025b），不读系统 tzdata；推翻旧决策卡「不内嵌 tzdata」，冻结账本 `A8.3-CRON-TZ-ALIAS-001` 已过时，2026-11-13 追加更正件 `-R2`（只新增文件） | 场景 `*-legacy-zones`、`time-process-tz` |
 
