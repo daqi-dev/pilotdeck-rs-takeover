@@ -50,6 +50,8 @@ node scripts/bbx/diff.mjs /tmp/a.json /tmp/b.json          # 两份基线互比�
 
 服务端令牌：采集器给 server 的令牌在环境变量里，基线这时不写 `server-token` 文件，而探测要求这个文件存在且非空，所以这类场景要在 `files` 里放 `home/.pilotdeck/server-token`。
 
+收尾：基线 CLI 连上 server 后从不关连接，`cli` 步骤只能等超时被 SIGKILL；被杀的客户端只留下半关闭的套接字，基线 server 不处理（`src/gateway/server/websocket.ts:19-20` 只听 `close` / `error`），之后 SIGTERM 停机永远等不完。所以 `cli-cron-online-*` / `cli-default-online-*` 以 `{"stopServer": "SIGKILL"}` 收尾，停机行为不在这些场景里比（这是基线 server 的一处挂起，Rust 的 server 在同样情况下正常退出，两边的差别要另行决定）。
+
 改 `diff.mjs` 之后先跑比较器自测：`node scripts/bbx/selftest.mjs`（也检查上面「没设变量就跳过」的几条）。它给比较器喂成对的小产物，检查每条归一化规则该抹的抹掉了、规则旁边「差一点」的改动仍然报差异。新增归一化规则时同时加这两类例子。
 
 ## 进度总表
@@ -78,7 +80,7 @@ node scripts/bbx/status-selftest.mjs                         # 自测（假产�
 | `env` | 额外环境变量 |
 | `provider` | 假 provider 的应答规则，按顺序匹配请求体文本：`when` 全部包含、`unless` 全部不包含；`reply` 可以是 `{text}`、`{tool:{name,arguments}}`、`{status,body}`。规则里的字符串（含工具参数）可用下面的 `{ROOT}` 等占位符。请求按命中的规则名分组记录 |
 | `server` | `false` 表示不起服务（纯 CLI 场景） |
-| `steps` | 依次执行：`{ws, params, answer}`（`answer` 见下）、`{http: "GET /path", headers, body}`、`{cli: [参数...], stdin, cwd, env}`、`{serve: [参数...]}`（见下）、`{connect: true}`（重连；也可以给一个完整的 hello 帧）、`{disconnect: true}`（客户端发关闭帧断开；不发关闭帧的几种见下）、`{sleep: 毫秒}`、`{sidecar: "start" / "stop"}` 与 `{tcpProxy: "start" / "cut"}`（见下） |
+| `steps` | 依次执行：`{ws, params, answer}`（`answer` 见下）、`{http: "GET /path", headers, body}`、`{cli: [参数...], stdin, cwd, env}`、`{serve: [参数...]}`（见下）、`{connect: true}`（重连；也可以给一个完整的 hello 帧）、`{disconnect: true}`（客户端发关闭帧断开；不发关闭帧的几种见下）、`{sleep: 毫秒}`、`{sidecar: "start" / "stop"}` 与 `{tcpProxy: "start" / "cut"}`、`{stopServer: 信号}`（见下） |
 | 步骤的 `timeout` | `ws` / `http` / `cli` / `serve` 等待的毫秒数，缺省 30000 |
 | 步骤的 `expectTimeout` | `true` 表示这一步在基线上本来就会超时（如等一个采集器不回答的询问、命令常驻不退出）。只有声明了的超时不判 `INVALID`；连不上不能这样声明 |
 | `expectStartFailure` | `true` 表示 `"server"` 起的服务预期启动失败。`serve` / `cli` 步骤里进程自己退出是被比较的输出，不需要声明 |
@@ -88,6 +90,10 @@ node scripts/bbx/status-selftest.mjs                         # 自测（假产�
 | `accepted` | 已接受差异 `[{id, why, paths: [正则]}]`，只用于基线自身的 bug（Rust 有意不照做）。命中的差异略过并打印条数；基线 vs Rust 时某条正则一处都没命中报 `STALE`，计 1 处差异 |
 
 `ws` 步骤可以带 `answer`，用来在这一步等待期间应答服务端发来的询问（权限询问、提问）：`"answer": [{"on": {"type": "permission_request"}, "ws": "permission_decide", "params": {"sessionKey": "s", "requestId": "{event.requestId}", "decision": "allow"}, "count": 1}]`。收集该步骤的帧时，每遇到一个属于本步骤、且 `on` 里各字段都与事件相等的事件帧，就用第一条还有余量的规则发一个请求；`params` 里的 `{event.字段}` 换成触发事件的字段值，`count` 是该规则最多应答几次（缺省不限）。发出的请求和它收到的帧记在该步骤的 `answers` 里，照常比较。两侧用的是同一段采集代码。
+
+`cli` 步骤可以带 `until` 与 `then`：stdout 或 stderr 里出现 `until` 时（进程还在不在都行）依次执行 `then` 里的步骤，然后照常等进程退出或超时；没等到 `until` 进程就结束了时 `then` 不执行，记成空数组。用来在一个不退出的 CLI 进程还连着 server 时做事，例如停掉 server。
+
+`{"stopServer": "SIGTERM"}`（值是信号名）给 `"server"` 起的被测服务发信号，等它退出，记下 `exitCode` 与 `signal`；15 秒不退就 SIGKILL 整个进程组，如实记成 SIGKILL。之后收尾不再停机。假 provider 的 `reply` 上写 `"killServer": "SIGKILL"` 则在命中这条规则时给 server 发这个信号（只发不等），用来让 server 在一轮进行中消失。
 
 `cli` 和 `serve` 步骤可以带 `env`：盖在场景环境之上，值为 `null` 表示删掉该变量（例如去掉采集器默认给的 `PILOTDECK_GATEWAY_TOKEN`）。
 

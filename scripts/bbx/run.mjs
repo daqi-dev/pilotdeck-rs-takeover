@@ -241,6 +241,8 @@ const mock = http.createServer(async (req, res) => {
   // 在一轮进行中打断外部 sidecar（见下面的 sidecar / tcpProxy 步骤）：先做这件事，再照常应答。
   // killSidecar: 信号名，发给当前的 sidecar 进程；cutProxy: true，断开 TCP 代理上现有的全部连接（代理继续监听）。
   if (reply.killSidecar && sidecarProc) { try { sidecarProc.child.kill(reply.killSidecar); } catch {} }
+  // killServer: 信号名，发给 "server" 起的被测服务（用来在一轮进行中让 server 消失；只发信号，不等它退出）。
+  if (reply.killServer && server && server.exitCode === null && server.signalCode === null) { try { server.kill(reply.killServer); } catch {} }
   if (reply.cutProxy) { for (const s of proxySockets.splice(0)) s.destroy(); }
   if (reply.status) { res.writeHead(reply.status, { 'content-type': 'application/json' }); res.end(JSON.stringify(reply.body ?? {})); return; }
   // 应答的组成：文本（text 或分块的 chunks）、推理文本（reasoning）、零到多个工具调用（tool / tools；
@@ -704,6 +706,19 @@ const runStep = async (step) => {
     return { serve: { reached, exitCode, signal, stdout, stderr }, then, ...(timedOut && { timedOut }) };
   }
   if (step.sidecar) return { sidecar: await sidecarStep(step) };
+  if (step.stopServer) {
+    // 给 "server" 起的被测服务发信号（stopServer 的值是信号名），等它退出，记下退出码和信号；15 秒不退就
+    // SIGKILL 整个进程组，如实记成 SIGKILL。之后收尾不再停机。
+    if (!server || server.exitCode !== null || server.signalCode !== null) {
+      return { stopServer: { running: false, exitCode: server?.exitCode ?? null, signal: server?.signalCode ?? null } };
+    }
+    const exited = new Promise((r) => server.once('exit', (code, sig) => r({ exitCode: code, signal: sig })));
+    server.kill(step.stopServer);
+    const killer = setTimeout(() => { try { process.kill(-server.pid, 'SIGKILL'); } catch {} }, 15000);
+    const result = await exited;
+    clearTimeout(killer);
+    return { stopServer: result };
+  }
   if (step.tcpProxy) return { tcpProxy: await proxyStep(step) };
   if (step.cli) {
     const [cmd, ...prefix] = SIDES[side].cli;
@@ -713,9 +728,21 @@ const runStep = async (step) => {
     child.stdin.end(step.stdin ?? '');
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, step.timeout ?? STEP_TIMEOUT_MS);
-    const [exitCode, signal] = await new Promise((r) => child.on('close', (c, s) => r([c, s])));
+    let ended = false;
+    const closed = new Promise((r) => child.on('close', (c, s) => { ended = true; r([c, s]); }));
+    // until / then：stdout 或 stderr 里出现 until 时（进程还在不在都行），依次执行 then 里的步骤，然后照常等进程退出。
+    // 进程没输出 until 就结束了（或超时）时 then 不执行，记成空数组。
+    let then;
+    if (step.until !== undefined) {
+      const until = subst(step.until);
+      const seen = () => stdout.includes(until) || stderr.includes(until);
+      while (!seen() && !ended) await sleep(20);
+      then = [];
+      if (seen()) for (const inner of step.then ?? []) then.push({ step: inner, ...(await runStep(inner)) });
+    }
+    const [exitCode, signal] = await closed;
     clearTimeout(timer);
-    return { cli: { exitCode, signal, stdout, stderr }, ...(timedOut && { timedOut }) };
+    return { cli: { exitCode, signal, stdout, stderr }, ...(then && { then }), ...(timedOut && { timedOut }) };
   }
   throw new Error(`unknown step: ${JSON.stringify(step)}`);
 };
@@ -748,7 +775,7 @@ out.unsolicited = allFrames.filter((f) => !['notification', 'hello_ok', 'respons
 if (ws) ws.close();
 
 // ── 停机：SIGTERM，记退出码 ──
-if (server && server.exitCode === null) {
+if (server && server.exitCode === null && server.signalCode === null) {
   const exited = new Promise((r) => server.on('exit', (code, signal) => r({ code, signal })));
   server.kill('SIGTERM');
   out.shutdown = await Promise.race([exited, sleep(15000).then(() => ({ timeout: true }))]);
