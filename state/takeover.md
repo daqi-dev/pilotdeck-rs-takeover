@@ -135,6 +135,7 @@ cb8 的情况（2026-11-12）：Ubuntu 24.04、aarch64、20 核、119 GB；Rust 
 | 遥测上报到外部地址 | `telemetry.enabled` 时上报 | 不实现 | 待登记 |
 | 客户端不发关闭帧就消失（进程被强杀 / 只关 TCP），且服务端此后再没写过那条连接时停机 | SIGTERM 后 `server.close()` 一直等这条半开连接，进程退不出（`websocket.ts:17-21` 不听 end，`GatewayServer.ts:184-186`） | 停机时结束半开连接，正常退出 | `stop-hangs-on-vanished-client`（`cli-run-model-no-project`、`robust-drop-half-close-midturn`、`robust-drop-cli-kill-midturn`） |
 | wecom 保存的状态文件是 JSON 真值原始值（`"abc"`、`5`） | `WeComSessionMapper` 构造函数抛 TypeError，启动失败、退出码 1（`WeComSessionMapper.ts:27-31`） | 照常启动（与状态文件为假值 0 时基线自己的表现相同） | `wecom-primitive-state-crash`（`cfg-adapters-wecom-bad-state`） |
+| sidecar 发给宿主的模块调用帧里的 `abortSignal` 字段 | 帧里带 `"abortSignal":{}`（`hostModelInvokerPort.ts:101` 把 AbortSignal 放进调用对象），与基线自己的类型和协议 schema 矛盾：基线 1204 帧里 326 帧因此不合法 | 不发这个字段，全部帧合法 | 未登记在场景里（bbx 不记录 sidecar 帧）；由 `scripts/upstream-tests` 的 schema 组体现 |
 | 断线后 sidecar 进程里的孤儿执行（TCP 部署） | 永远挂着 | 回收 | 未登记（gateway 一侧看不出差别） |
 | 显式时区名的解析（时间工具、cron、配置校验） | Node 自带 ICU 数据 | 内置 IANA 数据（`jiff-tzdb` 2025b），不读系统 tzdata；推翻旧决策卡「不内嵌 tzdata」，冻结账本 `A8.3-CRON-TZ-ALIAS-001` 已过时、待追加说明 | 场景 `*-legacy-zones`、`time-process-tz` |
 
