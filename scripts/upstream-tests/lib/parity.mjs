@@ -34,18 +34,32 @@ function copyTool(baseline, dest) {
 }
 
 /** 跑一轮。side: ts | rust。返回 { perScenario: {sid: {status, details[]}}, summary, exit }。 */
-export async function runParityRound({ baseline, side, rustBin, runDir, toolCopy, scenario = 'all', timeoutMs = 60 * 60_000 }) {
+export async function runParityRound({ baseline, side, rustBin, runDir, toolCopy, scenario = 'all', timeoutMs = 60 * 60_000, teeLog }) {
   rmSync(runDir, { recursive: true, force: true });
   mkdirSync(runDir, { recursive: true });
   const tool = copyTool(baseline, toolCopy);
-  const candidate = side === 'rust' ? rustBin : join(baseline, 'dist/src/cli/pilotdeck-agent-loop-sidecar.js');
+  const tsSidecar = join(baseline, 'dist/src/cli/pilotdeck-agent-loop-sidecar.js');
+  let command = side === 'rust' ? rustBin : undefined;
+  let candidate = side === 'rust' ? rustBin : tsSidecar;
+  let bindSide = side;
+  const tee = {};
+  if (teeLog) {
+    // 采集模式：两侧都经 modules.agentLoop 绑定拉起转录垫片，垫片再拉起真正的 sidecar。
+    // 这时 bind.mjs 核对的身份是垫片本身，所以采集模式的结果只用来取帧，不计入对拍结论。
+    command = join(REPO, 'scripts/upstream-tests/lib/tee-sidecar.mjs');
+    candidate = command;
+    bindSide = 'rust';
+    tee.PDRS_TEE_LOG = teeLog;
+    tee.PDRS_TEE_TARGET = side === 'rust' ? `${rustBin},${tsSidecar}` : `${process.execPath},${tsSidecar}`;
+  }
   const env = isolatedEnv(runDir, {
     PYTHONDONTWRITEBYTECODE: '1',
     PDRS_BASELINE: baseline,
-    PDRS_SIDE: side,
+    PDRS_SIDE: bindSide,
     PDRS_EXPECTED_SHA256: sha256(candidate),
     PILOTDECK_AGENT_LOOP_TRANSPORT: 'stdio',
-    PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND: side === 'rust' ? rustBin : undefined,
+    PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND: command,
+    ...tee,
   });
   const artifacts = join(runDir, 'artifacts');
   const args = ['-B', join(tool, 'run.py'),

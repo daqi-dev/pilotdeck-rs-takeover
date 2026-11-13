@@ -38,7 +38,10 @@ export function assertFreshBinary(bin) {
   if (!existsSync(depFile)) return;
   const text = readFileSync(depFile, 'utf8').replace(/\\\n/g, ' ');
   const deps = text.slice(text.indexOf(':') + 1).split(/(?<!\\)\s+/).filter(Boolean).map((p) => p.replace(/\\ /g, ' '));
-  const stale = deps.filter((p) => existsSync(p) && statSync(p).mtimeMs > built);
+  // 与 bbx 一样只看 src/ 下的 .rs / Cargo.toml / Cargo.lock（清单里还有 .git 的引用文件，提交一次就会变新）。
+  const srcRoot = join(REPO, 'src') + '/';
+  const stale = deps.filter((p) => p.startsWith(srcRoot) && !p.includes('/target/') && /(\.rs|Cargo\.toml|Cargo\.lock)$/.test(p)
+    && existsSync(p) && statSync(p).mtimeMs > built);
   if (stale.length) {
     throw new Error(`Rust sidecar ${bin} is older than ${stale.length} source file(s), e.g. ${stale[0]}; rebuild or set PDRS_ALLOW_STALE=1`);
   }

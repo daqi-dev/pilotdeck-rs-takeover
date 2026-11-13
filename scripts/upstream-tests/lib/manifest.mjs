@@ -73,6 +73,20 @@ export const EXCLUSIONS = [
   // 由 run.mjs 的实测结果填写，见 README「剔除的用例」。
 ];
 
+// 对拍工具（tools/agent-loop-parity，53 个 PilotDeck 场景）里不计入的场景：
+// 基线自比（TS 原生循环 vs 基线 sidecar）不能每轮都过的，见 README「parity」。
+export const PARITY_EXCLUSIONS = [
+  // 由基线自比的实测结果填写。
+];
+
+// 基线 sidecar 自己发出的、违反基线 schema 的帧（疑似基线 bug，Rust 不照做）。
+// 只在 --target baseline 时豁免；指向 Rust 时同样的违规照常判失败。
+export const KNOWN_BASELINE_SCHEMA_VIOLATIONS = [
+  // src/agent/modules/llm/hostModelInvokerPort.ts:101 把 AbortSignal 放进 call，
+  // agentLoopSidecarServer.ts callModule 原样展开进 module_call 帧，序列化成 "abortSignal":{}。
+  'moduleCallRequest: / additionalProperties {"additionalProperty":"abortSignal"}',
+];
+
 export function exclusionFor(group, name) {
   return EXCLUSIONS.find((item) => item.group === group && item.name === name);
 }

@@ -15,9 +15,11 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { REPO, baselineRoot, rustSidecarBin, assertFreshBinary, prepareCwdRoot } from './lib/common.mjs';
-import { GROUPS, EXCLUSIONS, SIDECAR_TESTS } from './lib/manifest.mjs';
+import { GROUPS, EXCLUSIONS, SIDECAR_TESTS, PARITY_EXCLUSIONS, KNOWN_BASELINE_SCHEMA_VIOLATIONS } from './lib/manifest.mjs';
 import { generateGroup } from './lib/generate.mjs';
 import { runNodeGroup } from './lib/node-groups.mjs';
+import { loadValidator, validateFrames, selfCheck } from './lib/schema.mjs';
+import { runParityRound, parityScenarioIds } from './lib/parity.mjs';
 
 const ALL_GROUPS = ['client', 'tcp', 'deployment', 'stdio', 'parity', 'schema'];
 
@@ -86,25 +88,40 @@ async function main() {
   console.log(`baseline: ${baseline}\ntarget:   ${options.target}${options.target === 'rust' ? ` (${rustBin})` : ''}\nout:      ${out}\n`);
 
   const summaries = [];
+  const transcripts = [];
+  const runGroup = async (group, rounds, { transcribeFirst = false, label = group } = {}) => {
+    const gen = generateGroup(baseline, group, join(out, 'gen'));
+    const runs = [];
+    for (let round = 1; round <= rounds; round += 1) {
+      const runDir = join(out, 'runs', options.target, label, String(round));
+      const started = Date.now();
+      const transcriptFile = (transcribeFirst && round === 1) || process.env.PDRS_UT_TRANSCRIPT ? join(runDir, 'frames.jsonl') : undefined;
+      const run = await runNodeGroup({
+        baseline, group, genFile: gen.outPath, target: options.target, rustBin, runDir, cwdRoot, transcriptFile,
+        verbose: options.verbose,
+      });
+      if (transcriptFile && round === 1) transcripts.push(transcriptFile);
+      runs.push(run);
+      const fails = run.rows.filter((r) => r.status === 'fail').map((r) => r.name);
+      console.log(`[${label} ${options.target} ${round}/${rounds}] ${run.rows.length} tests, ${fails.length} failed, ${Math.round((Date.now() - started) / 1000)}s${run.timedOut ? ' TIMED OUT' : ''}${fails.length ? `\n    ${fails.join('\n    ')}` : ''}`);
+    }
+    return summarizeNode(group, gen.upstreamTests, runs);
+  };
+
+  const wantSchema = options.groups.includes('schema') && options.target !== 'inprocess';
   for (const group of options.groups) {
     if (GROUPS[group]) {
-      const gen = generateGroup(baseline, group, join(out, 'gen'));
-      const runs = [];
-      for (let round = 1; round <= options.repeat; round += 1) {
-        const runDir = join(out, 'runs', options.target, group, String(round));
-        const started = Date.now();
-        const run = await runNodeGroup({
-          baseline, group, genFile: gen.outPath, target: options.target, rustBin, runDir, cwdRoot,
-          transcriptFile: process.env.PDRS_UT_TRANSCRIPT ? join(runDir, 'frames.jsonl') : undefined,
-          verbose: options.verbose,
-        });
-        runs.push(run);
-        const fails = run.rows.filter((r) => r.status === 'fail').map((r) => r.name);
-        console.log(`[${group} ${options.target} ${round}/${options.repeat}] ${run.rows.length} tests, ${fails.length} failed, ${Math.round((Date.now() - started) / 1000)}s${run.timedOut ? ' TIMED OUT' : ''}${fails.length ? `\n    ${fails.join('\n    ')}` : ''}`);
-      }
-      summaries.push(summarizeNode(group, gen.upstreamTests, runs));
+      summaries.push(await runGroup(group, options.repeat, { transcribeFirst: wantSchema && group === 'client' }));
+    } else if (group === 'schema') {
+      if (!wantSchema) { summaries.push({ group, skipped: true, why: 'inprocess 不采集外部 sidecar 的帧' }); continue; }
+      // 帧来自 client 组（TS 宿主 + 外部 sidecar，经 runtime.mjs 转录）；本次没跑 client 就单独跑一轮。
+      if (!transcripts.length) await runGroup('client', 1, { transcribeFirst: true, label: 'schema-client' });
+      summaries.push(schemaSummary(baseline, options.target, transcripts));
+    } else if (group === 'parity') {
+      if (options.target === 'inprocess') { summaries.push({ group, skipped: true, why: 'inprocess 不适用' }); continue; }
+      summaries.push(await paritySummary(baseline, options, rustBin, out));
     } else {
-      summaries.push({ group, skipped: true });
+      summaries.push({ group, skipped: true, why: '未实现' });
     }
   }
   writeFileSync(join(out, `summary.${options.target}.json`), JSON.stringify({ target: options.target, summaries }, null, 2));
@@ -112,15 +129,82 @@ async function main() {
   process.exitCode = summaries.every((s) => s.skipped || s.ok) ? 0 : 1;
 }
 
+function schemaSummary(baseline, target, files) {
+  const validator = loadValidator(baseline);
+  const sidecar = validateFrames(validator, files, { direction: 'sidecar_to_host' });
+  const host = validateFrames(validator, files, { direction: 'host_to_sidecar' });
+  const checks = selfCheck(validator, files);
+  // 基线自己违反 schema 的已知一类（见 README「疑似基线 bug」）：只在指向基线时豁免，Rust 不豁免。
+  const known = target === 'baseline' ? KNOWN_BASELINE_SCHEMA_VIOLATIONS : [];
+  const failures = [...sidecar.failures].map(([key, entry]) => ({ key, count: entry.count, sample: JSON.stringify(entry.sample).slice(0, 300), known: known.some((k) => key.includes(k)) }));
+  const unexplained = failures.filter((f) => !f.known);
+  return {
+    group: 'schema', kind: 'schema', ajv: validator.version,
+    sidecarFrames: sidecar.frames, sidecarInvalid: sidecar.invalid, hostFrames: host.frames, hostInvalid: host.invalid,
+    failures, selfChecks: checks, byKind: sidecar.byKind,
+    ok: unexplained.length === 0 && host.invalid === 0 && checks.every((c) => c.ok) && sidecar.frames > 0,
+  };
+}
+
+async function paritySummary(baseline, options, rustBin, out) {
+  const side = options.target === 'baseline' ? 'ts' : 'rust';
+  const ids = parityScenarioIds(baseline);
+  const rounds = [];
+  for (let round = 1; round <= options.repeat; round += 1) {
+    const started = Date.now();
+    const result = await runParityRound({
+      baseline, side, rustBin, runDir: join(out, 'runs', options.target, 'parity', String(round)), toolCopy: join(out, 'parity-tool'),
+    });
+    rounds.push(result);
+    const bad = Object.entries(result.perScenario).filter(([, v]) => v.status !== 'PASS');
+    console.log(`[parity ${options.target} ${round}/${options.repeat}] run.py exit ${result.exit}, ${ids.length - bad.length}/${ids.length} PASS, ${Math.round((Date.now() - started) / 1000)}s${result.timedOut ? ' TIMED OUT' : ''}`);
+  }
+  const excluded = PARITY_EXCLUSIONS.filter((e) => ids.includes(e.scenarioId));
+  const excludedIds = new Set(excluded.map((e) => e.scenarioId));
+  const counted = ids.filter((id) => !excludedIds.has(id));
+  const perScenario = Object.fromEntries(ids.map((id) => [id, rounds.map((r) => r.perScenario[id]?.status ?? 'MISSING')]));
+  const failures = counted.filter((id) => perScenario[id].some((s) => s !== 'PASS'))
+    .map((id) => ({ name: id, statuses: perScenario[id], details: rounds.flatMap((r) => r.perScenario[id]?.details ?? []).slice(0, 3) }));
+  const broken = rounds.filter((r) => r.timedOut || !r.summary);
+  return {
+    group: 'parity', kind: 'parity', upstreamTests: ids.length, rounds: rounds.length, side,
+    excluded: excluded.map((e) => ({ name: e.scenarioId, reason: e.reason })),
+    counted: counted.length, passed: counted.length - failures.length, failures, perScenario,
+    excludedResults: Object.fromEntries([...excludedIds].map((id) => [id, perScenario[id]])),
+    brokenRuns: broken.map((r) => ({ exit: r.exit, timedOut: r.timedOut, stderr: r.stderr })),
+    ok: broken.length === 0 && failures.length === 0,
+  };
+}
+
 function printTable(summaries) {
   console.log('\n| 组 | 上游总数 | 不经被测 sidecar | 剔除 | 计入 | 通过（每轮都过） | 轮数 | 结论 |');
   console.log('|---|---|---|---|---|---|---|---|');
   for (const s of summaries) {
-    if (s.skipped) { console.log(`| ${s.group} | — | — | — | — | — | — | 未实现 |`); continue; }
+    if (s.skipped) { console.log(`| ${s.group} | — | — | — | — | — | — | 跳过：${s.why} |`); continue; }
+    if (s.kind === 'schema') {
+      console.log(`| schema | ${s.sidecarFrames} 帧 | — | — | ${s.sidecarFrames} | ${s.sidecarFrames - s.sidecarInvalid} | 1 | ${s.ok ? 'OK' : 'FAIL'} |`);
+      continue;
+    }
+    if (s.kind === 'parity') {
+      console.log(`| parity | ${s.upstreamTests} | — | ${s.excluded.length} | ${s.counted} | ${s.passed} | ${s.rounds} | ${s.ok ? 'OK' : 'FAIL'} |`);
+      continue;
+    }
     console.log(`| ${s.group} | ${s.upstreamTests} | ${s.hostOnly.length} | ${s.excluded.length} | ${s.counted} | ${s.passed} | ${s.rounds} | ${s.ok ? 'OK' : 'FAIL'} |`);
   }
   for (const s of summaries) {
     if (s.skipped) continue;
+    if (s.kind === 'schema') {
+      console.log(`\nschema（ajv ${s.ajv}）：sidecar 发出 ${s.sidecarFrames} 帧，不合法 ${s.sidecarInvalid}；宿主发出 ${s.hostFrames} 帧，不合法 ${s.hostInvalid}`);
+      for (const f of s.failures) console.log(`  ${f.known ? '[已知基线 bug] ' : ''}${f.count}× ${f.key}\n     例：${f.sample}`);
+      for (const c of s.selfChecks.filter((x) => !x.ok)) console.log(`  校验器自检失败：${c.name}：${c.why}`);
+      console.log(`  校验器自检：${s.selfChecks.filter((c) => c.ok).length}/${s.selfChecks.length} 处注入的违规被判为不合法`);
+      continue;
+    }
+    if (s.kind === 'parity') {
+      for (const f of s.failures) console.log(`\nparity 未过：${f.name} [${f.statuses.join(' ')}]\n  ${f.details.join('\n  ')}`);
+      for (const b of s.brokenRuns) console.log(`\nparity 运行异常：exit=${b.exit} timedOut=${b.timedOut}\n${b.stderr}`);
+      continue;
+    }
     if (s.seen !== s.upstreamTests) console.log(`\n${s.group}: 报告了 ${s.seen} 个用例，上游有 ${s.upstreamTests} 个（文件级错误？）`);
     for (const f of s.failures) console.log(`\n${s.group} 未过：${f.name}（过 ${f.pass} / 败 ${f.fail}）\n  ${String(f.error ?? '').split('\n').slice(0, 6).join('\n  ')}`);
     for (const h of s.hostOnly.filter((x) => x.fail)) console.log(`\n${s.group} 不经被测 sidecar 的用例失败：${h.name}`);
