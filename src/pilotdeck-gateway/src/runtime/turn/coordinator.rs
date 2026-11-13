@@ -151,6 +151,10 @@ pub struct TurnEventCoordinator {
     /// Serializes the composite operations that TS performs in one synchronous
     /// method body. Never held while a sink runs.
     state: Mutex<CoordinatorState>,
+    /// Hook executions per session whose start passed through this
+    /// coordinator and whose completion has not (see [`Self::hooks_settled`]).
+    hooks_in_flight: Mutex<HashMap<JsString, usize>>,
+    hooks_changed: tokio::sync::Notify,
     #[cfg(test)]
     hooks: CoordinatorHooks,
 }
@@ -185,6 +189,8 @@ impl TurnEventCoordinator {
             id: NEXT_COORDINATOR_ID.fetch_add(1, Ordering::Relaxed),
             replay,
             state: Mutex::new(CoordinatorState::default()),
+            hooks_in_flight: Mutex::default(),
+            hooks_changed: tokio::sync::Notify::new(),
             #[cfg(test)]
             hooks: CoordinatorHooks::default(),
         }
@@ -275,6 +281,7 @@ impl TurnEventCoordinator {
     /// the turn itself published and before its completion. `false` when no
     /// registration is live, like `emit`.
     pub fn emit_before_terminal(&self, session_key: &JsString, event: &JsValue) -> bool {
+        self.observe_hook(session_key, event);
         {
             let mut state = lock(&self.state);
             let Some(registration) = state
@@ -325,6 +332,7 @@ impl TurnEventCoordinator {
         }
     }
     pub fn emit(&self, session_key: &JsString, event: &JsValue) -> bool {
+        self.observe_hook(session_key, event);
         let marker_token = self.drain_token_on_this_thread(session_key);
         let (token, boundary) = {
             let mut state = lock(&self.state);
@@ -386,6 +394,49 @@ impl TurnEventCoordinator {
             self.drain(session_key, token, boundary);
         }
         true
+    }
+    /// Counts the session's hook executions from their projected transitions
+    /// (`hook_execution_started` / `hook_execution_completed`, or the SDK's
+    /// `hook_started` / `hook_response`), whether or not a sink is live.
+    fn observe_hook(&self, session_key: &JsString, event: &JsValue) {
+        let text = |key: &str| {
+            event
+                .get(key)
+                .and_then(JsValue::as_string)
+                .map(|value| String::from_utf16_lossy(value.units()))
+        };
+        let kind = match text("type").as_deref() {
+            Some("agent_status") => text("event"),
+            other => other.map(str::to_owned),
+        };
+        let delta: isize = match kind.as_deref() {
+            Some("hook_execution_started" | "hook_started") => 1,
+            Some("hook_execution_completed" | "hook_response") => -1,
+            _ => return,
+        };
+        {
+            let mut counts = lock(&self.hooks_in_flight);
+            let count = counts.entry(session_key.clone()).or_default();
+            *count = count.saturating_add_signed(delta);
+            if *count == 0 {
+                counts.remove(session_key);
+            }
+        }
+        self.hooks_changed.notify_waiters();
+    }
+    /// Resolves once every hook execution of `session_key` that reported its
+    /// start through this coordinator has reported its completion. The
+    /// caller bounds the wait.
+    pub async fn hooks_settled(&self, session_key: &JsString) {
+        loop {
+            let notified = self.hooks_changed.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if !lock(&self.hooks_in_flight).contains_key(session_key) {
+                return;
+            }
+            notified.await;
+        }
     }
     /// The sink is removed even when `run_id` does not match the replay, as in
     /// TS. Unlike the single-threaded TS host, the drainer that is still
@@ -3053,5 +3104,49 @@ mod tests {
         assert_eq!(kinds(&delivered.lock().unwrap()), ["block"]);
         drop(registration);
         assert!(!coordinator.emit_before_terminal(&session, &event("gone")));
+    }
+
+    /// A timed-out turn waits for the hooks its abort killed: the session's
+    /// hook transitions are counted whether or not a sink is registered, and
+    /// the wait ends at the last completion (or at once when none is in flight).
+    #[tokio::test]
+    async fn hooks_settled_waits_for_the_sessions_started_hooks() {
+        let coordinator = Arc::new(TurnEventCoordinator::new());
+        let session: JsString = "s".into();
+        let other: JsString = "other".into();
+        let status = |event: &str| {
+            crate::metadata::object([("type", "agent_status".into()), ("event", event.into())])
+        };
+        let sdk = |kind: &str| crate::metadata::object([("type", kind.into())]);
+        tokio::time::timeout(Duration::from_millis(50), coordinator.hooks_settled(&session))
+            .await
+            .expect("nothing in flight");
+        let _registration = coordinator.start(&session, &"run-1".into(), |_| {});
+        coordinator.emit(&session, &status("hook_execution_started"));
+        coordinator.emit(&session, &sdk("hook_started"));
+        coordinator.emit(&other, &status("hook_execution_started"));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), coordinator.hooks_settled(&session))
+                .await
+                .is_err()
+        );
+        let waiter = {
+            let coordinator = coordinator.clone();
+            let session = session.clone();
+            tokio::spawn(async move { coordinator.hooks_settled(&session).await })
+        };
+        coordinator.emit(&session, &status("hook_execution_completed"));
+        coordinator.retain_terminal(&session, &"run-1".into());
+        // No sink any more: the completion still counts.
+        assert!(!coordinator.emit_before_terminal(&session, &sdk("hook_response")));
+        tokio::time::timeout(Duration::from_secs(1), waiter)
+            .await
+            .expect("settled")
+            .expect("join");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), coordinator.hooks_settled(&other))
+                .await
+                .is_err()
+        );
     }
 }

@@ -267,6 +267,7 @@ async fn replay_case(case: &JsValue, name: &str) {
         execute_ready: None,
         execute_messages,
         recorded: std::collections::VecDeque::new(),
+        timeout_reason: None,
         timeline: Some(timeline),
     };
     let completed = if compaction_final {

@@ -42,6 +42,12 @@ use crate::{
 
 pub type SubmitFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
+/// How long a timed-out turn waits, from its abort, for the hooks the abort
+/// killed to report their completion before it records the timeout. The same
+/// window as the aborted turn's advisory hooks (`live.rs`): a hook that dies
+/// on SIGTERM reports within it, one that outlives the kill does not.
+const KILLED_HOOK_SETTLE: Duration = Duration::from_millis(25);
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SubmitError {
     pub code: String,
@@ -758,6 +764,19 @@ impl TurnSubmitter {
                     let hint = "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.";
                     let _ = self.host.reject_pending(run.session(), "turn_timeout");
                     let _ = handle.abort(&format!("timeout:{}", display(&run.run_id)).into());
+                    // The abort kills the hooks the turn has in flight. In the
+                    // baseline their completions reach the turn's sink while
+                    // the timeout status is still being written to the session
+                    // transcript (behind its write queue) and the run registry
+                    // — before the timeout status in 58 of 60 measured runs
+                    // over the Pre/PostToolUse, PostToolUseFailure and
+                    // SubagentStart rows, never missing. Give the killed hooks
+                    // that window, measured from the abort, before the record.
+                    let _ = tokio::time::timeout(
+                        KILLED_HOOK_SETTLE,
+                        self.coordinator.hooks_settled(run.session()),
+                    )
+                    .await;
                     if owns_terminal {
                         let mut failure = status("turn_timeout", &message, hint, "turn");
                         let mut detail = field(&failure, "detail").clone();
@@ -785,12 +804,12 @@ impl TurnSubmitter {
                             publisher.gateway_event(event);
                         })
                         .await;
-                        // The timed-out session is never reused: the baseline
-                        // closes it as soon as the timeout settled, so the
-                        // aborted loop's own terminal records (step_completed,
-                        // turn_result, turn_failed) land on a closed writer and
-                        // are dropped (InProcessGateway.ts:1824-1836).
-                        handle.close_transcript();
+                        // The transcript stays open: like the baseline, the
+                        // aborted loop keeps recording until the pump stops
+                        // pulling it (at the first event after the timeout),
+                        // and the session's disposal closes the writer once
+                        // that run has ended (AgentHandle.finishDispose waits
+                        // for no active run before onDispose).
                     }
                     // The settlement lets a worker that observed the timeout
                     // drain and finish (which closes delivery itself).
