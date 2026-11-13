@@ -284,6 +284,10 @@ fn supported_agents() -> JsValue {
 #[cfg(test)]
 pub(crate) mod tests;
 
+#[cfg(test)]
+#[path = "../tests/fixtures/native-collation/regression.rs"]
+mod native_collation_tests;
+
 pub(crate) fn route_catalog<F: Files>(
     request: &JsValue,
     metadata: Option<&Metadata<F>>,

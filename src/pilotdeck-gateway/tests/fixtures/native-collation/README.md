@@ -2,7 +2,7 @@
 
 `regression.rs` 复用 #1193 的 `../surrogate-collation-matrix/oracle.json`：5 locale × 10 键类 × catalog/session 两方法，共 100 格完整响应逐字节核对。原件不改；UTF-16 字段经 protocol codec 保留。
 
-`native_matrix_matches_node` 直接走产品 response；`matrix_pairing_has_zero_business_upstream` 为每个 locale 启独立测试子进程，再走真实 pairing。认证后业务帧全部原生响应；随后转发 `describe_server` fence，上游下一帧必须恰好等于 fence，证明此前没有业务帧转发。
+`native_matrix_matches_node` 直接走产品 response（模块挂在 `dispatch::native_collation_tests`）。原先经透明代理 pairing 回放同一矩阵的 `matrix_pairing_has_zero_business_upstream` 已随透明代理一起删除（2026-11-12）；它回放的 100 格与本测试相同，额外只证明代理不把业务帧转发给 TS 上游。
 
 补充 `oracle.json` 由固定 Node v22.22.0 / ICU 78.2 的 `localeCompare` 生成，含 61 个唯一键 × 61 键 × 14 locale = 52,094 对比较：真实 PUA、U+FFFD、孤立高/低、合法 pair、连续孤立项、组合重音、收缩、Thai/Lithuanian、数字和法加倒序 secondary。它是运行时比较器原件；真实 TS 方法原件仍以上述 #1193 矩阵为准。
 

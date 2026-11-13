@@ -211,7 +211,6 @@ async fn boundary_stream(
     duplicate: bool,
 ) -> Result<(), StreamMismatch> {
     let (io, mut client) = tokio::io::duplex(4096);
-    let (upstream, mut host) = tokio::io::duplex(4096);
     let bytes_read = Arc::new(AtomicUsize::new(0));
     let after = client_frame(0x81, 127, b"post101 frame preserved once");
     let mut reads = VecDeque::new();
@@ -270,7 +269,10 @@ async fn boundary_stream(
     let server = tokio::spawn(server);
     let upgraded = upgrade.await.unwrap();
     drop(lease);
-    let pair = tokio::spawn(pair_upgraded::<Scripted, _>(upgraded, upstream));
+    // The raw post-101 stream the native WS transport takes over
+    // (`upgraded_stream`, as `native_ws` calls it): every byte the client
+    // sends after the HTTP head must arrive exactly once, in order.
+    let mut stream = upgraded_stream::<Scripted>(upgraded).unwrap();
     let mut headers = Vec::new();
     while !headers.ends_with(b"\r\n\r\n") {
         headers.push(client.read_u8().await.unwrap());
@@ -284,20 +286,19 @@ async fn boundary_stream(
     // The negative waits for its actual injected bytes before terminating. This
     // is a causal hit barrier, not the verdict: both paths still read through EOF.
     let mut actual = vec![0; prefix_len + if duplicate { later.len() } else { 0 }];
-    host.read_exact(&mut actual).await.unwrap();
+    stream.read_exact(&mut actual).await.unwrap();
     let expected = [later, after].concat();
-    // Preserve the original upstream-FIN termination path. Once the production
-    // pair is reaped its owned writer is dropped, giving this reader real EOF.
-    host.shutdown().await.unwrap();
+    // Client FIN ends the raw stream; whatever else it still carries counts.
+    client.shutdown().await.unwrap();
+    stream.read_to_end(&mut actual).await.unwrap();
+    drop(stream);
     let mut output = Vec::new();
     client.read_to_end(&mut output).await.unwrap();
     assert!(
         output.is_empty(),
         "no duplicate/local response for opaque frames"
     );
-    pair.await.unwrap().unwrap();
     server.await.unwrap().unwrap();
-    host.read_to_end(&mut actual).await.unwrap();
     if actual != expected {
         return Err(StreamMismatch {
             code: "UPSTREAM_FULL_STREAM_MISMATCH",
@@ -671,7 +672,6 @@ async fn blocked_failure_wakes_hyper_and_serves_already_available_next_request()
 async fn upgrade_after_client_halfclose_preserves_pending_frame_then_ends() {
     timeout(Duration::from_secs(3), async {
         let (io, mut client) = tokio::io::duplex(4096);
-        let (upstream, mut host) = tokio::io::duplex(4096);
         let bytes_read = Arc::new(AtomicUsize::new(0));
         let frame = client_frame(0x81, 126, b"frame before FIN");
         let io = Scripted {
@@ -713,15 +713,15 @@ async fn upgrade_after_client_halfclose_preserves_pending_frame_then_ends() {
         let server = tokio::spawn(server);
         let upgraded = upgraded.await.unwrap();
         drop(lease);
-        let pair = tokio::spawn(pair_upgraded::<Scripted, _>(upgraded, upstream));
+        let mut stream = upgraded_stream::<Scripted>(upgraded).unwrap();
         let mut actual = Vec::new();
-        host.read_to_end(&mut actual).await.unwrap();
+        stream.read_to_end(&mut actual).await.unwrap();
         assert_eq!(actual, frame);
         assert_eq!(
             bytes_read.load(Ordering::SeqCst),
             REQUEST.len() + frame.len()
         );
-        pair.await.unwrap().unwrap();
+        drop(stream);
         let mut response = String::new();
         client.read_to_string(&mut response).await.unwrap();
         assert!(response.starts_with("HTTP/1.1 101"));

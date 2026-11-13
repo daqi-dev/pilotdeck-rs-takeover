@@ -263,7 +263,3 @@ async fn forward_or_drain<W: AsyncWrite + Unpin>(writer: &mut W, frame: &frame::
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-#[path = "../tests/fixtures/native-collation/regression.rs"]
-mod native_collation_tests;

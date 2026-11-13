@@ -1481,12 +1481,11 @@ mod tests {
 
     #[tokio::test]
     async fn get_and_first_frame_in_same_write_discards_upgrade_head() {
-        use crate::frame::{client_frame, server_frame};
+        use crate::frame::client_frame;
         use tokio::io::DuplexStream;
 
         timeout(Duration::from_secs(3), async {
             let (downstream, mut client) = tokio::io::duplex(4096);
-            let (upstream, mut fake_ts) = tokio::io::duplex(4096);
             let first = client_frame(0x81, 127, b"discard this first frame");
             let second = client_frame(0x81, 126, b"forward only after upgrade");
             let mut request = b"GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: key\r\n\r\n".to_vec();
@@ -1502,27 +1501,28 @@ mod tests {
                     upgrade_tx.lock().unwrap().take().unwrap().send((upgraded, lease)).unwrap();
                     async { Ok(acceptor::websocket_response(hyper::HeaderMap::new(), "accept")) }
                 };
-                serve_connection_with(downstream, handler).await.unwrap();
+                serve_connection_configured(downstream, handler, false, None, None, None, None)
+                    .await
+                    .unwrap();
             });
             let (upgraded, _lease) = upgrade_rx.await.unwrap();
             let upgraded = upgraded.await.unwrap();
-            let pair = tokio::spawn(pair_upgraded::<DuplexStream, _>(upgraded, upstream));
+            // The raw post-101 stream the native WS transport takes over.
+            let mut stream = upgraded_stream::<DuplexStream>(upgraded).unwrap();
             let mut response = Vec::new();
             while !response.ends_with(b"\r\n\r\n") {
                 response.push(client.read_u8().await.unwrap());
             }
             assert!(response.starts_with(b"HTTP/1.1 101"));
             client.write_all(&second).await.unwrap();
-            let mut forwarded = vec![0; second.len()];
-            fake_ts.read_exact(&mut forwarded).await.unwrap();
-            assert_eq!(forwarded, second, "pre-read first frame must be discarded");
-            let reply = server_frame(1, b"only second frame reached TS");
-            fake_ts.write_all(&reply).await.unwrap();
-            fake_ts.shutdown().await.unwrap();
+            client.shutdown().await.unwrap();
+            let mut received = Vec::new();
+            stream.read_to_end(&mut received).await.unwrap();
+            assert_eq!(received, second, "pre-read first frame must be discarded");
+            drop(stream);
             let mut output = Vec::new();
             client.read_to_end(&mut output).await.unwrap();
-            assert_eq!(output, reply);
-            pair.await.unwrap().unwrap();
+            assert!(output.is_empty());
             http.await.unwrap();
         }).await.expect("upgrade head test timeout");
     }
