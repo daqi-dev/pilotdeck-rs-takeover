@@ -476,12 +476,16 @@ impl BoundExchange {
         let mut identity = self.identity.clone();
         identity.request_id = self.owner.next_id("host-request");
         let mut request = JsObject::new();
+        // agentLoopSidecarServer.ts callModule: the envelope is kind / messageId /
+        // method plus the caller's binding, requestId, module and payload. The
+        // operation name lives only in payload.operation; a top-level copy is
+        // not part of Module Protocol v2 (pilotdeck-module-protocol-v2.schema.json
+        // moduleCallRequest has additionalProperties: false).
         for (key, value) in [
             ("kind", JsValue::from("request")),
             ("messageId", JsValue::String(message_id.clone())),
             ("method", JsValue::from("module_call")),
             ("module", JsValue::from(module)),
-            ("operation", JsValue::from(operation)),
             ("runId", JsValue::String(identity.run_id.clone())),
             (
                 "operationId",
