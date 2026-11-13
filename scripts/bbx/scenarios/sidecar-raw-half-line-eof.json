@@ -41,5 +41,16 @@
   {
    "sidecar": "stop"
   }
+ ],
+ "accepted": [
+  {
+   "id": "tcp-sidecar-half-line-eof-crash",
+   "why": "基线 bug（崩溃）：TCP 部署的 sidecar 上，客户端发一段不带换行的内容后半关闭。基线把半行当作最后一行、要回 INVALID_JSON 时写端已随读端结束（net.Socket 默认 allowHalfOpen: false），写入被拒、serve 抛出，tcpAgentLoopSidecarServer.ts:76-78 拿这个错误 destroy 套接字而套接字上没有 error 监听，成了未捕获异常：整个 sidecar 进程以 1 退出，之后的连接全部被拒——一个客户端就能让常驻的 sidecar 连同其他连接一起退出。Rust 对半行回 INVALID_JSON，进程继续服务（stdio 部署下基线自己也是这样回的）。只放过：多出的那一帧、之后那次连接是否被拒、sidecar 的退出方式与 stderr 里的异常文本",
+   "paths": [
+    "^\\$\\.steps\\[1\\]\\.raw\\.lines(\\.length|\\[1\\])$",
+    "^\\$\\.steps\\[3\\]\\.raw\\.(refused|lines|serverClosed)$",
+    "^\\$\\.steps\\[4\\]\\.sidecar\\.(exitCode|signal|stderr)$"
+   ]
+  }
  ]
 }

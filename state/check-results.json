@@ -2,17 +2,17 @@
   "about": "scripts/bbx/status.mjs 读的检查结果。手写，只记命令的当次输出，每项写明日期、提交、机器和来源；没有的就删掉那一项，status.mjs 会显示「没有数据」。fmt / clippy / doctest 的取值写 pass 或 fail。",
   "fourCommands": {
     "date": "2026-11-14",
-    "commit": "809bc4cb8",
+    "commit": "380e07062",
     "machine": "cb8（Linux aarch64）",
     "fmt": "pass",
     "clippy": "pass",
     "nextest": {
       "result": "fail",
-      "passed": 7766,
-      "total": 7768
+      "passed": 7768,
+      "total": 7770
     },
     "doctest": "pass",
-    "source": "cb8 上 ~/ws/pdrs-takeover/logs/verify-v20.log。nextest 失败的 2 个都是固定端口被同机别的进程占用（sms head_timeout_tests 的 18973、wecom_callback 的 18990；当时我们自己的另一个子代理也在 cb8 上跑测试）；上一个提交 2bfa0c7a7 在 verify-v19 里 7763/7763 全过"
+    "source": "cb8 上 ~/ws/pdrs-takeover/logs/verify-v21.log。nextest 失败的 2 个（mcp_proxy::replays_ts_mcp_http_proxy_scenarios、web_tools::real_ts_web_fetch_and_web_search_over_loopback）是两个测试并行时串了端口：一个测试的请求落到了另一个测试的本机假服务上；同一提交随后两个一起单独重跑都通过"
   },
   "upstreamTests": {
     "date": "2026-11-13",
