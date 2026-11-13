@@ -98,10 +98,13 @@ fn main() -> ExitCode {
         capabilities_version: "1".into(),
     };
     let clock = Arc::new(SystemExecutionClock);
-    let factory = Arc::new(OriginalAgentFactory {
-        clock: clock.clone(),
-        process_cwd,
-    });
+    let factory = Arc::new(
+        OriginalAgentFactory {
+            clock: clock.clone(),
+            process_cwd,
+        }
+        .sidecar_public(),
+    );
     if let Some(port) = tcp_port {
         let host = std::env::var("PILOTDECK_AGENT_LOOP_TCP_HOST")
             .ok()

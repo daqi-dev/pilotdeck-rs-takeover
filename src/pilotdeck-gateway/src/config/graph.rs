@@ -331,20 +331,9 @@ pub(super) fn merged_sources(sources: &[ValueGraph]) -> Result<ValueGraph, super
         root: Value::Ref(0),
         nodes: vec![Container::Object(vec![])],
     };
-    // Prototype setters/inherited lookups require the JS host. In particular,
-    // do not guess how two cyclic sources interact through __proto__.
-    if sources.len() > 1
-        && sources.iter().any(|g| cycle(g, &g.root, false))
-        && sources.iter().any(|g| {
-            g.nodes.iter().any(|n| {
-                matches!(n, Container::Object(a) if a.iter().any(|(k, _)| k.equals_str("__proto__")))
-            })
-        })
-    {
-        let mut e = super::Error::new("JS_HOST_REQUIRED", "Cyclic configuration uses prototype merging.");
-        e.requires_host = true;
-        return Err(e);
-    }
+    // A cycle and a prototype key may occur in unrelated data branches.
+    // Only a repeated pair on the actual recursive merge path below is a
+    // deepMerge stack overflow; untouched cyclic branches retain identity.
     fn relocate(v: &mut Value, offset: usize) {
         if let Value::Ref(id) = v {
             *id += offset;

@@ -89,6 +89,12 @@ fn measured(method: &str, error: &io::Error) -> Result<()> {
 pub(crate) fn open_beneath(root: &Path, canonical: &Path) -> io::Result<File> {
     open_checked(root, canonical, false)
 }
+/// Read relative to an already owned directory descriptor. Callers which
+/// retain a workspace capability must not reopen its mutable pathname.
+#[cfg(unix)]
+pub(crate) fn open_file_at(root: &File, relative: &Path) -> io::Result<File> {
+    walk_beneath(root, relative, false)
+}
 /// Create a private file without following any component, preserving Node's
 /// `wx` semantics. Reuse the same directory walk as reads; only the final open
 /// gains write/create flags. Check the opened inode before callers write bytes.

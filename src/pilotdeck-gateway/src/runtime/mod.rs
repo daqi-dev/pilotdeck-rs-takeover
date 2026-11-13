@@ -12,6 +12,7 @@ pub mod cron;
 pub mod goal;
 pub mod hooks;
 pub mod interaction;
+pub mod lsp;
 pub mod manager;
 pub mod mcp;
 pub mod memory;

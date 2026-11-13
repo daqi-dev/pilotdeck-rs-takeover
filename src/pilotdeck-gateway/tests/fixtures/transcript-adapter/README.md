@@ -45,6 +45,30 @@ PDRS_BASELINE=/absolute/path/to/PilotDeck cargo test -p pilotdeck-gateway transc
 
 #222：域用例输入与 `../session-domain/cases.mts` 共用；完整校验范围见其 README。尚未移植的恢复/列表投影形状返回 `ProjectionUnavailable`（A7.5），不能视为 TS 一致或已完成投影。
 
+PH02 的窄补充金样保存在 `list-message-nonarray.json`，由原生成器的
+`--list-message-nonarray` 模式生成，原 `oracle.json` 的 492 条不变。
+两个独立 HOME/PILOT_HOME/TMPDIR 下的固定 TS Node 22 采集逐字相同。
+正常 accepted input 提供摘要，completed assistant 的字符串 content 在真实
+`listSessions` → conversation finalize → `cloneMessage` 中归一为 `[]`，列表成功；
+同一文件 `restore` → hydrate 的 WebHistory reducer 仍抛
+`TypeError: message.content.some is not a function`，writer state 已恢复至 sequence 3，
+之后 list 的结果不变。第二个输入的 content 为 `[null]`，list 与 hydrate 均抛
+`Cannot read properties of null (reading 'type')`，防止把未知消息普遍放行或吞掉错误。
+每例比较全部步骤、store 调用及落盘文件；这是 adapter 的真实双端口对照，未冒称
+独立 GUI render 或正式 CLI/session manager 的端到端验收。Rust 新叶为
+`storage::transcript_adapter_tests::completed_assistant_nonarray_content_lists_but_hydrate_keeps_type_error`。
+
+复现时使用显式 Node 22、固定基线的 tsx loader，并分别将 HOME、PILOT_HOME、TMPDIR
+指向自造目录：
+
+```sh
+PDRS_BASELINE=/absolute/path/to/PilotDeck \
+HOME=/isolated/home PILOT_HOME=/isolated/pilot TMPDIR=/isolated/tmp \
+/absolute/path/to/node22 --import /absolute/path/to/PilotDeck/node_modules/tsx/dist/loader.mjs \
+src/pilotdeck-gateway/tests/fixtures/transcript-adapter/generate.mts \
+/isolated/output --list-message-nonarray
+```
+
 修复轮 1（#562）：`restore-message-*` 由真实 restore/hydrate 生成，覆盖三类 message 条目的 20 种形状：缺失/null/原始值 message，非数组 content，null block、原始值 block、空数组，以及 tool_result/tool_result_reference 的 `.some` 短路。比较完整输出与 TypeError 文案；不把 canonical-message 形状校验代替 JS reducer 语义。TS 来源 `WebHistoryProjections.ts:79,321-324`，另加一条 reducer 全日志执行顺序用例，总计新增 61 场景（336→397）。WebHistory、SessionProjectionDriver 与 BuiltinSessionProjections 源码也纳入逐文件溯源守卫。
 
 修复负控：在仓根运行 `python3 src/pilotdeck-gateway/tests/fixtures/session-domain/fix1-negative.py`。脚本核启动器 target、逐 cargo 核 slot、对子进程组设期限，实际修改产品源码后验证行为失败并在 finally 恢复。除消息错误、短路和原始值 block 外，还把 restore 的锁移到读盘之后，要求确定性的锁范围回归测试转红。

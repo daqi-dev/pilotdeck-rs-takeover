@@ -586,11 +586,27 @@ fn setup(scenario: &JsValue, dir: &Path) -> Ctx {
 #[test]
 fn real_ts_scenarios_match_outcomes_calls_and_bytes() {
     let oracle = oracle();
-    let JsValue::Array(scenarios) = field(&oracle, "scenarios") else {
+    replay_oracle_scenarios(&oracle, 492);
+}
+
+#[test]
+fn completed_assistant_nonarray_content_lists_but_hydrate_keeps_type_error() {
+    let oracle = crate::test_baseline::oracle(include_str!(
+        "../../tests/fixtures/transcript-adapter/list-message-nonarray.json"
+    ));
+    replay_oracle_scenarios(&oracle, 2);
+}
+
+fn replay_oracle_scenarios(oracle: &JsValue, expected_count: usize) {
+    let JsValue::Array(scenarios) = field(oracle, "scenarios") else {
         panic!("scenarios")
     };
     // Keep in sync with transcript-adapter/generate.mts and its README.
-    assert_eq!(scenarios.len(), 492, "adapter oracle scenario count");
+    assert_eq!(
+        scenarios.len(),
+        expected_count,
+        "adapter oracle scenario count"
+    );
     let scratch = Scratch::new();
     for scenario in scenarios {
         let name = s(field(scenario, "name"));

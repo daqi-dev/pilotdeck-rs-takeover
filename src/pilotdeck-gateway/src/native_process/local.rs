@@ -54,6 +54,25 @@ impl LocalGateway {
         options: LocalOptions,
         extensions: crate::extensions::NativeExtensions,
     ) -> Result<Self, ProxyError> {
+        Self::start_with_services(options, extensions, None)
+    }
+
+    /// Select a native LSP service factory at the same project-generation
+    /// boundary as the fixed baseline lspServiceFactory. This source-level
+    /// supplier is independent of NativeExtensions registration updates.
+    pub fn start_with_lsp_factory(
+        options: LocalOptions,
+        extensions: crate::extensions::NativeExtensions,
+        factory: Arc<dyn crate::runtime::lsp::LspServiceFactory>,
+    ) -> Result<Self, ProxyError> {
+        Self::start_with_services(options, extensions, Some(factory))
+    }
+
+    fn start_with_services(
+        options: LocalOptions,
+        extensions: crate::extensions::NativeExtensions,
+        lsp_factory: Option<Arc<dyn crate::runtime::lsp::LspServiceFactory>>,
+    ) -> Result<Self, ProxyError> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
@@ -86,8 +105,12 @@ impl LocalGateway {
                 telemetry_context: options.telemetry_context.clone(),
                 telemetry_reload: false,
             };
-            let (host, _webhook, _switch) =
-                assembly::start_with_extensions(process, options.env.clone(), extensions).await?;
+            let (host, _webhook, _switch) = if let Some(factory) = lsp_factory {
+                assembly::start_with_lsp_factory(process, options.env.clone(), extensions, factory)
+                    .await?
+            } else {
+                assembly::start_with_extensions(process, options.env.clone(), extensions).await?
+            };
             Ok::<_, ProxyError>(host)
         })?;
         Ok(Self { runtime, host })
@@ -111,3 +134,7 @@ impl LocalGateway {
             .map_err(|error| String::from_utf16_lossy(error.message.units()))
     }
 }
+
+#[cfg(test)]
+#[path = "local_lsp_tests.rs"]
+mod lsp_tests;

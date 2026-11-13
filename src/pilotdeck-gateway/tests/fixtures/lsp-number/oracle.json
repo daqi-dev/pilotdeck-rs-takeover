@@ -1,0 +1,93 @@
+{
+  "node": "v22.22.0",
+  "results": [
+    {
+      "input": 2,
+      "validation": {
+        "ok": true,
+        "input": {
+          "operation": "hover",
+          "file_path": "source.ts",
+          "line": 2,
+          "character": 2
+        }
+      },
+      "query": {
+        "operation": "hover",
+        "filePath": "source.ts",
+        "position": {
+          "line": 1,
+          "character": 1
+        },
+        "workspaceRoot": "/isolated-lsp-number-workspace"
+      },
+      "wirePosition": "{\"line\":1,\"character\":1}"
+    },
+    {
+      "input": 4294967298,
+      "validation": {
+        "ok": true,
+        "input": {
+          "operation": "hover",
+          "file_path": "source.ts",
+          "line": 4294967298,
+          "character": 4294967298
+        }
+      },
+      "query": {
+        "operation": "hover",
+        "filePath": "source.ts",
+        "position": {
+          "line": 4294967297,
+          "character": 4294967297
+        },
+        "workspaceRoot": "/isolated-lsp-number-workspace"
+      },
+      "wirePosition": "{\"line\":4294967297,\"character\":4294967297}"
+    },
+    {
+      "input": 9007199254740992,
+      "validation": {
+        "ok": true,
+        "input": {
+          "operation": "hover",
+          "file_path": "source.ts",
+          "line": 9007199254740992,
+          "character": 9007199254740992
+        }
+      },
+      "query": {
+        "operation": "hover",
+        "filePath": "source.ts",
+        "position": {
+          "line": 9007199254740991,
+          "character": 9007199254740991
+        },
+        "workspaceRoot": "/isolated-lsp-number-workspace"
+      },
+      "wirePosition": "{\"line\":9007199254740991,\"character\":9007199254740991}"
+    },
+    {
+      "input": 1e+21,
+      "validation": {
+        "ok": true,
+        "input": {
+          "operation": "hover",
+          "file_path": "source.ts",
+          "line": 1e+21,
+          "character": 1e+21
+        }
+      },
+      "query": {
+        "operation": "hover",
+        "filePath": "source.ts",
+        "position": {
+          "line": 1e+21,
+          "character": 1e+21
+        },
+        "workspaceRoot": "/isolated-lsp-number-workspace"
+      },
+      "wirePosition": "{\"line\":1e+21,\"character\":1e+21}"
+    }
+  ]
+}

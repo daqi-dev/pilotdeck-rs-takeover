@@ -265,6 +265,43 @@ async function scenario(name: string, config: any, expected: string[]) {
 }
 const appendCalls = (result: any) => result.calls.filter((c: any) => c.method === 'append');
 
+// A focused additive oracle: list runs conversation finalize, whereas restore
+// also runs WebHistory's message.content.some. Keep the original 492 rows intact.
+if (process.argv[3] === '--list-message-nonarray') {
+  try {
+    for (const [name, content] of [['nonarray-string', 'ignored nonarray content'], ['null-block', [null]]] as const) {
+      const entries = [
+        seed(1, { type: 'accepted_input', turnId: 'turn-1', messages: [user('PH02 normal prompt')] }),
+        seed(2, { type: 'assistant_message', turnId: 'turn-1', message: { role: 'assistant', content } }),
+        seed(3, { type: 'turn_result', turnId: 'turn-1', result: turnResult }),
+      ];
+      const result = await runScenario(scratch, `list-completed-assistant-${name}`, {
+        store: { list: [{ sessionId: 's1', lastModified: 1, fileSize: 1 }] },
+        files: { 's1.jsonl': entries.map(line).join('') },
+        steps: [{ op: 'list' }, open(), { op: 'restore' }, { op: 'state' }, { op: 'list' }, { op: 'read' }, { op: 'close' }],
+      });
+      const [first, , restore, state, second] = result.steps.map((step: any) => step.outcome);
+      assert.deepEqual(first, second, 'hydrate must not change list behavior');
+      assert.equal(state.state.sequence, 3);
+      if (name === 'nonarray-string') {
+        assert.equal(first.sessions.length, 1);
+        assert.equal(first.sessions[0].summary, 'PH02 normal prompt');
+        assert.deepEqual(restore, { error: { name: 'TypeError', message: 'message.content.some is not a function' } });
+      } else {
+        assert.deepEqual(first, { error: { name: 'TypeError', message: "Cannot read properties of null (reading 'type')" } });
+        assert.deepEqual(restore, first);
+      }
+      scenarios.push(result);
+    }
+    const sourceSha256 = await baselineSourceHashes(baseline, [...SOURCES, 'src/model/protocol/clone.ts']);
+    const oracle = JSON.stringify({ sourceCommit, sourceSha256, node: process.version, now: NOW, projectRoot: PROJECT_ROOT, scenarios }, null, 2) + '\n';
+    for (const dir of [scratch, output, baseline]) assert.ok(!oracle.includes(dir), 'oracle contains an absolute capture path');
+    await writeFile(join(output, 'list-message-nonarray.json'), oracle);
+    console.log('Recorded 2 actual TS list/hydrate contrasts; original 492-row oracle unchanged.');
+  } finally { await rm(scratch, { recursive: true, force: true }); }
+  process.exit(0);
+}
+
 try {
   {
     const r = await scenario('normal', {

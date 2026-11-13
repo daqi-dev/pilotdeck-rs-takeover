@@ -1582,7 +1582,23 @@ fn list_conversation_entry_supported(
             if nullish(message) {
                 return Err(cannot_read(message, "metadata"));
             }
-            !completed_turn || before_boundary || message_supported(message)
+            let completed_assistant = completed_turn
+                && !before_boundary
+                && kind == "assistant_message"
+                && plain_object(message)
+                && is_str(field(message, "role"), "assistant");
+            if completed_assistant
+                && let Some(error) = replacement_clone_error(&JsValue::Array(vec![message.clone()]))
+            {
+                return Err(error);
+            }
+            // cloneMessage uses messageContent: a completed assistant's
+            // non-array content is cloned as [], not read with `.some`.
+            // Hydrate still performs WebHistory's separate `.some` read.
+            !completed_turn
+                || before_boundary
+                || message_supported(message)
+                || (completed_assistant && !matches!(field(message, "content"), JsValue::Array(_)))
         }
         "turn_result" => {
             // Conversation finalize (cloneTurnResult) reads the result:

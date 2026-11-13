@@ -1508,7 +1508,7 @@ async fn production_listener_presents_the_api_web_ledger_surface() {
 }
 #[test]
 fn tool_policy_and_turn_environment() {
-    let lsp = Arc::new(families::DefaultLsp::default());
+    let lsp = Arc::new(crate::runtime::lsp::LspService::new());
     let world = tools::ExecutionWorld::new();
     let all = tools::native_tools(
         None,

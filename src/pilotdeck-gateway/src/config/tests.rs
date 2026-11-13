@@ -561,6 +561,86 @@ fn merge_reads_prototype_values_with_utf16_keys_like_javascript() {
     assert_eq!(field(merged, "b"), &JsValue::Number(2.0));
 }
 
+#[test]
+fn cyclic_yaml_sources_with_proto_follow_actual_merge_paths() {
+    let oracle = crate::test_baseline::oracle(include_str!(
+        "../../tests/fixtures/config/cycle-proto-merge/oracle.json"
+    ));
+    let JsValue::Array(cases) = field(&oracle, "cases") else {
+        panic!("cycle/prototype merge cases")
+    };
+    assert_eq!(cases.len(), 3);
+    struct Scratch(PathBuf);
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let scratch =
+        Scratch(std::env::temp_dir().join(format!("pdrs-cycle-proto-{}", uuid::Uuid::new_v4())));
+    for case in cases {
+        let id = text(field(case, "id")).unwrap();
+        let root = scratch.0.join(&id);
+        let home = root.join("pilot");
+        let project = root.join("project");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(project.join(".pilotdeck")).unwrap();
+        std::fs::write(
+            home.join("pilotdeck.yaml"),
+            text(field(case, "globalYaml")).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            project.join(".pilotdeck/pilotdeck.yaml"),
+            text(field(case, "projectYaml")).unwrap(),
+        )
+        .unwrap();
+        let env = Env::from([("PILOT_HOME".into(), home.to_string_lossy().into_owned())]);
+        let expected = field(case, "result");
+        // Exercise both role-limited CLI load and the full gateway snapshot.
+        for full_values in [false, true] {
+            let metadata = Metadata {
+                home: home.clone(),
+                cwd: root.clone(),
+                files: crate::metadata::NativeFiles,
+            };
+            let result = super::load_project_with_files_inner(
+                &metadata,
+                &env,
+                Some(project.to_str().unwrap()),
+                full_values.then(|| (1.0, "2026-10-18T00:00:00.000Z".into())),
+            );
+            if field(expected, "ok") == &JsValue::Bool(true) {
+                let config = result.unwrap_or_else(|error| panic!("{id}: {error:?}"));
+                assert_eq!(
+                    encode(&JsValue::Array(config.diagnostics)),
+                    encode(field(expected, "diagnostics")),
+                    "{id}: diagnostics, full={full_values}"
+                );
+                assert_eq!(config.selection, ("parity".into(), "deterministic".into()));
+                if let Some(snapshot) = config.snapshot {
+                    assert_eq!(
+                        encode(field(field(&snapshot, "config"), "agent")),
+                        encode(field(expected, "agent")),
+                        "{id}: agent snapshot"
+                    );
+                }
+            } else {
+                let error = match result {
+                    Ok(_) => panic!("{id}: recursive merge unexpectedly accepted"),
+                    Err(error) => error,
+                };
+                assert!(!error.requires_host, "{id}: must not require JS host");
+                assert_eq!(error.name, text(field(expected, "name")).unwrap());
+                assert_eq!(
+                    &error.message,
+                    field(expected, "message").as_string().unwrap()
+                );
+            }
+        }
+    }
+}
+
 /// #2301 fix-r3 review P1 #2: the real merge path installs the null
 /// prototype. Two config sources hold `adapters.wecomCallback.extra.port` as
 /// records (`{}` and `{__proto__: null}`), so the nested merge reaches the

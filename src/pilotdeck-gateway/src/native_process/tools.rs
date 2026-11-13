@@ -71,7 +71,7 @@ pub struct SessionTools {
     config: JsObject,
     interactions: Arc<GatewayInteractionCoordinator>,
     permission: Arc<Permissions>,
-    lsp: Arc<super::families::DefaultLsp>,
+    lsp: Arc<crate::runtime::lsp::LspService>,
     /// #1433: the session's composed MCP tools, registered into every turn's
     /// tool registry after the LSP entry (composed once at prepare, like
     /// `SessionMcpRuntimeBundle.compose`).
@@ -200,7 +200,7 @@ pub(super) struct ForkSeed {
     pub(super) context: crate::runtime::session::SessionContext,
     interactions: Arc<GatewayInteractionCoordinator>,
     permission: Arc<Permissions>,
-    lsp: Arc<super::families::DefaultLsp>,
+    lsp: Arc<crate::runtime::lsp::LspService>,
     mcp: SessionMcpTools,
     world: ExecutionWorld,
     events: Option<crate::runtime::project::interaction_events::InteractionEvents>,
@@ -395,7 +395,7 @@ impl SessionTools {
         binding: SessionBinding,
         config: JsObject,
         interactions: Arc<GatewayInteractionCoordinator>,
-        lsp: Arc<super::families::DefaultLsp>,
+        lsp: Arc<crate::runtime::lsp::LspService>,
         mcp: SessionMcpTools,
     ) -> Result<Self, RuntimeError> {
         let project = options.project_root_for(binding.context.project_key.as_ref());
@@ -1569,11 +1569,11 @@ impl crate::runtime::tools::ToolAuditRecorder for DurablePermissionAudit {
 }
 
 struct LspTool {
-    service: Arc<super::families::DefaultLsp>,
+    service: Arc<crate::runtime::lsp::LspService>,
     fields: JsObject,
 }
 impl LspTool {
-    fn new(service: Arc<super::families::DefaultLsp>) -> Self {
+    fn new(service: Arc<crate::runtime::lsp::LspService>) -> Self {
         Self { service, fields: value([
             ("name", "lsp".into()), ("kind", "filesystem".into()),
             ("description", "Query a language server for precise definitions, references, implementations, or hover information. Coordinates are one-based UTF-16 positions.".into()),
@@ -1652,33 +1652,110 @@ impl crate::runtime::tools::ExecutableTool for LspTool {
                     "LSP tool requires a workspace cwd",
                 ));
             }
-            let result = service.query(
-                &cwd,
-                &text(input.get("file_path")),
-                input
-                    .get("line")
-                    .and_then(JsValue::as_number)
-                    .unwrap_or(f64::NAN)
-                    - 1.0,
-                input
-                    .get("character")
-                    .and_then(JsValue::as_number)
-                    .unwrap_or(f64::NAN)
-                    - 1.0,
-            );
-            match result {
-                Err(error) => Err(crate::runtime::tools::ToolError::new(
-                    error
-                        .js_error()
-                        .and_then(|e| e.code.clone())
-                        .unwrap_or_else(|| "tool_execution_failed".into()),
-                    error.message,
-                )),
-                Ok(_) => Err(crate::runtime::tools::ToolError::new(
-                    "LSP_UNAVAILABLE",
-                    "No native LSP provider is registered.",
-                )),
+            use crate::runtime::lsp::{LspOperation, LspPosition, LspQueryRequest, LspQueryResult};
+            let operation = match text(input.get("operation")).as_str() {
+                "goToDefinition" => LspOperation::Definition,
+                "findReferences" => LspOperation::References,
+                "goToImplementation" => LspOperation::Implementation,
+                "hover" => LspOperation::Hover,
+                _ => {
+                    return Err(crate::runtime::tools::ToolError::new(
+                        "invalid_tool_input",
+                        "Invalid LSP operation",
+                    ));
+                }
+            };
+            let cancellation = crate::runtime::network::Cancellation::new();
+            if context.is_aborted() {
+                cancellation.cancel();
             }
+            let mut query = service.query(
+                LspQueryRequest {
+                    operation,
+                    file_path: text(input.get("file_path")),
+                    position: LspPosition {
+                        line: (input
+                            .get("line")
+                            .and_then(JsValue::as_number)
+                            .unwrap_or(1.0)
+                            - 1.0),
+                        character: (input
+                            .get("character")
+                            .and_then(JsValue::as_number)
+                            .unwrap_or(1.0)
+                            - 1.0),
+                    },
+                    workspace_root: std::path::PathBuf::from(cwd),
+                },
+                cancellation.clone(),
+            );
+            let result = tokio::select! {
+                result = &mut query => result,
+                _ = context.cancelled() => { cancellation.cancel(); query.await }
+            }
+            .map_err(|error| crate::runtime::tools::ToolError::new(error.code, error.message))?;
+            let as_js = |json: &serde_json::Value| {
+                pilotdeck_protocol::parse_json(&json.to_string()).map_err(|error| {
+                    crate::runtime::tools::ToolError::new(
+                        "LSP_MALFORMED_RESPONSE",
+                        error.to_string(),
+                    )
+                })
+            };
+            let (data, text) = match result {
+                LspQueryResult::Hover { hover } => {
+                    let text = hover
+                        .as_ref()
+                        .map(serde_json::to_string_pretty)
+                        .transpose()
+                        .map_err(|error| {
+                            crate::runtime::tools::ToolError::new(
+                                "LSP_MALFORMED_RESPONSE",
+                                error.to_string(),
+                            )
+                        })?
+                        .unwrap_or_else(|| "No hover information.".to_owned());
+                    let data = value([
+                        ("kind", "hover".into()),
+                        ("hover", as_js(&hover.unwrap_or(serde_json::Value::Null))?),
+                    ]);
+                    (data, text)
+                }
+                LspQueryResult::Locations {
+                    locations,
+                    resolved_workspace_uri,
+                } => {
+                    let locations = serde_json::to_value(locations).map_err(|error| {
+                        crate::runtime::tools::ToolError::new(
+                            "LSP_MALFORMED_RESPONSE",
+                            error.to_string(),
+                        )
+                    })?;
+                    let text = if locations.as_array().is_some_and(Vec::is_empty) {
+                        "No matching locations.".to_owned()
+                    } else {
+                        serde_json::to_string_pretty(&serde_json::json!({"locations":locations,"resolvedWorkspaceUri":resolved_workspace_uri}))
+                            .map_err(|error| crate::runtime::tools::ToolError::new("LSP_MALFORMED_RESPONSE",error.to_string()))?
+                    };
+                    (
+                        value([
+                            ("kind", "locations".into()),
+                            ("locations", as_js(&locations)?),
+                            ("resolvedWorkspaceUri", resolved_workspace_uri.into()),
+                        ]),
+                        text,
+                    )
+                }
+            };
+            Ok(crate::runtime::tools::ToolOutput {
+                content: vec![JsValue::Object(value([
+                    ("type", "text".into()),
+                    ("text", text.into()),
+                ]))],
+                supplemental_messages: None,
+                data: Some(JsValue::Object(data)),
+                metadata: None,
+            })
         })
     }
 }
@@ -2244,7 +2321,7 @@ fn managed_tool_blocked(policy: &JsValue, name: &JsString) -> bool {
 pub(super) fn native_tools(
     allowed: Option<Vec<JsString>>,
     denied: Option<Vec<JsString>>,
-    lsp: Arc<super::families::DefaultLsp>,
+    lsp: Arc<crate::runtime::lsp::LspService>,
     mcp: &SessionMcpTools,
     world: &ExecutionWorld,
 ) -> ToolRegistry {
@@ -3785,7 +3862,7 @@ mod tests {
         let registry = native_tools(
             None,
             None,
-            Arc::new(super::super::families::DefaultLsp::default()),
+            Arc::new(crate::runtime::lsp::LspService::new()),
             &tools,
             &ExecutionWorld::new(),
         );
@@ -3800,7 +3877,7 @@ mod tests {
         let restricted = native_tools(
             Some(vec![name.clone()]),
             None,
-            Arc::new(super::super::families::DefaultLsp::default()),
+            Arc::new(crate::runtime::lsp::LspService::new()),
             &tools,
             &ExecutionWorld::new(),
         );
@@ -3820,7 +3897,7 @@ mod tests {
         let denied = native_tools(
             None,
             Some(vec![name]),
-            Arc::new(super::super::families::DefaultLsp::default()),
+            Arc::new(crate::runtime::lsp::LspService::new()),
             &tools,
             &ExecutionWorld::new(),
         );
@@ -3866,7 +3943,7 @@ mod tests {
         let base = native_tools(
             None,
             None,
-            Arc::new(super::super::families::DefaultLsp::default()),
+            Arc::new(crate::runtime::lsp::LspService::new()),
             &SessionMcpTools::empty(),
             &ExecutionWorld::new(),
         );

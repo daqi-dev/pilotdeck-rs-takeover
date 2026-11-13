@@ -1,6 +1,6 @@
 use super::{
     Options,
-    families::{LspFamily, TitleFamily, TitleResource},
+    families::{TitleFamily, TitleResource},
 };
 use crate::runtime::permission::effective_permission_mode;
 use crate::{
@@ -232,6 +232,7 @@ const MCP_ASK_SYNC_SKIPPED: &str = "native session: MCP ask rule sync skipped \
 /// config is published, and an acquire miss goes to stderr.
 pub(super) struct AssemblySeams {
     pub extensions: crate::extensions::NativeExtensions,
+    pub lsp_factory: Option<Arc<dyn crate::runtime::lsp::LspServiceFactory>>,
     pub permission_rule_sets: Option<Arc<GatewaySessionPermissionRuleSetRegistry>>,
     pub acquire_miss_report: Option<AcquireMissReport>,
     pub publish_mcp_config: bool,
@@ -242,6 +243,7 @@ impl Default for AssemblySeams {
     fn default() -> Self {
         Self {
             extensions: crate::extensions::NativeExtensions::default(),
+            lsp_factory: None,
             permission_rule_sets: None,
             acquire_miss_report: None,
             publish_mcp_config: true,
@@ -312,6 +314,7 @@ pub(super) async fn start_with_webhook(
         env,
         crate::extensions::NativeExtensions::default(),
         false,
+        None,
     )
     .await
 }
@@ -334,6 +337,7 @@ pub(super) async fn start_for_listener(
         env,
         crate::extensions::NativeExtensions::default(),
         true,
+        None,
     )
     .await
 }
@@ -350,7 +354,23 @@ pub(super) async fn start_with_extensions(
     ),
     ProxyError,
 > {
-    start_with_extensions_impl(options, env, extensions, false).await
+    start_with_extensions_impl(options, env, extensions, false, None).await
+}
+
+pub(super) async fn start_with_lsp_factory(
+    options: Options,
+    env: Env,
+    extensions: crate::extensions::NativeExtensions,
+    factory: Arc<dyn crate::runtime::lsp::LspServiceFactory>,
+) -> Result<
+    (
+        TurnGateway,
+        crate::native_http::WebhookResolver,
+        super::switch_wiring::AssemblySwitchHandles,
+    ),
+    ProxyError,
+> {
+    start_with_extensions_impl(options, env, extensions, false, Some(factory)).await
 }
 
 async fn start_with_extensions_impl(
@@ -358,6 +378,7 @@ async fn start_with_extensions_impl(
     env: Env,
     extensions: crate::extensions::NativeExtensions,
     defer_channel_activation: bool,
+    lsp_factory: Option<Arc<dyn crate::runtime::lsp::LspServiceFactory>>,
 ) -> Result<
     (
         TurnGateway,
@@ -378,6 +399,7 @@ async fn start_with_extensions_impl(
         Some(switch_slots.clone()),
         AssemblySeams {
             extensions,
+            lsp_factory,
             defer_channel_activation,
             ..AssemblySeams::default()
         },
@@ -437,6 +459,7 @@ pub(super) async fn start_observed_with_permission_rule_sets(
         None,
         AssemblySeams {
             extensions: crate::extensions::NativeExtensions::default(),
+            lsp_factory: None,
             permission_rule_sets: Some(permission_rule_sets),
             acquire_miss_report: Some(miss_report),
             publish_mcp_config,
@@ -500,6 +523,7 @@ async fn start_assembly_resources(
 ) -> Result<TurnGateway, ProxyError> {
     let AssemblySeams {
         extensions,
+        lsp_factory,
         permission_rule_sets,
         acquire_miss_report,
         publish_mcp_config,
@@ -572,6 +596,7 @@ async fn start_assembly_resources(
         &options,
         &env,
         extensions.clone(),
+        lsp_factory,
         Some(background_completion_projection(gateway_emit.clone())),
         Some(Arc::new(RouterEventLog {
             path: options.home.join("router").join("events.jsonl"),
@@ -719,12 +744,18 @@ async fn start_assembly_resources(
                 let lsp = staged
                     .owner(Family::LspService)
                     .ok_or_else(|| RuntimeError::new("Native LSP service is missing."))?;
-                let lsp = Arc::new(
+                let (lsp, lsp_factory) = if let Some(resource) =
+                    lsp.as_any().downcast_ref::<super::families::LspResource>()
+                {
+                    (resource.service.clone(), resource.factory.clone())
+                } else {
+                    // Keep the historical default owner's disposed validation.
                     lsp.as_any()
                         .downcast_ref::<super::families::DefaultLsp>()
                         .ok_or_else(|| RuntimeError::new("Native LSP service has the wrong type."))?
-                        .bind()?,
-                );
+                        .bind()?;
+                    (Arc::new(crate::runtime::lsp::LspService::new()), None)
+                };
                 // `readSkill: { loader, lister }` over the project's plugin
                 // runtime (ProjectRuntimeResourcesBundle.ts:265).
                 let plugin_runtime =
@@ -1014,6 +1045,53 @@ async fn start_assembly_resources(
                 let native_factory = extension_lease.factory();
                 let child_extensions = extension_lease.clone();
                 let mut retained = PreparedResources::default();
+                let requested_execution = lsp_factory
+                    .as_ref()
+                    .map(|factory| {
+                        factory.session_execution(
+                            &project_root,
+                            &String::from_utf16_lossy(context.session_key.units()),
+                        )
+                    })
+                    .transpose()
+                    .map_err(|error| RuntimeError::new(error.message))?
+                    .flatten();
+                let native_sandbox =
+                    crate::runtime::tools::sandbox::Sandbox::new(profile.sandbox_mode);
+                let execution = if requested_execution.is_some() {
+                    requested_execution
+                } else if native_sandbox.confines() {
+                    Some(crate::runtime::lsp::LspSessionExecution {
+                        workspace_root: project_root.clone(),
+                        io: Arc::new(
+                            crate::runtime::lsp::NativeLspExecutionPort::new(
+                                native_sandbox,
+                                project_root.clone(),
+                            )
+                            .map_err(|error| RuntimeError::new(error.message))?,
+                        ),
+                    })
+                } else {
+                    None
+                };
+                let lsp = if let Some(execution) = execution {
+                    let bound = lsp
+                        .bind_session(execution)
+                        .await
+                        .map_err(|error| RuntimeError::new(error.message))?;
+                    let release = bound.clone();
+                    retained.push(move || {
+                        Box::pin(async move {
+                            release
+                                .dispose()
+                                .await
+                                .map_err(|error| RuntimeError::new(error.message))
+                        })
+                    });
+                    bound
+                } else {
+                    lsp
+                };
                 retained.push(move || {
                     Box::pin(async move {
                         drop(extension_lease);
@@ -2787,6 +2865,7 @@ pub(super) fn project_registry(options: &Options, env: &Env) -> Arc<ProjectRunti
         None,
         None,
         None,
+        None,
     )
 }
 
@@ -2943,6 +3022,7 @@ fn project_registry_with(
     options: &Options,
     env: &Env,
     extensions: crate::extensions::NativeExtensions,
+    lsp_factory: Option<Arc<dyn crate::runtime::lsp::LspServiceFactory>>,
     on_completion: Option<crate::runtime::background::CompletionHandler>,
     router_events: Option<Arc<dyn crate::runtime::model::router::RouterEventSink>>,
     telemetry: Option<crate::runtime::project::TelemetryClient>,
@@ -2976,7 +3056,7 @@ fn project_registry_with(
             config_version: None,
             runtime_profile_overrides: RuntimeProfileOverrides::default(),
             families: Families {
-                lsp: Some(Arc::new(LspFamily)),
+                lsp: Some(Arc::new(super::families::SelectedLspFamily(lsp_factory))),
                 session_title: Some(Arc::new(TitleFamily)),
                 ..Families::unwired()
             }

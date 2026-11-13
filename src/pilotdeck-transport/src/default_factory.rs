@@ -206,12 +206,27 @@ pub struct ObservedOriginalAgentFactory {
     factory: OriginalAgentFactory,
     activity: Arc<NativeLoopActivity>,
 }
+/// External stdio/TCP AgentLoop source events, without native durable fields.
+pub struct SidecarOriginalAgentFactory(OriginalAgentFactory);
 impl OriginalAgentFactory {
+    pub fn sidecar_public(self) -> SidecarOriginalAgentFactory {
+        SidecarOriginalAgentFactory(self)
+    }
     pub fn observed(self, activity: Arc<NativeLoopActivity>) -> ObservedOriginalAgentFactory {
         ObservedOriginalAgentFactory {
             factory: self,
             activity,
         }
+    }
+}
+impl ExecutionFactory for SidecarOriginalAgentFactory {
+    fn execute(
+        &self,
+        request: &ExecuteRequest,
+        context: &mut ExecutionContext,
+    ) -> PortResult<ExecutionTerminal> {
+        self.0
+            .execute_observed(request, context, None, StatusExposure::SidecarPublic)
     }
 }
 impl ExecutionFactory for ObservedOriginalAgentFactory {
@@ -220,8 +235,12 @@ impl ExecutionFactory for ObservedOriginalAgentFactory {
         request: &ExecuteRequest,
         context: &mut ExecutionContext,
     ) -> PortResult<ExecutionTerminal> {
-        self.factory
-            .execute_observed(request, context, Some(self.activity.clone()))
+        self.factory.execute_observed(
+            request,
+            context,
+            Some(self.activity.clone()),
+            StatusExposure::NativeDurable,
+        )
     }
 }
 /// IO composition only: final context capture cannot run while an accepted
@@ -964,10 +983,34 @@ impl TurnPreparationPort for Preparation {
         }
     }
 }
+#[derive(Clone, Copy)]
+enum StatusExposure {
+    SidecarPublic,
+    NativeDurable,
+}
+impl StatusExposure {
+    fn project(self, kind: &JsString, payload: JsObject) -> JsObject {
+        if matches!(self, Self::NativeDurable) || !kind.equals_str("agent_status") {
+            return payload;
+        }
+        // AgentLoop.toAgentStatusEvent selects these fields. The external
+        // client's durable callback reconstructs text from this public event;
+        // native execution keeps the original internal callback payload.
+        let mut public = JsObject::new();
+        for key in ["type", "sessionId", "turnId", "event", "detail"] {
+            public.insert(
+                key.into(),
+                payload.get(key).cloned().unwrap_or(JsValue::Undefined),
+            );
+        }
+        public
+    }
+}
 struct EventSink<'a> {
     context: &'a mut ExecutionContext,
     notifications: Arc<Mutex<InstructionBridge>>,
     activity: Option<Arc<NativeLoopActivity>>,
+    status_exposure: StatusExposure,
 }
 impl TurnEventPort for EventSink<'_> {
     fn drain_owned_activity(&mut self) {
@@ -992,7 +1035,8 @@ impl EventSink<'_> {
         let kind = payload
             .get("type")
             .and_then(JsValue::as_string)
-            .ok_or_else(|| gap("AgentEvent type admission"))?;
+            .ok_or_else(|| gap("AgentEvent type admission"))?
+            .clone();
         // An aborted turn under deadline is an informational source event, not
         // a successful execution or a settled host call. The factory still
         // returns its original Unknown and keeps every accepted-call fence.
@@ -1028,6 +1072,7 @@ impl EventSink<'_> {
             .activity
             .as_ref()
             .map(|activity| activity.stage(JsValue::Object(payload.clone())));
+        let payload = self.status_exposure.project(&kind, payload);
         let result = if accepted {
             self.context
                 .emit_accepted(JsString::from_utf16(name), payload)
@@ -1048,7 +1093,7 @@ impl ExecutionFactory for OriginalAgentFactory {
         request: &ExecuteRequest,
         context: &mut ExecutionContext,
     ) -> PortResult<ExecutionTerminal> {
-        self.execute_observed(request, context, None)
+        self.execute_observed(request, context, None, StatusExposure::NativeDurable)
     }
 }
 impl OriginalAgentFactory {
@@ -1057,6 +1102,7 @@ impl OriginalAgentFactory {
         request: &ExecuteRequest,
         context: &mut ExecutionContext,
         activity: Option<Arc<NativeLoopActivity>>,
+        status_exposure: StatusExposure,
     ) -> PortResult<ExecutionTerminal> {
         context.control.check()?;
         let mut decoded = OriginalFactoryPayloadDecoder
@@ -1258,6 +1304,7 @@ impl OriginalAgentFactory {
             context,
             notifications: notifications.clone(),
             activity,
+            status_exposure,
         };
         let mut host = NotificationFencedHost {
             host,
@@ -1474,3 +1521,7 @@ mod calibration_lookup_tests {
 #[cfg(test)]
 #[path = "default_factory/activity_tests.rs"]
 mod activity_tests;
+
+#[cfg(all(test, unix))]
+#[path = "default_factory/budget_boundary_tests.rs"]
+mod budget_boundary_tests;

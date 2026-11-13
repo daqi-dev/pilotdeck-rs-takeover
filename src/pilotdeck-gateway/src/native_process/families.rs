@@ -118,8 +118,56 @@ impl ResourceFamilySource for LspFamily {
         Family::LspService
     }
     fn stage(&self, _: &StageContext, sink: &mut StageSink<'_>) -> RuntimeResult {
-        sink.register_owner(self.family(), Arc::new(DefaultLsp::default()));
+        sink.register_owner(
+            self.family(),
+            Arc::new(LspResource {
+                service: Arc::new(crate::runtime::lsp::LspService::new()),
+                factory: None,
+            }),
+        );
         Ok(())
+    }
+}
+
+/// Typed callable owner retained by the project generation. The independent
+/// source-level factory and service live until the last project lease closes.
+pub struct LspResource {
+    pub service: Arc<crate::runtime::lsp::LspService>,
+    pub factory: Option<Arc<dyn crate::runtime::lsp::LspServiceFactory>>,
+}
+impl FamilyResource for LspResource {
+    fn dispose(&self) -> DisposeFuture<'_> {
+        let future = self.service.dispose();
+        Box::pin(async move { future.await.map_err(|e| RuntimeError::new(e.message)) })
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+pub struct SelectedLspFamily(pub Option<Arc<dyn crate::runtime::lsp::LspServiceFactory>>);
+impl ResourceFamilySource for SelectedLspFamily {
+    fn family(&self) -> Family {
+        Family::LspService
+    }
+    fn stage(&self, context: &StageContext, sink: &mut StageSink<'_>) -> RuntimeResult {
+        if let Some(factory) = &self.0 {
+            let service = factory
+                .create(&context.project_root())
+                .map_err(|e| RuntimeError::new(e.message))?;
+            if let Ok(executor) = tokio::runtime::Handle::try_current() {
+                service.attach_runtime(executor);
+            }
+            sink.register_owner(
+                self.family(),
+                Arc::new(LspResource {
+                    service,
+                    factory: Some(factory.clone()),
+                }),
+            );
+            Ok(())
+        } else {
+            LspFamily.stage(context, sink)
+        }
     }
 }
 
