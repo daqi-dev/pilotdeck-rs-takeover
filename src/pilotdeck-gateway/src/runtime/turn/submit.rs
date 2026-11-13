@@ -50,9 +50,10 @@ pub type SubmitFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// but measured over 20 runs per row they land in between: a killed hook's
 /// completion before the status (PostToolUse 20/20, UserPromptSubmit 20/20,
 /// PreToolUse / PostToolUseFailure / SubagentStart 19/20 each), the failure
-/// hook of a killed tool starting before it (MCP 20/20, bash 19/20); a hook
-/// started later than a few milliseconds after the abort (the batch's
-/// PostToolUseFailure, a node hook's own completion) does not. Rust's record
+/// hook of a killed tool starting before it (MCP 20/20, bash 19/20), while a
+/// node hook's own completion never does and the Stop / SubagentStop
+/// completions and the tool batch's failure hook land on either side (11/9,
+/// declared volatile in the abort-timeout-* scenarios). Rust's record
 /// settles in well under that, so the registry events wait out this window,
 /// measured from the abort — the same span as the advisory hooks' kill
 /// window (`ADVISORY_KILL_SETTLE`, live.rs).
