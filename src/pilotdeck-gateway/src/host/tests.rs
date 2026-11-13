@@ -9,6 +9,8 @@ mod event;
 mod model;
 mod modules;
 mod native;
+#[cfg(unix)]
+mod operation_journal;
 mod resume;
 mod tcp;
 

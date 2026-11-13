@@ -496,6 +496,7 @@ impl TurnHostFactory {
         signal: crate::runtime::hooks::Cancellation,
     ) -> Result<InteractionHost, HostError> {
         let lease = self.acquire_lease()?;
+        let journal_writer = recorder.writer().clone();
         let ports = (self.ports)(identity, recorder, signal);
         let assembled = match &self.port_decorators {
             Some(decorators) => Self::assemble_decorated(lease, identity, ports, decorators).await,
@@ -564,22 +565,31 @@ impl TurnHostFactory {
                     } => {
                         let mut command = Command::new(command);
                         command.args(args).current_dir(cwd).env_clear().envs(env);
-                        HostClient::spawn(&mut command, expected.as_ref(), limits).await
+                        HostClient::spawn(&mut command, expected.as_ref(), limits)
+                            .await
+                            .map(|client| {
+                                client.with_operation_journal(
+                                    super::operation_journal::SessionJournal::new(journal_writer),
+                                )
+                            })
                     }
                     Deployment::Tcp {
                         host,
                         port,
                         connect_timeout_ms,
-                    } => {
-                        HostClient::connect_tcp(
-                            &host,
-                            port,
-                            connect_timeout_ms.map(std::time::Duration::from_millis),
-                            expected.as_ref(),
-                            limits,
+                    } => HostClient::connect_tcp(
+                        &host,
+                        port,
+                        connect_timeout_ms.map(std::time::Duration::from_millis),
+                        expected.as_ref(),
+                        limits,
+                    )
+                    .await
+                    .map(|client| {
+                        client.with_operation_journal(
+                            super::operation_journal::SessionJournal::new(journal_writer),
                         )
-                        .await
-                    }
+                    }),
                 }
             }),
             lease,

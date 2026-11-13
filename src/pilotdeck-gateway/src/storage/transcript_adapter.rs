@@ -891,6 +891,21 @@ impl TranscriptWriter {
         self.begin_close();
         drop(self.lock());
     }
+    /// Read a recovery snapshot through this writer's store under its commit
+    /// mutex. No second descriptor owner or competing JSONL writer is opened.
+    pub(crate) fn read_operation_entries(&self) -> AdapterResult<Vec<JsValue>> {
+        let _commit = self.lock();
+        self.check_retired()?;
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(AdapterError::Closed(
+                "Operation journal session writer is closed.".into(),
+            ));
+        }
+        let read = self.base.store.read(&self.base.key(&self.path), None)?;
+        read.ensure_writable()?;
+        Ok(read.entries)
+    }
+
     pub fn record_session_event(
         &self,
         session_id: &JsString,

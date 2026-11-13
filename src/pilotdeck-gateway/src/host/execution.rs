@@ -57,6 +57,10 @@ fn post_cancel_timeout() -> HostError {
 }
 
 fn terminal_result(event: Arc<Frame>, aborted: bool, progress: &mut Progress) -> ExecuteResult {
+    if let Ok(MessageRef::Event(final_event)) = decode(&event.value) {
+        progress.terminal_outcome = final_event.outcome;
+        progress.terminal_sequence = Some(final_event.sequence.value());
+    }
     // All callback/queue references have been released before transferring the
     // original lease. Sharing a validated final adds no unbudgeted payload copy.
     let event = Arc::try_unwrap(event).expect("terminal exclusively owned");
@@ -186,6 +190,32 @@ pub(super) async fn run(
     }
     let outgoing = JsValue::Object(outgoing);
     decode(&outgoing)?;
+    if let Some(journal) = &client.journal {
+        let id = crate::storage::OperationIdentity {
+            run_id: identity.run_id.clone(),
+            operation_id: identity.operation_id.clone(),
+            request_id: identity.request_id.clone(),
+            session_id: identity.session_id.clone(),
+            turn_id: identity.turn_id.clone(),
+            binding: pilotdeck_protocol::module::ModuleBinding {
+                module_instance_id: client.binding.module_instance_id.clone(),
+                connection_generation: client.binding.connection_generation.clone(),
+            },
+            idempotency_key: outgoing
+                .get("idempotencyKey")
+                .and_then(JsValue::as_string)
+                .cloned(),
+        };
+        if let Some(resolution) = journal.begin(id).await? {
+            let mut payload = JsObject::new();
+            payload.insert("result".into(), resolution.result);
+            payload.insert("messages".into(), JsValue::Array(resolution.messages));
+            if let Some(seed) = resolution.seed_state {
+                payload.insert("seedState".into(), seed);
+            }
+            return Ok(ExecuteResult::RecoveredTerminal(JsValue::Object(payload)));
+        }
+    }
     client.connection.send(&outgoing)?;
     drop(outgoing);
     let mut next_sequence = 0.0;
@@ -433,6 +463,9 @@ pub(super) async fn run(
                         // streamId without resetting sequence or re-sending cancel.
                         progress.stream_id = Some(response.fields.get("streamId").and_then(JsValue::as_string)
                             .filter(|id| !id.is_empty()).ok_or_else(|| HostError::protocol("Sidecar execute response did not provide streamId."))?.clone());
+                        if let Some(journal) = &client.journal {
+                            journal.accepted(progress.stream_id.clone().expect("real accepted stream")).await?;
+                        }
                     }
                     MessageRef::Event(event) => {
                         // TS client:879-893: all four IDs, strictly 0,1,..., replay
@@ -440,6 +473,18 @@ pub(super) async fn run(
                         if progress.stream_id.as_ref() != Some(event.stream_id) || event.identity.run_id != &identity.run_id
                             || event.identity.operation_id != &identity.operation_id || event.identity.request_id != &identity.request_id {
                             return Err(HostError::protocol("Sidecar event identity does not match the active execution (or event before acceptance)."));
+                        }
+                        if event.final_event && event.outcome == Some(ModuleOutcome::ResultUnknown)
+                            && let Some(journal) = &client.journal {
+                                if event.sequence.value() != next_sequence {
+                                    return Err(HostError::protocol(format!("Sidecar event sequence mismatch: expected {next_sequence}, got {}.", event.sequence.value())));
+                                }
+                                journal.result_unknown(
+                                    event.stream_id.clone(),
+                                    event.sequence.value(),
+                                    event.fields.get("code").and_then(JsValue::as_string).cloned(),
+                                    event.fields.get("error").cloned(),
+                                ).await?;
                         }
                         let aborted = validate_event(event, &identity, &cancellation)?;
                         if event.sequence.value() != next_sequence {

@@ -8,6 +8,7 @@ pub mod interaction;
 pub mod live;
 mod live_session;
 mod maintenance;
+pub(crate) mod operation_journal;
 pub mod projector;
 #[cfg(all(test, unix))]
 mod projector_cwd_tests;

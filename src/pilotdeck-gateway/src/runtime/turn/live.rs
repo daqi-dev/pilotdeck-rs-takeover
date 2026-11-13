@@ -1112,7 +1112,7 @@ impl LiveTurn for LiveTurnStream {
                     continue;
                 }
                 return match self.result.take() {
-                    Some(result) => match self.finish(result) {
+                    Some(result) => match self.finish_maybe_journaled(result).await {
                         Ok(Some(event)) => self.record_event(event, true, false, None).await,
                         Err(error)
                             if self.accepted
@@ -1488,9 +1488,42 @@ impl LiveTurnStream {
         Ok(Some(event))
     }
 
+    async fn finish_maybe_journaled(
+        &mut self,
+        result: Result<ExecuteResult, HostError>,
+    ) -> Result<Option<JsValue>, RuntimeError> {
+        match result {
+            Ok(ExecuteResult::Journal { result, finalizer }) => {
+                let mut captured = None;
+                // All original delivered/integrity fences run before projection
+                // and the journal sees this exact payload, exactly once.
+                let projected = self.finish_with_projection(Ok(*result), Some(&mut captured));
+                let durable = match (&projected, captured) {
+                    (Ok(Some(_)), Some(payload)) => Ok(payload),
+                    (Err(error), _) => Err(HostError::protocol(error.message.clone())),
+                    _ => Err(HostError::protocol(
+                        "Operation terminal projection is unavailable.",
+                    )),
+                };
+                // settle synchronously hands the real client/scope to its owner
+                // task before awaiting. Dropping this waiter cannot cancel drain.
+                finalizer.settle(durable).await.map_err(map_host_error)?;
+                projected
+            }
+            result => self.finish(result),
+        }
+    }
     fn finish(
         &self,
         result: Result<ExecuteResult, HostError>,
+    ) -> Result<Option<JsValue>, RuntimeError> {
+        self.finish_with_projection(result, None)
+    }
+
+    fn finish_with_projection(
+        &self,
+        result: Result<ExecuteResult, HostError>,
+        captured: Option<&mut Option<JsValue>>,
     ) -> Result<Option<JsValue>, RuntimeError> {
         match result {
             Ok(ExecuteResult::Terminal(terminal)) => {
@@ -1532,11 +1565,35 @@ impl LiveTurnStream {
                         .filter(|state| !state.is_undefined())
                         .cloned();
                 }
-                Ok(Some(self.completed_event(
+                Ok(Some(self.completed_event_projected(
                     terminal.get("payload").unwrap_or(&JsValue::Undefined),
                     true,
+                    false,
+                    captured,
                 )?))
             }
+            Ok(ExecuteResult::RecoveredTerminal(payload)) => {
+                let result = payload.get("result");
+                if result
+                    .and_then(|r| r.get("sessionId"))
+                    .and_then(JsValue::as_string)
+                    != Some(&self.identity.session_id)
+                    || result
+                        .and_then(|r| r.get("turnId"))
+                        .and_then(JsValue::as_string)
+                        != Some(&self.identity.turn_id)
+                {
+                    return Err(RuntimeError::new(
+                        "Recovered operation terminal has a different session or turn.",
+                    ));
+                }
+                Ok(Some(self.completed_event_projected(
+                    &payload, false, true, captured,
+                )?))
+            }
+            Ok(ExecuteResult::Journal { .. }) => Err(RuntimeError::new(
+                "Nested operation finalizer cannot bypass durable settlement.",
+            )),
             Ok(ExecuteResult::Aborted { terminal }) => {
                 self.integrity.observe_aborted()?;
                 self.delivered.observe_aborted()?;
@@ -1547,7 +1604,9 @@ impl LiveTurnStream {
                     Some(terminal) => (terminal, true),
                     None => (self.aborted_result(), false),
                 };
-                Ok(Some(self.completed_event(&terminal, position)?))
+                Ok(Some(self.completed_event_projected(
+                    &terminal, position, false, captured,
+                )?))
             }
             Ok(ExecuteResult::AbortedCompaction) => {
                 self.integrity.observe_aborted()?;
@@ -1557,9 +1616,12 @@ impl LiveTurnStream {
                 // -> projectTerminal, so unlike the pre-execute cancels the
                 // original input messages get block coordinates.
                 let position = !crate::mutants::on("timeline-compaction-unpositioned");
-                Ok(Some(
-                    self.completed_event(&self.aborted_result(), position)?,
-                ))
+                Ok(Some(self.completed_event_projected(
+                    &self.aborted_result(),
+                    position,
+                    false,
+                    captured,
+                )?))
             }
             Ok(ExecuteResult::Rejected(error)) => Err(RuntimeError {
                 message: "Turn execution rejected.".into(),
@@ -1576,10 +1638,21 @@ impl LiveTurnStream {
         }
     }
 
+    #[cfg(test)]
     fn completed_event(&self, terminal: &JsValue, position: bool) -> Result<JsValue, RuntimeError> {
+        self.completed_event_projected(terminal, position, false, None)
+    }
+    fn completed_event_projected(
+        &self,
+        terminal: &JsValue,
+        position: bool,
+        already_projected: bool,
+        captured: Option<&mut Option<JsValue>>,
+    ) -> Result<JsValue, RuntimeError> {
         let mut terminal = terminal.clone();
-        if let (Some(module), JsValue::Object(fields)) =
-            (self.integrity.marking_module().as_ref(), &mut terminal)
+        if !already_projected
+            && let (Some(module), JsValue::Object(fields)) =
+                (self.integrity.marking_module().as_ref(), &mut terminal)
         {
             if let Some(mut result) = fields.get("result").and_then(JsValue::as_object).cloned()
                 && let Some(mut message) = result.get("finalMessage").cloned()
@@ -1598,7 +1671,8 @@ impl LiveTurnStream {
                 fields.insert("messages".into(), JsValue::Array(messages));
             }
         }
-        if position
+        if !already_projected
+            && position
             && let Some(timeline) = &self.timeline
             && let JsValue::Object(fields) = &mut terminal
         {
@@ -1631,6 +1705,9 @@ impl LiveTurnStream {
                 }
                 fields.insert("messages".into(), JsValue::Array(messages));
             }
+        }
+        if let Some(captured) = captured {
+            *captured = Some(terminal.clone());
         }
         let mut event = JsObject::new();
         event.insert("type".into(), "turn_completed".into());
@@ -2168,8 +2245,12 @@ impl StreamHandler {
             } => {
                 if let Some(cancel) = &self.callback_cancel {
                     cancel.cancel(None);
-                    // Unlike dropping execute, awaiting it joins child/handler cleanup.
-                    let _ = execution.await;
+                    // A journaled final still owns its real connection. Pump
+                    // failure must await that finalizer rather than merely
+                    // dropping it and claiming transport cleanup was joined.
+                    if let Ok(ExecuteResult::Journal { finalizer, .. }) = execution.await {
+                        let _ = finalizer.settle(Err(error.clone())).await;
+                    }
                 }
                 Err(error)
             },

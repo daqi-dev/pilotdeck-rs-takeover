@@ -5300,3 +5300,6 @@ fn execute_identity_is_unique_per_request_and_stable_when_reused() {
         "explicit identity remains unchanged"
     );
 }
+
+#[path = "operation_journal_projection_tests.rs"]
+mod operation_journal_projection_tests;

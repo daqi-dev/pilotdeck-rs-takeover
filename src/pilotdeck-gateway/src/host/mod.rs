@@ -56,6 +56,7 @@ mod budget;
 mod connection;
 mod execution;
 pub mod modules;
+pub mod operation_journal;
 mod recovery;
 
 use connection::{Connection, TcpEndpoint};
@@ -65,7 +66,7 @@ use pilotdeck_protocol::{
         ExecutionIdentity, SidecarBinding, parse_sidecar_binding, parse_sidecar_capabilities,
         same_binding,
     },
-    module::ModuleMethod,
+    module::{ModuleMethod, ModuleOutcome},
     wire::{EnvelopeRef, MessageRef},
 };
 use std::{
@@ -446,6 +447,15 @@ pub struct ExecuteRequest {
 #[derive(Debug)]
 pub enum ExecuteResult {
     Terminal(JsValue),
+    /// Exact projected payload recovered from the durable session journal;
+    /// no new execute or synthetic wire lifecycle was emitted.
+    RecoveredTerminal(JsValue),
+    /// External known result whose connection remains owned until durable
+    /// projection/journal settlement. Native never constructs this variant.
+    Journal {
+        result: Box<ExecuteResult>,
+        finalizer: operation_journal::OperationFinalizer,
+    },
     /// TS abortedResult (client:330,593,1434-1448). The session layer projects
     /// type=aborted, stopReason=aborted_streaming, turns=0 and retains its
     /// original input messages. This variant is only the pre-execute cancels
@@ -508,9 +518,12 @@ pub(super) struct Progress {
     stream_id: Option<JsString>,
     last_applied_sequence: Arc<AtomicU64>,
     terminal_lease: Option<budget::Lease>,
+    terminal_outcome: Option<ModuleOutcome>,
+    terminal_sequence: Option<f64>,
 }
 
 pub struct HostClient {
+    journal: Option<Arc<dyn operation_journal::OperationJournal>>,
     connection: Connection,
     binding: SidecarBinding,
     ack_enabled: bool,
@@ -619,6 +632,7 @@ impl HostClient {
         });
         match handshake {
             Ok((binding, ack_enabled, cancel_enabled)) => Ok(Self {
+                journal: None,
                 connection,
                 binding,
                 ack_enabled,
@@ -651,6 +665,13 @@ impl HostClient {
         client.reconnect_transport = Some(ReconnectTransport::Stdio(command));
         Ok(client)
     }
+    pub(crate) fn with_operation_journal(
+        mut self,
+        journal: Arc<dyn operation_journal::OperationJournal>,
+    ) -> Self {
+        self.journal = Some(journal);
+        self
+    }
     pub fn binding(&self) -> &SidecarBinding {
         &self.binding
     }
@@ -679,41 +700,117 @@ impl HostClient {
     /// and cleanup finite even if the peer never emits a terminal; a valid
     /// terminal arriving inside that bound still wins.
     pub async fn execute_cancellable(
-        mut self,
+        self,
         request: ExecuteRequest,
         handler: Arc<dyn HostHandler>,
         cancellation: Cancellation,
     ) -> Result<ExecuteResult, HostError> {
-        let mut scope = execution::TurnScope::new(handler.clone(), self.limits.close_timeout);
-        #[cfg(test)]
-        {
-            scope.dispose_gate = self.test_signals.dispose_gate.clone();
-        }
+        let scope = execution::TurnScope::new(handler.clone(), self.limits.close_timeout);
         let mut progress = Progress {
             last_applied_sequence: Arc::new(AtomicU64::new((-1.0_f64).to_bits())),
             ..Progress::default()
         };
+        let mut owned = operation_journal::OperationFinalizer::executing(
+            self,
+            scope,
+            progress.last_applied_sequence.clone(),
+        );
+        let (client, scope) = owned.parts_mut();
+        #[cfg(test)]
+        {
+            scope.dispose_gate = client.test_signals.dispose_gate.clone();
+        }
         let result = execution::run(
-            &mut self,
+            client,
             request,
             handler.clone(),
             &mut progress,
             cancellation,
-            &mut scope,
+            scope,
         )
         .await;
         #[cfg(test)]
         {
-            self.test_signals.last_applied_bits.store(
+            client.test_signals.last_applied_bits.store(
                 progress.last_applied_sequence.load(Ordering::SeqCst),
                 Ordering::SeqCst,
             );
-            self.test_signals.loop_exited.store(true, Ordering::SeqCst);
+            client
+                .test_signals
+                .loop_exited
+                .store(true, Ordering::SeqCst);
         }
         scope.stop_callbacks().await;
+        let result = match result {
+            Ok(known @ (ExecuteResult::Terminal(_) | ExecuteResult::AbortedCompaction))
+                if client.journal.is_some() =>
+            {
+                match (progress.terminal_outcome, progress.terminal_sequence) {
+                    (Some(outcome), Some(sequence)) => {
+                        owned.prepare_terminal(
+                            Some(outcome),
+                            progress.stream_id,
+                            sequence,
+                            true,
+                            progress.terminal_lease,
+                        );
+                        return Ok(ExecuteResult::Journal {
+                            result: Box::new(known),
+                            finalizer: owned,
+                        });
+                    }
+                    _ => Err(HostError::protocol(
+                        "Operation journal lacks validated terminal identity.",
+                    )),
+                }
+            }
+            Ok(recovered @ ExecuteResult::RecoveredTerminal(_)) if client.journal.is_some() => {
+                owned.prepare_terminal(None, None, -1.0, false, progress.terminal_lease);
+                return Ok(ExecuteResult::Journal {
+                    result: Box::new(recovered),
+                    finalizer: owned,
+                });
+            }
+            Err(error) if client.journal.is_some() && progress.stream_id.is_some() => {
+                let mut serialized = JsObject::new();
+                serialized.insert("name".into(), "Error".into());
+                serialized.insert("message".into(), error.message.as_str().into());
+                match client
+                    .journal
+                    .as_ref()
+                    .expect("external journal")
+                    .abandoned(
+                        f64::from_bits(progress.last_applied_sequence.load(Ordering::SeqCst)),
+                        JsValue::Object(serialized),
+                    )
+                    .await
+                {
+                    Ok(()) => Err(error),
+                    Err(write_error) => {
+                        let mut error = error;
+                        error.message.push_str(&format!(
+                            "; operation journal uncertainty persistence failed: {write_error}"
+                        ));
+                        Err(error)
+                    }
+                }
+            }
+            result => result,
+        };
+        if let Some(journal) = &client.journal {
+            // Unknown/error paths still own every started blocking write until
+            // it has really settled, before closing the external connection.
+            if let Err(error) = journal.drain().await {
+                let _ = client.connection.close().await;
+                scope.dispose().await;
+                owned.disarm();
+                return Err(error);
+            }
+        }
+
         // TS client:1143-1146: only a started but not successful reconnect
         // emits failure. Later replay/terminal errors cannot reverse success.
-        if result.is_err() && self.reconnect_attempted && !self.reconnect_succeeded {
+        if result.is_err() && client.reconnect_attempted && !client.reconnect_succeeded {
             recovery::observe(&handler, ReconnectObservation::Failed { attempt: 1 });
         }
         let result = match result {
@@ -721,22 +818,24 @@ impl HostClient {
                 terminal @ (ExecuteResult::Terminal(_)
                 | ExecuteResult::Aborted { .. }
                 | ExecuteResult::AbortedCompaction),
-            ) => self.connection.finish_terminal().await.map(|()| terminal),
-            Ok(rejected) => self.connection.flush().await.map(|()| rejected),
+            ) => client.connection.finish_terminal().await.map(|()| terminal),
+            Ok(rejected) => client.connection.flush().await.map(|()| rejected),
             Err(error) => Err(error),
         };
-        let cleanup = self.connection.close().await;
+        let cleanup = client.connection.close().await;
         scope.dispose().await;
         let result = result.and_then(|terminal| cleanup.map(|()| terminal));
-        result.map_err(|mut error| {
+        let result = result.map_err(|mut error| {
             error.accepted = progress.stream_id.is_some();
             error.stream_id = progress.stream_id;
             error.last_applied_sequence = error
                 .accepted
                 .then(|| f64::from_bits(progress.last_applied_sequence.load(Ordering::SeqCst)));
-            append_diagnostic(&mut error, &self.connection);
+            append_diagnostic(&mut error, &client.connection);
             error
-        })
+        });
+        owned.disarm();
+        result
     }
 }
 /// `timeout` when a bound is configured, otherwise the plain future.
