@@ -1,0 +1,268 @@
+{
+  "name": "abort-hook-subagent-stop",
+  "about": "中止落在 SubagentStop hook 执行中（OneShotSubagentPort.ts:206）：abort_turn、close_session、timeoutMs。比较 subagent_completed 与 hook 完成帧的先后、帧、会话与子代理记录、下一轮。",
+  "files": {
+    "home/.pilotdeck/plugins/bbx-abort/plugin.json": {
+      "name": "bbx-abort",
+      "version": "0.1.0",
+      "description": "bbx bbx-abort",
+      "hooks": {
+        "SubagentStop": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "cat >/dev/null; sleep 3"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "home/.pilotdeck/plugins/bbx-abort/hook.mjs": "// bbx hook fixture: node hook.mjs <log> <exit> [stdout] [stderr] [sleepMs]\nimport fs from 'node:fs';\nconst [log, exit = '0', out = '', err = '', sleep = '0'] = process.argv.slice(2);\nconst dir = process.env.HOME + '/hooklog';\nconst append = (row) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(dir + '/' + log + '.jsonl', JSON.stringify(row) + '\\n'); };\nlet input = '';\nprocess.stdin.on('data', (d) => { input += d; });\nprocess.stdin.on('end', () => {\n  let parsed; try { parsed = JSON.parse(input); } catch { parsed = { raw: input }; }\n  const keep = {};\n  for (const k of ['hook_event_name', 'hookEventName', 'tool_name', 'toolName', 'error', 'isInterrupt', 'is_interrupt', 'prompt', 'reason', 'stopHookActive']) if (k in parsed) keep[k] = parsed[k];\n  append({ argv: process.argv.slice(2), input: keep });\n  setTimeout(() => {\n    append({ argv: process.argv.slice(2), done: true });\n    if (out) process.stdout.write(out);\n    if (err) process.stderr.write(err);\n    process.exit(Number(exit));\n  }, Number(sleep));\n});\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Abort run\"}"
+      }
+    },
+    {
+      "name": "child-sp-run",
+      "when": [
+        "CHILD-sp-run"
+      ],
+      "reply": {
+        "text": "Scope: x.\nResult: y.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "child-sp-close",
+      "when": [
+        "CHILD-sp-close"
+      ],
+      "reply": {
+        "text": "Scope: x.\nResult: y.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "child-sp-timeout",
+      "when": [
+        "CHILD-sp-timeout"
+      ],
+      "reply": {
+        "text": "Scope: x.\nResult: y.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "next-sp-run",
+      "when": [
+        "next-sp-run:"
+      ],
+      "reply": {
+        "text": "Next sp-run."
+      }
+    },
+    {
+      "name": "sp-run-after",
+      "when": [
+        "sp-run:",
+        "\"tool_call_id\":\"call_sp_run\""
+      ],
+      "reply": {
+        "text": "Done sp-run."
+      }
+    },
+    {
+      "name": "sp-run",
+      "when": [
+        "sp-run:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_sp_run",
+          "name": "agent",
+          "arguments": {
+            "description": "Look",
+            "prompt": "CHILD-sp-run: look.",
+            "subagent_type": "general-purpose"
+          }
+        }
+      }
+    },
+    {
+      "name": "next-sp-close",
+      "when": [
+        "next-sp-close:"
+      ],
+      "reply": {
+        "text": "Next sp-close."
+      }
+    },
+    {
+      "name": "sp-close-after",
+      "when": [
+        "sp-close:",
+        "\"tool_call_id\":\"call_sp_close\""
+      ],
+      "reply": {
+        "text": "Done sp-close."
+      }
+    },
+    {
+      "name": "sp-close",
+      "when": [
+        "sp-close:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_sp_close",
+          "name": "agent",
+          "arguments": {
+            "description": "Look",
+            "prompt": "CHILD-sp-close: look.",
+            "subagent_type": "general-purpose"
+          }
+        }
+      }
+    },
+    {
+      "name": "next-sp-timeout",
+      "when": [
+        "next-sp-timeout:"
+      ],
+      "reply": {
+        "text": "Next sp-timeout."
+      }
+    },
+    {
+      "name": "sp-timeout-after",
+      "when": [
+        "sp-timeout:",
+        "\"tool_call_id\":\"call_sp_timeout\""
+      ],
+      "reply": {
+        "text": "Done sp-timeout."
+      }
+    },
+    {
+      "name": "sp-timeout",
+      "when": [
+        "sp-timeout:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_sp_timeout",
+          "name": "agent",
+          "arguments": {
+            "description": "Look",
+            "prompt": "CHILD-sp-timeout: look.",
+            "subagent_type": "general-purpose"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-sp-run",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-sp-run",
+        "channelKey": "test",
+        "runId": "run-sp-run",
+        "message": "sp-run: go"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "agent_status",
+            "event": "hook_execution_started"
+          },
+          "ws": "abort_turn",
+          "params": {
+            "sessionKey": "s-sp-run",
+            "runId": "run-sp-run"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-sp-run",
+        "channelKey": "test",
+        "message": "next-sp-run: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-sp-close",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-sp-close",
+        "channelKey": "test",
+        "message": "sp-close: go"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "agent_status",
+            "event": "hook_execution_started"
+          },
+          "ws": "close_session",
+          "params": {
+            "sessionKey": "s-sp-close"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-sp-close",
+        "channelKey": "test",
+        "message": "next-sp-close: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-sp-run"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-sp-close"
+      }
+    }
+  ]
+}

@@ -1,0 +1,239 @@
+{
+  "name": "abort-hook-post-tool-failure",
+  "about": "中止落在 PostToolUseFailure hook 执行中（ToolRuntime.ts:418-423；bash 以非零退出码失败）：abort_turn、close_session、timeoutMs。",
+  "files": {
+    "home/.pilotdeck/plugins/bbx-abort/plugin.json": {
+      "name": "bbx-abort",
+      "version": "0.1.0",
+      "description": "bbx bbx-abort",
+      "hooks": {
+        "PostToolUseFailure": [
+          {
+            "matcher": "bash",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "cat >/dev/null; sleep 3"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "home/.pilotdeck/plugins/bbx-abort/hook.mjs": "// bbx hook fixture: node hook.mjs <log> <exit> [stdout] [stderr] [sleepMs]\nimport fs from 'node:fs';\nconst [log, exit = '0', out = '', err = '', sleep = '0'] = process.argv.slice(2);\nconst dir = process.env.HOME + '/hooklog';\nconst append = (row) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(dir + '/' + log + '.jsonl', JSON.stringify(row) + '\\n'); };\nlet input = '';\nprocess.stdin.on('data', (d) => { input += d; });\nprocess.stdin.on('end', () => {\n  let parsed; try { parsed = JSON.parse(input); } catch { parsed = { raw: input }; }\n  const keep = {};\n  for (const k of ['hook_event_name', 'hookEventName', 'tool_name', 'toolName', 'error', 'isInterrupt', 'is_interrupt', 'prompt', 'reason', 'stopHookActive']) if (k in parsed) keep[k] = parsed[k];\n  append({ argv: process.argv.slice(2), input: keep });\n  setTimeout(() => {\n    append({ argv: process.argv.slice(2), done: true });\n    if (out) process.stdout.write(out);\n    if (err) process.stderr.write(err);\n    process.exit(Number(exit));\n  }, Number(sleep));\n});\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Abort run\"}"
+      }
+    },
+    {
+      "name": "next-hf-run",
+      "when": [
+        "next-hf-run:"
+      ],
+      "reply": {
+        "text": "Next hf-run."
+      }
+    },
+    {
+      "name": "hf-run-after",
+      "when": [
+        "hf-run:",
+        "\"tool_call_id\":\"call_hf_run\""
+      ],
+      "reply": {
+        "text": "Done hf-run."
+      }
+    },
+    {
+      "name": "hf-run",
+      "when": [
+        "hf-run:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_hf_run",
+          "name": "bash",
+          "arguments": {
+            "command": "echo failing 1>&2; exit 7",
+            "description": "hf-run"
+          }
+        }
+      }
+    },
+    {
+      "name": "next-hf-close",
+      "when": [
+        "next-hf-close:"
+      ],
+      "reply": {
+        "text": "Next hf-close."
+      }
+    },
+    {
+      "name": "hf-close-after",
+      "when": [
+        "hf-close:",
+        "\"tool_call_id\":\"call_hf_close\""
+      ],
+      "reply": {
+        "text": "Done hf-close."
+      }
+    },
+    {
+      "name": "hf-close",
+      "when": [
+        "hf-close:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_hf_close",
+          "name": "bash",
+          "arguments": {
+            "command": "echo failing 1>&2; exit 7",
+            "description": "hf-close"
+          }
+        }
+      }
+    },
+    {
+      "name": "next-hf-timeout",
+      "when": [
+        "next-hf-timeout:"
+      ],
+      "reply": {
+        "text": "Next hf-timeout."
+      }
+    },
+    {
+      "name": "hf-timeout-after",
+      "when": [
+        "hf-timeout:",
+        "\"tool_call_id\":\"call_hf_timeout\""
+      ],
+      "reply": {
+        "text": "Done hf-timeout."
+      }
+    },
+    {
+      "name": "hf-timeout",
+      "when": [
+        "hf-timeout:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_hf_timeout",
+          "name": "bash",
+          "arguments": {
+            "command": "echo failing 1>&2; exit 7",
+            "description": "hf-timeout"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-hf-run",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-hf-run",
+        "channelKey": "test",
+        "runId": "run-hf-run",
+        "message": "hf-run: go"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "agent_status",
+            "event": "hook_execution_started"
+          },
+          "ws": "abort_turn",
+          "params": {
+            "sessionKey": "s-hf-run",
+            "runId": "run-hf-run"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-hf-run",
+        "channelKey": "test",
+        "message": "next-hf-run: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-hf-close",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-hf-close",
+        "channelKey": "test",
+        "message": "hf-close: go"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "agent_status",
+            "event": "hook_execution_started"
+          },
+          "ws": "close_session",
+          "params": {
+            "sessionKey": "s-hf-close"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-hf-close",
+        "channelKey": "test",
+        "message": "next-hf-close: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-hf-run"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-hf-close"
+      }
+    }
+  ]
+}

@@ -1,0 +1,191 @@
+{
+  "name": "abort-timeout-permission-pending",
+  "about": "超时列（submit_turn.timeoutMs，从 abort-permission-pending 拆出）：中止落在权限询问未答时（abort_turn 见 params-abort-reason-snapshot，断开见 robust-drop-*-permission）：close_session、timeoutMs；对照：询问期间插话、同会话再提交（之后批准）。比较询问是否被撤回（permission_list）、工具是否执行（ran-*.txt）、帧、会话记录、下一轮。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Abort run\"}"
+      }
+    },
+    {
+      "name": "next-pa-close",
+      "when": [
+        "next-pa-close:"
+      ],
+      "reply": {
+        "text": "Next pa-close."
+      }
+    },
+    {
+      "name": "pa-close-after",
+      "when": [
+        "pa-close:",
+        "\"tool_call_id\":\"call_pa_close\""
+      ],
+      "reply": {
+        "text": "Done pa-close."
+      }
+    },
+    {
+      "name": "pa-close",
+      "when": [
+        "pa-close:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_pa_close",
+          "name": "bash",
+          "arguments": {
+            "command": "echo ran > ran-pa-close.txt",
+            "description": "pa-close"
+          }
+        }
+      }
+    },
+    {
+      "name": "next-pa-timeout",
+      "when": [
+        "next-pa-timeout:"
+      ],
+      "reply": {
+        "text": "Next pa-timeout."
+      }
+    },
+    {
+      "name": "pa-timeout-after",
+      "when": [
+        "pa-timeout:",
+        "\"tool_call_id\":\"call_pa_timeout\""
+      ],
+      "reply": {
+        "text": "Done pa-timeout."
+      }
+    },
+    {
+      "name": "pa-timeout",
+      "when": [
+        "pa-timeout:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_pa_timeout",
+          "name": "bash",
+          "arguments": {
+            "command": "echo ran > ran-pa-timeout.txt",
+            "description": "pa-timeout"
+          }
+        }
+      }
+    },
+    {
+      "name": "next-pa-steer",
+      "when": [
+        "next-pa-steer:"
+      ],
+      "reply": {
+        "text": "Next pa-steer."
+      }
+    },
+    {
+      "name": "pa-steer-after",
+      "when": [
+        "pa-steer:",
+        "\"tool_call_id\":\"call_pa_steer\""
+      ],
+      "reply": {
+        "text": "Done pa-steer."
+      }
+    },
+    {
+      "name": "pa-steer",
+      "when": [
+        "pa-steer:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_pa_steer",
+          "name": "bash",
+          "arguments": {
+            "command": "echo ran > ran-pa-steer.txt",
+            "description": "pa-steer"
+          }
+        }
+      }
+    },
+    {
+      "name": "next-pa-busy",
+      "when": [
+        "next-pa-busy:"
+      ],
+      "reply": {
+        "text": "Next pa-busy."
+      }
+    },
+    {
+      "name": "pa-busy-after",
+      "when": [
+        "pa-busy:",
+        "\"tool_call_id\":\"call_pa_busy\""
+      ],
+      "reply": {
+        "text": "Done pa-busy."
+      }
+    },
+    {
+      "name": "pa-busy",
+      "when": [
+        "pa-busy:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_pa_busy",
+          "name": "bash",
+          "arguments": {
+            "command": "echo ran > ran-pa-busy.txt",
+            "description": "pa-busy"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-pa-timeout",
+        "channelKey": "test",
+        "message": "pa-timeout: go",
+        "timeoutMs": 1500
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 2500
+    },
+    {
+      "ws": "permission_list",
+      "params": {
+        "sessionKey": "s-pa-timeout"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-pa-timeout",
+        "channelKey": "test",
+        "message": "next-pa-timeout: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-pa-timeout"
+      }
+    }
+  ]
+}

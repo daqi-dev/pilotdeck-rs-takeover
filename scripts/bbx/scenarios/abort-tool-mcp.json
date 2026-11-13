@@ -1,0 +1,246 @@
+{
+  "name": "abort-tool-mcp",
+  "about": "中止落在 MCP 工具调用中（stdio 服务 2 秒后才回 tools/call）：abort_turn、close_session、timeoutMs。比较 MCP 服务收到的消息（有没有 notifications/cancelled）、PostToolUseFailure、帧与会话记录、下一轮。",
+  "files": {
+    "home/.pilotdeck/mcp/slow-mcp.mjs": "// bbx fixture: slow MCP stdio server. node slow-mcp.mjs <label> <delayMs>\nimport fs from 'node:fs';\nimport readline from 'node:readline';\nconst label = process.argv[2] ?? 'slow';\nconst delay = Number(process.argv[3] ?? '2000');\nconst dir = process.env.HOME + '/hooklog';\nconst log = (row) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(dir + '/mcp-' + label + '.jsonl', JSON.stringify(row) + '\\n'); };\nconst send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');\nconst tool = {\n  name: 'slow',\n  description: 'Wait a while, then echo the given text.',\n  inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false },\n};\nreadline.createInterface({ input: process.stdin }).on('line', (line) => {\n  let request;\n  try { request = JSON.parse(line); } catch { return; }\n  if (request.method === 'tools/call' || (request.method ?? '').startsWith('notifications/cancelled')) log({ method: request.method, params: request.params ?? null });\n  if (request.id === undefined) return;\n  if (request.method === 'initialize') {\n    send({ jsonrpc: '2.0', id: request.id, result: { protocolVersion: request.params?.protocolVersion ?? '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'bbx-slow-' + label, version: '1.0.0' } } });\n  } else if (request.method === 'tools/list') {\n    send({ jsonrpc: '2.0', id: request.id, result: { tools: [tool] } });\n  } else if (request.method === 'tools/call') {\n    const text = String(request.params?.arguments?.text ?? '');\n    setTimeout(() => { send({ jsonrpc: '2.0', id: request.id, result: { content: [{ type: 'text', text: 'slow[' + label + ']: ' + text }] } }); }, delay);\n  } else if (request.method === 'ping') {\n    send({ jsonrpc: '2.0', id: request.id, result: {} });\n  } else {\n    send({ jsonrpc: '2.0', id: request.id, error: { code: -32601, message: 'Method not found: ' + request.method } });\n  }\n});\n",
+    "home/.pilotdeck/mcp.json": {
+      "mcpServers": {
+        "bbx-slow": {
+          "command": "node",
+          "args": [
+            "{PILOT_HOME}/mcp/slow-mcp.mjs",
+            "slow",
+            "2000"
+          ]
+        }
+      }
+    },
+    "home/.pilotdeck/plugins/bbx-abort/plugin.json": {
+      "name": "bbx-abort",
+      "version": "0.1.0",
+      "description": "bbx bbx-abort",
+      "hooks": {
+        "PostToolUseFailure": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs post-failure 0 '' '' 0"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "home/.pilotdeck/plugins/bbx-abort/hook.mjs": "// bbx hook fixture: node hook.mjs <log> <exit> [stdout] [stderr] [sleepMs]\nimport fs from 'node:fs';\nconst [log, exit = '0', out = '', err = '', sleep = '0'] = process.argv.slice(2);\nconst dir = process.env.HOME + '/hooklog';\nconst append = (row) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(dir + '/' + log + '.jsonl', JSON.stringify(row) + '\\n'); };\nlet input = '';\nprocess.stdin.on('data', (d) => { input += d; });\nprocess.stdin.on('end', () => {\n  let parsed; try { parsed = JSON.parse(input); } catch { parsed = { raw: input }; }\n  const keep = {};\n  for (const k of ['hook_event_name', 'hookEventName', 'tool_name', 'toolName', 'error', 'isInterrupt', 'is_interrupt', 'prompt', 'reason', 'stopHookActive']) if (k in parsed) keep[k] = parsed[k];\n  append({ argv: process.argv.slice(2), input: keep });\n  setTimeout(() => {\n    append({ argv: process.argv.slice(2), done: true });\n    if (out) process.stdout.write(out);\n    if (err) process.stderr.write(err);\n    process.exit(Number(exit));\n  }, Number(sleep));\n});\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Abort run\"}"
+      }
+    },
+    {
+      "name": "next-tm-run",
+      "when": [
+        "next-tm-run:"
+      ],
+      "reply": {
+        "text": "Next tm-run."
+      }
+    },
+    {
+      "name": "tm-run-after",
+      "when": [
+        "tm-run:",
+        "\"tool_call_id\":\"call_tm_run\""
+      ],
+      "reply": {
+        "text": "Done tm-run."
+      }
+    },
+    {
+      "name": "tm-run",
+      "when": [
+        "tm-run:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_tm_run",
+          "name": "mcp__bbx-slow__slow",
+          "arguments": {
+            "text": "tm-run"
+          }
+        }
+      }
+    },
+    {
+      "name": "next-tm-close",
+      "when": [
+        "next-tm-close:"
+      ],
+      "reply": {
+        "text": "Next tm-close."
+      }
+    },
+    {
+      "name": "tm-close-after",
+      "when": [
+        "tm-close:",
+        "\"tool_call_id\":\"call_tm_close\""
+      ],
+      "reply": {
+        "text": "Done tm-close."
+      }
+    },
+    {
+      "name": "tm-close",
+      "when": [
+        "tm-close:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_tm_close",
+          "name": "mcp__bbx-slow__slow",
+          "arguments": {
+            "text": "tm-close"
+          }
+        }
+      }
+    },
+    {
+      "name": "next-tm-timeout",
+      "when": [
+        "next-tm-timeout:"
+      ],
+      "reply": {
+        "text": "Next tm-timeout."
+      }
+    },
+    {
+      "name": "tm-timeout-after",
+      "when": [
+        "tm-timeout:",
+        "\"tool_call_id\":\"call_tm_timeout\""
+      ],
+      "reply": {
+        "text": "Done tm-timeout."
+      }
+    },
+    {
+      "name": "tm-timeout",
+      "when": [
+        "tm-timeout:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_tm_timeout",
+          "name": "mcp__bbx-slow__slow",
+          "arguments": {
+            "text": "tm-timeout"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-tm-run",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tm-run",
+        "channelKey": "test",
+        "runId": "run-tm-run",
+        "message": "tm-run: go"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started"
+          },
+          "ws": "abort_turn",
+          "params": {
+            "sessionKey": "s-tm-run",
+            "runId": "run-tm-run"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tm-run",
+        "channelKey": "test",
+        "message": "next-tm-run: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-tm-close",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tm-close",
+        "channelKey": "test",
+        "message": "tm-close: go"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started"
+          },
+          "ws": "close_session",
+          "params": {
+            "sessionKey": "s-tm-close"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tm-close",
+        "channelKey": "test",
+        "message": "next-tm-close: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-tm-run"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-tm-close"
+      }
+    }
+  ]
+}

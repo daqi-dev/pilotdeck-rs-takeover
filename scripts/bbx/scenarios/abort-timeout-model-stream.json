@@ -1,0 +1,292 @@
+{
+  "name": "abort-timeout-model-stream",
+  "about": "超时列（submit_turn.timeoutMs，从 abort-model-stream 拆出）：中止落在模型请求中：已发出还没有响应头、推理输出到一半、文本之后工具调用已到但结束原因未到、文本输出到一半（abort_turn 带 runId / close_session / timeoutMs）。比较帧、部分 assistant 消息是否落盘、工具是否执行、下一轮请求带着的历史。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Abort run\"}"
+      }
+    },
+    {
+      "name": "next-sh-run",
+      "when": [
+        "next-sh-run:"
+      ],
+      "reply": {
+        "text": "Next sh-run."
+      }
+    },
+    {
+      "name": "sh-run",
+      "when": [
+        "sh-run:"
+      ],
+      "reply": {
+        "text": "late headers",
+        "delayMs": 3000
+      }
+    },
+    {
+      "name": "next-sh-close",
+      "when": [
+        "next-sh-close:"
+      ],
+      "reply": {
+        "text": "Next sh-close."
+      }
+    },
+    {
+      "name": "sh-close",
+      "when": [
+        "sh-close:"
+      ],
+      "reply": {
+        "text": "late headers",
+        "delayMs": 3000
+      }
+    },
+    {
+      "name": "next-sh-timeout",
+      "when": [
+        "next-sh-timeout:"
+      ],
+      "reply": {
+        "text": "Next sh-timeout."
+      }
+    },
+    {
+      "name": "sh-timeout",
+      "when": [
+        "sh-timeout:"
+      ],
+      "reply": {
+        "text": "late headers",
+        "delayMs": 3000
+      }
+    },
+    {
+      "name": "next-sr-run",
+      "when": [
+        "next-sr-run:"
+      ],
+      "reply": {
+        "text": "Next sr-run."
+      }
+    },
+    {
+      "name": "sr-run",
+      "when": [
+        "sr-run:"
+      ],
+      "reply": {
+        "reasoning": "thinking about it",
+        "chunks": [
+          "never ",
+          "shown"
+        ],
+        "hangAfter": 1,
+        "hangMs": 4000
+      }
+    },
+    {
+      "name": "next-sr-close",
+      "when": [
+        "next-sr-close:"
+      ],
+      "reply": {
+        "text": "Next sr-close."
+      }
+    },
+    {
+      "name": "sr-close",
+      "when": [
+        "sr-close:"
+      ],
+      "reply": {
+        "reasoning": "thinking about it",
+        "chunks": [
+          "never ",
+          "shown"
+        ],
+        "hangAfter": 1,
+        "hangMs": 4000
+      }
+    },
+    {
+      "name": "next-sc-run",
+      "when": [
+        "next-sc-run:"
+      ],
+      "reply": {
+        "text": "Next sc-run."
+      }
+    },
+    {
+      "name": "sc-run",
+      "when": [
+        "sc-run:"
+      ],
+      "reply": {
+        "text": "let me look ",
+        "tool": {
+          "id": "call_sc",
+          "name": "bash",
+          "arguments": {
+            "command": "echo never > never-sc.txt"
+          }
+        },
+        "hangAfter": 2,
+        "hangMs": 4000
+      }
+    },
+    {
+      "name": "next-sc-close",
+      "when": [
+        "next-sc-close:"
+      ],
+      "reply": {
+        "text": "Next sc-close."
+      }
+    },
+    {
+      "name": "sc-close",
+      "when": [
+        "sc-close:"
+      ],
+      "reply": {
+        "text": "let me look ",
+        "tool": {
+          "id": "call_scc",
+          "name": "bash",
+          "arguments": {
+            "command": "echo never > never-scc.txt"
+          }
+        },
+        "hangAfter": 2,
+        "hangMs": 4000
+      }
+    },
+    {
+      "name": "next-st-close",
+      "when": [
+        "next-st-close:"
+      ],
+      "reply": {
+        "text": "Next st-close."
+      }
+    },
+    {
+      "name": "st-close",
+      "when": [
+        "st-close:"
+      ],
+      "reply": {
+        "chunks": [
+          "partial ",
+          "never"
+        ],
+        "hangAfter": 1,
+        "hangMs": 4000
+      }
+    },
+    {
+      "name": "next-st-timeout",
+      "when": [
+        "next-st-timeout:"
+      ],
+      "reply": {
+        "text": "Next st-timeout."
+      }
+    },
+    {
+      "name": "st-timeout",
+      "when": [
+        "st-timeout:"
+      ],
+      "reply": {
+        "chunks": [
+          "partial ",
+          "never"
+        ],
+        "hangAfter": 1,
+        "hangMs": 4000
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-sh-timeout",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-sh-timeout",
+        "channelKey": "test",
+        "message": "sh-timeout: go",
+        "timeoutMs": 1500
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 4500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-sh-timeout",
+        "channelKey": "test",
+        "message": "next-sh-timeout: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-st-timeout",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-st-timeout",
+        "channelKey": "test",
+        "message": "st-timeout: go",
+        "timeoutMs": 1500
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 4500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-st-timeout",
+        "channelKey": "test",
+        "message": "next-st-timeout: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-sh-timeout"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-st-timeout"
+      }
+    }
+  ]
+}

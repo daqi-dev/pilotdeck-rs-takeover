@@ -1,0 +1,502 @@
+{
+  "name": "abort-tool-bash",
+  "about": "中止落在 bash 工具执行中（子进程在睡眠）：abort_turn 带 / 不带 runId、close_session、timeoutMs 超时、插话、同会话再提交。比较：子进程是否被杀（late-*.txt）、PostToolUse / PostToolUseFailure hook 是否跑与 isInterrupt、帧序列与 finishReason、turn_aborted 状态、会话记录、下一轮请求带着的历史。",
+  "files": {
+    "home/.pilotdeck/plugins/bbx-abort/plugin.json": {
+      "name": "bbx-abort",
+      "version": "0.1.0",
+      "description": "bbx bbx-abort",
+      "hooks": {
+        "PostToolUse": [
+          {
+            "matcher": "bash",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs post 0 '' '' 0"
+              }
+            ]
+          }
+        ],
+        "PostToolUseFailure": [
+          {
+            "matcher": "bash",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs post-failure 0 '' '' 0"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "home/.pilotdeck/plugins/bbx-abort/hook.mjs": "// bbx hook fixture: node hook.mjs <log> <exit> [stdout] [stderr] [sleepMs]\nimport fs from 'node:fs';\nconst [log, exit = '0', out = '', err = '', sleep = '0'] = process.argv.slice(2);\nconst dir = process.env.HOME + '/hooklog';\nconst append = (row) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(dir + '/' + log + '.jsonl', JSON.stringify(row) + '\\n'); };\nlet input = '';\nprocess.stdin.on('data', (d) => { input += d; });\nprocess.stdin.on('end', () => {\n  let parsed; try { parsed = JSON.parse(input); } catch { parsed = { raw: input }; }\n  const keep = {};\n  for (const k of ['hook_event_name', 'hookEventName', 'tool_name', 'toolName', 'error', 'isInterrupt', 'is_interrupt', 'prompt', 'reason', 'stopHookActive']) if (k in parsed) keep[k] = parsed[k];\n  append({ argv: process.argv.slice(2), input: keep });\n  setTimeout(() => {\n    append({ argv: process.argv.slice(2), done: true });\n    if (out) process.stdout.write(out);\n    if (err) process.stderr.write(err);\n    process.exit(Number(exit));\n  }, Number(sleep));\n});\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Abort run\"}"
+      }
+    },
+    {
+      "name": "next-tb-run",
+      "when": [
+        "next-tb-run:"
+      ],
+      "reply": {
+        "text": "Next tb-run."
+      }
+    },
+    {
+      "name": "tb-run-after",
+      "when": [
+        "tb-run:",
+        "\"tool_call_id\":\"call_tb_run\""
+      ],
+      "reply": {
+        "text": "Done tb-run."
+      }
+    },
+    {
+      "name": "tb-run",
+      "when": [
+        "tb-run:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_tb_run",
+          "name": "bash",
+          "arguments": {
+            "command": "sleep 2; echo late > late-tb-run.txt",
+            "description": "tb-run"
+          }
+        }
+      }
+    },
+    {
+      "name": "next-tb-bare",
+      "when": [
+        "next-tb-bare:"
+      ],
+      "reply": {
+        "text": "Next tb-bare."
+      }
+    },
+    {
+      "name": "tb-bare-after",
+      "when": [
+        "tb-bare:",
+        "\"tool_call_id\":\"call_tb_bare\""
+      ],
+      "reply": {
+        "text": "Done tb-bare."
+      }
+    },
+    {
+      "name": "tb-bare",
+      "when": [
+        "tb-bare:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_tb_bare",
+          "name": "bash",
+          "arguments": {
+            "command": "sleep 2; echo late > late-tb-bare.txt",
+            "description": "tb-bare"
+          }
+        }
+      }
+    },
+    {
+      "name": "next-tb-close",
+      "when": [
+        "next-tb-close:"
+      ],
+      "reply": {
+        "text": "Next tb-close."
+      }
+    },
+    {
+      "name": "tb-close-after",
+      "when": [
+        "tb-close:",
+        "\"tool_call_id\":\"call_tb_close\""
+      ],
+      "reply": {
+        "text": "Done tb-close."
+      }
+    },
+    {
+      "name": "tb-close",
+      "when": [
+        "tb-close:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_tb_close",
+          "name": "bash",
+          "arguments": {
+            "command": "sleep 2; echo late > late-tb-close.txt",
+            "description": "tb-close"
+          }
+        }
+      }
+    },
+    {
+      "name": "next-tb-timeout",
+      "when": [
+        "next-tb-timeout:"
+      ],
+      "reply": {
+        "text": "Next tb-timeout."
+      }
+    },
+    {
+      "name": "tb-timeout-after",
+      "when": [
+        "tb-timeout:",
+        "\"tool_call_id\":\"call_tb_timeout\""
+      ],
+      "reply": {
+        "text": "Done tb-timeout."
+      }
+    },
+    {
+      "name": "tb-timeout",
+      "when": [
+        "tb-timeout:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_tb_timeout",
+          "name": "bash",
+          "arguments": {
+            "command": "sleep 2; echo late > late-tb-timeout.txt",
+            "description": "tb-timeout"
+          }
+        }
+      }
+    },
+    {
+      "name": "next-tb-steer",
+      "when": [
+        "next-tb-steer:"
+      ],
+      "reply": {
+        "text": "Next tb-steer."
+      }
+    },
+    {
+      "name": "tb-steer-after",
+      "when": [
+        "tb-steer:",
+        "\"tool_call_id\":\"call_tb_steer\""
+      ],
+      "reply": {
+        "text": "Done tb-steer."
+      }
+    },
+    {
+      "name": "tb-steer",
+      "when": [
+        "tb-steer:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_tb_steer",
+          "name": "bash",
+          "arguments": {
+            "command": "sleep 2; echo late > late-tb-steer.txt",
+            "description": "tb-steer"
+          }
+        }
+      }
+    },
+    {
+      "name": "next-tb-busy",
+      "when": [
+        "next-tb-busy:"
+      ],
+      "reply": {
+        "text": "Next tb-busy."
+      }
+    },
+    {
+      "name": "tb-busy-after",
+      "when": [
+        "tb-busy:",
+        "\"tool_call_id\":\"call_tb_busy\""
+      ],
+      "reply": {
+        "text": "Done tb-busy."
+      }
+    },
+    {
+      "name": "tb-busy",
+      "when": [
+        "tb-busy:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_tb_busy",
+          "name": "bash",
+          "arguments": {
+            "command": "sleep 2; echo late > late-tb-busy.txt",
+            "description": "tb-busy"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-tb-run",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tb-run",
+        "channelKey": "test",
+        "runId": "run-tb-run",
+        "message": "tb-run: go"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started",
+            "name": "bash"
+          },
+          "ws": "abort_turn",
+          "params": {
+            "sessionKey": "s-tb-run",
+            "runId": "run-tb-run"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tb-run",
+        "channelKey": "test",
+        "message": "next-tb-run: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-tb-bare",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tb-bare",
+        "channelKey": "test",
+        "message": "tb-bare: go"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started",
+            "name": "bash"
+          },
+          "ws": "abort_turn",
+          "params": {
+            "sessionKey": "s-tb-bare"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tb-bare",
+        "channelKey": "test",
+        "message": "next-tb-bare: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-tb-close",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tb-close",
+        "channelKey": "test",
+        "message": "tb-close: go"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started",
+            "name": "bash"
+          },
+          "ws": "close_session",
+          "params": {
+            "sessionKey": "s-tb-close"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tb-close",
+        "channelKey": "test",
+        "message": "next-tb-close: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-tb-steer",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tb-steer",
+        "channelKey": "test",
+        "runId": "run-tb-steer",
+        "message": "tb-steer: go"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started",
+            "name": "bash"
+          },
+          "ws": "steer_turn",
+          "params": {
+            "sessionKey": "s-tb-steer",
+            "runId": "run-tb-steer",
+            "itemId": "item-s-tb-steer",
+            "message": "steer-s-tb-steer: also say hi"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tb-steer",
+        "channelKey": "test",
+        "message": "next-tb-steer: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-tb-busy",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tb-busy",
+        "channelKey": "test",
+        "message": "tb-busy: go"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started",
+            "name": "bash"
+          },
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-tb-busy",
+            "channelKey": "test",
+            "message": "busy-s-tb-busy: second"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tb-busy",
+        "channelKey": "test",
+        "message": "next-tb-busy: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-tb-run"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-tb-bare"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-tb-close"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-tb-steer"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-tb-busy"
+      }
+    }
+  ]
+}

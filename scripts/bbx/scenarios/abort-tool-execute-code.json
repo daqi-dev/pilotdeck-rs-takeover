@@ -1,0 +1,236 @@
+{
+  "name": "abort-tool-execute-code",
+  "about": "中止落在 execute_code 执行中（Python 子进程睡 2 秒后写 late-*.txt）：abort_turn、close_session、timeoutMs。比较子进程是否被杀、PostToolUseFailure、帧与会话记录、下一轮。",
+  "files": {
+    "home/.pilotdeck/plugins/bbx-abort/plugin.json": {
+      "name": "bbx-abort",
+      "version": "0.1.0",
+      "description": "bbx bbx-abort",
+      "hooks": {
+        "PostToolUseFailure": [
+          {
+            "matcher": "execute_code",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs post-failure 0 '' '' 0"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "home/.pilotdeck/plugins/bbx-abort/hook.mjs": "// bbx hook fixture: node hook.mjs <log> <exit> [stdout] [stderr] [sleepMs]\nimport fs from 'node:fs';\nconst [log, exit = '0', out = '', err = '', sleep = '0'] = process.argv.slice(2);\nconst dir = process.env.HOME + '/hooklog';\nconst append = (row) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(dir + '/' + log + '.jsonl', JSON.stringify(row) + '\\n'); };\nlet input = '';\nprocess.stdin.on('data', (d) => { input += d; });\nprocess.stdin.on('end', () => {\n  let parsed; try { parsed = JSON.parse(input); } catch { parsed = { raw: input }; }\n  const keep = {};\n  for (const k of ['hook_event_name', 'hookEventName', 'tool_name', 'toolName', 'error', 'isInterrupt', 'is_interrupt', 'prompt', 'reason', 'stopHookActive']) if (k in parsed) keep[k] = parsed[k];\n  append({ argv: process.argv.slice(2), input: keep });\n  setTimeout(() => {\n    append({ argv: process.argv.slice(2), done: true });\n    if (out) process.stdout.write(out);\n    if (err) process.stderr.write(err);\n    process.exit(Number(exit));\n  }, Number(sleep));\n});\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Abort run\"}"
+      }
+    },
+    {
+      "name": "next-tx-run",
+      "when": [
+        "next-tx-run:"
+      ],
+      "reply": {
+        "text": "Next tx-run."
+      }
+    },
+    {
+      "name": "tx-run-after",
+      "when": [
+        "tx-run:",
+        "\"tool_call_id\":\"call_tx_run\""
+      ],
+      "reply": {
+        "text": "Done tx-run."
+      }
+    },
+    {
+      "name": "tx-run",
+      "when": [
+        "tx-run:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_tx_run",
+          "name": "execute_code",
+          "arguments": {
+            "code": "import time\ntime.sleep(2)\nopen('late-tx-run.txt', 'w').write('late')\nprint('slept')"
+          }
+        }
+      }
+    },
+    {
+      "name": "next-tx-close",
+      "when": [
+        "next-tx-close:"
+      ],
+      "reply": {
+        "text": "Next tx-close."
+      }
+    },
+    {
+      "name": "tx-close-after",
+      "when": [
+        "tx-close:",
+        "\"tool_call_id\":\"call_tx_close\""
+      ],
+      "reply": {
+        "text": "Done tx-close."
+      }
+    },
+    {
+      "name": "tx-close",
+      "when": [
+        "tx-close:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_tx_close",
+          "name": "execute_code",
+          "arguments": {
+            "code": "import time\ntime.sleep(2)\nopen('late-tx-close.txt', 'w').write('late')\nprint('slept')"
+          }
+        }
+      }
+    },
+    {
+      "name": "next-tx-timeout",
+      "when": [
+        "next-tx-timeout:"
+      ],
+      "reply": {
+        "text": "Next tx-timeout."
+      }
+    },
+    {
+      "name": "tx-timeout-after",
+      "when": [
+        "tx-timeout:",
+        "\"tool_call_id\":\"call_tx_timeout\""
+      ],
+      "reply": {
+        "text": "Done tx-timeout."
+      }
+    },
+    {
+      "name": "tx-timeout",
+      "when": [
+        "tx-timeout:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_tx_timeout",
+          "name": "execute_code",
+          "arguments": {
+            "code": "import time\ntime.sleep(2)\nopen('late-tx-timeout.txt', 'w').write('late')\nprint('slept')"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-tx-run",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tx-run",
+        "channelKey": "test",
+        "runId": "run-tx-run",
+        "message": "tx-run: go"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started",
+            "name": "execute_code"
+          },
+          "ws": "abort_turn",
+          "params": {
+            "sessionKey": "s-tx-run",
+            "runId": "run-tx-run"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tx-run",
+        "channelKey": "test",
+        "message": "next-tx-run: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-tx-close",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tx-close",
+        "channelKey": "test",
+        "message": "tx-close: go"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started",
+            "name": "execute_code"
+          },
+          "ws": "close_session",
+          "params": {
+            "sessionKey": "s-tx-close"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tx-close",
+        "channelKey": "test",
+        "message": "next-tx-close: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-tx-run"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-tx-close"
+      }
+    }
+  ]
+}
