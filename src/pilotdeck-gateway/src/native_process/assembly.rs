@@ -1441,9 +1441,19 @@ async fn start_assembly(
         let runs_path = options.home.join("runs").join("registry.json");
         let runs = match registry_switch {
             Some(RunRegistrySwitch::Off) => None,
-            Some(RunRegistrySwitch::On) | None => Some(Arc::new(FileRegistry::new(
-                FileRunRegistry::open(runs_path)?,
-            )?)),
+            // The baseline opens the registry in the constructor but its
+            // startup recovery is a promise nobody awaits: a registry that
+            // cannot be read (not JSON, wrong schemaVersion, lock timeout)
+            // rejects after the server is already listening, and the
+            // unhandledRejection handler shuts it down with exit 1 and no
+            // message (RunRegistry.ts:61-66, 93-108; pilotdeck.ts:271-274).
+            Some(RunRegistrySwitch::On) | None => match FileRunRegistry::open(runs_path) {
+                Ok(registry) => Some(Arc::new(FileRegistry::new(registry)?)),
+                Err(_) => {
+                    super::defer_startup_failure();
+                    None
+                }
+            },
         };
         // `resolve(tmpdir(), "pilotdeck-tool-output", process.pid.toString())`
         // (createLocalGateway.ts:924-926).

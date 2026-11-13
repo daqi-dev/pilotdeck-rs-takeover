@@ -122,6 +122,21 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
 /// signals, serve, and on SIGTERM / SIGINT run the switch machine to a clean
 /// stop. `listening` runs once the accept loop is live and `stopping` when the
 /// signal arrives; each entry prints its own lines there.
+static DEFERRED_STARTUP_FAILURE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// A startup step failed the way the baseline only notices after listening
+/// (an unawaited rejection): `pilotdeck server` prints its listening lines,
+/// stops at once like a signal would, and exits 1 without a message.
+pub(crate) fn defer_startup_failure() {
+    DEFERRED_STARTUP_FAILURE.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Whether `serve` stopped because of [`defer_startup_failure`].
+pub fn deferred_startup_failure() -> bool {
+    DEFERRED_STARTUP_FAILURE.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 async fn serve_until_signal(
     drain_budget: Duration,
     host: crate::runtime::turn::gateway::TurnGateway,
@@ -184,10 +199,12 @@ async fn serve_until_signal(
     timeouts.entries_unbounded = until_clients_leave;
     let machine = crate::switch::SwitchMachine::new(faces.clone(), timeouts);
     listening(address);
-    #[cfg(unix)]
-    tokio::select! { _ = terminate.recv() => {}, _ = interrupt.recv() => {} }
-    #[cfg(not(unix))]
-    let _ = tokio::signal::ctrl_c().await;
+    if !deferred_startup_failure() {
+        #[cfg(unix)]
+        tokio::select! { _ = terminate.recv() => {}, _ = interrupt.recv() => {} }
+        #[cfg(not(unix))]
+        let _ = tokio::signal::ctrl_c().await;
+    }
     stopping();
     match machine.run().await {
         Ok(()) => Ok(()),
