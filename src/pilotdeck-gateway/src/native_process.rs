@@ -98,8 +98,8 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
     let inherited = capture_environment(std::env::vars_os());
     validate_environment(&inherited)?;
     let env = options.environment(inherited);
-    let (host, feishu_webhook, switch_handles) =
-        assembly::start_with_webhook(options.clone(), env).await?;
+    let (host, feishu_webhook, mut switch_handles) =
+        assembly::start_for_listener(options.clone(), env).await?;
     let api_web = production_api_web(token.clone(), options.home.clone());
     let server =
         match production_listener(options.listen, host.clone(), token, feishu_webhook, api_web)
@@ -107,6 +107,7 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
         {
             Ok(server) => server,
             Err(error) => {
+                drop(switch_handles.channel_activation.take());
                 let _ = host.shutdown(options.drain_budget).await;
                 return Err(error);
             }
@@ -141,7 +142,7 @@ async fn serve_until_signal(
     drain_budget: Duration,
     host: crate::runtime::turn::gateway::TurnGateway,
     server: crate::native_ws::NativeWsServer,
-    switch_handles: switch_wiring::AssemblySwitchHandles,
+    mut switch_handles: switch_wiring::AssemblySwitchHandles,
     until_clients_leave: bool,
     lifecycle: ServeLifecycle<impl FnOnce(SocketAddr), impl FnOnce()>,
 ) -> Result<(), ProxyError> {
@@ -161,6 +162,7 @@ async fn serve_until_signal(
     let (mut terminate, mut interrupt) = match signals {
         Ok(signals) => signals,
         Err(error) => {
+            drop(switch_handles.channel_activation.take());
             let _ = host.shutdown(drain_budget).await;
             return Err(error.into());
         }
@@ -168,6 +170,7 @@ async fn serve_until_signal(
     let address = match server.local_addr() {
         Ok(address) => address,
         Err(error) => {
+            drop(switch_handles.channel_activation.take());
             let _ = host.shutdown(drain_budget).await;
             return Err(error.into());
         }
@@ -193,6 +196,7 @@ async fn serve_until_signal(
     } else {
         server.run_phased(stop, drain_budget)
     });
+    let activation = switch_handles.channel_activation.take();
     let startup_channels = switch_handles.channels.clone();
     let faces = switch_wiring::ProductionFaces::new(
         switch_handles.cron,
@@ -206,11 +210,43 @@ async fn serve_until_signal(
     timeouts.entries_unbounded = until_clients_leave;
     let machine = crate::switch::SwitchMachine::new(faces.clone(), timeouts);
     listening(address);
-    startup_channels.server().publish_startup();
-    #[cfg(unix)]
-    tokio::select! { _ = terminate.recv() => {}, _ = interrupt.recv() => {} }
-    #[cfg(not(unix))]
-    let _ = tokio::signal::ctrl_c().await;
+    // TS starts channel operations only after GatewayServer owns a live accept
+    // loop and reports readiness (pilotdeckServer.ts:261–295).
+    let stopped_during_start = if let Some(mut activation) = activation {
+        #[cfg(unix)]
+        let result = tokio::select! {
+            result = &mut activation => Some(result),
+            _ = terminate.recv() => None,
+            _ = interrupt.recv() => None,
+        };
+        #[cfg(not(unix))]
+        let result = tokio::select! {
+            result = &mut activation => Some(result),
+            _ = tokio::signal::ctrl_c() => None,
+        };
+        // Dropping an interrupted start invokes ChannelServer's existing
+        // cancellation owner. The switch below then closes and joins it.
+        drop(activation);
+        match result {
+            Some(Ok(())) => false,
+            Some(Err(error)) => {
+                faces.finish_after_halt().await.map_err(|cleanup| {
+                    crate::ProxyError::from(format!("{error}; teardown: {cleanup}"))
+                })?;
+                return Err(error);
+            }
+            None => true,
+        }
+    } else {
+        false
+    };
+    if !stopped_during_start {
+        startup_channels.server().publish_startup();
+        #[cfg(unix)]
+        tokio::select! { _ = terminate.recv() => {}, _ = interrupt.recv() => {} }
+        #[cfg(not(unix))]
+        let _ = tokio::signal::ctrl_c().await;
+    }
     stopping();
     match machine.run().await {
         Ok(()) => Ok(()),

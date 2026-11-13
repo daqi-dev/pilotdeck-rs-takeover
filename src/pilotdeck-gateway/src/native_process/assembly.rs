@@ -177,7 +177,7 @@ pub(super) fn loop_stimulus_switch(env: &Env) -> Result<Option<PathBuf>, ProxyEr
         .map_err(Into::into)
 }
 
-/// Test/embedded entry: the production path is [`start_with_webhook`], which
+/// Test/embedded entry: the production path is [`start_for_listener`], which
 /// also hands the `/feishu/webhook` resolver to the listener.
 #[cfg(test)]
 pub async fn start(options: Options, env: Env) -> Result<TurnGateway, ProxyError> {
@@ -235,6 +235,7 @@ pub(super) struct AssemblySeams {
     pub permission_rule_sets: Option<Arc<GatewaySessionPermissionRuleSetRegistry>>,
     pub acquire_miss_report: Option<AcquireMissReport>,
     pub publish_mcp_config: bool,
+    pub defer_channel_activation: bool,
 }
 
 impl Default for AssemblySeams {
@@ -244,6 +245,7 @@ impl Default for AssemblySeams {
             permission_rule_sets: None,
             acquire_miss_report: None,
             publish_mcp_config: true,
+            defer_channel_activation: false,
         }
     }
 }
@@ -292,6 +294,8 @@ pub(super) async fn start_observed_with_upload_cleanup(
 /// listener mounts (`activeFeishu`, resolved per request so a stop or reload
 /// changes the answer), and the #1353 switch handles the embedding's machine
 /// drives (the cron stop handle, the channel assembly).
+/// Existing assembly-only tests retain immediate initial channel startup.
+#[cfg(test)]
 pub(super) async fn start_with_webhook(
     options: Options,
     env: Env,
@@ -303,13 +307,57 @@ pub(super) async fn start_with_webhook(
     ),
     ProxyError,
 > {
-    start_with_extensions(options, env, crate::extensions::NativeExtensions::default()).await
+    start_with_extensions_impl(
+        options,
+        env,
+        crate::extensions::NativeExtensions::default(),
+        false,
+    )
+    .await
+}
+
+/// Listener entries construct the complete core first and activate channels
+/// only once GatewayServer's accept loop has started.
+pub(super) async fn start_for_listener(
+    options: Options,
+    env: Env,
+) -> Result<
+    (
+        TurnGateway,
+        crate::native_http::WebhookResolver,
+        super::switch_wiring::AssemblySwitchHandles,
+    ),
+    ProxyError,
+> {
+    start_with_extensions_impl(
+        options,
+        env,
+        crate::extensions::NativeExtensions::default(),
+        true,
+    )
+    .await
 }
 
 pub(super) async fn start_with_extensions(
     options: Options,
     env: Env,
     extensions: crate::extensions::NativeExtensions,
+) -> Result<
+    (
+        TurnGateway,
+        crate::native_http::WebhookResolver,
+        super::switch_wiring::AssemblySwitchHandles,
+    ),
+    ProxyError,
+> {
+    start_with_extensions_impl(options, env, extensions, false).await
+}
+
+async fn start_with_extensions_impl(
+    options: Options,
+    env: Env,
+    extensions: crate::extensions::NativeExtensions,
+    defer_channel_activation: bool,
 ) -> Result<
     (
         TurnGateway,
@@ -330,6 +378,7 @@ pub(super) async fn start_with_extensions(
         Some(switch_slots.clone()),
         AssemblySeams {
             extensions,
+            defer_channel_activation,
             ..AssemblySeams::default()
         },
     )
@@ -345,6 +394,11 @@ pub(super) async fn start_with_extensions(
         host,
         crate::channel::feishu::FeishuWebhookSlot::resolver(&slot),
         super::switch_wiring::AssemblySwitchHandles {
+            channel_activation: switch_slots
+                .channel_activation
+                .lock()
+                .expect("channel activation slot")
+                .take(),
             cron: switch_slots.cron.get().cloned(),
             automation_stop: switch_slots.automation_stop.get().cloned(),
             channels: switch_slots.channels.get().cloned().ok_or_else(|| {
@@ -448,6 +502,7 @@ async fn start_assembly_resources(
         permission_rule_sets,
         acquire_miss_report,
         publish_mcp_config,
+        defer_channel_activation,
     } = seams;
     let in_process_cli = options.in_process_cli;
     let registry_switch = run_registry_switch(&env)?;
@@ -2452,10 +2507,10 @@ async fn start_assembly_resources(
             // the loop after the bundle keys, in the TS startup order
             // (feishu, weixin, qq, then `channels`;
             // `ChannelAdapterBundle.createStartupAdapters`).
-            let mut startup = Vec::new();
             if in_process_cli {
                 return Ok(host);
             }
+            let mut startup = Vec::new();
             if let Some(feishu) = channel_assembly.create_startup_feishu().await {
                 startup.push(feishu);
             }
@@ -2470,19 +2525,33 @@ async fn start_assembly_resources(
             if let Some(wecom) = wecom {
                 startup.push(wecom);
             }
-            if !startup.is_empty()
-                && let Err(error) = channel_assembly
-                    .server()
-                    .start_channels_staged(startup)
-                    .await
-            {
+            let activation: super::switch_wiring::ChannelActivation = Box::pin(async move {
+                if !startup.is_empty()
+                    && let Err(error) = channel_assembly
+                        .server()
+                        .start_channels_staged(startup)
+                        .await
+                {
+                    return Err(error.message().to_string().into());
+                }
+                if let Some(driver) = reload_slot.get() {
+                    driver.activate();
+                } else {
+                    channel_assembly.activate_config_reload();
+                }
+                Ok(())
+            });
+            if defer_channel_activation {
+                let slots = switch_slots
+                    .as_ref()
+                    .expect("listener startup has switch slots");
+                *slots
+                    .channel_activation
+                    .lock()
+                    .expect("channel activation slot") = Some(activation);
+            } else if let Err(error) = activation.await {
                 let _ = host.shutdown(budget).await;
-                return Err(error.message().to_string().into());
-            }
-            if let Some(driver) = reload_slot.get() {
-                driver.activate();
-            } else {
-                channel_assembly.activate_config_reload();
+                return Err(error);
             }
             Ok(host)
         }

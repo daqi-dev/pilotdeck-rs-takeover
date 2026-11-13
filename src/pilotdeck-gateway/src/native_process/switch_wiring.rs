@@ -40,7 +40,12 @@ use super::channels::NativeChannels;
 /// The handles `start_with_webhook` hands the embedding that drives the
 /// machine: the cron stop handle (absent when no `cron:` section was
 /// configured) and the channel assembly.
+pub(crate) type ChannelActivation =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), crate::ProxyError>> + Send>>;
+
 pub(crate) struct AssemblySwitchHandles {
+    /// Listener entries take this exactly once after the accept loop is live.
+    pub(crate) channel_activation: Option<ChannelActivation>,
     pub(crate) cron: Option<Arc<CronStopHandle>>,
     pub(crate) automation_stop: Option<AutomationStop>,
     pub(crate) channels: Arc<NativeChannels>,
@@ -64,6 +69,7 @@ pub(crate) type ReleaseInteractions = Arc<dyn Fn() + Send + Sync>;
 /// through `OnceLock`s the embedding reads once the builder has run.
 #[derive(Clone, Default)]
 pub(crate) struct AssemblySwitchSlots {
+    pub(crate) channel_activation: Arc<std::sync::Mutex<Option<ChannelActivation>>>,
     pub(crate) cron: Arc<std::sync::OnceLock<Arc<CronStopHandle>>>,
     pub(crate) automation_stop: Arc<std::sync::OnceLock<AutomationStop>>,
     pub(crate) channels: Arc<std::sync::OnceLock<Arc<NativeChannels>>>,

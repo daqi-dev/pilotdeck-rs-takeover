@@ -633,7 +633,7 @@ async fn runtime_status_sink_serves_lifecycle_and_login_reports() {
 // #1763 / #1386 / #1302 B: the production native startup must refuse a config
 // that enables a channel this process does not implement. These drive
 // `assembly::start` (the `#[cfg(test)]` facade over the same `start_impl` that
-// `native_process::run` reaches through `start_with_webhook`), so deleting the
+// `native_process::run` reaches through `start_for_listener`), so deleting the
 // call site, downgrading it to a warning, or turning it into a silent skip
 // fails here; the seam-level tests in `channel::tests` alone would stay green.
 
@@ -2407,4 +2407,255 @@ async fn native_weixin_default_maker_polls_http_and_dispatches_configured_gatewa
         all.iter().all(|(auth, _)| *auth),
         "wrong auth never receives inbound fixture"
     );
+}
+
+/// Exercise the production core → bind → deferred activation stages with
+/// real native SMS HTTP and no REST/model calls.
+enum SmsStartupCase {
+    SamePort,
+    Independent,
+    InvalidCore,
+    OccupiedGateway,
+    EphemeralGateway,
+}
+
+async fn sms_listener_isolation(case: SmsStartupCase) {
+    let same_port = matches!(case, SmsStartupCase::SamePort | SmsStartupCase::InvalidCore);
+    let invalid_config = matches!(case, SmsStartupCase::InvalidCore);
+    let occupied_gateway = matches!(case, SmsStartupCase::OccupiedGateway);
+    let ephemeral_gateway = matches!(case, SmsStartupCase::EphemeralGateway);
+    let (_scratch, requests) = super::management_tests::setup();
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("dispose fixture project");
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("dispose fixture owner");
+    let gateway_probe = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("owned gateway probe");
+    let gateway_address = gateway_probe.local_addr().expect("probe address");
+    let sms_probe = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("owned SMS probe");
+    let sms_address = if same_port {
+        gateway_address
+    } else {
+        sms_probe.local_addr().expect("SMS address")
+    };
+    let config = requests.options.home.join("pilotdeck.yaml");
+    let mut body = std::fs::read_to_string(&config).expect("fixture config");
+    body.push_str(&format!("adapters:\n  sms:\n    enabled: true\n    extra:\n      accountSid: AC0000\n      authToken: fixture-token\n      phoneNumber: '+15550000000'\n      webhookPort: {}\n", sms_address.port()));
+    if invalid_config {
+        body = "invalid: [".into();
+    }
+    std::fs::write(&config, body).expect("write owned SMS configuration");
+    let options = super::ServerOptions {
+        telemetry_context: crate::telemetry::TelemetryRuntimeContext {
+            installation_id: "fixture".into(),
+            instance_id: "fixture".into(),
+            deployment_mode: "fixture".into(),
+            commit_hash: "fixture".into(),
+            app_version: "fixture".into(),
+            platform: "fixture".into(),
+        },
+        telemetry_enabled: false,
+        pilot_home: requests.options.home.clone(),
+        project: requests.options.project_root.clone(),
+        os_home: requests.options.os_home.clone(),
+        host: Some("127.0.0.1".into()),
+        port: if ephemeral_gateway {
+            0.0
+        } else {
+            f64::from(gateway_address.port())
+        },
+        allow_remote_host: false,
+        token: if invalid_config {
+            None
+        } else {
+            Some("fixture-token".into())
+        },
+        token_path: requests.options.home.join("listener-only-token"),
+        sidecar: requests.options.sidecar.clone(),
+        env: requests.env.clone(),
+        builtin_skills_root: None,
+        builtin_plugins_root: None,
+    };
+    let gateway_probe = if occupied_gateway {
+        Some(gateway_probe)
+    } else {
+        drop(gateway_probe);
+        None
+    };
+    drop(sms_probe);
+    let started =
+        super::assembly::start_for_listener(requests.options.clone(), requests.env.clone()).await;
+    if invalid_config {
+        assert!(
+            started.is_err(),
+            "invalid core fails before listener/token side effects"
+        );
+        let rebound = tokio::net::TcpListener::bind(gateway_address)
+            .await
+            .expect("core failure leaves gateway port unbound");
+        drop(rebound);
+        assert!(
+            !options.token_path.exists(),
+            "invalid core must not create listener token"
+        );
+        return;
+    }
+    let (host, webhook, mut handles) = started.expect("core assembly before listener");
+    let bound = super::server::bind(
+        &options,
+        &host,
+        webhook,
+        handles.module_host.clone().expect("production module host"),
+    )
+    .await;
+    if occupied_gateway {
+        let error = bound
+            .err()
+            .expect("owned occupied gateway must fail to bind");
+        assert!(error.to_string().contains("EADDRINUSE"), "{error}");
+        assert!(
+            tokio::net::TcpStream::connect(sms_address).await.is_err(),
+            "bind failure must not poll SMS activation"
+        );
+        drop(handles.channel_activation.take());
+        host.shutdown(Duration::from_secs(5))
+            .await
+            .expect("unactivated core cleanup");
+        drop(gateway_probe);
+        let rebound = tokio::net::TcpListener::bind(gateway_address)
+            .await
+            .expect("owned gateway port released");
+        drop(rebound);
+        return;
+    }
+    let (server, _) = bound.expect("ordinary-config gateway survives SMS collision");
+    let actual_address = server.local_addr().expect("real bound listener");
+    if !ephemeral_gateway {
+        assert_eq!(actual_address, gateway_address);
+    }
+    assert_ne!(
+        actual_address.port(),
+        0,
+        "port zero returns actual bound address"
+    );
+    let gateway_address = actual_address;
+    let (stop, stopping) = tokio::sync::oneshot::channel();
+    let serving = tokio::spawn(server.run(
+        async {
+            let _ = stopping.await;
+        },
+        Duration::from_secs(5),
+    ));
+    handles
+        .channel_activation
+        .take()
+        .expect("listener owns deferred startup")
+        .await
+        .expect("channel startup after real accept loop");
+    handles.channels.server().publish_startup();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let snapshot = JsValue::Object(read_snapshot(&options.pilot_home));
+            if snapshot
+                .get("channels")
+                .and_then(|value| value.get("sms"))
+                .and_then(|value| field_text(value, "state"))
+                == Some("connected".into())
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("SMS startup completion before HTTP assertions");
+    async fn request(address: std::net::SocketAddr, path: &str) -> String {
+        tokio::time::timeout(Duration::from_secs(5), async move {
+            let mut stream = tokio::net::TcpStream::connect(address)
+                .await
+                .expect("owned HTTP connect");
+            stream
+                .write_all(
+                    format!("{} {path} HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", if path == "/sms/incoming" { "POST" } else { "GET" })
+                        .as_bytes(),
+                )
+                .await
+                .expect("HTTP request");
+            let mut response = Vec::new();
+            stream
+                .read_to_end(&mut response)
+                .await
+                .expect("HTTP response");
+            String::from_utf8(response).expect("HTTP text")
+        })
+        .await
+        .expect("bounded owned HTTP response")
+    }
+    let health = request(gateway_address, "/health").await;
+    assert!(health.starts_with("HTTP/1.1 200"), "{health}");
+    assert!(health.contains("\"ok\":true"), "{health}");
+    let incoming = request(gateway_address, "/sms/incoming").await;
+    assert!(
+        incoming.starts_with("HTTP/1.1 404"),
+        "Gateway owns same-port SMS path: {incoming}"
+    );
+    if !same_port {
+        let response = request(sms_address, "/not-a-sms-route").await;
+        assert!(
+            response.starts_with("HTTP/1.1 404"),
+            "independent native SMS really listens: {response}"
+        );
+    }
+    stop.send(()).expect("stop owned gateway");
+    serving
+        .await
+        .expect("gateway driver")
+        .expect("gateway drain");
+    host.shutdown(Duration::from_secs(5))
+        .await
+        .expect("host/channel cleanup");
+    assert!(
+        tokio::net::TcpStream::connect(gateway_address)
+            .await
+            .is_err(),
+        "gateway stopped"
+    );
+    assert!(
+        tokio::net::TcpStream::connect(sms_address).await.is_err(),
+        "SMS stopped"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gateway_listener_survives_same_port_native_sms_start() {
+    sms_listener_isolation(SmsStartupCase::SamePort).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gateway_listener_preserves_independent_native_sms_listener() {
+    sms_listener_isolation(SmsStartupCase::Independent).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gateway_core_failure_precedes_listener_side_effects() {
+    sms_listener_isolation(SmsStartupCase::InvalidCore).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gateway_bind_failure_never_activates_native_sms() {
+    sms_listener_isolation(SmsStartupCase::OccupiedGateway).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gateway_port_zero_keeps_actual_listener_address() {
+    sms_listener_isolation(SmsStartupCase::EphemeralGateway).await;
 }

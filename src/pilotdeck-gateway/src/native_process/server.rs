@@ -137,8 +137,8 @@ async fn serve_on_runtime(
     };
     // createLocalGateway precedes startGatewayServer in the baseline, so the
     // host and token checks below run with the gateway already built.
-    let (host, feishu_webhook, switch_handles) =
-        match assembly::start_with_webhook(process, options.env.clone()).await {
+    let (host, feishu_webhook, mut switch_handles) =
+        match assembly::start_for_listener(process, options.env.clone()).await {
             Ok(assembled) => assembled,
             Err(error) => {
                 telemetry.shutdown().await;
@@ -148,6 +148,7 @@ async fn serve_on_runtime(
     let module_host = match switch_handles.module_host.clone() {
         Some(module_host) => module_host,
         None => {
+            drop(switch_handles.channel_activation.take());
             let _ = host.shutdown(DRAIN_BUDGET).await;
             telemetry.shutdown().await;
             return Err("module host provider was not constructed during assembly".into());
@@ -156,6 +157,7 @@ async fn serve_on_runtime(
     let (server, started) = match bind(&options, &host, feishu_webhook, module_host).await {
         Ok(bound) => bound,
         Err(error) => {
+            drop(switch_handles.channel_activation.take());
             let _ = host.shutdown(DRAIN_BUDGET).await;
             telemetry.shutdown().await;
             return Err(error);
@@ -216,7 +218,7 @@ pub(super) fn ensure_router_dir(pilot_home: &Path) {
 /// startGatewayServer up to `await listen(...)`, in its order: the remote
 /// binding checks, the token, then the listener. Returns the token path when
 /// the token was read or generated rather than supplied.
-async fn bind(
+pub(super) async fn bind(
     options: &ServerOptions,
     host: &crate::runtime::turn::gateway::TurnGateway,
     feishu_webhook: crate::native_http::WebhookResolver,
