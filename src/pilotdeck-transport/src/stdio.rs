@@ -11,6 +11,7 @@ use std::collections::{HashMap, VecDeque};
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DispatchPhase {
@@ -56,6 +57,8 @@ struct Packet {
 #[derive(Debug, Default)]
 struct State {
     closed: bool,
+    /// The writer has taken a packet off a queue and not yet finished writing it.
+    writing: bool,
     control: VecDeque<Packet>,
     data: VecDeque<Packet>,
     calls: HashMap<JsString, CallRecord>,
@@ -114,6 +117,27 @@ impl ConnectionOwner {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .closed
+    }
+    /// Waits (at most until `until`) for everything already queued to reach the
+    /// output. agentLoopSidecarServer.ts serve(): every `send` issued before the
+    /// input ends is a write Node flushes before the process exits; only sends
+    /// attempted after the end are dropped (`connection.closed`).
+    pub fn wait_drained(&self, until: Instant) {
+        loop {
+            let generation = self.0.wake.generation();
+            {
+                let state = self.0.state.lock().unwrap_or_else(|p| p.into_inner());
+                if state.closed
+                    || (!state.writing && state.control.is_empty() && state.data.is_empty())
+                {
+                    return;
+                }
+            }
+            if Instant::now() >= until {
+                return;
+            }
+            self.0.wake.wait(generation, Some(until));
+        }
     }
     pub fn close(&self) {
         let mut state = self.0.state.lock().unwrap_or_else(|p| p.into_inner());
@@ -375,6 +399,7 @@ impl ConnectionOwner {
                     }
                     call.phase = DispatchPhase::Dispatching;
                 }
+                state.writing = packet.is_some();
                 packet
             };
             let Some(packet) = packet else {
@@ -389,9 +414,11 @@ impl ConnectionOwner {
                 self.close();
                 return Err(error);
             }
-            if let Some(id) = &packet.pending {
+            {
                 let mut state = self.0.state.lock().unwrap_or_else(|p| p.into_inner());
-                if let Some(record) = state.calls.get_mut(id)
+                state.writing = false;
+                if let Some(id) = &packet.pending
+                    && let Some(record) = state.calls.get_mut(id)
                     && record.phase == DispatchPhase::Dispatching
                 {
                     record.phase = DispatchPhase::Sent;
