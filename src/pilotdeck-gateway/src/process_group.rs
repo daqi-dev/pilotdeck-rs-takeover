@@ -143,6 +143,19 @@ pub(crate) fn leader_exit_code_unreaped(group: Option<Pid>) -> Option<i32> {
     }
 }
 
+/// Pause before the `attempt`-th (0-based) re-check of a leader that has not
+/// exited yet. Most leaders exit within a millisecond or two of being asked
+/// to (a sidecar after stdin EOF, a finished tool command), so the first
+/// re-checks come at the timer's 1 ms granularity instead of a flat 5 ms; a
+/// leader still running after that is polled every 5 ms as before.
+fn exit_poll_delay(attempt: u32) -> Duration {
+    Duration::from_millis(match attempt {
+        0..=3 => 1,
+        4..=5 => 2,
+        _ => 5,
+    })
+}
+
 /// Wait until the leader has exited without reaping it, or `limit` elapses.
 ///
 /// `Ok(true)` means the leader exited; `Ok(false)` means the bounded wait
@@ -155,10 +168,14 @@ pub(crate) async fn wait_for_exit_unreaped(
         return Ok(true);
     };
     let observe = async {
+        let mut attempt = 0;
         loop {
             match leader_exited_unreaped(group) {
                 Ok(true) => return Ok(true),
-                Ok(false) => tokio::time::sleep(Duration::from_millis(5)).await,
+                Ok(false) => {
+                    tokio::time::sleep(exit_poll_delay(attempt)).await;
+                    attempt += 1;
+                }
                 Err(error) => return Err(error),
             }
         }
@@ -202,21 +219,27 @@ pub(crate) async fn wait_exit_unreaped(
         target_os = "redox",
         target_os = "wasi"
     )))]
-    loop {
-        use rustix::process::{WaitId, WaitIdOptions, waitid};
-        match waitid(
-            WaitId::Pid(leader),
-            WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
-        ) {
-            Ok(Some(status)) => {
-                return Ok(Some(LeaderExit {
-                    code: status.exit_status(),
-                    signal: status.terminating_signal(),
-                }));
+    {
+        let mut attempt = 0;
+        loop {
+            use rustix::process::{WaitId, WaitIdOptions, waitid};
+            match waitid(
+                WaitId::Pid(leader),
+                WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
+            ) {
+                Ok(Some(status)) => {
+                    return Ok(Some(LeaderExit {
+                        code: status.exit_status(),
+                        signal: status.terminating_signal(),
+                    }));
+                }
+                Ok(None) => {
+                    tokio::time::sleep(exit_poll_delay(attempt)).await;
+                    attempt += 1;
+                }
+                Err(rustix::io::Errno::INTR) => continue,
+                Err(error) => return Err(error),
             }
-            Ok(None) => tokio::time::sleep(std::time::Duration::from_millis(5)).await,
-            Err(rustix::io::Errno::INTR) => continue,
-            Err(error) => return Err(error),
         }
     }
     #[cfg(any(

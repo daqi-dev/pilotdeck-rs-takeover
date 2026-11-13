@@ -606,7 +606,11 @@ impl FileRunRegistry {
         }
     }
 
-    /// RunRegistry.ts:184-194: compact JSON, sibling temporary, rename.
+    /// RunRegistry.ts:184-194: compact JSON, sibling temporary, rename. Like
+    /// the baseline (`writeFile` then `rename`), the temporary is not synced:
+    /// every published turn event persists the registry before it is
+    /// delivered, so an fsync here (F_FULLFSYNC on macOS) was a fixed delay
+    /// on each event the baseline does not have.
     fn persist(&self, snapshot: &Snapshot) -> Result<()> {
         let records = snapshot
             .records
@@ -637,7 +641,7 @@ impl FileRunRegistry {
             .create_new(true)
             .open(&temporary.0)?;
         file.write_all(text.as_bytes())?;
-        file.sync_all()?;
+        drop(file);
         #[cfg(test)]
         if self
             .fail_persist

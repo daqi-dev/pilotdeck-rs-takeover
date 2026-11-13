@@ -402,6 +402,11 @@ impl PhasedInner {
                             drop(socket);
                             continue;
                         };
+                        // Node's `http.createServer` disables Nagle on every
+                        // accepted socket (`noDelay` defaults to true), so each
+                        // gateway frame leaves at once instead of waiting for
+                        // the peer's ACK of the previous small write.
+                        let _ = socket.set_nodelay(true);
                         let host = self.host.clone();
                         let token = self.token.clone();
                         let version = self.version.clone();

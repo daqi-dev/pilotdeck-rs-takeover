@@ -350,6 +350,8 @@ pub(crate) fn https_connector(
     let mut http = HttpConnector::new();
     http.enforce_http(false);
     http.set_connect_timeout(Some(Duration::from_secs(10)));
+    // undici's connector disables Nagle on every socket it opens.
+    http.set_nodelay(true);
     hyper_rustls::HttpsConnectorBuilder::new()
         .with_tls_config(config)
         .https_or_http()
@@ -1103,6 +1105,8 @@ pub(crate) fn proxy_https_connector(
     let mut http = HttpConnector::new();
     http.enforce_http(false);
     http.set_connect_timeout(Some(Duration::from_secs(10)));
+    // undici's connector disables Nagle on every socket it opens.
+    http.set_nodelay(true);
     let tls = Arc::new(config.clone());
     hyper_rustls::HttpsConnectorBuilder::new()
         .with_tls_config(config)
