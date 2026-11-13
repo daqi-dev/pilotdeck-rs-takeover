@@ -23,6 +23,8 @@
 | `skills-extension-watch-symlink` 在 Linux 上稳定差 2 处：基线比 Rust 多打「Extensions changed」日志行（子代理对 Linux 上 `fs.watch` 的推断不对） | ext | cb8 验收（`9a5fb723b`）两次单独重跑与全量 | cb8 验收 | 在修（Linux 遗留子代理） |
 | `turn-steer-terminal`：轮次进行中插话（steer）后，会话文件里插话记录与本轮记录的先后与基线不同（Rust 的循环在 sidecar 里，落盘经宿主一跳）。macOS 与 cb8 都稳定差 33 处 | loop, session | 场景 `turn-steer-terminal`；cb8 验收（`6894f3dca`） | 审阅 | 待派（与 sidecar 进程内化一起评估） |
 | WS 与 HTTP 共用 64 条连接上限（Rust 独有，基线 1000 条同时在线全部正常、RSS 只多约 8 MB）：100 条并发时 37 条被重置，期间 `/health` 与 `/api/web` 也连不上 | gw | `native_ws.rs`；场景 `gw-conn-many-clients`；旧记录 `A7.2-NATIVE-WS-AGGREGATE-001`（未批准） | gw 缺口审查 | 在修（2026-11-13 定：去掉上限；先量两侧在描述符耗尽时的表现，Rust 不能比基线差） |
+| 配置热重载的子系统部分整块没有（G1）：服务运行中改了 `cron` / `alwaysOn` / `proxy` / `adapters` / `telemetry` 的配置（含界面改设置），基线重启对应子系统并打日志，Rust 静默不生效，要重启。`assembly/automation.rs` 的 `reload` 已写好但只有测试调用 | config, auto, channels | `native_process/assembly.rs:1998`；基线 `pilotdeck.ts:132-206`；无场景 | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 在修（2026-11-13 派） |
+| `request_user_form` 遇到带 Draft 2020-12 声明的表单 schema 时工具报 Rust 自造的「not supported by this gateway」（G3）；模型写 schema 时常带这一行 | tools | `form_dialog.rs:160-164` | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 待派（先实测基线对这类 schema 的处理） |
 
 ## 3 边角
 
@@ -42,6 +44,12 @@
 | 被杀的 advisory hook 收到 SIGTERM 后若还活不到 1 秒，Rust 会把它的完成帧放上流，基线可能已结束这一轮；1 秒上限是 Rust 自定的，无场景，这个修复也没单独做注入错误检查 | hooks | `runtime/turn/coordinator` 的 `ADVISORY_KILL_SETTLE` | hook 帧次序 | 待派 |
 | sidecar 收到「请求方取消」恰好落在 factory 前或准备阶段的毫秒级窗口时：Rust 给干净的中止结果，基线 TS sidecar 给缺结果的 `cancelled` 终止帧（只在显式外部部署下可见） | modules | `pilotdeck-transport/src/server.rs`、`default_factory.rs` | 任务预算与中止差异 | 记为已知 |
 | 审阅第 3 级修复没做完的：子代理场景的用量正则没有加位置限定（只认字段名）；Google 协议分支的重试日志行没有对拍覆盖 | agents, model | `c6a53a052` 的报告 | 审阅 | 待派 |
+| `sdkSessionConfig` 的三种合法写法被拒（G2）：`plugins`、基线会忽略的未知键、同时给 `skills` 列表和 `agents`；请求带基线没有的 `sdkConfig` 字段、畸形的 `uploadedAttachments` 引用、method 名含孤立代理项时回 Rust 自造的拒绝（G11） | config, loop, session | `sdk_config.rs:1365-1391` | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 待派 |
+| `modules.skills` / `modelProvider` / `context` 配了外部模块绑定时 server 拒绝启动（G4） | modules | 文案 `Native isolated profile does not yet support configured module bindings.` | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 待派 |
+| `gateway setup` 里只写本地 yaml、不联网的三步输出 `TODO`（G5） | cli | `gateway_setup.rs:269,307,361` | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 待派（联网的三步等人定范围） |
+| 会话记录里少见的条目形状读取时报「not implemented (A7.5)」（G6，只核对了 Rust 侧，没逐个读基线的 reducer）；MCP 工具的 `outputSchema` 用 JS 专有正则时报错（G7）；`update_settings` 遇到少见 YAML 特性报错（G8） | session, ext, config | 见盘点文件 | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 待派 |
+| 循环与工厂里 42 处「原生档案缺口」：模型或宿主回来的值形状异常时整轮失败，文案是 Rust 自造的（G9）；配置里用 `constructor`、`toString` 这类 JS 内建属性名时 CLI 输出 `TODO config requiring JavaScript host support`（G10） | loop, context, config | `*_PROFILE` 错误码、`requires_host` | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 待派（先各实测几条基线的表现） |
+| 盘点没有实测（只读源码）：技能文件 EACCES 等「没测量过的 errno」约 45 行里哪些真机上会撞到；三句「不可达防御」是否真的走不到；`file_history` 的 `backupStorage` 在 server 下是否注入 | * | 盘点文件「没查清的」 | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 待派 |
 | 慢读客户端：Rust 在输出队列满 64 帧后以 1009 关闭连接（只送达 687 帧），基线 20001 帧全部送达 | gw | `native_ws.rs` 的输出队列；只有量测 | gw 缺口审查 | 在修（2026-11-13 定：帧数上限改成每连接 64 MiB 的字节上限，作为有意偏离登记） |
 | `runs/registry.json` 写坏时两侧都以 1 退出，但基线先打印监听地址与 telemetry 行、Rust 只打一行解析错误 | gw, session | 场景 `recovery-runs-registry-corrupt` | gw 缺口审查 | 在修（照基线对齐） |
 | 经项目内的符号链接写到项目外：基线只做字面检查（`projectFiles.ts:238`，只读了源码没运行）；Rust 的表现没量。Rust 也能写出去的话是第 1 级 | gw | 无场景 | gw 缺口审查 | 在修（先实测两侧；Rust 拒绝解析后越界的写入并登记） |
@@ -88,4 +96,6 @@
 - StaffDeck 的审批接口与项目绑定（设了环境变量才生效）是否收缩。
 - 请求转储（`PILOTDECK_DUMP_REQUEST`）：Rust 的文件名带进程号和序号、独占创建、权限 600，是上一轮登记的安全偏离（标着「AI 代批，待人复核」）；内容已与基线一致。场景 `env-dump-request-tmpdir`、`proto-dump-request` 现在不一致，是否登记由「任务预算与中止差异」子代理先用基线实测判断，再由主会话定。
 - `cli-update-usage`：Rust 的安装要不要带网页更新脚本（发布构建阶段定）。
+- **渠道配齐凭据时 Rust 的 server 整个拒绝启动**（盘点 P1）：`qq`、`wecom`、`mattermost`、`signal`、`whatsapp`、`homeassistant` 这几个基线会真的去连外部服务的渠道，Rust 报「未迁移到 Rust，需继续使用 TS gateway」并退出，与「TS gateway 退役」矛盾。要定：照常启动并报一行该渠道不可用，还是继续拒绝启动（换文案）。
+- 范围待定的六项（盘点 P2–P7，建议都归范围外并登记）：`pilotdeck tui`；`gateway setup` 的联网三步（飞书凭据校验、微信与企业微信扫码）；`update` 的 Git Web 更新；遥测上报（现在静默不上报）；公共 host `file_parse` 的 PDF 抽文本；sidecar 的 `PILOTDECK_AGENT_LOOP_FACTORY`（加载用户的 JS 模块）。
 - 公开 agent 评测的两侧对比（人说之后再决定）。
