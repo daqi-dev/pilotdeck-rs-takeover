@@ -1,0 +1,212 @@
+{
+  "name": "loop-model-errors-network",
+  "about": "provider 错误文案落到网络类与透传类归一化码（model/errors/normalizeModelError.ts:44-47 的优先级：classifyNetworkError 115-120 的文案匹配 → classifySemanticError 138-186 → 错误体自带的 code/type → statusCodeToCode 215-242）。每个会话一种，状态码都用 400：n1 ENOTFOUND→dns_error；n2 socket hang up→connection_reset；n3 ECONNREFUSED→connection_refused；n4 certificate→tls_error；n5 proxy error→proxy_error；n6 错误体 code=unknown 原样透传→unknown；n7 无法归类、没有 code/type→provider_error（241）；n8 ETIMEDOUT→timeout（178）。可重试的码（188-208）会被重试，退避设成 1ms。失败提示走 agent/loop/AgentLoop.ts:3560-3615 的分支。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      retry:\n        baseDelayMs: 1\n        maxDelayMs: 1\n        jitter: 0\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Err\"}"
+      }
+    },
+    {
+      "name": "n1",
+      "when": [
+        "n1:"
+      ],
+      "reply": {
+        "status": 400,
+        "body": {
+          "error": {
+            "message": "getaddrinfo ENOTFOUND api.bbx.invalid"
+          }
+        }
+      }
+    },
+    {
+      "name": "n2",
+      "when": [
+        "n2:"
+      ],
+      "reply": {
+        "status": 400,
+        "body": {
+          "error": {
+            "message": "socket hang up"
+          }
+        }
+      }
+    },
+    {
+      "name": "n3",
+      "when": [
+        "n3:"
+      ],
+      "reply": {
+        "status": 400,
+        "body": {
+          "error": {
+            "message": "connect ECONNREFUSED 127.0.0.1:9"
+          }
+        }
+      }
+    },
+    {
+      "name": "n4",
+      "when": [
+        "n4:"
+      ],
+      "reply": {
+        "status": 400,
+        "body": {
+          "error": {
+            "message": "unable to verify the first certificate"
+          }
+        }
+      }
+    },
+    {
+      "name": "n5",
+      "when": [
+        "n5:"
+      ],
+      "reply": {
+        "status": 400,
+        "body": {
+          "error": {
+            "message": "proxy error while forwarding request"
+          }
+        }
+      }
+    },
+    {
+      "name": "n6",
+      "when": [
+        "n6:"
+      ],
+      "reply": {
+        "status": 400,
+        "body": {
+          "error": {
+            "code": "unknown",
+            "message": "Odd upstream failure."
+          }
+        }
+      }
+    },
+    {
+      "name": "n7",
+      "when": [
+        "n7:"
+      ],
+      "reply": {
+        "status": 400,
+        "body": {
+          "error": {
+            "message": "Something odd about field foo."
+          }
+        }
+      }
+    },
+    {
+      "name": "n8",
+      "when": [
+        "n8:"
+      ],
+      "reply": {
+        "status": 400,
+        "body": {
+          "error": {
+            "message": "read ETIMEDOUT"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-n1",
+        "channelKey": "test",
+        "message": "n1: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-n2",
+        "channelKey": "test",
+        "message": "n2: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-n3",
+        "channelKey": "test",
+        "message": "n3: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-n4",
+        "channelKey": "test",
+        "message": "n4: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-n5",
+        "channelKey": "test",
+        "message": "n5: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-n6",
+        "channelKey": "test",
+        "message": "n6: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-n7",
+        "channelKey": "test",
+        "message": "n7: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-n8",
+        "channelKey": "test",
+        "message": "n8: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-n1"
+      }
+    }
+  ]
+}

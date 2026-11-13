@@ -1,0 +1,148 @@
+{
+  "name": "hook-file-changed-warning",
+  "about": "会话自己的 FileChanged hook（插件 plugin.json 里配置，不是 sdkSessionConfig.hooks）阻断或出错时的观察结果：tool/execution/ToolRuntime.ts:540-580 dispatchFileChanged 在写文件后派发，effects 里有 block → warning(code file_changed_hook_blocked)；blockingErrors 与 nonBlockingErrors 每条一个 warning(code file_changed_hook_error，带 hookName)；warning 经 gateway/client/GatewayAgentEventProjector.ts:369-373 投影成 agent_status:warning，metadata 带 absolutePath / relativePath / changeKind。三个 hook：fc.mjs block 回 {decision:block}；fc.mjs err 退出码 1；fc.mjs two 退出码 2。w1 新建文件（create），w2 先读再覆盖已有文件（update）。写文件本身不受影响。",
+  "files": {
+    "home/.pilotdeck/plugins/bbx-fc/plugin.json": {
+      "name": "bbx-fc",
+      "version": "0.1.0",
+      "description": "bbx file-changed hooks",
+      "hooks": {
+        "FileChanged": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node fc.mjs block"
+              },
+              {
+                "type": "command",
+                "command": "node fc.mjs err"
+              },
+              {
+                "type": "command",
+                "command": "node fc.mjs two"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "home/.pilotdeck/plugins/bbx-fc/fc.mjs": "let input = '';\nprocess.stdin.on('data', (d) => { input += d; });\nprocess.stdin.on('end', () => {\n  const mode = process.argv[2];\n  if (mode === 'block') { process.stdout.write(JSON.stringify({ decision: 'block', reason: 'file hook blocks' }) + '\\n'); process.exit(0); }\n  if (mode === 'err') { process.stderr.write('file hook failed\\n'); process.exit(1); }\n  if (mode === 'two') { process.stderr.write('file hook exit two\\n'); process.exit(2); }\n  process.exit(0);\n});\n",
+    "proj/existing.txt": "old line\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"File hook\"}"
+      }
+    },
+    {
+      "name": "w1-after",
+      "when": [
+        "w1:",
+        "\"tool_call_id\":\"call_w1\""
+      ],
+      "reply": {
+        "text": "done w1"
+      }
+    },
+    {
+      "name": "w1",
+      "when": [
+        "w1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_w1",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "{PROJECT}/created.txt",
+            "content": "fresh\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "w2-after",
+      "when": [
+        "w2:",
+        "\"tool_call_id\":\"call_w2\""
+      ],
+      "reply": {
+        "text": "done w2"
+      }
+    },
+    {
+      "name": "w2-after-read",
+      "when": [
+        "w2:",
+        "\"tool_call_id\":\"call_w2r\""
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_w2",
+          "name": "write_file",
+          "arguments": {
+            "file_path": "{PROJECT}/existing.txt",
+            "content": "replaced\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "w2",
+      "when": [
+        "w2:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_w2r",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "{PROJECT}/existing.txt"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-w1",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-w1",
+        "channelKey": "test",
+        "message": "w1: create a file",
+        "cwd": "{PROJECT}"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-w2",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-w2",
+        "channelKey": "test",
+        "message": "w2: overwrite a file",
+        "cwd": "{PROJECT}"
+      },
+      "timeout": 30000
+    }
+  ]
+}
