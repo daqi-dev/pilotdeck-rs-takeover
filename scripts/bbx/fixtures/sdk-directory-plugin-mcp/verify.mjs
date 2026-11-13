@@ -41,6 +41,7 @@ function validate(a){
  assert.notEqual(events.find(r=>r.generation==='A').pid,events.find(r=>r.generation==='B').pid,'PID reuse is rejected rather than treated as cleanup success');
  for(const [i,phase] of ['A','ISOLATED','B','CLEAR'].entries()){
   assert.equal(a.steps[i].step.ws,'submit_turn');
+  if(i!==1){assert.ok(a.steps[i].answers?.length>0,'real permission answer '+phase);for(const answer of a.steps[i].answers){assert.equal(answer.ws,'permission_decide');assert.equal(answer.params.decision,'allow');assert.ok(answer.frames.some(f=>f.type==='response'&&!f.error),'permission decision succeeded')}}
   assert.ok(!a.steps[i].frames.some(f=>f.error||f.type==='__timeout'));
   assert.ok(JSON.stringify(a.steps[i].frames).includes('SDK-MCP-DONE-'+phase),'real streamed completion '+phase);
   const req=records[phase==='ISOLATED'?'isolated':phase.toLowerCase()+'-initial'];

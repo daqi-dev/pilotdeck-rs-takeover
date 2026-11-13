@@ -11,3 +11,5 @@ A initialize/list/call 必须同时进入真实服务端 journal、模型工具�
 运行：`node scripts/bbx/fixtures/sdk-directory-plugin-mcp/verify.mjs CAPTURE --self-test`。需要 E0 在隔离 HOME/PILOT_HOME 的固定 TS 正式入口先校准；本地未启动 BBX/gateway，也没有产品 Cargo。当前 verifier 尚未经过真实 capture 校准，不能报告正式通过。
 
 首轮后仍需实际故障变体：MCP call 返回不同 marker，或 B 故意报告 previousAlive:true；真实 capture 成功但 strict 必须拒绝。`--self-test` 的 6 个结构 corruption 只是检查 verifier 防空结果，不替代真实进程负控。清理边界仅 POSIX，Windows 未承诺。
+
+首轮固定 TS capture 的第一 turn 停在真实 permission_request；首败保存在 `_tmp/20261113-e0-resume/c1c633ca-directory-mcp-first`。候选已按既有正式场景协议补 permission_decide allow 并检查实际应答响应；未改变 timeout、生命周期或业务断言，尚待新 capture。

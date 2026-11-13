@@ -273,3 +273,52 @@ export function sdkAgentContract(raw, declaration, baselineRoot) {
   const count = loadPinnedTokenizer(baselineRoot);
   derivedValues(raw,raw,count);
 }
+
+// Reorder only the four known child transcript/projection entries in a clone.
+// UUID aliases are assigned in traversal order, so semantic identity must be
+// established before the normalizer sees the filesystem's lexical UUID order.
+export function sdkAgentOrderChildTree(raw, declaration) {
+  insist(isDeepStrictEqual(declaration,{policy:'sdkAgent03DerivedValues'}), 'declaration');
+  insist(raw?.scenario==='agent03-sdk-fork' && raw.evidence?.scenario?.sha256===SCENARIO_SHA, 'scenario identity');
+  const report=raw.provider?.['parent-after']?.[0]?.body?.messages?.filter(m=>m.role==='tool'&&m.tool_call_id==='ag03-agent');
+  insist(raw.provider?.['parent-after']?.length===1 && report?.length===1, 'unique worker report');
+  const worker=validateAgentReport(report[0].content).uuid;
+  const parent=raw.tree?.[PARENT_PATH]?.jsonl;
+  insist(Array.isArray(parent), 'parent transcript missing');
+  const frames=raw.steps?.flatMap(s=>s.frames??[]).map(f=>f.event) ?? [];
+  const ids=[];
+  for (const role of ['worker','reviewer']) {
+    const starts=parent.filter(x=>x?.type==='subagent_started'&&x.subagentType===role);
+    const completed=parent.filter(x=>x?.type==='subagent_completed'&&x.subagentType===role);
+    const emitted=frames.filter(e=>e?.type==='agent_status'&&e.event==='subagent_started'&&e.detail?.subagentType===role);
+    insist(starts.length===1 && completed.length===1 && emitted.length===1, `unique ${role} lifecycle`);
+    const start=starts[0],done=completed[0],id=start.subagentId;
+    insist(typeof id==='string'&&new RegExp(`^${UUID}$`).test(id)&&done.subagentId===id&&emitted[0].detail.subagentId===id
+      &&start.sessionId==='agent03-parent'&&done.sessionId===start.sessionId&&start.turnId===done.turnId&&emitted[0].runId===start.turnId
+      &&start.sequence<done.sequence && done.errored===false && start.subagentSessionId===`/tmp/pdrs-bbx/root/home/.pilotdeck::sub::${id}`
+      &&start.transcriptRelativePath===`agent03-parent/subagents/${id}.jsonl`, `${role} references`);
+    if(role==='worker') insist(id===worker && emitted[0].detail.toolCallId==='ag03-agent' && start.promptPreview==='AG03-CHILD-DIRECTIVE', 'worker report identity');
+    else insist(start.promptPreview?.includes('Observed agent: worker') && done.summaryPreview==='AG03-OBSERVER-REPORT', 'reviewer identity');
+    ids.push(id);
+  }
+  insist(ids[0]!==ids[1], 'worker and reviewer must differ');
+  const dir=PARENT_PATH.slice(0,-'.jsonl'.length)+'/subagents/';
+  const names=Object.keys(raw.tree).filter(k=>k.startsWith(dir));
+  const ordered=ids.flatMap(id=>[`${dir}${id}.jsonl`,`${dir}${id}.jsonl.projections.json`]);
+  insist(names.length===4 && ordered.every(k=>names.includes(k)), 'child tree membership');
+  for(const id of ids) {
+    const path=`${dir}${id}.jsonl`, rows=raw.tree[path]?.jsonl, projection=raw.tree[path+'.projections.json']?.json;
+    const session=`/tmp/pdrs-bbx/root/home/.pilotdeck::sub::${id}`;
+    insist(Array.isArray(rows)&&rows.length>0&&rows[0]?.type==='turn_started'&&rows[0].sessionId===session
+      &&rows.every(x=>x.sessionId===session) && projection?.sessionId===session && projection.asOfSequence===rows.at(-1).sequence
+      &&projection.anchor?.sequence===rows.at(-1).sequence && projection.anchor.entryId===rows.at(-1).entryId
+      &&projection.anchor.parentEntryId===rows.at(-1).parentEntryId && projection.anchor.turnId===rows.at(-1).turnId
+      &&projection.anchor.type===rows.at(-1).type, 'child transcript/projection association');
+  }
+  const clone=structuredClone(raw), entries=Object.entries(clone.tree), slots=[];
+  for(let i=0;i<entries.length;i++) if(names.includes(entries[i][0])) slots.push(i);
+  const children=new Map(ordered.map(k=>[k,clone.tree[k]]));
+  for(let i=0;i<slots.length;i++) entries[slots[i]]=[ordered[i],children.get(ordered[i])];
+  clone.tree=Object.fromEntries(entries);
+  return clone;
+}

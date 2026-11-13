@@ -169,6 +169,44 @@
       "id": "recovery-model-request",
       "path": "/provider/recovered/0/body/model",
       "equals": "deterministic"
+    },
+    {
+      "id": "signal-aborted-footer",
+      "sides": [
+        "rust"
+      ],
+      "path": "/steps/1/serve/stdout",
+      "matches": "\\n\\{\"status\":\"aborted\",\"reason\":\"CLI interrupted\"\\}\\n$"
+    },
+    {
+      "id": "signal-empty-stderr",
+      "sides": [
+        "rust"
+      ],
+      "path": "/steps/1/serve/stderr",
+      "equals": ""
+    }
+  ],
+  "accepted": [
+    {
+      "id": "D1-SDK-SIGNAL-ABORT-ORDER-001",
+      "policy": "sdkSignalAbortOrder",
+      "why": "Single real SIGINT/current-run abort ordering bug; raw durable recovery and independently reverified same-binary eight-wire evidence are both required. TS self instability remains DIFF.",
+      "assertions": [
+        "initial-completed",
+        "partial-reached",
+        "signal-handled",
+        "cancel-exit",
+        "recovery-completed",
+        "recovery-real-output",
+        "recovery-status",
+        "history-read",
+        "history-after-recovery",
+        "cancel-model-request",
+        "recovery-model-request",
+        "signal-aborted-footer",
+        "signal-empty-stderr"
+      ]
     }
   ]
 }

@@ -47,7 +47,9 @@ import { fileURLToPath } from 'node:url';
 import { syntaxAcceptedPaths } from './syntax-policy.mjs';
 import { isDeepStrictEqual } from 'node:util';
 import { channelPollVolatilePaths } from './channel-poll-policy.mjs';
-import { sdkAgentDerivedPaths } from './sdk-agent-policy.mjs';
+import { sdkAgentDerivedPaths, sdkAgentOrderChildTree } from './sdk-agent-policy.mjs';
+import { sdkSignalAcceptedPaths } from './sdk-signal-policy.mjs';
+import { sdkSignalAcceptedEntry, validateSdkSignalAcceptedEvidence } from './evidence.mjs';
 
 const args = process.argv.slice(2);
 const files = args.filter((a) => !a.startsWith('--'));
@@ -145,7 +147,12 @@ function resettleProjections(v, moved) {
 const UNORDERED_JSONL = /\/always-on\/projects\/[^/]+\/events\.jsonl$/;
 const orderKey = (r) => JSON.stringify(r).replace(UUID, 'U').replace(ISO, 'T').replace(/\d{13}(\.\d+)?/g, 'M');
 function load(file) {
-  const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  let raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  for (const entry of raw.volatilePolicies ?? []) {
+    if (isDeepStrictEqual(entry, { policy: 'sdkAgent03DerivedValues' })) {
+      raw = sdkAgentOrderChildTree(raw, entry);
+    }
+  }
   for (const [name, entry] of Object.entries(raw.tree ?? {})) {
     if (name.endsWith('.jsonl') && Array.isArray(entry?.jsonl)) {
       const moved = settleTitleRecords(entry.jsonl);
@@ -216,8 +223,29 @@ for (const entry of raw[0].volatilePolicies ?? []) {
   } else throw Error('unsupported volatile value policy');
   for (const [at, reason] of paths) { timeValues.set(at, reason); timePolicies.set(at, entry.policy); }
 }
+// The one named signal scenario cannot bypass its required proof by deleting
+// accepted declarations from both captures. TS self remains the original diff.
+let sdkSignalScenario;
+if (!selfCompare && raw.some(artifact => artifact.scenario === 'c1-sdk-cancel-resume')) {
+  try {
+    sdkSignalScenario = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'scenarios/c1-sdk-cancel-resume.json'), 'utf8'));
+    if (!raw.every(artifact => artifact.scenario === sdkSignalScenario.name
+      && isDeepStrictEqual(artifact.accepted ?? [], sdkSignalScenario.accepted ?? []))) throw Error('required named scenario accepted declaration is missing or changed');
+  } catch (error) { console.error(`INVALID SDK signal evidence: ${error.message}`); process.exit(2); }
+}
 const scenarioAccepted = (raw[0].accepted ?? []).map((x) => ({ ...x, res: (x.paths ?? []).map((p) => new RegExp(p)), hits: 0 }));
 for (const entry of scenarioAccepted) if (entry.policy) {
+  if (entry.policy === 'sdkSignalAbortOrder') {
+    if (!sdkSignalAcceptedEntry(entry) || !isDeepStrictEqual(raw[0].accepted ?? [], raw[1].accepted ?? [])) throw Error('invalid SDK signal accepted declaration');
+    if (selfCompare) { entry.checked = new Map(); continue; }
+    try {
+      const scenario = sdkSignalScenario ?? JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'scenarios/c1-sdk-cancel-resume.json'), 'utf8'));
+      validateSdkSignalAcceptedEvidence(raw[0], scenario);
+      const wire = validateSdkSignalAcceptedEvidence(raw[1], scenario);
+      entry.checked = sdkSignalAcceptedPaths({ left: a, right: b, rawLeft: raw[0], rawRight: raw[1], scenario, wireReceipt: wire?.receipt });
+    } catch (error) { console.error(`INVALID SDK signal evidence: ${error.message}`); process.exit(2); }
+    continue;
+  }
   if (entry.policy !== 'syntaxDiagnostics' || entry.res.length) throw Error('unsupported value-checked accepted policy');
   const baseline = process.env.BBX_BASELINE || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../resources/PilotDeck');
   const require = createRequire(path.join(baseline, 'package.json'));

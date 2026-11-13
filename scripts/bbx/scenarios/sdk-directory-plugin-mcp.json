@@ -149,7 +149,20 @@
           ]
         }
       },
-      "timeout": 30000
+      "timeout": 30000,
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "sdk-mcp-shared",
+            "requestId": "{event.requestId}",
+            "decision": "allow"
+          }
+        }
+      ]
     },
     {
       "ws": "submit_turn",
@@ -177,7 +190,20 @@
           ]
         }
       },
-      "timeout": 30000
+      "timeout": 30000,
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "sdk-mcp-shared",
+            "requestId": "{event.requestId}",
+            "decision": "allow"
+          }
+        }
+      ]
     },
     {
       "ws": "submit_turn",
@@ -188,7 +214,20 @@
         "message": "SDK-MCP-PHASE-CLEAR",
         "sdkSessionConfig": {}
       },
-      "timeout": 30000
+      "timeout": 30000,
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "sdk-mcp-shared",
+            "requestId": "{event.requestId}",
+            "decision": "allow"
+          }
+        }
+      ]
     }
   ],
   "assertions": [

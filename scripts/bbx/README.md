@@ -139,3 +139,7 @@ T1 八个固定写后诊断场景另有 `syntaxDiagnostics` 正向谓词，验�
 依赖身份另记录实际加载的 Sharp JS 文件/addon/libvips 共享库、MuPDF 入口/loader/WASM、诊断策略实际使用的 js-tiktoken lite 入口和 o200k 编码表，并记录包 manifest 与软链接真实路径。Sharp 探测使用隔离 HOME 的新子进程，避免 require 缓存藏住替换。`BBX_IMAGE_TOOL` / `{IMAGE_TOOL}` 指定原生图像组件；身份包含组件、相邻发行 libvips 库，以及 Linux 动态链接器实际解析的 libvips 路径和哈希。缺失文件记录 null，不以固定 lockfile 代替已安装依赖的实际哈希；构建或替换这些依赖期间不得把旧 run 当作有效覆盖证据。
 
 二进制输入夹具使用严格单键对象 `{"$binaryBase64":"..."}`，仅接受规范 base64，写入解码后的原始字节；多键对象仍按普通 JSON 写入。图像正向断言可用 `imageAttachments: {count, mime, maxBytes, bytes?, sha256?}` 检查所选 provider messages 下的全部 `image_url`：要求精确数量、MIME、规范 data URL、非空内容、预算上限，以及可选的精确长度和 SHA-256。`count: 0` 用于坏图像确实未附加的证明，所选路径仍必须存在。该谓词不改变比较输出，也不忽略图像 payload；缺失执行记录、错误 MIME、超出预算和 payload 被改写均失败。
+
+### SDK 真实信号取消的具名 bug 策略
+
+`c1-sdk-cancel-resume` 仅在同 binary 的完整八路原始 wire 证据重验成功后，使用 `sdkSignalAbortOrder` 对第1 serve 的 stdout footer/stderr 逐值接受已授权差异。运行前必须设置绝对 `BBX_SDK_SIGNAL_WIRE_DIR` 和 `BBX_SDK_SIGNAL_WIRE_RECEIPT`；`inputIdentity` 保存原始文件及收据哈希，缺证据为 INVALID。TS 自比仍保留原 DIFF，其他字段不忽略。完整命令、两层证据边界与严格负控见 [SDK signal 策略](sdk-signal-policy.md)。

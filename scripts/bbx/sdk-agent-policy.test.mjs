@@ -103,3 +103,35 @@ test('actual e8 capture derives only validated report and HTTP lengths', {skip: 
   ];
   for(const corrupt of corruptions) {const a=structuredClone(raws[0]);corrupt(a);await assert.rejects(run(a,raws[1]));}
 });
+
+test('4bf child-tree ordering follows verified worker/reviewer references', {skip: !process.env.AGENT03_4BF_ROOT}, async () => {
+  const {readFileSync}=await import('node:fs');
+  const {sdkAgentOrderChildTree}=await import('./sdk-agent-policy.mjs');
+  const dir=process.env.AGENT03_4BF_ROOT;
+  const captures=[1,2].map(i=>JSON.parse(readFileSync(`${dir}/agent03-sdk-fork.ts-${i}.json`)));
+  const decl={policy:'sdkAgent03DerivedValues'};
+  const parent='/home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/agent03-parent.jsonl';
+  const roleOrder=a=>Object.keys(a.tree).filter(k=>k.includes('/chats/agent03-parent/subagents/') && k.endsWith('.jsonl')).map(k=>{
+    const row=a.tree[parent].jsonl.find(x=>x.type==='subagent_started'&&k.endsWith('/'+x.subagentId+'.jsonl'));return row?.subagentType;
+  });
+  assert.deepEqual(roleOrder(captures[0]),['worker','reviewer']);
+  assert.deepEqual(roleOrder(captures[1]),['reviewer','worker']);
+  for(const a of captures){
+    const before=JSON.stringify(a), result=sdkAgentOrderChildTree(a,decl);
+    assert.equal(JSON.stringify(a),before,'original capture must not mutate');
+    assert.deepEqual(roleOrder(result),['worker','reviewer']);
+    assert.deepEqual(Object.entries(result.tree).filter(([p])=>!p.includes('/chats/agent03-parent/subagents/')),Object.entries(a.tree).filter(([p])=>!p.includes('/chats/agent03-parent/subagents/')));
+  }
+  const faults=[
+    a=>{let s=a.tree[parent].jsonl.find(x=>x.type==='subagent_started'&&x.subagentType==='worker');s.subagentId='00000000-0000-4000-8000-000000000000';},
+    a=>{let starts=a.tree[parent].jsonl.filter(x=>x.type==='subagent_started');[starts[0].subagentType,starts[1].subagentType]=[starts[1].subagentType,starts[0].subagentType];},
+    a=>{let p=Object.keys(a.tree).find(k=>k.includes('/subagents/')&&k.endsWith('.projections.json'));delete a.tree[p];},
+    a=>{a.tree[parent.replace('.jsonl','/subagents/extra.jsonl')]={jsonl:[]};},
+    a=>{let p=Object.keys(a.tree).find(k=>k.includes('/subagents/')&&k.endsWith('.projections.json'));a.tree[p].json.anchor.entryId='00000000-0000-4000-8000-000000000000';},
+    a=>{let e=a.steps.flatMap(x=>x.frames??[]).map(x=>x.event).find(x=>x?.type==='agent_status'&&x.event==='subagent_started'&&x.detail?.subagentType==='reviewer');e.detail.subagentId='00000000-0000-4000-8000-000000000000';},
+  ];
+  for(const fault of faults){const a=structuredClone(captures[0]);fault(a);assert.throws(()=>sdkAgentOrderChildTree(a,decl));}
+  const changed=structuredClone(captures[0]), child=Object.keys(changed.tree).find(k=>k.includes('/subagents/')&&k.endsWith('.jsonl'));
+  changed.tree[child].jsonl[1].extraMutation='must remain comparable';
+  assert.equal(sdkAgentOrderChildTree(changed,decl).tree[child].jsonl[1].extraMutation,'must remain comparable');
+});

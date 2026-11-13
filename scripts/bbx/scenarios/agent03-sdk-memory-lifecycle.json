@@ -18,6 +18,15 @@
       }
     },
     {
+      "name": "memory-selector",
+      "when": [
+        "You select a small number of memory files from a compact manifest."
+      ],
+      "reply": {
+        "text": "{\"selected_ids\":[\"global/UserIdentity/user-profile.md\"]}"
+      }
+    },
+    {
       "name": "title",
       "when": [
         "Generate a concise title"

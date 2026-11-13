@@ -5,11 +5,13 @@ const [file,scene] = process.argv.slice(2); assert.ok(file && scene, 'provide ca
 const a=JSON.parse(fs.readFileSync(file,'utf8'));
 assert.equal(a.scenario,'agent03-sdk-fork-lifecycle-probe');
 const sha=createHash('sha256').update(fs.readFileSync(scene)).digest('hex');
-assert.equal(sha,'9459860c1d83f7fdb71f37cb56a20ee0ae38655cf265b9294274fb61610f0e80');
+assert.equal(sha,'d654c045d164826de415eb7581325471b5b0b32b57d664a8069a1feb504e101a');
 assert.equal(a.evidence?.scenario?.sha256,sha,'capture bound to scenario bytes');
 assert.equal(a.evidence?.inputs?.ts?.commit,'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85');
 assert.deepEqual((a.failures??[]).filter(x=>!x.expected),[]);
 assert.ok(a.provider?.['memory-gate']?.length>0,'actual memory gate request');
+assert.ok(a.provider?.['memory-selector']?.length>0,'actual memory selector request');
+assert.equal(a.provider?.parent?.length,1,'one actual parent request');
 const parent=a.provider?.parent?.[0]?.body, child=a.provider?.['child-alpha']?.[0]?.body;
 assert.ok(parent && child,'actual parent and child model requests');
 const parentSystem=(parent.messages??[]).filter(x=>x.role==='system').map(x=>JSON.stringify(x.content)).join('\n');
