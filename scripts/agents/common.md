@@ -37,6 +37,7 @@
 - 不改 `scripts/bbx/*.mjs`；需要采集器新能力时在报告里提出。不给场景加 `volatile` / `accepted`。基线自己跑两次就不一样的值，用 `--self` 的输出证明后在报告里列出路径，由主会话决定怎么处理；这类场景先留着差异。
 - 场景只读写 bbx 的隔离目录（`{ROOT}` 之下）。不读不写不启停 `~/.pilotdeck`、本机正在运行的 PilotDeck 进程（机器上有别的项目的 `pilotdeck-*` 进程，别碰）、`~/ws/PilotDeck-rust-program-20261009/`。不要让任何进程监听 `0.0.0.0`；不碰端口 18789（bbx 发现它有监听者会拒跑，不要绕过）。
 - **任何时候运行两侧的 `pilotdeck` 命令（基线的 `node dist/src/cli/pilotdeck.js` 或 Rust 的 `pilotdeck`，包括 `--version`、`--help` 这类看似无害的），都必须经过 bbx，或者在命令前显式设置隔离的 `HOME` 和 `PILOT_HOME`（指向你 scratchpad 下的临时目录）。** 不带隔离直接运行会读到真实的 `~/.pilotdeck`，这是禁止的。
+- **场景和探测不能产生对外的真实网络连接。** 模型 provider 一律指向假 provider；渠道、webhook、MCP、搜索这类会连外部服务的功能，只测「缺凭据 / 没装 / 地址不可用」的表现，或者把地址指到本机的假服务。写渠道配置前先读基线判断「凭据齐全」的条件，别让基线真的去连（2026-11-12 有一次探测让基线向企业微信的服务器发起了连接）。
 - 不联网，不访问真实模型 provider，不用 `.env.local` 里的密钥，不 `pip install` / `npm install`。
 - 只读不许动：`resources/`、`vault/raw/`、`notes/`、任何 `hi.md`、`.42cog/`、`docs/plan/`、`specs/`、`state/`。
 - 仓库里有一套已停用的旧测试装置（`src/*/tests/fixtures/**/negative_controls.py`、产品代码里的 `mutants::on(...)` 开关）。不用维护它：改产品代码时不必同步那些 `.py`；碰到 `mutants::on` 开关照常保留或随被删的代码一起删。不要新增这类东西。
