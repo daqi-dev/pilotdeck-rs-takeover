@@ -1010,23 +1010,37 @@ pub fn decode(
     })
 }
 
-/// The process runs as an explicitly deployed sidecar: the gateway selected
-/// `PILOTDECK_AGENT_LOOP_TRANSPORT=stdio` and its environment reaches this
-/// child unchanged (`AgentLoopDeploymentProfile.ts:66-73`), or the process
-/// listens as the long-lived TCP sidecar ([`serve_as_tcp_sidecar`]). Without
-/// either this process is the gateway's own in-process loop.
+/// Set by the Rust gateway, and only by it, on the sidecar it launches as its
+/// own built-in loop: the loop the baseline runs in process. The gateway's
+/// deployment decision is the single source; every other launch (an
+/// explicit `PILOTDECK_AGENT_LOOP_TRANSPORT=stdio` / `tcp` deployment, a
+/// `modules.agentLoop` binding, the baseline's gateway, the long-lived TCP
+/// listener) runs this process as the baseline's external loop module.
+// `tests/factory_payload.rs` includes this file as its own module, where the
+// gateway (the only reader of the name) does not exist.
+#[allow(dead_code)]
+pub const IN_PROCESS_LOOP_ENV: &str = "PILOTDECK_RS_IN_PROCESS_LOOP";
+
+/// The process runs as an external loop module rather than as the gateway's
+/// in-process loop: the long-lived TCP sidecar ([`serve_as_tcp_sidecar`]),
+/// or a sidecar process launched without the gateway's
+/// [`IN_PROCESS_LOOP_ENV`] mark ([`serve_as_external_loop`], decided by the
+/// binary's entry point). A loop hosted inside a test process is in process.
 pub(crate) fn external_deployment() -> bool {
-    static EXTERNAL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     TCP_SIDECAR.load(std::sync::atomic::Ordering::SeqCst)
-        || *EXTERNAL.get_or_init(|| {
-            std::env::var("PILOTDECK_AGENT_LOOP_TRANSPORT").is_ok_and(|value| {
-                let value = value.trim();
-                value.eq_ignore_ascii_case("stdio") || value.eq_ignore_ascii_case("tcp")
-            })
-        })
+        || EXTERNAL_LOOP.load(std::sync::atomic::Ordering::SeqCst)
 }
 
 static TCP_SIDECAR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static EXTERNAL_LOOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// This sidecar process runs as the baseline's external loop module.
+// `tests/factory_payload.rs` includes this file as its own module, where the
+// binary's only caller does not exist.
+#[allow(dead_code)]
+pub fn serve_as_external_loop() {
+    EXTERNAL_LOOP.store(true, std::sync::atomic::Ordering::SeqCst);
+}
 
 /// This process serves the TCP deployment (`PILOTDECK_AGENT_LOOP_TCP_PORT`,
 /// pilotdeck-agent-loop-sidecar.ts:27-37): a long-lived sidecar is always an

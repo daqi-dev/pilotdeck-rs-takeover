@@ -1,10 +1,6 @@
 {
  "name": "agent-loop-sidecar-tcp-tool",
  "about": "PILOTDECK_AGENT_LOOP_TRANSPORT=tcp 下带工具调用的轮次（与 agent-loop-sidecar-stdio-tool 相同的输入，sidecar 换成外部常驻的 TCP 进程）：第一轮 read_file 再 bash（宿主侧执行工具，sidecar 只经 module_call 调用），第二轮同会话纯文本，两轮各连一次 sidecar（agentLoopSidecarClient.ts:355-362 每轮 connect，tcpAgentLoopSidecarConnection.ts:37），同一个 sidecar 实例。比较帧、provider 请求、agent_loop_operation_* 记录与 sidecar 进程的输出和退出。",
- "volatile": [
-  "\\.jsonl\\[\\d+\\]\\.binding\\.(moduleInstanceId|connectionGeneration)$",
-  "\\.jsonl\\[\\d+\\]\\.streamId$"
- ],
  "env": {
   "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
   "PILOTDECK_AGENT_LOOP_TCP_PORT": "38414"

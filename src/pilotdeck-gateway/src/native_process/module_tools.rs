@@ -161,9 +161,25 @@ impl ExternalToolPort {
             .clone()
             .downcast::<ExecutionContext>()
             .map_err(|_| ModuleError::new("Tool runtime requires a host ExecutionContext."))?;
+        let run = Arc::new(ToolRunContext::new(runtime.clone()));
         let aborted = {
-            let run = ToolRunContext::new(runtime.clone());
+            let run = run.clone();
             move || run.is_aborted()
+        };
+        // `callModule({ abortSignal: execution.abortSignal })`
+        // (hostToolPort.ts:192,244): a user abort cancels the in-flight
+        // module request at once (HttpModuleClient.ts:107-113 aborts the
+        // fetch, which rejects as MODULE_ABORTED); dropping the request
+        // future closes its connection the same way.
+        let module_call = |call: ModuleCall| {
+            let run = run.clone();
+            async move {
+                tokio::select! {
+                    biased;
+                    () = run.cancelled() => None,
+                    response = self.client.module_call(call) => Some(response),
+                }
+            }
         };
         let wire_context = serialize_tool_context(&runtime.fields, host_permission);
         let wire_execution = serialize_execution_context(&execution.fields, external_loop);
@@ -190,13 +206,14 @@ impl ExternalToolPort {
                 ("context", JsValue::Object(wire_context)),
                 ("execution", JsValue::Object(wire_execution)),
             ]);
-            let response = match self
-                .client
-                .module_call(identity.call(format!("tool-batch-{}", random_suffix()), payload))
-                .await
+            let response = match module_call(
+                identity.call(format!("tool-batch-{}", random_suffix()), payload),
+            )
+            .await
             {
-                Ok(response) => response,
-                Err(error) => {
+                None => return Err(cancelled()),
+                Some(Ok(response)) => response,
+                Some(Err(error)) => {
                     if error.code.equals_str("MODULE_ABORTED") || aborted() {
                         return Err(cancelled());
                     }
@@ -251,19 +268,19 @@ impl ExternalToolPort {
                     ("context", JsValue::Object(wire_context)),
                     ("execution", JsValue::Object(wire_execution)),
                 ]);
-                let response = match self
-                    .client
-                    .module_call(identity.call(format!("tool-{}", random_suffix()), payload))
-                    .await
-                {
-                    Ok(response) => response,
-                    Err(error) => {
-                        if error.code.equals_str("MODULE_ABORTED") || aborted() {
-                            return Err(cancelled());
+                let response =
+                    match module_call(identity.call(format!("tool-{}", random_suffix()), payload))
+                        .await
+                    {
+                        None => return Err(cancelled()),
+                        Some(Ok(response)) => response,
+                        Some(Err(error)) => {
+                            if error.code.equals_str("MODULE_ABORTED") || aborted() {
+                                return Err(cancelled());
+                            }
+                            return Ok(transport_failure_result(&call, &error));
                         }
-                        return Ok(transport_failure_result(&call, &error));
-                    }
-                };
+                    };
                 if aborted() {
                     return Err(cancelled());
                 }

@@ -494,6 +494,14 @@ impl TurnHostFactory {
             } => {
                 let mut command = Command::new(command);
                 command.args(args).current_dir(cwd).env_clear().envs(env);
+                // The one place the gateway's deployment decision reaches the
+                // sidecar: only its own built-in loop runs as the baseline's
+                // in-process loop; any other launch is an external module.
+                if self.in_process_loop {
+                    command.env(pilotdeck_transport::IN_PROCESS_LOOP_ENV, "1");
+                } else {
+                    command.env_remove(pilotdeck_transport::IN_PROCESS_LOOP_ENV);
+                }
                 Box::pin(async move {
                     HostClient::spawn(&mut command, expected.as_ref(), limits)
                         .await

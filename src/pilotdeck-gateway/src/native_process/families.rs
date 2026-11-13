@@ -246,11 +246,24 @@ pub fn title_provider(
                 let response = model.complete(request, Some(abort.clone()));
                 tokio::pin!(response);
                 let result = tokio::select! {
-                    result = &mut response => result.ok(),
-                    _ = input.signal.cancelled() => { abort.abort(); response.await.ok() },
-                    _ = tokio::time::sleep(timeout) => { abort.abort(); response.await.ok() },
+                    result = &mut response => result,
+                    _ = input.signal.cancelled() => { abort.abort(); response.await },
+                    _ = tokio::time::sleep(timeout) => { abort.abort(); response.await },
                 };
-                Ok(result.as_ref().and_then(parse_title))
+                Ok(match result {
+                    Ok(response) => match parse_title(&response) {
+                        Ok(title) => Some(title),
+                        Err((reason, message)) => {
+                            log_title_failure(reason, message.as_deref());
+                            None
+                        }
+                    },
+                    Err(error) => {
+                        let message = String::from_utf16_lossy(error.message.units());
+                        log_title_failure("provider_error", Some(&message));
+                        None
+                    }
+                })
             })
         }),
     }
@@ -275,14 +288,31 @@ fn normalized(text: &JsString) -> Vec<u16> {
     }
     output
 }
-fn parse_title(response: &JsValue) -> Option<JsString> {
-    let JsValue::Array(blocks) = response.get("content")? else {
-        return None;
+/// `logSessionTitleFailure` (SessionTitleGenerator.ts:196-200): a skipped
+/// title is a `console.debug` line on stdout; the error message is cut to
+/// 200 UTF-16 units.
+fn log_title_failure(reason: &str, message: Option<&str>) {
+    let suffix = match message.filter(|message| !message.is_empty()) {
+        Some(message) => {
+            let units: Vec<u16> = message.encode_utf16().take(200).collect();
+            format!(": {}", String::from_utf16_lossy(&units))
+        }
+        None => String::new(),
     };
+    println!("[session-title] generation skipped ({reason}){suffix}");
+}
+type TitleSkip = (&'static str, Option<String>);
+/// `parseGeneratedTitle` / `sanitizeGeneratedTitle`
+/// (SessionTitleGenerator.ts:150-194); the error is the logged skip reason.
+fn parse_title(response: &JsValue) -> Result<JsString, TitleSkip> {
     let mut units = Vec::new();
-    for block in blocks {
-        if block.get("type") == Some(&"text".into()) {
-            units.extend_from_slice(block.get("text")?.as_string()?.units());
+    if let Some(JsValue::Array(blocks)) = response.get("content") {
+        for block in blocks {
+            if block.get("type") == Some(&"text".into())
+                && let Some(text) = block.get("text").and_then(JsValue::as_string)
+            {
+                units.extend_from_slice(text.units());
+            }
         }
     }
     // Preserve literal unpaired UTF-16 units in JSON strings by escaping them
@@ -295,15 +325,33 @@ fn parse_title(response: &JsValue) -> Option<JsString> {
         }
     }
     let text = crate::metadata::js_trim(&text);
-    let fence = regex::Regex::new(r"(?is)^```(?:json)?\s*([\s\S]*?)\s*```$").ok()?;
-    let body = fence
-        .captures(text)
-        .and_then(|c| c.get(1))
-        .map_or(text, |m| m.as_str());
-    let parsed = parse_json(crate::metadata::js_trim(body)).ok()?;
-    let mut title = normalized(parsed.get("title")?.as_string()?);
+    if text.is_empty() {
+        return Err(("empty_content", None));
+    }
+    let fence = regex::Regex::new(r"(?is)^```(?:json)?\s*([\s\S]*?)\s*```$")
+        .map_err(|error| ("invalid_json", Some(error.to_string())))?;
+    let body = crate::metadata::js_trim(
+        fence
+            .captures(text)
+            .and_then(|c| c.get(1))
+            .map_or(text, |m| m.as_str()),
+    );
+    let parsed = parse_json(body).map_err(|error| {
+        let message =
+            pilotdeck_protocol::json_syntax::parse_error(body).unwrap_or_else(|| error.to_string());
+        ("invalid_json", Some(message))
+    })?;
+    let title = parsed
+        .as_object()
+        .and_then(|object| object.get("title"))
+        .and_then(JsValue::as_string)
+        .ok_or(("missing_title", None))?;
+    let mut title = normalized(title);
     title.truncate(80);
-    (!title.is_empty()).then(|| JsString::from_utf16(title))
+    if title.is_empty() {
+        return Err(("missing_title", None));
+    }
+    Ok(JsString::from_utf16(title))
 }
 
 const PROMPT_SUGGESTION_SYSTEM_PROMPT: &str = "Suggest the single most useful next message the human user could send after this completed agent turn.\n\nWrite the suggestion in the user's voice and in the same natural language as the original request. It must be a short, concrete follow-up request, not advice to the user and not a summary of the completed work. Do not claim an action already happened. Return only the suggested prompt, without quotes, labels, Markdown, code fences, analysis, or explanation.";

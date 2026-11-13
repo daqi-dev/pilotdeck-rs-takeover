@@ -404,7 +404,11 @@ impl ToolContextBuilder {
         let config = &binding.config;
         let session = required_host_string(&binding.input, "sessionId")?;
         let turn = required_host_string(&binding.input, "turnId")?;
-        let cwd = required_host_string(config, "cwd")?;
+        // `cwd: config.cwd` is copied as is (sidecarToolContext.ts:85); a
+        // non-string one throws later, where `buildTurnEnvironment` calls
+        // `path.resolve(cwd)` for `env` (sidecarToolContext.ts:124,
+        // TurnEnvironment.ts:15), after the `outputTruncated` check.
+        let cwd_value = get(config, "cwd");
         let directory = self
             .ports
             .plan_files
@@ -414,7 +418,7 @@ impl ToolContextBuilder {
         let files = binding.checkpoint.tool_context_state();
         let mut fields = host_identity(binding);
         fields.insert("messageId".into(), JsValue::String(turn.clone()));
-        fields.insert("cwd".into(), JsValue::String(cwd.clone()));
+        fields.insert("cwd".into(), cwd_value.clone());
         let remote = remote.as_object();
         if let Some(value @ JsValue::String(_)) =
             remote.and_then(|r| r.get_property("currentToolCallId"))
@@ -455,6 +459,10 @@ impl ToolContextBuilder {
                     && self.ports.elicitation.is_some(),
             ),
         );
+        let cwd = match &cwd_value {
+            JsValue::String(cwd) => cwd.clone(),
+            other => return Err(non_string_cwd_error(other)),
+        };
         fields.insert(
             "env".into(),
             JsValue::Object(
@@ -647,6 +655,17 @@ fn required_host_string(object: &JsObject, field: &str) -> Result<JsString, Host
         .ok_or_else(|| {
             ModuleError::new(format!("Host context field {field} must be a string.")).into()
         })
+}
+/// Node's `path.resolve` over a non-string cwd: `ERR_INVALID_ARG_TYPE` for
+/// `paths[0]`, or the error the `Received` description itself throws.
+fn non_string_cwd_error(cwd: &JsValue) -> HostError {
+    let message = match crate::metadata::argument_received(cwd) {
+        crate::metadata::ArgumentReceived::Text(received) => {
+            crate::metadata::invalid_arg_type_message("paths[0]", &received)
+        }
+        crate::metadata::ArgumentReceived::Throws { message, .. } => message,
+    };
+    ModuleError::new(String::from_utf16_lossy(message.units())).into()
 }
 fn get(object: &JsObject, key: &str) -> JsValue {
     object.get(key).cloned().unwrap_or(JsValue::Undefined)

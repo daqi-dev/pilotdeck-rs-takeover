@@ -1,7 +1,6 @@
 {
   "name": "agent-loop-sidecar-stdio-tool",
   "about": "PILOTDECK_AGENT_LOOP_TRANSPORT=stdio 下带工具调用的轮次：第一轮 read_file 读项目文件再 bash 一次（宿主侧执行工具，sidecar 只经 module_call 调用），第二轮同会话纯文本（新 turnId，新的一组 agent_loop_operation_* 记录，modelState 从上一轮带入 execute）。比较帧、发给 provider 的请求与会话 .jsonl 里 agent_loop_operation_started / accepted / terminal 的位置与字段（terminal 的 lastAppliedSequence、seedState 里宿主的读文件检查点）。src/agent/modules/transport/agentLoopSidecarClient.ts:586-632、780-798、1053-1072，sessionOperationLedger.ts:52-130。标题请求延迟 4 秒、首轮后等 5 秒，让标题记录稳定落在首轮之后（sidecar 起动快慢不同，标题与 agent_loop_operation_started 的先后在两侧会不同）。",
-  "volatile": ["\\.jsonl\\[\\d+\\]\\.binding\\.(moduleInstanceId|connectionGeneration)$", "\\.jsonl\\[\\d+\\]\\.streamId$"],
   "env": {
     "PILOTDECK_AGENT_LOOP_TRANSPORT": "stdio"
   },

@@ -250,16 +250,6 @@ fn ledger_failure(error: LedgerError) -> HostError {
     HostError::new(HostErrorKind::Callback, error.to_string())
 }
 
-/// `resolveAgentLoopDeploymentProfile`'s transport selection
-/// (`AgentLoopDeploymentProfile.ts:130-134`) names an external loop: stdio
-/// or tcp.
-pub fn explicit_external(transport: Option<&str>) -> bool {
-    transport.is_some_and(|value| {
-        let value = value.trim();
-        value.eq_ignore_ascii_case("stdio") || value.eq_ignore_ascii_case("tcp")
-    })
-}
-
 /// The module outcome a final event declares.
 pub(super) fn final_outcome(frame: &JsValue) -> Option<ModuleOutcome> {
     let outcome = frame.get("outcome")?.as_string()?;

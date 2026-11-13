@@ -1,10 +1,6 @@
 {
  "name": "agent-loop-sidecar-tcp-binding",
  "about": "pilotdeck.yaml 的 modules.agentLoop 绑定 module-tcp-v2（parseModulesConfig.ts:227-238）而不设部署环境变量：会话的 agentLoopBinding（SessionAgentConfigBundle.ts:157-158）让 createAgentLoopBindingFactory（AgentLoopDeploymentProfile.ts:107-127）按绑定的 host / port / connectTimeoutMs 连外部 sidecar，并以 implementationId 作为握手时要求的模块身份（agentLoopSidecarClient.ts:810-813）。implementationId 写成 sidecar 实际的 pilotdeck-agent-loop，一轮带工具调用的对话照常走 TCP sidecar。",
- "volatile": [
-  "\\.jsonl\\[\\d+\\]\\.binding\\.(moduleInstanceId|connectionGeneration)$",
-  "\\.jsonl\\[\\d+\\]\\.streamId$"
- ],
  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  agentLoop:\n    enabled: true\n    implementationId: pilotdeck-agent-loop\n    contract: pilotdeck.agent-loop/v1\n    transport: module-tcp-v2\n    host: 127.0.0.1\n    port: 38414\n    connectTimeoutMs: 2000\n",
  "files": {
   "proj/notes.txt": "alpha\nbeta\n"

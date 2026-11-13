@@ -23,6 +23,7 @@ const U1 = '11111111-1111-4111-8111-111111111111', U2 = '22222222-2222-4222-8222
 const H1 = 'a'.repeat(64), H2 = 'b'.repeat(64);
 const rec = (type, extra = {}) => ({ type, turnId: 't1', sequence: 0, entryId: 'e', parentEntryId: null, createdAt: '2026-01-01T00:00:00.000Z', ...extra });
 const title = rec('session_metadata', { metadata: { aiTitle: 'T', titleSource: 'provider' } });
+const sql = (row, volatile = []) => art([], { volatile, tree: { '/home/x/m.sqlite': { mode: '644', sqlite: { objects: [], tables: { t: [row] } } } } });
 const jsonl = (records) => art([], { tree: { '/home/x/chats/s.jsonl': { mode: '644', jsonl: records.map((r, i) => ({ ...r, sequence: i + 1, entryId: `e${i}` })) } } });
 
 // 会话文件加上一份投影检查点，投影里抄了 step_started 那条记录的位置字段。
@@ -85,6 +86,20 @@ const cases = [
   ['请求转储文件名里的毫秒', frame({ s: 'dumped to /t/pilotdeck_request_1794000000000.json then /t/pilotdeck_request_1794000000050.json' }), frame({ s: 'dumped to /t/pilotdeck_request_1794000001111.json then /t/pilotdeck_request_1794000001170.json' }), 'SAME'],
   ['请求转储文件名的相等关系变了', frame({ a: '/t/pilotdeck_request_1794000000000.json', b: '/t/pilotdeck_request_1794000000000.json' }), frame({ a: '/t/pilotdeck_request_1794000001111.json', b: '/t/pilotdeck_request_1794000001170.json' }), 'DIFF'],
   ['别的文件名里的毫秒不抹', frame({ s: '/t/other_1794000000000.json' }), frame({ s: '/t/other_1794000001111.json' }), 'DIFF'],
+  ['sidecar 身份的随机段', frame({ b: { moduleInstanceId: 'pilotdeck-agent-loop-instance-hloasjsoc6i', connectionGeneration: 'pilotdeck-agent-loop-instance-hloasjsoc6i-to3pp0vuy6o-g0ui61bw94w' }, streamId: 'stream-a9io7r7a4wu' }),
+    frame({ b: { moduleInstanceId: 'pilotdeck-agent-loop-instance-14j56wlvxfz', connectionGeneration: 'pilotdeck-agent-loop-instance-14j56wlvxfz-g5281tr9mk-7mtdrsl9hx' }, streamId: 'stream-5i0fhci4pq' }), 'SAME'],
+  ['重启后一侧是新实例、一侧还是旧实例', frame({ a: { moduleInstanceId: 'm-instance-aaa' }, b: { moduleInstanceId: 'm-instance-bbb' } }), frame({ a: { moduleInstanceId: 'm-instance-ccc' }, b: { moduleInstanceId: 'm-instance-ccc' } }), 'DIFF'],
+  ['连接代与实例不再对应', frame({ moduleInstanceId: 'm-instance-aaa', connectionGeneration: 'm-instance-aaa-g1-c1' }), frame({ moduleInstanceId: 'm-instance-ccc', connectionGeneration: 'm-instance-ddd-g1-c1' }), 'DIFF'],
+  ['连接代的段数不同', frame({ connectionGeneration: 'm-instance-aaa-g1-c1' }), frame({ connectionGeneration: 'm-instance-aaa-g1' }), 'DIFF'],
+  ['实例 id 的模块名不同', frame({ moduleInstanceId: 'm-instance-aaa' }), frame({ moduleInstanceId: 'n-instance-aaa' }), 'DIFF'],
+  ['同一条流对两条流', frame({ a: { streamId: 'stream-x1' }, b: { streamId: 'stream-x1' } }), frame({ a: { streamId: 'stream-y1' }, b: { streamId: 'stream-y2' } }), 'DIFF'],
+  ['别的键里的同形字符串不抹', frame({ id: 'stream-x1' }), frame({ id: 'stream-y1' }), 'DIFF'],
+  ['sqlite 的 _json 单元格按内部字段放过', sql({ k: 'a', state_json: '{"x":1,"caseId":"r1"}' }, ['\\.state_json\\.<json>\\.caseId$']), sql({ k: 'a', state_json: '{"x":1,"caseId":"r2"}' }, ['\\.state_json\\.<json>\\.caseId$']), 'SAME'],
+  ['sqlite 的 _json 单元格里别的字段照比', sql({ k: 'a', state_json: '{"x":1,"caseId":"r1"}' }, ['\\.state_json\\.<json>\\.caseId$']), sql({ k: 'a', state_json: '{"x":2,"caseId":"r2"}' }, ['\\.state_json\\.<json>\\.caseId$']), 'DIFF'],
+  ['sqlite 的 _json 单元格写法不同', sql({ k: 'a', state_json: '{"x":1}' }), sql({ k: 'a', state_json: '{ "x": 1 }' }), 'DIFF'],
+  ['sqlite 的 _json 单元格键顺序不同', sql({ k: 'a', state_json: '{"x":1,"y":2}' }), sql({ k: 'a', state_json: '{"y":2,"x":1}' }), 'DIFF'],
+  ['sqlite 的 _json 单元格一侧不是 JSON', sql({ k: 'a', state_json: '{"x":1}' }), sql({ k: 'a', state_json: 'x=1' }), 'DIFF'],
+  ['别的列里的 JSON 文本照整串比', sql({ k: 'a', note: '{"caseId":"r1"}' }, ['\\.note\\.<json>\\.caseId$']), sql({ k: 'a', note: '{"caseId":"r2"}' }, ['\\.note\\.<json>\\.caseId$']), 'DIFF'],
   ['created 之外的 10 位整数', frame({ startedAt: 1794495673 }), frame({ startedAt: 1794495675 }), 'DIFF'],
   ['created 一侧不是时间戳', frame({ created: 1794495673 }), frame({ created: 12 }), 'DIFF'],
   ['警告之外的 stderr', frame({ stderr: '(node:1) ExperimentalWarning: x\n(Use `node --trace-warnings ...` to show where the warning was created)\nreal\n' }), frame({ stderr: 'other\n' }), 'DIFF'],

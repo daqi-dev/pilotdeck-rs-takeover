@@ -1,6 +1,6 @@
 {
   "name": "turn-steer-terminal",
-  "about": "插话落在本轮的收尾阶段。s1：模型这一次本该收尾（纯文本，延迟 1.5 秒），收尾前发现邮箱里有插话（src/agent/loop/AgentLoop.ts:1862-1882），把插话并入、发 turn_continued（reason user_steer）再请求一次；插话在收到 model_selection_changed 时发出（它在请求真正发出之后；挂在更早的 model_request_started / context_budget 上时，Rust 的 model_request 记录要经 sidecar 一跳才落盘，与插话记录的先后取决于应答快慢）。s2：maxTurns=1，模型调 bash sleep 2，sleep 期间（tool_call_started 时）插话；工具批之后 2211-2230 的 maxTurns 检查先于下一次请求前取插话（399），轮次以 max_turns 结束，插话一直没被取出，src/agent/turn/TurnRunner.ts:158-173 closeSteerMailbox 把它作为 steer_unapplied（reason turn_ended）发出。",
+  "about": "插话落在本轮的收尾阶段。s1：模型这一次本该收尾（纯文本，延迟 1.5 秒），收尾前发现邮箱里有插话（src/agent/loop/AgentLoop.ts:1862-1882），把插话并入、发 turn_continued（reason user_steer）再请求一次；插话在收到 model_request_started 时发出。2026-11-13 两侧各跑 20 次量过：基线 20/20 次会话文件里都是 model_request、model_stream_event(request_started) 落盘之后才是 inbox_mutation；Rust 0/20 与基线一致（14 次 inbox_mutation 在 agent_status_message 之前、6 次在它与 model_request 之间），Rust 自比 20 次里 6 次不同。原因是 Rust 的 model_request 记录要经 sidecar 的模型端口一跳才落盘，而插话由 gateway 直接记下。这是 Rust 的真实差异，场景保持不一致（此前把触发点挪到 model_selection_changed 遮住了它）。s2：maxTurns=1，模型调 bash sleep 2，sleep 期间（tool_call_started 时）插话；工具批之后 2211-2230 的 maxTurns 检查先于下一次请求前取插话（399），轮次以 max_turns 结束，插话一直没被取出，src/agent/turn/TurnRunner.ts:158-173 closeSteerMailbox 把它作为 steer_unapplied（reason turn_ended）发出。",
   "provider": [
     {
       "name": "title",
@@ -60,7 +60,7 @@
       "answer": [
         {
           "on": {
-            "type": "model_selection_changed"
+            "type": "model_request_started"
           },
           "ws": "steer_turn",
           "params": {

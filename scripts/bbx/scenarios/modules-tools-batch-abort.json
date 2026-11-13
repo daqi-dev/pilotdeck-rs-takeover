@@ -1,0 +1,238 @@
+{
+ "name": "modules-tools-batch-abort",
+ "about": "同 modules-tools-abort，模块声明 execute_batch 时走批量调用（hostToolPort.ts:186-196 同样带 abortSignal）：批量请求进行中用户中止，这一轮立刻以 turn_completed（aborted_streaming）结束。",
+ "volatile": [
+  "^\\$\\.provider\\.m-[a-z0-9-]+\\[\\d+\\]\\.(body\\.requestId|headers\\.content-length)$"
+ ],
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  tools:\n    enabled: true\n    implementationId: bbx.tools\n    contract: pilotdeck.tools/v1\n    transport: module-http-v2\n    endpoint: {MOCK}/tools\n    timeoutMs: 30000\n    methods:\n      - execute\n      - execute_batch\n    catalog:\n      - name: bbx_echo\n        description: Echo text through the external capability module.\n        inputSchema:\n          type: object\n          properties:\n            text:\n              type: string\n          required:\n            - text\n      - name: bbx_lookup\n        description: Look a key up in the external capability module.\n        kind: search\n        readOnly: true\n        concurrencySafe: true\n        inputSchema:\n          type: object\n          properties:\n            key:\n              type: string\n",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Tool run\"}"
+   }
+  },
+  {
+   "name": "manifest",
+   "unless": [
+    "\""
+   ],
+   "reply": {
+    "status": 200,
+    "body": {
+     "protocolVersion": "2.0",
+     "implementationId": "bbx.tools",
+     "contract": "pilotdeck.tools/v1",
+     "transport": "module-http-v2",
+     "methods": [
+      "execute",
+      "execute_batch",
+      "list_tools"
+     ]
+    }
+   }
+  },
+  {
+   "name": "m-b01-0",
+   "when": [
+    "\"method\":\"module_call\"",
+    "execute_batch",
+    "call_b01_0"
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "r",
+     "inReplyTo": "{saved.mid}",
+     "requestId": "{saved.rid}",
+     "ok": true,
+     "payload": {
+      "results": [
+       {
+        "type": "success",
+        "toolCallId": "call_b01_0",
+        "toolName": "bbx_echo",
+        "content": [
+         {
+          "type": "text",
+          "text": "bbx_echo b01"
+         }
+        ],
+        "startedAt": "2026-01-01T00:00:00.000Z",
+        "completedAt": "2026-01-01T00:00:00.000Z"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "m-b01-1",
+   "when": [
+    "\"method\":\"module_call\"",
+    "execute_batch",
+    "call_b01_1"
+   ],
+   "save": {
+    "mid": "\"messageId\":\"(module-http-\\d+)\"",
+    "rid": "\"requestId\":\"([^\"]+)\""
+   },
+   "reply": {
+    "status": 200,
+    "body": {
+     "kind": "response",
+     "messageId": "r",
+     "inReplyTo": "{saved.mid}",
+     "requestId": "{saved.rid}",
+     "ok": true,
+     "payload": {
+      "results": [
+       {
+        "type": "success",
+        "toolCallId": "call_b01_1",
+        "toolName": "bbx_lookup",
+        "content": [
+         {
+          "type": "text",
+          "text": "bbx_lookup b01"
+         }
+        ],
+        "startedAt": "2026-01-01T00:00:00.000Z",
+        "completedAt": "2026-01-01T00:00:00.000Z"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "m-slow",
+   "when": [
+    "\"method\":\"module_call\"",
+    "execute_batch",
+    "\"toolCallId\":\"call_slow\""
+   ],
+   "reply": {
+    "text": "late",
+    "delayMs": 20000
+   }
+  },
+  {
+   "name": "next",
+   "when": [
+    "next:"
+   ],
+   "reply": {
+    "text": "next reply"
+   }
+  },
+  {
+   "name": "slow-after",
+   "when": [
+    "slow:",
+    "\"tool_call_id\":\"call_slow\""
+   ],
+   "reply": {
+    "text": "slow done"
+   }
+  },
+  {
+   "name": "slow",
+   "when": [
+    "slow:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_slow",
+     "name": "bbx_echo",
+     "arguments": {
+      "text": "slow"
+     }
+    }
+   }
+  },
+  {
+   "name": "b01-after",
+   "when": [
+    "warm:",
+    "\"tool_call_id\":\"call_b01_1\""
+   ],
+   "reply": {
+    "text": "Done b01."
+   }
+  },
+  {
+   "name": "b01",
+   "when": [
+    "warm:"
+   ],
+   "reply": {
+    "tools": [
+     {
+      "id": "call_b01_0",
+      "name": "bbx_echo",
+      "arguments": {
+       "text": "x"
+      }
+     },
+     {
+      "id": "call_b01_1",
+      "name": "bbx_lookup",
+      "arguments": {
+       "key": "k"
+      }
+     }
+    ]
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-mb",
+    "channelKey": "test",
+    "message": "warm: call once"
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-mb",
+    "channelKey": "test",
+    "message": "slow: call and abort"
+   },
+   "timeout": 10000,
+   "answer": [
+    {
+     "on": {
+      "type": "tool_call_started"
+     },
+     "ws": "abort_turn",
+     "params": {
+      "sessionKey": "s-mb"
+     },
+     "count": 1
+    }
+   ]
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-mb",
+    "channelKey": "test",
+    "message": "next: after abort"
+   },
+   "timeout": 10000
+  }
+ ]
+}

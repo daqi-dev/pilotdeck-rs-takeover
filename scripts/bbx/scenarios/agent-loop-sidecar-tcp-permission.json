@@ -1,7 +1,6 @@
 {
  "name": "agent-loop-sidecar-tcp-permission",
  "about": "PILOTDECK_AGENT_LOOP_TRANSPORT=tcp 下的权限询问：缺省权限模式，bash 写文件要询问。第一轮允许、第二轮拒绝。询问由宿主的 permission 模块在 sidecar 的 module_call 期间发给客户端（sidecarDefaultModuleDispatcher.ts、sidecarHostModulePorts.ts），回答后宿主把结果回给 sidecar。比较询问帧、回答、工具结果、agent_loop_operation_* 记录与落盘的文件。",
- "volatile": ["\\.jsonl\\[\\d+\\]\\.binding\\.(moduleInstanceId|connectionGeneration)$", "\\.jsonl\\[\\d+\\]\\.streamId$"],
  "env": {
   "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
   "PILOTDECK_AGENT_LOOP_TCP_PORT": "38414"

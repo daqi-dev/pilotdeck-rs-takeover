@@ -60,7 +60,14 @@ const project = path.join(ROOT, 'proj');
 const tmp = path.join(ROOT, 'tmp');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const subst = (text) => text
+// {SIDECAR}：本侧 agent loop sidecar 的启动命令行（shell 写法，与下面 sidecar 步骤起的是同一个程序）。
+// 两侧的值不同，只能放进不落盘的地方（场景的 env），例如 env 里 "BBX_SIDECAR": "{SIDECAR}"，
+// 再让 modules.agentLoop 的 module-stdio-v2 绑定用 /bin/sh -c 'exec $BBX_SIDECAR' 起它；写进配置文件会成为差异。
+const shq = (s) => `'${s.replaceAll("'", "'\\''")}'`;
+const SIDECAR_LINE = side === 'ts'
+  ? `node ${shq(path.join(BASELINE, 'dist/src/cli/pilotdeck-agent-loop-sidecar.js'))}`
+  : shq(path.join(TARGET, 'pilotdeck-agent-loop-sidecar'));
+const subst = (text) => text.replaceAll('{SIDECAR}', SIDECAR_LINE)
   .replaceAll('{ROOT}', ROOT).replaceAll('{HOME}', home).replaceAll('{PILOT_HOME}', pilotHome)
   .replaceAll('{PROJECT}', project).replaceAll('{MOCK}', `http://127.0.0.1:${MOCK_PORT}`)
   .replaceAll('{GATEWAY}', `http://127.0.0.1:${GATEWAY_PORT}`).replaceAll('{TOKEN}', TOKEN);

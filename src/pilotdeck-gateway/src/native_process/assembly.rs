@@ -1203,7 +1203,7 @@ async fn start_assembly(
                         .with_extra_tools(extra_tools, excluded_tools)
                         .with_knowledge(knowledge_binding.as_ref())
                         .with_module_tools(tools_binding.as_ref())
-                        .with_external_loop_binding(bound.is_some())
+                        .with_external_loop(explicit.is_some())
                         .with_sandbox(profile.sandbox_mode)
                         .with_interaction(profile.interaction, can_prompt_override)
                         .with_web_search(&web_search_config)
