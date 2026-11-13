@@ -155,7 +155,7 @@ fn serialize_input(operation: Operation, source: JsObject) -> JsObject {
     let mut serializable = without(&source, &["abortSignal", "budgetEvaluator", "budgetStage"]);
     if operation == Operation::TryAutoCompact {
         let projection = project_compaction_budget(&JsValue::Object(source));
-        if let JsValue::Object(projection) = projection {
+        if let JsValue::Object(projection) = &projection {
             for (from, to) in [
                 ("request", "budgetRequest"),
                 ("preparation", "budgetPreparation"),
@@ -168,7 +168,7 @@ fn serialize_input(operation: Operation, source: JsObject) -> JsObject {
             serializable.insert(
                 "budgetProjection".into(),
                 JsValue::Object(without(
-                    &projection,
+                    projection,
                     &["request", "preparation", "calibration"],
                 )),
             );

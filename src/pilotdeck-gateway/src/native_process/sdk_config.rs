@@ -748,7 +748,7 @@ fn resolve_session_skills(
     requested: &[JsValue],
     available: &[JsString],
 ) -> Result<Vec<JsString>, SubmitError> {
-    let mut resolved = Vec::new();
+    let mut resolved: Vec<JsString> = Vec::new();
     for item in requested {
         let requested = item.as_string().cloned().unwrap_or_default();
         let exact: Vec<&JsString> = available
@@ -776,7 +776,7 @@ fn resolve_session_skills(
                 ));
             }
             [name] => {
-                if !resolved.contains(name) {
+                if !resolved.contains(*name) {
                     resolved.push((*name).clone());
                 }
             }

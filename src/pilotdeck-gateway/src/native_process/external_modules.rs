@@ -122,7 +122,7 @@ impl Selection {
             let mut input = pilotdeck_protocol::JsObject::new();
             input.insert(
                 "projectKey".into(),
-                project.to_string_lossy().into_owned().into(),
+                JsValue::String(project.to_string_lossy().into_owned().into()),
             );
             let skills = module.list(JsValue::Object(input), None).await?;
             self.skill_runtime = Some((module, skills));
