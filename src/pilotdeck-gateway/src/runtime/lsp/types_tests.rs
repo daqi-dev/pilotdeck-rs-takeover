@@ -98,7 +98,6 @@ async fn original_root_descriptor_survives_rename_and_foreign_real_directory_rep
 #[tokio::test]
 #[cfg(unix)]
 async fn raced_fifo_is_nonblocking_and_rejected_as_nonregular() {
-    use std::os::unix::ffi::OsStrExt;
     let s = Scratch::new();
     let file = s.0.join("source.ts");
     std::fs::write(&file, b"OWNED").unwrap();
@@ -110,8 +109,12 @@ async fn raced_fifo_is_nonblocking_and_rejected_as_nonregular() {
         Cancellation::new(),
         Some(Box::new(move || {
             std::fs::remove_file(&swapped).unwrap();
-            let p = std::ffi::CString::new(swapped.as_os_str().as_bytes()).unwrap();
-            assert_eq!(unsafe { libc::mkfifo(p.as_ptr(), 0o600) }, 0);
+            rustix::fs::mkfifoat(
+                rustix::fs::CWD,
+                &swapped,
+                rustix::fs::Mode::from_raw_mode(0o600),
+            )
+            .unwrap();
         })),
     );
     let error = tokio::time::timeout(std::time::Duration::from_secs(1), operation)
@@ -349,10 +352,13 @@ while True:
             }
         }
         for pid in rows.iter().filter_map(|r| r["pid"].as_i64()) {
-            assert_eq!(unsafe { libc::kill(pid as i32, 0) }, -1);
+            let pid = rustix::process::Pid::from_raw(
+                i32::try_from(pid).expect("actual LSP pid fits i32"),
+            )
+            .expect("actual LSP pid is positive");
             assert_eq!(
-                std::io::Error::last_os_error().raw_os_error(),
-                Some(libc::ESRCH)
+                rustix::process::test_kill_process(pid),
+                Err(rustix::io::Errno::SRCH)
             );
         }
     }
