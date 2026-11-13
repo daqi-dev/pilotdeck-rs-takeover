@@ -8,6 +8,7 @@ import hashlib
 import http.server
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -183,6 +184,36 @@ def provider_media(records, workspace):
 
 
 
+def ripgrep_version(package, manifest, env, out):
+    """Check the moved mandatory engine, never a PATH fallback or override."""
+    assert 'PILOTDECK_RIPGREP_PATH' not in env
+    entry = next(component for component in manifest['components'] if component['name'] == 'ripgrep')
+    executable = package / entry['binary']
+    assert digest(executable) == entry['sha256']
+    result = subprocess.run([str(executable), '--version'], cwd=out, env=env, capture_output=True, timeout=10)
+    (out / 'ripgrep-version.stdout').write_bytes(result.stdout)
+    (out / 'ripgrep-version.stderr').write_bytes(result.stderr)
+    value = result.stdout.decode('utf-8')
+    assert result.returncode == 0 and not result.stderr, 'bundled ripgrep version probe failed'
+    assert re.search(r'^ripgrep 15\.0\.0(?:\s|$)', value), value
+    assert 'PCRE2 10.45 is available (JIT is available)' in value, value
+    return {'path': str(executable), 'sha256': digest(executable), 'versionOutput': value,
+            'buildRecordSha256': entry['buildRecordSha256'], 'overrideUsed': False, 'pathFallbackAvailable': False}
+
+
+def search_receipts(records, frames):
+    expected = {'release-grep': 'RELEASE_NATIVE_GREP_OK', 'release-glob': 'release-search-probe.txt'}
+    for tool_id, marker in expected.items():
+        receipts = [frame['event'] for frame in frames if frame.get('event', {}).get('type') == 'tool_call_finished'
+                    and frame['event'].get('toolCallId') == tool_id]
+        assert len(receipts) == 1 and receipts[0].get('ok') is True, f'{tool_id} did not execute successfully'
+        assert marker in receipts[0].get('resultPreview', ''), f'{tool_id} returned no actual fixture match'
+        tool_messages = [message for record in records for message in record['body'].get('messages', [])
+                         if message.get('role') == 'tool' and message.get('tool_call_id') == tool_id]
+        assert tool_messages and marker in json.dumps(tool_messages), f'{tool_id} receipt never reached provider'
+    return {'grep': 'actual content match and successful tool receipt', 'glob': 'actual fixture path and successful tool receipt'}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("package", type=Path)
@@ -205,6 +236,7 @@ def main():
     workspace = home / ".pilotdeck"
     workspace.mkdir()
     (workspace / "release-check.txt").write_text("RELEASE_NATIVE_READ_OK\n")
+    (workspace / "release-search-probe.txt").write_text("RELEASE_NATIVE_GREP_OK\n")
     fixtures(workspace)
     attempts = out / "forbidden-runtime-attempts.txt"
     env = {"HOME": str(home), "PILOT_HOME": str(home / ".pilotdeck"), "PATH": f"{guards}:{package / 'bin'}",
@@ -234,9 +266,16 @@ def main():
                 if title:
                     delta, reason = {"role": "assistant", "content": '{"title":"Release smoke"}'}, "stop"
                 elif has_receipt:
+                    tools = {message.get('tool_call_id'): message for message in body.get('messages', []) if message.get('role') == 'tool'}
+                    assert 'RELEASE_NATIVE_GREP_OK' in json.dumps(tools.get('release-grep')), 'grep receipt missing'
+                    assert 'release-search-probe.txt' in json.dumps(tools.get('release-glob')), 'glob receipt missing'
                     delta, reason = {"role": "assistant", "content": "RELEASE_NATIVE_COMPLETE"}, "stop"
                 else:
                     delta = {"role": "assistant", "tool_calls": [{"index": index, "id": f"release-read-{index}", "type": "function", "function": {"name": "read_file", "arguments": json.dumps({"file_path": name})}} for index, name in enumerate(["release-check.txt", "release.pdf", "release.png"])]}
+                    delta['tool_calls'].extend([
+                        {'index': 3, 'id': 'release-grep', 'type': 'function', 'function': {'name': 'grep', 'arguments': json.dumps({'pattern': '^RELEASE_NATIVE_GREP_OK$', 'path': 'release-search-probe.txt', 'output_mode': 'content'})}},
+                        {'index': 4, 'id': 'release-glob', 'type': 'function', 'function': {'name': 'glob', 'arguments': json.dumps({'pattern': 'release-search-*.txt'})}},
+                    ])
                     reason = "tool_calls"
                 if body.get("stream"):
                     self.send_response(200)
@@ -264,6 +303,9 @@ def main():
     config.write_text(f"schemaVersion: 1\nagent:\n  model: mock/deterministic\n  maxTurns: 4\nmodel:\n  providers:\n    mock:\n      protocol: openai\n      url: http://127.0.0.1:{model.server_port}/v1\n      apiKey: local-mock-only\n      models:\n        deterministic: {{multimodal: {{input: [text, image, pdf]}}}}\ntelemetry:\n  enabled: false\n")
     env["PILOTDECK_CONFIG_PATH"] = str(config)
     sidecar = package / "bin/pilotdeck-agent-loop-sidecar"
+    engine = ripgrep_version(package, manifest, env, out)
+    assert not (package / "resources/PilotDeck").exists(), "TS reference tree included"
+    assert not (package / "node_modules").exists(), "default core/full must not depend on a Node business tree"
     version = subprocess.run([str(sidecar), "--version"], cwd=project, env=env, capture_output=True, timeout=10)
     assert version.returncode == 0, version.stderr.decode(errors="replace")
     (out / "sidecar-version.txt").write_bytes(version.stdout + version.stderr)
@@ -273,7 +315,7 @@ def main():
     sidecar.chmod(0o755)
     port, child, ws = free_port(), None, None
     evidence = {"schema": 1, "package": verified, "passed": False, "nodeRuntimeAvailable": False,
-                "referenceDirectoryIncluded": False, "defaultLoopProbe": "independent sidecar replaced by failing sentinel"}
+                "referenceDirectoryIncluded": False, "ripgrepIdentity": engine, "defaultLoopProbe": "independent sidecar replaced by failing sentinel"}
     log = (out / "server.log").open("wb")
     try:
         child = subprocess.Popen([str(package / "bin/pilotdeck"), "server", "--host", "127.0.0.1", "--port", str(port)], cwd=project, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
@@ -300,6 +342,7 @@ def main():
                 break
         assert any(f.get("event", {}).get("text") == "RELEASE_NATIVE_COMPLETE" for f in frames), frames
         assert any("RELEASE_NATIVE_READ_OK" in json.dumps(r["body"].get("messages")) for r in records), "tool receipt never reached provider"
+        evidence["nativeSearchContracts"] = search_receipts(records, frames)
         observed = json.dumps(records)
         if manifest["variant"] == "core":
             assert "PDF capability unavailable:" in observed, "missing PDF component did not report unavailable"

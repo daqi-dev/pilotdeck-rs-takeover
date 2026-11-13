@@ -159,10 +159,20 @@ impl ProjectAutomationProvider for NativeAlwaysOnProvider {
         })
     }
 
-    /// The manager's tools reach the sessions through the assembly's
-    /// always-on slot (`always_on_manager_slot`), not this name list.
+    /// Publish the names of this generation's actual tools. Session assembly
+    /// obtains the same manager's definitions, then applies this name list as
+    /// its publication fence; an empty list would filter every definition out.
     fn tools(&self) -> Vec<JsString> {
-        Vec::new()
+        self.manager
+            .tools()
+            .iter()
+            .filter_map(|tool| {
+                tool.fields()
+                    .get("name")
+                    .and_then(JsValue::as_string)
+                    .cloned()
+            })
+            .collect()
     }
 
     fn always_on_manager(&self) -> Option<Arc<AlwaysOnManager>> {

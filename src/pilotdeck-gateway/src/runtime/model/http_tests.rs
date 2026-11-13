@@ -2667,3 +2667,212 @@ fn real_ts_router_transient_thrown_words_match_fallback() {
         );
     }
 }
+
+/// The conditional formal witness uses the same sink as the agent run. Google
+/// audits SDK parameters/chunks, not the transport's wire JSON or SSE framing.
+#[tokio::test]
+async fn google_stream_invocation_audit_records_sdk_bodies_and_settles_each_attempt() {
+    let (request, mut config) = stream_config();
+    let mut provider = field(field(&config, "providers"), "p").clone();
+    put(&mut provider, "protocol", "google".into());
+    put(
+        &mut provider,
+        "retry",
+        parse_json(r#"{"streamMaxRetries":0}"#).unwrap(),
+    );
+    let mut providers = JsObject::new();
+    providers.insert("p".into(), provider);
+    put(&mut config, "providers", JsValue::Object(providers));
+    let root = std::env::temp_dir().join(format!("pdrs-google-audit-{}", uuid::Uuid::new_v4()));
+    let sink = Arc::new(crate::storage::invocation_log::JsonlInvocationLogSink::new(
+        crate::storage::invocation_log::InvocationStorageConfig {
+            root: root.clone(),
+            storage_config_version: "env".into(),
+        },
+    ));
+    let mut context = JsObject::new();
+    for (key, value) in [
+        ("workspaceId", "ws"),
+        ("sessionId", "s1"),
+        ("turnId", "turn"),
+        ("runId", "turn"),
+        ("logicalCallId", "call"),
+        ("caller", "agent"),
+        ("storageConfigVersion", "env"),
+    ] {
+        context.insert(key.into(), value.into());
+    }
+    let options = StreamOptions {
+        invocation: Some(InvocationAudit { sink, context }),
+        ..StreamOptions::default()
+    };
+    struct GoogleAuditTransport(Scripted);
+    impl ModelHttpTransport for GoogleAuditTransport {
+        fn send(&self, request: Request<Full<Bytes>>) -> TransportFuture {
+            let future = self.0.send(request);
+            TransportFuture::io(async move {
+                let mut response = future.await?;
+                response
+                    .headers_mut()
+                    .insert("x-z", "last".parse().unwrap());
+                response
+                    .headers_mut()
+                    .insert("content-type", "text/event-stream".parse().unwrap());
+                Ok(response)
+            })
+        }
+    }
+    let transport = GoogleAuditTransport(Scripted(std::sync::Mutex::new(vec![
+        (200, vec![Some(b"data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]}}]}\n\ndata: {\"candidates\":[{\"finishReason\":\"STOP\"}]}\n\n")]),
+        (400, vec![Some(b"{\"error\":{\"message\":\"bad\"}}")]),
+    ])));
+    for _ in 0..2 {
+        stream_model(&transport, &request, &config, &options, &mut |_| {})
+            .await
+            .unwrap();
+    }
+    let dir = root.join("workspaces/ws/sessions/s1/llm");
+    let records: Vec<JsValue> = std::fs::read_to_string(dir.join("invocations.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| parse_json(line).unwrap())
+        .collect();
+    assert_eq!(records.len(), 2);
+    let request_body = field(&records[0], "requestBody").as_string().unwrap();
+    let request_text = String::from_utf16_lossy(request_body.units());
+    assert_eq!(
+        request_text,
+        r#"{"model":"m","contents":[],"config":{"maxOutputTokens":8,"automaticFunctionCalling":{"disable":true},"abortSignal":{}}}"#
+    );
+    let response_text = String::from_utf16_lossy(
+        field(&records[0], "responseBody")
+            .as_string()
+            .unwrap()
+            .units(),
+    );
+    assert_eq!(
+        response_text,
+        r#"{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]}}],"sdkHttpResponse":{"headers":{"content-type":"text/event-stream","x-z":"last"}}}{"candidates":[{"finishReason":"STOP"}],"sdkHttpResponse":{"headers":{"content-type":"text/event-stream","x-z":"last"}}}"#
+    );
+    assert_eq!(
+        field(&records[0], "requestBytes").as_number(),
+        Some(request_text.len() as f64)
+    );
+    assert_eq!(
+        field(&records[0], "responseBytes").as_number(),
+        Some(response_text.len() as f64)
+    );
+    for record in &records {
+        assert_eq!(field(record, "runId"), &JsValue::from("turn"));
+        assert!(field(record, "httpStatus").is_undefined());
+    }
+    assert_eq!(field(&records[0], "outcome"), &JsValue::from("success"));
+    assert_eq!(field(&records[0], "responseComplete"), &JsValue::Bool(true));
+    assert_eq!(field(&records[1], "outcome"), &JsValue::from("incomplete"));
+    assert_eq!(
+        field(&records[1], "responseComplete"),
+        &JsValue::Bool(false)
+    );
+    assert_eq!(std::fs::read_dir(dir.join(".pending")).unwrap().count(), 0);
+    // Audit's shallow extraBody merge must retain temperature, even though
+    // the Google wire mapper deliberately sanitizes it from transport JSON.
+    let mut extra_config = config.clone();
+    let mut extra_provider = field(field(&extra_config, "providers"), "p").clone();
+    put(
+        &mut extra_provider,
+        "extraBody",
+        parse_json(r#"{"temperature":0.25,"generationConfig":{"temperature":0.5}}"#).unwrap(),
+    );
+    let mut providers = JsObject::new();
+    providers.insert("p".into(), extra_provider);
+    put(&mut extra_config, "providers", JsValue::Object(providers));
+    let extra = Scripted(std::sync::Mutex::new(vec![(
+        200,
+        vec![Some(
+            b"data: {\"candidates\":[{\"finishReason\":\"STOP\"}]}\n\n",
+        )],
+    )]));
+    stream_model(&extra, &request, &extra_config, &options, &mut |_| {})
+        .await
+        .unwrap();
+    let settled = std::fs::read_to_string(dir.join("invocations.jsonl")).unwrap();
+    let last = parse_json(settled.lines().last().unwrap()).unwrap();
+    let raw = String::from_utf16_lossy(field(&last, "requestBody").as_string().unwrap().units());
+    assert_eq!(
+        raw,
+        r#"{"model":"m","contents":[],"config":{"maxOutputTokens":8,"automaticFunctionCalling":{"disable":true},"abortSignal":{}},"temperature":0.25,"generationConfig":{"temperature":0.5}}"#
+    );
+    // The SDK appends a received chunk before streamGuard rejects duration.
+    let mut guarded_config = config.clone();
+    let mut guarded_provider = field(field(&guarded_config, "providers"), "p").clone();
+    put(
+        &mut guarded_provider,
+        "retry",
+        parse_json(r#"{"streamMaxRetries":0,"maxStreamingDurationMs":1}"#).unwrap(),
+    );
+    let mut providers = JsObject::new();
+    providers.insert("p".into(), guarded_provider);
+    put(&mut guarded_config, "providers", JsValue::Object(providers));
+    let ticks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let guarded_options = StreamOptions {
+        clock: Arc::new(move || {
+            (ticks.fetch_add(1, std::sync::atomic::Ordering::SeqCst) * 10) as f64
+        }),
+        ..options.clone()
+    };
+    let partial = Scripted(std::sync::Mutex::new(vec![(
+        200,
+        vec![Some(
+            b"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"received\"}]}}]}\n\n",
+        )],
+    )]));
+    stream_model(
+        &partial,
+        &request,
+        &guarded_config,
+        &guarded_options,
+        &mut |_| {},
+    )
+    .await
+    .unwrap();
+    let settled = std::fs::read_to_string(dir.join("invocations.jsonl")).unwrap();
+    let last = parse_json(settled.lines().last().unwrap()).unwrap();
+    assert_eq!(field(&last, "outcome"), &JsValue::from("incomplete"));
+    let received =
+        String::from_utf16_lossy(field(&last, "responseBody").as_string().unwrap().units());
+    assert_eq!(
+        received,
+        r#"{"candidates":[{"content":{"parts":[{"text":"received"}]}}],"sdkHttpResponse":{"headers":{}}}"#
+    );
+    assert_eq!(std::fs::read_dir(dir.join(".pending")).unwrap().count(), 0);
+    // An in-flight parent cancellation follows TS throwIfGoogleAbort before
+    // finishInvocation: retain its stage, without inventing a terminal row.
+    let abort = AbortFlag::new();
+    let cancelled = StreamOptions {
+        abort: Some(abort.clone()),
+        ..options.clone()
+    };
+    let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let never = Never(dropped.clone());
+    let mut discard = |_: StreamOutput| {};
+    let mut flight = Box::pin(stream_model(
+        &never,
+        &request,
+        &config,
+        &cancelled,
+        &mut discard,
+    ));
+    poll_pending(flight.as_mut()).await;
+    abort.abort();
+    assert!(flight.await.unwrap_err().is_abort());
+    assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(
+        std::fs::read_to_string(dir.join("invocations.jsonl"))
+            .unwrap()
+            .lines()
+            .count(),
+        4
+    );
+    assert_eq!(std::fs::read_dir(dir.join(".pending")).unwrap().count(), 1);
+    std::fs::remove_dir_all(root).unwrap();
+}

@@ -3,13 +3,13 @@ use hyper::Response;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 
 use super::{
-    AbortFlag, Checkpoint, DumpFailure, ErrorInput, JsError, ModelBody, ModelHttpTransport,
-    ModelStreamError, StreamGuard, StreamOptions, StreamOutput, aborted, build_http_request,
-    continuation_request, delay, dump_request_to_file, duration, error_event, field,
-    idle_timeout_ms, is_retryable_stream_error, js_round, normalize_model_error, object_entries,
-    protocol, provider_exchange, provider_id, providers, read_frame, request_started_event,
-    response_text, retry_decide, retryable_message, sse, sse_error, sse_limit, throw_if_aborted,
-    wait_abort,
+    AbortFlag, Checkpoint, DumpFailure, ErrorInput, InvocationResponse, JsError, ModelBody,
+    ModelHttpTransport, ModelStreamError, StreamGuard, StreamOptions, StreamOutput, aborted,
+    begin_invocation_body, build_http_request, continuation_request, delay, dump_request_to_file,
+    duration, error_event, field, finish_invocation, idle_timeout_ms, is_retryable_stream_error,
+    js_round, normalize_model_error, object_entries, protocol, provider_exchange, provider_id,
+    providers, read_frame, request_started_event, response_text, retry_decide, retryable_message,
+    sse, sse_error, sse_limit, throw_if_aborted, wait_abort,
 };
 
 /// `toProviderError(provider, <fs error>)`: the canonical error the TS Google
@@ -209,6 +209,58 @@ pub(super) async fn google_response_error(
     Ok(ModelStreamError::Provider(canonical))
 }
 
+/// The audit records the public SDK parameters, rather than its HTTP wire body.
+fn invocation_request(request: &JsValue, wire: &JsValue) -> JsValue {
+    let mut config = JsObject::new();
+    let generation = field(wire, "generationConfig");
+    config.insert(
+        "maxOutputTokens".into(),
+        field(generation, "maxOutputTokens").clone(),
+    );
+    let prompt = field(request, "systemPrompt");
+    if crate::runtime::model::count_body::truthy(prompt) {
+        let mut instruction = JsObject::new();
+        instruction.insert("text".into(), prompt.clone());
+        config.insert("systemInstruction".into(), JsValue::Object(instruction));
+    }
+    let mut automatic = JsObject::new();
+    automatic.insert("disable".into(), JsValue::Bool(true));
+    config.insert(
+        "automaticFunctionCalling".into(),
+        JsValue::Object(automatic),
+    );
+    for key in ["tools", "toolConfig"] {
+        if !field(wire, key).is_undefined() {
+            config.insert(key.into(), field(wire, key).clone());
+        }
+    }
+    for key in ["thinkingConfig", "responseMimeType", "responseJsonSchema"] {
+        if !field(generation, key).is_undefined() {
+            config.insert(key.into(), field(generation, key).clone());
+        }
+    }
+    // JSON.stringify(AbortSignal) is {}. Every Google stream owns a signal.
+    config.insert("abortSignal".into(), JsValue::Object(JsObject::new()));
+    let mut body = JsObject::new();
+    let model = field(request, "model")
+        .as_string()
+        .map(|s| String::from_utf16_lossy(s.units()))
+        .unwrap_or_default();
+    body.insert(
+        "model".into(),
+        JsValue::String(providers::google::normalize_model_id(&model).into()),
+    );
+    body.insert("contents".into(), field(wire, "contents").clone());
+    body.insert("config".into(), JsValue::Object(config));
+    JsValue::Object(body)
+}
+
+struct GoogleAttempt<'a> {
+    wire: &'a JsValue,
+    audit: JsValue,
+    number: f64,
+}
+
 /// One `streamGoogleProviderRequest` attempt: send, then consume the SDK SSE
 /// stream. Returns as soon as a `message_end` event is emitted, like the TS
 /// loop's `stream.return(...)`.
@@ -216,17 +268,35 @@ async fn google_attempt(
     transport: &dyn ModelHttpTransport,
     provider: &JsValue,
     model: &JsValue,
-    body: &JsValue,
+    request: GoogleAttempt<'_>,
     options: &StreamOptions,
     sink: &mut (dyn FnMut(StreamOutput) + Send),
     checkpoint: &mut Checkpoint,
 ) -> (Result<(), ModelStreamError>, bool) {
     // Error normalization is also a queued continuation: a later parent timer
     // must not replace an already-read SDK error with AbortError.
+    let mut audit_body = object_entries(&request.audit);
+    if let Some(extra) = field(provider, "extraBody").as_object() {
+        for (key, value) in extra.own_entries() {
+            audit_body.insert(key.clone(), value.clone());
+        }
+    }
+    let mut invocation = match begin_invocation_body(
+        options,
+        provider,
+        model,
+        true,
+        &JsValue::Object(audit_body),
+        request.number,
+    ) {
+        Ok(state) => state,
+        Err(error) => return (Err(error), false),
+    };
+    let mut raw_response = String::new();
     let mut body_before_abort = false;
     let sdk_deadline = tokio::time::Instant::now() + duration(idle_timeout_ms(provider, options));
     let outcome = async {
-        let response = send_google_request(transport, provider, model, body, options)
+        let response = send_google_request(transport, provider, model, request.wire, options)
             .await
             .map_err(|(error, before_abort)| {
                 body_before_abort = before_abort;
@@ -274,6 +344,24 @@ async fn google_attempt(
                 }
             };
         }
+        // Fetch Headers iteration is lexically ordered and lower-cased.
+        let mut sorted = std::collections::BTreeMap::<String, String>::new();
+        for (name, value) in response.headers() {
+            let value = String::from_utf8_lossy(value.as_bytes());
+            sorted
+                .entry(name.as_str().to_owned())
+                .and_modify(|old| {
+                    old.push_str(", ");
+                    old.push_str(&value);
+                })
+                .or_insert_with(|| value.into_owned());
+        }
+        let mut headers = JsObject::new();
+        for (name, value) in sorted {
+            headers.insert(name.into(), JsValue::String(value.into()));
+        }
+        let mut http_response = JsObject::new();
+        http_response.insert("headers".into(), JsValue::Object(headers));
         let (mut body, _) = response.into_body();
         let mut state = providers::google::StreamState::default();
         let idle_ms = idle_timeout_ms(provider, options);
@@ -284,20 +372,36 @@ async fn google_attempt(
                 throw_if_aborted(options)?;
             }
             let chunk = read_frame(&mut body, idle_ms, options, &mut body_before_abort).await?;
-            if !body_before_abort {
-                throw_if_aborted(options)?;
-            }
             let parsed = match chunk {
                 Some(ref bytes) => buffer.push(bytes),
                 None => buffer.finish(),
             };
             for item in parsed {
                 let item = item.map_err(sse_error)?;
-                guard.check_duration((options.clock)())?;
                 let raw = match item {
                     sse::SseEvent::Done => continue,
                     sse::SseEvent::Data(raw) => raw,
                 };
+                if invocation.is_some() {
+                    let mut chunk = object_entries(&providers::google::sdk_response(&raw));
+                    chunk.insert(
+                        "sdkHttpResponse".into(),
+                        JsValue::Object(http_response.clone()),
+                    );
+                    let encoded = crate::js_value::json_stringify(&JsValue::Object(chunk))
+                        .map_err(|_| {
+                            ModelStreamError::thrown(
+                                "RangeError",
+                                crate::js_value::StackOverflow::MESSAGE,
+                            )
+                        })?
+                        .unwrap_or_default();
+                    raw_response.push_str(&encoded);
+                }
+                if !body_before_abort {
+                    throw_if_aborted(options)?;
+                }
+                guard.check_duration((options.clock)())?;
                 for event in state.normalize(&raw)? {
                     let tag = field(&event, "type");
                     if tag.as_string().is_some_and(|tag| tag.equals_str("error")) {
@@ -331,6 +435,30 @@ async fn google_attempt(
         Ok(())
     }
     .await;
+    // TS throwIfGoogleAbort runs before finishInvocation. Preserve that
+    // boundary: cancellation can leave the staged record pending; this change
+    // only fills the missing normal/incomplete Google stream audit path.
+    let abort_before_finish = outcome
+        .as_ref()
+        .err()
+        .is_some_and(|error| error.is_abort() || (!body_before_abort && aborted(options)));
+    if !abort_before_finish {
+        finish_invocation(
+            &mut invocation,
+            options,
+            if outcome.is_ok() {
+                "success"
+            } else {
+                "incomplete"
+            },
+            InvocationResponse {
+                body: Some(raw_response.as_bytes()),
+                status: None,
+                complete: outcome.is_ok(),
+            },
+            outcome.as_ref().err(),
+        );
+    }
     (outcome, body_before_abort)
 }
 
@@ -382,7 +510,11 @@ pub(super) async fn stream_google_model(
                     transport,
                     provider,
                     &model_id,
-                    &body,
+                    GoogleAttempt {
+                        audit: invocation_request(&current, &body),
+                        wire: &body,
+                        number: attempt + 1.0,
+                    },
                     options,
                     sink,
                     &mut checkpoint,

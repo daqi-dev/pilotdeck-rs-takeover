@@ -553,6 +553,211 @@ async fn a_budget_cut_cleanup_still_disposes_factory_and_project() {
     );
 }
 
+/// Exercise the real native provider -> publication names -> session registry
+/// fence -> manager-owned discovery tool, rather than a hand-built registry.
+/// The existing controlled provider deliberately forces the discovery call;
+/// only its successful discovery receipt and admission to the next phase are
+/// asserted here. Full phase-specific replies remain the formal AO scenario.
+#[tokio::test]
+async fn native_always_on_publishes_discovery_tool_and_advances_after_saved_plan() {
+    use crate::native_process::sdk_output_controls_tests::ControlProvider;
+    use std::time::Duration;
+
+    let (scratch, requests) = crate::native_process::management_tests::setup();
+    let options = requests.options.clone();
+    let env = requests.env.clone();
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("dispose fixture registry");
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("shutdown fixture owner");
+    let project = options.project.to_string_lossy().into_owned();
+    let plan = format!(
+        "# Native publication plan\n\n> Always-On Discovery Plan\n> id: native_wiring_plan\n> sourceRunId: native-wiring\n> createdAt: 2026-01-01T00:00:00.000Z\n> projectRoot: {project}\n> dedupeKey: native-publication\n\n## Summary\nVerify real automation tool publication.\n\n## Rationale\nThe native provider must publish its tools.\n\n## Context Signals\n- The project is isolated.\n\n## Proposed Change\nCreate a verification note.\n\n## Execution Steps\n1. Create NOTES.md.\n\n## Verification\n- NOTES.md exists.\n"
+    );
+    let provider = ControlProvider::start_with_arguments(
+        "always_on_discovery_plan",
+        &json!({"title":"Native publication plan","summary":"Verify real automation tool publication.","rationale":"The native provider must publish its tools.","dedupeKey":"native-publication","content":plan}).to_string(),
+    );
+    std::fs::write(
+        options.home.join("pilotdeck.yaml"),
+        format!("schemaVersion: 1\nagent: {{model: test/test}}\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: http://{}/v1\n      apiKey: local-native-wiring\n      models: {{test: {{}}}}\ntelemetry: {{enabled: false}}\nalwaysOn:\n  trigger: {{tickIntervalMinutes: 0.001}}\n  projects:\n    {}:\n      enabled: true\n", provider.address, serde_json::to_string(&project).expect("project key")),
+    ).expect("native automation config");
+    let mut harness = boot_with(options, env).await;
+    harness._scratch = Some(scratch);
+    let observation = tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            let captured = provider.requests.lock().expect("model requests").clone();
+            let discovery = captured.iter().find(|request| {
+                request.get("tools").is_some()
+                    && request["messages"]
+                        .to_string()
+                        .contains("autonomous Always-On discovery")
+                    && request["messages"].as_array().is_some_and(|messages| {
+                        messages.iter().any(|message| {
+                            message["role"] == "tool"
+                                && message["content"].as_str().is_some_and(|content| {
+                                    content.starts_with("Plan saved as native_wiring_plan")
+                                })
+                        })
+                    })
+            });
+            let workspace = captured.iter().find(|request| {
+                request.get("tools").is_some()
+                    && request["messages"]
+                        .to_string()
+                        .contains("preparing an isolated workspace")
+            });
+            let project_stores = harness.options.home.join("always-on/projects");
+            let persisted = std::fs::read_dir(project_stores).ok().and_then(|entries| {
+                entries.filter_map(Result::ok).find_map(|entry| {
+                    std::fs::read_to_string(entry.path().join("plans/native_wiring_plan.md")).ok()
+                })
+            });
+            if let (Some(discovery), Some(workspace), Some(persisted)) =
+                (discovery, workspace, persisted)
+            {
+                break (discovery.clone(), workspace.clone(), persisted);
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    // Settle real manager/session resources before reporting a failed receipt.
+    harness
+        .host
+        .shutdown(harness.options.drain_budget)
+        .await
+        .expect("native host shutdown");
+    let (discovery, workspace, persisted) = observation.unwrap_or_else(|error| {
+        panic!("native discovery did not save a plan and reach workspace: {error}; actual requests: {:?}", provider.requests.lock().expect("actual model requests"));
+    });
+    for name in [
+        "always_on_discovery_plan",
+        "always_on_report",
+        "always_on_prepare_workspace",
+        "always_on_read_chat_history",
+    ] {
+        assert!(
+            discovery["tools"]
+                .as_array()
+                .expect("actual discovery tools")
+                .iter()
+                .any(|tool| tool["function"]["name"] == name),
+            "missing actual discovery tool {name}"
+        );
+    }
+    assert!(
+        workspace["tools"]
+            .as_array()
+            .expect("actual workspace tools")
+            .iter()
+            .any(|tool| tool["function"]["name"] == "always_on_prepare_workspace")
+    );
+    assert!(persisted.contains("id: native_wiring_plan"));
+    assert!(persisted.contains("## Verification\n- NOTES.md exists."));
+}
+
+/// A normal native session must receive and execute the published cron tools;
+/// it must not acquire the always-on-only tools through that shared fence.
+#[tokio::test]
+async fn native_session_publishes_and_executes_enabled_cron_tools() {
+    use crate::native_process::sdk_output_controls_tests::ControlProvider;
+    use std::time::Duration;
+
+    let (scratch, requests) = crate::native_process::management_tests::setup();
+    let options = requests.options.clone();
+    let env = requests.env.clone();
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("dispose fixture registry");
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("shutdown fixture owner");
+    let provider = ControlProvider::start_with_arguments("cron_list", "{}");
+    let config = CRON_CONFIG.replace(
+        "http://127.0.0.1:1",
+        &format!("http://{}/v1", provider.address),
+    );
+    std::fs::write(options.home.join("pilotdeck.yaml"), config).expect("cron model config");
+    let mut harness = boot_with(options, env).await;
+    harness._scratch = Some(scratch);
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let capture = events.clone();
+    let receipt = tokio::time::timeout(Duration::from_secs(8), harness.host.submit_turn(
+        pilotdeck_protocol::parse_json(&json!({"sessionKey":"native-cron-publication", "channelKey":"test", "message":"List scheduled tasks for the native publication regression."}).to_string()).expect("submission"),
+        Arc::new(move |event| capture.lock().expect("events").push(event)),
+    )).await;
+    harness
+        .host
+        .shutdown(harness.options.drain_budget)
+        .await
+        .expect("native host shutdown");
+    receipt
+        .expect("bounded native cron turn")
+        .expect("native cron submission");
+    let captured = provider
+        .requests
+        .lock()
+        .expect("actual model requests")
+        .clone();
+    let main = captured
+        .iter()
+        .find(|request| request.get("tools").is_some())
+        .expect("real native request declares tools");
+    for name in [
+        "cron_create",
+        "cron_list",
+        "cron_update",
+        "cron_delete",
+        "cron_stop",
+        "cron_run_now",
+    ] {
+        assert!(
+            main["tools"]
+                .as_array()
+                .expect("tools")
+                .iter()
+                .any(|tool| tool["function"]["name"] == name),
+            "missing {name}: {captured:?}"
+        );
+    }
+    assert!(
+        !main["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .any(|tool| tool["function"]["name"]
+                .as_str()
+                .is_some_and(|name| name.starts_with("always_on_")))
+    );
+    assert!(
+        captured.iter().any(
+            |request| request["messages"]
+                .as_array()
+                .is_some_and(
+                    |messages| messages.iter().any(|message| message["role"] == "tool"
+                        && message["content"].as_str().is_some_and(|content| {
+                            serde_json::from_str::<Value>(content)
+                                .ok()
+                                .is_some_and(|value| value["tasks"] == json!([]))
+                        }))
+                )
+        ),
+        "cron_list must execute in the native registry, not return tool_not_found: requests={captured:?}; events={:?}",
+        events.lock().expect("events")
+    );
+}
+
 /// #2294: a config `alwaysOn:` section with one enabled project stages the
 /// one `AlwaysOnManager` through the automation bundle — the assembly boots,
 /// the three names are advertised, and the control methods answer the real

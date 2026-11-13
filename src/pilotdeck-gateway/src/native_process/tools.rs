@@ -271,31 +271,9 @@ impl ForkSeed {
             self.context_state
         };
         let mut world = self.world;
-        let skills = if config.get("subagentObserverReadOnly") == Some(&JsValue::Bool(true)) {
-            Some(Vec::new())
-        } else {
-            config
-                .get("sdkSkills")
-                .or_else(|| {
-                    config
-                        .get("subagentDefinitions")
-                        .and_then(|definitions| definitions.get(&scope.definition.id))
-                        .and_then(|definition| definition.get("skills"))
-                })
-                .and_then(|skills| match skills {
-                    JsValue::Array(skills) => Some(
-                        skills
-                            .iter()
-                            .filter_map(JsValue::as_string)
-                            .map(|name| String::from_utf16_lossy(name.units()))
-                            .collect(),
-                    ),
-                    _ => None,
-                })
-        };
-        if let Some(skills) = skills {
-            world.skills_filter = Some(skills);
-        }
+        let skills =
+            child_skill_selection(&config, &scope.definition, world.skills_filter.as_deref());
+        world.scope_child_skills(skills, scope.definition.observer_run);
         SessionTools {
             plan_files: Arc::new(crate::runtime::plan_todo::SessionPlanFiles::new(
                 &self.project,
@@ -1289,7 +1267,11 @@ impl SessionTools {
             cooldown: self.compaction_cooldown.clone(),
         };
         SessionPorts {
-            skills: self.world.skills_filter.clone(),
+            skills: self.world.prompt_skills.clone(),
+            include_extensions_with_custom_system_prompt: self
+                .fork
+                .as_ref()
+                .is_some_and(|scope| scoped_child_context(&self.config, &scope.definition)),
             context_state: Some(self.context_state.clone()),
             compaction,
             model: RouterModelPortOptions {
@@ -2018,6 +2000,9 @@ pub(super) struct ExecutionWorld {
     /// `sdkSessionConfig.skills`: the session's skills restricted to these
     /// names (`filterSessionSkills`), for `read_skill` and the prompt.
     skills_filter: Option<Vec<String>>,
+    // Prompt discovery remains inherited for read-only observers even though
+    // their executable read_skill scope is empty.
+    prompt_skills: Option<Vec<String>>,
     plugin_contributions: Option<crate::runtime::plugins::PluginSessionContributionSnapshot>,
     /// `sdkSessionConfig.managedTools`: the `{ allow, deny }` selector policy
     /// (`blockedToolNames`' `managed`).
@@ -2039,7 +2024,59 @@ pub(super) struct ExecutionWorld {
     /// and code-runtime providers behind the builtin tools.
     sandbox: crate::runtime::tools::sandbox::Sandbox,
 }
+/// Child definitions select from the parent's already selected contributions;
+/// inherited sdkSkills must not override an explicit child skill scope.
+fn child_skill_selection(
+    config: &JsObject,
+    definition: &builtin::agent::SubagentDefinition,
+    parent: Option<&[String]>,
+) -> Option<Vec<String>> {
+    if definition.observer_run {
+        return Some(Vec::new());
+    }
+    config
+        .get("subagentDefinitions")
+        .and_then(|definitions| definitions.get(&definition.id))
+        .and_then(|definition| definition.get("skills"))
+        .or_else(|| config.get("sdkSkills"))
+        .and_then(|skills| match skills {
+            JsValue::Array(skills) => Some(
+                skills
+                    .iter()
+                    .filter_map(JsValue::as_string)
+                    .map(|name| String::from_utf16_lossy(name.units()))
+                    .filter(|name| parent.is_none_or(|allowed| allowed.contains(name)))
+                    .collect(),
+            ),
+            _ => None,
+        })
+}
+
+/// Match createContext's exact scoped-child condition. Inherited parent SDK
+/// skill selection alone does not request a new scoped context.
+fn scoped_child_context(
+    config: &JsObject,
+    definition: &builtin::agent::SubagentDefinition,
+) -> bool {
+    definition.memory_disabled
+        || (!definition.observer_run
+            && config
+                .get("subagentDefinitions")
+                .and_then(|definitions| definitions.get(&definition.id))
+                .and_then(|definition| definition.get("skills"))
+                .is_some_and(|skills| !matches!(skills, JsValue::Undefined)))
+}
+
 impl ExecutionWorld {
+    fn scope_child_skills(&mut self, skills: Option<Vec<String>>, observer: bool) {
+        if let Some(skills) = skills {
+            if !observer {
+                self.prompt_skills = Some(skills.clone());
+            }
+            self.skills_filter = Some(skills);
+        }
+    }
+
     pub(super) fn new() -> Self {
         Self {
             #[cfg(unix)]
@@ -2051,6 +2088,7 @@ impl ExecutionWorld {
             deferred: None,
             skills: None,
             skills_filter: None,
+            prompt_skills: None,
             plugin_contributions: None,
             managed_tools: None,
             sdk_sandbox: None,
@@ -2124,6 +2162,7 @@ impl SessionTools {
         skills: Option<Vec<String>>,
         managed_tools: Option<JsValue>,
     ) -> Self {
+        self.world.prompt_skills = skills.clone();
         self.world.skills_filter = skills;
         self.world.managed_tools = managed_tools;
         self
@@ -2598,6 +2637,64 @@ mod tests {
             SdkMcpProjectResolver, SdkMcpSessionPlugins, SystemEnvironment,
         },
     };
+
+    #[test]
+    fn scoped_child_prompt_discovery_preserves_observer_tool_isolation() {
+        let parse = |raw| {
+            pilotdeck_protocol::parse_json(raw)
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .clone()
+        };
+        let config = parse(
+            r#"{"sdkSkills":["alpha","beta"],"subagentDefinitions":{"worker":{"skills":["alpha"]}}}"#,
+        );
+        let worker = builtin::agent::SubagentDefinition {
+            id: "worker".into(),
+            ..Default::default()
+        };
+        assert!(scoped_child_context(&config, &worker));
+        let ordinary = builtin::agent::SubagentDefinition {
+            id: "ordinary".into(),
+            ..Default::default()
+        };
+        assert!(!scoped_child_context(&config, &ordinary));
+        let observer = builtin::agent::SubagentDefinition {
+            id: "reviewer".into(),
+            observer_run: true,
+            memory_disabled: true,
+            ..Default::default()
+        };
+        assert!(scoped_child_context(&config, &observer));
+        let mut parent = ExecutionWorld::new();
+        parent.skills_filter = Some(vec!["alpha".into(), "beta".into()]);
+        parent.prompt_skills = parent.skills_filter.clone();
+        let mut child = parent.clone();
+        let selection = child_skill_selection(&config, &worker, child.skills_filter.as_deref());
+        assert_eq!(selection, Some(vec!["alpha".into()]));
+        child.scope_child_skills(selection, false);
+        assert_eq!(child.prompt_skills, Some(vec!["alpha".into()]));
+        assert_eq!(child.skills_filter, Some(vec!["alpha".into()]));
+        let restricted = vec!["beta".into()];
+        assert_eq!(
+            child_skill_selection(&config, &worker, Some(&restricted)),
+            Some(Vec::new()),
+            "child cannot widen the parent contribution scope"
+        );
+        let mut review = parent;
+        let selection = child_skill_selection(&config, &observer, review.skills_filter.as_deref());
+        review.scope_child_skills(selection, true);
+        assert_eq!(
+            review.prompt_skills,
+            Some(vec!["alpha".into(), "beta".into()])
+        );
+        assert_eq!(
+            review.skills_filter,
+            Some(Vec::new()),
+            "observer executable read_skill scope remains empty"
+        );
+    }
 
     fn wire_name(tool: &McpBridgeTool) -> String {
         String::from_utf16_lossy(tool.spec().wire_name.units())

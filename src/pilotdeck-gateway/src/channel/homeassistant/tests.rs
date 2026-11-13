@@ -804,6 +804,9 @@ async fn reconnect_waits_five_seconds_preserves_ids_and_stop_clears_retry() {
             .is_pending()
     );
     tokio::time::advance(Duration::from_secs(1)).await;
+    // Real TCP/WS I/O must not let the paused clock auto-advance the
+    // connector's timeout while the kernel is completing the handshake.
+    tokio::time::resume();
     let (stream, _) = accept.await.unwrap();
     let mut second = accept_async(stream).await.unwrap();
     second
@@ -818,6 +821,7 @@ async fn reconnect_waits_five_seconds_preserves_ids_and_stop_clears_retry() {
     while channel.shared.runtime.lock().unwrap().socket.is_some() {
         tokio::task::yield_now().await;
     }
+    tokio::time::pause();
     handle.stop("reload").await.unwrap();
     tokio::time::advance(Duration::from_secs(20)).await;
     let accept = listener.accept();

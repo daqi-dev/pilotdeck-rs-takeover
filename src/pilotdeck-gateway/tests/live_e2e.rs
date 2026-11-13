@@ -418,6 +418,7 @@ fn ports(
         ..Default::default()
     };
     SessionPorts {
+        include_extensions_with_custom_system_prompt: false,
         skills: None,
         plugin_contributions: None,
         context_state: None,

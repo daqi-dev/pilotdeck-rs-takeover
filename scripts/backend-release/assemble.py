@@ -12,6 +12,7 @@ import tomllib
 from common import Path, archive, binary_target, digest, inventory, run, source_identity, write_json
 from linkage import inspect
 from resource_layout import resource_contract
+from ripgrep_component import copy_ripgrep, validate_ripgrep
 
 
 def copy_tree(source, destination):
@@ -155,6 +156,7 @@ def main():
     parser.add_argument("--build-record", type=Path, required=True)
     parser.add_argument("--cargo-metadata", type=Path, required=True)
     parser.add_argument("--variant", choices=["core", "full"], required=True)
+    parser.add_argument("--ripgrep", type=Path, required=True)
     parser.add_argument("--mupdf", type=Path)
     parser.add_argument("--image", type=Path)
     parser.add_argument("--skills", type=Path)
@@ -176,6 +178,7 @@ def main():
         parser.error("full package requires both source-built components")
     if args.variant == "core" and (args.mupdf or args.image):
         parser.error("core package must not silently include optional components")
+    validate_ripgrep(args.ripgrep, record["target"])
     contract = resource_contract(args.skills, args.plugins)
     if args.out.exists():
         parser.error("output directory must be new; preserve failed attempts")
@@ -204,9 +207,9 @@ def main():
     shutil.copyfile(source / "LICENSE", package / "LICENSE")
     dependencies(args.cargo_metadata, source, package)
     source_notices(source, package)
-    components = []
+    components = [copy_ripgrep(args.ripgrep.resolve(), package, target)]
     if args.variant == "full":
-        components = [component(args.mupdf.resolve(), "mupdf", package, target), component(args.image.resolve(), "image", package, target)]
+        components.extend([component(args.mupdf.resolve(), "mupdf", package, target), component(args.image.resolve(), "image", package, target)])
     write_json(package / "native-dependencies.json", inspect(package, target))
     resources = {}
     for directory, key in [(args.skills, "skills"), (args.plugins, "builtin-plugins")]:
@@ -236,6 +239,7 @@ def main():
         "schema": 1, "variant": args.variant, "target": target, "sourceDateEpoch": epoch,
         "classification": "development" if args.development else "release-candidate",
         "defaultEntry": "bin/pilotdeck", "defaultRuntime": "native", "components": components,
+        "requiredComponents": ["ripgrep"],
         "resources": resources, "resourceContract": contract,
         "variantMeaning": "native core" if args.variant == "core" else "native core plus source-built MuPDF and image components",
         "scopeExclusions": ["StaffDeck", "Web frontend", "ui/server", "desktop", "TUI"],

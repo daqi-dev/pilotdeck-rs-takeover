@@ -1055,6 +1055,44 @@ async fn write_to_an_existing_directory_answers_node_eisdir() {
     let _ = fs::remove_dir_all(&parent);
 }
 
+// The individual tests construct the expected quote tier and escaping from
+// their own input. Node's error constructor cuts the inspected UTF-16 value,
+// not the full message, at 128 units before appending an ellipsis.
+fn expected_nul_message(inspected: &str) -> Vec<u16> {
+    let mut value: Vec<u16> = inspected.encode_utf16().collect();
+    if value.len() > 128 {
+        value.truncate(128);
+        value.extend("...".encode_utf16());
+    }
+    let mut expected: Vec<u16> =
+        "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received "
+            .encode_utf16()
+            .collect();
+    expected.extend(value);
+    expected
+}
+
+// These three quote-tier probes deliberately need an ordinary root path;
+// reject incompatible fixture roots explicitly rather than silently changing
+// which util.inspect branch is under test.
+fn assert_nul_fixture_root(root: &str, backtick_tier: bool) {
+    assert!(
+        !root.chars().any(|c| c.is_control() || c == '\\'),
+        "fixture root would require inspect escaping"
+    );
+    if backtick_tier {
+        assert!(
+            !root.contains('`') && !root.contains("${"),
+            "fixture root must permit the backtick quote tier"
+        );
+    } else {
+        assert!(
+            !root.contains('\''),
+            "fixture root must permit the single-quote tier"
+        );
+    }
+}
+
 /// #1764: a path with a NUL byte is refused by Node's fs argument validation
 /// before any syscall — the received value rendered by `util.inspect`, NUL
 /// as the literal `\x00` (probe cell `write-nul-path`; the quoting table is
@@ -1083,10 +1121,11 @@ async fn write_to_a_nul_path_answers_node_argument_validation() {
         response.starts_with("HTTP/1.1 500"),
         "#1764 the NUL-path write answers the 500: {response:?}"
     );
+    assert_nul_fixture_root(&root_text, false);
+    let expected = expected_nul_message(&format!("'{root_text}/a\\x00b.txt'"));
+    let json = serde_json::to_string(&String::from_utf16_lossy(&expected)).unwrap();
     assert!(
-        response.contains(&format!(
-            "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '{root_text}/a\\\\x00b.txt'"
-        )),
+        response.contains(&latin1_string(json.as_bytes())),
         "#1764 the NUL-path write answers Node's argument-validation text: {response:?}"
     );
     assert!(
@@ -1123,10 +1162,11 @@ async fn write_to_a_nested_nul_path_answers_node_argument_validation() {
         response.starts_with("HTTP/1.1 500"),
         "#1764 the nested NUL-path write answers the 500: {response:?}"
     );
+    assert_nul_fixture_root(&root_text, false);
+    let expected = expected_nul_message(&format!("'{root_text}/sub/a\\x00b.txt'"));
+    let json = serde_json::to_string(&String::from_utf16_lossy(&expected)).unwrap();
     assert!(
-        response.contains(&format!(
-            "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '{root_text}/sub/a\\\\x00b.txt'"
-        )),
+        response.contains(&latin1_string(json.as_bytes())),
         "#1764 the nested NUL-path write names the joined target: {response:?}"
     );
     assert!(
@@ -1152,15 +1192,12 @@ fn write_nul_path_with_both_quotes_renders_the_backtick_tier() {
         &pilotdeck_protocol::JsString::from("x"),
         false,
     );
+    assert_nul_fixture_root(&root_text, true);
+    let expected = expected_nul_message(&format!("`{root_text}/a'b\"c\\x00d.txt`"));
     match result {
         Err(files::FilesError::MessageUnits(message)) => assert_eq!(
             message.units(),
-            format!(
-                "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received `{root_text}/a'b\"c\\x00d.txt`"
-            )
-            .encode_utf16()
-            .collect::<Vec<_>>()
-            .as_slice(),
+            expected.as_slice(),
             "#2354 both quote kinds render the backtick tier like node v22.22.0"
         ),
         Err(_) => panic!("#2354 a NUL path answers the argument-validation message"),

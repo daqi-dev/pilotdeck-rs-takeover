@@ -64,6 +64,8 @@ pub struct ContextStorageResources {
 /// subagent definition routing; this factory does not implement `createContext`.
 #[derive(Default)]
 pub struct SessionContextOptions {
+    /// Scoped child contexts retain extension discovery with their custom prompt.
+    pub include_extensions_with_custom_system_prompt: bool,
     /// Set for a scoped agent whose definition has `memory: "disabled"`.
     /// The default inherits this generation's resolver.
     pub memory_disabled: bool,
@@ -217,6 +219,8 @@ impl ContextStorageResources {
             memory_retrieval_timeout_ms,
             now: Some(self.now.clone()),
             extension: options.extension,
+            include_extensions_with_custom_system_prompt: options
+                .include_extensions_with_custom_system_prompt,
             compaction: Some(Arc::new(native_compaction_port(summary))),
             session_state: Some(session_state),
             // `new PromptContributionRegistry({ name: `agent:${sessionKey}` })`

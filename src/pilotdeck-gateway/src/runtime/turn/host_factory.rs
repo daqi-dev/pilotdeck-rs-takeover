@@ -178,6 +178,7 @@ pub struct SessionPorts {
     /// `modules.context.requestIdentity`; turn-bound by the session.
     pub context_identity: crate::host::modules::tool_context::ContextRequestIdentity,
     pub context_config: JsObject,
+    pub include_extensions_with_custom_system_prompt: bool,
     pub tool_execution: Arc<dyn capability::ToolExecution>,
     pub tool_context: Arc<dyn capability::ToolContext>,
     pub tool_observer: Arc<dyn capability::CapabilityResultObserver>,
@@ -572,6 +573,7 @@ impl TurnHostFactory {
             context_runtime,
             context_identity,
             context_config,
+            include_extensions_with_custom_system_prompt,
             tool_execution,
             tool_context,
             tool_observer,
@@ -673,6 +675,7 @@ impl TurnHostFactory {
                         tool_results_dir,
                         compaction,
                         compaction_model,
+                        include_extensions_with_custom_system_prompt,
                         skills: skills.as_deref(),
                         plugin_contributions: plugin_contributions.as_ref(),
                         session_state: context_state,
@@ -728,6 +731,7 @@ use crate::runtime::context as context_runtime;
 /// context storage (`SessionContextRuntimeBundle.compose`), with the
 /// session's compaction ports.
 struct SessionContextInputs<'a> {
+    include_extensions_with_custom_system_prompt: bool,
     tool_results_dir: PathBuf,
     compaction: CompactionPorts,
     compaction_model: Arc<dyn crate::host::modules::model::ModelExecution>,
@@ -742,6 +746,7 @@ async fn session_context_runtime(
     inputs: SessionContextInputs<'_>,
 ) -> Result<Arc<dyn context::ContextRuntime>, HostError> {
     let SessionContextInputs {
+        include_extensions_with_custom_system_prompt,
         tool_results_dir,
         compaction,
         compaction_model,
@@ -789,6 +794,7 @@ async fn session_context_runtime(
             .create_session_with_options(
                 tool_results_dir,
                 crate::runtime::project::context_storage::SessionContextOptions {
+                    include_extensions_with_custom_system_prompt,
                     extension,
                     compaction: Some(
                         crate::runtime::project::context_storage::SessionCompaction {
@@ -947,6 +953,7 @@ impl TurnHostFactory {
                 tool_results_dir: ports.tool_results_dir,
                 compaction: ports.compaction,
                 compaction_model,
+                include_extensions_with_custom_system_prompt: false,
                 skills: ports.skills.as_deref(),
                 plugin_contributions: ports.plugin_contributions.as_ref(),
                 session_state: ports.context_state,

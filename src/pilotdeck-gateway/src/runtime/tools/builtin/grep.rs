@@ -8,14 +8,14 @@
 //! ordering, pagination and error mapping. If no binary is found the tool
 //! raises the same `unsupported_tool` message instead of fabricating matches.
 //!
-//! Binary resolution follows the TS contract
-//! (`filesystem/ripgrep.ts:84-103`): the bundled
-//! `@vscode/ripgrep-<platform>-<arch>/bin/rg` package is resolved with Node's
-//! `node_modules` walk (pnpm's virtual store included) from the runtime root
-//! and the gateway executable's ancestors. `PILOTDECK_RIPGREP_PATH` is an
-//! explicit deployment/parity override; it is the only way to run an engine
-//! outside the bundled package. Without a bundled engine the tool raises the
-//! TS `unsupported_tool` wording, exactly like `require("@vscode/ripgrep")`
+//! `PILOTDECK_RIPGREP_PATH` is the highest-priority explicit override.
+//! Native packages provide `components/ripgrep/bin/rg` (`rg.exe` on Windows)
+//! at the explicit runtime root or beside the executable's `bin` directory.
+//! These native component roots are finite. Existing Node installations remain
+//! compatible through their ordinary `node_modules` ancestor walk (including
+//! pnpm's virtual store), as in `filesystem/ripgrep.ts:84-103`. Reference-tree
+//! directories and `PATH` are never implicit engine sources. Without a bundled
+//! engine the tool raises the TS `unsupported_tool` wording, exactly like `require("@vscode/ripgrep")`
 //! failing in `filesystem/ripgrep.ts:89-103` (no `PATH` fallback in TS).
 //!
 //! No ripgrep binary is downloaded or bundled by this crate.
@@ -305,9 +305,9 @@ fn executable_parent() -> Option<PathBuf> {
         .and_then(|executable| executable.parent().map(Path::to_path_buf))
 }
 
-/// Split from [`resolve_ripgrep`] so a test can pin the module-walk roots
-/// without inheriting the real test binary's ancestors. The signature has no
-/// `PATH` input on purpose: TS's `require("@vscode/ripgrep")` failure is
+/// Split from [`resolve_ripgrep`] so the module-walk and native package roots
+/// follow the same runtime-root/executable inputs. There is no search of
+/// `PATH` on purpose: TS's `require("@vscode/ripgrep")` failure is
 /// terminal and never falls back to a system `rg`.
 fn resolve_ripgrep_in(
     environment: Option<&JsObject>,
@@ -343,13 +343,14 @@ pub fn ripgrep_available() -> bool {
 }
 
 /// Resolution order: explicit `PILOTDECK_RIPGREP_PATH` (deployment/parity
-/// pin) -> the bundled `@vscode/ripgrep-<platform>-<arch>/bin/rg` package ->
+/// pin) -> finite native component roots -> the compatible bundled
+/// `@vscode/ripgrep-<platform>-<arch>/bin/rg` package ->
 /// the TS `unsupported_tool` error. This is the TS contract
 /// (`filesystem/ripgrep.ts:89-103`): `require("@vscode/ripgrep")` failure is
 /// terminal and never falls back to `PATH`.
 fn resolve_ripgrep_with(
     override_path: Option<PathBuf>,
-    roots: &[PathBuf],
+    roots: &RipgrepRoots,
 ) -> Result<PathBuf, ToolError> {
     if let Some(path) = override_path {
         if is_executable(&path) {
@@ -360,27 +361,53 @@ fn resolve_ripgrep_with(
             path.display()
         )));
     }
-    match bundled_ripgrep(roots) {
+    let binary = if cfg!(windows) { "rg.exe" } else { "rg" };
+    for root in &roots.native {
+        let candidate = root
+            .join("components")
+            .join("ripgrep")
+            .join("bin")
+            .join(binary);
+        if is_executable(&candidate) {
+            return Ok(candidate.canonicalize().unwrap_or(candidate));
+        }
+    }
+    match bundled_ripgrep(&roots.modules) {
         Ok(Some(path)) => Ok(path),
         Ok(None) => Err(ripgrep_unavailable("Cannot find module '@vscode/ripgrep'")),
         Err(cause) => Err(ripgrep_unavailable(&cause)),
     }
 }
 
-fn default_roots(runtime_root: Option<String>) -> Vec<PathBuf> {
+#[derive(Default)]
+struct RipgrepRoots {
+    native: Vec<PathBuf>,
+    modules: Vec<PathBuf>,
+}
+
+fn default_roots(runtime_root: Option<String>) -> RipgrepRoots {
     default_roots_in(runtime_root, executable_parent())
 }
 
 fn default_roots_in(
     runtime_root: Option<String>,
     executable_parent: Option<PathBuf>,
-) -> Vec<PathBuf> {
-    let mut roots = Vec::new();
+) -> RipgrepRoots {
+    let mut roots = RipgrepRoots::default();
     if let Some(root) = runtime_root.filter(|value| !value.is_empty()) {
-        roots.push(PathBuf::from(root));
+        let root = PathBuf::from(root);
+        roots.native.push(root.clone());
+        roots.modules.push(root);
     }
     if let Some(parent) = executable_parent {
-        roots.push(parent);
+        // Only the installed package's own bin directory identifies a native
+        // component root. Never walk ancestors looking for native components.
+        if parent.file_name().is_some_and(|name| name == "bin")
+            && let Some(package) = parent.parent()
+        {
+            roots.native.push(package.to_path_buf());
+        }
+        roots.modules.push(parent);
     }
     roots
 }
@@ -396,25 +423,18 @@ fn bundled_ripgrep(roots: &[PathBuf]) -> Result<Option<PathBuf>, String> {
     let mut saw_package = false;
     for root in roots {
         for ancestor in root.ancestors() {
-            for modules in [
-                ancestor.join("node_modules"),
-                ancestor
-                    .join("resources")
-                    .join("PilotDeck")
-                    .join("node_modules"),
-            ] {
-                let package_dir = modules.join("@vscode").join("ripgrep");
-                if !package_dir.is_dir() {
-                    continue;
-                }
-                saw_package = true;
-                if let Ok(real) = package_dir.canonicalize() {
-                    for base in real.ancestors() {
-                        if let Some(found) =
-                            platform_binary(&base.join("node_modules"), &package, binary)
-                        {
-                            return Ok(Some(found));
-                        }
+            let modules = ancestor.join("node_modules");
+            let package_dir = modules.join("@vscode").join("ripgrep");
+            if !package_dir.is_dir() {
+                continue;
+            }
+            saw_package = true;
+            if let Ok(real) = package_dir.canonicalize() {
+                for base in real.ancestors() {
+                    if let Some(found) =
+                        platform_binary(&base.join("node_modules"), &package, binary)
+                    {
+                        return Ok(Some(found));
                     }
                 }
             }
@@ -1893,8 +1913,11 @@ mod tests {
         )
         .expect("#1125 publish bundled rg by helper");
 
-        let resolved =
-            resolve_ripgrep_with(None, std::slice::from_ref(&app)).expect("bundled resolution");
+        let resolved = resolve_ripgrep_with(
+            None,
+            &default_roots_in(Some(app.to_string_lossy().into_owned()), None),
+        )
+        .expect("bundled resolution");
         assert_eq!(resolved, bundled, "bundled package platform binary");
 
         let context = context(
@@ -1922,8 +1945,128 @@ mod tests {
     }
 
     #[test]
+    fn native_bundled_ripgrep_uses_only_runtime_or_executable_package_roots() {
+        let scratch = Scratch::new("native-bundle");
+        let runtime = scratch.root.join("runtime");
+        let package = scratch.root.join("package");
+        let binary = if cfg!(windows) { "rg.exe" } else { "rg" };
+        let runtime_binary = runtime.join("components/ripgrep/bin").join(binary);
+        let package_binary = package.join("components/ripgrep/bin").join(binary);
+        for path in [&runtime_binary, &package_binary] {
+            std::fs::create_dir_all(path.parent().expect("component parent"))
+                .expect("native component directory");
+            crate::test_scratch::write_executable(path, "#!/bin/sh\nexit 0\n", 0o755)
+                .expect("publish native rg fixture");
+        }
+        let roots = default_roots_in(
+            Some(runtime.to_string_lossy().into_owned()),
+            Some(package.join("bin")),
+        );
+        assert_eq!(roots.native, vec![runtime.clone(), package.clone()]);
+        assert_eq!(
+            resolve_ripgrep_with(None, &roots).expect("explicit runtime native component"),
+            runtime_binary.canonicalize().expect("real runtime rg")
+        );
+        assert_eq!(
+            resolve_ripgrep_with(None, &default_roots_in(None, Some(package.join("bin"))))
+                .expect("relocated executable package component"),
+            package_binary.canonicalize().expect("real package rg")
+        );
+        let nested = package.join("nested/bin");
+        assert_eq!(
+            default_roots_in(None, Some(nested)).native,
+            vec![package.join("nested")],
+            "native components are not searched in all ancestors"
+        );
+        assert!(
+            default_roots_in(None, Some(package.join("libexec")))
+                .native
+                .is_empty()
+        );
+        let nested_roots = default_roots_in(None, Some(package.join("nested/bin")));
+        assert_ne!(
+            resolve_ripgrep_with(None, &nested_roots).ok(),
+            Some(package_binary.canonicalize().expect("real package rg")),
+            "a native component in a higher ancestor is not a candidate"
+        );
+        let explicit_bin = default_roots_in(
+            Some(package.join("bin").to_string_lossy().into_owned()),
+            None,
+        );
+        assert_eq!(explicit_bin.native, vec![package.join("bin")]);
+        assert_ne!(
+            resolve_ripgrep_with(None, &explicit_bin).ok(),
+            Some(package_binary.canonicalize().expect("real package rg")),
+            "an explicit runtime root is not reinterpreted as its parent"
+        );
+    }
+
+    #[test]
+    fn explicit_ripgrep_override_precedes_native_and_invalid_override_is_terminal() {
+        let scratch = Scratch::new("native-override");
+        let binary = if cfg!(windows) { "rg.exe" } else { "rg" };
+        let native = scratch.root.join("components/ripgrep/bin").join(binary);
+        std::fs::create_dir_all(native.parent().expect("component parent"))
+            .expect("native component directory");
+        crate::test_scratch::write_executable(&native, "#!/bin/sh\nexit 0\n", 0o755)
+            .expect("publish native rg fixture");
+        let explicit = scratch.script("explicit-rg", "#!/bin/sh\nexit 0\n");
+        let roots = default_roots_in(Some(scratch.root.to_string_lossy().into_owned()), None);
+        assert_eq!(
+            resolve_ripgrep_with(Some(explicit.clone()), &roots).expect("explicit override"),
+            explicit
+        );
+        let invalid = scratch.root.join("missing-explicit-rg");
+        let error = resolve_ripgrep_with(Some(invalid), &roots)
+            .expect_err("invalid explicit override cannot use a native component instead");
+        assert_eq!(error.code, "unsupported_tool");
+        let non_executable = scratch.root.join("not-an-executable");
+        std::fs::create_dir(&non_executable).expect("invalid directory override");
+        assert!(resolve_ripgrep_with(Some(non_executable), &roots).is_err());
+    }
+
+    #[test]
+    fn adding_an_ancestor_reference_tree_cannot_change_ripgrep_resolution() {
+        let scratch = Scratch::new("reference-excluded");
+        let app = scratch.root.join("app");
+        let executable = app.join("bin");
+        std::fs::create_dir_all(&executable).expect("fixture executable directory");
+        let environment = object([
+            ("PILOTDECK_RIPGREP_PATH", JsValue::from("")),
+            (
+                "PILOTDECK_DESKTOP_RUNTIME_ROOT",
+                JsValue::from(app.to_string_lossy().as_ref()),
+            ),
+        ]);
+        // Normal ancestor node_modules compatibility is intentional. Compare
+        // before/after rather than assuming every real ancestor lacks modules.
+        let before = resolve_ripgrep_in(Some(&environment), Some(executable.clone())).ok();
+        let (platform, arch) = platform_arch();
+        let modules = app.join("resources/PilotDeck/node_modules");
+        std::fs::create_dir_all(modules.join("@vscode/ripgrep"))
+            .expect("self-created reference wrapper directory");
+        let binary = if cfg!(windows) { "rg.exe" } else { "rg" };
+        let reference = modules
+            .join(format!("@vscode/ripgrep-{platform}-{arch}/bin"))
+            .join(binary);
+        std::fs::create_dir_all(reference.parent().expect("reference parent"))
+            .expect("self-created platform directory");
+        crate::test_scratch::write_executable(&reference, "#!/bin/sh\nexit 0\n", 0o755)
+            .expect("publish self-created reference rg fixture");
+        let after = resolve_ripgrep_in(Some(&environment), Some(executable)).ok();
+        assert_ne!(
+            after,
+            Some(reference.canonicalize().expect("real fixture reference"))
+        );
+        assert_eq!(
+            after, before,
+            "reference directories cannot alter engine provenance"
+        );
+    }
+
+    #[test]
     fn missing_bundled_ripgrep_reports_the_ts_unsupported_tool_error() {
-        let error = resolve_ripgrep_with(None, &[]).expect_err("missing");
+        let error = resolve_ripgrep_with(None, &RipgrepRoots::default()).expect_err("missing");
         assert_eq!(error.code, "unsupported_tool");
         assert_eq!(
             error.message.to_utf8().unwrap(),
@@ -1953,8 +2096,9 @@ mod tests {
             .expect("#1125 publish path rg by helper");
         assert!(is_executable(&on_path), "precondition: rg is on PATH");
         // Drive the same entry point the tool uses, with only a scratch root
-        // and a pinned executable parent so the real machine's module tree
-        // cannot answer the lookup. `PATH` names an executable rg, yet
+        // and a pinned executable parent. This fixture has no native or
+        // normal Node bundle; reference-tree ancestors are not candidates.
+        // `PATH` names an executable rg, yet
         // `require("@vscode/ripgrep")` failure is terminal in TS
         // (`filesystem/ripgrep.ts:89-103`), so resolution must still fail; a
         // reintroduced PATH fallback would return `Ok`.

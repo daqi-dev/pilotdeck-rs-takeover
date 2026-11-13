@@ -2,7 +2,7 @@
 
 只使用 Python 3.11+ 标准库；不运行 Cargo、不下载组件、不依赖 Node，也不发布任何内容。构建仍由主协调者/E0的单独队列执行。StaffDeck 已按本期决定暂停，包清单不声明其可用。
 
-`core` 包含 Rust CLI 和独立 sidecar；`full` 另外必须包含声明支持的 MuPDF、libvips 图像组件及它们的源码和许可材料。这里的 `full` 表示组件组合，不表示所有后端入口已经验收或内建技能资源已经齐备。资源缺口记录在 `manifest.json.pendingDelivery`；不能删除这个记录来宣称完整交付。
+`core` 包含 Rust CLI、独立 sidecar及必需的source-built ripgrep15.0.0/PCRE2 10.45 JIT组件；`full` 另外必须包含声明支持的 MuPDF、libvips 图像组件及它们的源码和许可材料。这里的 `full` 表示组件组合，不表示所有后端入口已经验收或内建技能资源已经齐备。资源缺口记录在 `manifest.json.pendingDelivery`；不能删除这个记录来宣称完整交付。
 
 已支持的装配目标名称为 `aarch64-unknown-linux-gnu`、`x86_64-unknown-linux-gnu`、`aarch64-apple-darwin`、`x86_64-apple-darwin`。每个实际二进制检查 ELF/Mach-O 架构；支持目标名称不等于已有该目标构建证据。现有 Linux ARM64 组件实际要求 GLIBC 2.38；macOS ARM64 组件已完成源码构建、固定 TS 组件对拍和搬迁验证，记录的最低系统版本为 macOS 11，但尚未在 macOS 11 真机运行验证。
 
@@ -24,7 +24,7 @@ python3 scripts/backend-release/record.py \
 python3 scripts/backend-release/assemble.py \
   --source /path/to/checkout --build-record /path/to/new-build-record.json \
   --cargo-metadata /path/to/build/metadata.json \
-  --variant core --out /path/to/new-core-output
+  --variant core --ripgrep /task/tools/ripgrep --out /path/to/new-core-output
 ```
 
 完整组件包在上述命令上使用 `--variant full --mupdf /task/tools/mupdf --image /task/tools/vips`。image 前缀必须同时拥有 helper、共享库、`share/source` 与 `share/licenses`。MuPDF同样需要源码和许可证。完整组件目录按原生查找规则放到 `components/{mupdf,image}`，不依赖环境变量指向构建机器。
@@ -93,3 +93,51 @@ FunASR载荷位于`pilot-home/funasr/`。用户显式选择安装至`PILOT_HOME/
 两个供应包均有独立manifest、runtime-identity、exact-file清单、checksum与archive摘要，可由现有verify.py校验。来源receipt与recipe实体归档在provenance中，不要求安装机器访问旧_tmp路径；这些raw历史文本中的主机路径仅是证据，不是加载映射。外部核准的identity SHA与包内去主机输入路径的identity副本用途不同，二者不混用。
 
 本轮实际供应包在`_tmp/20261113-core-no-node/{browser-runtime-bundle,funasr-runtime-bundle-second}/`：移动解压verify分别199/34payload项通过；移动browser runtime真实stdio catalog23工具并自然退出。移动ASR引擎与原引擎`--help`均exit1，除可执行路径外实际usage字节相同；首个driver误期望exit0的失败保留。未重跑搬迁后声学/Chrome/正式loader，不把这些轻量probe称为最终same-binary发行验证。
+
+## core/full必需的原生搜索组件
+
+两种variant均要求显式`--ripgrep PREFIX`，布局固定为`components/ripgrep/bin/rg`（Windows采用rg.exe的路径约定，但Windows构建/发行仍须单独证明）。full在此基础上增加MuPDF/image，不把必需rg当可缺的optional工具。资源addon/runtime归档不受这一默认包合同影响。旧无rg的核心包不能继续作为完整独立发行证明；旧smoke原证保持历史身份，不覆盖重判。
+
+PREFIX须由受验源码构建过程产生，不允许从宿主PATH复制未知rg或下载预编译bin。`share/source/`包含rg/PCRE2锁定源码、所需vendor及可复现recipe；`share/licenses/`包含相应许可。构建方同时生成`share/ripgrep-build.json`：
+
+```json
+{
+  "schema": 1, "name": "ripgrep", "version": "15.0.0",
+  "target": "aarch64-unknown-linux-gnu", "sourceBuilt": true,
+  "pcre2": {"version": "10.45", "jit": true},
+  "binary": {"path": "bin/rg", "sha256": "ACTUAL_SHA256"},
+  "buildEvidence": [
+    {"role": "rg-command", "path": "share/evidence/rg-command.txt", "sha256": "ACTUAL_SHA256"},
+    {"role": "rg-exit", "path": "share/evidence/rg-exit.txt", "sha256": "ACTUAL_SHA256"},
+    {"role": "pcre-command", "path": "share/evidence/pcre-command.txt", "sha256": "ACTUAL_SHA256"},
+    {"role": "pcre-exit", "path": "share/evidence/pcre-exit.txt", "sha256": "ACTUAL_SHA256"},
+    {"role": "platform", "path": "share/evidence/platform.txt", "sha256": "ACTUAL_SHA256"},
+    {"role": "version", "path": "share/evidence/version.txt", "sha256": "ACTUAL_SHA256"},
+    {"role": "recipe", "path": "share/evidence/build.sh", "sha256": "ACTUAL_SHA256"}
+  ],
+  "sourcePins": {
+    "ripgrep": "3a612f88b805e14aef45bfa43e25a54abc6297fc",
+    "pcre2": "2dce7761b1831fd3f82a9c2bd5476259d945da4d",
+    "sljit": "e51eabbfb8eabc6526f56e4e88b29fb10d1ee048",
+    "Cargo.lock.sha256": "257bfa1eeacfa4d8222e2c50f9d2f8d15ef07e96adee46eaa87839f3b6cfa3b4"
+  },
+  "distribution": {
+    "sources": {"ripgrep": "ENTRY", "pcre2": "ENTRY", "sljit": "ENTRY"},
+    "licenses": {"ripgrep": ["ENTRY"], "pcre2": ["ENTRY"], "sljit": ["ENTRY"]},
+    "cargoLock": "ENTRY", "vendor": "ENTRY"
+  },
+  "files": []
+}
+```
+
+`files`必须为完整common.inventory(PREFIX)结果，排除record本身，而非示例空数组；所有来源archive、vendor、锁、许可与原始证据均纳入exact-file闭包。记录声明不自行证明source build发生；构建负责人必须保留实际命令/退出码/版本/链接/架构与源码身份，包装器核字节/目标及搬移后的完整闭包，不执行构建。现有native-dependencies审计也检查rg动态依赖，PCRE2应静态链接，未供给非系统库必须拒绝。
+
+assemble在复制前验证版本/PCRE2 JIT/target/实际binSHA、执行权限、source/license非空、角色明确且路径互不重复的七份构建证据及exactinventory，复制后复验。core/full manifest明确requiredComponents=[ripgrep]并绑定component与buildRecord摘要；verify除普通清单/checksum外再次核必需组件，缺件即失败。
+
+原有smoke在同一native业务任务里保留3个read_file调用和既有PDF/image判据，增加真实grep内容匹配与glob文件匹配。PATH不提供rg/Node，不设置PILOTDECK_RIPGREP_PATH；只允许搬移包相邻component成为默认引擎来源。收据包含搬移rg--version实际输出、15.0.0/PCRE2 10.45 JIT、二进制/buildrecordSHA；两个工具都必须有成功tool_call_finished且实际匹配进入provider。当前新增包装单测使用明确fake字节并mock架构，只证明结构与拒绝行为，不能冒称真实引擎或最终产品smoke已通过。真实sourcebuiltprefix与新same-source CLI统一由root排最终组包/搬移验证。
+
+独审有限修正：`buildEvidence`的role与path均唯一，七role全部必需；rg/pcre退出文件必须为实际文本0或原JSON `{exit:0}`，exit1即使hash正确也拒绝。command/recipe核locked+featurespcre2、PCRE2_SYS_STATIC=0与PKG_CONFIG_ALL_STATIC=1、PCRE配置JITON/sharedOFF；version文本核实际15.0.0/10.45/JIT。PCRE2_SYS_STATIC=1会触发pcre2-sys自带10.46编译，不能使用。
+
+上例ENTRY必须由`ripgrep_component.distribution_identity(prefix,relative)`生成的真实对象代替：普通文件为path/type=file/sha256，目录为path/type=directory/inventorySha256（sorted-key compactJSON的common.inventory摘要）。source按rg/PCRE2/SLJIT明确声明，含SLJIT子模块的PCRE源archive可被两source role引用。三source commit与Cargo.lock的已知SHA固定；actual Cargo.lock也必须匹配。许可证按固定源原文本摘要核验（rg可MIT或UNLICENSE之一，PCRE2 LICENCE与SLJIT LICENSE分别保留）。vendor必须真实随包，目录或tar源码归档须含Cargo checksum manifests；validator只读tar目录，不解包。
+
+这些结构校验不认证任意不可信构建；真正source build仍由固定checkout、原始成功命令/日志、版本/链接与独立审查支持。首版只检查三份hash文件的缺陷与首测原证保留；新版增加且仅增加重复证据、exit1但hash正确、缺vendor三个对应负控。当前30项包装回归通过，其中fake测试明确mock source/license pin与架构，不能称真实离线重建成功。真实供应prefix另须通过同validator后才能组包。

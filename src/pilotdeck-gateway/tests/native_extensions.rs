@@ -124,6 +124,9 @@ impl MockProvider {
                     }
                     Err(error) => panic!("mock accept: {error}"),
                 };
+                // macOS may inherit the listener's nonblocking flag. The
+                // fixture reads a complete HTTP request using blocking I/O.
+                socket.set_nonblocking(false).unwrap();
                 socket
                     .set_read_timeout(Some(Duration::from_secs(5)))
                     .unwrap();
@@ -204,7 +207,14 @@ impl MockProvider {
 impl Drop for MockProvider {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
-        self.worker.take().unwrap().join().unwrap();
+        let result = self.worker.take().expect("mock worker is owned").join();
+        if std::thread::panicking() {
+            if result.is_err() {
+                eprintln!("mock provider worker also panicked during cleanup");
+            }
+        } else {
+            result.expect("mock provider worker must finish successfully");
+        }
     }
 }
 

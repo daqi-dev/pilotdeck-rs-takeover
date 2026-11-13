@@ -458,6 +458,7 @@ fn ports_with_tool_results_dir(
 ) -> SessionPorts {
     let signal = Cancellation::new();
     SessionPorts {
+        include_extensions_with_custom_system_prompt: false,
         skills: None,
         plugin_contributions: None,
         context_state: None,

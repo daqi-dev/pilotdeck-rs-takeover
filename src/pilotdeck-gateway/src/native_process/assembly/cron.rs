@@ -243,11 +243,21 @@ impl super::automation::ProjectAutomationProvider for NativeCronProvider {
         })
     }
 
-    /// TS composes the cron provider's tool definitions into `extraTools`;
-    /// the port has none behind its manager (the #1305 firing half owns that
-    /// surface), so the publish composes none.
+    /// Publish this manager's actual tools, matching CronManager.getTools's
+    /// enabled gate before the generation's names fence session assembly.
     fn tools(&self) -> Vec<JsString> {
-        Vec::new()
+        if !self.manager.enabled() {
+            return Vec::new();
+        }
+        crate::runtime::cron::cron_tools(&self.manager)
+            .iter()
+            .filter_map(|tool| {
+                tool.fields()
+                    .get("name")
+                    .and_then(JsValue::as_string)
+                    .cloned()
+            })
+            .collect()
     }
 
     fn cron_manager(&self) -> Option<Arc<CronManager>> {

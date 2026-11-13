@@ -9,8 +9,8 @@
 //! Events are delivered to a sink in order; an `Err` is what TS throws.
 //!
 //! HTTP redirects follow undici through `crate::fetch_redirect::follow`
-//! (#360-1), including the Google SDK transport. Not ported here: invocation
-//! audit staging (`options.invocation`, A6.4-pr10). Both provider paths
+//! (#360-1), including the Google SDK transport. Invocation audit staging uses the
+//! configured sink for both provider paths. Both provider paths
 //! support `PILOTDECK_DUMP_REQUEST` for inspecting outgoing request bodies,
 //! on the streaming sends only — TS never dumps from `complete()`.
 //! The outgoing HTTP proxy (`cli/proxy.ts`) is implemented here and wired into
@@ -1271,10 +1271,30 @@ fn begin_invocation(
     body: &JsValue,
     attempt: f64,
 ) -> Result<Option<InvocationAttempt>, ModelStreamError> {
+    begin_invocation_body(
+        options,
+        provider,
+        model,
+        stream,
+        &providers::final_body(body, provider),
+        attempt,
+    )
+}
+
+/// Stage an already projected audit body. Google SDK audit parameters use a
+/// shallow extraBody merge, independently of HTTP wire sanitization.
+fn begin_invocation_body(
+    options: &StreamOptions,
+    provider: &JsValue,
+    model: &JsValue,
+    stream: bool,
+    body: &JsValue,
+    attempt: f64,
+) -> Result<Option<InvocationAttempt>, ModelStreamError> {
     let Some(invocation) = &options.invocation else {
         return Ok(None);
     };
-    let request_body = crate::js_value::json_stringify(&providers::final_body(body, provider))
+    let request_body = crate::js_value::json_stringify(body)
         .map_err(|_| {
             ModelStreamError::thrown("RangeError", crate::js_value::StackOverflow::MESSAGE)
         })?

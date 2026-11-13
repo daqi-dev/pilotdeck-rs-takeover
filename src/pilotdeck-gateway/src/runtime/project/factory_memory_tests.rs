@@ -871,3 +871,76 @@ async fn context_memory_leased_sessions_keep_their_generation_resolver() {
     drop(new_lease);
     registry.dispose().await.unwrap();
 }
+
+/// Scoped subagents append discovery even with their custom system prompt;
+/// ordinary custom prompts retain the default suppression. Memory opt-out is
+/// independent of skill discovery (ProjectSessionRuntimeBundle.ts:567-582).
+#[tokio::test]
+async fn scoped_child_custom_prompt_retains_environment_and_selected_skill_discovery() {
+    struct Skills(Vec<&'static str>);
+    impl crate::runtime::context::ExtensionResolver for Skills {
+        fn list_skills(&self) -> Vec<crate::runtime::context::ContributedSkill> {
+            self.0
+                .iter()
+                .map(|name| crate::runtime::context::ContributedSkill {
+                    name: (*name).into(),
+                    description: Some(format!("{name} description")),
+                    path: format!("/isolated/skills/{name}/SKILL.md"),
+                })
+                .collect()
+        }
+    }
+    let scratch = Scratch::new();
+    let memory = RecordingMemory::new(Behavior::Success(0));
+    let (registry, lease, main) = build(&scratch, Some(""), memory.source(false));
+    let resource = storage(&lease);
+    let storage = resource
+        .as_any()
+        .downcast_ref::<ContextStorageResources>()
+        .unwrap();
+    for (include, names) in [
+        (false, vec!["alpha", "beta"]),
+        (true, vec!["alpha"]),
+        (true, vec!["alpha", "beta"]),
+    ] {
+        let scoped = storage
+            .create_session_with_options(
+                scratch.0.join("scoped-prompt-spill"),
+                SessionContextOptions {
+                    memory_disabled: true,
+                    include_extensions_with_custom_system_prompt: include,
+                    extension: Some(Arc::new(Skills(names.clone()))),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let mut request = input(&scratch);
+        request
+            .fields
+            .insert("customSystemPrompt".into(), "CHILD-CUSTOM-SYSTEM".into());
+        let result = scoped
+            .context_runtime
+            .prepare_for_model(request)
+            .await
+            .unwrap();
+        let prompt = text_field(&result, "systemPrompt");
+        assert!(prompt.contains("CHILD-CUSTOM-SYSTEM"));
+        assert_eq!(prompt.contains("<environment>\nnow: "), include);
+        assert_eq!(prompt.contains("<available-skills>"), include);
+        assert_eq!(prompt.contains("alpha description"), include);
+        assert_eq!(prompt.contains("/isolated/skills/alpha/SKILL.md"), include);
+        assert_eq!(
+            prompt.contains("beta description"),
+            include && names.contains(&"beta")
+        );
+        assert_eq!(prompt.contains("Use the read_skill tool"), include);
+        assert_no_memory(&result);
+    }
+    assert!(
+        memory.inputs.lock().unwrap().is_empty(),
+        "prompt discovery must not reenable child memory"
+    );
+    drop(main);
+    drop(lease);
+    registry.dispose().await.unwrap();
+}
