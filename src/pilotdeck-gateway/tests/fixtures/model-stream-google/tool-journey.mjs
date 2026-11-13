@@ -93,7 +93,8 @@ const mock = createServer(async (req, res) => {
     const usageMetadata = index === 1 ? { promptTokenCount: 11, candidatesTokenCount: 2, totalTokenCount: 13 } : { promptTokenCount: 17, candidatesTokenCount: 3, totalTokenCount: 20 };
     wire.reply = { part: reply, usageMetadata };
     const responseText = `data: ${JSON.stringify({ responseId: `ra05-response-${index}`, candidates: [{ content: { role: 'model', parts: [reply] } }] })}\n\n` + `data: ${JSON.stringify({ candidates: [{ finishReason: 'STOP' }], usageMetadata })}\n\n`;
-    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.setHeader('content-type', 'text/event-stream');
+    res.writeHead(200);
     res.flushHeaders();
     wire.response = {status:res.statusCode, headers:res.getHeaders(), rawHeaders:res._header, bodyBase64:Buffer.from(responseText).toString('base64'), sha256:sha(responseText)};
     res.end(responseText);
@@ -105,11 +106,19 @@ writeFileSync(join(pilot, 'pilotdeck.yaml'), config);
 const env = { PATH: process.env.PATH, HOME: home, USERPROFILE: home, CFFIXED_USER_HOME: home, PILOT_HOME: pilot, PILOTDECK_CONFIG_PATH: join(pilot, 'pilotdeck.yaml'), PILOTDECK_STORAGE_ROOT: join(out, 'audit'), PILOTDECK_SNAPSHOT_ROOT: join(tmp, 'snapshots'), TMPDIR: tmp, LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8', TZ: 'UTC', NO_COLOR: '1', NODE_NO_WARNINGS: '1' };
 identity.env = env; identity.cwd = pilot;
 writeFileSync(join(out,'identity.json'),json(identity)); // identity is durable before any product spawn
-let ended;
+let ended, closeReceipt = null;
+const lifecycle = [], groupObservations = [];
+function observeGroup(label) {
+  let exists = false, error = null;
+  if (child?.pid) { try { process.kill(-child.pid,0); exists=true; } catch (e) { if (e.code !== 'ESRCH') { exists=true; error=String(e); } } }
+  const row={at:Date.now(),label,pgid:child?.pid ?? null,exists,error,leaderExitCode:child?.exitCode ?? null,leaderSignalCode:child?.signalCode ?? null}; groupObservations.push(row); return row;
+}
 try {
   child = spawn(command, args, { cwd: pilot, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   identity.pid = child.pid; identity.pgid = child.pid;
-  ended = new Promise(done => child.once('close', (code, signal) => { exit = { code, signal }; done(); }));
+  child.once('exit',(code,signal)=>{exit={code,signal};lifecycle.push({kind:'exit',at:Date.now(),code,signal});observeGroup('leader-exit');});
+  ended = new Promise(done => child.once('close', (code, signal) => { closeReceipt={code,signal};lifecycle.push({kind:'close',at:Date.now(),code,signal});observeGroup('stdio-close');done(); }));
+  observeGroup('spawn');
   child.once('error', error => { artifact.errors.push(String(error)); });
   child.stdout.on('data', data => { stdout += data; if (stdout.length > 8 * 1024 * 1024) child.kill('SIGTERM'); });
   child.stderr.on('data', data => { stderr += data; if (stderr.length > 8 * 1024 * 1024) child.kill('SIGTERM'); });
@@ -130,15 +139,33 @@ try {
   artifact.captureComplete = true;
 } catch (error) { fatal = error; artifact.errors.push(String(error.stack ?? error)); }
 finally {
-  socket?.terminate();
-  if (child && !exit) { child.kill('SIGINT'); await Promise.race([ended, pause(5000)]); }
-  if (child && !exit) { try { process.kill(-child.pid, 'SIGKILL'); } catch (e) { if (e.code !== 'ESRCH') artifact.errors.push(String(e)); } await Promise.race([ended, pause(3000)]); }
-  let groupGone = !child?.pid;
-  if (child?.pid) { try { process.kill(-child.pid, 0); } catch (e) { if (e.code === 'ESRCH') groupGone = true; else artifact.errors.push(String(e)); } }
+  const gracefulStartedAt=Date.now(), gracefulDeadline=gracefulStartedAt+5000;
+  let wsClosed=false, forced=false;
+  if (socket) {
+    if (socket.readyState === 3) { wsClosed=true; lifecycle.push({kind:'ws-close',at:Date.now(),alreadyClosed:true}); }
+    else {
+      const closed=new Promise(done=>socket.once('close',(code,reason)=>{wsClosed=true;lifecycle.push({kind:'ws-close',at:Date.now(),code,reason:reason.toString()});done();}));
+      lifecycle.push({kind:'ws-close-request',at:Date.now()});socket.close(1000,'RA05 completed');
+      await Promise.race([closed,pause(Math.max(0,gracefulDeadline-Date.now()))]);
+      if (!wsClosed) { lifecycle.push({kind:'ws-close-timeout',at:Date.now()});socket.terminate(); }
+    }
+  }
+  observeGroup('before-sigint');
+  if (child && !exit && wsClosed) {
+    lifecycle.push({kind:'signal',signal:'SIGINT',target:'owned-leader',pid:child.pid,at:Date.now(),accepted:child.kill('SIGINT')});
+    await Promise.race([ended,pause(Math.max(0,gracefulDeadline-Date.now()))]);
+  }
+  observeGroup('graceful-deadline');
+  if (child && !exit) {
+    forced=true;const signal={kind:'signal',signal:'SIGKILL',target:'owned-private-group',pgid:child.pid,at:Date.now()};
+    try { process.kill(-child.pid,'SIGKILL');signal.accepted=true; } catch (e) {signal.error=String(e);if(e.code!=='ESRCH')artifact.errors.push(String(e));}
+    lifecycle.push(signal);await Promise.race([ended,pause(3000)]);
+  }
+  const groupGone=!observeGroup('final').exists;
   let socketReleased = false;
   if (stdout.includes('WebSocket: ws://')) { const port = Number(new URL(stdout.match(/WebSocket: (ws:\/\/[^\s]+)/)[1]).port); const probe = createServer(); socketReleased = await new Promise(done => { probe.once('error', () => done(false)); probe.listen(port, '127.0.0.1', () => probe.close(() => done(true))); }); }
   mock.closeAllConnections(); await new Promise(done => mock.close(done));
-  artifact.cleanup = { exit, groupGone, socketReleased };
+  artifact.cleanup = {exit,close:closeReceipt,groupGone,socketReleased,wsClosed,forced,gracefulStartedAt,gracefulDeadline,lifecycle,groupObservations,diagnostic:'Original cleanup blocker is not yet identified; exit/close and group timings are evidence, never an accepted shutdown exception.'};
   artifact.inputAfterSha256 = sha(readFileSync(join(pilot, 'ra05-input.txt')));
   artifact.workspaceFiles = readdirSync(pilot).sort();
   const files = [];

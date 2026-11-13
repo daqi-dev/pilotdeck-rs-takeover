@@ -50,6 +50,10 @@ export function verify(a) {
   for (const r of main) {
     assert.equal(r.response.status, 200);
     assert.match(r.response.headers['content-type'], /^text\/event-stream/);
+    const lines=r.response.rawHeaders.trim().split('\r\n');
+    assert.match(lines.shift(),/^HTTP\/1\.1 200 /);
+    const actualHeaders=Object.fromEntries(lines.map(line=>{const i=line.indexOf(':');return [line.slice(0,i).toLowerCase(),line.slice(i+1).trim()];}));
+    assert.equal(actualHeaders['content-type'],r.response.headers['content-type'],'actual raw HTTP header agrees with structured record');
     assert.equal(sha(Buffer.from(r.response.bodyBase64, 'base64')), r.response.sha256);
     const chunks = Buffer.from(r.response.bodyBase64, 'base64').toString().split('\n\n').filter(Boolean).map(line => JSON.parse(line.replace(/^data: /, '')));
     assert.equal(chunks.length, 2);
@@ -79,28 +83,38 @@ export function verify(a) {
   assert.equal(final.length, 1); assert.equal(final[0].event.type, 'turn_completed');
   assert.equal(final[0].event.finishReason, 'completed');
   assert.deepEqual(final[0].event.usage, { inputTokens: 28, outputTokens: 5, totalTokens: 33 });
-  const history = walk(a.history);
-  assert.ok(history.some(b => b.type === 'tool_call' && b.id === CALL.id && b.name === CALL.name), 'persisted actual call');
-  const durable = history.filter(b => b.type === 'tool_result' && b.toolCallId === CALL.id);
-  assert.equal(durable.length, 1, 'one persisted actual tool result');
-  const strings = value => typeof value === 'string' ? [value] : value && typeof value === 'object' ? Object.values(value).flatMap(strings) : [];
-  assert.ok(strings(durable[0].content).includes(output), 'durable tool output equals complete functionResponse.output');
-  assert.ok(history.some(b => b.type === 'text' && b.text === ANSWER), 'persisted exact final text block');
+  const history=a.history.messages;
+  assert.ok(Array.isArray(history),'public history.messages');
+  const uses=history.filter(m=>m.kind==='tool_use' && m.toolCallId===CALL.id);
+  assert.equal(uses.length,1);assert.equal(uses[0].role,'tool');assert.equal(uses[0].toolName,CALL.name);assert.deepEqual(uses[0].payload,CALL.args);
+  const durable=history.filter(m=>m.kind==='tool_result' && m.toolCallId===CALL.id);
+  assert.equal(durable.length,1);assert.equal(durable[0].role,'tool');assert.equal(durable[0].toolName,CALL.name);assert.equal(durable[0].ok,true);
+  assert.equal(durable[0].text,output,'public durable result equals complete functionResponse.output');
+  const answers=history.filter(m=>m.role==='assistant' && m.kind==='text');
+  assert.equal(answers.length,1);assert.equal(answers[0].text,ANSWER);
   const auditRows = a.audit.files.filter(f => f.path.endsWith('/invocations.jsonl')).flatMap(f => { assert.equal(sha(f.text), f.sha256); return f.text.trim().split('\n').filter(Boolean).map(line => JSON.parse(line)); });
   const invocations = auditRows.filter(r => r.sessionId === 'ra05-google-tool' && r.stream === true && r.protocol === 'google' && r.model === 'm');
   assert.equal(invocations.length, 2, 'two actual main invocation audit rows');
   for (const row of invocations) { assert.equal(row.outcome, 'success'); assert.equal(row.responseComplete, true); assert.equal(typeof row.requestBody, 'string'); assert.equal(typeof row.responseBody, 'string'); }
   assert.ok(invocations.some(row => walk(JSON.parse(row.requestBody)).some(p => p.functionResponse?.id === CALL.id && p.functionResponse.response.output === output)), 'audit retains complete continuation output');
   assert.deepEqual(a.cleanup.exit, { code: 0, signal: null });
+  assert.deepEqual(a.cleanup.close,a.cleanup.exit);
+  assert.equal(a.cleanup.wsClosed,true);assert.equal(a.cleanup.forced,false);
+  assert.equal(a.cleanup.gracefulDeadline-a.cleanup.gracefulStartedAt,5000);
+  const wsClose=a.cleanup.lifecycle.find(e=>e.kind==='ws-close'), signal=a.cleanup.lifecycle.find(e=>e.kind==='signal' && e.signal==='SIGINT'), exited=a.cleanup.lifecycle.find(e=>e.kind==='exit'), closed=a.cleanup.lifecycle.find(e=>e.kind==='close');
+  assert.ok(wsClose && signal && exited && closed,'independent lifecycle receipts');
+  assert.ok(wsClose.at<=signal.at && signal.at<=exited.at && exited.at<=closed.at);
+  assert.ok(closed.at<=a.cleanup.gracefulDeadline,'original five-second graceful deadline');
+  assert.ok(a.cleanup.groupObservations.some(o=>o.label==='final' && o.exists===false));
   assert.equal(a.cleanup.socketReleased, true); assert.equal(a.cleanup.groupGone, true);
   return { passed: true, profile: a.schema, mainRequests: 2, realReadCalls: 1 };
 }
 function sample() {
   const h = '0'.repeat(64), output = INPUT;
-  const response = index => { const data = [{candidates:[{content:{role:'model',parts:[index === 0 ? {functionCall:CALL} : {text:ANSWER}]}}]},{candidates:[{finishReason:'STOP'}]}].map(v=>'data: '+JSON.stringify(v)+'\n\n').join(''); return {status:200,headers:{'content-type':'text/event-stream'},bodyBase64:Buffer.from(data).toString('base64'),sha256:sha(data)}; };
+  const response = index => { const data = [{candidates:[{content:{role:'model',parts:[index === 0 ? {functionCall:CALL} : {text:ANSWER}]}}]},{candidates:[{finishReason:'STOP'}]}].map(v=>'data: '+JSON.stringify(v)+'\n\n').join(''); return {status:200,headers:{'content-type':'text/event-stream'},rawHeaders:'HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\n',bodyBase64:Buffer.from(data).toString('base64'),sha256:sha(data)}; };
   const auditText = [0,1].map(index=>JSON.stringify({sessionId:'ra05-google-tool',stream:true,protocol:'google',model:'m',outcome:'success',responseComplete:true,requestBody:JSON.stringify(index===0?{}:{contents:[{parts:[{functionResponse:{id:CALL.id,name:CALL.name,response:{output}}}]}]}),responseBody:'{}'})).join('\n')+'\n';
   const body = { contents: [{role:'user',parts:[{text:PROMPT}]}], tools: [{ functionDeclarations: [{ name: 'read_file', parametersJsonSchema: { required: ['file_path'] } }] }] };
-  return { schema: 'RA05-google-tool-v1', captureComplete: true, errors: [], identity: { engine: 'ts', selectedEntryMode:'source',selectedEntry:'/fixed/src/cli/pilotdeck.ts',selectedEntrySha256:h,node:{path:'/node',sha256:h},command:'/node',args:['--import','/tsx','/fixed/src/cli/pilotdeck.ts'], driverSha256: h, commandSha256: h, baselineCommit: 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85', sourceClosure: { 'src/cli/pilotdeck.ts': h } }, inputBeforeSha256: sha(INPUT), inputAfterSha256: sha(INPUT), audit:{files:[{path:'sessions/ra05-google-tool/llm/invocations.jsonl',text:auditText,sha256:sha(auditText)}]}, requests: [body, { contents: [{ role: 'model', parts: [{ functionCall: CALL }] }, { role: 'user', parts: [{ functionResponse: { id: CALL.id, name: CALL.name, response: { output } } }] }] }].map((body,index) => ({ response:response(index), purpose: 'turn', method: 'POST', path: '/v1beta/models/m:streamGenerateContent?alt=sse', apiKey: 'fixture-only', body })), frames: [{ id: 'turn', event: { type: 'tool_call_started', toolCallId: CALL.id, name: CALL.name } }, { id: 'turn', event: { type: 'tool_call_finished', toolCallId: CALL.id, ok: true } }, { id: 'turn', final: true, event: { type: 'turn_completed', finishReason: 'completed', usage: { inputTokens: 28, outputTokens: 5, totalTokens: 33 } } }], history: [{ type: 'tool_call', id: CALL.id, name: CALL.name }, { type: 'tool_result', toolCallId: CALL.id, content: output }, { type: 'text', text: ANSWER }], cleanup: { exit: { code: 0, signal: null }, socketReleased: true, groupGone: true } };
+  return { schema: 'RA05-google-tool-v1', captureComplete: true, errors: [], identity: { engine: 'ts', selectedEntryMode:'source',selectedEntry:'/fixed/src/cli/pilotdeck.ts',selectedEntrySha256:h,node:{path:'/node',sha256:h},command:'/node',args:['--import','/tsx','/fixed/src/cli/pilotdeck.ts'], driverSha256: h, commandSha256: h, baselineCommit: 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85', sourceClosure: { 'src/cli/pilotdeck.ts': h } }, inputBeforeSha256: sha(INPUT), inputAfterSha256: sha(INPUT), audit:{files:[{path:'sessions/ra05-google-tool/llm/invocations.jsonl',text:auditText,sha256:sha(auditText)}]}, requests: [body, { contents: [{ role: 'model', parts: [{ functionCall: CALL }] }, { role: 'user', parts: [{ functionResponse: { id: CALL.id, name: CALL.name, response: { output } } }] }] }].map((body,index) => ({ response:response(index), purpose: 'turn', method: 'POST', path: '/v1beta/models/m:streamGenerateContent?alt=sse', apiKey: 'fixture-only', body })), frames: [{ id: 'turn', event: { type: 'tool_call_started', toolCallId: CALL.id, name: CALL.name } }, { id: 'turn', event: { type: 'tool_call_finished', toolCallId: CALL.id, ok: true } }, { id: 'turn', final: true, event: { type: 'turn_completed', finishReason: 'completed', usage: { inputTokens: 28, outputTokens: 5, totalTokens: 33 } } }], history: {messages:[{role:'tool',kind:'tool_use',toolCallId:CALL.id,toolName:CALL.name,payload:CALL.args},{role:'tool',kind:'tool_result',toolCallId:CALL.id,toolName:CALL.name,ok:true,text:output},{role:'assistant',kind:'text',text:ANSWER}]}, cleanup:{exit:{code:0,signal:null},close:{code:0,signal:null},socketReleased:true,groupGone:true,wsClosed:true,forced:false,gracefulStartedAt:1,gracefulDeadline:5001,lifecycle:[{kind:'ws-close',at:2},{kind:'signal',signal:'SIGINT',at:3},{kind:'exit',at:4},{kind:'close',at:5}],groupObservations:[{label:'final',exists:false}]}  };
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (process.argv[2] === '--self-test') {
@@ -111,7 +125,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     built.identity.baselineDist={sha256:h,expectedSha256:h,files,manifestSha256:sha(JSON.stringify(files))};
     verify(built);
     const badDist=structuredClone(built); badDist.identity.baselineDist.expectedSha256='1'.repeat(64); assert.throws(()=>verify(badDist));
-    const corruptions = [a => a.requests.pop(), a => a.requests[1].body.contents[1].parts[0].functionResponse.id = 'wrong', a => a.requests[1].body.contents[1].parts[0].functionResponse.response.output = 'RA05-WRONG-SOURCE', a => a.frames[1].event.ok = false, a => a.frames[2].event.usage.inputTokens++, a => a.history.splice(1, 1), a => a.identity.sourceClosure = {}, a => a.cleanup.groupGone = false, a => a.requests[0].body.contents = [], a => a.history[1].content += ' extra', a => a.audit.files = [], a => a.requests[0].response.bodyBase64 = Buffer.from('wrong').toString('base64'), a => a.identity.selectedEntryMode='built', a => a.identity.commandSha256='1'.repeat(64)];
+    const corruptions = [a => a.requests.pop(), a => a.requests[1].body.contents[1].parts[0].functionResponse.id = 'wrong', a => a.requests[1].body.contents[1].parts[0].functionResponse.response.output = 'RA05-WRONG-SOURCE', a => a.frames[1].event.ok = false, a => a.frames[2].event.usage.inputTokens++, a => a.history.messages.splice(1,1), a => a.identity.sourceClosure = {}, a => a.cleanup.groupGone = false, a => a.requests[0].body.contents = [], a => a.history.messages[1].text += ' extra', a => a.audit.files = [], a => a.requests[0].response.bodyBase64 = Buffer.from('wrong').toString('base64'), a => a.identity.selectedEntryMode='built', a => a.identity.commandSha256='1'.repeat(64), a=>a.requests[0].response.rawHeaders='HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\n\r\n',a=>a.cleanup.forced=true,a=>a.cleanup.lifecycle[0].at=8,a=>a.cleanup.close.signal='SIGKILL',a=>a.history.messages[0].payload={file_path:'other'},a=>a.history.messages[1].ok=false];
     for (const corrupt of corruptions) { const a = sample(); corrupt(a); assert.throws(() => verify(a)); }
     console.log(JSON.stringify({ syntheticOnly: true, positive: 2, rejectedCorruptions: corruptions.length+1 }));
   } else console.log(JSON.stringify(verify(JSON.parse(readFileSync(process.argv[2], 'utf8')))));
