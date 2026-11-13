@@ -41,11 +41,15 @@ for (const file of slots ? [] : scenarios) {
   const a = path.join(outDir, `${name}.${sideA}${self ? '-1' : ''}.json`);
   const b = path.join(outDir, `${name}.${sideB}${self ? '-2' : ''}.json`);
   // 采集是独占的：锁被别的运行占着（run.mjs 退出码 3）就等，最多等 20 分钟。
+  // BBX_WAIT_18789=1 时，18789 上有监听者（退出码 5）也等：只用在确知那个监听者是另一轮对拍
+  // 短暂起的被测 server 的机器上（cb8）。缺省不等，直接算采集失败——本机那里可能是真实的 PilotDeck。
   const collect = (side, out) => {
-    for (let waited = 0; ; waited += 15) {
+    for (let waited = 0; ; ) {
       const r = node('run.mjs', side, file, out);
-      if (r.status !== 3 || waited >= 1200) return r;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 15000);
+      const busy18789 = r.status === 5 && process.env.BBX_WAIT_18789 === '1';
+      if ((r.status !== 3 && !busy18789) || waited >= 1200) return r;
+      const pause = busy18789 ? 3 : 15; waited += pause;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, pause * 1000);
     }
   };
   const runs = [collect(sideA, a), collect(sideB, b)];
