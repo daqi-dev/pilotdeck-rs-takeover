@@ -2237,3 +2237,174 @@ async fn loader_channels_submit_under_their_own_channel_identity() {
     // test's).
     assert_ports_closed_after_stop(&[IDENTITY_API_SERVER_PORT]).await;
 }
+
+/// Close only the config/default-maker/native-HTTP/dispatcher binding edge.
+/// The existing recording submit host deliberately rejects after normalize;
+/// this does not claim a new model, account, or full CLI journey.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn native_weixin_default_maker_polls_http_and_dispatches_configured_gateway() {
+    let home = Root::new();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("owned ephemeral iLink peer");
+    let address = listener.local_addr().expect("local peer address");
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let recorded = requests.clone();
+    let (release, held) = tokio::sync::watch::channel(false);
+    let (stop_peer, mut stopping) = tokio::sync::watch::channel(false);
+    let peer = tokio::spawn(async move {
+        let mut connections = tokio::task::JoinSet::new();
+        loop {
+            tokio::select! {
+                _ = stopping.changed() => break,
+                accepted = listener.accept() => {
+                    let (mut socket, _) = accepted.expect("accept local iLink HTTP");
+                    let recorded = recorded.clone();
+                    let mut held = held.clone();
+                    connections.spawn(async move {
+                        let mut bytes = Vec::new();
+                        let head_end = loop {
+                            let mut chunk = [0u8; 1024];
+                            let count = socket.read(&mut chunk).await.expect("read HTTP request");
+                            assert!(count > 0, "complete HTTP request head");
+                            bytes.extend_from_slice(&chunk[..count]);
+                            assert!(bytes.len() < 65536, "bounded local request");
+                            if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+                                break end + 4;
+                            }
+                        };
+                        let head = String::from_utf8(bytes[..head_end].to_vec()).expect("ASCII HTTP head");
+                        assert!(head.starts_with("POST /ilink/bot/getupdates HTTP/1.1\r\n"));
+                        let headers: std::collections::HashMap<_, _> = head.lines().skip(1)
+                            .filter_map(|line| line.split_once(':'))
+                            .map(|(name, value)| (name.to_ascii_lowercase(), value.trim().to_owned()))
+                            .collect();
+                        let length: usize = headers["content-length"].parse().expect("body length");
+                        assert!(length < 65536);
+                        while bytes.len() < head_end + length {
+                            let mut chunk = [0u8; 1024];
+                            let count = socket.read(&mut chunk).await.expect("read JSON body");
+                            assert!(count > 0);
+                            bytes.extend_from_slice(&chunk[..count]);
+                        }
+                        let body: serde_json::Value = serde_json::from_slice(&bytes[head_end..head_end + length]).expect("real iLink JSON");
+                        let authenticated = headers.get("authorization").map(String::as_str) == Some("Bearer local-weixin-token")
+                            && headers.get("authorizationtype").map(String::as_str) == Some("ilink_bot_token");
+                        let index = {
+                            let mut all = recorded.lock().expect("HTTP receipts");
+                            all.push((authenticated, body.clone()));
+                            all.len()
+                        };
+                        let (status, response) = if !authenticated {
+                            (401, serde_json::json!({"error":"wrong local fixture auth"}))
+                        } else if index == 1 {
+                            assert_eq!(body["get_updates_buf"], "fixture-cursor");
+                            // The BOT envelope must never reach normalize; only
+                            // the subsequent user envelope may claim the mapper.
+                            let message = |kind, text| serde_json::json!({"message_type":kind,"message_id":text,"from_user_id":"fixture-user","item_list":[{"type":1,"text_item":{"text":text}}]});
+                            (200, serde_json::json!({"ret":0,"get_updates_buf":"next-cursor","msgs":[message(2,"REJECT-BOT"),message(1,"DEFAULT-MAKER-MARKER")]}))
+                        } else {
+                            if !*held.borrow() { let _ = held.changed().await; }
+                            // Bound the empty-poll cadence while stop is being
+                            // awaited; this is the mock long poll, not a wait
+                            // used to declare successful dispatcher admission.
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                            (200, serde_json::json!({"ret":0,"get_updates_buf":"next-cursor","msgs":[]}))
+                        };
+                        let body = response.to_string();
+                        socket.write_all(format!("HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.expect("write local response");
+                        socket.shutdown().await.expect("finish local response");
+                    });
+                }
+                finished = connections.join_next(), if !connections.is_empty() => {
+                    finished.expect("connection receipt").expect("local HTTP worker succeeded");
+                }
+            }
+        }
+        while let Some(finished) = connections.join_next().await {
+            finished.expect("remaining local HTTP worker succeeded");
+        }
+    });
+    let credentials = home.path().join("weixin-local.json");
+    std::fs::write(&credentials, serde_json::json!({"baseUrl":format!("http://{address}"),"botToken":"local-weixin-token","accountId":"fixture-account","cursor":"fixture-cursor"}).to_string()).expect("isolated credentials");
+    let channels = NativeChannels::new(NativeChannelsOptions {
+        pilot_home: home.path(),
+        config: Arc::new(parse_json(r#"{"adapters":{"weixin":{"enabled":true}}}"#).unwrap()),
+        weixin: WeixinChannelOptions {
+            credentials_path: credentials,
+            credentials_dir: Some(home.path()),
+            ..Default::default()
+        },
+        weixin_maker: None,
+        feishu: Default::default(),
+        log: None,
+        report_status: None,
+        close_host: None,
+    });
+    let (seen_tx, seen_rx) = std::sync::mpsc::channel();
+    let owner = SessionOwner::new(SessionOwnerOptions::new(Arc::new(UnreachedSessionFactory)));
+    let submitter = Arc::new(TurnSubmitter {
+        owner: owner.clone(),
+        coordinator: Arc::new(TurnEventCoordinator::new()),
+        projector: Arc::new(
+            GatewayAgentEventProjector::new(GatewayAgentEventProjectorOptions::default()).unwrap(),
+        ),
+        registry: None,
+        host: Arc::new(RecordingSubmitHost { seen: seen_tx }),
+        workspace_admissions: WorkspaceAdmissions::default(),
+    });
+    assert!(channels.set_gateway_port(Arc::new(
+        crate::channel::weixin::NativeWeixinGatewayPort::new(submitter)
+    )));
+    let channel = channels
+        .create_startup_weixin()
+        .await
+        .expect("ordinary enabled config uses default maker");
+    let handle = channel
+        .start(ChannelStartDeps::default())
+        .await
+        .expect("start native polling channel");
+    let receipt = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Ok(value) = seen_rx.try_recv() {
+                break value;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    // Always settle the poll and every owned peer connection before asserting
+    // the admission receipt, including the deliberately wrong-auth failure.
+    release.send(true).expect("release held poll");
+    let stopped =
+        tokio::time::timeout(Duration::from_secs(5), handle.stop("fixture complete")).await;
+    let after_stop = requests.lock().unwrap().len();
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    let stable = requests.lock().unwrap().len() == after_stop;
+    stop_peer.send(true).expect("stop owned HTTP peer");
+    tokio::time::timeout(Duration::from_secs(5), peer)
+        .await
+        .expect("peer drains")
+        .expect("peer task succeeds");
+    owner.shutdown().await.expect("recording owner shutdown");
+    channels.flush().await.expect("mapper state flushed");
+    stopped
+        .expect("poll stop bounded")
+        .expect("native poll stopped");
+    let (key, session, message) =
+        receipt.expect("real default-maker HTTP reaches native dispatcher");
+    assert_eq!(key, "weixin");
+    assert_eq!(session, "weixin:chat=fixture-user:general");
+    assert_eq!(message, "DEFAULT-MAKER-MARKER");
+    assert!(
+        seen_rx.try_recv().is_err(),
+        "bot envelope ignored and valid message dispatched once"
+    );
+    assert!(stable, "no new HTTP request after successful channel stop");
+    let all = requests.lock().unwrap();
+    assert!(!all.is_empty());
+    assert!(
+        all.iter().all(|(auth, _)| *auth),
+        "wrong auth never receives inbound fixture"
+    );
+}
