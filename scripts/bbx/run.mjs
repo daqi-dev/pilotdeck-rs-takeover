@@ -442,6 +442,50 @@ const mock = http.createServer(async (req, res) => {
 });
 await new Promise((r) => mock.listen(MOCK_PORT, '127.0.0.1', r));
 
+// ── 假 HTTP 代理（场景字段 httpProxies）──
+// {"httpProxies": {"A": 38415, "B": {"port": 38416, "status": 407}}}：在 127.0.0.1 上各起一个 HTTP 代理，
+// 早于被测进程。收到的每个请求记一条 {method, target, headers}：CONNECT 的 target 是请求行里的 host:port，
+// 绝对 URI 请求的 target 是整个 URL。只转发到本机假 provider：目标主机是本机写法（[::1]、0.0.0.0、
+// 127.0.0.1、localhost）时不论端口，CONNECT 回 200 并把隧道接到 127.0.0.1 上的假 provider，绝对 URI 请求
+// 同样转给它；其余目标回 502、不外连。端口不限是为了让不同种类的请求用不同的目标端口（各自一条隧道，
+// 记录里分得清是谁走了代理）；这些端口上没有人监听 [::1]，没走代理的请求直连时立刻被拒。
+// 写了 status 的代理对 CONNECT 一律回这个状态并关连接（模拟代理拒绝）。记录按 JSON 文本排序
+// （并发请求到达代理的先后不稳定），条数照比，所以隧道是否复用（CONNECT 了几次）也在比较之内。
+const proxyRecords = {};
+const LOOPBACK_NAMES = new Set(['[::1]', '0.0.0.0', '127.0.0.1', 'localhost']);
+// {"proxyLog": true} 步骤取出各代理自上一次取出以来新收到的记录（排序后），用来分段看「这一段的请求走没走代理」；
+// 收尾时把剩下的记进产物的 proxies。
+const takeProxyLog = () => Object.fromEntries(Object.entries(proxyRecords).map(([name, records]) => [name,
+  records.splice(0).map((r) => JSON.stringify(r)).sort().map((t) => JSON.parse(t))]));
+for (const [name, spec] of Object.entries(scenario.httpProxies ?? {})) {
+  const { port, status } = typeof spec === 'number' ? { port: spec } : spec;
+  const records = proxyRecords[name] = [];
+  const toMock = (target) => { try { return LOOPBACK_NAMES.has(new URL(`http://${target}`).hostname); } catch { return false; } };
+  const proxy = http.createServer((req, res) => {
+    records.push({ method: req.method, target: req.url, headers: req.headers });
+    let url = null; try { url = new URL(req.url); } catch {}
+    if (status || !url || url.protocol !== 'http:' || !toMock(url.host)) { res.writeHead(status || 502); res.end(); return; }
+    const upstream = http.request({ host: '127.0.0.1', port: MOCK_PORT, method: req.method, path: url.pathname + url.search, headers: req.headers }, (up) => {
+      res.writeHead(up.statusCode, up.headers); up.pipe(res);
+    });
+    upstream.on('error', () => res.destroy());
+    req.pipe(upstream);
+  });
+  proxy.on('connect', (req, client, head) => {
+    records.push({ method: req.method, target: req.url, headers: req.headers });
+    client.on('error', () => {});
+    if (status || !toMock(req.url)) { client.end(`HTTP/1.1 ${status || 502} Proxy Refused\r\n\r\n`); return; }
+    const upstream = net.connect(MOCK_PORT, '127.0.0.1', () => {
+      client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      if (head?.length) upstream.write(head);
+      client.pipe(upstream); upstream.pipe(client);
+    });
+    upstream.on('error', () => client.destroy());
+    client.on('close', () => upstream.destroy()); upstream.on('close', () => client.destroy());
+  });
+  await new Promise((r) => proxy.listen(port, '127.0.0.1', r));
+}
+
 // ── 被测一侧 ──
 const env = {
   PATH: process.env.PATH, HOME: home, PILOT_HOME: pilotHome, TMPDIR: tmp,
@@ -736,6 +780,7 @@ const runStep = async (step) => {
   if (step.raw) return { raw: await rawStep(step.raw) };
   if (step.flood) return await floodStep(step);
   if (step.sleep) { await sleep(step.sleep); return { slept: true }; }
+  if (step.proxyLog) return { proxyLog: takeProxyLog() };
   if (step.disconnect === 'end') {
     // 只关写方向（半关闭，发 FIN）：不发关闭帧、不再发请求，但照常接收服务端的帧。之后可以再
     // {disconnect: "destroy"} 把这条连接彻底关掉；在那之前不要 connect 新连接（两条连接的帧会混在一起）。
@@ -1006,6 +1051,7 @@ const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) =
   if (p.endsWith('.json')) { try { return [[p, { mode, json: JSON.parse(text), raw: rawPrint(text) }]]; } catch {} }
   return [[p, { mode, text }]];
 });
+if (scenario.httpProxies) out.proxies = takeProxyLog();
 out.tree = Object.fromEntries([...walk(home), ...walk(project)].map(([p, v]) => [p.slice(ROOT.length), v]));
 fs.mkdirSync(path.dirname(path.resolve(outPath)), { recursive: true });
 fs.writeFileSync(outPath, JSON.stringify(out, null, 1) + '\n');

@@ -81,11 +81,12 @@ node scripts/bbx/status-selftest.mjs                         # 自测（假产�
 | `env` | 额外环境变量 |
 | `provider` | 假 provider 的应答规则，按顺序匹配请求体文本：`when` 全部包含、`unless` 全部不包含；`reply` 可以是 `{text}`、`{tool:{name,arguments}}`、`{status,body}`。规则里的字符串（含工具参数）可用下面的 `{ROOT}` 等占位符。请求按命中的规则名分组记录 |
 | `server` | `false` 表示不起服务（纯 CLI 场景） |
-| `steps` | 依次执行：`{ws, params, answer}`（`answer` 见下）、`{http: "GET /path", headers, body}`、`{cli: [参数...], stdin, cwd, env}`、`{serve: [参数...]}`（见下）、`{connect: true}`（重连；也可以给一个完整的 hello 帧）、`{disconnect: true}`（客户端发关闭帧断开；不发关闭帧的几种见下）、`{sleep: 毫秒}`、`{sidecar: "start" / "stop"}` 与 `{tcpProxy: "start" / "cut"}`、`{stopServer: 信号}`（见下） |
+| `steps` | 依次执行：`{ws, params, answer}`（`answer` 见下）、`{http: "GET /path", headers, body}`、`{cli: [参数...], stdin, cwd, env}`、`{serve: [参数...]}`（见下）、`{connect: true}`（重连；也可以给一个完整的 hello 帧）、`{disconnect: true}`（客户端发关闭帧断开；不发关闭帧的几种见下）、`{sleep: 毫秒}`、`{sidecar: "start" / "stop"}` 与 `{tcpProxy: "start" / "cut"}`、`{stopServer: 信号}`、`{proxyLog: true}`（见下） |
 | 步骤的 `timeout` | `ws` / `http` / `cli` / `serve` 等待的毫秒数，缺省 30000 |
 | 步骤的 `expectTimeout` | `true` 表示这一步在基线上本来就会超时（如等一个采集器不回答的询问、命令常驻不退出）。只有声明了的超时不判 `INVALID`；连不上不能这样声明 |
 | `expectStartFailure` | `true` 表示 `"server"` 起的服务预期启动失败。`serve` / `cli` 步骤里进程自己退出是被比较的输出，不需要声明 |
 | `settleMs` | 最后一步之后、收尾前等待的毫秒数，缺省 300 |
+| `httpProxies` | 假 HTTP 代理，见下面「假 HTTP 代理」 |
 | `gatewayPort` | 只能是 `18789`：把被测 server 起在 18789 上，要求 `BBX_ALLOW_18789=1`，否则 SKIPPED（见上面「占用 18789 的场景」） |
 | `volatile` | 该场景里确认不稳定的差异路径（正则）。会被略过并打印。用之前先用 `--self` 证明它确实不稳定 |
 | `accepted` | 已接受差异 `[{id, why, paths: [正则]}]`，只用于基线自身的 bug（Rust 有意不照做）。命中的差异略过并打印条数；基线 vs Rust 时某条正则一处都没命中报 `STALE`，计 1 处差异 |
@@ -109,6 +110,8 @@ node scripts/bbx/status-selftest.mjs                         # 自测（假产�
 `sidecar` 步骤起停一个外部常驻的 agent loop sidecar（TCP 部署用）：基线是 `node dist/src/cli/pilotdeck-agent-loop-sidecar.js`，Rust 是 `pilotdeck-agent-loop-sidecar`。`{"sidecar": "start", "port": 38414, "env": {...}}` 用场景环境盖上步骤 `env` 起进程，等它在 `port` 上开始监听（进程没等到监听就退出时记下退出码、信号、stdout、stderr）；`{"sidecar": "stop", "signal": "SIGKILL"}` 给最近起的那个发信号（缺省 SIGTERM），等它退出并记下退出码、信号、stdout、stderr（15 秒不退就 SIGKILL）。场景结束时还在跑的由收尾按进程组杀掉，不记输出。sidecar 是否监听 TCP 由环境里的 `PILOTDECK_AGENT_LOOP_TCP_PORT` 决定，和 gateway 用同一套变量。
 
 `tcpProxy` 步骤在采集器里起一个透明的 TCP 转发，用来在 sidecar 不退出的情况下断开它与 gateway 之间的连接：`{"tcpProxy": "start", "port": 38413, "target": 38414}`；`{"tcpProxy": "cut"}` 立刻断开现有的全部连接，结果里的 `live` 是断开前还连着的连接数（代理继续监听）。要在一轮进行中打断，在假 provider 的 `reply` 上写 `"cutProxy": true`（断开代理上的连接）或 `"killSidecar": "SIGKILL"`（给当前 sidecar 发信号）：命中这条规则时先做这件事，再照常应答（可配 `delayMs`）。
+
+假 HTTP 代理：场景写 `"httpProxies": {"A": 38415, "B": {"port": 38418, "status": 407}}`，采集器在被测进程之前于 `127.0.0.1` 上各起一个 HTTP 代理（端口照常随槽位替换）。每个收到的请求记一条 `{method, target, headers}`：`CONNECT` 的 `target` 是请求行里的 `host:port`，绝对 URI 请求是整个 URL；头名是小写，键的先后照收到的顺序。它只转发到本机假 provider：目标主机是 `[::1]`、`0.0.0.0`、`127.0.0.1`、`localhost` 时不论端口，`CONNECT` 回 `200` 后把隧道接到 `127.0.0.1` 上的假 provider，绝对 URI 请求同样转给它；别的目标回 `502`，不外连。写了 `status` 的代理对 `CONNECT` 一律回这个状态。端口不限是为了让不同种类的请求用不同的目标端口（如模型 `http://[::1]:38416/v1`、hook `http://[::1]:38417/...`），各自一条隧道，记录里分得清谁走了代理；`[::1]` 上没有人监听这些端口，没走代理的请求直连时立刻被拒（被测进程对 `127.0.0.1` / `localhost` 固定直连，所以目标不能用它们）。`{"proxyLog": true}` 步骤取出各代理自上次取出以来的新记录（按 JSON 文本排序：并发请求到达代理的先后不稳定；条数照比，隧道复用了几次因此也在比较之内），收尾时剩下的记进产物的 `proxies`（见 `cfg-proxy-outbound`、`cfg-proxy-routing`、`hot-reload-proxy`）。
 
 假 provider 的 `reply` 除了 `{text}`、`{tool}`、`{status, body}` 之外还可以组合：`tools`（多个工具调用，可与 `text` 同时给）、工具上的 `rawArguments`（原样当参数字符串，用来回非法 JSON）、`reasoning`（推理文本）、`chunks`（文本分多块流式发出）、`finish`（覆盖结束原因，如 `length`）、`usage`、`delayMs`（先等一会儿再回）、`breakAfter: n`（流里发出 n 块后断开连接）、`hangAfter: n`（发出 n 块后挂住，`hangMs` 后断开）、`endAfter: n`（发出 n 块后正常结束响应，流里没有结束原因 / `[DONE]` / `message_stop`）。请求路径按协议分流：以 `/messages` 结尾按 Anthropic messages 的形状应答；以 `/responses` 结尾按 OpenAI Responses（`finish` 是响应的 `status`：`completed` / `incomplete` / `failed`，`failed` 的错误对象取 `reply.error`）；`…/models/<模型>:generateContent` 或 `:streamGenerateContent` 按 Google Gemini（`finish` 是 `finishReason`，缺省 `STOP`；推理文本是带 `thoughtSignature` 的 `thought` 部分；工具调用只有显式写了 `id` 才带 `functionCall.id`）；其余按 OpenAI chat completions。`usage` 一律按 chat 形状写（可带 `prompt_tokens_details.cached_tokens`、`completion_tokens_details.reasoning_tokens`），各协议自行换算。
 

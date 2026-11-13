@@ -37,9 +37,12 @@ pub trait ProviderCountTransport: Send + Sync {
     fn post(&self, request: CountHttpRequest) -> CountFuture;
 }
 
+type CountClient = Client<hyper_rustls::HttpsConnector<super::http::ProxyConnect>, Full<Bytes>>;
+
+/// Follows the process-wide dispatcher like the stream transport.
 #[derive(Clone)]
 pub struct HyperCountTransport {
-    client: Client<hyper_rustls::HttpsConnector<super::http::ProxyConnect>, Full<Bytes>>,
+    client: std::sync::Arc<super::http::dispatcher::DispatchedClient<CountClient>>,
 }
 impl HyperCountTransport {
     /// Trust exactly `roots` (tests use a throwaway CA).
@@ -48,12 +51,13 @@ impl HyperCountTransport {
     }
     fn from_config(config: rustls::ClientConfig) -> Self {
         Self {
-            client: Client::builder(TokioExecutor::new()).build(
-                super::http::proxy_https_connector(
-                    config,
-                    super::http::ProxyConfig::from_settings(None),
-                ),
-            ),
+            client: std::sync::Arc::new(super::http::dispatcher::DispatchedClient::global(
+                move |proxy| {
+                    Client::builder(TokioExecutor::new()).build(
+                        super::http::shared_proxy_https_connector(config.clone(), proxy),
+                    )
+                },
+            )),
         }
     }
 }
@@ -65,7 +69,7 @@ impl Default for HyperCountTransport {
 }
 impl ProviderCountTransport for HyperCountTransport {
     fn post(&self, request: CountHttpRequest) -> CountFuture {
-        let client = self.client.clone();
+        let (client, _) = self.client.get();
         CountFuture::io(fetch_count(request, move |mut request| {
             let client = client.clone();
             // TokenAccountingRuntime.ts:271 posts through Node's global

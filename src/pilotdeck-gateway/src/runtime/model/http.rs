@@ -46,6 +46,7 @@ use super::router::AbortFlag;
 use crate::host::ModuleError;
 
 mod complete;
+pub mod dispatcher;
 pub(crate) mod encoding;
 mod errors;
 mod google;
@@ -308,21 +309,22 @@ pub trait ModelHttpTransport: Send + Sync {
 }
 
 /// hyper + rustls (ring, TLS 1.2/1.3), HTTP/1.1, `http` and `https`.
+type ModelClient = Client<hyper_rustls::HttpsConnector<ProxyConnect>, Full<Bytes>>;
+
+/// Follows the process-wide dispatcher (see [`dispatcher`]): the proxy in
+/// force when a request is sent is the one its connection uses.
 #[derive(Clone)]
 pub struct HyperModelTransport {
-    client: Client<hyper_rustls::HttpsConnector<ProxyConnect>, Full<Bytes>>,
+    client: Arc<dispatcher::DispatchedClient<ModelClient>>,
 }
 impl HyperModelTransport {
     /// Bundled roots plus Node-compatible explicit CA files; see `tls`.
     pub fn new() -> Self {
-        Self::from_config(webpki_client_config(), ProxyConfig::from_settings(None))
+        Self::following(webpki_client_config())
     }
     /// Trust exactly `roots` (tests use a throwaway CA).
     pub fn with_roots(roots: rustls::RootCertStore) -> Self {
-        Self::from_config(
-            rooted_client_config(roots),
-            ProxyConfig::from_settings(None),
-        )
+        Self::following(rooted_client_config(roots))
     }
     fn builder() -> rustls::ConfigBuilder<rustls::ClientConfig, rustls::WantsVerifier> {
         rustls::ClientConfig::builder_with_provider(Arc::new(
@@ -331,12 +333,27 @@ impl HyperModelTransport {
         .with_safe_default_protocol_versions()
         .expect("ring supports the default protocol versions")
     }
+    fn build(config: &rustls::ClientConfig, proxy: Option<Arc<ProxyConfig>>) -> ModelClient {
+        // 空闲连接的弃用时机由 `keep_alive` 按 undici 的规则逐条决定，不用 hyper 的全局时限。
+        Client::builder(TokioExecutor::new())
+            .pool_idle_timeout(None)
+            .build(shared_proxy_https_connector(config.clone(), proxy))
+    }
+    /// Follows the process-wide dispatcher.
+    fn following(config: rustls::ClientConfig) -> Self {
+        Self {
+            client: Arc::new(dispatcher::DispatchedClient::global(move |proxy| {
+                Self::build(&config, proxy)
+            })),
+        }
+    }
+    /// Test seam: one fixed proxy (`None` = direct) for the transport's life.
+    #[cfg(test)]
     fn from_config(config: rustls::ClientConfig, proxy: Option<ProxyConfig>) -> Self {
         Self {
-            // 空闲连接的弃用时机由 `keep_alive` 按 undici 的规则逐条决定，不用 hyper 的全局时限。
-            client: Client::builder(TokioExecutor::new())
-                .pool_idle_timeout(None)
-                .build(proxy_https_connector(config, proxy)),
+            client: Arc::new(dispatcher::DispatchedClient::pinned(proxy, move |proxy| {
+                Self::build(&config, proxy)
+            })),
         }
     }
 }
@@ -564,9 +581,20 @@ pub(crate) struct ProxyConfig {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ProxyParseError {
-    Configuration,
+pub(crate) enum ProxyParseError {
+    /// The URL structure; the message is the one undici throws.
+    Configuration(&'static str),
+    /// `decodeURIComponent` of the userinfo threw `URIError: URI malformed`.
     Userinfo,
+}
+impl ProxyParseError {
+    /// The thrown error's `message`, as `applyGlobalProxy` logs it.
+    pub(crate) fn message(self) -> &'static str {
+        match self {
+            Self::Configuration(message) => message,
+            Self::Userinfo => "URI malformed",
+        }
+    }
 }
 
 impl ProxyConfig {
@@ -619,7 +647,8 @@ impl ProxyConfig {
             .skip(5)
             .find_map(|&key| lookup(key).filter(|value| !value.is_empty()))
             .unwrap_or_default();
-        let parsed = Self::new_with_extra(&proxy_url, &user_no_proxy, extra_no_proxy.as_deref());
+        let parsed =
+            Self::new_structural_first(&proxy_url, &user_no_proxy, extra_no_proxy.as_deref());
         // TS first tries env, then config at startup. An invalid env install
         // must not prevent a valid config from being installed.
         let parsed = parsed.or_else(|error| {
@@ -628,13 +657,13 @@ impl ProxyConfig {
             }) else {
                 return Err(error);
             };
-            Self::new_with_extra(&settings.url, &user_no_proxy, None).map_err(|fallback| {
+            Self::new_structural_first(&settings.url, &user_no_proxy, None).map_err(|fallback| {
                 // A failed fallback must not hide a structural env error (or
                 // vice versa). Only userinfo-only startup failures go direct.
                 if error == ProxyParseError::Userinfo && fallback == ProxyParseError::Userinfo {
                     ProxyParseError::Userinfo
                 } else {
-                    ProxyParseError::Configuration
+                    ProxyParseError::Configuration("invalid proxy configuration")
                 }
             })
         });
@@ -651,9 +680,63 @@ impl ProxyConfig {
         }))
     }
 
+    /// `applyGlobalProxy(url, source, extraNoProxy)`'s agent: `buildNoProxy`
+    /// reads `no_proxy || NO_PROXY` through `lookup`, then appends
+    /// `extraNoProxy`, `127.0.0.1` and `localhost`.
+    pub(crate) fn for_install(
+        proxy_url: &str,
+        extra_no_proxy: Option<&str>,
+        lookup: &dyn Fn(&str) -> Option<String>,
+    ) -> Result<Self, ProxyParseError> {
+        let user_no_proxy = PROXY_ENV_KEYS
+            .iter()
+            .skip(5)
+            .find_map(|&key| lookup(key).filter(|value| !value.is_empty()))
+            .unwrap_or_default();
+        Self::new_with_extra(proxy_url, &user_no_proxy, extra_no_proxy)
+    }
+
+    /// The joined `noProxy` the install logs.
+    pub(crate) fn no_proxy(&self) -> &str {
+        &self.no_proxy
+    }
+
     #[cfg(test)]
     fn new(proxy_url: &str, user_no_proxy: &str) -> Option<Self> {
         Self::new_with_extra(proxy_url, user_no_proxy, None).ok()
+    }
+
+    /// The proxy client's `parseURL` checks: protocol, then no path / query /
+    /// fragment (HTTP(S) only; SOCKS proxies get no proxy client).
+    fn structure(proxy: &url::Url) -> Result<(), ProxyParseError> {
+        if !matches!(proxy.scheme(), "http" | "https" | "socks5" | "socks") {
+            return Err(ProxyParseError::Configuration(
+                "Invalid URL protocol: the URL must start with `http:` or `https:`.",
+            ));
+        }
+        if matches!(proxy.scheme(), "http" | "https")
+            && (proxy.path() != "/"
+                || proxy.query().is_some_and(|value| !value.is_empty())
+                || proxy.fragment().is_some_and(|value| !value.is_empty()))
+        {
+            return Err(ProxyParseError::Configuration("invalid url"));
+        }
+        Ok(())
+    }
+
+    /// The explicit-settings seam ([`Self::from_settings`]) keeps the
+    /// registered fail-closed rule A6.5-MCP-PROXY-FALLBACK-001-R1: a
+    /// structural error wins over a userinfo error in the same URL. The
+    /// process-wide install path ([`dispatcher`]) uses undici's order instead.
+    fn new_structural_first(
+        proxy_url: &str,
+        user_no_proxy: &str,
+        extra_no_proxy: Option<&str>,
+    ) -> Result<Self, ProxyParseError> {
+        if let Ok(proxy) = url::Url::parse(proxy_url) {
+            Self::structure(&proxy)?;
+        }
+        Self::new_with_extra(proxy_url, user_no_proxy, extra_no_proxy)
     }
 
     fn new_with_extra(
@@ -661,19 +744,61 @@ impl ProxyConfig {
         user_no_proxy: &str,
         extra_no_proxy: Option<&str>,
     ) -> Result<Self, ProxyParseError> {
-        let proxy = url::Url::parse(proxy_url).map_err(|_| ProxyParseError::Configuration)?;
-        if proxy.host_str().is_none()
-            || !matches!(proxy.scheme(), "http" | "https" | "socks5" | "socks")
-        {
-            return Err(ProxyParseError::Configuration);
+        // The checks `new EnvHttpProxyAgent({ httpProxy: url, ... })` makes,
+        // in its `ProxyAgent` constructor's order: the WHATWG URL parse, the
+        // `decodeURIComponent` of the userinfo (only with a username), then
+        // the proxy client's `parseURL` (protocol, then no path / query /
+        // fragment). SOCKS proxies get no proxy client, so no `parseURL`.
+        const INVALID_URL: ProxyParseError = ProxyParseError::Configuration("Invalid URL");
+        let proxy = url::Url::parse(proxy_url).map_err(|_| INVALID_URL)?;
+        if proxy.host_str().is_none() {
+            return Err(INVALID_URL);
         }
-        if matches!(proxy.scheme(), "http" | "https")
-            && (proxy.path() != "/"
-                || proxy.query().is_some_and(|value| !value.is_empty())
-                || proxy.fragment().is_some_and(|value| !value.is_empty()))
-        {
-            return Err(ProxyParseError::Configuration);
+        let authorization = proxy_authorization(&proxy).map_err(|_| ProxyParseError::Userinfo)?;
+        Self::structure(&proxy)?;
+        let (no_proxy, entries) = Self::no_proxy_entries(user_no_proxy, extra_no_proxy);
+        Ok(Self {
+            proxy: Some(proxy),
+            no_proxy,
+            entries,
+            authorization,
+        })
+    }
+
+    /// A dispatcher that refuses every request it would have sent through a
+    /// proxy (registered difference A6.5-MCP-PROXY-FALLBACK-001-R1): the
+    /// `noProxy` list (with `127.0.0.1` and `localhost`) is built as for a
+    /// working proxy, so those targets still connect directly; every other
+    /// target fails with "Invalid or unsupported proxy configuration; direct
+    /// connection refused" instead of silently going direct.
+    pub(crate) fn refusing(
+        extra_no_proxy: Option<&str>,
+        lookup: &dyn Fn(&str) -> Option<String>,
+    ) -> Self {
+        let user_no_proxy = PROXY_ENV_KEYS
+            .iter()
+            .skip(5)
+            .find_map(|&key| lookup(key).filter(|value| !value.is_empty()))
+            .unwrap_or_default();
+        let (no_proxy, entries) = Self::no_proxy_entries(&user_no_proxy, extra_no_proxy);
+        Self {
+            proxy: None,
+            no_proxy,
+            entries,
+            authorization: None,
         }
+    }
+
+    /// Whether this is a [`Self::refusing`] dispatcher (no usable proxy).
+    pub(crate) fn is_refusing(&self) -> bool {
+        self.proxy.is_none()
+    }
+
+    /// `buildNoProxy` joined, and undici's parse of it.
+    fn no_proxy_entries(
+        user_no_proxy: &str,
+        extra_no_proxy: Option<&str>,
+    ) -> (String, Vec<NoProxyEntry>) {
         let no_proxy = [
             Some(user_no_proxy),
             extra_no_proxy,
@@ -718,13 +843,7 @@ impl ProxyConfig {
                 port: port.filter(|port| *port != 0),
             });
         }
-        let authorization = proxy_authorization(&proxy).map_err(|_| ProxyParseError::Userinfo)?;
-        Ok(Self {
-            proxy: Some(proxy),
-            no_proxy,
-            entries,
-            authorization,
-        })
+        (no_proxy, entries)
     }
 
     /// `EnvHttpProxyAgent.#shouldProxy` against a hyper URI.
@@ -827,6 +946,9 @@ impl ProxyConfig {
         let stream = tokio::net::TcpStream::connect((host.as_str(), port))
             .await
             .map_err(|error| self.connect_error(error))?;
+        // undici's connector disables Nagle on the socket to the proxy too
+        // (the tunnel is that same socket).
+        let _ = stream.set_nodelay(true);
         let mut stream: Box<dyn ProxyIo> = if proxy.scheme() == "https" {
             let name = rustls::pki_types::ServerName::try_from(host)
                 .map_err(|_| ProxyError::new("Invalid HTTPS proxy hostname".into()))?;
@@ -846,13 +968,17 @@ impl ProxyConfig {
             return Ok((stream, Vec::new()));
         }
         let (authority, host_header) = connect_target(target);
-        let mut request = format!(
-            "CONNECT {authority} HTTP/1.1\r\nhost: {host_header}\r\nproxy-connection: keep-alive\r\n"
-        );
+        // undici's request head for the tunnel (client-h1.js `writeH1`): the
+        // `host` it lifted out of the headers, `connection: close` (a CONNECT
+        // never returns to the pool), then the remaining headers in their
+        // object order — the proxy's own headers before `proxy-connection`
+        // (proxy-agent.js `connectParams.headers`).
+        let mut request =
+            format!("CONNECT {authority} HTTP/1.1\r\nhost: {host_header}\r\nconnection: close\r\n");
         if let Some(auth) = self.authorization() {
             request.push_str(&format!("proxy-authorization: {auth}\r\n"));
         }
-        request.push_str("\r\n");
+        request.push_str("proxy-connection: keep-alive\r\n\r\n");
         stream
             .write_all(request.as_bytes())
             .await
@@ -1098,9 +1224,18 @@ impl tower_service::Service<hyper::Uri> for ProxyConnect {
 
 /// Shared connector for MCP transports: [`https_connector`] plus the outgoing
 /// proxy (env-configured; `None` keeps the direct path).
+#[cfg(test)]
 pub(crate) fn proxy_https_connector(
     config: rustls::ClientConfig,
     proxy: Option<ProxyConfig>,
+) -> hyper_rustls::HttpsConnector<ProxyConnect> {
+    shared_proxy_https_connector(config, proxy.map(Arc::new))
+}
+
+/// [`proxy_https_connector`] over a dispatcher's shared proxy.
+pub(crate) fn shared_proxy_https_connector(
+    config: rustls::ClientConfig,
+    proxy: Option<Arc<ProxyConfig>>,
 ) -> hyper_rustls::HttpsConnector<ProxyConnect> {
     let mut http = HttpConnector::new();
     http.enforce_http(false);
@@ -1115,7 +1250,7 @@ pub(crate) fn proxy_https_connector(
         .wrap_connector(ProxyConnect {
             tls,
             inner: http,
-            proxy: proxy.map(Arc::new),
+            proxy,
         })
 }
 
@@ -1136,7 +1271,7 @@ impl Default for HyperModelTransport {
 }
 impl ModelHttpTransport for HyperModelTransport {
     fn send(&self, mut request: Request<Full<Bytes>>) -> TransportFuture {
-        let client = self.client.clone();
+        let (client, _) = self.client.get();
         let method = request.method().clone();
         let follow_redirects = request
             .extensions()
@@ -1175,6 +1310,28 @@ impl ModelHttpTransport for HyperModelTransport {
 fn cause_code(error: &(dyn std::error::Error + 'static)) -> Option<&'static str> {
     let mut current: Option<&(dyn std::error::Error + 'static)> = Some(error);
     while let Some(error) = current {
+        // A failure reaching the proxy itself carries the socket error's code
+        // as undici reports it (`cfg-proxy-routing`: an unreachable proxy is
+        // `network_connection_refused`); a CONNECT the proxy refuses has no
+        // code (`Proxy response (407) !== 200 ...` → `network_fetch_failed`).
+        if let Some(proxy) = error.downcast_ref::<ProxyError>() {
+            let cause = proxy.cause.as_str();
+            return if cause.starts_with("connect ECONNREFUSED") {
+                Some("ECONNREFUSED")
+            } else if cause.starts_with("Connect Timeout Error") {
+                Some("UND_ERR_CONNECT_TIMEOUT")
+            } else if cause.starts_with("getaddrinfo ENOTFOUND") {
+                Some("ENOTFOUND")
+            } else if cause.starts_with("Invalid or unsupported proxy configuration") {
+                // A refusing dispatcher (A6.5-MCP-PROXY-FALLBACK-001-R1, no
+                // baseline counterpart): classified as `network_proxy_error`
+                // (provider error code `proxy_error`), never as a timeout.
+                // The code itself stays internal; only the class is visible.
+                Some("ERR_PROXY_CONFIGURATION")
+            } else {
+                None
+            };
+        }
         if let Some(tls) = error.downcast_ref::<rustls::Error>() {
             return Some(match tls {
                 rustls::Error::InvalidCertificate(rustls::CertificateError::NotValidForName)
@@ -3724,6 +3881,39 @@ mod proxy_tests {
             error.to_string().contains("Connect Timeout Error"),
             "{error}"
         );
+    }
+
+    /// The tunnel request head as the bbx fake proxy recorded it from the
+    /// baseline (`cfg-proxy-routing`): `host`, `connection: close`, then
+    /// `proxy-authorization` before `proxy-connection`; Nagle is off on the
+    /// socket to the proxy.
+    #[tokio::test]
+    async fn tunnel_request_head_matches_undici() {
+        use tokio::io::AsyncReadExt as _;
+        use tower_service::Service;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let mut connector = proxy_https_connector(
+            webpki_client_config(),
+            ProxyConfig::new(&format!("http://us%20er:p%40ss@{address}"), ""),
+        );
+        let request =
+            tokio::spawn(async move { connector.call("http://[::1]:9/".parse().unwrap()).await });
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut head = Vec::new();
+        let mut chunk = [0u8; 512];
+        while find_header_end(&head).is_none() {
+            let read = socket.read(&mut chunk).await.unwrap();
+            assert!(read > 0, "proxy saw EOF before the head ended");
+            head.extend_from_slice(&chunk[..read]);
+        }
+        assert_eq!(
+            String::from_utf8(head).unwrap(),
+            "CONNECT [::1]:9 HTTP/1.1\r\nhost: [::1]:9\r\nconnection: close\r\n\
+             proxy-authorization: Basic dXMgZXI6cEBzcw==\r\nproxy-connection: keep-alive\r\n\r\n"
+        );
+        drop(socket);
+        assert!(request.await.unwrap().is_err());
     }
 
     #[test]
