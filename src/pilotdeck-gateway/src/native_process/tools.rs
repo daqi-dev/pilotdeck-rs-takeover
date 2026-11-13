@@ -579,6 +579,7 @@ impl SessionTools {
         mut self,
         settings: crate::hooks::protocol::HooksSettings,
         emit: super::permission_prompt::GatewayEmitSlot,
+        emit_before_terminal: super::permission_prompt::GatewayEmitSlot,
         sdk: bool,
         async_registry: Option<super::hooks::AsyncRegistrySlot>,
     ) -> Self {
@@ -589,6 +590,7 @@ impl SessionTools {
             execution: Some(Arc::new(super::hooks::GatewayHookProjection {
                 session: session.clone(),
                 emit,
+                emit_before_terminal,
                 sdk,
             })),
             async_registered: async_registry.map(|registry| {

@@ -87,6 +87,17 @@ type Sink = Arc<dyn Fn(&JsValue) + Send + Sync>;
 /// sink handle their queue entry owns.
 struct SinkRegistration {
     sink: Sink,
+    /// Events [`TurnEventCoordinator::emit_before_terminal`] accepted for
+    /// this registration and holds until its owner releases them.
+    held: Mutex<Held>,
+}
+
+#[derive(Default)]
+struct Held {
+    events: Vec<JsValue>,
+    /// Set once the owner took the held events: from then on
+    /// `emit_before_terminal` delivers like `emit`.
+    released: bool,
 }
 
 // Sessions whose sink is currently running on this thread, with the drain
@@ -159,9 +170,9 @@ pub struct TurnEventCoordinator {
 /// it without waiting for that drop.
 #[derive(Clone)]
 pub struct TurnSinkRegistration {
-    /// Held for ownership only: nothing reads it, but this clone's drop is
-    /// what keeps the registration — and only the registration — alive.
-    #[allow(dead_code)]
+    /// This clone's drop is what keeps the registration — and only the
+    /// registration — alive; [`TurnEventCoordinator::release_held`] also
+    /// reads its held events through it.
     registration: Arc<SinkRegistration>,
 }
 
@@ -205,6 +216,7 @@ impl TurnEventCoordinator {
     {
         let registration = Arc::new(SinkRegistration {
             sink: Arc::new(sink),
+            held: Mutex::default(),
         });
         let mut state = lock(&self.state);
         // The replay store may panic through its injected timer (#805): the
@@ -255,6 +267,60 @@ impl TurnEventCoordinator {
     /// event surfaces at this call site — a port-only attribution). Events
     /// accepted before a sink panic or a `dispose` are dropped without any
     /// signal to their emitters.
+    /// Like [`Self::emit`], except that while the session's registration has
+    /// not been released ([`Self::release_held`]) the event is only accepted:
+    /// its runId fill, replay record and delivery happen at the release, in
+    /// arrival order. The registration's owner releases right before it
+    /// publishes the turn's terminal, so a held event lands after every event
+    /// the turn itself published and before its completion. `false` when no
+    /// registration is live, like `emit`.
+    pub fn emit_before_terminal(&self, session_key: &JsString, event: &JsValue) -> bool {
+        {
+            let mut state = lock(&self.state);
+            let Some(registration) = state
+                .sinks
+                .get(session_key)
+                .and_then(|registration| registration.upgrade())
+            else {
+                state.sinks.remove(session_key);
+                return false;
+            };
+            let mut held = lock(&registration.held);
+            if !held.released {
+                held.events.push(event.clone());
+                return true;
+            }
+        }
+        self.emit(session_key, event)
+    }
+    /// Ends `registration`'s hold and returns the events it held, in arrival
+    /// order, with their runId filled like `emit` does. The caller records
+    /// and delivers them; anything `emit_before_terminal` accepts afterwards
+    /// is delivered at once.
+    pub fn release_held(
+        &self,
+        session_key: &JsString,
+        registration: &TurnSinkRegistration,
+    ) -> Vec<JsValue> {
+        let state = lock(&self.state);
+        let events = {
+            let mut held = lock(&registration.registration.held);
+            held.released = true;
+            std::mem::take(&mut held.events)
+        };
+        match catch_unwind(AssertUnwindSafe(|| {
+            events
+                .iter()
+                .map(|event| self.replay.with_run_id(session_key, event))
+                .collect()
+        })) {
+            Ok(events) => events,
+            Err(panic) => {
+                drop(state);
+                resume_unwind(panic);
+            }
+        }
+    }
     pub fn emit(&self, session_key: &JsString, event: &JsValue) -> bool {
         let marker_token = self.drain_token_on_this_thread(session_key);
         let (token, boundary) = {
@@ -2949,5 +3015,40 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    #[test]
+    fn emit_before_terminal_holds_until_release() {
+        let coordinator = TurnEventCoordinator::new();
+        let session: JsString = "s".into();
+        let delivered = Arc::new(Mutex::new(Vec::<JsValue>::new()));
+        let sink_delivered = delivered.clone();
+        let event = |kind: &str| crate::metadata::object([("type", kind.into())]);
+        let kinds = |events: &[JsValue]| {
+            events
+                .iter()
+                .map(|event| String::from_utf16_lossy(text(field(event, "type")).units()))
+                .collect::<Vec<_>>()
+        };
+        assert!(!coordinator.emit_before_terminal(&session, &event("early")));
+        let registration = coordinator.start(&session, &"run-1".into(), move |event| {
+            sink_delivered.lock().unwrap().push(event.clone());
+        });
+        assert!(coordinator.emit_before_terminal(&session, &event("held-1")));
+        assert!(coordinator.emit(&session, &event("block")));
+        assert!(coordinator.emit_before_terminal(&session, &event("held-2")));
+        assert_eq!(kinds(&delivered.lock().unwrap()), ["block"]);
+        let held = coordinator.release_held(&session, &registration);
+        assert_eq!(kinds(&held), ["held-1", "held-2"]);
+        assert!(
+            held.iter()
+                .all(|event| text(field(event, "runId")).equals_str("run-1"))
+        );
+        assert!(coordinator.release_held(&session, &registration).is_empty());
+        // Released: later events are delivered at once.
+        assert!(coordinator.emit_before_terminal(&session, &event("late")));
+        assert_eq!(kinds(&delivered.lock().unwrap()), ["block", "late"]);
+        drop(registration);
+        assert!(!coordinator.emit_before_terminal(&session, &event("gone")));
     }
 }
