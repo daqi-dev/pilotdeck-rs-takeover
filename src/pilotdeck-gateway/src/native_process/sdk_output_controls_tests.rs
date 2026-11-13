@@ -433,6 +433,16 @@ fn sdk_progress_flag_gates_real_tool_context_emission() {
         assert_eq!(progress.len(), usize::from(enabled));
         if enabled {
             assert_eq!(progress[0].get("message"), Some(&JsValue::from("working")));
+            let start = run
+                .events
+                .iter()
+                .find(|event| {
+                    has_type(event, "tool_call_started")
+                        && event.get("name") == Some(&JsValue::from("progress_probe"))
+                })
+                .expect("actual progress tool start");
+            assert_eq!(progress[0].get("toolCallId"), start.get("toolCallId"));
+            assert_eq!(progress[0].get("toolName"), start.get("name"));
         }
     }
 }

@@ -6,6 +6,8 @@ mod recovery;
 pub mod registry;
 pub mod sandbox;
 pub mod scheduler;
+#[cfg(test)]
+mod scheduler_tests;
 
 use crate::host::{
     HostError, ModuleError,

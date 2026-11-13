@@ -590,6 +590,7 @@ impl ToolRuntime {
             execution
                 .fields
                 .insert("currentPermissionDecision".into(), decision);
+            bind_call_progress(&mut execution, &call.id, &name);
             if let Some(lifecycle) = &self.lifecycle {
                 execution.file_saved = Some(file_changed_notifier(
                     lifecycle.clone(),
@@ -706,6 +707,48 @@ impl ToolRuntime {
         // operation deadline) still destroys it without detached work.
         operation.await
     }
+}
+
+/// ToolRuntime.ts wraps each call's progress without changing shared services.
+pub(super) fn bind_call_progress(context: &mut ToolRunContext, id: &JsString, name: &JsString) {
+    let Some(sink) = context.host.progress.clone() else {
+        return;
+    };
+    let id = id.clone();
+    let name = name.clone();
+    let progress = Arc::new(move |event: JsObject| {
+        let mut emitted = JsObject::new();
+        for (key, value) in event.own_entries() {
+            emitted.insert(key.clone(), value.clone());
+        }
+        for (key, fallback) in [("toolCallId", &id), ("toolName", &name)] {
+            let value = event
+                .get_property(key)
+                .filter(|value| truthy(value))
+                .cloned()
+                .unwrap_or_else(|| JsValue::String(fallback.clone()));
+            emitted.insert(key.into(), value);
+        }
+        sink(emitted);
+    });
+    let host = &context.host;
+    context.host = Arc::new(crate::host::modules::tool_context::ToolRuntimeContext {
+        fields: host.fields.clone(),
+        files: host.files.clone(),
+        abort_signal: host.abort_signal.clone(),
+        model: host.model.clone(),
+        elicitation: host.elicitation.clone(),
+        user_dialog: host.user_dialog.clone(),
+        audit_recorder: host.audit_recorder.clone(),
+        file_history: host.file_history.clone(),
+        file_update_notifier: host.file_update_notifier.clone(),
+        now: host.now.clone(),
+        progress: Some(progress),
+        subagent: host.subagent.clone(),
+        plan_todo: host.plan_todo.clone(),
+        goal: host.goal.clone(),
+        plan_directory: host.plan_directory.clone(),
+    });
 }
 impl ToolCatalog for ToolRuntime {
     fn list(&self) -> HostFuture<Vec<Arc<dyn ToolDefinition>>> {
