@@ -1,0 +1,51 @@
+{
+  "name": "records-session-metadata-seeded",
+  "about": "会话 .jsonl 里 session_metadata 的 gitBranch / linkedPullRequest / tag 三个字段：基线自己从不写 gitBranch 与 linkedPullRequest（只有类型和读取：session/transcript/TranscriptEntry.ts:428-439，SessionMetadataStore.ts:55 的 saveLinkedPullRequest 没有调用方），但读会话时照样合并进元数据投影（session/projection/AgentTranscriptProjections.ts:576-600 mergeMetadata：linkedPullRequest 取后一条非空的，其余字段后者覆盖前者；decodeSessionMetadata 认 gitBranch）。种子会话有两条 session_metadata：第一条带三个字段，第二条只改 gitBranch。先 list_sessions（session/storage/SessionList.ts:250-266 只回 tag 不回另外两个），再在这个会话上续一轮，比较重新加载后写出的投影检查点（.projections.json 的 agent-transcript.metadata）和续写的记录。",
+  "files": {
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-meta.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s-meta\",\"turnId\":\"seed-turn-1\",\"sequence\":1,\"createdAt\":\"2026-11-01T00:00:01.000Z\",\"entryId\":\"m-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello seeded\"}]}],\"metadata\":{\"permissionMode\":\"default\",\"runMode\":\"agent\",\"basePermissionMode\":\"default\",\"allowPlanModeTools\":false},\"sessionId\":\"s-meta\",\"turnId\":\"seed-turn-1\",\"sequence\":2,\"createdAt\":\"2026-11-01T00:00:02.000Z\",\"entryId\":\"m-2\",\"parentEntryId\":\"m-1\"}\n{\"type\":\"session_metadata\",\"metadata\":{\"firstPrompt\":\"hello seeded\",\"lastPrompt\":\"hello seeded\",\"gitBranch\":\"feature/seeded\",\"linkedPullRequest\":{\"number\":42,\"url\":\"https://example.invalid/pr/42\",\"repository\":\"example/repo\"},\"tag\":\"seed-tag\",\"updatedAt\":\"2026-11-01T00:00:03.000Z\"},\"sessionId\":\"s-meta\",\"turnId\":\"seed-turn-1\",\"sequence\":3,\"createdAt\":\"2026-11-01T00:00:03.000Z\",\"entryId\":\"m-3\",\"parentEntryId\":\"m-2\"}\n{\"type\":\"assistant_message\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Seeded answer.\"}],\"metadata\":{\"model\":\"deterministic\"}},\"sessionId\":\"s-meta\",\"turnId\":\"seed-turn-1\",\"sequence\":4,\"createdAt\":\"2026-11-01T00:00:04.000Z\",\"entryId\":\"m-4\",\"parentEntryId\":\"m-3\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"stopReason\":\"completed\",\"usage\":{\"inputTokens\":12,\"outputTokens\":4,\"totalTokens\":16},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-11-01T00:00:01.000Z\",\"finalMessage\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Seeded answer.\"}],\"metadata\":{\"model\":\"deterministic\"}}},\"sessionId\":\"s-meta\",\"turnId\":\"seed-turn-1\",\"sequence\":5,\"createdAt\":\"2026-11-01T00:00:05.000Z\",\"entryId\":\"m-5\",\"parentEntryId\":\"m-4\"}\n{\"type\":\"session_metadata\",\"metadata\":{\"gitBranch\":\"feature/later\",\"updatedAt\":\"2026-11-01T00:00:06.000Z\"},\"sessionId\":\"s-meta\",\"turnId\":\"seed-turn-1\",\"sequence\":6,\"createdAt\":\"2026-11-01T00:00:06.000Z\",\"entryId\":\"m-6\",\"parentEntryId\":\"m-5\"}\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Seeded\"}"
+      }
+    },
+    {
+      "name": "next",
+      "when": [
+        "meta-2:"
+      ],
+      "reply": {
+        "text": "Second answer."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "list_sessions",
+      "params": {}
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-meta",
+        "channelKey": "test",
+        "message": "meta-2: continue"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-meta"
+      }
+    }
+  ]
+}
