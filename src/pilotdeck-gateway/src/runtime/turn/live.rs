@@ -109,6 +109,8 @@ pub struct LiveSessionAdapter {
     maintenance: Option<Arc<MaintenanceFactory>>,
     /// See [`Self::with_operation_ledger`].
     operations: Option<Arc<super::operation::SessionOperations>>,
+    /// See [`Self::with_liveness`].
+    alive: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 /// Composes the session's context runtime outside a turn.
@@ -177,7 +179,15 @@ impl LiveSessionAdapter {
             state: Arc::default(),
             maintenance: None,
             operations: None,
+            alive: None,
         }
+    }
+
+    /// A flag this session clears when it is disposed, for state it leaves
+    /// in project-level resources (the events its maintenance carried).
+    pub(super) fn with_liveness(mut self, alive: Arc<std::sync::atomic::AtomicBool>) -> Self {
+        self.alive = Some(alive);
+        self
     }
 
     /// Install the maintenance composer behind manual compaction.
@@ -471,6 +481,7 @@ impl LiveSessionAdapter {
             state: Arc::default(),
             maintenance: None,
             operations: None,
+            alive: None,
         }
     }
 }
@@ -824,6 +835,9 @@ impl LiveSession for LiveSessionAdapter {
     }
 
     fn dispose(&self) -> DisposeFuture<'_> {
+        if let Some(alive) = &self.alive {
+            alive.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
         let mut state = self.state.lock().unwrap();
         state.disposed = true;
         if let Some(tail) = &self.tail {

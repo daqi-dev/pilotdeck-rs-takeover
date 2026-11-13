@@ -487,7 +487,10 @@ impl Inner {
         }
         progress.state = HandleState::Draining;
         let active = progress.activity && !progress.maintenance;
-        if active || progress.maintenance {
+        // `finishDispose` (AgentHandle.ts:260-269) aborts a reserved
+        // maintenance task's controller as well as an active run.
+        let abort = active || progress.maintenance;
+        if abort {
             progress.cancelled.get_or_insert_with(|| reason.clone());
         }
         let (result, completion) = watch::channel(None);
@@ -569,7 +572,7 @@ impl Inner {
                 let _writer_guard = session.disposal_guard();
                 // session.abort() is outside the progress lock (no poison risk).
                 // Called before the drain wait so the session can begin cancellation.
-                let abort_error = if active {
+                let abort_error = if abort {
                     // Like TS AgentHandle.finishDispose, an abort failure does not
                     // skip the active-run drain or the ordinary resource disposer.
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
