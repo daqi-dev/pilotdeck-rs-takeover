@@ -1,9 +1,8 @@
 {
   "name": "tool-agent-child-stream",
-  "about": "子代理模型流里的推理文本与流内错误怎样投影给父会话（agent/sub/SubAgentSession.ts:315-333 forwardActivity 把子代理的 model_event 包成 subagent_model_event；gateway/client/GatewayAgentEventProjector.ts:540-560 mapSubagentModelEvent：thinking_delta → agent_status:subagent_thinking_delta，error → agent_status:subagent_model_error）。turn-1：explore 子代理的回复带推理文本（reasoning）再给报告；turn-2：子代理的模型请求回 400（model/streaming/streamModel.ts:225-249 不可重试时 yield {type:error}），子代理以错误结束，父轮拿到工具错误结果后继续。 已知不稳：成功的子代理工具结果里带随机 UUID（subagentSessionId、transcriptRelativePath），本地分词器给它的 token 数逐次不同，基线自比时 s-child-1 收尾的 context_budget 估算值（used / displayUsed / usageTokens / localEstimateTokens / ratio / breakdown.total / breakdown.messages）不同，这些数值也写进会话文件，read_session_messages 回的 session.fileSize 随之差几个字节；两者声明为 volatile。子代理工具结果文本里还有 durationMs（diff.mjs 只抹数值不抹位数），它的位数随机器快慢变（两位或三位），工具结果的 resultBytes 和下一次模型请求的 content-length 随之差一个字节，由 diff.mjs 第 19 条两侧各自核对，不再声明。",
+  "about": "子代理模型流里的推理文本与流内错误怎样投影给父会话（agent/sub/SubAgentSession.ts:315-333 forwardActivity 把子代理的 model_event 包成 subagent_model_event；gateway/client/GatewayAgentEventProjector.ts:540-560 mapSubagentModelEvent：thinking_delta → agent_status:subagent_thinking_delta，error → agent_status:subagent_model_error）。turn-1：explore 子代理的回复带推理文本（reasoning）再给报告；turn-2：子代理的模型请求回 400（model/streaming/streamModel.ts:225-249 不可重试时 yield {type:error}），子代理以错误结束，父轮拿到工具错误结果后继续。 已知不稳：成功的子代理工具结果里带随机 UUID（subagentSessionId、transcriptRelativePath），本地分词器给它的 token 数逐次不同，基线自比时 s-child-1 收尾的 context_budget 估算值（used / displayUsed / usageTokens / localEstimateTokens / ratio / breakdown.total / breakdown.messages）不同，这些估算值声明为 volatile；它们也写进会话文件，read_session_messages 回的 session.fileSize 随之差几个字节，由 diff.mjs 第 17 条按「写到第几条记录」比，不再声明。子代理工具结果文本里还有 durationMs（diff.mjs 只抹数值不抹位数），它的位数随机器快慢变（两位或三位），工具结果的 resultBytes 和下一次模型请求的 content-length 随之差一个字节，由 diff.mjs 第 19 条两侧各自核对，不再声明。",
   "volatile": [
-    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|breakdown\\.total|breakdown\\.messages)$",
-    "\\.session\\.fileSize$"
+    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|breakdown\\.total|breakdown\\.messages)$"
   ],
   "provider": [
     {

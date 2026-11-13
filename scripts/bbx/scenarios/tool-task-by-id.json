@@ -290,7 +290,7 @@
     }
   ],
   "volatile": [
-    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages)$"
+    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|breakdown\\.total|breakdown\\.messages)$"
   ],
   "volatileWhy": "随机的任务 id 进了模型上下文，token 估算随之变；基线自比已证明"
 }

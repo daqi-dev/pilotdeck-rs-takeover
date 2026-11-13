@@ -411,7 +411,7 @@
   }
  ],
  "volatile": [
-  "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages)$"
+  "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|breakdown\\.total|breakdown\\.messages)$"
  ],
  "volatileWhy": "bash 结果里的耗时位数不定，token 估算随之变（同其他工具场景）"
 }

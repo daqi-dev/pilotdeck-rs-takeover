@@ -1,7 +1,6 @@
 {
  "name": "gap-tool-grep",
- "about": "grep 的参数分支（tool/builtin/grep.ts:7-454）：先用 touch 排好修改时间（files_with_matches 按修改时间降序，grep.ts:203,384-398）；content 模式只对单个文件（基线多文件 content 的先后随 ripgrep 线程而变，自比不稳）；三种 output_mode、-i、-A/-B/-C/context、-n=false、glob、type、head_limit 与 offset、head_limit=0、multiline、path 指向文件、path 不存在、非法正则、无匹配、超过 500 列的长行、node_modules / dist 排除、非 ASCII 内容。（volatile 依据：Linux 上基线自比 6 次有 5 次 session.fileSize 不同，差几十字节，来自会话文件里 grep 结果的 durationMs 位数（8 与 10 毫秒之间跳动）；durationMs 本身已归一化，只有它的位数漏进了文件大小。）",
- "volatile": ["^\\$\\.steps\\[\\d+\\]\\.frames\\[\\d+\\]\\.result\\.session\\.fileSize$"],
+ "about": "grep 的参数分支（tool/builtin/grep.ts:7-454）：先用 touch 排好修改时间（files_with_matches 按修改时间降序，grep.ts:203,384-398）；content 模式只对单个文件（基线多文件 content 的先后随 ripgrep 线程而变，自比不稳）；三种 output_mode、-i、-A/-B/-C/context、-n=false、glob、type、head_limit 与 offset、head_limit=0、multiline、path 指向文件、path 不存在、非法正则、无匹配、超过 500 列的长行、node_modules / dist 排除、非 ASCII 内容。（会话文件里 grep 结果 durationMs 的位数会带动 session.fileSize 差几十字节（Linux 上基线自比 6 次有 5 次），由 diff.mjs 第 17 条按「写到第几条记录」比，不再声明 volatile。）",
  "files": {
   "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
   "home/work/alpha/a.txt": "alpha\nNeedle one\nbeta\nneedle two\ngamma\n",

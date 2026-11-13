@@ -177,7 +177,7 @@
     }
   ],
   "volatile": [
-    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.system|breakdown\\.total|breakdown\\.messages)$"
+    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|breakdown\\.system|breakdown\\.total|breakdown\\.messages)$"
   ],
   "files": {
     "tmp/repo/README.md": "alpha\n",

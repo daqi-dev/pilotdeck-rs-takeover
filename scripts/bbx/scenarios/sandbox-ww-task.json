@@ -142,7 +142,7 @@
     }
   ],
   "volatile": [
-    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|fileSize|breakdown\\.total|breakdown\\.messages)$"
+    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|breakdown\\.total|breakdown\\.messages)$"
   ],
   "volatileWhy": "随机的任务 id 或位数不定的耗时进了模型上下文，token 估算和请求体长度随之变；基线自比已证明"
 }

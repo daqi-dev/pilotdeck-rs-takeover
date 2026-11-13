@@ -148,9 +148,5 @@
         "projectKey": "{HOME}/work/alpha"
       }
     }
-  ],
-  "volatile": [
-    "\\.fileSize$"
-  ],
-  "volatileWhy": "execute_code 结果里耗时的位数逐次不同，会话文件大小随之差几个字节；基线自比已证明同类场景不稳"
+  ]
 }
