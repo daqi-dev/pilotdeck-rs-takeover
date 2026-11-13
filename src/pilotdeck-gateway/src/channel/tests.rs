@@ -1611,12 +1611,9 @@ fn bundle_channels_without_credentials_start_with_one_line() {
                 .map(|(_, value)| JsString::from(*value))
         }
     };
-    let cases: [(
-        &str,
-        &str,
-        &'static [(&'static str, &'static str)],
-        Option<(&str, &str)>,
-    ); 12] = [
+    type Vars = &'static [(&'static str, &'static str)];
+    type Case<'a> = (&'a str, &'a str, Vars, Option<(&'a str, &'a str)>);
+    let cases: [Case; 12] = [
         ("qq", r#"{"enabled":true}"#, &[], Some(("info", qq_line))),
         (
             "qq",

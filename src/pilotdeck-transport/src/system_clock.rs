@@ -282,6 +282,7 @@ fn host_zone_file(id: &str) -> Option<tz::TimeZone> {
 /// `Intl.DateTimeFormat().resolvedOptions().timeZone` (`undefined` as
 /// `None`). For a host-default zone it is the ICU canonical name of the
 /// zone `/etc/localtime` links to, else of `/etc/timezone`'s content.
+#[allow(dead_code)] // called from the gateway; flagged dead in the test-only #[path] include
 pub fn host_zone_name() -> Option<String> {
     let zone = host_zone();
     match zone.rules {
@@ -310,6 +311,7 @@ pub fn host_zone_name() -> Option<String> {
 
 /// The process zone's UTC offset (seconds east) at `epoch_ms`, as local date
 /// formatting uses it; `None` when the host data cannot answer.
+#[allow(dead_code)] // called from the CLI; flagged dead in the test-only #[path] include
 pub fn host_offset_at(epoch_ms: i64) -> Option<i32> {
     let at = |zone: tz::TimeZoneRef<'_>| {
         zone.find_local_time_type(epoch_ms.div_euclid(1000))

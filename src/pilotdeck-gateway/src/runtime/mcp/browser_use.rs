@@ -100,7 +100,7 @@ fn output_dir(context: &BrowserUseSessionContext<'_>) -> Result<String, RuntimeE
         "{}/.pilotdeck/browser_screenshots/{session}",
         context.project_root.to_string_lossy()
     );
-    super::registry::resolve_path(&joined).map_err(|error| RuntimeError::new(&error.to_string()))
+    super::registry::resolve_path(&joined).map_err(|error| RuntimeError::new(error.to_string()))
 }
 
 /// `buildBrowserUseArgs(baseArgs, outputDir, env, configProxy)`.

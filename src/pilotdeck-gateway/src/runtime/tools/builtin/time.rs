@@ -213,7 +213,6 @@ mod zone_cache_tests {
     use super::*;
     use crate::host::modules::tool_context::{HostToolCheckpoint, ToolRuntimeContext};
     use pilotdeck_protocol::JsString;
-    use pilotdeck_transport::system_clock::ZonedPartsResolver;
 
     const FIXED_NOW: f64 = 1_767_225_600_000.0;
 
