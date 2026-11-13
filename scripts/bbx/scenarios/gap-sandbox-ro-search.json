@@ -1,0 +1,108 @@
+{
+  "name": "gap-sandbox-ro-search",
+  "about": "agent.sandboxMode=read-only 下 grep / glob 的 ripgrep 子进程（tool/execution-world/ExecutionWorldBundle.ts:134-147 在受限模式下把所有子进程经 NodeSandboxPort 准备；NodeSandboxPort.ts:34-36 在没有 Seatbelt 的平台上对受限策略直接抛 SandboxUnavailableError）。比较工具结果与落盘。macOS 上走 Seatbelt，Linux 上看失败关闭的表现。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\n  sandboxMode: read-only\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "files": {
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-alpha/.cwd": "{HOME}/work/alpha\n",
+    "home/work/alpha/a.txt": "needle here\n",
+    "home/work/alpha/sub/b.txt": "no match\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Sandbox search\"}"
+      }
+    },
+    {
+      "name": "s02-after",
+      "when": [
+        "s02:",
+        "\"tool_call_id\":\"call_s02\""
+      ],
+      "reply": {
+        "text": "Done s02."
+      }
+    },
+    {
+      "name": "s02",
+      "when": [
+        "s02:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_s02",
+          "name": "glob",
+          "arguments": {
+            "pattern": "**/*.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "s01-after",
+      "when": [
+        "s01:",
+        "\"tool_call_id\":\"call_s01\""
+      ],
+      "reply": {
+        "text": "Done s01."
+      }
+    },
+    {
+      "name": "s01",
+      "when": [
+        "s01:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_s01",
+          "name": "grep",
+          "arguments": {
+            "pattern": "needle",
+            "output_mode": "files_with_matches"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-sb",
+        "mode": "bypassPermissions",
+        "projectKey": "{HOME}/work/alpha"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-sb",
+        "channelKey": "test",
+        "message": "s01: go",
+        "projectKey": "{HOME}/work/alpha"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-sb",
+        "channelKey": "test",
+        "message": "s02: go",
+        "projectKey": "{HOME}/work/alpha"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    }
+  ]
+}
