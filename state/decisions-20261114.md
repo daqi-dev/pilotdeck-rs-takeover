@@ -61,3 +61,9 @@ Sol 承担边界清楚的实现、取证与验证整理；Terra 承担复杂接�
 固定 TS 的实际 owned canary 竞态原件、prepared cwd 首次 FAIL wire、原类型合同和源码均已经作者与非作者复核，原首败及取证汇总 turn 被工具终止的历史保留，不重采安全 probe。非作者最终复核 `_tmp/20261114-lsp-diff-independent/review.md` SHA `f1d7bf5a9992c0a3e7dc803a4945f2dbb3e5068d23cb165461b3b12c94556453`，36份原件及36/37/38相关源码对象SHA均核同。36双平台七项安全读取与一项真实prepared child控制实际PASS，整批Mac557/562、Linux558/563的五个生命周期首败不抹除；37双平台7/8与38双平台仅更正一项1/1另列，不合并伪称重跑全绿。
 
 准许只追加这两条公共差异记录，原冻结判据与历史差异文件不改，不产生整场景忽略规则。非Unix、自定义/guest端口、所有中间目录竞态排列、并发增长屏障、hardlink/mount隔离及最终发行组合的未验范围继续明确保留。该决定接受有证据的窄修复，不能将其解释为LSP整模块或本期交付完成。
+
+## 外部模型物化修复的42实际验证与登记
+
+42 `4d42d66005a71e3bd46a233c6dc19adadc282887` 已在macOS/Linux实际完成model14/14及真实Handler context投影控制PASS，S1独立逐名核原件；Mac最终收据SHA `de579e76556de9e827f826a9586d26a0c678cb507d32d709ddaaeac93a689a02`。根据此前精确决定，准许正式追加 `A7-EXTERNAL-MODEL-MATERIALIZER-001`。原工厂桥崩溃事实、prepared字段保留/缓存替换/无native opaque解引用及零远端materialize请求边界不扩大。
+
+42整个受影响批次双平台仍117/129 FAIL；发现的外部model临时next future被durable Pending轮询丢弃属于独立P1，不被接受差异豁免。43仅该stream所有权及必要fixture/oracle修复，仍须同源实际验证。本次登记不把两materializer函数控制当成完整Gateway预算turn或三拓扑验证，不改原判分实现或FROZEN，不重新请求已经得到的项目决定授权。
