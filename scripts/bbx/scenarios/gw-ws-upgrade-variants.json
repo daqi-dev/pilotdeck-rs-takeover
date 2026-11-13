@@ -1,6 +1,9 @@
 {
   "name": "gw-ws-upgrade-variants",
   "about": "WS 升级请求的各种写法（src/gateway/server/GatewayServer.ts:137-172 handleUpgrade）：路径不是 /ws 或缺 Sec-WebSocket-Key 时直接断开、不回任何字节（145-153）；Upgrade 头的值、方法、Sec-WebSocket-Version 都不检查，带查询串照常升级，请求的子协议不回显（154-163 只回 Accept）；跟升级请求挤在同一段里的 hello 被丢掉（67 不读 upgrade 事件的 head），所以没有 hello_ok；hello 与第一个请求连发（不等 hello_ok）时请求照常应答（GatewayWsConnection.ts:108 在等 describeServer 之前就置 authed）；第二个 hello 关 4002 invalid_frame；request 的 id 不是字符串关 4002 invalid_frame（630-637）；分成两帧的消息（FIN=0 + 续帧）第一段按整条消息解析失败，关 4002 invalid_json。",
+  "volatile": [
+    "\\.http\\.headers\\.date$"
+  ],
   "steps": [
     {
       "raw": {
@@ -173,14 +176,7 @@
       }
     },
     {
-      "raw": {
-        "send": [
-          {
-            "text": "GET /health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
-          }
-        ],
-        "readMs": 1500
-      }
+      "http": "GET /health"
     }
   ]
 }

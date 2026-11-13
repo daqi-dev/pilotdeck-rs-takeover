@@ -1,6 +1,9 @@
 {
   "name": "gw-conn-large-frame",
   "about": "大帧与大请求体：基线的帧解析不设帧长上限（websocket.ts:107-148 只拒绝超过 Number.MAX_SAFE_INTEGER 的长度），一条约 16 MiB 的请求帧（describe_server 带一个大字段）照常应答，之后同一连接照常；/api/web/.../files/write 的请求体也不限大小（httpRouter.ts:132-143），约 4 MiB 的写入照常 200 并落盘，读回时超过 1 MiB 只给元数据（projectFiles.ts:162-170）。",
+  "volatile": [
+    "\\.http\\.headers\\.date$"
+  ],
   "steps": [
     {
       "raw": {
@@ -48,13 +51,9 @@
       }
     },
     {
-      "raw": {
-        "send": [
-          {
-            "text": "GET /api/web/projects/%2Fprivate%2Ftmp%2Fpdrs-bbx%2Froot%2Fproj/files/read?path=big.txt HTTP/1.1\r\nHost: x\r\nauthorization: Bearer {TOKEN}\r\nConnection: close\r\n\r\n"
-          }
-        ],
-        "readMs": 1500
+      "http": "GET /api/web/projects/%2Fprivate%2Ftmp%2Fpdrs-bbx%2Froot%2Fproj/files/read?path=big.txt",
+      "headers": {
+        "authorization": "Bearer {TOKEN}"
       }
     }
   ]
