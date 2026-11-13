@@ -523,8 +523,30 @@ pub fn run_admitted_turn(
             );
         }
         if host.advertised("turn", "drain_steer") {
-            let HostReply::SteerMessages(steers) = host.call(control, HostCall::TurnDrain)? else {
-                return Err(wrong_reply("drain_steer"));
+            // The original drains steers without observing the abort; one that
+            // lands meanwhile is seen after createModelRequest (AgentLoop.ts:
+            // 624-680) and ends the turn like the step-top check.
+            let steers = match host.call(control, HostCall::TurnDrain) {
+                Ok(HostReply::SteerMessages(steers)) => steers,
+                Ok(_) => return Err(wrong_reply("drain_steer")),
+                Err(
+                    error @ PortError::Cancelled {
+                        cause: CancelCause::Requested(_),
+                    },
+                ) => {
+                    return finish_pre_model_abort(
+                        state,
+                        started_at,
+                        error,
+                        host,
+                        preparation,
+                        events,
+                        clock,
+                        input,
+                        cleanup,
+                    );
+                }
+                Err(error) => return Err(error),
             };
             for mut steer in steers {
                 // The authenticated host mailbox returns already committed items;

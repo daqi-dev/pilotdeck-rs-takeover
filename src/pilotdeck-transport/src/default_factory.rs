@@ -821,7 +821,10 @@ impl ExecutionFactory for OriginalAgentFactory {
         request: &ExecuteRequest,
         context: &mut ExecutionContext,
     ) -> PortResult<ExecutionTerminal> {
-        context.control.check()?;
+        // A requested cancel is left to the loop's step-top check (see
+        // `observed_by_loop` below); a deadline or a lost owner still stops
+        // here.
+        requested_cancel_left_to_loop(context.control.check())?;
         let mut decoded = OriginalFactoryPayloadDecoder
             .decode(&request.boundary, &self.process_cwd)
             .map_err(|error| {
@@ -876,39 +879,55 @@ impl ExecutionFactory for OriginalAgentFactory {
             }
         }
         let mut host = RemoteHost::new(exchange, effective_methods);
+        // A cancel that reaches a setup call is the loop's to report: the
+        // AgentLoop observes an abort first at its step top (AgentLoop.ts:
+        // 597-614, `turn_aborted` status and an aborted result), and the turn
+        // below starts with that check. A missing preparation input is never
+        // used, because that check ends the turn before any request.
+        let observed_by_loop = |error: &PortError| {
+            matches!(
+                error,
+                PortError::Cancelled {
+                    cause: CancelCause::Requested(_),
+                }
+            ) && context.control.check().is_err()
+        };
         // Order matches the original default factory: initialize plan state,
         // fetch initial model metadata, then parse file/model projections.
         let mut plan_todo_addendum = None;
         if host.advertised("capability", "plan_todo") {
-            let reply = host.call(
+            match host.call(
                 &context.control,
                 HostCall::PlanTodo(PlanTodoRequest {
                     session_id: decoded.input.session_id.clone(),
                     turn_id: decoded.input.turn_id.clone(),
                     mutation: PlanTodoMutation::Read,
                 }),
-            )?;
-            plan_todo_addendum = match reply {
-                HostReply::PlanTodo(snapshot) => plan_addendum(&snapshot.view),
-                HostReply::PlanTodoBoundaryOnly(_) => {
+            ) {
+                Ok(HostReply::PlanTodo(snapshot)) => {
+                    plan_todo_addendum = plan_addendum(&snapshot.view);
+                }
+                Ok(HostReply::PlanTodoBoundaryOnly(_)) => {
                     return Err(gap("open PlanTodo prompt/blocking projection"));
                 }
-                _ => return Err(gap("PlanTodo read operation reply")),
-            };
+                Ok(_) => return Err(gap("PlanTodo read operation reply")),
+                Err(error) if observed_by_loop(&error) => {}
+                Err(error) => return Err(error),
+            }
         }
         let mut metadata = Vec::new();
-        if host.advertised("model", "get_metadata") {
+        if host.advertised("model", "get_metadata") && context.control.check().is_ok() {
             let route = decoded
                 .input
                 .model_override
                 .as_ref()
                 .map_or_else(|| decoded.config.route.clone(), |m| m.route.clone());
-            let HostReply::ModelMetadata(value) =
-                host.call(&context.control, HostCall::ModelMetadata { route })?
-            else {
-                return Err(gap("metadata operation reply"));
-            };
-            metadata.push(value);
+            match host.call(&context.control, HostCall::ModelMetadata { route }) {
+                Ok(HostReply::ModelMetadata(value)) => metadata.push(value),
+                Ok(_) => return Err(gap("metadata operation reply")),
+                Err(error) if observed_by_loop(&error) => {}
+                Err(error) => return Err(error),
+            }
         }
         let file_state = parse_file_state(
             decoded
@@ -1106,6 +1125,18 @@ impl ExecutionFactory for OriginalAgentFactory {
                 .and_then(|error| error.value().as_object())
                 .cloned(),
         })
+    }
+}
+/// The baseline sidecar starts the factory and the AgentLoop for an accepted
+/// execute without checking its abort signal first
+/// (agentLoopSidecarServer.ts:267-276); the loop's own step-top check
+/// (AgentLoop.ts:597-614) is what reports a requested abort.
+pub(crate) fn requested_cancel_left_to_loop(check: PortResult<()>) -> PortResult<()> {
+    match check {
+        Err(PortError::Cancelled {
+            cause: CancelCause::Requested(_),
+        }) => Ok(()),
+        other => other,
     }
 }
 fn invalid(message: &str) -> PortError {

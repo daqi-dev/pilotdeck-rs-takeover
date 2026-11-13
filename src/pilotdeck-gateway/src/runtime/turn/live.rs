@@ -625,12 +625,17 @@ impl LiveSession for LiveSessionAdapter {
         let (session_sender, session_ready) = oneshot::channel();
         let session_id = identity.session_id.clone();
         let session_owner = active.clone();
+        // The baseline runs the gateway's own loop in-process: an abort after
+        // admission still reaches the loop, which reports it from its step-top
+        // check (AgentLoop.ts:597-614). Only an external loop's client skips
+        // execute for an already-aborted input (agentLoopSidecarClient.ts:330).
+        let in_process_loop = self.in_process_loop;
         let turn = LiveTurnStream {
             callback_cancel: Some(cancellation.clone()),
             execution: Some(Box::pin(async move {
                 let (client, inner, lease, manifest, interaction_events, prompt_hooks, lifecycle) = tokio::select! {
                     biased;
-                    _ = cancellation.cancelled(), if !crate::mutants::on("gates-factory-ready-priority") => {
+                    _ = cancellation.cancelled(), if !in_process_loop && !crate::mutants::on("gates-factory-ready-priority") => {
                         return Ok(ExecuteResult::Aborted { terminal: None });
                     }
                     // select constructs every branch before polling; keep the
@@ -744,7 +749,7 @@ impl LiveSession for LiveSessionAdapter {
                     .insert("messages".into(), JsValue::Array(messages));
                 let client = tokio::select! {
                     biased;
-                    _ = cancellation.cancelled() => return Ok(ExecuteResult::Aborted { terminal: None }),
+                    _ = cancellation.cancelled(), if !in_process_loop => return Ok(ExecuteResult::Aborted { terminal: None }),
                     client = client => client?,
                 };
                 if let Some(pending) = pending_host.take() {

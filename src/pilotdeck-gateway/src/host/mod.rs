@@ -566,6 +566,9 @@ pub struct HostClient {
     /// The loop is the baseline's external module (an explicit stdio or tcp
     /// deployment), whose client reads terminals with its own rules.
     pub(super) external_loop: bool,
+    /// The loop is the gateway's own built-in loop, which the baseline runs
+    /// in-process; see [`Self::as_in_process_loop`].
+    pub(super) in_process_loop: bool,
     #[cfg(test)]
     test_signals: tests::ExecutionSignals,
 }
@@ -645,6 +648,7 @@ impl HostClient {
                 reconnect_attempted: false,
                 reconnect_succeeded: false,
                 external_loop: false,
+                in_process_loop: false,
                 #[cfg(test)]
                 test_signals: tests::ExecutionSignals::default(),
             }),
@@ -672,6 +676,17 @@ impl HostClient {
     /// This connection runs the baseline's external loop module.
     pub fn as_external_loop(mut self) -> Self {
         self.external_loop = true;
+        self
+    }
+    /// This connection runs the gateway's own built-in loop. The baseline
+    /// runs that loop in-process, where an abort that lands before the first
+    /// model request still reaches the loop's own step-top check
+    /// (AgentLoop.ts:597-614: `turn_aborted` status, then the aborted
+    /// result). So an already-cancelled turn still sends execute and lets
+    /// the loop observe the cancel, instead of the external client's
+    /// "never send execute" shortcut (agentLoopSidecarClient.ts:330/593).
+    pub fn as_in_process_loop(mut self) -> Self {
+        self.in_process_loop = true;
         self
     }
     pub fn binding(&self) -> &SidecarBinding {

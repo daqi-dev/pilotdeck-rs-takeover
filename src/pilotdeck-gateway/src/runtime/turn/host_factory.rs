@@ -470,9 +470,12 @@ impl TurnHostFactory {
         let expected = self.expected_module_id.clone();
         let limits = self.limits;
         let external = self.external_loop;
+        let in_process = self.in_process_loop;
         let mark = move |client: HostClient| {
             if external {
                 client.as_external_loop()
+            } else if in_process {
+                client.as_in_process_loop()
             } else {
                 client
             }

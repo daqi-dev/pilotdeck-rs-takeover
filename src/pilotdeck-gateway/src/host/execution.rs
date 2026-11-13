@@ -144,8 +144,10 @@ pub(super) async fn run(
     cancellation: Cancellation,
     scope: &mut TurnScope,
 ) -> Result<ExecuteResult, HostError> {
-    // TS client:593: an already-aborted input never sends execute.
-    if cancellation.is_cancelled() {
+    // TS client:593: an already-aborted input never sends execute. The
+    // gateway's own loop is in-process in the baseline and observes the
+    // abort itself (see `HostClient::as_in_process_loop`).
+    if cancellation.is_cancelled() && !client.in_process_loop {
         return Ok(ExecuteResult::Aborted { terminal: None });
     }
     let limits = client.limits;
