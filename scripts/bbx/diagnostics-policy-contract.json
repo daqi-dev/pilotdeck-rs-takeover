@@ -1,0 +1,2244 @@
+{
+  "scenario": "tool-write-file-diagnostics",
+  "sceneSHA": "2ee5a0c1b8316c16a68b1bf8a101d6a7356451d30dba605d785d90bc6e70df62",
+  "diffPairs": [
+    {
+      "at": "$.steps[23].frames[6].event.resultPreview",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.steps[23].frames[6].event.resultLineCount",
+      "a": 1,
+      "b": 4
+    },
+    {
+      "at": "$.steps[23].frames[6].event.resultBytes",
+      "a": 19,
+      "b": 120
+    },
+    {
+      "at": "$.steps[23].frames[7].event.fullText",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.steps[23].frames[10].event.used",
+      "a": 5581,
+      "b": 5592
+    },
+    {
+      "at": "$.steps[23].frames[10].event.displayUsed",
+      "a": 5581,
+      "b": 5592
+    },
+    {
+      "at": "$.steps[23].frames[10].event.localEstimateTokens",
+      "a": 11162,
+      "b": 11184
+    },
+    {
+      "at": "$.steps[23].frames[10].event.usageTokens",
+      "a": 5581,
+      "b": 5592
+    },
+    {
+      "at": "$.steps[23].frames[10].event.ratio",
+      "a": 0.09732491629464286,
+      "b": 0.09751674107142858
+    },
+    {
+      "at": "$.steps[23].frames[10].event.breakdown.total",
+      "a": 11162,
+      "b": 11184
+    },
+    {
+      "at": "$.steps[23].frames[10].event.breakdown.messages",
+      "a": 795,
+      "b": 817
+    },
+    {
+      "at": "$.steps[25].frames[3].event.used",
+      "a": 5591,
+      "b": 5602
+    },
+    {
+      "at": "$.steps[25].frames[3].event.displayUsed",
+      "a": 5591,
+      "b": 5602
+    },
+    {
+      "at": "$.steps[25].frames[3].event.localEstimateTokens",
+      "a": 11181,
+      "b": 11203
+    },
+    {
+      "at": "$.steps[25].frames[3].event.usageTokens",
+      "a": 5591,
+      "b": 5602
+    },
+    {
+      "at": "$.steps[25].frames[3].event.calibrationEstimatedInputTokens",
+      "a": 11162,
+      "b": 11184
+    },
+    {
+      "at": "$.steps[25].frames[3].event.ratio",
+      "a": 0.09749930245535714,
+      "b": 0.09769112723214286
+    },
+    {
+      "at": "$.steps[25].frames[3].event.breakdown.total",
+      "a": 11181,
+      "b": 11203
+    },
+    {
+      "at": "$.steps[25].frames[3].event.breakdown.messages",
+      "a": 814,
+      "b": 836
+    },
+    {
+      "at": "$.steps[25].frames[6].event.resultPreview",
+      "a": "Created d/bad.csv.\n\nSyntax issues detected:\n- L2:1 error: Quote Not Closed: the parsing is finished with an opening quote at line 2",
+      "b": "Created d/bad.csv.\n\nSyntax issues detected:\n- L3:1 error: Unclosed quoted field."
+    },
+    {
+      "at": "$.steps[25].frames[6].event.resultBytes",
+      "a": 131,
+      "b": 80
+    },
+    {
+      "at": "$.steps[25].frames[7].event.fullText",
+      "a": "Created d/bad.csv.\n\nSyntax issues detected:\n- L2:1 error: Quote Not Closed: the parsing is finished with an opening quote at line 2",
+      "b": "Created d/bad.csv.\n\nSyntax issues detected:\n- L3:1 error: Unclosed quoted field."
+    },
+    {
+      "at": "$.steps[25].frames[10].event.used",
+      "a": 5623,
+      "b": 5629
+    },
+    {
+      "at": "$.steps[25].frames[10].event.displayUsed",
+      "a": 5623,
+      "b": 5629
+    },
+    {
+      "at": "$.steps[25].frames[10].event.localEstimateTokens",
+      "a": 11246,
+      "b": 11257
+    },
+    {
+      "at": "$.steps[25].frames[10].event.usageTokens",
+      "a": 5623,
+      "b": 5629
+    },
+    {
+      "at": "$.steps[25].frames[10].event.calibrationEstimatedInputTokens",
+      "a": 11181,
+      "b": 11203
+    },
+    {
+      "at": "$.steps[25].frames[10].event.ratio",
+      "a": 0.09805733816964286,
+      "b": 0.09816196986607142
+    },
+    {
+      "at": "$.steps[25].frames[10].event.breakdown.total",
+      "a": 11246,
+      "b": 11257
+    },
+    {
+      "at": "$.steps[25].frames[10].event.breakdown.messages",
+      "a": 879,
+      "b": 890
+    },
+    {
+      "at": "$.steps[27].frames[3].event.used",
+      "a": 5633,
+      "b": 5638
+    },
+    {
+      "at": "$.steps[27].frames[3].event.displayUsed",
+      "a": 5633,
+      "b": 5638
+    },
+    {
+      "at": "$.steps[27].frames[3].event.localEstimateTokens",
+      "a": 11265,
+      "b": 11276
+    },
+    {
+      "at": "$.steps[27].frames[3].event.usageTokens",
+      "a": 5633,
+      "b": 5638
+    },
+    {
+      "at": "$.steps[27].frames[3].event.calibrationEstimatedInputTokens",
+      "a": 11246,
+      "b": 11257
+    },
+    {
+      "at": "$.steps[27].frames[3].event.ratio",
+      "a": 0.09823172433035714,
+      "b": 0.09831891741071429
+    },
+    {
+      "at": "$.steps[27].frames[3].event.breakdown.total",
+      "a": 11265,
+      "b": 11276
+    },
+    {
+      "at": "$.steps[27].frames[3].event.breakdown.messages",
+      "a": 898,
+      "b": 909
+    },
+    {
+      "at": "$.steps[27].frames[6].event.resultPreview",
+      "a": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Expression expected.\n- L2:10 error: Identifier expected.\n- L3:1 error: ')' expected.",
+      "b": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Unexpected token"
+    },
+    {
+      "at": "$.steps[27].frames[6].event.resultLineCount",
+      "a": 6,
+      "b": 4
+    },
+    {
+      "at": "$.steps[27].frames[6].event.resultBytes",
+      "a": 142,
+      "b": 74
+    },
+    {
+      "at": "$.steps[27].frames[7].event.fullText",
+      "a": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Expression expected.\n- L2:10 error: Identifier expected.\n- L3:1 error: ')' expected.",
+      "b": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Unexpected token"
+    },
+    {
+      "at": "$.steps[27].frames[10].event.used",
+      "a": 5669,
+      "b": 5664
+    },
+    {
+      "at": "$.steps[27].frames[10].event.displayUsed",
+      "a": 5669,
+      "b": 5664
+    },
+    {
+      "at": "$.steps[27].frames[10].event.localEstimateTokens",
+      "a": 11338,
+      "b": 11328
+    },
+    {
+      "at": "$.steps[27].frames[10].event.usageTokens",
+      "a": 5669,
+      "b": 5664
+    },
+    {
+      "at": "$.steps[27].frames[10].event.calibrationEstimatedInputTokens",
+      "a": 11265,
+      "b": 11276
+    },
+    {
+      "at": "$.steps[27].frames[10].event.ratio",
+      "a": 0.09885951450892858,
+      "b": 0.09877232142857142
+    },
+    {
+      "at": "$.steps[27].frames[10].event.breakdown.total",
+      "a": 11338,
+      "b": 11328
+    },
+    {
+      "at": "$.steps[27].frames[10].event.breakdown.messages",
+      "a": 971,
+      "b": 961
+    },
+    {
+      "at": "$.steps[29].frames[3].event.used",
+      "a": 5679,
+      "b": 5674
+    },
+    {
+      "at": "$.steps[29].frames[3].event.displayUsed",
+      "a": 5679,
+      "b": 5674
+    },
+    {
+      "at": "$.steps[29].frames[3].event.localEstimateTokens",
+      "a": 11357,
+      "b": 11347
+    },
+    {
+      "at": "$.steps[29].frames[3].event.usageTokens",
+      "a": 5679,
+      "b": 5674
+    },
+    {
+      "at": "$.steps[29].frames[3].event.calibrationEstimatedInputTokens",
+      "a": 11338,
+      "b": 11328
+    },
+    {
+      "at": "$.steps[29].frames[3].event.ratio",
+      "a": 0.09903390066964286,
+      "b": 0.09894670758928571
+    },
+    {
+      "at": "$.steps[29].frames[3].event.breakdown.total",
+      "a": 11357,
+      "b": 11347
+    },
+    {
+      "at": "$.steps[29].frames[3].event.breakdown.messages",
+      "a": 990,
+      "b": 980
+    },
+    {
+      "at": "$.steps[29].frames[10].event.used",
+      "a": 5698,
+      "b": 5693
+    },
+    {
+      "at": "$.steps[29].frames[10].event.displayUsed",
+      "a": 5698,
+      "b": 5693
+    },
+    {
+      "at": "$.steps[29].frames[10].event.localEstimateTokens",
+      "a": 11395,
+      "b": 11385
+    },
+    {
+      "at": "$.steps[29].frames[10].event.usageTokens",
+      "a": 5698,
+      "b": 5693
+    },
+    {
+      "at": "$.steps[29].frames[10].event.calibrationEstimatedInputTokens",
+      "a": 11357,
+      "b": 11347
+    },
+    {
+      "at": "$.steps[29].frames[10].event.ratio",
+      "a": 0.099365234375,
+      "b": 0.09927804129464286
+    },
+    {
+      "at": "$.steps[29].frames[10].event.breakdown.total",
+      "a": 11395,
+      "b": 11385
+    },
+    {
+      "at": "$.steps[29].frames[10].event.breakdown.messages",
+      "a": 1028,
+      "b": 1018
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[69].text",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[70].payload.detail.used",
+      "a": 5581,
+      "b": 5592
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[70].payload.detail.displayUsed",
+      "a": 5581,
+      "b": 5592
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[70].payload.detail.localEstimateTokens",
+      "a": 11162,
+      "b": 11184
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[70].payload.detail.usageTokens",
+      "a": 5581,
+      "b": 5592
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[70].payload.detail.ratio",
+      "a": 0.09732491629464286,
+      "b": 0.09751674107142858
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[70].payload.detail.breakdown.total",
+      "a": 11162,
+      "b": 11184
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[70].payload.detail.breakdown.messages",
+      "a": 795,
+      "b": 817
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[73].payload.detail.used",
+      "a": 5591,
+      "b": 5602
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[73].payload.detail.displayUsed",
+      "a": 5591,
+      "b": 5602
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[73].payload.detail.localEstimateTokens",
+      "a": 11181,
+      "b": 11203
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[73].payload.detail.usageTokens",
+      "a": 5591,
+      "b": 5602
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[73].payload.detail.calibrationEstimatedInputTokens",
+      "a": 11162,
+      "b": 11184
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[73].payload.detail.ratio",
+      "a": 0.09749930245535714,
+      "b": 0.09769112723214286
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[73].payload.detail.breakdown.total",
+      "a": 11181,
+      "b": 11203
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[73].payload.detail.breakdown.messages",
+      "a": 814,
+      "b": 836
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[75].text",
+      "a": "Created d/bad.csv.\n\nSyntax issues detected:\n- L2:1 error: Quote Not Closed: the parsing is finished with an opening quote at line 2",
+      "b": "Created d/bad.csv.\n\nSyntax issues detected:\n- L3:1 error: Unclosed quoted field."
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[76].payload.detail.used",
+      "a": 5623,
+      "b": 5629
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[76].payload.detail.displayUsed",
+      "a": 5623,
+      "b": 5629
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[76].payload.detail.localEstimateTokens",
+      "a": 11246,
+      "b": 11257
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[76].payload.detail.usageTokens",
+      "a": 5623,
+      "b": 5629
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[76].payload.detail.calibrationEstimatedInputTokens",
+      "a": 11181,
+      "b": 11203
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[76].payload.detail.ratio",
+      "a": 0.09805733816964286,
+      "b": 0.09816196986607142
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[76].payload.detail.breakdown.total",
+      "a": 11246,
+      "b": 11257
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[76].payload.detail.breakdown.messages",
+      "a": 879,
+      "b": 890
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[79].payload.detail.used",
+      "a": 5633,
+      "b": 5638
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[79].payload.detail.displayUsed",
+      "a": 5633,
+      "b": 5638
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[79].payload.detail.localEstimateTokens",
+      "a": 11265,
+      "b": 11276
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[79].payload.detail.usageTokens",
+      "a": 5633,
+      "b": 5638
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[79].payload.detail.calibrationEstimatedInputTokens",
+      "a": 11246,
+      "b": 11257
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[79].payload.detail.ratio",
+      "a": 0.09823172433035714,
+      "b": 0.09831891741071429
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[79].payload.detail.breakdown.total",
+      "a": 11265,
+      "b": 11276
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[79].payload.detail.breakdown.messages",
+      "a": 898,
+      "b": 909
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[81].text",
+      "a": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Expression expected.\n- L2:10 error: Identifier expected.\n- L3:1 error: ')' expected.",
+      "b": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Unexpected token"
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[82].payload.detail.used",
+      "a": 5669,
+      "b": 5664
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[82].payload.detail.displayUsed",
+      "a": 5669,
+      "b": 5664
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[82].payload.detail.localEstimateTokens",
+      "a": 11338,
+      "b": 11328
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[82].payload.detail.usageTokens",
+      "a": 5669,
+      "b": 5664
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[82].payload.detail.calibrationEstimatedInputTokens",
+      "a": 11265,
+      "b": 11276
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[82].payload.detail.ratio",
+      "a": 0.09885951450892858,
+      "b": 0.09877232142857142
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[82].payload.detail.breakdown.total",
+      "a": 11338,
+      "b": 11328
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[82].payload.detail.breakdown.messages",
+      "a": 971,
+      "b": 961
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[85].payload.detail.used",
+      "a": 5679,
+      "b": 5674
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[85].payload.detail.displayUsed",
+      "a": 5679,
+      "b": 5674
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[85].payload.detail.localEstimateTokens",
+      "a": 11357,
+      "b": 11347
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[85].payload.detail.usageTokens",
+      "a": 5679,
+      "b": 5674
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[85].payload.detail.calibrationEstimatedInputTokens",
+      "a": 11338,
+      "b": 11328
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[85].payload.detail.ratio",
+      "a": 0.09903390066964286,
+      "b": 0.09894670758928571
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[85].payload.detail.breakdown.total",
+      "a": 11357,
+      "b": 11347
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[85].payload.detail.breakdown.messages",
+      "a": 990,
+      "b": 980
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[88].payload.detail.used",
+      "a": 5698,
+      "b": 5693
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[88].payload.detail.displayUsed",
+      "a": 5698,
+      "b": 5693
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[88].payload.detail.localEstimateTokens",
+      "a": 11395,
+      "b": 11385
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[88].payload.detail.usageTokens",
+      "a": 5698,
+      "b": 5693
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[88].payload.detail.calibrationEstimatedInputTokens",
+      "a": 11357,
+      "b": 11347
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[88].payload.detail.ratio",
+      "a": 0.099365234375,
+      "b": 0.09927804129464286
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[88].payload.detail.breakdown.total",
+      "a": 11395,
+      "b": 11385
+    },
+    {
+      "at": "$.steps[31].frames[0].result.messages[88].payload.detail.breakdown.messages",
+      "a": 1028,
+      "b": 1018
+    },
+    {
+      "at": "$.steps[31].frames[0].result.tokenUsage.used",
+      "a": 5698,
+      "b": 5693
+    },
+    {
+      "at": "$.steps[31].frames[0].result.tokenUsage.displayUsed",
+      "a": 5698,
+      "b": 5693
+    },
+    {
+      "at": "$.steps[31].frames[0].result.tokenUsage.ratio",
+      "a": 0.099365234375,
+      "b": 0.09927804129464286
+    },
+    {
+      "at": "$.steps[31].frames[0].result.session.fileSize",
+      "a": 2178002,
+      "b": 2178482
+    },
+    {
+      "at": "$.steps[31].frames[0].result.stream.events[3].used",
+      "a": 5679,
+      "b": 5674
+    },
+    {
+      "at": "$.steps[31].frames[0].result.stream.events[3].displayUsed",
+      "a": 5679,
+      "b": 5674
+    },
+    {
+      "at": "$.steps[31].frames[0].result.stream.events[3].localEstimateTokens",
+      "a": 11357,
+      "b": 11347
+    },
+    {
+      "at": "$.steps[31].frames[0].result.stream.events[3].usageTokens",
+      "a": 5679,
+      "b": 5674
+    },
+    {
+      "at": "$.steps[31].frames[0].result.stream.events[3].calibrationEstimatedInputTokens",
+      "a": 11338,
+      "b": 11328
+    },
+    {
+      "at": "$.steps[31].frames[0].result.stream.events[3].ratio",
+      "a": 0.09903390066964286,
+      "b": 0.09894670758928571
+    },
+    {
+      "at": "$.steps[31].frames[0].result.stream.events[3].breakdown.total",
+      "a": 11357,
+      "b": 11347
+    },
+    {
+      "at": "$.steps[31].frames[0].result.stream.events[3].breakdown.messages",
+      "a": 990,
+      "b": 980
+    },
+    {
+      "at": "$.steps[31].frames[0].result.stream.events[10].used",
+      "a": 5698,
+      "b": 5693
+    },
+    {
+      "at": "$.steps[31].frames[0].result.stream.events[10].displayUsed",
+      "a": 5698,
+      "b": 5693
+    },
+    {
+      "at": "$.steps[31].frames[0].result.stream.events[10].localEstimateTokens",
+      "a": 11395,
+      "b": 11385
+    },
+    {
+      "at": "$.steps[31].frames[0].result.stream.events[10].usageTokens",
+      "a": 5698,
+      "b": 5693
+    },
+    {
+      "at": "$.steps[31].frames[0].result.stream.events[10].calibrationEstimatedInputTokens",
+      "a": 11357,
+      "b": 11347
+    },
+    {
+      "at": "$.steps[31].frames[0].result.stream.events[10].ratio",
+      "a": 0.099365234375,
+      "b": 0.09927804129464286
+    },
+    {
+      "at": "$.steps[31].frames[0].result.stream.events[10].breakdown.total",
+      "a": 11395,
+      "b": 11385
+    },
+    {
+      "at": "$.steps[31].frames[0].result.stream.events[10].breakdown.messages",
+      "a": 1028,
+      "b": 1018
+    },
+    {
+      "at": "$.provider.turn-12-after-tool[0].headers.content-length",
+      "a": "53867",
+      "b": "53971"
+    },
+    {
+      "at": "$.provider.turn-12-after-tool[0].body.messages[47].content",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.provider.turn-13[0].headers.content-length",
+      "a": "53959",
+      "b": "54063"
+    },
+    {
+      "at": "$.provider.turn-13[0].body.messages[47].content",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.provider.turn-13-after-tool[0].headers.content-length",
+      "a": "54347",
+      "b": "54400"
+    },
+    {
+      "at": "$.provider.turn-13-after-tool[0].body.messages[47].content",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.provider.turn-13-after-tool[0].body.messages[51].content",
+      "a": "Created d/bad.csv.\n\nSyntax issues detected:\n- L2:1 error: Quote Not Closed: the parsing is finished with an opening quote at line 2",
+      "b": "Created d/bad.csv.\n\nSyntax issues detected:\n- L3:1 error: Unclosed quoted field."
+    },
+    {
+      "at": "$.provider.turn-14[0].headers.content-length",
+      "a": "54439",
+      "b": "54492"
+    },
+    {
+      "at": "$.provider.turn-14[0].body.messages[47].content",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.provider.turn-14[0].body.messages[51].content",
+      "a": "Created d/bad.csv.\n\nSyntax issues detected:\n- L2:1 error: Quote Not Closed: the parsing is finished with an opening quote at line 2",
+      "b": "Created d/bad.csv.\n\nSyntax issues detected:\n- L3:1 error: Unclosed quoted field."
+    },
+    {
+      "at": "$.provider.turn-14-after-tool[0].headers.content-length",
+      "a": "54847",
+      "b": "54830"
+    },
+    {
+      "at": "$.provider.turn-14-after-tool[0].body.messages[47].content",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.provider.turn-14-after-tool[0].body.messages[51].content",
+      "a": "Created d/bad.csv.\n\nSyntax issues detected:\n- L2:1 error: Quote Not Closed: the parsing is finished with an opening quote at line 2",
+      "b": "Created d/bad.csv.\n\nSyntax issues detected:\n- L3:1 error: Unclosed quoted field."
+    },
+    {
+      "at": "$.provider.turn-14-after-tool[0].body.messages[55].content",
+      "a": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Expression expected.\n- L2:10 error: Identifier expected.\n- L3:1 error: ')' expected.",
+      "b": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Unexpected token"
+    },
+    {
+      "at": "$.provider.turn-15[0].headers.content-length",
+      "a": "54939",
+      "b": "54922"
+    },
+    {
+      "at": "$.provider.turn-15[0].body.messages[47].content",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.provider.turn-15[0].body.messages[51].content",
+      "a": "Created d/bad.csv.\n\nSyntax issues detected:\n- L2:1 error: Quote Not Closed: the parsing is finished with an opening quote at line 2",
+      "b": "Created d/bad.csv.\n\nSyntax issues detected:\n- L3:1 error: Unclosed quoted field."
+    },
+    {
+      "at": "$.provider.turn-15[0].body.messages[55].content",
+      "a": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Expression expected.\n- L2:10 error: Identifier expected.\n- L3:1 error: ')' expected.",
+      "b": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Unexpected token"
+    },
+    {
+      "at": "$.provider.turn-15-after-tool[0].headers.content-length",
+      "a": "55214",
+      "b": "55197"
+    },
+    {
+      "at": "$.provider.turn-15-after-tool[0].body.messages[47].content",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.provider.turn-15-after-tool[0].body.messages[51].content",
+      "a": "Created d/bad.csv.\n\nSyntax issues detected:\n- L2:1 error: Quote Not Closed: the parsing is finished with an opening quote at line 2",
+      "b": "Created d/bad.csv.\n\nSyntax issues detected:\n- L3:1 error: Unclosed quoted field."
+    },
+    {
+      "at": "$.provider.turn-15-after-tool[0].body.messages[55].content",
+      "a": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Expression expected.\n- L2:10 error: Identifier expected.\n- L3:1 error: ')' expected.",
+      "b": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Unexpected token"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[464].result.content[0].text",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[466].message.content[0].content[0].text",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[466].message.content[0].raw.content[0].text",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[471].detail.used",
+      "a": 5581,
+      "b": 5592
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[471].detail.displayUsed",
+      "a": 5581,
+      "b": 5592
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[471].detail.localEstimateTokens",
+      "a": 11162,
+      "b": 11184
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[471].detail.usageTokens",
+      "a": 5581,
+      "b": 5592
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[471].detail.ratio",
+      "a": 0.09732491629464286,
+      "b": 0.09751674107142858
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[471].detail.breakdown.total",
+      "a": 11162,
+      "b": 11184
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[471].detail.breakdown.messages",
+      "a": 795,
+      "b": 817
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[472].request.messages[46].content[0].content[0].text",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[472].request.messages[46].content[0].raw.content[0].text",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[489].detail.used",
+      "a": 5591,
+      "b": 5602
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[489].detail.displayUsed",
+      "a": 5591,
+      "b": 5602
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[489].detail.localEstimateTokens",
+      "a": 11181,
+      "b": 11203
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[489].detail.usageTokens",
+      "a": 5591,
+      "b": 5602
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[489].detail.calibrationEstimatedInputTokens",
+      "a": 11162,
+      "b": 11184
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[489].detail.ratio",
+      "a": 0.09749930245535714,
+      "b": 0.09769112723214286
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[489].detail.breakdown.total",
+      "a": 11181,
+      "b": 11203
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[489].detail.breakdown.messages",
+      "a": 814,
+      "b": 836
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[490].request.messages[46].content[0].content[0].text",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[490].request.messages[46].content[0].raw.content[0].text",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[504].result.content[0].text",
+      "a": "Created d/bad.csv.\n\nSyntax issues detected:\n- L2:1 error: Quote Not Closed: the parsing is finished with an opening quote at line 2",
+      "b": "Created d/bad.csv.\n\nSyntax issues detected:\n- L3:1 error: Unclosed quoted field."
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[506].message.content[0].content[0].text",
+      "a": "Created d/bad.csv.\n\nSyntax issues detected:\n- L2:1 error: Quote Not Closed: the parsing is finished with an opening quote at line 2",
+      "b": "Created d/bad.csv.\n\nSyntax issues detected:\n- L3:1 error: Unclosed quoted field."
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[506].message.content[0].raw.content[0].text",
+      "a": "Created d/bad.csv.\n\nSyntax issues detected:\n- L2:1 error: Quote Not Closed: the parsing is finished with an opening quote at line 2",
+      "b": "Created d/bad.csv.\n\nSyntax issues detected:\n- L3:1 error: Unclosed quoted field."
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[511].detail.used",
+      "a": 5623,
+      "b": 5629
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[511].detail.displayUsed",
+      "a": 5623,
+      "b": 5629
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[511].detail.localEstimateTokens",
+      "a": 11246,
+      "b": 11257
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[511].detail.usageTokens",
+      "a": 5623,
+      "b": 5629
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[511].detail.calibrationEstimatedInputTokens",
+      "a": 11181,
+      "b": 11203
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[511].detail.ratio",
+      "a": 0.09805733816964286,
+      "b": 0.09816196986607142
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[511].detail.breakdown.total",
+      "a": 11246,
+      "b": 11257
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[511].detail.breakdown.messages",
+      "a": 879,
+      "b": 890
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[512].request.messages[46].content[0].content[0].text",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[512].request.messages[46].content[0].raw.content[0].text",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[512].request.messages[50].content[0].content[0].text",
+      "a": "Created d/bad.csv.\n\nSyntax issues detected:\n- L2:1 error: Quote Not Closed: the parsing is finished with an opening quote at line 2",
+      "b": "Created d/bad.csv.\n\nSyntax issues detected:\n- L3:1 error: Unclosed quoted field."
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[512].request.messages[50].content[0].raw.content[0].text",
+      "a": "Created d/bad.csv.\n\nSyntax issues detected:\n- L2:1 error: Quote Not Closed: the parsing is finished with an opening quote at line 2",
+      "b": "Created d/bad.csv.\n\nSyntax issues detected:\n- L3:1 error: Unclosed quoted field."
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[529].detail.used",
+      "a": 5633,
+      "b": 5638
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[529].detail.displayUsed",
+      "a": 5633,
+      "b": 5638
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[529].detail.localEstimateTokens",
+      "a": 11265,
+      "b": 11276
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[529].detail.usageTokens",
+      "a": 5633,
+      "b": 5638
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[529].detail.calibrationEstimatedInputTokens",
+      "a": 11246,
+      "b": 11257
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[529].detail.ratio",
+      "a": 0.09823172433035714,
+      "b": 0.09831891741071429
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[529].detail.breakdown.total",
+      "a": 11265,
+      "b": 11276
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[529].detail.breakdown.messages",
+      "a": 898,
+      "b": 909
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[530].request.messages[46].content[0].content[0].text",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[530].request.messages[46].content[0].raw.content[0].text",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[530].request.messages[50].content[0].content[0].text",
+      "a": "Created d/bad.csv.\n\nSyntax issues detected:\n- L2:1 error: Quote Not Closed: the parsing is finished with an opening quote at line 2",
+      "b": "Created d/bad.csv.\n\nSyntax issues detected:\n- L3:1 error: Unclosed quoted field."
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[530].request.messages[50].content[0].raw.content[0].text",
+      "a": "Created d/bad.csv.\n\nSyntax issues detected:\n- L2:1 error: Quote Not Closed: the parsing is finished with an opening quote at line 2",
+      "b": "Created d/bad.csv.\n\nSyntax issues detected:\n- L3:1 error: Unclosed quoted field."
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[544].result.content[0].text",
+      "a": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Expression expected.\n- L2:10 error: Identifier expected.\n- L3:1 error: ')' expected.",
+      "b": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Unexpected token"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[546].message.content[0].content[0].text",
+      "a": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Expression expected.\n- L2:10 error: Identifier expected.\n- L3:1 error: ')' expected.",
+      "b": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Unexpected token"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[546].message.content[0].raw.content[0].text",
+      "a": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Expression expected.\n- L2:10 error: Identifier expected.\n- L3:1 error: ')' expected.",
+      "b": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Unexpected token"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[551].detail.used",
+      "a": 5669,
+      "b": 5664
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[551].detail.displayUsed",
+      "a": 5669,
+      "b": 5664
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[551].detail.localEstimateTokens",
+      "a": 11338,
+      "b": 11328
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[551].detail.usageTokens",
+      "a": 5669,
+      "b": 5664
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[551].detail.calibrationEstimatedInputTokens",
+      "a": 11265,
+      "b": 11276
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[551].detail.ratio",
+      "a": 0.09885951450892858,
+      "b": 0.09877232142857142
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[551].detail.breakdown.total",
+      "a": 11338,
+      "b": 11328
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[551].detail.breakdown.messages",
+      "a": 971,
+      "b": 961
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[552].request.messages[46].content[0].content[0].text",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[552].request.messages[46].content[0].raw.content[0].text",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[552].request.messages[50].content[0].content[0].text",
+      "a": "Created d/bad.csv.\n\nSyntax issues detected:\n- L2:1 error: Quote Not Closed: the parsing is finished with an opening quote at line 2",
+      "b": "Created d/bad.csv.\n\nSyntax issues detected:\n- L3:1 error: Unclosed quoted field."
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[552].request.messages[50].content[0].raw.content[0].text",
+      "a": "Created d/bad.csv.\n\nSyntax issues detected:\n- L2:1 error: Quote Not Closed: the parsing is finished with an opening quote at line 2",
+      "b": "Created d/bad.csv.\n\nSyntax issues detected:\n- L3:1 error: Unclosed quoted field."
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[552].request.messages[54].content[0].content[0].text",
+      "a": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Expression expected.\n- L2:10 error: Identifier expected.\n- L3:1 error: ')' expected.",
+      "b": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Unexpected token"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[552].request.messages[54].content[0].raw.content[0].text",
+      "a": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Expression expected.\n- L2:10 error: Identifier expected.\n- L3:1 error: ')' expected.",
+      "b": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Unexpected token"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[569].detail.used",
+      "a": 5679,
+      "b": 5674
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[569].detail.displayUsed",
+      "a": 5679,
+      "b": 5674
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[569].detail.localEstimateTokens",
+      "a": 11357,
+      "b": 11347
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[569].detail.usageTokens",
+      "a": 5679,
+      "b": 5674
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[569].detail.calibrationEstimatedInputTokens",
+      "a": 11338,
+      "b": 11328
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[569].detail.ratio",
+      "a": 0.09903390066964286,
+      "b": 0.09894670758928571
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[569].detail.breakdown.total",
+      "a": 11357,
+      "b": 11347
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[569].detail.breakdown.messages",
+      "a": 990,
+      "b": 980
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[570].request.messages[46].content[0].content[0].text",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[570].request.messages[46].content[0].raw.content[0].text",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[570].request.messages[50].content[0].content[0].text",
+      "a": "Created d/bad.csv.\n\nSyntax issues detected:\n- L2:1 error: Quote Not Closed: the parsing is finished with an opening quote at line 2",
+      "b": "Created d/bad.csv.\n\nSyntax issues detected:\n- L3:1 error: Unclosed quoted field."
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[570].request.messages[50].content[0].raw.content[0].text",
+      "a": "Created d/bad.csv.\n\nSyntax issues detected:\n- L2:1 error: Quote Not Closed: the parsing is finished with an opening quote at line 2",
+      "b": "Created d/bad.csv.\n\nSyntax issues detected:\n- L3:1 error: Unclosed quoted field."
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[570].request.messages[54].content[0].content[0].text",
+      "a": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Expression expected.\n- L2:10 error: Identifier expected.\n- L3:1 error: ')' expected.",
+      "b": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Unexpected token"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[570].request.messages[54].content[0].raw.content[0].text",
+      "a": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Expression expected.\n- L2:10 error: Identifier expected.\n- L3:1 error: ')' expected.",
+      "b": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Unexpected token"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[591].detail.used",
+      "a": 5698,
+      "b": 5693
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[591].detail.displayUsed",
+      "a": 5698,
+      "b": 5693
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[591].detail.localEstimateTokens",
+      "a": 11395,
+      "b": 11385
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[591].detail.usageTokens",
+      "a": 5698,
+      "b": 5693
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[591].detail.calibrationEstimatedInputTokens",
+      "a": 11357,
+      "b": 11347
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[591].detail.ratio",
+      "a": 0.099365234375,
+      "b": 0.09927804129464286
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[591].detail.breakdown.total",
+      "a": 11395,
+      "b": 11385
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[591].detail.breakdown.messages",
+      "a": 1028,
+      "b": 1018
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[592].request.messages[46].content[0].content[0].text",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[592].request.messages[46].content[0].raw.content[0].text",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[592].request.messages[50].content[0].content[0].text",
+      "a": "Created d/bad.csv.\n\nSyntax issues detected:\n- L2:1 error: Quote Not Closed: the parsing is finished with an opening quote at line 2",
+      "b": "Created d/bad.csv.\n\nSyntax issues detected:\n- L3:1 error: Unclosed quoted field."
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[592].request.messages[50].content[0].raw.content[0].text",
+      "a": "Created d/bad.csv.\n\nSyntax issues detected:\n- L2:1 error: Quote Not Closed: the parsing is finished with an opening quote at line 2",
+      "b": "Created d/bad.csv.\n\nSyntax issues detected:\n- L3:1 error: Unclosed quoted field."
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[592].request.messages[54].content[0].content[0].text",
+      "a": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Expression expected.\n- L2:10 error: Identifier expected.\n- L3:1 error: ')' expected.",
+      "b": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Unexpected token"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.jsonl[592].request.messages[54].content[0].raw.content[0].text",
+      "a": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Expression expected.\n- L2:10 error: Identifier expected.\n- L3:1 error: ')' expected.",
+      "b": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Unexpected token"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.raw.skeletons.06dbefc85f9b43f6",
+      "a": 1
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.raw.skeletons.071e165a1271ce54",
+      "a": 1
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.raw.skeletons.0acbd78cbc7631ee",
+      "a": 1
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.raw.skeletons.0b37c53d11351386",
+      "a": 1
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.raw.skeletons.5ede9306e9c30191",
+      "a": 1
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.raw.skeletons.ba99a5a76b99dc1d",
+      "a": 1
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.raw.skeletons.ced50683d838e581",
+      "a": 1
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.raw.skeletons.d4baf8abcc5759e5",
+      "a": 1
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.raw.skeletons.d66a5e78f457d976",
+      "a": 1
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.raw.skeletons.74910afd74c90f06",
+      "b": 1
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.raw.skeletons.7babb93773b9a242",
+      "b": 1
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.raw.skeletons.8613830668d99b3a",
+      "b": 1
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.raw.skeletons.873597a2188a2639",
+      "b": 1
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.raw.skeletons.a90a91c0434b7181",
+      "b": 1
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.raw.skeletons.b52c34c239722416",
+      "b": 1
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.raw.skeletons.c1518d5c410a41a0",
+      "b": 1
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.raw.skeletons.f7d04e273561d227",
+      "b": 1
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.raw.skeletons.f9cb60505d5c6ca7",
+      "b": 1
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.raw.skeletons.1b85ed7546cd62c1",
+      "a": 3,
+      "b": 4
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.raw.skeletons.b22fd73a17c71ace",
+      "a": 3,
+      "b": 4
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.raw.skeletons.f847996ff3c46a67",
+      "a": 5,
+      "b": 4
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.raw.skeletons.fd9746a2b3c6c35f",
+      "a": 5,
+      "b": 4
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.agent-transcript.conversation.state.entries[57].entry.message.content[0].content[0].text",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.agent-transcript.conversation.state.entries[57].entry.message.content[0].raw.content[0].text",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.agent-transcript.conversation.state.entries[62].entry.message.content[0].content[0].text",
+      "a": "Created d/bad.csv.\n\nSyntax issues detected:\n- L2:1 error: Quote Not Closed: the parsing is finished with an opening quote at line 2",
+      "b": "Created d/bad.csv.\n\nSyntax issues detected:\n- L3:1 error: Unclosed quoted field."
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.agent-transcript.conversation.state.entries[62].entry.message.content[0].raw.content[0].text",
+      "a": "Created d/bad.csv.\n\nSyntax issues detected:\n- L2:1 error: Quote Not Closed: the parsing is finished with an opening quote at line 2",
+      "b": "Created d/bad.csv.\n\nSyntax issues detected:\n- L3:1 error: Unclosed quoted field."
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.agent-transcript.conversation.state.entries[67].entry.message.content[0].content[0].text",
+      "a": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Expression expected.\n- L2:10 error: Identifier expected.\n- L3:1 error: ')' expected.",
+      "b": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Unexpected token"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.agent-transcript.conversation.state.entries[67].entry.message.content[0].raw.content[0].text",
+      "a": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Expression expected.\n- L2:10 error: Identifier expected.\n- L3:1 error: ')' expected.",
+      "b": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Unexpected token"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[23].detail.used",
+      "a": 5581,
+      "b": 5592
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[23].detail.displayUsed",
+      "a": 5581,
+      "b": 5592
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[23].detail.localEstimateTokens",
+      "a": 11162,
+      "b": 11184
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[23].detail.usageTokens",
+      "a": 5581,
+      "b": 5592
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[23].detail.ratio",
+      "a": 0.09732491629464286,
+      "b": 0.09751674107142858
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[23].detail.breakdown.total",
+      "a": 11162,
+      "b": 11184
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[23].detail.breakdown.messages",
+      "a": 795,
+      "b": 817
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[24].detail.used",
+      "a": 5591,
+      "b": 5602
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[24].detail.displayUsed",
+      "a": 5591,
+      "b": 5602
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[24].detail.localEstimateTokens",
+      "a": 11181,
+      "b": 11203
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[24].detail.usageTokens",
+      "a": 5591,
+      "b": 5602
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[24].detail.calibrationEstimatedInputTokens",
+      "a": 11162,
+      "b": 11184
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[24].detail.ratio",
+      "a": 0.09749930245535714,
+      "b": 0.09769112723214286
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[24].detail.breakdown.total",
+      "a": 11181,
+      "b": 11203
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[24].detail.breakdown.messages",
+      "a": 814,
+      "b": 836
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[25].detail.used",
+      "a": 5623,
+      "b": 5629
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[25].detail.displayUsed",
+      "a": 5623,
+      "b": 5629
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[25].detail.localEstimateTokens",
+      "a": 11246,
+      "b": 11257
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[25].detail.usageTokens",
+      "a": 5623,
+      "b": 5629
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[25].detail.calibrationEstimatedInputTokens",
+      "a": 11181,
+      "b": 11203
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[25].detail.ratio",
+      "a": 0.09805733816964286,
+      "b": 0.09816196986607142
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[25].detail.breakdown.total",
+      "a": 11246,
+      "b": 11257
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[25].detail.breakdown.messages",
+      "a": 879,
+      "b": 890
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[26].detail.used",
+      "a": 5633,
+      "b": 5638
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[26].detail.displayUsed",
+      "a": 5633,
+      "b": 5638
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[26].detail.localEstimateTokens",
+      "a": 11265,
+      "b": 11276
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[26].detail.usageTokens",
+      "a": 5633,
+      "b": 5638
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[26].detail.calibrationEstimatedInputTokens",
+      "a": 11246,
+      "b": 11257
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[26].detail.ratio",
+      "a": 0.09823172433035714,
+      "b": 0.09831891741071429
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[26].detail.breakdown.total",
+      "a": 11265,
+      "b": 11276
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[26].detail.breakdown.messages",
+      "a": 898,
+      "b": 909
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[27].detail.used",
+      "a": 5669,
+      "b": 5664
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[27].detail.displayUsed",
+      "a": 5669,
+      "b": 5664
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[27].detail.localEstimateTokens",
+      "a": 11338,
+      "b": 11328
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[27].detail.usageTokens",
+      "a": 5669,
+      "b": 5664
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[27].detail.calibrationEstimatedInputTokens",
+      "a": 11265,
+      "b": 11276
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[27].detail.ratio",
+      "a": 0.09885951450892858,
+      "b": 0.09877232142857142
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[27].detail.breakdown.total",
+      "a": 11338,
+      "b": 11328
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[27].detail.breakdown.messages",
+      "a": 971,
+      "b": 961
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[28].detail.used",
+      "a": 5679,
+      "b": 5674
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[28].detail.displayUsed",
+      "a": 5679,
+      "b": 5674
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[28].detail.localEstimateTokens",
+      "a": 11357,
+      "b": 11347
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[28].detail.usageTokens",
+      "a": 5679,
+      "b": 5674
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[28].detail.calibrationEstimatedInputTokens",
+      "a": 11338,
+      "b": 11328
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[28].detail.ratio",
+      "a": 0.09903390066964286,
+      "b": 0.09894670758928571
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[28].detail.breakdown.total",
+      "a": 11357,
+      "b": 11347
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[28].detail.breakdown.messages",
+      "a": 990,
+      "b": 980
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[29].detail.used",
+      "a": 5698,
+      "b": 5693
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[29].detail.displayUsed",
+      "a": 5698,
+      "b": 5693
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[29].detail.localEstimateTokens",
+      "a": 11395,
+      "b": 11385
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[29].detail.usageTokens",
+      "a": 5698,
+      "b": 5693
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[29].detail.calibrationEstimatedInputTokens",
+      "a": 11357,
+      "b": 11347
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[29].detail.ratio",
+      "a": 0.099365234375,
+      "b": 0.09927804129464286
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[29].detail.breakdown.total",
+      "a": 11395,
+      "b": 11385
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.agent-statuses.state[29].detail.breakdown.messages",
+      "a": 1028,
+      "b": 1018
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.token-usage.state.latestContextBudget.usage.used",
+      "a": 5698,
+      "b": 5693
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.token-usage.state.latestContextBudget.usage.displayUsed",
+      "a": 5698,
+      "b": 5693
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.json.projections.web-history.token-usage.state.latestContextBudget.usage.ratio",
+      "a": 0.099365234375,
+      "b": 0.09927804129464286
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.raw.skeletons.41f797ddc774a210",
+      "a": 1
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/projects/tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-bbx-1.jsonl.projections.json.raw.skeletons.64df849db8f0ca20",
+      "b": 1
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:24>[6].event.resultPreview",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:24>[6].event.resultLineCount",
+      "a": 1,
+      "b": 4
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:24>[6].event.resultBytes",
+      "a": 19,
+      "b": 120
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:24>[7].event.fullText",
+      "a": "Created d/bad.html.",
+      "b": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:24>[10].event.used",
+      "a": 5581,
+      "b": 5592
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:24>[10].event.displayUsed",
+      "a": 5581,
+      "b": 5592
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:24>[10].event.localEstimateTokens",
+      "a": 11162,
+      "b": 11184
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:24>[10].event.usageTokens",
+      "a": 5581,
+      "b": 5592
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:24>[10].event.ratio",
+      "a": 0.09732491629464286,
+      "b": 0.09751674107142858
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:24>[10].event.breakdown.total",
+      "a": 11162,
+      "b": 11184
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:24>[10].event.breakdown.messages",
+      "a": 795,
+      "b": 817
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:26>[3].event.used",
+      "a": 5591,
+      "b": 5602
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:26>[3].event.displayUsed",
+      "a": 5591,
+      "b": 5602
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:26>[3].event.localEstimateTokens",
+      "a": 11181,
+      "b": 11203
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:26>[3].event.usageTokens",
+      "a": 5591,
+      "b": 5602
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:26>[3].event.calibrationEstimatedInputTokens",
+      "a": 11162,
+      "b": 11184
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:26>[3].event.ratio",
+      "a": 0.09749930245535714,
+      "b": 0.09769112723214286
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:26>[3].event.breakdown.total",
+      "a": 11181,
+      "b": 11203
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:26>[3].event.breakdown.messages",
+      "a": 814,
+      "b": 836
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:26>[6].event.resultPreview",
+      "a": "Created d/bad.csv.\n\nSyntax issues detected:\n- L2:1 error: Quote Not Closed: the parsing is finished with an opening quote at line 2",
+      "b": "Created d/bad.csv.\n\nSyntax issues detected:\n- L3:1 error: Unclosed quoted field."
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:26>[6].event.resultBytes",
+      "a": 131,
+      "b": 80
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:26>[7].event.fullText",
+      "a": "Created d/bad.csv.\n\nSyntax issues detected:\n- L2:1 error: Quote Not Closed: the parsing is finished with an opening quote at line 2",
+      "b": "Created d/bad.csv.\n\nSyntax issues detected:\n- L3:1 error: Unclosed quoted field."
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:26>[10].event.used",
+      "a": 5623,
+      "b": 5629
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:26>[10].event.displayUsed",
+      "a": 5623,
+      "b": 5629
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:26>[10].event.localEstimateTokens",
+      "a": 11246,
+      "b": 11257
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:26>[10].event.usageTokens",
+      "a": 5623,
+      "b": 5629
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:26>[10].event.calibrationEstimatedInputTokens",
+      "a": 11181,
+      "b": 11203
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:26>[10].event.ratio",
+      "a": 0.09805733816964286,
+      "b": 0.09816196986607142
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:26>[10].event.breakdown.total",
+      "a": 11246,
+      "b": 11257
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:26>[10].event.breakdown.messages",
+      "a": 879,
+      "b": 890
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:28>[3].event.used",
+      "a": 5633,
+      "b": 5638
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:28>[3].event.displayUsed",
+      "a": 5633,
+      "b": 5638
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:28>[3].event.localEstimateTokens",
+      "a": 11265,
+      "b": 11276
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:28>[3].event.usageTokens",
+      "a": 5633,
+      "b": 5638
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:28>[3].event.calibrationEstimatedInputTokens",
+      "a": 11246,
+      "b": 11257
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:28>[3].event.ratio",
+      "a": 0.09823172433035714,
+      "b": 0.09831891741071429
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:28>[3].event.breakdown.total",
+      "a": 11265,
+      "b": 11276
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:28>[3].event.breakdown.messages",
+      "a": 898,
+      "b": 909
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:28>[6].event.resultPreview",
+      "a": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Expression expected.\n- L2:10 error: Identifier expected.\n- L3:1 error: ')' expected.",
+      "b": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Unexpected token"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:28>[6].event.resultLineCount",
+      "a": 6,
+      "b": 4
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:28>[6].event.resultBytes",
+      "a": 142,
+      "b": 74
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:28>[7].event.fullText",
+      "a": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Expression expected.\n- L2:10 error: Identifier expected.\n- L3:1 error: ')' expected.",
+      "b": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Unexpected token"
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:28>[10].event.used",
+      "a": 5669,
+      "b": 5664
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:28>[10].event.displayUsed",
+      "a": 5669,
+      "b": 5664
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:28>[10].event.localEstimateTokens",
+      "a": 11338,
+      "b": 11328
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:28>[10].event.usageTokens",
+      "a": 5669,
+      "b": 5664
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:28>[10].event.calibrationEstimatedInputTokens",
+      "a": 11265,
+      "b": 11276
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:28>[10].event.ratio",
+      "a": 0.09885951450892858,
+      "b": 0.09877232142857142
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:28>[10].event.breakdown.total",
+      "a": 11338,
+      "b": 11328
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:28>[10].event.breakdown.messages",
+      "a": 971,
+      "b": 961
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:30>[3].event.used",
+      "a": 5679,
+      "b": 5674
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:30>[3].event.displayUsed",
+      "a": 5679,
+      "b": 5674
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:30>[3].event.localEstimateTokens",
+      "a": 11357,
+      "b": 11347
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:30>[3].event.usageTokens",
+      "a": 5679,
+      "b": 5674
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:30>[3].event.calibrationEstimatedInputTokens",
+      "a": 11338,
+      "b": 11328
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:30>[3].event.ratio",
+      "a": 0.09903390066964286,
+      "b": 0.09894670758928571
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:30>[3].event.breakdown.total",
+      "a": 11357,
+      "b": 11347
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:30>[3].event.breakdown.messages",
+      "a": 990,
+      "b": 980
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:30>[10].event.used",
+      "a": 5698,
+      "b": 5693
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:30>[10].event.displayUsed",
+      "a": 5698,
+      "b": 5693
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:30>[10].event.localEstimateTokens",
+      "a": 11395,
+      "b": 11385
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:30>[10].event.usageTokens",
+      "a": 5698,
+      "b": 5693
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:30>[10].event.calibrationEstimatedInputTokens",
+      "a": 11357,
+      "b": 11347
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:30>[10].event.ratio",
+      "a": 0.099365234375,
+      "b": 0.09927804129464286
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:30>[10].event.breakdown.total",
+      "a": 11395,
+      "b": 11385
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.json.events.\u0000s-bbx-1\u0000<uuid:30>[10].event.breakdown.messages",
+      "a": 1028,
+      "b": 1018
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.raw.skeletons.cac98fbf88eb1d19",
+      "a": 1
+    },
+    {
+      "at": "$.tree./home/.pilotdeck/runs/registry.json.raw.skeletons.660bcbf1cb14d6bb",
+      "b": 1
+    }
+  ],
+  "outputs": {
+    "ts": {
+      "call_bbx_1": "Created d/bad.json.\n\nSyntax issues detected:\n- L1:9 error: Expected double-quoted property name in JSON at position 8 (line 1 column 9)",
+      "call_bbx_2": "Created d/good.json.",
+      "call_bbx_3": "Created d/bad.py.\n\nSyntax issues detected:\n- L1:12 error: invalid syntax",
+      "call_bbx_4": "Created d/good.py.",
+      "call_bbx_5": "Created d/bad.sh.\n\nSyntax issues detected:\n- L3:1 error: syntax error: unexpected end of file",
+      "call_bbx_6": "Created d/good.sh.",
+      "call_bbx_7": "Created d/bad.yaml.\n\nSyntax issues detected:\n- L2:1 error: Flow sequence in block collection must be sufficiently indented and end with a ]",
+      "call_bbx_8": "Created d/good.yaml.",
+      "call_bbx_9": "Created d/bad.md.\n\nSyntax issues detected:\n- L3:1 error: Unclosed Markdown code fence.",
+      "call_bbx_10": "Created d/front.md.\n\nSyntax issues detected:\n- L1:1 error: YAML frontmatter is opened with --- but no closing delimiter was found.",
+      "call_bbx_11": "Created d/good.md.",
+      "call_bbx_12": "Created d/bad.html.",
+      "call_bbx_13": "Created d/bad.csv.\n\nSyntax issues detected:\n- L2:1 error: Quote Not Closed: the parsing is finished with an opening quote at line 2",
+      "call_bbx_14": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Expression expected.\n- L2:10 error: Identifier expected.\n- L3:1 error: ')' expected.",
+      "call_bbx_15": "Created d/good.ts."
+    },
+    "rust": {
+      "call_bbx_1": "Created d/bad.json.\n\nSyntax issues detected:\n- L1:9 error: Expected double-quoted property name in JSON at position 8 (line 1 column 9)",
+      "call_bbx_2": "Created d/good.json.",
+      "call_bbx_3": "Created d/bad.py.\n\nSyntax issues detected:\n- L1:12 error: invalid syntax",
+      "call_bbx_4": "Created d/good.py.",
+      "call_bbx_5": "Created d/bad.sh.\n\nSyntax issues detected:\n- L3:1 error: syntax error: unexpected end of file",
+      "call_bbx_6": "Created d/good.sh.",
+      "call_bbx_7": "Created d/bad.yaml.\n\nSyntax issues detected:\n- L2:1 error: Flow sequence in block collection must be sufficiently indented and end with a ]",
+      "call_bbx_8": "Created d/good.yaml.",
+      "call_bbx_9": "Created d/bad.md.\n\nSyntax issues detected:\n- L3:1 error: Unclosed Markdown code fence.",
+      "call_bbx_10": "Created d/front.md.\n\nSyntax issues detected:\n- L1:1 error: YAML frontmatter is opened with --- but no closing delimiter was found.",
+      "call_bbx_11": "Created d/good.md.",
+      "call_bbx_12": "Created d/bad.html.\n\nSyntax issues detected:\n- L1:1 error: HTML parse error: Found special tag while closing generic tag",
+      "call_bbx_13": "Created d/bad.csv.\n\nSyntax issues detected:\n- L3:1 error: Unclosed quoted field.",
+      "call_bbx_14": "Created d/bad.ts.\n\nSyntax issues detected:\n- L1:19 error: Unexpected token",
+      "call_bbx_15": "Created d/good.ts."
+    }
+  },
+  "files": {
+    "ts": {
+      "/home/.pilotdeck/d/bad.csv": {
+        "mode": "644",
+        "text": "a,b\n\"unterminated,1\n"
+      },
+      "/home/.pilotdeck/d/bad.html": {
+        "mode": "644",
+        "text": "<div><p>unclosed</div></span>\n"
+      },
+      "/home/.pilotdeck/d/bad.json": {
+        "mode": "644",
+        "text": "{\"a\": 1,}\n"
+      },
+      "/home/.pilotdeck/d/bad.md": {
+        "mode": "644",
+        "text": "# Title\n\n```js\nlet a = 1;\n"
+      },
+      "/home/.pilotdeck/d/bad.py": {
+        "mode": "644",
+        "text": "def broken(:\n    pass\n"
+      },
+      "/home/.pilotdeck/d/bad.sh": {
+        "mode": "644",
+        "text": "if true; then\necho hi\n"
+      },
+      "/home/.pilotdeck/d/bad.ts": {
+        "mode": "644",
+        "text": "const a: number = ;\nfunction (\n"
+      },
+      "/home/.pilotdeck/d/bad.yaml": {
+        "mode": "644",
+        "text": "a: [1, 2\nb: 3\n"
+      },
+      "/home/.pilotdeck/d/front.md": {
+        "mode": "644",
+        "text": "---\ntitle: x\nbody\n"
+      },
+      "/home/.pilotdeck/d/good.json": {
+        "mode": "644",
+        "json": {
+          "a": 1
+        },
+        "raw": {
+          "lines": 1,
+          "finalNewline": true,
+          "skeletons": {
+            "f44aca138cc8b382": 1
+          }
+        }
+      },
+      "/home/.pilotdeck/d/good.md": {
+        "mode": "644",
+        "text": "# Title\n\n```js\nlet a = 1;\n```\n"
+      },
+      "/home/.pilotdeck/d/good.py": {
+        "mode": "644",
+        "text": "print(1)\n"
+      },
+      "/home/.pilotdeck/d/good.sh": {
+        "mode": "644",
+        "text": "echo hi\n"
+      },
+      "/home/.pilotdeck/d/good.ts": {
+        "mode": "644",
+        "text": "export const a: number = 1;\n"
+      },
+      "/home/.pilotdeck/d/good.yaml": {
+        "mode": "644",
+        "text": "a: 1\n"
+      }
+    },
+    "rust": {
+      "/home/.pilotdeck/d/bad.csv": {
+        "mode": "644",
+        "text": "a,b\n\"unterminated,1\n"
+      },
+      "/home/.pilotdeck/d/bad.html": {
+        "mode": "644",
+        "text": "<div><p>unclosed</div></span>\n"
+      },
+      "/home/.pilotdeck/d/bad.json": {
+        "mode": "644",
+        "text": "{\"a\": 1,}\n"
+      },
+      "/home/.pilotdeck/d/bad.md": {
+        "mode": "644",
+        "text": "# Title\n\n```js\nlet a = 1;\n"
+      },
+      "/home/.pilotdeck/d/bad.py": {
+        "mode": "644",
+        "text": "def broken(:\n    pass\n"
+      },
+      "/home/.pilotdeck/d/bad.sh": {
+        "mode": "644",
+        "text": "if true; then\necho hi\n"
+      },
+      "/home/.pilotdeck/d/bad.ts": {
+        "mode": "644",
+        "text": "const a: number = ;\nfunction (\n"
+      },
+      "/home/.pilotdeck/d/bad.yaml": {
+        "mode": "644",
+        "text": "a: [1, 2\nb: 3\n"
+      },
+      "/home/.pilotdeck/d/front.md": {
+        "mode": "644",
+        "text": "---\ntitle: x\nbody\n"
+      },
+      "/home/.pilotdeck/d/good.json": {
+        "mode": "644",
+        "json": {
+          "a": 1
+        },
+        "raw": {
+          "lines": 1,
+          "finalNewline": true,
+          "skeletons": {
+            "f44aca138cc8b382": 1
+          }
+        }
+      },
+      "/home/.pilotdeck/d/good.md": {
+        "mode": "644",
+        "text": "# Title\n\n```js\nlet a = 1;\n```\n"
+      },
+      "/home/.pilotdeck/d/good.py": {
+        "mode": "644",
+        "text": "print(1)\n"
+      },
+      "/home/.pilotdeck/d/good.sh": {
+        "mode": "644",
+        "text": "echo hi\n"
+      },
+      "/home/.pilotdeck/d/good.ts": {
+        "mode": "644",
+        "text": "export const a: number = 1;\n"
+      },
+      "/home/.pilotdeck/d/good.yaml": {
+        "mode": "644",
+        "text": "a: 1\n"
+      }
+    }
+  }
+}

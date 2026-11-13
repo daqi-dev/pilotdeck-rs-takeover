@@ -6,6 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { discoveryPrefixContract, discoveryPrefixPair } from './ao-discovery-prefix-policy.mjs';
+import {normalizer as actualNormalizer} from './normalization.mjs';
 const ids = ['11111111-2222-4333-8444-555555555555', 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'];
 const normalize = text => text.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '<uuid>');
 function fixture(run = ids[0], unicode = false) {
@@ -85,3 +86,7 @@ test('real diff CLI consumes descriptors; preserves ordinary changes and rejects
     const business = fixture(ids[1]); mutatePrompt(business, s => s + 'changed'); assert.equal(run(fixture(), business).status, 2);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('only the approved execfail scene extends the full prefix contract',()=>{const left=fixture(),right=fixture(ids[1]);left.scenario=right.scenario='always-on-fire-execfail';assert.ok(discoveryPrefixContract(left).prompt.length>1200);assert.equal(discoveryPrefixPair(left,right,normalize).length,2);for(const unknown of ['always-on-fire-execfail-other','cron-auto-fire'])assert.throws(()=>discoveryPrefixContract({...left,scenario:unknown}));});
+const {actualManifest,readActual}=await import('./fixtures/observer-approved/actual.mjs');
+if(actualManifest)for(const index of[1,2])test('actual execfail '+(index===1?'self':'pair')+' retains complete full prompt proof',()=>{const a=readActual(actualManifest.ao[0]),b=readActual(actualManifest.ao[index]);assert.equal(discoveryPrefixPair(a,b,value=>actualNormalizer()(value)).length,2);const bad=structuredClone(b);bad.provider.discovery[0].body.messages.find(m=>m.role==='user').content+='FOREIGN';assert.throws(()=>discoveryPrefixPair(a,bad,value=>actualNormalizer()(value)));});

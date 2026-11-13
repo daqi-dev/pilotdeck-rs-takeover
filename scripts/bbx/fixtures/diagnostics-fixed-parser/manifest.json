@@ -1,0 +1,53 @@
+{
+  "status": "offline scan of actual uncompressed synthetic fixture bytes; no env/user key access",
+  "conversion": "Parse approved original synthetic JSON; remove only top-level serverLog/startMs; preserve all values, evidence/source identities, failures, provider/durable and sceneSHA; JSON serialize UTF8 newline, Node built-in Brotli quality6 lgwin22; no value changes.",
+  "artifactsAre": "derived test inputs, not new formal captures",
+  "files": [
+    {
+      "side": "ts",
+      "originalRawSHA256": "a1e7ecfa77a7f732cf4cf31a629a63b7f6c96fbaee698c7741bff3687e52a66c",
+      "removedKeys": [
+        "serverLog",
+        "startMs"
+      ],
+      "decompressedSHA256": "c29dcd54a20707625e0a5d7d553e72dc0a60d224ded88eba450ac35ece5dbf0f",
+      "decompressedBytes": 4101691,
+      "credentialStringFindings": {
+        "total": 31,
+        "nonAllowlisted": []
+      },
+      "patternFindings": {
+        "awsAccess": 0,
+        "openaiLike": 0,
+        "privateKey": 0,
+        "realUserHome": 0
+      },
+      "compressedSHA256": "7047ef1935ed73c613933d8ea6dc17af7c40a41595ed2b9708d1cc9e2858edc6",
+      "compressedBytes": 63803,
+      "codec": "brotli (node:zlib)"
+    },
+    {
+      "side": "rust",
+      "originalRawSHA256": "51b6d7ebcf567b8a2818cae35e0bd16ed5a139381217b55772e2e06e454ebffd",
+      "removedKeys": [
+        "serverLog",
+        "startMs"
+      ],
+      "decompressedSHA256": "be9689558a99a24bf056e2614c843179fc63fed93112e2f4446755524438bf1e",
+      "decompressedBytes": 4102367,
+      "credentialStringFindings": {
+        "total": 31,
+        "nonAllowlisted": []
+      },
+      "patternFindings": {
+        "awsAccess": 0,
+        "openaiLike": 0,
+        "privateKey": 0,
+        "realUserHome": 0
+      },
+      "compressedSHA256": "d0790f0913a1ee4161c3bb01ee0e36bd8eb743becf76ab0eb8310312c36735d8",
+      "compressedBytes": 64119,
+      "codec": "brotli (node:zlib)"
+    }
+  ]
+}

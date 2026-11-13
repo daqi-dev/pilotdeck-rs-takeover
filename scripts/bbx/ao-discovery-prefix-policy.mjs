@@ -1,10 +1,11 @@
 // Only the generated AO discovery run UUID cut by the listing's 1200 UTF16 cap.
 // No raw artifact is changed; descriptors reference the validated metadata owners.
 import assert from 'node:assert/strict';
+const SCENARIOS = new Set(['always-on-fire','always-on-fire-execfail']);
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const one = (xs, why) => { assert.equal(xs.length, 1, why); return xs[0]; };
 export function discoveryPrefixContract(raw) {
-  assert.equal(raw.scenario, 'always-on-fire');
+  assert.ok(SCENARIOS.has(raw.scenario), 'explicit AO discovery scenario required');
   const [file, entry] = one(Object.entries(raw.tree ?? {}).filter(([name, value]) =>
     /\/chats\/always-on-discovery:project=.*:run=.*\.jsonl$/.test(name) && Array.isArray(value.jsonl)), 'unique discovery transcript');
   const run = file.match(new RegExp(`:run=(${UUID_SOURCE})\\.jsonl$`))?.[1];
@@ -67,7 +68,7 @@ export function discoveryPrefixContract(raw) {
   return { prompt, descriptors };
 }
 export function discoveryPrefixPair(left, right, normalize) {
-  if (left.scenario !== 'always-on-fire' && right.scenario !== 'always-on-fire') return [new WeakMap(), new WeakMap()];
+  if (!SCENARIOS.has(left.scenario) && !SCENARIOS.has(right.scenario)) return [new WeakMap(), new WeakMap()];
   const a = discoveryPrefixContract(left), b = discoveryPrefixContract(right);
   assert.equal(normalize(a.prompt), normalize(b.prompt), 'complete discovery prompts differ beyond existing UUID/time rules');
   return [a.descriptors, b.descriptors];

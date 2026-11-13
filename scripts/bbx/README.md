@@ -161,3 +161,25 @@ T1 八个固定写后诊断场景另有 `syntaxDiagnostics` 正向谓词，验�
 这一步只在 normalized 副本中重标八个已证别名。未证明的编号不重新分配，所有数组位置、非 UUID 值和对象键插入顺序保持原样；未知 entry/operation 等继续差异。逐项打印 `UUID-ENTITY` 便于审查实际关系，不把新可见的 provider/context/history/存储指纹差异包进来。私有原型与旧正式263/214结果保留，正式冻结后另记新比较。
 
 比较器末尾使用 `process.exitCode` 自然排空 stdout/stderr pipe，保持0/1退出语义。大型逐叶报告的真实spawn+pipe控制要求超过128KiB且完整保留最后 `DIFF N`；它只证明报告收口，不替代任何产品、工具供给或实际副作用断言。旧缺末尾verdict或工具缺失证据不得据此回算通过。
+
+### 2026-11-13 已批准的 A/B/C 精确补充（公共候选）
+
+本节按 `state/decisions-20261113.md:59`（A）、`:71`（B）、`:83`（C）补充上述边界。批准不等于正式重判通过；旧 raw、首 FAIL、旧 DIFF 均保留，公共接线独审和新 harness 冻结后另记成绩。watch、parent、cron、Original53 和 memory tree 键序没有由此获得许可。
+
+`normalization.mjs` 只提取原 `diff.mjs` 的 normalizer/load/title/compare 逻辑，规则与对象/数组顺序不变；提取前后自测61/61，六份实际 raw 与边界样例的 views、aliases、比较结果逐项等价。正式策略可直接导入，不能动态 eval 比较器源码或接受 caller 拼装的 view/Map/passed 收据。
+
+A 组仅以下有限合同：
+
+- `observer-provenance.mjs`、`observer-supplement-policy.mjs` 内部绑定原两场的同 worker/reviewer、完整业务、canonical 请求、固定 tokenizer/calibration、WS/durable/registry/history/projection及真实producer。provider 只允许 parent-after/observer 相邻两项反序；context 只允许重算的八个数值叶和最终 usage三叶（含明确新增的 memory block支持）。两 run counters、两 history sequence、registry skeleton 必须完整成员、终态、producer及逐侧全部 byte/skeleton 来源联合成立。其他值继续比较。
+- `observer-id-links-policy.mjs` 补齐既有同 ID 关系的准确 producer/normalized-slot/projection，每个原叶须有唯一真实 counterpart。它不将159 UUID表全局重标，不对未知对象任意递归授予许可，也不排序tree。未获许可的 memory tree四键组顺序继续 DIFF。
+- `observer-memory-witness.mjs` 仅三L0精确formula和schema/唯一业务行、严格case/trace/step引用图与非目标payload、collector有限行序、12项原ISO规则，以及62parent全文/bytes/SHA/stat重建后输出七个精确路径。未采Math.random不被假称已逆算；其它hash/field/size不接受。
+- `duration-file-size-policy.mjs` 只 long-tool-chain step3/frame0、permissions step10/frame0 的唯一 stat；必须为实际成功 read_session_messages/s-gap，完整JSONL byte/SHA与该侧stat相同、其余capture原比较全相同，总差严格等枚举durationMs十进制位数贡献。同移step0、同改method/session仍拒。
+- AO完整prompt→1200UTF16残片规则仅有限增加 always-on-fire-execfail；仍使用完整run/accepted/provider/state/projection/anchor和无歧义prefix的原WeakMap descriptor，不将firstPrompt/lastPrompt整字段volatile。
+
+B 组 `feishu-stop-policy.mjs` 只非self的具名stop场景，内部重读sealed原文件并核源码/场景/原字节身份、完整receipt复制、exact旧WS关闭因果、全部budget/calibration/durable字节来源和完整普通差异。62因果路径与2固定SDK日志路径使用不同理由；固定SDK1.65.0的3组startup info和1组not.registered warn须各一次且原阶段顺序。Node SQLite仍仅使用旧warning规则。失败为INVALID，不以无Pong/timeout当dead，TSself不适用。
+
+C 组 `diagnostics-policy.mjs` 只处理具名诊断场景中的三个固定文件；TS self不应用该Rust差异合同，从raw内部重建views/完整all、固定source/fixture/真实诊断及所有UTF8/token/durable/rawPrint派生。完整具名合同不成立就INVALID；不接受外部counter/view/Map或所有诊断文本。
+
+正式输入身份新增记录 `normalization.mjs`、全部上述runtime策略和constants/contract JSON的SHA。ledger仅新增对应 `diffs/` 文件，不改aggregate/FROZEN。两侧原type/键全集/键序/数组长度和非目标内容始终由原比较器保留。
+
+真实原件控制通过显式测试清单提供，避免公共代码依赖开发机 `_tmp`：`BBX_OBSERVER_ACTUAL_MANIFEST` 指向 `{schema:1, observer:{memory:[TS1,TS2,Rust],fork:[TS1,TS2,Rust]}, tail:{场景:{"ts-1":路径,"ts-2":路径,"rust":路径}}, ao:[TS1,TS2,Rust], rawSha256:{路径:原SHA}}`。`BBX_BASELINE` 指定固定TS包，public tests核每份原件SHA后只在内存变异，不重写原件。不提供该清单时只运行明确注册的便携控制，不把缺失原件算作真实正例通过。Feishu原件测试另用 `FEISHU_STOP_ARTIFACT_ROOT`；各结果分母与实际模式须明确报告。

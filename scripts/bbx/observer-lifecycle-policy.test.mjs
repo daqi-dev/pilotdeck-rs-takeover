@@ -58,21 +58,21 @@ function runDiff(mutate) {
  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'observer-lifecycle-'));
  try {
   pair.forEach((value, i) => fs.writeFileSync(path.join(dir, `${i}.json`), JSON.stringify(value)));
-  return spawnSync(process.execPath, [fileURLToPath(new URL('./diff.mjs', import.meta.url)), path.join(dir, '0.json'), path.join(dir, '1.json'), '--max', '2000'], { encoding: 'utf8', env: { ...process.env, HOME: dir, PILOT_HOME: path.join(dir, 'pilot') } });
+  return spawnSync(process.execPath, [fileURLToPath(new URL('./fixtures/observer-lifecycle-policy/layer-cli.mjs', import.meta.url)), path.join(dir, '0.json'), path.join(dir, '1.json'), '--max', '2000'], { encoding: 'utf8', env: { ...process.env, HOME: dir, PILOT_HOME: path.join(dir, 'pilot') } });
  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }
-test('formal CLI maps only proven leaves, preserves alias residuals and reports typed expansion', () => {
+test('lifecycle layer CLI maps only proven leaves, preserves alias residuals and reports typed expansion', () => {
  const r = runDiff(); assert.equal(r.status, 1, r.stderr); assert.match(r.stdout, /COMPATIBILITY-VALUE observerLifecycleWindows/); assert.match(r.stdout, /LIFECYCLE-LEAF-EXPANSION/); assert.match(r.stdout, /^  \$[^\n]*\.entryId\n/m); assert.match(r.stdout, /DIFF/);
 });
 test('unknown field in an extra non-target record remains a leaf DIFF', () => {
  const r = runDiff(([ts]) => { ts.steps[3].frames.at(-1).unapprovedField = 'MUST-STAY-DIFF'; });
  assert.equal(r.status, 1, r.stderr); assert.match(r.stdout, /^  \$\.steps\[3\]\.frames\[11\]\.unapprovedField\n/m); assert.match(r.stdout, /MUST-STAY-DIFF/);
 });
-test('formal CLI rejects missing registry witness as INVALID', () => {
+test('lifecycle layer CLI rejects missing registry witness as INVALID', () => {
  const r = runDiff(([, rust]) => { delete reg(rust).events[Object.keys(reg(rust).events)[0]]; });
  assert.equal(r.status, 2); assert.match(r.stderr, /INVALID observer lifecycle/);
 });
-test('formal CLI rejects unknown target payload instead of exempting its record', () => {
+test('lifecycle layer CLI rejects unknown target payload instead of exempting its record', () => {
  const r = runDiff(([, rust]) => { const i = rust.steps[0].frames.indexOf(events(rust)[0]); projectedEvent(rust, i, e => e.detail.unapproved = true); });
  assert.equal(r.status, 2); assert.match(r.stderr, /INVALID observer lifecycle/);
 });
