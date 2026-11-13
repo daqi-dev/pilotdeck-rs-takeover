@@ -17,6 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
+import { parseHttpHead, parseHttpResponses } from './lib/rawhttp.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const BASELINE = process.env.BBX_BASELINE || path.join(REPO, 'resources/PilotDeck');
@@ -586,14 +587,6 @@ const readServerFrames = (buf) => {
   return { frames, rest: buf.subarray(off) };
 };
 // HTTP 应答头：状态行和头（小写名，去掉 date），正文原样。
-const parseHttpHead = (raw) => {
-  // 管线化时后一个应答整段落在正文里，它的 Date 行同样去掉。
-  const text = raw.replace(/^date: .*\r\n/gim, '');
-  const i = text.indexOf('\r\n\r\n'); const head = i < 0 ? text : text.slice(0, i);
-  const [status, ...lines] = head.split('\r\n');
-  const headers = Object.fromEntries(lines.map((l) => [l.slice(0, l.indexOf(':')).toLowerCase(), l.slice(l.indexOf(':') + 1).trim()]).filter(([k]) => k !== 'date'));
-  return { status, headers, ...(i >= 0 && { body: text.slice(i + 4) }) };
-};
 const openRaw = (port) => new Promise((resolve) => {
   const s = net.connect(port, '127.0.0.1');
   // 收到的块先攒着，用到 buf 时才拼（几十 MB 的应答逐块 concat 是平方级）。
@@ -657,7 +650,7 @@ const rawStep = async (spec) => {
       for (const f of frames) { const k = f.opcode === 8 ? `close:${f.code}:${f.reason}` : f.json ? `${f.json.type}:${f.json.id ?? ''}` : `opcode:${f.opcode}`; counts[k] = (counts[k] ?? 0) + 1; }
       r.frames = { total: frames.length, counts };
     }
-  } else if (st.buf.length) r.http = parseHttpHead(st.buf.toString());
+  } else if (st.buf.length) r.http = parseHttpResponses(st.buf.toString('latin1'));
   r.serverClosed = st.closed ? (st.ended ?? 'close') : st.ended === 'fin' ? 'fin-half' : null;
   await rawClose(st, upgraded || / 101 /.test(r.http?.status ?? ''));
   return r;
