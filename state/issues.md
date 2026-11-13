@@ -20,7 +20,8 @@
 | Rust 的标题生成比基线晚约 55 ms 落盘（基线约 25 ms，Rust 约 75 ms，`turn-text` 等场景里都是）：`modules-tools-result-unknown-sidecar-binding` 因此标题记录与 `agent_loop_operation_started` 的先后和基线相反（基线 36/36，Rust 20/20 相反）。原因没查，怀疑每次请求新建 HTTP 客户端或没关 Nagle；可能与台账里「`submit_turn` 约 300 ms 对基线约 47 ms」同源 | model, session, modules | 记录的 createdAt；cb8 上的量测 | Linux 遗留差异的报告 | 在修（2026-11-14 派：查 Rust 每个模型请求的固定延迟） |
 | 轮次超时之后的收尾：基线超时后停止转发、客户端收到 `result_unknown`，但被中止的循环在后台继续收尾（hook 照跑、事件写进 `runs/registry.json`、会话记录照写、子代理按自己的期限结束）；Rust 超时时立刻关闭会话写入，这些都没有。16 个 `abort-timeout-*` 场景全部不一致 | loop, session, hooks | 矩阵文件第 4 节 | 中止语义审查（`specs/delivery/abort-matrix.md`） | 在修（2026-11-14 派；基线这一段依赖两个异步操作谁先完成，先两侧各量 20 次） |
 | `abort-model-stream`：Rust 读一个被中止过的会话的历史时，缺上一轮保留的流（两轮都复现，成因没查） | session, loop | 场景 `abort-model-stream` | 中止语义审查（`specs/delivery/abort-matrix.md`） | 在修（同上一个子代理） |
-| 配置热重载的子系统部分整块没有（G1）：服务运行中改了 `cron` / `alwaysOn` / `proxy` / `adapters` / `telemetry` 的配置（含界面改设置），基线重启对应子系统并打日志，Rust 静默不生效，要重启。`assembly/automation.rs` 的 `reload` 已写好但只有测试调用 | config, auto, channels | `native_process/assembly.rs:1998`；基线 `pilotdeck.ts:132-206`；无场景 | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 在修（2026-11-13 派） |
+| 配置里的 `proxy.url` 对 Rust 的模型、hook 等请求不生效：这些请求只读环境变量里的代理（`ProxyConfig::from_settings(None)`），启动时配置里写的代理也没用上；基线启动时与热重载时都会安装全局代理并打 `[proxy] Global fetch proxy → URL (noProxy: …)` / `[proxy] Global fetch proxy removed` | model, config | 无场景 | 配置热重载的报告 | 待派（要一个进程级、可替换的代理状态；启动与热重载两条入口一起做） |
+| 渠道的配置热重载没接：Rust 的 `NativeChannels::reload` 只管 feishu 与 weixin，没有订阅配置变化；基线重载后打 `[pilotdeck] Adapter hot-reload complete: …`（只有 `adapters.` 开头的子路径触发，整段新增不触发）。还没量 | channels, config | 基线 `ChannelAdapterBundle.ts:96` | 配置热重载的报告 | 待派（与「渠道配齐凭据时拒绝启动」的取舍一起，等人定之后做） |
 | `request_user_form` 遇到带 Draft 2020-12 声明的表单 schema 时工具报 Rust 自造的「not supported by this gateway」（G3）；模型写 schema 时常带这一行 | tools | `form_dialog.rs:160-164` | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 待派（先实测基线对这类 schema 的处理） |
 
 ## 3 边角
@@ -40,6 +41,7 @@
 | 请求转储在带 `extraBody` 或 Google 协议时，Rust 转储的是实际发出的请求体，与基线不同；无场景 | model | `runtime/model/http.rs` | 任务预算与中止差异 | 待派 |
 | sidecar 收到「请求方取消」恰好落在 factory 前或准备阶段的毫秒级窗口时：Rust 给干净的中止结果，基线 TS sidecar 给缺结果的 `cancelled` 终止帧（只在显式外部部署下可见） | modules | `pilotdeck-transport/src/server.rs`、`default_factory.rs` | 任务预算与中止差异 | 记为已知 |
 | 审阅第 3 级修复没做完的：子代理场景的用量正则没有加位置限定（只认字段名）；Google 协议分支的重试日志行没有对拍覆盖 | agents, model | `c6a53a052` 的报告 | 审阅 | 待派 |
+| 没有场景的热重载边角：停机第一步停掉 cron 之后再来一次重载（Rust 选择跳过）；服务运行中把配置改成非法内容——基线这时半停机（记忆维护里 `loadPilotConfig` 抛的异常没人接，cron 与 always-on 被撤下、之后每轮报 `INVALID_SDK_SESSION_CONFIG`、客户端断开后以 1 退出，疑似基线 bug），Rust 的表现没量 | config, auto | 配置热重载的报告 | 配置热重载的报告 | 待派（先量 Rust；基线那条核实后登记） |
 | 直接对 sidecar 说原始协议时的差异（基线自比 5/5 稳定，对 Rust 稳定差 28 处）：应答的 messageId 前缀不同（基线 `parse-` / `validation-` / `hello-` / `cancel-` / `status-` / `module-call-` 加随机串，Rust 是 `error-` / `response-<连接代>-<序号>`）；status 与 module_call 应答里 `requestId` 和 `ok` 的键序相反；客户端发半行后半关闭时基线抛未处理异常、不回，Rust 回 `INVALID_JSON`（疑似基线 bug） | modules | 尺子第二批的报告（场景 `sidecar-raw-protocol`） | 待派（前两处照基线改；第三处先核实再登记） |
 | 中止矩阵里没有场景的格子：上下文准备中、续写 / 恢复间隙（没有可观察的触发帧）；web 工具（采集器没有慢速本机端点）；后台子代理；工具调用参数传到一半。检查点之间的其余段落没有逐段审查 | loop, tools, agents | 矩阵文件 | 中止语义审查（`specs/delivery/abort-matrix.md`） | 记为已知 |
 | `sdkSessionConfig` 的三种合法写法被拒（G2）：`plugins`、基线会忽略的未知键、同时给 `skills` 列表和 `agents`；请求带基线没有的 `sdkConfig` 字段、畸形的 `uploadedAttachments` 引用、method 名含孤立代理项时回 Rust 自造的拒绝（G11） | config, loop, session | `sdk_config.rs:1365-1391` | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 待派 |

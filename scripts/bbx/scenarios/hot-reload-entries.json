@@ -184,5 +184,21 @@
     }
    ]
   }
+ ],
+ "accepted": [
+  {
+   "id": "config-watch-survives-rewrite",
+   "why": "基线 bug（已在 settings-update 场景登记的同一条）：update_settings 用改名的方式原子替换配置文件，此后基线的文件监视还盯着旧文件，之后手改配置不再被看到，要等 reload_config 才生效；Rust 的配置监视按路径轮询，立刻看到手改并重启 cron。从手改那一步起两侧走向不同：Rust 多一次重载（日志行、cron 任务的创建时机与编号、其后的帧、这个会话的记录、标题请求）。放过的范围因此较宽；监视行为若改回与基线一样，这些路径不再有差异，比较器会把没命中的登记报为过期",
+   "paths": [
+    "^\\$\\.steps\\[0\\]\\.serve\\.",
+    "^\\$\\.steps\\[0\\]\\.then\\[0\\]\\.hello\\.interactionBinding\\.connectionId$",
+    "^\\$\\.steps\\[0\\]\\.then\\[[467]\\]\\.frames",
+    "^\\$\\.tree\\..*/chats/w-u1\\.jsonl\\.",
+    "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.",
+    "^\\$\\.tree\\./home/\\.pilotdeck/cron/projects/[^/]+/tasks\\.json\\.json\\.tasks\\[\\d+\\]\\.",
+    "^\\$\\.provider\\.title",
+    "^\\$\\.provider\\.<key order>$"
+   ]
+  }
  ]
 }
