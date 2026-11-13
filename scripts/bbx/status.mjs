@@ -179,7 +179,7 @@ function walkRs(dir, acc = []) {
   return acc;
 }
 const rsFiles = walkRs(P.src);
-const PLACEHOLDERS = { 'unimplemented!': /\bunimplemented!\s*\(/, 'todo!': /\btodo!\s*\(/, NOT_IMPLEMENTED: /NOT_IMPLEMENTED/ };
+const PLACEHOLDERS = { 'unimplemented!': /\bunimplemented!\s*\(/, 'todo!': /\btodo!\s*\(/, NOT_IMPLEMENTED: /(?<!StatusCode::)NOT_IMPLEMENTED/ };
 const PROXY = /\b(?:var|var_os)\(\s*"PILOTDECK_(?:PROXY_UPSTREAM|PROXY_LISTEN|GATEWAY_MODE)"|dist\/src\/cli\/pilotdeck\.js|\bstruct\s+Proxy\b/;
 const placeholderHits = Object.fromEntries(Object.keys(PLACEHOLDERS).map((k) => [k, []]));
 const proxyHits = [];
@@ -264,7 +264,7 @@ p('### 第 1 条：不是 SAME 的场景', '');
 if (!nonSame.length) p('（无）', '');
 else { p('| 场景 | 结论 | 归类 | 子能力 |', '|---|---|---|---|'); for (const s of nonSame) p(`| \`${s.name}\` | ${s.verdict} | ${tagOf(s)} | ${s.caps.map((c) => `\`${c}\``).join(' ') || '归属不了'} |`); p(''); }
 p('### 第 5 条：占位的逐处位置', '');
-p('判据：`src/` 下的 `.rs`，跳过 `target`、`tests`、`benches`、`examples`、`fixtures` 目录和 `tests.rs`、`*_tests.rs`、`test_*.rs` 一类文件名，跳过整行注释；文件内的 `#[cfg(test)]` 模块没有排除。', '');
+p('判据：`src/` 下的 `.rs`，跳过 `target`、`tests`、`benches`、`examples`、`fixtures` 目录和 `tests.rs`、`*_tests.rs`、`test_*.rs` 一类文件名，跳过整行注释；HTTP 状态码 `StatusCode::NOT_IMPLEMENTED`（501）不算；文件内的 `#[cfg(test)]` 模块没有排除。', '');
 if (!phCount) p('（无）', '');
 else for (const [k, hits] of Object.entries(placeholderHits)) for (const h of hits) p(`- \`${k}\`：\`${h}\``);
 p('', '### 第 6 条：透明代理的判据', '');
