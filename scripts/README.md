@@ -21,7 +21,6 @@
 | `gateway-coverage/` | `specs/gateway-coverage/coverage-manifest.json` 登记的账本校验器 |
 | `product-coverage/` | `specs/product-coverage/README.md` 使用的入口枚举与检查工具 |
 | `retirement-outcome-parity/` | `specs/gateway-parity/diffs/A8.6-RETIREMENT-OUTCOME-PARITY-001*.md` 引用的判据实现与复算命令 |
-| `native-witness/` | Linux strace 采集器（随相关测试一起待删） |
 | `smoke/` | 真实 provider 冒烟（`real_provider.py`）与 edgeclaw 冒烟；配对测试 `test-smoke-real-provider.py` |
 | `cargo-slots.sh` | `smoke/real_provider.py` 开编译前调用它查 cargo 名额 |
 | `test-gateway-ledger.py` | 差异账本相关回归 |
