@@ -1362,7 +1362,14 @@ where
                         text.close(code, "frame too large");
                         break;
                     }
-                    Err(error) => return Err(std::io::Error::other(format!("invalid WS frame: {error:?}")).into()),
+                    // TS throws inside its data handler here (unmasked client
+                    // frame, websocket.ts:133-135), which takes the whole
+                    // process down — a registered baseline bug we do not
+                    // copy. RFC 6455 §7.4.1: close this peer with 1002.
+                    Err(frame::DecodeError::Unmasked) => {
+                        text.close(1002, "");
+                        break 'read;
+                    }
                 };
                 match acceptor::action(&frame) {
                     acceptor::Action::Text => {
