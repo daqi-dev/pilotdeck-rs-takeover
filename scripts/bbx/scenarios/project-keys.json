@@ -273,7 +273,23 @@
         "\\.projections\\.agent-transcript\\.metadata\\.state\\.(title|tag)$",
         "\\.fileSize$",
         "\\.jsonl(\\.projections\\.json)?\\.raw\\.skeletons\\."
+      ],
+      "assertions": [
+        "positive-project-keys"
       ]
+    }
+  ],
+  "assertions": [
+    {
+      "id": "positive-project-keys",
+      "sides": [
+        "rust"
+      ],
+      "path": "/steps",
+      "acceptedPositive": {
+        "scene": "project-keys",
+        "id": "rename-record-chain"
+      }
     }
   ]
 }

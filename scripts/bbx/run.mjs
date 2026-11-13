@@ -20,6 +20,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import { inputIdentity, scenarioIdentity, assertionResults } from './evidence.mjs';
+import { externalConfigRewrite, configWatchStepResult } from './fixtures/config-watch-input.mjs';
+import { componentSupplyEnvironment, componentSupplyIdentity } from './component-supply.mjs';
 import { matchesProviderRule, writeSeedFile } from './mock-support.mjs';
 import { observePersistedRunEvent, trackProviderResponse, validateTrigger } from './serve-persisted-event.mjs';
 
@@ -57,7 +59,7 @@ const tmp = path.join(ROOT, 'tmp');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const subst = (text) => text
   .replaceAll('{ROOT}', ROOT).replaceAll('{HOME}', home).replaceAll('{PILOT_HOME}', pilotHome)
-  .replaceAll('{PROJECT}', project).replaceAll('{MOCK}', `http://127.0.0.1:${MOCK_PORT}`)
+  .replaceAll('{PROJECT}', project).replaceAll('{PROJECT_ENCODED}', encodeURIComponent(project)).replaceAll('{MOCK}', `http://127.0.0.1:${MOCK_PORT}`)
   .replaceAll('{PDF_TOOL}', process.env.BBX_PDF_TOOL || '/missing/bbx-pilotdeck-pdf')
   .replaceAll('{IMAGE_TOOL}', process.env.BBX_IMAGE_TOOL || '/missing/bbx-pilotdeck-image')
   .replaceAll('{GATEWAY}', `http://127.0.0.1:${GATEWAY_PORT}`).replaceAll('{TOKEN}', TOKEN);
@@ -293,7 +295,18 @@ const env = {
   // 内置插件目录：基线固定用自己安装位置下的这一处（loadBuiltinPlugins.ts），不认这个变量；
   // Rust 没有随二进制带插件，靠它指到基线那份。
   PILOTDECK_BUNDLED_PLUGINS_DIR: path.join(BASELINE, 'dist/src/extension/plugins/builtin'),
+  ...componentSupplyEnvironment(process.env),
   ...substDeep(scenario.env ?? {}),
+};
+// A scenario may explicitly disable one of these common supply bindings.
+for (const variable of ['PILOTDECK_RIPGREP_PATH', 'PILOTDECK_PDF_TOOL', 'PILOTDECK_IMAGE_TOOL']) {
+  if (env[variable] === null) delete env[variable];
+}
+// Side-local deployment evidence, outside the shared inputIdentity contract.
+// Record the selected variables AFTER scenario/step overrides at each spawn.
+const recordComponentSupply = (kind, selected, stepIndex = null) => {
+  (evidence.componentSupply ??= []).push({ kind, stepIndex, paths: componentSupplyIdentity(selected) });
+  return selected;
 };
 const SIDES = {
   ts: {
@@ -306,12 +319,12 @@ const SIDES = {
   },
 };
 // volatile 原样带进产物：diff.mjs 从产物里读它（两侧相同，不会成为差异）。
-const out = { scenario: scenario.name, side, volatile: scenario.volatile ?? [], accepted: scenario.accepted ?? [], steps: [], notifications: [], provider: providerRequests };
+const out = { scenario: scenario.name, side, volatile: scenario.volatile ?? [], accepted: scenario.accepted ?? [], ...(scenario.volatilePolicies ? { volatilePolicies: scenario.volatilePolicies } : {}), steps: [], notifications: [], provider: providerRequests };
 let server; let serverLog = '';
 const wantServer = scenario.server !== false;
 if (wantServer) {
   const [cmd, ...args] = SIDES[side].server;
-  server = spawn(cmd, args, { cwd: project, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+  server = spawn(cmd, args, { cwd: project, env: recordComponentSupply('server', env), stdio: ['ignore', 'pipe', 'pipe'], detached: true });
   children.push(server);
   server.stdout.on('data', (d) => { serverLog += d; });
   server.stderr.on('data', (d) => { serverLog += d; });
@@ -355,7 +368,30 @@ const stepEnv = (step) => {
   return merged;
 };
 let requestSeq = 0;
-const runStep = async (step) => {
+const nextRequestId = (internalId) => {
+  if (internalId !== undefined) {
+    if (!/^bbx-config-watch:step27:snapshot[1-9][0-9]*$/.test(internalId)) throw Error('invalid internal config-watch request ID');
+    return internalId;
+  }
+  return `q${++requestSeq}`;
+};
+const runStep = async (step, internalId) => {
+  if (internalId !== undefined && (scenario.name !== 'settings-update' || out.steps.length !== 27 || step.ws !== 'resolve_settings' || JSON.stringify(step.params) !== '{}' || Object.keys(step).length !== 2)) throw Error('internal ID is reserved for the exact read-only config-watch probe');
+  if (step.externalConfigRewrite) {
+    let snapshotSeq = 0;
+    const { receipt, ...result } = await externalConfigRewrite({
+      scene: scenario.name, input: step.externalConfigRewrite, pilotHome, ownedRoot: ROOT,
+      resolveSettings: async () => {
+        const request = { ws: 'resolve_settings', params: {} };
+        return { step: request, ...await runStep(request, `bbx-config-watch:step${out.steps.length}:snapshot${++snapshotSeq}`) };
+      },
+      readFrames: () => allFrames, timeoutMs: STEP_TIMEOUT_MS,
+    });
+    const receipts = evidence.configWatchInput ??= [];
+    const receiptIndex = receipts.length;
+    receipts.push({ ...receipt, stepIndex: out.steps.length });
+    return configWatchStepResult(side, result, receipt, receiptIndex);
+  }
   if (step.sleep) { await sleep(step.sleep); return { slept: true }; }
   if (step.disconnect) {
     if (!ws || ws.readyState > 1) return { disconnected: false };
@@ -368,7 +404,7 @@ const runStep = async (step) => {
   if (step.ws) {
     let hello; if (!ws) hello = await connect();
     if (hello?.connectFailed) return { hello };
-    const id = `q${++requestSeq}`;
+    const id = nextRequestId(internalId);
     ws.send(JSON.stringify({ type: 'request', id, method: step.ws, params: substDeep(step.params ?? {}) }));
     // answer：收集本步骤的帧期间，遇到匹配的事件就按模板发一个请求（见 README）。
     // 每条规则最多应答 count 次（缺省不限）；一个事件只由第一条还有余量的匹配规则应答。
@@ -421,7 +457,7 @@ const runStep = async (step) => {
     if (condition !== undefined) { validateTrigger(condition); if (step.until !== undefined) throw Error('serve cannot combine until and untilPersistedRunEvent'); }
     const [cmd, ...prefix] = SIDES[side].cli;
     const child = spawn(cmd, [...prefix, ...substDeep(step.serve)], {
-      cwd: step.cwd ? subst(step.cwd) : project, env: stepEnv(step), stdio: ['ignore', 'pipe', 'pipe'], detached: true,
+      cwd: step.cwd ? subst(step.cwd) : project, env: recordComponentSupply('serve', stepEnv(step), out.steps.length), stdio: ['ignore', 'pipe', 'pipe'], detached: true,
     });
     children.push(child);
     let stdout = '', stderr = '';
@@ -464,7 +500,7 @@ const runStep = async (step) => {
   }
   if (step.cli) {
     const [cmd, ...prefix] = SIDES[side].cli;
-    const child = spawn(cmd, [...prefix, ...substDeep(step.cli)], { cwd: step.cwd ? subst(step.cwd) : project, env: stepEnv(step), stdio: ['pipe', 'pipe', 'pipe'], detached: true });
+    const child = spawn(cmd, [...prefix, ...substDeep(step.cli)], { cwd: step.cwd ? subst(step.cwd) : project, env: recordComponentSupply('cli', stepEnv(step), out.steps.length), stdio: ['pipe', 'pipe', 'pipe'], detached: true });
     children.push(child);
     let stdout = '', stderr = '';
     child.stdout.on('data', (d) => { stdout += d; }); child.stderr.on('data', (d) => { stderr += d; });
@@ -557,15 +593,28 @@ const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) =
   }
   // 其它非 UTF-8 文件：比长度和内容的 sha256。
   if (Buffer.from(text, 'utf8').compare(bytes) !== 0) return [[p, { mode, binaryBytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }]];
-  if (p.endsWith('.jsonl')) { try { return [[p, { mode, jsonl: text.split('\n').filter(Boolean).map((l) => JSON.parse(l)), raw: rawPrint(text) }]]; } catch {} }
+  if (p.endsWith('.jsonl')) {
+    try {
+      const jsonl = text.split('\n').filter(Boolean).map((l) => JSON.parse(l));
+      // Preserve a witness from the actual file bytes. A value policy may
+      // reconstruct canonical JSONL only when both this hash and length agree;
+      // parsing alone cannot prove whitespace, escapes or number spellings.
+      evidence.persistedFiles ??= {};
+      evidence.persistedFiles[p.slice(ROOT.length)] = {
+        byteLength: bytes.length,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+      };
+      return [[p, { mode, jsonl, raw: rawPrint(text) }]];
+    } catch {}
+  }
   if (p.endsWith('.json')) { try { return [[p, { mode, json: JSON.parse(text), raw: rawPrint(text) }]]; } catch {} }
   return [[p, { mode, text }]];
 });
 out.tree = Object.fromEntries([...walk(home), ...walk(project)].map(([p, v]) => [p.slice(ROOT.length), v]));
 fs.mkdirSync(path.dirname(path.resolve(outPath)), { recursive: true });
+out.evidence = evidence;
 evidence.assertions = assertionResults(scenario.assertions, out, side);
 for (const assertion of evidence.assertions) if (!assertion.skipped && !assertion.passed) out.failures.push({ at: `assertions.${assertion.id}`, kind: 'assertion', expected: false });
-out.evidence = evidence;
 fs.writeFileSync(outPath, JSON.stringify(out, null, 1) + '\n');
 console.error(`bbx: ${side} ${scenario.name}: ${out.startFailure ? 'START FAILED' : `${out.steps.length} steps`} -> ${outPath}`);
 process.exit(0);

@@ -1,0 +1,154 @@
+{
+  "accepted": [{"id":"D1-CLI-SHUTDOWN-001","why":"固定七步CLI任务/EOF完成后的关闭挂起修复及129→130尾metadata checkpoint","policy":"cliShutdownCompleted","assertions":["cli-shutdown-completed-positive"]}],
+  "assertions": [{"id":"cli-shutdown-completed-positive","path":"/steps","cliShutdownCompleted":true}],
+  "name": "cli-survey-offline-nontui",
+  "about": "由 cli-survey-offline 逐步收敛本期后端/非TUI独有输入；原混合场景未运行且不改。保留原环境、配置、stdin、timeout、expectTimeout和合法步骤顺序；不扩展原行为。原步骤0-based索引：0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23。",
+  "server": false,
+  "steps": [
+    {
+      "cli": [],
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "help"
+      ]
+    },
+    {
+      "cli": [
+        "--help"
+      ]
+    },
+    {
+      "cli": [
+        "-h"
+      ]
+    },
+    {
+      "cli": [
+        "nonsense"
+      ],
+      "expectTimeout": true
+    },
+    {
+      "cli": [
+        "sessions"
+      ]
+    },
+    {
+      "cli": [
+        "sessions",
+        "list"
+      ],
+      "timeout": 15000
+    },
+    {
+      "cli": [
+        "sessions",
+        "messages"
+      ],
+      "timeout": 15000
+    },
+    {
+      "cli": [
+        "settings"
+      ],
+      "timeout": 15000
+    },
+    {
+      "cli": [
+        "run"
+      ],
+      "timeout": 15000
+    },
+    {
+      "cli": [
+        "run",
+        "hello"
+      ],
+      "timeout": 20000
+    },
+    {
+      "cli": [
+        "resume"
+      ],
+      "timeout": 15000
+    },
+    {
+      "cli": [
+        "gateway"
+      ]
+    },
+    {
+      "cli": [
+        "gateway",
+        "nonsense"
+      ]
+    },
+    {
+      "cli": [
+        "cron"
+      ],
+      "timeout": 15000
+    },
+    {
+      "cli": [
+        "cron",
+        "list"
+      ],
+      "timeout": 15000
+    },
+    {
+      "cli": [
+        "cron",
+        "nonsense"
+      ],
+      "timeout": 15000
+    },
+    {
+      "cli": [
+        "skills"
+      ]
+    },
+    {
+      "cli": [
+        "skills",
+        "nonsense"
+      ]
+    },
+    {
+      "cli": [
+        "skills",
+        "migrate",
+        "--help"
+      ]
+    },
+    {
+      "cli": [
+        "skills",
+        "migrate",
+        "--dry-run"
+      ],
+      "timeout": 15000
+    },
+    {
+      "cli": [
+        "chat"
+      ]
+    },
+    {
+      "cli": [
+        "chat",
+        "search"
+      ]
+    },
+    {
+      "cli": [
+        "chat",
+        "search",
+        "hello"
+      ],
+      "timeout": 15000
+    }
+  ]
+}

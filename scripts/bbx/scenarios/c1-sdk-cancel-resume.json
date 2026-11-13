@@ -169,6 +169,64 @@
       "id": "recovery-model-request",
       "path": "/provider/recovered/0/body/model",
       "equals": "deterministic"
+    },
+    {
+      "id": "signal-aborted-footer",
+      "sides": [
+        "rust"
+      ],
+      "path": "/steps/1/serve/stdout",
+      "matches": "\\n\\{\"status\":\"aborted\",\"reason\":\"CLI interrupted\"\\}\\n$"
+    },
+    {
+      "id": "signal-empty-stderr",
+      "sides": [
+        "rust"
+      ],
+      "path": "/steps/1/serve/stderr",
+      "equals": ""
+    }
+  ],
+  "accepted": [
+    {
+      "id": "D1-SDK-SIGNAL-ABORT-ORDER-001",
+      "policy": "sdkSignalAbortOrder",
+      "why": "Single real SIGINT/current-run abort ordering bug; raw durable recovery and independently reverified same-binary eight-wire evidence are both required. TS self instability remains DIFF.",
+      "assertions": [
+        "initial-completed",
+        "partial-reached",
+        "signal-handled",
+        "cancel-exit",
+        "recovery-completed",
+        "recovery-real-output",
+        "recovery-status",
+        "history-read",
+        "history-after-recovery",
+        "cancel-model-request",
+        "recovery-model-request",
+        "signal-aborted-footer",
+        "signal-empty-stderr"
+      ]
+    },
+    {
+      "id": "D1-SDK-SIGNAL-TERMINAL-OBSERVATION-001",
+      "policy": "sdkSignalTerminalObservation",
+      "why": "Explicitly approved preservation of Rust complete terminal: only TS missing the sole result seq7 with exact six-event prefix, matching durable seq8, real recovery and same-binary strict eight-wire proof. TS self never accepted.",
+      "assertions": [
+        "initial-completed",
+        "partial-reached",
+        "signal-handled",
+        "cancel-exit",
+        "recovery-completed",
+        "recovery-real-output",
+        "recovery-status",
+        "history-read",
+        "history-after-recovery",
+        "cancel-model-request",
+        "recovery-model-request",
+        "signal-aborted-footer",
+        "signal-empty-stderr"
+      ]
     }
   ]
 }

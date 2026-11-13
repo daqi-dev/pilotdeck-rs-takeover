@@ -1,0 +1,14 @@
+# Original53 父关闭双类精确准入及 ledger 闭包重登记
+
+用户已明确批准，执行登记仍由唯一managed writer完成。本文件记录已批准的精确变更；FROZEN 哈希由唯一受控 writer 在本候选固定后生成并独立核验。原S52、全部旧FAIL和旧捕获不变；未来S53拒绝，独立双池双锁，53/k5及cancel原策略不变。批准和范围详见六字段差异条目 C-PARENTCLOSE-ADMISSION-001。
+
+Calibration-Evidence: _tmp/20261113-parentclose-candidate/candidate-manifest.json
+Independent-Reviews: S1: _tmp/20261113-parentclose-independent-recheck/review.md; SDK: _tmp/20261113-parentclose-independent-recheck/sdk-review/report.md
+Approved-By: 用户，2026-11-13
+Approval-Basis: state/decisions-20261113.md:95 用户原话“批准精确父关闭准入及冻结（推荐）”；manifest f30fabbfcf7b15479641af7dbcee749aabd9a424ba7a6ed67617191799c19409
+Change: 6c27c7cf2c5614c6c4a81f0d5f5fc9ae0ff3d0839860ae0f51bb5d13294fab46 62db71fb16c747d689f6fb1292a31dd38dc1c9765c139cfa7bf4e0521fe2f7bd scripts/parity/score.py
+Change: - c322453029a524466a8e829da1fa8127a34c1598ad7c232e5d4720c5ba163a23 scripts/parity/parentclose_policy.py
+Change: - 4a565d3a4a2686c2db1bd14b6befa7e119e9f1c19a3f930608ba30a08225bbd7 scripts/parity/parentclose_oracle.py
+Change: 781b0e6d78ca11801e50954059bc6038cf75ea0e66229622eccd6bcabfe500a4 8674274c466c0dd3b693c2787cae5baaa82a1267978d85ecdaba2f51822ac369 scripts/parity/check_ruler.py
+Change: 99459327a27982d3bd1eba6881c32e1027b0725e4e659f325af8981e024c2e3f b50c3929937ea874514855df9cbd580441edda83c6afd08a47575aec84bfc169 scripts/parity/controls/multimodal.py
+Change: 4d3d7683c48e14ca6a8567ad1482ec5e19da9d9790b62526515a040f9e9cb425 8ad75a71dd2cc28d87e16779367b703025f592945852af073b993922a66128be scripts/parity/controls/run_all.py

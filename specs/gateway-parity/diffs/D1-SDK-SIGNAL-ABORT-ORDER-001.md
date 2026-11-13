@@ -34,8 +34,16 @@ RPC 错误、无对应响应、malformed、连接中断、原 deadline 超时不
 
 封存 4525 CLI `e408a2bf557d106e0043134ecf2fe7bca0b3602535451a2ff28b67eb8ce6d06b` 首次三门均 Gateway client closed、缺 canonical JSON，证据 `_tmp/20261113-sdk-cancel-order-diagnostic/rust-4525-first/` 保留。修复后实际执行结果与固定 binary 身份由 `docs/backend-delivery/D1-sdk-signal-abort-order.md` 追加；当前待验证。
 
-正式 `c1-sdk-cancel-resume` 仍须真实 provider partial、持久事件、真实 signal→对应 abort、canonical CLI 输出/exit1，随后同 durable session resume 成功、历史中保留被取消 partial且无重复副作用。严格 accepted-bug 比较策略须根审核后单独落实，不能先让比较器宽容。
+正式 `c1-sdk-cancel-resume` 的artifact层须真实provider partial、原始持久registry重放、SIGINT/PID/时间与同session/project/request/run证据、canonical CLI输出/exit1，随后同durable session resume成功、历史中保留被取消partial且无重复provider请求。该artifact没有abortRPC原帧，不声称此层直接观察请求/响应或socket close；这部分由同binary SHA的独立8wire严格PASS原始证据及收据证明，两个证据层缺一不可。私有 `scripts/bbx/sdk-signal-policy.mjs` 仅在两层成功时逐值映射具名serve stdout/stderr，其前stream事件须完全一致，TS self仍保留DIFF；公共比较接线须根审核后单独落实，不能先让比较器宽容。
 
 ## 批准记录
 
 2026-11-13 用户本轮 `docs/plan/backend-completion.md` 明确允许修复崩溃、挂起、丢数据、安全问题；当前会话根协调确认「SDK race诊断已充分支持已授权崩溃bug范围」，并明确授权本条最小 signal/current-run/同 abort Promise 的修复、独立差异账本与严格正负控制。批准不代替编译、行为测试或正式恢复验收；未通过项仍记待验证。
+
+### 2026-11-13 公共接线与装置验证追加
+
+本条原部分不回写。新增 `scripts/bbx/sdk-signal-policy.mjs` 只对具名第1 serve逐值映射stdout/stderr；公共diff/evidence接线通过两绝对环境路径加载原wire目录/receipt，核固定实跑driver/verifier哈希、重跑严格8raw验证、绑定实际formal binary SHA，inputIdentity保存receipt及34个raw文件hash并在使用时复核。缺失、篡改、手写PASS无raw、错误binary/source均INVALID，不能当普通DIFF绕过。固定具名scene加accepted声明及Rust-only canonical footer/empty-stderr已执行断言，原signal/timeout/等待/turn不改；TSself始终不接受，原DIFF保留。
+
+第一轮公共单测中synthetic数据缺model正断言、随后旧check临时copy依赖表缺新policy造成的失败日志保留；分别修测试数据和相关测试依赖清单后，policy40/public12/原evidence-check39合计91/91通过。真实macOS同binary八wire原始证据重验与synthetic formal克隆的全链验证得到：正向SAME且打印仅两条ACCEPTED；缺partial/缺receipt INVALID；无关tree仍DIFF；原TS1/TS2 self仍DIFF。这不是实际Rust正式恢复验收，Linux实际Gateway/provider/持久resume仍待E0。
+
+后续收口追加：具名scene实际声明与两个Rust-only断言已落地，裸diff校验当前scene声明、两侧已执行断言；双方删除策略也INVALID，TSself无新声明仍原DIFF。增加真实受信driver/verifier字节篡改、receipt改字节、缺失executed assertions等反例后，四组公共/私有/原回归合计97/97通过。最终全链装置探针使用真实mac八wire原件并执行断言的synthetic formal克隆，正向exit0、缺partial/receipt INVALID2、无关tree DIFF1、原TSself DIFF1；不作为实际Linux正式恢复结果。

@@ -132,6 +132,68 @@ node scripts/bbx/selftest.mjs
 
 T1 八个固定写后诊断场景另有 `syntaxDiagnostics` 正向谓词，验证真实工具结果、error/精确夹具位置/非空诊断、好文件无诊断及坏好文件字节。对应 `accepted.policy: "syntaxDiagnostics"` 必须绑定完全相同 config 的正向断言，且不能携带路径正则。`syntax-policy.mjs` 逐值核验后只接受已验证诊断串及其重算的 UTF-8 长度、JSON 请求长度、o200k token 和 calibration 派生值；具体边界见 `specs/gateway-parity/diffs/T1-SYNTAX-NATIVE-001-R1.md`。比较报告仍逐项打印 raw a/b 与接受原因，未接受的字段照常比较。该策略不改写旧运行证据，不是通用语法诊断忽略开关。
 
+`backend-core-channel-recovery` 使用显式 `volatilePolicies: [{"policy":"coreChannelPollAfter"}]`，只处理 TS 双轮已证实波动的 BlueBubbles 启动轮询 `after` 秒值。独立合同核验固定两阶段、请求数量及次序、URL 唯一查询字段、实际 durable input 与时间范围；两侧 URL 仅替换该十进制值后仍须完全相同，其他 URL 字节、headers、body 和请求序号继续比较。比较器逐条打印原值和理由，身份验证同时要求声明与原场景完全相同并执行合同，不能仅添加路径豁免。旧的七处 DIFF 和 verifier 字节错误仍保留；新规则需要固定候选重新运行，不能改写旧运行结果。
+
+`agent03-sdk-fork` 的 `sdkAgent03DerivedValues` 只处理已取证的子代理随机 UUID/耗时报告引起的 token 与文件大小派生值。单侧合同使用固定哈希的 o200k 实现重算完整 canonical 请求，并逐条验证 calibration、对外事件和持久化投影；双侧只接受由验证后输入推导出的精确数值路径。JSONL 的采集见证位于 `evidence.persistedFiles`，直接记录实际文件字节的长度和 SHA-256；canonical 重构只有两者均匹配才可用于文件大小正判。缺见证、业务内容变化、无法重算或投影错配都拒绝，不忽略任意 token/byte 字段。原 0e 的 DIFF90 与合成见证诊断保持独立，正式规则需新采集验证。
+
 依赖身份另记录实际加载的 Sharp JS 文件/addon/libvips 共享库、MuPDF 入口/loader/WASM、诊断策略实际使用的 js-tiktoken lite 入口和 o200k 编码表，并记录包 manifest 与软链接真实路径。Sharp 探测使用隔离 HOME 的新子进程，避免 require 缓存藏住替换。`BBX_IMAGE_TOOL` / `{IMAGE_TOOL}` 指定原生图像组件；身份包含组件、相邻发行 libvips 库，以及 Linux 动态链接器实际解析的 libvips 路径和哈希。缺失文件记录 null，不以固定 lockfile 代替已安装依赖的实际哈希；构建或替换这些依赖期间不得把旧 run 当作有效覆盖证据。
 
 二进制输入夹具使用严格单键对象 `{"$binaryBase64":"..."}`，仅接受规范 base64，写入解码后的原始字节；多键对象仍按普通 JSON 写入。图像正向断言可用 `imageAttachments: {count, mime, maxBytes, bytes?, sha256?}` 检查所选 provider messages 下的全部 `image_url`：要求精确数量、MIME、规范 data URL、非空内容、预算上限，以及可选的精确长度和 SHA-256。`count: 0` 用于坏图像确实未附加的证明，所选路径仍必须存在。该谓词不改变比较输出，也不忽略图像 payload；缺失执行记录、错误 MIME、超出预算和 payload 被改写均失败。
+
+### SDK 真实信号取消的具名 bug 策略
+
+`c1-sdk-cancel-resume` 仅在同 binary 的完整八路原始 wire 证据重验成功后，使用 `sdkSignalAbortOrder` 对第1 serve 的 stdout footer/stderr 逐值接受已授权差异。运行前必须设置绝对 `BBX_SDK_SIGNAL_WIRE_DIR` 和 `BBX_SDK_SIGNAL_WIRE_RECEIPT`；`inputIdentity` 保存原始文件及收据哈希，缺证据为 INVALID。TS 自比仍保留原 DIFF，其他字段不忽略。完整命令、两层证据边界与严格负控见 [SDK signal 策略](sdk-signal-policy.md)。
+
+### 已批准的后台 observer 生命周期窗口与 memory 两个有限子组
+
+2026-11-13 用户明确批准三组精确边界：observer started/completion 的两个已验证窗口、memory 四处请求字节派生值、memory 六处采集 headers 对象键序。它们不是新校准的随机 volatile，也不代表全部 SDK 子代理差异已接受。规则逐叶打印 `COMPATIBILITY-VALUE`、实际路径、两侧原值及理由；原 capture 不改。
+
+`observer-lifecycle-policy.mjs` 仅接受固定 SHA 的 `agent03-sdk-fork` 和 memory lifecycle 原场景。先核同 worker/reviewer、完整四次 assistant 活动摘要/最终报告、实际 provider 参数、child/parent durable 链、projection、真实 WS/registry/history 及 run 内连续 seq。reviewer started 只能位于 agent tool_result 前，或紧随该 tool_result 与 step_completed 后，不能越过其他事件；completion 的 text/block/completed 必须完整且有序，属于首轮 W0 或同 session 紧接 W1 的真实 drain 窗口。固定源码的 session buffer 链与同 producer 的 durable/terminal/新 run/原始帧共同作证，不伪造隐藏 tap；没有同 exact TS 反向自比实证的限制仍保留。
+
+这项规则只配对已经证明的实体和实际路径，不排序或删除原事件数组。非目标值继续比较，不能把整个 array/record 标作已接受。若某个已验证跨窗口记录在普通逐下标报告里表现为整对象多出，比较器只在此具名合同内将它展开为 `.<type>`、对象键全集/次序、数组长度与每个叶值，再逐叶核对唯一实际 counterpart；打印 `LIFECYCLE-LEAF-EXPANSION`，未证明的未知字段、类型或叶仍报 DIFF。原整记录差异仍可从原件复算。已有标题 FLOAT_OVER 规则不扩大；仅六类强 UUID 实体用于目标证明，其他首次出现别名连锁仍保留。参见 `specs/gateway-parity/diffs/H1-OBSERVER-LIFECYCLE-WINDOWS-001.md`。
+
+`observer-memory-policy.mjs` 仅接受原 memory 具名场景的四个已验证长度/bytes 叶，以及 `memory-gate[0..2]`、`memory-selector[0..2]` 六个 headers 对象的键序叶。请求真实 body 的 UTF8 字节数、唯一 agent 报告 duration、headers 全部键值、请求身份与数量均须通过；不忽略 body、任意 header 或原始 wire。参见 `D1-SDK-MEMORY-DERIVED-001.md` 与 `D1-SDK-MEMORY-HEADER-ORDER-001.md`。fork 原 `sdkAgent03DerivedValues` 仍按原范围独立执行，memory trace/hash、其他数值、provider 请求键序和 model_selection 键序均未因此批准。
+
+`fixtures/observer-lifecycle-policy/paired-contract.json` 是明确删减无关大字段的合成结构测试数据，不是实际采集、构建来源或正式通过证明。正式实现还独立复用了原两场完整 capture 控制；旧 8a/ccc 的真实缺最后 assistant 摘要原件仍在专属摘要门被拒，不能用新生命周期规则遮住旧产品 bug。
+
+`observer-uuid-policy.mjs` 是同一完整 UUID 引用关系的归一实现修复，不是新增差异许可。仅上述两个固定场景在完整 lifecycle 验证后，配对八个真实实体：parent W0/W1、second session run、worker/reviewer、reviewer block，以及由 actual delta/block、run/timeline、durable assistant_message 和 terminal.finalMessage 共同证明的 parent 两轮最终 block。UUID 与实体双向唯一；当前 raw、normalized view 和实际 aliases 表的哈希、强锚位置和全引用次数在一次调用内绑定，不接受外部拼装的 proof。伪造表、字面 alias 欺骗、多对一或新 token 碰撞均 INVALID。
+
+这一步只在 normalized 副本中重标八个已证别名。未证明的编号不重新分配，所有数组位置、非 UUID 值和对象键插入顺序保持原样；未知 entry/operation 等继续差异。逐项打印 `UUID-ENTITY` 便于审查实际关系，不把新可见的 provider/context/history/存储指纹差异包进来。私有原型与旧正式263/214结果保留，正式冻结后另记新比较。
+
+比较器末尾使用 `process.exitCode` 自然排空 stdout/stderr pipe，保持0/1退出语义。大型逐叶报告的真实spawn+pipe控制要求超过128KiB且完整保留最后 `DIFF N`；它只证明报告收口，不替代任何产品、工具供给或实际副作用断言。旧缺末尾verdict或工具缺失证据不得据此回算通过。
+
+### 2026-11-13 已批准的 A/B/C 精确补充（公共候选）
+
+本节按 `state/decisions-20261113.md:59`（A）、`:71`（B）、`:83`（C）补充上述边界。批准不等于正式重判通过；旧 raw、首 FAIL、旧 DIFF 均保留，公共接线独审和新 harness 冻结后另记成绩。watch、parent、cron、Original53 和 memory tree 键序没有由此获得许可。
+
+`normalization.mjs` 只提取原 `diff.mjs` 的 normalizer/load/title/compare 逻辑，规则与对象/数组顺序不变；提取前后自测61/61，六份实际 raw 与边界样例的 views、aliases、比较结果逐项等价。正式策略可直接导入，不能动态 eval 比较器源码或接受 caller 拼装的 view/Map/passed 收据。
+
+A 组仅以下有限合同：
+
+- `observer-provenance.mjs`、`observer-supplement-policy.mjs` 内部绑定原两场的同 worker/reviewer、完整业务、canonical 请求、固定 tokenizer/calibration、WS/durable/registry/history/projection及真实producer。provider 只允许 parent-after/observer 相邻两项反序；context 只允许重算的八个数值叶和最终 usage三叶（含明确新增的 memory block支持）。两 run counters、两 history sequence、registry skeleton 必须完整成员、终态、producer及逐侧全部 byte/skeleton 来源联合成立。其他值继续比较。
+- `observer-id-links-policy.mjs` 补齐既有同 ID 关系的准确 producer/normalized-slot/projection，每个原叶须有唯一真实 counterpart。它不将159 UUID表全局重标，不对未知对象任意递归授予许可，也不排序tree。未获许可的 memory tree四键组顺序继续 DIFF。
+- `observer-memory-witness.mjs` 仅三L0精确formula和schema/唯一业务行、严格case/trace/step引用图与非目标payload、collector有限行序、12项原ISO规则，以及62parent全文/bytes/SHA/stat重建后输出七个精确路径。未采Math.random不被假称已逆算；其它hash/field/size不接受。
+- `duration-file-size-policy.mjs` 只 long-tool-chain step3/frame0、permissions step10/frame0 的唯一 stat；必须为实际成功 read_session_messages/s-gap，完整JSONL byte/SHA与该侧stat相同、其余capture原比较全相同，总差严格等枚举durationMs十进制位数贡献。同移step0、同改method/session仍拒。
+- AO完整prompt→1200UTF16残片规则仅有限增加 always-on-fire-execfail；仍使用完整run/accepted/provider/state/projection/anchor和无歧义prefix的原WeakMap descriptor，不将firstPrompt/lastPrompt整字段volatile。
+
+B 组 `feishu-stop-policy.mjs` 只非self的具名stop场景，内部重读sealed原文件并核源码/场景/原字节身份、完整receipt复制、exact旧WS关闭因果、全部budget/calibration/durable字节来源和完整普通差异。62因果路径与2固定SDK日志路径使用不同理由；固定SDK1.65.0的3组startup info和1组not.registered warn须各一次且原阶段顺序。Node SQLite仍仅使用旧warning规则。失败为INVALID，不以无Pong/timeout当dead，TSself不适用。
+
+C 组 `diagnostics-policy.mjs` 只处理具名诊断场景中的三个固定文件；TS self不应用该Rust差异合同，从raw内部重建views/完整all、固定source/fixture/真实诊断及所有UTF8/token/durable/rawPrint派生。完整具名合同不成立就INVALID；不接受外部counter/view/Map或所有诊断文本。
+
+正式输入身份新增记录 `normalization.mjs`、全部上述runtime策略和constants/contract JSON的SHA。ledger仅新增对应 `diffs/` 文件，不改aggregate/FROZEN。两侧原type/键全集/键序/数组长度和非目标内容始终由原比较器保留。
+
+真实原件控制通过显式测试清单提供，避免公共代码依赖开发机 `_tmp`：`BBX_OBSERVER_ACTUAL_MANIFEST` 指向 `{schema:1, observer:{memory:[TS1,TS2,Rust],fork:[TS1,TS2,Rust]}, tail:{场景:{"ts-1":路径,"ts-2":路径,"rust":路径}}, ao:[TS1,TS2,Rust], rawSha256:{路径:原SHA}}`。`BBX_BASELINE` 指定固定TS包，public tests核每份原件SHA后只在内存变异，不重写原件。不提供该清单时只运行明确注册的便携控制，不把缺失原件算作真实正例通过。Feishu原件测试另用 `FEISHU_STOP_ARTIFACT_ROOT`；各结果分母与实际模式须明确报告。
+
+### 两固定 memory TS 原件 self 的四兄弟键序补充
+
+用户单独批准后，`memory-tree-order-policy.mjs` 仅对已审两份 sealed TS 原件的 self 比较许可一个 `$.tree.<key order>` 叶。原件字节 SHA 和原 644 closure receipt SHA 在代码中固定；压缩 closure 在有界解压前核固定压缩 SHA，解压后再核字节 SHA，不能由 fixture manifest 或调用方见证替换。runtime 无开发机绝对 `_tmp` 依赖。完整生命周期见证重新执行；27 键中索引5–8必须是实际 worker/reviewer transcript 与其 projection 两个整组的两种已观察排列，其余23键名称及顺序完全不变，固定 raw SHA 同时保护全部内容和归属。只返回该精确键序叶，不排序或改写对象。pair、未来原件、其他树、额外排列均不适用；原公共644 self DIFF1及原输入保留。
+
+`fixtures/memory-tree-order/` 的压缩原件是已有真实采集的逐字副本，用于便携离线控制，不能冒新产品采集或未来输入许可。`node --test scripts/bbx/memory-tree-order-policy.test.mjs` 包含真实公共CLI self SAME、无self保持DIFF1，以及内容、键名、缺键、外scope、其他键序、归属、未观察排列、未来/Rust、交换原件、篡改固定见证拒绝控制。本次不修改 aggregate 或 FROZEN；登记见 `specs/parity/diffs/D1-MEMORY-SEALED-TREE-ORDER-001.md`。
+
+### 固定 settings watch 三原件的三个精确叶
+
+主协调依2026-11-14用户自主决策授权明确接受固定d677/644原件的三叶，见 `specs/gateway-parity/diffs/A7-CONFIG-WATCH-EXACT-CAPTURE-001.md` 与 `state/decisions-20261114.md` 对应决定。`config-watch-exact-policy.mjs` 仅原TS1→Rust pair，TS2为强制sealed见证：step25.version必须为number9/9/10；step27.observationExpired必须为TS=true/Rust不存在，observed必须TS=false/Rust=true。self、第三原件替代第一、反向及未来输入均无许可。旧场景regex不改，本条独立接受9/10，不冒称旧A6.3已批准；9/10在后续外写之前，不能由外写解释。
+
+`fixtures/config-watch-exact/` 保存三份既有真实raw的逐字压缩副本、固定30文件644采集闭包、原公共strict DIFF2及绕旧accepted的DIFF3。代码内固定压缩/解压SHA和有界大小，重读实际输入并与sealed字节及调用者raw有序内容一致，再重验真实写入、通知完整内容/归属/顺序、source/snapshot/version、下一请求/usage/durable/public ids与其余所有原值；可替换manifest仅供人读，不授予权限。runtime不依赖Git或开发机 `_tmp`。公共输出逐叶打印 `COMPATIBILITY-VALUE fixedConfigWatchExactApproved`；固定策略消费的旧version叶不再被重复计STALE，其它规则不变。
+
+`node --test scripts/bbx/config-watch-exact-policy.test.mjs` 明确区分37底层语义、39输入身份、1 helper+manifest替换、20额外version语义负控及2直接正控，再单列额外seal/归属控制与真实公共CLI self/pair/改值拒绝/无Git执行。原FAIL不覆盖，便携原件不是新采集，公共迁移独审与冻结完成前不能冒称正式总验收通过。

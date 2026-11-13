@@ -69,7 +69,23 @@
         "^\\$\\.steps\\[[2-6]\\]",
         "^\\$\\.tree",
         "^\\$\\.provider"
+      ],
+      "assertions": [
+        "positive-baseline-bug-rename-reload"
       ]
+    }
+  ],
+  "assertions": [
+    {
+      "id": "positive-baseline-bug-rename-reload",
+      "sides": [
+        "rust"
+      ],
+      "path": "/steps",
+      "acceptedPositive": {
+        "scene": "baseline-bug-rename-reload",
+        "id": "rename-then-reload-bricks-session"
+      }
     }
   ]
 }

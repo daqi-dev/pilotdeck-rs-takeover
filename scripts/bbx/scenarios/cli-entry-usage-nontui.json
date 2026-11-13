@@ -1,0 +1,263 @@
+{
+  "name": "cli-entry-usage-nontui",
+  "about": "由 cli-entry-usage 逐步收敛本期后端/非TUI独有输入；原混合场景未运行且不改。保留原环境、配置、stdin、timeout、expectTimeout和合法步骤顺序；不扩展原行为。原步骤0-based索引：0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28。",
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "steps": [
+    {
+      "cli": [
+        "help",
+        "run"
+      ]
+    },
+    {
+      "cli": [
+        "--help",
+        "--json"
+      ]
+    },
+    {
+      "cli": [
+        "-h",
+        "extra",
+        "words"
+      ]
+    },
+    {
+      "cli": [
+        "run",
+        "--help"
+      ],
+      "timeout": 15000
+    },
+    {
+      "cli": [
+        "sessions",
+        "bogus"
+      ],
+      "env": {
+        "PILOTDECK_TOKEN": "t"
+      },
+      "timeout": 15000
+    },
+    {
+      "cli": [
+        "sessions",
+        "messages"
+      ],
+      "env": {
+        "PILOTDECK_TOKEN": "t"
+      },
+      "timeout": 15000
+    },
+    {
+      "cli": [
+        "sessions",
+        "messages",
+        "--project",
+        "p"
+      ],
+      "env": {
+        "PILOTDECK_TOKEN": "t"
+      },
+      "timeout": 15000
+    },
+    {
+      "cli": [
+        "settings",
+        "bogus"
+      ],
+      "env": {
+        "PILOTDECK_TOKEN": "t"
+      },
+      "timeout": 15000
+    },
+    {
+      "cli": [
+        "settings",
+        "set"
+      ],
+      "env": {
+        "PILOTDECK_TOKEN": "t"
+      },
+      "timeout": 15000
+    },
+    {
+      "cli": [
+        "settings",
+        "set",
+        "{bad"
+      ],
+      "env": {
+        "PILOTDECK_TOKEN": "t"
+      },
+      "timeout": 15000
+    },
+    {
+      "cli": [
+        "settings",
+        "set",
+        "--json",
+        "[1,"
+      ],
+      "env": {
+        "PILOTDECK_TOKEN": "t"
+      },
+      "timeout": 15000
+    },
+    {
+      "cli": [
+        "resume"
+      ],
+      "env": {
+        "PILOTDECK_TOKEN": "t"
+      },
+      "timeout": 15000
+    },
+    {
+      "cli": [
+        "resume",
+        "--auth-token",
+        "t",
+        "--model",
+        "m"
+      ],
+      "timeout": 15000
+    },
+    {
+      "cli": [
+        "run",
+        "hello"
+      ],
+      "env": {
+        "PILOTDECK_SDK_AUTH_TOKEN": "t",
+        "PILOTDECK_GATEWAY_URL": "ws://127.0.0.1:38411/ws"
+      },
+      "timeout": 15000
+    },
+    {
+      "cli": [
+        "sessions",
+        "list",
+        "--auth-token",
+        "t",
+        "--gateway-url",
+        "ws://127.0.0.1:38411/ws"
+      ],
+      "timeout": 15000
+    },
+    {
+      "cli": [
+        "settings",
+        "get"
+      ],
+      "env": {
+        "PILOTDECK_TOKEN": "t"
+      },
+      "timeout": 15000
+    },
+    {
+      "cli": [
+        "run",
+        "hello"
+      ],
+      "env": {
+        "PILOTDECK_TOKEN": ""
+      },
+      "timeout": 15000
+    },
+    {
+      "cli": [
+        "gateway"
+      ]
+    },
+    {
+      "cli": [
+        "gateway",
+        "Setup"
+      ]
+    },
+    {
+      "cli": [
+        "gateway",
+        "--help"
+      ]
+    },
+    {
+      "cli": [
+        "cron",
+        "--help"
+      ],
+      "timeout": 15000
+    },
+    {
+      "cli": [
+        "cron",
+        "create",
+        "--message",
+        "x"
+      ],
+      "timeout": 15000
+    },
+    {
+      "cli": [
+        "skills",
+        "--help"
+      ]
+    },
+    {
+      "cli": [
+        "skills",
+        "migrate",
+        "--from",
+        "bogus"
+      ],
+      "timeout": 15000
+    },
+    {
+      "cli": [
+        "skills",
+        "migrate",
+        "--from",
+        "cc,,nope"
+      ],
+      "timeout": 15000
+    },
+    {
+      "cli": [
+        "chat",
+        "--help"
+      ]
+    },
+    {
+      "cli": [
+        "chat",
+        "search",
+        "--limit",
+        "5"
+      ]
+    },
+    {
+      "cli": [
+        "chat",
+        "search",
+        "--json",
+        "--role",
+        "user"
+      ]
+    },
+    {
+      "cli": [
+        "chat",
+        "search",
+        "--project",
+        "x",
+        "--session",
+        "y"
+      ]
+    }
+  ]
+}

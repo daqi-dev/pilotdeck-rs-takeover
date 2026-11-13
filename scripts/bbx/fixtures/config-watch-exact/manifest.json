@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "description": "仅供人读的身份清单。运行时许可由已审policy代码内固定哈希授予，不由本可编辑manifest授予。",
+  "raw": [
+    {
+      "file": "ts-1.json.br",
+      "compressedSHA": "5d04df75537b1498cd7c1adaa95659c87ee60ec252ec3e3a4fd273814a9eeb10",
+      "sha256": "470a8eda78ffb832e517152e340cc95cc735e3359c877107c7b3a0fa96daa228",
+      "size": 639616
+    },
+    {
+      "file": "ts-2.json.br",
+      "compressedSHA": "e0c227d5d9eb1cdc34259ce67366e6385b2260b9018ecee3751c744b2072185b",
+      "sha256": "c855e606c8b817a008ea3dea8f82460cd5f63d0e87f5bd88c21f4742d245a0ff",
+      "size": 639617
+    },
+    {
+      "file": "rust.json.br",
+      "compressedSHA": "8efdf8123bb9f24edc17754b64fc13342940016a81e2228c22b39d4b2bb74f4f",
+      "sha256": "6efc3c541a8cbd661b1244c73567f6cce24b7fcdb0a94b42e7053d602d734ba0",
+      "size": 645967
+    }
+  ],
+  "closure": {
+    "file": "closure.json.br",
+    "compressedSHA": "cf9536e122fd3adcadcf0d8ec06fe9ff45a0ffd17f88790dd842511fe8175cd2",
+    "sha256": "d3a560c7c700339cacb09a650d1a370c910b2d4a890d95213bfb632451f8c0e3",
+    "size": 480570
+  }
+}

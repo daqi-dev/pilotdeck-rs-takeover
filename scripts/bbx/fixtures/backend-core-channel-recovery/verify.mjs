@@ -23,8 +23,13 @@ function validate(artifact,scenario,scenarioHash){
  for(const [index,phase]of artifact.steps.entries()){
   assert.equal(phase.serve?.reached,true);assert.equal(phase.serve.exitCode,0);assert.equal(phase.serve.signal,null);
   assert.equal(phase.step.serve[0],'server');assert.ok(!phase.serve.stdout.includes('未迁移'));
-  assert.equal(phase.then?.[2]?.disconnected,true,'WS closed before process stop');
-  const responses=phase.then[1]?.frames?.filter(frame=>frame.type==='response');
+  const disconnects=phase.then?.filter(step=>step.step?.disconnect===true);
+  exact(disconnects,'explicit graceful disconnect phase '+index,1);
+  assert.equal(disconnects[0].disconnected,true,'WS closed before process stop');
+  const reads=phase.then?.filter(step=>step.step?.ws==='read_session_messages');
+  exact(reads,'actual history read phase '+index,1);
+  if(index===1){const connects=phase.then.filter(step=>step.step?.connect===true);exact(connects,'new-process explicit reconnect',1);assert.equal(connects[0].hello?.type,'hello_ok');assert.ok(phase.then.indexOf(connects[0])<phase.then.indexOf(reads[0]));}
+  const responses=reads[0]?.frames?.filter(frame=>frame.type==='response');
   assert.equal(responses?.length,1,'one actual history read response per phase');
   assert.ok(!responses[0].error);phaseResults.push(responses[0].result);
   assert.ok(JSON.stringify(responses[0].result).includes('CORE-DONE'),'first result survived phase '+index);

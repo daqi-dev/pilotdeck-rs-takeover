@@ -13,6 +13,15 @@
       }
     },
     {
+      "name": "watch-rewrite",
+      "when": [
+        "watch-rewrite: confirm current config"
+      ],
+      "reply": {
+        "text": "Watch rewrite applied."
+      }
+    },
+    {
       "name": "main",
       "reply": {
         "text": "Settings turn done."
@@ -217,6 +226,31 @@
     {
       "ws": "resolve_settings",
       "params": {}
+    },
+    {
+      "ws": "update_settings",
+      "params": {
+        "source": "localSettings",
+        "settings": {
+          "agent": {
+            "maxOutputTokens": 4096
+          }
+        }
+      }
+    },
+    {
+      "externalConfigRewrite": {
+        "fromMaxOutputTokens": 4096,
+        "toMaxOutputTokens": 2048
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-watch-rewrite",
+        "channelKey": "test",
+        "message": "watch-rewrite: confirm current config"
+      }
     }
   ],
   "accepted": [
@@ -225,7 +259,20 @@
       "why": "基线对配置文件本身调 fs.watch，update_settings 原子替换文件后监视的是已删除的旧文件，之后改配置不再热重载（版本号少跳一次）；Rust 保持持续监视",
       "paths": [
         "^\\$\\.steps\\[25\\]\\.frames\\[0\\]\\.result\\.version$"
+      ],
+      "assertions": [
+        "config-watch-rewrite-positive"
       ]
+    }
+  ],
+  "assertions": [
+    {
+      "id": "config-watch-rewrite-positive",
+      "sides": [
+        "rust"
+      ],
+      "path": "/steps",
+      "configWatchInput": true
     }
   ]
 }

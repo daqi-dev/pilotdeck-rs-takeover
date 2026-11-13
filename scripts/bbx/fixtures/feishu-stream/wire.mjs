@@ -1,0 +1,14 @@
+// Independently authored local mock codec for fixed Lark pbbp2 Frame.
+export function varint(n){n=BigInt(n);const out=[];do{out.push(Number(n&127n)|(n>127n?128:0));n>>=7n}while(n);return Buffer.from(out)}
+const bytes=(tag,value)=>Buffer.concat([varint(tag*8+2),varint(value.length),value]);
+export function encode(frame){
+ const out=[...['seq','log','service','method'].map((k,i)=>Buffer.concat([varint((i+1)*8),varint(frame[k]??0)]))];
+ for(const [key,value] of frame.headers??[])out.push(bytes(5,Buffer.concat([bytes(1,Buffer.from(key)),bytes(2,Buffer.from(value))])));
+ if(frame.payload)out.push(bytes(8,Buffer.from(frame.payload)));return Buffer.concat(out);
+}
+function read(bytes,state){let out=0n;for(let shift=0n;shift<70n;shift+=7n){if(state.at>=bytes.length)throw Error('truncated varint');const b=bytes[state.at++];out|=BigInt(b&127)<<shift;if(!(b&128))return out}throw Error('overflow varint')}
+function fields(buffer){const out=[];const state={at:0};while(state.at<buffer.length){const tag=Number(read(buffer,state));if((tag&7)===0)out.push([tag>>3,read(buffer,state)]);else if((tag&7)===2){const n=Number(read(buffer,state));if(n>buffer.length-state.at)throw Error('truncated field');out.push([tag>>3,buffer.subarray(state.at,state.at+n)]);state.at+=n}else throw Error('unsupported mock field')}return out}
+export function decode(buffer){const frame={seq:'0',log:'0',service:0,method:0,headers:[],payload:null};for(const[tag,value]of fields(buffer)){if(tag===1)frame.seq=String(value);if(tag===2)frame.log=String(value);if(tag===3)frame.service=Number(value);if(tag===4)frame.method=Number(value);if(tag===5){const h=fields(value);frame.headers.push([h.find(([n])=>n===1)[1].toString(),h.find(([n])=>n===2)[1].toString()])}if(tag===8)frame.payload=value.toString()}return frame}
+export function websocket(opcode,payload){payload=Buffer.from(payload);const head=payload.length<126?Buffer.from([128|opcode,payload.length]):Buffer.from([128|opcode,126,payload.length>>8,payload.length&255]);return Buffer.concat([head,payload])}
+// Client masking is mandatory, but TCP packet boundaries have no significance.
+export function websocketReader(onFrame){let pending=Buffer.alloc(0);return chunk=>{pending=Buffer.concat([pending,chunk]);for(;;){if(pending.length<2)return;const opcode=pending[0]&15,masked=pending[1]&128;let n=pending[1]&127,at=2;if(!(pending[0]&128))throw Error('mock expects complete client messages');if(n===126){if(pending.length<4)return;n=pending.readUInt16BE(2);at=4}if(n===127)throw Error('unexpected oversized client frame');if(!masked)throw Error('unmasked client frame');if(pending.length<at+4+n)return;const mask=pending.subarray(at,at+4);at+=4;const body=Buffer.from(pending.subarray(at,at+n));for(let i=0;i<body.length;i++)body[i]^=mask[i%4];pending=pending.subarray(at+n);onFrame(opcode,body)}}}

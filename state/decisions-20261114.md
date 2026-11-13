@@ -1,0 +1,77 @@
+# 2026-11-14 项目决策
+
+## 主协调自主决策与模型分工
+
+用户明确授权原文：
+
+> 有了表格之后，是不是可以更高效率的用 6.1 sol 和 6.1 terra 子智能体来并发了？ 当然关键难点，也可以用 Astra 来攻关。或者你有更好的安排？ 项目所有决策你都可以自行决策。
+
+主协调据此自行决定项目内技术取舍、排程、实现与有证据支持的兼容性处理；不再重复请求例行项目决策审批。保留固定基线、StaffDeck 延期、当前后端及非 TUI 范围、真实验收和首败记录。接受差异仍按明确原因、精确范围、独立审查及追加冻结登记处理，不为变绿放宽标准。没有因此执行推送、正式发布、生产部署或删除外部资源。
+
+Sol 承担边界清楚的实现、取证与验证整理；Terra 承担复杂接线和独审；Astra 定点攻克难归因的并发、取消、恢复问题。作者与独审分离，公共文件唯一 writer，双平台各一 heavy，避免并发构建挤压资源。首个新 Astra 子任务为 Original53 deadline 两场景终态根因，只读分析已有实际原件。
+
+## Original53：本批 deadline 宿主竞态的精确 accepted 汇总
+
+主协调于 2026-11-14 基于本会话用户“项目所有决策你都可以自行决策”的明确授权，决定正式登记以下有限比较适配。此处是授权范围内的主协调决定，不冒称用户逐字批准了这一具体规则。旧 #6 对基线缺陷的批准只作背景，不能代替本次机器规则的独立审查。
+
+依据：Astra重新核固定TS源码与20份真实raw，均有相同 unknown/DEADLINE_EXCEEDED、fail-closed、公开failed终态、模型请求/响应/usage；只有3格在timeout尾部多一条TS宿主catch生成的gateway_submit_failed。原报告`_tmp/20261114-original53-deadline-analysis/review.json` SHA `ec3ec95ef341fea3272a4d3916072e81c67077cd4f05d5f8430ec2b90fcf6c8b`。Rust sidecar不改成cancelled，不加延时；Rust宿主既有terminal claim保护另做实际验收。
+
+批准范围仅本批登记的20份原件、`deadline`与`deadline_during_tool`、固定cc7 TS-host拓扑。先在未改raw上执行原identity/health/oracle/单侧E/partial-order；仅当唯一差异流为parent/B、最多一个额外状态且完整文案/字段/身份/尾部位置精确成立时，在独立accepted视图将其视为可选。operation unknown、公开terminal、原值model request/response/全部usage、工具生命周期及副作用快照继续严格核验；其他所有通道和G03、pair E10/E11全部严格。原sequence不重编号，原trace不改写。
+
+独立Astra按最终module `f03387d3e164dfaa8f3319fe89a849b6962f8a22df55710cdd843ca014740334`、ready `8d787685c71fa54e1baec3a378bcffd309cd34459a2a8c1145dcd058cceb56a8` 实际复验120正控/52负控；原30个strict FAIL仍并列，其他51项×5轮的255个compact逐项等于原score。负控区分完整入口身份层与真正内层内容变异；已修删invocationId漏拒和覆盖已有输出问题，首版本保留。独审最终收据SHA `286cb1c2ef5ac8a0cebb12b7c54b9a0b65bba9ea2ea07886958ddc3579ecaf1b`。
+
+准许新增独立accepted汇总、精确差异条目和必要冻结登记；不改原score.py/G03算法、53分母、5轮要求、TS参考池或原strict `50/53 FAIL`。accepted汇总须与strict并列，预算失败仍保，不能因这两场景适配声称53/53。公共接线须再次独审并在固定源码上运行，私有通过不直接冒正式评分。
+
+未来批次不自动获准。后续使用固定规则引擎、不可变批次manifest和根审核的显式登记；每批source/bin/TS5/Rust5/ledger/日期/driver/catalog/adapter/strictscore均独立绑定，新manifest由根核真实证据后追加登记，不能接受任意外传manifest自授权。现raw缺完整transport wire、fence时间戳和最终采样后的无限期副作用观察，不把这些未知说成已经通过，也不豁免对应产品验收。
+
+## settings-update：固定三原件的配置监听及版本计数差异
+
+主协调基于本会话用户授予的项目自主决策权，决定登记本批精确差异。此决定不借用旧 A6.3 或场景既有 regex 的批准状态，不冒称用户逐条批准。先保留原公共比较的 DIFF 2；绕过旧 accepted 过滤的原归一化比较实际为 DIFF 3，三处全部明确列在本决定中。
+
+只适用产品 `d67705eece5a035b9f689809bf5b4088755ebcb8`、固定 TS `cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`、采集装置 `644a8d80a45916bbe7a0b0ee93ff6e331a9dbf98` 的三份完整原件：TS1 SHA `470a8eda78ffb832e517152e340cc95cc735e3359c877107c7b3a0fa96daa228`、TS2 SHA `c855e606c8b817a008ea3dea8f82460cd5f63d0e87f5bd88c21f4742d245a0ff`、Rust SHA `6efc3c541a8cbd661b1244c73567f6cce24b7fcdb0a94b42e7053d602d734ba0`，路径见 `_tmp/20261114-watch-exact-policy/exact-diff-draft.md`。未来采集、其他候选或相似现象不自动适用。
+
+精确允许：① `$.steps[25].frames[0].result.version` 为 number，TS 两侧值均 9、Rust 值 10；② `$.steps[27].externalConfigRewrite.observationExpired` 在 TS 两侧为 true、Rust 不存在；③同一对象 observed 在 TS 两侧为 false、Rust 为 true。任何其他值、类型、对象或步骤不放宽；原始值、完整有序内容及身份锁不因接受而移除。
+
+监听差异依据：三侧均在原有文件同 inode 只做一次 4096→2048 原地写入；TS 两侧 30 秒窗口未见目标通知，Rust 约 309ms 收到完整目标 config_changed，并以关联快照证明 sourceHash 和版本推进；下一次唯一 watch-rewrite 模型请求均使用 max_tokens=2048。固定 TS 对文件本体一次 fs.watch，而 update_settings 原子替换文件后没有重挂，结合其自身 watcher 测试的通知承诺，构成基线缺陷依据。旧 inode 导致失效是有源码支持的推断，原件未捕获注册 inode/内核事件，不伪称逐事件因果证明。三侧顶层 notifications 总数均 4；不声称 TS 永远不通知或内部快照一直未变化。
+
+版本计数另行依据：step25 的 9/9/10 发生在 step26/27 外部改写前；三侧 snapshot 除版本和 loadedAt 外一致，完整配置、contentHash 与 env/default 来源一致，下一次写 4096 后捕获的版本各恰加 1。缺少 step9→25 每次重载的原因轨迹，不能指认某次 watch 回调；不以随后外部改写解释既有计数差，也不以主观因果推断扩大接受范围。重建 step25 source 字节与当时来源 SHA 相同的证据明确是重建，不冒充直接采集。
+
+私有验证及非作者 Terra 独审：原件 self SAME、三侧 validateArtifact 通过、Rust 实际正控通过、两个 accepted 正控和 77 个负控全部通过；原模块 SHA `e11547d9f2e5f96f7043b14bc7a83a6df2dc9b0e40729d58e45b2094016978cd`。额外 version/type/缺失/其他步骤/source/config 20 个直接语义负控全部拒绝，1 个正控通过；独审补证 `_tmp/20261114-watch-independent-9wyVLQ/step25-run-wBUUXx/evidence.json` SHA `a9ec7c15cffc4489ed679bce0fd67f95d2a9cbbc74d17e8b7e04c385925a2515`，作者补证脚本 SHA `674ffd27dde9e1ee5734270fe8d2956a2cbf18cdd226d7ae427f9f5731c62061`。
+
+准许最小公共迁移、新增精确差异条目与必要冻结登记；公共接线须重新独审，并在固定源码上重判原件。全部真实写入字节、sourceHash、快照、完整通知与归属、请求/响应/usage/落盘链及公共 id 仍严格，不删除或放宽旧场景规则，不修改 Rust 行为或原件。私有通过不代替公共固定源码结果，也不把此固定旧候选证据转记为新候选或整模块已交付。
+
+## 性能目标与收口优先级
+
+主协调重新核本轮正本 `docs/plan/backend-completion.md:240,248,273` 及非作者范围审计 `_tmp/20261114-package-remaining-audit/scope-note.md`（SHA `deb3f949d381b2f804ccd1448f88f73797883bf0b23b563d4031b0e06c664999`）。硬要求是同扩展集合、真实安装体积/启动分布/全进程树内存/排除网络后的开销比较与完整性能报告；缩小部署、降低内存、避免执行退化是目标，未达指标必须报告。未见本会话明确把 full 小于 TS 另定为硬阈值，不能自行把改进目标升级成无限阻断交付的门。
+
+因此暂停进一步 source archive 压缩探索，优先产品真实失败、完整必需能力与最终组合验收。已完成 rg/librsvg 无损转换保留并按其真实新prefix身份参与后续包装；未重新离线构建的限制继续保留。原 full 1,168,781,633B、两项净减54,459,368B与332,579,305B、算术余量781,742,960B及TS295,973,079B不变；算术估计不是新包实测。最终包仍按原完整分母计量和如实报告，不能删源码/许可或把估计写成达标。剩余体积优化属于明确未达目标及后续工作，不因本决定删除或改绿。
+
+## 外部 HTTP 模型：修复宿主物化时的基线崩溃
+
+主协调按用户自主决策授权及意向书“崩溃、与类型矛盾的基线 bug 默认修”作出精确实现决定。固定 cc7 基线的真实回环 HTTP prepare、原 createAgentTurnCapabilities、原 createRouterRuntime 和默认 RouterRequestMaterializer 已实际串联：外部 prepared 无 opaque，原桥实际传入 undefined，读取 requestPatch 抛出 TypeError。证据 `_tmp/20261114-external-materializer-baseline/esm-second/result.json`、原件身份及回收收据保留；POST 一次、native dispatch 零。此证据仅覆盖真实生产 factory 的最窄桥调用，未冒称完整 AgentLoop 预算 turn。首个 .ts 探针的 CJS 装置失败也保留。
+
+仅当生产选择的是外部 HTTP modelProvider 时，装配独立 prepared-execution materializer，采用固定基线 `src/agent/loop/AgentLoop.ts:2508–2530` 已有 fallback 语义：完整保留 prepared.request 的 provider 专有控制、prompt、tools、输出上限等字段，只以候选 messages、cacheBreakpoints、cachePlan 更新窗口与缓存，并以 prepared.provider/model 保持路由。候选缺少缓存字段时不残留旧缓存。外部 opaque 只供外部执行身份使用，不交给 native RouterDecision；此修复不新增远端 materialize POST，不自动暴露生产 wrapper 原本丢弃的可选远端 materializer。
+
+宿主原配置 metadata、sticky 行为、durable 记录、权限、native router 物化、stdio/TCP 协议字段及错误投影均不随本决定放宽。正常 prepared 身份仍贯穿 prepare、预算和 stream；所有非此崩溃的差异继续核验。实现由 model 作者完成，Astra 非作者复核，集中候选须实际验证保持字段、缓存替换/缺失、身份及无额外调用，另核 context 投影在 native/stdio/TCP 的边界。当前是允许实现并验收的决定，尚非测试通过或交付声明；公共差异条目及适用冻结登记须随实际验证证据补齐。
+
+## LSP：绑定来源读取与 prepared cwd 两项精确基线修复
+
+主协调根据用户项目自主决策授权及既有基线 bug 默认修规则，正式接受两项分别登记的修复：`T1-LSP-BOUND-SOURCE-READ-001` 与 `T1-LSP-PREPARED-CWD-001`。前者限自有 Unix native LSP source，使用原 workspace 目录描述符逐段 NOFOLLOW、有界读取并保持合法根内链接；后者限准备器返回不同 cwd 时执行完整 prepared command，同时保留原 LSP workspace URI/name。不得借此扩大工具权限、改变普通 LSP 结果或放宽完整场景评分。
+
+固定 TS 的实际 owned canary 竞态原件、prepared cwd 首次 FAIL wire、原类型合同和源码均已经作者与非作者复核，原首败及取证汇总 turn 被工具终止的历史保留，不重采安全 probe。非作者最终复核 `_tmp/20261114-lsp-diff-independent/review.md` SHA `f1d7bf5a9992c0a3e7dc803a4945f2dbb3e5068d23cb165461b3b12c94556453`，36份原件及36/37/38相关源码对象SHA均核同。36双平台七项安全读取与一项真实prepared child控制实际PASS，整批Mac557/562、Linux558/563的五个生命周期首败不抹除；37双平台7/8与38双平台仅更正一项1/1另列，不合并伪称重跑全绿。
+
+准许只追加这两条公共差异记录，原冻结判据与历史差异文件不改，不产生整场景忽略规则。非Unix、自定义/guest端口、所有中间目录竞态排列、并发增长屏障、hardlink/mount隔离及最终发行组合的未验范围继续明确保留。该决定接受有证据的窄修复，不能将其解释为LSP整模块或本期交付完成。
+
+## 外部模型物化修复的42实际验证与登记
+
+42 `4d42d66005a71e3bd46a233c6dc19adadc282887` 已在macOS/Linux实际完成model14/14及真实Handler context投影控制PASS，S1独立逐名核原件；Mac最终收据SHA `de579e76556de9e827f826a9586d26a0c678cb507d32d709ddaaeac93a689a02`。根据此前精确决定，准许正式追加 `A7-EXTERNAL-MODEL-MATERIALIZER-001`。原工厂桥崩溃事实、prepared字段保留/缓存替换/无native opaque解引用及零远端materialize请求边界不扩大。
+
+42整个受影响批次双平台仍117/129 FAIL；发现的外部model临时next future被durable Pending轮询丢弃属于独立P1，不被接受差异豁免。43仅该stream所有权及必要fixture/oracle修复，仍须同源实际验证。本次登记不把两materializer函数控制当成完整Gateway预算turn或三拓扑验证，不改原判分实现或FROZEN，不重新请求已经得到的项目决定授权。
+
+## 产品44与正式判据82a的统一候选登记
+
+主协调按用户本会话全部项目决定授权，将产品44 `1ab5904c78c95553822ffa846fc7feb7ee7b0d57` 与已经正式登记的判据82a `82a1010b09fcd88ebf5ee69a3b7f15ce0817e3b9` 合为同一个后续验证候选。使用临时index逐文件导入，不用harness整树覆盖产品；产品44独有差异条目、源码、发行内容与历史首败保留。44两平台受影响203/203实际通过，不代替统一候选的最终全门、发行和真实拓扑。
+
+`specs/parity/FROZEN.md` 和 `multimodal.md` 逐字采用82a已登记对象，对应用户已明确批准的Original53单类/父关闭及必要重新冻结、此前root精确deadline决定与冻结事件；不重新解释或扩大其适用范围。SDK `D1-SDK-SIGNAL-ABORT-ORDER-001.md` 与对应交付文档也逐字采用82a正式记录，保留44旧产品snapshot供追溯。这是把本会话已接通并验过控制的正式harness记录纳入统一候选，不是重新修改该正式记录或新增可接受差异。其artifact与同binary独立8-wire两层证明均必需，既有一处文案纠正不把没有RPC原帧的artifact冒称直接观察RPC；同run终态、恢复与全部协议检查均保持。用户的SDK精确补充授权和root既有接线决定不再重复请求。统一候选应对canonical82a及所需冻结登记基准分别核验，不能因两个临时分支的旧快照不同而把已批准记录当新许可。
+
+源码闭包审查发现5个模型正式夹具未在产品44树内，全部已经在82a有固定Git对象且与工作区逐字一致，随本次一并纳入；它们是验收装置，不能据纳入推定通过。两个决定文件按root最新原文保存，管理三表与实时交接独立维护，不从旧管理树覆盖当前状态。

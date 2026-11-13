@@ -7,8 +7,15 @@ import { spawnSync } from 'node:child_process';
 import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { syntaxContract } from './syntax-policy.mjs';
+import { acceptedPositiveContract } from './accepted-positive-policy.mjs';
+import { cliShutdownEvidence } from './cli-shutdown-policy.mjs';
+import { verifyConfigWatchInput } from './fixtures/config-watch-input.mjs';
+import { validateConfigWatchExactArtifact } from './config-watch-exact-policy.mjs';
 import { nativeDependencyIdentity } from './native-identity.mjs';
 import { validatePersistedRunTriggers } from './serve-persisted-event.mjs';
+import { channelPollContract } from './channel-poll-policy.mjs';
+import { sdkAgentContract } from './sdk-agent-policy.mjs';
+import { validateSdkSignalArtifact, SDK_SIGNAL_POLICY_ID, SDK_SIGNAL_TERMINAL_POLICY_ID } from './sdk-signal-policy.mjs';
 
 export const here = path.dirname(fileURLToPath(import.meta.url));
 export const repo = path.resolve(here, '../..');
@@ -37,22 +44,81 @@ const treeHash = (root) => {
   };
   walk(root); return hash.digest('hex');
 };
+const SDK_WIRE_DRIVER_SHA = '6b29ef61cf58a1403dbfc15e55f057c65ee8b1ef0afa3272f48a7a41d2d8926a';
+const SDK_WIRE_VERIFY_SHA = 'e4e2d422e7b96d2b67219fec81510edb329e0566b308752d95add440ef1edc87';
+const SDK_WIRE_CASES = ['final-and-abort-batch','final-and-abort-next-turn','final-and-abort-separated','wrong-run-response','malformed-response','abort-rpc-error','connection-drop','abort-timeout'];
+const insistWire = (condition, message) => { if (!condition) throw Error(`sdk signal wire evidence: ${message}`); };
+export function loadSdkSignalWireEvidence({ binarySha256, expectedIdentity } = {}) {
+  insistWire(/^[a-f0-9]{64}$/.test(binarySha256 ?? ''), 'formal binary SHA required');
+  const directory = process.env.BBX_SDK_SIGNAL_WIRE_DIR;
+  const receiptFile = process.env.BBX_SDK_SIGNAL_WIRE_RECEIPT;
+  insistWire(directory && receiptFile && path.isAbsolute(directory) && path.isAbsolute(receiptFile), 'absolute wire directory and original receipt file required');
+  const root = fs.realpathSync(directory), receipt = fs.realpathSync(receiptFile);
+  const fixture = path.join(repo, 'src/pilotdeck-cli/tests/fixtures/sdk-signal-abort-order');
+  const driver = path.join(fixture, 'driver.mjs'), verifier = path.join(fixture, 'verify.mjs');
+  insistWire(fileHash(driver) === SDK_WIRE_DRIVER_SHA && fileHash(verifier) === SDK_WIRE_VERIFY_SHA, 'trusted driver/verifier source changed');
+  const names = ['identity.json','summary.json', ...SDK_WIRE_CASES.flatMap(name => ['summary.json','timeline.jsonl','stdout.txt','stderr.txt'].map(file => `${name}/${file}`))].sort();
+  const snapshot = () => Object.fromEntries(names.map(name => {
+    const file = path.join(root, name), stat = fs.lstatSync(file);
+    insistWire(stat.isFile() && !stat.isSymbolicLink(), `raw evidence must be a regular file: ${name}`);
+    return [name, fileHash(file)];
+  }));
+  const before = snapshot(), receiptHash = fileHash(receipt);
+  const capturedIdentity = JSON.parse(fs.readFileSync(path.join(root, 'identity.json'), 'utf8'));
+  insistWire(capturedIdentity.cliSha256 === binarySha256 && capturedIdentity.driverSha256 === SDK_WIRE_DRIVER_SHA, 'raw wire binary/producer identity mismatch');
+  const result = spawnSync(process.execPath, [verifier, root, binarySha256], { encoding: 'utf8', timeout: 60_000, maxBuffer: 1_048_576 });
+  insistWire(result.status === 0 && !result.signal && !result.error && result.stderr === '', `strict raw verifier failed: ${result.stderr || result.error?.message || result.signal || result.status}`);
+  const checked = JSON.parse(result.stdout), original = JSON.parse(fs.readFileSync(receipt, 'utf8'));
+  insistWire(isDeepStrictEqual(Object.keys(checked).sort(), ['binary','cases','status']) && checked.status === 'PASS'
+    && checked.binary === binarySha256 && isDeepStrictEqual(checked.cases, SDK_WIRE_CASES), 'strict verifier receipt shape/cases mismatch');
+  insistWire(isDeepStrictEqual(original, checked), 'original receipt does not match strict raw replay');
+  insistWire(isDeepStrictEqual(before, snapshot()) && receiptHash === fileHash(receipt)
+    && fileHash(driver) === SDK_WIRE_DRIVER_SHA && fileHash(verifier) === SDK_WIRE_VERIFY_SHA, 'wire evidence changed while being reverified');
+  const identity = { schema: 1, directory: root, binarySha256,
+    driver: { path: driver, sha256: SDK_WIRE_DRIVER_SHA }, verifier: { path: verifier, sha256: SDK_WIRE_VERIFY_SHA },
+    receipt: { path: receipt, sha256: receiptHash }, files: before };
+  if (expectedIdentity !== undefined) insistWire(isDeepStrictEqual(identity, expectedIdentity), 'wire files/source/receipt identity changed since formal capture');
+  return { receipt: checked, identity };
+}
+export function sdkSignalAcceptedEntry(entry) {
+  return ((entry?.policy === 'sdkSignalAbortOrder' && entry.id === SDK_SIGNAL_POLICY_ID)
+    || (entry?.policy === 'sdkSignalTerminalObservation' && entry.id === SDK_SIGNAL_TERMINAL_POLICY_ID))
+    && (entry.paths === undefined || isDeepStrictEqual(entry.paths, [])) && entry.config === undefined;
+}
+function signalWireForArtifact(artifact, inputs = artifact.evidence?.inputs) {
+  const binary = inputs?.binaries?.pilotdeck;
+  const binarySha256 = typeof binary === 'string' ? binary : binary?.sha256;
+  insistWire(inputs?.sdkSignalWire, 'formal input identity is missing reverified wire evidence');
+  return loadSdkSignalWireEvidence({ binarySha256, expectedIdentity: inputs.sdkSignalWire });
+}
+export function validateSdkSignalAcceptedEvidence(artifact, scenario, inputs = artifact.evidence?.inputs) {
+  validateSdkSignalArtifact(artifact, scenario, artifact.side);
+  const executed = assertionResults(scenario.assertions, artifact, artifact.side);
+  insistWire(isDeepStrictEqual(artifact.evidence?.assertions, executed)
+    && executed.every(result => result.skipped || result.passed), 'required named scenario assertions were not executed or failed');
+  if (artifact.side === 'rust') return signalWireForArtifact(artifact, inputs);
+  return null;
+}
 export function inputIdentity() {
   const baseline = process.env.BBX_BASELINE || path.join(repo, 'resources/PilotDeck');
   const target = process.env.BBX_TARGET || path.join(repo, 'src/target/debug');
+  const binaries = Object.fromEntries(['pilotdeck', 'pilotdeck-agent-loop-sidecar'].map((name) => {
+    const file = path.join(target, name); return [name, fs.existsSync(file) ? fileHash(file) : null];
+  }));
+  const wireConfigured = process.env.BBX_SDK_SIGNAL_WIRE_DIR || process.env.BBX_SDK_SIGNAL_WIRE_RECEIPT;
+  const sdkSignalWire = wireConfigured ? loadSdkSignalWireEvidence({ binarySha256: binaries.pilotdeck }).identity : undefined;
   return {
     rust: gitIdentity(process.env.BBX_SRC || path.resolve(target, '../..')),
     ts: gitIdentity(baseline),
-    binaries: Object.fromEntries(['pilotdeck', 'pilotdeck-agent-loop-sidecar'].map((name) => {
-      const file = path.join(target, name); return [name, fs.existsSync(file) ? fileHash(file) : null];
-    })),
+    binaries,
+    ...(sdkSignalWire ? { sdkSignalWire } : {}),
     components: { pdf: { path: process.env.BBX_PDF_TOOL ?? null,
       sha256: process.env.BBX_PDF_TOOL && fs.existsSync(process.env.BBX_PDF_TOOL) ? fileHash(process.env.BBX_PDF_TOOL) : null } },
     dependencies: nativeDependencyIdentity(baseline, process.env.BBX_IMAGE_TOOL),
     baselineDist: treeHash(path.join(baseline, 'dist')),
     baselineLock: fs.existsSync(path.join(baseline, 'pnpm-lock.yaml')) ? fileHash(path.join(baseline, 'pnpm-lock.yaml')) : null,
     baselineEntry: fs.existsSync(path.join(baseline, 'dist/src/cli/pilotdeck.js')) ? fileHash(path.join(baseline, 'dist/src/cli/pilotdeck.js')) : null,
-    harness: Object.fromEntries(['check.mjs', 'run.mjs', 'diff.mjs', 'evidence.mjs', 'mock-support.mjs', 'syntax-policy.mjs', 'native-identity.mjs', 'serve-persisted-event.mjs'].map((name) => [name, fileHash(path.join(here, name))])),
+    harness: Object.fromEntries(['check.mjs', 'run.mjs', 'diff.mjs', 'evidence.mjs', 'mock-support.mjs', 'syntax-policy.mjs', 'native-identity.mjs', 'serve-persisted-event.mjs', 'channel-poll-policy.mjs', 'sdk-agent-policy.mjs', 'sdk-signal-policy.mjs', 'ao-discovery-prefix-policy.mjs', 'observer-lifecycle-policy.mjs', 'observer-memory-policy.mjs', 'observer-uuid-policy.mjs', 'component-supply.mjs', 'accepted-positive-policy.mjs', 'cli-shutdown-policy.mjs', 'fixtures/config-watch-input.mjs', 'normalization.mjs', 'observer-provenance.mjs', 'observer-supplement-policy.mjs', 'observer-id-links-policy.mjs', 'observer-memory-witness.mjs', 'duration-file-size-policy.mjs', 'feishu-stop-policy.mjs', 'feishu-stop-policy-constants.mjs', 'diagnostics-policy.mjs', 'diagnostics-policy-contract.json', 'memory-tree-order-policy.mjs', 'fixtures/memory-tree-order/closure-receipt.json.br'].map((name) => [name, fileHash(path.join(here, name))])),
     tools: { node: process.version, executable: fileHash(process.execPath), rust: command('rustc', ['--version'], repo), pnpm: command('pnpm', ['--version'], baseline) },
     platform: { os: process.platform, arch: process.arch, release: os.release() },
   };
@@ -90,6 +156,24 @@ export function assertionResults(assertions, artifact, side) {
     if ('includes' in a) checks.push(typeof actual === 'string' && actual.includes(a.includes));
     if ('matches' in a) checks.push(typeof actual === 'string' && new RegExp(a.matches).test(actual));
     if ('imageAttachments' in a) checks.push(imageAttachmentsMatch(actual, a.imageAttachments));
+    if ('acceptedPositive' in a) {
+      try {
+        if (a.path !== '/steps') throw Error('accepted positive contracts require /steps');
+        acceptedPositiveContract(artifact, a.acceptedPositive); checks.push(true);
+      } catch { checks.push(false); }
+    }
+    if ('configWatchInput' in a) {
+      try {
+        if (a.path !== '/steps' || a.configWatchInput !== true) throw Error('invalid config watch contract');
+        verifyConfigWatchInput(artifact); checks.push(true);
+      } catch { checks.push(false); }
+    }
+    if ('cliShutdownCompleted' in a) {
+      try {
+        if (a.path !== '/steps' || a.cliShutdownCompleted !== true) throw Error('invalid CLI shutdown contract');
+        cliShutdownEvidence(artifact); checks.push(true);
+      } catch { checks.push(false); }
+    }
     if ('syntaxDiagnostics' in a) {
       try { syntaxContract(artifact, a.syntaxDiagnostics, side); checks.push(true); } catch { checks.push(false); }
     }
@@ -119,6 +203,7 @@ export function imageAttachmentsMatch(actual, expected) {
 export function validateArtifact(artifact, scenario, expected) {
   const errors = [];
   const evidence = artifact.evidence;
+  try { validateConfigWatchExactArtifact(artifact); } catch (error) { errors.push(`fixed settings exact evidence: ${error.message}`); }
   if (!evidence || evidence.schema !== 1 || evidence.runId !== expected.runId || evidence.side !== expected.side
     || !isDeepStrictEqual(evidence.scenario, expected.scenario) || !isDeepStrictEqual(evidence.inputs, expected.inputs)) errors.push('artifact identity mismatch');
   if (!Array.isArray(artifact.failures)) errors.push('missing failures collection');
@@ -130,6 +215,21 @@ export function validateArtifact(artifact, scenario, expected) {
   if (!isDeepStrictEqual(evidence?.assertions, assertions)) errors.push('required assertions were not executed');
   if (assertions.some((a) => !a.skipped && !a.passed)) errors.push('required assertion failed');
   if (!isDeepStrictEqual(artifact.accepted ?? [], scenario.accepted ?? [])) errors.push('accepted policy mismatch');
+  if (!isDeepStrictEqual(artifact.volatilePolicies ?? [], scenario.volatilePolicies ?? [])) errors.push('volatile value policy mismatch');
+  for (const policy of scenario.volatilePolicies ?? []) {
+    try {
+      if (isDeepStrictEqual(policy, { policy: 'coreChannelPollAfter' })) channelPollContract(artifact, policy);
+      else if (isDeepStrictEqual(policy, { policy: 'sdkAgent03DerivedValues' })) sdkAgentContract(artifact, policy,
+        process.env.BBX_BASELINE || path.resolve(here, '../../resources/PilotDeck'));
+      else errors.push('unsupported volatile value policy');
+    } catch (error) { errors.push(error.message); }
+  }
+  for (const accepted of scenario.accepted ?? []) if (['sdkSignalAbortOrder','sdkSignalTerminalObservation'].includes(accepted.policy)) {
+    try {
+      if (!sdkSignalAcceptedEntry(accepted)) throw Error('invalid SDK signal accepted declaration');
+      validateSdkSignalAcceptedEvidence(artifact, scenario, expected.inputs);
+    } catch (error) { errors.push(error.message); }
+  }
   if (expected.side === 'rust') for (const accepted of scenario.accepted ?? []) {
     if (!Array.isArray(accepted.assertions) || !accepted.assertions.length || accepted.assertions.some((id) => !assertions.some((a) => a.id === id && a.passed))) errors.push(`accepted difference ${accepted.id} lacks executed positive assertions`);
     if (accepted.policy === 'syntaxDiagnostics' && !scenario.assertions?.some((a) => accepted.assertions.includes(a.id)

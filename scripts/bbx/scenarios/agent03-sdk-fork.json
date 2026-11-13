@@ -1,0 +1,248 @@
+{
+  "name": "agent03-sdk-fork",
+  "volatilePolicies": [{"policy": "sdkAgent03DerivedValues"}],
+  "about": "Private candidate: actual SDK submit and child MCP/observer; must validate real TS before use.",
+  "files": {
+    "home/.pilotdeck/skills/agent03-alpha/SKILL.md": "---\nname: agent03-alpha\ndescription: AG03 alpha skill.\n---\n\nAG03-ALPHA-CONTENT\n",
+    "home/.pilotdeck/skills/agent03-beta/SKILL.md": "---\nname: agent03-beta\ndescription: AG03 beta skill.\n---\n\nAG03-BETA-CONTENT\n",
+    "home/.pilotdeck/agent03-mcp.mjs": "import fs from 'node:fs';\nimport readline from 'node:readline';\nconst log=process.argv[2];const mark=(event,extra={})=>fs.appendFileSync(log,JSON.stringify({event,...extra})+'\\n');mark('start');\nconst send=x=>process.stdout.write(JSON.stringify(x)+'\\n');\nreadline.createInterface({input:process.stdin}).on('line',line=>{const q=JSON.parse(line);if(q.id===undefined)return;mark(q.method,{...(q.method==='tools/call'?{name:q.params?.name,args:q.params?.arguments}:{})});let result;if(q.method==='initialize')result={protocolVersion:q.params?.protocolVersion??'2024-11-05',capabilities:{tools:{}},serverInfo:{name:'agent03-private',version:'1'}};else if(q.method==='tools/list')result={tools:[{name:'echo',description:'AG03 child-only echo',inputSchema:{type:'object',properties:{text:{type:'string'}},required:['text']}}]};else if(q.method==='tools/call')result={content:[{type:'text',text:'AG03-MCP-RESULT:'+q.params.arguments.text}]};else result={};send({jsonrpc:'2.0',id:q.id,result});});\nprocess.on('SIGTERM',()=>{mark('term');process.exit(0)});process.on('exit',()=>mark('exit'));\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Agent03\"}"
+      }
+    },
+    {
+      "name": "parent-check",
+      "when": [
+        "AG03-PARENT-CHECK"
+      ],
+      "reply": {
+        "text": "AG03-PARENT-CHECK-DONE"
+      }
+    },
+    {
+      "name": "observer",
+      "when": [
+        "You are an observer.",
+        "AG03-OBSERVER-POSTAMBLE"
+      ],
+      "reply": {
+        "text": "AG03-OBSERVER-REPORT"
+      }
+    },
+    {
+      "name": "parent-after",
+      "when": [
+        "AG03-PARENT-BEGIN",
+        "\"tool_call_id\":\"ag03-agent\""
+      ],
+      "reply": {
+        "text": "AG03-PARENT-DONE"
+      }
+    },
+    {
+      "name": "child-after-mcp",
+      "when": [
+        "AG03-CHILD-DIRECTIVE",
+        "\"tool_call_id\":\"ag03-mcp\""
+      ],
+      "reply": {
+        "text": "Scope: done.\nResult: AG03-CHILD-REPORT.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "child-mcp",
+      "when": [
+        "AG03-CHILD-DIRECTIVE",
+        "\"tool_call_id\":\"ag03-beta\""
+      ],
+      "reply": {
+        "tool": {
+          "id": "ag03-mcp",
+          "name": "mcp__agent03-private__echo",
+          "arguments": {
+            "text": "AG03-MCP-CALL"
+          }
+        }
+      }
+    },
+    {
+      "name": "child-beta",
+      "when": [
+        "AG03-CHILD-DIRECTIVE",
+        "\"tool_call_id\":\"ag03-alpha\""
+      ],
+      "reply": {
+        "tool": {
+          "id": "ag03-beta",
+          "name": "read_skill",
+          "arguments": {
+            "skillName": "agent03-beta"
+          }
+        }
+      }
+    },
+    {
+      "name": "child-alpha",
+      "when": [
+        "AG03-CHILD-DIRECTIVE"
+      ],
+      "reply": {
+        "tool": {
+          "id": "ag03-alpha",
+          "name": "read_skill",
+          "arguments": {
+            "skillName": "agent03-alpha"
+          }
+        }
+      }
+    },
+    {
+      "name": "parent",
+      "when": [
+        "AG03-PARENT-BEGIN"
+      ],
+      "reply": {
+        "tool": {
+          "id": "ag03-agent",
+          "name": "agent",
+          "arguments": {
+            "description": "AG03 delegate",
+            "prompt": "AG03-CHILD-DIRECTIVE",
+            "subagent_type": "worker"
+          }
+        }
+      }
+    },
+    {
+      "name": "second",
+      "when": [
+        "AG03-SECOND-SESSION"
+      ],
+      "reply": {
+        "text": "AG03-SECOND-DONE"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "agent03-parent",
+        "channelKey": "test",
+        "message": "AG03-PARENT-BEGIN",
+        "sdkSessionConfig": {
+          "skills": [
+            "agent03-alpha",
+            "agent03-beta"
+          ],
+          "agents": {
+            "worker": {
+              "description": "AG03 child worker",
+              "prompt": "AG03-WORKER-SUFFIX",
+              "tools": [
+                "read_skill",
+                "mcp__agent03-private__echo"
+              ],
+              "skills": [
+                "agent03-alpha"
+              ],
+              "memory": "disabled",
+              "initialPrompt": "AG03-INITIAL-ONLY",
+              "observer": "reviewer",
+              "observerMessage": "AG03-OBSERVER-POSTAMBLE",
+              "mcpServers": {
+                "agent03-private": {
+                  "type": "stdio",
+                  "command": "node",
+                  "args": [
+                    "{PILOT_HOME}/agent03-mcp.mjs",
+                    "{PILOT_HOME}/agent03-mcp-log.jsonl"
+                  ]
+                }
+              }
+            },
+            "reviewer": {
+              "description": "AG03 independent observer",
+              "prompt": "AG03-OBSERVER-SUFFIX",
+              "tools": [
+                "write_file",
+                "read_skill",
+                "mcp__agent03-private__echo"
+              ],
+              "skills": [
+                "agent03-beta"
+              ],
+              "memory": "inherit",
+              "initialPrompt": "AG03-OBSERVER-INITIAL-MUST-NOT-LEAK"
+            }
+          }
+        }
+      },
+      "timeout": 60000,
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request",
+            "toolName": "mcp__agent03-private__echo"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "agent03-parent",
+            "requestId": "{event.requestId}",
+            "decision": "allow"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 1200
+    },
+    {
+      "ws": "background_tasks",
+      "params": {
+        "sessionKey": "agent03-parent"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "agent03-parent",
+        "channelKey": "test",
+        "message": "AG03-PARENT-CHECK"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "agent03-second",
+        "channelKey": "test",
+        "message": "AG03-SECOND-SESSION",
+        "sdkSessionConfig": {
+          "skills": [
+            "agent03-alpha",
+            "agent03-beta"
+          ]
+        }
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "agent03-parent"
+      }
+    }
+  ]
+}

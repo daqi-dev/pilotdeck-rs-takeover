@@ -83,7 +83,23 @@
         "^\\$\\.tree",
         "^\\$\\.provider",
         "^\\$\\.shutdown\\.code$"
+      ],
+      "assertions": [
+        "positive-robust-restart-registry-lock-leftover"
       ]
+    }
+  ],
+  "assertions": [
+    {
+      "id": "positive-robust-restart-registry-lock-leftover",
+      "sides": [
+        "rust"
+      ],
+      "path": "/steps",
+      "acceptedPositive": {
+        "scene": "robust-restart-registry-lock-leftover",
+        "id": "registry-dead-owner-lock-blocks-startup"
+      }
     }
   ]
 }

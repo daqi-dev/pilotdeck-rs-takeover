@@ -1,0 +1,160 @@
+{
+  "name": "backend-feishu-stream-stop",
+  "about": "Independent formal Feishu stop scope: actual stream inbound/model/final reply followed by actual reaction DELETE triggers fixture edit enabled:false in isolated config. Existing serve until exact adapter hot-reload complete log is the barrier; only then formal WS observer executes builtin nonce-Ping probe of the original exact WS. TS must prove matching Pong leak, Rust must prove old socket close. Timeout is failure. No process-exit cleanup proof, no normal-scene mutation; requires E0 fixed TS calibration.",
+  "env": {
+    "HTTPS_PROXY": "http://127.0.0.1:38413",
+    "https_proxy": "http://127.0.0.1:38413",
+    "HTTP_PROXY": "http://127.0.0.1:38413",
+    "http_proxy": "http://127.0.0.1:38413",
+    "NO_PROXY": "127.0.0.1,localhost",
+    "no_proxy": "127.0.0.1,localhost",
+    "NODE_EXTRA_CA_CERTS": "{ROOT}/../feishu-stop-ca/ca.pem"
+  },
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nproxy:\n  url: http://127.0.0.1:38413\n  noProxy: 127.0.0.1,localhost\nadapters:\n  feishu:\n    enabled: true\n    appId: cli_0123456789abcdef\n    appSecret: feishu-local-secret\n    connectionMode: stream\n",
+  "files": {
+    "home/.pilotdeck/feishu-stop-witness/probe.mjs": "const response=await fetch('http://127.0.0.1:38414/probe-stopped',{signal:AbortSignal.timeout(7000)});\nif(!response.ok)throw Error('exact socket probe failed '+response.status);\nconst result=await response.json();\nif(result.marker!=='FEISHU-STOP-PROBE'||typeof result.alive!=='boolean')throw Error('invalid socket receipt');\nconsole.log(JSON.stringify(result));\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Feishu stop fixture\"}"
+      }
+    },
+    {
+      "name": "observer-final",
+      "when": [
+        "FEISHU-STOP-OBSERVE",
+        "\"tool_call_id\":\"call_feishu_receipt\""
+      ],
+      "reply": {
+        "text": "FEISHU-STOP-OBSERVER-DONE"
+      }
+    },
+    {
+      "name": "observer-initial",
+      "when": [
+        "FEISHU-STOP-OBSERVE"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_feishu_receipt",
+          "name": "bash",
+          "arguments": {
+            "command": "node '{PILOT_HOME}/feishu-stop-witness/probe.mjs'"
+          }
+        }
+      }
+    },
+    {
+      "name": "channel",
+      "when": [
+        "FEISHU-STOP-BEGIN"
+      ],
+      "reply": {
+        "text": "FEISHU-STOP-DONE"
+      }
+    },
+    {
+      "name": "unexpected",
+      "reply": {
+        "text": "FEISHU-STREAM-UNEXPECTED"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "serve": [
+        "server",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "38411"
+      ],
+      "timeout": 25000,
+      "settleMs": 0,
+      "until": "[pilotdeck] Adapter hot-reload complete: feishu=stopped",
+      "then": [
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "feishu-stop-observer",
+            "channelKey": "test",
+            "runId": "feishu-stop-observer-run",
+            "message": "FEISHU-STOP-OBSERVE"
+          },
+          "answer": [
+            {
+              "on": {
+                "type": "permission_request"
+              },
+              "ws": "permission_decide",
+              "params": {
+                "sessionKey": "feishu-stop-observer",
+                "requestId": "{event.requestId}",
+                "decision": "allow"
+              }
+            }
+          ],
+          "timeout": 12000
+        },
+        {
+          "ws": "read_session_messages",
+          "params": {
+            "sessionKey": "feishu:chat=feishu-local-chat:general"
+          },
+          "timeout": 5000
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    }
+  ],
+  "assertions": [
+    {
+      "id": "observer-initial-model",
+      "path": "/provider/observer-initial/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "observer-initial-unique",
+      "path": "/provider/observer-initial/1",
+      "exists": false
+    },
+    {
+      "id": "observer-final-model",
+      "path": "/provider/observer-final/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "observer-final-unique",
+      "path": "/provider/observer-final/1",
+      "exists": false
+    },
+    {
+      "id": "channel-model",
+      "path": "/provider/channel/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "channel-unique",
+      "path": "/provider/channel/1",
+      "exists": false
+    },
+    {
+      "id": "no-unexpected",
+      "path": "/provider/unexpected/0",
+      "exists": false
+    },
+    {
+      "id": "no-default",
+      "path": "/provider/default/0",
+      "exists": false
+    }
+  ],
+  "server": false
+}

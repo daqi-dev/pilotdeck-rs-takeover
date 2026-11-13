@@ -33,6 +33,7 @@ const write=()=>{
  const event={seq:6,event:{type:'assistant_text_delta',text:mode==='wrong-text'?'OTHER':'C1 partial',runId:mode==='wrong-run-id'?'22222222-2222-4222-8222-222222222222':run}};
  const records=mode==='duplicate-record'?[record,record]:[record];
  fs.mkdirSync(path.join(pilot,'runs'),{recursive:true});fs.writeFileSync(path.join(pilot,'runs/registry.json'),JSON.stringify({schemaVersion:1,records,events:{[project+'\0'+session+'\0'+run]:[event]}}));
+ fs.writeFileSync(path.join(pilot,'witness.jsonl'),' {"name":"字","value":1.0}\r\n');
 };
 process.on('SIGINT',()=>{fs.writeFileSync(path.join(pilot,'signal.json'),JSON.stringify({signal:'SIGINT',pid:process.pid}));console.log(JSON.stringify({status:'aborted',reason:'CLI interrupted'}));process.exit(1);});
 const timer=setInterval(()=>{},1000);console.log('fixture alive, no partial stdout');
@@ -48,7 +49,7 @@ async function capture(mode) {
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'bbx-persisted-trigger-'));
   const scripts=path.join(root,'scripts/bbx'),base=path.join(root,'baseline'),bin=path.join(root,'bin');
   for(const dir of [scripts,path.join(base,'dist/src/cli'),bin])fs.mkdirSync(dir,{recursive:true});
-  for(const name of ['run.mjs','check.mjs','diff.mjs','evidence.mjs','mock-support.mjs','syntax-policy.mjs','native-identity.mjs','serve-persisted-event.mjs'])fs.copyFileSync(new URL(name,import.meta.url),path.join(scripts,name));
+  for(const name of ['run.mjs','check.mjs','diff.mjs','evidence.mjs','mock-support.mjs','syntax-policy.mjs','native-identity.mjs','serve-persisted-event.mjs', 'channel-poll-policy.mjs', 'sdk-agent-policy.mjs', 'sdk-signal-policy.mjs'])fs.copyFileSync(new URL(name,import.meta.url),path.join(scripts,name));
   const ports=[await boundPort(),await boundPort()];assert(!ports.includes(18789));
   const runner=path.join(scripts,'run.mjs');let source=fs.readFileSync(runner,'utf8');
   source=source.replace('const GATEWAY_PORT = 38411 + 10 * SLOT;',`const GATEWAY_PORT = ${ports[0]};`).replace('const MOCK_PORT = 38412 + 10 * SLOT;',`const MOCK_PORT = ${ports[1]};`);fs.writeFileSync(runner,source);
@@ -83,6 +84,12 @@ test('production serve sends SIGINT only after real flushed/open provider and pe
   assert.equal(serve.persistedRunEvent.provider.flushedChunks,1);assert.deepEqual(f.artifact.failures,[]);
   assert.deepEqual(validateArtifact(f.artifact,f.scenario,f.artifact.evidence),[]);
   const proof=f.artifact.evidence.serveTriggers[0];assert.equal(hash(Buffer.from(proof.raw.base64,'base64')),proof.raw.sha256);
+  const witnessBytes=fs.readFileSync(path.join(f.root,'fixture/pdrs-bbx/root/home/.pilotdeck/witness.jsonl'));
+  const witness=f.artifact.evidence.persistedFiles['/home/.pilotdeck/witness.jsonl'];
+  assert.deepEqual(witness,{byteLength:witnessBytes.length,sha256:hash(witnessBytes)});
+  const parsed=f.artifact.tree['/home/.pilotdeck/witness.jsonl'].jsonl;
+  const canonical=Buffer.from(parsed.map(line=>JSON.stringify(line)+'\n').join(''));
+  assert.notEqual(witness.sha256,hash(canonical),'parsed equivalence must not certify original JSONL bytes');
   // Reproduce the real scenario's escaped capture regex, not a simplified
   // substitution: serve uses the session saved from the initial CLI output.
   const original=JSON.parse(fs.readFileSync(new URL('./scenarios/c1-sdk-cancel-resume.json',import.meta.url)));

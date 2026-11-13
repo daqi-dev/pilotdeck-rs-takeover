@@ -159,6 +159,12 @@ def run_controls(source):
             name = f'{sid}.pilotdeck-current-sidecar.jsonl'
             shutil.copyfile(source / name, left / name)
             shutil.copyfile(source / name, right / name)
+        # Carry the original identity ledger with its original trace bytes.
+        # Legacy captures lacking a ledger remain subject to G03's own checks.
+        ledger = source.parent / 'run.json' if source.name == 'artifacts' else source / 'run.json'
+        if ledger.is_file():
+            for directory in (left, right):
+                shutil.copyfile(ledger, directory / 'run.json')
         positive = G.compare_directories(left, right)
         cases['real_self_positive'] = dict(ok=positive['verdict'] == 'PASS', **verdict_summary(positive))
         lp, rp = [d / 'pure_text.pilotdeck-current-sidecar.jsonl' for d in (left, right)]

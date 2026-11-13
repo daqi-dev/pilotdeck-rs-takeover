@@ -11,7 +11,7 @@ import { loadRun } from './evidence.mjs';
 const fixture = () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bbx-cli-test-'));
   const dir = path.join(root, 'scripts/bbx'); fs.mkdirSync(dir, { recursive: true });
-  for (const name of ['check.mjs', 'evidence.mjs', 'diff.mjs', 'mock-support.mjs', 'syntax-policy.mjs', 'native-identity.mjs', 'serve-persisted-event.mjs']) fs.copyFileSync(new URL(name, import.meta.url), path.join(dir, name));
+  for (const name of ['check.mjs', 'evidence.mjs', 'diff.mjs', 'mock-support.mjs', 'syntax-policy.mjs', 'native-identity.mjs', 'serve-persisted-event.mjs', 'channel-poll-policy.mjs', 'sdk-agent-policy.mjs', 'sdk-signal-policy.mjs']) fs.copyFileSync(new URL(name, import.meta.url), path.join(dir, name));
   // The supervisor is the production CLI; only its workers are faulted in this isolated copy.
   const check = path.join(dir, 'check.mjs');
   fs.writeFileSync(check, fs.readFileSync(check, 'utf8').replace('#!/usr/bin/env node', `#!/usr/bin/env node

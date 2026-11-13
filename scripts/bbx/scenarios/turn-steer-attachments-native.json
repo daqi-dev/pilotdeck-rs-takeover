@@ -1,0 +1,185 @@
+{
+  "name": "turn-steer-attachments-native",
+  "about": "正式默认native server/WS：活动turn的bash工具开始时steer附本地注册text文件；实际permission只允许一次初始bash，steer应用后模型必须看到附件和注册path note，再调用read_file读取隔离tmp外部路径，依靠准确allowedReadFiles进入真实工具；最后正常结束并落盘。禁止MockTurnGateway，模型仅本地mock。TS双轮与Rust待E0固定snapshot。",
+  "files": {
+    "tmp/steer-registered.txt": "STEER-REGISTERED-FILE\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Steer attachment\"}"
+      }
+    },
+    {
+      "name": "after-read",
+      "when": [
+        "STEER-ATTACH-START",
+        "call_attachment_read",
+        "\"role\":\"tool\""
+      ],
+      "reply": {
+        "text": "STEER-ATTACH-OK"
+      }
+    },
+    {
+      "name": "after-steer",
+      "when": [
+        "STEER-ATTACH-START",
+        "STEER-REGISTERED-FILE",
+        "call_attachment_pause",
+        "\"role\":\"tool\""
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_attachment_read",
+          "name": "read_file",
+          "arguments": {
+            "file_path": "{ROOT}/tmp/steer-registered.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "initial",
+      "when": [
+        "STEER-ATTACH-START"
+      ],
+      "unless": [
+        "call_attachment_pause"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_attachment_pause",
+          "name": "bash",
+          "arguments": {
+            "command": "sleep 2; echo STEER-PAUSE"
+          }
+        }
+      }
+    },
+    {
+      "name": "unexpected",
+      "reply": {
+        "status": 400,
+        "body": {
+          "error": {
+            "message": "unexpected steer attachment model request"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "steer_turn",
+      "params": {
+        "sessionKey": "s-steer-attachment",
+        "runId": "run-steer-attachment",
+        "itemId": "before-active",
+        "message": "before-active",
+        "attachments": [
+          null
+        ]
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-steer-attachment",
+        "channelKey": "test",
+        "runId": "run-steer-attachment",
+        "message": "STEER-ATTACH-START"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started"
+          },
+          "ws": "steer_turn",
+          "params": {
+            "sessionKey": "s-steer-attachment",
+            "runId": "run-steer-attachment",
+            "itemId": "steer-attachment",
+            "message": "STEER-ATTACH-NOTE",
+            "attachments": [
+              {
+                "type": "text",
+                "path": "{ROOT}/tmp/steer-registered.txt",
+                "name": "registered steer file",
+                "metadata": {
+                  "channelKey": "fixture"
+                }
+              }
+            ]
+          },
+          "count": 1
+        },
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "s-steer-attachment",
+            "requestId": "{event.requestId}",
+            "decision": "allow"
+          },
+          "count": 1
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-steer-attachment"
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "id": "admission-before-invalid-attachments",
+      "path": "/steps/0/frames/0/result/reason",
+      "equals": "no_active_turn"
+    },
+    {
+      "id": "steer-accepted",
+      "path": "/steps/1/answers/0/frames/0/result/accepted",
+      "equals": true
+    },
+    {
+      "id": "attachment-reached-model",
+      "path": "/provider/after-steer/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "attachment-tool-result-reached-model",
+      "path": "/provider/after-read/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "single-initial",
+      "path": "/provider/initial/1",
+      "exists": false
+    },
+    {
+      "id": "single-followup",
+      "path": "/provider/after-steer/1",
+      "exists": false
+    },
+    {
+      "id": "single-finish",
+      "path": "/provider/after-read/1",
+      "exists": false
+    },
+    {
+      "id": "no-unexpected-request",
+      "path": "/provider/unexpected/0",
+      "exists": false
+    }
+  ]
+}

@@ -108,7 +108,23 @@
         "/chats/s-cancel\\.jsonl\\.jsonl(\\.length|\\[2\\d\\].*)$",
         "/chats/s-cancel\\.jsonl\\.(raw|projections\\.json)\\.",
         "^\\$\\.steps\\[3\\]\\.frames\\[0\\]\\.result\\.session\\.fileSize$"
+      ],
+      "assertions": [
+        "positive-hook-cancelled"
       ]
+    }
+  ],
+  "assertions": [
+    {
+      "id": "positive-hook-cancelled",
+      "sides": [
+        "rust"
+      ],
+      "path": "/steps",
+      "acceptedPositive": {
+        "scene": "hook-cancelled",
+        "id": "aborted-hook-does-not-run-tool"
+      }
     }
   ]
 }
