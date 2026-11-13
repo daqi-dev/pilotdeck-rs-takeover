@@ -1,0 +1,126 @@
+{
+  "name": "abort-timeout-hook-user-prompt",
+  "about": "超时列（submit_turn.timeoutMs，从 abort-hook-user-prompt 拆出）：中止落在 UserPromptSubmit hook 执行中（TurnRunner.ts:229-241）：abort_turn、close_session、timeoutMs。比较 hook 是否被杀、user_prompt_submitted 之后的走向、turn_aborted 状态、会话记录、下一轮。",
+  "files": {
+    "home/.pilotdeck/plugins/bbx-abort/plugin.json": {
+      "name": "bbx-abort",
+      "version": "0.1.0",
+      "description": "bbx bbx-abort",
+      "hooks": {
+        "UserPromptSubmit": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "cat >/dev/null; sleep 3"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "home/.pilotdeck/plugins/bbx-abort/hook.mjs": "// bbx hook fixture: node hook.mjs <log> <exit> [stdout] [stderr] [sleepMs]\nimport fs from 'node:fs';\nconst [log, exit = '0', out = '', err = '', sleep = '0'] = process.argv.slice(2);\nconst dir = process.env.HOME + '/hooklog';\nconst append = (row) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(dir + '/' + log + '.jsonl', JSON.stringify(row) + '\\n'); };\nlet input = '';\nprocess.stdin.on('data', (d) => { input += d; });\nprocess.stdin.on('end', () => {\n  let parsed; try { parsed = JSON.parse(input); } catch { parsed = { raw: input }; }\n  const keep = {};\n  for (const k of ['hook_event_name', 'hookEventName', 'tool_name', 'toolName', 'error', 'isInterrupt', 'is_interrupt', 'prompt', 'reason', 'stopHookActive']) if (k in parsed) keep[k] = parsed[k];\n  append({ argv: process.argv.slice(2), input: keep });\n  setTimeout(() => {\n    append({ argv: process.argv.slice(2), done: true });\n    if (out) process.stdout.write(out);\n    if (err) process.stderr.write(err);\n    process.exit(Number(exit));\n  }, Number(sleep));\n});\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Abort run\"}"
+      }
+    },
+    {
+      "name": "next-hu-run",
+      "when": [
+        "next-hu-run:"
+      ],
+      "reply": {
+        "text": "Next hu-run."
+      }
+    },
+    {
+      "name": "hu-run",
+      "when": [
+        "hu-run:"
+      ],
+      "reply": {
+        "text": "answer hu-run"
+      }
+    },
+    {
+      "name": "next-hu-close",
+      "when": [
+        "next-hu-close:"
+      ],
+      "reply": {
+        "text": "Next hu-close."
+      }
+    },
+    {
+      "name": "hu-close",
+      "when": [
+        "hu-close:"
+      ],
+      "reply": {
+        "text": "answer hu-close"
+      }
+    },
+    {
+      "name": "next-hu-timeout",
+      "when": [
+        "next-hu-timeout:"
+      ],
+      "reply": {
+        "text": "Next hu-timeout."
+      }
+    },
+    {
+      "name": "hu-timeout",
+      "when": [
+        "hu-timeout:"
+      ],
+      "reply": {
+        "text": "answer hu-timeout"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-hu-timeout",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-hu-timeout",
+        "channelKey": "test",
+        "message": "hu-timeout: go",
+        "timeoutMs": 1500
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-hu-timeout",
+        "channelKey": "test",
+        "message": "next-hu-timeout: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-hu-timeout"
+      }
+    }
+  ]
+}

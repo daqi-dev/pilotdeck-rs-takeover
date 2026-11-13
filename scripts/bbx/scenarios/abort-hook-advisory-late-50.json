@@ -1,0 +1,88 @@
+{
+  "name": "abort-hook-advisory-late-50",
+  "about": "PreModelRequest hook（不等待的 advisory hook，AgentLoop.ts:699-702）执行中（模型已开始流式输出）abort_turn，hook 收到 SIGTERM 后再活 50 毫秒才退出（commandRunner.ts:96-101 先 TERM、3 秒后 KILL，结果等子进程 close）。模型请求挂着。比较 hook 完成帧是否上流、与 turn_completed 的先后、hook 日志、会话记录。",
+  "files": {
+    "home/.pilotdeck/plugins/bbx-abort/plugin.json": {
+      "name": "bbx-abort",
+      "version": "0.1.0",
+      "description": "bbx bbx-abort",
+      "hooks": {
+        "PreModelRequest": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "trap 'sleep 0.05; echo term-exit >> \"$HOME/hooklog/al-50.log\"; exit 143' TERM; mkdir -p \"$HOME/hooklog\"; echo start >> \"$HOME/hooklog/al-50.log\"; cat >/dev/null; sleep 5 & wait; echo done >> \"$HOME/hooklog/al-50.log\""
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Abort run\"}"
+      }
+    },
+    {
+      "name": "al-50",
+      "when": [
+        "al-50:"
+      ],
+      "reply": {
+        "chunks": [
+          "partial ",
+          "never"
+        ],
+        "delayMs": 300,
+        "hangAfter": 1,
+        "hangMs": 6000
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-al-50",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-al-50",
+        "channelKey": "test",
+        "message": "al-50: go"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "assistant_text_delta"
+          },
+          "ws": "abort_turn",
+          "params": {
+            "sessionKey": "s-al-50"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-al-50"
+      }
+    }
+  ]
+}

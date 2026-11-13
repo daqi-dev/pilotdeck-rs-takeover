@@ -1,0 +1,210 @@
+{
+  "name": "abort-timeout-hook-subagent-start",
+  "about": "超时列（submit_turn.timeoutMs，从 abort-hook-subagent-start 拆出）：中止落在 SubagentStart hook 执行中（OneShotSubagentPort.ts:139）：abort_turn、close_session、timeoutMs。比较 subagent_started / subagent_completed、hook 是否被杀、子代理是否仍发模型请求、帧、会话与子代理记录、下一轮。",
+  "files": {
+    "home/.pilotdeck/plugins/bbx-abort/plugin.json": {
+      "name": "bbx-abort",
+      "version": "0.1.0",
+      "description": "bbx bbx-abort",
+      "hooks": {
+        "SubagentStart": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "cat >/dev/null; sleep 3"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "home/.pilotdeck/plugins/bbx-abort/hook.mjs": "// bbx hook fixture: node hook.mjs <log> <exit> [stdout] [stderr] [sleepMs]\nimport fs from 'node:fs';\nconst [log, exit = '0', out = '', err = '', sleep = '0'] = process.argv.slice(2);\nconst dir = process.env.HOME + '/hooklog';\nconst append = (row) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(dir + '/' + log + '.jsonl', JSON.stringify(row) + '\\n'); };\nlet input = '';\nprocess.stdin.on('data', (d) => { input += d; });\nprocess.stdin.on('end', () => {\n  let parsed; try { parsed = JSON.parse(input); } catch { parsed = { raw: input }; }\n  const keep = {};\n  for (const k of ['hook_event_name', 'hookEventName', 'tool_name', 'toolName', 'error', 'isInterrupt', 'is_interrupt', 'prompt', 'reason', 'stopHookActive']) if (k in parsed) keep[k] = parsed[k];\n  append({ argv: process.argv.slice(2), input: keep });\n  setTimeout(() => {\n    append({ argv: process.argv.slice(2), done: true });\n    if (out) process.stdout.write(out);\n    if (err) process.stderr.write(err);\n    process.exit(Number(exit));\n  }, Number(sleep));\n});\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Abort run\"}"
+      }
+    },
+    {
+      "name": "child-ss-run",
+      "when": [
+        "CHILD-ss-run"
+      ],
+      "reply": {
+        "text": "Scope: x.\nResult: y.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "child-ss-close",
+      "when": [
+        "CHILD-ss-close"
+      ],
+      "reply": {
+        "text": "Scope: x.\nResult: y.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "child-ss-timeout",
+      "when": [
+        "CHILD-ss-timeout"
+      ],
+      "reply": {
+        "text": "Scope: x.\nResult: y.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "next-ss-run",
+      "when": [
+        "next-ss-run:"
+      ],
+      "reply": {
+        "text": "Next ss-run."
+      }
+    },
+    {
+      "name": "ss-run-after",
+      "when": [
+        "ss-run:",
+        "\"tool_call_id\":\"call_ss_run\""
+      ],
+      "reply": {
+        "text": "Done ss-run."
+      }
+    },
+    {
+      "name": "ss-run",
+      "when": [
+        "ss-run:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_ss_run",
+          "name": "agent",
+          "arguments": {
+            "description": "Look",
+            "prompt": "CHILD-ss-run: look.",
+            "subagent_type": "general-purpose"
+          }
+        }
+      }
+    },
+    {
+      "name": "next-ss-close",
+      "when": [
+        "next-ss-close:"
+      ],
+      "reply": {
+        "text": "Next ss-close."
+      }
+    },
+    {
+      "name": "ss-close-after",
+      "when": [
+        "ss-close:",
+        "\"tool_call_id\":\"call_ss_close\""
+      ],
+      "reply": {
+        "text": "Done ss-close."
+      }
+    },
+    {
+      "name": "ss-close",
+      "when": [
+        "ss-close:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_ss_close",
+          "name": "agent",
+          "arguments": {
+            "description": "Look",
+            "prompt": "CHILD-ss-close: look.",
+            "subagent_type": "general-purpose"
+          }
+        }
+      }
+    },
+    {
+      "name": "next-ss-timeout",
+      "when": [
+        "next-ss-timeout:"
+      ],
+      "reply": {
+        "text": "Next ss-timeout."
+      }
+    },
+    {
+      "name": "ss-timeout-after",
+      "when": [
+        "ss-timeout:",
+        "\"tool_call_id\":\"call_ss_timeout\""
+      ],
+      "reply": {
+        "text": "Done ss-timeout."
+      }
+    },
+    {
+      "name": "ss-timeout",
+      "when": [
+        "ss-timeout:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_ss_timeout",
+          "name": "agent",
+          "arguments": {
+            "description": "Look",
+            "prompt": "CHILD-ss-timeout: look.",
+            "subagent_type": "general-purpose"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-ss-timeout",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ss-timeout",
+        "channelKey": "test",
+        "message": "ss-timeout: go",
+        "timeoutMs": 1500
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ss-timeout",
+        "channelKey": "test",
+        "message": "next-ss-timeout: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-ss-timeout"
+      }
+    }
+  ],
+  "volatile": [
+    "/chats/s-ss-timeout\\.jsonl\\.(jsonl\\[\\d+\\]|projections\\.json\\.json\\.projections\\.agent-transcript\\.subagent-references\\.state\\.completed\\[0\\])\\.summaryPreview$"
+  ]
+}

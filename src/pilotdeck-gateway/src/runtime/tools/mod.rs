@@ -225,6 +225,15 @@ impl ToolRunContext {
                 .host_cancellation()
                 .is_some_and(crate::host::Cancellation::is_cancelled)
     }
+    /// `AbortSignal.reason` of the abort signal, when it named one.
+    pub fn abort_reason(&self) -> Option<JsString> {
+        self.cancellation()
+            .and_then(ToolCancellation::reason)
+            .or_else(|| {
+                self.host_cancellation()
+                    .and_then(crate::host::Cancellation::reason)
+            })
+    }
     /// Only timestamped event delivery can be ordered against pending timers.
     /// The legacy host signal and explicit synchronous aborts keep immediate
     /// delivery semantics.

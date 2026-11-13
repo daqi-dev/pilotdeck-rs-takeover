@@ -774,8 +774,12 @@ async fn resolve_python(
     sandbox: crate::runtime::tools::sandbox::Sandbox,
 ) -> Result<Option<&'static str>, ToolError> {
     for candidate in ["python3", "python"] {
+        // `signal?.throwIfAborted()` (NodeCodeRuntimePort.ts:58) throws the
+        // abort reason itself. The turn's reasons are strings (`aborted`,
+        // `aborted:<runId>`, `session_closed`, `timeout:<runId>`), so the
+        // tool fails with the non-Error normalization, not `tool_aborted`.
         if context.is_aborted() {
-            return Err(ToolError::aborted());
+            return Err(ToolError::non_error());
         }
         let mut command = if sandbox.confines() {
             let probe_cwd = super::os_path(&cwd(context));
@@ -911,8 +915,10 @@ async fn run_execute_code(
             none(),
         ));
     };
+    // `executionWorkspace.create({ signal })` throws the abort reason
+    // (NodeExecutionWorkspacePort.ts:10); see `resolve_python`.
     if context.is_aborted() {
-        return Err(ToolError::aborted());
+        return Err(ToolError::non_error());
     }
     let workspace = Workspace {
         root: create_workspace_root()?,

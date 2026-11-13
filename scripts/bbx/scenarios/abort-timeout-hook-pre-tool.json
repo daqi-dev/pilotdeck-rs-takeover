@@ -1,0 +1,143 @@
+{
+  "name": "abort-timeout-hook-pre-tool",
+  "about": "超时列（submit_turn.timeoutMs，从 abort-hook-pre-tool 拆出）：中止落在 PreToolUse hook 执行中（ToolRuntime.ts:188）：close_session、timeoutMs（abort_turn 见 hook-cancelled）。比较 hook 是否被杀、工具是否仍执行（ran-*.txt）、帧、会话记录、下一轮。",
+  "files": {
+    "home/.pilotdeck/plugins/bbx-abort/plugin.json": {
+      "name": "bbx-abort",
+      "version": "0.1.0",
+      "description": "bbx bbx-abort",
+      "hooks": {
+        "PreToolUse": [
+          {
+            "matcher": "bash",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "cat >/dev/null; sleep 3"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "home/.pilotdeck/plugins/bbx-abort/hook.mjs": "// bbx hook fixture: node hook.mjs <log> <exit> [stdout] [stderr] [sleepMs]\nimport fs from 'node:fs';\nconst [log, exit = '0', out = '', err = '', sleep = '0'] = process.argv.slice(2);\nconst dir = process.env.HOME + '/hooklog';\nconst append = (row) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(dir + '/' + log + '.jsonl', JSON.stringify(row) + '\\n'); };\nlet input = '';\nprocess.stdin.on('data', (d) => { input += d; });\nprocess.stdin.on('end', () => {\n  let parsed; try { parsed = JSON.parse(input); } catch { parsed = { raw: input }; }\n  const keep = {};\n  for (const k of ['hook_event_name', 'hookEventName', 'tool_name', 'toolName', 'error', 'isInterrupt', 'is_interrupt', 'prompt', 'reason', 'stopHookActive']) if (k in parsed) keep[k] = parsed[k];\n  append({ argv: process.argv.slice(2), input: keep });\n  setTimeout(() => {\n    append({ argv: process.argv.slice(2), done: true });\n    if (out) process.stdout.write(out);\n    if (err) process.stderr.write(err);\n    process.exit(Number(exit));\n  }, Number(sleep));\n});\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Abort run\"}"
+      }
+    },
+    {
+      "name": "next-hp-close",
+      "when": [
+        "next-hp-close:"
+      ],
+      "reply": {
+        "text": "Next hp-close."
+      }
+    },
+    {
+      "name": "hp-close-after",
+      "when": [
+        "hp-close:",
+        "\"tool_call_id\":\"call_hp_close\""
+      ],
+      "reply": {
+        "text": "Done hp-close."
+      }
+    },
+    {
+      "name": "hp-close",
+      "when": [
+        "hp-close:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_hp_close",
+          "name": "bash",
+          "arguments": {
+            "command": "echo ran > ran-hp-close.txt",
+            "description": "hp-close"
+          }
+        }
+      }
+    },
+    {
+      "name": "next-hp-timeout",
+      "when": [
+        "next-hp-timeout:"
+      ],
+      "reply": {
+        "text": "Next hp-timeout."
+      }
+    },
+    {
+      "name": "hp-timeout-after",
+      "when": [
+        "hp-timeout:",
+        "\"tool_call_id\":\"call_hp_timeout\""
+      ],
+      "reply": {
+        "text": "Done hp-timeout."
+      }
+    },
+    {
+      "name": "hp-timeout",
+      "when": [
+        "hp-timeout:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_hp_timeout",
+          "name": "bash",
+          "arguments": {
+            "command": "echo ran > ran-hp-timeout.txt",
+            "description": "hp-timeout"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-hp-timeout",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-hp-timeout",
+        "channelKey": "test",
+        "message": "hp-timeout: go",
+        "timeoutMs": 1500
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-hp-timeout",
+        "channelKey": "test",
+        "message": "next-hp-timeout: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-hp-timeout"
+      }
+    }
+  ]
+}

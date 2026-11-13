@@ -1,0 +1,126 @@
+{
+  "name": "abort-timeout-hook-stop",
+  "about": "超时列（submit_turn.timeoutMs，从 abort-hook-stop 拆出）：中止落在 Stop hook 执行中（AgentLoop.ts:1884-1929：Stop 之后没有中止检查）：abort_turn、close_session、timeoutMs。比较 finishReason、turn_failed / error 有无、帧、会话记录、下一轮。",
+  "files": {
+    "home/.pilotdeck/plugins/bbx-abort/plugin.json": {
+      "name": "bbx-abort",
+      "version": "0.1.0",
+      "description": "bbx bbx-abort",
+      "hooks": {
+        "Stop": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "cat >/dev/null; sleep 3"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "home/.pilotdeck/plugins/bbx-abort/hook.mjs": "// bbx hook fixture: node hook.mjs <log> <exit> [stdout] [stderr] [sleepMs]\nimport fs from 'node:fs';\nconst [log, exit = '0', out = '', err = '', sleep = '0'] = process.argv.slice(2);\nconst dir = process.env.HOME + '/hooklog';\nconst append = (row) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(dir + '/' + log + '.jsonl', JSON.stringify(row) + '\\n'); };\nlet input = '';\nprocess.stdin.on('data', (d) => { input += d; });\nprocess.stdin.on('end', () => {\n  let parsed; try { parsed = JSON.parse(input); } catch { parsed = { raw: input }; }\n  const keep = {};\n  for (const k of ['hook_event_name', 'hookEventName', 'tool_name', 'toolName', 'error', 'isInterrupt', 'is_interrupt', 'prompt', 'reason', 'stopHookActive']) if (k in parsed) keep[k] = parsed[k];\n  append({ argv: process.argv.slice(2), input: keep });\n  setTimeout(() => {\n    append({ argv: process.argv.slice(2), done: true });\n    if (out) process.stdout.write(out);\n    if (err) process.stderr.write(err);\n    process.exit(Number(exit));\n  }, Number(sleep));\n});\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Abort run\"}"
+      }
+    },
+    {
+      "name": "next-hs-run",
+      "when": [
+        "next-hs-run:"
+      ],
+      "reply": {
+        "text": "Next hs-run."
+      }
+    },
+    {
+      "name": "hs-run",
+      "when": [
+        "hs-run:"
+      ],
+      "reply": {
+        "text": "answer hs-run"
+      }
+    },
+    {
+      "name": "next-hs-close",
+      "when": [
+        "next-hs-close:"
+      ],
+      "reply": {
+        "text": "Next hs-close."
+      }
+    },
+    {
+      "name": "hs-close",
+      "when": [
+        "hs-close:"
+      ],
+      "reply": {
+        "text": "answer hs-close"
+      }
+    },
+    {
+      "name": "next-hs-timeout",
+      "when": [
+        "next-hs-timeout:"
+      ],
+      "reply": {
+        "text": "Next hs-timeout."
+      }
+    },
+    {
+      "name": "hs-timeout",
+      "when": [
+        "hs-timeout:"
+      ],
+      "reply": {
+        "text": "answer hs-timeout"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-hs-timeout",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-hs-timeout",
+        "channelKey": "test",
+        "message": "hs-timeout: go",
+        "timeoutMs": 1500
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-hs-timeout",
+        "channelKey": "test",
+        "message": "next-hs-timeout: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-hs-timeout"
+      }
+    }
+  ]
+}
