@@ -1053,6 +1053,16 @@ async fn start_assembly(
                             session_key: &context.session_key,
                             max_per_session_instances,
                             on_diagnostic: mcp_diagnostic.clone(),
+                            browser_use: Some(
+                                crate::runtime::mcp::browser_use::BrowserUseSessionContext {
+                                    project_root: &project_root,
+                                    session_key: &context.session_key,
+                                    config_proxy: snapshot
+                                        .get("config")
+                                        .and_then(|config| config.get("proxy")),
+                                    env: &|name| std::env::var(name).ok(),
+                                },
+                            ),
                         })
                         .await?
                     }
