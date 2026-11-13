@@ -546,6 +546,9 @@ hooks:
   // 中止落在流进行中、hook 睡完之前。之后同一会话再跑一轮：hook 照常派发、跑完。
   // hook 进程收到 SIGTERM 后再活 300ms 才退出（term.mjs 包一层 hook.mjs）：被杀的 hook 的执行结果因此确定地落在
   // 中止的一轮收尾之后、不上这一轮的流。不包这层时它与被截断的 assistant_block 只差几毫秒，Rust 侧五次里有一次先后颠倒。
+  // 2026-11-12 量过（macOS，槽位 3）：不包这层，基线 40 次全是 assistant_block > hook 完成(cancelled) > turn_completed；
+  // Rust 40 次里 14 次 hook 完成排到 assistant_block 前面。基线里两者没有代码上的先后约束（被杀 hook 的完成要等子进程
+  // close，SubprocessPort.ts:137；截断的块走 sidecar 往返），只是 Node 一侧子进程收尾慢得多；Rust 侧还没对齐，先保留包装。
   // 两个事件各一个场景：同时杀两个 hook 时两条 hook_execution_completed 的先后取决于进程退出的先后，基线自比不稳。
   for (const [name, event, log] of [
     ['hook-model-request-cancelled', 'PreModelRequest', 'pre-model'],
