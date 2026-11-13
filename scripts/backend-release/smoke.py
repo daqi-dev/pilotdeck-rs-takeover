@@ -116,6 +116,73 @@ def fixtures(project):
     (project / "release.pdf").write_bytes(pdf)
 
 
+
+def png_pixel(data):
+    """Decode the smoke fixture's exact one-pixel RGB PNG contract."""
+    assert data.startswith(b"\x89PNG\r\n\x1a\n"), "provider image is not PNG"
+    offset, pixels, header, ended = 8, bytearray(), None, False
+    while offset < len(data):
+        assert offset + 12 <= len(data), "truncated PNG chunk"
+        length = struct.unpack("!I", data[offset:offset + 4])[0]
+        kind = data[offset + 4:offset + 8]
+        end = offset + 12 + length
+        assert end <= len(data), "truncated PNG payload"
+        content = data[offset + 8:offset + 8 + length]
+        crc = struct.unpack("!I", data[end - 4:end])[0]
+        assert crc == zlib.crc32(kind + content), "PNG checksum differs"
+        if kind == b"IHDR":
+            assert header is None, "duplicate PNG header"
+            header = struct.unpack("!2I5B", content)
+        elif kind == b"IDAT":
+            pixels.extend(content)
+        elif kind == b"IEND":
+            assert not content and end == len(data), "PNG has trailing data"
+            ended = True
+        offset = end
+    assert ended and header == (1, 1, 8, 2, 0, 0, 0), "unexpected PNG dimensions/format"
+    row = zlib.decompress(pixels)
+    # For the first and only RGB pixel all left/above predictors are zero.
+    assert len(row) == 4 and row[0] in range(5), "invalid PNG scanline"
+    return row[1:]
+
+
+def provider_media(records, workspace):
+    media = []
+    for request in records:
+        for message in request["body"].get("messages", []):
+            content = message.get("content")
+            if message.get("role") != "user" or not isinstance(content, list):
+                continue
+            for block in content:
+                if block.get("type") == "image_url":
+                    url = block["image_url"]["url"]
+                    prefix, encoded = url.split(",", 1)
+                    assert prefix in {"data:application/pdf;base64", "data:image/jpeg;base64"}, "unexpected provider media type"
+                    media.append((prefix, base64.b64decode(encoded, validate=True)))
+    pdfs = [data for prefix, data in media if prefix == "data:application/pdf;base64"]
+    images = [data for prefix, data in media if prefix == "data:image/jpeg;base64"]
+    assert pdfs, "bundled PDF component did not supply provider PDF block"
+    assert images, "bundled image component did not supply provider JPEG block"
+    expected_pdf = (workspace / "release.pdf").read_bytes()
+    assert b"RELEASE_PDF_OK" in expected_pdf
+    assert all(data == expected_pdf for data in pdfs), "provider PDF bytes differ from fixture"
+    input_png = (workspace / "release.png").read_bytes()
+    assert png_pixel(input_png) == b"\x20\x80\xd0"
+    golden_file = Path(__file__).resolve().parent / "fixtures/read-file-rgb1x1-jpeg.json"
+    golden = json.loads(golden_file.read_text())
+    assert hashlib.sha256(input_png).hexdigest() == golden["inputSha256"], "image fixture differs from fixed TS golden input"
+    expected_image = base64.b64decode(golden["outputBase64"], validate=True)
+    assert golden["outputMime"] == "image/jpeg"
+    assert len(expected_image) == golden["outputBytes"] and hashlib.sha256(expected_image).hexdigest() == golden["outputSha256"]
+    assert all(data == expected_image for data in images), "provider JPEG bytes differ from fixed TS read_file golden"
+    return {"pdfFixtureSha256": hashlib.sha256(expected_pdf).hexdigest(), "pdfBlocks": len(pdfs),
+            "pdfBytesExactlyMatchFixture": True, "imageBlocks": len(images), "inputPngRGB": [32, 128, 208],
+            "imageInputFixtureSha256": golden["inputSha256"], "imageOutputMime": golden["outputMime"],
+            "imageOutputSha256": golden["outputSha256"], "imageOutputBytes": golden["outputBytes"],
+            "imageGoldenSha256": digest(golden_file), "providerImageBytesMatchFixedTs": True}
+
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("package", type=Path)
@@ -135,8 +202,10 @@ def main():
     home, project, guards = out / "home", out / "project", out / "guard-bin"
     for directory in [home, project, guards]:
         directory.mkdir()
-    (project / "release-check.txt").write_text("RELEASE_NATIVE_READ_OK\n")
-    fixtures(project)
+    workspace = home / ".pilotdeck"
+    workspace.mkdir()
+    (workspace / "release-check.txt").write_text("RELEASE_NATIVE_READ_OK\n")
+    fixtures(workspace)
     attempts = out / "forbidden-runtime-attempts.txt"
     env = {"HOME": str(home), "PILOT_HOME": str(home / ".pilotdeck"), "PATH": f"{guards}:{package / 'bin'}",
            "TMPDIR": str(out / "tmp"), "PILOTDECK_GATEWAY_TOKEN": "release-smoke-token", "DOCKER_CONTAINER": "1",
@@ -192,7 +261,7 @@ def main():
     model = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Model)
     threading.Thread(target=model.serve_forever, daemon=True).start()
     config = home / "pilotdeck.yaml"
-    config.write_text(f"schemaVersion: 1\nagent:\n  model: mock/deterministic\n  maxTurns: 4\nmodel:\n  providers:\n    mock:\n      protocol: openai\n      url: http://127.0.0.1:{model.server_port}/v1\n      apiKey: local-mock-only\n      models:\n        deterministic: {{}}\ntelemetry:\n  enabled: false\n")
+    config.write_text(f"schemaVersion: 1\nagent:\n  model: mock/deterministic\n  maxTurns: 4\nmodel:\n  providers:\n    mock:\n      protocol: openai\n      url: http://127.0.0.1:{model.server_port}/v1\n      apiKey: local-mock-only\n      models:\n        deterministic: {{multimodal: {{input: [text, image, pdf]}}}}\ntelemetry:\n  enabled: false\n")
     env["PILOTDECK_CONFIG_PATH"] = str(config)
     sidecar = package / "bin/pilotdeck-agent-loop-sidecar"
     version = subprocess.run([str(sidecar), "--version"], cwd=project, env=env, capture_output=True, timeout=10)
@@ -236,8 +305,7 @@ def main():
             assert "PDF capability unavailable:" in observed, "missing PDF component did not report unavailable"
             assert "Image capability unavailable:" in observed, "missing image component did not report unavailable"
         else:
-            assert "RELEASE_PDF_OK" in observed, "bundled PDF component did not supply extracted text"
-            assert "data:image/" in observed, "bundled image component did not supply model image content"
+            evidence["nativeReadContracts"] = provider_media(records, workspace)
             assert "capability unavailable:" not in observed, "full package failed component discovery"
         assert not model_errors, model_errors
         assert not attempts.exists(), "Node or sidecar was invoked in default native mode"

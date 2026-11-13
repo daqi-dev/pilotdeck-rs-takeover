@@ -4,7 +4,7 @@
 
 `core` 包含 Rust CLI 和独立 sidecar；`full` 另外必须包含声明支持的 MuPDF、libvips 图像组件及它们的源码和许可材料。这里的 `full` 表示组件组合，不表示所有后端入口已经验收或内建技能资源已经齐备。资源缺口记录在 `manifest.json.pendingDelivery`；不能删除这个记录来宣称完整交付。
 
-已支持的装配目标名称为 `aarch64-unknown-linux-gnu`、`x86_64-unknown-linux-gnu`、`aarch64-apple-darwin`、`x86_64-apple-darwin`。每个实际二进制检查 ELF/Mach-O 架构；支持目标名称不等于已有该目标构建证据。当前 E0 的组件只有 Linux ARM64，并要求 GLIBC 2.38；macOS 组件尚待源码构建。
+已支持的装配目标名称为 `aarch64-unknown-linux-gnu`、`x86_64-unknown-linux-gnu`、`aarch64-apple-darwin`、`x86_64-apple-darwin`。每个实际二进制检查 ELF/Mach-O 架构；支持目标名称不等于已有该目标构建证据。现有 Linux ARM64 组件实际要求 GLIBC 2.38；macOS ARM64 组件已完成源码构建、固定 TS 组件对拍和搬迁验证，记录的最低系统版本为 macOS 11，但尚未在 macOS 11 真机运行验证。
 
 ## 构建输入
 
@@ -54,7 +54,7 @@ python3 scripts/backend-release/smoke.py /path/to/extracted/package --out /path/
 python3 scripts/backend-release/test_release.py
 ```
 
-smoke将完整包复制到新目录，使用隔离HOME、项目和临时目录，清空继承环境，PATH只含包及拒绝执行的Node/npm等探针。它通过CLI正式server/WS入口、动态loopback模型服务运行文本读取、PDF和图像读取，要求工具回执到达模型及真实最终完成。core必须明确报告缺组件；full必须实际提取PDF并提供模型图像。默认native验证时，包副本的独立sidecar被临时替换为失败探针，任何Node/sidecar调用都使smoke失败；原副本随后恢复并重新核对包清单。独立sidecar还单独执行`--version`；完整stdio/TCP协议验收由R2记录，不能用版本命令代替。
+smoke将完整包复制到新目录，使用隔离HOME、项目和临时目录，清空继承环境，PATH只含包及拒绝执行的Node/npm等探针。它通过CLI正式server/WS入口、动态loopback模型服务运行文本读取、PDF和图像读取，要求工具回执到达模型及真实最终完成。core必须明确报告缺组件；full必须把完整 PDF document/data URI 解码后与测试 PDF 逐字节核对，并将 PNG 输入规范化得到的 JPEG 模型图像与固定 TS [golden](fixtures/read-file-rgb1x1-jpeg.json) 逐字节核对；该 golden 的实际输出为 269 字节 JPEG，而不是原始 PNG。默认native验证时，包副本的独立sidecar被临时替换为失败探针，任何Node/sidecar调用都使smoke失败；原副本随后恢复并重新核对包清单。独立sidecar还单独执行`--version`；完整stdio/TCP协议验收由R2记录，不能用版本命令代替。
 
 原始WS帧、模型请求、服务日志及成功/失败结果全部保留。只回收该脚本启动的进程组，不使用固定18789、不访问真实模型或账号。严格的“参考仓不存在”环境验收应由E0在只挂载发行包的隔离环境运行本脚本；本机搬迁证明不冒充完整文件访问审计。
 

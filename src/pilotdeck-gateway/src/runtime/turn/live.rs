@@ -2694,7 +2694,11 @@ fn parse_execute_request(
     let execution = options.get("execution").unwrap_or(options);
     let run_id = extract_string(execution, "runId").unwrap_or_else(|_| turn_id.clone());
     let operation_id = extract_string(execution, "operationId").unwrap_or_else(|_| turn_id.clone());
-    let request_id = extract_string(options, "requestId").unwrap_or_else(|_| "default".into());
+    // One identity per logical execute, retained by the host for the entire
+    // stream, cancellation and any reconnect. A process-wide constant collides
+    // with earlier requests in a long-lived TCP sidecar's request cache.
+    let request_id = extract_string(options, "requestId")
+        .unwrap_or_else(|_| format!("request-{}", uuid::Uuid::new_v4()).into());
 
     let synthetic = match options.get("syntheticMessages") {
         None | Some(JsValue::Null | JsValue::Undefined) => vec![],

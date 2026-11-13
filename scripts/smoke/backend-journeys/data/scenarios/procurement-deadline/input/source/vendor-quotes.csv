@@ -1,0 +1,7 @@
+sku,vendor,unit_price_cents,calendar_lead_days
+CABLE,Local,300,2
+CABLE,Remote,220,10
+DOCK,Local,1800,4
+DOCK,Remote,1400,7
+ADAPTER,Local,250,3
+ADAPTER,Remote,180,8

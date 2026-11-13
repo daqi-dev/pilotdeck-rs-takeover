@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "purpose": "fixed TypeScript read_file normalization golden for release smoke 1x1 RGB PNG",
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "sharp": "0.34.5",
+  "vips": "8.17.3",
+  "readFileModuleSha256": "39412f9020d0a09a28bb46467692636badec0e5c5e4a50584f0c883a73d2218f",
+  "inputSha256": "8b08bb1c57beab1a9db65229d6634a30243658d038383247bb933b086796052e",
+  "inputBytes": 69,
+  "inputRGB": [
+    32,
+    128,
+    208
+  ],
+  "outputMime": "image/jpeg",
+  "outputBytes": 269,
+  "outputSha256": "53d182b9acd7b60c5b7870dce1cd6b795f4e7d9517a779e740fd5d24adc333bb",
+  "outputBase64": "/9j/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAACP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AIoAlRsf/9k=",
+  "decodedOutputRGB": [
+    31,
+    128,
+    207
+  ]
+}

@@ -5245,3 +5245,48 @@ async fn module_call_waits_for_exactly_the_preceding_wire_events() {
         .await
         .unwrap();
 }
+
+#[test]
+fn execute_identity_is_unique_per_request_and_stable_when_reused() {
+    let make_options = |turn: &str, run: &str| {
+        let mut value = JsObject::new();
+        value.insert("sessionId".into(), "session".into());
+        value.insert("turnId".into(), turn.into());
+        value.insert("runId".into(), run.into());
+        value.insert("operationId".into(), run.into());
+        JsValue::Object(value)
+    };
+    let first = parse_execute_request(&input(), &make_options("t1", "r1"), vec![])
+        .unwrap()
+        .0;
+    let second = parse_execute_request(&input(), &make_options("t2", "r2"), vec![])
+        .unwrap()
+        .0;
+    let first_id = first.identity.request_id.to_utf8().unwrap();
+    let second_id = second.identity.request_id.to_utf8().unwrap();
+    assert_ne!(
+        first_id, second_id,
+        "distinct logical executions need distinct cache keys"
+    );
+    for id in [&first_id, &second_id] {
+        let suffix = id
+            .strip_prefix("request-")
+            .expect("TS sidecar request identity prefix");
+        assert_eq!(uuid::Uuid::parse_str(suffix).unwrap().get_version_num(), 4);
+    }
+    let retry = first.clone();
+    assert_eq!(
+        retry.identity.request_id, first.identity.request_id,
+        "reusing an execution for retry retains its identity"
+    );
+    assert_eq!(retry.identity.run_id, first.identity.run_id);
+    assert_eq!(retry.identity.operation_id, first.identity.operation_id);
+    let explicit = parse_execute_request(&input(), &options(), vec![])
+        .unwrap()
+        .0;
+    assert_eq!(
+        explicit.identity.request_id,
+        JsString::from("request"),
+        "explicit identity remains unchanged"
+    );
+}

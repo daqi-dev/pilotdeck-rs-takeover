@@ -1,0 +1,4 @@
+sku,on_hand,demand,safety_stock,pack_size,priority
+CABLE,12,35,5,10,1
+DOCK,3,12,2,5,1
+ADAPTER,10,20,4,10,2

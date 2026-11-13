@@ -346,14 +346,14 @@ mod tests {
     }
 
     #[test]
-    fn host_dependent_config_remains_an_explicit_todo() {
+    fn missing_provider_is_reported_before_intrinsic_agent_selection() {
         assert_eq!(
             run(
-                "host-required",
+                "missing-provider-intrinsic-selection",
                 "schemaVersion: 1\nagent: {model: constructor/m}\nmodel: {}\n",
                 None
             ),
-            "TODO config requiring JavaScript host support"
+            "Model config must contain at least one provider."
         );
     }
 }

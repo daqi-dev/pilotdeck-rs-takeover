@@ -3,7 +3,7 @@
 use std::{fs, process::Command};
 
 #[test]
-fn staffdeck_binding_uses_config_errors_and_host_only_config_remains_explicit() {
+fn staffdeck_binding_and_missing_provider_report_config_errors() {
     let root = std::env::temp_dir().join(format!("pdrs-d1-config-exit-{}", std::process::id()));
     fs::create_dir_all(root.join("project")).unwrap();
     fs::create_dir_all(root.join("home")).unwrap();
@@ -19,8 +19,8 @@ fn staffdeck_binding_uses_config_errors_and_host_only_config_remains_explicit() 
         (
             "false",
             "schemaVersion: 1\nagent: {model: constructor/m}\nmodel: {}\n",
-            2,
-            "pilotdeck-rs TODO: config requiring JavaScript host support is not implemented yet.",
+            1,
+            "Model config must contain at least one provider.",
         ),
     ] {
         fs::write(&config, yaml).unwrap();

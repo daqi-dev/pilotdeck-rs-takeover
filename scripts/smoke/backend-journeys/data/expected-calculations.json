@@ -1,0 +1,55 @@
+{
+  "sales-margin": {
+    "currency": "CNY",
+    "totals": {
+      "net_units": 48,
+      "revenue_cents": 531600,
+      "cost_cents": 297300,
+      "gross_profit_cents": 234300
+    },
+    "gross_margin_bps": 4407,
+    "by_region": {
+      "华东": {
+        "net_units": 26,
+        "revenue_cents": 297400,
+        "cost_cents": 167300,
+        "gross_profit_cents": 130100
+      },
+      "华南": {
+        "net_units": 16,
+        "revenue_cents": 156800,
+        "cost_cents": 85600,
+        "gross_profit_cents": 71200
+      },
+      "北区": {
+        "net_units": 6,
+        "revenue_cents": 77400,
+        "cost_cents": 44400,
+        "gross_profit_cents": 33000
+      }
+    },
+    "sources": [
+      "source/transactions.csv",
+      "source/口径说明.md"
+    ]
+  },
+  "procurement-deadline": {
+    "CABLE": {
+      "needed": 28,
+      "ordered": 30,
+      "cost_cents": 9000
+    },
+    "DOCK": {
+      "needed": 11,
+      "ordered": 15,
+      "cost_cents": 27000
+    },
+    "ADAPTER": {
+      "needed": 14,
+      "full_pack_cost_cents": 5000,
+      "remaining_cents": 4000,
+      "deferred": true
+    }
+  },
+  "renewal-after-restart": "240000 - round(240000*750/10000) + 12000 - 5000 = 229000"
+}
