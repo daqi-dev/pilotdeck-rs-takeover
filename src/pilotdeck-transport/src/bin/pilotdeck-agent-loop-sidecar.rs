@@ -151,7 +151,14 @@ fn serve_tcp(host: &str, port: u16, connection: impl Fn() -> Arc<ExecutionServer
         }
     };
     for stream in listener.incoming() {
-        let Ok(stream) = stream else { continue };
+        let Ok(stream) = stream else {
+            // A failing accept (file descriptors exhausted, …) fails again
+            // at once while the peer waits in the backlog: back off instead
+            // of spinning. Like the baseline's listener (libuv drops the
+            // pending peer on EMFILE) it is silent and keeps listening.
+            std::thread::sleep(Duration::from_millis(100));
+            continue;
+        };
         let _ = stream.set_nodelay(true);
         let (Ok(input), Ok(output)) = (stream.try_clone(), stream.try_clone()) else {
             continue;
