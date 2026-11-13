@@ -1,0 +1,275 @@
+{
+ "name": "sidecar-raw-stdio-factory-failure",
+ "about": "stdio 部署：默认工厂（pilotdeck-agent-loop-default-factory.ts）对 seedState / modelState 不是对象、agent.subagentModel 不合法（829-852）时抛错，agentLoopSidecarServer.ts:347-376 的 catch 分支发 failed 终止帧（code / error / payload.error）。每种不合法载荷一条 execute，等到它的终止帧再发下一条（until），比每条失败的文案；没有宿主模块调用。写完关闭 stdin，进程正常退出。",
+ "server": false,
+ "steps": [
+  {
+   "sidecar": "stdio",
+   "send": [
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x-seed-str",
+      "method": "execute",
+      "runId": "run-0",
+      "operationId": "op-0",
+      "requestId": "rq-0",
+      "payload": {
+       "seedState": "bad"
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-0\",\"final\":true"
+     },
+     "timeout": 8000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x-seed-num",
+      "method": "execute",
+      "runId": "run-1",
+      "operationId": "op-1",
+      "requestId": "rq-1",
+      "payload": {
+       "seedState": 5
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-1\",\"final\":true"
+     },
+     "timeout": 8000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x-seed-arr",
+      "method": "execute",
+      "runId": "run-2",
+      "operationId": "op-2",
+      "requestId": "rq-2",
+      "payload": {
+       "seedState": []
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-2\",\"final\":true"
+     },
+     "timeout": 8000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x-model-num",
+      "method": "execute",
+      "runId": "run-3",
+      "operationId": "op-3",
+      "requestId": "rq-3",
+      "payload": {
+       "modelState": 5
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-3\",\"final\":true"
+     },
+     "timeout": 8000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x-model-str",
+      "method": "execute",
+      "runId": "run-4",
+      "operationId": "op-4",
+      "requestId": "rq-4",
+      "payload": {
+       "modelState": "x"
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-4\",\"final\":true"
+     },
+     "timeout": 8000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x-model-arr",
+      "method": "execute",
+      "runId": "run-5",
+      "operationId": "op-5",
+      "requestId": "rq-5",
+      "payload": {
+       "modelState": []
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-5\",\"final\":true"
+     },
+     "timeout": 8000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x-sub-num",
+      "method": "execute",
+      "runId": "run-6",
+      "operationId": "op-6",
+      "requestId": "rq-6",
+      "payload": {
+       "agent": {
+        "subagentModel": 5
+       }
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-6\",\"final\":true"
+     },
+     "timeout": 8000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x-sub-empty",
+      "method": "execute",
+      "runId": "run-7",
+      "operationId": "op-7",
+      "requestId": "rq-7",
+      "payload": {
+       "agent": {
+        "subagentModel": {}
+       }
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-7\",\"final\":true"
+     },
+     "timeout": 8000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x-sub-noModel",
+      "method": "execute",
+      "runId": "run-8",
+      "operationId": "op-8",
+      "requestId": "rq-8",
+      "payload": {
+       "agent": {
+        "subagentModel": {
+         "provider": "p"
+        }
+       }
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-8\",\"final\":true"
+     },
+     "timeout": 8000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x-sub-ctx0",
+      "method": "execute",
+      "runId": "run-9",
+      "operationId": "op-9",
+      "requestId": "rq-9",
+      "payload": {
+       "agent": {
+        "subagentModel": {
+         "provider": "p",
+         "model": "m",
+         "maxContextTokens": 0
+        }
+       }
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-9\",\"final\":true"
+     },
+     "timeout": 8000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x-sub-outStr",
+      "method": "execute",
+      "runId": "run-10",
+      "operationId": "op-10",
+      "requestId": "rq-10",
+      "payload": {
+       "agent": {
+        "subagentModel": {
+         "provider": "p",
+         "model": "m",
+         "maxOutputTokens": "x"
+        }
+       }
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-10\",\"final\":true"
+     },
+     "timeout": 8000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x-sub-top",
+      "method": "execute",
+      "runId": "run-11",
+      "operationId": "op-11",
+      "requestId": "rq-11",
+      "payload": {
+       "subagentModel": {
+        "provider": ""
+       }
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-11\",\"final\":true"
+     },
+     "timeout": 8000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "s-all",
+      "method": "status",
+      "requestId": "rq-0"
+     }
+    },
+    {
+     "text": "",
+     "end": true
+    }
+   ],
+   "readMs": 4000
+  }
+ ]
+}

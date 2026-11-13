@@ -575,6 +575,44 @@ const sidecarStep = async (step) => {
     const [exitCode, signal] = await record.closed;
     return { action: 'start', listening, exitCode, signal, stdout: record.stdout, stderr: record.stderr };
   }
+  if (step.sidecar === 'stdio') {
+    // stdio 部署：起一个 sidecar 子进程（与 start 同一个程序、同一套环境），按 send 往它的 stdin 写（见 sendScript；
+    // 字节项上的 end 关闭 stdin，不写就一直开着），stdout 按行记录。写完后等到进程退出或 readMs（缺省 1000）到时；
+    // 还没退出的记 exited: false，再发 signal（缺省 SIGTERM，15 秒不退就 SIGKILL），记下退出码与信号；stderr 原样记。
+    const [cmd, ...prefix] = SIDES[side].sidecar;
+    const child = spawn(cmd, prefix, { cwd: project, env: stepEnv(step), stdio: ['pipe', 'pipe', 'pipe'], detached: true });
+    children.push(child);
+    let stdout = Buffer.alloc(0), stderr = '';
+    const wakers = [];
+    const poke = () => wakers.splice(0).forEach((w) => w());
+    let exited = false;
+    const closed = new Promise((r) => child.on('close', (c, s) => { exited = true; poke(); r([c, s]); }));
+    child.stdout.on('data', (d) => { stdout = Buffer.concat([stdout, d]); poke(); });
+    child.stderr.on('data', (d) => { stderr += d; });
+    // 进程先退出时 stdin 上的写会 EPIPE：吞掉，不让采集器崩溃（输出与退出码照记）。
+    child.stdin.on('error', () => {});
+    const wait = (pred, ms) => new Promise((resolve) => {
+      const t0 = Date.now();
+      const check = () => { if (pred() || exited || Date.now() - t0 >= ms) return resolve(); wakers.push(check); setTimeout(check, Math.min(50, Math.max(1, ms - (Date.now() - t0)))); };
+      check();
+    });
+    const script = await sendScript(step.send ?? [], {
+      closed: () => exited,
+      write: (bytes) => child.stdin.write(bytes),
+      end: () => child.stdin.end(),
+      pause: () => {}, resume: () => {},
+      received: () => stdout.toString('utf8'),
+      wait,
+    });
+    await wait(() => false, step.readMs ?? 1000);
+    const exitedByItself = exited;
+    if (!exited) child.kill(step.signal ?? 'SIGTERM');
+    const killer = setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }, 15000);
+    const [exitCode, signal] = await closed;
+    clearTimeout(killer);
+    return { action: 'stdio', ...splitLines(stdout.toString('utf8')), stderr, exited: exitedByItself, exitCode, signal,
+      ...(script.untilMissed === undefined ? {} : { untilMissed: script.untilMissed }) };
+  }
   if (step.sidecar === 'stop') {
     if (!sidecarProc) return { action: 'stop', running: false };
     const { child, record } = sidecarProc;
@@ -649,6 +687,64 @@ const upgradeRequest = (spec) => {
   const headers = { Host: `127.0.0.1:${GATEWAY_PORT}`, Upgrade: 'websocket', Connection: 'Upgrade', 'Sec-WebSocket-Key': 'YmJ4LXJhdy1rZXktMDAwMA==', 'Sec-WebSocket-Version': '13', ...substDeep(o.headers ?? {}) };
   return `${o.method ?? 'GET'} ${subst(o.path ?? '/ws')} HTTP/1.1\r\n${Object.entries(headers).filter(([, v]) => v !== null).map(([k, v]) => `${k}: ${v}`).join('\r\n')}\r\n\r\n`;
 };
+// 发送脚本：raw 步骤（TCP）与 sidecar stdio 步骤共用。依次处理 send 里的项：
+//   {text} / {hex} / {frame}（拼字节，见 README）、{json: 值}（写 JSON.stringify(值) 加换行，一行一条按行协议的消息）；
+//   字节项可带 times / splitAt / end（写完关闭写方向：TCP 半关闭，stdio 关闭 stdin）；
+//   {wait: 毫秒}；{pauseRead} / {resumeRead}（只对 TCP）；
+//   {until: {lines: N} | {text: "…"}, timeout, save}：等对方的输出里出现第 N 个完整行（从头数）/ 在上一次 until
+//     停下的位置之后出现这段文字且那一行已经完整，再往下走；save 的正则在那一整行上匹配（与步骤上的 save 同一套
+//     {saved.名字}），用来应答对方发来的请求（例如 sidecar 发给宿主的 module_call）。timeout（缺省 10000 毫秒）
+//     内没等到，后面的项不再执行，结果里记 untilMissed（这一项的下标）。
+// 每一项在用到时才替换 {saved.名字}，所以前面 until 刚存下的值后面的项就能引用。对方关闭后不再写。
+const sendScript = async (items, io) => {
+  let cursor = 0;
+  for (const [index, spec] of items.entries()) {
+    if (io.closed()) break;
+    const item = withSaved(spec);
+    if (item.wait) { await io.wait(() => false, item.wait); continue; }
+    if (item.pauseRead) { io.pause(); continue; }
+    if (item.resumeRead) { io.resume(); continue; }
+    if (item.until) {
+      const find = () => {
+        const text = io.received();
+        if (item.until.lines !== undefined) {
+          let start = 0;
+          for (let n = 1; ; n++) {
+            const end = text.indexOf('\n', start);
+            if (end < 0) return null;
+            if (n === item.until.lines) return { line: text.slice(start, end), next: end + 1 };
+            start = end + 1;
+          }
+        }
+        const at = text.indexOf(subst(item.until.text), cursor);
+        const end = at < 0 ? -1 : text.indexOf('\n', at);
+        if (end < 0) return null;
+        return { line: text.slice(text.lastIndexOf('\n', at - 1) + 1, end), next: end + 1 };
+      };
+      let hit = find();
+      if (!hit) await io.wait(() => (hit = find()) !== null, item.timeout ?? 10000);
+      if (!hit) return { untilMissed: index };
+      capture(item.save, hit.line);
+      cursor = Math.max(cursor, hit.next);
+      continue;
+    }
+    const one = item.json !== undefined ? Buffer.from(JSON.stringify(substDeep(item.json)) + '\n')
+      : item.frame ? wsClientFrame(item.frame) : item.hex !== undefined ? Buffer.from(item.hex, 'hex')
+      : Buffer.from(subst(item.prefix ?? '') + subst(item.text ?? '').repeat(item.repeat ?? 1) + subst(item.suffix ?? ''));
+    // times：同样的字节连写 n 遍、一次写出（例如不等应答连发很多个请求帧）。
+    const bytes = item.times ? Buffer.concat(Array(item.times).fill(one)) : one;
+    // splitAt：先写前 n 个字节，停 200 毫秒再写其余（一帧跨两次读）。
+    if (item.splitAt) { io.write(bytes.subarray(0, item.splitAt)); await io.wait(() => false, 200); io.write(bytes.subarray(item.splitAt)); }
+    else if (bytes.length) io.write(bytes);
+    if (item.end) io.end();
+  }
+  return {};
+};
+// 按行协议的输出：按换行切开，每行能解析成 JSON 的记解析结果，否则记 {text}；没有换行结尾的最后一段另记 partial。
+const splitLines = (text) => {
+  const parts = text.split('\n'); const tail = parts.pop();
+  return { lines: parts.map((l) => { try { return JSON.parse(l); } catch { return { text: l }; } }), ...(tail ? { partial: tail } : {}) };
+};
 const rawStep = async (spec) => {
   const st = await openRaw(spec.port ?? GATEWAY_PORT);
   if (st.error && !st.s.writable) return { refused: st.error };
@@ -664,28 +760,23 @@ const rawStep = async (spec) => {
       await rawWait(st, () => readServerFrames(st.buf).frames.length > 0, 5000);
     }
   }
-  for (const item of spec.send ?? []) {
-    if (st.closed) break;
-    if (item.wait) { await rawWait(st, () => false, item.wait); continue; }
+  const script = await sendScript(spec.send ?? [], {
+    closed: () => st.closed,
+    write: (bytes) => st.s.write(bytes),
+    end: () => st.s.end(),
     // pauseRead / resumeRead：停止从套接字读（字节留在内核缓冲里，服务端写不出去时就在它那边排队），之后恢复。
-    if (item.pauseRead) { st.s.pause(); continue; }
-    if (item.resumeRead) { st.s.resume(); continue; }
-    const one = item.frame ? wsClientFrame(item.frame) : item.hex !== undefined ? Buffer.from(item.hex, 'hex')
-      : Buffer.from(subst(item.prefix ?? '') + subst(item.text ?? '').repeat(item.repeat ?? 1) + subst(item.suffix ?? ''));
-    // times：同样的字节连写 n 遍、一次写出（例如不等应答连发很多个请求帧）。
-    const bytes = item.times ? Buffer.concat(Array(item.times).fill(one)) : one;
-    // splitAt：先写前 n 个字节，停 200 毫秒再写其余（一帧跨两次 TCP 读）。
-    if (item.splitAt) { st.s.write(bytes.subarray(0, item.splitAt)); await rawWait(st, () => false, 200); st.s.write(bytes.subarray(item.splitAt)); }
-    else st.s.write(bytes);
-    if (item.end) st.s.end();
-  }
+    pause: () => st.s.pause(), resume: () => st.s.resume(),
+    received: () => st.buf.toString('utf8'),
+    wait: (pred, ms) => rawWait(st, pred, ms),
+  });
+  if (script.untilMissed !== undefined) r.untilMissed = script.untilMissed;
   await rawWait(st, () => false, spec.readMs ?? 1000);
   // lines：对方说的是按行分隔的 JSON（agent loop sidecar 的原始协议），收到的字节按换行切开，
   // 每行能解析成 JSON 的记解析结果，否则记原文；最后一段没有换行结尾的另记 partial。
   if (spec.lines) {
-    const text = st.buf.toString('utf8'); const parts = text.split('\n'); const tail = parts.pop();
-    r.lines = parts.map((l) => { try { return JSON.parse(l); } catch { return { text: l }; } });
-    if (tail) r.partial = tail;
+    // 键序与原来相同：lines、partial 在 untilMissed 之前（untilMissed 只在没等到时出现）。
+    const { untilMissed } = r; delete r.untilMissed;
+    Object.assign(r, splitLines(st.buf.toString('utf8')), untilMissed === undefined ? {} : { untilMissed });
   } else if (upgraded || (spec.ws && st.buf.length && !st.buf.subarray(0, 5).toString().startsWith('HTTP/'))) {
     const { frames, rest } = readServerFrames(st.buf); r.frames = frames; if (rest.length) r.trailingBytes = rest.length;
     // countFrames：帧太多时只记按「类型:id」（关闭帧记码与原因，其余记 opcode）分组的计数和总数，次序不记。
