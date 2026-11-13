@@ -23,15 +23,21 @@ fn main() -> ExitCode {
         eprintln!("Usage: pilotdeck-agent-loop-sidecar [--stdio | --version | <sidecar-path>]");
         return ExitCode::from(2);
     }
-    for option in [
-        "PILOTDECK_AGENT_LOOP_FACTORY",
-        "PILOTDECK_AGENT_LOOP_TCP_PORT",
-    ] {
-        if std::env::var_os(option).is_some_and(|value| !value.is_empty()) {
-            eprintln!("Rust candidate does not yet support the {option} deployment profile.");
-            return ExitCode::from(2);
-        }
+    if std::env::var_os("PILOTDECK_AGENT_LOOP_FACTORY").is_some_and(|value| !value.is_empty()) {
+        eprintln!(
+            "Rust candidate does not yet support the PILOTDECK_AGENT_LOOP_FACTORY deployment profile."
+        );
+        return ExitCode::from(2);
     }
+    // pilotdeck-agent-loop-sidecar.ts:27-46: a TCP port selects the
+    // long-lived listener; an empty value keeps stdio.
+    let tcp_port = match optional_port(std::env::var("PILOTDECK_AGENT_LOOP_TCP_PORT").ok()) {
+        Ok(port) => port,
+        Err(message) => {
+            eprintln!("{message}");
+            return ExitCode::from(1);
+        }
+    };
     // #1371: an armed controlled loop resolves and validates its plan before
     // the server advertises readiness, so an invalid control directory fails
     // closed here exactly like the gateway assembly.
@@ -83,18 +89,36 @@ fn main() -> ExitCode {
     // base-36 token.
     let token = pilotdeck_transport::stdio::random_token;
     let module_instance = format!("pilotdeck-agent-loop-instance-{}", token());
-    let binding = SidecarBinding {
-        module_id: "pilotdeck-agent-loop".into(),
-        module_instance_id: module_instance.clone().into(),
-        connection_generation: format!("{module_instance}-{}-{}", token(), token()).into(),
-        capabilities_version: "1".into(),
-    };
+    let server_generation = format!("{module_instance}-{}", token());
     let clock = Arc::new(SystemExecutionClock);
     let factory = Arc::new(OriginalAgentFactory {
         clock: clock.clone(),
         process_cwd,
     });
-    let server = ExecutionServer::new(ConnectionOwner::new(binding, 64), factory, clock, 32);
+    let connection = move || {
+        let binding = SidecarBinding {
+            module_id: "pilotdeck-agent-loop".into(),
+            module_instance_id: module_instance.clone().into(),
+            connection_generation: format!("{server_generation}-{}", token()).into(),
+            capabilities_version: "1".into(),
+        };
+        ExecutionServer::new(
+            ConnectionOwner::new(binding, 64),
+            factory.clone(),
+            clock.clone(),
+            32,
+        )
+    };
+    if let Some(port) = tcp_port {
+        let host = std::env::var("PILOTDECK_AGENT_LOOP_TCP_HOST")
+            .ok()
+            .map(|host| host.trim().to_owned())
+            .filter(|host| !host.is_empty())
+            .unwrap_or_else(|| "127.0.0.1".into());
+        pilotdeck_transport::serve_as_tcp_sidecar();
+        return serve_tcp(&host, port, connection);
+    }
+    let server = connection();
     let report = server.serve(
         BufReader::new(io::stdin()),
         io::stdout(),
@@ -110,6 +134,64 @@ fn main() -> ExitCode {
             report.reader_joined, report.writer_joined, report.worker_joined
         );
         ExitCode::from(3)
+    }
+}
+
+/// `AgentLoopSidecarTcpServer` (tcpAgentLoopSidecarServer.ts:23-80): one
+/// long-lived listener; every accepted socket is served as its own
+/// connection of this sidecar instance (same module instance, a fresh
+/// connection generation) until the process is stopped. A connection that
+/// goes away retires only itself.
+fn serve_tcp(host: &str, port: u16, connection: impl Fn() -> Arc<ExecutionServer>) -> ExitCode {
+    let listener = match std::net::TcpListener::bind((host, port)) {
+        Ok(listener) => listener,
+        Err(error) => {
+            eprintln!("Sidecar TCP listen failed: {error}");
+            return ExitCode::from(1);
+        }
+    };
+    for stream in listener.incoming() {
+        let Ok(stream) = stream else { continue };
+        let _ = stream.set_nodelay(true);
+        let (Ok(input), Ok(output)) = (stream.try_clone(), stream.try_clone()) else {
+            continue;
+        };
+        let server = connection();
+        std::thread::spawn(move || {
+            let _ = server.serve(BufReader::new(input), output, Duration::from_secs(5));
+            // Threads still blocked after the grace period keep their
+            // clones; close the socket itself so the host sees the end.
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+        });
+    }
+    ExitCode::SUCCESS
+}
+
+/// `optionalPort` (pilotdeck-agent-loop-sidecar.ts:39-46): JS `Number()` of
+/// the trimmed text, an integer in 1..=65535; empty or unset means stdio.
+fn optional_port(value: Option<String>) -> Result<Option<u16>, String> {
+    let Some(value) = value.filter(|value| !value.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let text = value.trim();
+    let radix = |prefix: &str, radix| {
+        text.strip_prefix(prefix)
+            .or_else(|| text.strip_prefix(&prefix.to_uppercase()))
+            .map(|digits| u64::from_str_radix(digits, radix).ok().map(|n| n as f64))
+    };
+    let number = radix("0x", 16)
+        .or_else(|| radix("0o", 8))
+        .or_else(|| radix("0b", 2))
+        .unwrap_or_else(|| {
+            text.parse::<f64>().ok().filter(|_| {
+                !text.contains(|c: char| c.is_ascii_alphabetic() && c != 'e' && c != 'E')
+            })
+        });
+    match number {
+        Some(port) if port.fract() == 0.0 && (1.0..=65_535.0).contains(&port) => {
+            Ok(Some(port as u16))
+        }
+        _ => Err("PILOTDECK_AGENT_LOOP_TCP_PORT must be an integer between 1 and 65535.".into()),
     }
 }
 
