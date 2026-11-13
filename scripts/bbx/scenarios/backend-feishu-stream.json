@@ -1,0 +1,142 @@
+{
+  "name": "backend-feishu-stream",
+  "about": "Private wrapper required: Linux network-none, runtime CA, local Axios absoluteURL/CONNECT proxy and real binary WS. Ordinary enabled Feishu config receives wrong event + reversed fragments + duplicate, drives real model and actual Open API reply. Independent formal WS observer runs builtin bash to await mock reply receipt without sleep. Normal protocol first; does not claim adapter stop cleanup. TS self and actual wrongreply negative required, not yet run.",
+  "env": {
+    "HTTPS_PROXY": "http://127.0.0.1:38413",
+    "https_proxy": "http://127.0.0.1:38413",
+    "HTTP_PROXY": "http://127.0.0.1:38413",
+    "http_proxy": "http://127.0.0.1:38413",
+    "NO_PROXY": "127.0.0.1,localhost",
+    "no_proxy": "127.0.0.1,localhost",
+    "NODE_EXTRA_CA_CERTS": "{ROOT}/../feishu-ca/ca.pem"
+  },
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nproxy:\n  url: http://127.0.0.1:38413\n  noProxy: 127.0.0.1,localhost\nadapters:\n  feishu:\n    enabled: true\n    appId: cli_0123456789abcdef\n    appSecret: feishu-local-secret\n    connectionMode: stream\n",
+  "files": {
+    "home/.pilotdeck/feishu-stream-witness/probe.mjs": "import fs from 'node:fs';\nconst url='http://127.0.0.1:38414/await-reply';\nconst response=await fetch(url,{signal:AbortSignal.timeout(12000)});\nif(!response.ok)throw Error('mock control failed '+response.status);\nconst result=await response.json();\nif(result.marker!=='FEISHU-STREAM-REPLY-OBSERVED'||result.replyCount<1)throw Error('missing actual outbound receipt');\nconsole.log(JSON.stringify(result));\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Feishu stream fixture\"}"
+      }
+    },
+    {
+      "name": "observer-final",
+      "when": [
+        "FEISHU-STREAM-OBSERVE",
+        "\"tool_call_id\":\"call_feishu_receipt\""
+      ],
+      "reply": {
+        "text": "FEISHU-STREAM-OBSERVER-DONE"
+      }
+    },
+    {
+      "name": "observer-initial",
+      "when": [
+        "FEISHU-STREAM-OBSERVE"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_feishu_receipt",
+          "name": "bash",
+          "arguments": {
+            "command": "node '{PILOT_HOME}/feishu-stream-witness/probe.mjs'"
+          }
+        }
+      }
+    },
+    {
+      "name": "channel",
+      "when": [
+        "FEISHU-STREAM-BEGIN"
+      ],
+      "reply": {
+        "text": "FEISHU-STREAM-DONE"
+      }
+    },
+    {
+      "name": "unexpected",
+      "reply": {
+        "text": "FEISHU-STREAM-UNEXPECTED"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "feishu-stream-observer",
+        "channelKey": "test",
+        "runId": "feishu-stream-observer-run",
+        "message": "FEISHU-STREAM-OBSERVE"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "permission_request"
+          },
+          "ws": "permission_decide",
+          "params": {
+            "sessionKey": "feishu-stream-observer",
+            "requestId": "{event.requestId}",
+            "decision": "allow"
+          }
+        }
+      ],
+      "timeout": 25000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "feishu:chat=feishu-local-chat:general"
+      },
+      "timeout": 5000
+    }
+  ],
+  "assertions": [
+    {
+      "id": "observer-initial-model",
+      "path": "/provider/observer-initial/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "observer-initial-unique",
+      "path": "/provider/observer-initial/1",
+      "exists": false
+    },
+    {
+      "id": "observer-final-model",
+      "path": "/provider/observer-final/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "observer-final-unique",
+      "path": "/provider/observer-final/1",
+      "exists": false
+    },
+    {
+      "id": "channel-model",
+      "path": "/provider/channel/0/body/model",
+      "equals": "deterministic"
+    },
+    {
+      "id": "channel-unique",
+      "path": "/provider/channel/1",
+      "exists": false
+    },
+    {
+      "id": "no-unexpected",
+      "path": "/provider/unexpected/0",
+      "exists": false
+    },
+    {
+      "id": "no-default",
+      "path": "/provider/default/0",
+      "exists": false
+    }
+  ]
+}
