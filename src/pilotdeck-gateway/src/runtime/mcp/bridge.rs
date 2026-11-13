@@ -251,6 +251,9 @@ impl McpAbort for ContextSignal {
     fn aborted(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
         Box::pin(self.0.cancelled())
     }
+    fn reason(&self) -> Option<JsString> {
+        self.0.abort_reason()
+    }
 }
 
 fn block_type(block: &JsValue) -> Option<&JsString> {

@@ -30,7 +30,7 @@ use super::http::{HttpLink, detach};
 use super::protocol::{Inbound, ResultSchema, parse_inbound, parse_result};
 use crate::js_value;
 pub(super) use crate::runtime::cleanup_task::lock;
-use pilotdeck_protocol::{JsObject, JsValue};
+use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     collections::HashMap,
     process::Stdio,
@@ -56,6 +56,11 @@ pub trait McpAbort: Send + Sync {
     fn is_aborted(&self) -> bool;
     /// Resolves once aborted; never resolves otherwise.
     fn aborted(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>>;
+    /// `signal.reason` when the abort named one (a string); `None` stands
+    /// for the default AbortError DOMException.
+    fn reason(&self) -> Option<JsString> {
+        None
+    }
 }
 
 /// A shareable [`McpAbort`].
@@ -70,6 +75,13 @@ impl McpAbortSignal {
     }
     pub async fn aborted(&self) {
         self.0.aborted().await;
+    }
+    /// `String(signal.reason)`.
+    fn reason_text(&self) -> String {
+        self.0
+            .reason()
+            .map(|reason| String::from_utf16_lossy(reason.units()))
+            .unwrap_or_else(|| ABORT_REASON.to_owned())
     }
 }
 impl std::fmt::Debug for McpAbortSignal {
@@ -483,9 +495,14 @@ impl Wire {
         hook: Option<SettledHook>,
         signal: Option<&McpAbortSignal>,
     ) -> Result<JsValue, McpClientError> {
-        // `options.signal.throwIfAborted()` throws the signal's reason, a
-        // DOMException named AbortError (code 20).
-        if signal.is_some_and(McpAbortSignal::is_aborted) {
+        // `options.signal.throwIfAborted()` throws the signal's reason: the
+        // turn's own string reason (`aborted`, `session_closed` ...), a value
+        // without a `message` (McpClient.ts:294-296 then reads "unknown"), or
+        // else a DOMException named AbortError (code 20).
+        if let Some(signal) = signal.filter(|signal| signal.is_aborted()) {
+            if signal.0.reason().is_some() {
+                return Err(McpClientError::plain("String", "unknown"));
+            }
             return Err(McpClientError::with_code(
                 "AbortError",
                 McpErrorCode::Number(20.0),
@@ -548,9 +565,11 @@ impl Wire {
                 None => std::future::pending().await,
             }
         };
+        // The SDK's abort listener calls `cancel(signal.reason)`: the turn's
+        // abort names its reason (`aborted:<runId>`, `session_closed` ...).
         let outcome = tokio::select! {
-            outcome = tokio::time::timeout(node_delay(timeout_ms), reply) => outcome.map_err(|_| "Request timed out"),
-            () = aborted => Err(ABORT_REASON),
+            outcome = tokio::time::timeout(node_delay(timeout_ms), reply) => outcome.map_err(|_| "Request timed out".to_owned()),
+            () = aborted => Err(signal.map_or_else(|| ABORT_REASON.to_owned(), McpAbortSignal::reason_text)),
         };
         match outcome {
             Ok(Ok(Ok(raw))) => parse_result(schema, &raw)
@@ -561,11 +580,12 @@ impl Wire {
                 // `cancel(reason)`: forget the request, tell the server, and
                 // reject with an McpError(RequestTimeout, String(reason)).
                 lock(&self.state).pending.remove(&id);
-                let error = McpClientError::rpc(-32001.0, reason);
-                let reason = if reason == ABORT_REASON {
-                    reason.to_owned()
-                } else {
+                let timed_out = reason == "Request timed out";
+                let error = McpClientError::rpc(-32001.0, &reason);
+                let reason = if timed_out {
                     format!("McpError: {}", error.message())
+                } else {
+                    reason
                 };
                 self.send_detached(object(vec![
                     ("jsonrpc", "2.0".into()),
