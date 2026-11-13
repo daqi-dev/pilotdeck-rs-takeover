@@ -162,6 +162,23 @@ struct CancelWaiter {
     stop: Cancellation,
     armed: bool,
 }
+impl CancelWaiter {
+    fn wait(
+        self,
+        receive: oneshot::Receiver<Result<LspQueryResult, LspError>>,
+    ) -> LspFuture<LspQueryResult> {
+        Box::pin(async move {
+            // Move the whole Drop owner into the future, not just its Copy
+            // `armed` field. This owner also exists before the first poll.
+            let mut guard = self;
+            let result = receive
+                .await
+                .map_err(|_| error("LSP_DISPOSED", "LSP query owner did not return a result"))?;
+            guard.armed = false;
+            result
+        })
+    }
+}
 impl Drop for CancelWaiter {
     fn drop(&mut self) {
         if self.armed {
@@ -232,14 +249,7 @@ impl LspProvider for StdioLspProvider {
             let _ = reply.send(output);
         });
         // Construct the cancellation owner now, including an unpolled waiter.
-        let mut guard = CancelWaiter { stop, armed: true };
-        Box::pin(async move {
-            let result = receive
-                .await
-                .map_err(|_| error("LSP_DISPOSED", "LSP query owner did not return a result"))?;
-            guard.armed = false;
-            result
-        })
+        CancelWaiter { stop, armed: true }.wait(receive)
     }
     fn dispose(&self) -> LspFuture<()> {
         let controls = {

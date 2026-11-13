@@ -198,9 +198,10 @@ fn actual_budget_loop_separates_sidecar_public_and_native_durable_status() {
         } else {
             "maxBudgetUsd"
         };
-        let human = JsValue::from(format!(
-            "Reached Gateway-owned {budget_name} ($0.500000) after spending $1.000000."
-        ));
+        let human = JsValue::String(
+            format!("Reached Gateway-owned {budget_name} ($0.500000) after spending $1.000000.")
+                .into(),
+        );
         let status = |events: &[JsValue]| {
             events
                 .iter()

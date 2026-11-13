@@ -825,3 +825,62 @@ async fn stdio_missing_source_paths_preserve_actual_node_error_phase() {
         }
     }
 }
+
+/// Exercise the exact waiter constructor used by query, without a server:
+/// full-owner capture must survive construction, cancel on unpolled Drop,
+/// disarm after a completed reply, and stay armed if the reply owner is lost.
+#[tokio::test]
+async fn stdio_query_waiter_moves_the_whole_drop_owner() {
+    let dropped = Cancellation::new();
+    let (reply, receive) = oneshot::channel();
+    let waiter = CancelWaiter {
+        stop: dropped.clone(),
+        armed: true,
+    }
+    .wait(receive);
+    assert!(
+        !dropped.is_cancelled(),
+        "constructing the future must retain its guard"
+    );
+    drop(waiter);
+    assert!(
+        dropped.is_cancelled(),
+        "dropping an unpolled future cancels its query"
+    );
+    assert!(
+        reply
+            .send(Ok(LspQueryResult::Hover { hover: None }))
+            .is_err()
+    );
+
+    let finished = Cancellation::new();
+    let (reply, receive) = oneshot::channel();
+    let waiter = CancelWaiter {
+        stop: finished.clone(),
+        armed: true,
+    }
+    .wait(receive);
+    assert!(!finished.is_cancelled());
+    reply
+        .send(Ok(LspQueryResult::Hover { hover: None }))
+        .unwrap();
+    assert_eq!(waiter.await.unwrap(), LspQueryResult::Hover { hover: None });
+    assert!(
+        !finished.is_cancelled(),
+        "normal reply disarms the whole guard before Drop"
+    );
+
+    let lost = Cancellation::new();
+    let (reply, receive) = oneshot::channel();
+    let waiter = CancelWaiter {
+        stop: lost.clone(),
+        armed: true,
+    }
+    .wait(receive);
+    drop(reply);
+    assert_eq!(waiter.await.unwrap_err().code, "LSP_DISPOSED");
+    assert!(
+        lost.is_cancelled(),
+        "missing reply keeps cancellation armed"
+    );
+}

@@ -1741,7 +1741,10 @@ impl crate::runtime::tools::ExecutableTool for LspTool {
                         value([
                             ("kind", "locations".into()),
                             ("locations", as_js(&locations)?),
-                            ("resolvedWorkspaceUri", resolved_workspace_uri.into()),
+                            (
+                                "resolvedWorkspaceUri",
+                                JsValue::String(resolved_workspace_uri.into()),
+                            ),
                         ]),
                         text,
                     )
@@ -1750,7 +1753,7 @@ impl crate::runtime::tools::ExecutableTool for LspTool {
             Ok(crate::runtime::tools::ToolOutput {
                 content: vec![JsValue::Object(value([
                     ("type", "text".into()),
-                    ("text", text.into()),
+                    ("text", JsValue::String(text.into())),
                 ]))],
                 supplemental_messages: None,
                 data: Some(JsValue::Object(data)),
