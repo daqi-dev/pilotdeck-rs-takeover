@@ -589,6 +589,18 @@ fn normalize_responses_finish_reason(response: &JsValue, output: &[JsValue]) -> 
     }
 }
 
+/// `console.warn` before each `complete()` retry (streamModel.ts:108-111 for
+/// the Google branch, :127-130 for the others).
+fn warn_retry(error: &ModelStreamError, attempt: f64, max_retries: f64, delay_ms: f64) {
+    eprintln!(
+        "[PilotDeck] complete() retry: {} (attempt {}/{}, delay={}ms)",
+        String::from_utf16_lossy(error.message().units()),
+        crate::js_value::number_string(attempt + 1.0),
+        crate::js_value::number_string(max_retries),
+        crate::js_value::number_string(delay_ms),
+    );
+}
+
 /// `createNativeRetryPolicy({defaultMaxRetries: 2, defaultJitter: 0})` for
 /// `kind: "request"` (complete uses a linear, unjittered request retry).
 pub(super) fn retry_decide_request(provider: &JsValue, attempt: f64, random: f64) -> (f64, f64) {
@@ -682,6 +694,7 @@ pub async fn complete_model(
                     if attempt < max_retries && is_retryable_request_error(&error) {
                         let (_, delay_ms) =
                             retry_decide_request(&provider, attempt, (options.random)());
+                        warn_retry(&error, attempt, max_retries, delay_ms);
                         let _ = delay(delay_ms, options).await?;
                         attempt += 1.0;
                         continue;
@@ -711,6 +724,7 @@ pub async fn complete_model(
                     if attempt < max_retries && is_retryable_request_error(&error) {
                         let (_, delay_ms) =
                             retry_decide_request(&provider, attempt, (options.random)());
+                        warn_retry(&error, attempt, max_retries, delay_ms);
                         let _ = delay(delay_ms, options).await?;
                         attempt += 1.0;
                         continue;

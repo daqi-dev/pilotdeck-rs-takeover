@@ -1,0 +1,162 @@
+{
+ "name": "model-complete-retry-stderr",
+ "about": "serve 起服务，比服务进程自己的 stdout / stderr。preq（openai）与 pgoog（google）两个 provider 都设 timeoutMs 600、requestMaxRetries 2、baseDelayMs 1，标题请求挂 1.5 秒：openai 分支每次超时后重试，基线 complete() 在重试前 console.warn「[PilotDeck] complete() retry: <消息> (attempt n/max, delay=Nms)」（streamModel.ts:127-130，Google 分支是 108-111）到 stderr，三次都失败后 SessionTitleGenerator.ts:97、196-200 在 stdout 打 console.debug「[session-title] generation skipped (provider_error): …」；google 分支这里是标题自己的中止（This operation was aborted，isRetryableRequestError 不重试），只有 skipped 一行。之后四个会话的标题应答分别是空白、坏 JSON、带代码围栏但没有 title、title 全是空白：empty_content / invalid_json（带 JSON.parse 的报错）/ missing_title / missing_title。",
+ "server": false,
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    preq:\n      protocol: openai\n      url: {MOCK}/preq/v1\n      apiKey: bbx-mock-only\n      timeoutMs: 600\n      retry:\n        requestMaxRetries: 2\n        streamMaxRetries: 0\n        baseDelayMs: 1\n      models:\n        m:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    pgoog:\n      protocol: google\n      url: {MOCK}/pgoog\n      apiKey: bbx-google-key\n      timeoutMs: 600\n      retry:\n        requestMaxRetries: 2\n        streamMaxRetries: 0\n        baseDelayMs: 1\n      models:\n        m:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+ "provider": [
+  {
+   "name": "title-slow",
+   "when": [
+    "Generate a concise title",
+    "rq-"
+   ],
+   "reply": {
+    "delayMs": 1500,
+    "text": "{\"title\":\"Slow\"}"
+   }
+  },
+  {
+   "name": "title-empty",
+   "when": [
+    "Generate a concise title",
+    "te-empty"
+   ],
+   "reply": {
+    "text": "  "
+   }
+  },
+  {
+   "name": "title-bad",
+   "when": [
+    "Generate a concise title",
+    "te-bad"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Bad\","
+   }
+  },
+  {
+   "name": "title-miss",
+   "when": [
+    "Generate a concise title",
+    "te-miss"
+   ],
+   "reply": {
+    "text": "```json\n{\"name\": \"x\"}\n```"
+   }
+  },
+  {
+   "name": "title-blank",
+   "when": [
+    "Generate a concise title",
+    "te-blank"
+   ],
+   "reply": {
+    "text": "{\"title\": \"  \\n \"}"
+   }
+  },
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\":\"Fast\"}"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "then": [
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-oa",
+      "channelKey": "test",
+      "message": "rq-oa: go",
+      "modelOverride": {
+       "mode": "model",
+       "provider": "preq",
+       "model": "m"
+      }
+     },
+     "timeout": 15000
+    },
+    {
+     "sleep": 3500
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-gg",
+      "channelKey": "test",
+      "message": "rq-gg: go",
+      "modelOverride": {
+       "mode": "model",
+       "provider": "pgoog",
+       "model": "m"
+      }
+     },
+     "timeout": 15000
+    },
+    {
+     "sleep": 3500
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-te-empty",
+      "channelKey": "test",
+      "message": "te-empty: go"
+     },
+     "timeout": 15000
+    },
+    {
+     "sleep": 500
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-te-bad",
+      "channelKey": "test",
+      "message": "te-bad: go"
+     },
+     "timeout": 15000
+    },
+    {
+     "sleep": 500
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-te-miss",
+      "channelKey": "test",
+      "message": "te-miss: go"
+     },
+     "timeout": 15000
+    },
+    {
+     "sleep": 500
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "s-te-blank",
+      "channelKey": "test",
+      "message": "te-blank: go"
+     },
+     "timeout": 15000
+    },
+    {
+     "sleep": 500
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  }
+ ]
+}
