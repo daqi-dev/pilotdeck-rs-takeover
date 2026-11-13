@@ -23,6 +23,11 @@ fn main() -> ExitCode {
         eprintln!("Usage: pilotdeck-agent-loop-sidecar [--stdio | --version | <sidecar-path>]");
         return ExitCode::from(2);
     }
+    // Only the Rust gateway's own built-in loop carries the in-process mark;
+    // every other launch is the baseline's external loop module.
+    if std::env::var_os(pilotdeck_transport::IN_PROCESS_LOOP_ENV).is_none_or(|value| value != "1") {
+        pilotdeck_transport::serve_as_external_loop();
+    }
     if std::env::var_os("PILOTDECK_AGENT_LOOP_FACTORY").is_some_and(|value| !value.is_empty()) {
         eprintln!(
             "Rust candidate does not yet support the PILOTDECK_AGENT_LOOP_FACTORY deployment profile."

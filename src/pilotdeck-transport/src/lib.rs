@@ -12,7 +12,7 @@ pub mod default_factory;
 pub mod execute;
 mod factory_payload;
 mod host_operations;
-pub use factory_payload::{IN_PROCESS_LOOP_ENV, serve_as_tcp_sidecar};
+pub use factory_payload::{IN_PROCESS_LOOP_ENV, serve_as_external_loop, serve_as_tcp_sidecar};
 pub mod loop_stimulus;
 mod model_admission;
 mod notifications;
