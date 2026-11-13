@@ -1524,6 +1524,12 @@ impl LiveTurnStream {
                 fields.insert("messages".into(), JsValue::Array(messages));
             }
         }
+        // The gateway's own loop runs in-process in the baseline; see
+        // `project_terminal_message`'s `located_only`.
+        let located_only = !self
+            .integrity
+            .marks_module
+            .load(std::sync::atomic::Ordering::SeqCst);
         if position
             && let Some(timeline) = &self.timeline
             && let JsValue::Object(fields) = &mut terminal
@@ -1541,6 +1547,7 @@ impl LiveTurnStream {
                 super::timeline::project_terminal_message(
                     &mut timeline.lock().unwrap(),
                     message_fields,
+                    located_only,
                 );
                 result.insert("finalMessage".into(), message);
                 fields.insert("result".into(), JsValue::Object(result));
@@ -1552,6 +1559,7 @@ impl LiveTurnStream {
                         super::timeline::project_terminal_message(
                             &mut timeline.lock().unwrap(),
                             message_fields,
+                            located_only,
                         );
                     }
                 }
