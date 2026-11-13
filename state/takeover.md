@@ -31,7 +31,7 @@
 | 比较器的尺子问题（`fileSize` 容差、`registry.json.lock`、规则 15 造成的死声明、登记 `turn-abort-before-request-sidecar-stdio`） | cb8 `wt-tz` | `3037b178e` |
 | 会话写入锁（`LedgerLock`）的去留：先量基线两个写者的表现再定删或留 | 本机 worktree | `991283d50` |
 
-还没派的（额度允许时，同时不超过 5–6 个）：sidecar 取消时释放挂起的模块调用；「场景说明与实际触发行为是否相符」的核对；`scripts/upstream-tests` 缺省去掉 parity 组；清理批 5–9；发布构建与性能报告；ui-smoke 与进程证据；安静机器上连续 3 轮全量（macOS、Linux 各一套）；Fable 盲审与下一次独立代码审阅。给冻结账本 `A8.3-CRON-TZ-ALIAS-001` 追加「已不成立」的说明（只追加，走 `diffs/` 目录规则）。
+还没派的（额度允许时，同时不超过 5–6 个）：sidecar 取消时释放挂起的模块调用；「场景说明与实际触发行为是否相符」的核对；`scripts/upstream-tests` 缺省去掉 parity 组；清理批 5–9；发布构建与性能报告；ui-smoke 与进程证据；安静机器上连续 3 轮全量（macOS、Linux 各一套）；Fable 盲审与下一次独立代码审阅。
 
 还没进台账的线索：让缓存代际回到 1 的其他入口（MCP 设置变更、`apply_flag_settings`、配置热重载、空闲回收）没有场景；模型错误的 `details.raw` 是否落成 `{}` 现在按形状识别（`is_error_instance_raw`）；疑似基线 bug、先照基线的两处：`run --project P --model <不存在>` 时 CLI 与 server 都退不出，SMS 渠道永远起不来（ESM 里用 `require`）。
 
@@ -123,7 +123,7 @@ cb8 的情况（2026-11-12）：Ubuntu 24.04、aarch64、20 核、119 GB；Rust 
 | `PILOTDECK_DUMP_REQUEST` 的请求转储文件 | 写进 `os.tmpdir()`（可能是共享的 `/tmp`），文件名 `pilotdeck_request_<毫秒>.json` 可预测，`writeFileSync` 跟随符号链接并截断，权限 644，内容是整段对话 | 独占创建、权限 600、文件名加进程号与序号；内容与基线逐字相同 | `dump-request-exclusive-private-file`（`env-dump-request-tmpdir`、`proto-dump-request`；只放过权限，比较器把两种文件名对齐后正文照常比） |
 | 显式外部 sidecar 部署下，请求发出前就中止 | 不发 `turn_completed`，WS 流以「Gateway stream ended without a terminal result.」结束，`runs/registry.json` 里这次运行永远停在 `running` | 发 `turn_completed`（aborted） | 待登记（场景 `turn-abort-before-request-sidecar-stdio` 现在不一致） |
 | 断线后 sidecar 进程里的孤儿执行（TCP 部署） | 永远挂着 | 回收 | 未登记（gateway 一侧看不出差别） |
-| 显式时区名的解析（时间工具、cron、配置校验） | Node 自带 ICU 数据 | 内置 IANA 数据（`jiff-tzdb` 2025b），不读系统 tzdata；推翻旧决策卡「不内嵌 tzdata」，冻结账本 `A8.3-CRON-TZ-ALIAS-001` 已过时、待追加说明 | 场景 `*-legacy-zones`、`time-process-tz` |
+| 显式时区名的解析（时间工具、cron、配置校验） | Node 自带 ICU 数据 | 内置 IANA 数据（`jiff-tzdb` 2025b），不读系统 tzdata；推翻旧决策卡「不内嵌 tzdata」，冻结账本 `A8.3-CRON-TZ-ALIAS-001` 已过时，2026-11-13 追加更正件 `-R2`（只新增文件） | 场景 `*-legacy-zones`、`time-process-tz` |
 
 保持与基线一致的已知风险或怪异行为（人可以决定让 Rust 修掉）：
 
