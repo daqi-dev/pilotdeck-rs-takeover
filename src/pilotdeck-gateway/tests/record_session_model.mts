@@ -111,7 +111,7 @@ for(const [path,global,overrides] of [
 ] as any[])for(const [kind,projectYaml] of overrides)add(`cycle-merge-${path}-${kind}`,{yaml:global,projectYaml});
 add('cycle-merge-both-recursive',{yaml:base.replace('      models:', '      extraBody: &b {self: *b}\n      models:'),projectYaml:'model: {providers: {parity: {extraBody: &c {self: *c}}}}'});
 add('cycle-merge-unused',{yaml:base+'unused: &b {self: *b}\n',projectYaml:'agent: {model: parity/alternate}'});
-add('cycle-merge-prototype-host',{yaml:base+'unused: &b {self: *b}\n',projectYaml:'__proto__: {unused: 0}',forward:true,loadForward:true});
+add('cycle-merge-prototype-host',{yaml:base+'unused: &b {self: *b}\n',projectYaml:'__proto__: {unused: 0}',forward:false,loadForward:false});
 add('session-nul-general',{general:true,sessionValue:'web:\0',generalMarker:true});
 add('session-nul-registered',{sessionValue:'web:\0'});
 add('project-nul',{projectNul:true});

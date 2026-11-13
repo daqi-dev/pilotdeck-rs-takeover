@@ -24416,8 +24416,8 @@
         "killCalls": [],
         "loadKillCalls": []
       },
-      "forward": true,
-      "loadForward": true
+      "forward": false,
+      "loadForward": false
     },
     {
       "id": "session-nul-general",

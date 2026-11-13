@@ -36,8 +36,9 @@ alive→自然退出→dead 测试。
 tools catalog）的完整覆盖、未覆盖和部分覆盖；provider/adapter 还区分只覆盖
 其他键与覆盖 self。双源都递归的 merge 仍报 RangeError；未被消费的环不报错。
 普通双源按 TS deepMerge 的浅复制、object/object 递归、数组替换语义保留引用。
-双源同时涉及环和 `__proto__` 时保守转发 TS，`loadForward` 对 loader 也断言
-requires_host；这个边界不算作本地 wire 命中。
+原先双源同时涉及环和 `__proto__` 时保守转发 TS；移除该全局保守限制后，
+`cycle-merge-prototype-host` 改为断言本地完整 wire 与 loader diagnostics 均匹配
+既有真实 Node 原件。case ID、输入、响应和诊断原值保持不变。
 
 NUL 案例覆盖 General/注册项目的 sessionKey、projectKey、配置路径及 bindingId。
 sessionKey 在首次 transcript stat 时报 ERR_INVALID_ARG_VALUE；projectKey 在项目
