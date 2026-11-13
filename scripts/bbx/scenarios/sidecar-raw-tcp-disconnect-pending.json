@@ -122,5 +122,14 @@
   {
    "sidecar": "stop"
   }
+ ],
+ "accepted": [
+  {
+   "id": "module-call-abortsignal-field",
+   "why": "基线 bug（与它自己的协议 schema 矛盾）：sidecar 发给宿主的 module_call 帧里带 \"abortSignal\":{}（hostModelInvokerPort.ts:101 把 AbortSignal 对象放进了调用载荷，序列化成空对象），基线自己的 schema 校验下这些帧不合法（上游验收集：基线 1204 帧里 326 帧因此不合法）。Rust 不发这个字段，全部帧合法。只放过这个字段本身",
+   "paths": [
+    "^\\$\\.steps\\[\\d+\\]\\.(sidecar|raw)\\.lines\\[\\d+\\]\\.abortSignal$"
+   ]
+  }
  ]
 }
