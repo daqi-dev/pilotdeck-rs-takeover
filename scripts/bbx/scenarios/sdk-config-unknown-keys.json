@@ -1,0 +1,22 @@
+{
+ "name": "sdk-config-unknown-keys",
+ "about": "sdkSessionConfig 里基线类型之外的键（foo、嵌套对象、null）随配置保存、不起作用，轮次照常；同一配置再送一次走「未变化」；plugins 指向不存在的路径报 SDK_PLUGIN_NOT_FOUND，指向文件报 SDK_PLUGIN_NOT_DIRECTORY（基线 resolveSdkSessionPlugins 在加载前的检查）。",
+ "provider": [
+  {"name": "title", "when": ["Generate a concise title"], "reply": {"text": "{\"title\": \"Keys\"}"}},
+  {"name": "main", "reply": {"text": "Got it."}}
+ ],
+ "files": {
+  "home/plugin-file.txt": "not a directory\n"
+ },
+ "steps": [
+  {"ws": "submit_turn", "params": {"sessionKey": "s-1", "channelKey": "test", "runId": "run-1", "message": "one", "sdkSessionConfig": {"foo": 1}}},
+  {"ws": "submit_turn", "params": {"sessionKey": "s-1", "channelKey": "test", "runId": "run-2", "message": "two", "sdkSessionConfig": {"foo": 1}}},
+  {"ws": "submit_turn", "params": {"sessionKey": "s-1", "channelKey": "test", "runId": "run-3", "message": "three", "sdkSessionConfig": {"foo": 2, "appendSystemPrompt": "Be brief."}}},
+  {"ws": "submit_turn", "params": {"sessionKey": "s-2", "channelKey": "test", "runId": "run-4", "message": "four", "sdkSessionConfig": {"userDialogKinds": ["form"], "bar": {"x": [1]}, "baz": null, "sdkConfig": {"model": "x"}}}},
+  {"ws": "submit_turn", "params": {"sessionKey": "s-3", "channelKey": "test", "runId": "run-5", "message": "five", "sdkSessionConfig": {"plugins": [{"type": "local", "path": "{ROOT}/no-such-plugin"}]}}},
+  {"ws": "submit_turn", "params": {"sessionKey": "s-4", "channelKey": "test", "runId": "run-6", "message": "six", "sdkSessionConfig": {"plugins": [{"type": "local", "path": "{HOME}/plugin-file.txt"}]}}},
+  {"ws": "submit_turn", "params": {"sessionKey": "s-5", "channelKey": "test", "runId": "run-7", "message": "seven", "sdkSessionConfig": {"plugins": [{"type": "local", "path": "{ROOT}/no-such-plugin"}, {"type": "local", "path": "{HOME}/plugin-file.txt"}], "foo": true}}},
+  {"ws": "read_session_messages", "params": {"sessionKey": "s-1"}}
+ ],
+ "settleMs": 800
+}

@@ -3,9 +3,11 @@
 //! and the session-config store behind `setSdkSessionConfig`
 //! (ProjectRuntimeRegistry.ts:956-1023).
 //!
-//! Only the fields whose effect this host composes are accepted
-//! ([`WIRED_FIELDS`]). A config that passes the baseline's shape check but
-//! names any other field is still answered with the unavailable shape the
+//! Keys outside the baseline's `GatewaySessionSdkConfig` are stored and
+//! ignored like the baseline does. A config that passes the baseline's shape
+//! check but needs something this host does not compose (`plugins`, an agent
+//! definition key outside [`WIRED_AGENT_FIELDS`], a session skill list
+//! together with `agents`) is still answered with the unavailable shape the
 //! host gave before, instead of being stored and silently ignored.
 use super::session_overrides::SessionOverrides;
 use crate::runtime::{
@@ -17,36 +19,6 @@ use crate::runtime::{
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
 use std::sync::Arc;
-
-/// The `sdkSessionConfig` fields whose effect the native session composes.
-pub(super) const WIRED_FIELDS: &[&str] = &[
-    "taskBudget",
-    "userDialogKinds",
-    "systemPrompt",
-    "appendSystemPrompt",
-    "planModeInstructions",
-    "toolAliases",
-    "outputFormat",
-    "forwardSubagentText",
-    "agentProgressSummaries",
-    "outputStyle",
-    "permissionMode",
-    "additionalWorkingDirectories",
-    "managedPermissions",
-    "hooks",
-    "includeHookEvents",
-    "fallbackModel",
-    "managedModels",
-    "agents",
-    "skills",
-    "managedTools",
-    "sandbox",
-    "deferredTools",
-    "persistSession",
-    "promptSuggestions",
-    "settings",
-    "settingSources",
-];
 
 /// The `agents.<id>` keys whose effect the native subagent composes. A
 /// definition naming any other key (`mcpServers`, `skills`, `memory`,
@@ -1362,17 +1334,49 @@ fn resolve_agent_mcp_servers(
     Ok(resolved)
 }
 
+/// `resolveSdkSessionPlugins` (ProjectRuntimeRegistry.ts:1807-1850) walks the
+/// local plugin paths in order: realpath, listed once, a directory, then
+/// `loadPluginFromPath`. Loading a plugin into one session's extension view is
+/// not composed by this host, so the first path that resolves to a directory
+/// answers the unavailable shape; only that first path's own checks run
+/// (a later duplicate or missing path is never reached).
+fn resolve_session_plugins(plugins: Option<&JsValue>) -> Result<(), SubmitError> {
+    let Some(plugin) = plugins.and_then(|plugins| match plugins {
+        JsValue::Array(plugins) => plugins.first(),
+        _ => None,
+    }) else {
+        return Ok(());
+    };
+    let path = plugin
+        .get("path")
+        .and_then(JsValue::as_string)
+        .map(text)
+        .unwrap_or_default();
+    let Ok(real) = std::fs::canonicalize(&path) else {
+        return Err(err(
+            "SDK_PLUGIN_NOT_FOUND",
+            format!("Gateway-local SDK plugin path does not exist: {path}"),
+        ));
+    };
+    if !std::fs::metadata(&real).is_ok_and(|meta| meta.is_dir()) {
+        return Err(err(
+            "SDK_PLUGIN_NOT_DIRECTORY",
+            format!("Gateway-local SDK plugin path is not a directory: {path}"),
+        ));
+    }
+    Err(err(
+        "CAPABILITY_UNAVAILABLE",
+        "sdk_session_config is unavailable.",
+    ))
+}
+
 impl SubmitSdkSessionConfig for NativeSdkSessionConfig {
     fn validate(&self, config: &JsValue) -> Result<(), SubmitError> {
         validate(config)?;
-        let wired = matches!(config, JsValue::Array(_))
-            || config.as_object().is_some_and(|config| {
-                config
-                    .own_entries()
-                    .iter()
-                    .filter(|(_, value)| !value.is_undefined())
-                    .all(|(key, _)| WIRED_FIELDS.iter().any(|name| key.equals_str(name)))
-            });
+        // Keys outside `GatewaySessionSdkConfig` are stored with the config
+        // and read by nothing (measured: `sdk-config-unknown-keys`).
+        // `plugins` is checked where the baseline resolves it
+        // ([`resolve_session_plugins`]).
         // With a session skill list, `resolveSdkSubagentScopes` gives every
         // agent that list as its own `skills` scope, which the native child
         // context does not compose.
@@ -1380,7 +1384,7 @@ impl SubmitSdkSessionConfig for NativeSdkSessionConfig {
             && config
                 .get("agents")
                 .is_some_and(|agents| !agents.is_undefined());
-        let wired = wired && !scoped_agents && config.as_object().is_none_or(agents_wired);
+        let wired = !scoped_agents && config.as_object().is_none_or(agents_wired);
         if wired {
             Ok(())
         } else {
@@ -1467,6 +1471,7 @@ impl NativeSdkSessionConfig {
             if previous.as_ref().map(serialize) == Some(serialize(config)) {
                 return Ok(false);
             }
+            resolve_session_plugins(config.get("plugins"))?;
             let mut next = config.clone();
             // `next.skills = resolveSdkSessionSkills(next.skills,
             // extensionView.getAllSkills())` after a plugin refresh.
@@ -1675,6 +1680,5 @@ mod tests {
         for field in ["initialPrompt", "memory", "mcpServers"] {
             assert!(WIRED_AGENT_FIELDS.contains(&field), "{field}");
         }
-        assert!(WIRED_FIELDS.contains(&"sandbox"));
     }
 }

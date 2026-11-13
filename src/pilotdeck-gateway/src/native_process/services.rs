@@ -1154,13 +1154,6 @@ impl SubmitHostServices for Services {
                     .ok_or_else(|| failure("projectKey must be a valid path string."))?,
             ),
         };
-        // The composition does not expose the SDK setter yet. Refuse it
-        // before session admission instead of reporting a false selection.
-        if input.get("sdkConfig").is_some_and(|v| !v.is_undefined()) {
-            return Err(unavailable(
-                "Per-turn SDK overrides are not installed in this isolated process.",
-            ));
-        }
         // When snapshots are enabled (--storage-root was supplied), resolve the
         // id exactly as the management snapshot route does
         // (`PersistenceResources::snapshot_gateway`): TS `resolveProjectStorageId`
@@ -1262,12 +1255,7 @@ impl SubmitHostServices for Services {
             // (GatewaySubmitHost::prepare checks that before calling).
             let refs = match input.get("uploadedAttachments") {
                 Some(JsValue::Array(refs)) => refs.clone(),
-                _ => {
-                    return Err(SubmitError::new(
-                        "CAPABILITY_UNAVAILABLE",
-                        "uploadedAttachments must be a non-empty array.",
-                    ));
-                }
+                _ => Vec::new(),
             };
             let project_key = project.to_string_lossy().into_owned();
             // Acquire leases sequentially, mirroring TS GatewayUploadedAttachmentBundle.
@@ -1280,45 +1268,29 @@ impl SubmitHostServices for Services {
                     // the partially-acquired set is dropped without release.
                     let outcome: Result<(), SubmitError> = (|| {
                         for r in &refs {
-                            let upload_id = r
-                                .get("uploadId")
-                                .and_then(JsValue::as_string)
-                                .and_then(|s| s.to_utf8().ok())
-                                .ok_or_else(|| {
-                                    SubmitError::new(
-                                        "CAPABILITY_UNAVAILABLE",
-                                        "uploadedAttachments[].uploadId must be a string.",
-                                    )
-                                })?;
-                            // attachmentIds: optional string array
-                            let attachment_ids: Option<Vec<String>> = match r.get("attachmentIds") {
-                                Some(JsValue::Array(ids)) => Some(
-                                    ids.iter()
-                                        .map(|v| {
-                                            v.as_string().and_then(|s| s.to_utf8().ok()).ok_or_else(
-                                                || {
-                                                    SubmitError::new(
-                                                        "CAPABILITY_UNAVAILABLE",
-                                                        "attachmentIds must be strings.",
-                                                    )
-                                                },
-                                            )
-                                        })
-                                        .collect::<Result<Vec<_>, _>>()?,
-                                ),
-                                _ => None,
+                            let upload_id = uploaded_attachment_id(r)?;
+                            let wanted = wanted_attachments(r);
+                            let unmatchable = [UNMATCHABLE_ATTACHMENT_ID.to_owned()];
+                            let attachment_ids = match &wanted {
+                                WantedAttachments::All => None,
+                                WantedAttachments::Ids(ids) => Some(ids.as_slice()),
+                                // `new Set(attachmentIds)` throws after the
+                                // record, project and status checks: run those
+                                // with an id no attachment can have.
+                                WantedAttachments::NotIterable(_) => Some(&unmatchable[..]),
                             };
                             let lease = store
-                                .acquire_attachment_lease(
-                                    &upload_id,
-                                    &project_key,
-                                    attachment_ids.as_deref(),
-                                )
-                                .map_err(|e| {
-                                    SubmitError::new(
+                                .acquire_attachment_lease(&upload_id, &project_key, attachment_ids)
+                                .map_err(|e| match &wanted {
+                                    WantedAttachments::NotIterable(message)
+                                        if e.code == "ATTACHMENT_NOT_FOUND" =>
+                                    {
+                                        SubmitError::new("TypeError", message.clone())
+                                    }
+                                    _ => SubmitError::new(
                                         e.code.as_str(),
                                         String::from_utf16_lossy(e.message.units()),
-                                    )
+                                    ),
                                 })?;
                             acquired.push(lease);
                         }
@@ -1892,6 +1864,141 @@ pub fn native_settings_for_process(
         }),
         reload_output_styles: output_styles,
     }))
+}
+
+/// Upload attachment ids are filesystem-safe names, so no attachment can
+/// carry a NUL: a wanted id that never matches.
+const UNMATCHABLE_ATTACHMENT_ID: &str = "\u{0}";
+
+/// `/^[A-Za-z0-9._-]{1,128}$/` (UploadStore.ts:460).
+fn safe_upload_id_text(text: &str) -> bool {
+    !text.is_empty()
+        && text.len() <= 128
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+}
+
+/// `String(value)` for the values a JSON reference can carry.
+fn js_string_of(value: &JsValue) -> String {
+    match value {
+        JsValue::Undefined => "undefined".into(),
+        JsValue::Null => "null".into(),
+        JsValue::Bool(value) => value.to_string(),
+        JsValue::Number(number) => pilotdeck_protocol::number::number_to_string(*number),
+        JsValue::String(text) => String::from_utf16_lossy(text.units()),
+        JsValue::Object(_) => "[object Object]".into(),
+        JsValue::Array(items) => items
+            .iter()
+            .map(|item| match item {
+                JsValue::Undefined | JsValue::Null => String::new(),
+                item => js_string_of(item),
+            })
+            .collect::<Vec<_>>()
+            .join(","),
+    }
+}
+
+/// `upload.uploadId` as `UploadStore.get` receives it
+/// (GatewayUploadedAttachmentBundle.ts:34-42 passes the reference through
+/// unchecked). `assertUploadId` tests `String(value)` against the safe-id
+/// pattern and then calls `value.includes("..")`, so a non-string id fails
+/// with JavaScript's own error (measured on the baseline:
+/// `params-submit-malformed-refs`). The error code is not a gateway code, so
+/// the turn reports `gateway_submit_failed` like the baseline.
+fn uploaded_attachment_id(reference: &JsValue) -> Result<String, SubmitError> {
+    let type_error = |message: &str| SubmitError::new("TypeError", message);
+    let invalid = || SubmitError::new("UPLOAD_NOT_FOUND", "Invalid uploadId.");
+    let undefined = JsValue::Undefined;
+    let value = match reference {
+        JsValue::Null => {
+            return Err(type_error(
+                "Cannot read properties of null (reading 'uploadId')",
+            ));
+        }
+        JsValue::Object(object) => object.get("uploadId").unwrap_or(&undefined),
+        _ => &undefined,
+    };
+    match value {
+        // The store validates string ids itself; a lone surrogate never
+        // matches the pattern.
+        JsValue::String(text) => text.to_utf8().map_err(|_| invalid()),
+        JsValue::Undefined => Err(type_error(
+            "Cannot read properties of undefined (reading 'includes')",
+        )),
+        JsValue::Null => Err(type_error(
+            "Cannot read properties of null (reading 'includes')",
+        )),
+        JsValue::Bool(_) | JsValue::Number(_) if safe_upload_id_text(&js_string_of(value)) => {
+            Err(type_error("value.includes is not a function"))
+        }
+        // `Array.prototype.includes` exists: a safe-looking array id goes on
+        // to `path.join`, which rejects it.
+        JsValue::Array(items)
+            if safe_upload_id_text(&js_string_of(value))
+                && !items
+                    .iter()
+                    .any(|item| matches!(item, JsValue::String(text) if text.equals_str(".."))) =>
+        {
+            Err(type_error(
+                "The \"paths[1]\" argument must be of type string. Received an instance of Array",
+            ))
+        }
+        _ => Err(invalid()),
+    }
+}
+
+/// `attachmentIds ? new Set(attachmentIds) : undefined` (UploadStore.ts:303).
+enum WantedAttachments {
+    All,
+    Ids(Vec<String>),
+    /// `new Set(value)` throws this `TypeError`.
+    NotIterable(String),
+}
+
+fn wanted_attachments(reference: &JsValue) -> WantedAttachments {
+    let Some(value) = reference.get("attachmentIds") else {
+        return WantedAttachments::All;
+    };
+    if !crate::metadata::js_truthy(value) {
+        return WantedAttachments::All;
+    }
+    let id = |text: &JsString| {
+        text.to_utf8()
+            .unwrap_or_else(|_| UNMATCHABLE_ATTACHMENT_ID.to_owned())
+    };
+    let not_iterable = |what: String| {
+        WantedAttachments::NotIterable(format!(
+            "{what} is not iterable (cannot read property Symbol(Symbol.iterator))"
+        ))
+    };
+    match value {
+        // Non-string members stay in the set but never equal an id.
+        JsValue::Array(items) => WantedAttachments::Ids(
+            items
+                .iter()
+                .map(|item| match item {
+                    JsValue::String(text) => id(text),
+                    _ => UNMATCHABLE_ATTACHMENT_ID.to_owned(),
+                })
+                .collect(),
+        ),
+        // A string iterates by code point.
+        JsValue::String(text) => WantedAttachments::Ids(
+            char::decode_utf16(text.units().iter().copied())
+                .map(|unit| match unit {
+                    Ok(c) => c.to_string(),
+                    Err(_) => UNMATCHABLE_ATTACHMENT_ID.to_owned(),
+                })
+                .collect(),
+        ),
+        JsValue::Bool(value) => not_iterable(format!("boolean {value}")),
+        JsValue::Number(number) => not_iterable(format!(
+            "number {}",
+            pilotdeck_protocol::number::number_to_string(*number)
+        )),
+        _ => not_iterable("object".to_owned()),
+    }
 }
 
 /// `(payload) => registry.dispatchSdkConfigChange(payload)`
