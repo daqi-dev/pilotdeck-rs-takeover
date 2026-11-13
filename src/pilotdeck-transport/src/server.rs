@@ -11,6 +11,7 @@ use pilotdeck_protocol::wire::{EnvelopeRef, MessageRef, RequestBodyRef, RequestR
 use pilotdeck_protocol::{JsObject, JsString, JsValue, MODULE_PROTOCOL_VERSION, parse_json};
 use std::collections::{HashMap, VecDeque};
 use std::io::{self, BufRead, Write};
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -57,6 +58,7 @@ pub struct ExecutionContext {
     stream_id: JsString,
     sequence: Arc<Mutex<f64>>,
     identities: Mutex<Vec<ExecutionIdentity>>,
+    plan_todo_sequence: Arc<AtomicU64>,
     pub control: CallControl,
 }
 impl ExecutionContext {
@@ -91,7 +93,10 @@ impl ExecutionContext {
                 message: "Execution identity belongs to another operation.".into(),
             });
         }
-        let exchange = self.owner.bound_exchange(identity.clone())?;
+        let exchange = self
+            .owner
+            .bound_exchange(identity.clone())?
+            .with_plan_todo_sequence(self.plan_todo_sequence.clone());
         let mut identities = self.identities.lock().unwrap_or_else(|p| p.into_inner());
         if !identities.contains(&identity) {
             identities.push(identity);
@@ -178,9 +183,19 @@ impl ExecutionContext {
         error: Option<JsObject>,
         sequence: f64,
     ) -> JsValue {
+        // agentLoopSidecarServer.ts names each frame after the branch that
+        // sends it: loop events `event` (283), the loop's own result `final`
+        // (321, always with payload.result), a thrown execution `failed`
+        // (363, payload { error }), an unknown outcome `result-unknown` (422).
+        let prefix = match outcome {
+            None => "event",
+            Some(ModuleOutcome::ResultUnknown) => "result-unknown",
+            Some(_) if payload.get("result").is_some() => "final",
+            Some(_) => "failed",
+        };
         let mut event = object([
             ("kind", JsValue::from("event")),
-            ("messageId", JsValue::String(self.owner.next_id("event"))),
+            ("messageId", JsValue::String(self.owner.next_id(prefix))),
             ("eventType", JsValue::String(event_type)),
             ("streamId", JsValue::String(self.stream_id.clone())),
             ("sequence", JsValue::Number(sequence)),
@@ -194,8 +209,8 @@ impl ExecutionContext {
                 JsValue::String(self.request.request_id.clone()),
             ),
             ("final", JsValue::Bool(outcome.is_some())),
-            ("payload", JsValue::Object(payload)),
         ]);
+        // Terminal frames put outcome / code / error before payload (319-345).
         if let Some(outcome) = outcome {
             event.insert("outcome".into(), JsValue::from(outcome_name(outcome)));
         }
@@ -205,6 +220,7 @@ impl ExecutionContext {
             }
             event.insert("error".into(), JsValue::Object(error));
         }
+        event.insert("payload".into(), JsValue::Object(payload));
         JsValue::Object(event)
     }
 }
@@ -217,22 +233,95 @@ enum OperationPhase {
     Cancelled,
     Resolving,
 }
+/// `ModuleOperationHost`'s snapshot of one operation (moduleRuntime.ts:21-120):
+/// it outlives the executions that run under the operation id, collects every
+/// request id accepted for it, and keeps the first terminal outcome.
+#[derive(Debug)]
+struct OperationSnapshot {
+    run_id: JsString,
+    operation_id: JsString,
+    phase: OperationPhase,
+    outcome: Option<ModuleOutcome>,
+    request_ids: Vec<JsString>,
+    cancel_requested: bool,
+    updated_at: JsString,
+}
+impl OperationSnapshot {
+    /// `recordFinal` / `expire` (moduleRuntime.ts:48-61): the first outcome wins.
+    fn record_final(&mut self, outcome: ModuleOutcome, now: JsString) {
+        if self.outcome.is_some() {
+            return;
+        }
+        self.outcome = Some(outcome);
+        self.phase = outcome_phase(outcome);
+        self.updated_at = now;
+    }
+    fn to_payload(&self) -> JsObject {
+        let mut snapshot = object([
+            ("runId", JsValue::String(self.run_id.clone())),
+            ("operationId", JsValue::String(self.operation_id.clone())),
+            ("state", JsValue::from(phase_name(self.phase))),
+            (
+                "requestIds",
+                JsValue::Array(
+                    self.request_ids
+                        .iter()
+                        .cloned()
+                        .map(JsValue::String)
+                        .collect(),
+                ),
+            ),
+            ("cancelRequested", JsValue::Bool(self.cancel_requested)),
+            ("updatedAt", JsValue::String(self.updated_at.clone())),
+        ]);
+        if let Some(outcome) = self.outcome {
+            snapshot.insert("outcome".into(), JsValue::from(outcome_name(outcome)));
+        }
+        snapshot
+    }
+}
+/// An execution between acceptance and its terminal (the baseline's
+/// `abortControllers` entry, agentLoopSidecarServer.ts:245, 395-398). `ready`
+/// is the owning connection's wake signal.
+#[derive(Debug)]
+struct ActiveOperation {
+    run_id: JsString,
+    request_id: JsString,
+    stream_id: JsString,
+    cancellation: Cancellation,
+    deadline: Option<Instant>,
+    ready: Arc<pilotdeck_agent::ports::WakeSignal>,
+}
+#[derive(Debug, Default)]
+struct Registry {
+    operations: HashMap<JsString, OperationSnapshot>,
+    requests: HashMap<JsString, JsString>,
+    active: HashMap<JsString, ActiveOperation>,
+}
+/// Operation state that the baseline keeps on its single
+/// `AgentLoopSidecarServer` instance (`operations`, `requestOperations`,
+/// `abortControllers`) and therefore shares between every connection a TCP
+/// sidecar accepts (tcpAgentLoopSidecarServer.ts:72-80): a status or cancel
+/// on one connection sees an execution started on another.
+#[derive(Debug, Clone, Default)]
+pub struct OperationRegistry(Arc<Mutex<Registry>>);
+impl OperationRegistry {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Registry> {
+        self.0.lock().unwrap_or_else(|p| p.into_inner())
+    }
+}
+/// This connection's own executions: what its worker runs and what its
+/// retirement settles.
 #[derive(Debug)]
 struct Operation {
     request: ExecuteRequest,
     stream_id: JsString,
     sequence: Arc<Mutex<f64>>,
     cancellation: Cancellation,
-    cancel_requested: bool,
     /// The worker has handed this operation's final event to the connection.
     terminal_published: bool,
-    deadline: Option<Instant>,
     timer: Option<thread::JoinHandle<()>>,
-    phase: OperationPhase,
-    accepted: JsValue,
     terminal: Option<JsValue>,
-    outcome: Option<ModuleOutcome>,
-    updated_at: JsString,
 }
 #[derive(Debug)]
 struct Work {
@@ -244,12 +333,12 @@ struct Work {
 #[derive(Debug, Default)]
 struct State {
     operations: HashMap<JsString, Operation>,
-    requests: HashMap<JsString, JsString>,
     queue: VecDeque<Work>,
 }
 pub struct ExecutionServer {
     owner: ConnectionOwner,
     state: Mutex<State>,
+    registry: OperationRegistry,
     ready: Arc<pilotdeck_agent::ports::WakeSignal>,
     factory: Arc<dyn ExecutionFactory>,
     clock: Arc<dyn ExecutionClock>,
@@ -273,9 +362,26 @@ impl ExecutionServer {
         clock: Arc<dyn ExecutionClock>,
         queue_capacity: usize,
     ) -> Arc<Self> {
+        Self::with_registry(
+            owner,
+            factory,
+            clock,
+            queue_capacity,
+            OperationRegistry::default(),
+        )
+    }
+    /// A connection of a sidecar whose other connections share `registry`.
+    pub fn with_registry(
+        owner: ConnectionOwner,
+        factory: Arc<dyn ExecutionFactory>,
+        clock: Arc<dyn ExecutionClock>,
+        queue_capacity: usize,
+        registry: OperationRegistry,
+    ) -> Arc<Self> {
         Arc::new(Self {
             owner,
             state: Mutex::new(State::default()),
+            registry,
             ready: Arc::default(),
             factory,
             clock,
@@ -286,7 +392,7 @@ impl ExecutionServer {
     pub fn receive(&self, value: &JsValue) -> io::Result<()> {
         let envelope = match EnvelopeRef::decode(value) {
             Ok(envelope) => envelope,
-            Err(error) => return self.send_error(error.code, error.message.into()),
+            Err(error) => return self.send_error("validation", error.code, error.message.into()),
         };
         let MessageRef::Request(request) = envelope.message else {
             if matches!(envelope.message, MessageRef::Response(_)) {
@@ -296,7 +402,18 @@ impl ExecutionServer {
         };
         match request.body {
             RequestBodyRef::Hello { .. } | RequestBodyRef::Capabilities { .. } => {
-                let mut response = self.response(request, true);
+                // handshake (488-505): no requestId; capabilities only fills payload.
+                let capabilities = matches!(request.body, RequestBodyRef::Capabilities { .. });
+                let mut response = self.response(
+                    if capabilities {
+                        "capabilities"
+                    } else {
+                        "hello"
+                    },
+                    request,
+                    None,
+                    true,
+                );
                 let binding = self.owner.binding();
                 for (key, value) in [
                     ("protocolVersion", JsValue::from(MODULE_PROTOCOL_VERSION)),
@@ -318,13 +435,11 @@ impl ExecutionServer {
                 }
                 response.insert(
                     "payload".into(),
-                    JsValue::Object(
-                        if matches!(request.body, RequestBodyRef::Capabilities { .. }) {
-                            self.capabilities()
-                        } else {
-                            JsObject::new()
-                        },
-                    ),
+                    JsValue::Object(if capabilities {
+                        self.capabilities()
+                    } else {
+                        JsObject::new()
+                    }),
                 );
                 self.owner.send_control(&JsValue::Object(response))
             }
@@ -343,32 +458,32 @@ impl ExecutionServer {
                 operation_id,
                 reason,
             } => {
-                let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-                let active = state
-                    .operations
-                    .get_mut(operation_id)
-                    .filter(|op| op.terminal.is_none());
-                let matches = active.as_ref().is_some_and(|op| {
-                    &op.request.run_id == run_id
-                        && request
-                            .fields
-                            .get("requestId")
-                            .filter(|v| !v.is_undefined())
-                            .is_none_or(|v| v.as_string() == Some(&op.request.request_id))
+                // 169-192: the active execution of this operation, on any connection.
+                let request_id = request.fields.get("requestId").and_then(JsValue::as_string);
+                let mut guard = self.registry.lock();
+                let registry = &mut *guard;
+                let active = registry.active.get(operation_id);
+                let matches = active.is_some_and(|active| {
+                    &active.run_id == run_id && request_id.is_none_or(|id| id == &active.request_id)
                 });
                 let code = if active.is_some() {
                     "OPERATION_IDENTITY_MISMATCH"
                 } else {
                     "UNKNOWN_OPERATION"
                 };
+                let mut woken = None;
                 if matches {
-                    let op = active.expect("matched active operation");
-                    if op.deadline.is_some_and(|d| Instant::now() >= d) {
-                        op.cancellation.cancel(CancelCause::Deadline);
+                    let active = active.expect("matched active operation");
+                    if let Some(snapshot) = registry.operations.get_mut(operation_id)
+                        && snapshot.outcome.is_none()
+                    {
+                        snapshot.cancel_requested = true;
+                        snapshot.phase = OperationPhase::CancelRequested;
+                        snapshot.updated_at = self.clock.now_iso();
                     }
-                    op.phase = OperationPhase::CancelRequested;
-                    op.cancel_requested = true;
-                    op.updated_at = self.clock.now_iso();
+                    if active.deadline.is_some_and(|d| Instant::now() >= d) {
+                        active.cancellation.cancel(CancelCause::Deadline);
+                    }
                     let mut timeout: Vec<u16> = "timeout:".encode_utf16().collect();
                     timeout.extend_from_slice(run_id.units());
                     // A gateway timeout reaches a sidecar together with the
@@ -377,16 +492,20 @@ impl ExecutionServer {
                     // nor a deadline terminal (the baseline runs it as a plain
                     // AgentLoop), so the reason marks a deadline only for an
                     // operation that carries one.
-                    let cause = if reason.units() == timeout && op.deadline.is_some() {
+                    let cause = if reason.units() == timeout && active.deadline.is_some() {
                         CancelCause::Deadline
                     } else {
                         CancelCause::Requested(reason.clone())
                     };
-                    op.cancellation.cancel(cause);
+                    active.cancellation.cancel(cause);
+                    woken = Some(active.ready.clone());
                 }
-                drop(state);
+                drop(guard);
+                if let Some(ready) = woken {
+                    ready.notify();
+                }
                 self.ready.notify();
-                let mut response = self.response(request, matches);
+                let mut response = self.response("cancel", request, request_id, matches);
                 if matches {
                     response.insert(
                         "payload".into(),
@@ -401,45 +520,51 @@ impl ExecutionServer {
                 self.owner.send_control(&JsValue::Object(response))
             }
             RequestBodyRef::Status { request_id } => {
-                let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-                let op = state
+                // status (507-520).
+                let registry = self.registry.lock();
+                let snapshot = registry
                     .requests
                     .get(request_id)
-                    .and_then(|id| state.operations.get(id));
-                let mut response = self.response(request, op.is_some());
-                if let Some(op) = op {
-                    let mut snapshot = object([
-                        ("runId", JsValue::String(op.request.run_id.clone())),
-                        (
-                            "operationId",
-                            JsValue::String(op.request.operation_id.clone()),
-                        ),
-                        ("state", JsValue::from(phase_name(op.phase))),
-                        (
-                            "requestIds",
-                            JsValue::Array(vec![JsValue::String(op.request.request_id.clone())]),
-                        ),
-                        ("cancelRequested", JsValue::Bool(op.cancel_requested)),
-                        ("updatedAt", JsValue::String(op.updated_at.clone())),
-                    ]);
-                    if let Some(outcome) = op.outcome {
-                        snapshot.insert("outcome".into(), JsValue::from(outcome_name(outcome)));
+                    .and_then(|id| registry.operations.get(id))
+                    .map(OperationSnapshot::to_payload);
+                drop(registry);
+                let mut response =
+                    self.response("status", request, Some(request_id), snapshot.is_some());
+                match snapshot {
+                    Some(snapshot) => {
+                        response.insert("payload".into(), JsValue::Object(snapshot));
                     }
-                    response.insert("payload".into(), JsValue::Object(snapshot));
-                } else {
-                    response.insert("code".into(), JsValue::from("UNKNOWN_REQUEST"));
+                    None => {
+                        response.insert("code".into(), JsValue::from("UNKNOWN_REQUEST"));
+                    }
                 }
-                drop(state);
                 self.owner.send_control(&JsValue::Object(response))
             }
-            RequestBodyRef::ModuleCall { .. } => {
-                self.reject(request, "UNEXPECTED_MODULE_CALL", true)
+            RequestBodyRef::ModuleCall { identity, .. } => {
+                // module_call is sidecar-originated (158-168).
+                self.reject(
+                    "module-call",
+                    request,
+                    Some(identity.request_id),
+                    "UNEXPECTED_MODULE_CALL",
+                    true,
+                )
             }
-            RequestBodyRef::Resume { .. } => self.reject(request, "RESUME_UNSUPPORTED", false),
-            RequestBodyRef::Ack { .. } => self.reject(request, "ACK_UNSUPPORTED", false),
+            // controlFailure (526-528, 558-560, 747-755): no requestId.
+            RequestBodyRef::Resume { .. } => {
+                self.reject("resume", request, None, "RESUME_UNSUPPORTED", false)
+            }
+            RequestBodyRef::Ack { .. } => {
+                self.reject("ack", request, None, "ACK_UNSUPPORTED", false)
+            }
         }
     }
+    /// handleExecute's admission (agentLoopSidecarServer.ts:208-267). The
+    /// baseline does not deduplicate by request id: a new execute of an
+    /// operation that is no longer active runs again under the same
+    /// operation snapshot.
     fn accept(&self, request: RequestRef<'_>, input: ExecuteRequest) -> io::Result<()> {
+        let request_id = Some(&input.request_id);
         // Parse before accepting. A restricted parser fails visibly, never drops a deadline.
         let mut deadline_ms: Option<f64> = None;
         for name in ["operationDeadline", "attemptDeadline"] {
@@ -452,128 +577,171 @@ impl ExecutionServer {
                         deadline_ms = Some(deadline_ms.map_or(ms, |old| old.min(ms)))
                     }
                     Ok(_) => {}
-                    Err(_) => return self.reject(request, "UNSUPPORTED_DEADLINE_PROFILE", true),
+                    Err(_) => {
+                        return self.reject(
+                            "execute-rejected",
+                            request,
+                            request_id,
+                            "UNSUPPORTED_DEADLINE_PROFILE",
+                            true,
+                        );
+                    }
                 }
             }
         }
         let now = self.clock.now_epoch_ms();
         if !now.is_finite() {
-            return self.reject(request, "INVALID_OWNER_CLOCK", true);
+            return self.reject(
+                "execute-rejected",
+                request,
+                request_id,
+                "INVALID_OWNER_CLOCK",
+                true,
+            );
         }
-        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(prior_id) = state.requests.get(&input.request_id) {
-            let prior = state
-                .operations
-                .get(prior_id)
-                .expect("registered request operation");
-            if prior.request.boundary == input.boundary {
-                let cached = prior.terminal.as_ref().unwrap_or(&prior.accepted).clone();
-                drop(state);
-                return if cached
-                    .get("kind")
-                    .and_then(JsValue::as_string)
-                    .is_some_and(|k| k.equals_str("event"))
-                {
-                    self.owner.send_cached_stream(&cached)
-                } else {
-                    self.owner.send_control(&cached)
-                };
-            }
-            drop(state);
-            return self.reject(request, "REQUEST_IDENTITY_CONFLICT", false);
-        }
-        if let Some(prior) = state.operations.get(&input.operation_id) {
-            let code = if prior.request.run_id != input.run_id {
-                "OPERATION_IDENTITY_MISMATCH"
-            } else if prior.terminal.is_none() {
+        let mut registry = self.registry.lock();
+        if let Some(active) = registry.active.get(&input.operation_id) {
+            // 209-220.
+            let code = if active.run_id == input.run_id {
                 "OPERATION_ALREADY_ACTIVE"
             } else {
-                "OPERATION_REQUIRES_RECONCILIATION"
+                "OPERATION_IDENTITY_MISMATCH"
             };
-            drop(state);
-            return self.reject(request, code, false);
+            drop(registry);
+            return self.reject("execute-rejected", request, request_id, code, false);
         }
-        if state.queue.len() >= self.queue_capacity {
-            drop(state);
-            return self.reject(request, "EXECUTION_QUEUE_FULL", false);
+        // The baseline's `operations.accept` throws OPERATION_RUN_MISMATCH
+        // here (moduleRuntime.ts:30) and, uncaught inside handleExecute, the
+        // rejection takes the whole sidecar process down. This answers it
+        // like the active-operation mismatch above instead.
+        if registry
+            .operations
+            .get(&input.operation_id)
+            .is_some_and(|snapshot| snapshot.run_id != input.run_id)
+        {
+            drop(registry);
+            return self.reject(
+                "execute-rejected",
+                request,
+                request_id,
+                "OPERATION_IDENTITY_MISMATCH",
+                false,
+            );
         }
-        let stream_id = self.owner.random_id("stream");
+        if self
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .queue
+            .len()
+            >= self.queue_capacity
+        {
+            drop(registry);
+            return self.reject(
+                "execute-rejected",
+                request,
+                request_id,
+                "EXECUTION_QUEUE_FULL",
+                false,
+            );
+        }
+        // operations.accept (moduleRuntime.ts:27-46) and requestOperations.
+        let updated_at = self.clock.now_iso();
+        let snapshot = registry
+            .operations
+            .entry(input.operation_id.clone())
+            .or_insert_with(|| OperationSnapshot {
+                run_id: input.run_id.clone(),
+                operation_id: input.operation_id.clone(),
+                phase: OperationPhase::Running,
+                outcome: None,
+                request_ids: Vec::new(),
+                cancel_requested: false,
+                updated_at: updated_at.clone(),
+            });
+        if !snapshot.request_ids.contains(&input.request_id) {
+            snapshot.request_ids.push(input.request_id.clone());
+        }
+        snapshot.updated_at = updated_at;
+        registry
+            .requests
+            .insert(input.request_id.clone(), input.operation_id.clone());
+        if deadline_ms.is_some_and(|ms| ms <= now) {
+            // 223-236.
+            if let Some(snapshot) = registry.operations.get_mut(&input.operation_id) {
+                snapshot.record_final(ModuleOutcome::Failed, self.clock.now_iso());
+            }
+            drop(registry);
+            return self.reject("deadline", request, request_id, "DEADLINE_EXCEEDED", true);
+        }
+        let stream_id = self.owner.next_id("stream");
         let sequence = Arc::new(Mutex::new(0.0));
         let cancellation = Cancellation::default();
-        let mut accepted = self.response(request, true);
-        accepted.insert("streamId".into(), JsValue::String(stream_id.clone()));
-        accepted.insert("cursor".into(), JsValue::Number(0.0));
-        let expired = deadline_ms.is_some_and(|ms| ms <= now);
-        if expired {
-            accepted = self.response(request, false);
-            accepted.insert("final".into(), JsValue::Bool(true));
-            accepted.insert("outcome".into(), JsValue::from("failed"));
-            accepted.insert("code".into(), JsValue::from("DEADLINE_EXCEEDED"));
-        }
         // Freeze the earliest deadline once, never from a later host response.
         let deadline = deadline_ms
             .and_then(|ms| Instant::now().checked_add(execution_deadline_delay(ms - now)));
-        let timer = if expired {
-            None
-        } else {
-            deadline.map(|deadline| {
-                let cancellation = cancellation.clone();
-                thread::spawn(move || {
-                    if matches!(
-                        cancellation.wait_until(deadline),
-                        Some(CancelCause::Deadline)
-                    ) {
-                        cancellation.cancel(CancelCause::Deadline);
-                    }
-                })
+        let timer = deadline.map(|deadline| {
+            let cancellation = cancellation.clone();
+            thread::spawn(move || {
+                if matches!(
+                    cancellation.wait_until(deadline),
+                    Some(CancelCause::Deadline)
+                ) {
+                    cancellation.cancel(CancelCause::Deadline);
+                }
             })
-        };
-        let accepted = JsValue::Object(accepted);
-        // Acceptance/final cached before publication, including immediate expiration.
-        state
-            .requests
-            .insert(input.request_id.clone(), input.operation_id.clone());
-        state.operations.insert(
+        });
+        registry.active.insert(
             input.operation_id.clone(),
-            Operation {
-                request: input.clone(),
+            ActiveOperation {
+                run_id: input.run_id.clone(),
+                request_id: input.request_id.clone(),
                 stream_id: stream_id.clone(),
-                sequence: sequence.clone(),
                 cancellation: cancellation.clone(),
-                cancel_requested: false,
-                terminal_published: false,
                 deadline,
-                timer,
-                phase: if expired {
-                    OperationPhase::Failed
-                } else {
-                    OperationPhase::Running
-                },
-                accepted: accepted.clone(),
-                terminal: expired.then_some(accepted.clone()),
-                outcome: expired.then_some(ModuleOutcome::Failed),
-                updated_at: self.clock.now_iso(),
+                ready: self.ready.clone(),
             },
         );
-        drop(state);
+        drop(registry);
+        let mut accepted = self.response("accepted", request, request_id, true);
+        accepted.insert("streamId".into(), JsValue::String(stream_id.clone()));
+        accepted.insert("cursor".into(), JsValue::Number(0.0));
+        let accepted = JsValue::Object(accepted);
+        {
+            let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+            let replaced = state.operations.insert(
+                input.operation_id.clone(),
+                Operation {
+                    request: input.clone(),
+                    stream_id: stream_id.clone(),
+                    sequence: sequence.clone(),
+                    cancellation: cancellation.clone(),
+                    terminal_published: false,
+                    timer,
+                    terminal: None,
+                },
+            );
+            drop(state);
+            if let Some(timer) = replaced.and_then(|op| op.timer) {
+                let _ = timer.join();
+            }
+        }
         if let Err(error) = self.owner.send_control(&accepted) {
             self.retire();
             return Err(error);
         }
-        if !expired {
-            let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-            state.queue.push_back(Work {
-                request: input,
-                stream_id,
-                sequence,
-                control: CallControl {
-                    cancellation,
-                    deadline,
-                },
-            });
-            drop(state);
-            self.ready.notify();
-        }
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        state.queue.push_back(Work {
+            request: input,
+            stream_id,
+            sequence,
+            control: CallControl {
+                cancellation,
+                deadline,
+            },
+        });
+        drop(state);
+        self.ready.notify();
         Ok(())
     }
     fn worker(&self) {
@@ -595,9 +763,10 @@ impl ExecutionServer {
             let mut context = ExecutionContext {
                 owner: self.owner.clone(),
                 request: work.request.clone(),
-                stream_id: work.stream_id,
+                stream_id: work.stream_id.clone(),
                 sequence: work.sequence,
                 identities: Mutex::new(Vec::new()),
+                plan_todo_sequence: Arc::default(),
                 control: work.control,
             };
             // Catching a worker panic prevents a permanently running operation.
@@ -655,23 +824,33 @@ impl ExecutionServer {
                 .unwrap_or_else(|p| p.into_inner())
                 .operations
                 .get_mut(&work.request.operation_id)
+                .filter(|op| op.stream_id == work.stream_id)
                 .and_then(|op| op.timer.take());
             if let Some(timer) = timer {
                 let _ = timer.join();
             }
             {
                 let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-                let op = state
+                let Some(op) = state
                     .operations
                     .get_mut(&work.request.operation_id)
-                    .expect("owned active operation");
+                    .filter(|op| op.stream_id == work.stream_id)
+                else {
+                    continue;
+                };
                 if op.terminal.is_some() {
                     continue;
                 }
-                op.outcome = Some(terminal.outcome);
-                op.phase = outcome_phase(terminal.outcome);
                 op.terminal = Some(final_event.clone());
-                op.updated_at = self.clock.now_iso();
+            }
+            // recordFinal precedes the final frame (318-319).
+            if let Some(snapshot) = self
+                .registry
+                .lock()
+                .operations
+                .get_mut(&work.request.operation_id)
+            {
+                snapshot.record_final(terminal.outcome, self.clock.now_iso());
             }
             // Main cancellation must not suppress its own terminal. Cleanup has a
             // separately bounded publication budget, never a permission to retry effects.
@@ -682,12 +861,15 @@ impl ExecutionServer {
             if self.owner.publish(&cleanup, &final_event).is_err() {
                 self.retire();
             }
+            // The abortControllers entry goes after the final is sent (395-398).
+            self.release_active(&work.request.operation_id, &work.stream_id);
             if let Some(op) = self
                 .state
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
                 .operations
                 .get_mut(&work.request.operation_id)
+                .filter(|op| op.stream_id == work.stream_id)
             {
                 op.terminal_published = true;
             }
@@ -702,6 +884,16 @@ impl ExecutionServer {
                     self.owner.release_known_calls(identity);
                 }
             }
+        }
+    }
+    fn release_active(&self, operation_id: &JsString, stream_id: &JsString) {
+        let mut registry = self.registry.lock();
+        if registry
+            .active
+            .get(operation_id)
+            .is_some_and(|active| &active.stream_id == stream_id)
+        {
+            registry.active.remove(operation_id);
         }
     }
     /// The input reached its end. agentLoopSidecarServer.ts serve() handles each
@@ -724,7 +916,10 @@ impl ExecutionServer {
                 .unwrap_or_else(|p| p.into_inner())
                 .operations
                 .values()
-                .any(|op| op.cancel_requested && !op.terminal_published);
+                .any(|op| {
+                    matches!(op.cancellation.cause(), Some(CancelCause::Requested(_)))
+                        && !op.terminal_published
+                });
             if !pending || self.owner.is_closed() || Instant::now() >= until {
                 break;
             }
@@ -735,21 +930,20 @@ impl ExecutionServer {
     pub fn retire(&self) {
         self.owner.close();
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut retired = Vec::new();
         for op in state
             .operations
             .values_mut()
             .filter(|op| op.terminal.is_none())
         {
             op.cancellation.cancel(CancelCause::TransportClosed);
-            op.phase = OperationPhase::Resolving;
-            op.outcome = Some(ModuleOutcome::ResultUnknown);
-            op.updated_at = self.clock.now_iso();
             let context = ExecutionContext {
                 owner: self.owner.clone(),
                 request: op.request.clone(),
                 stream_id: op.stream_id.clone(),
                 sequence: op.sequence.clone(),
                 identities: Mutex::new(Vec::new()),
+                plan_todo_sequence: Arc::default(),
                 control: CallControl {
                     cancellation: op.cancellation.clone(),
                     deadline: None,
@@ -767,9 +961,26 @@ impl ExecutionServer {
                     ),
                 ])),
             ));
+            retired.push((op.request.operation_id.clone(), op.stream_id.clone()));
         }
         state.queue.clear();
         drop(state);
+        if !retired.is_empty() {
+            let now = self.clock.now_iso();
+            let mut registry = self.registry.lock();
+            for (operation_id, stream_id) in &retired {
+                if registry
+                    .active
+                    .get(operation_id)
+                    .is_some_and(|active| &active.stream_id == stream_id)
+                {
+                    registry.active.remove(operation_id);
+                    if let Some(snapshot) = registry.operations.get_mut(operation_id) {
+                        snapshot.record_final(ModuleOutcome::ResultUnknown, now.clone());
+                    }
+                }
+            }
+        }
         self.ready.notify();
         let timers: Vec<_> = {
             let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
@@ -789,7 +1000,7 @@ impl ExecutionServer {
     /// interruptible IO implementation before treating incomplete shutdown as safe.
     pub fn serve(
         self: &Arc<Self>,
-        mut input: impl BufRead + Send + 'static,
+        input: impl BufRead + Send + 'static,
         output: impl Write + Send + 'static,
         grace: Duration,
     ) -> ShutdownReport {
@@ -797,31 +1008,27 @@ impl ExecutionServer {
         let reader_server = self.clone();
         let reader_done = done_tx.clone();
         let reader = thread::spawn(move || {
-            let mut bytes = Vec::new();
+            let mut lines = LineReader::new(input);
             while !reader_server.owner.is_closed() {
-                bytes.clear();
-                match input.read_until(b'\n', &mut bytes) {
-                    Ok(0) => {
+                let bytes = match lines.next_line() {
+                    Ok(Some(bytes)) => bytes,
+                    Ok(None) => {
                         reader_server.settle_on_input_end();
                         break;
                     }
                     Err(_) => break,
-                    Ok(_) => {}
-                }
-                if bytes.last() == Some(&b'\n') {
-                    bytes.pop();
-                }
-                if bytes.last() == Some(&b'\r') {
-                    bytes.pop();
-                }
+                };
                 let line = String::from_utf8_lossy(&bytes);
                 if line.chars().all(js_whitespace) {
                     continue;
                 }
                 let result = match parse_json(&line) {
                     Ok(value) => reader_server.receive(&value),
-                    Err(_) => reader_server
-                        .send_error("INVALID_JSON", "Module message is not valid JSON.".into()),
+                    Err(_) => reader_server.send_error(
+                        "parse",
+                        "INVALID_JSON",
+                        "Module message is not valid JSON.".into(),
+                    ),
                 };
                 if result.is_err() {
                     break;
@@ -868,36 +1075,50 @@ impl ExecutionServer {
         }
         report
     }
-    fn response(&self, request: RequestRef<'_>, ok: bool) -> JsObject {
+    /// The baseline's response envelopes: kind, messageId (`nextId(prefix)`),
+    /// inReplyTo, then requestId when the branch writes one, then ok.
+    fn response(
+        &self,
+        prefix: &str,
+        request: RequestRef<'_>,
+        request_id: Option<&JsString>,
+        ok: bool,
+    ) -> JsObject {
         let mut response = object([
             ("kind", JsValue::from("response")),
-            ("messageId", JsValue::String(self.owner.next_id("response"))),
+            ("messageId", JsValue::String(self.owner.next_id(prefix))),
             ("inReplyTo", JsValue::String(request.message_id.clone())),
-            ("ok", JsValue::Bool(ok)),
         ]);
-        if let Some(JsValue::String(id)) = request.fields.get("requestId") {
+        if let Some(id) = request_id {
             response.insert("requestId".into(), JsValue::String(id.clone()));
         }
+        response.insert("ok".into(), JsValue::Bool(ok));
         response
     }
+    /// A refusal: `final: true, outcome: "failed"` before the code when the
+    /// branch ends the call (module_call 158-168, deadline 226-235).
     fn reject(
         &self,
+        prefix: &str,
         request: RequestRef<'_>,
+        request_id: Option<&JsString>,
         code: &'static str,
         final_failure: bool,
     ) -> io::Result<()> {
-        let mut response = self.response(request, false);
-        response.insert("code".into(), JsValue::from(code));
+        let mut response = self.response(prefix, request, request_id, false);
         if final_failure {
             response.insert("final".into(), JsValue::Bool(true));
             response.insert("outcome".into(), JsValue::from("failed"));
         }
+        response.insert("code".into(), JsValue::from(code));
         self.owner.send_control(&JsValue::Object(response))
     }
-    fn send_error(&self, code: &'static str, message: JsString) -> io::Result<()> {
+    /// `parse` for a line that is not JSON (114-123), `validation` for one
+    /// validateModuleMessage refuses (125-134).
+    fn send_error(&self, prefix: &str, code: &'static str, message: JsString) -> io::Result<()> {
         self.owner.send_control(&JsValue::Object(object([
             ("kind", JsValue::from("error")),
-            ("messageId", JsValue::String(self.owner.next_id("error"))),
+            ("messageId", JsValue::String(self.owner.next_id(prefix))),
             ("code", JsValue::from(code)),
             ("message", JsValue::String(message)),
             ("retryability", JsValue::from("unsafe")),
@@ -935,6 +1156,57 @@ impl ExecutionServer {
             ),
             ("methods", JsValue::Array(methods.into())),
         ])
+    }
+}
+/// readline over the input (agentLoopSidecarServer.ts:108, `crlfDelay:
+/// Infinity`): `\n`, `\r\n` and a lone `\r` each end a line, a `\n` right
+/// after a `\r` (even in a later read) ends nothing, and a lone `\r` hands its
+/// line over at once instead of waiting for more input. The bytes after the
+/// last line ending come out as a final line when the input ends.
+struct LineReader<R> {
+    input: R,
+    after_cr: bool,
+}
+impl<R: BufRead> LineReader<R> {
+    fn new(input: R) -> Self {
+        Self {
+            input,
+            after_cr: false,
+        }
+    }
+    fn next_line(&mut self) -> io::Result<Option<Vec<u8>>> {
+        let mut line = Vec::new();
+        let mut started = false;
+        loop {
+            let available = match self.input.fill_buf() {
+                Ok(available) => available,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error),
+            };
+            if available.is_empty() {
+                return Ok(started.then_some(line));
+            }
+            if self.after_cr && available[0] == b'\n' {
+                self.after_cr = false;
+                self.input.consume(1);
+                continue;
+            }
+            self.after_cr = false;
+            started = true;
+            match available.iter().position(|b| *b == b'\n' || *b == b'\r') {
+                Some(end) => {
+                    line.extend_from_slice(&available[..end]);
+                    self.after_cr = available[end] == b'\r';
+                    self.input.consume(end + 1);
+                    return Ok(Some(line));
+                }
+                None => {
+                    let length = available.len();
+                    line.extend_from_slice(available);
+                    self.input.consume(length);
+                }
+            }
+        }
     }
 }
 fn object<const N: usize>(fields: [(&str, JsValue); N]) -> JsObject {
@@ -1105,6 +1377,43 @@ mod deadline_delay_tests {
                 "remaining_ms={remaining_ms}",
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod line_reader_tests {
+    use super::LineReader;
+    use std::io::{BufReader, Read};
+
+    /// Hands out the input in the given pieces, one per read.
+    struct Pieces(Vec<&'static [u8]>);
+    impl Read for Pieces {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            if self.0.is_empty() {
+                return Ok(0);
+            }
+            let piece = self.0.remove(0);
+            buffer[..piece.len()].copy_from_slice(piece);
+            Ok(piece.len())
+        }
+    }
+
+    #[test]
+    fn splits_like_readline_with_infinite_crlf_delay() {
+        let mut lines = LineReader::new(BufReader::new(Pieces(vec![
+            b"a\rb\n",
+            b"c\r",
+            b"\nd\r\n\r\n",
+            b"\n",
+            b"e\r",
+            b"\r",
+            b"tail",
+        ])));
+        let mut seen = Vec::new();
+        while let Some(line) = lines.next_line().unwrap() {
+            seen.push(String::from_utf8(line).unwrap());
+        }
+        assert_eq!(seen, ["a", "b", "c", "d", "", "", "e", "", "tail"]);
     }
 }
 

@@ -69,7 +69,6 @@ struct Inner {
     binding: SidecarBinding,
     state: Mutex<State>,
     wake: Arc<WakeSignal>,
-    next_id: AtomicU64,
     queue_capacity: usize,
 }
 /// Clone is a handle to this exact connection, not a new generation.
@@ -88,28 +87,18 @@ impl ConnectionOwner {
             binding,
             state: Mutex::new(State::default()),
             wake: Arc::new(WakeSignal::default()),
-            next_id: AtomicU64::new(1),
             queue_capacity: queue_capacity.max(1),
         }))
     }
     pub fn binding(&self) -> &SidecarBinding {
         &self.0.binding
     }
-    /// `${prefix}-${uuid()}` with the baseline sidecar's default id source,
-    /// `Math.random().toString(36).slice(2)` (agentLoopSidecarServer.ts:96,
-    /// 255): a stream id the host may persist (its operation ledger).
-    pub fn random_id(&self, prefix: &str) -> JsString {
-        format!("{prefix}-{}", random_token()).into()
-    }
+    /// `nextId(prefix)` (agentLoopSidecarServer.ts:647-649): `${prefix}-${uuid()}`
+    /// with the baseline sidecar's default id source,
+    /// `Math.random().toString(36).slice(2)` (96). Message ids, the stream id
+    /// and the host ports' request ids all take this shape.
     pub fn next_id(&self, prefix: &str) -> JsString {
-        let sequence = self.0.next_id.fetch_add(1, Ordering::Relaxed);
-        // Instance/generation are already owner-issued strings. They stay exact.
-        let mut units: Vec<u16> = prefix.encode_utf16().collect();
-        units.push(45);
-        units.extend_from_slice(self.0.binding.connection_generation.units());
-        units.push(45);
-        units.extend(sequence.to_string().encode_utf16());
-        JsString::from_utf16(units)
+        format!("{prefix}-{}", random_token()).into()
     }
     pub fn is_closed(&self) -> bool {
         self.0
@@ -200,6 +189,7 @@ impl ConnectionOwner {
         Ok(BoundExchange {
             owner: self.clone(),
             identity,
+            plan_todo_sequence: Arc::default(),
         })
     }
     /// Reader never waits for output capacity. Controls change cancellation/state
@@ -459,8 +449,57 @@ fn unknown(identity: &ExecutionIdentity) -> PortError {
 pub struct BoundExchange {
     owner: ConnectionOwner,
     identity: ExecutionIdentity,
+    /// hostPlanTodoPort.ts:62 numbers its requests per port, and the default
+    /// factory builds one port per execution: the execution shares this.
+    plan_todo_sequence: Arc<AtomicU64>,
 }
 impl BoundExchange {
+    pub(crate) fn with_plan_todo_sequence(mut self, sequence: Arc<AtomicU64>) -> Self {
+        self.plan_todo_sequence = sequence;
+        self
+    }
+    /// The request id each baseline host port gives its call (a prefix naming
+    /// the port and operation, then `uuid()` = `Math.random().toString(36)
+    /// .slice(2)`): hostModelInvokerPort.ts:99/128/161/185/198, the default
+    /// factory's metadata port (pilotdeck-agent-loop-default-factory.ts:344,
+    /// no random part), hostContextRuntime.ts:48, hostToolPort.ts:163/190/242,
+    /// hostPlanTodoPort.ts:62, hostLifecycleRuntime.ts:42,
+    /// hostAgentEventBridge.ts:40, hostTurnCallbacks.ts:36,
+    /// hostPermissionDecisionPort.ts:33, hostModelBudgetPort.ts:37.
+    fn host_request_id(&self, module: &str, operation: &str, payload: &JsObject) -> JsString {
+        let prefix = match (module, operation) {
+            ("model", "prepare") => "model-prepare".to_owned(),
+            ("model", "materialize_prepared_request") => "model-materialize".to_owned(),
+            ("model", "stream_next") => "model-stream-next".to_owned(),
+            ("model", "close_stream") => "model-close-stream".to_owned(),
+            ("model", "get_metadata") => {
+                let mut units: Vec<u16> = "model-metadata-".encode_utf16().collect();
+                for (index, key) in ["provider", "model"].into_iter().enumerate() {
+                    if index > 0 {
+                        units.push(u16::from(b'-'));
+                    }
+                    if let Some(value) = payload.get(key).and_then(JsValue::as_string) {
+                        units.extend_from_slice(value.units());
+                    }
+                }
+                return JsString::from_utf16(units);
+            }
+            ("model", _) => "model".to_owned(),
+            ("capability", "plan_todo") => {
+                let sequence = self.plan_todo_sequence.fetch_add(1, Ordering::Relaxed) + 1;
+                return format!("plan-todo-{}-{sequence}", random_token()).into();
+            }
+            ("capability", "list_tools") => "tool-catalog".to_owned(),
+            ("capability", "execute_batch") => "tool-batch".to_owned(),
+            ("capability", _) => "tool".to_owned(),
+            ("lifecycle", _) => "lifecycle-dispatch".to_owned(),
+            ("event", _) => "agent-event".to_owned(),
+            ("permission", _) => "permission-decide".to_owned(),
+            // context / turn / budget: `${module}-${operation}`.
+            (module, operation) => format!("{module}-{operation}"),
+        };
+        self.owner.next_id(&prefix)
+    }
     pub(crate) fn start(
         &mut self,
         control: &CallControl,
@@ -501,31 +540,34 @@ impl BoundExchange {
         }
         let message_id = self.owner.next_id("module-call");
         let mut identity = self.identity.clone();
-        identity.request_id = self.owner.next_id("host-request");
+        identity.request_id = self.host_request_id(module, operation, &payload);
+        // agentLoopSidecarServer.ts callModule (437-445): kind / messageId /
+        // method, then the host port's call object in its own key order —
+        // every port writes the binding (runId, operationId, idempotencyKey
+        // when present), then requestId, module and payload. The operation
+        // name lives only in payload.operation; a top-level copy is not part
+        // of Module Protocol v2 (pilotdeck-module-protocol-v2.schema.json
+        // moduleCallRequest has additionalProperties: false). The ports'
+        // `abortSignal`, which JSON.stringify writes as `{}`, is not sent
+        // either: the same schema rejects it.
         let mut request = JsObject::new();
-        // agentLoopSidecarServer.ts callModule: the envelope is kind / messageId /
-        // method plus the caller's binding, requestId, module and payload. The
-        // operation name lives only in payload.operation; a top-level copy is
-        // not part of Module Protocol v2 (pilotdeck-module-protocol-v2.schema.json
-        // moduleCallRequest has additionalProperties: false).
-        for (key, value) in [
-            ("kind", JsValue::from("request")),
-            ("messageId", JsValue::String(message_id.clone())),
-            ("method", JsValue::from("module_call")),
-            ("module", JsValue::from(module)),
-            ("runId", JsValue::String(identity.run_id.clone())),
-            (
-                "operationId",
-                JsValue::String(identity.operation_id.clone()),
-            ),
-            ("requestId", JsValue::String(identity.request_id.clone())),
-            ("payload", JsValue::Object(payload)),
-        ] {
-            request.insert(key.into(), value);
-        }
+        request.insert("kind".into(), JsValue::from("request"));
+        request.insert("messageId".into(), JsValue::String(message_id.clone()));
+        request.insert("method".into(), JsValue::from("module_call"));
+        request.insert("runId".into(), JsValue::String(identity.run_id.clone()));
+        request.insert(
+            "operationId".into(),
+            JsValue::String(identity.operation_id.clone()),
+        );
         if let Some(key) = &identity.idempotency_key {
             request.insert("idempotencyKey".into(), JsValue::String(key.clone()));
         }
+        request.insert(
+            "requestId".into(),
+            JsValue::String(identity.request_id.clone()),
+        );
+        request.insert("module".into(), JsValue::from(module));
+        request.insert("payload".into(), JsValue::Object(payload));
         let request = JsValue::Object(request);
         // Stage-one validation is still required at our own outbound boundary.
         EnvelopeRef::decode(&request).map_err(|error| PortError::InvalidResponse {
@@ -978,20 +1020,79 @@ impl HostExchange for BoundExchange {
     }
 }
 
-/// A random lowercase base-36 token, the shape of the baseline sidecar's
-/// `Math.random().toString(36).slice(2)`: the 52 random bits of a double
-/// written as base-36 digits.
+/// The baseline sidecar's default id source,
+/// `Math.random().toString(36).slice(2)` (agentLoopSidecarServer.ts:96):
+/// a double carrying 52 random bits, printed the way V8 prints a fraction in
+/// radix 36, without the leading `0.`.
 pub fn random_token() -> String {
-    let mut bits = (uuid::Uuid::new_v4().as_u128() as u64) & ((1 << 52) - 1);
-    let mut digits = Vec::new();
-    while bits > 0 {
-        digits.push(char::from_digit((bits % 36) as u32, 36).expect("base-36 digit"));
-        bits /= 36;
+    fraction_base36_digits((uuid::Uuid::new_v4().as_u128() as u64) & ((1 << 52) - 1))
+}
+
+/// V8 `DoubleToRadixCString` for `bits / 2^52` in radix 36 (the shortest
+/// digit string that reads back as the same double, rounding half to even),
+/// minus the `0.` that `.slice(2)` drops. Zero prints `0` and a carry into
+/// the integer part prints `1`; both slice to an empty string, as in Node.
+fn fraction_base36_digits(bits: u64) -> String {
+    const DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let value = bits as f64 / (1u64 << 52) as f64;
+    let mut fraction = value;
+    let next = f64::from_bits(value.to_bits() + 1);
+    let mut delta = (0.5 * (next - value)).max(f64::from_bits(1));
+    let mut digits: Vec<u8> = Vec::new();
+    if fraction >= delta {
+        loop {
+            fraction *= 36.0;
+            delta *= 36.0;
+            let digit = fraction as usize;
+            digits.push(DIGITS[digit]);
+            fraction -= digit as f64;
+            if (fraction > 0.5 || (fraction == 0.5 && digit & 1 == 1)) && fraction + delta > 1.0 {
+                // Round up, carrying through already written digits.
+                loop {
+                    let Some(last) = digits.pop() else {
+                        return String::new();
+                    };
+                    let digit = DIGITS
+                        .iter()
+                        .position(|d| *d == last)
+                        .expect("base-36 digit");
+                    if digit + 1 < 36 {
+                        digits.push(DIGITS[digit + 1]);
+                        break;
+                    }
+                }
+                break;
+            }
+            if fraction < delta {
+                break;
+            }
+        }
     }
-    if digits.is_empty() {
-        digits.push('0');
+    String::from_utf8(digits).expect("ascii digits")
+}
+
+#[cfg(test)]
+mod random_token_tests {
+    use super::fraction_base36_digits;
+
+    #[test]
+    fn matches_node_math_random_to_string_36() {
+        // Node 22: (Number(bits) / 2 ** 52).toString(36).slice(2)
+        for (bits, expected) in [
+            (0u64, ""),
+            (1, "0000000000t84r35w1ryi"),
+            (1 << 51, "i"),
+            (123_456_789_012_345, "0ziz62ugrraa"),
+            (4_503_599_627_370_495, "zzzzzzzzzza"),
+            (2_251_799_813_697_593, "i0000007qe"),
+            (987_654_321_098_765, "7w7tcr4bvqq"),
+            (3_333_333_333_333_333, "qn8dkjcl73"),
+            (17, "000000000dsu8shs4u7b"),
+            (4_000_000_000_000_000, "vz2uon7wmx"),
+        ] {
+            assert_eq!(fraction_base36_digits(bits), expected, "bits={bits}");
+        }
     }
-    digits.iter().rev().collect()
 }
 
 #[cfg(test)]
