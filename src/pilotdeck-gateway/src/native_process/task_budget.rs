@@ -816,11 +816,30 @@ mod tests {
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|request| request["stream"] == true)
+                .filter(|request| {
+                    // A main call retains the actual user's turn and declares the tool;
+                    // title/judge calls do not meet this contract, regardless of streaming.
+                    request["messages"].as_array().is_some_and(|messages| {
+                        messages.iter().any(|message| {
+                            message["role"] == "user"
+                                && message["content"]
+                                    .to_string()
+                                    .contains("one priced model turn")
+                        })
+                    }) && request["tools"].as_array().is_some_and(|tools| {
+                        tools
+                            .iter()
+                            .any(|tool| tool["function"]["name"] == "structured_output")
+                    })
+                })
                 .count()
         };
         let after_first = count();
-        assert!(after_first >= 1);
+        assert!(
+            after_first >= 1,
+            "actual main model request contract; requests: {:?}",
+            provider.requests.lock().unwrap()
+        );
         let blocked = submit(&gateway, "priced-blocked");
         assert!(blocked.iter().any(|event|event.get("code")==Some(&JsValue::from("agent_task_budget_reached"))));
         assert!(

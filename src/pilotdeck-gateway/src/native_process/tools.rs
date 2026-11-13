@@ -1172,6 +1172,14 @@ impl SessionTools {
             self.goal.clone(),
         );
         let tool_ports = ToolContextPorts {
+            // Root-side progress has the current session/turn identity gate.
+            // A forked child's composition has no eventEmitter, as in the baseline.
+            event_emitter: match (&self.fork, self.events.clone()) {
+                (None, Some(events)) => Some(Arc::new(move |event| {
+                    let _ = events.emit_current(event);
+                }) as EventSink),
+                _ => None,
+            },
             clock: Some(Arc::new(|| JsValue::String(SystemExecutionClock.now_iso()))),
             goal: Some(Arc::new(crate::runtime::goal::GoalSessions(goal))),
             plan_files: Some(self.plan_files.clone()),

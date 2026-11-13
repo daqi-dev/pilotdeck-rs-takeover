@@ -20,6 +20,7 @@ pub(in crate::native_process) struct ControlProvider {
     stop: Arc<std::sync::atomic::AtomicBool>,
     pub(in crate::native_process) requests: Arc<Mutex<Vec<serde_json::Value>>>,
     worker: Option<std::thread::JoinHandle<()>>,
+    errors: Arc<Mutex<Vec<String>>>,
 }
 impl ControlProvider {
     pub(in crate::native_process) fn start(tool_name: &str) -> Self {
@@ -40,7 +41,9 @@ impl ControlProvider {
         let tool_arguments = arguments.to_owned();
         let requests = Arc::new(Mutex::new(Vec::new()));
         let captured = requests.clone();
-        use std::io::{Read, Write};
+        use std::io::Write;
+        let errors = Arc::new(Mutex::new(Vec::new()));
+        let protocol_errors = errors.clone();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let address = listener.local_addr().unwrap();
@@ -56,37 +59,14 @@ impl ControlProvider {
                     }
                     Err(error) => panic!("mock accept: {error}"),
                 };
-                socket
-                    .set_read_timeout(Some(Duration::from_secs(5)))
-                    .unwrap();
-                let mut bytes = Vec::new();
-                let mut chunk = [0u8; 8192];
-                let (start, length) = loop {
-                    let count = socket.read(&mut chunk).unwrap();
-                    if count == 0 {
-                        panic!("mock request ended before headers");
-                    }
-                    bytes.extend_from_slice(&chunk[..count]);
-                    if let Some(index) = bytes.windows(4).position(|v| v == b"\r\n\r\n") {
-                        let headers = String::from_utf8_lossy(&bytes[..index]);
-                        let length = headers
-                            .lines()
-                            .find_map(|line| {
-                                line.split_once(':')
-                                    .filter(|(name, _)| name.eq_ignore_ascii_case("content-length"))
-                                    .map(|(_, length)| length.trim().parse::<usize>().unwrap())
-                            })
-                            .unwrap();
-                        break (index + 4, length);
+                let body = match read_control_request(&mut socket) {
+                    Ok(Some(body)) => body,
+                    Ok(None) => continue, // An unused HTTP pool connection carries no request.
+                    Err(error) => {
+                        protocol_errors.lock().unwrap().push(error);
+                        continue;
                     }
                 };
-                while bytes.len() < start + length {
-                    let count = socket.read(&mut chunk).unwrap();
-                    assert!(count > 0);
-                    bytes.extend_from_slice(&chunk[..count]);
-                }
-                let body: serde_json::Value =
-                    serde_json::from_slice(&bytes[start..start + length]).unwrap();
                 captured.lock().unwrap().push(body.clone());
                 let title = body.to_string().contains("Generate a concise title");
                 let after_tool = body["messages"]
@@ -124,7 +104,12 @@ impl ControlProvider {
                     "HTTP/1.1 200 OK\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",
                     response.len()
                 );
-                let _ = socket.write_all(response.as_bytes());
+                if let Err(error) = socket.write_all(response.as_bytes()) {
+                    protocol_errors
+                        .lock()
+                        .unwrap()
+                        .push(format!("mock response write: {error}"));
+                }
             }
         });
         Self {
@@ -132,13 +117,110 @@ impl ControlProvider {
             requests,
             stop,
             worker: Some(worker),
+            errors,
         }
     }
 }
 impl Drop for ControlProvider {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
-        self.worker.take().unwrap().join().unwrap();
+        if self.worker.take().unwrap().join().is_err() {
+            self.errors
+                .lock()
+                .unwrap()
+                .push("mock worker panicked".to_owned());
+        }
+        let errors = self.errors.lock().unwrap();
+        if !errors.is_empty() {
+            eprintln!("control provider protocol errors: {errors:?}");
+            if !std::thread::panicking() {
+                panic!("control provider protocol errors: {errors:?}");
+            }
+        }
+    }
+}
+
+/// Read one content-length HTTP request; an entirely unused connection is harmless.
+fn read_control_request(
+    socket: &mut std::net::TcpStream,
+) -> Result<Option<serde_json::Value>, String> {
+    use std::io::Read;
+    socket
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .map_err(|e| e.to_string())?;
+    let mut bytes = Vec::new();
+    let mut chunk = [0u8; 8192];
+    let (start, length) = loop {
+        let count = match socket.read(&mut chunk) {
+            Ok(0) if bytes.is_empty() => return Ok(None),
+            Ok(0) => return Err("mock request ended before headers".into()),
+            Ok(count) => count,
+            Err(error)
+                if bytes.is_empty()
+                    && matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+            {
+                return Ok(None);
+            }
+            Err(error) => {
+                return Err(format!(
+                    "mock request header read: {error}; received {} bytes",
+                    bytes.len()
+                ));
+            }
+        };
+        bytes.extend_from_slice(&chunk[..count]);
+        if let Some(index) = bytes.windows(4).position(|v| v == b"\r\n\r\n") {
+            let headers = String::from_utf8_lossy(&bytes[..index]);
+            let length = headers
+                .lines()
+                .find_map(|line| {
+                    line.split_once(':')
+                        .filter(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                        .map(|(_, length)| length.trim().parse::<usize>())
+                })
+                .ok_or("mock request has no content-length")?
+                .map_err(|e| format!("mock content-length: {e}"))?;
+            break (index + 4, length);
+        }
+    };
+    while bytes.len() < start + length {
+        let count = socket
+            .read(&mut chunk)
+            .map_err(|e| format!("mock request body read: {e}"))?;
+        if count == 0 {
+            return Err("mock request ended before body".into());
+        }
+        bytes.extend_from_slice(&chunk[..count]);
+    }
+    serde_json::from_slice(&bytes[start..start + length])
+        .map(Some)
+        .map_err(|e| format!("mock JSON body: {e}"))
+}
+
+#[test]
+fn control_provider_reader_distinguishes_unused_connections_and_invalid_requests() {
+    use std::io::Write;
+    for (request, expected_empty) in [
+        (b"".as_slice(), true),
+        (
+            b"POST / HTTP/1.1\r\nContent-Length: 2\r\n\r\n{".as_slice(),
+            false,
+        ),
+    ] {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        client.write_all(request).unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        let result = read_control_request(&mut server);
+        if expected_empty {
+            assert!(matches!(result, Ok(None)));
+        } else {
+            assert!(result.unwrap_err().contains("before body"));
+        }
     }
 }
 
@@ -191,6 +273,7 @@ impl ExecutionFactory for ChildEventFactory {
             .expect("SDK control native payload");
         for kind in ["text_delta", "thinking_delta"] {
             let mut payload = JsObject::new();
+            payload.insert("type".into(), JsValue::from("subagent_model_event"));
             payload.insert(
                 "sessionId".into(),
                 JsValue::String(decoded.input.session_id.clone()),
@@ -208,7 +291,7 @@ impl ExecutionFactory for ChildEventFactory {
                     ("text", JsValue::from("child fragment")),
                 ]),
             );
-            context.emit("subagent_model_event".into(), payload)?;
+            context.emit("agent.subagent_model_event".into(), payload)?;
         }
         pilotdeck_transport::default_factory::OriginalAgentFactory {
             clock: Arc::new(pilotdeck_transport::system_clock::SystemExecutionClock),

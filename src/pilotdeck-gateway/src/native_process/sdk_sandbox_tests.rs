@@ -239,8 +239,20 @@ mod native_calls {
             assert_eq!(counter.load(Ordering::SeqCst), 0);
             advertised(&provider.requests.lock().unwrap(), &marker, false);
             let allowed = format!("SANDBOX-ALLOWED-{index}");
-            run(&gateway, "unrestricted", &allowed, None);
-            assert_eq!(counter.load(Ordering::SeqCst), 1);
+            let allowed_events = run(&gateway, "unrestricted", &allowed, None);
+            let allowed_requests: Vec<_> = provider
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|request| request["messages"].to_string().contains(&allowed))
+                .cloned()
+                .collect();
+            assert_eq!(
+                counter.load(Ordering::SeqCst),
+                1,
+                "unrestricted tool must execute exactly once; marker={allowed:?}; actual marker requests={allowed_requests:#?}; actual events={allowed_events:#?}"
+            );
             advertised(&provider.requests.lock().unwrap(), &allowed, true);
             let again = format!("SANDBOX-RESTRICTED-AGAIN-{index}");
             let events = run(&gateway, "restricted", &again, Some(policy));

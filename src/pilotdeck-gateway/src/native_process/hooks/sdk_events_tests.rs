@@ -188,7 +188,7 @@ fn formal_native_submit_write_tool_invokes_sdk_file_changed_http_hook() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let mock = runtime.block_on(HttpMock::start(1, false));
     let config_path = project.join("pilotdeck.yaml");
-    std::fs::write(&config_path,format!("agent: {{model: fixture/mock, permissionMode: bypassPermissions}}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://{}/v1\n      apiKey: fixture-local-only\n      models: {{mock: {{capabilities: {{supportsToolUse: true}}}}}}\ntelemetry: {{enabled: false}}\n",provider.address)).unwrap();
+    std::fs::write(&config_path,format!("agent: {{model: fixture/mock}}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://{}/v1\n      apiKey: fixture-local-only\n      models: {{mock: {{capabilities: {{supportsToolUse: true}}}}}}\ntelemetry: {{enabled: false}}\n",provider.address)).unwrap();
     let env = [
         ("HOME", home.to_string_lossy().into_owned()),
         ("PILOT_HOME", home.to_string_lossy().into_owned()),
@@ -213,7 +213,7 @@ fn formal_native_submit_write_tool_invokes_sdk_file_changed_http_hook() {
     .unwrap();
     let events = Arc::new(Mutex::new(Vec::new()));
     let capture = events.clone();
-    let submit = serde_json::json!({"sessionKey":"formal-sdk-file","channelKey":"test","message":"write a.txt","sdkSessionConfig":{"hooks":{"url":mock.url.clone(),"events":{"FileChanged":[{"matcher":"a.txt"}]}}}});
+    let submit = serde_json::json!({"sessionKey":"formal-sdk-file","channelKey":"test","message":"write a.txt","mode":"bypassPermissions","basePermissionMode":"bypassPermissions","canPrompt":false,"sdkSessionConfig":{"hooks":{"url":mock.url.clone(),"events":{"FileChanged":[{"matcher":"a.txt"}]}}}});
     gateway
         .submit_turn(
             pilotdeck_protocol::parse_json(&submit.to_string()).unwrap(),
@@ -229,16 +229,31 @@ fn formal_native_submit_write_tool_invokes_sdk_file_changed_http_hook() {
         "formal SDK submit failed before the write: events={observed:?}; model requests={:?}",
         provider.requests.lock().unwrap()
     );
+    assert!(
+        !observed
+            .iter()
+            .any(|event| event.get("type") == Some(&"permission_request".into())),
+        "explicit outer bypass mode must not leave a fixture permission waiter: {observed:?}"
+    );
+    assert!(
+        observed.iter().any(
+            |event| event.get("type") == Some(&"tool_call_finished".into())
+                && event.get("toolCallId") == Some(&"native-call".into())
+                && event.get("ok") == Some(&JsValue::Bool(true))
+        ),
+        "the real write tool must finish successfully before file/hook assertions: {observed:?}"
+    );
     let model_requests = provider.requests.lock().unwrap().clone();
     assert!(
         model_requests
             .iter()
             .any(|request| request["messages"]
                 .as_array()
-                .is_some_and(|messages| messages
-                    .iter()
-                    .any(|message| message["role"] == "tool"
-                        && message["tool_call_id"] == "native-call"))),
+                .is_some_and(
+                    |messages| messages.iter().any(|message| message["role"] == "tool"
+                        && message["tool_call_id"] == "native-call"
+                        && message["content"].as_str() == Some("Created a.txt."))
+                )),
         "formal SDK submit must execute the real write tool before continuation: events={observed:?}; model requests={model_requests:?}"
     );
     assert_eq!(
