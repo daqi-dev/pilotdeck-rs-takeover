@@ -211,6 +211,9 @@ impl ModelExecution for ExternalModelExecution {
                 abort: input.abort,
                 id,
                 events: VecDeque::new(),
+                pending: None,
+                cleanup: None,
+                failure: None,
                 done: false,
                 batch_done: false,
                 started: false,
@@ -268,6 +271,11 @@ impl RequestMaterializer for ExternalModelExecution {
     }
 }
 
+struct EventBatch {
+    events: VecDeque<JsValue>,
+    done: bool,
+}
+
 struct ExternalModelStream {
     port: ExternalModelExecution,
     request: JsValue,
@@ -275,6 +283,12 @@ struct ExternalModelStream {
     abort: Option<Cancellation>,
     id: JsString,
     events: VecDeque<JsValue>,
+    // The durable consumer polls a temporary next() future once and may drop
+    // it at Pending. Exchanges and cleanup therefore belong to the stream,
+    // never to that borrowing future. A later poll resumes the same request.
+    pending: Option<ModelFuture<EventBatch>>,
+    cleanup: Option<ModelFuture<()>>,
+    failure: Option<ModuleError>,
     pull: bool,
     done: bool,
     batch_done: bool,
@@ -283,88 +297,92 @@ struct ExternalModelStream {
 }
 
 impl ExternalModelStream {
-    async fn cleanup(&mut self) {
+    fn begin_cleanup(&mut self) {
+        if self.closed {
+            return;
+        }
         self.closed = true;
+        self.pending = None;
         self.events.clear();
         if self.started && self.pull && !self.done && self.port.supports("close_stream") {
-            // Cleanup has no cancelled turn signal and must never mask the
-            // original error, exactly like the TS generator's finally/catch.
-            let _ = self
-                .port
-                .call(
-                    "model-close-stream",
-                    object([
-                        ("operation", "close_stream".into()),
-                        ("preparationId", JsValue::String(self.id.clone())),
-                    ]),
-                    &self.context,
-                    None,
-                )
-                .await;
+            let port = self.port.clone();
+            let context = self.context.clone();
+            let id = self.id.clone();
+            self.cleanup = Some(Box::pin(async move {
+                // Cleanup has no cancelled turn signal. Its failure must never
+                // mask the original error, like the TS finally/catch.
+                let _ = port
+                    .call(
+                        "model-close-stream",
+                        object([
+                            ("operation", "close_stream".into()),
+                            ("preparationId", JsValue::String(id)),
+                        ]),
+                        &context,
+                        None,
+                    )
+                    .await;
+                Ok(())
+            }));
         }
     }
 
-    async fn fetch(&mut self) -> Result<(), ModuleError> {
-        self.started = true;
-        let operation = if self.pull { "stream_next" } else { "stream" };
-        let request_prefix = if self.pull {
-            "model-stream-next"
-        } else {
-            "model"
-        };
-        let response = self
-            .port
-            .call(
-                request_prefix,
-                object([
-                    ("operation", operation.into()),
-                    ("request", self.request.clone()),
-                    ("preparationId", JsValue::String(self.id.clone())),
-                    ("context", serializable_context(&self.context)),
-                ]),
-                &self.context,
-                Some(
-                    self.abort
-                        .clone()
-                        .unwrap_or_else(|| self.port.abort.clone()),
-                ),
-            )
-            .await?;
-        assert_response(
-            &response,
-            if self.pull {
-                "Model stream failed"
-            } else {
-                "Model module failed"
-            },
-        )?;
-        let payload = response.get("payload");
-        let events =
-            payload
+    fn fetch(&self) -> ModelFuture<EventBatch> {
+        let port = self.port.clone();
+        let request = self.request.clone();
+        let context = self.context.clone();
+        let id = self.id.clone();
+        let pull = self.pull;
+        let abort = self.abort.clone().unwrap_or_else(|| port.abort.clone());
+        Box::pin(async move {
+            let operation = if pull { "stream_next" } else { "stream" };
+            let request_prefix = if pull { "model-stream-next" } else { "model" };
+            let response = port
+                .call(
+                    request_prefix,
+                    object([
+                        ("operation", operation.into()),
+                        ("request", request),
+                        ("preparationId", JsValue::String(id)),
+                        ("context", serializable_context(&context)),
+                    ]),
+                    &context,
+                    Some(abort),
+                )
+                .await?;
+            assert_response(
+                &response,
+                if pull {
+                    "Model stream failed"
+                } else {
+                    "Model module failed"
+                },
+            )?;
+            let payload = response.get("payload");
+            let events = payload
                 .and_then(|payload| payload.get("events"))
                 .and_then(|value| match value {
                     JsValue::Array(values) => Some(values),
                     _ => None,
                 });
-        let done = payload
-            .and_then(|payload| payload.get("done"))
-            .and_then(JsValue::as_bool);
-        if events.is_none() || (self.pull && done.is_none()) {
-            return Err(invalid(
-                "INVALID_MODEL_RESPONSE",
-                if self.pull {
-                    "Model stream_next response must contain events and done."
-                } else {
-                    "Model module response must contain canonical events."
-                },
-            ));
-        }
-        self.events
-            .extend(events.expect("checked events").iter().cloned());
-        // For pull mode TS applies done after yielding all events. A close at
-        // the last yield must still close the remote stream even when done=true.
-        self.batch_done = !self.pull || done == Some(true);
-        Ok(())
+            let done = payload
+                .and_then(|payload| payload.get("done"))
+                .and_then(JsValue::as_bool);
+            if events.is_none() || (pull && done.is_none()) {
+                return Err(invalid(
+                    "INVALID_MODEL_RESPONSE",
+                    if pull {
+                        "Model stream_next response must contain events and done."
+                    } else {
+                        "Model module response must contain canonical events."
+                    },
+                ));
+            }
+            Ok(EventBatch {
+                events: events.expect("checked events").iter().cloned().collect(),
+                done: !pull || done == Some(true),
+            })
+        })
     }
 }
 
@@ -372,6 +390,13 @@ impl ModelStream for ExternalModelStream {
     fn next(&mut self) -> StreamFuture<'_, Option<JsValue>> {
         Box::pin(async move {
             loop {
+                if let Some(cleanup) = self.cleanup.as_mut() {
+                    let _ = cleanup.await;
+                    self.cleanup = None;
+                }
+                if let Some(error) = self.failure.take() {
+                    return Err(error);
+                }
                 if self.closed {
                     return Ok(None);
                 }
@@ -383,9 +408,23 @@ impl ModelStream for ExternalModelStream {
                     self.closed = true;
                     return Ok(None);
                 }
-                if let Err(error) = self.fetch().await {
-                    self.cleanup().await;
-                    return Err(error);
+                if self.pending.is_none() {
+                    self.started = true;
+                    self.pending = Some(self.fetch());
+                }
+                let batch = self.pending.as_mut().expect("pending model exchange").await;
+                self.pending = None;
+                match batch {
+                    Ok(batch) => {
+                        self.events = batch.events;
+                        // Apply done only after every event has been yielded;
+                        // an early return at the last yield still closes pull.
+                        self.batch_done = batch.done;
+                    }
+                    Err(error) => {
+                        self.failure = Some(error);
+                        self.begin_cleanup();
+                    }
                 }
             }
         })
@@ -393,9 +432,12 @@ impl ModelStream for ExternalModelStream {
 
     fn close(&mut self) -> StreamFuture<'_, ()> {
         Box::pin(async move {
-            if !self.closed {
-                self.cleanup().await;
+            self.begin_cleanup();
+            if let Some(cleanup) = self.cleanup.as_mut() {
+                let _ = cleanup.await;
+                self.cleanup = None;
             }
+            self.failure = None;
             Ok(())
         })
     }

@@ -59,6 +59,16 @@ impl ModuleHttpTransport for Wire {
             }
             let mut response = object([
                 ("kind", "response".into()),
+                (
+                    "messageId",
+                    JsValue::String(
+                        format!(
+                            "response-{}",
+                            text(request.get("messageId").unwrap().as_string().unwrap())
+                        )
+                        .into(),
+                    ),
+                ),
                 ("inReplyTo", request.get("messageId").unwrap().clone()),
                 ("requestId", request.get("requestId").unwrap().clone()),
                 ("ok", JsValue::Bool(true)),
@@ -267,6 +277,8 @@ async fn static_descriptor_and_single_payload_match_fixed_capability_contract() 
         .await
         .unwrap();
     assert_eq!(result[0].get("toolCallId"), Some(&"one".into()));
+    assert_eq!(result[0].get("type"), Some(&"success".into()));
+    assert_eq!(result[0].get("data"), Some(&call("one", "remote").input));
     let requests = wire.requests.lock().unwrap();
     let request = &requests[0];
     assert_eq!(request.get("module"), Some(&"capability".into()));
@@ -301,6 +313,11 @@ async fn advertised_batch_is_one_dispatch_and_validates_result_length_and_identi
         .await
         .unwrap();
     assert_eq!(wire.posts.load(Ordering::SeqCst), 1);
+    assert!(
+        result
+            .iter()
+            .all(|result| result.get("type") == Some(&"success".into()))
+    );
     assert_eq!(
         result
             .iter()
@@ -867,6 +884,16 @@ impl ModuleHttpTransport for HeldWire {
             }
             let mut response = object([
                 ("kind", "response".into()),
+                (
+                    "messageId",
+                    JsValue::String(
+                        format!(
+                            "response-{}",
+                            text(request.get("messageId").unwrap().as_string().unwrap())
+                        )
+                        .into(),
+                    ),
+                ),
                 ("inReplyTo", request.get("messageId").unwrap().clone()),
                 ("requestId", request.get("requestId").unwrap().clone()),
                 ("ok", JsValue::Bool(true)),

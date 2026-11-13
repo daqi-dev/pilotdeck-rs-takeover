@@ -27,6 +27,10 @@ const CONTEXT_TEXT: &str = "EXTERNAL-CONTEXT-SELECTED";
 struct Scratch(PathBuf);
 impl Drop for Scratch {
     fn drop(&mut self) {
+        if thread::panicking() {
+            eprintln!("EXTERNAL_MODULE_E2E_PRESERVED_SCRATCH {}", self.0.display());
+            return;
+        }
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
@@ -85,14 +89,36 @@ fn isolated(name: &str, body: fn(&Path)) {
         }
     }
     let mut child = cmd.spawn().unwrap();
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(60);
     let status = loop {
         if let Some(status) = child.try_wait().unwrap() {
             break status;
         }
         if Instant::now() >= deadline {
-            child.kill().unwrap();
-            let _ = child.wait();
+            let worker_pid = child.id();
+            let kill = child.kill();
+            let reaped = child.wait();
+            let observed_unix_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|value| value.as_millis())
+                .unwrap_or_default();
+            eprintln!(
+                "EXTERNAL_MODULE_E2E_TIMEOUT case={name} worker_pid={worker_pid} observed_unix_ms={observed_unix_ms} waited_ms={} scratch={} kill={kill:?} reaped={reaped:?}",
+                started.elapsed().as_millis(),
+                scratch.0.display()
+            );
+            for file in ["stdout.log", "stderr.log"] {
+                match std::fs::read(scratch.0.join(file)) {
+                    Ok(bytes) => eprintln!(
+                        "EXTERNAL_MODULE_E2E_TIMEOUT_{file}\n{}",
+                        String::from_utf8_lossy(&bytes)
+                    ),
+                    Err(error) => {
+                        eprintln!("EXTERNAL_MODULE_E2E_TIMEOUT_{file}: read failed: {error}")
+                    }
+                }
+            }
             panic!("owned external-module test timed out: {name}");
         }
         thread::sleep(Duration::from_millis(10));
@@ -1254,11 +1280,30 @@ fn external_modules_remote_skill_list_error_cannot_silently_fall_back() {
                 "bypassPermissions",
             );
             let combined = format!("{result:?} {events:?}");
+            // The public submit pump consumes its failure after emitting the
+            // status/error pair, so Ok(()) is not a successful agent turn.
+            // Accept only the exact observed failure and its shared run, never
+            // an arbitrary error frame or unrelated preflight status.
+            let exact_public_failure = if let [status, error] = events.as_slice() {
+                error["type"] == "error"
+                    && error["code"] == "gateway_submit_failed"
+                    && error["message"] == "owned remote skill list unavailable"
+                    && error["recoverable"] == false
+                    && error["runId"].as_str().is_some_and(|run| !run.is_empty())
+                    && status["type"] == "agent_status"
+                    && status["event"] == "gateway_submit_failed"
+                    && status["detail"]["code"] == "gateway_submit_failed"
+                    && status["detail"]["message"] == "owned remote skill list unavailable"
+                    && status["runId"] == error["runId"]
+            } else {
+                false
+            };
             assert!(
                 result.is_err()
                     || events
                         .iter()
-                        .any(|e| e["type"] == "turn_failed" || e["finishReason"] == "failed"),
+                        .any(|e| e["type"] == "turn_failed" || e["finishReason"] == "failed")
+                    || exact_public_failure,
                 "remote-list failure must fail the production turn: {combined}"
             );
             assert!(
@@ -1268,6 +1313,20 @@ fn external_modules_remote_skill_list_error_cannot_silently_fall_back() {
             );
             g.shutdown(Duration::from_secs(5)).unwrap();
             assert_eq!(m.calls("skills", "list").len(), 1);
+            if exact_public_failure {
+                let rows = f.transcript("failed-remote-list");
+                strict_chain(&rows);
+                assert_eq!(
+                    rows.iter()
+                        .filter(|row| row["type"] == "agent_status_message"
+                            && row["event"] == "gateway_submit_failed"
+                            && row["text"] == "owned remote skill list unavailable"
+                            && row["turnId"] == events[1]["runId"])
+                        .count(),
+                    1,
+                    "exact public failure must have one matching durable run status"
+                );
+            }
             assert_eq!(
                 m.calls("model", "prepare").len(),
                 0,

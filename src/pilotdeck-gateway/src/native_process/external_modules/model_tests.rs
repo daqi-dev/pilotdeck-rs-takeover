@@ -20,6 +20,7 @@ enum Reply {
     Failure(JsValue),
     Disconnect,
     Pending,
+    Held(Arc<PostGate>, Box<Reply>),
 }
 
 struct ModuleServer {
@@ -49,12 +50,17 @@ impl ModuleHttpTransport for ModuleServer {
             }
             let call = parse_json(std::str::from_utf8(&request.body).unwrap()).unwrap();
             self.calls.lock().unwrap().push(call.clone());
-            let reply = self
+            let mut reply = self
                 .replies
                 .lock()
                 .unwrap()
                 .pop_front()
                 .expect("unexpected model HTTP dispatch");
+            while let Reply::Held(gate, next) = reply {
+                gate.entered.notify_one();
+                gate.release.acquire().await.unwrap().forget();
+                reply = *next;
+            }
             let payload = match reply {
                 Reply::Disconnect => return Err(ModuleTransportError::Unavailable),
                 Reply::Pending => return std::future::pending().await,
@@ -62,6 +68,7 @@ impl ModuleHttpTransport for ModuleServer {
                     object([("ok", JsValue::Bool(true)), ("payload", payload)])
                 }
                 Reply::Failure(response) => response,
+                Reply::Held(_, _) => unreachable!("held reply is resolved above"),
             };
             let mut response = payload.as_object().unwrap().clone();
             response.insert("kind".into(), "response".into());
@@ -567,4 +574,325 @@ async fn production_materializer_clears_absent_cache_fields_and_never_decodes_ex
         assert!(!serialized.contains("cachePlan"));
     }
     assert!(server.calls.lock().unwrap().is_empty());
+}
+
+struct PostGate {
+    entered: tokio::sync::Notify,
+    release: tokio::sync::Semaphore,
+}
+impl PostGate {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Semaphore::new(0),
+        })
+    }
+}
+
+struct DurableTranscript {
+    root: std::path::PathBuf,
+    path: std::path::PathBuf,
+}
+impl Drop for DurableTranscript {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            eprintln!("EXTERNAL_MODEL_DURABLE_SCRATCH {}", self.root.display());
+        } else {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+}
+impl DurableTranscript {
+    fn entries(&self, kind: &str) -> Vec<JsValue> {
+        std::fs::read_to_string(&self.path)
+            .unwrap()
+            .lines()
+            .map(|line| parse_json(line).unwrap())
+            .filter(|entry| entry.get("type") == Some(&JsValue::String(kind.into())))
+            .collect()
+    }
+}
+
+fn durable_port(port: ExternalModelExecution) -> (Arc<dyn ModelExecution>, DurableTranscript) {
+    use crate::host::modules::model_port::{DurableRecorder, durable_execution};
+    use crate::storage::{JsonlTranscriptStore, TranscriptKey, recorder::Recorder};
+    let root = std::env::temp_dir().join(format!(
+        "pdrs-external-model-durable-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("transcript.jsonl");
+    let recorder = Arc::new(Recorder::with_sources(
+        Arc::new(JsonlTranscriptStore::new()),
+        TranscriptKey {
+            project_root: root.clone(),
+            pilot_home: root.join("pilot"),
+            session_id: "session-1".into(),
+            transcript_path: path.clone(),
+        },
+        Arc::new(|| Ok("2026-11-14T00:00:00.000Z".into())),
+        Arc::new(|| Ok(uuid::Uuid::new_v4().to_string())),
+    ));
+    recorder
+        .start_turn(&"session-1".into(), &"turn-1".into())
+        .unwrap();
+    let execution = durable_execution(
+        Arc::new(port),
+        Some(DurableRecorder {
+            recorder,
+            recording_session_id: None,
+        }),
+    );
+    (execution, DurableTranscript { root, path })
+}
+
+async fn durable_stream(execution: &Arc<dyn ModelExecution>) -> Box<dyn ModelStream> {
+    let prepared = execution
+        .prepare(PrepareInput {
+            request: request(),
+            context: context(),
+        })
+        .await
+        .unwrap();
+    execution
+        .stream(StreamInput {
+            prepared,
+            context: context(),
+            abort: None,
+        })
+        .await
+        .unwrap()
+}
+
+// A valid consumer may poll and drop a borrowing next future, then pull again.
+// The production durable wrapper also does this to its inner stream each poll.
+async fn poll_next_once(
+    iterator: &mut dyn ModelStream,
+) -> std::task::Poll<Result<Option<JsValue>, ModuleError>> {
+    std::future::poll_fn(|cx| {
+        let mut next = iterator.next();
+        std::task::Poll::Ready(next.as_mut().poll(cx))
+    })
+    .await
+}
+
+async fn drive_to_post(iterator: &mut dyn ModelStream, server: &ModuleServer, count: usize) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            assert!(poll_next_once(iterator).await.is_pending());
+            if server.calls.lock().unwrap().len() == count {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("durable stream never dispatched its owned pending exchange");
+}
+
+#[tokio::test]
+async fn durable_http_pending_pull_resumes_one_dispatch_and_records_request_and_event_once() {
+    let gate = PostGate::new();
+    let (port, server) = fixture(
+        &["stream"],
+        vec![Reply::Held(
+            gate.clone(),
+            Box::new(events(r#"[{"type":"text_delta","text":"released"}]"#, None)),
+        )],
+        Cancellation::new(),
+    );
+    let (execution, transcript) = durable_port(port);
+    let mut iterator = durable_stream(&execution).await;
+    drive_to_post(iterator.as_mut(), &server, 1).await;
+    tokio::time::timeout(Duration::from_secs(5), gate.entered.notified())
+        .await
+        .unwrap();
+    for _ in 0..3 {
+        assert!(poll_next_once(iterator.as_mut()).await.is_pending());
+        assert_eq!(server.calls.lock().unwrap().len(), 1);
+    }
+    assert_eq!(transcript.entries("model_request").len(), 1);
+    assert!(transcript.entries("model_stream_event").is_empty());
+    gate.release.add_permits(1);
+    let event = tokio::time::timeout(Duration::from_secs(5), iterator.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        event,
+        parse_json(r#"{"type":"text_delta","text":"released"}"#).unwrap()
+    );
+    assert_eq!(iterator.next().await.unwrap(), None);
+    iterator.close().await.unwrap();
+    assert_eq!(server.calls.lock().unwrap().len(), 1);
+    let requests = transcript.entries("model_request");
+    let recorded = transcript.entries("model_stream_event");
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].get("request"), Some(&request()));
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0].get("event"), Some(&event));
+}
+
+#[tokio::test]
+async fn durable_unstarted_close_keeps_http_and_model_records_empty() {
+    let (port, server) = fixture(
+        &["stream_next", "close_stream"],
+        vec![],
+        Cancellation::new(),
+    );
+    let (execution, transcript) = durable_port(port);
+    let mut iterator = durable_stream(&execution).await;
+    iterator.close().await.unwrap();
+    iterator.close().await.unwrap();
+    assert_eq!(iterator.next().await.unwrap(), None);
+    assert!(server.calls.lock().unwrap().is_empty());
+    assert!(transcript.entries("model_request").is_empty());
+    assert!(transcript.entries("model_stream_event").is_empty());
+}
+
+#[tokio::test]
+async fn durable_pull_error_survives_pending_cleanup_and_close_is_dispatched_once() {
+    let gate = PostGate::new();
+    let (port, server) = fixture(
+        &["stream_next", "close_stream"],
+        vec![
+            events("[]", None),
+            Reply::Held(gate.clone(), Box::new(Reply::Disconnect)),
+        ],
+        Cancellation::new(),
+    );
+    let (execution, transcript) = durable_port(port);
+    let mut iterator = durable_stream(&execution).await;
+    drive_to_post(iterator.as_mut(), &server, 2).await;
+    tokio::time::timeout(Duration::from_secs(5), gate.entered.notified())
+        .await
+        .unwrap();
+    for _ in 0..3 {
+        assert!(poll_next_once(iterator.as_mut()).await.is_pending());
+        assert_eq!(server.calls.lock().unwrap().len(), 2);
+    }
+    gate.release.add_permits(1);
+    let error = tokio::time::timeout(Duration::from_secs(5), iterator.next())
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(
+        error.code,
+        Some("INVALID_MODEL_RESPONSE".into()),
+        "cleanup transport failure must not replace the primary protocol error"
+    );
+    assert_eq!(iterator.next().await.unwrap(), None);
+    iterator.close().await.unwrap();
+    let operations: Vec<_> = server
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|call| operation(call).clone())
+        .collect();
+    assert_eq!(
+        operations,
+        vec!["stream_next".into(), "close_stream".into()]
+    );
+    assert_eq!(transcript.entries("model_request").len(), 1);
+    assert!(transcript.entries("model_stream_event").is_empty());
+}
+
+#[tokio::test]
+async fn durable_pull_early_close_resumes_pending_cleanup_without_duplicate_close_post() {
+    let gate = PostGate::new();
+    let (port, server) = fixture(
+        &["stream_next", "close_stream"],
+        vec![
+            events(r#"[{"type":"text_delta","text":"prefix"}]"#, Some(false)),
+            Reply::Held(
+                gate.clone(),
+                Box::new(Reply::Payload(object([("closed", JsValue::Bool(true))]))),
+            ),
+        ],
+        Cancellation::new(),
+    );
+    let (execution, transcript) = durable_port(port);
+    let mut iterator = durable_stream(&execution).await;
+    assert!(
+        tokio::time::timeout(Duration::from_secs(5), iterator.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .is_some()
+    );
+    for _ in 0..3 {
+        let polled = std::future::poll_fn(|cx| {
+            let mut close = iterator.close();
+            std::task::Poll::Ready(close.as_mut().poll(cx))
+        })
+        .await;
+        assert!(polled.is_pending());
+        assert_eq!(server.calls.lock().unwrap().len(), 2);
+    }
+    tokio::time::timeout(Duration::from_secs(5), gate.entered.notified())
+        .await
+        .unwrap();
+    gate.release.add_permits(1);
+    tokio::time::timeout(Duration::from_secs(5), iterator.close())
+        .await
+        .unwrap()
+        .unwrap();
+    iterator.close().await.unwrap();
+    assert_eq!(iterator.next().await.unwrap(), None);
+    let operations: Vec<_> = server
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|call| operation(call).clone())
+        .collect();
+    assert_eq!(
+        operations,
+        vec!["stream_next".into(), "close_stream".into()]
+    );
+    assert_eq!(transcript.entries("model_request").len(), 1);
+    assert_eq!(transcript.entries("model_stream_event").len(), 1);
+}
+
+#[tokio::test]
+async fn durable_close_during_pending_pull_discards_fetch_and_closes_known_identity_once() {
+    let gate = PostGate::new();
+    let (port, server) = fixture(
+        &["stream_next", "close_stream"],
+        vec![
+            Reply::Held(
+                gate.clone(),
+                Box::new(events(
+                    r#"[{"type":"text_delta","text":"must not publish"}]"#,
+                    Some(false),
+                )),
+            ),
+            Reply::Payload(object([("closed", JsValue::Bool(true))])),
+        ],
+        Cancellation::new(),
+    );
+    let (execution, transcript) = durable_port(port);
+    let mut iterator = durable_stream(&execution).await;
+    drive_to_post(iterator.as_mut(), &server, 1).await;
+    tokio::time::timeout(Duration::from_secs(5), iterator.close())
+        .await
+        .unwrap()
+        .unwrap();
+    gate.release.add_permits(1);
+    iterator.close().await.unwrap();
+    assert_eq!(iterator.next().await.unwrap(), None);
+    {
+        let calls = server.calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(operation(&calls[0]), &"stream_next".into());
+        assert_eq!(operation(&calls[1]), &"close_stream".into());
+        assert_eq!(
+            calls[0].get("payload").unwrap().get("preparationId"),
+            calls[1].get("payload").unwrap().get("preparationId")
+        );
+    }
+    assert_eq!(transcript.entries("model_request").len(), 1);
+    assert!(transcript.entries("model_stream_event").is_empty());
 }
