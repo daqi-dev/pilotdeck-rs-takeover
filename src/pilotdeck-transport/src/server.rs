@@ -350,6 +350,11 @@ pub struct ShutdownReport {
     pub reader_joined: bool,
     pub writer_joined: bool,
     pub worker_joined: bool,
+    /// The connection ended while executions of the baseline's external loop
+    /// still waited on it for a reply, with no deadline that could ever
+    /// settle them: the state in which Node, with nothing left on its event
+    /// loop, ends the sidecar on its unsettled top-level await.
+    pub stalled: bool,
 }
 impl ShutdownReport {
     pub fn complete(self) -> bool {
@@ -779,6 +784,26 @@ impl ExecutionServer {
             executions.push(handle);
         }
     }
+    /// Every execution still running waits on the closed connection, and
+    /// none has a deadline timer that could abort it.
+    fn stalled(&self) -> bool {
+        let running = self
+            .executions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .filter(|execution| !execution.is_finished())
+            .count() as u64;
+        running > 0
+            && self.owner.parked() == running
+            && self
+                .state
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .operations
+                .values()
+                .all(|op| op.terminal.is_some() || op.timer.is_none())
+    }
     fn executions_finished(&self) -> bool {
         self.executions
             .lock()
@@ -957,10 +982,15 @@ impl ExecutionServer {
         self.owner.close();
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         let mut retired = Vec::new();
+        // The baseline's external loop module only marks the connection
+        // closed (agentLoopSidecarServer.ts:201-204): its executions keep
+        // running, stay active for a cancel or status on another connection,
+        // and settle on their own terms.
+        let external = crate::factory_payload::external_deployment();
         for op in state
             .operations
             .values_mut()
-            .filter(|op| op.terminal.is_none())
+            .filter(|op| op.terminal.is_none() && !external)
         {
             op.cancellation.cancel(CancelCause::TransportClosed);
             let context = ExecutionContext {
@@ -1008,11 +1038,13 @@ impl ExecutionServer {
             }
         }
         self.ready.notify();
+        // Executions that keep running still own their deadline timers.
         let timers: Vec<_> = {
             let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
             state
                 .operations
                 .values_mut()
+                .filter(|op| op.terminal.is_some() || !external)
                 .filter_map(|op| op.timer.take())
                 .collect()
         };
@@ -1080,18 +1112,28 @@ impl ExecutionServer {
         let until = Instant::now()
             .checked_add(grace)
             .unwrap_or_else(Instant::now);
+        let mut stalled = false;
         while Instant::now() < until
             && !(reader.is_finished()
                 && writer.is_finished()
                 && worker.is_finished()
                 && self.executions_finished())
         {
+            if reader.is_finished()
+                && writer.is_finished()
+                && worker.is_finished()
+                && self.stalled()
+            {
+                stalled = true;
+                break;
+            }
             thread::sleep(Duration::from_millis(5));
         }
         let report = ShutdownReport {
             reader_joined: reader.is_finished(),
             writer_joined: writer.is_finished(),
             worker_joined: worker.is_finished() && self.executions_finished(),
+            stalled,
         };
         if report.reader_joined {
             let _ = reader.join();

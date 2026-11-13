@@ -71,6 +71,9 @@ struct Inner {
     wake: Arc<WakeSignal>,
     queue_capacity: usize,
     turns: Turns,
+    /// Executions waiting on this closed connection for a settlement only
+    /// their abort can bring.
+    parked: AtomicU64,
 }
 /// Executions of one connection take turns between their outputs, the way
 /// the baseline's single event loop interleaves them: each execution runs
@@ -142,6 +145,7 @@ impl ConnectionOwner {
             wake: Arc::new(WakeSignal::default()),
             queue_capacity: queue_capacity.max(1),
             turns: Turns::default(),
+            parked: AtomicU64::new(0),
         }))
     }
     pub fn binding(&self) -> &SidecarBinding {
@@ -166,6 +170,21 @@ impl ConnectionOwner {
         }
         let _leave = Leave(&self.0.turns, ticket);
         run()
+    }
+    /// How many executions wait on this closed connection for their abort.
+    pub(crate) fn parked(&self) -> u64 {
+        self.0.parked.load(Ordering::SeqCst)
+    }
+    fn park<T>(&self, wait: impl FnOnce() -> T) -> T {
+        struct Unpark<'a>(&'a AtomicU64);
+        impl Drop for Unpark<'_> {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+        self.0.parked.fetch_add(1, Ordering::SeqCst);
+        let _unpark = Unpark(&self.0.parked);
+        wait()
     }
     fn pass_turn(&self) {
         if let Some(ticket) = TURN.with(std::cell::Cell::get) {
@@ -340,6 +359,12 @@ impl ConnectionOwner {
             control.check()?;
             let mut state = self.0.state.lock().unwrap_or_else(|p| p.into_inner());
             if state.closed {
+                // The baseline's external loop keeps running an execution
+                // whose connection is gone; its stream events have nowhere to
+                // go and are dropped (agentLoopSidecarServer.ts:573-576).
+                if crate::factory_payload::external_deployment() {
+                    return Ok(());
+                }
                 return Err(before(closed()));
             }
             if state.data.len() < self.0.queue_capacity {
@@ -794,6 +819,16 @@ impl BoundExchange {
             }
             control.check()?;
             if state.closed {
+                if crate::factory_payload::external_deployment() {
+                    // callModule (agentLoopSidecarServer.ts:446-465): the
+                    // call stays pending when it cannot be sent and settles
+                    // only on the execution's abort.
+                    drop(state);
+                    let owner = self.owner.clone();
+                    return Err(owner.outside_turns(|| {
+                        owner.park(|| parked_until_cancelled(control))
+                    }));
+                }
                 return Err(before(closed()));
             }
             if state.data.len() < self.owner.0.queue_capacity {
@@ -988,7 +1023,6 @@ impl PendingExchange {
             // reconciliation wait, no accepted-call uncertainty.
             if dispatched
                 && !invalid
-                && !state.closed
                 && matches!(
                     cancellation,
                     Some(PortError::Cancelled {
@@ -1019,8 +1053,11 @@ impl PendingExchange {
             }
             let reconciliation_expired = reconciliation_deadline
                 .is_some_and(|deadline| std::time::Instant::now() >= deadline);
+            // A reply can no longer arrive on a closed connection, but the
+            // baseline's external loop still waits for its abort (above).
+            let gone = state.closed && !crate::factory_payload::external_deployment();
             if invalid
-                || state.closed
+                || gone
                 || hard_stopped
                 || deadline_exceeded
                 || reconciliation_expired
@@ -1054,12 +1091,33 @@ impl PendingExchange {
                 }
                 return Err(cancellation.unwrap_or_else(|| before(closed())));
             }
+            let parked = state.closed;
             drop(state);
-            owner
-                .0
-                .wake
-                .wait(generation, reconciliation_deadline.or(control.deadline));
+            let wait = || {
+                owner
+                    .0
+                    .wake
+                    .wait(generation, reconciliation_deadline.or(control.deadline))
+            };
+            if parked {
+                owner.park(wait);
+            } else {
+                wait();
+            }
         }
+    }
+}
+/// Blocks until the execution is cancelled (or its deadline passes) and
+/// returns that cancellation.
+fn parked_until_cancelled(control: &CallControl) -> PortError {
+    loop {
+        if let Err(error) = control.check() {
+            return error;
+        }
+        let until = control
+            .deadline
+            .unwrap_or_else(|| Instant::now() + std::time::Duration::from_secs(3600));
+        control.cancellation.wait_until(until);
     }
 }
 fn same_execution(a: &ExecutionIdentity, b: &ExecutionIdentity) -> bool {
