@@ -1,0 +1,137 @@
+{
+ "name": "hook-advisory-abort-after-turn",
+ "about": "PreModelRequest hook（AgentLoop.ts:699-702 不等待地派发）睡 3 秒，模型立即答完；收到 turn_completed 之后再 abort_turn。a：不带 runId（InProcessGateway.ts:2000-2013 照样调 router.abort → AgentSession.abort 中止上一轮的 controller）；b：带上一轮的 runId（activeTurnRunId 已空，直接返回）；c：hook 已经退出后再不带 runId 中止。基线实测三种情况 hook 都跑完（hooklog 每次都有 done 行；另用 Stop hook 打时间戳的探测确认 hook 的 done 比 Stop 晚约 3 秒、abort_turn 在 hook 睡眠期间到达），abort_turn 都回 {ok:true}，同一会话下一轮照常。",
+ "files": {
+  "home/.pilotdeck/plugins/bbx-model-advisory/plugin.json": {
+   "name": "bbx-model-advisory",
+   "version": "0.1.0",
+   "description": "bbx advisory hook outliving its turn",
+   "hooks": {
+    "PreModelRequest": [
+     {
+      "hooks": [
+       {
+        "type": "command",
+        "command": "node hook.mjs pre-model 0 '' '' 3000"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "home/.pilotdeck/plugins/bbx-model-advisory/hook.mjs": "// bbx hook fixture: node hook.mjs <log> <exit> [stdout] [stderr] [sleepMs]\nimport fs from 'node:fs';\nconst [log, exit = '0', out = '', err = '', sleep = '0'] = process.argv.slice(2);\nconst dir = process.env.HOME + '/hooklog';\nconst append = (row) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(dir + '/' + log + '.jsonl', JSON.stringify(row) + '\\n'); };\nlet input = '';\nprocess.stdin.on('data', (d) => { input += d; });\nprocess.stdin.on('end', () => {\n  let parsed; try { parsed = JSON.parse(input); } catch { parsed = { raw: input }; }\n  const env = {};\n  for (const k of Object.keys(process.env).sort()) env[k] = /^PILOT/.test(k) && !/BUNDLED/.test(k) ? process.env[k] : true;\n  append({ argv: process.argv.slice(2), cwd: process.cwd(), input: parsed, env });\n  // exit \"@\": the behaviour is the JSON between HOOK<< and >> in the prompt (or the last assistant message).\n  let spec = { exit, out, err, sleep };\n  if (exit === '@') {\n    const m = /HOOK<<(.*?)>>/s.exec(String(parsed.prompt ?? parsed.lastAssistantMessage ?? ''));\n    spec = { exit: 0, out: '', err: '', sleep: 0, ...(m ? JSON.parse(m[1]) : {}) };\n  }\n  setTimeout(() => {\n    append({ argv: process.argv.slice(2), done: true });\n    if (spec.out) process.stdout.write(spec.out);\n    if (spec.err) process.stderr.write(spec.err);\n    process.exit(Number(spec.exit));\n  }, Number(spec.sleep));\n});\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Advisory abort\"}"
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "quick reply"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-a",
+    "channelKey": "test",
+    "message": "case-a: first"
+   },
+   "timeout": 20000
+  },
+  {
+   "ws": "abort_turn",
+   "params": {
+    "sessionKey": "s-a"
+   }
+  },
+  {
+   "sleep": 4500
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-a",
+    "channelKey": "test",
+    "message": "case-a: after"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 4500
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-b",
+    "channelKey": "test",
+    "message": "case-b: first"
+   },
+   "timeout": 20000,
+   "save": {
+    "run": "\"runId\":\"([0-9a-f-]{36})\""
+   }
+  },
+  {
+   "ws": "abort_turn",
+   "params": {
+    "sessionKey": "s-b",
+    "runId": "{saved.run}"
+   }
+  },
+  {
+   "sleep": 4500
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-b",
+    "channelKey": "test",
+    "message": "case-b: after"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 4500
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-c",
+    "channelKey": "test",
+    "message": "case-c: first"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 4500
+  },
+  {
+   "ws": "abort_turn",
+   "params": {
+    "sessionKey": "s-c"
+   }
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-c",
+    "channelKey": "test",
+    "message": "case-c: after"
+   },
+   "timeout": 20000
+  },
+  {
+   "sleep": 4500
+  }
+ ]
+}
