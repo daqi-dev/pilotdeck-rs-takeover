@@ -1,0 +1,43 @@
+{
+  "about": "交付标准第 5 条占位判据命中处里，属于 2026-11-13 已定范围外六项（state/takeover.md「人已定」第 13 条、specs/delivery/README.md 范围段）的逐处清单。status.mjs 把命中行按这里单列为「已定范围外」，其余才算「范围内的占位」。每条只认一处：file 是 src/ 下的相对路径（不许目录、不许通配），match 是命中行里必须出现的原文（按字面子串比，不是正则）；同一文件里命中 0 行或多于 1 行都算失效，生成时报出来。六项里遥测上报（静默不上报）、update 的 Git Web 更新（只报基线自己的「没有更新脚本」文案）、公共 host 的 PDF 抽文本（回 415 PUBLIC_FILE_TYPE_UNSUPPORTED）现在不命中任何判据，所以没有条目。",
+  "items": [
+    "pilotdeck tui",
+    "gateway setup 的联网三步",
+    "update 的 Git Web 更新",
+    "遥测上报",
+    "公共 host file_parse 的 PDF 抽文本",
+    "sidecar 的 PILOTDECK_AGENT_LOOP_FACTORY"
+  ],
+  "entries": [
+    {
+      "file": "pilotdeck-cli/src/main.rs",
+      "match": "Failure::Todo(\"pilotdeck tui\")",
+      "item": "pilotdeck tui",
+      "reason": "stdin 是终端时基线起 ink/React 的终端界面（src/cli/pilotdeck.ts:318-345，adapters/channel/tui/）；Rust 打印 pilotdeck-rs TODO 文案、退出码 2。stdin 不是终端时两侧一致（打印 requires an interactive terminal、退出码 1）。"
+    },
+    {
+      "file": "pilotdeck-cli/src/gateway_setup.rs",
+      "match": "Failure::Todo(\"gateway setup: Feishu credential check and pilotdeck.yaml write\")",
+      "item": "gateway setup 的联网三步",
+      "reason": "飞书填完 App ID / Secret 后基线去 open.feishu.cn / open.larksuite.com 校验凭据再写配置（gatewaySetup.ts:152-171）；对拍不允许真实外连。Rust 在打印「验证凭据」之前报错、退出码 2，不写文件。"
+    },
+    {
+      "file": "pilotdeck-cli/src/gateway_setup.rs",
+      "match": "Failure::Todo(\"gateway setup: Weixin iLink QR login\")",
+      "item": "gateway setup 的联网三步",
+      "reason": "微信继续扫码时基线用 weixin-ilink 向外部服务取二维码并轮询（gatewaySetup.ts:530-583）。Rust 报错、退出码 2，不写凭据与配置。"
+    },
+    {
+      "file": "pilotdeck-cli/src/gateway_setup.rs",
+      "match": "Failure::Todo(\"gateway setup: WeCom QR scan\")",
+      "item": "gateway setup 的联网三步",
+      "reason": "企业微信选扫码时基线请求企业微信二维码接口（gatewaySetup.ts:380-457）。Rust 报错、退出码 2，不写配置。"
+    },
+    {
+      "file": "pilotdeck-transport/src/bin/pilotdeck-agent-loop-sidecar.rs",
+      "match": "does not yet support the PILOTDECK_AGENT_LOOP_FACTORY deployment profile",
+      "item": "sidecar 的 PILOTDECK_AGENT_LOOP_FACTORY",
+      "reason": "基线 import 用户给的 JS 模块当循环工厂（cli/pilotdeck-agent-loop-sidecar.ts:11-24）；在 Rust 进程里执行用户 JS 等于带回 Node 运行时。Rust 在开始服务之前打印一行、退出码 2。"
+    }
+  ]
+}
