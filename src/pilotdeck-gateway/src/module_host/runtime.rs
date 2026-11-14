@@ -615,12 +615,12 @@ impl RuntimeHost {
             ));
         }
         if extension == ".pdf" {
-            // No PDF text extractor exists in this host (the baseline uses
-            // mupdf); answer with the extractor's own unsupported-type error.
+            // PDF text extraction is out of scope (the baseline uses mupdf):
+            // the extractor's unsupported-type code, with a plain statement.
             return Err(parse_error(
                 415,
                 "PUBLIC_FILE_TYPE_UNSUPPORTED",
-                "This PD text extractor accepts PDF, .txt and Markdown",
+                "PDF text extraction is not supported by the Rust build of PilotDeck",
             ));
         }
         // `new TextDecoder("utf-8", { fatal: true }).decode(bytes)`: a leading
