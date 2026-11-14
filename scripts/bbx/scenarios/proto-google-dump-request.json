@@ -1,0 +1,90 @@
+{
+  "name": "proto-google-dump-request",
+  "about": "PILOTDECK_DUMP_REQUEST=1 落在 Google 协议上（model/streaming/streamModel.ts:194-203 流式、395-402 非流式）：转储的是 buildModelRequest 的产物，即交给 @google/genai SDK 之前的 GenerateContentParameters（model/providers/google/request.ts:29-60：model、contents、config），所以 config.automaticFunctionCalling = {disable: true}（request.ts:37，SDK 只在本地用、不上线）、config.systemInstruction、config.tools 这些只在转储里看得到。一轮带工具调用（两次流式请求）加一次标题生成（非流式）。其余与 proto-dump-request 相同：TMPDIR 指到 proj/dumps，转储文件落进被比较的 project 树，服务进程 stdout 的 [model-debug] 行用 serve 比。 现状不一致（2026-11-13）：Rust 转储的是上线的请求体（contents / systemInstruction / tools / generationConfig，SDK 转换之后的形状），基线转储的是 SDK 之前的 {model, contents, config}，两份转储整体形状不同，另有 contents 各项的键序不同；不是小改，留给主会话另派。",
+  "config": "schemaVersion: 1\nagent:\n  model: gem/gemini-bbx\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    gem:\n      protocol: google\n      url: {MOCK}\n      apiKey: bbx-google-key\n      timeoutMs: 45000\n      retry:\n        baseDelayMs: 1\n        maxDelayMs: 1\n        jitter: 0\n      models:\n        gemini-bbx:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "server": false,
+  "files": {
+    "proj/dumps/.keep": "",
+    "proj/notes.txt": "dump me\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Dump run\"}"
+      }
+    },
+    {
+      "name": "after-tool",
+      "when": [
+        "dump-1:",
+        "\"functionResponse\""
+      ],
+      "reply": {
+        "text": "Done."
+      }
+    },
+    {
+      "name": "dump-1",
+      "when": [
+        "dump-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_d1",
+          "name": "read_file",
+          "arguments": {
+            "path": "{PROJECT}/notes.txt"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "serve": [
+        "server"
+      ],
+      "env": {
+        "PILOTDECK_DUMP_REQUEST": "1",
+        "TMPDIR": "{PROJECT}/dumps"
+      },
+      "then": [
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-dump",
+            "channelKey": "test",
+            "message": "dump-1: read the notes"
+          },
+          "timeout": 20000
+        },
+        {
+          "sleep": 800
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    }
+  ],
+  "accepted": [
+    {
+      "id": "dump-request-exclusive-private-file",
+      "why": "基线 bug（安全）：PILOTDECK_DUMP_REQUEST 的转储在可能共享的临时目录里以可预测文件名、跟随符号链接、0644 写入整段对话；Rust 独占创建、0600、文件名加进程号与序号（比较器把两种文件名编成同一个 <dump:N>，正文照常比）",
+      "paths": [
+        "^\\$\\.tree\\..*/pilotdeck_request_<dump:\\d+>\\.json\\.mode$"
+      ]
+    },
+    {
+      "id": "ledger-lock-dir-in-tmpdir",
+      "why": "基线 bug（会话损坏，见场景 session-two-writers-*）的修复带来的落盘：Rust 的跨进程单写者栅栏把锁文件放在 os.tmpdir() 下的 pilotdeck-ledger-locks-<uid>/ 里，锁文件只在持有时存在，空目录留下。本场景把 TMPDIR 指进了被比较的目录，所以看得到这个目录；只放过这个目录本身",
+      "paths": [
+        "^\\$\\.tree\\./proj/dumps/pilotdeck-ledger-locks-\\d+/$"
+      ]
+    }
+  ]
+}
