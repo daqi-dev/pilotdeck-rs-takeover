@@ -352,9 +352,13 @@ fn closed_fork_prefix(
                 terminal = true;
                 continue;
             }
+            // Title/final metadata writes can race with or follow turn closure.
+            // Like the baseline selector, omit them from carried turn history;
+            // they neither close a lifecycle nor introduce model/tool content.
+            // Parent repair below follows through their actual source records.
             if is(kind, "step_completed") {
                 kept.push(entry.clone());
-            } else if !is(kind, "file_artifacts") {
+            } else if !is(kind, "file_artifacts") && !is(kind, "session_metadata") {
                 return Err(fork_error(
                     "fork_cutoff_not_closed",
                     format!(

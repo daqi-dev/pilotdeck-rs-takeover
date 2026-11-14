@@ -16,6 +16,7 @@ fn entry(kind: &str, sequence: u64, turn: &str, payload: &str) -> JsValue {
     let value = with(&value, "type", kind.into());
     let value = with(&value, "sessionId", "source".into());
     let value = with(&value, "turnId", turn.into());
+    let value = with(&value, "createdAt", "2026-11-14T00:00:00.000Z".into());
     let value = with(&value, "sequence", JsValue::Number(sequence as f64));
     let value = with(
         &value,
@@ -217,28 +218,34 @@ fn assistant_fork_keeps_completed_tool_steps_and_terminal_artifact_references() 
 fn middle_assistant_rejects_later_step_and_response_without_mutating_source() {
     let mut source = text_turn();
     source.pop();
-    source.push(entry("step_started", 7, "turn-1", r#"{"step":2}"#));
+    source.push(entry(
+        "session_metadata",
+        7,
+        "turn-1",
+        r#"{"metadata":{"title":"does not hide later semantic work"}}"#,
+    ));
+    source.push(entry("step_started", 8, "turn-1", r#"{"step":2}"#));
     source.push(entry(
         "model_request",
-        8,
+        9,
         "turn-1",
         r#"{"step":2,"request":{}}"#,
     ));
     source.push(entry(
         "assistant_message",
-        9,
+        10,
         "turn-1",
         r#"{"message":{"role":"assistant","content":[{"type":"text","text":"later answer"}]}}"#,
     ));
     source.push(entry(
         "step_completed",
-        10,
+        11,
         "turn-1",
         r#"{"step":2,"outcome":"completed"}"#,
     ));
     source.push(entry(
         "turn_result",
-        11,
+        12,
         "turn-1",
         r#"{"result":{"type":"success","usage":{},"permissionDenials":[]}}"#,
     ));
@@ -478,6 +485,12 @@ fn product_node_fork_writes_restorable_history_and_fresh_next_turn() {
             original.push('\n');
         }
         std::fs::write(&source_path, original.as_bytes()).unwrap();
+        let reread = crate::storage::read_transcript(&source_path).unwrap();
+        assert!(
+            reread.diagnostics.is_empty(),
+            "fixture must be a readable transcript"
+        );
+        assert_eq!(reread.entries, source);
         let request = json(&format!(
             r#"{{"sessionKey":"source","fromEntryId":"{id}","resumeAt":{resume}}}"#
         ));
@@ -714,4 +727,53 @@ fn assistant_fork_keeps_source_terminal_artifacts_recorded_after_result() {
     let mut source = text_turn();
     source.push(entry("file_artifacts", 8, "turn-1", r#"{"artifacts":[{"id":"late-1","name":"output.txt","path":"output.txt","operation":"created","source":"workspace_diff","status":"complete","size":1,"sha256":"digest","createdAt":"2026-11-14T00:00:00.000Z"}]}"#));
     assert_eq!(fork(&source, "entry-5", false).unwrap(), source);
+}
+
+#[test]
+fn assistant_fork_omits_nonsemantic_metadata_before_and_after_terminal() {
+    let base = text_turn();
+    let mut source = base[..5].to_vec();
+    source.push(entry(
+        "session_metadata",
+        6,
+        "turn-1",
+        r#"{"metadata":{"title":"late title"}}"#,
+    ));
+    source.push(entry(
+        "step_completed",
+        7,
+        "turn-1",
+        r#"{"step":1,"outcome":"completed"}"#,
+    ));
+    source.push(entry("turn_result", 8, "turn-1", "{}"));
+    source[7] = with(&source[7], "result", field(&base[6], "result").clone());
+    source.push(entry(
+        "session_metadata",
+        9,
+        "turn-1",
+        r#"{"metadata":{"updatedAt":"2026-11-14T00:00:00.000Z"}}"#,
+    ));
+    source.push(entry("file_artifacts", 10, "turn-1", r#"{"artifacts":[{"id":"artifact-1","name":"output.txt","path":"output.txt","operation":"created","source":"workspace_diff","status":"complete","size":1,"sha256":"digest","createdAt":"2026-11-14T00:00:00.000Z"}]}"#));
+    let before = source.clone();
+    validate_fork_entries(&source).unwrap();
+    let copied = fork(&source, "entry-5", false).unwrap();
+    assert_eq!(copied.len(), 8);
+    assert!(
+        !copied
+            .iter()
+            .any(|record| is(field(record, "type"), "session_metadata"))
+    );
+    assert_eq!(field(&copied[5], "entryId"), &JsValue::from("entry-7"));
+    assert_eq!(
+        field(&copied[5], "parentEntryId"),
+        &JsValue::from("entry-5")
+    );
+    assert_eq!(field(&copied[7], "entryId"), &JsValue::from("entry-10"));
+    assert_eq!(
+        field(&copied[7], "parentEntryId"),
+        &JsValue::from("entry-8")
+    );
+    assert_chain(&copied);
+    validate_fork_entries(&copied).unwrap();
+    assert_eq!(source, before);
 }
