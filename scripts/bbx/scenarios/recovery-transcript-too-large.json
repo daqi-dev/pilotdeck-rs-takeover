@@ -87,5 +87,17 @@
   ],
   "volatile": [
     "chats/s-big\\.jsonl\\.sha256$"
+  ],
+  "accepted": [
+    {
+      "id": "oversized-transcript-refused",
+      "why": "基线 bug（丢数据）：会话文件超过 50 MiB 时基线不读它、当成空会话（TranscriptReader.ts:19-31），随后的 submit_turn 照常跑——模型看不到任何历史，新记录从 sequence 1 重新编号追加到原文件末尾，与文件里已有的记录编号冲突；文件仍然超限，所以以后每一轮都是这样。Rust 拒绝在读不了的会话上续写，回 gateway_submit_failed，原文件不动。放过的范围：submit_turn 那一步及其后的读取（steps[5]、steps[6]）、s-big 的落盘、这一轮的运行登记、因此没发出的两次模型请求。list_sessions、读取、导出（steps[0]–[4]）与恰好 50 MiB 的 s-edge 照常比较。上一轮账本里的同一件事是 A6.9-PERSISTENCE-LARGE-001（未经人批准），2026-11-14 主会话定为不照做，列在 state/takeover.md 的过目表里",
+      "paths": [
+        "^\\$\\.steps\\[[56]\\]\\.",
+        "^\\$\\.tree\\..*/chats/s-big\\.jsonl\\.",
+        "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.",
+        "^\\$\\.provider\\.(title|turn-big)$"
+      ]
+    }
   ]
 }
