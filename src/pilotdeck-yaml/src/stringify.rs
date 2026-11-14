@@ -13,6 +13,7 @@ use crate::{
     doc::Document,
     nodes::{Node, NodeId, NodeKind, Pair, ScalarValue},
     schema::Resolve,
+    value::{Container, Value, ValueGraph},
 };
 use pilotdeck_protocol::{JsString, JsValue};
 use regex::Regex;
@@ -22,6 +23,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
+/// The `lineWidth` default of `toString` / `stringify`.
 const LINE_WIDTH: usize = 80;
 const MIN_CONTENT_WIDTH: usize = 20;
 const INDENT_STEP: &str = "  ";
@@ -36,9 +38,28 @@ pub enum StringifyError {
     Unsupported(String),
 }
 
+/// The `toString` / `stringify` options the baseline passes: `lineWidth`
+/// (0 turns folding off) and `singleQuote` (`None` is the default `null`,
+/// `Some(false)` always picks double quotes when a string needs quoting).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StringifyOptions {
+    pub line_width: usize,
+    pub single_quote: Option<bool>,
+}
+
+impl Default for StringifyOptions {
+    fn default() -> Self {
+        Self {
+            line_width: LINE_WIDTH,
+            single_quote: None,
+        }
+    }
+}
+
 /// A parsed document with the original's in-place edits applied.
 pub struct EditableDocument {
     doc: Document,
+    options: StringifyOptions,
     /// Nodes created by edits: they carry no `source`.
     created: HashSet<NodeId>,
     /// Pair values the original keeps as raw JS primitives (not nodes).
@@ -52,6 +73,7 @@ impl EditableDocument {
     pub fn new(doc: Document) -> Self {
         Self {
             doc,
+            options: StringifyOptions::default(),
             created: HashSet::new(),
             raw: HashSet::new(),
             min_fraction: HashMap::new(),
@@ -340,6 +362,126 @@ impl EditableDocument {
         Some(source.len() - dot - 1)
     }
 
+    /// `stringify(value, options)` (public-api.js): `new Document(value)` with
+    /// the default `createNode` options, then `toString(options)`. Objects and
+    /// arrays reached more than once (aliases and cycles the parse kept as
+    /// one JS object) get anchors `a1`, `a2`, … in the order their second
+    /// reference is met, and every later reference becomes an alias
+    /// (`aliasDuplicateObjects`, doc/anchors.js `createNodeAnchors`).
+    pub fn stringify_value(
+        graph: &ValueGraph,
+        options: StringifyOptions,
+    ) -> Result<String, StringifyError> {
+        let empty = crate::parse_document(&JsString::from(""), crate::Options::default());
+        let mut ed = Self::new(empty);
+        ed.options = options;
+        let mut refs: HashMap<usize, GraphRef> = HashMap::new();
+        let mut alias_order: Vec<usize> = Vec::new();
+        let root = ed.create_from_graph(graph, &graph.root, &mut refs, &mut alias_order)?;
+        // `setAnchors`: only after every node exists, so a cycle's anchor
+        // lands on its (by then created) source node.
+        for id in alias_order {
+            if let Some(GraphRef {
+                node: Some(node),
+                anchor: Some(anchor),
+            }) = refs.get(&id)
+            {
+                ed.doc.nodes[*node].anchor = Some(JsString::from(anchor.as_str()));
+            }
+        }
+        ed.doc.contents = root;
+        ed.to_yaml_string()
+    }
+
+    fn create_from_graph(
+        &mut self,
+        graph: &ValueGraph,
+        value: &Value,
+        refs: &mut HashMap<usize, GraphRef>,
+        alias_order: &mut Vec<usize>,
+    ) -> Result<Option<NodeId>, StringifyError> {
+        let kind = match value {
+            Value::Undefined => return Ok(None),
+            Value::Null => NodeKind::Scalar(ScalarValue::Null),
+            Value::Bool(b) => NodeKind::Scalar(ScalarValue::Bool(*b)),
+            Value::Number(n) => NodeKind::Scalar(ScalarValue::Number(*n)),
+            Value::String(s) => NodeKind::Scalar(ScalarValue::String(s.clone())),
+            Value::Symbol { .. } => {
+                return Err(StringifyError::Unsupported("symbol value".into()));
+            }
+            Value::Ref(id) => {
+                if refs.contains_key(id) {
+                    if refs[id].anchor.is_none() {
+                        let next = alias_order.len() + 1;
+                        if let Some(entry) = refs.get_mut(id) {
+                            entry.anchor = Some(format!("a{next}"));
+                        }
+                        alias_order.push(*id);
+                    }
+                    let anchor = refs[id].anchor.clone().unwrap_or_default();
+                    return Ok(Some(
+                        self.add(Node::new(NodeKind::Alias(JsString::from(anchor.as_str())))),
+                    ));
+                }
+                refs.insert(
+                    *id,
+                    GraphRef {
+                        anchor: None,
+                        node: None,
+                    },
+                );
+                let kind = match &graph.nodes[*id] {
+                    Container::Object(entries) => {
+                        // `Object.entries` order: array-index keys first,
+                        // ascending, then the rest in insertion order.
+                        let mut ordered: Vec<&(JsString, Value)> = entries.iter().collect();
+                        ordered.sort_by_key(|(key, _)| match key.array_index() {
+                            Some(index) => (0, index),
+                            None => (1, 0),
+                        });
+                        let mut pairs = Vec::new();
+                        for (key, item) in ordered {
+                            let Some(value) =
+                                self.create_from_graph(graph, item, refs, alias_order)?
+                            else {
+                                continue;
+                            };
+                            let key = self.add(Node::new(NodeKind::Scalar(ScalarValue::String(
+                                Arc::new(key.clone()),
+                            ))));
+                            pairs.push(Pair {
+                                key,
+                                value: Some(value),
+                            });
+                        }
+                        NodeKind::Map(pairs)
+                    }
+                    Container::Array(items) => {
+                        let mut ids = Vec::with_capacity(items.len());
+                        for item in items {
+                            // An undefined array item becomes a null scalar.
+                            let id = match self.create_from_graph(graph, item, refs, alias_order)? {
+                                Some(id) => id,
+                                None => self.add(Node::new(NodeKind::Scalar(ScalarValue::Null))),
+                            };
+                            ids.push(id);
+                        }
+                        NodeKind::Seq(ids)
+                    }
+                    Container::Map(_) | Container::Set(_) => {
+                        return Err(StringifyError::Unsupported("Map or Set value".into()));
+                    }
+                };
+                let node = self.add(Node::new(kind));
+                if let Some(entry) = refs.get_mut(id) {
+                    entry.node = Some(node);
+                }
+                return Ok(Some(node));
+            }
+        };
+        Ok(Some(self.add(Node::new(kind))))
+    }
+
     /// `doc.toString()` with the default options.
     pub fn to_yaml_string(&self) -> Result<String, StringifyError> {
         self.check_supported()?;
@@ -399,6 +541,12 @@ impl EditableDocument {
         }
         Ok(())
     }
+}
+
+/// `{ anchor, node }` of `sourceObjects` in doc/anchors.js.
+struct GraphRef {
+    anchor: Option<String>,
+    node: Option<NodeId>,
 }
 
 fn scalar_value(value: &JsValue) -> ScalarValue {
@@ -1216,7 +1364,8 @@ impl Printer<'_> {
         }
         if !req_newline {
             let len = lines.iter().map(|l| jlen(l) + 2).sum::<usize>() + 2;
-            req_newline = len > LINE_WIDTH;
+            let line_width = self.ed.options.line_width;
+            req_newline = line_width > 0 && len > line_width;
         }
         if req_newline {
             let mut s = start.to_string();
@@ -1550,6 +1699,7 @@ impl Printer<'_> {
                 &indent,
                 Fold::Quoted,
                 self.fold_options(ctx, false),
+                self.ed.options.line_width,
                 None,
             )
         }
@@ -1559,7 +1709,10 @@ impl Printer<'_> {
         static WS_NEWLINE: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r"[ \t]\n|\n[ \t]").unwrap());
         static NEWLINES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n+").unwrap());
-        if (ctx.implicit_key && value.contains('\n')) || WS_NEWLINE.is_match(value) {
+        if self.ed.options.single_quote == Some(false)
+            || (ctx.implicit_key && value.contains('\n'))
+            || WS_NEWLINE.is_match(value)
+        {
             return self.double_quoted(value, ctx);
         }
         let indent = if !ctx.indent.is_empty() {
@@ -1582,6 +1735,7 @@ impl Printer<'_> {
                 &indent,
                 Fold::Flow,
                 self.fold_options(ctx, false),
+                self.ed.options.line_width,
                 None,
             )
         }
@@ -1590,7 +1744,9 @@ impl Printer<'_> {
     fn quoted_string(&self, value: &str, ctx: &Ctx) -> String {
         let has_double = value.contains('"');
         let has_single = value.contains('\'');
-        if has_double && !has_single {
+        if self.ed.options.single_quote == Some(false) {
+            self.double_quoted(value, ctx)
+        } else if has_double && !has_single {
             self.single_quoted(value, ctx)
         } else {
             // hasSingle && !hasDouble, or singleQuote null → double quotes.
@@ -1624,7 +1780,7 @@ impl Printer<'_> {
         } else if style == "BLOCK_LITERAL" {
             true
         } else {
-            !line_length_over_limit(value, jlen(&indent))
+            !line_length_over_limit(value, jlen(&indent), self.ed.options.line_width)
         };
         if value.is_empty() {
             return if literal { "|\n".into() } else { ">\n".into() };
@@ -1703,6 +1859,7 @@ impl Printer<'_> {
                 &indent,
                 Fold::Block,
                 self.fold_options(ctx, true),
+                self.ed.options.line_width,
                 if check_overflow {
                     Some(&mut literal_fallback)
                 } else {
@@ -1773,6 +1930,7 @@ impl Printer<'_> {
                 &ctx.indent,
                 Fold::Flow,
                 self.fold_options(ctx, false),
+                self.ed.options.line_width,
                 None,
             )
         }
@@ -1890,9 +2048,12 @@ fn replace_more_indented(re: &Regex, s: &str) -> String {
     out
 }
 
-fn line_length_over_limit(s: &str, indent_length: usize) -> bool {
+fn line_length_over_limit(s: &str, indent_length: usize, line_width: usize) -> bool {
+    if line_width == 0 {
+        return false;
+    }
     let units: Vec<u16> = s.encode_utf16().collect();
-    let limit = LINE_WIDTH as isize - indent_length as isize;
+    let limit = line_width as isize - indent_length as isize;
     let len = units.len() as isize;
     if len <= limit {
         return false;
@@ -1920,19 +2081,28 @@ enum Fold {
     Quoted,
 }
 
-/// `foldFlowLines(text, indent, mode, { indentAtStart, lineWidth: 80,
-/// minContentWidth: 20, onOverflow })` over UTF-16 code units.
+/// `foldFlowLines(text, indent, mode, { indentAtStart, lineWidth,
+/// minContentWidth: 20, onOverflow })` over UTF-16 code units; a `lineWidth`
+/// of 0 disables folding.
 fn fold_flow_lines(
     text: &str,
     indent: &str,
     mode: Fold,
     indent_at_start: Option<usize>,
+    line_width: usize,
     on_overflow: Option<&mut bool>,
 ) -> String {
+    if line_width == 0 {
+        return text.to_string();
+    }
     let t: Vec<u16> = text.encode_utf16().collect();
     let indent_len = jlen(indent) as isize;
-    let line_width = LINE_WIDTH as isize;
-    let min_content_width = MIN_CONTENT_WIDTH as isize;
+    let line_width = line_width as isize;
+    let min_content_width = if line_width < MIN_CONTENT_WIDTH as isize {
+        0
+    } else {
+        MIN_CONTENT_WIDTH as isize
+    };
     let end_step = (1 + min_content_width).max(1 + line_width - indent_len);
     if t.len() as isize <= end_step {
         return text.to_string();
