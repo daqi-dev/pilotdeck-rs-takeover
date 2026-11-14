@@ -7,8 +7,8 @@
 //   <侧>.provider.jsonl 假 provider 收到的请求
 //   <侧>.*.log          各进程自己的输出
 // 两侧先后在同一个根目录（UI_SMOKE_ROOT，默认 /private/tmp/pdrs-ui-smoke/root）、同样的端口里跑，路径和端口不用归一化。
-// 隔离：HOME / PILOT_HOME / TMPDIR 都在根目录下；gateway 与 ui/server 用 sandbox-exec 跑，
-// 只许连 localhost、只许写根目录与 /dev，读真实 ~/.pilotdeck 被拒。所有进程只监听 127.0.0.1。
+// 隔离：HOME / PILOT_HOME / TMPDIR 都在根目录下；macOS 上 gateway 与 ui/server 用 sandbox-exec 跑，
+// 只许连 localhost、只许写根目录与 /dev，读真实 ~/.pilotdeck 被拒（Linux 见下面 UI_SMOKE_AUDIT）。所有进程只监听 127.0.0.1。
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
@@ -26,7 +26,13 @@ fs.mkdirSync(OUT, { recursive: true });
 
 const BASELINE = path.resolve(process.env.UI_SMOKE_BASELINE ?? path.join(REPO, 'resources/PilotDeck'));
 const TARGET = path.resolve(process.env.UI_SMOKE_TARGET ?? path.join(REPO, 'src/target/debug'));
-const ROOT = path.resolve(process.env.UI_SMOKE_ROOT ?? '/private/tmp/pdrs-ui-smoke/root');
+const IS_MAC = process.platform === 'darwin';
+const ROOT = path.resolve(process.env.UI_SMOKE_ROOT ?? (IS_MAC ? '/private/tmp/pdrs-ui-smoke/root' : path.join(os.tmpdir(), 'pdrs-ui-smoke/root')));
+// Linux 上没有 sandbox-exec（cb8 这类机器也不许非特权用户建 user namespace，bwrap / unshare 都起不来）。
+// 那里改用 UI_SMOKE_AUDIT=strace：gateway 与 ui/server 套在 strace -f 下，跑完由 audit.mjs 检查
+// 有没有连 localhost 以外的地址、有没有写根目录与 /dev 以外的路径、有没有读真实 ~/.pilotdeck（事后检查，不是拦截）。
+const AUDIT = process.env.UI_SMOKE_AUDIT ?? '';
+if (AUDIT && AUDIT !== 'strace') { console.error('UI_SMOKE_AUDIT must be empty or "strace"'); process.exit(2); }
 const BASE_PORT = Number(process.env.UI_SMOKE_PORT_BASE ?? 39100);
 const PORTS = { provider: BASE_PORT, gateway: BASE_PORT + 1, proxy: BASE_PORT + 2, ui: BASE_PORT + 3 };
 const TOKEN = 'ui-smoke-gateway-token-0000000000000000000';
@@ -39,7 +45,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const portFree = (port) => new Promise((resolve) => {
   const s = net.createServer().once('error', () => resolve(false)).once('listening', () => s.close(() => resolve(true))).listen(port, '127.0.0.1');
 });
-if (spawnSync('lsof', ['-nP', '-iTCP:18789', '-sTCP:LISTEN'], { encoding: 'utf8' }).stdout.trim()) {
+// lsof 在 Linux 上只看得到本用户的进程，另外直接连一次 127.0.0.1:18789（连得上就是有监听者）。
+const connects = (port) => new Promise((resolve) => {
+  const s = net.connect(port, '127.0.0.1');
+  s.once('connect', () => { s.destroy(); resolve(true); }).once('error', () => resolve(false));
+  s.setTimeout(1000, () => { s.destroy(); resolve(false); });
+});
+if (spawnSync('lsof', ['-nP', '-iTCP:18789', '-sTCP:LISTEN'], { encoding: 'utf8' }).stdout?.trim() || await connects(18789)) {
   console.error('ui-smoke: something is listening on 18789; refusing to run'); process.exit(5);
 }
 for (const p of Object.values(PORTS)) if (!(await portFree(p))) { console.error(`ui-smoke: port ${p} in use`); process.exit(3); }
@@ -79,7 +91,7 @@ for (const f of fs.readdirSync(OUT)) if (f.startsWith(`${label}.`)) fs.rmSync(pa
 // ── 沙箱配置：只许连 localhost，只许写根目录与 /dev ──
 const realPilotDeck = path.join(os.userInfo().homedir, '.pilotdeck');
 const sbPath = path.join(tmp, 'ui-smoke.sb');
-fs.writeFileSync(sbPath, `(version 1)
+if (IS_MAC) fs.writeFileSync(sbPath, `(version 1)
 (allow default)
 (deny network-outbound)
 (allow network-outbound (remote ip "localhost:*"))
@@ -88,6 +100,15 @@ fs.writeFileSync(sbPath, `(version 1)
 (deny file-write*)
 (allow file-write* (subpath ${JSON.stringify(fs.realpathSync(ROOT))}) (subpath ${JSON.stringify(ROOT)}) (subpath "/dev"))
 `);
+
+// 起 gateway / ui/server 的外壳：macOS 套 sandbox-exec；其他平台直接起，设了 UI_SMOKE_AUDIT=strace 时套 strace -f
+// （系统调用记到 <前缀>.<名>.strace，跑完由 audit.mjs 检查）。不套壳时 child.pid 就是 gateway 本身。
+const boxed = (name, argv) => {
+  if (IS_MAC) return ['sandbox-exec', ['-f', sbPath, ...argv]];
+  if (AUDIT === 'strace') return ['strace', ['-f', '-qq', '-y', '-s', '4096', '-e', 'trace=connect,open,openat,creat,mkdir,mkdirat,rename,renameat,renameat2,unlink,unlinkat,rmdir,symlink,symlinkat,link,linkat,truncate,chmod,fchmodat', '-o', path.join(OUT, `${label}.${name}.strace`), ...argv]];
+  return [argv[0], argv.slice(1)];
+};
+if (!IS_MAC && !AUDIT) console.log('[ui-smoke] no sandbox on this platform; set UI_SMOKE_AUDIT=strace to audit network / file access afterwards');
 
 const env = {
   PATH: process.env.PATH, HOME: home, PILOT_HOME: pilotHome, TMPDIR: tmp,
@@ -120,7 +141,8 @@ const stopAll = async () => {
     if (child.exitCode !== null || child.signalCode) { console.log(`[ui-smoke] ${name} pid=${child.pid} already exited (${child.exitCode ?? child.signalCode})`); stops.push({ name, already: child.exitCode ?? child.signalCode }); continue; }
     const done = new Promise((r) => child.once('exit', (code, sig) => r(code ?? sig)));
     const t0 = Date.now();
-    try { process.kill(child.pid, 'SIGTERM'); } catch {}
+    // strace 外壳下 SIGTERM 发给整个进程组（strace 自己收到只会脱离，被跟踪的 gateway 也要收到）。
+    try { process.kill(AUDIT && ['gateway', 'ui'].includes(name) ? -child.pid : child.pid, 'SIGTERM'); } catch {}
     const res = await Promise.race([done, sleep(15000).then(() => 'timeout')]);
     if (res === 'timeout') { try { process.kill(-child.pid, 'SIGKILL'); } catch {} await done; console.log(`[ui-smoke] ${name} pid=${child.pid} SIGKILL`); stops.push({ name, result: 'SIGKILL after 15s SIGTERM' }); }
     else { console.log(`[ui-smoke] ${name} pid=${child.pid} stopped (${res})`); stops.push({ name, result: res, ms: Date.now() - t0 }); }
@@ -137,7 +159,7 @@ try {
   const gwCmd = side === 'ts'
     ? [process.execPath, path.join(BASELINE, 'dist/src/cli/pilotdeck.js'), 'server', '--port', String(PORTS.gateway)]
     : [path.join(TARGET, 'pilotdeck'), 'server', '--port', String(PORTS.gateway)];
-  const gateway = start('gateway', 'sandbox-exec', ['-f', sbPath, ...gwCmd], { cwd: project, env });
+  const gateway = start('gateway', ...boxed('gateway', gwCmd), { cwd: project, env });
   const gwMs = await waitPort(PORTS.gateway, 'gateway', gateway);
   console.log(`[ui-smoke] gateway listening after ${gwMs}ms`);
   const proxy = start('proxy', process.execPath, [path.join(HERE, 'proxy.mjs'), String(PORTS.proxy), String(PORTS.gateway), path.join(OUT, `${label}.gateway.jsonl`)]);
@@ -146,7 +168,7 @@ try {
     ...env, SERVER_PORT: String(PORTS.ui), HOST: '127.0.0.1', VITE_PORT: String(PORTS.ui + 50),
     PILOTDECK_GATEWAY_URL: `ws://127.0.0.1:${PORTS.proxy}/ws`, PILOTDECK_BRIDGE_TIMEOUT: '20000',
   };
-  const ui = start('ui', 'sandbox-exec', ['-f', sbPath, process.execPath, '--import', 'tsx', path.join(BASELINE, 'ui/server/index.js')], { cwd: path.join(BASELINE, 'ui'), env: uiEnv });
+  const ui = start('ui', ...boxed('ui', [process.execPath, '--import', 'tsx', path.join(BASELINE, 'ui/server/index.js')]), { cwd: path.join(BASELINE, 'ui'), env: uiEnv });
   const uiMs = await waitPort(PORTS.ui, 'ui/server', ui);
   console.log(`[ui-smoke] ui/server listening after ${uiMs}ms`);
   const drive = spawn(process.execPath, [path.join(HERE, 'drive.mjs'), `http://127.0.0.1:${PORTS.ui}`, path.join(OUT, `${label}.ui.json`)], {
