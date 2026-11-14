@@ -1,0 +1,71 @@
+{
+  "name": "turn-steer-continued",
+  "about": "收尾前插话的「被取出」一侧单独比（src/agent/loop/AgentLoop.ts:1862-1882）：模型这一次本该收尾（纯文本，延迟 1.5 秒），收尾前发现邮箱里有插话，把插话并入、发 turn_continued（reason user_steer）、记 steer_applied，再请求一次。插话在收到 model_selection_changed 时发出——此时两侧的 model_request 记录都已落盘，插话的 inbox_mutation 落点不再与它竞争。插话紧跟 model_request_started 发出时两侧落盘次序不同（Rust 的 model_request 经 sidecar 一跳才落盘），那处差异由 turn-steer-terminal 保持可见，本场景不遮它。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Steer end\"}"
+      }
+    },
+    {
+      "name": "s1-steered",
+      "when": [
+        "st-1:",
+        "steer-1: also add a closing line"
+      ],
+      "reply": {
+        "text": "Answer with the closing line."
+      }
+    },
+    {
+      "name": "s1",
+      "when": [
+        "st-1:"
+      ],
+      "reply": {
+        "text": "First answer.",
+        "delayMs": 1500
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-st-1",
+        "channelKey": "test",
+        "runId": "run-st-1",
+        "message": "st-1: answer"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "model_selection_changed"
+          },
+          "ws": "steer_turn",
+          "params": {
+            "sessionKey": "s-st-1",
+            "runId": "run-st-1",
+            "itemId": "item-1",
+            "message": "steer-1: also add a closing line"
+          },
+          "count": 1
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-st-1"
+      }
+    }
+  ]
+}

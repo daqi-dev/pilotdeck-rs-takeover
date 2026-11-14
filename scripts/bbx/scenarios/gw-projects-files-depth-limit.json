@@ -1,0 +1,49 @@
+{
+  "name": "gw-projects-files-depth-limit",
+  "about": "project_files_list 的目录深度上限（src/gateway/dialog/projectFiles.ts:15 MAX_DEPTH = 64，:71-72 进入深度大于 64 的目录时抛 FILE_INDEX_LIMIT「Project file scan exceeded its resource limit.」）：deep64 里嵌套 64 层目录（最深一层在深度 64，照常列出），deep65 嵌套 65 层（第 65 层目录一进入就整个请求失败，哪怕它只有一个文件、哪怕带了只命中顶层文件的 query 或 limit）。另外两项上限（10 万项、5 秒）要造十万个文件或拖慢文件系统，这里不做。 成功的两步只列文件（includeDirs:false，或 query 只命中 leaf.txt）：目录的 mtimeMs 由采集时刻决定，小数部分偶尔恰好为 0 时比较器把它记成 <ms> 而另一侧是 <ms.frac>（本场景 130 个目录，第一次试跑就碰上一次），种下的文件 mtime 固定，没有这个问题。",
+  "files": {
+    "home/work/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/leaf.txt": "leaf\n",
+    "home/work/deep64/top.md": "top\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-deep64/.cwd": "{HOME}/work/deep64\n",
+    "home/work/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/leaf.txt": "leaf\n",
+    "home/work/deep65/top.md": "top\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-work-deep65/.cwd": "{HOME}/work/deep65\n"
+  },
+  "steps": [
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{HOME}/work/deep64",
+        "includeDirs": false
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{HOME}/work/deep64",
+        "query": "leaf"
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{HOME}/work/deep65"
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{HOME}/work/deep65",
+        "query": "top",
+        "limit": 1
+      }
+    },
+    {
+      "ws": "project_files_list",
+      "params": {
+        "projectKey": "{HOME}/work/deep65",
+        "includeDirs": false
+      }
+    }
+  ]
+}
