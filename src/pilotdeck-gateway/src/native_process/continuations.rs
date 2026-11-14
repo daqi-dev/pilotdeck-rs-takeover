@@ -553,6 +553,15 @@ impl Activation {
         }
         self.lock_state().disposing = true;
         let _ = self.session.abort(&"parent_agent_disposed".into());
+        // `AgentHandle.dispose` discards the queued turns right after the
+        // abort, while the aborted run is still unwinding (AgentHandle.ts:
+        // 260-276), so the discard lands before that run's closing records.
+        if self.pumping.load(Ordering::SeqCst) {
+            let pending: Vec<Queued> = self.lock_state().queue.drain(..).collect();
+            for queued in &pending {
+                let _ = record_discarded(self.recorder(), self.id.clone(), queued).await;
+            }
+        }
         self.wake.notify_one();
         // Before its first admission the child has no pump: whoever is
         // starting it settles it once it sees the disposal.
