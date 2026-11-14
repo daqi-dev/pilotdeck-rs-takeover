@@ -1,18 +1,19 @@
 # 固定基线网页的后端集成修补
 
-本目录把已经实际构建、用于网页交互验证的十文件 overlay 保存为可重新执行的构建入口。固定参考为 `OpenBMB/PilotDeck@cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`；基线源码、已有依赖和 public 资源只读解析，所有差额在 Vite transform 阶段应用，不修改或复制整套基线实现。
+本目录把已经实际构建、用于网页交互验证的十一文件 overlay 保存为可重新执行的构建入口。固定参考为 `OpenBMB/PilotDeck@cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`；基线源码、已有依赖和 public 资源只读解析，所有差额在 Vite transform 阶段应用，不修改或复制整套基线实现。
 
 这里保留 **TS React 网页** 和 **TS `ui/server`**：React 提供现有业务界面，Express UI server 提供网页 REST/WS、文件预览等本地能力以及浏览器协议到 Rust gateway RPC 的桥接。Rust 后端负责 gateway/native agent。该组合只修复当前 Web 集成实际遇到的缺陷，不代表完整前端迁移、Rust UI server 交付或 TS UI 的退役；StaffDeck 不在本项范围内。
 
 ## 固定差额
 
-`patches.json` 的前七个对象及其全部字节字段保持已构建 `frontend-candidate-02` / 正式 03 的输入不变；原七项清单 SHA256 为 `2e4811be00fbfa0fe664e39d684a7e542e7087478a9a0b8060df130c4db957fe`。04追加两个恢复修补对象；05仅更新其中realtime对象并追加composer对象，完整十项清单 SHA256 为 `a0c6fe1b3039cb885fd86e8117a502890d87150f570467ff96ffa0ee75f418ed`。每项同时登记固定源码 SHA256、唯一替换锚点和结果 SHA256，任一不符就失败。
+`patches.json` 的前七个对象及其全部字节字段保持已构建 `frontend-candidate-02` / 正式 03 的输入不变；原七项清单 SHA256 为 `2e4811be00fbfa0fe664e39d684a7e542e7087478a9a0b8060df130c4db957fe`。04追加两个恢复修补对象；05仅更新其中realtime对象并追加composer对象，05十项清单SHA256为 `a0c6fe1b3039cb885fd86e8117a502890d87150f570467ff96ffa0ee75f418ed`；06仅追加ProviderCard对象，完整十一项清单SHA256为 `41b684b6bbcd6878739692033490745de0ef258319de7eb7fb6f3d5a8f24aba4`。每项同时登记固定源码 SHA256、唯一替换锚点和结果 SHA256，任一不符就失败。
 
 | 差额 | 文件 | 改变 |
 | --- | --- | --- |
 | no-login WebSocket | `components/auth/types.ts`、`components/auth/context/AuthContext.tsx`、`contexts/WebSocketContext.tsx` | 由成功的服务端 auth/status 响应公开 authDisabled；仅明确关闭本地认证时允许同 origin 无 token WS，要求认证时保留 token gate；状态变化清理旧 socket |
 | 附件临时租约展示 | `components/chat/utils/attachmentNotes.ts`、`components/chat-v2/messageFileCardUtils.ts`、`stores/useSessionStore.ts`、`components/chat/hooks/useUploadedAttachmentPreviews.ts` | 临时 chat-upload-leases 路径恢复为上传标识，以 uploadId/attachmentId 去重；不把租约当永久工作区文件；通过已有上传元数据接口恢复文件名/MIME/大小 |
 
+| 预设provider已有URL编辑 | `components/settings/view/modelPool/components/ProviderCard.tsx` | 预设也展示可编辑API Base URL，保留catalog默认和预设协议，保存与重读使用现有url schema |
 | 答复回执与合法重连 | `components/chat/hooks/useChatComposerState.ts`，并更新 realtime handler | 答复后等待既有取消回执；相同session/request的未知与已知run合并保留known，冲突known不覆盖 |
 | 断连后残留交互 | `components/chat/types/types.ts`、`components/chat/hooks/useChatRealtimeHandlers.ts` | 保存授权/问题所属 runId；传输错误触发已有状态查询，只有匹配请求序号和预期 run 的权威 inactive 回复才清理该 session/run；明确终态和取消同样限定身份 |
 
@@ -20,7 +21,7 @@
 
 ## 运行
 
-需要已有的固定基线 Git checkout、与其锁文件匹配的已安装依赖、Node `>=22.13.0 <23`。此脚本不安装依赖、不下载二进制、不启动服务。Git HEAD、tracked clean、十文件 source/result SHA、Vite 配置、package manifests 和 pnpm lock 的 SHA 都在构建前校验。`baseline.json` 是固定输入身份，不能为了兼容其他上游版本而跳过检查。
+需要已有的固定基线 Git checkout、与其锁文件匹配的已安装依赖、Node `>=22.13.0 <23`。此脚本不安装依赖、不下载二进制、不启动服务。Git HEAD、tracked clean、十一文件 source/result SHA、Vite 配置、package manifests 和 pnpm lock 的 SHA 都在构建前校验。`baseline.json` 是固定输入身份，不能为了兼容其他上游版本而跳过检查。
 
 ```sh
 node scripts/backend-web-integration/build.mjs \
@@ -35,8 +36,8 @@ node scripts/backend-web-integration/build.mjs \
 产物包括：
 
 - `dist/`：候选网页，可由任务自己的静态代理服务托管，将 `/api/*` 与 `/ws` 转发既有隔离 TS UI server。
-- `source-manifest.json`：基线提交、十个 source/result SHA、其他固定输入、构建脚本身份、Node 版本和命令。
-- `build-result.json`：明确 built/failed；成功同时记录 index.html SHA256 和十文件名单。
+- `source-manifest.json`：基线提交、十一个 source/result SHA、其他固定输入、构建脚本身份、Node 版本和命令。
+- `build-result.json`：明确 built/failed；成功同时记录 index.html SHA256 和十一文件名单。
 - `baseline-config.mjs`：只用于本次构建的原配置运行副本，保留其基线绝对定位，不能拿它当跨机器发布配置。
 
 构建末尾再次核对基线与 overlay 输入，发现漂移则报告失败。输出清单中的机器路径是构建证据，不是网页运行时的源代码定位。已安装 node_modules 的平台产物仍是外部构建输入；这里不承诺未经验证的跨机器字节一致。
@@ -82,3 +83,20 @@ node scripts/backend-web-integration/check-recovery.mjs \
 TS UI server 的“仅delivered:true广播既有取消回执”及合法bridge rebind修补由独立runtime交付负责，不属于这个前端overlay。前端19项控制与其组合后的05构建/真实网页恢复必须分别报告；此目录不声称前端控制通过已代替端到端交互验收。
 
 05正式便携入口 `recovery-formal-check-05` 已实际19/19 PASS（2026-11-14），没有新build或服务操作；05网页候选仍待主协调者唯一构建及真实页面复验。
+
+
+## 06 预设 provider 的已有 Base URL 能力
+
+智谱等预设已经有 `model.providers.<id>.url` schema，但原Card把URL输入和custom协议选择一起隐藏。06只让预设和自定义provider都能编辑既有Base URL，预设协议仍不可在此改变，catalog默认与模型名单均不修改。省略url时输入显示原catalog默认；显式保存的非默认url继续优先。没有新增套餐自动探测或Coding Plan专用预设。
+
+保存链已核对：ProviderCard保存effectiveUrl，ModelsSection原样patch provider，normalizePilotDeckConfig不会重写url，resolveConfiguredProviderUrl和parseModelConfig均优先显式url。固定源码中没有名为buildCatalogProvider的覆盖步骤；控制走真实ModelsSection/Card保存链，没有通过替换onSave绕过UI逻辑。
+
+原安全边界保持：masked key与URL/protocol同时变更时，服务端要求重新输入key；06不会把旧key静默发送到新scope。用户变更地址需显式重新输入对应凭据。定点控制首次换URL时显式输入合成key；保存后重新读取mask，相同scope再次保存保持原key，证明mask往返不丢失。跨scope要求重输的保护仅由源码核验；这4项mock没有执行config route的scope validator，不冒称该路由负控已运行。没有读取用户key、真实配置或.env，也不调用真实provider。
+
+```sh
+node scripts/backend-web-integration/check-provider-settings.mjs \
+  --baseline /absolute/read-only/PilotDeck \
+  --out /absolute/task/_tmp/NEW-provider-settings-check
+```
+
+仅4项必要mock控制：预设非默认URL保存/重读/mask同scope再保存、预设默认回退及固定协议、无效URL拦截、自定义provider协议/URL输入兼容。实际controls-02为4/4 PASS；controls-01因新runner缺jsx-runtime alias执行0项，原记录保留，补齐alias后通过。该测试不证明sandbox外网可达；用户看到的fetch failed与预设地址隐藏是不同问题，不能把这次UI修补称为网络限制已解除。06独立dist已由本入口唯一构建完成（2026-11-14，14.03s，exit0），11项差额齐全；index.html SHA256为 `66660790f0506e6e8fbc4189d8f86438aecb56e18aff1a66714c95e50db0c16d`。构建有既有大chunk warning，没有编译错误。实际网页操作及真实provider请求仍未由本工作包执行。

@@ -181,3 +181,19 @@ root在既有合同与逐叶证据适用审基础上完成127本期叶的管理�
 ## Web交互重连全链修复
 
 2026-11-14主协调在用户明确授权现有网页实际测试、项目内决策自主的范围内，接受B3-WEB-INTERACTION-RECONNECT-001所述窄bug修复。原桥接短断连后没有合法reconnect_interaction，Rust正确返回delivered:false；旧server/前端又提前取消面板，造成答案丢失。修在保留的TS bridge/server与前端，不改Rust归属校验，不新建协议，不改resources。按对象保留服务端签发旧binding、使用既有合法迁移、仅实际delivered才确认、页面等待确认与权威inactive按身份清理构成完整因果链；各自19+11控制和Astra独审支持，实际组合验收独立记录。旧首败/timeout收尾保留，不能把mock的DONE字符串当回答成功。
+
+## Web组合05最终验收与无影响证据复用
+
+2026-11-14主协调接受核心58 + Web05 b5ab235e64be5834ca72cd17e1d1faf1e6c2309c本批六主路径验收。后端Mac624/Linux625唯一受影响测试、真实release，Web19+11控制、正式构建、实际问题/权限短断连及后端退出恢复和独立审计构成闭环。四最终run各唯一durable终态；断开的原wire final为0/0/0/1，前两snapshot重放，不能用durable冒原流收到final。原首败和首个05未及时回答的120秒timeout均保留。
+
+正常六路径及backend58+frontend03两项真实LLM按输入/分支影响分析继承：05的src树等于58，原7项前端补丁未变，新补丁只在断连交互及ACK分支，不重复真实API或无影响Rust测试。该接受不宣称58新跑完整workspace、Linux实操Web或full58重新打包。真实12请求中6count_tokens404按既有估算fallback，不当计数接口PASS；累计65，代理已关闭。
+
+P2历史gateway unavailable提示、中止write摘要误导、P3图片恢复名称仍留待后续；它们不掩盖原件和实际文件副作用。为用户查看保留任务隔离、mock-only网页，付费代理和heavy队列均结束；StaffDeck延期，无Daybreak，不推送/发布/生产部署。详见docs/backend-delivery/web-journeys.md和_tmp/20261114-web-journey/final-acceptance.json。
+
+## 提供商设置补验与精确修复
+
+2026-11-14用户在保留演示中填智谱Coding Plan key后报告models/test均fetch failed，并再次授权使用.env的LLM Center key实际测试；后明确key来自国内open.bigmodel.cn。本次追加任务覆盖旧批次停止新增API的临时限制，旧累计65保持独立，本批按metadata/探测/真实任务分别核账，不把TLS连接数当调用数。
+
+root确认原演示loopback沙箱不支持公网设置动作，无key实测EPERM；此为测试环境配置，不改Rust协议。保持应用文件/网络隔离，配置owned HTTPS CONNECT出口仅3目的host，原始gateway流量日志换为无payload中继，凭据不入证据；用户已存key不变，zhipu URL改国内coding专用地址。proxy.url明确配置为本机出口是运行意图，不把普通provider保存误说成会清除env代理。
+
+root接受B3-PRESET-PROVIDER-URL-001既有URL字段编辑的窄有意改进，协议/默认/鉴权scope保持；接受B3-PROBE-ZH-TEXT-ONLY-001仅400中文明确text-only的能力诊断bugfix，500/no-channel等真实未知错误继续保留。前者4控制及正式构建，后者原11+新7组mock控制，独审与实际网页结果分别归档，不把mock重放冒真实新调用。StaffDeck延期，无Daybreak；禁止无影响Rust重编、全量回归和新增长尾付费矩阵。

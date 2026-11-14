@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "head": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
-  "patchesSha256": "a0c6fe1b3039cb885fd86e8117a502890d87150f570467ff96ffa0ee75f418ed",
-  "overlayTargetCount": 10,
+  "patchesSha256": "41b684b6bbcd6878739692033490745de0ef258319de7eb7fb6f3d5a8f24aba4",
+  "overlayTargetCount": 11,
   "files": {
     "ui/vite.config.js": "aa8f045e70783d31f5d174cf77e616b52b4063a47fc9a1f4d6f66ef5bf13826f",
     "pnpm-lock.yaml": "664356f6b3abeb5af3c02f36cdedd2dee14958744478d2820bfaeb319506463b",

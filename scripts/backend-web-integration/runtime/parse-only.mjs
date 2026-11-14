@@ -1,10 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { SourceTextModule } from 'node:vm';
-import { identity, sha256, transformBridge, transformIndex } from './overlay.mjs';
+import { identity, sha256, transformBridge, transformIndex, transformModelProbe } from './overlay.mjs';
 
 for (const [name, transform] of [
     ['ui/server/pilotdeck-bridge.js', transformBridge],
     ['ui/server/index.js', transformIndex],
+    ['ui/server/services/modelConnectionProbe.js', transformModelProbe],
 ]) {
     const source = transform(readFileSync(identity[name].path, 'utf8'));
     // Compile the complete ESM grammar without linking imports or evaluating

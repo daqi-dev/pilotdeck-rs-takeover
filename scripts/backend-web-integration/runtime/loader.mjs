@@ -1,11 +1,12 @@
 import { readFile, appendFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { baseline, identity, sha256, transformBridge, transformIndex } from './overlay.mjs';
+import { baseline, identity, sha256, transformBridge, transformIndex, transformModelProbe } from './overlay.mjs';
 
 const targets = new Map([
     [pathToFileURL(identity['ui/server/pilotdeck-bridge.js'].path).href, transformBridge],
     [pathToFileURL(identity['ui/server/index.js'].path).href, transformIndex],
+    [pathToFileURL(identity['ui/server/services/modelConnectionProbe.js'].path).href, transformModelProbe],
 ]);
 
 export async function load(url, context, nextLoad) {

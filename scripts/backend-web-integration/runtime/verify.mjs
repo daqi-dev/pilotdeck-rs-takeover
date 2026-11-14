@@ -26,6 +26,7 @@ assert.equal(git.status, 0, git.stderr);
 assert.equal(git.stdout.trim(), baseline.baselineCommit);
 const commands = {
     controls: [process.execPath, '--test', path.join(directory, 'controls.test.mjs')],
+    modelProbeControls: [process.execPath, '--import', 'tsx', '--import', path.join(directory, 'register.mjs'), '--test', path.join(directory, 'model-probe-controls.test.mjs')],
     parseWithTsxHooks: [process.execPath, '--experimental-vm-modules', '--import', 'tsx', '--import', path.join(directory, 'register.mjs'), path.join(directory, 'parse-only.mjs')],
 };
 const results = {};
@@ -39,7 +40,7 @@ const sha = filename => createHash('sha256').update(fs.readFileSync(filename)).d
 const receipt = {
     node: process.version, baselineCommit: git.stdout.trim(), baselineRoot: root,
     baselineSources: Object.fromEntries(Object.keys(baseline.files).map(name => [name, sha(path.join(root, name))])),
-    implementation: Object.fromEntries(['baseline-identity.json', 'overlay.mjs', 'loader.mjs', 'register.mjs', 'controls.test.mjs', 'parse-only.mjs', 'verify.mjs'].map(name => [name, sha(path.join(directory, name))])),
+    implementation: Object.fromEntries(['baseline-identity.json', 'overlay.mjs', 'loader.mjs', 'register.mjs', 'controls.test.mjs', 'model-probe-controls.test.mjs', 'parse-only.mjs', 'verify.mjs'].map(name => [name, sha(path.join(directory, name))])),
     results, passed: Object.values(results).every(result => result.passed),
     limitations: ['The parser does not link or evaluate either UI module. Root must observe both loader receipts on the actual UI launch.', 'Mock Gateway controls do not replace the real pending interaction journey.'],
 };

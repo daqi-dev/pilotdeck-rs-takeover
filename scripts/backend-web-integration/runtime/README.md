@@ -34,12 +34,13 @@ env HOME="$TASK_ROOT/home" PILOT_HOME="$TASK_ROOT/home/.pilotdeck" \
 
 这段命令不替代 controller 的 Seatbelt、provider、组件路径、前端静态目录等既有隔离配置。不要直接运行它绕过 controller。`PILOTDECK_WEB_BASELINE_ROOT` 必须是绝对路径；receipt 路径在设置时也必须是绝对路径，父目录必须已存在并获 sandbox 写权限。
 
-Loader 只匹配这两个精确文件 URL。两份原始源码和变换结果分别与 `baseline-identity.json` 的完整 SHA256 核对；任意不匹配均拒绝加载。其他模块按原 loader 链处理。实际 UI 启动必须在 stderr 看见 **两条** `[web-reconnect-overlay]`，receipt JSONL 也须出现两个目标，分别核对：
+Loader 只匹配下表三个精确文件 URL。原始源码和变换结果分别与 `baseline-identity.json` 的完整 SHA256 核对；任意不匹配均拒绝加载。其他模块按原 loader 链处理。实际 UI 启动必须在 stderr 看见 **三条** `[web-reconnect-overlay]`，receipt JSONL 也须出现三个目标，分别核对：
 
 | 目标 | 原始 SHA256 | 结果 SHA256 |
 |---|---|---|
 | `ui/server/pilotdeck-bridge.js` | `3d622cc4684f89ca565f20e7453750937ea4ad796c15d0e8f516fd69d5f5d3e2` | `d48019ab042dec638d951817822ed90bc6f75076d551d4b1f0491cb5f5cfdfd7` |
 | `ui/server/index.js` | `ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b` | `17d668ad0ffbc0111599a99feea829df01733078048173310e0b93080c530f18` |
+| `ui/server/services/modelConnectionProbe.js` | `feb25d6cd28a73c2b45c8cfad524241bece91bd10dbda1b7dda0c680967fc32f` | `a9d1797c4cf7f5b7af025d5fd30425feccc2db4d1612a20cfdc5c385970ea79d` |
 
 ## 轻量控制
 
@@ -48,7 +49,17 @@ Loader 只匹配这两个精确文件 URL。两份原始源码和变换结果分
   --baseline-root "$BASELINE_ROOT" --output "$TASK_ROOT/runtime-controls-new"
 ```
 
-输出目录必须全新。入口验证固定基线完整 commit、隔离 HOME/PILOT_HOME，执行 11 个控制，并与 `tsx`、注册 hook 同时解析完整变换后的两份 ESM。控制使用真实 connection cache 和真实 bridge/index 函数片段，fake Gateway 模拟 hello 先清空再通知、精确 previous binding 迁移、旧 observer、跨代 Promise 与两种 delivered 确认；包含删除 snapshot 和原版假取消的反例。解析检查不会链接或执行 UI 模块，不能证明实际 UI 入口已经经过 hook。真实启动的两条 loader 收据和网页恢复仍由 root 验收。
+输出目录必须全新。入口验证固定基线完整 commit、隔离 HOME/PILOT_HOME，执行 11 个交互控制和 7 组模型能力控制，并与 `tsx`、注册 hook 同时解析完整变换后的三份 ESM。交互控制使用真实 connection cache 和真实 bridge/index 函数片段，fake Gateway 模拟 hello 先清空再通知、精确 previous binding 迁移、旧 observer、跨代 Promise 与两种 delivered 确认；包含删除 snapshot 和原版假取消的反例。模型能力控制通过真实 loader 导入目标 probe，使用本地内存 fake fetch，不发 API。解析检查不会链接或执行 UI 入口，不能证明实际 UI 入口已经经过 hook。真实启动的三条 loader 收据和网页恢复仍由 root 验收。
+
+## 07：中文 text-only 能力诊断
+
+这是保留的 TS UI 桥接实现的 bugfix，不能记为 Rust provider 迁移成果。智谱真实图像探测 HTTP400 已返回 `messages.content.type 参数非法，取值范围 ['text']`，原英文识别器误把明确 text-only 结果分类为 Undetermined。
+
+新增识别要求 HTTP400、完整字段名 `messages.content.type`、`参数非法`、`取值范围`、且枚举只有一个 `text`。仅容许有限空白、英文/中文逗号和冒号、单/双引号格式。其它字段、包含 image/unknown、额外限流信息、401/403/429/500 不按新规则解释为不支持图像。原英文判定不改。
+
+只给 `looksLikeImageUnsupported` 增加该规则并在现有 image 分支传入真实 HTTP status；原 text→image 顺序、默认4096输出预算、图像构造、协议和 catalog 均不动。mock控制核 text成功后image400得到 unsupported，text失败及未知400仍保留错误。
+
+补丁只影响之后执行的 probe；已生成的 task result 不会自动重算。不要把内存旧 Undetermined 记录改名后宣称真实能力验证通过。已有真实400无需为了这条规则重复付费：可由 root 用该录得诊断做隔离 mock replay，另行核查 UI 显示与路由结果转换。
 
 ## 边界
 

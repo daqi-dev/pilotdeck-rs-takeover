@@ -8,6 +8,10 @@
     "ui/server/index.js": {
       "sourceSha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
       "resultSha256": "17d668ad0ffbc0111599a99feea829df01733078048173310e0b93080c530f18"
+    },
+    "ui/server/services/modelConnectionProbe.js": {
+      "sourceSha256": "feb25d6cd28a73c2b45c8cfad524241bece91bd10dbda1b7dda0c680967fc32f",
+      "resultSha256": "a9d1797c4cf7f5b7af025d5fd30425feccc2db4d1612a20cfdc5c385970ea79d"
     }
   }
 }

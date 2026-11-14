@@ -204,5 +204,28 @@
       }
     ],
     "resultSha256": "68846ef7ccc7443b7142ec23e06d712f1ad50607b1f092d7b96b12941a6ad8e2"
+  },
+  {
+    "path": "ui/src/components/settings/view/modelPool/components/ProviderCard.tsx",
+    "sourceSha256": "5d5277c49155c0d54d07d14849e63af2c989a012b87a4bcc69b8fefd72681b30",
+    "resultSha256": "bf1e80f0653aa8da100594a1547c4c8cef83254fc7c1719a9445263b2d65196a",
+    "replacements": [
+      {
+        "before": "          {editing && !effectiveCatalogEntry && (",
+        "after": "          {editing && ("
+      },
+      {
+        "before": "            <div className=\"connection-grid\">\n              <label className=\"field\">\n                <span>{t(\"pilotDeckConfig.panels.models.protocol\")}</span>",
+        "after": "            <div className=\"connection-grid\">\n              {!effectiveCatalogEntry && (\n              <label className=\"field\">\n                <span>{t(\"pilotDeckConfig.panels.models.protocol\")}</span>"
+      },
+      {
+        "before": "                </select>\n              </label>\n              <label className=\"field\">\n                <span>{t(\"pilotDeckConfig.panels.models.baseUrl\")}</span>",
+        "after": "                </select>\n              </label>\n              )}\n              <label className=\"field\">\n                <span>{t(\"pilotDeckConfig.panels.models.baseUrl\")}</span>"
+      },
+      {
+        "before": "                  value={draftProvider.url ?? \"\"}",
+        "after": "                  value={effectiveUrl}"
+      }
+    ]
   }
 ]

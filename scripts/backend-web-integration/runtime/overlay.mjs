@@ -47,3 +47,19 @@ export function transformIndex(source) {
     if (sha256(next) !== identity['ui/server/index.js'].resultSha256) throw new Error('UI server index overlay result SHA mismatch.');
     return next;
 }
+
+export function transformModelProbe(source) {
+    const file = identity['ui/server/services/modelConnectionProbe.js'];
+    if (sha256(source) !== file.sha256) throw new Error('Model probe baseline SHA mismatch.');
+    let next = replaceOnce(source,
+        'function looksLikeImageUnsupported(detail) {\n  return ',
+        String.raw`function looksLikeImageUnsupported(detail, status) {
+  const textOnlyParameterError = status === 400
+    && /^\s*messages\.content\.type\s+参数非法\s*[，,]\s*取值范围\s*[:：]?\s*\[\s*(['"])text\1\s*\]\s*$/.test(detail);
+  return textOnlyParameterError || `);
+    next = replaceOnce(next,
+        'if (image && looksLikeImageUnsupported(detail)) {',
+        'if (image && looksLikeImageUnsupported(detail, response.status)) {');
+    if (sha256(next) !== file.resultSha256) throw new Error('Model probe overlay result SHA mismatch.');
+    return next;
+}

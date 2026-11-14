@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { identity, transformBridge, transformIndex } from './overlay.mjs';
+import { identity, transformBridge, transformIndex, transformModelProbe } from './overlay.mjs';
 import { load } from './loader.mjs';
 import { pathToFileURL } from 'node:url';
 const { createGatewayConnectionCache } = await import(new URL('./services/gatewayConnectionCache.js', pathToFileURL(identity['ui/server/pilotdeck-bridge.js'].path)).href);
@@ -164,13 +164,15 @@ for (const [type, nextType, helper] of [
 test('SHA drift is refused and hooks pass unrelated modules through', async () => {
     assert.throws(() => transformBridge(`${bridge}\n`), /SHA mismatch/);
     assert.throws(() => transformIndex(`${index}\n`), /SHA mismatch/);
+    const probe = readFileSync(identity['ui/server/services/modelConnectionProbe.js'].path, 'utf8');
+    assert.throws(() => transformModelProbe(`${probe}\n`), /SHA mismatch/);
     const fallback = {};
     assert.equal(await load('file:///unrelated.mjs', {}, async () => fallback), fallback);
-    for (const name of ['ui/server/pilotdeck-bridge.js', 'ui/server/index.js']) {
+    for (const name of ['ui/server/pilotdeck-bridge.js', 'ui/server/index.js', 'ui/server/services/modelConnectionProbe.js']) {
         const loaded = await load(pathToFileURL(identity[name].path).href, {}, async () => { throw new Error('target must use exact overlay'); });
         assert.equal(loaded.shortCircuit, true);
         assert.equal(loaded.format, 'module');
-        assert.equal(loaded.source, name.includes('bridge') ? patchedBridge : patchedIndex);
+        assert.equal(loaded.source, name.includes('bridge') ? patchedBridge : name.endsWith('/index.js') ? patchedIndex : transformModelProbe(probe));
     }
 });
 
