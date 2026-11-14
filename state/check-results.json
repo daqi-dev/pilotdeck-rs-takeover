@@ -2,17 +2,17 @@
   "about": "scripts/bbx/status.mjs 读的检查结果。手写，只记命令的当次输出，每项写明日期、提交、机器和来源；没有的就删掉那一项，status.mjs 会显示「没有数据」。fmt / clippy / doctest 的取值写 pass 或 fail。",
   "fourCommands": {
     "date": "2026-11-14",
-    "commit": "320552a46",
+    "commit": "d0e857162",
     "machine": "cb8（Linux aarch64）",
     "fmt": "pass",
     "clippy": "pass",
     "nextest": {
       "result": "pass",
-      "passed": 7778,
-      "total": 7778
+      "passed": 7784,
+      "total": 7784
     },
     "doctest": "pass",
-    "source": "cb8 上 ~/ws/pdrs-takeover/logs/verify-v24.log（verify.sh 一条龙：构建、单独重跑、全量对拍、四条命令）"
+    "source": "cb8 上 ~/ws/pdrs-takeover/logs/verify-v25.log（verify.sh 一条龙：构建、单独重跑、全量对拍、四条命令）"
   },
   "upstreamTests": {
     "date": "2026-11-13",
