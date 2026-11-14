@@ -413,10 +413,11 @@ async fn replay_http_case(case: &JsValue, oracle: &JsValue) -> Result<(), String
         .map(text)
         .collect();
     let server = model_mock::start_mock(exchange.clone(), excluded, None);
-    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
-        .map_err(|error| format!("{name}: closed-port bind: {error}"))?;
-    let closed = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
-    drop(listener);
+    let closed = format!(
+        "http://127.0.0.1:{}",
+        model_mock::refused_port::refused_port_on(std::net::Ipv4Addr::LOCALHOST.into())
+            .map_err(|error| format!("{name}: closed-port bind: {error}"))?
+    );
     let (trace, calls, usage) = execute_http(
         spec,
         Arc::new(pilotdeck_gateway::runtime::model::http::HyperModelTransport::new()),

@@ -23,6 +23,8 @@
 
 #[path = "common/baseline.rs"]
 mod baseline;
+#[path = "common/refused_port.rs"]
+mod refused_port;
 #[path = "common/scratch.rs"]
 mod scratch;
 
@@ -413,18 +415,14 @@ fn start_stall() -> Stall {
 }
 
 fn closed_origin() -> String {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-    let address = listener.local_addr().unwrap();
-    drop(listener);
-    format!("https://{address}")
+    format!("https://127.0.0.1:{}", refused_port::refused_port())
 }
 
 /// A `::1` port that is closed again before use; the IPv6 refused case needs
 /// loopback IPv6 on the host.
 fn closed_port6() -> u16 {
-    let listener = TcpListener::bind(("::1", 0))
-        .expect("the https-sse-refused-ipv6 oracle needs a loopback ::1");
-    listener.local_addr().unwrap().port()
+    refused_port::refused_port_on(std::net::Ipv6Addr::LOCALHOST.into())
+        .expect("the https-sse-refused-ipv6 oracle needs a loopback ::1")
 }
 
 // ------------------------------------------------------------------- ops

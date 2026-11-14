@@ -19,6 +19,8 @@ mod baseline;
 mod exact_receipt;
 #[path = "common/proxy_env.rs"]
 mod proxy_env;
+#[path = "common/refused_port.rs"]
+mod refused_port;
 #[path = "common/scratch.rs"]
 mod scratch;
 
@@ -32,7 +34,6 @@ use proxy_env::PROXY_ENV_KEYS;
 use rustls::pki_types::{CertificateDer, pem::PemObject};
 use scratch::Scratch;
 use std::{
-    net::TcpListener,
     path::{Path, PathBuf},
     process::Stdio,
     time::Duration,
@@ -261,12 +262,9 @@ impl Drop for Child {
     }
 }
 
-/// A loopback port that is closed again before use.
+/// A loopback port nothing listens on, held for the rest of the test.
 fn closed_port() -> u16 {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
-    port
+    refused_port::refused_port()
 }
 
 // ------------------------------------------------------------------ scenario

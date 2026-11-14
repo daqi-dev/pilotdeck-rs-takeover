@@ -2,6 +2,8 @@
 //! oracle replay for `generate.mts`-style model-stream fixtures
 //! (`tests/fixtures/model-stream*/`).
 #![allow(dead_code)]
+#[path = "refused_port.rs"]
+pub mod refused_port;
 use pilotdeck_gateway::runtime::model::http::{
     HyperModelTransport, ModelHttpTransport, ModelStreamError, StreamOptions, StreamOutput,
     stream_model,
@@ -409,10 +411,7 @@ pub async fn replay(oracle: &JsValue, cases_expected: usize, requests_expected: 
     let http = start_mock(exchange.clone(), excluded.clone(), None);
     let other = start_tagged_mock(exchange.clone(), excluded.clone(), None, Some("$OTHER"));
     let https = start_mock(exchange.clone(), excluded, Some(server_config));
-    let closed = {
-        let probe = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        format!("http://127.0.0.1:{}", probe.local_addr().unwrap().port())
-    };
+    let closed = format!("http://127.0.0.1:{}", refused_port::refused_port());
 
     let cases = items(get(&oracle, "cases"));
     assert_eq!(cases.len(), cases_expected);
