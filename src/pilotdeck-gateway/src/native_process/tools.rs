@@ -244,7 +244,26 @@ impl ForkSeed {
         // none, SubagentRuntimeComposition.ts:102-130), so its tool context
         // names no plan directory (AgentLoop.ts:2731-2738).
         permission.plan_directory_path = None;
-        let own_context = scope.definition.memory.as_deref() == Some("disabled");
+        // `createContext` (ProjectSessionRuntimeBundle.ts:567-581): a
+        // definition with `memory: "disabled"` or any `skills` composes the
+        // fork's own context runtime.
+        let memory_disabled = scope.definition.memory.as_deref() == Some("disabled");
+        let own_context = memory_disabled || scope.definition.skills.is_some();
+        let definition_skills = scope.definition.skills.clone().flatten();
+        let mut world = self.world.for_child_session();
+        // `configureTools` (ProjectSessionRuntimeBundle.ts:601-614): a skill
+        // list replaces `read_skill` with one over the session's skills that
+        // the list names.
+        if let Some(names) = &definition_skills {
+            world.skills_filter = Some(match &world.skills_filter {
+                Some(session) => names
+                    .iter()
+                    .filter(|name| session.contains(name))
+                    .cloned()
+                    .collect(),
+                None => names.clone(),
+            });
+        }
         let run_mode = Arc::new(Mutex::new(config_run_mode(&config)));
         // The child runs its loop without an AgentSession or TurnRunner
         // (SubAgentSession.runNative): the session events and
@@ -289,7 +308,7 @@ impl ForkSeed {
             permission_mode_source: None,
             run_mode,
             turn_permission: Arc::default(),
-            world: self.world.for_child_session(),
+            world,
             goal: Arc::default(),
             events: self.events,
             subagents: self.subagents,
@@ -305,14 +324,15 @@ impl ForkSeed {
             // A one-shot subagent without its own context definition runs on
             // the parent's context runtime (`createContext` returns
             // `undefined`), whose state is keyed by the child's session id.
-            // `memory: "disabled"` composes the fork's own context
-            // (`definition.memory !== "disabled" && definition.skills ===
-            // undefined` is the inheriting case).
+            // `memory: "disabled"` or a `skills` field composes the fork's
+            // own context (`definition.memory !== "disabled" &&
+            // definition.skills === undefined` is the inheriting case).
             context_state: if own_context {
                 Arc::new(
                     self.context_state
                         .scoped_child(crate::runtime::context::ScopedContext {
-                            memory_disabled: true,
+                            memory_disabled,
+                            skills: definition_skills,
                         }),
                 )
             } else {

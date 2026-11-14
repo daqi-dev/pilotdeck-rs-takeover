@@ -5,10 +5,10 @@
 //!
 //! Keys outside the baseline's `GatewaySessionSdkConfig` are stored and
 //! ignored like the baseline does. A config that passes the baseline's shape
-//! check but needs something this host does not compose (`plugins`, an agent
-//! definition key outside [`WIRED_AGENT_FIELDS`], a session skill list
-//! together with `agents`) is still answered with the unavailable shape the
-//! host gave before, instead of being stored and silently ignored.
+//! check but needs something this host does not compose (`plugins` naming a
+//! real directory, an agent definition key outside [`WIRED_AGENT_FIELDS`])
+//! is still answered with the unavailable shape the host gave before,
+//! instead of being stored and silently ignored.
 use super::session_overrides::SessionOverrides;
 use crate::runtime::{
     session::TurnCompletionHandle,
@@ -44,7 +44,23 @@ const WIRED_AGENT_FIELDS: &[&str] = &[
     // nowhere.
     "effort",
     "criticalSystemReminder_EXPERIMENTAL",
+    // `resolveSdkSubagentScopes` and the fork's own context / `read_skill`
+    // (ProjectSessionRuntimeBundle.ts:567-614); only `"all"` and a list of
+    // names (see [`agent_skills_wired`]).
+    "skills",
 ];
+
+/// The `agents.<id>.skills` shapes the native fork composes: `"all"` or an
+/// array of strings. The baseline does not check the shape; other values
+/// (spread as an iterable by `toSdkSubagentDefinitions`) keep the config
+/// unavailable.
+fn agent_skills_wired(agent: &JsObject) -> bool {
+    match agent.get("skills") {
+        None | Some(JsValue::Undefined) => true,
+        Some(JsValue::Array(names)) => names.iter().all(|name| name.as_string().is_some()),
+        Some(value) => string_in(value, &["all"]),
+    }
+}
 
 fn agents_wired(config: &JsObject) -> bool {
     let Some(JsValue::Object(agents)) = config.get("agents") else {
@@ -52,11 +68,12 @@ fn agents_wired(config: &JsObject) -> bool {
     };
     agents.own_entries().iter().all(|(_, agent)| {
         agent.as_object().is_some_and(|agent| {
-            agent
-                .own_entries()
-                .iter()
-                .filter(|(_, value)| !value.is_undefined())
-                .all(|(key, _)| WIRED_AGENT_FIELDS.iter().any(|name| key.equals_str(name)))
+            agent_skills_wired(agent)
+                && agent
+                    .own_entries()
+                    .iter()
+                    .filter(|(_, value)| !value.is_undefined())
+                    .all(|(key, _)| WIRED_AGENT_FIELDS.iter().any(|name| key.equals_str(name)))
         })
     })
 }
@@ -1222,6 +1239,7 @@ pub(super) fn apply_agent_fields(agent: &mut JsObject, config: Option<&JsValue>)
             ("memory", "memory"),
             ("initialPrompt", "initialPrompt"),
             ("mcpServers", "mcpServers"),
+            ("skills", "skills"),
         ] {
             if let Some(value) = field(source) {
                 definition.insert(key.into(), value.clone());
@@ -1377,15 +1395,7 @@ impl SubmitSdkSessionConfig for NativeSdkSessionConfig {
         // and read by nothing (measured: `sdk-config-unknown-keys`).
         // `plugins` is checked where the baseline resolves it
         // ([`resolve_session_plugins`]).
-        // With a session skill list, `resolveSdkSubagentScopes` gives every
-        // agent that list as its own `skills` scope, which the native child
-        // context does not compose.
-        let scoped_agents = matches!(config.get("skills"), Some(JsValue::Array(_)))
-            && config
-                .get("agents")
-                .is_some_and(|agents| !agents.is_undefined());
-        let wired = !scoped_agents && config.as_object().is_none_or(agents_wired);
-        if wired {
+        if config.as_object().is_none_or(agents_wired) {
             Ok(())
         } else {
             Err(err(
@@ -1475,8 +1485,18 @@ impl NativeSdkSessionConfig {
             let mut next = config.clone();
             // `next.skills = resolveSdkSessionSkills(next.skills,
             // extensionView.getAllSkills())` after a plugin refresh.
+            let agent_skill_lists = matches!(config.get("agents"), Some(JsValue::Object(agents))
+            if agents.own_entries().iter().any(|(_, agent)| {
+                matches!(agent.get("skills"), Some(JsValue::Array(_)))
+            }));
+            let available =
+                if matches!(config.get("skills"), Some(JsValue::Array(_))) || agent_skill_lists {
+                    project_skill_names(&self.project, &root).await?
+                } else {
+                    Vec::new()
+                };
+            let mut parent_skills: Option<Vec<String>> = None;
             if let Some(JsValue::Array(requested)) = config.get("skills") {
-                let available = project_skill_names(&self.project, &root).await?;
                 let resolved = resolve_session_skills(requested, &available)?;
                 if let JsValue::Object(fields) = &mut next {
                     fields.insert(
@@ -1484,6 +1504,7 @@ impl NativeSdkSessionConfig {
                         JsValue::Array(resolved.iter().map(|name| name.as_str().into()).collect()),
                     );
                 }
+                parent_skills = Some(resolved);
             }
             // `resolveSdkSubagentScopes`: an agent's model resolves against
             // the catalog and the session's model policy, stored qualified.
@@ -1510,37 +1531,78 @@ impl NativeSdkSessionConfig {
                         }
                         Ok(())
                     };
-                    let Some(model) = agent
+                    if let Some(model) = agent
                         .get("model")
                         .and_then(JsValue::as_string)
                         .filter(|model| !model.is_empty())
-                    else {
-                        resolve_mcp(&mut resolved_agents)?;
-                        continue;
-                    };
-                    let model_config = project_model_config(&self.project, &root)?;
-                    let (provider, name) = resolve_configured_model(
-                        &model_config,
-                        model,
-                        "INVALID_SDK_AGENT_MODEL",
-                        "model",
-                    )
-                    .map_err(|_| {
-                        err(
+                    {
+                        let model_config = project_model_config(&self.project, &root)?;
+                        let (provider, name) = resolve_configured_model(
+                            &model_config,
+                            model,
                             "INVALID_SDK_AGENT_MODEL",
-                            format!(
-                                "Agent {} model is not uniquely resolvable from the Gateway catalog: {}",
-                                text(id),
-                                text(model)
-                            ),
+                            "model",
                         )
-                    })?;
-                    assert_managed_model_allowed(config.get("managedModels"), &provider, &name)?;
-                    if let Some(JsValue::Object(agent)) = resolved_agents.get_key(id) {
+                        .map_err(|_| {
+                            err(
+                                "INVALID_SDK_AGENT_MODEL",
+                                format!(
+                                    "Agent {} model is not uniquely resolvable from the Gateway catalog: {}",
+                                    text(id),
+                                    text(model)
+                                ),
+                            )
+                        })?;
+                        assert_managed_model_allowed(
+                            config.get("managedModels"),
+                            &provider,
+                            &name,
+                        )?;
+                        if let Some(JsValue::Object(agent)) = resolved_agents.get_key(id) {
+                            let mut agent = agent.clone();
+                            agent.insert(
+                                "model".into(),
+                                JsValue::String(
+                                    format!("{}/{}", text(&provider), text(&name)).into(),
+                                ),
+                            );
+                            resolved_agents.insert(id.clone(), JsValue::Object(agent));
+                        }
+                    }
+                    // `agent.skills` (ProjectRuntimeRegistry.ts:2144-2161):
+                    // a list resolves like the session's and must stay inside
+                    // a session list; `"all"` or no list takes the session
+                    // list when there is one.
+                    let scoped = match agent.get("skills") {
+                        Some(JsValue::Array(requested)) => {
+                            let resolved = resolve_session_skills(requested, &available)?;
+                            if let Some(parent) = &parent_skills
+                                && let Some(escaped) =
+                                    resolved.iter().find(|name| !parent.contains(name))
+                            {
+                                return Err(err(
+                                    "SDK_AGENT_SKILL_OUT_OF_SCOPE",
+                                    format!(
+                                        "Agent {} skill is not visible to the parent SDK session: {escaped}",
+                                        text(id)
+                                    ),
+                                ));
+                            }
+                            Some(resolved)
+                        }
+                        None | Some(JsValue::Undefined) => parent_skills.clone(),
+                        Some(value) if string_in(value, &["all"]) => parent_skills.clone(),
+                        Some(_) => None,
+                    };
+                    if let Some(scoped) = scoped
+                        && let Some(JsValue::Object(agent)) = resolved_agents.get_key(id)
+                    {
                         let mut agent = agent.clone();
                         agent.insert(
-                            "model".into(),
-                            JsValue::String(format!("{}/{}", text(&provider), text(&name)).into()),
+                            "skills".into(),
+                            JsValue::Array(
+                                scoped.iter().map(|name| name.as_str().into()).collect(),
+                            ),
                         );
                         resolved_agents.insert(id.clone(), JsValue::Object(agent));
                     }

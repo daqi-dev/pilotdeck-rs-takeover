@@ -157,9 +157,38 @@ pub struct SessionContextState {
 /// the child runs on a custom system prompt
 /// (`includeExtensionsWithCustomSystemPrompt: true`), and a definition with
 /// `memory: "disabled"` composes no memory resolver.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct ScopedContext {
     pub memory_disabled: bool,
+    /// `filterSessionSkills(contributions, definition.skills)`: a definition
+    /// with a skill list sees only those of the session's skills; `None`
+    /// (`"all"`, or no list) keeps the session's.
+    pub skills: Option<Vec<String>>,
+}
+
+/// The session's contribution snapshot with its skills narrowed to a
+/// subagent definition's list (ProjectSessionRuntimeBundle.ts:576-581).
+struct ScopedSkills {
+    inner: Arc<dyn ExtensionResolver>,
+    skills: Vec<String>,
+}
+impl ExtensionResolver for ScopedSkills {
+    fn list_commands(&self) -> Vec<super::prompt::ContributedCommand> {
+        self.inner.list_commands()
+    }
+    fn list_skills(&self) -> Vec<super::prompt::ContributedSkill> {
+        self.inner
+            .list_skills()
+            .into_iter()
+            .filter(|skill| self.skills.contains(&skill.name))
+            .collect()
+    }
+    fn list_mcp_instructions(&self) -> Vec<super::prompt::McpServerInstruction> {
+        self.inner.list_mcp_instructions()
+    }
+    fn list_prompt_contributions(&self) -> Vec<super::prompt::ContributedPrompt> {
+        self.inner.list_prompt_contributions()
+    }
 }
 impl Default for SessionContextState {
     fn default() -> Self {
@@ -181,17 +210,28 @@ impl SessionContextState {
     /// runtime.promptCacheCoordinator`) and this session's contribution
     /// snapshot (`contributions`), nothing else carried over.
     pub fn scoped_child(&self, scoped: ScopedContext) -> Self {
+        let extension = match &scoped.skills {
+            None => self.session_extension(),
+            Some(skills) => self.session_extension().map(|extension| {
+                extension.map(|inner| {
+                    Arc::new(ScopedSkills {
+                        inner,
+                        skills: skills.clone(),
+                    }) as Arc<dyn ExtensionResolver>
+                })
+            }),
+        };
         Self {
             prompt_cache_coordinator: self.prompt_cache_coordinator.clone(),
             time: Mutex::new(HashMap::new()),
             cache_sessions: Mutex::new(HashSet::new()),
-            extension: Mutex::new(self.session_extension()),
+            extension: Mutex::new(extension),
             scoped: Some(scoped),
         }
     }
     /// `Some` for a forked child's own context runtime.
     pub fn scoped_context(&self) -> Option<ScopedContext> {
-        self.scoped
+        self.scoped.clone()
     }
     /// The contribution snapshot taken by the session's first composition,
     /// if any.
@@ -1801,5 +1841,48 @@ mod tests {
         // The same process still serializes ordinary messages after the error.
         let ordinary = message_with_content(JsValue::Array(vec![JsValue::String("ok".into())]));
         assert!(fingerprint(&ordinary).is_ok());
+    }
+
+    struct TwoSkills;
+    impl ExtensionResolver for TwoSkills {
+        fn list_skills(&self) -> Vec<super::super::prompt::ContributedSkill> {
+            ["alpha", "beta"]
+                .into_iter()
+                .map(|name| super::super::prompt::ContributedSkill {
+                    name: name.into(),
+                    description: None,
+                    path: format!("/skills/{name}/SKILL.md"),
+                })
+                .collect()
+        }
+    }
+
+    /// `createContext`'s `filterSessionSkills(contributions,
+    /// definition.skills)`: a list narrows the session's skills, `"all"`
+    /// keeps them.
+    #[test]
+    fn scoped_child_narrows_skills_to_the_definition_list() {
+        let parent = SessionContextState::default();
+        parent.freeze_session_extension(Some(Arc::new(TwoSkills)));
+        let names = |state: &SessionContextState| {
+            state
+                .session_extension()
+                .flatten()
+                .map(|extension| {
+                    extension
+                        .list_skills()
+                        .into_iter()
+                        .map(|skill| skill.name)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+        let narrowed = parent.scoped_child(ScopedContext {
+            memory_disabled: false,
+            skills: Some(vec!["beta".into(), "gamma".into()]),
+        });
+        assert_eq!(names(&narrowed), ["beta"]);
+        let all = parent.scoped_child(ScopedContext::default());
+        assert_eq!(names(&all), ["alpha", "beta"]);
     }
 }

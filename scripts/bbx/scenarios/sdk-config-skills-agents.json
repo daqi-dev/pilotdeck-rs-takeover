@@ -1,0 +1,526 @@
+{
+  "name": "sdk-config-skills-agents",
+  "about": "sdkSessionConfig.skills 与 agents 同时给（ProjectRuntimeRegistry.ts:995-1004、resolveSdkSubagentScopes :2119-2165；ProjectSessionRuntimeBundle.ts:567-616 createContext / configureTools）：会话 skills 为列表时，子代理的 skills 列表须在其内（否则 SDK_AGENT_SKILL_OUT_OF_SCOPE），不给或给 all 时取会话列表；子代理有 skills 时起自己的上下文（系统提示词的 skills 段按子代理的列表过滤）并替换 read_skill。s-a1..3（同一份配置，各一个会话，免得同目录下多个子代理文件的排序随 uuid 变）：会话 alpha+beta，narrow 只给 alpha（读 beta 回 not found）、inherit 不给（读 beta 成功）、every 给 all（读 gamma 回 not found）；s-b1..2：会话不限，gam 只给 gamma（重复名合并，读 alpha 回 not found）、whole 给 all（读 gamma 成功）；s-c 越界、s-d 名字找不到、s-e 模型先于 skills 报错。",
+  "files": {
+    "home/.pilotdeck/skills/alpha-skill/SKILL.md": "---\nname: alpha-skill\ndescription: The alpha skill for the bbx skills-agents scenario.\n---\n\n# alpha\n\nReply with ALPHA when asked.\n",
+    "home/.pilotdeck/skills/beta-skill/SKILL.md": "---\nname: beta-skill\ndescription: The beta skill for the bbx skills-agents scenario.\n---\n\n# beta\n\nReply with BETA when asked.\n",
+    "home/.pilotdeck/skills/gamma-skill/SKILL.md": "---\nname: gamma-skill\ndescription: The gamma skill for the bbx skills-agents scenario.\n---\n\n# gamma\n\nReply with GAMMA when asked.\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Skills agents\"}"
+      }
+    },
+    {
+      "name": "parent-after-5",
+      "when": [
+        "turn-5:",
+        "\"tool_call_id\":\"call_p5\""
+      ],
+      "reply": {
+        "text": "Done 5."
+      }
+    },
+    {
+      "name": "parent-5",
+      "when": [
+        "turn-5:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_p5",
+          "name": "agent",
+          "arguments": {
+            "description": "Delegate whole",
+            "prompt": "CHILD-DIRECTIVE-E: read a skill.",
+            "subagent_type": "whole"
+          }
+        }
+      }
+    },
+    {
+      "name": "parent-after-4",
+      "when": [
+        "turn-4:",
+        "\"tool_call_id\":\"call_p4\""
+      ],
+      "reply": {
+        "text": "Done 4."
+      }
+    },
+    {
+      "name": "parent-4",
+      "when": [
+        "turn-4:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_p4",
+          "name": "agent",
+          "arguments": {
+            "description": "Delegate gam",
+            "prompt": "CHILD-DIRECTIVE-D: read a skill.",
+            "subagent_type": "gam"
+          }
+        }
+      }
+    },
+    {
+      "name": "parent-after-3",
+      "when": [
+        "turn-3:",
+        "\"tool_call_id\":\"call_p3\""
+      ],
+      "reply": {
+        "text": "Done 3."
+      }
+    },
+    {
+      "name": "parent-3",
+      "when": [
+        "turn-3:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_p3",
+          "name": "agent",
+          "arguments": {
+            "description": "Delegate every",
+            "prompt": "CHILD-DIRECTIVE-C: read a skill.",
+            "subagent_type": "every"
+          }
+        }
+      }
+    },
+    {
+      "name": "parent-after-2",
+      "when": [
+        "turn-2:",
+        "\"tool_call_id\":\"call_p2\""
+      ],
+      "reply": {
+        "text": "Done 2."
+      }
+    },
+    {
+      "name": "parent-2",
+      "when": [
+        "turn-2:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_p2",
+          "name": "agent",
+          "arguments": {
+            "description": "Delegate inherit",
+            "prompt": "CHILD-DIRECTIVE-B: read a skill.",
+            "subagent_type": "inherit"
+          }
+        }
+      }
+    },
+    {
+      "name": "parent-after-1",
+      "when": [
+        "turn-1:",
+        "\"tool_call_id\":\"call_p1\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "parent-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_p1",
+          "name": "agent",
+          "arguments": {
+            "description": "Delegate narrow",
+            "prompt": "CHILD-DIRECTIVE-A: read a skill.",
+            "subagent_type": "narrow"
+          }
+        }
+      }
+    },
+    {
+      "name": "child-A-after",
+      "when": [
+        "CHILD-DIRECTIVE-A",
+        "\"tool_call_id\":\"call_c1\""
+      ],
+      "reply": {
+        "text": "Scope: narrow.\nResult: done.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "child-A",
+      "when": [
+        "CHILD-DIRECTIVE-A"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_c1",
+          "name": "read_skill",
+          "arguments": {
+            "skillName": "beta-skill"
+          }
+        }
+      }
+    },
+    {
+      "name": "child-B-after",
+      "when": [
+        "CHILD-DIRECTIVE-B",
+        "\"tool_call_id\":\"call_c2\""
+      ],
+      "reply": {
+        "text": "Scope: inherit.\nResult: done.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "child-B",
+      "when": [
+        "CHILD-DIRECTIVE-B"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_c2",
+          "name": "read_skill",
+          "arguments": {
+            "skillName": "beta-skill"
+          }
+        }
+      }
+    },
+    {
+      "name": "child-C-after",
+      "when": [
+        "CHILD-DIRECTIVE-C",
+        "\"tool_call_id\":\"call_c3\""
+      ],
+      "reply": {
+        "text": "Scope: every.\nResult: done.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "child-C",
+      "when": [
+        "CHILD-DIRECTIVE-C"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_c3",
+          "name": "read_skill",
+          "arguments": {
+            "skillName": "gamma-skill"
+          }
+        }
+      }
+    },
+    {
+      "name": "child-D-after",
+      "when": [
+        "CHILD-DIRECTIVE-D",
+        "\"tool_call_id\":\"call_c4\""
+      ],
+      "reply": {
+        "text": "Scope: gam.\nResult: done.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "child-D",
+      "when": [
+        "CHILD-DIRECTIVE-D"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_c4",
+          "name": "read_skill",
+          "arguments": {
+            "skillName": "alpha-skill"
+          }
+        }
+      }
+    },
+    {
+      "name": "child-E-after",
+      "when": [
+        "CHILD-DIRECTIVE-E",
+        "\"tool_call_id\":\"call_c5\""
+      ],
+      "reply": {
+        "text": "Scope: whole.\nResult: done.\nKey files: none\nFiles changed: none\nIssues: none"
+      }
+    },
+    {
+      "name": "child-E",
+      "when": [
+        "CHILD-DIRECTIVE-E"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_c5",
+          "name": "read_skill",
+          "arguments": {
+            "skillName": "gamma-skill"
+          }
+        }
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "ok"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-a1",
+        "channelKey": "test",
+        "message": "turn-1: delegate",
+        "sdkSessionConfig": {
+          "skills": [
+            "alpha-skill",
+            "beta-skill"
+          ],
+          "agents": {
+            "narrow": {
+              "description": "The narrow agent.",
+              "prompt": "NARROW-SUFFIX: follow the directive.",
+              "skills": [
+                "alpha-skill"
+              ]
+            },
+            "inherit": {
+              "description": "The inherit agent.",
+              "prompt": "INHERIT-SUFFIX: follow the directive."
+            },
+            "every": {
+              "description": "The every agent.",
+              "prompt": "EVERY-SUFFIX: follow the directive.",
+              "skills": "all"
+            }
+          }
+        }
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-a2",
+        "channelKey": "test",
+        "message": "turn-2: delegate",
+        "sdkSessionConfig": {
+          "skills": [
+            "alpha-skill",
+            "beta-skill"
+          ],
+          "agents": {
+            "narrow": {
+              "description": "The narrow agent.",
+              "prompt": "NARROW-SUFFIX: follow the directive.",
+              "skills": [
+                "alpha-skill"
+              ]
+            },
+            "inherit": {
+              "description": "The inherit agent.",
+              "prompt": "INHERIT-SUFFIX: follow the directive."
+            },
+            "every": {
+              "description": "The every agent.",
+              "prompt": "EVERY-SUFFIX: follow the directive.",
+              "skills": "all"
+            }
+          }
+        }
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-a3",
+        "channelKey": "test",
+        "message": "turn-3: delegate",
+        "sdkSessionConfig": {
+          "skills": [
+            "alpha-skill",
+            "beta-skill"
+          ],
+          "agents": {
+            "narrow": {
+              "description": "The narrow agent.",
+              "prompt": "NARROW-SUFFIX: follow the directive.",
+              "skills": [
+                "alpha-skill"
+              ]
+            },
+            "inherit": {
+              "description": "The inherit agent.",
+              "prompt": "INHERIT-SUFFIX: follow the directive."
+            },
+            "every": {
+              "description": "The every agent.",
+              "prompt": "EVERY-SUFFIX: follow the directive.",
+              "skills": "all"
+            }
+          }
+        }
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-b1",
+        "channelKey": "test",
+        "message": "turn-4: delegate",
+        "sdkSessionConfig": {
+          "agents": {
+            "gam": {
+              "description": "The gam agent.",
+              "prompt": "GAM-SUFFIX: follow the directive.",
+              "skills": [
+                "gamma-skill",
+                "gamma-skill"
+              ]
+            },
+            "whole": {
+              "description": "The whole agent.",
+              "prompt": "WHOLE-SUFFIX: follow the directive.",
+              "skills": "all"
+            }
+          }
+        }
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-b2",
+        "channelKey": "test",
+        "message": "turn-5: delegate",
+        "sdkSessionConfig": {
+          "agents": {
+            "gam": {
+              "description": "The gam agent.",
+              "prompt": "GAM-SUFFIX: follow the directive.",
+              "skills": [
+                "gamma-skill",
+                "gamma-skill"
+              ]
+            },
+            "whole": {
+              "description": "The whole agent.",
+              "prompt": "WHOLE-SUFFIX: follow the directive.",
+              "skills": "all"
+            }
+          }
+        }
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-c",
+        "channelKey": "test",
+        "message": "turn-6: rejected",
+        "sdkSessionConfig": {
+          "skills": [
+            "alpha-skill"
+          ],
+          "agents": {
+            "x": {
+              "description": "The x agent.",
+              "prompt": "X-SUFFIX: follow the directive.",
+              "skills": [
+                "beta-skill"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "sleep": 200
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-d",
+        "channelKey": "test",
+        "message": "turn-7: rejected",
+        "sdkSessionConfig": {
+          "agents": {
+            "y": {
+              "description": "The y agent.",
+              "prompt": "Y-SUFFIX: follow the directive.",
+              "skills": [
+                "no-such-skill"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "sleep": 200
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-e",
+        "channelKey": "test",
+        "message": "turn-8: rejected",
+        "sdkSessionConfig": {
+          "skills": [
+            "alpha-skill"
+          ],
+          "agents": {
+            "z": {
+              "description": "The z agent.",
+              "prompt": "Z-SUFFIX: follow the directive.",
+              "model": "no/such-model",
+              "skills": [
+                "beta-skill"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "sleep": 200
+    }
+  ],
+  "volatile": [
+    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|breakdown\\.total|breakdown\\.messages)$"
+  ],
+  "volatileWhy": "子代理结果文本里带位数不定的耗时，父轮上下文的 token 估算随之差几个；基线自比已证明（与 sdk-config-agents 同一组路径）"
+}
