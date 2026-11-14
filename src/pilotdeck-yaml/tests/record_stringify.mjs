@@ -41,9 +41,60 @@ const edits = [
   [['delete', ['agent', 'subagents', 'default']]],
 ];
 
+// Directives and yaml-1.1 shapes a hand-written pilotdeck.yaml may carry
+// (G8), each under a smaller set of edits.
+const base = 'schemaVersion: 1\nagent:\n  model: bbx/deterministic\n';
+const v11 = '%YAML 1.1\n---\n';
+const rareSources = {
+  yaml12: '%YAML 1.2\n---\n' + base,
+  yaml11: v11 + base,
+  yaml11Comment: '# head\n%YAML 1.1\n---\n# before\n' + base + '# tail\n',
+  tags2: '%TAG !a! tag:a.com,2000:\n%TAG !b! tag:b.com,2000:\n---\n' + base + 'x: !a!foo bar\n',
+  tags2Both: '%TAG !a! tag:a.com,2000:\n%TAG !b! tag:b.com,2000:\n---\n' + base + 'x: !a!foo bar\ny: !b!baz [1]\n',
+  tagOverride: '%TAG !! tag:other.org,2000:\n---\n' + base + 'x: !!foo bar\n',
+  localTag: base + 'x: !local bar\n',
+  merge12: 'defaults: &d\n  maxOutputTokens: 100\n' + base + '  <<: *d\n',
+  merge11: v11 + 'defaults: &d\n  maxOutputTokens: 100\n' + base + '  <<: *d\n',
+  merge11Seq: v11 + 'a: &a {x: 1}\nb: &b {y: 2}\n' + base + '  <<: [*a, *b]\n',
+  set11: v11 + base + 's: !!set\n  ? a\n  ? b\n',
+  set11Flow: v11 + base + 's: !!set {a, b}\n',
+  set11NullValues: v11 + base + 's: !!set\n  a: null\n  b: ~\n',
+  omap11: v11 + base + 'o: !!omap\n  - a: 1\n  - b: 2\n',
+  omap11Flow: v11 + base + 'o: !!omap [a: 1, b: 2]\n',
+  pairs11: v11 + base + 'p: !!pairs\n  - a: 1\n  - a: 2\n',
+  binary11: v11 + base + 'b: !!binary aGVsbG8=\n',
+  binary11Long: v11 + base + 'b: !!binary |\n  ' + 'Bwc'.repeat(53) + 'H\n',
+  binary11Quoted: v11 + base + 'b: !!binary "aGVsbG8="\n',
+  timestamp11: v11 + base + 't: 2001-12-14t21:59:43.10-05:00\nd: 2002-12-14\nu: 2002-12-14 01:02:03\n',
+  set12: base + 's: !!set\n  ? a\n',
+  binary12: base + 'b: !!binary aGVsbG8=\n',
+  timestamp12: base + 't: !!timestamp 2001-12-14\n',
+  omap12: base + 'o: !!omap\n  - a: 1\n',
+  bool11: v11 + base + 'k1: yes\nk2: off\nk3: Y\nk4: true\nk5: FALSE\nk6: On\n',
+  int11: v11 + base + 'oct: 010\nbin: 0b101\nhex: 0x1F\nnhex: -0x1F\nnoct: -010\nsex: 190:20:30\nfsex: 20:30.15\nund: 1_000\nfl: 1.50\nexp: 1e3\n',
+  str11: v11 + base + "s1: 'yes'\ns2: \"on\"\ns3: '010'\n",
+};
+const rareEdits = [
+  [],
+  [['set', ['agent', 'maxOutputTokens'], 4096]],
+  [['set', ['agent', 'note'], 'yes'], ['set', ['agent', 'subagents', 'timeoutMs'], 60000]],
+  // A created wrapper is an omap where the schema has that tag; later edits
+  // go through it like a map.
+  [
+    ['set', ['agent', 'subagents', 'timeoutMs'], 60000],
+    ['set', ['agent', 'subagents', 'default'], 'provider/some-model-name'],
+    ['delete', ['agent', 'subagents', 'timeoutMs']],
+    ['set', ['tools', 'webSearch', 'enabled'], false],
+  ],
+];
+
 const cases = [];
-for (const [name, src] of Object.entries(sources)) {
-  for (const ops of edits) {
+const all = [
+  ...Object.entries(sources).map(([name, src]) => [name, src, edits]),
+  ...Object.entries(rareSources).map(([name, src]) => [name, src, rareEdits]),
+];
+for (const [name, src, sourceEdits] of all) {
+  for (const ops of sourceEdits) {
     const doc = parseDocument(src, { prettyErrors: false });
     let error = null;
     try {
