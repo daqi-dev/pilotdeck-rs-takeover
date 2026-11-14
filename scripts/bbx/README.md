@@ -76,7 +76,8 @@ node scripts/bbx/status-selftest.mjs                         # 自测（假产�
 |---|---|
 | `name` / `about` | 名字和它想证明什么 |
 | `config` | `pilotdeck.yaml` 的内容；省略用默认（指向假 provider）；`null` 表示不写配置文件 |
-| `files` | 初始文件，键是相对根目录的路径（`home/.pilotdeck/...`、`proj/...`），值是字符串或 JSON |
+| `files` | 初始文件，键是相对根目录的路径（`home/.pilotdeck/...`、`proj/...`），值是字符串或 JSON。值是只有一个键 `$file` 的对象时按写法生成：`{"$file": {"prefix", "text", "repeat", "suffix", "mode"}}` 写 `prefix + text×repeat + suffix`（各段替换占位符，与 `raw` 的 `send` 同一写法，用来种几十 MiB 的大文件而不把内容写进场景），`mode` 是八进制权限（如 `"755"`，给假可执行文件） |
+| `pathDir` | 相对根目录的目录，排在子进程（被测服务、`cli` / `serve` / `sidecar` 步骤）PATH 的最前面，放场景自带的假可执行文件（用 `files` 的 `$file` 加 `mode` 种进去；常见写法是把收到的 argv 和指定的环境变量写到 `proj/` 下的文件，落盘照常比较）。被测进程本身在此之前已解析（基线的 `node` 也按这个 PATH 找，所以目录里不要放 `node`）；场景 `env` 里显式写的 `PATH` 盖过它 |
 | `symlinks` | 种完 `files` 之后建的符号链接：键是相对根目录的链接路径，值是链接内容（可用 `{ROOT}` 等占位符；链接本身必须在根目录之下，指向哪里不限） |
 | `env` | 额外环境变量 |
 | `provider` | 假 provider 的应答规则，按顺序匹配请求体文本：`when` 全部包含、`unless` 全部不包含；`reply` 可以是 `{text}`、`{tool:{name,arguments}}`、`{status,body}`。规则里的字符串（含工具参数）可用下面的 `{ROOT}` 等占位符。请求按命中的规则名分组记录 |
@@ -87,11 +88,12 @@ node scripts/bbx/status-selftest.mjs                         # 自测（假产�
 | `expectStartFailure` | `true` 表示 `"server"` 起的服务预期启动失败。`serve` / `cli` 步骤里进程自己退出是被比较的输出，不需要声明 |
 | `settleMs` | 最后一步之后、收尾前等待的毫秒数，缺省 300 |
 | `httpProxies` | 假 HTTP 代理，见下面「假 HTTP 代理」 |
+| `httpsPort` | 本机 HTTPS 前端的端口（如 `38419`，随槽位替换）：TLS 解密后原样转给假 provider，请求照常按规则应答和记录。证书是仓库里一次性的测试 CA 与 `127.0.0.1` 叶子（`src/pilotdeck-gateway/tests/fixtures/model-stream/tls.json`，不是凭据）；CA 写到 `{HTTPS_CA}`（根目录下、比较的两棵树之外），场景要在 `env` 里写 `"NODE_EXTRA_CA_CERTS": "{HTTPS_CA}"` 让两侧都信任它；`{HTTPS}` 是 `https://127.0.0.1:<端口>`（见 `abort-tool-web-fetch`） |
 | `gatewayPort` | 只能是 `18789`：把被测 server 起在 18789 上，要求 `BBX_ALLOW_18789=1`，否则 SKIPPED（见上面「占用 18789 的场景」） |
 | `volatile` | 该场景里确认不稳定的差异路径（正则）。会被略过并打印。用之前先用 `--self` 证明它确实不稳定 |
 | `accepted` | 已接受差异 `[{id, why, paths: [正则]}]`，只用于基线自身的 bug（Rust 有意不照做）。命中的差异略过并打印条数；基线 vs Rust 时某条正则一处都没命中报 `STALE`，计 1 处差异 |
 
-`ws` 步骤可以带 `answer`，用来在这一步等待期间应答服务端发来的询问（权限询问、提问）：`"answer": [{"on": {"type": "permission_request"}, "ws": "permission_decide", "params": {"sessionKey": "s", "requestId": "{event.requestId}", "decision": "allow"}, "count": 1}]`。收集该步骤的帧时，每遇到一个属于本步骤、且 `on` 里各字段都与事件相等的事件帧，就用第一条还有余量的规则发一个请求；`params` 里的 `{event.字段}` 换成触发事件的字段值，`count` 是该规则最多应答几次（缺省不限）。发出的请求和它收到的帧记在该步骤的 `answers` 里，照常比较。两侧用的是同一段采集代码。
+`ws` 步骤可以带 `answer`，用来在这一步等待期间应答服务端发来的询问（权限询问、提问）：`"answer": [{"on": {"type": "permission_request"}, "ws": "permission_decide", "params": {"sessionKey": "s", "requestId": "{event.requestId}", "decision": "allow"}, "count": 1}]`。收集该步骤的帧时，每遇到一个属于本步骤、且 `on` 里各字段都与事件相等的事件帧，就用第一条还有余量的规则发一个请求；`params` 里的 `{event.字段}` 换成触发事件的字段值，`count` 是该规则最多应答几次（缺省不限）。规则上写 `delayMs` 时等这么久再发（例如工具开始后过一会儿再中止）。发出的请求和它收到的帧记在该步骤的 `answers` 里，照常比较。两侧用的是同一段采集代码。
 
 `cli` 步骤可以带 `until` 与 `then`：stdout 或 stderr 里出现 `until` 时（进程还在不在都行）依次执行 `then` 里的步骤，然后照常等进程退出或超时；没等到 `until` 进程就结束了时 `then` 不执行，记成空数组。用来在一个不退出的 CLI 进程还连着 server 时做事，例如停掉 server。
 
@@ -121,7 +123,7 @@ stdio 部署用 `{"sidecar": "stdio", "env": {...}, "send": [...], "readMs": 100
 
 引用前面跑出来的值（服务端随机生成的 id 之类）：步骤或 provider 规则上写 `"save": {"名字": "正则"}`，正则在该步骤结果的 JSON 文本上（provider 规则则是在命中它的那次模型请求的原文上）匹配，第一个捕获组存成这个名字；之后的步骤参数和 provider 应答里用 `{saved.名字}` 引用。存下来的值不进产物，两侧各存各的。
 
-字符串里可用 `{ROOT}` `{HOME}` `{PILOT_HOME}` `{PROJECT}` `{MOCK}` `{GATEWAY}` `{TOKEN}`。另有 `{SIDECAR}`：本侧 agent loop sidecar 的启动命令行（shell 写法，基线是 `node …/pilotdeck-agent-loop-sidecar.js`，Rust 是 `pilotdeck-agent-loop-sidecar`），两侧的值不同，只能放进不落盘、不进输出的地方，例如场景 `env` 里 `"BBX_SIDECAR": "{SIDECAR}"`，再让 `modules.agentLoop` 的 `module-stdio-v2` 绑定以 `command: /bin/sh`、`args: [-c, 'eval "exec $BBX_SIDECAR"']` 起它（见 `modules-tools-batch-sidecar-binding`）。
+字符串里可用 `{ROOT}` `{HOME}` `{PILOT_HOME}` `{PROJECT}` `{MOCK}` `{GATEWAY}` `{TOKEN}`，以及 `{PATH}`（采集器自己的 PATH，不含 `pathDir`；两侧相同，但随机器变，只放进不落盘、不进输出的地方，例如场景 `env` 里 `"PATH": "{ROOT}/other:{PATH}"`）。另有 `{SIDECAR}`：本侧 agent loop sidecar 的启动命令行（shell 写法，基线是 `node …/pilotdeck-agent-loop-sidecar.js`，Rust 是 `pilotdeck-agent-loop-sidecar`），两侧的值不同，只能放进不落盘、不进输出的地方，例如场景 `env` 里 `"BBX_SIDECAR": "{SIDECAR}"`，再让 `modules.agentLoop` 的 `module-stdio-v2` 绑定以 `command: /bin/sh`、`args: [-c, 'eval "exec $BBX_SIDECAR"']` 起它（见 `modules-tools-batch-sidecar-binding`）。
 
 ## 注入错误检查
 
@@ -142,5 +144,6 @@ stdio 部署用 `{"sidecar": "stdio", "env": {...}, "send": [...], "readMs": 100
 - **时序与并发**：只比每一步结束后收集到的内容，帧之间的时间间隔、超时的具体时长、并发请求的交错、竞态都不在覆盖内；`expectTimeout` 只说明「两侧这一步都在等」，不说明等多久会怎样。需要单独设计场景或用单元测试。
 - **归一化抹掉的写法**：ISO 时间整体换成 `<iso>`，小数位数（毫秒 / 微秒）、`Z` 与 `+00:00` 的差异看不到；耗时只比有无不比数值和位数；UUID 只比「同一个 id」的关系，不比大小写和版本位。会话文件大小 `fileSize` 只看「写到第几条记录」，字节数本身的差由落盘树里那些记录的比较负责；CLI 输出文本里的 `"fileSize": N` 不在这条规则里。`resultBytes` 与发给 provider 的 `content-length` 在两侧都核对通过时只比类型不比数值：数值算错（与本侧原文 / 请求体对不上）会报出来，「两侧原文本身一样长」由原文的比较负责；找不到本侧原文（或同一个调用 id 有几份大小不同、分不出轮次的原文）时照比数值。运行记录文件锁只在两侧都有时比内容（进程号不比），有没有不比。
 - **原文指纹的粒度**：只比每行骨架的计数，不比行的先后（先后由解析结果比）；字符串里只看转义序列，不看普通字符；文件里的字符串长度和数字的位数不在指纹里（它们的值由解析结果比）。
+- **大文件**：落盘里超过 16 MiB 的文件只比长度（`largeBytes`）、全文 sha256 和末尾 64 KiB 里的完整行（`tail`，能解析成 JSON 的按解析结果比；被测进程追加在大文件末尾的记录在这里比；`.jsonl` 的末尾行全能解析时改放在 `jsonl` 下并标 `tailOnly`，会话记录的归一规则照样适用），不比其余内容的解析结果和原文指纹。命名管道、套接字这类不是普通文件的只记种类（`special`），不读内容。
 - **落盘范围**：只采 `home` 和 `proj` 两棵树；`TMPDIR`（`{ROOT}/tmp`）和其他位置的文件不比。`serverLog`（`"server"` 起的服务进程自己的输出）不比。
 - **未声明的失败只判 INVALID，不判谁对**：一侧超时一侧不超时时，差异照常在 `steps` 里报，但场景整体是 INVALID，要先修场景（或确认是 Rust 的挂起）再看差异。
