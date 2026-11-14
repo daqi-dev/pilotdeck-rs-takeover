@@ -433,7 +433,11 @@ fn closed_fork_prefix(
             "sequence",
             JsValue::Number(sequence(point.target) + 1.0),
         );
-        let probe = with(&probe, "entryId", uuid::Uuid::new_v4().to_string().into());
+        let probe = with(
+            &probe,
+            "entryId",
+            JsValue::String(uuid::Uuid::new_v4().to_string().into()),
+        );
         let probe = with(
             &probe,
             "parentEntryId",
