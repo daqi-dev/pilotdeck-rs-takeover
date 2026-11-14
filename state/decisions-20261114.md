@@ -177,3 +177,7 @@ root在既有合同与逐叶证据适用审基础上完成127本期叶的管理�
 用户要求拉起完整版、接现有网页实际操作六条主路径，并授权项目内决策自主、StaffDeck继续延期。因此本轮允许必要的既有Web集成修复；保留TS React与ui/server桥接，不宣称完整前端或UI服务迁移。主协调决定修复：已确认no-login时前端没有token而不建WS；上传历史错误暴露已释放lease路径；产品gateway停机时被网页空闲长连接无限阻塞。前两项以固定基线只读overlay构建，不修改resources。鉴权开启模式仍要求token，已有上传身份以服务器metadata验证，不新增任意路径读取。
 
 后端停机精确预期登记A7-SERVER-IDLE-WS-SHUTDOWN-001：S2主动用已有1001 close通知，idle正常退出0，超时保留失败并cleanup；不保证信号瞬间原子拒绝buffer请求，不豁免partial/terminal/持久链。固定TS隔离oracle证实peer释放才退出；Astra独审未发现must-fix，但明确4单测不覆盖真实partial archive/pending prompt，必须用正式入口补验。候选冻结后只做受影响Mac/Linux验证，已有无影响结果不重跑；真实API预算本轮2任务、最多12请求、2048输出上限、10分钟，累计原53保持单独计账。尚未验证的项目不标完成。
+
+## Web交互重连全链修复
+
+2026-11-14主协调在用户明确授权现有网页实际测试、项目内决策自主的范围内，接受B3-WEB-INTERACTION-RECONNECT-001所述窄bug修复。原桥接短断连后没有合法reconnect_interaction，Rust正确返回delivered:false；旧server/前端又提前取消面板，造成答案丢失。修在保留的TS bridge/server与前端，不改Rust归属校验，不新建协议，不改resources。按对象保留服务端签发旧binding、使用既有合法迁移、仅实际delivered才确认、页面等待确认与权威inactive按身份清理构成完整因果链；各自19+11控制和Astra独审支持，实际组合验收独立记录。旧首败/timeout收尾保留，不能把mock的DONE字符串当回答成功。

@@ -146,7 +146,7 @@
   {
     "path": "ui/src/components/chat/hooks/useChatRealtimeHandlers.ts",
     "sourceSha256": "54a3a9c89c370ca30a069bdd91e611e52d6d7e66f000e79707f43727fc1cd6d2",
-    "resultSha256": "76ab4a9696992d9ddfb3f225e747a40aaaca3ffe0e987c4e3d377550f072fb1b",
+    "resultSha256": "1b1f48ab9f600e194621b6dba2268eff344cd00b0e952f1973ab07d3ac9bcc75",
     "replacements": [
       {
         "before": "    const clearAccumulators = () => {\n      thinkingBySessionRef.current.clear();\n    };",
@@ -174,7 +174,7 @@
       },
       {
         "before": "          if (prev.some((r: PendingPermissionRequest) => r.requestId === requestId)) return prev;",
-        "after": "          if (prev.some((r: PendingPermissionRequest) => r.sessionId === sid\n            && r.runId === msgRunId && r.requestId === requestId)) return prev;"
+        "after": "          const compatibleIndex = prev.findIndex((r: PendingPermissionRequest) =>\n            r.sessionId === sid && r.requestId === requestId\n            && (!r.runId || !msgRunId || r.runId === msgRunId));\n          if (compatibleIndex >= 0) {\n            const existing = prev[compatibleIndex];\n            if (existing.runId || !msgRunId) return prev;\n            return prev.map((request, index) => index === compatibleIndex\n              ? { ...request, runId: msgRunId } : request);\n          }"
       },
       {
         "before": "          return [...prev, {\n            requestId,\n            toolName:",
@@ -182,8 +182,27 @@
       },
       {
         "before": "          setPendingPermissionRequests((prev) => prev.filter((r: PendingPermissionRequest) => r.requestId !== msg.requestId));",
-        "after": "          setPendingPermissionRequests((prev) => prev.filter((r: PendingPermissionRequest) =>\n            r.sessionId !== sid || r.requestId !== msg.requestId || (msgRunId && r.runId && r.runId !== msgRunId)));"
+        "after": "          setPendingPermissionRequests((prev) => {\n            const next = prev.filter((r: PendingPermissionRequest) =>\n              r.sessionId !== sid || r.requestId !== msg.requestId || (msgRunId && r.runId && r.runId !== msgRunId));\n            if (next.length !== prev.length && next.length === 0 && isForActiveView) {\n              setClaudeStatus(null);\n              setPilotDeckStatus(null);\n            }\n            return next;\n          });"
       }
     ]
+  },
+  {
+    "path": "ui/src/components/chat/hooks/useChatComposerState.ts",
+    "sourceSha256": "64deab709de1e8d9b5dfb3a3e4b20fd64e406a6a83ed7287ff547c6746706fba",
+    "replacements": [
+      {
+        "before": "  pendingPermissionRequests,\n  setPendingPermissionRequests,",
+        "after": "  pendingPermissionRequests,"
+      },
+      {
+        "before": "      setPendingPermissionRequests((previous) => {\n        const next = previous.filter((request) => !validIds.includes(request.requestId));\n        if (next.length === 0) {\n          setClaudeStatus(null);\n          setPilotDeckStatus(null);\n        }\n        return next;\n      });",
+        "after": "      // Keep the panel until the existing permission_cancelled acknowledgement.\n      // A queued/failed send or delivered:false must not look like success."
+      },
+      {
+        "before": "    [pendingPermissionRequests, sendMessage, setClaudeStatus, setPilotDeckStatus, setPendingPermissionRequests],",
+        "after": "    [pendingPermissionRequests, sendMessage],"
+      }
+    ],
+    "resultSha256": "68846ef7ccc7443b7142ec23e06d712f1ad50607b1f092d7b96b12941a6ad8e2"
   }
 ]

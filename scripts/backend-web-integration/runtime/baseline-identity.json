@@ -1,0 +1,13 @@
+{
+  "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "files": {
+    "ui/server/pilotdeck-bridge.js": {
+      "sourceSha256": "3d622cc4684f89ca565f20e7453750937ea4ad796c15d0e8f516fd69d5f5d3e2",
+      "resultSha256": "d48019ab042dec638d951817822ed90bc6f75076d551d4b1f0491cb5f5cfdfd7"
+    },
+    "ui/server/index.js": {
+      "sourceSha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+      "resultSha256": "17d668ad0ffbc0111599a99feea829df01733078048173310e0b93080c530f18"
+    }
+  }
+}

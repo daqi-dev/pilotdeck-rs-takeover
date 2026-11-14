@@ -1,4 +1,4 @@
-// Run only the eleven regression checks for stale interaction recovery.
+// Run only the nineteen regression checks for stale interaction recovery.
 import { readFile, mkdir, realpath } from 'node:fs/promises';
 import { basename, dirname, resolve, relative, isAbsolute, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -60,6 +60,7 @@ const ctx = await startVitest('test', [testFile], {
     '@pilotdeck-baseline': baseline,
     react: locate('react'),
     '@testing-library/react': locate('@testing-library/react'),
+    'react-i18next': locate('react-i18next'),
     vitest: resolve(dirname(locate('vitest/package.json')), 'dist/index.js'),
   } },
   plugins: [{

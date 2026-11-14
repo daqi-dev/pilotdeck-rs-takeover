@@ -126,3 +126,93 @@ it('ignores a wrong status sequence before accepting the correlated inactive rep
   reply(status, false);
   expect(result.current.pending).toEqual([]);
 });
+
+import { useChatComposerState } from '@pilotdeck-baseline/ui/src/components/chat/hooks/useChatComposerState';
+vi.mock('@pilotdeck-baseline/ui/src/utils/api', () => ({
+  authenticatedFetch: vi.fn().mockResolvedValue({ ok: true, json: async () => ({ pinned: [], builtIn: [], custom: [] }) }),
+}));
+vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+
+it('merges a runless replay into the same known session/request without losing its run', () => {
+  const { result } = mount([request(sid, 'old-run', 'permission')]);
+  deliver({ kind: 'permission_request', sessionId: sid, requestId: 'permission', toolName: 'write_file' });
+  expect(result.current.pending).toEqual([request(sid, 'old-run', 'permission')]);
+});
+it('enriches an unknown replay run when the identified request arrives', () => {
+  const { result } = mount([request(sid, undefined, 'permission')]);
+  deliver({ kind: 'permission_request', sessionId: sid, requestId: 'permission', runId: 'old-run', toolName: 'write_file' });
+  expect(result.current.pending).toEqual([request(sid, 'old-run', 'permission')]);
+});
+it('does not merge conflicting known runs or another session using the same request ID', () => {
+  const initial = [request(sid, 'old-run', 'permission'), request('web:other', 'new-run', 'permission')];
+  const { result } = mount(initial, 'new-run');
+  deliver({ kind: 'permission_request', sessionId: sid, requestId: 'permission', runId: 'new-run', toolName: 'write_file' });
+  expect(result.current.pending).toHaveLength(3);
+  expect(result.current.pending.slice(0, 2)).toEqual(initial);
+  expect(result.current.pending[2]).toMatchObject({ sessionId: sid, runId: 'new-run' });
+});
+function mountComposer(isElicitation: boolean) {
+  const statuses = { claude: vi.fn(), pilot: vi.fn() };
+  const store: any = {
+    appendRealtime: noop, closeTimeline: noop, setActiveSession: noop,
+    cancelRunningActivities: noop, finalizeStreaming: noop, finalizeStreamingThinking: noop,
+    refreshFromServer: vi.fn().mockResolvedValue(undefined),
+    getSessionSlot: () => ({ realtimeMessages: [], serverMessages: [] }),
+  };
+  const view = renderHook(() => {
+    const [pending, setPending] = useState([{ ...request(sid, 'old-run', 'decision'), isElicitation }]);
+    const [activeRunId, setActiveRunId] = useState<string | null>('old-run');
+    const composer = useChatComposerState({
+      selectedProject: null, selectedSession: { id: sid } as any, currentSessionId: sid,
+      model: 'mock/main', modelSelection: { mode: 'model', provider: 'mock', model: 'main' },
+      isModelSelectionReady: true, isPermissionModeReady: true,
+      permissionMode: 'default', runMode: 'agent', cycleRunMode: noop, isLoading: true,
+      canAbortSession: true, tokenBudget: null, sendMessage: wire.sendMessage,
+      pendingViewSessionRef: { current: null }, scrollToBottom: noop, addMessage: noop,
+      clearMessages: noop, rewindMessages: noop, setIsLoading: noop, setCanAbortSession: noop,
+      setIsAborting: noop, setClaudeStatus: statuses.claude, setPilotDeckStatus: statuses.pilot, setIsUserScrolledUp: noop,
+      pendingPermissionRequests: pending, setPendingPermissionRequests: setPending,
+    });
+    useChatRealtimeHandlers({
+      provider: 'pilotdeck', selectedProject: null, selectedSession: { id: sid } as any,
+      currentSessionId: sid, setCurrentSessionId: noop, setIsLoading: noop,
+      setSessionRuntimeState: noop, activeRunId, setActiveRunId,
+      setCanAbortSession: noop, setIsAborting: noop, setClaudeStatus: statuses.claude,
+      setPilotDeckStatus: statuses.pilot, setTokenBudget: noop, setPendingPermissionRequests: setPending,
+      pendingViewSessionRef: { current: null }, sessionStore: store,
+    });
+    return { pending, decide: composer.handlePermissionDecision };
+  });
+  statuses.claude.mockClear(); statuses.pilot.mockClear();
+  return { ...view, statuses };
+}
+it.each([
+  [false, false], [false, true], [true, false], [true, true],
+])('waits for ACK after the real composer response (question=%s, send=%s)', (isElicitation, sent) => {
+  wire.sendMessage.mockReturnValue(sent);
+  const { result, statuses } = mountComposer(isElicitation);
+  act(() => result.current.decide('decision', { allow: true, updatedInput: { answers: { question: 'A' } } }));
+  expect(wire.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+    type: isElicitation ? 'elicitation-response' : 'permission-response', requestId: 'decision', sessionId: sid,
+  }));
+  expect(result.current.pending).toHaveLength(1);
+  expect(statuses.claude).not.toHaveBeenCalled();
+  expect(statuses.pilot).not.toHaveBeenCalled();
+  if (sent) {
+    deliver({ kind: 'permission_cancelled', sessionId: sid, requestId: 'decision' });
+    expect(result.current.pending).toEqual([]);
+    expect(statuses.claude).toHaveBeenLastCalledWith(null);
+    expect(statuses.pilot).toHaveBeenLastCalledWith(null);
+  }
+});
+it('ignores another-session and duplicate ACK without clearing the current Waiting state', () => {
+  const { result, statuses } = mountComposer(true);
+  deliver({ kind: 'permission_cancelled', sessionId: 'web:other', requestId: 'decision' });
+  expect(result.current.pending).toHaveLength(1);
+  expect(statuses.claude).not.toHaveBeenCalled();
+  deliver({ kind: 'permission_cancelled', sessionId: sid, requestId: 'decision' });
+  statuses.claude.mockClear(); statuses.pilot.mockClear();
+  deliver({ kind: 'permission_cancelled', sessionId: sid, requestId: 'decision' });
+  expect(statuses.claude).not.toHaveBeenCalled();
+  expect(statuses.pilot).not.toHaveBeenCalled();
+});
