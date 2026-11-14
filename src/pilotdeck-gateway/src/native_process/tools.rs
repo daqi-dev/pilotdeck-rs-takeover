@@ -2091,6 +2091,8 @@ pub(super) struct ExecutionWorld {
     /// `sdkSessionPlugins`: the session's own plugins, which the scoped
     /// `read_skill` reads with the project's.
     session_plugins: Vec<Arc<crate::runtime::plugins::LoadedPlugin>>,
+    /// An external `modules.skills` binding's `read_skill` source.
+    external_skills: Option<builtin::read_skill::ExternalReadSkill>,
     /// `sdkSessionConfig.managedTools`: the `{ allow, deny }` selector policy
     /// (`blockedToolNames`' `managed`).
     managed_tools: Option<JsValue>,
@@ -2148,6 +2150,7 @@ impl ExecutionWorld {
             bypass_override: None,
             skills_filter: None,
             session_plugins: Vec::new(),
+            external_skills: None,
             managed_tools: None,
             sandbox_policy: None,
             extra_tools: Vec::new(),
@@ -2245,6 +2248,15 @@ impl SessionTools {
     ) -> Self {
         self.world.skills_filter = skills;
         self.world.managed_tools = managed_tools;
+        self
+    }
+
+    /// An external `modules.skills` binding's session source.
+    pub(super) fn with_external_skills(
+        mut self,
+        external: Option<builtin::read_skill::ExternalReadSkill>,
+    ) -> Self {
+        self.world.external_skills = external;
         self
     }
 
@@ -2435,7 +2447,8 @@ pub(super) fn native_tools(
         builtins.push(Arc::new(
             builtin::read_skill::ReadSkillTool::new(plugins.clone())
                 .with_selected(world.skills_filter.clone())
-                .with_session_plugins(world.session_plugins.clone()),
+                .with_session_plugins(world.session_plugins.clone())
+                .with_external(world.external_skills.clone()),
         ));
     }
     for tool in builtins {

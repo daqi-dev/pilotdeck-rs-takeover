@@ -46,22 +46,10 @@ const WIRED_AGENT_FIELDS: &[&str] = &[
     "effort",
     "criticalSystemReminder_EXPERIMENTAL",
     // `resolveSdkSubagentScopes` and the fork's own context / `read_skill`
-    // (ProjectSessionRuntimeBundle.ts:567-614); only `"all"` and a list of
-    // names (see [`agent_skills_wired`]).
+    // (ProjectSessionRuntimeBundle.ts:567-614); any shape is stored, and
+    // `toSdkSubagentDefinitions` spreads it (see [`spread_agent_skills`]).
     "skills",
 ];
-
-/// The `agents.<id>.skills` shapes the native fork composes: `"all"` or an
-/// array of strings. The baseline does not check the shape; other values
-/// (spread as an iterable by `toSdkSubagentDefinitions`) keep the config
-/// unavailable.
-fn agent_skills_wired(agent: &JsObject) -> bool {
-    match agent.get("skills") {
-        None | Some(JsValue::Undefined) => true,
-        Some(JsValue::Array(names)) => names.iter().all(|name| name.as_string().is_some()),
-        Some(value) => string_in(value, &["all"]),
-    }
-}
 
 fn agents_wired(config: &JsObject) -> bool {
     let Some(JsValue::Object(agents)) = config.get("agents") else {
@@ -69,12 +57,11 @@ fn agents_wired(config: &JsObject) -> bool {
     };
     agents.own_entries().iter().all(|(_, agent)| {
         agent.as_object().is_some_and(|agent| {
-            agent_skills_wired(agent)
-                && agent
-                    .own_entries()
-                    .iter()
-                    .filter(|(_, value)| !value.is_undefined())
-                    .all(|(key, _)| WIRED_AGENT_FIELDS.iter().any(|name| key.equals_str(name)))
+            agent
+                .own_entries()
+                .iter()
+                .filter(|(_, value)| !value.is_undefined())
+                .all(|(key, _)| WIRED_AGENT_FIELDS.iter().any(|name| key.equals_str(name)))
         })
     })
 }
@@ -1199,9 +1186,12 @@ fn resolve_sdk_model(requested: &JsString, parent: (JsValue, JsValue)) -> (JsVal
 /// `subagentDefinitions: toSdkSubagentDefinitions(sdk.agents)`
 /// (SessionAgentConfigBundle.ts:141,206-239): the SDK's agents replace the
 /// session's subagent table. No organization `maxTurns` cap exists here.
-pub(super) fn apply_agent_fields(agent: &mut JsObject, config: Option<&JsValue>) {
+pub(super) fn apply_agent_fields(
+    agent: &mut JsObject,
+    config: Option<&JsValue>,
+) -> Result<(), String> {
     let Some(JsValue::Object(agents)) = config.and_then(|config| config.get("agents")) else {
-        return;
+        return Ok(());
     };
     let mut definitions = JsObject::new();
     for (id, sdk) in agents.own_entries() {
@@ -1258,11 +1248,13 @@ pub(super) fn apply_agent_fields(agent: &mut JsObject, config: Option<&JsValue>)
             ("memory", "memory"),
             ("initialPrompt", "initialPrompt"),
             ("mcpServers", "mcpServers"),
-            ("skills", "skills"),
         ] {
             if let Some(value) = field(source) {
                 definition.insert(key.into(), value.clone());
             }
+        }
+        if let Some(skills) = field("skills") {
+            definition.insert("skills".into(), spread_agent_skills(skills)?);
         }
         if field("background") == Some(&JsValue::Bool(true)) {
             definition.insert("background".into(), JsValue::Bool(true));
@@ -1270,6 +1262,35 @@ pub(super) fn apply_agent_fields(agent: &mut JsObject, config: Option<&JsValue>)
         definitions.insert(id.clone(), JsValue::Object(definition));
     }
     agent.insert("subagentDefinitions".into(), JsValue::Object(definitions));
+    Ok(())
+}
+
+/// `agent.skills === "all" ? "all" : [...agent.skills]`
+/// (SessionAgentConfigBundle.ts:229): a string spreads into its code points,
+/// an array is copied, anything else is not iterable and fails the session.
+fn spread_agent_skills(skills: &JsValue) -> Result<JsValue, String> {
+    match skills {
+        JsValue::String(all) if all.equals_str("all") => Ok(skills.clone()),
+        JsValue::String(value) => {
+            let units = value.units();
+            let mut points = Vec::new();
+            let mut index = 0;
+            while index < units.len() {
+                let pair = (0xD800..0xDC00).contains(&units[index])
+                    && units
+                        .get(index + 1)
+                        .is_some_and(|next| (0xDC00..0xE000).contains(next));
+                let width = if pair { 2 } else { 1 };
+                points.push(JsValue::String(JsString::from_utf16(
+                    units[index..index + width].to_vec(),
+                )));
+                index += width;
+            }
+            Ok(JsValue::Array(points))
+        }
+        JsValue::Array(names) => Ok(JsValue::Array(names.clone())),
+        _ => Err("agent.skills is not iterable".to_owned()),
+    }
 }
 
 /// The model-routing fields of `SessionAgentConfigBundle.compose`
@@ -1721,6 +1742,27 @@ mod tests {
             code(r#"[{"d":{"type":"stdio","command":"a"}},{"d":{"type":"stdio","command":"b"}}]"#),
             "INVALID_MCP_SERVER"
         );
+    }
+
+    #[test]
+    fn agent_skills_spread_like_the_baseline() {
+        let spread = |json: &str| spread_agent_skills(&parse_json(json).unwrap());
+        let text = |value: JsValue| stringify_json(&value).unwrap().unwrap();
+        assert_eq!(text(spread(r#""all""#).unwrap()), r#""all""#);
+        assert_eq!(text(spread(r#""ab""#).unwrap()), r#"["a","b"]"#);
+        assert_eq!(text(spread(r#""""#).unwrap()), "[]");
+        assert_eq!(
+            text(spread(r#""a\ud83d\ude00""#).unwrap()),
+            "[\"a\",\"\u{1F600}\"]"
+        );
+        assert_eq!(text(spread(r#"["x",1]"#).unwrap()), r#"["x",1]"#);
+        for odd in ["5", "null", "true", "{}"] {
+            assert_eq!(
+                spread(odd).unwrap_err(),
+                "agent.skills is not iterable",
+                "{odd}"
+            );
+        }
     }
 
     #[test]

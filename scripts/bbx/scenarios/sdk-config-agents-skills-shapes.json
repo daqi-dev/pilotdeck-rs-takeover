@@ -1,0 +1,156 @@
+{
+  "name": "sdk-config-agents-skills-shapes",
+  "about": "sdkSessionConfig.agents.<id>.skills 写成列表与 \"all\" 以外的形状（字符串、数字、null、对象、布尔、空串）：validateSdkSessionConfig 不查这个字段的形状；resolveSdkSubagentScopes（ProjectRuntimeRegistry.ts:2144-2161）只处理数组与 \"all\"，其余原样存下；建会话时 toSdkSubagentDefinitions（SessionAgentConfigBundle.ts:229）把它当可迭代对象展开。数字、null、对象、布尔展开时抛 TypeError，这一轮回 gateway_submit_failed「agent.skills is not iterable」；字符串（含空串）按字符展开，照常跑。只比父会话这一轮（不调子代理：子代理结果里的 uuid 与耗时让后续 token 计数在基线自比时就不稳）。",
+  "files": {
+    "home/.pilotdeck/skills/a/SKILL.md": "---\nname: a\ndescription: The a skill.\n---\n\n# a\n\nReply with a.\n",
+    "home/.pilotdeck/skills/b/SKILL.md": "---\nname: b\ndescription: The b skill.\n---\n\n# b\n\nReply with b.\n",
+    "home/.pilotdeck/skills/ab/SKILL.md": "---\nname: ab\ndescription: The ab skill.\n---\n\n# ab\n\nReply with ab.\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Odd skills\"}"
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "ok"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-str",
+        "channelKey": "test",
+        "message": "turn-1: delegate",
+        "sdkSessionConfig": {
+          "agents": {
+            "odd": {
+              "description": "The odd agent.",
+              "prompt": "ODD-SUFFIX: follow the directive.",
+              "skills": "ab"
+            }
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-num",
+        "channelKey": "test",
+        "message": "turn-2: delegate",
+        "sdkSessionConfig": {
+          "agents": {
+            "odd": {
+              "description": "The odd agent.",
+              "prompt": "ODD-SUFFIX: follow the directive.",
+              "skills": 5
+            }
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-null",
+        "channelKey": "test",
+        "message": "turn-3: delegate",
+        "sdkSessionConfig": {
+          "agents": {
+            "odd": {
+              "description": "The odd agent.",
+              "prompt": "ODD-SUFFIX: follow the directive.",
+              "skills": null
+            }
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-obj",
+        "channelKey": "test",
+        "message": "turn-4: delegate",
+        "sdkSessionConfig": {
+          "agents": {
+            "odd": {
+              "description": "The odd agent.",
+              "prompt": "ODD-SUFFIX: follow the directive.",
+              "skills": {
+                "x": 1
+              }
+            }
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-bool",
+        "channelKey": "test",
+        "message": "turn-5: delegate",
+        "sdkSessionConfig": {
+          "agents": {
+            "odd": {
+              "description": "The odd agent.",
+              "prompt": "ODD-SUFFIX: follow the directive.",
+              "skills": true
+            }
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-empty",
+        "channelKey": "test",
+        "message": "turn-6: delegate",
+        "sdkSessionConfig": {
+          "agents": {
+            "odd": {
+              "description": "The odd agent.",
+              "prompt": "ODD-SUFFIX: follow the directive.",
+              "skills": ""
+            }
+          }
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    }
+  ]
+}

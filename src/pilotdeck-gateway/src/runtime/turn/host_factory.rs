@@ -753,7 +753,7 @@ async fn session_context_runtime(
     {
         Some(extension) => extension,
         None => {
-            let extension = session_extension(context, skills, Vec::new())
+            let extension = session_extension(context, skills, Vec::new(), None)
                 .await
                 .map_err(|error| session_error(error.to_string()))?;
             match &session_state {
@@ -951,6 +951,7 @@ pub(crate) async fn session_extension(
     context: &crate::runtime::project::StageContext,
     selected: Option<&[String]>,
     session_plugins: Vec<Arc<crate::runtime::plugins::LoadedPlugin>>,
+    external_skills: Option<Vec<crate::runtime::tools::builtin::read_skill::ExternalSkill>>,
 ) -> Result<
     Option<Arc<dyn context_runtime::ExtensionResolver>>,
     crate::runtime::plugins::PluginRuntimeError,
@@ -982,18 +983,31 @@ pub(crate) async fn session_extension(
                 argument_hint: command.argument_hint,
             })
             .collect(),
-        skills: view
-            .all_skills()
-            .into_iter()
-            .filter(|_| !skills_disabled)
-            // `filterSessionSkills(contributions, sdkSessionConfig.skills)`.
-            .filter(|skill| selected.is_none_or(|names| names.contains(&skill.name)))
-            .map(|skill| context_runtime::ContributedSkill {
-                name: skill.name,
-                description: skill.description,
-                path: skill.path.to_string_lossy().into_owned(),
-            })
-            .collect(),
+        skills: match external_skills {
+            // `replaceSkillContributions(contributions, await port.list(...))`.
+            Some(listed) => listed
+                .into_iter()
+                .map(|skill| context_runtime::ContributedSkill {
+                    name: skill.name,
+                    description: skill.description,
+                    path: skill.path,
+                })
+                .collect::<Vec<_>>(),
+            None => view
+                .all_skills()
+                .into_iter()
+                .filter(|_| !skills_disabled)
+                .map(|skill| context_runtime::ContributedSkill {
+                    name: skill.name,
+                    description: skill.description,
+                    path: skill.path.to_string_lossy().into_owned(),
+                })
+                .collect(),
+        }
+        .into_iter()
+        // `filterSessionSkills(contributions, sdkSessionConfig.skills)`.
+        .filter(|skill| selected.is_none_or(|names| names.contains(&skill.name)))
+        .collect(),
         mcp_instructions: view
             .all_mcp_instructions()
             .into_iter()

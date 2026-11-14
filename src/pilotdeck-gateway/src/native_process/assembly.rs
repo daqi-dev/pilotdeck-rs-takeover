@@ -934,13 +934,50 @@ async fn start_assembly(
                 // contributions)`): the context runtime lists these for the
                 // session's life, so a skill that appears or disappears
                 // after this point is not seen until the session is rebuilt.
+                // An external `modules.skills` binding (ProjectSessionRuntimeBundle
+                // .ts:250-263): the session's skills are the module's `list`,
+                // taken once when the session is created.
+                let external_skills = match snapshot
+                    .get("config")
+                    .and_then(|config| config.get("modules"))
+                    .and_then(|modules| modules.get("skills"))
+                    .and_then(|binding| {
+                        crate::runtime::tools::builtin::read_skill::ExternalSkillSource::from_binding(
+                            binding,
+                            &project_root,
+                        )
+                    }) {
+                    Some(source) => {
+                        let listed = source.list().await.map_err(|error| {
+                            RuntimeError::new(String::from_utf16_lossy(error.message.units()))
+                        })?;
+                        Some((Arc::new(source), listed))
+                    }
+                    None => None,
+                };
+                let session_skill_names = super::sdk_config::session_skills(sdk_config.as_ref());
                 let session_extension = crate::runtime::turn::host_factory::session_extension(
                     &staged,
-                    super::sdk_config::session_skills(sdk_config.as_ref()).as_deref(),
+                    session_skill_names.as_deref(),
                     sdk_plugins.clone(),
+                    external_skills.as_ref().map(|(_, listed)| listed.clone()),
                 )
                 .await
                 .map_err(|error| RuntimeError::new(error.to_string()))?;
+                // `createReadSkillTool({ loader: port.read, lister:
+                // contributions.skills })` over the filtered module list.
+                let external_read_skill = external_skills.map(|(source, listed)| {
+                    let available = listed
+                        .into_iter()
+                        .filter(|skill| {
+                            session_skill_names
+                                .as_ref()
+                                .is_none_or(|names| names.contains(&skill.name))
+                        })
+                        .map(|skill| (skill.name, skill.path))
+                        .collect();
+                    (source, available)
+                });
                 let hook_settings =
                     super::hooks::session_hook_settings(plugin_hooks, sdk_config.as_ref());
                 let include_hook_events = sdk_config
@@ -967,7 +1004,8 @@ async fn start_assembly(
                     sdk_config.as_ref(),
                     sdk_settings.as_ref(),
                 );
-                super::sdk_config::apply_agent_fields(&mut config, sdk_config.as_ref());
+                super::sdk_config::apply_agent_fields(&mut config, sdk_config.as_ref())
+                    .map_err(RuntimeError::new)?;
                 apply_session_overrides(
                     &mut config,
                     stored_permission_mode.as_ref(),
@@ -1243,6 +1281,7 @@ async fn start_assembly(
                                 .cloned(),
                         )
                         .with_sdk_session_plugins(sdk_plugins.clone())
+                        .with_external_skills(external_read_skill.clone())
                         .with_session_extension(session_extension.clone())
                         .with_permission_mode_source(permission_source.clone())
                         .with_continuation_parent(continuation_parent.parent_ref())
@@ -2413,7 +2452,8 @@ pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(),
     // `skills` / `knowledge` slot need no outside service and are served; an
     // external `knowledge` module is reached only by `knowledge_query`, an
     // external `tools` module is composed ahead of the session's tools, an
-    // external `agentLoop` module runs each turn's loop (`binding_deployment`).
+    // external `agentLoop` module runs each turn's loop (`binding_deployment`),
+    // an external `skills` module lists and reads each session's skills.
     // Other protocol bindings (an external module process or endpoint) and
     // the StaffDeck `sop` module are not served yet.
     let external = |binding: &JsValue| {
@@ -2430,6 +2470,7 @@ pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(),
                 slot.equals_str("sop")
                     || (external(binding)
                         && !slot.equals_str("knowledge")
+                        && !slot.equals_str("skills")
                         && !slot.equals_str("tools")
                         && !slot.equals_str("agentLoop"))
             })
