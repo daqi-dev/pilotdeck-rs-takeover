@@ -757,7 +757,7 @@ async fn session_context_runtime(
                         },
                     ),
                     session_state,
-                    memory_disabled: scoped.is_some_and(|scoped| scoped.memory_disabled),
+                    memory_disabled: scoped.as_ref().is_some_and(|scoped| scoped.memory_disabled),
                     include_extensions_with_custom_system_prompt: scoped.is_some(),
                     ..Default::default()
                 },

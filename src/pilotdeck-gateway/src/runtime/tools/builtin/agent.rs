@@ -62,6 +62,9 @@ pub struct SubagentDefinition {
     /// `memory`: `"disabled"` gives the fork its own context runtime without
     /// the project's memory resolver.
     pub memory: Option<String>,
+    /// `skills`: `Some(None)` is `"all"`, `Some(Some(names))` a list of the
+    /// session's skills; either gives the fork its own context runtime.
+    pub skills: Option<Option<Vec<String>>>,
     /// `mcpServers`: the fork's own MCP endpoints, already resolved from
     /// SDK-session references (`resolveSdkSubagentMcpServers`).
     pub mcp_servers: Vec<(String, JsValue)>,
@@ -231,6 +234,11 @@ pub fn definitions_from_config(config: &JsObject) -> Vec<Arc<SubagentDefinition>
                 permission_mode: text_of(definition.get("permissionMode")),
                 initial_prompt: text_of(definition.get("initialPrompt")),
                 memory: text_of(definition.get("memory")),
+                skills: match definition.get("skills") {
+                    Some(JsValue::Array(_)) => Some(Some(names(definition.get("skills")))),
+                    Some(value) if !value.is_undefined() => Some(None),
+                    _ => None,
+                },
                 mcp_servers: match definition.get("mcpServers") {
                     Some(JsValue::Object(servers)) => servers
                         .entries()
