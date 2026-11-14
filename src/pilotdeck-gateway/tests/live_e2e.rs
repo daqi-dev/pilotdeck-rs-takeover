@@ -420,6 +420,7 @@ fn ports(
     SessionPorts {
         skills: None,
         context_state: None,
+        auxiliary_model: None,
         compaction: Default::default(),
         model: RouterModelPortOptions::main_agent(),
         recorder: None,

@@ -1204,7 +1204,13 @@ impl SessionTools {
             }),
             self.goal.clone(),
         );
+        // `capabilities.model.auxiliary.forTurn(...)` (AgentLoop.ts:2740-2790):
+        // the tool context's `model`, routed through the session router once
+        // the turn's handlers are assembled.
+        let auxiliary_model = crate::host::modules::auxiliary_model::AuxiliaryModelSlot::default();
         let tool_ports = ToolContextPorts {
+            model: Some(Arc::new(auxiliary_model.clone())
+                as Arc<dyn crate::host::modules::tool_context::TurnModel>),
             clock: Some(Arc::new(|| JsValue::String(SystemExecutionClock.now_iso()))),
             goal: Some(Arc::new(crate::runtime::goal::GoalSessions(goal))),
             // A child loop has no plan file manager
@@ -1334,6 +1340,7 @@ impl SessionTools {
         SessionPorts {
             skills: self.world.skills_filter.clone(),
             context_state: Some(self.context_state.clone()),
+            auxiliary_model: Some(auxiliary_model),
             compaction,
             model: RouterModelPortOptions {
                 invocation: self.world.invocation.clone(),

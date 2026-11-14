@@ -369,10 +369,13 @@ impl RouterModelInvocation for ModelInvocationProviderRegistry {
             .map(|entry| JsValue::Number(entry.generation as f64))
             .unwrap_or(JsValue::Undefined)
     }
+    /// `protocolForProvider` (`RouterRuntime.ts:1242-1248`): an unknown
+    /// provider reads as `"openai"` — `getProviderProtocol` throws or answers
+    /// `undefined`, and every router call site falls back the same way.
     fn get_provider_protocol(&self, provider: &JsString) -> JsString {
         self.current(provider)
             .map(|entry| entry.provider.get_provider_protocol(provider))
-            .unwrap_or_default()
+            .unwrap_or_else(|_| "openai".into())
     }
     fn stream<'a>(
         &'a self,
