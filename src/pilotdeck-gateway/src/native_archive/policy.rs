@@ -151,7 +151,7 @@ pub(super) fn authorization_input(method: &str, params: &JsValue) -> Result<JsVa
     let mut input = JsObject::new();
     input.insert("operation".into(), operation.into());
     if let Some(params) = params.as_object() {
-        for (key, value) in params.iter() {
+        for (key, value) in params.entries() {
             input.insert(key.clone(), value.clone());
         }
     }
