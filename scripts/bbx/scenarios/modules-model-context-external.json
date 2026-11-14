@@ -1,0 +1,365 @@
+{
+  "name": "modules-model-context-external",
+  "about": "modules.modelProvider 与 modules.context 同时绑到外部 HTTP 模块：每次模型调用先向 context 模块 prepare_for_model，模块回的请求再交给 model 模块 prepare / stream；两个模块各有自己的客户端（各自取 manifest、messageId 各自编号）。带工具的一轮加一轮纯文本。比较发给两个模块的每个请求、帧与落盘。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  modelProvider:\n    enabled: true\n    implementationId: bbx.model\n    contract: pilotdeck.model/v1\n    transport: module-http-v2\n    endpoint: {MOCK}\n    manifestPath: /mp/module-manifest\n    callPath: /mp/call\n    methods:\n      - prepare\n      - stream\n  context:\n    enabled: true\n    implementationId: bbx.context\n    contract: pilotdeck.context/v1\n    transport: module-http-v2\n    endpoint: {MOCK}\n    manifestPath: /cx/module-manifest\n    callPath: /cx/call\n    methods:\n      - prepare_for_model\n",
+  "files": {
+    "home/.pilotdeck/seed.txt": "seed for both\n",
+    "proj/seed.txt": "seed for both\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Both modules\"}"
+      }
+    },
+    {
+      "name": "mp-manifest",
+      "url": "/mp/module-manifest",
+      "reply": {
+        "status": 200,
+        "body": {
+          "protocolVersion": "2.0",
+          "implementationId": "bbx.model",
+          "contract": "pilotdeck.model/v1",
+          "transport": "module-http-v2",
+          "methods": [
+            "prepare",
+            "stream"
+          ]
+        }
+      }
+    },
+    {
+      "name": "cx-manifest",
+      "url": "/cx/module-manifest",
+      "reply": {
+        "status": 200,
+        "body": {
+          "protocolVersion": "2.0",
+          "implementationId": "bbx.context",
+          "contract": "pilotdeck.context/v1",
+          "transport": "module-http-v2",
+          "methods": [
+            "prepare_for_model"
+          ]
+        }
+      }
+    },
+    {
+      "name": "cx-prepare-after",
+      "url": "/cx/call",
+      "when": [
+        "\"operation\":\"prepare_for_model\"",
+        "call_mc1"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "result": {
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "ctx-after"
+                    }
+                  ]
+                }
+              ],
+              "systemPrompt": "System from context module (ctx-after).",
+              "systemPromptParts": [
+                "System from context module (ctx-after)."
+              ],
+              "tools": [],
+              "diagnostics": [],
+              "boundaries": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "cx-prepare-tool",
+      "url": "/cx/call",
+      "when": [
+        "\"operation\":\"prepare_for_model\"",
+        "both-1:"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "result": {
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "ctx-tool"
+                    }
+                  ]
+                }
+              ],
+              "systemPrompt": "System from context module (ctx-tool).",
+              "systemPromptParts": [
+                "System from context module (ctx-tool)."
+              ],
+              "tools": [
+                {
+                  "name": "read_file",
+                  "description": "Read a file.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              ],
+              "diagnostics": [],
+              "boundaries": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-prepare-after",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"prepare\"",
+        "ctx-after"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "prepared": {
+              "provider": "bbx",
+              "model": "deterministic",
+              "request": {
+                "provider": "bbx",
+                "model": "deterministic",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "marker-after"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-prepare-tool",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"prepare\"",
+        "ctx-tool"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "prepared": {
+              "provider": "bbx",
+              "model": "deterministic",
+              "request": {
+                "provider": "bbx",
+                "model": "deterministic",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "marker-tool"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-stream-tool",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"stream\"",
+        "marker-tool"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "events": [
+              {
+                "type": "request_started",
+                "provider": "bbx",
+                "model": "deterministic"
+              },
+              {
+                "type": "message_start",
+                "role": "assistant"
+              },
+              {
+                "type": "tool_call_start",
+                "id": "call_mc1",
+                "name": "read_file"
+              },
+              {
+                "type": "tool_call_end",
+                "toolCall": {
+                  "id": "call_mc1",
+                  "name": "read_file",
+                  "input": {
+                    "path": "seed.txt"
+                  }
+                }
+              },
+              {
+                "type": "message_end",
+                "finishReason": "tool_call"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 10,
+                  "outputTokens": 6
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-stream-after",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"stream\"",
+        "marker-after"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "events": [
+              {
+                "type": "request_started",
+                "provider": "bbx",
+                "model": "deterministic"
+              },
+              {
+                "type": "message_start",
+                "role": "assistant"
+              },
+              {
+                "type": "text_delta",
+                "text": "Both done."
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 10,
+                  "outputTokens": 3
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "provider-direct"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mc",
+        "channelKey": "test",
+        "message": "both-1: read the seed"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-mc"
+      }
+    }
+  ]
+}

@@ -1,0 +1,423 @@
+{
+  "name": "modules-model-external-abort",
+  "about": "modules.modelProvider 外部模块的请求在途时中止本轮（HttpModuleClient.ts:102-134：中止信号掐断 fetch，报 MODULE_ABORTED）：s-as 在 stream 迟迟不回时 abort_turn；s-ap 在 prepare 迟迟不回时 abort_turn。模块声明了 stream_next / close_stream：被掐断的拉取在 finally 里发 close_stream。之后同一会话再来一轮。比较帧、发给模块的请求（含被掐断的那次）与落盘。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  modelProvider:\n    enabled: true\n    implementationId: bbx.model\n    contract: pilotdeck.model/v1\n    transport: module-http-v2\n    endpoint: {MOCK}\n    manifestPath: /mp/module-manifest\n    callPath: /mp/call\n    methods:\n      - prepare\n      - stream\n      - stream_next\n      - close_stream\n",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Model abort run\"}"
+      }
+    },
+    {
+      "name": "mp-manifest",
+      "url": "/mp/module-manifest",
+      "reply": {
+        "status": 200,
+        "body": {
+          "protocolVersion": "2.0",
+          "implementationId": "bbx.model",
+          "contract": "pilotdeck.model/v1",
+          "transport": "module-http-v2",
+          "methods": [
+            "prepare",
+            "stream",
+            "stream_next",
+            "close_stream"
+          ]
+        }
+      }
+    },
+    {
+      "name": "mp-prepare-next",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"prepare\"",
+        "zz-again-"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "prepared": {
+              "provider": "bbx",
+              "model": "deterministic",
+              "request": {
+                "provider": "bbx",
+                "model": "deterministic",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "marker-next"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-prepare-ap",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"prepare\"",
+        "ab-prep:"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "prepared": {
+              "provider": "bbx",
+              "model": "deterministic",
+              "request": {
+                "provider": "bbx",
+                "model": "deterministic",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "marker-ap"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "delayMs": 3000
+      }
+    },
+    {
+      "name": "mp-prepare-as",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"prepare\"",
+        "ab-stream:"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "prepared": {
+              "provider": "bbx",
+              "model": "deterministic",
+              "request": {
+                "provider": "bbx",
+                "model": "deterministic",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "marker-as"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-next-as",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"stream_next\"",
+        "marker-as"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "events": [
+              {
+                "type": "request_started",
+                "provider": "bbx",
+                "model": "deterministic"
+              },
+              {
+                "type": "message_start",
+                "role": "assistant"
+              },
+              {
+                "type": "text_delta",
+                "text": "late"
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 10,
+                  "outputTokens": 3
+                }
+              }
+            ],
+            "done": true
+          }
+        },
+        "delayMs": 3000
+      }
+    },
+    {
+      "name": "mp-next-ap",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"stream_next\"",
+        "marker-ap"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "events": [
+              {
+                "type": "request_started",
+                "provider": "bbx",
+                "model": "deterministic"
+              },
+              {
+                "type": "message_start",
+                "role": "assistant"
+              },
+              {
+                "type": "text_delta",
+                "text": "never"
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 10,
+                  "outputTokens": 3
+                }
+              }
+            ],
+            "done": true
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-next-next",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"stream_next\"",
+        "marker-next"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "events": [
+              {
+                "type": "request_started",
+                "provider": "bbx",
+                "model": "deterministic"
+              },
+              {
+                "type": "message_start",
+                "role": "assistant"
+              },
+              {
+                "type": "text_delta",
+                "text": "Next answer."
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 10,
+                  "outputTokens": 3
+                }
+              }
+            ],
+            "done": true
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-close",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"close_stream\""
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "closed": true
+          }
+        }
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "provider-direct"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-as",
+        "channelKey": "test",
+        "message": "ab-stream: go"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "model_selection_changed"
+          },
+          "ws": "abort_turn",
+          "params": {
+            "sessionKey": "s-as"
+          },
+          "count": 1,
+          "delayMs": 300
+        }
+      ]
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-as",
+        "channelKey": "test",
+        "message": "zz-again-as: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ap",
+        "channelKey": "test",
+        "message": "ab-prep: go"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "model_request_started"
+          },
+          "ws": "abort_turn",
+          "params": {
+            "sessionKey": "s-ap"
+          },
+          "count": 1,
+          "delayMs": 300
+        }
+      ]
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ap",
+        "channelKey": "test",
+        "message": "zz-again-ap: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-as"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-ap"
+      }
+    }
+  ]
+}

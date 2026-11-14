@@ -50,6 +50,13 @@ pub trait CompactionBudgetEvaluator: Send + Sync {
 pub trait ContextRuntime: Send + Sync {
     /// Prepare is required; the remaining methods are independently optional.
     fn supports(&self, operation: Operation) -> bool;
+    /// The runtime takes the loop's own input as it is: an external context
+    /// module that the baseline's in-process loop calls directly
+    /// (`AgentSessionRuntimeBundle.ts:156-163`), with no dispatcher between
+    /// them to stamp the host identity or project the compaction budget.
+    fn takes_loop_input(&self) -> bool {
+        false
+    }
     fn prepare_for_model(&self, input: ContextInput) -> HostFuture<JsValue>;
     fn apply_tool_results(&self, _input: ContextInput) -> HostFuture<JsValue> {
         unsupported(Operation::ApplyToolResults)
@@ -191,6 +198,19 @@ impl Handler {
             abort_signal: identity.and_then(|i| i.abort_signal),
             budget_evaluator: None,
         };
+        let takes_loop_input = self
+            .runtime
+            .as_ref()
+            .is_some_and(|runtime| runtime.takes_loop_input());
+        if takes_loop_input {
+            let mut fields = JsObject::new();
+            for (key, value) in source.into_iter().flat_map(JsObject::entries) {
+                if input.abort_signal.is_none() || !key.equals_str("abortSignal") {
+                    fields.insert(key.clone(), value.clone());
+                }
+            }
+            input.fields = fields;
+        }
         let config = self.config.clone();
         let signal = self.signal.clone();
         let runtime = self.runtime.clone();
@@ -203,7 +223,7 @@ impl Handler {
         let in_process = self.in_process;
         Box::pin(async move {
             let name = operation?;
-            if name.equals_str("try_auto_compact") {
+            if name.equals_str("try_auto_compact") && !takes_loop_input {
                 if missing(input.fields.get("budgetStage"))
                     && let Some(stage) = input
                         .fields

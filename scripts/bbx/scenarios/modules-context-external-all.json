@@ -1,0 +1,372 @@
+{
+  "name": "modules-context-external-all",
+  "about": "modules.context 外部模块声明全部五个操作（hostContextRuntime.ts:67-85）：带工具的一轮里 apply_tool_results 收到工具结果（模块回的 result 作为追加的消息），轮末 capture_turn，模型请求前 try_auto_compact（带 budgetProjection），模型回错时 recover_from_model_error。比较每个操作发给模块的请求体、发给 provider 的请求、帧与落盘。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  context:\n    enabled: true\n    implementationId: bbx.context\n    contract: pilotdeck.context/v1\n    transport: module-http-v2\n    endpoint: {MOCK}\n    manifestPath: /cx/module-manifest\n    callPath: /cx/call\n    methods:\n      - prepare_for_model\n      - apply_tool_results\n      - recover_from_model_error\n      - capture_turn\n      - try_auto_compact\n",
+  "files": {
+    "home/.pilotdeck/seed.txt": "seed for context\n",
+    "proj/seed.txt": "seed for context\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Context all run\"}"
+      }
+    },
+    {
+      "name": "cx-manifest",
+      "url": "/cx/module-manifest",
+      "reply": {
+        "status": 200,
+        "body": {
+          "protocolVersion": "2.0",
+          "implementationId": "bbx.context",
+          "contract": "pilotdeck.context/v1",
+          "transport": "module-http-v2",
+          "methods": [
+            "prepare_for_model",
+            "apply_tool_results",
+            "recover_from_model_error",
+            "capture_turn",
+            "try_auto_compact"
+          ]
+        }
+      }
+    },
+    {
+      "name": "cx-compact",
+      "url": "/cx/call",
+      "when": [
+        "\"operation\":\"try_auto_compact\""
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "result": {
+              "compacted": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "cx-capture",
+      "url": "/cx/call",
+      "when": [
+        "\"operation\":\"capture_turn\""
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "result": null
+          }
+        }
+      }
+    },
+    {
+      "name": "cx-recover",
+      "url": "/cx/call",
+      "when": [
+        "\"operation\":\"recover_from_model_error\""
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "result": {
+              "action": "fail"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "cx-apply",
+      "url": "/cx/call",
+      "when": [
+        "\"operation\":\"apply_tool_results\""
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "result": {
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "tool_result",
+                      "toolCallId": "call_cx1",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "seed via context"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "cx-prepare-after",
+      "url": "/cx/call",
+      "when": [
+        "\"operation\":\"prepare_for_model\"",
+        "call_cx1"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "result": {
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "ctx-after"
+                    }
+                  ]
+                }
+              ],
+              "systemPrompt": "System from context module (ctx-after).",
+              "systemPromptParts": [
+                "System from context module (ctx-after)."
+              ],
+              "tools": [],
+              "diagnostics": [],
+              "boundaries": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "cx-prepare-err",
+      "url": "/cx/call",
+      "when": [
+        "\"operation\":\"prepare_for_model\"",
+        "err-1:"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "result": {
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "ctx-err"
+                    }
+                  ]
+                }
+              ],
+              "systemPrompt": "System from context module (ctx-err).",
+              "systemPromptParts": [
+                "System from context module (ctx-err)."
+              ],
+              "tools": [],
+              "diagnostics": [],
+              "boundaries": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "cx-prepare-tool",
+      "url": "/cx/call",
+      "when": [
+        "\"operation\":\"prepare_for_model\"",
+        "tool-1:"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "result": {
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "ctx-tool"
+                    }
+                  ]
+                }
+              ],
+              "systemPrompt": "System from context module (ctx-tool).",
+              "systemPromptParts": [
+                "System from context module (ctx-tool)."
+              ],
+              "tools": [
+                {
+                  "name": "read_file",
+                  "description": "Read a file.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              ],
+              "diagnostics": [],
+              "boundaries": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "main-after",
+      "when": [
+        "seed via context"
+      ],
+      "reply": {
+        "text": "Done with tool."
+      }
+    },
+    {
+      "name": "main-tool",
+      "when": [
+        "ctx-tool"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_cx1",
+          "name": "read_file",
+          "arguments": {
+            "path": "seed.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "main-err",
+      "when": [
+        "ctx-err"
+      ],
+      "reply": {
+        "status": 400,
+        "body": {
+          "error": {
+            "message": "bad request from provider",
+            "type": "invalid_request_error"
+          }
+        }
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "provider-direct"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ca",
+        "channelKey": "test",
+        "message": "tool-1: read the seed"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ce",
+        "channelKey": "test",
+        "message": "err-1: provider fails"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-ca"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-ce"
+      }
+    }
+  ]
+}

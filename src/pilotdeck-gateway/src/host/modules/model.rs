@@ -42,6 +42,11 @@ pub struct PreparedInvocation {
     /// adapter reuses to execute without routing again. Like TS, it never
     /// serializes over the sidecar wire (`serialize_prepared` omits it).
     pub opaque: Option<JsValue>,
+    /// `hostModelInvokerPort.ts:45-63`: the preparation id an external model
+    /// module port assigned at `prepare`, carried host-locally (the TS
+    /// enumerable symbol) so the later `stream` names the same preparation.
+    /// Never serialized.
+    pub preparation_id: Option<JsString>,
 }
 impl PreparedInvocation {
     pub fn new(request: JsValue, provider: JsValue, model: JsValue) -> Self {
@@ -52,6 +57,7 @@ impl PreparedInvocation {
             max_context_tokens: None,
             max_output_tokens: None,
             opaque: None,
+            preparation_id: None,
         }
     }
 }

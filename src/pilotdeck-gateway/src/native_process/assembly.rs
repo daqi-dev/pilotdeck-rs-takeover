@@ -736,6 +736,18 @@ async fn start_assembly(
                     .and_then(|config| config.get("modules"))
                     .and_then(|modules| modules.get("tools"))
                     .cloned();
+                // `snapshot.config.modules.modelProvider` (SessionAgentConfigBundle.ts:159-163).
+                let model_binding = snapshot
+                    .get("config")
+                    .and_then(|config| config.get("modules"))
+                    .and_then(|modules| modules.get("modelProvider"))
+                    .cloned();
+                // `snapshot.config.modules.context` (SessionAgentConfigBundle.ts:159-163).
+                let context_binding = snapshot
+                    .get("config")
+                    .and_then(|config| config.get("modules"))
+                    .and_then(|modules| modules.get("context"))
+                    .cloned();
                 // `snapshot.config.modules.agentLoop` (SessionAgentConfigBundle.ts:157-158).
                 let agent_loop_binding = snapshot
                     .get("config")
@@ -1257,6 +1269,8 @@ async fn start_assembly(
                         .with_extra_tools(extra_tools, excluded_tools)
                         .with_knowledge(knowledge_binding.as_ref())
                         .with_module_tools(tools_binding.as_ref())
+                        .with_module_model(model_binding.as_ref())
+                        .with_module_context(context_binding.as_ref())
                         .with_external_loop(explicit.is_some())
                         .with_sandbox(profile.sandbox_mode)
                         .with_interaction(profile.interaction, can_prompt_override)
@@ -2446,12 +2460,10 @@ pub(super) fn register_project_at(
 /// This entry's currently supported profile is a text main agent with native
 /// read tools. Refuse configured integrations before admitting a turn instead
 /// of silently dropping their tools/hooks or launching an implicit helper.
-/// What the native host still refuses to start with: configured hooks and
-/// module bindings, neither of which it serves yet (the baseline has no such
-/// refusal). MCP servers, plugins, skills and the `agent.subagents` section
-/// are served — see `session_mcp_tools`, the plugin runtime and
-/// `subagents::compose_subagents_section` — and are no longer refused.
-/// Plugins that contribute hooks stay refused with the config-level hooks.
+/// What the native host still refuses to start with: a StaffDeck `modules.sop`
+/// binding, which is out of scope (the baseline has no such refusal). MCP
+/// servers, plugins, hooks, skills, the `agent.subagents` section and every
+/// core module binding are served.
 pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(), ProxyError> {
     use crate::runtime::project::ConfigSource;
     let snapshot = crate::runtime::project::NativeConfigSource::new(
@@ -2465,36 +2477,25 @@ pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(),
     // reports it as an unknown field and starts without it
     // (loadPilotConfig.ts:343-375). Plugin and SDK session hooks are served
     // (`native_process/hooks.rs`).
-    // `modules`: a built-in binding (`provider: pilotdeck`) and a disabled
-    // `skills` / `knowledge` slot need no outside service and are served; an
-    // external `knowledge` module is reached only by `knowledge_query`, an
-    // external `tools` module is composed ahead of the session's tools, an
-    // external `agentLoop` module runs each turn's loop (`binding_deployment`),
-    // an external `skills` module lists and reads each session's skills.
-    // Other protocol bindings (an external module process or endpoint) and
-    // the StaffDeck `sop` module are not served yet.
-    let external = |binding: &JsValue| {
-        binding
-            .as_object()
-            .is_some_and(|binding| binding.contains_key("implementationId"))
-    };
+    // `modules`: every core slot is served — built-in and disabled bindings
+    // need no outside service; an external `knowledge` module is reached only
+    // by `knowledge_query`, an external `tools` module is composed ahead of the
+    // session's tools, an external `agentLoop` module runs each turn's loop
+    // (`binding_deployment`), an external `skills` module lists and reads each
+    // session's skills, an external `modelProvider` module runs the session's
+    // model calls (`module_model`) and an external `context` module is the
+    // session's context runtime (`module_context`). The registry keeps only
+    // the six core slots and `sop` (parseModulesConfig.ts:24-63), so the one
+    // binding left is the StaffDeck `sop` module, which is out of scope.
     if snapshot
         .get("config")
         .and_then(|v| v.get("modules"))
         .and_then(JsValue::as_object)
-        .is_some_and(|modules| {
-            modules.own_entries().iter().any(|(slot, binding)| {
-                slot.equals_str("sop")
-                    || (external(binding)
-                        && !slot.equals_str("knowledge")
-                        && !slot.equals_str("skills")
-                        && !slot.equals_str("tools")
-                        && !slot.equals_str("agentLoop"))
-            })
-        })
+        .is_some_and(|modules| modules.contains_key("sop"))
     {
         return Err(
-            "Native isolated profile does not yet support configured module bindings.".into(),
+            "The StaffDeck SOP module (modules.sop) is not supported by the Rust build of PilotDeck."
+                .into(),
         );
     }
     Ok(())

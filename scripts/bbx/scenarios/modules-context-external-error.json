@@ -1,0 +1,163 @@
+{
+  "name": "modules-context-external-error",
+  "about": "modules.context 外部模块回错与回异常形状（hostContextRuntime.ts:54-64）：prepare_for_model 回 ok:false（错误消息与码成为本轮错误）；回 ok:true 但 payload 里没有 result（Context module prepare_for_model returned no result.）；应答信封 inReplyTo 对不上（MODULE_PROTOCOL_INCOMPATIBLE）。每个会话一种，比较帧与落盘。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  context:\n    enabled: true\n    implementationId: bbx.context\n    contract: pilotdeck.context/v1\n    transport: module-http-v2\n    endpoint: {MOCK}\n    manifestPath: /cx/module-manifest\n    callPath: /cx/call\n    methods:\n      - prepare_for_model\n",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Context error run\"}"
+      }
+    },
+    {
+      "name": "cx-manifest",
+      "url": "/cx/module-manifest",
+      "reply": {
+        "status": 200,
+        "body": {
+          "protocolVersion": "2.0",
+          "implementationId": "bbx.context",
+          "contract": "pilotdeck.context/v1",
+          "transport": "module-http-v2",
+          "methods": [
+            "prepare_for_model"
+          ]
+        }
+      }
+    },
+    {
+      "name": "cx-prepare-e1",
+      "url": "/cx/call",
+      "when": [
+        "\"operation\":\"prepare_for_model\"",
+        "cerr-1:"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": false,
+          "code": "CONTEXT_DOWN",
+          "error": {
+            "code": "CONTEXT_DOWN",
+            "message": "Context module is down.",
+            "retryability": "unsafe"
+          }
+        }
+      }
+    },
+    {
+      "name": "cx-prepare-e2",
+      "url": "/cx/call",
+      "when": [
+        "\"operation\":\"prepare_for_model\"",
+        "cerr-2:"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "notResult": true
+          }
+        }
+      }
+    },
+    {
+      "name": "cx-prepare-e3",
+      "url": "/cx/call",
+      "when": [
+        "\"operation\":\"prepare_for_model\"",
+        "cerr-3:"
+      ],
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "module-http-99",
+          "ok": true,
+          "payload": {
+            "result": null
+          }
+        }
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "provider-direct"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-x1",
+        "channelKey": "test",
+        "message": "cerr-1: fails"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-x2",
+        "channelKey": "test",
+        "message": "cerr-2: no result"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-x3",
+        "channelKey": "test",
+        "message": "cerr-3: bad envelope"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-x1"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-x2"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-x3"
+      }
+    }
+  ]
+}

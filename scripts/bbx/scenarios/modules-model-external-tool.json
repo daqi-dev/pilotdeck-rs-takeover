@@ -1,0 +1,261 @@
+{
+  "name": "modules-model-external-tool",
+  "about": "modules.modelProvider 外部模块下带工具的一轮：模块的 stream 回 tool_call_start / tool_call_delta / tool_call_end 与 finishReason tool_call，宿主照常执行工具（read_file），工具结果进下一次 prepare 的请求，第二次 stream 回文本收尾。比较两次 prepare 的请求体、工具帧与落盘。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  modelProvider:\n    enabled: true\n    implementationId: bbx.model\n    contract: pilotdeck.model/v1\n    transport: module-http-v2\n    endpoint: {MOCK}\n    manifestPath: /mp/module-manifest\n    callPath: /mp/call\n    methods:\n      - prepare\n      - stream\n",
+  "files": {
+    "home/.pilotdeck/seed.txt": "seed for module\n",
+    "proj/seed.txt": "seed for module\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Model tool run\"}"
+      }
+    },
+    {
+      "name": "mp-manifest",
+      "url": "/mp/module-manifest",
+      "reply": {
+        "status": 200,
+        "body": {
+          "protocolVersion": "2.0",
+          "implementationId": "bbx.model",
+          "contract": "pilotdeck.model/v1",
+          "transport": "module-http-v2",
+          "methods": [
+            "prepare",
+            "stream"
+          ]
+        }
+      }
+    },
+    {
+      "name": "mp-prepare-after",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"prepare\"",
+        "call_mt1"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "prepared": {
+              "provider": "bbx",
+              "model": "deterministic",
+              "request": {
+                "provider": "bbx",
+                "model": "deterministic",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "marker-after"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-prepare-first",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"prepare\"",
+        "tool-1:"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "prepared": {
+              "provider": "bbx",
+              "model": "deterministic",
+              "request": {
+                "provider": "bbx",
+                "model": "deterministic",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "marker-first"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-stream-first",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"stream\"",
+        "marker-first"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "events": [
+              {
+                "type": "request_started",
+                "provider": "bbx",
+                "model": "deterministic"
+              },
+              {
+                "type": "message_start",
+                "role": "assistant"
+              },
+              {
+                "type": "text_delta",
+                "text": "Reading."
+              },
+              {
+                "type": "tool_call_start",
+                "id": "call_mt1",
+                "name": "read_file"
+              },
+              {
+                "type": "tool_call_delta",
+                "id": "call_mt1",
+                "delta": "{\"path\":\"seed.txt\"}"
+              },
+              {
+                "type": "tool_call_end",
+                "toolCall": {
+                  "id": "call_mt1",
+                  "name": "read_file",
+                  "input": {
+                    "path": "seed.txt"
+                  }
+                }
+              },
+              {
+                "type": "message_end",
+                "finishReason": "tool_call"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 10,
+                  "outputTokens": 6
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-stream-after",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"stream\"",
+        "marker-after"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "events": [
+              {
+                "type": "request_started",
+                "provider": "bbx",
+                "model": "deterministic"
+              },
+              {
+                "type": "message_start",
+                "role": "assistant"
+              },
+              {
+                "type": "text_delta",
+                "text": "Seed read."
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 10,
+                  "outputTokens": 3
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "provider-direct"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-mt",
+        "channelKey": "test",
+        "message": "tool-1: read the seed"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-mt"
+      }
+    }
+  ]
+}

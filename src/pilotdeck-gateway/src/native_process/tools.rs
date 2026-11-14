@@ -1382,8 +1382,30 @@ impl SessionTools {
                 },
             },
             recorder: None,
+            model_execution: self
+                .world
+                .module_model
+                .as_ref()
+                .map(|port| port.for_turn(Some(signal.clone()), !self.world.external_loop)),
             tool_results_dir: session_tool_results_dir(&self.project, &identity.session_id),
-            context_runtime: None,
+            context_runtime: self
+                .world
+                .module_context
+                .as_ref()
+                .and_then(|(binding, cell)| {
+                    cell.get_or_init(|| {
+                        super::module_context::ExternalContextPort::from_binding(
+                            binding,
+                            &identity.session_id,
+                        )
+                        .map(Arc::new)
+                    })
+                    .clone()
+                    .map(|port| {
+                        Arc::new(super::module_context::ExternalContextRuntime(port))
+                            as Arc<dyn crate::host::modules::context::ContextRuntime>
+                    })
+                }),
             context_identity: ContextRequestIdentity::new(binding.clone(), tool_ports.clone()),
             context_config: config,
             tool_execution: execution,
@@ -2090,6 +2112,13 @@ pub(super) struct ExecutionWorld {
     /// The external `modules.tools` capability port
     /// (`createRuntimeModulePorts(...).tools`, one per session).
     module_tools: Option<Arc<super::module_tools::ExternalToolPort>>,
+    /// The external `modules.modelProvider` port
+    /// (`createRuntimeModulePorts(...).model`, one per session).
+    module_model: Option<Arc<super::module_model::ExternalModelPort>>,
+    /// The external `modules.context` binding and the session's port over it
+    /// (`createRuntimeModulePorts(...).context`), made for the session id on
+    /// its first turn.
+    module_context: Option<(JsValue, Arc<ContextPortCell>)>,
     /// The session override's `bypassAvailable`, when it gives one.
     bypass_override: Option<bool>,
     /// `sdkSessionConfig.skills`: the session's skills restricted to these
@@ -2128,6 +2157,9 @@ pub(super) struct ExecutionWorld {
     /// the in-process loop (`pilotdeck_transport::IN_PROCESS_LOOP_ENV`).
     external_loop: bool,
 }
+/// A session's external context port, made on its first turn.
+type ContextPortCell = std::sync::OnceLock<Option<Arc<super::module_context::ExternalContextPort>>>;
+
 impl ExecutionWorld {
     /// The world of a child (subagent) session: shared services, but its own
     /// external `modules.tools` port, since the child composes its module
@@ -2139,6 +2171,15 @@ impl ExecutionWorld {
             .as_ref()
             .and_then(|port| port.fresh())
             .map(Arc::new);
+        world.module_model = self
+            .module_model
+            .as_ref()
+            .and_then(|port| port.fresh())
+            .map(Arc::new);
+        world.module_context = self
+            .module_context
+            .as_ref()
+            .map(|(binding, _)| (binding.clone(), Arc::default()));
         world
     }
 
@@ -2154,6 +2195,8 @@ impl ExecutionWorld {
             skills: None,
             knowledge: None,
             module_tools: None,
+            module_model: None,
+            module_context: None,
             bypass_override: None,
             skills_filter: None,
             session_plugins: Vec::new(),
@@ -2226,6 +2269,30 @@ impl SessionTools {
     /// The session's loop runs as an external module (see the field).
     pub(super) fn with_external_loop(mut self, external: bool) -> Self {
         self.world.external_loop = external;
+        self
+    }
+
+    /// An external `modules.modelProvider` binding: the session's model
+    /// execution goes to the module, one module client per session.
+    pub(super) fn with_module_model(mut self, binding: Option<&JsValue>) -> Self {
+        self.world.module_model = binding
+            .and_then(super::module_model::ExternalModelPort::from_binding)
+            .map(Arc::new);
+        self
+    }
+
+    /// An external `modules.context` binding: the session's context runtime
+    /// is the module, one module client per session.
+    pub(super) fn with_module_context(mut self, binding: Option<&JsValue>) -> Self {
+        self.world.module_context = binding
+            .filter(|binding| {
+                super::module_context::ExternalContextPort::from_binding(
+                    binding,
+                    &JsString::default(),
+                )
+                .is_some()
+            })
+            .map(|binding| (binding.clone(), Arc::default()));
         self
     }
 

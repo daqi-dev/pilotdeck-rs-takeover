@@ -1,0 +1,61 @@
+{
+  "name": "modules-context-external-unreachable",
+  "about": "modules.context 绑到没有人监听的本机端点（127.0.0.1:9）：server 照常启动；轮次里取 manifest 失败（MODULE_TRANSPORT_UNAVAILABLE），本轮失败，下一轮重新取。比较帧与落盘。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  context:\n    enabled: true\n    implementationId: bbx.context\n    contract: pilotdeck.context/v1\n    transport: module-http-v2\n    endpoint: http://127.0.0.1:9\n    manifestPath: /cx/module-manifest\n    callPath: /cx/call\n    methods:\n      - prepare_for_model\n",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Context unreachable\"}"
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "provider-direct"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "rename_session",
+      "params": {
+        "sessionKey": "s-cu",
+        "value": "Named first"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-cu",
+        "channelKey": "test",
+        "message": "cunreach-1: hello"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-cu",
+        "channelKey": "test",
+        "message": "cunreach-2: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-cu"
+      }
+    }
+  ]
+}
