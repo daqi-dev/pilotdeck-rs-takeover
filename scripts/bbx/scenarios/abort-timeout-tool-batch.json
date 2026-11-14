@@ -1,6 +1,6 @@
 {
   "name": "abort-timeout-tool-batch",
-  "about": "超时列（submit_turn.timeoutMs，从 abort-tool-batch 拆出）：中止落在一批工具执行中（read_file 已完成、bash 在睡、write_file 还没开始）：abort_turn、close_session、timeoutMs。比较每个调用的 PreToolUse / PostToolUse / PostToolUseFailure、late-*.txt 与 written-*.txt、帧、会话记录、下一轮请求里留下的工具结果。\n运行记录里超时事件的先后（volatile 的依据）：基线 20 次：bash 被杀后 PostToolUseFailure 的开始在 error 之后 11 次、在 turn_timeout 之前 9 次。\n运行记录末尾那条 hook 完成的有无（volatile 的依据）：基线 10 次（cb8，2026-11-14，opt-level 1）：bash 被杀后 PostToolUseFailure 的完成在 error 之后追加 2 次、没进运行记录 8 次；相邻自比 9 对里 2 对不同。",
+  "about": "超时列（submit_turn.timeoutMs，从 abort-tool-batch 拆出）：中止落在一批工具执行中（read_file 已完成、bash 在睡、write_file 还没开始）：abort_turn、close_session、timeoutMs。比较每个调用的 PreToolUse / PostToolUse / PostToolUseFailure、late-*.txt 与 written-*.txt、帧、会话记录、下一轮请求里留下的工具结果。\n运行记录里超时事件的先后（volatile 的依据）：基线 20 次：bash 被杀后 PostToolUseFailure 的开始在 error 之后 11 次、在 turn_timeout 之前 9 次。\n运行记录末尾那条 hook 完成的有无（volatile 的依据）：基线 20 次（cb8，2026-11-14，opt-level 1，磁盘写满清理之后重量）：bash 被杀后 PostToolUseFailure 的完成在 error 之后追加 4 次、没进运行记录 16 次。",
   "files": {
     "proj/seed.txt": "seed\n",
     "home/.pilotdeck/plugins/bbx-abort/plugin.json": {

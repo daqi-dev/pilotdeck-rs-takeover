@@ -495,7 +495,7 @@ const timeoutOrderVolatile = ({ session, from, to }) => {
 // 那一下标处整条有无、事件条数、该轮记录的这两个计数和排版骨架；两侧都有这一条时内容照比，前面各条的先后照比。
 const TIMEOUT_TRAILING = {
   'abort-timeout-tool-mcp': { session: 's-tm-timeout', index: 9, record: 0, note: '基线 21 次（cb8，调试构建对拍用的同一槽位）：MCP 工具被中止后 PostToolUseFailure 的完成没进运行记录 17 次、在 error 之后追加 4 次；连跑 20 对自比 4 对不同。' },
-  'abort-timeout-tool-batch': { session: 's-tp-timeout', index: 13, record: 0, note: '基线 10 次（cb8，2026-11-14，opt-level 1）：bash 被杀后 PostToolUseFailure 的完成在 error 之后追加 2 次、没进运行记录 8 次；相邻自比 9 对里 2 对不同。' },
+  'abort-timeout-tool-batch': { session: 's-tp-timeout', index: 13, record: 0, note: '基线 20 次（cb8，2026-11-14，opt-level 1，磁盘写满清理之后重量）：bash 被杀后 PostToolUseFailure 的完成在 error 之后追加 4 次、没进运行记录 16 次。' },
   'abort-timeout-tool-bash': { session: 's-tb-timeout', index: 9, record: 0, note: '基线 10 次（cb8，2026-11-14，opt-level 1 的同一槽位）：bash 被杀后 PostToolUseFailure 的完成在 error 之后追加 2 次、没进运行记录 8 次；相邻自比 9 对里 2 对不同。Rust 10 次都没有这一条。' },
 };
 const timeoutTrailingVolatile = ({ session, index, record }) => [
