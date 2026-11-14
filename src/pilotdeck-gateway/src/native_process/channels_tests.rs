@@ -630,13 +630,9 @@ async fn runtime_status_sink_serves_lifecycle_and_login_reports() {
     );
 }
 
-// #1763 / #1386 / #1302 B: the production native startup must refuse a config
-// that enables a channel this process does not implement. These drive
-// `assembly::start` (the `#[cfg(test)]` facade over the same `start_impl` that
-// `native_process::run` reaches through `start_with_webhook`), so deleting the
-// call site, downgrading it to a warning, or turning it into a silent skip
-// fails here; the seam-level tests in `channel::tests` alone would stay green.
-const UNMIGRATED_REJECTION_PHRASE: &str = crate::channel::loader::UNMIGRATED_REASON;
+// These drive `assembly::start` (the `#[cfg(test)]` facade over the same
+// `start_impl` that `native_process::run` reaches through
+// `start_with_webhook`) over a config with the given `adapters:` section.
 
 /// The base config `management_tests::setup` writes, plus the given
 /// `adapters:` body (`""` leaves the section out entirely). Starts the real
@@ -676,10 +672,6 @@ async fn start_with_adapters(adapters_yaml: &str) -> Result<(), crate::ProxyErro
     }
 }
 
-fn startup_error(result: Result<(), crate::ProxyError>, assertion: &'static str) -> String {
-    crate::test_negative_receipt::expect_err(result, assertion).to_string()
-}
-
 /// An `adapters:` entry the baseline would connect with: the credential
 /// channels and the bundle keys `qq` / `wecom` with credentials (without them
 /// the baseline logs one line and keeps running, see
@@ -701,45 +693,68 @@ const CONNECTING_ADAPTERS: [(&str, &str); 6] = [
     ("wecom", "{enabled: true, token: t, extra: {secret: s}}"),
 ];
 
-#[tokio::test]
-async fn startup_refuses_every_unmigrated_channel() {
-    for (key, cfg) in CONNECTING_ADAPTERS {
-        let error = startup_error(
-            start_with_adapters(&format!("  {key}: {cfg}\n")).await,
-            "#1763 enabled unmigrated channel must refuse native startup",
-        );
-        crate::negative_assert!(
-            error.contains(&format!("channel \"{key}\"")),
-            "#1763 startup error names the enabled channel key"
-        );
-        crate::negative_assert!(
-            error.contains(UNMIGRATED_REJECTION_PHRASE),
-            "#1763 startup error carries the unmigrated phrase"
-        );
+// 2026-11-13 (`state/takeover.md` 人已定 12): a configuration the baseline
+// would connect with no longer refuses native startup (it used to, #1763).
+// Each such channel starts as a stand-in: one Rust line on the console, a
+// `connected` lifecycle entry, a no-op handle — and the rest of the server
+// starts. Driven through a re-exec'd child (see [`run_startup_probe_child`])
+// so the console lines the real `console_channel_log` writes are observable.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn startup_starts_every_connecting_channel_with_one_line() {
+    if child_probe_token("connecting-stand-ins").is_some() {
+        startup_connecting_channels_child().await;
+        return;
     }
+    let lines: Vec<String> = CONNECTING_ADAPTERS
+        .iter()
+        .map(|(key, _)| {
+            format!("{key}: not available in the Rust gateway; this channel will not connect\n")
+        })
+        .collect();
+    run_startup_probe_child(
+        "native_process::channels_tests::startup_starts_every_connecting_channel_with_one_line",
+        "connecting-stand-ins",
+        &lines,
+    )
+    .await;
 }
 
-// #1763 review P1: `main` is `async fn main() -> Result<(), ProxyError>`, and
-// std's `Termination for Result` prints `Error: {e:?}` — the Debug form, not
-// the Display form the seam returns. The ledger entries must describe what an
-// operator actually sees, so the exact stderr line is pinned here (measured
-// from a minimal `Termination` probe in the #1763 PR). This test does not
-// itself write to process stderr: it replays the one line std prints for the
-// `main` signature above (`main.rs` returns `Result<(), ProxyError>`, which
-// `native_process::run` propagates unchanged). Changing that signature or
-// wrapping the error before returning it would invalidate the pinned text.
-#[tokio::test]
-async fn startup_rejection_reaches_stderr_in_the_debug_form() {
-    let error = crate::test_negative_receipt::expect_err(
-        start_with_adapters("  qq: {enabled: true, appId: a, clientSecret: b}\n").await,
-        "#1763 enabled unmigrated channel must refuse native startup",
+/// The child half of [`startup_starts_every_connecting_channel_with_one_line`]:
+/// the real `assembly::start` over all six connecting configurations, every
+/// stand-in's lifecycle entry reaching `connected`, then a clean stop.
+async fn startup_connecting_channels_child() {
+    let mut adapters = String::new();
+    for (key, cfg) in CONNECTING_ADAPTERS {
+        adapters.push_str(&format!("  {key}: {cfg}\n"));
+    }
+    let alive = start_with_adapters_alive(&adapters).await;
+    let polled = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let snapshot = JsValue::Object(read_snapshot(&alive.home));
+            let channels = snapshot.get("channels");
+            let connected = CONNECTING_ADAPTERS
+                .iter()
+                .filter(|(key, _)| {
+                    channels
+                        .and_then(|channels| channels.get(key))
+                        .is_some_and(|entry| {
+                            field_text(entry, "state").as_deref() == Some("connected")
+                                && field_text(entry, "message") == Some(format!("{key}: started"))
+                        })
+                })
+                .count();
+            if connected == CONNECTING_ADAPTERS.len() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await;
+    crate::negative_assert!(
+        polled.is_ok(),
+        "every connecting channel reports the connected lifecycle entry"
     );
-    let printed = format!("Error: {error:?}");
-    crate::negative_assert_eq!(
-        printed,
-        "Error: Error(\"[adapters] channel \\\"qq\\\" 未迁移到 Rust，需继续使用 TS gateway\")",
-        "#1763 the process stderr line is the Debug form of ChannelError"
-    );
+    alive.stop().await;
 }
 
 // #1694 §7 / #1329: `feishu` used to be a bundle key outside the unmigrated

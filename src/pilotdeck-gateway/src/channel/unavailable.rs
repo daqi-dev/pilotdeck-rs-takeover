@@ -5,9 +5,10 @@
 //! `logger.error` and returns a no-op handle while the gateway keeps
 //! running. An option of the wrong type that makes the constructor or the
 //! first lines of `start` throw is logged the baseline's way too. A
-//! configuration the baseline would actually connect with is refused before
-//! startup (`loader::reject_unmigrated_channels`). The same stand-in serves the
-//! `ChannelAdapterBundle` keys `qq` / `wecom` without usable credentials
+//! configuration the baseline would actually connect with has no Rust
+//! implementation (`state/takeover.md` 人已定 12): it starts as the same
+//! stand-in, logging `loader::rust_unavailable_line` instead. The same
+//! stand-in serves the `ChannelAdapterBundle` keys `qq` / `wecom`
 //! (`native_process::channels`).
 
 use std::sync::{
@@ -146,12 +147,17 @@ pub fn register_with_env(mounts: &mut ChannelLoaderMounts, env: Arc<EnvLookupFn>
                     Some(UnavailableStart::ConstructorTypeError(message)) => {
                         Err(ChannelError::Plain(format!("TypeError: {message}")))
                     }
-                    // Startup refuses these configurations before any channel
-                    // is constructed; reaching here means that gate was
-                    // bypassed.
-                    _ => Err(ChannelError::error(format!(
-                        "channel {key} {}",
-                        super::loader::UNMIGRATED_REASON
+                    // The baseline would connect: Rust has no implementation.
+                    Some(UnavailableStart::Unsupported) => {
+                        Ok(Arc::new(UnavailableChannel::logging(
+                            key,
+                            "error",
+                            super::loader::rust_unavailable_line(key),
+                        )) as Arc<dyn ChannelAdapter>)
+                    }
+                    // Every key in `UNAVAILABLE_LOADER_KEYS` is classified.
+                    None => Err(ChannelError::error(format!(
+                        "channel module not registered: {key}"
                     ))),
                 }
             }),

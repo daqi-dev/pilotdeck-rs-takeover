@@ -36,15 +36,12 @@ pub const CHANNEL_LOADER_KEYS: [&str; 15] = [
 /// The 12 channel config keys without a Rust implementation (#1302 B,
 /// #1386). The set is ten `CHANNEL_LOADER_KEYS` members plus `qq` and
 /// `wecom`, which TS builds through `ChannelAdapterBundle` instead of the
-/// loader table. Any of them aborts native startup only when the baseline
-/// would get past its first start check ([`unavailable_start`],
-/// [`bundle_unavailable_start`]). The order is
-/// deterministic — reverse `CHANNEL_LOADER_KEYS` order, then `qq`, then
-/// `wecom`; the first enabled key in this order is the one reported. Reverse
-/// order on purpose: a table that repeats `CHANNEL_LOADER_KEYS`'s own
-/// adjacent key pairs (e.g. `"telegram",\n    "discord",`) would make the
-/// byte anchors other fixtures pin on that table ambiguous
-/// (`channel-core`'s `config-order` mutation expects exactly one match).
+/// loader table. None of them refuses startup (2026-11-13,
+/// `state/takeover.md` 人已定 12): an enabled one starts as the baseline's
+/// one-line stand-in ([`unavailable_start`], [`bundle_unavailable_start`]),
+/// and a configuration the baseline would actually connect with starts as a
+/// stand-in that logs [`rust_unavailable_line`]. The order is reverse
+/// `CHANNEL_LOADER_KEYS` order, then `qq`, then `wecom`.
 pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[
     "homeassistant",
     "email",
@@ -63,26 +60,20 @@ pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[
 /// The two keys whose TS gate is strict. `qq` and `wecom` are built by
 /// `ChannelAdapterBundle.createQQ` / `createWeCom`, which both start with
 /// `if (settings?.enabled !== true) return undefined` — a config of
-/// `{"enabled": 1}` or `{"enabled": "true"}` builds nothing and the TS
-/// gateway starts normally. The other nine keys are consumed by
-/// `loadEnabledChannels`'s `if (!cfg?.enabled) continue`, i.e. JS truthiness.
-/// Measured on the frozen baseline `cc7c4e65` over `true` / `1` / `"true"` /
-/// `"1"` / `[]` / `{}` / falsy / absent: `specs/gateway-parity/diffs/
-/// A8.3-CHANNEL-QQ-001.md` records the probe for the two keys above
-/// (`createStartupAdapters`) and its sibling run for the then-eleven loader
-/// keys (`loadEnabledChannels`; slack left the set in #1344 and bluebubbles
-/// in #1343). The seam sees whatever object the assembly unit
-/// feeds, and both sides coerce `enabled` to a strict bool before their
-/// gates (`config/snapshot.rs` here, `parseGatewayConfig`'s `booleanField` in
-/// TS), so on a real config file the two gates cannot be told apart — the
-/// raw-object split above is the seam contract, kept in that ledger caveat.
+/// `{"enabled": 1}` or `{"enabled": "true"}` builds nothing. The other ten
+/// keys are consumed by `loadEnabledChannels`'s `if (!cfg?.enabled)
+/// continue`, i.e. JS truthiness. Both sides coerce `enabled` to a strict
+/// bool before their gates on a real config file (`config/snapshot.rs`
+/// here, `parseGatewayConfig`'s `booleanField` in TS), so the split only
+/// shows on a raw object.
+#[cfg(test)]
 pub(crate) const STRICT_TRUE_CHANNEL_KEYS: &[&str] = &["qq", "wecom"];
 
 /// The TS `enabled` gate for one key: strict `=== true` for the
 /// `ChannelAdapterBundle` keys, JS truthiness (`js_truthy`) for the loader
-/// table. Splitting the table here is what keeps the Rust rejection aligned
-/// with the two different TS gates instead of imposing one on both.
-fn rejects_enabled(key: &str, cfg: &JsValue) -> bool {
+/// table.
+#[cfg(test)]
+fn enabled_by_baseline_gate(key: &str, cfg: &JsValue) -> bool {
     if STRICT_TRUE_CHANNEL_KEYS.contains(&key) {
         matches!(cfg.get("enabled"), Some(JsValue::Bool(true)))
     } else {
@@ -90,41 +81,39 @@ fn rejects_enabled(key: &str, cfg: &JsValue) -> bool {
     }
 }
 
-/// `#1302 B`: a config that enables a channel Rust does not implement
-/// refuses startup — never a silent skip, a downgrade to disabled, or a
-/// fallback to the TS gateway. The gate reads the config object's own keys
-/// (`wecom`/`qq` are absent from `CHANNEL_LOADER_KEYS`, so iterating the
-/// loader table alone would miss them); `enabled` follows each key's own TS
-/// gate — strict `=== true` for the two `ChannelAdapterBundle` keys, JS
-/// truthiness for the loader table (see [`STRICT_TRUE_CHANNEL_KEYS`]) — and
-/// `None` adapters is the TS
-/// `if (!adapters) return []` no-configuration path. Production calls this
-/// seam from `native_process/assembly.rs` before `NativeChannels` is
-/// constructed (and therefore before any adapter construction or
-/// `console.error` line); see also [`reject_unimplemented_bundle_channels`]
-/// for the `weixin` / `feishu` keys this table cannot cover.
-///
-/// The loader-table keys among them are refused only when the baseline would
-/// get past its first start check (see [`unavailable_start`]); with the SDK
-/// missing or the credentials absent the baseline logs one line and keeps
-/// running, and so does Rust (`unavailable::UnavailableChannel`).
-pub fn reject_unmigrated_channels(adapters: Option<&JsValue>) -> Result<(), ChannelError> {
-    reject_unmigrated_channels_with_env(adapters, &process_env)
+/// The line a channel logs (logger `error`, like the baseline's `not
+/// installed` lines) when its configuration is one the baseline would
+/// actually connect with. Rust has no production implementation of these
+/// channels (`state/takeover.md` 人已定 6 / 12), so the stand-in starts with
+/// a no-op handle and the rest of the server is unaffected. This is Rust's
+/// own wording — the baseline connects at this point — and an intended
+/// divergence.
+pub fn rust_unavailable_line(key: &str) -> String {
+    format!("{key}: not available in the Rust gateway; this channel will not connect")
 }
 
-/// [`reject_unmigrated_channels`] over an explicit environment lookup.
-pub fn reject_unmigrated_channels_with_env(
+/// The first enabled key, in [`UNMIGRATED_CHANNEL_KEYS`] order, whose
+/// configuration the baseline would actually connect with — the keys that
+/// start as the [`rust_unavailable_line`] stand-in. Native startup used to
+/// refuse exactly these configurations (#1302 B); the classification stays
+/// pinned by the channel tests through this helper.
+#[cfg(test)]
+pub(crate) fn connecting_unmigrated_channel(adapters: Option<&JsValue>) -> Option<&'static str> {
+    connecting_unmigrated_channel_with_env(adapters, &process_env)
+}
+
+/// [`connecting_unmigrated_channel`] over an explicit environment lookup.
+#[cfg(test)]
+pub(crate) fn connecting_unmigrated_channel_with_env(
     adapters: Option<&JsValue>,
     env: &EnvLookupFn,
-) -> Result<(), ChannelError> {
-    let Some(adapters) = adapters else {
-        return Ok(());
-    };
+) -> Option<&'static str> {
+    let adapters = adapters?;
     for key in UNMIGRATED_CHANNEL_KEYS {
         let Some(cfg) = adapters.get(key) else {
             continue;
         };
-        if !rejects_enabled(key, cfg) {
+        if !enabled_by_baseline_gate(key, cfg) {
             continue;
         }
         if let Some(UnavailableStart::Logged { .. }) = bundle_unavailable_start(key, cfg, env) {
@@ -132,21 +121,16 @@ pub fn reject_unmigrated_channels_with_env(
         }
         if CHANNEL_LOADER_KEYS.contains(key) {
             let options = build_options(key, cfg, &LoadEnabledChannelsOptions { pilot_home: None });
-            if let Some(
-                UnavailableStart::Line(_)
-                | UnavailableStart::Logged { .. }
-                | UnavailableStart::ConstructorTypeError(_)
-                | UnavailableStart::StartTypeError(_),
-            ) = unavailable_start(key, &options, env)
-            {
+            if !matches!(
+                unavailable_start(key, &options, env),
+                Some(UnavailableStart::Unsupported)
+            ) {
                 continue;
             }
         }
-        return Err(ChannelError::error(format!(
-            "[adapters] channel \"{key}\" 未迁移到 Rust，需继续使用 TS gateway"
-        )));
+        return Some(key);
     }
-    Ok(())
+    None
 }
 
 /// `process.env[name]`.
@@ -174,8 +158,8 @@ pub enum UnavailableStart {
     /// connection is made: the server logs `[adapters] channel <key> start
     /// failed: <message>` and keeps running (pilotdeckServer.ts:275-285).
     StartTypeError(&'static str),
-    /// The baseline would go further (a real connection): startup is
-    /// refused instead.
+    /// The baseline would go further (a real connection). Rust starts a
+    /// stand-in that logs [`rust_unavailable_line`] instead.
     Unsupported,
 }
 
@@ -364,8 +348,8 @@ fn mattermost_token_check_failure(server_url: &str) -> Option<String> {
 /// true`) and this environment. Neither channel has a Rust implementation:
 /// without usable credentials the baseline's start logs one line and returns
 /// a no-op handle ([`UnavailableStart::Logged`]); with them it connects
-/// ([`UnavailableStart::Unsupported`], refused at startup). `None` for any
-/// other key.
+/// ([`UnavailableStart::Unsupported`], a [`rust_unavailable_line`] stand-in
+/// here). `None` for any other key.
 pub fn bundle_unavailable_start(
     key: &str,
     cfg: &JsValue,
@@ -450,22 +434,18 @@ pub fn bundle_unavailable_start(
 /// TS builds `weixin` and `feishu` through `ChannelAdapterBundle.createWeixin`
 /// / `createFeishu` rather than the loader table, and neither is in
 /// [`UNMIGRATED_CHANNEL_KEYS`] — the two bundle keys that are (`qq`, `wecom`)
-/// already refuse through [`reject_unmigrated_channels`]. Without this list
+/// start as stand-ins (`unavailable::UnavailableChannel`). Without this list
 /// the same silent skip would simply reappear under a different key name
 /// (#1694 §7).
 pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin", "feishu"];
 
-/// The refusal reason both gates print. [`reject_unmigrated_channels`] keeps
-/// its own literal on purpose: the frozen `channel-unmigrated`
-/// negative-control fixture pins byte anchors on that exact line
-/// (`rejection-silenced`, `rejection-message-loses-key`), and an interpolated
-/// copy would make those anchors ambiguous. Both test modules assert the
-/// exact text, so the two spellings cannot drift silently.
+/// The refusal reason [`reject_unimplemented_bundle_channels`] prints. The
+/// production declaration covers both bundle keys, so it is reachable only
+/// if a bundle key loses its constructor.
 pub const UNMIGRATED_REASON: &str = "未迁移到 Rust，需继续使用 TS gateway";
 
 /// `#1694 §7`: an enabled `ChannelAdapterBundle` key with no assembly
-/// implementation refuses startup exactly like an unmigrated loader key —
-/// never a silent skip, a downgrade to disabled, or a fallback to TS. The
+/// implementation refuses startup — never a silent skip, a downgrade to disabled, or a fallback to TS. The
 /// assembly declares what it actually constructs (`implemented`); a key it
 /// cannot build is rejected before any channel is constructed.
 ///
@@ -475,9 +455,6 @@ pub const UNMIGRATED_REASON: &str = "未迁移到 Rust，需继续使用 TS gate
 /// production path feeds the parsed snapshot, where `config/snapshot.rs`
 /// (`enabled_only`, `feishu`) has already collapsed `enabled` to a real bool,
 /// so the two gates agree on every config file.
-///
-/// The message keeps [`reject_unmigrated_channels`]' phrase — from the
-/// operator's side the instruction is the same: keep using the TS gateway.
 pub fn reject_unimplemented_bundle_channels(
     adapters: Option<&JsValue>,
     implemented: &[&str],

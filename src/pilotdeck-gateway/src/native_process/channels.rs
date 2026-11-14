@@ -360,26 +360,29 @@ impl NativeChannels {
 
     /// ChannelAdapterBundle.createQQ / createWeCom (`settings?.enabled !==
     /// true` builds nothing, ChannelAdapterBundle.ts:157-183). Neither channel
-    /// is implemented in Rust: what is built is the baseline's start without
-    /// usable credentials — one log line and a no-op handle
-    /// (`loader::bundle_unavailable_start`). A config with credentials was
-    /// refused before startup (`loader::reject_unmigrated_channels`), so it
-    /// never reaches here; nothing is built for it.
+    /// is implemented in Rust: without usable credentials what is built is the
+    /// baseline's start — one log line and a no-op handle
+    /// (`loader::bundle_unavailable_start`); with them (the baseline
+    /// connects) the same stand-in logs `loader::rust_unavailable_line`.
     pub fn create_startup_bundle_unavailable(&self, key: &str) -> Option<Arc<dyn ChannelAdapter>> {
-        let settings = self.config.get("adapters")?.get(key)?;
+        Self::bundle_unavailable_from(&self.config, key)
+    }
+
+    /// [`Self::create_startup_bundle_unavailable`] against an explicit
+    /// config (`reload` builds from the config it was handed).
+    fn bundle_unavailable_from(config: &JsValue, key: &str) -> Option<Arc<dyn ChannelAdapter>> {
+        use crate::channel::{loader, unavailable::UnavailableChannel};
+        let settings = config.get("adapters")?.get(key)?;
         if !matches!(settings.get("enabled"), Some(JsValue::Bool(true))) {
             return None;
         }
-        match crate::channel::loader::bundle_unavailable_start(
-            key,
-            settings,
-            &crate::channel::loader::process_env,
-        )? {
-            crate::channel::loader::UnavailableStart::Logged { level, line } => Some(Arc::new(
-                crate::channel::unavailable::UnavailableChannel::logging(key, level, line),
-            )),
-            _ => None,
-        }
+        let channel = match loader::bundle_unavailable_start(key, settings, &loader::process_env)? {
+            loader::UnavailableStart::Logged { level, line } => {
+                UnavailableChannel::logging(key, level, line)
+            }
+            _ => UnavailableChannel::logging(key, "error", loader::rust_unavailable_line(key)),
+        };
+        Some(Arc::new(channel))
     }
 
     /// ChannelAdapterBundle.makeFeishu: mapper from the persisted state,

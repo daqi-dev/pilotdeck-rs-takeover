@@ -1,0 +1,50 @@
+{
+ "name": "cfg-adapters-connecting-local",
+ "about": "渠道配齐凭据、基线会真的去连的配置（mattermost / signal / whatsapp），地址都指向 127.0.0.1:9（没人听，不产生对外连接）。基线：mattermost 的 token 检查 fetch 失败、打一行后返回空句柄（MattermostChannel.ts:68-74）；signal 起 SSE 接收循环、连不上按退避重试打错误行（SignalChannel.ts:93-160）；whatsapp 用 node 起 bridgePath（不存在，子进程立即退出），等 bridge 就绪 15 秒、再等子进程退出 5 秒（cleanupChild，子进程早已退出，只能等到超时）后打一行返回空句柄（WhatsAppChannel.ts:57-100）。Rust 没有这些渠道的生产实现（state/takeover.md 人已定 6、12），每个渠道打一行「not available in the Rust gateway」（serverLog，不比较）后照常启动。比较的是 server 照常起来、之后的 method 与一轮对话照常工作、停机后的 channels/runtime-status.json（三个渠道都是 connected 后在停机时 stopped (server-shutdown)）。等 23 秒是为了让基线 whatsapp 的这 20 秒走完，否则它停在 starting。homeassistant 不在这里：基线的认证 promise 在连不上时一直不结束，状态停在 starting，Rust 的替身是 connected，差异只在这一处、属于有意偏离，由 Rust 侧测试覆盖；qq / wecom 的地址写死为外部域名，同样只用 Rust 侧测试。",
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  mattermost:\n    enabled: true\n    token: t\n    extra:\n      serverUrl: http://127.0.0.1:9\n  signal:\n    enabled: true\n    extra:\n      account: '+15550000000'\n      restUrl: http://127.0.0.1:9\n  whatsapp:\n    enabled: true\n    extra:\n      bridgePath: /nonexistent/bridge.js\n      bridgeUrl: http://127.0.0.1:9\n",
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Say hello\"}"
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "Hello from the mock."
+   }
+  }
+ ],
+ "steps": [
+  {
+   "sleep": 23000
+  },
+  {
+   "ws": "describe_server"
+  },
+  {
+   "ws": "list_sessions"
+  },
+  {
+   "ws": "submit_turn",
+   "params": {
+    "sessionKey": "s-bbx-1",
+    "channelKey": "test",
+    "message": "hello"
+   }
+  },
+  {
+   "sleep": 500
+  },
+  {
+   "ws": "read_session_messages",
+   "params": {
+    "sessionKey": "s-bbx-1"
+   }
+  }
+ ]
+}
