@@ -42,9 +42,11 @@ fn assert_error(error: &RequestError, code: &str, message: &str) {
     assert!(error.message.equals_str(message), "{error:?}");
 }
 
+type BlobContents = BTreeMap<(PathBuf, String), (TranscriptKey, Vec<u8>)>;
+
 #[derive(Default)]
 struct Blobs {
-    bytes: Mutex<BTreeMap<(PathBuf, String), (TranscriptKey, Vec<u8>)>>,
+    bytes: Mutex<BlobContents>,
     reads: AtomicUsize,
 }
 impl TranscriptBlobStore for Blobs {

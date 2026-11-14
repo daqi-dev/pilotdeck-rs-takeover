@@ -46,11 +46,10 @@ fn text(input: &JsValue, key: &str) -> String {
         .unwrap()
 }
 
+type BlobContents = BTreeMap<(PathBuf, String), (TranscriptKey, Vec<u8>)>;
+
 #[derive(Default)]
-struct Blobs(
-    Mutex<BTreeMap<(PathBuf, String), (TranscriptKey, Vec<u8>)>>,
-    Mutex<Vec<(TranscriptKey, String)>>,
-);
+struct Blobs(Mutex<BlobContents>, Mutex<Vec<(TranscriptKey, String)>>);
 impl TranscriptBlobStore for Blobs {
     fn write(&self, key: &TranscriptKey, name: &str, bytes: &[u8]) -> StoreResult<()> {
         let mut blobs = self.0.lock().unwrap();
