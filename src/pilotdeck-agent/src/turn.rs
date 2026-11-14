@@ -145,27 +145,27 @@ pub trait TurnPreparationPort {
     /// Tool-call typed admission occurs only when the owning turn dispatches
     /// tools, after all pre-emission recovery gates have declined the response.
     fn project_tool_calls(&self, _calls: &[BoundarySnapshot]) -> PortResult<Vec<ToolCall>> {
-        Err(profile_gap("open turn tool-call dispatch projection"))
+        Err(port_default("project_tool_calls"))
     }
     /// Re-admit the complete boundary after Source repeated-failure annotation.
     /// The projection must describe the same value that will be published and
     /// passed to context; stale pre-annotation content is never reused.
     fn project_tool_result(&self, _result: &BoundarySnapshot) -> PortResult<ToolExecutionResult> {
-        Err(profile_gap("annotated tool-result projection"))
+        Err(port_default("project_tool_result"))
     }
     fn current_output_cap(
         &self,
         _config: &TurnRuntimeConfig,
         _route: &Route,
     ) -> PortResult<Option<f64>> {
-        Err(profile_gap("current output cap recovery lookup"))
+        Err(port_default("current_output_cap"))
     }
     /// Cached provider model limit, distinct from turn/session requested caps.
     fn model_output_limit(&self, _route: &Route) -> Option<f64> {
         None
     }
     fn set_output_cap(&mut self, _route: &Route, _update: OutputCapUpdate) -> PortResult<()> {
-        Err(profile_gap("transient output cap recovery update"))
+        Err(port_default("set_output_cap"))
     }
     /// Original `setTransientTokenCap(target, { maxContextTokens })`
     /// (AgentLoop.ts:1480, merge 2633-2637). `clearTurnScopedTokenCaps`
@@ -173,7 +173,7 @@ pub trait TurnPreparationPort {
     /// caps it survives the turn; `currentMaxContextTokens` (A:2570-2578) reads
     /// it first, which `compaction_token_limits` already mirrors.
     fn set_context_cap(&mut self, _route: &Route, _max_context_tokens: f64) -> PortResult<()> {
-        Err(profile_gap("transient context cap recovery update"))
+        Err(port_default("set_context_cap"))
     }
 
     /// Source limit lookup is independent of the fallible preview construction.
@@ -225,7 +225,7 @@ pub trait TurnPreparationPort {
         _control: &CallControl,
         _parameters: RoutedCompactionPreparation<'_>,
     ) -> PortResult<Option<Box<crate::ports::CompactionIntent>>> {
-        Err(profile_gap("routed compaction preview"))
+        Err(port_default("prepare_routed_compaction"))
     }
     /// Recovery-stage preview intent for the `compact_and_retry` branch
     /// (AgentLoop.ts:1521-1544): `budgetStage:"recovery"`,
@@ -240,7 +240,7 @@ pub trait TurnPreparationPort {
         _control: &CallControl,
         _parameters: RecoveryCompactionPreparation<'_>,
     ) -> PortResult<Option<Box<crate::ports::CompactionIntent>>> {
-        Err(profile_gap("recovery compaction preview"))
+        Err(port_default("prepare_recovery_compaction"))
     }
     fn rebuild_routed_request(
         &mut self,
@@ -251,7 +251,7 @@ pub trait TurnPreparationPort {
         _messages: &[ProjectedMessage],
         _prepared: &crate::ports::PreparedInvocation,
     ) -> PortResult<CapturedRequest> {
-        Err(profile_gap("routed compaction request rebuild"))
+        Err(port_default("rebuild_routed_request"))
     }
     /// Applies only AgentLoop-owned output caps; provider-specific prepared
     /// controls remain intact. The default preserves collaborator compatibility.
@@ -1092,7 +1092,10 @@ pub fn run_admitted_turn(
             crate::output_recovery::OutputRecoverySelection::NeedsLargeFileRepair(token) => {
                 let decision = large_file_repair
                     .recover_from_boundary_truncation(&source_tool_calls)
-                    .map_err(|_| profile_gap("raw large-file repaired-call query"))?;
+                    // Only a null/undefined call fails the name read; the
+                    // assembler already threw on it (normalizeToolCallIds
+                    // reads toolCall.id, assembleModelMessage.ts:131-135).
+                    .map_err(|_| invariant_violation("assembled tool call is null or undefined"))?;
                 token.resolve(decision)?
             }
         };
@@ -1983,7 +1986,11 @@ pub fn run_admitted_turn(
         // results, repeated failure annotations, Plan/Todo observers and repair
         // must be integrated before claiming this partial canonical profile whole.
         if results.len() != admitted_tool_calls.len() {
-            return Err(profile_gap("missing-result recovery pairing"));
+            // host_operations admits execute_batch only with one result per
+            // call (the baseline's hostToolPort.ts:215-217 throws otherwise).
+            return Err(invariant_violation(
+                "admitted tool batch result count differs from its calls",
+            ));
         }
         let paired_boundaries = results
             .iter()
@@ -2857,7 +2864,11 @@ fn finish_aborted_after_tools(
 // than accepting the assembler's cached call list as the owning-turn oracle.
 fn collect_recovery_tool_calls(message: &BoundarySnapshot) -> PortResult<Vec<BoundarySnapshot>> {
     let Some(JsValue::Array(content)) = message.value().get("content") else {
-        return Err(profile_gap("open recovery assistant content collection"));
+        // The assembler always builds content as a fresh array
+        // (assembleModelMessage.ts:118-122); project_assembly keeps it.
+        return Err(invariant_violation(
+            "assembled assistant message content is not an array",
+        ));
     };
     let mut calls = Vec::new();
     for block in content {
@@ -3439,7 +3450,8 @@ fn model_error_regexp_text(value: &JsValue) -> PortResult<JsString> {
             JsValue::Number(number) if *number == f64::INFINITY => "Infinity".into(),
             JsValue::Number(number) if *number == f64::NEG_INFINITY => "-Infinity".into(),
             JsValue::Number(_) => pilotdeck_protocol::stringify_json(value)
-                .map_err(|_| profile_gap("model-error primitive number coercion"))?
+                // stringify_json is total on JsValue (no cycles or BigInt).
+                .map_err(|_| invariant_violation("JSON number text unavailable"))?
                 .ok_or_else(|| wrong_reply("model-error number coercion"))?
                 .into(),
             JsValue::Object(object) => {
@@ -3502,7 +3514,8 @@ fn finish_ordinary_model_error(
     let failure_text = match model_error.value() {
         JsValue::String(text) => JsValue::String(text.clone()),
         value => pilotdeck_protocol::stringify_json(value)
-            .map_err(|_| profile_gap("ordinary model-error JSON serialization"))?
+            // stringify_json is total on JsValue (no cycles or BigInt).
+            .map_err(|_| invariant_violation("wire JSON serialization failed"))?
             .map(|text| JsValue::String(text.into()))
             .unwrap_or(JsValue::Undefined),
     };
@@ -4157,6 +4170,14 @@ fn invariant_violation(what: &str) -> PortError {
         message: format!("Rust normal-turn internal invariant violated: {what}.").into(),
     }
 }
+/// Trait defaults exist for test doubles. The one production implementation
+/// (`pilotdeck-transport` `default_factory::Preparation`) overrides every
+/// method that uses this.
+fn port_default(method: &str) -> PortError {
+    invariant_violation(&format!(
+        "TurnPreparationPort::{method} has no implementation in this composition"
+    ))
+}
 fn profile_gap(profile: &str) -> PortError {
     PortError::InvalidResponse {
         message: format!("Rust normal-turn candidate has not implemented {profile}.").into(),
@@ -4776,7 +4797,8 @@ fn source_request_fingerprint(request: &CapturedRequest) -> PortResult<JsString>
             message: error.message.into(),
             boundary: BoundarySnapshot::capture(request.wire.request()),
         })?
-        .ok_or_else(|| profile_gap("undefined canonical request fingerprint"))?;
+        // Only a top-level undefined has no JSON text; the request is an object.
+        .ok_or_else(|| invariant_violation("captured model request serialized to undefined"))?;
     let digest = Sha256::digest(serialized.as_bytes());
     let mut hex = String::with_capacity(64);
     for byte in digest {
@@ -4931,8 +4953,11 @@ fn apply_pre_emission_output_plan(
             )?;
             Ok(OutputPlanProgress::Continue)
         }
-        OutputRecoveryAction::VisibleLengthExhausted => Err(profile_gap(
-            "output recovery plan at wrong pre-emission phase",
+        // Only `select_visible_length` (output_recovery_policy.rs) yields this
+        // action, and its caller handles it after publication; the
+        // pre-emission `select` never does.
+        OutputRecoveryAction::VisibleLengthExhausted => Err(invariant_violation(
+            "visible-length exhaustion reached the pre-emission output plan",
         )),
         OutputRecoveryAction::RepairedExhausted => {
             let error = plan.terminal_error()?;
