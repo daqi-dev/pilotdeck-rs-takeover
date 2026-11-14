@@ -1,0 +1,135 @@
+[
+  {
+    "path": "ui/src/components/auth/types.ts",
+    "sourceSha256": "c9236e85afc9341fa1949684298505b9592a315d6f7fee96f69ee2b1aee54b5a",
+    "resultSha256": "85fc197ff2d5d2e32618723e267b7a7d808eab6f9a3b93edccbe084071ae3072",
+    "replacements": [
+      {
+        "before": "  token: string | null;\n",
+        "after": "  token: string | null;\n  authDisabled: boolean;\n"
+      }
+    ]
+  },
+  {
+    "path": "ui/src/components/auth/context/AuthContext.tsx",
+    "sourceSha256": "38340d6ac1821f3f7fc7533ff33d1fb27f21ae876b22af938f8b4dc9b66f5c53",
+    "resultSha256": "ca138eefa5738d88f2eba2999a96d4f8cbd91f09e52ca9c10a1e3cd420609ae2",
+    "replacements": [
+      {
+        "before": "import { IS_PLATFORM, DISABLE_LOCAL_AUTH } from '../../../constants/config';",
+        "after": "import { IS_PLATFORM } from '../../../constants/config';"
+      },
+      {
+        "before": "  const [token, setToken] = useState<string | null>(() => readStoredToken());",
+        "after": "  const [token, setToken] = useState<string | null>(() => readStoredToken());\n  const [authDisabled, setAuthDisabled] = useState(false);"
+      },
+      {
+        "before": "      setIsLoading(true);\n      setError(null);\n\n      const statusResponse",
+        "after": "      setIsLoading(true);\n      setError(null);\n      setAuthDisabled(false);\n\n      const statusResponse"
+      },
+      {
+        "before": "      const statusPayload = await parseJsonSafely<AuthStatusPayload>(statusResponse);\n\n      if (statusPayload?.authDisabled) {",
+        "after": "      const statusPayload = await parseJsonSafely<AuthStatusPayload>(statusResponse);\n      const localAuthDisabled = statusResponse.ok && statusPayload?.authDisabled === true;\n      setAuthDisabled(localAuthDisabled);\n\n      if (localAuthDisabled) {"
+      },
+      {
+        "before": "    if (IS_PLATFORM || DISABLE_LOCAL_AUTH) {\n      setUser({ username: DISABLE_LOCAL_AUTH ? 'local-user' : 'platform-user', is_admin: true });",
+        "after": "    if (IS_PLATFORM) {\n      setUser({ username: 'platform-user', is_admin: true });"
+      },
+      {
+        "before": "      user,\n      token,\n      isLoading,",
+        "after": "      user,\n      token,\n      authDisabled,\n      isLoading,"
+      },
+      {
+        "before": "      retryGateway,\n      token,\n      user,",
+        "after": "      retryGateway,\n      token,\n      authDisabled,\n      user,"
+      }
+    ]
+  },
+  {
+    "path": "ui/src/contexts/WebSocketContext.tsx",
+    "sourceSha256": "24d34a554d935f1a50148b7258c8b8bd77eeb8aa31566bce6938aabda7e02acd",
+    "resultSha256": "bc9c7f6e586243e353cc554072e957deec2785ad2b328f696f773e6c1afb071f",
+    "replacements": [
+      {
+        "before": "const buildWebSocketUrl = (token: string | null) => {",
+        "after": "const buildWebSocketUrl = (token: string | null, authDisabled: boolean) => {"
+      },
+      {
+        "before": "  if (IS_PLATFORM) return `${protocol}//${window.location.host}/ws`;",
+        "after": "  if (IS_PLATFORM || authDisabled) return `${protocol}//${window.location.host}/ws`;"
+      },
+      {
+        "before": "  const { token } = useAuth();",
+        "after": "  const { token, authDisabled } = useAuth();"
+      },
+      {
+        "before": "        const wsUrl = buildWebSocketUrl(token);",
+        "after": "        const wsUrl = buildWebSocketUrl(token, authDisabled);"
+      },
+      {
+        "before": "  }, [token]);",
+        "after": "  }, [token, authDisabled]);"
+      }
+    ]
+  },
+  {
+    "path": "ui/src/components/chat/utils/attachmentNotes.ts",
+    "sourceSha256": "6da1435ce5093c25ea71f622393bc29d97117e04e408e8ef9c59d4c1c567f893",
+    "resultSha256": "77260f280160a453019cae36a59ffb7f8353990dde49e48c07cefc9f038ec2aa",
+    "replacements": [
+      {
+        "before": "function toChatAttachment(file: AttachmentPathNoteFile): ChatAttachment {\n  return {",
+        "after": "function toGeneratedChatAttachment(file: AttachmentPathNoteFile): ChatAttachment {\n  // A Gateway lease is valid only during the turn. Retain the existing upload\n  // identity, never offer the lease path as a durable workspace file.\n  const lease = file.path.replace(/\\\\/g, '/').match(/(?:^|\\/)\\.tmp\\/chat-upload-leases\\/([A-Za-z0-9_-]+)\\/([A-Za-z0-9_-]+)\\/([A-Za-z0-9_-]+)$/);\n  if (lease) return { name: file.name, uploadId: lease[1], attachmentId: lease[3] };\n  return toChatAttachment(file);\n}\n\nfunction toChatAttachment(file: AttachmentPathNoteFile): ChatAttachment {\n  return {"
+      },
+      {
+        "before": "generated?.attachments.map(toChatAttachment)",
+        "after": "generated?.attachments.map(toGeneratedChatAttachment)"
+      },
+      {
+        "before": "  const kind = attachment.kind || 'file';\n  const filePath = attachment.path || attachment.filePath || '';",
+        "after": "  const kind = attachment.kind || 'file';\n  if (attachment.uploadId && attachment.attachmentId) return ['upload', attachment.uploadId, attachment.attachmentId].join('\\0');\n  const filePath = attachment.path || attachment.filePath || '';"
+      }
+    ]
+  },
+  {
+    "path": "ui/src/components/chat-v2/messageFileCardUtils.ts",
+    "sourceSha256": "a7696306f53da89ab0d491e1f0dea43efa0fe8ee3afda716b0ca40d6a274f57b",
+    "resultSha256": "dabd5867bba000ef4a4b8265fb92b0d8c8cbf0568799add4b47ae07f4c550b90",
+    "replacements": [
+      {
+        "before": "const TRANSIENT_UPLOAD_PATH = /(?:^|\\/)\\.tmp\\/chat-uploads\\//;",
+        "after": "const TRANSIENT_UPLOAD_PATH = /(?:^|\\/)\\.tmp\\/chat-upload(?:s|-leases)\\//;"
+      }
+    ]
+  },
+  {
+    "path": "ui/src/stores/useSessionStore.ts",
+    "sourceSha256": "a35aebbbc061a10e913522671b80ca656720ddb5dea83bc3d6f02bf230ad13d6",
+    "resultSha256": "47ab18a16b97a71a37c6d1d72a3f70c4db23057c600c8f4d3061b52677ba87bd",
+    "replacements": [
+      {
+        "before": "  const kind = attachment.kind || 'file';\n  const path = attachment.path || attachment.filePath || attachment.name;",
+        "after": "  const kind = attachment.kind || 'file';\n  if (attachment.uploadId && attachment.attachmentId) return ['upload', attachment.uploadId, attachment.attachmentId].join('\\0');\n  const path = attachment.path || attachment.filePath || attachment.name;"
+      }
+    ]
+  },
+  {
+    "path": "ui/src/components/chat/hooks/useUploadedAttachmentPreviews.ts",
+    "sourceSha256": "968bf9edd562e01944aac1d7775bf829a287639fb6502360009498f3002cd0d6",
+    "resultSha256": "c533f01193fafe49b7f6176148f2d59ff560e1e1a0780787007d7abb2ee57b03",
+    "replacements": [
+      {
+        "before": "  const [loaded, setLoaded] = useState<Record<string, string>>({});\n  const missing = attachments.filter",
+        "after": "  const [loaded, setLoaded] = useState<Record<string, string>>({});\n  const [metadata, setMetadata] = useState<Record<string, { name: string; mimeType?: string; size?: number }>>({});\n  const metadataKey = JSON.stringify(attachments.filter(a => a.uploadId && a.attachmentId && (!a.mimeType || a.name === a.attachmentId)).map(a => [a.uploadId, a.attachmentId]));\n  useEffect(() => {\n    const controller = new AbortController();\n    const identities: [string, string][] = JSON.parse(metadataKey);\n    for (const [uploadId, attachmentId] of identities) {\n      void (async () => {\n        try {\n          const response = await authenticatedFetch(`/api/uploads/${encodeURIComponent(uploadId)}`, { signal: controller.signal, suppressServerErrorToast: true });\n          if (!response.ok) return;\n          const record = await response.json();\n          const item = Array.isArray(record.attachments) ? record.attachments.find((a: { attachmentId?: unknown }) => a.attachmentId === attachmentId) : undefined;\n          if (controller.signal.aborted || typeof item?.name !== 'string') return;\n          setMetadata(previous => ({ ...previous, [uploadedPreviewKey({ name: '', uploadId, attachmentId })]: {\n            name: item.name, ...(typeof item.mimeType === 'string' ? { mimeType: item.mimeType } : {}),\n            ...(typeof item.bytes === 'number' ? { size: item.bytes } : {}),\n          } }));\n        } catch { /* Expired or unavailable uploads remain non-browsable. */ }\n      })();\n    }\n    return () => controller.abort();\n  }, [metadataKey]);\n  const enriched = useMemo(() => attachments.map(attachment => ({ ...attachment, ...metadata[uploadedPreviewKey(attachment)] })), [attachments, metadata]);\n  const missing = enriched.filter"
+      },
+      {
+        "before": "  return useMemo(() => attachments.map(attachment => {",
+        "after": "  return useMemo(() => enriched.map(attachment => {"
+      },
+      {
+        "before": "  }), [attachments, loaded]);",
+        "after": "  }), [enriched, loaded]);"
+      }
+    ]
+  }
+]
