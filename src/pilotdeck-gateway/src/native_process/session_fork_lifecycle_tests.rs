@@ -17,14 +17,18 @@ fn entry(kind: &str, sequence: u64, turn: &str, payload: &str) -> JsValue {
     let value = with(&value, "sessionId", "source".into());
     let value = with(&value, "turnId", turn.into());
     let value = with(&value, "sequence", JsValue::Number(sequence as f64));
-    let value = with(&value, "entryId", format!("entry-{sequence}").into());
+    let value = with(
+        &value,
+        "entryId",
+        JsValue::String(format!("entry-{sequence}").into()),
+    );
     with(
         &value,
         "parentEntryId",
         if sequence == 1 {
             JsValue::Null
         } else {
-            format!("entry-{}", sequence - 1).into()
+            JsValue::String(format!("entry-{}", sequence - 1).into())
         },
     )
 }
@@ -391,14 +395,18 @@ fn accepted_resume_rejects_an_open_step_at_the_cutoff() {
     source.swap(1, 2);
     for (index, record) in source.iter_mut().enumerate() {
         *record = with(record, "sequence", JsValue::Number((index + 1) as f64));
-        *record = with(record, "entryId", format!("entry-{}", index + 1).into());
+        *record = with(
+            record,
+            "entryId",
+            JsValue::String(format!("entry-{}", index + 1).into()),
+        );
         *record = with(
             record,
             "parentEntryId",
             if index == 0 {
                 JsValue::Null
             } else {
-                format!("entry-{index}").into()
+                JsValue::String(format!("entry-{index}").into())
             },
         );
     }
