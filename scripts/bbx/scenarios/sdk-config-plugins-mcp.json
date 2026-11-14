@@ -1,0 +1,123 @@
+{
+  "name": "sdk-config-plugins-mcp",
+  "about": "sdkSessionConfig.plugins 的 MCP 面：会话插件 plugin.json 里的 mcpServers 并进本会话的 MCP 工具（ProjectSessionRuntimeBundle.ts:274-279 contributions.mcpServers），模型能调用；mcp_server_status 带 sessionKey 时列出会话插件的 server（ProjectRuntimeRegistry.ts:1300-1302）；set_mcp_servers 用会话插件的 server 名被拒（:1193-1203）；不带 plugins 的会话没有这个工具。",
+  "files": {
+    "proj/sess-plugin/plugin.json": "{\"name\": \"sess-plugin\", \"version\": \"1.0.0\", \"mcpServers\": {\"sess-echo\": {\"command\": \"node\", \"args\": [\"{PROJECT}/sess-plugin/echo-server.mjs\", \"sess\"], \"instructions\": \"Use sess-echo to echo.\"}}}\n",
+    "proj/sess-plugin/skills/delta/SKILL.md": "---\nname: delta\ndescription: The delta skill shipped by the session plugin.\n---\n\n# delta\n\nReply with DELTA.\n",
+    "proj/sess-plugin/commands/hello.md": "---\ndescription: Say hello from the session plugin.\n---\n\nSay hello.\n",
+    "proj/sess-plugin/echo-server.mjs": "// bbx fixture: minimal MCP stdio server (newline-delimited JSON-RPC 2.0).\n// argv[2] labels the instance so each configured server answers differently.\nimport readline from 'node:readline';\nconst label = process.argv[2] ?? 'unlabelled';\nconst send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');\nconst tool = {\n  name: 'echo',\n  description: 'Echo the given text back, prefixed with the server label (' + label + ').',\n  inputSchema: {\n    type: 'object',\n    properties: { text: { type: 'string', description: 'Text to echo.' } },\n    required: ['text'],\n    additionalProperties: false,\n  },\n};\nreadline.createInterface({ input: process.stdin }).on('line', (line) => {\n  let request;\n  try { request = JSON.parse(line); } catch { return; }\n  if (request.id === undefined) return; // notification\n  if (request.method === 'initialize') {\n    send({ jsonrpc: '2.0', id: request.id, result: {\n      protocolVersion: request.params?.protocolVersion ?? '2024-11-05',\n      capabilities: { tools: {} },\n      serverInfo: { name: 'bbx-echo-' + label, version: '1.0.0' },\n    } });\n  } else if (request.method === 'tools/list') {\n    send({ jsonrpc: '2.0', id: request.id, result: { tools: [tool] } });\n  } else if (request.method === 'tools/call') {\n    const text = String(request.params?.arguments?.text ?? '');\n    send({ jsonrpc: '2.0', id: request.id, result: { content: [{ type: 'text', text: 'echo[' + label + ']: ' + text }] } });\n  } else if (request.method === 'ping') {\n    send({ jsonrpc: '2.0', id: request.id, result: {} });\n  } else {\n    send({ jsonrpc: '2.0', id: request.id, error: { code: -32601, message: 'Method not found: ' + request.method } });\n  }\n});\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Plugin run\"}"
+      }
+    },
+    {
+      "name": "after-tool",
+      "when": [
+        "tool_call_id"
+      ],
+      "reply": {
+        "text": "Tool finished."
+      }
+    },
+    {
+      "name": "call-echo",
+      "when": [
+        "use the plugin server"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_pe",
+          "name": "mcp__sess-echo__echo",
+          "arguments": {
+            "text": "from session plugin"
+          }
+        }
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "ok"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-pm1",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-pm1",
+        "channelKey": "test",
+        "message": "turn-1: please use the plugin server",
+        "sdkSessionConfig": {
+          "plugins": [
+            {
+              "type": "local",
+              "path": "{PROJECT}/sess-plugin"
+            }
+          ]
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "mcp_server_status",
+      "params": {
+        "sessionKey": "s-pm1"
+      }
+    },
+    {
+      "ws": "set_mcp_servers",
+      "params": {
+        "sessionKey": "s-pm1",
+        "servers": {
+          "sess-echo": {
+            "type": "stdio",
+            "command": "node"
+          }
+        }
+      }
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-pm2",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-pm2",
+        "channelKey": "test",
+        "message": "turn-2: please use the plugin server"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "mcp_server_status",
+      "params": {
+        "sessionKey": "s-pm2"
+      }
+    }
+  ]
+}

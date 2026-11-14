@@ -6,7 +6,7 @@ use super::{field, object, schema, string, text};
 use crate::{
     host::{HostError, modules::capability::ToolDefinition},
     runtime::{
-        plugins::PluginRuntime,
+        plugins::{LoadedPlugin, PluginRuntime},
         tools::{ExecutableTool, ToolFuture, ToolOutput, ToolRunContext},
     },
 };
@@ -20,6 +20,11 @@ pub struct ReadSkillTool {
     /// 302-316): the loader answers only an exact selected name and the
     /// lister lists only the selected skills.
     selected: Option<Vec<String>>,
+    /// `sdkSessionPlugins`: an SDK skill-scoped session's replacement
+    /// `read_skill` reads the session contributions, which add these to the
+    /// project's plugins (ProjectSessionRuntimeBundle.ts:247-248, 302-316).
+    /// The project-level tool of an unscoped session never sees them.
+    session_plugins: Vec<Arc<LoadedPlugin>>,
 }
 
 impl ReadSkillTool {
@@ -27,6 +32,7 @@ impl ReadSkillTool {
         Self {
             plugins,
             selected: None,
+            session_plugins: Vec::new(),
             fields: object([
                 ("name", string("read_skill")),
                 ("aliases", JsValue::Array(vec![string("ReadSkill")])),
@@ -51,6 +57,11 @@ impl ReadSkillTool {
 impl ReadSkillTool {
     pub fn with_selected(mut self, selected: Option<Vec<String>>) -> Self {
         self.selected = selected;
+        self
+    }
+
+    pub fn with_session_plugins(mut self, plugins: Vec<Arc<LoadedPlugin>>) -> Self {
+        self.session_plugins = plugins;
         self
     }
 }
@@ -105,6 +116,7 @@ impl ExecutableTool for ReadSkillTool {
     fn execute(&self, input: JsValue, _context: ToolRunContext) -> ToolFuture<ToolOutput> {
         let plugins = self.plugins.clone();
         let selected = self.selected.clone();
+        let session_plugins = self.session_plugins.clone();
         Box::pin(async move {
             let name = match field(&input, "skillName") {
                 JsValue::String(name) => text(name),
@@ -115,14 +127,22 @@ impl ExecutableTool for ReadSkillTool {
                     .as_ref()
                     .is_none_or(|names| names.iter().any(|name| name == skill))
             };
+            // The scoped replacement reads the session's contributions; the
+            // project-level tool reads the project runtime alone.
+            let view = plugins
+                .create_view(if selected.is_some() {
+                    session_plugins
+                } else {
+                    Vec::new()
+                })
+                .await;
             let content = if chosen(&name) {
-                plugins.load_skill_prompt(&name).await
+                view.load_skill_prompt(&name)
             } else {
                 None
             };
-            let available: Vec<(String, String)> = plugins
+            let available: Vec<(String, String)> = view
                 .all_skills()
-                .await
                 .into_iter()
                 .filter(|skill| chosen(&skill.name))
                 .map(|skill| (skill.name, skill.path.to_string_lossy().into_owned()))

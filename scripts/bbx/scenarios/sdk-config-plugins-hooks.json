@@ -1,0 +1,64 @@
+{
+  "name": "sdk-config-plugins-hooks",
+  "about": "sdkSessionConfig.plugins 的 hooks 面：会话插件的 hooks/hooks.json 与项目插件的 hooks 一起进本会话（acquireSessionContributions 的 hooks），UserPromptSubmit 的 command hook 在两个插件里各跑一次、stdout 进上下文；不带 plugins 的会话只跑项目插件那个。",
+  "files": {
+    "proj/sess-plugin/plugin.json": "{\"name\": \"sess-plugin\", \"version\": \"1.0.0\"}\n",
+    "proj/sess-plugin/skills/delta/SKILL.md": "---\nname: delta\ndescription: The delta skill shipped by the session plugin.\n---\n\n# delta\n\nReply with DELTA.\n",
+    "proj/sess-plugin/commands/hello.md": "---\ndescription: Say hello from the session plugin.\n---\n\nSay hello.\n",
+    "proj/sess-plugin/hooks/hooks.json": "{\"UserPromptSubmit\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"node hook.mjs sess-plugin 0 'PLUGIN-HOOK-CONTEXT' '' 0\"}]}]}\n",
+    "proj/sess-plugin/hook.mjs": "// bbx hook fixture: node hook.mjs <log> <exit> [stdout] [stderr] [sleepMs]\nimport fs from 'node:fs';\nconst [log, exit = '0', out = '', err = '', sleep = '0'] = process.argv.slice(2);\nconst dir = process.env.HOME + '/hooklog';\nconst append = (row) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(dir + '/' + log + '.jsonl', JSON.stringify(row) + '\\n'); };\nlet input = '';\nprocess.stdin.on('data', (d) => { input += d; });\nprocess.stdin.on('end', () => {\n  let parsed; try { parsed = JSON.parse(input); } catch { parsed = { raw: input }; }\n  const env = {};\n  for (const k of Object.keys(process.env).sort()) env[k] = /^PILOT/.test(k) && !/BUNDLED/.test(k) ? process.env[k] : true;\n  append({ argv: process.argv.slice(2), cwd: process.cwd(), input: parsed, env });\n  // exit \"@\": the behaviour is the JSON between HOOK<< and >> in the prompt (or the last assistant message).\n  let spec = { exit, out, err, sleep };\n  if (exit === '@') {\n    const m = /HOOK<<(.*?)>>/s.exec(String(parsed.prompt ?? parsed.lastAssistantMessage ?? ''));\n    spec = { exit: 0, out: '', err: '', sleep: 0, ...(m ? JSON.parse(m[1]) : {}) };\n  }\n  setTimeout(() => {\n    append({ argv: process.argv.slice(2), done: true });\n    if (spec.out) process.stdout.write(spec.out);\n    if (spec.err) process.stderr.write(spec.err);\n    process.exit(Number(spec.exit));\n  }, Number(spec.sleep));\n});\n",
+    "home/.pilotdeck/plugins/home-plugin/plugin.json": "{\"name\": \"home-plugin\", \"version\": \"1.0.0\", \"hooks\": {\"UserPromptSubmit\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"node hook.mjs home-plugin 0 '' '' 0\"}]}]}}\n",
+    "home/.pilotdeck/plugins/home-plugin/hook.mjs": "// bbx hook fixture: node hook.mjs <log> <exit> [stdout] [stderr] [sleepMs]\nimport fs from 'node:fs';\nconst [log, exit = '0', out = '', err = '', sleep = '0'] = process.argv.slice(2);\nconst dir = process.env.HOME + '/hooklog';\nconst append = (row) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(dir + '/' + log + '.jsonl', JSON.stringify(row) + '\\n'); };\nlet input = '';\nprocess.stdin.on('data', (d) => { input += d; });\nprocess.stdin.on('end', () => {\n  let parsed; try { parsed = JSON.parse(input); } catch { parsed = { raw: input }; }\n  const env = {};\n  for (const k of Object.keys(process.env).sort()) env[k] = /^PILOT/.test(k) && !/BUNDLED/.test(k) ? process.env[k] : true;\n  append({ argv: process.argv.slice(2), cwd: process.cwd(), input: parsed, env });\n  // exit \"@\": the behaviour is the JSON between HOOK<< and >> in the prompt (or the last assistant message).\n  let spec = { exit, out, err, sleep };\n  if (exit === '@') {\n    const m = /HOOK<<(.*?)>>/s.exec(String(parsed.prompt ?? parsed.lastAssistantMessage ?? ''));\n    spec = { exit: 0, out: '', err: '', sleep: 0, ...(m ? JSON.parse(m[1]) : {}) };\n  }\n  setTimeout(() => {\n    append({ argv: process.argv.slice(2), done: true });\n    if (spec.out) process.stdout.write(spec.out);\n    if (spec.err) process.stderr.write(spec.err);\n    process.exit(Number(spec.exit));\n  }, Number(spec.sleep));\n});\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Plugin run\"}"
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "ok"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ph1",
+        "channelKey": "test",
+        "message": "turn-1: with plugin hooks",
+        "sdkSessionConfig": {
+          "plugins": [
+            {
+              "type": "local",
+              "path": "{PROJECT}/sess-plugin"
+            }
+          ]
+        }
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ph2",
+        "channelKey": "test",
+        "message": "turn-2: without"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    }
+  ]
+}

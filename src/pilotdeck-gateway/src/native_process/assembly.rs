@@ -913,14 +913,20 @@ async fn start_assembly(
                 let session_plugins = plugin_runtime_resource
                     .as_ref()
                     .and_then(|resource| resource.as_any().downcast_ref::<PluginResources>());
+                // `acquireSessionContributions(sdkSessionPlugins)`
+                // (ProjectSessionRuntimeBundle.ts:248): the plugins the
+                // session's SDK config loaded follow the project's.
+                let sdk_plugins = session_overrides.sdk_plugins(&context.session_key);
                 let plugin_hooks = match session_plugins {
-                    Some(plugins) => crate::runtime::plugins::collect_plugin_hooks(
-                        &plugins
+                    Some(plugins) => {
+                        let mut all = plugins
                             .runtime
                             .refresh()
                             .await
-                            .map_err(|error| RuntimeError::new(error.to_string()))?,
-                    ),
+                            .map_err(|error| RuntimeError::new(error.to_string()))?;
+                        all.extend(sdk_plugins.iter().cloned());
+                        crate::runtime::plugins::collect_plugin_hooks(&all)
+                    }
                     None => Vec::new(),
                 };
                 // The same composition's commands, skills and MCP
@@ -931,6 +937,7 @@ async fn start_assembly(
                 let session_extension = crate::runtime::turn::host_factory::session_extension(
                     &staged,
                     super::sdk_config::session_skills(sdk_config.as_ref()).as_deref(),
+                    sdk_plugins.clone(),
                 )
                 .await
                 .map_err(|error| RuntimeError::new(error.to_string()))?;
@@ -948,7 +955,7 @@ async fn start_assembly(
                     .is_some_and(|hooks| !hooks.is_undefined());
                 let stored_style_content =
                     match session_overrides.output_style(&context.session_key) {
-                        Some(name) => output_style_content(&staged, &name).await,
+                        Some(name) => output_style_content(&staged, &name, &sdk_plugins).await,
                         None => None,
                     };
                 super::sdk_config::apply_prompt_fields(
@@ -1059,7 +1066,11 @@ async fn start_assembly(
                         // servers — the builtin ones included — are composed
                         // when the session is created.
                         let plugin_servers = match session_plugins {
-                            Some(plugins) => plugins.runtime.mcp_servers().await,
+                            Some(plugins) => plugins
+                                .runtime
+                                .create_view(sdk_plugins.clone())
+                                .await
+                                .mcp_servers(),
                             None => JsObject::new(),
                         };
                         super::tools::session_mcp_tools(super::tools::SessionMcpToolsOptions {
@@ -1231,6 +1242,7 @@ async fn start_assembly(
                                 })
                                 .cloned(),
                         )
+                        .with_sdk_session_plugins(sdk_plugins.clone())
                         .with_session_extension(session_extension.clone())
                         .with_permission_mode_source(permission_source.clone())
                         .with_continuation_parent(continuation_parent.parent_ref())
@@ -2304,7 +2316,11 @@ pub(super) fn apply_session_overrides(
 /// PluginResources.runtime). Like ProjectRuntimeRegistry's
 /// getSdkOutputStyleContent the view is read without a refresh and a
 /// missing style is not an error: `None` leaves the field alone.
-async fn output_style_content(staged: &StageContext, name: &JsString) -> Option<String> {
+async fn output_style_content(
+    staged: &StageContext,
+    name: &JsString,
+    sdk_plugins: &[Arc<crate::runtime::plugins::LoadedPlugin>],
+) -> Option<String> {
     let plugin_runtime = staged
         .resource(Resource::PluginRuntime)?
         .as_any()
@@ -2312,7 +2328,7 @@ async fn output_style_content(staged: &StageContext, name: &JsString) -> Option<
         .runtime
         .clone();
     plugin_runtime
-        .create_view(vec![])
+        .create_view(sdk_plugins.to_vec())
         .await
         .list_output_styles()
         .into_iter()

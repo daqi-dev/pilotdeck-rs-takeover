@@ -753,7 +753,7 @@ async fn session_context_runtime(
     {
         Some(extension) => extension,
         None => {
-            let extension = session_extension(context, skills)
+            let extension = session_extension(context, skills, Vec::new())
                 .await
                 .map_err(|error| session_error(error.to_string()))?;
             match &session_state {
@@ -950,6 +950,7 @@ impl TurnHostFactory {
 pub(crate) async fn session_extension(
     context: &crate::runtime::project::StageContext,
     selected: Option<&[String]>,
+    session_plugins: Vec<Arc<crate::runtime::plugins::LoadedPlugin>>,
 ) -> Result<
     Option<Arc<dyn context_runtime::ExtensionResolver>>,
     crate::runtime::plugins::PluginRuntimeError,
@@ -964,15 +965,16 @@ pub(crate) async fn session_extension(
         return Ok(None);
     };
     plugins.runtime.refresh().await?;
+    // `acquireSessionContributions(sdkSessionPlugins)`: the project's plugins
+    // followed by the session's own.
+    let view = plugins.runtime.create_view(session_plugins).await;
     // `replaceSkillContributions(contributions, [])` for a disabled skill
     // module (ProjectSessionRuntimeBundle.ts:250-262).
     let skills_disabled = crate::runtime::project::skills_module_disabled(&context.snapshot());
     let text = |value: &pilotdeck_protocol::JsString| String::from_utf16_lossy(value.units());
     Ok(Some(Arc::new(PluginExtension {
-        commands: plugins
-            .runtime
+        commands: view
             .all_commands()
-            .await
             .into_iter()
             .map(|command| context_runtime::ContributedCommand {
                 name: command.name,
@@ -980,10 +982,8 @@ pub(crate) async fn session_extension(
                 argument_hint: command.argument_hint,
             })
             .collect(),
-        skills: plugins
-            .runtime
+        skills: view
             .all_skills()
-            .await
             .into_iter()
             .filter(|_| !skills_disabled)
             // `filterSessionSkills(contributions, sdkSessionConfig.skills)`.
@@ -994,10 +994,8 @@ pub(crate) async fn session_extension(
                 path: skill.path.to_string_lossy().into_owned(),
             })
             .collect(),
-        mcp_instructions: plugins
-            .runtime
+        mcp_instructions: view
             .all_mcp_instructions()
-            .await
             .into_iter()
             .map(|entry| context_runtime::McpServerInstruction {
                 server_name: text(&entry.server_name),

@@ -379,6 +379,13 @@ impl PluginRuntimeView {
     pub fn list_output_styles(&self) -> Vec<PluginOutputStyleContribution> {
         collect_output_styles(&self.plugins)
     }
+    pub fn all_hooks(&self) -> HooksSettings {
+        collect_hooks(&self.plugins)
+    }
+    /// `loadSkillPrompt(extensionId)` over the view's plugins.
+    pub fn load_skill_prompt(&self, id: &str) -> Option<String> {
+        load_skill_prompt(&self.plugins, id)
+    }
     pub fn snapshot_contributions(&self) -> PluginContributionSnapshot {
         create_contribution_snapshot(0, &self.plugins)
     }

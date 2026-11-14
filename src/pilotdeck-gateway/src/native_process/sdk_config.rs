@@ -4,11 +4,12 @@
 //! (ProjectRuntimeRegistry.ts:956-1023).
 //!
 //! Keys outside the baseline's `GatewaySessionSdkConfig` are stored and
-//! ignored like the baseline does. A config that passes the baseline's shape
-//! check but needs something this host does not compose (`plugins` naming a
-//! real directory, an agent definition key outside [`WIRED_AGENT_FIELDS`])
-//! is still answered with the unavailable shape the host gave before,
-//! instead of being stored and silently ignored.
+//! ignored like the baseline does. `plugins` are loaded when the config is
+//! set (`resolveSdkSessionPlugins`) and kept with it for the session's
+//! composition. A config that passes the baseline's shape check but names an
+//! agent definition key outside [`WIRED_AGENT_FIELDS`] is still answered
+//! with the unavailable shape the host gave before, instead of being stored
+//! and silently ignored.
 use super::session_overrides::SessionOverrides;
 use crate::runtime::{
     session::TurnCompletionHandle,
@@ -732,12 +733,12 @@ pub(super) fn apply_prompt_fields(agent: &mut JsObject, config: Option<&JsValue>
     }
 }
 
-/// `extensionView.getAllSkills()` of the project the config is set for, after
-/// `runtime.pluginRuntime.refresh()`.
-async fn project_skill_names(
+/// `runtime.pluginRuntime` of the project the config is set for; `None` for
+/// a generation composed without one.
+fn project_plugin_runtime(
     registry: &crate::runtime::project::ProjectRuntimeRegistry,
     root: &std::path::Path,
-) -> Result<Vec<String>, SubmitError> {
+) -> Result<Option<Arc<crate::runtime::plugins::PluginRuntime>>, SubmitError> {
     let lease = registry
         .acquire(Some(root))
         .map_err(|error| err("gateway_request_failed", error.to_string()))?;
@@ -751,30 +752,48 @@ async fn project_skill_names(
                 "Native project resources are missing.",
             )
         })?;
-    let Some(resource) = resources
+    Ok(resources
         .context()
         .resource(crate::runtime::project::Resource::PluginRuntime)
-    else {
-        return Ok(Vec::new());
+        .and_then(|resource| {
+            resource
+                .as_any()
+                .downcast_ref::<crate::runtime::project::plugins::PluginResources>()
+                .map(|plugins| plugins.runtime.clone())
+        }))
+}
+
+/// `await runtime.pluginRuntime.refresh()`, `resolveSdkSessionPlugins(
+/// next.plugins, runtime)` and `createView(sessionPlugins).getAllSkills()`
+/// (ProjectRuntimeRegistry.ts:990-995): the session's loaded plugins and the
+/// skill names its config's `skills` lists resolve against.
+async fn session_plugins_and_skills(
+    registry: &crate::runtime::project::ProjectRuntimeRegistry,
+    root: &std::path::Path,
+    plugins: Option<&JsValue>,
+) -> Result<(Vec<Arc<crate::runtime::plugins::LoadedPlugin>>, Vec<String>), SubmitError> {
+    let Some(runtime) = project_plugin_runtime(registry, root)? else {
+        return Ok((Vec::new(), Vec::new()));
     };
-    let Some(plugins) = resource
-        .as_any()
-        .downcast_ref::<crate::runtime::project::plugins::PluginResources>()
-    else {
-        return Ok(Vec::new());
-    };
-    plugins
-        .runtime
+    runtime
         .refresh()
         .await
         .map_err(|error| err("gateway_request_failed", error.to_string()))?;
-    Ok(plugins
-        .runtime
-        .all_skills()
+    let loaded = crate::runtime::sdk_session::resolve_sdk_session_plugins(
+        plugins,
+        &runtime.snapshot().await,
+        Some(&crate::runtime::sdk_session::DiskSdkPluginLoader),
+    )
+    .await
+    .map_err(|error| err(&error.code, error.message))?;
+    let skills = runtime
+        .create_view(loaded.clone())
         .await
+        .all_skills()
         .into_iter()
         .map(|skill| skill.name)
-        .collect())
+        .collect();
+    Ok((loaded, skills))
 }
 
 /// `resolveSdkSessionSkills` (ProjectRuntimeRegistry.ts:1850-1869): each
@@ -1352,49 +1371,13 @@ fn resolve_agent_mcp_servers(
     Ok(resolved)
 }
 
-/// `resolveSdkSessionPlugins` (ProjectRuntimeRegistry.ts:1807-1850) walks the
-/// local plugin paths in order: realpath, listed once, a directory, then
-/// `loadPluginFromPath`. Loading a plugin into one session's extension view is
-/// not composed by this host, so the first path that resolves to a directory
-/// answers the unavailable shape; only that first path's own checks run
-/// (a later duplicate or missing path is never reached).
-fn resolve_session_plugins(plugins: Option<&JsValue>) -> Result<(), SubmitError> {
-    let Some(plugin) = plugins.and_then(|plugins| match plugins {
-        JsValue::Array(plugins) => plugins.first(),
-        _ => None,
-    }) else {
-        return Ok(());
-    };
-    let path = plugin
-        .get("path")
-        .and_then(JsValue::as_string)
-        .map(text)
-        .unwrap_or_default();
-    let Ok(real) = std::fs::canonicalize(&path) else {
-        return Err(err(
-            "SDK_PLUGIN_NOT_FOUND",
-            format!("Gateway-local SDK plugin path does not exist: {path}"),
-        ));
-    };
-    if !std::fs::metadata(&real).is_ok_and(|meta| meta.is_dir()) {
-        return Err(err(
-            "SDK_PLUGIN_NOT_DIRECTORY",
-            format!("Gateway-local SDK plugin path is not a directory: {path}"),
-        ));
-    }
-    Err(err(
-        "CAPABILITY_UNAVAILABLE",
-        "sdk_session_config is unavailable.",
-    ))
-}
-
 impl SubmitSdkSessionConfig for NativeSdkSessionConfig {
     fn validate(&self, config: &JsValue) -> Result<(), SubmitError> {
         validate(config)?;
         // Keys outside `GatewaySessionSdkConfig` are stored with the config
         // and read by nothing (measured: `sdk-config-unknown-keys`).
-        // `plugins` is checked where the baseline resolves it
-        // ([`resolve_session_plugins`]).
+        // `plugins` is loaded where the baseline resolves it
+        // ([`session_plugins_and_skills`]).
         if config.as_object().is_none_or(agents_wired) {
             Ok(())
         } else {
@@ -1481,7 +1464,6 @@ impl NativeSdkSessionConfig {
             if previous.as_ref().map(serialize) == Some(serialize(config)) {
                 return Ok(false);
             }
-            resolve_session_plugins(config.get("plugins"))?;
             let mut next = config.clone();
             // `next.skills = resolveSdkSessionSkills(next.skills,
             // extensionView.getAllSkills())` after a plugin refresh.
@@ -1489,12 +1471,15 @@ impl NativeSdkSessionConfig {
             if agents.own_entries().iter().any(|(_, agent)| {
                 matches!(agent.get("skills"), Some(JsValue::Array(_)))
             }));
-            let available =
-                if matches!(config.get("skills"), Some(JsValue::Array(_))) || agent_skill_lists {
-                    project_skill_names(&self.project, &root).await?
-                } else {
-                    Vec::new()
-                };
+            let has_plugins = matches!(config.get("plugins"), Some(JsValue::Array(plugins)) if !plugins.is_empty());
+            let (session_plugins, available) = if has_plugins
+                || matches!(config.get("skills"), Some(JsValue::Array(_)))
+                || agent_skill_lists
+            {
+                session_plugins_and_skills(&self.project, &root, config.get("plugins")).await?
+            } else {
+                (Vec::new(), Vec::new())
+            };
             let mut parent_skills: Option<Vec<String>> = None;
             if let Some(JsValue::Array(requested)) = config.get("skills") {
                 let resolved = resolve_session_skills(requested, &available)?;
@@ -1685,6 +1670,7 @@ impl NativeSdkSessionConfig {
                     .map_err(super::task_budget::submit_error)?;
             }
             self.overrides.set_sdk_config(session, config.clone());
+            self.overrides.set_sdk_plugins(session, session_plugins);
             self.overrides.mark_sdk_config(session, root);
             Ok(true)
         }

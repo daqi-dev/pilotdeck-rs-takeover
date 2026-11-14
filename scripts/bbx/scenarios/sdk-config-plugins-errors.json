@@ -1,0 +1,268 @@
+{
+  "name": "sdk-config-plugins-errors",
+  "about": "resolveSdkSessionPlugins 的报错（ProjectRuntimeRegistry.ts:1807-1850）：路径不存在、同一真实路径列两次（含结尾斜杠）、不是目录、没有 plugin.json、manifest 不合法、JSON 解析失败、与项目插件同名、两个会话插件同名；先后次序：前一项先报。另有同一会话同一配置再提交（不变，不重新加载）与换成另一个同名插件后再提交（只与项目插件比名字，不与本会话之前的插件比）。",
+  "files": {
+    "proj/sess-plugin/plugin.json": "{\"name\": \"sess-plugin\", \"version\": \"1.0.0\"}\n",
+    "proj/sess-plugin/skills/delta/SKILL.md": "---\nname: delta\ndescription: The delta skill shipped by the session plugin.\n---\n\n# delta\n\nReply with DELTA.\n",
+    "proj/sess-plugin/commands/hello.md": "---\ndescription: Say hello from the session plugin.\n---\n\nSay hello.\n",
+    "proj/not-a-dir.txt": "x\n",
+    "proj/no-manifest/readme.md": "x\n",
+    "proj/bad-manifest/plugin.json": "{\"version\": 1}\n",
+    "proj/bad-json/plugin.json": "{not json\n",
+    "proj/clash/plugin.json": "{\"name\": \"home-plugin\", \"version\": \"1.0.0\"}\n",
+    "proj/twin/plugin.json": "{\"name\": \"sess-plugin\", \"version\": \"2.0.0\"}\n",
+    "home/.pilotdeck/plugins/home-plugin/plugin.json": "{\"name\": \"home-plugin\", \"version\": \"1.0.0\"}\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Plugin run\"}"
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "ok"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-e1",
+        "channelKey": "test",
+        "message": "turn-1: errors",
+        "sdkSessionConfig": {
+          "plugins": [
+            {
+              "type": "local",
+              "path": "{PROJECT}/missing"
+            },
+            {
+              "type": "local",
+              "path": "{PROJECT}/missing"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-e2",
+        "channelKey": "test",
+        "message": "turn-2: errors",
+        "sdkSessionConfig": {
+          "plugins": [
+            {
+              "type": "local",
+              "path": "{PROJECT}/sess-plugin"
+            },
+            {
+              "type": "local",
+              "path": "{PROJECT}/sess-plugin/"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-e3",
+        "channelKey": "test",
+        "message": "turn-3: errors",
+        "sdkSessionConfig": {
+          "plugins": [
+            {
+              "type": "local",
+              "path": "{PROJECT}/not-a-dir.txt"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-e4",
+        "channelKey": "test",
+        "message": "turn-4: errors",
+        "sdkSessionConfig": {
+          "plugins": [
+            {
+              "type": "local",
+              "path": "{PROJECT}/no-manifest"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-e5",
+        "channelKey": "test",
+        "message": "turn-5: errors",
+        "sdkSessionConfig": {
+          "plugins": [
+            {
+              "type": "local",
+              "path": "{PROJECT}/bad-manifest"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-e6",
+        "channelKey": "test",
+        "message": "turn-6: errors",
+        "sdkSessionConfig": {
+          "plugins": [
+            {
+              "type": "local",
+              "path": "{PROJECT}/bad-json"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-e7",
+        "channelKey": "test",
+        "message": "turn-7: errors",
+        "sdkSessionConfig": {
+          "plugins": [
+            {
+              "type": "local",
+              "path": "{PROJECT}/clash"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-e8",
+        "channelKey": "test",
+        "message": "turn-8: errors",
+        "sdkSessionConfig": {
+          "plugins": [
+            {
+              "type": "local",
+              "path": "{PROJECT}/sess-plugin"
+            },
+            {
+              "type": "local",
+              "path": "{PROJECT}/twin"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-e9",
+        "channelKey": "test",
+        "message": "turn-9: errors",
+        "sdkSessionConfig": {
+          "plugins": [
+            {
+              "type": "local",
+              "path": "{PROJECT}/sess-plugin"
+            },
+            {
+              "type": "local",
+              "path": "{PROJECT}/missing"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-e10",
+        "channelKey": "test",
+        "message": "turn-10: errors",
+        "sdkSessionConfig": {
+          "plugins": [
+            {
+              "type": "local",
+              "path": "relative/path"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ok",
+        "channelKey": "test",
+        "message": "turn-11: errors",
+        "sdkSessionConfig": {
+          "plugins": [
+            {
+              "type": "local",
+              "path": "{PROJECT}/sess-plugin"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ok",
+        "channelKey": "test",
+        "message": "turn-12: errors",
+        "sdkSessionConfig": {
+          "plugins": [
+            {
+              "type": "local",
+              "path": "{PROJECT}/sess-plugin"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ok",
+        "channelKey": "test",
+        "message": "turn-13: errors",
+        "sdkSessionConfig": {
+          "plugins": [
+            {
+              "type": "local",
+              "path": "{PROJECT}/twin"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "sleep": 300
+    }
+  ]
+}

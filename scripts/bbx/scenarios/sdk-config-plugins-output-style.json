@@ -1,0 +1,87 @@
+{
+  "name": "sdk-config-plugins-output-style",
+  "about": "sdkSessionConfig.plugins 的 output style 面：sdkSessionConfig.outputStyle 选会话插件的 style 时其内容进系统提示词（ProjectRuntimeRegistry.ts:314-320 getSdkOutputStyleContent 用 createView(会话插件)）；output_styles_list 带 sessionKey 时列出会话插件的 style（:1074-1090）；set_output_style 能选会话插件的 style（:1092-1105），没有会话插件的会话选它回 OUTPUT_STYLE_NOT_FOUND。",
+  "files": {
+    "proj/sess-plugin/plugin.json": "{\"name\": \"sess-plugin\", \"version\": \"1.0.0\"}\n",
+    "proj/sess-plugin/skills/delta/SKILL.md": "---\nname: delta\ndescription: The delta skill shipped by the session plugin.\n---\n\n# delta\n\nReply with DELTA.\n",
+    "proj/sess-plugin/commands/hello.md": "---\ndescription: Say hello from the session plugin.\n---\n\nSay hello.\n",
+    "proj/sess-plugin/output-styles/terse.md": "---\nname: terse\ndescription: Terse answers.\n---\n\nAnswer tersely. STYLE-MARKER.\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Plugin run\"}"
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "ok"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "output_styles_list",
+      "params": {}
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ps1",
+        "channelKey": "test",
+        "message": "turn-1: styled",
+        "sdkSessionConfig": {
+          "plugins": [
+            {
+              "type": "local",
+              "path": "{PROJECT}/sess-plugin"
+            }
+          ],
+          "outputStyle": "sess-plugin:terse"
+        }
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "output_styles_list",
+      "params": {
+        "sessionKey": "s-ps1"
+      }
+    },
+    {
+      "ws": "set_output_style",
+      "params": {
+        "sessionKey": "s-ps1",
+        "name": "sess-plugin:terse"
+      }
+    },
+    {
+      "ws": "set_output_style",
+      "params": {
+        "sessionKey": "s-ps2",
+        "name": "sess-plugin:terse"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-ps3",
+        "channelKey": "test",
+        "message": "turn-3: style without plugin",
+        "sdkSessionConfig": {
+          "outputStyle": "sess-plugin:terse"
+        }
+      }
+    },
+    {
+      "sleep": 300
+    }
+  ]
+}
