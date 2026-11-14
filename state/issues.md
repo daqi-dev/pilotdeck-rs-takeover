@@ -84,7 +84,7 @@
 | `compact-auto` 的主会话从来不触发压缩（假 provider 报的 `prompt_tokens 12` 让校准后的估算值很低），场景说明与实际不符。要查还有多少场景「一致只是因为没测到它声称测的东西」 | context, * | 任务预算与中止差异 | 待派（场景说明与实际触发行为的核对） |
 | `sidecar-raw-stdio-concurrent` 在 cb8 上偶发不一致：v24（`320552a46`）单独重跑两遍里第一遍差 24 处，第二遍和全量里一致；本机 6/6 一致。差异内容没留下（产物被后一遍覆盖） | sidecar | cb8 `logs/verify-v24.log` | cb8 验收 | 待查（下一轮多跑几遍并留下 diff） |
 | 采集器没有「本机站点」能力：`web_fetch` 的 7 个场景靠 UserPromptSubmit hook 起一个 127.0.0.1 的 HTTPS 假站点，同一份站点脚本复制进了 7 个场景文件（生成脚本没入库）。应让 `run.mjs` 支持带 content-type 与重定向头的本机站点，再把这 7 个场景改过去；新场景还没归入 `features.json` | tools | `tool-web-fetch-*` 场景 | web_fetch 的报告 | 待派（清理批） |
-| 满负载的全量里偶发不一致、单独重跑一致的场景（cb8，v28，当时机器上还有一个子代理在跑对拍）：`cron-run-now`（差 31）、`params-interaction-binding`（差 44）、`sidecar-raw-half-line-eof`（差 3）单独重跑 3/3 一致；`gap-tool-glob`（差 1）单独重跑 2/3 一致。交付前「连续 3 轮结果相同」要求它们稳定，安静机器上先量是否还出现，再逐个查 | cron, gw, sidecar, tools | cb8 `logs/verify-v28.log` | cb8 验收 | 待查（安静轮次时） |
+| 满负载的全量里偶发不一致、单独重跑一致的场景（cb8，v28，当时机器上还有一个子代理在跑对拍）：`cron-run-now`（差 31）、`params-interaction-binding`（差 44）、`sidecar-raw-half-line-eof`（差 3）单独重跑 3/3 一致；`gap-tool-glob`（差 1）单独重跑 2/3 一致。v29（同时有另外两遍全量在跑）又见：`cli-chat-search` 一次 RUN FAILED（重跑 2/2 一致，报错没留下）、`cli-cron-online-create`（差 11，重跑 1/2 一致）、`cron-run-now`、`turn-steer-cancel`（差 20，重跑 2/2 一致）。交付前「连续 3 轮结果相同」要求它们稳定，安静机器上先量是否还出现，再逐个查 | cron, gw, sidecar, tools | cb8 `logs/verify-v28.log` | cb8 验收 | 待查（安静轮次时） |
 | 旧流水线留下的守卫 `src/pilotdeck-gateway/tests/test_metadata_io_driver.py`（检查 nextest 配置里登记的测试名等）在 macOS 上直接运行 99 个里 19 个失败、21 个报错，改 nextest 配置前后相同；它不在四条命令里，没人在跑。要么修到能跑，要么按「先停用、确认无影响再删」处理 | * | 主会话抽查 | 主会话 | 待定（清理批） |
 
 ## 审阅读过、未发现问题的
