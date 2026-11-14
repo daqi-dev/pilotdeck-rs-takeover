@@ -497,10 +497,23 @@ fn leaf(o: &JsObject) -> Option<JsValue> {
         } else {
             "thinking"
         };
-        out = object([
-            ("type", kind.into()),
-            ("text", JsValue::String(string(o.get("text"))?)),
-        ]);
+        out = object([("type", kind.into())]);
+        match o.get("text") {
+            Some(JsValue::String(text)) => {
+                out.insert("text".into(), JsValue::String(text.clone()));
+            }
+            // The baseline gateway runs the loop in-process and hands it the
+            // session's blocks as they are, so a stored text block whose
+            // `text` is not a string (or is missing) reaches the request
+            // budget, where countTokens throws (TokenBudgetManager.ts:126,
+            // tokenizer.ts:19-21). The external loop's default factory
+            // drops such a block (toCanonicalContentBlocks).
+            Some(other) if !external_deployment() => {
+                out.insert("text".into(), other.clone());
+            }
+            None if !external_deployment() => {}
+            _ => return None,
+        }
         copy_string(&mut out, o, "blockId");
         if kind == "thinking" {
             copy_string(&mut out, o, "signature");

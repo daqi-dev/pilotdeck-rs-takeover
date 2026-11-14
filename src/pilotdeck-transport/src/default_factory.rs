@@ -763,7 +763,9 @@ impl TurnPreparationPort for Preparation {
             HostReply::PlanTodoBoundaryOnly(_) => {
                 Err(gap("open PlanTodo observer prompt/blocking projection"))
             }
-            _ => Err(gap("PlanTodo observer operation reply")),
+            _ => Err(invariant(
+                "PlanTodo call answered with a non-PlanTodo reply",
+            )),
         }
     }
 }
@@ -784,12 +786,12 @@ impl EventSink<'_> {
         let payload = boundary
             .value()
             .as_object()
-            .ok_or_else(|| gap("AgentEvent object admission"))?
+            .ok_or_else(|| invariant("turn event is not an object"))?
             .clone();
         let kind = payload
             .get("type")
             .and_then(JsValue::as_string)
-            .ok_or_else(|| gap("AgentEvent type admission"))?;
+            .ok_or_else(|| invariant("turn event has no string type"))?;
         // An aborted turn under deadline is an informational source event, not
         // a successful execution or a settled host call. The factory still
         // returns its original Unknown and keeps every accepted-call fence.
@@ -924,7 +926,11 @@ impl ExecutionFactory for OriginalAgentFactory {
                 Ok(HostReply::PlanTodoBoundaryOnly(_)) => {
                     return Err(gap("open PlanTodo prompt/blocking projection"));
                 }
-                Ok(_) => return Err(gap("PlanTodo read operation reply")),
+                Ok(_) => {
+                    return Err(invariant(
+                        "PlanTodo call answered with a non-PlanTodo reply",
+                    ));
+                }
                 Err(error) if observed_by_loop(&error) => {}
                 Err(error) => return Err(error),
             }
@@ -938,7 +944,11 @@ impl ExecutionFactory for OriginalAgentFactory {
                 .map_or_else(|| decoded.config.route.clone(), |m| m.route.clone());
             match host.call(&context.control, HostCall::ModelMetadata { route }) {
                 Ok(HostReply::ModelMetadata(value)) => metadata.push(value),
-                Ok(_) => return Err(gap("metadata operation reply")),
+                Ok(_) => {
+                    return Err(invariant(
+                        "metadata call answered with a non-metadata reply",
+                    ));
+                }
                 Err(error) if observed_by_loop(&error) => {}
                 // The baseline's default factory throws a plain Error carrying
                 // only the message (pilotdeck-agent-loop-default-factory.ts:
@@ -1168,6 +1178,15 @@ pub(crate) fn requested_cancel_left_to_loop(check: PortResult<()>) -> PortResult
 fn invalid(message: &str) -> PortError {
     PortError::InvalidResponse {
         message: message.into(),
+    }
+}
+/// Not reachable from any external value: `host_operations::call` answers
+/// each HostCall only with its own reply variants (PlanTodo → PlanTodo /
+/// PlanTodoBoundaryOnly, ModelMetadata → ModelMetadata), and turn events are
+/// encoded by `pilotdeck_agent::turn_wire` as objects with a string `type`.
+fn invariant(what: &str) -> PortError {
+    PortError::InvalidResponse {
+        message: format!("Rust factory internal invariant violated: {what}.").into(),
     }
 }
 fn gap(profile: &str) -> PortError {

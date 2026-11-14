@@ -72,7 +72,7 @@ fn wrong(method: &str) -> PortError {
 // in an array, and the literal `undefined` in an object template interpolation.
 pub fn stable_serialize(value: &JsValue) -> PortResult<Option<String>> {
     enum Emit<'a> {
-        Value(&'a JsValue, usize),
+        Value(&'a JsValue),
         Text(&'static str),
         Quoted(&'a JsString),
     }
@@ -80,7 +80,7 @@ pub fn stable_serialize(value: &JsValue) -> PortResult<Option<String>> {
         return Ok(None);
     }
     let mut out = String::new();
-    let mut tasks = vec![Emit::Value(value, 0)];
+    let mut tasks = vec![Emit::Value(value)];
     while let Some(task) = tasks.pop() {
         match task {
             Emit::Text(text) => out.push_str(text),
@@ -90,53 +90,44 @@ pub fn stable_serialize(value: &JsValue) -> PortResult<Option<String>> {
                     .expect("a string has JSON text");
                 out.push_str(&quoted);
             }
-            Emit::Value(item, depth) => {
-                if depth >= 1024 {
-                    return Err(gap(
-                        "REQUEST_CACHE_NATIVE_RECURSION_PROFILE",
-                        "Original recursive stableSerialize stack-limit behavior requires a verified native engine depth profile; this bounded wire serializer does not invent RangeError behavior.",
-                        value,
-                    ));
-                }
-                match item {
-                    JsValue::Array(items) => {
-                        out.push('[');
-                        tasks.push(Emit::Text("]"));
-                        for (index, child) in items.iter().enumerate().rev() {
-                            if !child.is_undefined() {
-                                tasks.push(Emit::Value(child, depth + 1));
-                            }
-                            if index > 0 {
-                                tasks.push(Emit::Text(","));
-                            }
+            Emit::Value(item) => match item {
+                JsValue::Array(items) => {
+                    out.push('[');
+                    tasks.push(Emit::Text("]"));
+                    for (index, child) in items.iter().enumerate().rev() {
+                        if !child.is_undefined() {
+                            tasks.push(Emit::Value(child));
+                        }
+                        if index > 0 {
+                            tasks.push(Emit::Text(","));
                         }
                     }
-                    JsValue::Object(object) => {
-                        let mut entries = object.entries().iter().collect::<Vec<_>>();
-                        entries.sort_by(|left, right| left.0.cmp(&right.0));
-                        out.push('{');
-                        tasks.push(Emit::Text("}"));
-                        for (index, (key, child)) in entries.into_iter().enumerate().rev() {
-                            if child.is_undefined() {
-                                tasks.push(Emit::Text("undefined"));
-                            } else {
-                                tasks.push(Emit::Value(child, depth + 1));
-                            }
-                            tasks.push(Emit::Text(":"));
-                            tasks.push(Emit::Quoted(key));
-                            if index > 0 {
-                                tasks.push(Emit::Text(","));
-                            }
+                }
+                JsValue::Object(object) => {
+                    let mut entries = object.entries().iter().collect::<Vec<_>>();
+                    entries.sort_by(|left, right| left.0.cmp(&right.0));
+                    out.push('{');
+                    tasks.push(Emit::Text("}"));
+                    for (index, (key, child)) in entries.into_iter().enumerate().rev() {
+                        if child.is_undefined() {
+                            tasks.push(Emit::Text("undefined"));
+                        } else {
+                            tasks.push(Emit::Value(child));
+                        }
+                        tasks.push(Emit::Text(":"));
+                        tasks.push(Emit::Quoted(key));
+                        if index > 0 {
+                            tasks.push(Emit::Text(","));
                         }
                     }
-                    _ => {
-                        let text = stringify_json(item)
-                            .map_err(|error| source_error(&error.to_string(), value))?
-                            .expect("nested undefined was handled by its container");
-                        out.push_str(&text);
-                    }
                 }
-            }
+                _ => {
+                    let text = stringify_json(item)
+                        .map_err(|error| source_error(&error.to_string(), value))?
+                        .expect("nested undefined was handled by its container");
+                    out.push_str(&text);
+                }
+            },
         }
     }
     Ok(Some(out))

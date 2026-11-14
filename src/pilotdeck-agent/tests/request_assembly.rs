@@ -1876,13 +1876,17 @@ fn cache_invalid_iterable_and_multi_tool_collation_have_distinct_failures_after_
 }
 
 #[test]
-fn cache_native_recursive_depth_profile_is_explicit_unfinished_scope() {
+fn cache_serialization_is_iterative_past_v8_frames() {
+    // Node v22.22.0 serializes 1500-deep nesting; V8 throws RangeError only
+    // when its native stack runs out (environment dependent), never at 1024.
     let mut value = JsValue::Null;
-    for _ in 0..1024 {
+    for _ in 0..1500 {
         value = arr([value]);
     }
-    assert!(
-        matches!(request_assembly::stable_serialize(&value),Err(PortError::HostFailure{code,..})if code.equals_str("REQUEST_CACHE_NATIVE_RECURSION_PROFILE"))
+    let text = request_assembly::stable_serialize(&value).unwrap().unwrap();
+    assert_eq!(
+        text,
+        format!("{}null{}", "[".repeat(1500), "]".repeat(1500))
     );
 }
 
