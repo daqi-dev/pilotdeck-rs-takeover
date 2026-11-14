@@ -2,12 +2,12 @@
 
 > 本文件由 `node scripts/bbx/status.mjs` 生成，不要手改。改功能清单改 `scripts/bbx/features.json`，改问题改 `state/issues.md`，改审阅记录改 `state/audits.md`，改检查结果改 `state/check-results.json`，然后重新生成。
 
-- 生成时间：2026-11-14T08:10:32Z
-- 仓库提交：`34260db33`（场景、表面清单、功能清单、台账都取自这个提交的工作区）
+- 生成时间：2026-11-14T09:25:27Z
+- 仓库提交：`7b75a0851`（场景、表面清单、功能清单、台账都取自这个提交的工作区）
 - 对拍产物：`_build/bbx`
-- 产物来历（人给的说明）：cb8（Linux aarch64）上 verify.sh v27 的一轮全量对拍（槽位 5–8 并行），被测提交 34260db3
-- 产物里的场景结果：636 个 `.diff.txt`；修改时间 2026-11-14T07:23:11.053Z 至 2026-11-14T08:04:15.278Z（UTC）；按小时：2026-11-14T07:00Z 604 个，2026-11-14T08:00Z 32 个
-- 采集平台（从 diff 文件头里的产物路径判断）：Linux 636 个
+- 产物来历（人给的说明）：cb8（Linux aarch64）上 verify.sh v28 的一轮全量对拍（槽位 5–8 并行），被测提交 7b75a085
+- 产物里的场景结果：644 个 `.diff.txt`；修改时间 2026-11-14T08:36:10.538Z 至 2026-11-14T09:18:37.540Z（UTC）；按小时：2026-11-14T08:00Z 293 个，2026-11-14T09:00Z 351 个
+- 采集平台（从 diff 文件头里的产物路径判断）：Linux 644 个
 - 产物里有、当前提交没有的场景 0 个；当前提交有、产物里没有的（记为「未跑」）0 个
 - 产物不记录被测提交号，也不记录是哪一轮；修改时间跨度大或分成几段时，可能混合了多轮。
 
@@ -15,11 +15,11 @@
 
 | 条 | 标准 | 现在（由数据算出） |
 |---|---|---|
-| 1 | 全量对拍稳定一致 | 场景 636 个：SAME 622，DIFF 14，INVALID 0，未跑 0。不是 SAME 的里属于允许清单 2 个、登记了 accepted 1 个、其余 11 个（逐个见下）。连续 3 轮稳定：需要连续 3 轮的产物，未提供 |
-| 2 | 表面覆盖完整 | 表面项 2113 个，范围内 2004 个：被 SAME 场景碰到 2001，只被有差异的场景碰到 3，没碰到 0；标为不计 109（理由表在 `state/out-of-scope.md`，待人过目） |
+| 1 | 全量对拍稳定一致 | 场景 644 个：SAME 629，DIFF 15，INVALID 0，未跑 0。不是 SAME 的里属于允许清单 2 个、登记了 accepted 3 个、其余 10 个（逐个见下）。连续 3 轮稳定：需要连续 3 轮的产物，未提供 |
+| 2 | 表面覆盖完整 | 表面项 2113 个，范围内 2004 个：被 SAME 场景碰到 2000，只被有差异的场景碰到 4，没碰到 0；标为不计 109（理由表在 `state/out-of-scope.md`，待人过目） |
 | 3 | 盲审收敛 | 审阅记录 10 次，其中类型为「盲审」的 1 次；16 个功能域里从没有过盲审或缺口审查的 0 个。各功能域最近一次见下表。「两次连续盲审覆盖全部区域且无 1、2 级新发现」：不满足 |
 | 4 | 原版界面可用 | 没有数据：需要 `scripts/ui-smoke` 的当次结果和人亲手使用的记录 |
-| 5 | 构建与测试全绿，没有占位 | 四条命令：2026-11-14 在 cb8（Linux aarch64） 上、提交 `d0e857162`：fmt pass，clippy pass，nextest pass（7784/7784），文档测试 pass。`src/` 产品代码里范围内的占位：`unimplemented!` 0 处、`todo!` 0 处、`NOT_IMPLEMENTED` 0 处、`Failure::Todo` 6 处、自报未实现文案 13 处、宿主边界哨兵 25 处、原生档案缺口 42 处、范围外不支持却没列进清单的 0 处（共 86，逐条见下）；已定范围外 10 处；范围外清单里失效的 0 条（`CAPABILITY_UNAVAILABLE`、返回固定空结果、空 match 分支没有机械判据，未统计，逐处定性见 `specs/delivery/placeholder-inventory.md`） |
+| 5 | 构建与测试全绿，没有占位 | 四条命令：2026-11-14 在 cb8（Linux aarch64） 上、提交 `34260db33`：fmt pass，clippy pass，nextest fail（7794/7796），文档测试 pass。`src/` 产品代码里范围内的占位：`unimplemented!` 0 处、`todo!` 0 处、`NOT_IMPLEMENTED` 0 处、`Failure::Todo` 6 处、自报未实现文案 13 处、宿主边界哨兵 25 处、原生档案缺口 18 处、范围外不支持却没列进清单的 0 处（共 62，逐条见下）；已定范围外 10 处；范围外清单里失效的 0 条（`CAPABILITY_UNAVAILABLE`、返回固定空结果、空 match 分支没有机械判据，未统计，逐处定性见 `specs/delivery/placeholder-inventory.md`） |
 | 6 | TS gateway 退役 | 透明代理入口的机械判据命中 0 处。进程树里没有 Node gateway 的证据：没有数据（需要全量对拍与界面冒烟期间的进程列表） |
 | 7 | 性能报告 | 没有数据：需要发布构建下两侧的启动耗时、每轮开销、内存、并发会话的测量 |
 | 8 | 真实使用 | 没有数据：需要人在最终组合上完成的真实任务记录 |
@@ -31,19 +31,20 @@
 | 场景 | 结论 | 归类 | 子能力 |
 |---|---|---|---|
 | `abort-model-stream` | DIFF | 其余 | `loop.steer-abort` |
-| `abort-timeout-tool-mcp` | DIFF | 其余 | `loop.steer-abort` |
 | `abort-tool-bash` | DIFF | 其余 | `loop.steer-abort` |
-| `abort-tool-web-fetch` | DIFF | 其余 | `loop.steer-abort` |
 | `abort-turn-finishing` | DIFF | 其余 | `loop.steer-abort` |
+| `cron-run-now` | DIFF | 其余 | `auto.cron-fire` |
+| `gap-tool-glob` | DIFF | 其余 | `tools.search` |
 | `gap-tool-read-file-vision` | DIFF | 允许不一致的清单 | `tools.files` |
 | `hot-reload-entries` | DIFF | 场景登记了 accepted（登记以外仍有差异） | 归属不了 |
 | `loop-parallel-tools` | DIFF | 其余 | `loop.tool-dispatch` |
 | `modules-tools-result-unknown-sidecar-binding` | DIFF | 其余 | `modules.tools` |
+| `params-interaction-binding` | DIFF | 其余 | `perm.interaction` |
 | `session-odd-shapes-turn` | DIFF | 其余 | 归属不了 |
-| `tool-execute-code` | DIFF | 其余 | `tools.execute-code` |
+| `sidecar-raw-half-line-eof` | DIFF | 场景登记了 accepted（登记以外仍有差异） | 归属不了 |
+| `sidecar-raw-stdio-concurrent` | DIFF | 场景登记了 accepted（登记以外仍有差异） | 归属不了 |
 | `tool-write-file-diagnostics` | DIFF | 允许不一致的清单 | `tools.files` |
 | `turn-abort-before-request-status` | DIFF | 其余 | `loop.steer-abort` |
-| `turn-steer-terminal` | DIFF | 其余 | `loop.steer-abort` |
 
 ### 第 5 条：占位的逐处位置
 
@@ -59,8 +60,8 @@
 | `Failure::Todo` | `pilotdeck-cli/src/skills.rs:29` | 范围内的占位 | — |
 | `Failure::Todo` | `pilotdeck-cli/src/skills.rs:256` | 范围内的占位 | — |
 | `Failure::Todo` | `pilotdeck-cli/src/skills_migrate.rs:123` | 范围内的占位 | — |
-| `自报未实现文案` | `pilotdeck-agent/src/turn.rs:4154` | 范围内的占位 | — |
-| `自报未实现文案` | `pilotdeck-gateway/src/native_process/assembly.rs:2494` | 范围内的占位 | — |
+| `自报未实现文案` | `pilotdeck-agent/src/turn.rs:4183` | 范围内的占位 | — |
+| `自报未实现文案` | `pilotdeck-gateway/src/native_process/assembly.rs:2497` | 范围内的占位 | — |
 | `自报未实现文案` | `pilotdeck-gateway/src/native_process/management.rs:33` | 范围内的占位 | — |
 | `自报未实现文案` | `pilotdeck-gateway/src/native_process/methods/metadata.rs:70` | 范围内的占位 | — |
 | `自报未实现文案` | `pilotdeck-gateway/src/native_process/methods/sop.rs:133` | 已定范围外 | staffdeck |
@@ -72,7 +73,7 @@
 | `自报未实现文案` | `pilotdeck-gateway/src/runtime/tools/builtin/form_dialog_2020.rs:710` | 范围内的占位 | — |
 | `自报未实现文案` | `pilotdeck-gateway/src/storage/transcript_adapter.rs:490` | 范围内的占位 | — |
 | `自报未实现文案` | `pilotdeck-gateway/src/storage/transcript_adapter.rs:1628` | 范围内的占位 | — |
-| `自报未实现文案` | `pilotdeck-transport/src/default_factory.rs:1175` | 范围内的占位 | — |
+| `自报未实现文案` | `pilotdeck-transport/src/default_factory.rs:1194` | 范围内的占位 | — |
 | `宿主边界哨兵` | `pilotdeck-gateway/src/config/binding.rs:27` | 已定范围外 | staffdeck |
 | `宿主边界哨兵` | `pilotdeck-gateway/src/config/binding.rs:28` | 已定范围外 | staffdeck |
 | `宿主边界哨兵` | `pilotdeck-gateway/src/config/graph.rs:344` | 范围内的占位 | — |
@@ -100,45 +101,21 @@
 | `宿主边界哨兵` | `pilotdeck-gateway/src/skills/error.rs:164` | 范围内的占位 | — |
 | `宿主边界哨兵` | `pilotdeck-gateway/src/skills/error.rs:173` | 范围内的占位 | — |
 | `宿主边界哨兵` | `pilotdeck-gateway/src/skills/error.rs:174` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/request_assembly.rs:96` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/request_assembly.rs:955` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/tool_context_policy.rs:125` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:148` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:154` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:161` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:168` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:176` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:228` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:243` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:254` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:1095` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:1179` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:1786` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:1875` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:1986` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:2064` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:2077` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:2085` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:2410` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:2556` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:2860` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:3270` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:3295` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:3442` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:3505` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:4269` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:4290` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:4598` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:4626` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:4765` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:4920` | 范围内的占位 | — |
+| `原生档案缺口` | `pilotdeck-agent/src/request_assembly.rs:946` | 范围内的占位 | — |
+| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:1182` | 范围内的占位 | — |
+| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:1789` | 范围内的占位 | — |
+| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:1878` | 范围内的占位 | — |
+| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:2071` | 范围内的占位 | — |
+| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:2084` | 范围内的占位 | — |
+| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:2092` | 范围内的占位 | — |
+| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:2417` | 范围内的占位 | — |
+| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:2563` | 范围内的占位 | — |
+| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:3281` | 范围内的占位 | — |
+| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:3306` | 范围内的占位 | — |
+| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:4298` | 范围内的占位 | — |
+| `原生档案缺口` | `pilotdeck-agent/src/turn.rs:4319` | 范围内的占位 | — |
 | `原生档案缺口` | `pilotdeck-transport/src/default_factory.rs:764` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-transport/src/default_factory.rs:766` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-transport/src/default_factory.rs:787` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-transport/src/default_factory.rs:792` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-transport/src/default_factory.rs:925` | 范围内的占位 | — |
 | `原生档案缺口` | `pilotdeck-transport/src/default_factory.rs:927` | 范围内的占位 | — |
-| `原生档案缺口` | `pilotdeck-transport/src/default_factory.rs:941` | 范围内的占位 | — |
 | `原生档案缺口` | `pilotdeck-transport/src/server.rs:596` | 范围内的占位 | — |
 | `原生档案缺口` | `pilotdeck-transport/src/system_clock.rs:371` | 范围内的占位 | — |
 | `原生档案缺口` | `pilotdeck-transport/src/system_clock.rs:432` | 范围内的占位 | — |
@@ -164,29 +141,32 @@
 
 | 功能域 | 子能力 | 场景 | 一致 | 表面项 | 被碰到 | 只被有差异的碰到 | 没碰到 | 不计 | 问题 1/2/3/4/尺子 | 最近盲审 / 缺口审查 | 最近代码审阅 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `loop` 对话主干与 agent 循环 | 7 | 97 | 89 | 195 | 185 | 0 | 0 | 10 | 0/1/8/1/4 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
+| `loop` 对话主干与 agent 循环 | 7 | 97 | 92 | 195 | 185 | 0 | 0 | 10 | 0/1/8/1/4 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
 | `model` 模型协议与路由 | 9 | 57 | 57 | 271 | 270 | 0 | 0 | 1 | 0/0/3/0/0 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
-| `tools` 工具 | 9 | 75 | 72 | 295 | 286 | 3 | 0 | 6 | 0/1/3/0/2 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
-| `perm` 权限、沙箱、路径检查 | 6 | 65 | 65 | 55 | 53 | 0 | 0 | 2 | 0/0/1/0/0 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
+| `tools` 工具 | 9 | 75 | 72 | 295 | 287 | 2 | 0 | 6 | 0/0/5/0/2 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
+| `perm` 权限、沙箱、路径检查 | 6 | 65 | 64 | 55 | 51 | 2 | 0 | 2 | 0/0/1/0/0 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
 | `session` 会话存储、分叉、恢复、导出 | 8 | 54 | 54 | 206 | 200 | 0 | 0 | 6 | 0/1/4/0/1 | 2026-11-13（缺口审查） | 2026-11-11（代码审阅） |
 | `context` 上下文、压缩与缓存 | 5 | 36 | 36 | 61 | 59 | 0 | 0 | 2 | 0/0/1/0/1 | 2026-11-13（缺口审查） | — |
 | `agents` 子代理与后台任务 | 4 | 32 | 32 | 91 | 90 | 0 | 0 | 1 | 0/1/4/0/1 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
 | `hooks` hooks | 5 | 34 | 34 | 99 | 99 | 0 | 0 | 0 | 0/0/0/2/3 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
-| `ext` 插件、skills、MCP | 5 | 25 | 25 | 146 | 134 | 0 | 0 | 12 | 0/0/4/1/1 | 2026-11-11（盲审） | 2026-11-11（代码审阅） |
+| `ext` 插件、skills、MCP | 5 | 25 | 25 | 146 | 134 | 0 | 0 | 12 | 0/0/4/1/0 | 2026-11-11（盲审） | 2026-11-11（代码审阅） |
 | `memory` 记忆 | 4 | 9 | 9 | 35 | 34 | 0 | 0 | 1 | 0/0/2/0/1 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
-| `auto` cron 与 always-on | 5 | 24 | 24 | 123 | 123 | 0 | 0 | 0 | 0/0/2/0/1 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
+| `auto` cron 与 always-on | 5 | 24 | 23 | 123 | 123 | 0 | 0 | 0 | 0/0/2/0/1 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
 | `config` 设置、配置、热重载 | 7 | 24 | 24 | 86 | 83 | 0 | 0 | 3 | 0/1/8/1/0 | 2026-11-12（缺口审查） | — |
 | `modules` 外部能力模块与 sidecar 部署 | 7 | 45 | 44 | 117 | 105 | 0 | 0 | 12 | 0/0/4/1/2 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
 | `gw` gateway 连接层 | 5 | 55 | 55 | 125 | 125 | 0 | 0 | 0 | 0/0/3/0/1 | 2026-11-13（缺口审查） | 2026-11-11（代码审阅） |
 | `channels` 渠道（只要求启动表现） | 4 | 13 | 13 | 125 | 83 | 0 | 0 | 42 | 0/0/0/0/1 | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） |
 | `cli` CLI | 6 | 24 | 24 | 83 | 72 | 0 | 0 | 11 | 0/0/2/0/0 | 2026-11-12（缺口审查） | — |
 | 横跨（`*`） | | | | | | | | | 0/0/2/1/4 | | |
-| 归属不了 | | 66 | 64 | 0 | 0 | 0 | 0 | 0 | | | |
+| 归属不了 | | 74 | 70 | 0 | 0 | 0 | 0 | 0 | | | |
 
 一个场景可以属于几个子能力，所以各域场景数之和大于场景总数；表面项每项只属于一个子能力。
 
 台账里认不出的功能域：
 - 「`hot-reload-entries` 在调试构建优化档位…」的功能域 cron
+- 「Rust sidecar 在 execute 以抛错结束时，…」的功能域 sidecar
+- 「Rust sidecar 在 execute 以抛错结束时，…」没有填功能域
+- 「占位残余（2026-11-14 第三批合并后，判据命中 62…」的功能域 sidecar
 - 「`sidecar-raw-stdio-concurrent`…」的功能域 sidecar
 - 「`sidecar-raw-stdio-concurrent`…」没有填功能域
 
@@ -199,7 +179,7 @@
 | 子能力 | 场景 | 一致 | 表面项 | 被碰到 | 只被有差异的碰到 | 没碰到 | 不计 | 上游验收集 | 最近盲审 / 缺口审查 | 最近代码审阅 | 基线位置 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | `loop.submit` 轮次受理与每轮参数 | 8 | 8 | 34 | 34 | 0 | 0 | 0 | — | — | 2026-11-13（代码审阅） | `src/agent/turn/` `src/gateway/client/InProcessGateway.ts` |
-| `loop.steer-abort` 插话与中止 | 58 | 51 | 30 | 27 | 0 | 0 | 3 | — | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） | `src/agent/session/SteerMailbox.ts` `src/agent/loop/AgentLoop.ts` |
+| `loop.steer-abort` 插话与中止 | 58 | 54 | 30 | 27 | 0 | 0 | 3 | — | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） | `src/agent/session/SteerMailbox.ts` `src/agent/loop/AgentLoop.ts` |
 | `loop.continuation` 步进与终止 | 3 | 3 | 43 | 38 | 0 | 0 | 5 | parity | 2026-11-11（盲审） | — | `src/agent/loop/decideLoopContinuation.ts` `src/agent/policy/FailureGuard.ts` |
 | `loop.recovery` 循环层的异常恢复 | 21 | 21 | 28 | 27 | 0 | 0 | 1 | — | 2026-11-13（缺口审查） | — | `src/agent/loop/AgentLoop.ts` `src/agent/loop/outputTokenRetry.ts` `src/agent/loop/LargeFileRepair.ts` |
 | `loop.tool-dispatch` 工具调用的调度 | 4 | 3 | 6 | 6 | 0 | 0 | 0 | — | 2026-11-12（缺口审查） | — | `src/tool/scheduler/` `src/agent/loop/collectToolCalls.ts` `src/agent/loop/ensureToolResultPairing.ts` `src/agent/modules/capability/hostToolPort.ts` |
@@ -229,11 +209,11 @@
 | 子能力 | 场景 | 一致 | 表面项 | 被碰到 | 只被有差异的碰到 | 没碰到 | 不计 | 上游验收集 | 最近盲审 / 缺口审查 | 最近代码审阅 | 基线位置 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | `tools.files` 文件工具 | 13 | 11 | 43 | 43 | 0 | 0 | 0 | — | 2026-11-11（盲审） | — | `src/tool/builtin/readFile.ts` `src/tool/builtin/writeFile.ts` `src/tool/builtin/editFile.ts` `src/tool/builtin/sendAttachment.ts` |
-| `tools.search` 搜索工具 | 4 | 4 | 24 | 24 | 0 | 0 | 0 | — | 2026-11-11（盲审） | — | `src/tool/builtin/glob.ts` `src/tool/builtin/grep.ts` |
+| `tools.search` 搜索工具 | 4 | 3 | 24 | 23 | 1 | 0 | 0 | — | 2026-11-11（盲审） | — | `src/tool/builtin/glob.ts` `src/tool/builtin/grep.ts` |
 | `tools.shell` bash | 4 | 4 | 15 | 14 | 0 | 0 | 1 | — | — | 2026-11-12（代码审阅） | `src/tool/builtin/` `src/runtime/commandShell.ts` |
-| `tools.execute-code` execute_code | 8 | 7 | 19 | 12 | 3 | 0 | 4 | — | — | 2026-11-11（代码审阅） | `src/tool/builtin/executeCode.ts` |
+| `tools.execute-code` execute_code | 8 | 8 | 19 | 15 | 0 | 0 | 4 | — | — | 2026-11-11（代码审阅） | `src/tool/builtin/executeCode.ts` |
 | `tools.web` web 工具 | 13 | 13 | 37 | 36 | 0 | 0 | 1 | — | 2026-11-11（盲审） | — | `src/tool/builtin/webSearch.ts` `src/tool/builtin/additionalWebSearch.ts` `src/tool/builtin/webFetch.ts` |
-| `tools.interaction` 向用户提问与对话框 | 16 | 16 | 79 | 79 | 0 | 0 | 0 | — | — | 2026-11-11（代码审阅） | `src/tool/elicitation/` `src/tool/dialog/` `src/gateway/elicitation/` `src/gateway/user-dialog/` |
+| `tools.interaction` 向用户提问与对话框 | 16 | 16 | 79 | 78 | 1 | 0 | 0 | — | — | 2026-11-11（代码审阅） | `src/tool/elicitation/` `src/tool/dialog/` `src/gateway/elicitation/` `src/gateway/user-dialog/` |
 | `tools.state` 计划、待办与目标 | 9 | 9 | 48 | 48 | 0 | 0 | 0 | — | 2026-11-13（缺口审查） | — | `src/plan-todo/` `src/goal/` `src/tool/builtin/` |
 | `tools.misc` 其他内建工具 | 4 | 4 | 9 | 9 | 0 | 0 | 0 | — | 2026-11-11（盲审） | 2026-11-13（代码审阅） | `src/tool/builtin/getCurrentTime.ts` `src/tool/builtin/lsp.ts` `src/lsp/` |
 | `tools.runtime` 工具运行时公共部分 | 5 | 5 | 21 | 21 | 0 | 0 | 0 | — | 2026-11-13（缺口审查） | — | `src/tool/registry/` `src/tool/execution/` `src/tool/protocol/` |
@@ -244,12 +224,12 @@
 
 | 子能力 | 场景 | 一致 | 表面项 | 被碰到 | 只被有差异的碰到 | 没碰到 | 不计 | 上游验收集 | 最近盲审 / 缺口审查 | 最近代码审阅 | 基线位置 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `perm.decision` 权限判定与询问 | 22 | 22 | 27 | 25 | 0 | 0 | 2 | — | — | 2026-11-13（代码审阅） | `src/permission/` `src/gateway/permission/` |
+| `perm.decision` 权限判定与询问 | 22 | 22 | 27 | 24 | 1 | 0 | 2 | — | — | 2026-11-13（代码审阅） | `src/permission/` `src/gateway/permission/` |
 | `perm.rules-file` permissions.json 与托管权限 | 3 | 3 | 6 | 6 | 0 | 0 | 0 | — | 2026-11-11（盲审） | 2026-11-13（代码审阅） | `src/permission/settings.ts` `src/agent/turn/permissionOverrides.ts` |
 | `perm.modes` 运行模式约束 | 7 | 7 | 7 | 7 | 0 | 0 | 0 | — | — | 2026-11-13（代码审阅） | `src/tool/planModeConstraints.ts` `src/tool/askModeConstraints.ts` |
 | `perm.sandbox` 沙箱模式 | 14 | 14 | 6 | 6 | 0 | 0 | 0 | — | 2026-11-11（盲审） | 2026-11-13（代码审阅） | `src/sandbox/` `src/tool/execution-world/` |
 | `perm.paths` 路径检查 | 7 | 7 | 4 | 4 | 0 | 0 | 0 | — | 2026-11-13（缺口审查） | 2026-11-13（代码审阅） | `src/tool/builtin/filesystem/pathSafety.ts` `src/pilot/writablePaths.ts` |
-| `perm.interaction` 交互 profile 与交互绑定 | 15 | 15 | 5 | 5 | 0 | 0 | 0 | — | 2026-11-11（盲审） | 2026-11-13（代码审阅） | `src/interaction/` |
+| `perm.interaction` 交互 profile 与交互绑定 | 15 | 14 | 5 | 4 | 1 | 0 | 0 | — | 2026-11-11（盲审） | 2026-11-13（代码审阅） | `src/interaction/` |
 
 ### `session` 会话存储、分叉、恢复、导出
 
@@ -332,7 +312,7 @@ memory 段、轮次中的捕获与检索、轮后维护、memory_* method。
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | `auto.cron-config` cron 配置与时区 | 3 | 3 | 5 | 5 | 0 | 0 | 0 | — | — | 2026-11-13（代码审阅） | `src/cron/config/` `src/cron/CronTimezone.ts` |
 | `auto.cron-api` cron 接口 | 7 | 7 | 61 | 61 | 0 | 0 | 0 | — | — | — | `src/cron/runtime/` `src/cron/tool/` |
-| `auto.cron-fire` cron 触发 | 3 | 3 | 2 | 2 | 0 | 0 | 0 | — | — | — | `src/cron/runtime/` |
+| `auto.cron-fire` cron 触发 | 3 | 2 | 2 | 2 | 0 | 0 | 0 | — | — | — | `src/cron/runtime/` |
 | `auto.always-on-cycle` always-on 调度与一轮 | 6 | 6 | 27 | 27 | 0 | 0 | 0 | — | 2026-11-13（缺口审查） | — | `src/always-on/runtime/` `src/always-on/config/` |
 | `auto.always-on-api` always-on 接口与工具 | 7 | 7 | 28 | 28 | 0 | 0 | 0 | — | — | — | `src/always-on/tool/` `src/always-on/protocol/` |
 
@@ -408,12 +388,19 @@ pilotdeck 的子命令（server 归 gw.server-entry，sidecar 可执行文件归
 
 「没碰到」是没有场景碰到；「只被有差异的碰到」是碰到它的场景都不是 SAME（括号里是那些场景）。
 
-#### `tools` 工具（3）
+#### `tools` 工具（2）
 
-- `tools.execute-code`
-  - 只被有差异的碰到（`tool-execute-code`）：`env` `env:PYTHONDONTWRITEBYTECODE` — src/tool/builtin/executeCode.ts:821
-  - 只被有差异的碰到（`tool-execute-code`）：`tool-params` `execute_code.description` — src/tool/builtin/executeCode.ts:202
-  - 只被有差异的碰到（`tool-execute-code`）：`tool-params` `execute_code.timeout_seconds` — src/tool/builtin/executeCode.ts:206
+- `tools.interaction`
+  - 只被有差异的碰到（`params-interaction-binding`）：`ws-params` `elicitation_respond.interactionBinding` — src/gateway/protocol/types.ts:986
+- `tools.search`
+  - 只被有差异的碰到（`gap-tool-glob`）：`tool-params` `glob.limit` — src/tool/builtin/glob.ts:82
+
+#### `perm` 权限、沙箱、路径检查（2）
+
+- `perm.decision`
+  - 只被有差异的碰到（`params-interaction-binding`）：`ws-params` `permission_list.projectKey` — src/gateway/protocol/types.ts:1062
+- `perm.interaction`
+  - 只被有差异的碰到（`params-interaction-binding`）：`ws-params` `reconnect_interaction.nextBinding` — src/gateway/protocol/types.ts:240
 
 ### 没有任何场景的子能力
 
@@ -477,10 +464,10 @@ pilotdeck 的子命令（server 归 gw.server-entry，sidecar 可执行文件归
 - `sidecar-raw-connections`（SAME）
 - `sidecar-raw-execute-terminal`（SAME）
 - `sidecar-raw-framing`（SAME）
-- `sidecar-raw-half-line-eof`（SAME）
+- `sidecar-raw-half-line-eof`（DIFF）
 - `sidecar-raw-protocol`（SAME）
 - `sidecar-raw-stdio-cancel-pending`（SAME）
-- `sidecar-raw-stdio-concurrent`（SAME）
+- `sidecar-raw-stdio-concurrent`（DIFF）
 - `sidecar-raw-stdio-eof-pending`（SAME）
 - `sidecar-raw-stdio-execute-terminal`（SAME）
 - `sidecar-raw-stdio-factory-failure`（SAME）
@@ -488,36 +475,44 @@ pilotdeck 的子命令（server 归 gw.server-entry，sidecar 可执行文件归
 - `sidecar-raw-stdio-half-line-eof`（SAME）
 - `sidecar-raw-stdio-model`（SAME）
 - `sidecar-raw-stdio-model-metadata`（SAME）
+- `sidecar-raw-stdio-odd-text`（SAME）
 - `sidecar-raw-stdio-timeout-cancel`（SAME）
 - `sidecar-raw-stdio-validation`（SAME）
 - `sidecar-raw-tcp-disconnect-pending`（SAME）
 - `sidecar-raw-validation`（SAME）
 - `tool-request-user-form-2020`（SAME）
+- `tool-web-fetch-html`（SAME）
+- `tool-web-fetch-llm`（SAME）
+- `tool-web-fetch-llm-anthropic`（SAME）
+- `tool-web-fetch-llm-errors`（SAME）
+- `tool-web-fetch-llm-routed`（SAME）
+- `tool-web-fetch-llm-subagent`（SAME）
+- `tool-web-fetch-llm-unrouted`（SAME）
 
 ## 归属统计
 
 - 表面项 2113 个：按规则归属 2112，例外 1，归属不了 0。
-- 场景 636 个：按规则归属 413，例外 157，归属不了 66。
+- 场景 644 个：按规则归属 413，例外 157，归属不了 74。
 
 ## 与 `coverage.mjs --surface` 的对照
 
-两者用同一个判定（`scripts/bbx/lib/surface.mjs`）。对同一产物目录运行 `node scripts/bbx/coverage.mjs --surface --out <产物目录>` 应打印与下表相同的数字（场景 622/636 SAME）。
+两者用同一个判定（`scripts/bbx/lib/surface.mjs`）。对同一产物目录运行 `node scripts/bbx/coverage.mjs --surface --out <产物目录>` 应打印与下表相同的数字（场景 629/644 SAME）。
 
 | 维度 | 项数 | 被SAME场景碰到 | 只被有差异的场景碰到 | 没碰到 | 不计 |
 |---|---|---|---|---|---|
 | config | 275 | 275 | 0 | 0 | 0 |
 | project-config | 12 | 12 | 0 | 0 | 0 |
 | files | 84 | 72 | 0 | 0 | 12 |
-| env | 192 | 130 | 1 | 0 | 61 |
+| env | 192 | 131 | 0 | 0 | 61 |
 | tools | 54 | 53 | 0 | 0 | 1 |
-| tool-params | 260 | 254 | 2 | 0 | 4 |
+| tool-params | 260 | 255 | 1 | 0 | 4 |
 | events | 88 | 81 | 0 | 0 | 7 |
 | records | 82 | 79 | 0 | 0 | 3 |
 | provider-protocols | 105 | 105 | 0 | 0 | 0 |
 | cli | 69 | 69 | 0 | 0 | 0 |
 | http | 23 | 23 | 0 | 0 | 0 |
 | ws-methods | 101 | 101 | 0 | 0 | 0 |
-| ws-params | 337 | 337 | 0 | 0 | 0 |
+| ws-params | 337 | 334 | 3 | 0 | 0 |
 | loop-behaviors | 116 | 108 | 0 | 0 | 8 |
 | hooks | 74 | 74 | 0 | 0 | 0 |
 | channels | 22 | 22 | 0 | 0 | 0 |
@@ -526,4 +521,4 @@ pilotdeck 的子命令（server 归 gw.server-entry，sidecar 可执行文件归
 | gw-behaviors | 75 | 75 | 0 | 0 | 0 |
 | recovery-behaviors | 13 | 13 | 0 | 0 | 0 |
 | module-behaviors | 19 | 18 | 0 | 0 | 1 |
-| 合计 | 2113 | 2001 | 3 | 0 | 109 |
+| 合计 | 2113 | 2000 | 4 | 0 | 109 |

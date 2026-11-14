@@ -2,17 +2,17 @@
   "about": "scripts/bbx/status.mjs 读的检查结果。手写，只记命令的当次输出，每项写明日期、提交、机器和来源；没有的就删掉那一项，status.mjs 会显示「没有数据」。fmt / clippy / doctest 的取值写 pass 或 fail。",
   "fourCommands": {
     "date": "2026-11-14",
-    "commit": "34260db33",
+    "commit": "7b75a0851",
     "machine": "cb8（Linux aarch64）",
     "fmt": "pass",
     "clippy": "pass",
     "nextest": {
       "result": "fail",
-      "passed": 7794,
-      "total": 7796
+      "passed": 7816,
+      "total": 7818
     },
     "doctest": "pass",
-    "source": "cb8 上 ~/ws/pdrs-takeover/logs/verify-v27.log（verify.sh 一条龙：构建、单独重跑、全量对拍、四条命令）。nextest 失败的 2 个（sms 的 head_timeout、wecom_callback 的 post_up_to_the_cap）都是固定端口 18973 / 18990 当时被同机另一个工作区的同一套测试占用，随后在同一构建上单独重跑 2/2 通过。全量对拍期间的进程采样：nodeGatewayUnderRust=0（893 个 Rust server、49282 次采样）"
+    "source": "cb8 上 ~/ws/pdrs-takeover/logs/verify-v28.log。nextest 失败的 2 个（sms 的 head_timeout、wecom_callback 的 post_up_to_the_cap）与 v26、v27 相同：feishu、sms、wecom_callback 三组测试共用固定端口 18973 / 18990，并行时相撞（调高优化档位后重叠成了必然），不是别的工作区占用；a6ae7c293 起放进同一个串行组，本机这三组 60/60 通过，等下一轮在 cb8 上确认。全量对拍期间的进程采样：nodeGatewayUnderRust=0（898 个 Rust server、50844 次采样）"
   },
   "upstreamTests": {
     "date": "2026-11-13",
